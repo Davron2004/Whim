@@ -25,7 +25,7 @@ import type { ReportDraft, ReportPreviewRow } from './report-payload';
 import { sendReport } from './generation-client';
 import type { ClientOptions } from './generation-client';
 import { REFUSAL_RULES, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
-import { terminalFallbackOf } from './wire-fallback';
+import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 import type { ServiceRefusal } from './service-refusal';
 import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } from './report-send';
 import ServiceNotice, { useNoticeWindowClear, useRetryGate } from './ServiceNotice';
@@ -82,9 +82,10 @@ export interface ReportSheetProps {
   /** Plain `ClientOptions` — sending a report needs no AI-data consent (design D3). */
   options: ClientOptions;
   onClose: () => void;
-  /** A send refused `update_required`: the host opens the update screen in place of the sheet
-   *  (request-envelope D5), and closing the sheet discards the draft as any close does. */
-  onUpdateRequired: () => void;
+  /** A send refused `update_required`, or answered with an `update` fallback: the host opens the
+   *  update screen in place of the sheet (request-envelope D5), showing the fallback's `notice` when
+   *  it has one, and closing the sheet discards the draft as any close does. */
+  onUpdateRequired: (notice?: string) => void;
   /** The active legal language: the privacy link opens its policy page. */
   legalLanguage: LegalLanguage;
 }
@@ -141,11 +142,13 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
       setPhase(settled.phase);
       setNotice(settled.notice);
     } catch (err) {
-      // A reply this build can't use whose fallback is `update` opens the update screen, as an
-      // `update_required` refusal does (beta-1 D16); a `fail` one is an ordinary failed send below.
-      if (terminalFallbackOf(err)?.kind === 'update') {
+      // A reply this build can't use whose fallback is `update` opens the update screen with its
+      // notice, as an `update_required` refusal does (beta-1 D16); a `fail` one is an ordinary
+      // failed send below.
+      const fallback = terminalFallbackOf(err);
+      if (fallback?.kind === 'update') {
         log.warn(CHANNELS.gen, 'report refused', { ...reportLogFields(request, 'update_required') });
-        onUpdateRequired();
+        onUpdateRequired(fallbackNotice(fallback));
         return;
       }
       const refusal = serviceRefusalOf(err);

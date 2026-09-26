@@ -954,13 +954,13 @@ function LauncherShell({
     goHome();
   };
 
-  /** A report refused `update_required`, from any of its three sheets: the update screen replaces
-   *  the screen the sheet sits on — only while that screen still shows, the same never-pull-back
-   *  rule every other refusal follows. */
-  const onReportUpdateRequired = () => {
+  /** A report refused `update_required`, or answered with an `update` fallback carrying `notice`,
+   *  from any of its three sheets: the update screen replaces the screen the sheet sits on — only
+   *  while that screen still shows, the same never-pull-back rule every other refusal follows. */
+  const onReportUpdateRequired = (notice?: string) => {
     setReportTarget(null);
     setScreen((prev) =>
-      prev.kind === 'done' || prev.kind === 'history' || prev.kind === 'app' ? { kind: 'update-required' } : prev,
+      prev.kind === 'done' || prev.kind === 'history' || prev.kind === 'app' ? updateScreenFrom(prev, notice) : prev,
     );
   };
 

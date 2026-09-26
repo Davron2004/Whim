@@ -285,6 +285,25 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
     });
   }
 
+  await h.test('fallback: an update fallback on a report opens the update screen with the notice', async () => {
+    const streams: Stream[] = [];
+    const deliver = streamingServer(streams);
+    await withLauncher({ server: (r) => (r.path === '/v1/report' ? futureBody({ reportId: 'report-1' }, 'update') : deliver(r)) }, async ({ tree, paths }) => {
+      await startBuild(tree, 'A tea timer');
+      streams[0].push(resultEvent('Tea Timer'));
+      streams[0].end();
+      await waitFor(() => on(tree, DoneStep), 'the done step');
+      await TestRenderer.act(async () => tree.root.findByType(DoneStep).props.onReport());
+      await waitFor(() => textOf(tree.root).includes(COPY.reportReasonBroken), 'the report draft');
+      await press(button(tree, COPY.reportReasonBroken));
+      await press(button(tree, COPY.reportSend));
+      await waitFor(() => on(tree, UpdateRequiredScreen), 'the update screen');
+      h.ok(paths().includes('/v1/report'), 'after the report was sent');
+      h.ok(textOf(tree.root).includes(UNARY_NOTICE), 'showing the notice');
+      h.ok(!textOf(tree.root).includes(COPY.updateBody), 'in place of the standard body');
+    });
+  });
+
   // ── answer modes (4.5) ───────────────────────────────────────────────────────────────────────
 
   await h.test('answers: one pick moves, several picks toggle, and Decide for me clears the picks and the typed answer', async () => {
