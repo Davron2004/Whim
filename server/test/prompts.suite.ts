@@ -53,7 +53,7 @@ import { parseJsonBlock } from '../src/generation/json-block';
 import { runStaticChecks } from '../../checks/index';
 import { FIELD_TYPES } from '../../src/host/storage-engine/contract';
 import { clarifyBuildInstead } from '../../src/host/launcher/copy';
-import { ClarifyQuestion, type Clarification, type GenerateRequest, type Diagnostic, type GenerationEvent } from '@whim/contract';
+import { ClarifyLimit, ClarifyQuestion, type Clarification, type GenerateRequest, type Diagnostic, type GenerationEvent } from '@whim/contract';
 
 const repoRoot = path.resolve(process.cwd());
 
@@ -788,6 +788,52 @@ function testLimitAlternativeFitsTheButton(): void {
   );
 }
 
+/** The examples a limit names in parentheses ("weather", "news", ...), or none. */
+function examplesNamedBy(limit: MiniAppLimit): string[] {
+  const open = limit.words.indexOf('(');
+  const close = limit.words.indexOf(')', open);
+  return open >= 0 && close > open ? limit.words.slice(open + 1, close).split(', ') : [];
+}
+
+/** The clarify call is stochastic, and a `limit` offered after "an empty list is a good answer" lost
+ *  to it most of the time (beta-1 fix-6): the reply shape and the instructions both settle the limit
+ *  before any question. */
+function testLimitDecisionComesFirst(): void {
+  section('Tripwire: clarify settles the limit before any question, in the reply shape and in the instructions');
+
+  const clarifySystem = buildClarifyMessages({ request: { prompt: 'a weather app' } }).find((m) => m.role === 'system')?.content ?? '';
+  const shape = clarifySystem.slice(clarifySystem.indexOf('{ "'));
+  const limitShape = `{ ${Object.keys(ClarifyLimit.shape).map((key) => JSON.stringify(key) + ': string').join(', ')} }`;
+  check(
+    'the reply shape opens with "limit", null or the contract’s limit object, before "questions"',
+    shape.startsWith(`{ "limit": null | ${limitShape}, "questions": [`),
+    shape.slice(0, 90),
+  );
+
+  const decision = clarifySystem.indexOf('Only when "limit" is null');
+  const questionRules = [clarifySystem.indexOf('Set "select"'), clarifySystem.indexOf('a good answer')];
+  const limitsAt = MINI_APP_LIMITS.map((limit) => clarifySystem.indexOf(limit.words));
+  check('questions are allowed only when "limit" is null', decision >= 0);
+  check(
+    'every mini-app limit is stated before questions are allowed',
+    limitsAt.every((at) => at >= 0 && at < decision),
+    JSON.stringify({ limitsAt, decision }),
+  );
+  check(
+    'the decision precedes the answer-mode rules and the empty-list reassurance',
+    questionRules.every((at) => at > decision),
+    JSON.stringify({ questionRules, decision }),
+  );
+
+  const bannedOption = /never an option like "([^"]+)"/.exec(clarifySystem)?.[1] ?? '';
+  const namedByTheList = MINI_APP_LIMITS.flatMap(examplesNamedBy);
+  check(
+    'no option may offer what a mini-app cannot do, and the banned example is one the limits list names',
+    namedByTheList.some((item) => bannedOption.toLowerCase().includes(item)),
+    bannedOption,
+  );
+}
+
 // ── §Answer modes and delegated questions (beta-1 D18) ───────────────────────
 
 function testAnswerModeInstructions(): void {
@@ -840,5 +886,6 @@ export async function runPromptsTests(): Promise<void> {
   testJsonBlockParsing();
   testMiniAppLimits();
   testLimitAlternativeFitsTheButton();
+  testLimitDecisionComesFirst();
   testAnswerModeInstructions();
 }

@@ -45,6 +45,7 @@ import type { PromptInputs } from '../src/generation/prompts/inputs';
 import {
   ClarifyResponse,
   GenerationEvent,
+  REQUEST_ID_HEADER,
   RewriteResponse,
   type GenerateRequest as GenerateRequestType,
   type RunSummary,
@@ -249,17 +250,37 @@ async function testClarifyEndpoint(): Promise<void> {
 }
 
 /** One clarify call answered with `reply`, read back as a validated `ClarifyResponse`. */
-async function clarifyWith(reply: unknown): Promise<{ status: number; body: ClarifyResponse | undefined; logs: Record<string, unknown>[] }> {
+interface ClarifyRead {
+  status: number;
+  /** The 200 body as sent, before any schema reads it. */
+  wire: unknown;
+  body: ClarifyResponse | undefined;
+  requestId: string | null;
+  /** "clarify limit kept, questions dropped" lines. */
+  logs: Record<string, unknown>[];
+  /** "clarify limit dropped, unusable" lines. */
+  droppedLimits: Record<string, unknown>[];
+}
+
+async function clarifyWith(reply: unknown): Promise<ClarifyRead> {
   const { app } = appWithModel([{ role: 'clarify', deltas: ['```json\n', JSON.stringify(reply), '\n```'], usage: TURN_USAGE }]);
   const capture = captureLogs();
   let res: Response;
   try {
-    res = await post(app, '/v1/clarify', { prompt: 'a weather app' }, DEVICE_HEADER);
+    res = await withinDeadline('clarify', post(app, '/v1/clarify', { prompt: 'a weather app' }, DEVICE_HEADER));
   } finally {
     capture.stop();
   }
-  const parsed = res.status === 200 ? ClarifyResponse.safeParse(await res.json()) : undefined;
-  return { status: res.status, body: parsed?.success ? parsed.data : undefined, logs: withMessage(capture, 'clarify limit kept, questions dropped') };
+  const wire: unknown = res.status === 200 ? await res.json() : undefined;
+  const parsed = res.status === 200 ? ClarifyResponse.safeParse(wire) : undefined;
+  return {
+    status: res.status,
+    wire,
+    body: parsed?.success ? parsed.data : undefined,
+    requestId: res.headers.get(REQUEST_ID_HEADER),
+    logs: withMessage(capture, 'clarify limit kept, questions dropped'),
+    droppedLimits: withMessage(capture, 'clarify limit dropped, unusable'),
+  };
 }
 
 async function testClarifyLimit(): Promise<void> {
@@ -280,18 +301,44 @@ async function testClarifyLimit(): Promise<void> {
   const noQuestionsKey = await clarifyWith({ limit });
   eq('a limit with no questions key at all is still a limit', noQuestionsKey.body, { questions: [], limit });
 
+  eq('a usable limit logs no dropped limit', [...alone.droppedLimits, ...both.droppedLimits, ...noQuestionsKey.droppedLimits], []);
+
+  // The prompt asks for `"limit": null` whenever a mini-app can build the request (beta-1 fix-6).
+  // That is no limit, and the raw body carries no `limit` key: the device's reader refuses `null`.
+  for (const questions of [[question], []]) {
+    const read = await clarifyWith({ limit: null, questions });
+    eq(`"limit": null beside ${questions.length} question(s) → 200`, read.status, 200);
+    eq(
+      `"limit": null beside ${questions.length} question(s): the wire body is the questions alone, with no "limit" key`,
+      read.wire,
+      { questions: questions.map((q) => ({ ...q, select: 'one', other: false })) },
+    );
+    eq(`"limit": null beside ${questions.length} question(s) is no limit, so nothing is logged as dropped`, read.droppedLimits, []);
+  }
+
+  // A limit the model wrote but that is unusable is dropped, and logged by its field lengths after
+  // trimming (null when not a string) with the request id, never its text.
   const malformed = [
-    { label: 'an empty reason', limit: { reason: '   ', alternative: limit.alternative } },
-    { label: 'a 201-character alternative', limit: { reason: limit.reason, alternative: 'x'.repeat(201) } },
-    { label: 'a missing alternative', limit: { reason: limit.reason } },
-    { label: 'a string instead of an object', limit: 'no weather' },
+    { label: 'an empty reason', limit: { reason: '   ', alternative: limit.alternative }, lengths: [0, limit.alternative.length] },
+    { label: 'a 201-character alternative', limit: { reason: limit.reason, alternative: 'x'.repeat(201) }, lengths: [limit.reason.length, 201] },
+    { label: 'a missing alternative', limit: { reason: limit.reason }, lengths: [limit.reason.length, null] },
+    { label: 'a string instead of an object', limit: 'no weather', lengths: [null, null] },
   ];
   for (const entry of malformed) {
     const read = await clarifyWith({ questions: [question], limit: entry.limit });
     eq(`${entry.label}: the reply is read as its questions, with no limit`, read.body, { questions: [{ ...question, select: 'one', other: false }] });
+    check(`${entry.label}: setup: the response names its request id`, read.requestId !== null);
+    eq(
+      `${entry.label}: the dropped limit is logged once, at info, with the request id and its field lengths`,
+      read.droppedLimits.map((r) => [r.severity, r.requestId, r.reasonLength, r.alternativeLength]),
+      [['INFO', read.requestId, ...entry.lengths]],
+    );
+    const logged = JSON.stringify(read.droppedLimits);
+    check(`${entry.label}: the log line carries no limit text`, !logged.includes('weather') && !logged.includes('checklist') && !logged.includes('xxxxxxxx'), logged);
   }
   const malformedAlone = await clarifyWith({ limit: { reason: '', alternative: '' } });
   eq('a malformed limit with no questions is an unusable reply → 502, as without a limit', malformedAlone.status, 502);
+  eq('a malformed limit with no questions is still logged as dropped', malformedAlone.droppedLimits.map((r) => [r.reasonLength, r.alternativeLength]), [[0, 0]]);
 
   const boundary = await clarifyWith({ questions: [], limit: { reason: 'r'.repeat(200), alternative: 'a'.repeat(200) } });
   eq('200 characters after trimming is still a limit', boundary.body?.limit, { reason: 'r'.repeat(200), alternative: 'a'.repeat(200) });
@@ -610,23 +657,79 @@ function sseFrame(payload: Record<string, unknown>): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
-/** A fetch double that answers one summary reply over a real SSE stream and captures the outgoing
- *  request body — the wire the summariser's call actually reaches, through the REAL
+/** A fetch double that answers every model call with `content` over a real SSE stream and hands
+ *  each outgoing request body to `onBody` — the wire a call actually reaches, through the REAL
  *  `OpenRouterClient` rather than `ScriptedModelClient`. */
-function summaryWireFetch(captured: { body?: Record<string, unknown> }): FetchFn {
+function contentWireFetch(content: string, onBody: (body: Record<string, unknown>) => void): FetchFn {
   return (async (_input, init) => {
-    captured.body = JSON.parse((init?.body as string) ?? '{}') as Record<string, unknown>;
-    const summaryJson = JSON.stringify({ text: 'It counts your glasses.', kind: 'Start', touched: [] });
+    onBody(JSON.parse((init?.body as string) ?? '{}') as Record<string, unknown>);
     const encoder = new TextEncoder();
     const body = new ReadableStream({
       start(controller) {
-        controller.enqueue(encoder.encode(sseFrame({ id: 'gen-summary-wire', choices: [{ index: 0, delta: { content: summaryJson } }] })));
+        controller.enqueue(encoder.encode(sseFrame({ id: 'gen-wire', choices: [{ index: 0, delta: { content } }] })));
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         controller.close();
       },
     });
     return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
   }) as FetchFn;
+}
+
+/** `contentWireFetch` answering one summary reply, keeping the outgoing body in `captured`. */
+function summaryWireFetch(captured: { body?: Record<string, unknown> }): FetchFn {
+  const summaryJson = JSON.stringify({ text: 'It counts your glasses.', kind: 'Start', touched: [] });
+  return contentWireFetch(summaryJson, (body) => {
+    captured.body = body;
+  });
+}
+
+/** In-process requests keep no socket open, so a stalled one could end the process without
+ *  failing a test. This referenced deadline keeps it alive and fails the call by name. */
+async function withinDeadline<T>(label: string, pending: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} exceeded the 5s test deadline`)), 5000);
+  });
+  try {
+    return await Promise.race([pending, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** One `route` call through the REAL `OpenRouterClient`, answered with `reply`: the outgoing model
+ *  request bodies, in order. */
+async function modelWireBodies(route: '/v1/clarify' | '/v1/rewrite', reply: unknown): Promise<Record<string, unknown>[]> {
+  const bodies: Record<string, unknown>[] = [];
+  const model = openRouterModelClient(new OpenRouterClient(contentWireFetch(JSON.stringify(reply), (body) => bodies.push(body))));
+  const app = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), model, roster: ROSTER });
+  const res = await withinDeadline(route, post(app, route, { prompt: 'a weather app' }, DEVICE_HEADER));
+  eq(`setup: ${route} → 200`, res.status, 200);
+  return bodies;
+}
+
+/**
+ * Clarify chooses between a `limit` and questions, and at the provider's default temperature the
+ * same prompt got either (beta-1 fix-6). Red-check: fails if the clarify call stops sending
+ * `temperature: 0`, and if a temperature reaches the rewrite or summary call too (a default in
+ * the adapter, or one threaded through every roster role).
+ */
+async function testOnlyClarifySamplesAtTemperatureZero(): Promise<void> {
+  section('Wire v2 — the clarify call samples at temperature 0; the rewrite and summary calls keep the provider default (beta-1 fix-6)');
+
+  const clarify = await modelWireBodies('/v1/clarify', { limit: null, questions: [] });
+  eq('setup: clarify made one model call', clarify.length, 1);
+  eq('the clarify wire body asks for temperature 0', clarify[0]?.temperature, 0);
+
+  const rewrite = await modelWireBodies('/v1/rewrite', { rewrittenPrompt: 'A weather log.', plan: [{ label: 'What it is', text: 'A weather log.' }] });
+  eq('setup: rewrite made one model call', rewrite.length, 1);
+  check('the rewrite wire body states no temperature', rewrite.every((body) => !('temperature' in body)), `temperature ${JSON.stringify(rewrite[0]?.temperature)}`);
+
+  const summary: { body?: Record<string, unknown> } = {};
+  const summariser = createModelSummariser({ model: openRouterModelClient(new OpenRouterClient(summaryWireFetch(summary))), roster: ROSTER, timeoutMs: 2_000 });
+  const summarised = await withinDeadline('summary', summariser.summarise({ prompt: 'a weather log', isEdit: false, appName: 'demo', capabilities: [], attempts: 1, diagnostics: [], sourceChange: 'unknown' }));
+  eq('setup: the summariser produced a summary', summarised.summary?.text, 'It counts your glasses.');
+  check('the summary wire body states no temperature', summary.body !== undefined && !('temperature' in summary.body), `temperature ${JSON.stringify(summary.body?.temperature)}`);
 }
 
 /**
@@ -941,6 +1044,7 @@ export async function runWireV2Tests(): Promise<void> {
   testSummaryShaping();
   await testModelSummariser();
   await testSummariserWireReasoningIsExplicitlyOff();
+  await testOnlyClarifySamplesAtTemperatureZero();
   await testSummariserModelCallCarriesRequestId();
   await testSummaryOnTerminalEvent();
   await testSseFramesSummaryUnmodified();

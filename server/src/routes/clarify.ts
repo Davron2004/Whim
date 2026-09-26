@@ -99,12 +99,25 @@ function limitField(value: unknown): string | undefined {
   return trimmed.length > 0 && trimmed.length <= LIMIT_FIELD_MAX_CHARS ? trimmed : undefined;
 }
 
-/** The model's `limit` (beta-1 D9), when both fields are usable. Anything else is no limit. */
-function shapeLimit(raw: unknown): ClarifyLimit | undefined {
-  if (typeof raw !== 'object' || raw === null) return undefined;
-  const reason = limitField((raw as Record<string, unknown>).reason);
-  const alternative = limitField((raw as Record<string, unknown>).alternative);
-  return reason !== undefined && alternative !== undefined ? { reason, alternative } : undefined;
+/** A limit field's length after trimming, or `null` when it is not a string. */
+function limitFieldLength(value: unknown): number | null {
+  return typeof value === 'string' ? value.trim().length : null;
+}
+
+/** The model's `limit` (beta-1 D9), when both fields are usable. Anything else is no limit. A limit
+ *  the model did write (anything but absent or `null`) that is unusable is logged by its field
+ *  lengths, never its text, so a dropped "can't build" answer is visible. */
+function shapeLimit(raw: unknown, log: ServerLogger): ClarifyLimit | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const fields = typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const reason = limitField(fields.reason);
+  const alternative = limitField(fields.alternative);
+  if (reason !== undefined && alternative !== undefined) return { reason, alternative };
+  log.info(
+    { reasonLength: limitFieldLength(fields.reason), alternativeLength: limitFieldLength(fields.alternative) },
+    'clarify limit dropped, unusable',
+  );
+  return undefined;
 }
 
 /**
@@ -115,15 +128,17 @@ function shapeLimit(raw: unknown): ClarifyLimit | undefined {
  * `other: false`), the mode every question had before the model could choose one.
  *
  * A usable `limit` wins: it is returned with no questions, and questions the model sent beside it
- * are dropped and logged, since the contract refuses the pair. A malformed `limit` is ignored, so
- * the reply is read as questions exactly as it would be without one.
+ * are dropped and logged, since the contract refuses the pair. `limit: null` is the model saying a
+ * mini-app can build the request, so it is no limit, and the body carries no `limit` key (the
+ * device's reader refuses `null` there). A malformed `limit` is logged and ignored, so the reply is
+ * read as questions exactly as it would be without one.
  */
 function shapeClarify(text: string, log: ServerLogger): ClarifyResponse | undefined {
   const parsed = parseJsonBlock(text);
   if (typeof parsed !== 'object' || parsed === null) return undefined;
   const reply = parsed as Record<string, unknown>;
   const raw = reply.questions;
-  const limit = shapeLimit(reply.limit);
+  const limit = shapeLimit(reply.limit, log);
   if (limit !== undefined) {
     if (Array.isArray(raw) && raw.length > 0) log.info({ droppedQuestions: raw.length }, 'clarify limit kept, questions dropped');
     return { questions: [], limit };
@@ -542,6 +557,7 @@ async function runClarifyWork(
       model: roster.clarify.model,
       messages: buildClarifyMessages({ request: parsed }),
       reasoning: roster.clarify.reasoning,
+      temperature: roster.clarify.temperature,
       role: 'clarify',
       logger: requestLog,
     },

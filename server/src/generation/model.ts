@@ -107,7 +107,17 @@ export interface RoleSetting {
   reasoning: ReasoningSetting;
 }
 
-export type ModelRoster = Record<ModelRole, RoleSetting>;
+/** The clarify role also fixes its sampling temperature. Clarify chooses between a `limit` and
+ *  questions, and at the provider's default temperature one prompt got either (beta-1 fix-6), so
+ *  it samples at `CLARIFY_TEMPERATURE`. No other role has one: their requests state no temperature,
+ *  which leaves the provider's default. */
+export interface ClarifySetting extends RoleSetting {
+  temperature: number;
+}
+
+export type ModelRoster = Record<Exclude<ModelRole, 'clarify'>, RoleSetting> & { clarify: ClarifySetting };
+
+const CLARIFY_TEMPERATURE = 0;
 
 const REWRITE_MODEL_ENV = 'WHIM_REWRITE_MODEL';
 const ENGINEER_MODEL_ENV = 'WHIM_ENGINEER_MODEL';
@@ -201,7 +211,7 @@ export function modelRosterFromEnv(env: NodeJS.ProcessEnv = process.env): ModelR
   const engineerReasoning = readReasoning(env, 'engineer');
 
   return {
-    clarify: { model: clarify, reasoning: readReasoning(env, 'clarify') },
+    clarify: { model: clarify, reasoning: readReasoning(env, 'clarify'), temperature: CLARIFY_TEMPERATURE },
     rewrite: { model: rewrite, reasoning: readReasoning(env, 'rewrite') },
     summary: { model: summary, reasoning: readReasoning(env, 'summary') },
     plan: { model: plan, reasoning: readReasoning(env, 'plan') },
@@ -215,7 +225,7 @@ export function modelRosterFromEnv(env: NodeJS.ProcessEnv = process.env): ModelR
  *  `WHIM_REWRITE_MODEL`/`WHIM_ENGINEER_MODEL` are set. */
 export function defaultModelRoster(rewriteModel: string, engineerModel: string): ModelRoster {
   return {
-    clarify: { model: rewriteModel, reasoning: REASONING_DEFAULTS.clarify },
+    clarify: { model: rewriteModel, reasoning: REASONING_DEFAULTS.clarify, temperature: CLARIFY_TEMPERATURE },
     rewrite: { model: rewriteModel, reasoning: REASONING_DEFAULTS.rewrite },
     summary: { model: rewriteModel, reasoning: REASONING_DEFAULTS.summary },
     plan: { model: engineerModel, reasoning: REASONING_DEFAULTS.plan },

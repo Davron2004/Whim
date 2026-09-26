@@ -37,14 +37,18 @@ export interface GenerateReport extends PhaseReport {
 }
 
 /** `limit` is clarify saying the request's core needs something a mini-app cannot do (beta-1 D9):
- *  the case stops before rewrite, and it is not a failure. */
+ *  the case stops before rewrite, and it is not a failure. `clarified` is a run that stopped once
+ *  clarify answered with questions or none (`--stop-after clarify`); it is not a failure either. */
 export type CaseOutcome =
   | { type: 'result' }
   | { type: 'limit'; reason: string; alternative: string }
+  | { type: 'clarified' }
   | { type: 'failure'; phase: 'clarify' | 'rewrite' | 'generate'; reason: string; attempts: number };
 
 export interface CaseReport {
   caseId: string;
+  /** Which run of the case this is, from 1 (`--repeat`). */
+  run: number;
   appSlug: string;
   prompt: string;
   deviceId: string;
@@ -62,6 +66,20 @@ export interface PhaseSummary {
   maxMs: number;
 }
 
+/** What clarify answered across one case's runs: a `limit`, at least one question, no question,
+ *  or no usable answer at all (`failure`: an error status or an off-contract body). Every run counts
+ *  once. A failure after clarify is not a clarify answer: it counts in `summary.failures`. */
+export interface CaseTally {
+  caseId: string;
+  runs: number;
+  limit: number;
+  questions: number;
+  empty: number;
+  failure: number;
+}
+
+type ClarifyAnswer = Exclude<keyof CaseTally, 'caseId' | 'runs'>;
+
 export interface FlowBenchmarkReport {
   setId: string;
   url: string;
@@ -74,6 +92,8 @@ export interface FlowBenchmarkReport {
     /** Real failures only: a `limit` outcome is counted in `limits`. */
     failures: number;
     limits: number;
+    /** One per case, in eval-set order. */
+    tallies: CaseTally[];
   };
 }
 
@@ -92,6 +112,24 @@ function phaseSummary(reports: readonly (PhaseReport | GenerateReport | undefine
   };
 }
 
+function clarifyAnswer(item: CaseReport): ClarifyAnswer {
+  if (item.outcome.type === 'limit') return 'limit';
+  if (item.outcome.type === 'failure' && item.outcome.phase === 'clarify') return 'failure';
+  // Each question clarify asked gets exactly one auto-answer.
+  return item.clarifications.length > 0 ? 'questions' : 'empty';
+}
+
+function tallies(cases: readonly CaseReport[]): CaseTally[] {
+  const byCase = new Map<string, CaseTally>();
+  for (const item of cases) {
+    const tally = byCase.get(item.caseId) ?? { caseId: item.caseId, runs: 0, limit: 0, questions: 0, empty: 0, failure: 0 };
+    tally.runs += 1;
+    tally[clarifyAnswer(item)] += 1;
+    byCase.set(item.caseId, tally);
+  }
+  return [...byCase.values()];
+}
+
 export function buildReport(setId: string, url: string, startedAt: string, cases: readonly CaseReport[], finishedAt = new Date().toISOString()): FlowBenchmarkReport {
   return {
     setId,
@@ -108,6 +146,7 @@ export function buildReport(setId: string, url: string, startedAt: string, cases
       results: cases.filter((item) => item.outcome.type === 'result').length,
       failures: cases.filter((item) => item.outcome.type === 'failure').length,
       limits: cases.filter((item) => item.outcome.type === 'limit').length,
+      tallies: tallies(cases),
     },
   };
 }
@@ -120,9 +159,11 @@ function statusText(report: PhaseReport | GenerateReport | undefined): string {
   return report === undefined ? '-' : `${report.status} / ${durationText(report.durationMs)}`;
 }
 
-function outcomeText(outcome: CaseOutcome): string {
+function outcomeText(item: CaseReport): string {
+  const { outcome } = item;
   if (outcome.type === 'result') return 'result';
   if (outcome.type === 'limit') return `limit: ${outcome.reason} → ${outcome.alternative}`;
+  if (outcome.type === 'clarified') return `clarified: ${item.clarifications.length} question(s)`;
   return `failure: ${outcome.reason}`;
 }
 
@@ -131,19 +172,25 @@ export function formatMarkdownReport(report: FlowBenchmarkReport): string {
     `| Case | Clarify | Rewrite | Generate | Stages | Outcome |`,
     `| --- | ---: | ---: | ---: | --- | --- |`,
   ];
+  const repeated = report.cases.some((item) => item.run > 1);
   for (const item of report.cases) {
     const generate = item.phases.generate;
     const stages = generate?.stages.map((stage) => {
       const attempt = stage.attempt === undefined ? '' : `#${stage.attempt}`;
       return `${stage.stage}${attempt}: ${stage.durationMs} ms`;
     }).join('<br>') ?? '-';
-    const outcome = outcomeText(item.outcome);
-    lines.push(`| ${item.caseId} | ${statusText(item.phases.clarify)} | ${statusText(item.phases.rewrite)} | ${statusText(generate)} | ${stages} | ${outcome} |`);
+    const outcome = outcomeText(item);
+    const label = repeated ? `${item.caseId} #${item.run}` : item.caseId;
+    lines.push(`| ${label} | ${statusText(item.phases.clarify)} | ${statusText(item.phases.rewrite)} | ${statusText(generate)} | ${stages} | ${outcome} |`);
   }
   lines.push('', '| Phase | Median | Maximum |', '| --- | ---: | ---: |');
   for (const phase of ['clarify', 'rewrite', 'generate'] as const) {
     const summary = report.summary.phases[phase];
     lines.push(`| ${phase} | ${summary.medianMs} ms | ${summary.maxMs} ms |`);
+  }
+  lines.push('', '| Case | Runs | Limit | Questions | Empty | Failure |', '| --- | ---: | ---: | ---: | ---: | ---: |');
+  for (const tally of report.summary.tallies) {
+    lines.push(`| ${tally.caseId} | ${tally.runs} | ${tally.limit} | ${tally.questions} | ${tally.empty} | ${tally.failure} |`);
   }
   return `${lines.join('\n')}\n`;
 }
