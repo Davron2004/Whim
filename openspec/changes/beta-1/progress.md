@@ -266,3 +266,4 @@
   - The Settings helper line passed 10 of 11 focuses; the miss was the first focus after a fresh install, not reproducible.
   - Regression sweep PASS (first launch, keyboard incl. plan row 6/7, a build with `CONTAINED=true 49/49`, limit, update ghost).
   - Remaining: the tile long-press menu and "Make a new ID" sheets don't cover the status bar or reach the gesture bar (pre-fix-12 build; to check); the update ghost caption reads "Didn't finish" in red; a ~150 ms age-check flash; #132.
+- 09:08 PAUSED (orchestrator context low). Full resume state in `docs/handoff-2026-09-26.md`. The iOS final pass (ios-3) was still running at the pause; fix-13 not yet dispatched.
