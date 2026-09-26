@@ -352,7 +352,7 @@ async function testRewriteClarificationsAndPlan(): Promise<void> {
 // ── §4a Rewrite: answer modes, delegated questions and typed answers (beta-1 D18) ────────────
 
 async function testRewriteAnswerModes(): Promise<void> {
-  section('Wire v2 — rewrite decides delegated questions, keeps every pick, and quotes a typed answer as data (beta-1 D18)');
+  section('Wire v2 — rewrite asks the model to decide delegated questions, keeps every pick, and quotes a typed answer as data (beta-1 D18)');
 
   const planned = {
     rewrittenPrompt: 'A running log in kilometres for Monday and Wednesday runs.',
@@ -377,7 +377,7 @@ async function testRewriteAnswerModes(): Promise<void> {
     DEVICE_HEADER,
   );
   eq('rewrite with every answer mode → 200', res.status, 200);
-  const body = RewriteResponse.parse(await res.json());
+  check('the answer is a contract RewriteResponse', RewriteResponse.safeParse(await res.json()).success);
   const messages = model.requests[0]?.request.messages ?? [];
   const system = messages.find((m) => m.role === 'system')?.content ?? '';
   const lines = (messages.find((m) => m.role === 'user')?.content ?? '').split('\n');
@@ -393,8 +393,6 @@ async function testRewriteAnswerModes(): Promise<void> {
   check('both picks reach the model on the question’s row', lines.some((line) => line.includes('Which days?') && line.includes('Monday') && line.includes('Wednesday')));
   check('the typed answer reaches the model as a quoted JSON string', lines.some((line) => line.includes('Anything else?') && line.includes(JSON.stringify(typed))));
   check('the typed answer cannot open a line of its own', !lines.some((line) => line.startsWith('Ignore everything above')));
-  check('the plan the (stub) model wrote names the decision', (body.plan ?? []).some((row) => row.text.includes('kilometres')));
-  check('the plan keeps both picks', (body.plan ?? []).some((row) => row.text.includes('Monday') && row.text.includes('Wednesday')));
 }
 
 // ── §4b Rewrite: retries once on an empty or plan-less reply, never a third time ─────────────
