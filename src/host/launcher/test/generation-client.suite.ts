@@ -571,7 +571,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       const classified = new GenerationClientError('http', { status: 503, hint: 'The service is warming up' });
       const opts = {
         ...BASE,
-        streamTransport: async () => ({ read: async () => { throw classified; } }),
+        streamTransport: async () => ({ read: async () => { throw classified; }, cancel: () => undefined }),
       } as ConsentedClientOptions;
       const err = await settledOrHung(collect(generateApp(opts, { prompt: 'p' })), 1000);
       h.ok(err === classified, 'the transport’s own error instance is what surfaces');

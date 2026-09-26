@@ -42,6 +42,9 @@ import { CHANNELS } from '../logging/channels';
 declare global {
   interface ResponseBodyReader {
     read(): Promise<{ done: boolean; value?: Uint8Array }>;
+    /** Ends the request from the client's side: the transport aborts it, so the server sees the
+     *  connection close. A no-op once the stream has ended. */
+    cancel(): void;
     /** The stream response's `x-whim-request-id`, set when the transport opened it. */
     readonly requestId?: string;
   }

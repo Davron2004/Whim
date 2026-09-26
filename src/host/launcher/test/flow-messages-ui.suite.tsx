@@ -34,6 +34,7 @@ const build = (tree: Tree) => tree.root.findByType(BuildStep);
 const clarify = (tree: Tree) => tree.root.findByType(ClarifyStep);
 const ghosts = (tree: Tree): PendingBuildRecord[] => home(tree).props.pending;
 const records = (kv: KVBackend) => new PendingBuildStore(kv).list().map((record) => [record.state, record.failure?.reason]);
+const generateSignal = (sent: readonly SentRequest[]) => sent.find((r) => r.path === '/v1/generate')?.signal;
 
 const STAGE = { type: 'stage', stage: 'plan', status: 'start' };
 
@@ -192,12 +193,13 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
   await h.test('fallback: an update fallback mid-build fails the record, installs nothing, and the update screen shows the notice', async () => {
     const streams: Stream[] = [];
     const notice = stubFutureFrame('update').compat?.notice ?? '';
-    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
       await startBuild(tree, 'A tip splitter');
       streams[0].push(STAGE);
       streams[0].push(stubFutureFrame('update'));
       streams[0].push(resultEvent('Tip Splitter'));
       await waitFor(() => on(tree, UpdateRequiredScreen), 'the update screen');
+      h.eq(generateSignal(sent)?.aborted, true, 'the generation request is aborted, so the server stops building');
       h.ok(notice.length > 0 && textOf(tree.root).includes(notice), 'showing the notice');
       h.ok(!textOf(tree.root).includes(COPY.updateBody), 'in place of the standard body');
       h.eq(records(kv), [['failed', notice]], 'the pending record resolves as failed');
@@ -212,12 +214,13 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
   await h.test('fallback: a fail fallback mid-build ends on the failure screen with the notice as its reason, and installs nothing', async () => {
     const streams: Stream[] = [];
     const notice = stubFutureFrame('fail').compat?.notice ?? '';
-    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
       await startBuild(tree, 'A tip splitter');
       streams[0].push(STAGE);
       streams[0].push(stubFutureFrame('fail'));
       streams[0].push(resultEvent('Tip Splitter'));
       await waitFor(() => on(tree, FailureScreen), 'the failure screen');
+      h.eq(generateSignal(sent)?.aborted, true, 'the generation request is aborted, so the server stops building');
       h.eq(tree.root.findByType(FailureScreen).props.reason, notice, 'the notice is the reason, as plain text');
       h.eq(records(kv), [['failed', notice]], 'the pending record resolves as failed');
       h.eq(new AppIndex(kv).list(), [], 'and nothing is installed');

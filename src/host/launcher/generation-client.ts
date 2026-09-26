@@ -492,6 +492,10 @@ async function openFetchGenerateStream(
   const inner = response.body.getReader();
   return {
     requestId: requestIdOf(response.headers),
+    cancel() {
+      cleanup();
+      controller.abort();
+    },
     async read() {
       try {
         const chunk = await inner.read();
@@ -626,6 +630,7 @@ function concatBytes(chunks: Uint8Array[]): Uint8Array {
  *
  * An aborted stream (via `signal`) ends the iteration silently — no terminal event, no throw.
  * Any other stream failure (network error mid-read) raises `GenerationClientError{kind:'network'}`.
+ * Whatever ends the stream on the client's side also aborts its request (`streamEvents`).
  *
  * Hermes ships a TextDecoder polyfill whose streaming-decode option is unverified (this
  * project's own ambient TextDecoder type — `src/host/version-store/env.d.ts` — declares only the
@@ -665,7 +670,13 @@ export function generateApp(
  *  before that and when the response had none. */
 export type GenerationStream = AsyncGenerator<GenerationEvent, void, undefined> & { readonly requestId?: string };
 
-/** `generateApp`'s event loop; records the opened stream's request id on `opened`. */
+/** `generateApp`'s event loop; records the opened stream's request id on `opened`.
+ *
+ *  A stream the client ends — a fallback that ends the flow, a frame that fails to parse, a read
+ *  that fails, or a consumer that stops iterating — is cancelled here, on every one of those paths,
+ *  so the transport aborts the request. Otherwise the server would build on for nobody: holding the
+ *  slot, spending, recording a delivery, and refusing the device's retry `device_busy`. A stream
+ *  the server ended, or the caller's signal aborted, has nothing left to cancel. */
 async function* streamEvents(
   opts: ConsentedClientOptions,
   request: GenerateRequest,
@@ -678,6 +689,18 @@ async function* streamEvents(
   }
   opened.requestId = reader.requestId;
 
+  let ended = false;
+  try {
+    yield* eventsOn(reader, opts.onKeepalive);
+    ended = true;
+  } finally {
+    if (!ended) reader.cancel();
+  }
+}
+
+/** The events on an opened stream's SSE body, until the body ends or the caller's signal aborts
+ *  it (see `generateApp` for why each byte is decoded exactly once). */
+async function* eventsOn(reader: ResponseBodyReader, onKeepalive: (() => void) | undefined): AsyncGenerator<GenerationEvent, void, undefined> {
   const decoder = new TextDecoder();
   // The bytes that have arrived and are NOT yet part of a completed block: at most one partial
   // frame, never the accumulated body.
@@ -700,7 +723,7 @@ async function* streamEvents(
       // Nothing follows, so the trailing block (if any) is final too — the one case where a block
       // with no separator after it is still complete.
       if (pending.length > 0) {
-        yield* framesIn(decoder.decode(pending).split('\n\n'), opts.onKeepalive);
+        yield* framesIn(decoder.decode(pending).split('\n\n'), onKeepalive);
       }
       break;
     }
@@ -712,7 +735,7 @@ async function* streamEvents(
       // few bytes of the next partial frame.
       pending = concatBytes([pending.subarray(separator + SEPARATOR_LENGTH)]);
       searchedThrough = Math.max(0, pending.length - SEPARATOR_LENGTH + 1);
-      yield* framesIn(completed.split('\n\n'), opts.onKeepalive);
+      yield* framesIn(completed.split('\n\n'), onKeepalive);
     } else {
       searchedThrough = Math.max(0, pending.length - SEPARATOR_LENGTH + 1);
     }
