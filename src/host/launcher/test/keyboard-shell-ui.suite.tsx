@@ -316,9 +316,15 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('clarify "Other" and the Settings server field are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
+  await h.test('clarify "Other", and the Settings server field with the helper line under it, are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
+    // The Settings field names its block: the field, its helper line and the probe's line, 100 tall.
+    const cases: [string, React.ReactElement, Geometry, string][] = [
+      ['clarify', clarify(), { frame: SCREEN_FRAME, field: [500, 60] }, 'the field'],
+      ['settings', settings(), { frame: SCREEN_FRAME, field: [500, 60], block: [500, 100] }, 'the field and its helper line'],
+    ];
     for (const device of [IOS, ANDROID_14, ANDROID_17]) {
-      for (const [name, element] of [['clarify', clarify()], ['settings', settings()]] as const) {
+      for (const [name, element, geometry, shown] of cases) {
+        const [top, height] = geometry.block ?? geometry.field;
         await on(device, element, async ({ tree, scrolls }) => {
           const reports = scrollReports(tree);
           await reports.viewport(700);
@@ -328,10 +334,10 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
           h.eq(scrolls, [], `${device.name} ${name}: a field already in view is left where it is`);
           await keyboard(device, true);
           await reports.viewport(400);
-          h.eq(scrolls.at(-1), 500 + 60 + SPACING.md - 400, `${device.name} ${name}: once the keyboard shrinks the scroll view, the field scrolls clear above its end`);
+          h.eq(scrolls.at(-1), top + height + SPACING.md - 400, `${device.name} ${name}: once the keyboard shrinks the scroll view, ${shown} scroll clear above its end`);
           h.eq([field(tree).props.multiline === true, doneBars(tree).length], [false, 0], `${device.name} ${name}: one line, with no Done bar`);
           h.eq(scrollView(tree).props.keyboardShouldPersistTaps, 'handled', `${device.name} ${name}: the controls around it take their taps while typing`);
-        }, { frame: SCREEN_FRAME, field: [500, 60] });
+        }, geometry);
       }
     }
     await on(IOS, clarify(), async ({ tree }) => {

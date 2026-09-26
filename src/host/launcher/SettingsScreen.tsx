@@ -183,6 +183,8 @@ export default function SettingsScreen({
   // Expanding Advanced reveals the address field: it is the last section, so once the content has
   // grown by it the scroll view scrolls to its end.
   const scrollRef = useRef<ScrollView>(null);
+  // The address field with the lines under it, which the shell keeps in view while it is focused.
+  const addressBlock = useRef<View>(null);
   const revealAdvanced = useRef(false);
   const toggleAdvanced = () => {
     revealAdvanced.current = !advancedOpen;
@@ -337,26 +339,29 @@ export default function SettingsScreen({
           <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
             {COPY.serverAddressSectionTitle}
           </Text>
-          <KeyboardTextInput
-            value={serverUrlDraft}
-            onChangeText={onAddressChange}
-            onSubmitEditing={settleAddress}
-            onBlur={settleAddress}
-            placeholder={RELEASE.serverUrl.replace(/^https?:\/\//, '')}
-            placeholderTextColor={p.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            style={[
-              TYPE_SCALE.body,
-              styles.serverInput,
-              { color: p.text, borderColor: p.cardBorder, backgroundColor: p.card },
-            ]}
-          />
-          <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.serverAddressHint}</Text>
-          {probeLine != null && (
-            <Text style={[TYPE_SCALE.caption, styles.hint, { color: probeLineColor }]}>{probeLine}</Text>
-          )}
+          <View ref={addressBlock}>
+            <KeyboardTextInput
+              revealTarget={addressBlock}
+              value={serverUrlDraft}
+              onChangeText={onAddressChange}
+              onSubmitEditing={settleAddress}
+              onBlur={settleAddress}
+              placeholder={RELEASE.serverUrl.replace(/^https?:\/\//, '')}
+              placeholderTextColor={p.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              style={[
+                TYPE_SCALE.body,
+                styles.serverInput,
+                { color: p.text, borderColor: p.cardBorder, backgroundColor: p.card },
+              ]}
+            />
+            <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.serverAddressHint}</Text>
+            {probeLine != null && (
+              <Text style={[TYPE_SCALE.caption, styles.hint, { color: probeLineColor }]}>{probeLine}</Text>
+            )}
+          </View>
           {serverUrlDraft.trim().length > 0 && (
             <TouchableOpacity onPress={onUseDefault} hitSlop={10}>
               <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>
