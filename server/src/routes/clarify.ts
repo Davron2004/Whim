@@ -544,6 +544,7 @@ async function runClarifyWork(
       model: roster.clarify.model,
       messages: buildClarifyMessages({ request: parsed }),
       reasoning: roster.clarify.reasoning,
+      temperature: roster.clarify.temperature,
       role: 'clarify',
       logger: requestLog,
     },

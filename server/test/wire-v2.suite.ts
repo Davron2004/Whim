@@ -623,23 +623,79 @@ function sseFrame(payload: Record<string, unknown>): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
-/** A fetch double that answers one summary reply over a real SSE stream and captures the outgoing
- *  request body — the wire the summariser's call actually reaches, through the REAL
+/** A fetch double that answers every model call with `content` over a real SSE stream and hands
+ *  each outgoing request body to `onBody` — the wire a call actually reaches, through the REAL
  *  `OpenRouterClient` rather than `ScriptedModelClient`. */
-function summaryWireFetch(captured: { body?: Record<string, unknown> }): FetchFn {
+function contentWireFetch(content: string, onBody: (body: Record<string, unknown>) => void): FetchFn {
   return (async (_input, init) => {
-    captured.body = JSON.parse((init?.body as string) ?? '{}') as Record<string, unknown>;
-    const summaryJson = JSON.stringify({ text: 'It counts your glasses.', kind: 'Start', touched: [] });
+    onBody(JSON.parse((init?.body as string) ?? '{}') as Record<string, unknown>);
     const encoder = new TextEncoder();
     const body = new ReadableStream({
       start(controller) {
-        controller.enqueue(encoder.encode(sseFrame({ id: 'gen-summary-wire', choices: [{ index: 0, delta: { content: summaryJson } }] })));
+        controller.enqueue(encoder.encode(sseFrame({ id: 'gen-wire', choices: [{ index: 0, delta: { content } }] })));
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         controller.close();
       },
     });
     return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
   }) as FetchFn;
+}
+
+/** `contentWireFetch` answering one summary reply, keeping the outgoing body in `captured`. */
+function summaryWireFetch(captured: { body?: Record<string, unknown> }): FetchFn {
+  const summaryJson = JSON.stringify({ text: 'It counts your glasses.', kind: 'Start', touched: [] });
+  return contentWireFetch(summaryJson, (body) => {
+    captured.body = body;
+  });
+}
+
+/** In-process requests keep no socket open, so a stalled one could end the process without
+ *  failing a test. This referenced deadline keeps it alive and fails the call by name. */
+async function withinDeadline<T>(label: string, pending: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} exceeded the 5s test deadline`)), 5000);
+  });
+  try {
+    return await Promise.race([pending, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** One `route` call through the REAL `OpenRouterClient`, answered with `reply`: the outgoing model
+ *  request bodies, in order. */
+async function modelWireBodies(route: '/v1/clarify' | '/v1/rewrite', reply: unknown): Promise<Record<string, unknown>[]> {
+  const bodies: Record<string, unknown>[] = [];
+  const model = openRouterModelClient(new OpenRouterClient(contentWireFetch(JSON.stringify(reply), (body) => bodies.push(body))));
+  const app = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), model, roster: ROSTER });
+  const res = await withinDeadline(route, post(app, route, { prompt: 'a weather app' }, DEVICE_HEADER));
+  eq(`setup: ${route} → 200`, res.status, 200);
+  return bodies;
+}
+
+/**
+ * Clarify chooses between a `limit` and questions, and at the provider's default temperature the
+ * same prompt got either (beta-1 fix-6). Red-check: fails if the clarify call stops sending
+ * `temperature: 0`, and if a temperature reaches the rewrite or summary call too (a default in
+ * the adapter, or one threaded through every roster role).
+ */
+async function testOnlyClarifySamplesAtTemperatureZero(): Promise<void> {
+  section('Wire v2 — the clarify call samples at temperature 0; the rewrite and summary calls keep the provider default (beta-1 fix-6)');
+
+  const clarify = await modelWireBodies('/v1/clarify', { limit: null, questions: [] });
+  eq('setup: clarify made one model call', clarify.length, 1);
+  eq('the clarify wire body asks for temperature 0', clarify[0]?.temperature, 0);
+
+  const rewrite = await modelWireBodies('/v1/rewrite', { rewrittenPrompt: 'A weather log.', plan: [{ label: 'What it is', text: 'A weather log.' }] });
+  eq('setup: rewrite made one model call', rewrite.length, 1);
+  check('the rewrite wire body states no temperature', rewrite.every((body) => !('temperature' in body)), `temperature ${JSON.stringify(rewrite[0]?.temperature)}`);
+
+  const summary: { body?: Record<string, unknown> } = {};
+  const summariser = createModelSummariser({ model: openRouterModelClient(new OpenRouterClient(summaryWireFetch(summary))), roster: ROSTER, timeoutMs: 2_000 });
+  const summarised = await withinDeadline('summary', summariser.summarise({ prompt: 'a weather log', isEdit: false, appName: 'demo', capabilities: [], attempts: 1, diagnostics: [], sourceChange: 'unknown' }));
+  eq('setup: the summariser produced a summary', summarised.summary?.text, 'It counts your glasses.');
+  check('the summary wire body states no temperature', summary.body !== undefined && !('temperature' in summary.body), `temperature ${JSON.stringify(summary.body?.temperature)}`);
 }
 
 /**
@@ -954,6 +1010,7 @@ export async function runWireV2Tests(): Promise<void> {
   testSummaryShaping();
   await testModelSummariser();
   await testSummariserWireReasoningIsExplicitlyOff();
+  await testOnlyClarifySamplesAtTemperatureZero();
   await testSummariserModelCallCarriesRequestId();
   await testSummaryOnTerminalEvent();
   await testSseFramesSummaryUnmodified();
