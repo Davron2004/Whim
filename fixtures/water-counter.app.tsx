@@ -30,18 +30,12 @@ const SCHEMA: SchemaArtifact = {
   },
 };
 
-/** Pull a fix-hint out of a rejected syscall's structured error (the §8.1 shape). */
-function hintOf(e: unknown): string {
-  const detail = (e as { detail?: { hint?: string; kind?: string } } | undefined)?.detail;
-  if (detail && typeof detail.hint === 'string') return detail.hint;
-  const message = (e as { message?: string } | undefined)?.message;
-  return message ?? JSON.stringify(e) ?? 'unknown error';
-}
-
 function Home() {
   const [total, setTotal] = useState(0);
   const [history, setHistory] = useState(0);
-  const [status, setStatus] = useState('loading…');
+  // The line under the title speaks to the person using the app. It changes only once the reads
+  // or the writes have landed, which is what the release upgrade check waits on.
+  const [status, setStatus] = useState('Loading…');
 
   // Load the persisted count + history on mount (the cross-restart proof: this is what shows
   // the count survived a kill).
@@ -54,9 +48,10 @@ function Home() {
         if (!live) return;
         setTotal(typeof saved === 'number' ? saved : 0);
         setHistory(drinks.length);
-        setStatus('loaded from storage');
-      } catch (e) {
-        if (live) setStatus('load failed: ' + hintOf(e));
+        setStatus('Tap a button after each glass.');
+        // eslint-disable-next-line no-restricted-syntax -- intentional: a mini-app has no logger; the user is told on the status line, and the host records the rejected syscall's error kind (useMiniAppHost `lastSyscall`)
+      } catch {
+        if (live) setStatus('Couldn’t load your saved glasses.');
       }
     })();
     return () => {
@@ -78,14 +73,15 @@ function Home() {
         landed++;
       }
       setHistory((h) => h + landed);
-      setStatus('saved');
-    } catch (e) {
+      setStatus('Saved.');
+      // eslint-disable-next-line no-restricted-syntax -- intentional: a mini-app has no logger; the user is told on the status line, and the host records the rejected syscall's error kind (useMiniAppHost `lastSyscall`)
+    } catch {
       // kv.set already landed → `next` is the durable truth, so keep it displayed (reverting
       // here would diverge from what a reload shows). Only undo the optimistic bump if the kv
       // write itself never made it to storage.
       if (!kvSaved) setTotal(previous);
       if (landed > 0) setHistory((h) => h + landed);
-      setStatus('save failed: ' + hintOf(e));
+      setStatus('Couldn’t save that. Try again.');
     }
   };
 
