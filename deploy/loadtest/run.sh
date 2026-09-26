@@ -169,11 +169,14 @@ cmd_drive() {
   trap cleanup EXIT
 
   echo "==> sampling docker stats on the VM every ${WHIM_LOADTEST_SAMPLE_INTERVAL_S}s" >&2
-  # CPU% and MEM% only — both are `docker stats`-native percentages, so the sampler needs no
-  # byte-unit conversion in bash. `server/src/loadtest/drive.ts#parseStatsCsv` reads this shape.
+  # A leading `cores,<N>` line (`nproc` on the VM, read once over this same ssh session — the
+  # driver never hardcodes a core count) then CPU% and MEM% per line — both are `docker
+  # stats`-native (per-core) percentages, so the sampler needs no byte-unit conversion in bash.
+  # `server/src/loadtest/drive.ts#parseCoresLine`/`#parseStatsCsv` read this shape.
   case "$-" in *m*) monitor_was_set=1 ;; esac
   set -m
   whim_vm_ssh "container=\$($WHIM_COMPOSE ps -q whim-server)
+printf 'cores,%s\\n' \"\$(nproc)\"
 while sudo docker inspect -f '{{.State.Running}}' \"\$container\" >/dev/null 2>&1; do
   sample=\$(sudo docker stats \"\$container\" --no-stream --format '{{.CPUPerc}},{{.MemPerc}}') || exit
   printf '%s\\n' \"\$sample\" | tr -d '%' || exit

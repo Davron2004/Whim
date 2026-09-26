@@ -1974,10 +1974,12 @@ function loadtestDriveTests(): void {
 
   const writeDriveStubs = (sandbox: Sandbox): void => {
     fs.writeFileSync(path.join(sandbox.bin, 'gcloud'), `#!/usr/bin/env bash
+printf '%s\\n' "$@" >"$STUB_DIR/sampler-ssh-args"
 printf '%s' "$$" >"$STUB_DIR/sampler-pid"
 ps -o pgid= -p "$$" | tr -d ' ' >"$STUB_DIR/sampler-pgid"
 heartbeat=0
 trap 'printf "%s" "$$" >"$STUB_DIR/sampler-terminated"; exit 0' TERM
+printf 'cores,4\\n'
 while :; do
   heartbeat=$((heartbeat + 1))
   printf '%s' "$heartbeat" >"$STUB_DIR/sampler-heartbeat"
@@ -1994,10 +1996,11 @@ printf '%s' "$stats" >"$STUB_DIR/driver-stats"
 attempt=0
 while [ ! -s "$STUB_DIR/sampler-pid" ] && [ "$attempt" -lt 100 ]; do attempt=$((attempt + 1)); sleep 0.01; done
 attempt=0
-while [ ! -s "$stats" ] && [ "$attempt" -lt 100 ]; do attempt=$((attempt + 1)); sleep 0.01; done
+while [ "$(wc -l <"$stats" 2>/dev/null || echo 0)" -lt 2 ] && [ "$attempt" -lt 100 ]; do attempt=$((attempt + 1)); sleep 0.01; done
 if [ -s "$stats" ]; then
   printf '%s' "$stats" >"$STUB_DIR/driver-stats-receipt"
-  sed -n '1p' "$stats" >"$STUB_DIR/driver-stats-sample"
+  sed -n '1p' "$stats" >"$STUB_DIR/driver-stats-cores-line"
+  sed -n '2p' "$stats" >"$STUB_DIR/driver-stats-sample"
 fi
 exit "\${STUB_DRIVER_STATUS:-0}"
 `, { mode: 0o755 });
@@ -2026,6 +2029,8 @@ exit "\${STUB_DRIVER_STATUS:-0}"
           && samplerStopped
           && stats !== ''
           && statsReceipt === stats
+          && stubFile(sandbox, 'sampler-ssh-args').includes('nproc')
+          && stubFile(sandbox, 'driver-stats-cores-line') === 'cores,4\n'
           && stubFile(sandbox, 'driver-stats-sample') === '1.5,2.5\n'
           && !fs.existsSync(stats)
           && stubFile(sandbox, 'driver-args').includes('--cap\n2\n--queue-max\n0\n'), `${run.stdout}\n${run.stderr}\nstatus=${run.status} sampler=${samplerPid} stopped=${samplerStopped} stats=${stats} receipt=${statsReceipt} exists=${stats !== '' && fs.existsSync(stats)}`);

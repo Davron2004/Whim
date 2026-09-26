@@ -29,14 +29,19 @@ import { defaultModelRoster, type ModelRoster, type ModelStream } from '../src/g
 import type { GenerateRequest, GenerationEvent, Usage } from '@whim/contract';
 import {
   buildReport,
+  cpuReport,
   feedSseBuffer,
   isRealFrame,
   leakVerdict,
   parseArgs,
+  parseCoresLine,
   parseGenerationEvent,
+  parseStatsCsv,
+  readCpuReport,
   verdict,
   type DeviceOutcome,
   type LeakProbeOutcome,
+  type StatsSample,
 } from '../src/loadtest/drive';
 
 const ROOT = process.cwd();
@@ -406,6 +411,69 @@ function testLineReportAndVerdict(): void {
   }
 }
 
+function testCpuNormalization(): void {
+  section('drive.ts: the report normalizes per-core CPU% to the whole machine (fix-9, 10.2/R18)');
+
+  eq('parseCoresLine reads the sampler\'s leading cores line', parseCoresLine('cores,4\n40,10\n80,20\n'), 4);
+  eq('parseCoresLine finds the cores line anywhere in the text', parseCoresLine('40,10\ncores,8\n80,20\n'), 8);
+  for (const bad of ['', '40,10\n80,20\n', 'cores,0\n', 'cores,-2\n', 'cores,1.5\n', 'cores,nope\n']) {
+    eq(`parseCoresLine rejects ${JSON.stringify(bad)}`, parseCoresLine(bad), undefined);
+  }
+
+  const samplesWithCoresLine = parseStatsCsv('cores,4\n40.0,10.0\n80.0,20.0\n');
+  eq('parseStatsCsv skips the cores line as an unparseable row', samplesWithCoresLine, [
+    { cpuPercent: 40, memoryPercent: 10 },
+    { cpuPercent: 80, memoryPercent: 20 },
+  ] satisfies StatsSample[]);
+
+  // Fixed sample list: per-core % of [40, 80, 120, 160, 200] on a 2-core machine normalizes to
+  // [20, 40, 60, 80, 100] — nearest-rank p50 is the 3rd of 5 (60), p95 the 5th (100, also the peak).
+  const fixed: StatsSample[] = [40, 80, 120, 160, 200].map((cpuPercent) => ({ cpuPercent, memoryPercent: 0 }));
+  eq('cpuReport normalizes a fixed sample list by dividing per-core % by cores', cpuReport(fixed, 2), {
+    cores: 2,
+    samples: 5,
+    p50Percent: 60,
+    p95Percent: 100,
+    peakPercent: 100,
+  });
+
+  // The tiny-sample case: one sample, still divided by cores, not left raw.
+  eq('cpuReport normalizes the tiny-sample (single-sample) case', cpuReport([{ cpuPercent: 150, memoryPercent: 0 }], 2), {
+    cores: 2,
+    samples: 1,
+    p50Percent: 75,
+    p95Percent: 75,
+    peakPercent: 75,
+  });
+
+  eq('cpuReport is undefined with no samples', cpuReport([], 4), undefined);
+  for (const badCores of [0, -1, 1.5]) {
+    eq(`cpuReport is undefined for a non-positive-integer core count (${badCores})`, cpuReport(fixed, badCores), undefined);
+  }
+
+  const statsPath = path.join(os.tmpdir(), `whim-loadtest-cpu-${process.pid}-${Date.now()}.csv`);
+  try {
+    fs.writeFileSync(statsPath, 'cores,2\n40,5\n80,10\n120,15\n160,20\n200,25\n');
+    eq('readCpuReport reads cores and samples from a stats file end to end', readCpuReport(statsPath), {
+      cores: 2,
+      samples: 5,
+      p50Percent: 60,
+      p95Percent: 100,
+      peakPercent: 100,
+    });
+  } finally {
+    fs.rmSync(statsPath, { force: true });
+  }
+  eq('readCpuReport is undefined with no --stats path', readCpuReport(undefined), undefined);
+  const noCoresPath = path.join(os.tmpdir(), `whim-loadtest-cpu-nocores-${process.pid}-${Date.now()}.csv`);
+  try {
+    fs.writeFileSync(noCoresPath, '40,5\n80,10\n');
+    eq('readCpuReport is undefined when the sampler never wrote a cores line', readCpuReport(noCoresPath), undefined);
+  } finally {
+    fs.rmSync(noCoresPath, { force: true });
+  }
+}
+
 // ── Entry point ────────────────────────────────────────────────────────────
 
 export async function runLoadTestTests(): Promise<void> {
@@ -418,4 +486,5 @@ export async function runLoadTestTests(): Promise<void> {
   testSseFraming();
   testReportAndVerdict();
   testLineReportAndVerdict();
+  testCpuNormalization();
 }
