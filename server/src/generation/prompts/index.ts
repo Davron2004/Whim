@@ -303,7 +303,9 @@ const CLARIFY_SYSTEM = [
   'pointless without it), ask nothing and reply instead with',
   '{ "questions": [], "limit": { "reason": string, "alternative": string } }: "reason" says in one',
   'short sentence what a mini-app cannot do here, and "alternative" is the nearest app that CAN be',
-  'built, written as a short request the user could send instead. Each is at most 200 characters.',
+  'built, as a short noun phrase that reads right on the app\'s button "Build <alternative> instead"',
+  '(for example "a weather log you fill in yourself"), never a sentence or a request. Each is at most',
+  '200 characters.',
 ].join(' ');
 
 export function buildClarifyMessages(ctx: ClarifyTurnContext): ModelMessage[] {
