@@ -837,6 +837,12 @@ export function historySubtitle(versionCount: number, startedWhen: string): stri
   return `${versions} · started ${startedWhen}`;
 }
 
+/** A history row's headline under `You said` (design 4a, "the prompt is the headline"): the
+ *  user's own words, verbatim, in quotation marks. */
+export function historyQuotedPrompt(prompt: string): string {
+  return `“${prompt}”`;
+}
+
 /** The all-versions filter pill, whose count is live: "All 7". */
 export function historyFilterAll(versionCount: number): string {
   return `All ${versionCount}`;

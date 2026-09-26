@@ -22,6 +22,7 @@ import {
   listVersions,
   storedSummary,
 } from '../history-logic';
+import { historyQuotedPrompt } from '../copy';
 import type { AppRecord } from '../../bridge/contract';
 
 const REC = (id: string): AppRecord => ({ appId: id, name: id, manifest: { capabilities: ['storage'] } });
@@ -47,7 +48,7 @@ const SUMMARY_ADDED = { text: 'A chime now plays before the last pour.', kind: '
 
 export async function runHistoryLogicTests(h: Harness): Promise<void> {
 
-  await h.test('history: fallback to prompt text (v1 envelope, no summary, or a run with none)', async () => {
+  await h.test('history: a row headlines with its own prompt, quoted, from an envelope or a raw legacy string', async () => {
     const { store, access } = harnessAccess();
     const orig = await access.install({
       id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1',
@@ -56,20 +57,37 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
     await store.snapshot('wc', { 'bundle.js': 'V2' }, 'Example: track water'); // raw legacy prompt
     const list = await listVersions(access, orig);
     const rows = buildHistoryRows(list, await access.activeId(orig));
-    h.eq(rows.map(r => r.headline), ['Example: track water', 'make a tip splitter'], 'no summary on either row: headline falls back to the resolved prompt text');
+    h.eq(rows.map(r => r.headline), [historyQuotedPrompt('Example: track water'), historyQuotedPrompt('make a tip splitter')], 'each headline quotes the resolved prompt text');
+    h.eq(rows.map(r => r.origin), ['you-said', 'you-said'], 'under “You said”');
     h.eq(rows.map(r => r.kind), [null, null], 'no summary: no kind either');
+    h.eq(rows.map(r => r.result), [null, null], 'and nothing of Whim’s for the opened row');
     h.ok(rows.every(r => typeof r.when === 'string' && r.when.length > 0), 'every row carries a formatted timestamp');
   });
 
-  await h.test('history: a summarised row headlines with the summary; an un-summarised sibling falls back to its prompt', async () => {
+  await h.test('history: a summarised row still headlines with the user’s words; the summary, with its marks, is what the opened row says', async () => {
     const { store, access } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: envelope('a tip splitter') });
-    await store.snapshot('wc', { 'bundle.js': 'V2' }, envelope('add a warning chime', SUMMARY_ADDED));
+    const marked = { ...SUMMARY_ADDED, marks: [{ cls: 'chg', start: 2, end: 7 }] };
+    await store.snapshot('wc', { 'bundle.js': 'V2' }, envelope('add a warning chime', marked));
     const list = await listVersions(access, orig); // [summarised, install]
     const rows = buildHistoryRows(list, await access.activeId(orig));
-    h.eq(rows[0].headline, SUMMARY_ADDED.text, "the summarised row's headline is the summary's text, not the prompt");
+    h.eq(rows[0].headline, historyQuotedPrompt('add a warning chime'), 'the summarised row’s headline is the prompt, not the summary');
+    h.eq(rows[0].marks, [], 'the summary’s marks point into the summary, so none land on the quoted prompt');
+    h.eq(rows[0].result, { text: SUMMARY_ADDED.text, marks: marked.marks }, 'the summary and its marks are the opened row’s result');
     h.eq(rows[0].kind, 'Added', 'its kind comes from the summary');
-    h.eq(rows[1].headline, 'a tip splitter', "the install row (no summary) falls back to its prompt's text");
+    h.eq(rows[1].headline, historyQuotedPrompt('a tip splitter'), 'the install row (no summary) quotes its prompt too');
+  });
+
+  await h.test('history: a version with no prompt reads “Whim, on its own” and headlines with its summary, once', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: envelope('a tip splitter') });
+    const fixed = { text: 'The timer kept counting past zero.', kind: 'Fixed', touched: ['The timer screen'], marks: [{ cls: 'chg', start: 4, end: 9 }] };
+    await store.snapshot('wc', { 'bundle.js': 'V2' }, envelope('', fixed));
+    const [unprompted] = buildHistoryRows(await listVersions(access, orig), await access.activeId(orig));
+    h.eq(unprompted.origin, 'whim-on-its-own', 'no words of the user’s: Whim acted on its own');
+    h.eq(unprompted.headline, fixed.text, 'so the summary is the headline');
+    h.eq(unprompted.marks, fixed.marks, 'with the summary’s own marks');
+    h.eq(unprompted.result, null, 'and the opened row does not say it a second time');
   });
 
   // ── Kind grouping + unclassified rows (E6) ────────────────────────────────
