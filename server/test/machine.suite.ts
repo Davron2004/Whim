@@ -2141,8 +2141,8 @@ function withUnrelatedTimer(source: string): string {
   return source
     .replace('  storage,\n', '  storage,\n  interval,\n')
     .replace(
-      "  const [status, setStatus] = useState('loading…');\n",
-      "  const [status, setStatus] = useState('loading…');\n  const [seconds, setSeconds] = useState(0);\n  interval(() => setSeconds((s) => s + 1), 1000);\n",
+      "  const [status, setStatus] = useState('Loading…');\n",
+      "  const [status, setStatus] = useState('Loading…');\n  const [seconds, setSeconds] = useState(0);\n  interval(() => setSeconds((s) => s + 1), 1000);\n",
     );
 }
 

@@ -8,6 +8,7 @@
  */
 import type { ServiceRefusalCode } from '@whim/contract';
 import { GenerationClientError, isNonEmptyString } from './transport-shared';
+import type { PendingFailureRemedy } from './pending-builds';
 import {
   COPY,
   retryLineElapsed,
@@ -86,6 +87,13 @@ export function serviceRefusalOf(err: unknown): ServiceRefusal | undefined {
 /** What the phone shows for `refusal` as text: its rule's own `text`, or the server's hint. */
 export function refusalText(refusal: ServiceRefusal): string {
   return REFUSAL_RULES[refusal.code].text ?? refusal.hint;
+}
+
+/** The remedy a record settled by `refusal` keeps: none for a refusal about the words themselves
+ *  (its text lands on compose, and describing the app differently can get past it), `retry` for
+ *  every other. */
+export function refusalRemedy(refusal: ServiceRefusal): PendingFailureRemedy | undefined {
+  return REFUSAL_RULES[refusal.code].landing === 'text' ? undefined : { kind: 'retry' };
 }
 
 /** The moment (epoch ms) the landing screen's primary action re-enables, or `undefined` when the

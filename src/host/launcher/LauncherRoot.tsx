@@ -35,7 +35,7 @@ import { AppBusy, runAppOp } from './app-busy';
 import type { AppBusyMap } from './app-busy';
 import { StoreAccess } from './store-access';
 import { PendingBuildStore } from './pending-builds';
-import type { PendingBuildRecord } from './pending-builds';
+import type { PendingBuildRecord, PendingFailureRemedy } from './pending-builds';
 import { RunJournalStore } from './run-journal';
 import type { RunJournal, RunTerminalCounts } from './run-journal';
 import {
@@ -45,6 +45,7 @@ import {
   hydratedDiagnostics,
   journalStreamEvent,
   refusedGenerateOutcome,
+  reopenedRecord,
   retryBuildScreen,
   settleRefusedGenerate,
   startPendingBuild,
@@ -107,6 +108,7 @@ import {
 } from './prompt-flow';
 import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowLimit, FlowNotice, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
 import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
+import { PROTOCOL_LEVEL } from './wire-headers';
 import { FlowRequests, onlyOnStep } from './flow-request';
 import { SHELL_PALETTE } from './theme';
 import { clearServerUrl, effectiveServerUrl, saveServerUrl, serverOverride } from './server-address';
@@ -131,12 +133,12 @@ import { activeLegalLanguage, chooseLegalLanguage, type LegalLanguage } from './
 import { deviceLocale as installedDeviceLocale } from './device-locale';
 import { declineTarget, nextLegalStep } from './consent-flow';
 import type { ConsentContinuation, LegalFlow } from './consent-flow';
-import { REFUSAL_RULES, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
+import { REFUSAL_RULES, refusalRemedy, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
 import type { ServiceRefusal } from './service-refusal';
 import { rewriteRefusalTarget } from './refusal-target';
 import type { RefusalSentFrom } from './refusal-target';
 import { useNoticeWindowClear } from './ServiceNotice';
-import { errorReason, errorReasonCode, GENERIC_STREAM_ERROR } from './error-reason';
+import { errorReason, errorReasonCode, errorRemedy, errorRephraseHelps, GENERIC_STREAM_ERROR } from './error-reason';
 import { liveClientOptions } from './consent-options';
 import { resolveOptions } from './resolve-options';
 import { probeGateFor } from './probe-gate';
@@ -193,6 +195,9 @@ type Screen =
       diagnostics: readonly { hint: string }[];
       observedRepairAttempts: number;
       hasWorkingVersion: boolean;
+      /** Whether describing the app differently could get past this failure — the failure
+       *  screen's rephrase advice (`FailureScreenProps.rephraseHelps`). */
+      rephraseHelps: boolean;
       /** Set ONLY when this screen was opened from a `failed`/`interrupted` pending-build record
        *  rather than from a live terminal event — the one thing that distinguishes the two, and
        *  what turns the primary action into Retry and the secondary into Dismiss (`prompt-flow`
@@ -1211,6 +1216,7 @@ function LauncherShell({
       observedRepairAttempts: observed,
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: editing != null,
+      rephraseHelps: errorRephraseHelps(err),
     };
   };
 
@@ -1441,13 +1447,14 @@ function LauncherShell({
     reason: string,
     diagnostics: readonly { hint: string }[],
     observed: RunTerminalCounts,
+    remedy?: PendingFailureRemedy,
   ) => {
     releaseLiveRef(id);
     // `observed` is the end-of-stream flush: the final cumulative counts (closing the last throttle
     // window, which no aggregate entry can) and how many `diagnostic` events went past. Only the
     // loop that watched the stream can supply them, so they are threaded in rather than re-derived.
     journal.appendTerminal(id, { failure: { reason, diagnostics }, ...observed });
-    failPendingBuild(pending, id, reason, diagnostics);
+    failPendingBuild(pending, id, reason, diagnostics, remedy);
     refresh();
   };
 
@@ -1496,6 +1503,9 @@ function LauncherShell({
       observedRepairAttempts: input.observed,
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: input.editing != null,
+      // A terminal `failure` or a stream that ended without one: both offer rephrasing (prompt-flow
+      // "Failure is shown honestly, never as a crash").
+      rephraseHelps: true,
     });
   };
 
@@ -1523,7 +1533,7 @@ function LauncherShell({
     const notice = noticeFrom(refusal);
     const outcome = refusedGenerateOutcome(isRetry, detached);
     releaseLiveRef(attemptId);
-    settleRefusedGenerate(pending, journal, attemptId, outcome, refusalText(refusal), counts);
+    settleRefusedGenerate(pending, journal, attemptId, outcome, refusalText(refusal), counts, refusalRemedy(refusal));
     refresh();
     if (outcome === 'drop') {
       if (fromPlan) {
@@ -1572,7 +1582,10 @@ function LauncherShell({
       logUpdateFallback('generate', e, attempt.streamRequestId);
       const notice = fallbackNotice(fallback);
       const detached = ctl.detached;
-      settleFailed(attempt.attemptId, notice ?? COPY.updateRequiredLine, [], attempt.counts);
+      settleFailed(attempt.attemptId, notice ?? COPY.updateRequiredLine, [], attempt.counts, {
+        kind: 'update',
+        protocolLevel: PROTOCOL_LEVEL,
+      });
       setScreen((prev) => (!detached || updateMayInterrupt(prev) ? updateScreenFrom(prev, notice) : prev));
       return true;
     }
@@ -1763,7 +1776,7 @@ function LauncherShell({
       releaseGenRef(ctl);
       logGenError('build failed', e, stream?.requestId);
       const reasoned = errorReason(e);
-      settleFailed(attemptId, reasoned.reason, reasoned.diagnostics, terminalCounts());
+      settleFailed(attemptId, reasoned.reason, reasoned.diagnostics, terminalCounts(), errorRemedy(e));
       setScreen(failure(editing, building.text, e, 'build failed', counts.repair, attemptId, stream?.requestId));
     }
   };
@@ -1840,6 +1853,8 @@ function LauncherShell({
       diagnostics: hydratedDiagnostics(rec.failure),
       observedRepairAttempts: 0,
       hasWorkingVersion: edited != null,
+      // A record that names a remedy is one rewording can't get past (`PendingFailureRemedy`).
+      rephraseHelps: rec.failure?.remedy == null,
       pendingId: rec.id,
       journalId: rec.id,
     };
@@ -1848,10 +1863,12 @@ function LauncherShell({
   /** Tap a ghost. `building` reattaches to the run's own build-progress screen — the stream is
    *  still in this shell's closure, so this is a screen-state change and no new request is sent;
    *  reattaching also un-detaches it, so its done step lands as if the user had never left.
-   *  `failed`/`interrupted` opens the hydrated failure screen instead. */
+   *  `failed`/`interrupted` opens the hydrated failure screen instead — or, for a record an `update`
+   *  fallback ended while this build still needs that update, the update screen with its notice. */
   const onOpenPending = (rec: PendingBuildRecord) => {
     if (rec.state !== 'building') {
-      setScreen(failureFromRecord(rec));
+      const reopened = reopenedRecord(rec, PROTOCOL_LEVEL);
+      setScreen(reopened.kind === 'update' ? updateScreenFrom(screen, reopened.notice) : failureFromRecord(rec));
       return;
     }
     const live = liveRef.current;
@@ -2197,6 +2214,7 @@ function LauncherShell({
           diagnostics={screen.diagnostics}
           observedRepairAttempts={screen.observedRepairAttempts}
           hasWorkingVersion={screen.hasWorkingVersion}
+          rephraseHelps={screen.rephraseHelps}
           notice={screen.notice}
           journal={failureJournal}
           attemptStarted={screen.journalId != null}

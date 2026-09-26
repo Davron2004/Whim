@@ -21,7 +21,7 @@ import {
 } from '../orb-actions';
 import { chromeInsetBottom } from '../orb-geometry';
 import { resetNativeStorage } from './native-storage';
-import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { button, press, renderScreen, unmountScreen } from './react-screen';
 
 export async function runOrbMenuTests(h: Harness): Promise<void> {
   // ── the action set ─────────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
         await press(dismiss()[0]);
         h.eq(Object.values(counts()).reduce((a, b) => a + b, 0), 0, 'opening, closing and dismissing the menu count nothing');
         await press(button(tree, COPY.orbMenuOpenLabel));
-        await press(tree.root.find((n) => n.type === 'Pressable' && n.props.accessibilityLabel == null && textOf(n).endsWith(action.label)));
+        await press(button(tree, action.label));
         const expected = Object.fromEntries(Object.keys(calls).map((name) => [name, name === callbackOf[action.id] ? 1 : 0]));
         h.eq(calls, expected, `"${action.label}" calls ${callbackOf[action.id]} once and nothing else`);
         h.eq(counts()[action.id], 1, 'and is counted once in storage');
@@ -124,6 +124,33 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
       } finally {
         await unmountScreen(tree);
       }
+    }
+  });
+
+  // ── accessibility: a screen reader can reach every action ──────────────────────────────────
+  await h.test('orb-menu: every action is its own labelled button, never inside the dismiss layer', async () => {
+    // A touchable is ONE accessibility element: iOS and Android read everything inside it as that
+    // element, so an action nested in the full-screen dismiss layer was only ever announced as
+    // "Dismiss the app menu" (the iOS acceptance hierarchy dump showed nothing else).
+    resetNativeStorage();
+    const tree = await renderScreen(React.createElement(Orb, { onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
+    try {
+      await press(button(tree, COPY.orbMenuOpenLabel));
+      const touchable = (n: { type: unknown }) => n.type === 'Pressable' || n.type === 'TouchableOpacity';
+      for (const action of ORB_ACTIONS) {
+        const node = tree.root.findAll((n) => touchable(n) && n.props.accessibilityLabel === action.label);
+        h.eq(node.length, 1, `"${action.label}" is one element labelled with its own words`);
+        h.eq(node[0]?.props.accessibilityRole, 'button', `"${action.label}" is announced as a button`);
+        const enclosing: string[] = [];
+        for (let up = node[0]?.parent ?? null; up; up = up.parent) if (touchable(up)) enclosing.push(String(up.props.accessibilityLabel));
+        h.eq(enclosing, [], `"${action.label}" sits inside no other touchable`);
+      }
+      const dismiss = tree.root.findAll((n) => touchable(n) && n.props.accessibilityLabel === COPY.orbMenuDismissLabel);
+      h.eq(dismiss.length, 1, 'the dismiss layer is still there, behind the actions');
+      await press(dismiss[0]);
+      h.eq(tree.root.findAll((n) => String(n.type) === 'Modal').length, 0, 'and still closes the menu');
+    } finally {
+      await unmountScreen(tree);
     }
   });
 

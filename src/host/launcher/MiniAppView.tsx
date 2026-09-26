@@ -122,7 +122,11 @@ export default function MiniAppView({
       <View style={[styles.root, styles.errorRoot, { backgroundColor: p.bg }]}>
         <Text style={[TYPE_SCALE.screenTitle, styles.errorTitle, { color: p.text }]}>{COPY.launchFailedTitle}</Text>
         <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.launchFailedBody}</Text>
-        <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={onExit}>
+        <Pressable
+          accessibilityRole="button"
+          style={[styles.errorAction, { backgroundColor: p.accent, borderColor: p.cardBorder }]}
+          onPress={onExit}
+        >
           <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.launchFailedBack}</Text>
         </Pressable>
       </View>
@@ -144,11 +148,19 @@ export default function MiniAppView({
       <View style={[styles.root, styles.errorRoot, { backgroundColor: p.bg }]}>
         <Text style={[TYPE_SCALE.screenTitle, styles.errorTitle, { color: p.text }]}>{COPY.appErrorTitle}</Text>
         <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.appErrorBody}</Text>
-        <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={retry}>
+        <Pressable
+          accessibilityRole="button"
+          style={[styles.errorAction, { backgroundColor: p.accent, borderColor: p.cardBorder }]}
+          onPress={retry}
+        >
           <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.appErrorRetry}</Text>
         </Pressable>
-        <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={onExit}>
-          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.launchFailedBack}</Text>
+        <Pressable
+          accessibilityRole="button"
+          style={[styles.errorAction, styles.errorSecondary, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
+          onPress={onExit}
+        >
+          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{COPY.launchFailedBack}</Text>
         </Pressable>
       </View>
     );
@@ -206,11 +218,20 @@ export default function MiniAppView({
 const styles = StyleSheet.create({
   root: { flex: 1 },
   web: { flex: 1 },
-  errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.xl },
+  errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.lg },
   errorTitle: { textAlign: 'center', marginBottom: SPACING.sm },
   errorBody: { textAlign: 'center', marginBottom: SPACING.lg },
-  // marginBottom, not a bare stack: two flush pills read as one overlapping shape on device.
-  errorButton: { paddingVertical: SPACING.sm, paddingHorizontal: SPACING.lg, borderRadius: RADIUS.field, marginBottom: SPACING.sm },
+  // The app's standard pair (DoneStep): a filled primary and an outlined secondary, each the full
+  // width and one height, with a gap so the two never read as one shape.
+  errorAction: {
+    alignSelf: 'stretch',
+    height: 52,
+    borderRadius: RADIUS.card,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  errorSecondary: { marginTop: SPACING.sm },
   boot: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.xl },
   bootTitle: { textAlign: 'center', marginBottom: SPACING.md },
   bootMark: { width: SPACING.xl, height: SPACING.xs, borderRadius: RADIUS.chip, marginBottom: SPACING.md },

@@ -26,9 +26,18 @@ import { CHANNELS } from '../logging/channels';
 
 export type PendingBuildState = 'building' | 'failed' | 'interrupted';
 
+/** What gets past a failure that describing the app differently can't fix. `retry`: a service
+ *  refusal that isn't about the words, or a message this build can't use whose fallback is `fail`.
+ *  `update`: a message whose fallback is `update`; `protocolLevel` is this build's wire protocol
+ *  level when the attempt ended, so a build above it knows the update has happened. */
+export type PendingFailureRemedy = { kind: 'retry' } | { kind: 'update'; protocolLevel: number };
+
 export interface PendingBuildFailure {
   reason: string;
   diagnostics?: string;
+  /** Absent when rewording may help (a failed generation), which is also what every record written
+   *  before this field means. */
+  remedy?: PendingFailureRemedy;
 }
 
 /** The persisted record (design D2, additive-only discipline). */

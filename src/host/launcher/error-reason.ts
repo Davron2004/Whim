@@ -17,6 +17,7 @@
  * instead, never shown verbatim.
  */
 import type { DiagnosticReason } from '../logging/diagnostic';
+import type { PendingFailureRemedy } from './pending-builds';
 import { GenerationClientError } from './transport-shared';
 import { EmptyBundleError } from './build-lifecycle';
 import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
@@ -61,4 +62,17 @@ export function errorReason(err: unknown): { reason: string; diagnostics: readon
  *  sentence, which may be the server's own text. */
 export function errorReasonCode(err: unknown): DiagnosticReason {
   return classify(err).code;
+}
+
+/** Whether describing the app differently could get past the failure `err` became. Not for a
+ *  message this build can't use, notice or none, and not for an error the server answered with its
+ *  own hint (a server that isn't set up, a device it won't serve): rewording changes neither, so the
+ *  failure screen doesn't advise it. */
+export function errorRephraseHelps(err: unknown): boolean {
+  return terminalFallbackOf(err) === undefined && classify(err).code !== 'server_refused';
+}
+
+/** The remedy a failed attempt's record keeps for `err`: `retry` where rewording can't help. */
+export function errorRemedy(err: unknown): PendingFailureRemedy | undefined {
+  return errorRephraseHelps(err) ? undefined : { kind: 'retry' };
 }

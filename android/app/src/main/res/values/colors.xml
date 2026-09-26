@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Whim's accent, `SHELL_COLORS.accent` in src/sdk/design-tokens.ts (checks/test/repo/android-accent.suite.ts
+         holds the two together), for the controls Android draws itself: the text cursor, the selection
+         handles, and switches. -->
+    <color name="whim_accent">#3f3d8f</color>
+    <!-- Selected text: the accent at the 40% alpha Material uses for its own highlight. -->
+    <color name="whim_accent_highlight">#663f3d8f</color>
+</resources>

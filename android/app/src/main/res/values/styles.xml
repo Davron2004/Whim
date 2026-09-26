@@ -5,6 +5,9 @@
         <!-- Customize your theme here. -->
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
         <item name="android:windowBackground">@color/launch_background</item>
+        <!-- AppCompat's default accent is teal; cursors, selection handles and switches take Whim's. -->
+        <item name="colorAccent">@color/whim_accent</item>
+        <item name="android:textColorHighlight">@color/whim_accent_highlight</item>
     </style>
 
     <!-- Launch wiring (design D10): the mark centered on the launch background color, shown

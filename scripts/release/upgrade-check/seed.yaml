@@ -34,15 +34,16 @@ env:
     visible: "YOUR APPS"
     timeout: 15000
 
-# 2. Saved data in an example: one "+2 glasses". The status line reads "saved" only once the count
-#    and both history records have been written.
+# 2. Saved data in an example: one "+2 glasses". The line under the title changes once the saved
+#    count has loaded, and reads "Saved." only once the count and both history records have been
+#    written. Earlier builds, 382511 among them, wrote "loaded from storage" and "saved" there.
 - tapOn: "Water Counter"
 - extendedWaitUntil:
-    visible: "loaded from storage"
+    visible: "Tap a button after each glass\\.|loaded from storage"
     timeout: 60000
 - tapOn: "\\+2 glasses"
 - extendedWaitUntil:
-    visible: "saved"
+    visible: "Saved\\.|saved"
     timeout: 30000
 - tapOn: "Open the app menu"
 - tapOn: "Home"
