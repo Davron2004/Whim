@@ -73,7 +73,29 @@ class Value {
   interpolate() { return this.value; }
 }
 const animation = () => ({ start: () => {}, stop: () => {} });
-export const Animated = { Value, View, Text, timing: animation, sequence: animation, loop: animation, parallel: animation };
+type AnimationEnd = (result: { finished: boolean }) => void;
+/** Timing animations run until the test says their time has passed: `finishAnimations` ends every
+ *  one running, as the native driver reports it (the value at its target, `finished: true`); a
+ *  stopped one ends `finished: false`. */
+const runningAnimations = new Set<AnimationEnd>();
+const timing = (value: Value, config: { toValue: number }) => {
+  let end: AnimationEnd | undefined;
+  return {
+    start: (callback?: AnimationEnd) => {
+      end = (result) => {
+        runningAnimations.delete(end!);
+        if (result.finished) value.setValue(config.toValue);
+        callback?.(result);
+      };
+      runningAnimations.add(end);
+    },
+    stop: () => { if (end && runningAnimations.has(end)) end({ finished: false }); },
+  };
+};
+export function finishAnimations(): void {
+  for (const end of [...runningAnimations]) end({ finished: true });
+}
+export const Animated = { Value, View, Text, timing, sequence: animation, loop: animation, parallel: animation };
 export const Easing = { bezier: () => {}, inOut: () => {}, ease: () => {} };
 const backListeners = new Set<() => boolean>();
 export const BackHandler = {

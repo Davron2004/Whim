@@ -176,6 +176,25 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('tile: the done tile lays out its art as Home’s tile does, whatever the monogram — the watermark bleeding off the top-right, the initials at the bottom-left', async () => {
+    const layout = (root: TestRenderer.ReactTestInstance, app: Pick<InstalledApp, 'name' | 'record'>) => {
+      const square = art(root, app);
+      const { padding, borderRadius, justifyContent, alignItems, overflow } = flat(square);
+      return { square: { padding, borderRadius, justifyContent, alignItems, overflow }, monograms: lines(square).map(flat) };
+    };
+    for (const name of ['Hello App', 'Water Counter', 'Pour Timer']) {
+      const app = { name, record: { appId: name, name, manifest: { capabilities: [] } } };
+      const done = await renderScreen(<AppTile name={name} size="done" />);
+      const home = await renderScreen(<AppTile name={name} width={homeGridCellWidth(448, APP_TILE_SIZE)} />);
+      try {
+        h.eq(layout(done.root, app), layout(home.root, app), `${monogram(name)}: the done tile’s art is laid out as Home’s`);
+      } finally {
+        await unmountScreen(done);
+        await unmountScreen(home);
+      }
+    }
+  });
+
   await h.test('tile: a failed or interrupted ghost is outlined in the broken hue and keeps its own fill; a building ghost is not', async () => {
     for (const ghost of ['failed', 'interrupted', 'building'] as const) {
       const fill = ghostTileColorFor('ghost-1');

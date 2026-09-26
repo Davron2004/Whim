@@ -148,6 +148,31 @@ async function dismissBoth(tree: Tree): Promise<number> {
   return Keyboard.dismissed - before;
 }
 
+/** A `#rrggbb` or `rgba(r,g,b,a)` colour as 0–255 channels and an alpha. */
+function rgba(color: string): [number, number, number, number] {
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color);
+  if (hex) return [parseInt(hex[1], 16), parseInt(hex[2], 16), parseInt(hex[3], 16), 1];
+  const fn = /^rgba\((\d+),(\d+),(\d+),([\d.]+)\)$/.exec(color);
+  if (fn) return [Number(fn[1]), Number(fn[2]), Number(fn[3]), Number(fn[4])];
+  throw new Error(`not a colour this suite reads: ${color}`);
+}
+
+/** WCAG relative luminance of opaque channels. */
+function luminance([r, g, b]: readonly number[]): number {
+  const lin = (c: number) => (c / 255 <= 0.03928 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** The contrast of `text` on a highlight painted over the field's `background`, as Android paints a
+ *  selection. */
+function contrastOnHighlight(text: string, highlight: string, background: string): number {
+  const [hr, hg, hb, ha] = rgba(highlight);
+  const under = rgba(background);
+  const painted = [hr, hg, hb].map((c, i) => c * ha + under[i] * (1 - ha));
+  const [light, dark] = [luminance(painted), luminance(rgba(text))].sort((a, b) => b - a);
+  return (light + 0.05) / (dark + 0.05);
+}
+
 /** Lets the report sheet's draft load (`reportDraftFor` reads the store). */
 const draftLoaded = () => TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });
 
@@ -291,9 +316,15 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('clarify "Other" and the Settings server field are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
+  await h.test('clarify "Other", and the Settings server field with the helper line under it, are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
+    // The Settings field names its block: the field, its helper line and the probe's line, 100 tall.
+    const cases: [string, React.ReactElement, Geometry, string][] = [
+      ['clarify', clarify(), { frame: SCREEN_FRAME, field: [500, 60] }, 'the field'],
+      ['settings', settings(), { frame: SCREEN_FRAME, field: [500, 60], block: [500, 100] }, 'the field and its helper line'],
+    ];
     for (const device of [IOS, ANDROID_14, ANDROID_17]) {
-      for (const [name, element] of [['clarify', clarify()], ['settings', settings()]] as const) {
+      for (const [name, element, geometry, shown] of cases) {
+        const [top, height] = geometry.block ?? geometry.field;
         await on(device, element, async ({ tree, scrolls }) => {
           const reports = scrollReports(tree);
           await reports.viewport(700);
@@ -303,10 +334,10 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
           h.eq(scrolls, [], `${device.name} ${name}: a field already in view is left where it is`);
           await keyboard(device, true);
           await reports.viewport(400);
-          h.eq(scrolls.at(-1), 500 + 60 + SPACING.md - 400, `${device.name} ${name}: once the keyboard shrinks the scroll view, the field scrolls clear above its end`);
+          h.eq(scrolls.at(-1), top + height + SPACING.md - 400, `${device.name} ${name}: once the keyboard shrinks the scroll view, ${shown} scroll clear above its end`);
           h.eq([field(tree).props.multiline === true, doneBars(tree).length], [false, 0], `${device.name} ${name}: one line, with no Done bar`);
           h.eq(scrollView(tree).props.keyboardShouldPersistTaps, 'handled', `${device.name} ${name}: the controls around it take their taps while typing`);
-        }, { frame: SCREEN_FRAME, field: [500, 60] });
+        }, geometry);
       }
     }
     await on(IOS, clarify(), async ({ tree }) => {
@@ -366,7 +397,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('every launcher field wears Whim’s accent for its caret and selection, paints its own background, and on iOS a one-line field sets no line height', async () => {
+  await h.test('every launcher field wears Whim’s accent for its caret and selection handles, selected text stays readable on its highlight, it paints its own background, and on iOS a one-line field sets no line height', async () => {
     for (const device of [IOS, ANDROID_17]) {
       const fields: [string, React.ReactElement, (tree: Tree) => Promise<void>][] = [
         ['compose', compose(), async () => {}],
@@ -379,8 +410,14 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         await on(device, element, async ({ tree }) => {
           await open(tree);
           const input = field(tree);
-          h.eq([input.props.selectionColor, input.props.cursorColor], [SHELL_PALETTE.accent, SHELL_PALETTE.accent], `${device.name} ${name}: accent caret and selection`);
           h.ok(typeof flat(input).backgroundColor === 'string', `${device.name} ${name}: it paints its own background, which covers Android's default field underline`);
+          if (device.os === 'ios') {
+            h.eq(input.props.selectionColor, SHELL_PALETTE.accent, `${device.name} ${name}: the accent tints the caret, the handles and the highlight iOS draws translucent itself`);
+          } else {
+            h.eq([input.props.cursorColor, input.props.selectionHandleColor], [SHELL_PALETTE.accent, SHELL_PALETTE.accent], `${device.name} ${name}: accent caret and selection handles`);
+            const contrast = contrastOnHighlight(String(flat(input).color), String(input.props.selectionColor), String(flat(input).backgroundColor));
+            h.ok(contrast >= 4.5, `${device.name} ${name}: the text Android paints its highlight over stays readable (${contrast.toFixed(2)}:1, at least 4.5:1)`);
+          }
           const oneLineOnIos = device.os === 'ios' && input.props.multiline !== true;
           h.eq(typeof flat(input).lineHeight, oneLineOnIos ? 'undefined' : 'number', `${device.name} ${name}: ${oneLineOnIos ? 'no line height, so iOS keeps its descenders' : 'its type’s line height'}`);
         });

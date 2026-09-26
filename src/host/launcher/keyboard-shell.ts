@@ -16,6 +16,8 @@
  *   fully into view, clear of the footer.
  */
 
+import { SELECTION_HIGHLIGHT, SHELL_PALETTE } from './theme';
+
 /** Who pads for the keyboard: a whole screen, or the sheet (`SheetModal`) a shell sits in. */
 export type KeyboardShellHost = 'screen' | 'sheet';
 
@@ -95,6 +97,23 @@ export function revealOffset(
   if (bottom + margin > offset + viewport) return Math.max(0, bottom + margin - viewport);
   if (fits && top - margin < offset) return Math.max(0, top - margin);
   return null;
+}
+
+/** The colours a field draws its caret, selection handles and selected text's highlight in. */
+export interface SelectionColors {
+  readonly selectionColor: string;
+  readonly cursorColor?: string;
+  readonly selectionHandleColor?: string;
+}
+
+/** Whim's accent for a field's caret and selection handles, and a highlight its text stays readable
+ *  on. iOS tints all three from `selectionColor` and draws the highlight translucent itself, so the
+ *  accent is the whole answer there. Android paints the highlight in exactly `selectionColor`, over
+ *  the selected text, so it gets the translucent highlight, and the caret and handles take the
+ *  accent through their own props. */
+export function selectionColors(os: string): SelectionColors {
+  if (os !== 'android') return { selectionColor: SHELL_PALETTE.accent };
+  return { selectionColor: SELECTION_HIGHLIGHT, cursorColor: SHELL_PALETTE.accent, selectionHandleColor: SHELL_PALETTE.accent };
 }
 
 /** A multiline field on iOS gets the keyboard's Done bar: Return adds a newline there, and iOS has

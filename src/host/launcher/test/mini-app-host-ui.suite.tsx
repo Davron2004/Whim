@@ -17,7 +17,7 @@ import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { DiagnosticsBatch } from '@whim/contract';
 import { log } from '../../logging';
-import { injectedScripts, StyleSheet } from './native-host';
+import { finishAnimations, injectedScripts, StyleSheet } from './native-host';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { closedDatabases, resetNativeStorage } from './native-storage';
 import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen } from './react-screen';
@@ -143,6 +143,8 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       h.ok(shown().includes(COPY.appErrorTitle), 'the recovery screen replaces the app');
       h.ok(!shown().includes('SENTINEL'), 'without the raw error text');
       h.ok(webView() == null, 'the failed realm’s WebView is gone');
+      const retry = StyleSheet.flatten(button(tree, COPY.appErrorRetry).props.style) as { backgroundColor?: string; borderColor?: string };
+      h.eq(retry.borderColor, retry.backgroundColor, 'Retry is its primary action, filled edge to edge with no ring of another colour');
       await press(button(tree, COPY.appErrorRetry));
       h.ok(webView() != null && webView() !== first, 'Retry mounts a new WebView');
       h.ok(!shown().includes(COPY.appErrorTitle), 'the recovery screen is gone');
@@ -336,6 +338,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     await withMiniApp(TIP, async ({ loadEnd, clock, tree, exits }) => {
       await loadEnd();
       await press(button(tree, COPY.orbMenuOpenLabel));
+      await TestRenderer.act(async () => { finishAnimations(); });
       const home = tree.root.findAll((n) => n.type === 'Pressable' && textOf(n).endsWith(COPY.orbActionHome));
       await press(home[0]);
       h.eq(exits(), 1, 'Home leaves the app');

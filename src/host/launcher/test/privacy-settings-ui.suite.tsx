@@ -11,6 +11,7 @@ import SettingsScreen from '../SettingsScreen';
 import ConsentScreen from '../ConsentScreen';
 import TermsScreen from '../TermsScreen';
 import AgeScreen from '../AgeScreen';
+import ConfirmSheet from '../ConfirmSheet';
 import LauncherRoot from '../LauncherRoot';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { COPY } from '../copy';
@@ -72,14 +73,18 @@ function errorDetailsSwitch(tree: Tree): TestRenderer.ReactTestInstance {
   return tree.root.find((node) => node.type === 'Switch' && node.props.accessibilityLabel === COPY.settingsErrorDetailsTitle);
 }
 
-/** Opens the confirm step and returns the dialog it raised. */
+/** Opens the confirm step: the launcher's own confirm sheet, never a system alert. Returns what the
+ *  sheet shows, and its two controls. */
 async function openMakeNewId(tree: Tree) {
-  const before = Alert.shown.length;
+  const alerts = Alert.shown.length;
   await press(button(tree, COPY.settingsDeviceIdReset));
-  const raised = Alert.shown.slice(before);
-  if (raised.length !== 1) throw new Error(`expected one confirm dialog, got ${raised.length}`);
-  return raised[0];
+  if (Alert.shown.length !== alerts) throw new Error('"Make a new ID" raised a system alert');
+  const sheet = tree.root.find((node) => String(node.type) === 'Modal');
+  const control = (label: string) => sheet.find((node) => String(node.type) === 'TouchableOpacity' && textOf(node) === label);
+  return { text: textOf(sheet), cancel: control(COPY.cancel), confirm: control(COPY.settingsDeviceIdReset) };
 }
+
+const flatStyle = (node: TestRenderer.ReactTestInstance) => Object.assign({}, ...[node.props.style].flat(Infinity)) as { height?: number; backgroundColor?: string };
 
 /** Home → compose → Continue, and the `x-whim-device` header the clarify request carried. */
 async function headerOfNextRequest(tree: Tree, sent: SentRequest[]): Promise<string | null> {
@@ -144,11 +149,10 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
     await withLauncher({ apps: [APP], server: clarifyServer }, async ({ tree, kv, sent }) => {
       await openSettings(tree);
       const before = shownDeviceId(tree);
-      const dialog = await openMakeNewId(tree);
-      h.eq(dialog.message, COPY.settingsDeviceIdResetConfirm, 'the confirm step says how long old records are kept');
+      const sheet = await openMakeNewId(tree);
+      h.ok(sheet.text.includes(COPY.settingsDeviceIdResetConfirm), 'the confirm step says how long old records are kept');
       h.eq(shownDeviceId(tree), before, 'nothing changes until the user confirms');
-      const confirm = dialog.buttons.find((b) => b.text === COPY.settingsDeviceIdReset);
-      await TestRenderer.act(async () => confirm?.onPress?.());
+      await press(sheet.confirm);
       const after = shownDeviceId(tree);
       h.ok(after !== before, 'Settings shows a different ID');
       h.eq(getDeviceId(kv), after, 'the new ID is the stored one, so a restart keeps it');
@@ -164,12 +168,21 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
     await withLauncher({ server: clarifyServer }, async ({ tree, kv }) => {
       await openSettings(tree);
       const before = shownDeviceId(tree);
-      const dialog = await openMakeNewId(tree);
-      const cancel = dialog.buttons.find((b) => b.style === 'cancel');
-      h.eq(cancel?.text, COPY.cancel, 'the confirm step offers Cancel');
-      await TestRenderer.act(async () => cancel?.onPress?.());
+      const sheet = await openMakeNewId(tree);
+      await press(sheet.cancel);
       h.eq(getDeviceId(kv), before, 'the stored ID is unchanged');
       h.eq(shownDeviceId(tree), before, 'and Settings shows the same ID');
+      h.eq(tree.root.findAll((node) => String(node.type) === 'Modal').length, 0, 'and the sheet is gone');
+    });
+  });
+
+  await h.test('phone ID: "Make a new ID" asks in the confirm sheet History asks in, on either platform: Cancel the large button, the new ID plain text beneath it', async () => {
+    await withLauncher({ apps: [APP], server: clarifyServer }, async ({ tree }) => {
+      await openSettings(tree);
+      const sheet = await openMakeNewId(tree);
+      h.eq(tree.root.findAllByType(ConfirmSheet).length, 1, 'the launcher’s own confirm sheet, not a system alert');
+      const [cancel, confirm] = [flatStyle(sheet.cancel), flatStyle(sheet.confirm)];
+      h.ok((cancel.height ?? 0) > (confirm.height ?? 0) && cancel.backgroundColor !== undefined && confirm.backgroundColor === undefined, 'the safe Cancel is the large filled button; making a new ID is plain text under it');
     });
   });
 

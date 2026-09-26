@@ -14,12 +14,13 @@
 // policy, terms of use, support, this phone's ID), and — in internal builds only (legal-surface-v2
 // D10) — Advanced (the server address override, collapsed unless one is saved).
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Easing, Linking, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Easing, Linking, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import type { ScrollView } from 'react-native';
 import { RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { ConsentStatus } from './ai-consent';
 import { aiFeaturesStatusLine, COPY, serverProbeLabel } from './copy';
 import { RELEASE } from './release-config';
+import ConfirmSheet from './ConfirmSheet';
 import { BackHeader, FLOW_HEADER_GAP } from './flow-chrome';
 import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
 import { legalDateLabel, privacyPolicyUrl, termsUrl, type LegalLanguage } from './legal-language';
@@ -110,6 +111,7 @@ export default function SettingsScreen({
   const [serverUrlDraft, setServerUrlDraft] = useState(serverUrl ?? '');
   const [probeState, setProbeState] = useState<SettingsProbeState>('idle');
   const [advancedOpen, setAdvancedOpen] = useState(() => advancedInitiallyOpen(serverUrl));
+  const [confirmingNewId, setConfirmingNewId] = useState(false);
   const p = SHELL_PALETTE;
 
   // The Advanced disclosure chevron rotates smoothly between closed (right) and open (down)
@@ -183,6 +185,8 @@ export default function SettingsScreen({
   // Expanding Advanced reveals the address field: it is the last section, so once the content has
   // grown by it the scroll view scrolls to its end.
   const scrollRef = useRef<ScrollView>(null);
+  // The address field with the lines under it, which the shell keeps in view while it is focused.
+  const addressBlock = useRef<View>(null);
   const revealAdvanced = useRef(false);
   const toggleAdvanced = () => {
     revealAdvanced.current = !advancedOpen;
@@ -195,12 +199,10 @@ export default function SettingsScreen({
   };
 
   // The confirm step before replacing the ID (privacy-settings "Settings shows this phone's ID and
-  // can make a new one"): Cancel changes nothing.
-  const confirmResetDeviceId = () => {
-    Alert.alert(COPY.settingsDeviceIdReset, COPY.settingsDeviceIdResetConfirm, [
-      { text: COPY.cancel, style: 'cancel' },
-      { text: COPY.settingsDeviceIdReset, onPress: onResetDeviceId },
-    ]);
+  // can make a new one"), in the launcher's own confirm sheet: Cancel changes nothing.
+  const makeNewId = () => {
+    setConfirmingNewId(false);
+    onResetDeviceId();
   };
 
   const aiFeaturesSubtitle =
@@ -307,11 +309,16 @@ export default function SettingsScreen({
         </Text>
       </View>
       <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.settingsDeviceIdHint}</Text>
-      <TouchableOpacity onPress={confirmResetDeviceId} hitSlop={10} accessibilityRole="button">
+      <TouchableOpacity onPress={() => setConfirmingNewId(true)} hitSlop={10} accessibilityRole="button">
         <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>
           {COPY.settingsDeviceIdReset}
         </Text>
       </TouchableOpacity>
+      <ConfirmSheet
+        confirm={confirmingNewId ? { title: COPY.settingsDeviceIdReset, body: COPY.settingsDeviceIdResetConfirm, confirmLabel: COPY.settingsDeviceIdReset } : null}
+        onCancel={() => setConfirmingNewId(false)}
+        onConfirm={makeNewId}
+      />
 
       {/* Advanced (app-launcher "Settings groups its controls...with the server address under
           Advanced") — internal builds only; one row that expands inline; already open while an
@@ -337,26 +344,29 @@ export default function SettingsScreen({
           <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
             {COPY.serverAddressSectionTitle}
           </Text>
-          <KeyboardTextInput
-            value={serverUrlDraft}
-            onChangeText={onAddressChange}
-            onSubmitEditing={settleAddress}
-            onBlur={settleAddress}
-            placeholder={RELEASE.serverUrl.replace(/^https?:\/\//, '')}
-            placeholderTextColor={p.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            style={[
-              TYPE_SCALE.body,
-              styles.serverInput,
-              { color: p.text, borderColor: p.cardBorder, backgroundColor: p.card },
-            ]}
-          />
-          <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.serverAddressHint}</Text>
-          {probeLine != null && (
-            <Text style={[TYPE_SCALE.caption, styles.hint, { color: probeLineColor }]}>{probeLine}</Text>
-          )}
+          <View ref={addressBlock}>
+            <KeyboardTextInput
+              revealTarget={addressBlock}
+              value={serverUrlDraft}
+              onChangeText={onAddressChange}
+              onSubmitEditing={settleAddress}
+              onBlur={settleAddress}
+              placeholder={RELEASE.serverUrl.replace(/^https?:\/\//, '')}
+              placeholderTextColor={p.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              style={[
+                TYPE_SCALE.body,
+                styles.serverInput,
+                { color: p.text, borderColor: p.cardBorder, backgroundColor: p.card },
+              ]}
+            />
+            <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.serverAddressHint}</Text>
+            {probeLine != null && (
+              <Text style={[TYPE_SCALE.caption, styles.hint, { color: probeLineColor }]}>{probeLine}</Text>
+            )}
+          </View>
           {serverUrlDraft.trim().length > 0 && (
             <TouchableOpacity onPress={onUseDefault} hitSlop={10}>
               <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>

@@ -19,7 +19,7 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { FONT_FAMILY, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, clarifyBuildInstead, clarifyHeadline } from './copy';
-import { EditingEyebrow, FLOW_HEADER_GAP, FlowHeader, PrimaryAction } from './flow-chrome';
+import { EditingEyebrow, FLOW_HEADER_GAP, FlowHeader, PrimaryAction, StepNotice } from './flow-chrome';
 import { ClarifyQuestionsSkeleton } from './flow-skeletons';
 import { WorkingLine } from './flow-working';
 import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
@@ -32,8 +32,8 @@ import {
   type FlowNotice,
   type FlowQuestion,
 } from './prompt-flow';
-import ServiceNotice, { useRetryGate } from './ServiceNotice';
-import { SHELL_PALETTE } from './theme';
+import { useRetryGate } from './ServiceNotice';
+import { primaryButtonColors, SHELL_PALETTE } from './theme';
 import { useSystemBack } from './use-system-back';
 
 export interface ClarifyStepProps {
@@ -96,7 +96,7 @@ export default function ClarifyStep({
       header={<FlowHeader step="clarify" onBack={onBack} />}
       footer={
         <>
-          {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
+          <StepNotice notice={notice} />
           {/* A disabled button under a skeleton is noise — there is nothing to confirm yet. The
               action mounts once the real questions have landed; `WorkingLine` is the only liveness
               element while loading. No validation gate of its own — the retry window is the only
@@ -276,7 +276,7 @@ function LimitActions({
         disabled={!enabled}
         accessibilityRole="button"
         accessibilityLabel={label}
-        style={[styles.buildInstead, { backgroundColor: enabled ? p.accent : p.card, borderColor: p.cardBorder }]}
+        style={[styles.buildInstead, primaryButtonColors(enabled)]}
       >
         <Text style={[TYPE_SCALE.bodyEmphatic, styles.buildInsteadLabel, { color: enabled ? p.onAccent : p.textMuted }]}>{label}</Text>
       </TouchableOpacity>

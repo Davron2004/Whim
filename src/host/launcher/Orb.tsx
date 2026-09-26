@@ -56,6 +56,11 @@ export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readon
   const kv = useRef(createMmkvBackend('whim.launcher')).current;
   const insets = useSafeAreaInsets();
   const [menuOpen, setMenuOpen] = useState(false);
+  // The rows take taps only once the menu has risen into place. While it rises, a row is drawn
+  // somewhere other than where its touch target is, so a quick tap could land on its neighbour
+  // (a tap on Versions opened Report on device). A press that begins during the rise is refused,
+  // and so never fires on release either.
+  const [menuSettled, setMenuSettled] = useState(false);
   const riseAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -68,20 +73,25 @@ export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readon
       duration: MOTION.sheetRise.durationMs,
       easing: Easing.bezier(0.2, 0.8, 0.2, 1),
       useNativeDriver: true,
-    }).start();
+    }).start(({ finished }) => {
+      if (finished) setMenuSettled(true);
+    });
   }, [menuOpen, riseAnim]);
 
+  // Opening or closing, the menu is not settled until a rise completes.
   const closeAll = () => {
     setMenuOpen(false);
+    setMenuSettled(false);
   };
 
   const onOrbPress = () => {
     setMenuOpen((open) => !open);
+    setMenuSettled(false);
   };
 
   const onAction = (id: OrbActionId) => {
     recordOrbAction(kv, id);
-    setMenuOpen(false);
+    closeAll();
     if (id === 'home') onExit();
     else if (id === 'versions') onVersions();
     else if (id === 'report') onReport();
@@ -142,6 +152,7 @@ export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readon
                 <Pressable
                   key={action.id}
                   style={styles.row}
+                  disabled={!menuSettled}
                   onPress={() => onAction(action.id)}
                   accessibilityRole="button"
                   accessibilityLabel={action.label}

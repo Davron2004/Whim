@@ -91,10 +91,13 @@ export interface FlowNotice {
 }
 
 /** One labelled plan row. `label` is empty for the single-row fallback, which renders unlabelled
- *  (the wire carried a rewritten string and no structured breakdown). */
+ *  (the wire carried a rewritten string and no structured breakdown). `edited`: the user rewrote
+ *  the row inline, so its text is theirs, not the model's — it shows as typed, never through the
+ *  prose renderer, which marks up agent prose only (Whim Syntax rule 7). */
 export interface FlowPlanRow {
   label: string;
   text: string;
+  edited?: true;
 }
 
 export interface ComposeScreen {
@@ -375,7 +378,7 @@ export function withPlan(
  *  are a stable, never-reordered array, so an index survives duplicate row text where the
  *  `label:text` string the UI otherwise keys off of would collide. */
 export function updatePlanRow(screen: PlanScreen, index: number, text: string): PlanScreen {
-  const rows = screen.rows.map((row, i) => (i === index ? { ...row, text } : row));
+  const rows = screen.rows.map((row, i): FlowPlanRow => (i === index ? { ...row, text, edited: true } : row));
   // Saving a row edit clears a `text`-landing (`danger`-tone) notice, the same rule `composeTextChanged`
   // applies — a `sender`-landing notice survives it, unrelated to the plan's own words.
   return { ...screen, rows, edited: true, notice: screen.notice?.tone === 'danger' ? undefined : screen.notice };

@@ -28,7 +28,7 @@ import type { AppManifest } from '../bridge/contract';
  *  (group D, sdk-design-system "Loading skeletons derive their geometry from exported component
  *  constants") imports these rather than restating them, guaranteeing no layout jump on load. */
 export const APP_TILE_SIZE = 88;
-/** Wider than any two-letter monogram at the Done tile's 92px, so the watermark never truncates. */
+/** Far wider than any two-letter monogram, so the watermark never truncates. */
 const GHOST_MONOGRAM_BOX_WIDTH = 240;
 export const APP_TILE_RADIUS = RADIUS.tile;
 
@@ -54,9 +54,12 @@ export interface AppTileProps {
   /** The host-held record's manifest, read only for its declared colour — never anything the
    *  running bundle reports about itself. Omitted resolves `appColor(name)`. */
   manifest?: Pick<AppManifest, 'tileColor'>;
-  /** `'done'` renders the flow's celebration variant (design html:520-524): 120x120, radius 32, a
-   *  glow colour-matched to the app's own hue, a one-shot rise-in, and no name label — the done
-   *  step writes its own headline instead. Omitted is the grid tile, unchanged. */
+  /** `'done'` renders the flow's celebration variant: the grid tile's own art and layout at 120x120,
+   *  with a glow colour-matched to the app's own hue (design html:520), a one-shot rise-in, and no
+   *  name label — the done step writes its own headline instead. Not the mockup's radius 32 and
+   *  92px watermark: a wide monogram ("HA") at 92px is wider than the tile, so it ran in from the
+   *  left edge under the initials, where the grid's 62px bleeds off the top-right as on Home.
+   *  Omitted is the grid tile, unchanged. */
   size?: 'done';
   /** How wide the grid tile stands, so the home grid can be fluid 3-up (design html:388
    *  `repeat(3,1fr)`) instead of three fixed 88s. Omitted is `APP_TILE_SIZE` — every caller that
@@ -156,7 +159,7 @@ export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, g
     <Animated.View style={[styles.root, isDone ? styles.rootDone : null, fluidRoot, riseStyle]}>
       <View style={[styles.tile, isDone ? styles.tileDone : null, fluidTile, { backgroundColor: bg }, glow, ghostTileStyle, busy ? styles.tileBusy : null]}>
         <Text
-          style={[styles.ghostMonogram, isDone ? styles.ghostMonogramDone : null]}
+          style={styles.ghostMonogram}
           numberOfLines={1}
           accessibilityElementsHidden
           importantForAccessibility="no"
@@ -164,7 +167,7 @@ export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, g
           {mono}
         </Text>
         <Text
-          style={[styles.foregroundMonogram, isDone ? styles.foregroundMonogramDone : null]}
+          style={styles.foregroundMonogram}
           numberOfLines={1}
           accessibilityElementsHidden
           importantForAccessibility="no"
@@ -181,9 +184,8 @@ export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, g
   );
 }
 
-/** The done variant's geometry, from design html:520-524. These have no `SPACING`/`RADIUS`
- *  counterpart and get no one-off token (ruling R9) — they stay local, exactly as the grid tile's
- *  own 9/-13/62/19 do. */
+/** The done variant's size, from design html:520. No `SPACING` counterpart, and no one-off token
+ *  (ruling R9) — it stays local, exactly as the grid tile's own 9/-13/62/19 do. */
 const DONE_TILE_SIZE = 120;
 
 const styles = StyleSheet.create({
@@ -203,8 +205,6 @@ const styles = StyleSheet.create({
   tileDone: {
     width: DONE_TILE_SIZE,
     height: DONE_TILE_SIZE,
-    borderRadius: 32,
-    padding: 14,
     // The glow itself is set at the call site — it is the tile's own resolved colour.
   },
   ghostMonogram: {
@@ -222,14 +222,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: 'rgba(255,255,255,0.16)',
   },
-  ghostMonogramDone: { top: -20, right: -12, fontSize: 92 },
   foregroundMonogram: {
     fontFamily: FONT_FAMILY.sansSemiBold,
     fontSize: 19,
     fontWeight: '600',
     color: '#ffffff',
   },
-  foregroundMonogramDone: { fontSize: 26 },
   name: {
     fontFamily: FONT_FAMILY.sansMedium,
     fontSize: 11.5,

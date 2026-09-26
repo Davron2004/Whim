@@ -4,6 +4,7 @@
          holds the two together), for the controls Android draws itself: the text cursor, the selection
          handles, and switches. -->
     <color name="whim_accent">#3f3d8f</color>
-    <!-- Selected text: the accent at the 40% alpha Material uses for its own highlight. -->
-    <color name="whim_accent_highlight">#663f3d8f</color>
+    <!-- Selected text: the accent at 30%, the highlight a launcher field paints (`SELECTION_HIGHLIGHT` in
+         src/host/launcher/theme.ts; checks/test/repo/android-accent.suite.ts holds the two together). -->
+    <color name="whim_accent_highlight">#4d3f3d8f</color>
 </resources>

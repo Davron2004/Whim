@@ -47,6 +47,7 @@ import {
   pinsFooter,
   revealOffset,
   scrollEdges,
+  selectionColors,
   showsDoneBar,
   type KeyboardShellHost,
   type ScrollMetrics,
@@ -274,8 +275,9 @@ export interface KeyboardTextInputProps extends TextInputProps {
 }
 
 /**
- * A text field for a `KeyboardShell`: Whim's accent for its caret and selection, and the shell keeps
- * it in view while it is focused.
+ * A text field for a `KeyboardShell`: Whim's accent for its caret and selection handles, a highlight
+ * its selected text stays readable on (`selectionColors`), and the shell keeps it in view while it
+ * is focused.
  * `autoFocus` focuses it once it has mounted rather than natively: iOS links a Done bar to its field
  * when the bar mounts, and a field that took focus before that shows none. Multiline on iOS, it
  * carries the keyboard's Done bar, which puts the keyboard away and submits nothing; one line on iOS,
@@ -300,8 +302,7 @@ export function KeyboardTextInput({
   const doneBar = showsDoneBar(Platform.OS, props.multiline);
   const field = (
     <TextInput
-      selectionColor={SHELL_PALETTE.accent}
-      cursorColor={SHELL_PALETTE.accent}
+      {...selectionColors(Platform.OS)}
       {...props}
       ref={input}
       style={[style, Platform.OS === 'ios' && props.multiline !== true && styles.naturalLineHeight]}

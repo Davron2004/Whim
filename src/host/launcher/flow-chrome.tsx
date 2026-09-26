@@ -1,6 +1,7 @@
 /**
- * flow-chrome — the three pieces every gated step of the `2a` flow shares (shell-redesign-v2,
- * group D): the back link, the three-bar step indicator, and the bottom primary action.
+ * flow-chrome — the pieces every gated step of the `2a` flow shares (shell-redesign-v2, group D):
+ * the back link, the three-bar step indicator, the bottom primary action, and the refusal notice
+ * that sits above it.
  *
  * Kept in one module so compose, clarify and plan cannot drift on the rule that matters:
  * "Forward movement SHALL be gated by an explicit primary action... A busy primary action SHALL
@@ -12,8 +13,9 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, editingEyebrow } from './copy';
-import { primaryActionLabel, type FlowStep } from './prompt-flow';
-import { SHELL_PALETTE } from './theme';
+import { primaryActionLabel, type FlowNotice, type FlowStep } from './prompt-flow';
+import ServiceNotice from './ServiceNotice';
+import { primaryButtonColors, SHELL_PALETTE } from './theme';
 
 /** The gated steps, in order — the step indicator's three bars. */
 const INDICATOR_STEPS: readonly FlowStep[] = ['compose', 'clarify', 'plan'];
@@ -78,15 +80,23 @@ export function PrimaryAction({ step, enabled, editing = false, onPress }: Reado
       disabled={!enabled}
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={[
-        styles.primary,
-        { backgroundColor: enabled ? SHELL_PALETTE.accent : SHELL_PALETTE.card, borderColor: SHELL_PALETTE.cardBorder },
-      ]}
+      style={[styles.primary, primaryButtonColors(enabled)]}
     >
       <Text style={[TYPE_SCALE.bodyEmphatic, { color: enabled ? SHELL_PALETTE.onAccent : SHELL_PALETTE.textMuted }]}>
         {label}
       </Text>
     </TouchableOpacity>
+  );
+}
+
+/** A step's refusal notice, when it has one, above the step's primary action and a sibling gap
+ *  clear of it. */
+export function StepNotice({ notice }: Readonly<{ notice?: FlowNotice }>) {
+  if (notice == null) return null;
+  return (
+    <View style={styles.stepNotice}>
+      <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />
+    </View>
   );
 }
 
@@ -113,6 +123,8 @@ export function EditingEyebrow({ name }: Readonly<EditingEyebrowProps>) {
 
 const styles = StyleSheet.create({
   editingEyebrow: { marginBottom: SPACING.xs },
+  // design README "Spacing": `sm 12` between siblings — the notice and the action it sits above.
+  stepNotice: { marginBottom: SPACING.sm },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
