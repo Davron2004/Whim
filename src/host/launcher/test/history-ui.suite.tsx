@@ -1,6 +1,7 @@
 /** The rendered History screen over a real version store: the first load is a loading state, not
- *  an empty list; a row expands without restoring; Go back and Start a copy act on that row's own
- *  version, once each, however often the confirm is tapped. And Home's sheet reaches it. */
+ *  an empty list; a row quotes the user's words and opens to Whim's summary; a row expands without
+ *  restoring; Go back and Start a copy act on that row's own version, once each, however often the
+ *  confirm is tapped. And Home's sheet reaches it. */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
@@ -13,6 +14,8 @@ import { createMemoryStore, MapKVBackend } from '../../version-store';
 import ComposeStep from '../ComposeStep';
 import DoneStep from '../DoneStep';
 import WhimProse from '../../ui/whim-prose/WhimProse';
+import { SHELL_COLORS } from '../../../sdk/theme';
+import { StyleSheet } from './native-host';
 import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
 import { buildIt, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
@@ -50,6 +53,9 @@ const loadingRows = (tree: Tree) => tree.root.findAll((n) => n.type === 'View' &
 /** The row card whose headline is `text`. */
 const row = (tree: Tree, text: string) => tree.root.find((n) => n.type === 'TouchableOpacity' && typeof n.props.onPress === 'function' && textOf(n).includes(text) && textOf(n).includes(COPY.historyOriginYouSaid));
 const hasRow = (tree: Tree, text: string) => tree.root.findAll((n) => n.type === 'TouchableOpacity' && typeof n.props.onPress === 'function' && textOf(n).includes(text) && textOf(n).includes(COPY.historyOriginYouSaid)).length === 1;
+/** The words a rendered prose line attributes to the user (its `yours` spans). */
+const yoursIn = (prose: TestRenderer.ReactTestInstance) =>
+  prose.findAll((n) => n.type === 'Text' && StyleSheet.flatten(n.props.style).color === SHELL_COLORS.yours).map(textOf);
 
 export async function runHistoryUiTests(h: Harness): Promise<void> {
   await h.test('history screen: the first load shows a loading state, never an empty list, until the versions arrive', async () => {
@@ -110,15 +116,17 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('history screen: after a build and an edit made through the app, each version keeps its own words and summary', async () => {
+  await h.test('history screen: after a build and an edit made through the app, each row quotes the words that made it under “You said”, and Whim’s summary opens with the row', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     const summary = (text: string, kind: 'Start' | 'Added') => ({ text, kind, touched: [], marks: [] });
+    const FIRST_SUMMARY = 'Counts the glasses you drink';
+    const EDIT_SUMMARY = 'You can now set your own daily water goal';
     const home = (tree: Tree) => tree.root.findByType(HomeScreen);
     const tracker = (tree: Tree): InstalledApp => home(tree).props.apps.find((a: InstalledApp) => a.name === 'Water Tracker');
     const realNow = Date.now;
     await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
       await startBuild(tree, 'A water tracker');
-      streams[0].push({ ...resultEvent('Water Tracker'), summary: summary('Counts the glasses you drink', 'Start') });
+      streams[0].push({ ...resultEvent('Water Tracker'), summary: summary(FIRST_SUMMARY, 'Start') });
       streams[0].end();
       await waitFor(() => tree.root.findAllByType(DoneStep).length === 1, 'the first version');
       await press(button(tree, COPY.doneBackToApps));
@@ -131,17 +139,19 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       await waitFor(() => planLoaded(tree), 'the edit’s plan');
       await buildIt(tree);
       await waitFor(() => streams.length === 2, 'the edit’s generation');
-      streams[1].push({ ...resultEvent('Water Tracker'), summary: summary('You can now set your own daily water goal', 'Added') });
+      streams[1].push({ ...resultEvent('Water Tracker'), summary: summary(EDIT_SUMMARY, 'Added') });
       streams[1].end();
       await waitFor(() => tree.root.findAllByType(DoneStep).length === 1, 'the second version');
       await press(button(tree, COPY.doneBackToApps));
       await TestRenderer.act(async () => home(tree).props.onHistory(tracker(tree)));
       await waitFor(() => tree.root.findAllByType(WhimProse).length === 2, 'both versions on the timeline');
-      const rows = tree.root.findAllByType(WhimProse).map((n) => [n.props.storedPrompt, n.props.text]);
-      h.eq(rows, [
-        ['Let me set my own daily goal', 'You can now set your own daily water goal'],
-        ['A water tracker', 'Counts the glasses you drink'],
-      ], 'newest first, each version with the words that made it and its own summary: the edit never rewrites v1');
+      h.eq(tree.root.findAllByType(WhimProse).map((n) => n.props.storedPrompt), ['Let me set my own daily goal', 'A water tracker'], 'newest first: the edit never rewrites v1');
+      h.eq(tree.root.findAllByType(WhimProse).map(yoursIn), [['Let me set my own daily goal'], ['A water tracker']], 'each headline quotes the user’s own words, rendered as theirs');
+      h.ok(hasRow(tree, 'Let me set my own daily goal') && hasRow(tree, 'A water tracker'), 'each under “You said”');
+      h.ok(!textOf(tree.root).includes(EDIT_SUMMARY) && !textOf(tree.root).includes(FIRST_SUMMARY), 'a collapsed row does not show Whim’s summary');
+      await press(row(tree, 'Let me set my own daily goal'));
+      h.ok(textOf(row(tree, 'Let me set my own daily goal')).includes(EDIT_SUMMARY), 'opening the edit’s row shows what Whim did for it');
+      h.ok(!textOf(tree.root).includes(FIRST_SUMMARY), 'and only for it: the other row stays closed');
     }).finally(() => { Date.now = realNow; });
   });
 

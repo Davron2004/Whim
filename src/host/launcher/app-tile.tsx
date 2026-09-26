@@ -18,7 +18,7 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { FONT_FAMILY, RADIUS, SHELL_COLORS, STATUS_COLORS } from '../../sdk/theme';
 import { monogram, tileColor } from './tiles';
-import { ghostStateCaption } from './copy';
+import { COPY, ghostStateCaption } from './copy';
 import TilePill from './tile-pill-view';
 import type { TilePillKind } from './tile-pill';
 import type { AppManifest } from '../bridge/contract';
@@ -85,14 +85,23 @@ export interface AppTileProps {
    *  would render as nothing at all on Android. Orthogonal to `ghost`, which is a different (and
    *  never simultaneous) state — a ghost tile is not launchable, so it can never be opening. */
   busy?: boolean;
-  /** The tile's one overlay pill (`tile-pill.ts`'s `tilePillFor`, design D8) — an "Example" label,
-   *  or an accent naming an in-flight rebuild of this already-installed app. Rendered inside the
-   *  square, top-right, never affecting the square's own launchable/ghost look. `onPress` is read
-   *  only for a tappable kind (`failed`/`interrupted` — see `TILE_PILL` in `tile-pill.ts`);
-   *  ignored for a passive one. Omitted or `null` renders no pill. Never combined with `ghost` — a
-   *  ghost tile has no pill (it isn't installed yet, so it can neither be the seeded example nor
-   *  be rebuilding). */
+  /** The tile's one overlay pill (`tile-pill.ts`'s `tilePillFor`, design D8) — an accent naming an
+   *  in-flight rebuild of this already-installed app. Rendered inside the square, top-right, never
+   *  affecting the square's own launchable/ghost look. `onPress` is read only for a tappable kind
+   *  (`failed`/`interrupted` — see `TILE_PILL` in `tile-pill.ts`); ignored for a passive one.
+   *  Omitted or `null` renders no pill. Never combined with `ghost` — a ghost tile has no pill (it
+   *  isn't installed yet, so it cannot be rebuilding). */
   pill?: { kind: TilePillKind; onPress?: () => void } | null;
+  /** A seeded example (beta-1 R16): says so in a muted caption under the name — the slot and face
+   *  a ghost's state caption uses — so the label never sits on the tile art at any width. Never
+   *  combined with `ghost` (a ghost isn't installed yet, so it cannot be a seeded example). */
+  example?: boolean;
+}
+
+/** The line under the tile's name, if any: a ghost's state, or the example label. */
+function captionFor(ghost: AppTileProps['ghost'], example: boolean | undefined): string | null {
+  if (ghost) return ghostStateCaption(ghost);
+  return example ? COPY.exampleBadge : null;
 }
 
 /** `failed` and `interrupted` share one alert treatment, distinct from `building`'s neutral one
@@ -101,13 +110,14 @@ function isAlertGhost(ghost: AppTileProps['ghost']): boolean {
   return ghost === 'failed' || ghost === 'interrupted';
 }
 
-export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, ghost, busy, pill }: Readonly<AppTileProps>) {
+export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, ghost, busy, pill, example }: Readonly<AppTileProps>) {
   const mono = monogram(name);
   const bg = tileColor(name, manifest);
   const isDone = size === 'done';
   const alertGhost = ghost != null && isAlertGhost(ghost);
   const ghostTileStyle = ghost ? [styles.tileGhost, alertGhost ? styles.tileGhostAlert : null] : null;
-  const ghostCaptionStyle = alertGhost ? [styles.ghostCaption, styles.ghostCaptionAlert] : styles.ghostCaption;
+  const caption = captionFor(ghost, example);
+  const captionStyle = alertGhost ? [styles.caption, styles.captionAlert] : styles.caption;
 
   /** See `width` above: the done variant ignores it, so these are `null` there and `rootDone`/
    *  `tileDone` remain the only source of that variant's 120x120. */
@@ -164,8 +174,8 @@ export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, g
         {!isDone && pill != null && <TilePill kind={pill.kind} onPress={pill.onPress} />}
       </View>
       {!isDone && <Text style={styles.name} numberOfLines={1}>{name}</Text>}
-      {!isDone && ghost && (
-        <Text style={ghostCaptionStyle} numberOfLines={1}>{ghostStateCaption(ghost)}</Text>
+      {!isDone && caption != null && (
+        <Text style={captionStyle} numberOfLines={1}>{caption}</Text>
       )}
     </Animated.View>
   );
@@ -241,7 +251,8 @@ const styles = StyleSheet.create({
    *  replaced by the reserved status "broken" hue, at the same 1px inset the ordinary tile keeps
    *  (`building` keeps the ordinary white border — the neutral treatment). */
   tileGhostAlert: { borderColor: STATUS_COLORS.broken },
-  ghostCaption: {
+  /** The muted line under the name: a ghost's state, or a seeded example's label. */
+  caption: {
     fontFamily: FONT_FAMILY.sansMedium,
     fontSize: 10.5,
     lineHeight: 13,
@@ -249,5 +260,5 @@ const styles = StyleSheet.create({
     color: SHELL_COLORS.muted,
     marginTop: 1,
   },
-  ghostCaptionAlert: { color: STATUS_COLORS.broken },
+  captionAlert: { color: STATUS_COLORS.broken },
 });

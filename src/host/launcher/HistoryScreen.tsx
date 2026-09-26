@@ -5,9 +5,9 @@
 // `SHELL_PALETTE` colors, `TYPE_SCALE` faces, and every label from `copy.ts`. History is
 // only reachable from the home action sheet, so the app itself is never running while this
 // screen is open — no live-realm interaction to design for. All store access goes through
-// `StoreAccess` (never a raw `VersionStore`); the row model (summary-or-prompt headline, kind
-// grouping, at-most-two actions) lives in `history-logic.ts` so it is Node-testable without
-// rendering this component.
+// `StoreAccess` (never a raw `VersionStore`); the row model (the user's quoted prompt as the
+// headline, Whim's summary for the opened row, kind grouping, at-most-two actions) lives in
+// `history-logic.ts` so it is Node-testable without rendering this component.
 //
 // Tapping a row EXPANDS it (never restores) — restoring and forking are explicit actions inside
 // an expanded row, each behind a confirm sheet whose safe option is the large button (D11).
@@ -425,6 +425,15 @@ function HistoryRowView({
 
         {expanded && (
           <View style={[styles.expandedBody, { borderTopColor: p.cardBorder }]}>
+            {row.result && (
+              <WhimProse
+                text={row.result.text}
+                apps={proseApps}
+                storedPrompt={row.promptText}
+                marks={row.result.marks}
+                style={[TYPE_SCALE.body, { color: p.textMuted }]}
+              />
+            )}
             {row.touched.length > 0 && (
               <>
                 <Text style={[TYPE_SCALE.metaWide, { color: p.textMuted, marginTop: SPACING.sm }]}>
