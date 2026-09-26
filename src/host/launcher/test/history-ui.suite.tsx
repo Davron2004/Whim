@@ -10,8 +10,12 @@ import HomeScreen from '../HomeScreen';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { StoreAccess, storeIdOf } from '../store-access';
 import { createMemoryStore, MapKVBackend } from '../../version-store';
+import ComposeStep from '../ComposeStep';
+import DoneStep from '../DoneStep';
+import WhimProse from '../../ui/whim-prose/WhimProse';
 import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
-import { waitFor } from './rendered-launcher';
+import { buildIt, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
+import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
 type Tree = TestRenderer.ReactTestRenderer;
 const envelope = (text: string) => JSON.stringify({ v: 2, text });
@@ -104,6 +108,41 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       await waitFor(() => textOf(tree.root).includes(COPY.historyCopyToast), 'the copy to finish');
       h.eq(forks, [middle.id], 'one copy, from that row’s version');
     });
+  });
+
+  await h.test('history screen: after a build and an edit made through the app, each version keeps its own words and summary', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    const summary = (text: string, kind: 'Start' | 'Added') => ({ text, kind, touched: [], marks: [] });
+    const home = (tree: Tree) => tree.root.findByType(HomeScreen);
+    const tracker = (tree: Tree): InstalledApp => home(tree).props.apps.find((a: InstalledApp) => a.name === 'Water Tracker');
+    const realNow = Date.now;
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
+      await startBuild(tree, 'A water tracker');
+      streams[0].push({ ...resultEvent('Water Tracker'), summary: summary('Counts the glasses you drink', 'Start') });
+      streams[0].end();
+      await waitFor(() => tree.root.findAllByType(DoneStep).length === 1, 'the first version');
+      await press(button(tree, COPY.doneBackToApps));
+      // The edit comes a minute later, as it would on a phone: a version's time is its commit's,
+      // to the second, and two versions stamped in the same second have no order between them.
+      Date.now = () => realNow() + 60_000;
+      await TestRenderer.act(async () => home(tree).props.onPromptAgain(tracker(tree)));
+      await TestRenderer.act(async () => tree.root.findByType(ComposeStep).props.onChangeText('Let me set my own daily goal'));
+      await tap(() => tree.root.findByType(ComposeStep).props.onContinue());
+      await waitFor(() => planLoaded(tree), 'the edit’s plan');
+      await buildIt(tree);
+      await waitFor(() => streams.length === 2, 'the edit’s generation');
+      streams[1].push({ ...resultEvent('Water Tracker'), summary: summary('You can now set your own daily water goal', 'Added') });
+      streams[1].end();
+      await waitFor(() => tree.root.findAllByType(DoneStep).length === 1, 'the second version');
+      await press(button(tree, COPY.doneBackToApps));
+      await TestRenderer.act(async () => home(tree).props.onHistory(tracker(tree)));
+      await waitFor(() => tree.root.findAllByType(WhimProse).length === 2, 'both versions on the timeline');
+      const rows = tree.root.findAllByType(WhimProse).map((n) => [n.props.storedPrompt, n.props.text]);
+      h.eq(rows, [
+        ['Let me set my own daily goal', 'You can now set your own daily water goal'],
+        ['A water tracker', 'Counts the glasses you drink'],
+      ], 'newest first, each version with the words that made it and its own summary: the edit never rewrites v1');
+    }).finally(() => { Date.now = realNow; });
   });
 
   await h.test('history screen: Home’s long-press sheet opens History for that app', async () => {
