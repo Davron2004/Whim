@@ -1,10 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // HistoryScreen — the `4a` timeline (shell-redesign-v2 chain-E; version-history spec).
 // ─────────────────────────────────────────────────────────────────────────────
-// A full-screen sibling of SettingsScreen: its own hardware-back binding returning to Home,
-// `SHELL_PALETTE` colors, `TYPE_SCALE` faces, and every label from `copy.ts`. History is
-// only reachable from the home action sheet, so the app itself is never running while this
-// screen is open — no live-realm interaction to design for. All store access goes through
+// A full-screen sibling of SettingsScreen: its own hardware-back binding returning to where it
+// was opened from, `SHELL_PALETTE` colors, `TYPE_SCALE` faces, and every label from `copy.ts`.
+// History opens from Home's action sheet or the running app's orb, and replaces either screen,
+// so the app itself is never running while this screen is open — no live-realm interaction to
+// design for. All store access goes through
 // `StoreAccess` (never a raw `VersionStore`); the row model (the user's quoted prompt as the
 // headline, Whim's summary for the opened row, kind grouping, at-most-two actions) lives in
 // `history-logic.ts` so it is Node-testable without rendering this component.
@@ -61,7 +62,7 @@ import WhimProse from '../ui/whim-prose/WhimProse';
 export interface HistoryScreenProps {
   app: InstalledApp;
   access: StoreAccess;
-  /** Returns to the home screen — supplied by `LauncherRoot` (same callback Home refreshes on). */
+  /** Leaves History, for where it was opened from: the app it was opened over, or Home. */
   onBack: () => void;
   /**
    * Opens the compose step scoped to `app` — the current version's one action, "Change it from
@@ -669,7 +670,8 @@ const styles = StyleSheet.create({
   versionLabel: { marginLeft: 'auto' },
   originLine: { marginTop: 4 },
   headline: { marginTop: 4 },
-  installLabel: { marginTop: 4, fontStyle: 'italic' },
+  // Upright: Instrument Sans ships no italic face, and a synthesized one is the system font's.
+  installLabel: { marginTop: 4 },
   currentMarker: { marginTop: 8, marginLeft: 26 },
   kindBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
   expandedBody: { marginTop: SPACING.sm, paddingTop: SPACING.sm, borderTopWidth: StyleSheet.hairlineWidth },

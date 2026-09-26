@@ -156,7 +156,9 @@ type Screen =
   | { kind: 'app'; app: InstalledApp; record: AppRecord; source: string; engineAppId: string }
   | { kind: 'dev' }
   | { kind: 'settings' }
-  | { kind: 'history'; app: InstalledApp }
+  // `from`: where History was opened — Home's sheet, or the orb over the running app — and so
+  // where leaving it returns.
+  | { kind: 'history'; app: InstalledApp; from: 'home' | 'app' }
   // An app link's id matched neither an installed app nor a pending build (design D15; spec
   // app-links "A link to an app that isn't on this phone shows a friendly screen").
   | { kind: 'link-missing' }
@@ -912,8 +914,15 @@ function LauncherShell({
       }
     });
 
-  const onHistory = (app: InstalledApp) => {
-    setScreen({ kind: 'history', app });
+  const onHistory = (app: InstalledApp, from: 'home' | 'app') => {
+    setScreen({ kind: 'history', app, from });
+  };
+
+  /** Leaving History: back into the app it was opened over, reopened at whatever version is now
+   *  current (a restore there may have moved it), or Home. */
+  const leaveHistory = (app: InstalledApp, from: 'home' | 'app') => {
+    if (from === 'app') onOpen(index.get(app.id) ?? app);
+    else goHome();
   };
 
   const onDelete = (app: InstalledApp) =>
@@ -2034,7 +2043,7 @@ function LauncherShell({
           engineAppId={screen.engineAppId}
           theme={DEFAULT_THEME}
           onExit={goHome}
-          onVersions={() => onHistory(screen.app)}
+          onVersions={() => onHistory(screen.app, 'app')}
           onChangeIt={() => openWithConsent({ kind: 'compose', editing: screen.app })}
           installedApp={screen.app}
           access={access}
@@ -2096,7 +2105,7 @@ function LauncherShell({
           <HistoryScreen
             app={screen.app}
             access={access}
-            onBack={goHome}
+            onBack={() => leaveHistory(screen.app, screen.from)}
             onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
             onReport={() => setReportTarget(screen.app)}
           />
@@ -2231,7 +2240,7 @@ function LauncherShell({
           onFork={onFork}
           onDelete={onDelete}
           appBusy={appBusy}
-          onHistory={onHistory}
+          onHistory={(app) => onHistory(app, 'home')}
           onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
           onCreate={() => openWithConsent({ kind: 'compose' })}
           onSettings={() => setScreen({ kind: 'settings' })}

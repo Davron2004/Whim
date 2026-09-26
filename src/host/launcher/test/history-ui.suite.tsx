@@ -1,7 +1,7 @@
 /** The rendered History screen over a real version store: the first load is a loading state, not
  *  an empty list; a row quotes the user's words and opens to Whim's summary; a row expands without
  *  restoring; Go back and Start a copy act on that row's own version, once each, however often the
- *  confirm is tapped. And Home's sheet reaches it. */
+ *  confirm is tapped. Home's sheet and a running app's orb reach it, and leaving returns there. */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
@@ -13,9 +13,10 @@ import { StoreAccess, storeIdOf } from '../store-access';
 import { createMemoryStore, MapKVBackend } from '../../version-store';
 import ComposeStep from '../ComposeStep';
 import DoneStep from '../DoneStep';
+import MiniAppView from '../MiniAppView';
 import WhimProse from '../../ui/whim-prose/WhimProse';
 import { SHELL_COLORS } from '../../../sdk/theme';
-import { StyleSheet } from './native-host';
+import { hardwareBack, StyleSheet } from './native-host';
 import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
 import { buildIt, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
@@ -56,6 +57,9 @@ const hasRow = (tree: Tree, text: string) => tree.root.findAll((n) => n.type ===
 /** The words a rendered prose line attributes to the user (its `yours` spans). */
 const yoursIn = (prose: TestRenderer.ReactTestInstance) =>
   prose.findAll((n) => n.type === 'Text' && StyleSheet.flatten(n.props.style).color === SHELL_COLORS.yours).map(textOf);
+
+/** The system back gesture, delivered as Android delivers it. */
+const systemBack = () => TestRenderer.act(async () => { hardwareBack(); });
 
 export async function runHistoryUiTests(h: Harness): Promise<void> {
   await h.test('history screen: the first load shows a loading state, never an empty list, until the versions arrive', async () => {
@@ -153,6 +157,37 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       h.ok(textOf(row(tree, 'Let me set my own daily goal')).includes(EDIT_SUMMARY), 'opening the edit’s row shows what Whim did for it');
       h.ok(!textOf(tree.root).includes(FIRST_SUMMARY), 'and only for it: the other row stays closed');
     }).finally(() => { Date.now = realNow; });
+  });
+
+  await h.test('history screen: opened from a running app’s orb, Back and system back return to that app; opened from Home, to Home', async () => {
+    const never = () => new Promise<Response>(() => {});
+    await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+      const home = () => tree.root.findByType(HomeScreen);
+      const showing = (type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+      await waitFor(() => showing(HomeScreen) && home().props.apps.length > 0, 'the example apps');
+      const app: InstalledApp = home().props.apps[0];
+      const leaves: [string, () => Promise<void>][] = [
+        ['Back', () => press(button(tree, COPY.backLabel))],
+        ['system back', systemBack],
+      ];
+      for (const [name, leave] of leaves) {
+        await tap(() => home().props.onOpen(app));
+        await waitFor(() => showing(MiniAppView), `${app.name} to open`);
+        await press(button(tree, COPY.orbMenuOpenLabel));
+        await press(button(tree, COPY.orbActionVersions));
+        await waitFor(() => showing(HistoryScreen), 'its history');
+        await leave();
+        await waitFor(() => showing(MiniAppView) || showing(HomeScreen), `${name} to leave history`);
+        h.ok(showing(MiniAppView), `${name} from the history opened over the app returns to the app, not Home`);
+        h.eq(tree.root.findByType(MiniAppView).props.installedApp.id, app.id, `${name}: the same app`);
+        await TestRenderer.act(async () => tree.root.findByType(MiniAppView).props.onExit());
+      }
+      for (const [name, leave] of leaves) {
+        await TestRenderer.act(async () => home().props.onHistory(app));
+        await leave();
+        h.ok(showing(HomeScreen), `${name} from the history opened from Home returns Home`);
+      }
+    });
   });
 
   await h.test('history screen: Home’s long-press sheet opens History for that app', async () => {
