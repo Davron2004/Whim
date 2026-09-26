@@ -22,6 +22,7 @@ import type { InstalledApp } from '../app-index';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { PROTOCOL_LEVEL } from '../wire-headers';
 import { stubFutureFrame } from '../../../../server/src/stub-markers';
+import { contentPolicyRefusal, serverBusyRefusal, type ServiceRefusal } from '../../../../server/src/admission/refusals';
 import { button, press, textOf } from './react-screen';
 import { buildIt, composeAndContinue, hasInstalled, json, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
@@ -35,6 +36,12 @@ const clarify = (tree: Tree) => tree.root.findByType(ClarifyStep);
 const ghosts = (tree: Tree): PendingBuildRecord[] => home(tree).props.pending;
 const records = (kv: KVBackend) => new PendingBuildStore(kv).list().map((record) => [record.state, record.failure?.reason]);
 const generateSignal = (sent: readonly SentRequest[]) => sent.find((r) => r.path === '/v1/generate')?.signal;
+const occurrences = (text: string, part: string) => text.split(part).length - 1;
+/** The failure screen's two ways of suggesting the user reword the request, as far as they show. */
+const rephraseAdvice = (tree: Tree) => [COPY.failureRowSayItDifferently, COPY.failureRephrase].filter((line) => textOf(tree.root).includes(line));
+/** A refusal as the server's own builder makes it and its route answers it. */
+const refused = (refusal: ServiceRefusal): Response =>
+  new Response(JSON.stringify(refusal.body), { status: refusal.status, headers: { 'Content-Type': 'application/json', ...refusal.headers } });
 
 const STAGE = { type: 'stage', stage: 'plan', status: 'start' };
 
@@ -224,6 +231,102 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       h.eq(tree.root.findByType(FailureScreen).props.reason, notice, 'the notice is the reason, as plain text');
       h.eq(records(kv), [['failed', notice]], 'the pending record resolves as failed');
       h.eq(new AppIndex(kv).list(), [], 'and nothing is installed');
+      streams[0].end();
+    });
+  });
+
+  await h.test('fallback: a fail fallback mid-build shows its notice once and offers no rephrasing, live and reopened from its ghost', async () => {
+    const streams: Stream[] = [];
+    const notice = stubFutureFrame('fail').compat?.notice ?? '';
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
+      await startBuild(tree, 'A tip splitter');
+      streams[0].push(STAGE);
+      streams[0].push(stubFutureFrame('fail'));
+      await waitFor(() => on(tree, FailureScreen), 'the failure screen');
+      h.ok(notice.length > 0, 'the stub sends a notice');
+      h.eq(occurrences(textOf(tree.root), notice), 1, 'the notice reads once');
+      h.eq(rephraseAdvice(tree), [], 'and nothing suggests rephrasing');
+      await press(button(tree, COPY.failureBack));
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+      h.ok(on(tree, FailureScreen), 'its ghost reopens the failure');
+      h.eq(occurrences(textOf(tree.root), notice), 1, 'with the notice once');
+      h.eq(rephraseAdvice(tree), [], 'and still no rephrasing advice');
+      streams[0].end();
+    });
+  });
+
+  await h.test('failure: a build the model couldn’t finish still advises rephrasing, and states its reason once', async () => {
+    const streams: Stream[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
+      await startBuild(tree, 'A tip splitter');
+      streams[0].push(STAGE);
+      streams[0].push({ type: 'failure', reason: 'The app did not build.', attempts: 0, diagnostics: [] });
+      streams[0].end();
+      await waitFor(() => on(tree, FailureScreen), 'the failure screen');
+      h.eq(rephraseAdvice(tree), [COPY.failureRowSayItDifferently, COPY.failureRephrase], 'describing it differently is advised');
+      h.eq(occurrences(textOf(tree.root), 'The app did not build.'), 1, 'and the reason reads once');
+    });
+  });
+
+  for (const [name, refusal, advised] of [['capacity', serverBusyRefusal(), false], ['content policy', contentPolicyRefusal(), true]] as const) {
+    await h.test(`refusal: a ${name} refusal on a Retry ${advised ? 'keeps' : 'drops'} the rephrase advice, and its reopened ghost agrees`, async () => {
+      await withLauncher({
+        prepare: (kv) => {
+          const pending = new PendingBuildStore(kv);
+          pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+          pending.setFailed('failed', { reason: 'The app did not build.' });
+        },
+        server: () => refused(refusal),
+      }, async ({ tree, kv }) => {
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get('failed')));
+        h.eq(rephraseAdvice(tree), [COPY.failureRowSayItDifferently], 'a failed generation advises rephrasing');
+        await press(button(tree, COPY.screenErrorRetry));
+        await waitFor(() => tree.root.findAllByType(FailureScreen)[0]?.props.notice != null, 'the refused Retry');
+        h.eq(occurrences(textOf(tree.root), refusal.body.hint), 1, 'the refusal reads once');
+        h.eq(rephraseAdvice(tree).length > 0, advised, advised ? 'a refusal about the words keeps the advice' : 'a busy server gets no rephrasing advice');
+        await press(button(tree, COPY.failureBack));
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get('failed')));
+        h.eq(rephraseAdvice(tree).length > 0, advised, 'and its ghost reopens the same way');
+      });
+    });
+  }
+
+  await h.test('fallback: an update fallback’s ghost reopens to the update screen with its notice, never the failure screen', async () => {
+    const streams: Stream[] = [];
+    const notice = stubFutureFrame('update').compat?.notice ?? '';
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
+      await startBuild(tree, 'A tip splitter');
+      streams[0].push(STAGE);
+      streams[0].push(stubFutureFrame('update'));
+      await waitFor(() => on(tree, UpdateRequiredScreen), 'the update screen');
+      await press(button(tree, COPY.updateNotNow));
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+      h.ok(on(tree, UpdateRequiredScreen) && !on(tree, FailureScreen), 'the ghost reopens the update screen');
+      h.ok(notice.length > 0 && textOf(tree.root).includes(notice), 'showing the notice');
+      h.ok(!textOf(tree.root).includes(COPY.updateBody), 'in place of the standard body, as it did live');
+      await press(button(tree, COPY.updateNotNow));
+      h.eq(ghosts(tree).map((g) => g.state), ['failed'], 'and Not now leaves the ghost where it was');
+      streams[0].end();
+    });
+  });
+
+  await h.test('fallback: once this build is past the level an update fallback ended on, its ghost reopens to the failure screen with Retry', async () => {
+    const streams: Stream[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+      await startBuild(tree, 'A tip splitter');
+      streams[0].push(STAGE);
+      streams[0].push(stubFutureFrame('update'));
+      await waitFor(() => on(tree, UpdateRequiredScreen), 'the update screen');
+      await press(button(tree, COPY.updateNotNow));
+      // The record as this build wrote it, read by a build one level on: the update has happened.
+      const [written] = new PendingBuildStore(kv).list();
+      const remedy = written.failure?.remedy;
+      h.eq(remedy, { kind: 'update', protocolLevel: PROTOCOL_LEVEL }, 'the record keeps the level the fallback ended on');
+      kv.set(`pending:${written.id}`, JSON.stringify({ ...written, failure: { ...written.failure, remedy: { kind: 'update', protocolLevel: PROTOCOL_LEVEL - 1 } } }));
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get(written.id)));
+      h.ok(on(tree, FailureScreen) && !on(tree, UpdateRequiredScreen), 'the ghost reopens the failure screen');
+      h.eq(tree.root.findByType(FailureScreen).props.retryable, true, 'with Retry');
+      h.eq(rephraseAdvice(tree), [], 'and no rephrasing advice');
       streams[0].end();
     });
   });

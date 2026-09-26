@@ -29,7 +29,7 @@ import type { AppManifest, AppRecord } from '../bridge';
 import type { SchemaArtifact } from '../storage-engine';
 import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
-import type { PendingBuildFailure, PendingBuildRecord, PendingBuildStore } from './pending-builds';
+import type { PendingBuildFailure, PendingBuildRecord, PendingBuildStore, PendingFailureRemedy } from './pending-builds';
 import type { BuildScreen, RunSignals } from './prompt-flow';
 import type { RunJournalStore, RunTerminalCounts } from './run-journal';
 import { accumulateRunAggregates, ghostTileColorFor, withRestart, withTurnStart, workingTitleFromPrompt } from './prompt-flow';
@@ -280,10 +280,18 @@ const HINT_SEPARATOR = '\n';
 /** The failure payload persisted on the record: the same plain-English `reason` the screen shows
  *  plus its HINT-ONLY rows — never a `Diagnostic`'s `kind`/`symbol`/`message`, since the record is
  *  read straight back into that same screen. No hints at all writes no field, so "none" and
- *  "absent" stay the same state they are on the wire. */
-export function pendingFailure(reason: string, diagnostics: readonly { hint: string }[]): PendingBuildFailure {
+ *  "absent" stay the same state they are on the wire; no `remedy` (rewording may help) likewise. */
+export function pendingFailure(
+  reason: string,
+  diagnostics: readonly { hint: string }[],
+  remedy?: PendingFailureRemedy,
+): PendingBuildFailure {
   const hints = diagnostics.map((d) => d.hint).filter((hint) => hint.length > 0);
-  return { reason, ...(hints.length > 0 ? { diagnostics: hints.join(HINT_SEPARATOR) } : {}) };
+  return {
+    reason,
+    ...(hints.length > 0 ? { diagnostics: hints.join(HINT_SEPARATOR) } : {}),
+    ...(remedy ? { remedy } : {}),
+  };
 }
 
 /** The failure screen's hint rows rebuilt from a persisted payload — the inverse of
@@ -305,8 +313,25 @@ export function failPendingBuild(
   id: string,
   reason: string,
   diagnostics: readonly { hint: string }[],
+  remedy?: PendingFailureRemedy,
 ): void {
-  pending.setFailed(id, pendingFailure(reason, diagnostics));
+  pending.setFailed(id, pendingFailure(reason, diagnostics, remedy));
+}
+
+/** What reopening a `failed`/`interrupted` record shows. A record an `update` fallback ended opens
+ *  the update screen with its notice while this build is still at or below the protocol level it
+ *  ended on; the notice is the record's reason unless that is the phone's own update line, which
+ *  stands in for a fallback that sent none (the live screen then showed its standard body). Every
+ *  other record, and that one once the build is past its level, opens the failure screen. */
+export type ReopenedRecord = { readonly kind: 'update'; readonly notice?: string } | { readonly kind: 'failure' };
+
+export function reopenedRecord(rec: PendingBuildRecord, protocolLevel: number): ReopenedRecord {
+  const remedy = rec.failure?.remedy;
+  if (remedy?.kind === 'update' && protocolLevel <= remedy.protocolLevel) {
+    const reason = rec.failure?.reason;
+    return { kind: 'update', ...(reason && reason !== COPY.updateRequiredLine ? { notice: reason } : {}) };
+  }
+  return { kind: 'failure' };
 }
 
 /**
@@ -328,7 +353,8 @@ export function refusedGenerateOutcome(isRetry: boolean, detached: boolean): Ref
  * The refusal settlement itself, for the outcome `refusedGenerateOutcome` decided: `'drop'`
  * deletes the record and its journal exactly as a cancel does (no generation took place); `'settle'`
  * writes the journal's terminal entry and persists the record `failed` with the refusal's hint as
- * its reason, the same shape `failPendingBuild` gives any other stream failure. Pure over
+ * its reason (and `remedy`, when rewording can't get past the refusal), the same shape
+ * `failPendingBuild` gives any other stream failure. Pure over
  * `pending`/`journal` — the caller (`LauncherRoot.tsx#handleGenerateRefusal`) still owns releasing
  * its own `liveRef` and refreshing the grid, neither of which this module can see.
  */
@@ -339,6 +365,7 @@ export function settleRefusedGenerate(
   outcome: RefusedGenerateOutcome,
   hint: string,
   counts: RunTerminalCounts,
+  remedy?: PendingFailureRemedy,
 ): void {
   if (outcome === 'drop') {
     dropPendingBuild(pending, id);
@@ -346,7 +373,7 @@ export function settleRefusedGenerate(
     return;
   }
   journal.appendTerminal(id, { failure: { reason: hint, diagnostics: [] }, ...counts });
-  failPendingBuild(pending, id, hint, []);
+  failPendingBuild(pending, id, hint, [], remedy);
 }
 
 /** The ONE deletion path a user can trigger: cancelling an in-flight attempt and dismissing a

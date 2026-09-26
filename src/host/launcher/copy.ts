@@ -883,16 +883,18 @@ export interface FailureRow {
 /**
  * The terminal failure state's rows (design `3b` RP[5]): the reassurance that the last working
  * version survived — OMITTED when the app has none, because there is nothing honest to reassure
- * about — then one row per diagnostic hint, then the advisory line.
+ * about — then one row per diagnostic hint, then the advisory line, OMITTED when rewording can't
+ * get past the failure (`rephraseHelps: false`: a refusal, a message this build can't use).
  */
 export function failureChecklistRows(input: {
   readonly diagnostics: readonly { hint: string }[];
   readonly hasWorkingVersion: boolean;
+  readonly rephraseHelps?: boolean;
 }): readonly FailureRow[] {
   const rows: FailureRow[] = [];
   if (input.hasWorkingVersion) rows.push({ kind: 'done', text: COPY.failureRowLastVersionWorks });
   for (const diagnostic of input.diagnostics) rows.push({ kind: 'bad', text: diagnostic.hint });
-  rows.push({ kind: 'wait', text: COPY.failureRowSayItDifferently });
+  if (input.rephraseHelps !== false) rows.push({ kind: 'wait', text: COPY.failureRowSayItDifferently });
   return rows;
 }
 
