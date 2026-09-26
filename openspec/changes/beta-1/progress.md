@@ -112,3 +112,12 @@
   - L5: the report-sheet notice, and a busy-slot policy refusal writes no ledger row.
 - R11. Every finding goes into one fix chain (`dispatch/fix-1.md`), lows included, because most touch the reader that can never be updated and each is small. Then gate-full again and a scoped reviewer re-check of the fix diff before 10.1 is ticked.
 - 21:08 fix-1 dispatched: BASE `4132bdfe57c2962f28cd88c35952141b0bcf2d02`, worktree `.claude/worktrees/beta-1-fix1`, block `dispatch/fix-1.md`, model Opus.
+- fix-1 (Opus) report: STATUS complete, GATE PASS (`server:test` 4180/0, `launcher:test` 13011/0, `server:e2e` 56/0, `launcher:deliver-verify` green), commits `0b8db185`..`7e49bb55`, one per finding.
+  - M1: `ResponseBodyReader.cancel()` in a `try/finally` in `streamEvents`, which aborts on a fallback, a parse or read failure, or a consumer that stops iterating (fetch and XHR). The red-check fails 10 named checks, and a weaker "always cancel" variant fails one.
+  - M2: the device defaults a missing `select`/`other`; `docs/deploy.md` gets the no-rollback-below-beta-1 line; design.md is corrected.
+  - L1: `queue_timeout` removed (and design D8's mention).
+  - L2: `readProtocolLevel(registry)` wraps `c.json`, so every error body is adapted, and `forClient` routes every event. The stub's `[[future:*]]` frames are now registered one level up in `STUB_WIRE_REGISTRY` (class A).
+  - L3: the vacuous checks replaced; L4: the alternative is asked for as a noun phrase; L5a: the report-sheet notice.
+  - L5b: my premise was wrong (a free-slot policy refusal DOES spend its unit, pinned by "a policy refusal is not refunded"). The busy path now writes a row and refunds it, so the unit asymmetry remains by D8.
+  Open: a busy-slot `policy_unavailable` writes no row (noted on #120).
+- fix-1 merged (integrity OK). Worktree and branch removed.

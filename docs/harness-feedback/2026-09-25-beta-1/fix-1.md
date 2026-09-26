@@ -1,0 +1,13 @@
+# fix-1 (the reviewer's findings M1, M2, L1–L5), implementer, Opus
+
+- **What:** L5b's parenthetical said the free-slot refusal doesn't count against the limit. **Mechanism:** the dispatcher's note ("the daily unit IS the ledger row") sent me to `usage-store.ts#admit` and `routes-generate.suite.ts` ("a policy refusal is not refunded"), which shows the opposite. **Verdict:** CAUGHT-REAL-MISTAKE (in the finding text). **Cost:** low, about 3 reads. **Evidence:** routes-generate.suite.ts, `testPolicyOutcomes`, the "not refunded" assertion.
+- **What:** L2 ("route every event through `eventForLevel`") didn't notice that the stub pipeline emits an unregistered, already-shrunk `stub-future` frame. **Mechanism:** doing exactly what L2 says would throw in stub mode; I found it by grepping, and the server-core stub-marker checks would have failed. **Verdict:** DRAWBACK: the finding underestimated how much it touches. **Cost:** moderate (stub registry, `AppOptions.wireRegistry`, handoff edit). **Evidence:** `server/src/pipeline.ts:154` (old), and 5 `[[future:*]]` checks failing in the L2 red-check.
+- **What:** typechecking the launcher test files with a scratch tsconfig. **Mechanism:** gate #79 doesn't cover them, and old errors make the scratch output noisy: generation-client.suite.ts lines 63/92/155/647, rendered-launcher.tsx:93, native-host.tsx:26, prompt-flow-ui.suite.tsx:31/200. I had to filter out my own errors by line number. **Verdict:** ENV. **Cost:** low but error-prone. **Evidence:** scratch tsc output.
+- **What:** the 120-line cap on handoffs, applied to fix-time amendments. **Mechanism:** amending wire-protocol.md for L1/M2/L2 went 1 line over, so I condensed an old interim-behaviour line. **Verdict:** NEUTRAL. **Cost:** low. **Evidence:** wire-protocol.md item 5.
+
+What helped: the file:line pointers in fix-1.md. The server-built frame helpers already in wire-future-frames (`adapted`, `sseFromServer`) and `FakeXMLHttpRequest.abortCount` made the both-transport abort tests cheap. `rendered-launcher`'s `sent[].signal` gave a 2-line user-level repro of M1 before the fix. `launcher:test` runs in seconds, so full-suite red-checks were cheap.
+
+Proposals:
+1. Fix the old launcher-test type errors and put `src/host/launcher/test` under a gate typecheck (#79).
+2. When a reviewer finding changes a shared seam ("route every X through Y"), make it list the other producers of X, e.g. by grepping for `compat:` literals and `as unknown as GenerationEvent` casts, so the chain block covers the knock-on effects.
+3. Let fix chains record handoff amendments in a short appendix outside the 120-line body.
