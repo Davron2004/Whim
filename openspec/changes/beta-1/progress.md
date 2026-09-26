@@ -102,3 +102,12 @@
   Red-check caught its own vacuous test (a length-ignoring MMKV parser passed), which was then fixed. Not yet run on a device: the seed flow (10.5 is its first run; `--manual-seed` fallback for iOS). A Release iOS build from beta-1 on ignores the server-address override (matters for the next upgrade check). The exact 10.5 command sequence is in `docs/release/mobile.md` → "Upgrade check". Devices in use by others: emulator-5554 (Pixel_10_Pro_XL) and 4 booted simulators incl. Whim-Upgrade-15Plus. Section 10 creates its own.
 - chain-9 merged (integrity OK); tasks 9.1–9.3 ticked (37/45; section 10 remains). Regate: FAST GATE PASSED. Worktree and branch removed. All nine chains merged.
 - 20:50 10.1 gate-full on the staging tip `957e28c5`: FULL GATE PASSED (openspec 48/48). Reviewer dispatched on `f847b1cd..integration/beta-1` (Opus).
+- Reviewer (Opus) verdict: SHIP WITH FIXES. It ran `server:test` 4174/0, `launcher:test` 12979/0 (also under `fr_CA.UTF-8`), the fast gate, and `tsc` with contract.suite.ts in the program (the IDE error is IntelliJ-only, not real under TS 5.9.3). File lists match the reports; the only protected file touched is `build/build.mjs` (the orchestrator's fix). Report honesty: minor (handoff line on `queue_timeout`, task 1.1's "and server", a vacuous 3.5 check, 9.1 not device-run, all disclosed). Findings:
+  - M1: a fallback or `stream_parse` mid-build never aborts the request, so the server holds the slot and the retry gets `device_busy`;
+  - M2: a server rollback below beta-1 breaks beta-1 apps (required `select`/`other`, old `answer`), and design.md wrongly calls it harmless;
+  - L1: `queue_timeout` is dead;
+  - L2: only `restart` goes through `eventForLevel`;
+  - L3: two vacuous checks in `wire-v2.suite.ts`;
+  - L4: "Build Make me a … instead";
+  - L5: the report-sheet notice, and a busy-slot policy refusal writes no ledger row.
+- R11. Every finding goes into one fix chain (`dispatch/fix-1.md`), lows included, because most touch the reader that can never be updated and each is small. Then gate-full again and a scoped reviewer re-check of the fix diff before 10.1 is ticked.
