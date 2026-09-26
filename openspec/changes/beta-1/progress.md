@@ -121,3 +121,4 @@
   - L5b: my premise was wrong (a free-slot policy refusal DOES spend its unit, pinned by "a policy refusal is not refunded"). The busy path now writes a row and refunds it, so the unit asymmetry remains by D8.
   Open: a busy-slot `policy_unavailable` writes no row (noted on #120).
 - fix-1 merged (integrity OK). Worktree and branch removed.
+- 21:55 gate-full after fix-1: FULL GATE PASSED. Scoped reviewer re-check dispatched on the fix-1 merge (Sonnet).
