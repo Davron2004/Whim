@@ -18,7 +18,7 @@ import MiniAppView from '../MiniAppView';
 import WhimProse from '../../ui/whim-prose/WhimProse';
 import { SHELL_COLORS } from '../../../sdk/theme';
 import { finishAnimations, hardwareBack, StyleSheet } from './native-host';
-import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen } from './react-screen';
 import { buildIt, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
@@ -58,6 +58,9 @@ const hasRow = (tree: Tree, text: string) => tree.root.findAll((n) => n.type ===
 /** The words a rendered prose line attributes to the user (its `yours` spans). */
 const yoursIn = (prose: TestRenderer.ReactTestInstance) =>
   prose.findAll((n) => n.type === 'Text' && StyleSheet.flatten(n.props.style).color === SHELL_COLORS.yours).map(textOf);
+
+/** How many sheets are open. */
+const sheetsOpen = (tree: Tree) => tree.root.findAll((n) => String(n.type) === 'Modal').length;
 
 /** The system back gesture, delivered as Android delivers it. */
 const systemBack = () => TestRenderer.act(async () => { hardwareBack(); });
@@ -120,6 +123,34 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       await waitFor(() => textOf(tree.root).includes(COPY.historyCopyToast), 'the copy to finish');
       h.eq(forks, [middle.id], 'one copy, from that row’s version');
     });
+  });
+
+  await h.test('history screen: to VoiceOver each confirm is Cancel and the action as labelled buttons, and activating the action restores or copies rather than cancelling', async () => {
+    const asks = [
+      { action: COPY.historyGoBackToThis, confirm: COPY.historyRestoreConfirm, ran: 'restore' },
+      { action: COPY.historyStartCopyHere, confirm: COPY.historyCopyConfirm, ran: 'copy' },
+    ];
+    for (const ask of asks) {
+      const { access, app, middle } = await threeVersions();
+      const ran: string[] = [];
+      const [rollback, fork] = [access.rollback.bind(access), access.fork.bind(access)];
+      access.rollback = async (entry, id) => { ran.push(`restore ${id}`); return rollback(entry, id); };
+      access.fork = async (entry, id, opts) => { ran.push(`copy ${id}`); return fork(entry, id, opts); };
+      await withHistory(access, app, async (tree) => {
+        await waitFor(() => hasRow(tree, 'add a chime'), 'the versions to load');
+        await press(row(tree, 'add a chime'));
+        await press(button(tree, ask.action));
+        const sheet = tree.root.find((n) => String(n.type) === 'Modal');
+        for (const label of [COPY.cancel, ask.confirm]) {
+          const control = sheet.find((n) => ['Pressable', 'TouchableOpacity'].includes(String(n.type)) && textOf(n) === label);
+          h.ok(screenReaderElement(control) === control, `${ask.ran}: "${label}" is an element of its own, not read as part of one around it`);
+          h.eq([control.props.accessibilityRole, control.props.accessibilityLabel], ['button', label], `${ask.ran}: "${label}" is announced as a button, in its own words`);
+        }
+        await activate(button(tree, ask.confirm));
+        await waitFor(() => sheetsOpen(tree) === 0, `${ask.ran}: the sheet to close`);
+        h.eq(ran, [`${ask.ran} ${middle.id}`], `${ask.ran}: activating "${ask.confirm}" acts on that row’s version, and is not Cancel`);
+      });
+    }
   });
 
   await h.test('history screen: after a build and an edit made through the app, each row quotes the words that made it under “You said”, and Whim’s summary opens with the row', async () => {

@@ -32,6 +32,29 @@ export async function press(node: TestRenderer.ReactTestInstance): Promise<void>
   await TestRenderer.act(async () => { node.props.onPress(); });
 }
 
+/** React Native's touchables, text and inputs are accessibility elements unless `accessible={false}`
+ *  (`Pressable` passes `accessible !== false`); a plain View is one only with `accessible`. */
+const ACCESSIBLE_BY_DEFAULT = new Set(['TouchableOpacity', 'Pressable', 'Text', 'TextInput', 'Switch']);
+
+const isAccessibilityElement = (node: TestRenderer.ReactTestInstance) =>
+  typeof node.type === 'string' && node.props.accessible !== false && (node.props.accessible === true || ACCESSIBLE_BY_DEFAULT.has(node.type));
+
+/** The element VoiceOver reads `node` as: the outermost accessibility element around it, itself
+ *  included. iOS reads an accessibility element and everything inside it as one element, with one
+ *  joined label, and activating it runs that element's own press. */
+export function screenReaderElement(node: TestRenderer.ReactTestInstance): TestRenderer.ReactTestInstance | null {
+  let element: TestRenderer.ReactTestInstance | null = null;
+  for (let up: TestRenderer.ReactTestInstance | null = node; up; up = up.parent) if (isAccessibilityElement(up)) element = up;
+  return element;
+}
+
+/** A VoiceOver double-tap on `control`: it presses the element the control is read as. */
+export async function activate(control: TestRenderer.ReactTestInstance): Promise<void> {
+  const element = screenReaderElement(control);
+  if (!element) throw new Error('A screen reader cannot reach this control');
+  await press(element);
+}
+
 /** Advance only a named timeout, leaving promise settlement to React.act. */
 export function captureTimeouts() {
   const originalSet = globalThis.setTimeout;
