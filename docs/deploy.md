@@ -402,7 +402,7 @@ Two committed profiles tie the VM's machine type to the server's concurrency lim
 |---|---|---|
 | Machine type | `e2-standard-2` | `e2-standard-8` |
 | Server memory / shm | 6g / 1gb | 16g / 3gb |
-| Concurrent generations | 3 (default) | 15 |
+| Concurrent generations | 5 (default) | 15 |
 | Synthetic-run contexts | 2 (default) | 6 |
 | Concurrent unary calls | 16 (default) | 32 |
 
