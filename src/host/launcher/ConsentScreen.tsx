@@ -120,7 +120,7 @@ export default function ConsentScreen({
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView style={[styles.scroll, { borderBottomColor: p.cardBorder }]} contentContainerStyle={styles.content}>
         <LegalLanguageSwitch language={language} onChange={onLanguageChange} />
         {notice !== undefined && (
           <View style={[styles.notice, whatsNew !== undefined && styles.noticeWithWhatsNew]}>
@@ -197,6 +197,8 @@ export default function ConsentScreen({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  // The disclosure scrolls under the pinned actions; a hairline marks where it is cut off.
+  scroll: { borderBottomWidth: StyleSheet.hairlineWidth },
   content: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl, paddingBottom: SPACING.xl },
   notice: { marginBottom: SPACING.sm },
   // The what's-new line is a full paragraph, so the pair keeps a section's worth of air above the
