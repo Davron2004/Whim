@@ -5,7 +5,7 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { COPY, LEGAL_COPY, clarifyBuildInstead } from '../copy';
-import { primaryActionLabel, type FlowNotice } from '../prompt-flow';
+import { composeStep, planStep, primaryActionLabel, updatePlanRow, withPlan, type FlowNotice } from '../prompt-flow';
 import ComposeStep from '../ComposeStep';
 import ClarifyStep from '../ClarifyStep';
 import PlanStep from '../PlanStep';
@@ -18,7 +18,7 @@ import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
 import { reportClientOptions } from '../transport-shared';
 import { testAppInfo } from './client-fixtures';
-import { SPACING } from '../../../sdk/theme';
+import { SPACING, TYPE_SCALE } from '../../../sdk/theme';
 import { StyleSheet } from './native-host';
 import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
 
@@ -74,6 +74,14 @@ function fillAndEdge(node: Node): [unknown, unknown] {
 
 /** Lets a sheet's asynchronous first load land. */
 const loaded = () => TestRenderer.act(async () => { await new Promise((resolve) => setImmediate(resolve)); });
+
+/** The face of the innermost text holding `words`. */
+function faceOf(tree: Tree, words: string): unknown {
+  const holds = (n: Node) => n.type === 'Text' && textOf(n).includes(words);
+  const innermost = tree.root.findAll((n) => holds(n) && n.findAll((c) => c !== n && holds(c)).length === 0);
+  if (innermost.length !== 1) throw new Error(`expected one text holding “${words}”, got ${innermost.length}`);
+  return (StyleSheet.flatten(innermost[0].props.style) as { fontFamily?: string }).fontFamily;
+}
 
 /** The card `ServiceNotice` draws. */
 const noticeCard = (tree: Tree): Node => tree.root.findByType(ServiceNotice).find((n) => typeof n.type === 'string');
@@ -174,6 +182,22 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
       const picked = button(tree, COPY.reportReasonBroken);
       h.eq([...fillAndEdge(picked), labelColour(picked)], answer, 'the picked reason looks like a picked answer');
       h.ok(fillAndEdge(button(tree, COPY.reportReasonOther))[0] !== answer[0], 'and an unpicked reason does not');
+    });
+  });
+
+  await h.test('plan: a row the user rewrote shows their words in the body face, a number they typed included, while the model’s rows keep Whim Syntax', async () => {
+    const noop = () => {};
+    const planned = withPlan(planStep(composeStep(undefined, 'A checklist for the day')), {
+      rewrittenPrompt: 'A checklist for the day',
+      plan: [
+        { label: 'Progress', text: 'A bar that fills as tasks are ticked off.' },
+        { label: 'Timer', text: 'Counts down from 90s.' },
+      ],
+    });
+    const edited = updatePlanRow(planned, 0, 'A bar that fills as tasks are ticked off. It turns green at 100.');
+    await rendered(<PlanStep rows={edited.rows} loading={false} editing={false} onChangeRow={noop} onBuild={noop} onBack={noop} />, async (tree) => {
+      h.eq(faceOf(tree, '100'), TYPE_SCALE.body.fontFamily, 'the 100 the user typed is in the body face, not set as a measure');
+      h.ok(faceOf(tree, '90s') !== TYPE_SCALE.body.fontFamily, 'the model’s own row still sets its measure apart');
     });
   });
 
