@@ -150,14 +150,14 @@ async function testStubAppRuns(session: SynthRunSession): Promise<void> {
     check('setup: the stub pipeline delivered an app with its source', false, String(app));
     return;
   }
-  const report = await within(createRunCandidate(session)(app.source), 120_000);
-  if (report === TIMED_OUT) {
+  const run = await within(createRunCandidate(session)(app.source), 120_000);
+  if (run === TIMED_OUT) {
     check('the synthetic run of the stub app finished', false);
     return;
   }
-  check('the stub app runs contained', report.contained === true, containedDetail(report.contained, report));
-  eq('it mounts and survives the sweep with no diagnostic', report.diagnostics, []);
-  eq('its screen is declared and visited', report.screens, { declared: ['Today'], visited: ['Today'] });
+  check('the stub app runs contained', run.contained === true, containedDetail(run.contained, run));
+  eq('it mounts and survives the sweep with no diagnostic', run.diagnostics, []);
+  eq('its screen is declared and visited', run.screens, { declared: ['Today'], visited: ['Today'] });
 }
 
 // ── A real escape-attempting candidate stays contained (non-vacuity for the stub test above) ──
