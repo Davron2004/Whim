@@ -37,6 +37,7 @@
   - Version history: design 4a (the owner-approved reference) quotes the user's prompt under "You said" and puts the summary in the expanded row, and it wins over the live spec's summary-headline wording (spec delta added in beta-1). 4a's teal/black accents stay; they are the design.
 - R17. Oldest-reader tolerance, finished. `compat.notice: null` reads as no notice, in device and contract `WireEnvelope` in lockstep (`fallback`/`min` null stay unreadable → fail). The device shape-checks `result.summary` and the rewrite `plan` and DROPS a malformed one (log, no crash). → fix-7b.
 - R18. Caps decision needs the p95 the rule names. At 5/2 the only CPU number is the peak (80 % of the machine at 5 devices), and the raw samples are deleted on exit (`run.sh` EXIT trap). fix-9 makes the report give a normalized p95 (÷ the VM's `nproc`). After it is deployed, rerun 5 devices at cap 5: keep 5 if normalized p95 < 70 %, else test 4 (then 3).
+- R19. The standard caps stay **3 generations / 2 synthetic runs** (fix-3b reverted). Across three runs at cap 5 the normalized CPU p95 hit 68 % (5 devices, run 3), 80 % peak (5 devices, run 2) and 98 % (7 devices, run 3), so the 70 % rule fails more often than not. Cap 3 peaked at 42 %/35 %. With 2 s sampling (~16 samples) the p95 is close to the maximum. Cap 4 is unmeasured → #134. The runs are recorded in `docs/deploy.md` (capacity section). Production keeps cap 5 until the post-merge redeploy from `main` applies 3 (no users).
 
 ## Ledger
 - 13:09 chain-1 dispatched: BASE `9a7a69d9a628be58e2877c0bde41de11d1892eaa`, worktree `.claude/worktrees/beta-1-1`, branch `chain/beta-1-1`, @whim symlinks pre-created, model Opus.
@@ -228,3 +229,7 @@
   - BLOCKED: the mini-app error screen (no way to make a broken app on the stub). Skipped: TalkBack (adb gestures bypass it; the a11y tree lists the 4 labelled actions).
   - New/remaining defects → fix-11 (selection contrast, the notice-card gap, primary button consistency, history back-nav/font/back control, "is ready" tile layout, the Settings helper line, a monospace plan number, orb taps during the animation, the stock "Make a new ID" dialog).
   - Filed #131 (a queued build's screen shows another build's progress; only with several device IDs), #132 (placeholder ordering), #133 (no tile during "Change it"); #127 comment (hue collisions).
+- **10.2 load test, run 3** (deployed `29af5041` with fix-9's normalized CPU report; smoke green incl. the 426):
+  - cap 5, 5 devices: 5/5 results, cpu `{cores 2, samples 16, p50 0.08 %, p95 68.07 %}`, total p95 43.8 s.
+  - cap 5, 7 devices: 7/7 results, queued 2, cpu p95 97.61 % (18 samples), total p95 67.8 s.
+  → R19: default back to 3 (commit "keep the standard generation cap at 3"), regate FAST GATE PASSED. **10.2 ticked.**
