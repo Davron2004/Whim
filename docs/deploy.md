@@ -448,11 +448,20 @@ device's first event); `queued`, the devices that waited in line, and `waitMs`, 
 p50/p95/max; `terminals` (`result`/`failure`/`none` counts); `refusals` by `ApiError` code
 (`server_busy` is expected only once `devices` exceeds `cap` + `queue-max`); `leakProbe.ok` (two
 rounds of `cap` fresh devices that must each get a slot at once, proving no slot leaked and the line
-is empty); and `peak.peakCpuPercent`/`peakMemoryPercent` from the VM's `docker stats` sampler. It
-exits non-zero on any `failure` terminal (a device that waited past `WHIM_QUEUE_MAX_WAIT_MS` is one),
-an unexpected refusal, a number of waiting devices other than the ones past the cap that fit in the
+is empty); `peak.peakCpuPercent`/`peakMemoryPercent`, raw/per-core (`200` means both vCPUs of an
+e2-standard-2), from the VM's `docker stats` sampler; and `cpu: { cores, samples, p50Percent,
+p95Percent, peakPercent }`, the same CPU samples normalized to the whole machine (per-core % ÷
+`cores`, the VM's `nproc`, read once over the same ssh as the sampler — never hardcoded). It exits
+non-zero on any `failure` terminal (a device that waited past `WHIM_QUEUE_MAX_WAIT_MS` is one), an
+unexpected refusal, a number of waiting devices other than the ones past the cap that fit in the
 line, or a failed leak probe. Each device gets 300 seconds before the driver gives up on it: a run's
 own 120 plus the default longest wait in line.
+
+The cap rule (`specs/server-admission-control`) is: pick the highest generation/synthetic-run cap
+pair a load test on the standard machine type sustains with the report's normalized `cpu.p95Percent`
+under 70 %, no `failure` terminal, and no unexpected refusal — never the exit code alone, since a run
+can exit 0 with the verdict silent on capacity. `peak`/`cpu.peakPercent` are informative only (they
+explain a spike the p95 already accounts for); they are never part of the pass/fail decision.
 
 ## Rolling back and rotating the key
 

@@ -38,8 +38,15 @@ try {
   console.error('==> leak probe');
   const leak = await drive.leakProbe(args.target, args.cap);
   const peak = drive.readPeakStats(args.statsPath);
-  const report = drive.buildReport(args.devices, args.cap, args.queueMax, outcomes, leak, peak);
+  const cpu = drive.readCpuReport(args.statsPath);
+  const report = drive.buildReport(args.devices, args.cap, args.queueMax, outcomes, leak, peak, cpu);
   const verdict = drive.verdict(report);
+  if (cpu) {
+    console.error(
+      `==> cpu: ${cpu.cores} core(s), ${cpu.samples} sample(s), normalized p50 ${cpu.p50Percent.toFixed(1)}% ` +
+        `p95 ${cpu.p95Percent.toFixed(1)}% peak ${cpu.peakPercent.toFixed(1)}% (raw peak ${peak?.peakCpuPercent.toFixed(1) ?? 'n/a'}%)`,
+    );
+  }
   const output = JSON.stringify({ ...report, verdict }, null, 2);
   console.log(output);
   if (args.jsonPath) fs.writeFileSync(args.jsonPath, output);

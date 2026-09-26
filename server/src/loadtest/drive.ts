@@ -272,8 +272,9 @@ export interface StatsSample {
 }
 
 /** Parses `run.sh`'s sampler CSV: one `cpuPercent,memoryPercent` pair per line (both docker
- *  `stats --format` percentages, e.g. `12.34,56.78` — no byte-unit conversion in bash), blank
- *  lines and unparseable rows skipped. */
+ *  `stats --format` percentages, e.g. `12.34,56.78` — no byte-unit conversion in bash; `200` means
+ *  both vCPUs of an e2-standard-2, since these are per-core percentages), blank lines and
+ *  unparseable rows (including the leading `cores,<N>` line `parseCoresLine` reads) skipped. */
 export function parseStatsCsv(text: string): StatsSample[] {
   const samples: StatsSample[] = [];
   for (const line of text.split('\n')) {
@@ -285,6 +286,21 @@ export function parseStatsCsv(text: string): StatsSample[] {
     if (Number.isFinite(cpuPercent) && Number.isFinite(memoryPercent)) samples.push({ cpuPercent, memoryPercent });
   }
   return samples;
+}
+
+const CORES_LINE_PREFIX = 'cores,';
+
+/** Parses the one `cores,<N>` line `run.sh`'s sampler writes before its CSV samples (`nproc`, read
+ *  once over the same ssh session as the sampler loop — never hardcoded) — `undefined` when no such
+ *  line is present or its value isn't a positive integer. */
+export function parseCoresLine(text: string): number | undefined {
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(CORES_LINE_PREFIX)) continue;
+    const cores = Number(trimmed.slice(CORES_LINE_PREFIX.length));
+    if (Number.isInteger(cores) && cores > 0) return cores;
+  }
+  return undefined;
 }
 
 export interface PeakStats {
@@ -303,6 +319,31 @@ export function peakStats(samples: readonly StatsSample[]): PeakStats | undefine
   );
 }
 
+/** CPU usage normalized to the whole machine (per-core `docker stats` % ÷ `cores`), so `100` means
+ *  every vCPU saturated — the shape the beta-1 cap rule (`specs/server-admission-control`, "p95 CPU
+ *  under 70 %") is stated in, unlike `PeakStats.peakCpuPercent`, which stays raw/per-core. */
+export interface CpuReport {
+  cores: number;
+  samples: number;
+  p50Percent: number;
+  p95Percent: number;
+  peakPercent: number;
+}
+
+/** `undefined` when there are no samples or `cores` isn't a positive integer — a missing/unreadable
+ *  `nproc` result means no normalized figure can be reported, not a divide-by-a-guessed-constant. */
+export function cpuReport(samples: readonly StatsSample[], cores: number): CpuReport | undefined {
+  if (samples.length === 0 || !Number.isInteger(cores) || cores <= 0) return undefined;
+  const normalized = samples.map((s) => s.cpuPercent / cores);
+  return {
+    cores,
+    samples: samples.length,
+    p50Percent: percentile(normalized, 50),
+    p95Percent: percentile(normalized, 95),
+    peakPercent: percentile(normalized, 100),
+  };
+}
+
 export interface LoadTestReport {
   devices: number;
   cap: number;
@@ -316,7 +357,10 @@ export interface LoadTestReport {
   terminals: { result: number; failure: number; none: number };
   refusals: Record<string, number>;
   leakProbe: { ok: boolean; detail?: string };
+  /** Raw/per-core (continuity with earlier reports) — `cpu` below is the normalized figure the cap
+   *  rule is stated in. */
   peak?: PeakStats;
+  cpu?: CpuReport;
 }
 
 export function buildReport(
@@ -326,6 +370,7 @@ export function buildReport(
   outcomes: readonly DeviceOutcome[],
   leak: LeakProbeOutcome,
   peak?: PeakStats,
+  cpu?: CpuReport,
 ): LoadTestReport {
   const firstEvents = outcomes.map((o) => o.timeToFirstEventMs).filter((v): v is number => v !== undefined);
   const totals = outcomes.map((o) => o.totalMs);
@@ -352,6 +397,7 @@ export function buildReport(
     refusals,
     leakProbe: { ok: leak.ok, detail: leak.detail },
     peak,
+    cpu,
   };
 }
 
@@ -448,4 +494,15 @@ export function parseArgs(argv: readonly string[]): CliArgs {
 export function readPeakStats(statsPath: string | undefined): PeakStats | undefined {
   if (!statsPath) return undefined;
   return peakStats(parseStatsCsv(fs.readFileSync(statsPath, 'utf8')));
+}
+
+/** Reads `--stats`, when given, into the normalized CPU report — `undefined` when there's no file,
+ *  no samples, or the sampler's `cores,<N>` line is missing/unparseable (never a hardcoded core
+ *  count). Kept a pure-argument function alongside `readPeakStats` for the same reason. */
+export function readCpuReport(statsPath: string | undefined): CpuReport | undefined {
+  if (!statsPath) return undefined;
+  const text = fs.readFileSync(statsPath, 'utf8');
+  const cores = parseCoresLine(text);
+  if (cores === undefined) return undefined;
+  return cpuReport(parseStatsCsv(text), cores);
 }
