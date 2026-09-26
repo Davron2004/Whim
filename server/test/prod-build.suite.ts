@@ -413,6 +413,12 @@ async function testBootRefusals(fixture: Fixture): Promise<void> {
     { NODE_ENV: 'production', WHIM_PIPELINE: 'stub', WHIM_DATA_DIR: fixture.dataDir('prod-stub') },
     'WHIM_PIPELINE',
   );
+  await expectBootRefusal(
+    'the stub delay without the stub selector',
+    fixture.tree,
+    { WHIM_STUB_DELAY_MS: '1500', WHIM_DATA_DIR: fixture.dataDir('stub-delay-real') },
+    'WHIM_STUB_DELAY_MS',
+  );
 
   // specs/device-records "Too long a report retention refuses to start": the process exits naming
   // the variable and the maximum the current disclosure manifest publishes for reports.
@@ -456,6 +462,38 @@ async function testBootRefusals(fixture: Fixture): Promise<void> {
     },
     'browser_launch',
   );
+}
+
+/** `WHIM_STUB_DELAY_MS` reaches the stub pipeline the composed server runs (beta-1 fix-3): with a
+ *  1.5 s wait before each event, a build's first event takes at least that long. RED while the
+ *  server kept its fixed 200 ms. */
+async function testStubDelayReachesThePipeline(fixture: Fixture): Promise<void> {
+  section('spec: WHIM_STUB_DELAY_MS sets the stub pipeline\'s wait before each event');
+
+  const delayMs = 1500;
+  const port = await freePort();
+  const proc = new TreeProcess(fixture.tree, {
+    WHIM_PIPELINE: 'stub',
+    WHIM_STUB_DELAY_MS: String(delayMs),
+    WHIM_DATA_DIR: fixture.dataDir('stub-delay'),
+    WHIM_SERVER_HOST: '127.0.0.1',
+    WHIM_SERVER_PORT: String(port),
+  });
+  let stream: ReturnType<typeof rawRequest> | undefined;
+  try {
+    check('setup: the tree listened', await proc.waitForLog('whim-server listening', BOOT_MS), proc.text().slice(-2000));
+    const payload = JSON.stringify({ prompt: 'a tip splitter' });
+    const sentAt = Date.now();
+    const opened = rawRequest(port, generateHead(DEVICE_A, payload), payload);
+    stream = opened;
+    const arrived = await waitFor(() => opened.text().includes('event: '), delayMs + 5000);
+    const elapsed = Date.now() - sentAt;
+    check('the generation stream delivered its first event', arrived, opened.text().slice(-500));
+    check(`no sooner than the ${delayMs} ms wait`, elapsed >= delayMs, `${elapsed} ms`);
+  } finally {
+    stream?.socket.destroy();
+    await proc.dispose();
+  }
 }
 
 /** Starts the stub tree and opens one generation stream that has delivered its first event. */
@@ -587,6 +625,7 @@ export async function runProdBuildTests(): Promise<void> {
   try {
     await testStubTreeServes(fixture);
     await testBootRefusals(fixture);
+    await testStubDelayReachesThePipeline(fixture);
     await testDrainCompletesStream(fixture);
     await testDrainDeadlineAborts(fixture);
     await testSecondSignalSkipsWait(fixture);

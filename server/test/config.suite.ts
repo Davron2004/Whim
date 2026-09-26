@@ -115,6 +115,26 @@ function runGenerationLineTests(defaults: ServerConfig): void {
   check('WHIM_QUEUE_MAX_WAIT_MS=0 fails startup naming the variable', throwsNaming(() => loadServerConfig(baseEnv({ WHIM_QUEUE_MAX_WAIT_MS: '0' })), 'WHIM_QUEUE_MAX_WAIT_MS'));
 }
 
+function runStubDelayTests(): void {
+  section('WHIM_STUB_DELAY_MS (beta-1 fix-3): the stub pipeline\'s wait before each event, stub-only');
+
+  const stub = (overrides: NodeJS.ProcessEnv = {}): ServerConfig => loadServerConfig(baseEnv({ WHIM_PIPELINE: 'stub', ...overrides }));
+  eq('unset: the stub waits 200 ms before each event', stub().stubDelayMs, 200);
+  eq('under the stub, a value reaches ServerConfig.stubDelayMs', stub({ WHIM_STUB_DELAY_MS: '5000' }).stubDelayMs, 5000);
+  eq('0 means no wait at all', stub({ WHIM_STUB_DELAY_MS: '0' }).stubDelayMs, 0);
+  for (const [what, raw] of [['a negative value', '-1'], ['a fraction', '2.5'], ['an empty value', ''], ['a word', 'slow']] as const) {
+    check(`${what} (${JSON.stringify(raw)}) fails startup naming the variable`, throwsNaming(() => stub({ WHIM_STUB_DELAY_MS: raw }), 'WHIM_STUB_DELAY_MS'));
+  }
+  check(
+    'set without the stub selector, it fails startup naming the variable',
+    throwsNaming(() => loadServerConfig(baseEnv({ WHIM_STUB_DELAY_MS: '5000' })), 'WHIM_STUB_DELAY_MS'),
+  );
+  check(
+    'a WHIM_PIPELINE other than stub counts as no stub',
+    throwsNaming(() => loadServerConfig(baseEnv({ WHIM_PIPELINE: 'real', WHIM_STUB_DELAY_MS: '5000' })), 'WHIM_STUB_DELAY_MS'),
+  );
+}
+
 export function runConfigTests(): void {
   section('Admission limits are environment-configurable with public-beta defaults');
 
@@ -275,6 +295,14 @@ export function runConfigTests(): void {
     throwsNaming(() => loadServerConfig(prodEnv({ WHIM_PIPELINE: 'stub' })), 'WHIM_PIPELINE'),
   );
   check(
+    'the stub delay cannot reach production on its own',
+    throwsNaming(() => loadServerConfig(prodEnv({ WHIM_STUB_DELAY_MS: '5000' })), 'WHIM_STUB_DELAY_MS'),
+  );
+  check(
+    '... nor beside the stub selector',
+    throwsNaming(() => loadServerConfig(prodEnv({ WHIM_PIPELINE: 'stub', WHIM_STUB_DELAY_MS: '5000' })), 'WHIM_PIPELINE'),
+  );
+  check(
     'a missing OpenRouter key is named at boot',
     throwsNaming(
       () => loadServerConfig(prodEnv({ OPENROUTER_API_KEY: undefined })),
@@ -346,6 +374,7 @@ export function runConfigTests(): void {
 
   runProviderQuantizationTests();
   runGenerationLineTests(defaults);
+  runStubDelayTests();
 
   section('modelRosterFromEnv (design D2) — the roster of per-role models and reasoning settings');
 

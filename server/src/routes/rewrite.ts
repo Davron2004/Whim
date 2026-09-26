@@ -20,7 +20,7 @@
  */
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { RewriteRequest, RewriteResponse, type ApiError, type PlanRow, type Usage } from '@whim/contract';
+import { RewriteRequest, RewriteResponse, type ApiError, type Clarification, type PlanRow, type Usage } from '@whim/contract';
 import { isCreditExhaustedError, type ModelClient, type ModelMessage, type ModelRoster } from '../generation/model';
 import type { FailureReason, UsageStore, RequestOutcome } from '../usage-store';
 import type { ServerConfig } from '../config';
@@ -48,6 +48,33 @@ const MODEL_FAILURE: ApiError = {
   error: 'model_failure',
   hint: 'The rewrite model call failed. Try again in a moment.',
 };
+
+/** The stub's canned plan (`WHIM_PIPELINE=stub`): fixed and prompt-independent like the stub
+ *  clarify's questions, and a description of the app the stub pipeline builds
+ *  (`pipeline.ts#STUB_APP_SOURCE`). Five rows, so editing the fourth and later rows of a plan can
+ *  be tried without spending tokens. */
+const STUB_PLAN: readonly PlanRow[] = [
+  { label: 'What it is', text: 'A checklist for the day: tick things off as you go.' },
+  { label: 'Main screen', text: 'Sixteen starter tasks, each with a tick box, and how many are done.' },
+  { label: 'Adding', text: 'Type a task and tap Add to put it at the end of the list.' },
+  { label: 'Progress', text: 'A bar that fills as tasks are ticked off.' },
+  { label: 'Clearing', text: 'A button at the bottom clears every ticked task.' },
+];
+
+/** A clarify answer as a plan row, as the plan turn honours it: the question, then every picked
+ *  choice and the user's own words, or that Whim decides when they asked it to. */
+function stubAnswerRow(c: Clarification): PlanRow {
+  if (c.decide === true) return { label: c.question, text: 'Whim decides this one.' };
+  const own = c.other === undefined ? [] : [`in your words: “${c.other}”`];
+  return { label: c.question, text: [...c.choices, ...own].join(', ') };
+}
+
+/** What the stub rewrite answers: the canned rows, then one row per clarify answer, with the rows
+ *  as the rewritten prompt (the `label: text` lines an edited plan is built from on the device). */
+function stubRewriteResponse(request: RewriteRequest): RewriteResponse {
+  const plan = [...STUB_PLAN, ...(request.clarifications ?? []).map(stubAnswerRow)];
+  return { rewrittenPrompt: plan.map((row) => `${row.label}: ${row.text}`).join('\n'), plan };
+}
 
 /**
  * The model is asked for `{ rewrittenPrompt, plan: [{label, text}] }` (design D10). A model that
@@ -212,10 +239,10 @@ async function runRewriteAttempt(
 }
 
 export interface RewriteRouteOptions {
-  /** True when the server was started under the stub selector (`WHIM_PIPELINE=stub`): a prompt
-   *  carrying a marker the stub pipeline reads (`[[fail]]`, `[[future:*]]`) is passed through raw,
-   *  with no model call — mirroring `/v1/clarify`'s stub short-circuit — so the marker survives
-   *  into `/v1/generate`. */
+  /** True when the server was started under the stub selector (`WHIM_PIPELINE=stub`): the route
+   *  makes no model call, mirroring `/v1/clarify`'s stub short-circuit. A prompt carrying a marker
+   *  the stub pipeline reads (`[[fail]]`, `[[future:*]]`) is passed through raw, so the marker
+   *  survives into `/v1/generate`; any other prompt gets the canned plan (`stubRewriteResponse`). */
   stub?: boolean;
   config: ServerConfig;
   clock: () => number;
@@ -317,9 +344,10 @@ export function makeRewriteRoute(
       };
 
       try {
-        if (options.stub && carriesStubPipelineMarker(parsed.data.prompt)) {
+        if (options.stub) {
           await finish('ok', [], new Set());
-          return c.json({ rewrittenPrompt: parsed.data.prompt } satisfies RewriteResponse, 200);
+          const stubbed = carriesStubPipelineMarker(parsed.data.prompt) ? { rewrittenPrompt: parsed.data.prompt } : stubRewriteResponse(parsed.data);
+          return c.json(stubbed satisfies RewriteResponse, 200);
         }
 
         if (!model || !roster) {

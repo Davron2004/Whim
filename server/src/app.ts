@@ -83,10 +83,11 @@ export interface AppOptions {
    *  and no ungated product surface is created. */
   devLogSink?: DevLogSinkOptions;
   /** The stub selector (`WHIM_PIPELINE=stub`), forwarded from `main.ts`. It makes `/v1/clarify`
-   *  deterministic and model-free, and makes `/v1/rewrite` pass a prompt carrying a stub pipeline
-   *  marker (`[[fail]]`, `[[future:*]]`) through raw (no model call) so the marker survives into
-   *  `/v1/generate`, where `STUB_WIRE_REGISTRY` adapts the stub's `[[future:*]]` event for the app;
-   *  the pipeline's own stub is selected by passing `createStubPipeline()` above, not by this flag. */
+   *  and `/v1/rewrite` deterministic and model-free: rewrite answers a canned plan, and passes a
+   *  prompt carrying a stub pipeline marker (`[[fail]]`, `[[future:*]]`) through raw so the marker
+   *  survives into `/v1/generate`, where `STUB_WIRE_REGISTRY` adapts the stub's `[[future:*]]` event
+   *  for the app; the pipeline's own stub is selected by passing `createStubPipeline()` above, not
+   *  by this flag. */
   stub?: boolean;
   /** The registry every `/v1` error body and generation event is adapted against for the client's
    *  protocol level (beta-1 D16 layer 2). Defaults to `STUB_WIRE_REGISTRY` under `stub`, else
