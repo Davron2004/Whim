@@ -211,3 +211,8 @@
   - 5 devices at cap 5: 5/5 results, no refusals, TTFE p95 1153 ms, total p50 35529 / p95 42874 ms (cap 3 run: 41928), leak probe ok, **peak CPU 160.72 % per core = 80 % of the machine**.
   - 7 devices at cap 5: 7/7 results, **queued 2, wait p50 32981 / p95 33078 ms**, total p95 67265 ms, peak 122.11 % (61 %).
   - Latency didn't move from cap 3 to cap 5, but the rule is p95 < 70 % and only the peak is reported. `run.sh stop` restored production (rc 0). → R18, fix-9.
+- Scoped review (Opus) of `eed78401..35704928`: **MERGE-READY**, all low. It ran server:test 4282/0 and launcher:test 13433/0 (it skipped gate.sh because app builds owned the tree; gate-full had passed on the same code). Report honesty matches.
+  - The oldest-reader wire holds (null can't make an unknown message known; `min`/`fallback` null fail; a future frame can't install; M1/M2 intact). Stub paths are unreachable in production. fix-6 is correct. The fix-4 table, cleanup and debounce are right. Security holds. No vacuous tests.
+  - Lows: L1 `compat: null` lockstep blind; L2 R17 rules only in progress/handoff; L3 Water Counter few-shot teaches eslint-disables + host names; L4 Android 11+ keyboard height change → stale padding (#128); L5 the sheet relies on activity keyboard events on every Android, only API 37 seen (#129); L6 listener removal unpinned; L7 stale comments; L8 two probes per pause (#130).
+  - Outside the range: `loader.js:119` keeps a mini-app field visible only on viewport shrink, and Android 15+ doesn't resize → sent to the running Android re-verification as item 9.
+  - fix-10 dispatched for L1, L2, L3, L6, L7.
