@@ -304,7 +304,8 @@ async function testClarifyLimit(): Promise<void> {
   eq('a usable limit logs no dropped limit', [...alone.droppedLimits, ...both.droppedLimits, ...noQuestionsKey.droppedLimits], []);
 
   // The prompt asks for `"limit": null` whenever a mini-app can build the request (beta-1 fix-6).
-  // That is no limit, and the raw body carries no `limit` key: the device's reader refuses `null`.
+  // That is no limit, and the raw body carries no `limit` key: the contract's `limit` is optional,
+  // never null (a device reads a `null` there as absent too, but the server sends none).
   for (const questions of [[question], []]) {
     const read = await clarifyWith({ limit: null, questions });
     eq(`"limit": null beside ${questions.length} question(s) → 200`, read.status, 200);

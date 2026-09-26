@@ -11,9 +11,9 @@ export const COMPAT_NOTICE_MAX_CHARS = 200;  // CompatNotice = z.string().max(20
 export const Compat = z.object({ min: z.number().int().positive(), fallback: CompatFallback, notice: CompatNotice });
 export const WireEnvelope = z.object({                       // reader side: fallback is an OPEN string
   type: z.string().optional(), error: z.string().optional(),
-  compat: z.object({ min: int ≥ 1, fallback: z.string(), notice: CompatNotice }).optional(),
+  compat: z.object({ min: int ≥ 1, fallback: z.string(), notice: CompatNotice }).nullish().transform((c) => c ?? undefined).optional(),
 });
-// Every GenerationEvent arm, ApiError, ClarifyResponse, RewriteResponse and ReportResponse gains `compat?: Compat`.
+// Every GenerationEvent arm, ApiError, ClarifyResponse, RewriteResponse and ReportResponse gains `compat?: Compat`, null read as absent (same nullish transform).
 { type: 'queued'; position: number /* int ≥ 1: generations ahead + 1 */ }   // non-terminal
 { type: 'restart' }                                                        // non-terminal: the current model turn is resent; its tokens since the turn began are void
 export const ClarifyQuestion = z.object({ id, question, options: z.array(z.string()).min(1), select: z.enum(['one', 'many']), other: z.boolean() });
@@ -95,7 +95,7 @@ export function isKnownErrorCode(code: string): boolean;
 Decode: known && (no compat || compat.min ≤ PROTOCOL_LEVEL) → full guard. Otherwise: no compat → `fail`; unreadable compat (not a record;
 min not a safe int ≥ 1; fallback not a string; notice not a string ≤ 200) → `fail`; fallback outside the set → `fail` (notice kept); empty
 notice = none. Known event types = keys of `generation-client.ts#EVENT_GUARDS` (mapped over `GenerationEvent['type']`).
-- Null (oldest reader): `null` on an optional field = absent, before any guard, so `compat: null` = no compat and `compat.notice: null` = no notice (the contract reads a null notice the same); `null` on a required field, `compat.min`/`compat.fallback` included, still fails (in `compat` → `fail`; in a message → its guard's error).
+- Null (oldest reader): `null` on an optional field = absent, before any guard, so `compat: null` = no compat and `compat.notice: null` = no notice (the contract reads both the same); `null` on a required field, `compat.min`/`compat.fallback` included, still fails (in `compat` → `fail`; in a message → its guard's error).
 - A result's `summary` or a rewrite's `plan` failing its contract shape (`RunSummary`, `PlanRow[]`) is dropped, never the message (warn on `whim:gen`, route + field only, no content): the app installs with no summary; the plan step shows its one `rewrittenPrompt` row.
 
 **Where callers receive it.** `skip` never leaves the client: an SSE frame is dropped; a success body is read with

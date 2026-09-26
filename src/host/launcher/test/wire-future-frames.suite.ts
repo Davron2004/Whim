@@ -194,6 +194,22 @@ function outcomeOf(error: unknown): string {
   return error.kind === 'fallback' ? (error.fallback?.kind ?? 'fallback') : error.kind;
 }
 
+/** The outcome the contract names for a message of a known or unknown type carrying `compat`:
+ *  phase one is the contract's `WireEnvelope`, so a compat it refuses is `fail`; a known type is
+ *  decoded when the compat it reads is absent or its `min` is at most the contract's level;
+ *  otherwise the fallback applies (`fail` for a value outside the frozen set), and no compat at all
+ *  is `fail`. */
+function contractOutcome(compat: unknown, known: boolean): string {
+  const envelope = WireEnvelope.safeParse({ type: known ? TOKEN.type : ETA.type, compat });
+  if (!envelope.success) return 'fail';
+  const read = envelope.data.compat;
+  if (known && (read === undefined || read.min <= CONTRACT_LEVEL)) return 'none';
+  if (read === undefined) return 'fail';
+  const fallback = CompatFallback.safeParse(read.fallback);
+  if (!fallback.success) return 'fail';
+  return fallback.data === 'skip' ? 'none' : fallback.data;
+}
+
 export async function runWireFutureFramesTests(h: Harness): Promise<void> {
   // ── Events a later server sends, as it sends them to this build ──────────────────────────────
 
@@ -269,11 +285,12 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('future frames: this build reads exactly the compat values the contract’s WireEnvelope reads', async () => {
+  await h.test('future frames: this build reads exactly the compat values the contract’s WireEnvelope reads, on known and unknown types', async () => {
     const notice = (length: number): string => 'n'.repeat(length);
     const corpus: readonly unknown[] = [
       { min: 2, fallback: 'skip' },
       { min: 1, fallback: 'skip' },
+      { min: 1, fallback: 'update' },
       { min: 2, fallback: 'skip', notice: '' },
       { min: 2, fallback: 'skip', notice: notice(COMPAT_NOTICE_MAX_CHARS) },
       { min: 2, fallback: 'skip', notice: notice(COMPAT_NOTICE_MAX_CHARS + 1) },
@@ -296,9 +313,10 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
       [],
     ];
     for (const compat of corpus) {
-      const read = WireEnvelope.safeParse({ type: 'eta', compat }).success;
-      const { error } = await drain(sseFromServer([{ type: 'eta', compat }, RESULT]));
-      h.eq(outcomeOf(error) === 'none', read, `compat ${JSON.stringify(compat)}: read by this build exactly when the contract reads it (else fail)`);
+      const known = await drain(sseFromServer([{ ...TOKEN, compat }, RESULT]));
+      h.eq(outcomeOf(known.error), contractOutcome(compat, true), `compat ${JSON.stringify(compat)} on a known type: the outcome the contract names`);
+      const unknown = await drain(sseFromServer([{ ...ETA, compat }, RESULT]));
+      h.eq(outcomeOf(unknown.error), contractOutcome(compat, false), `compat ${JSON.stringify(compat)} on an unknown type: the outcome the contract names`);
     }
   });
 

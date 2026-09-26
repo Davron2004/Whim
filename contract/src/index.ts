@@ -81,16 +81,26 @@ export type Compat = z.infer<typeof Compat>;
  *  else. Unknown fields are tolerated, and `compat.fallback` is read as an open string so a value
  *  outside `CompatFallback` still parses — a client treats it as `fail`. A client decodes the full
  *  schema only when it knows the type or code and `compat.min` (default 1) is at most its level;
- *  otherwise it applies the fallback, and an unknown message with no `compat` means `fail`. */
+ *  otherwise it applies the fallback, and an unknown message with no `compat` means `fail`.
+ *  `compat: null` is no `compat`, as the oldest installed build reads it. */
 export const WireEnvelope = z.object({
   type: z.string().optional(),
   error: z.string().optional(),
-  compat: z.object({ min: CompatMin, fallback: z.string(), notice: CompatNotice }).optional(),
+  compat: z
+    .object({ min: CompatMin, fallback: z.string(), notice: CompatNotice })
+    .nullish()
+    .transform((compat) => compat ?? undefined)
+    .optional(),
 });
 export type WireEnvelope = z.infer<typeof WireEnvelope>;
 
-/** The optional `compat` every SSE event and unary body accepts, spread into each shape. */
-const compatField = { compat: Compat.optional() };
+/** The optional `compat` every SSE event and unary body accepts, spread into each shape, with
+ *  `null` read as no `compat` the way `WireEnvelope` reads it. */
+const compatField = {
+  compat: Compat.nullish()
+    .transform((compat) => compat ?? undefined)
+    .optional(),
+};
 
 /** Integer token counts. ONE shape, used identically by the SSE `usage` event, `/v1/usage`, and
  *  the OpenRouter wrapper's captured usage — imported by reference, never re-declared. */

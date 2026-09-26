@@ -15,11 +15,12 @@ export const KeyboardAvoidingView = host('KeyboardAvoidingView');
 export const InputAccessoryView = host('InputAccessoryView');
 type KeyboardEventName = 'keyboardWillShow' | 'keyboardWillChangeFrame' | 'keyboardWillHide' | 'keyboardDidShow' | 'keyboardDidHide';
 interface KeyboardEvent { endCoordinates: { screenX: number; screenY: number; width: number; height: number }; duration: number; easing: string }
-type KeyboardListener = (event: KeyboardEvent) => void;
+export type KeyboardListener = (event: KeyboardEvent) => void;
 const keyboardListeners = new Map<KeyboardEventName, Set<KeyboardListener>>();
 /** Counts `Keyboard.dismiss` calls, so a test can tell putting the keyboard away from submitting.
  *  `emit` plays a keyboard event to every listener, as the native module would, with the keyboard's
- *  top edge at `screenY` in window coordinates (a hidden keyboard reports the window's bottom). */
+ *  top edge at `screenY` in window coordinates (a hidden keyboard reports the window's bottom).
+ *  `listening` is every listener still subscribed, to any event. */
 export const Keyboard = {
   dismissed: 0,
   visible: false,
@@ -33,6 +34,7 @@ export const Keyboard = {
     listeners.add(listener);
     return { remove: () => listeners.delete(listener) };
   },
+  listening: (): ReadonlySet<KeyboardListener> => new Set([...keyboardListeners.values()].flatMap((listeners) => [...listeners])),
   emit: (event: KeyboardEventName, screenY: number) => {
     Keyboard.visible = !event.endsWith('Hide') && screenY < 844;
     Keyboard.last = { screenX: 0, screenY, width: 390, height: Math.max(0, 844 - screenY) };

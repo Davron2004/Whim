@@ -22,7 +22,7 @@ import { reportClientOptions } from '../transport-shared';
 import { AI_CONSENT_VERSION } from '../release-config';
 import { button, press, textOf, unmountScreen } from './react-screen';
 import { testAppInfo } from './client-fixtures';
-import { Keyboard, Platform, StyleSheet, useSafeAreaInsets } from './native-host';
+import { Keyboard, Platform, StyleSheet, useSafeAreaInsets, type KeyboardListener } from './native-host';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -384,6 +384,26 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
           const oneLineOnIos = device.os === 'ios' && input.props.multiline !== true;
           h.eq(typeof flat(input).lineHeight, oneLineOnIos ? 'undefined' : 'number', `${device.name} ${name}: ${oneLineOnIos ? 'no line height, so iOS keeps its descenders' : 'its type’s line height'}`);
         });
+      }
+    }
+  });
+
+  await h.test('a keyboard frame, a screen’s or a sheet’s, removes every keyboard subscription it added once it unmounts', async () => {
+    for (const device of DEVICES) {
+      const frameHosts: [string, React.ReactElement, () => Promise<void>, boolean][] = [
+        ['compose', compose(), async () => {}, windowStaysPut(device)],
+        ['report sheet', report(), draftLoaded, true],
+      ];
+      for (const [name, element, open, pads] of frameHosts) {
+        const before = Keyboard.listening();
+        let added: KeyboardListener[] = [];
+        await on(device, element, async () => {
+          await open();
+          added = [...Keyboard.listening()].filter((listener) => !before.has(listener));
+        });
+        if (pads) h.ok(added.length > 0, `${device.name} ${name}: setup: the frame listens to the keyboard while it pads`);
+        const after = Keyboard.listening();
+        h.eq(added.filter((listener) => after.has(listener)).length, 0, `${device.name} ${name}: none of the subscriptions it added outlive it`);
       }
     }
   });
