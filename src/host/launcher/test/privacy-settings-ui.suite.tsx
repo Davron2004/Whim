@@ -79,8 +79,8 @@ async function openMakeNewId(tree: Tree) {
   const alerts = Alert.shown.length;
   await press(button(tree, COPY.settingsDeviceIdReset));
   if (Alert.shown.length !== alerts) throw new Error('"Make a new ID" raised a system alert');
-  const sheet = tree.root.find((node) => node.type === 'Modal');
-  const control = (label: string) => sheet.find((node) => node.type === 'TouchableOpacity' && textOf(node) === label);
+  const sheet = tree.root.find((node) => String(node.type) === 'Modal');
+  const control = (label: string) => sheet.find((node) => String(node.type) === 'TouchableOpacity' && textOf(node) === label);
   return { text: textOf(sheet), cancel: control(COPY.cancel), confirm: control(COPY.settingsDeviceIdReset) };
 }
 
@@ -172,7 +172,7 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
       await press(sheet.cancel);
       h.eq(getDeviceId(kv), before, 'the stored ID is unchanged');
       h.eq(shownDeviceId(tree), before, 'and Settings shows the same ID');
-      h.eq(tree.root.findAll((node) => node.type === 'Modal').length, 0, 'and the sheet is gone');
+      h.eq(tree.root.findAll((node) => String(node.type) === 'Modal').length, 0, 'and the sheet is gone');
     });
   });
 

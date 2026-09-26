@@ -44,14 +44,14 @@ const shipped = () => new Set(fs.readdirSync(FONTS_DIR));
 /** A text node's face as drawn: its own style over every enclosing text's, as nested text inherits. */
 function drawnFace(node: Node): Partial<Face> {
   const chain: Node[] = [];
-  for (let at: Node | null = node; at; at = at.parent) if (at.type === 'Text') chain.unshift(at);
+  for (let at: Node | null = node; at; at = at.parent) if (String(at.type) === 'Text') chain.unshift(at);
   return Object.assign({}, ...chain.map((n) => StyleSheet.flatten(n.props.style) ?? {})) as Partial<Face>;
 }
 
 /** Every text node under `root` whose drawn face names an asset family Android doesn't ship. */
 function unshippedFaces(root: Node, files: ReadonlySet<string>): string[] {
   return root
-    .findAll((n) => n.type === 'Text')
+    .findAll((n) => String(n.type) === 'Text')
     .map((n) => ({ text: textOf(n), file: androidFontFile(drawnFace(n)) }))
     .filter(({ file }) => file !== null && !files.has(file))
     .map(({ text, file }) => `“${text}” needs ${file}`);

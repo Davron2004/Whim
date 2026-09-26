@@ -5,7 +5,7 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { COPY, LEGAL_COPY, clarifyBuildInstead } from '../copy';
-import { composeStep, planStep, primaryActionLabel, updatePlanRow, withPlan, type FlowNotice } from '../prompt-flow';
+import { composeStep, planStep, primaryActionLabel, updatePlanRow, withPlan, type FlowNotice, type FlowQuestion } from '../prompt-flow';
 import ComposeStep from '../ComposeStep';
 import ClarifyStep from '../ClarifyStep';
 import PlanStep from '../PlanStep';
@@ -42,7 +42,7 @@ async function rendered(element: React.ReactElement, body: (tree: Tree) => Promi
 }
 
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
-const QUESTION = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'], select: 'one', other: false };
+const QUESTION: FlowQuestion = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'], select: 'one', other: false };
 const ROWS = [{ label: 'Timer', text: 'Counts down' }, { label: 'Alert', text: 'Buzzes at zero' }];
 const BUSY: FlowNotice = { hint: 'This device is already building an app. Try again when it finishes.', tone: 'neutral' };
 
@@ -77,7 +77,7 @@ const loaded = () => TestRenderer.act(async () => { await new Promise((resolve) 
 
 /** The face of the innermost text holding `words`. */
 function faceOf(tree: Tree, words: string): unknown {
-  const holds = (n: Node) => n.type === 'Text' && textOf(n).includes(words);
+  const holds = (n: Node) => String(n.type) === 'Text' && textOf(n).includes(words);
   const innermost = tree.root.findAll((n) => holds(n) && n.findAll((c) => c !== n && holds(c)).length === 0);
   if (innermost.length !== 1) throw new Error(`expected one text holding “${words}”, got ${innermost.length}`);
   return (StyleSheet.flatten(innermost[0].props.style) as { fontFamily?: string }).fontFamily;
@@ -165,7 +165,7 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
 
   await h.test('a report reason is picked the way a clarify answer is: the accent, fill and edge, with its label on it', async () => {
     const noop = () => {};
-    const labelColour = (node: Node) => (StyleSheet.flatten(node.find((n) => n.type === 'Text').props.style) as { color?: string }).color;
+    const labelColour = (node: Node) => (StyleSheet.flatten(node.find((n) => String(n.type) === 'Text').props.style) as { color?: string }).color;
     let answer: unknown[] = [];
     await rendered(
       <ClarifyStep prompt="A tea timer" questions={[QUESTION]} answers={{ alert: { choices: ['Buzz'], other: '', decide: false } }} loading={false} editing={false} onAnswer={noop} onContinue={noop} onBack={noop} />,
