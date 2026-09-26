@@ -34,13 +34,23 @@ export const SHELL_PALETTE: ShellPalette = Object.freeze({
   danger: DEFAULT_THEME.colors.danger,
 });
 
-/** `SHELL_COLORS.ink` at `alpha`, e.g. `inkAlpha(0.58)` -> `'rgba(23,23,26,0.58)'` — derived from
- *  the hex literal rather than a hand-typed rgb triple, so a caller that wants ink at some
- *  translucency (the orb's resting fill) can never drift from `ink` itself. */
-export function inkAlpha(alpha: number): string {
-  const hex = SHELL_COLORS.ink;
+/** A `#rrggbb` colour at `alpha`, as `rgba()`. */
+function withAlpha(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return `rgba(${r},${g},${b},${alpha})`;
 }
+
+/** `SHELL_COLORS.ink` at `alpha`, e.g. `inkAlpha(0.58)` -> `'rgba(23,23,26,0.58)'` — derived from
+ *  the hex literal rather than a hand-typed rgb triple, so a caller that wants ink at some
+ *  translucency (the orb's resting fill) can never drift from `ink` itself. */
+export function inkAlpha(alpha: number): string {
+  return withAlpha(SHELL_COLORS.ink, alpha);
+}
+
+/** Selected text's highlight where the platform paints it in exactly the colour it is given (an
+ *  Android field): the accent at 30%, so the text under it stays readable — the solid accent put
+ *  it at about 2:1. `whim_accent_highlight` in `android/app/src/main/res/values/colors.xml` is the
+ *  same colour, for the text Android selects under the app's theme. */
+export const SELECTION_HIGHLIGHT = withAlpha(SHELL_PALETTE.accent, 0.3);
