@@ -58,9 +58,9 @@
 
 ## 9. Release upgrade check (tooling)
 
-- [ ] 9.1 Maestro seed flow for the previous release: an example with saved data, and a generated app with two versions. It records what was seeded.
-- [ ] 9.2 `scripts/release/upgrade-check.sh --platform android|ios --from <old> --to <new>`: fresh device, install old, seed, install new over it, assert tiles, versions, data, consent state and device id, and exit non-zero on any difference.
-- [ ] 9.3 `docs/release/mobile.md`: the upgrade check is required before any beta build ships, and the doc says where the evidence goes.
+- [x] 9.1 Maestro seed flow for the previous release: an example with saved data, and a generated app with two versions. It records what was seeded.
+- [x] 9.2 `scripts/release/upgrade-check.sh --platform android|ios --from <old> --to <new>`: fresh device, install old, seed, install new over it, assert tiles, versions, data, consent state and device id, and exit non-zero on any difference.
+- [x] 9.3 `docs/release/mobile.md`: the upgrade check is required before any beta build ships, and the doc says where the evidence goes.
 
 ## 10. Acceptance and rollout (orchestrator, attended)
 
