@@ -469,6 +469,14 @@ Roll back with the **current** checkout's `deploy/deploy.sh --tag <sha>`, never 
 older commit and running its `deploy.sh`: an older `deploy/lib.sh` refuses any `deploy.env` line it
 doesn't know (`unknown variable WHIM_MIN_BUILD_IOS`), even an empty one.
 
+**Never `--tag` below the beta-1 server image once beta-1 builds are installed.** A server from
+before beta-1 rejects the answers beta-1 sends with its clarify questions (it requires the old
+`Clarification.answer`), so every rewrite and generation carrying an answer fails with
+`400 invalid_request`. No later app build can change what an installed beta-1 build sends, and no
+setting on the old image can accept it. To undo a bad server release, `--tag` an earlier image that
+is still beta-1 or later (the `commit` its `/healthz` reported when it was live), or roll forward:
+fix on `main` and run `deploy/deploy.sh` without `--tag`.
+
 Rolling back to an image from before the commit report (developer-observability) leaves a server
 whose `/healthz` has no `commit`: the rollback is live, but smoke fails on that check, so
 `deploy.sh` exits 1 without `done`. Confirm the rest of the smoke output passed, then roll forward

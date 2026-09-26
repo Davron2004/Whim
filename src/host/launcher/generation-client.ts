@@ -98,16 +98,30 @@ function isReportResponse(value: unknown): value is ReportResponse {
   return isRecord(value) && isNonEmptyString(value.reportId);
 }
 
-function isClarifyQuestion(value: unknown): value is ClarifyQuestion {
+/** A clarify question as it may arrive: a server from before answer modes (beta-1 D18) sends no
+ *  `select` and no `other`. */
+type WireClarifyQuestion = Omit<ClarifyQuestion, 'select' | 'other'> & Partial<Pick<ClarifyQuestion, 'select' | 'other'>>;
+type WireClarifyResponse = Omit<ClarifyResponse, 'questions'> & { questions: WireClarifyQuestion[] };
+
+/** A missing `select` or `other` is read as the server's own default (tolerant reader, beta-1 D16
+ *  layer 1), so an older server's questions still work; a present value of the wrong kind still
+ *  fails the guard. */
+function isClarifyQuestion(value: unknown): value is WireClarifyQuestion {
   return (
     isRecord(value) &&
     typeof value.id === 'string' &&
     typeof value.question === 'string' &&
     Array.isArray(value.options) &&
     value.options.every((option) => typeof option === 'string') &&
-    (value.select === 'one' || value.select === 'many') &&
-    typeof value.other === 'boolean'
+    (value.select === undefined || value.select === 'one' || value.select === 'many') &&
+    (value.other === undefined || typeof value.other === 'boolean')
   );
+}
+
+/** The question with the server's defaults for an answer mode it didn't send: one pick, no typed
+ *  answer (`server/src/routes/clarify.ts#shapeClarify`). */
+function withAnswerModeDefaults(question: WireClarifyQuestion): ClarifyQuestion {
+  return { ...question, select: question.select ?? 'one', other: question.other ?? false };
 }
 
 function isClarifyLimit(value: unknown): boolean {
@@ -115,7 +129,7 @@ function isClarifyLimit(value: unknown): boolean {
 }
 
 /** A `limit` answers with no questions, so a response carrying both is malformed. */
-function isClarifyResponse(value: unknown): value is ClarifyResponse {
+function isClarifyResponse(value: unknown): value is WireClarifyResponse {
   return (
     isRecord(value) &&
     Array.isArray(value.questions) &&
@@ -259,7 +273,7 @@ export async function clarifyPrompt(
   if (!isClarifyResponse(bodyJson)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected clarify response shape' });
   }
-  return withRequestId(bodyJson, response);
+  return withRequestId({ ...bodyJson, questions: bodyJson.questions.map(withAnswerModeDefaults) }, response);
 }
 
 /** `POST /v1/rewrite` — fast and unary, plain JSON, no stream. `clarifications` carries the

@@ -336,6 +336,18 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('answers: questions from a server that sends no answer modes are one pick each, with no Other field', async () => {
+    const older = ANSWER_QUESTIONS.map(({ id, question, options }) => ({ id, question, options }));
+    await withLauncher({ server: (r) => (r.path === '/v1/clarify' ? json({ questions: older }) : streamingServer([])(r)) }, async ({ tree }) => {
+      await composeAndContinue(tree, 'A tea timer');
+      await waitFor(() => on(tree, ClarifyStep) && !clarify(tree).props.loading, 'the questions');
+      await press(button(tree, 'Honey'));
+      await press(button(tree, 'Lemon'));
+      h.eq([picked(button(tree, 'Honey')), picked(button(tree, 'Lemon'))], [false, true], 'a second pick moves the first, as on a one-pick question');
+      h.eq(tree.root.findAll((n) => String(n.type) === 'TextInput').length, 0, 'and no question offers an Other field');
+    });
+  });
+
   await h.test('answers: skipping the questions sends no answers with the rewrite or the generation', async () => {
     const streams: Stream[] = [];
     await withLauncher({ server: answeringServer(streams) }, async ({ tree, sent }) => {
