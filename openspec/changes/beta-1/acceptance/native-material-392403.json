@@ -1,7 +1,7 @@
 {
   "build": 392403,
-  "product_source_sha": null,
-  "status": "preparation only; no native execution",
+  "product_source_sha": "c76191d34343510c5c5af748132c5b2a650067ee",
+  "status": "source accepted; native material preparation only; no runtime pass",
   "copied_from_preparation_build": 392089,
   "captures_use_supplied_candidate_EVIDENCE_DIR": true,
   "files": [
