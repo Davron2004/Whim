@@ -124,3 +124,5 @@ S27, S28, S30: worker commit 5c01cf6e8d666e0e99565df40dcdb21cbd549e88 passed fas
 Launcher-age and appstats-noop evidence: corrected verbatim blocks passed root stale checks with actual exit 0. The earlier stale failures did not create a worktree or authorize a source dispatch.
 
 S22, S75: dispatched to fix/beta-1-sonar-launcher-age in .claude/worktrees/beta-1-sonar-launcher-age, pinned BASE 100d71f79c45f6d2e8509f85fa8e9bd492b73b50, after root stale exit 0 (two lines). Four-file allowlist and corrected launcher-age DONE govern this cohort.
+
+S46, S85: dispatched to fix/beta-1-sonar-xhr-usage in .claude/worktrees/beta-1-sonar-xhr-usage, pinned BASE 6314b1eea6dca5f5f83d485950233ea7bc0f16ea, after root stale exit 0 (14 lines). Four-file allowlist and corrected xhr-usage DONE govern this cohort.
