@@ -166,3 +166,9 @@ S1: worker commit dde9bbfb548a6e636313148c7ff1675654ada264, fastgate session7141
 S1: independent review CLEAN in reviews/evidence-path.md, confirming resolved confinement, symlink escape refusal and preserved bounds. Fast/root RED/integrity passed; full gate and merge pending.
 
 S78: worker commit 1c7b4a8c6c8f5a839eb18c191b9b4346b746d16e, fastgate session9880 actual exit 0, FAST GATE PASSED. Root integrity actual exit 0, exact onefile. Structural scope; independent review/fullgate/merge remain pending.
+
+S22, S75: root authorized exactly one additional nonprotected, same-subsystem test helper (native-storage.ts) while the primary checkout was detached for the queue gate. Five-file PLAN allowlist and concrete correction addendum are now saved canonically. Shared backend failure predicate defaults unchanged and resets in finally. Prepared five-file correction reviewed CLEAN, including persistent journal-write/restore failure, independent pending recovery, guardian persistence and fresh record/order partial failure. This is pre-commit review only; final SHA review and new fast/root RED/full gate still required.
+
+S78: independent review CLEAN in reviews/appstats-noop.md, confirming exact structural promise-null contract. Full gate/merge pending.
+
+S27, S28, S30: hermetic fullgate session99597 actual exit 0, FULL GATE PASSED. Log /tmp/whim-beta1-sonar-queue-fullgate.log. Primary restored to integration/beta-1; immediate merge and post-merge fast regate follow.

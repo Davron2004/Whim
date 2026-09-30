@@ -2,3 +2,4 @@ src/host/launcher/LauncherRoot.tsx
 src/host/launcher/age-check.ts
 src/host/launcher/test/age-check.suite.ts
 src/host/launcher/test/attempt-lifecycle-ui.suite.tsx
+src/host/launcher/test/native-storage.ts
