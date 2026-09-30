@@ -180,3 +180,5 @@ S22, S75: corrected commit ccea1d07b698e89ae6d9c98ebd3ba2ba59f53a98 passed fastg
 S22, S75: hermetic fullgate session54718 actual exit 0, FULL GATE PASSED, /tmp/whim-beta1-sonar-launcher-age-fullgate.log. Corrected five-file committed tip ccea1d07 tested in primary tree and checkout restored to staging. Immediate merge and fast regate follow.
 
 S22, S75: merged, regate-pass at d75de94d6319e98cfaaddc24552d3e38806cd99a. Post-merge fastgate session64588 actual exit 0, FAST GATE PASSED; /tmp/whim-beta1-sonar-launcher-age-regate.log. Corrected candidate ccea1d07 passed final independent review, expanded integrity, new root RED and fullgate before merge. Terminal source count: 26, false positives: 60.
+
+S81, S82, S88: hermetic fullgate session17137 actual exit 0, FULL GATE PASSED, /tmp/whim-beta1-sonar-history-fullgate.log. Primary restored to staging; immediate merge and post-merge fast regate follow.

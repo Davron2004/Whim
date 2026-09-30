@@ -244,7 +244,7 @@ QA_PORT=8790
 QA_DATA="$(mktemp -d "/tmp/whim-final-qa-$BUILD.XXXXXX")"
 cd "$REPO"
 env -u OPENROUTER_API_KEY WHIM_PIPELINE=stub WHIM_SERVER_HOST=127.0.0.1 WHIM_SERVER_PORT="$QA_PORT" \
-  WHIM_DATA_DIR="$QA_DATA" WHIM_MAX_CONCURRENT_GENERATIONS=1 \
+  WHIM_DATA_DIR="$QA_DATA" WHIM_MAX_CONCURRENT_GENERATIONS=1 WHIM_STUB_DELAY_MS=4000 \
   node server/dev.mjs >"$RUN_ROOT/qa-server.log" 2>&1 &
 QA_SERVER_PID=$!
 QA_SERVER_READY=0
@@ -391,3 +391,11 @@ The Android and iOS devices in this cleanup were created by this run. Do not
 kill FilmKit/`emulator-5556`, the Outsiide Maestro process, or any PID this
 run did not create. The fresh QA data directory is also owned by this run;
 do not remove a prior QA server or its data.
+
+## Required coverage supplement
+
+Use final-native-flow-map.md for source-derived stub controls, existing capture helpers and exact cases. Repeat ordinary failure, both limit exits, `[[future:skip]]` through successful delivery, `[[future:fail]]` plus Try again, and `[[future:update]]` with no installed app on both internal native platforms. These are required section-10 cases; earlier short recapture lists do not waive them.
+
+For the cap-one line, run controlled HTTP clients A and B with fresh QA device IDs against the owned local stub. Prepare the single native host C through Plan before starting them. After A starts and B queues, C must show one build ahead, then next, then begin after B. Retain real A/B SSE traces, C native captures and server ordering. A/B are server clients; only C supplies native UI evidence. The source-derived temporary client is /tmp/whim-beta1-line-clients.mjs; capture its hash and keep its raw trace with the acceptance receipt. This satisfies three distinct builds without three native devices.
+
+Before any Maestro use, follow maestro-global-log-isolation.md: two clear process/archive scans sixty seconds apart, bounded to ten minutes, then one client per owned device. Do not interrupt another project's QA, change its home/settings or claim debug-output isolates global diagnostic logs.
