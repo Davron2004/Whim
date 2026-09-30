@@ -11,8 +11,9 @@ import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
 import { reportClientOptions } from '../transport-shared';
 import { testAppInfo } from './client-fixtures';
-import { button, captureTimeouts, press, renderScreen, unmountScreen } from './react-screen';
+import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen } from './react-screen';
 import { Linking, StyleSheet } from './native-host';
+import { log } from '../../logging';
 
 const noop = () => {};
 const isAdvancedTitle = (node: TestRenderer.ReactTestInstance) => String(node.type) === 'Text' && node.children.includes(COPY.settingsAdvancedSectionTitle);
@@ -222,4 +223,63 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
       h.eq(reportSwitches, [settingsSwitches[0]], 'the report sheet’s one switch matches them, not the platform default');
     } finally { await unmountScreen(sheet); }
   });
+
+  for (const failedRead of ['activeDescription', 'activeSource'] as const) {
+    await h.test(`Report: rejected ${failedRead} offers content-free recovery and reopening reads a complete draft`, async () => {
+      const secret = 'private-report-content';
+      const app: InstalledApp = { id: 'timer', name: `${secret}-app`, createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: `${secret}-app`, manifest: { capabilities: [] } } };
+      let rejectRead!: (error: Error) => void;
+      const pending = new Promise<string>((_resolve, reject) => { rejectRead = reject; });
+      const reads: string[] = [];
+      let retry = false;
+      const read = (operation: string, value: string) => {
+        reads.push(operation);
+        return !retry && operation === failedRead ? pending : Promise.resolve(value);
+      };
+      const access = {
+        activeDescription: () => read('activeDescription', `${secret}-prompt`),
+        activeSource: () => read('activeSource', `${secret}-source`),
+      } as unknown as StoreAccess;
+      const unhandled: unknown[] = [];
+      const captureRejection = (reason: unknown) => { unhandled.push(reason); };
+      process.on('unhandledRejection', captureRejection);
+      const before = new Set(log.buffer.snapshot());
+      let closed = 0;
+      const sheetProps = { access, options: reportClientOptions({ kind: 'absent' } as const, 'https://server.test', `${secret}-device`, testAppInfo), onClose: () => { closed++; }, onUpdateRequired: noop, legalLanguage: 'en' as const };
+      const sheet = await renderScreen(<ReportSheet {...sheetProps} app={app} />);
+      try {
+        await TestRenderer.act(async () => {
+          rejectRead(new Error(`${secret}-raw-error`));
+          await new Promise(resolve => setImmediate(resolve));
+        });
+        h.eq(unhandled, [], 'the rejected mandatory read is handled after promise settlement');
+        h.ok(textOf(sheet.root).includes(COPY.reportDraftLoadFailed), 'the sheet explains that loading failed');
+        h.eq(sheet.root.findAll(node => String(node.type) === 'TextInput').length, 0, 'no partial report editor is offered');
+        const sends = sheet.root.findAll(node => String(node.type) === 'TouchableOpacity' && textOf(node) === COPY.reportSend);
+        h.ok(sends.every(node => node.props.disabled === true), 'Send is absent or disabled while the mandatory draft is unavailable');
+        h.ok(!textOf(sheet.root).includes(secret), 'failure UI exposes no report content or raw error');
+        const records = log.buffer.snapshot().filter(record => !before.has(record));
+        h.eq(records.map(record => [record.message, record.fields]), [['report draft load failed', { outcome: 'failed' }]], 'only the failed operation and outcome are logged');
+        h.ok(!JSON.stringify(records).includes(secret), 'logs exclude the app, prompt, source, device ID and raw error');
+        await press(button(sheet, COPY.reportDraftClose));
+        h.eq(closed, 1, 'the recovery action closes through the owner');
+        await TestRenderer.act(async () => sheet.update(<ReportSheet {...sheetProps} app={null} />));
+        retry = true;
+        await TestRenderer.act(async () => sheet.update(<ReportSheet {...sheetProps} app={app} />));
+        h.eq(reads, ['activeDescription', 'activeSource', 'activeDescription', 'activeSource'], 'reopening retries both mandatory reads');
+        h.ok(!textOf(sheet.root).includes(COPY.reportDraftLoadFailed), 'a successful fresh read clears the failure');
+        h.eq(button(sheet, COPY.reportSend).props.disabled, true, 'the fresh complete draft still requires a reason');
+        await press(button(sheet, COPY.reportReasonBroken));
+        h.eq(button(sheet, COPY.reportSend).props.disabled, false, 'a complete draft with a reason can be sent');
+        const codeLabel = sheet.root.find(node => String(node.type) === 'Text' && node.children.includes(COPY.reportFieldSource));
+        let header = codeLabel.parent;
+        while (header && String(header.type) !== 'View') header = header.parent;
+        await press(header!.find(node => String(node.type) === 'TouchableOpacity' && textOf(node) === COPY.reportShowMore));
+        h.ok(textOf(sheet.root).includes(`${secret}-source`), 'the recovered draft includes the mandatory original source');
+      } finally {
+        await unmountScreen(sheet);
+        process.off('unhandledRejection', captureRejection);
+      }
+    });
+  }
 }

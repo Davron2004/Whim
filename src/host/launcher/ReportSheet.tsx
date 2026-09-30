@@ -93,6 +93,7 @@ export interface ReportSheetProps {
 export default function ReportSheet({ app, access, options, onClose, onUpdateRequired, legalLanguage }: Readonly<ReportSheetProps>) {
   const p = SHELL_PALETTE;
   const [draft, setDraft] = useState<ReportDraft | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [phase, setPhase] = useState<Phase>('draft');
   const [notice, setNotice] = useState<ReportNotice | null>(null);
   const [promptExpanded, setPromptExpanded] = useState(false);
@@ -106,17 +107,22 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
   });
 
   useEffect(() => {
+    setDraft(null);
+    setLoadFailed(false);
+    setPhase('draft');
+    setNotice(null);
+    setPromptExpanded(false);
+    setSourceExpanded(false);
     if (!app) {
-      setDraft(null);
-      setPhase('draft');
-      setNotice(null);
-      setPromptExpanded(false);
-      setSourceExpanded(false);
       return undefined;
     }
     let cancelled = false;
     reportDraftFor(app, access).then((d) => {
       if (!cancelled) setDraft(d);
+    }, () => {
+      if (cancelled) return;
+      setLoadFailed(true);
+      log.warn(CHANNELS.gen, 'report draft load failed', { outcome: 'failed' });
     });
     return () => {
       cancelled = true;
@@ -179,6 +185,18 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
 
   return (
     <SheetModal visible={app != null} onClose={handleClose}>
+      {loadFailed && (
+        <View style={styles.thanks}>
+          <ServiceNotice hint={COPY.reportDraftLoadFailed} tone="danger" />
+          <TouchableOpacity
+            onPress={handleClose}
+            accessibilityRole="button"
+            style={[styles.primary, { backgroundColor: p.accent }]}
+          >
+            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.reportDraftClose}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       {draft && phase === 'thanks' && (
         <View style={styles.thanks}>
           <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.reportThanksTitle}</Text>

@@ -220,6 +220,8 @@ export const COPY = {
   reportShowLess: 'Show less',
   reportThanksTitle: 'Thanks. We’ll look into it.',
   reportThanksDone: 'Done',
+  reportDraftLoadFailed: 'Couldn’t open the report. Close it and try again.',
+  reportDraftClose: 'Close',
   reportSendFailedGeneric: 'Couldn’t send the report. Check your connection and try again.',
   reportTooLarge: 'This report is too large to send. You can try leaving out the prompt.',
 
