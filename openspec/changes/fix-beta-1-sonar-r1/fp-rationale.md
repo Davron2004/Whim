@@ -57,4 +57,3 @@ Each entry has intentional seriality/boundedness; replacing it with Promise.all 
 - S96 AaDv2G_fDHOwsfbTeJjc — build/build.mjs:223: bundle generation logs and fails in input order.
 
 Required evidence before disposition: existing flowbench/e2e/loadtest/synthrun tests cover the worker cap, two-round leak outcome, and watchdog bounds. routes-generate suite covers queue heartbeat, abort, timeout, drain, cleanup, and hand-off. npm run build remains the build-series proof. No source or test change is proposed.
-
