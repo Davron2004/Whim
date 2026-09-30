@@ -74,3 +74,15 @@ Opus 5.5, main thread. 9 chains, 16 fix chains, 2 whole-change reviews, 2 scoped
    gate run on one.
 6. **Refresh CLAUDE.md and implementer.md** to match reality (protected files retired, `cd && cmd` allowed), and
    turn off, or fix the project config for, the IDE diagnostic injection.
+
+## Resumed closure, 2026-09-29
+
+- **The gate needs a server-test lease.** A concurrent server suite interrupted an earlier full gate with exit 143. Device jobs and independent source edits can run in parallel, but server suites, worker gates, full gates and merge regates now share one explicit lease. File ownership alone does not cover process conflicts.
+- **Native acceptance found two release blockers after earlier green receipts.** Android sheets did not dim the system-bar area or expose separate accessible actions; iOS could leave the last editor row beneath the keyboard. Separate fixes, non-vacuous tests and independent device passes caught both. A passing gate remains only part of acceptance.
+- **Acceptance belongs to the shipping artifact.** Build 391705 has useful evidence for those fixes, but the Sonar round changes source again. Its upgrade and native receipts must name the rebuilt final candidate before task 10.4 can close. Reusing the older candidate's receipt would claim more than it proves.
+- **Maestro can collide outside the device lease.** A dedicated Android upgrade emulator still lost Maestro's host-wide log directory during finalization while another project had a Maestro run. Seeding passed; the script failed before the upgrade, so the failed run was retained as tooling evidence rather than recorded as a data-preservation pass. Serialize these jobs across projects when possible.
+- **The Sonar script's exit code is not the whole verdict.** Before an analysis exists, the probe can exit 0 with GATE:NONE. Closure must require a settled GitHub check and an explicit GATE:OK for the current head. The first completed analysis reported 96 findings.
+- **False-positive decisions need receipts.** The 41 deliberate serial loops and Promise/AsyncGenerator contracts were checked against current issue keys and source locations, documented individually, transitioned through Sonar's supported API with notifications disabled, and read back as FALSE_POSITIVE. The remaining 55 findings are source work. No rule or checker was weakened.
+- **A corrected plan can preserve the original BASE.** The release-tooling worker's first gate exposed a missing node:buffer type declaration. The seventh-file scope correction is compile-only; its allowlist and DONE spec were updated. The original BASE remains pinned, so integrity still checks the actual dispatched work.
+
+Closure is still in progress. Store rollout, the owner-phone check, the minimum-build increase and archive have not yet completed.
