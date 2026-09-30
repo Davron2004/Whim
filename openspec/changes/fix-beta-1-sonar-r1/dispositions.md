@@ -136,3 +136,9 @@ S77: merged, regate-pass at 5656a631f9891d74c2c99d26ef0e40afa4273404. Report ful
 S46, S85: worker fast gate session 25629 actual exit 0, FAST GATE PASSED, /tmp/whim-beta1-sonar-xhr-usage-fast.log. Commit, independent review, root RED/integrity and full gate remain pending.
 
 S3, S4, S35: root stale exit 0 (three lines); created fix/beta-1-sonar-host-guards in .claude/worktrees/beta-1-sonar-host-guards at immutable BASE b40f7fab23972492ee6b9c50b0a4770b4739f570. One-file structural scope; final host-Hermes compatibility proof remains a distinct acceptance requirement.
+
+Host-guards native acceptance clarified after read-only engine/producer review: all three callsites invoke the same Object.hasOwn intrinsic in launcher Hermes. Existing wire-future-frames tests prove null normalization, summaries and event semantics. One successful host decode on each shipping platform proves intrinsic availability; optional-null Release branch coverage would require unrelated production/test infrastructure. See host-guards-native-evidence.md and corrected DONE. Native receipts still required.
+
+S22, S75: fast gate attempt 1 session 88035 actual exit 1; the sole failure was server metafile resolution through the worktree dependency link (4,327 passed, one failed). Worker repaired the ignored local contract workspace link and retains the lease for retry; no source PASS or terminal disposition inferred.
+
+S46, S85: source commit add2be3988aca8ef35bd7cbbee2fbf8b1a05759d; root integrity actual exit 0, exact four paths. Root RED and independent review/full gate remain pending.
