@@ -184,3 +184,5 @@ S22, S75: merged, regate-pass at d75de94d6319e98cfaaddc24552d3e38806cd99a. Post-
 S81, S82, S88: hermetic fullgate session17137 actual exit 0, FULL GATE PASSED, /tmp/whim-beta1-sonar-history-fullgate.log. Primary restored to staging; immediate merge and post-merge fast regate follow.
 
 S81, S82, S88: merged, regate-pass at 017c105be2a99ece3d627d6f38febf7b4f51ab35. Post-merge fastgate session58550 actual exit 0, FAST GATE PASSED; /tmp/whim-beta1-sonar-history-regate.log. Workerfast, root RED/integrity, independent review and primary hermetic fullgate passed before merge. Terminal source count: 29, false positives: 60.
+
+S46, S85: hermetic fullgate session93206 actual exit 0, FULL GATE PASSED, /tmp/whim-beta1-sonar-xhr-usage-fullgate.log. Committed candidate add2be39 tested in the primary tree; staging checkout restored. Immediate merge and post-merge fast regate follow.
