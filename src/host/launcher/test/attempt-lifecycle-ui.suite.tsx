@@ -16,6 +16,7 @@ import { JOURNAL_KEY, LAST_RUN_KEY, RunJournalStore } from '../run-journal';
 import { GENERIC_STREAM_ERROR } from '../error-reason';
 import type { InstalledApp } from '../app-index';
 import { StoreAccess } from '../store-access';
+import { revokeConsent } from '../ai-consent';
 import { hardwareBack, openLink } from './native-host';
 import { failNativeStorageRemovalsWhen, failNativeStorageWritesWhen } from './native-storage';
 import AppLinkMissingScreen from '../AppLinkMissingScreen';
@@ -46,6 +47,34 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       h.eq(ghosts(tree).map((g) => [g.id, g.state]), [['orphan', 'interrupted']], 'the ghost reads interrupted, since no stream survived the restart');
       await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
       h.eq(tree.root.findByType(FailureScreen).props.reason, COPY.interruptedBuildReason, 'tapping it explains the build was interrupted');
+    });
+  });
+
+  await h.test('ghosts: cold recovery retains an unwritable interruption while recovering the other building record', async () => {
+    let clearWriteFailure: (() => void) | undefined;
+    await withLauncher({
+      prepare: (kv) => {
+        const pending = new PendingBuildStore(kv);
+        pending.create({ id: 'unwritable', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+        pending.create({ id: 'recoverable', prompt: 'A dice roller', workingTitle: 'Dice roller' });
+        const journal = new RunJournalStore(kv);
+        journal.create('unwritable');
+        journal.appendTerminal('unwritable', { failure: { reason: 'An old report must stay unavailable.' } });
+        clearWriteFailure = failNativeStorageWritesWhen(({ id, key }) => id === 'whim.launcher' && key === 'pending:unwritable');
+      },
+      server: () => json({}),
+    }, async ({ tree, kv }) => {
+      try {
+        h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [['recoverable', 'interrupted'], ['unwritable', 'interrupted']], 'Home is ready with both cold attempts interrupted');
+        h.eq([new PendingBuildStore(kv).get('unwritable')?.state, new PendingBuildStore(kv).get('unwritable')?.journalUnavailable], ['building', true], 'the unwritable raw record remains a flagged building snapshot');
+        h.eq(new PendingBuildStore(kv).get('recoverable')?.state, 'interrupted', 'the independent record persists its interruption despite the sibling outage');
+        const retained = ghosts(tree).find((ghost) => ghost.id === 'unwritable')!;
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(retained));
+        const failure = tree.root.findByType(FailureScreen).props;
+        h.eq([failure.reason, failure.attemptStarted, failure.journal], [COPY.interruptedBuildReason, false, null], 'the retained cold interruption withholds its old report');
+      } finally {
+        clearWriteFailure?.();
+      }
     });
   });
 
@@ -129,6 +158,43 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       h.eq(generates.length, 2, 'Retry sends a new generation request');
       h.eq(generates[1]?.body?.prompt, 'A tea timer', 'for the stored prompt');
       h.eq(new PendingBuildStore(kv).list().map((r) => [r.id, r.state]), [[failed.id, 'building']], 'under the same record, now building again');
+    });
+  });
+
+  await h.test('ghosts: a failed Retry sends no new request until setup recovers and then reuses its id once', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
+      await startBuild(tree, 'A tea timer');
+      streams[0].end();
+      await waitFor(() => on(tree, FailureScreen), 'the initial failed build');
+      const initialRequests = sent.filter((request) => request.path === '/v1/generate').length;
+      const failedId = new PendingBuildStore(kv).list()[0]!.id;
+      const oldPending = kv.getString(`pending:${failedId}`);
+      const oldJournal = kv.getString(JOURNAL_KEY(failedId));
+      revokeConsent(kv);
+      await press(button(tree, COPY.failureBack));
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+      const clearWriteFailure = failNativeStorageWritesWhen(({ id, key }) =>
+        id === 'whim.launcher' && key === JOURNAL_KEY(failedId));
+      try {
+        await press(button(tree, COPY.screenErrorRetry));
+        await waitFor(() => textOf(tree.root).includes(COPY.consentTitle), 'the retry consent step');
+        await press(button(tree, COPY.consentAgree));
+        await waitFor(() => on(tree, FailureScreen), 'the rejected retry setup');
+
+        h.eq(sent.filter((request) => request.path === '/v1/generate').length, initialRequests, 'the failed setup sends zero new generation requests beyond the initial run');
+        h.eq([kv.getString(`pending:${failedId}`), kv.getString(JOURNAL_KEY(failedId))], [oldPending, oldJournal], 'the failed setup restores the prior pending and journal bytes before activation');
+        await press(button(tree, COPY.failureBack));
+        h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [[failedId, 'failed']], 'the prior current failed ghost remains the one actionable entry');
+      } finally {
+        clearWriteFailure();
+      }
+
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+      await press(button(tree, COPY.screenErrorRetry));
+      await waitFor(() => streams.length === initialRequests + 1 && on(tree, BuildStep), 'the recovered retry to activate');
+      h.eq(sent.filter((request) => request.path === '/v1/generate').length, initialRequests + 1, 'the verified recovered setup sends exactly one new generation request');
+      h.eq(new PendingBuildStore(kv).list().map((record) => [record.id, record.state]), [[failedId, 'building']], 'the recovered retry activates the same launcher id only after setup verification');
     });
   });
 
@@ -552,6 +618,31 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
         h.eq(ghosts(tree).map((ghost) => ghost.state), ['failed'], 'Back exposes the volatile failed ghost once');
         await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
         h.eq(tree.root.findByType(FailureScreen).props.journal, null, 'reopen never borrows an unverified journal');
+      } finally {
+        clearWriteFailure();
+      }
+    });
+  });
+
+  await h.test('ghosts: an app link resolves a retained current failure instead of its raw building record', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    let rejectTerminalWrites = false;
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+      const clearWriteFailure = failNativeStorageWritesWhen(({ id, key }) =>
+        rejectTerminalWrites && id === 'whim.launcher' && (key.startsWith('pending:') || key.startsWith('journal:')));
+      try {
+        await startBuild(tree, 'A tea timer');
+        const id = new PendingBuildStore(kv).list()[0]!.id;
+        rejectTerminalWrites = true;
+        streams[0].end();
+        await waitFor(() => on(tree, FailureScreen), 'the retained live failure');
+        h.eq(new PendingBuildStore(kv).get(id)?.state, 'building', 'the raw record still says building before the link arrives');
+
+        await TestRenderer.act(async () => openLink(appLinkFor(id)));
+        const failure = tree.root.findByType(FailureScreen).props;
+        h.eq([failure.onDismiss != null, failure.attemptStarted, failure.journal], [true, false, null], 'the native app-link handler opens the retained failed entry with pending actions and no report');
+        await press(button(tree, COPY.failureBack));
+        h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [[id, 'failed']], 'Back from the linked failure leaves exactly one retained ghost');
       } finally {
         clearWriteFailure();
       }

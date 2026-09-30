@@ -100,4 +100,4 @@ zero HTTP, cold building→interrupted preserves true/no old report. Prove recov
 verified current terminal pairs can show their own report, and exact old-pair restore stays
 intact. Keep fully unwritable Back/reopen, raw/current separation, Retry, both removal failure
 modes/partial Discard, links, independent IDs and stale leases. Native restart smoke follows
-Node checks on the rebuilt candidate. No checks were run by the planning author.
+Node checks on the rebuilt candidate.
