@@ -1,16 +1,34 @@
 ## src/host/launcher/LauncherRoot.tsx
-    runAgeCheck(kv, ageSignal, () => new Date(), { significantUpdate: acknowledgment }).then((result) => {
-      if (current) advanceLegalFlowRef.current(checkingAge, result);
-    });
-
-## src/host/launcher/LauncherRoot.tsx
+  const runContinuation = (continuation: ConsentContinuation) => {
+    if (continuation.kind === 'compose') {
+      openCompose(continuation.editing);
+    } else if (continuation.kind === 'resume') {
+      setScreen(continuation.screen);
+    } else if (continuation.kind === 'settings') {
+      setScreen({ kind: 'settings' });
     } else {
       onRetryPending(continuation.record);
     }
+  };
+
+  useEffect(() => {
+    if (checkingAge === undefined) return undefined;
+    let current = true;
+    const acknowledgment = significantUpdate === undefined ? undefined : { sheet: significantUpdate, description: updateLineRef.current };
+    runAgeCheck(kv, ageSignal, () => new Date(), { significantUpdate: acknowledgment }).then((result) => {
+      if (current) advanceLegalFlowRef.current(checkingAge, result);
+    });
+    return () => {
+      current = false;
+    };
+  }, [checkingAge, kv, ageSignal, significantUpdate]);
 
 ## src/host/launcher/age-check.ts
+export async function runAgeCheck(kv: KVBackend, read: () => Promise<unknown>, now: () => Date, options: AgeCheckOptions = {}): Promise<AgeCheckResult> {
+  const timers = options.timers ?? REAL_TIMERS;
   const signal = ageSignalFrom(await answerWithin(read, STORE_ANSWER_DEADLINE_MS, timers));
   const result = signal === 'minor-approved' ? await approvedMinorResult(kv, options, timers) : ageResultOf(signal);
   const stored: StoredAgeCheck = { outcome: result === 'allowed' ? 'allowed' : 'blocked', checkedAt: now().toISOString() };
   kv.set(AGE_CHECK_KEY, JSON.stringify(stored));
   return result;
+}

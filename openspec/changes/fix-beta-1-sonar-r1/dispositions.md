@@ -96,3 +96,11 @@ Shell-release: hermetic full gate exited 0 on cb57231c914689c6c97717bfa067d58395
 Resolver API transition: 13 success, 0 ignored/failures, notifications disabled; readback confirms every reviewed current key FALSE_POSITIVE. Worker route edits were restored to its pinned BASE; no source commit/merge. Initial void patch failed lint; the adaptive catch attempt lost its final gate outcome, so no pass was inferred. Total confirmed false-positive dispositions: 54.
 
 S81, S82, S88: dispatched at BASE b6575a7b5c3b6f110ba18c3d7ebe57d6dc069a9d to fix/beta-1-sonar-history in .claude/worktrees/beta-1-sonar-history after 12-line stale check passed. Behavioral regressions and review/gates pending.
+
+## Launcher producer dispositions and report verification
+
+S2, S5, S74, S76, S83: root accepted the closed product-callback evidence in launcher-fp-rationale.md; current keys/rules/paths/lines were verified before the supported Sonar API transition. Five success, no ignored/failures, notifications disabled; readback confirms all FALSE_POSITIVE. See launcher-fp-receipt.json. Total confirmed false positives: 59.
+
+S77: worker commit 244597d2f46df4a0613a138bcfd73a5273ab0ed4 passed fast gate with actual exit 0; root integrity passed. Independent review CLEAN. Root redcheck2 exited 0, confirming 6 assertion failures with ReportSheet and copy reverted to BASE (81 passed). The first redcheck incorrectly targeted the primary checkout, ran its older 61-check suite and exited 5; the corrected command uses the redcheck temporary checkout cwd. No assertion was changed to obtain the RED. Hermetic full gate and merge remain pending.
+
+Launcher-age initial stale check exited 7: the evidence block did not match HEAD. No worktree was created and no worker dispatched. Planner supplied corrected verbatim evidence for the next stale check.
