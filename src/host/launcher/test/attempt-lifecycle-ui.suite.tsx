@@ -44,6 +44,17 @@ function activeThrowingServer(setThrowStream: (throwStream: () => void) => void)
   };
 }
 
+function activeThrowingStreamsServer(throwStreams: (() => void)[]) {
+  return (request: SentRequest) => {
+    if (request.path === '/v1/clarify') return json({ questions: [] });
+    if (request.path === '/v1/rewrite') return json({ rewrittenPrompt: String(request.body?.prompt), plan: [] });
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => { throwStreams.push(() => controller.error(new Error('active stream failed'))); },
+    });
+    return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+}
+
 /** Leave the build screen the way the button does: the run keeps going. */
 async function leaveRunning(tree: Tree): Promise<void> {
   await press(button(tree, COPY.buildLeaveRunning));
@@ -670,6 +681,48 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
     } finally {
       process.off('unhandledRejection', captureRejection);
     }
+  });
+
+  await h.test('ghosts: a stale same-id stream failure cannot borrow the newer volatile failure actions', async () => {
+    const throwStreams: (() => void)[] = [];
+    let rejectTerminalWrites = false;
+    await withLauncher({ server: activeThrowingStreamsServer(throwStreams) }, async ({ tree, kv }) => {
+      const clearWriteFailure = failNativeStorageWritesWhen(({ id, key }) =>
+        rejectTerminalWrites && id === 'whim.launcher' && (key.startsWith('pending:') || key.startsWith('journal:')));
+      try {
+        await startBuild(tree, 'A tea timer');
+        await settle();
+        const id = new PendingBuildStore(kv).list()[0]!.id;
+        await leaveRunning(tree);
+        const started = new PendingBuildStore(kv).get(id)!;
+        kv.set(`pending:${id}`, JSON.stringify({
+          ...started,
+          prompt: 'A dice roller',
+          workingTitle: 'Dice roller',
+          state: 'failed',
+          failure: { reason: 'Retry this instead.' },
+        }));
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+        await press(button(tree, COPY.screenErrorRetry));
+        await settle();
+        h.eq(throwStreams.length, 2, 'the newer same-id retry has its own active stream');
+
+        rejectTerminalWrites = true;
+        throwStreams[1]!();
+        await waitFor(() => on(tree, FailureScreen), 'the newer volatile failure');
+        const newer = tree.root.findByType(FailureScreen).props;
+        h.eq(newer.onDismiss != null, true, 'the completion that retained the current view remains discardable');
+
+        throwStreams[0]!();
+        await waitFor(() => on(tree, FailureScreen) && tree.root.findByType(FailureScreen).props.onRephrase !== newer.onRephrase, 'the delayed stale failure');
+        const stale = tree.root.findByType(FailureScreen).props;
+        h.eq([stale.onDismiss != null, stale.retryable, stale.attemptStarted, stale.journal], [false, false, false, null], 'the stale completion cannot authorize actions for the newer retained failure');
+        await press(button(tree, COPY.failureBack));
+        h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.prompt, ghost.state]), [[id, 'A dice roller', 'failed']], 'the stale stream error leaves the newer volatile ghost unchanged');
+      } finally {
+        clearWriteFailure();
+      }
+    });
   });
 
   await h.test('ghosts: an app link resolves a retained current failure instead of its raw building record', async () => {

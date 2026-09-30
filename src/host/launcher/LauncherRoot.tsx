@@ -1554,8 +1554,7 @@ function LauncherShell({
     const terminalPersisted = settlement === 'persisted';
     const genericRecordPersisted = settlement === 'generic-pair' || settlement === 'generic-record';
     const genericJournalPersisted = settlement === 'generic-pair';
-    const retainedVolatile = settlement === 'unresolved'
-      && pending.readCurrent(input.attemptId)?.durability === 'volatile';
+    const retainedVolatile = settlement === 'retained';
     const failureReason = terminalPersisted ? input.reason : GENERIC_STREAM_ERROR;
     const failureHints = terminalPersisted ? input.hints : [];
     setScreen({
@@ -1607,6 +1606,7 @@ function LauncherShell({
       observedRepairAttempts,
       ids.recordId,
       ids.journalId,
+      ids.pendingId,
     ));
   };
 
@@ -1712,6 +1712,7 @@ function LauncherShell({
         attempt.observedRepairAttempts,
         ids.recordId,
         ids.journalId,
+        ids.pendingId,
       );
       setScreen((prev) => (!detached || updateMayInterrupt(prev)
         ? genericFailure ?? updateScreenFrom(prev, notice)
@@ -1781,9 +1782,6 @@ function LauncherShell({
     );
     const terminalPersisted = settlement === 'persisted';
     const ids = genericSettlementIds(settlement, input.attemptId);
-    const retainedVolatile = settlement === 'unresolved'
-      && pending.readCurrent(input.attemptId)?.durability === 'volatile';
-    const retainedPendingId = retainedVolatile ? input.attemptId : undefined;
     setScreen(terminalPersisted
       ? failure(
         input.editing,
@@ -1801,16 +1799,17 @@ function LauncherShell({
         input.observedRepairAttempts,
         ids.recordId,
         ids.journalId,
-        retainedPendingId,
+        ids.pendingId,
       ));
   };
 
   type AttemptSnapshot = { pending: string | null | undefined; journal: string | null | undefined };
-  type TerminalSettlement = 'persisted' | 'generic-pair' | 'generic-record' | 'restored' | 'unresolved';
+  type TerminalSettlement = 'persisted' | 'generic-pair' | 'generic-record' | 'restored' | 'retained' | 'unresolved';
 
-  const genericSettlementIds = (settlement: TerminalSettlement, id: string): { recordId?: string; journalId?: string } => {
+  const genericSettlementIds = (settlement: TerminalSettlement, id: string): { recordId?: string; journalId?: string; pendingId?: string } => {
     if (settlement === 'generic-pair') return { recordId: id, journalId: id };
-    return settlement === 'generic-record' ? { recordId: id } : {};
+    if (settlement === 'generic-record') return { recordId: id };
+    return settlement === 'retained' ? { pendingId: id } : {};
   };
 
   const currentPendingIds = (): string[] => kv.getAllKeys()
@@ -1892,6 +1891,8 @@ function LauncherShell({
     }
     if (lease && pending.retainFailed(lease, { reason: GENERIC_STREAM_ERROR, ...(remedy ? { remedy } : {}) })) {
       pending.releaseAttempt(lease);
+      refresh();
+      return 'retained';
     }
     refresh();
     return 'unresolved';
