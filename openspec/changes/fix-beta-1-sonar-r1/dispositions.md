@@ -142,3 +142,9 @@ Host-guards native acceptance clarified after read-only engine/producer review: 
 S22, S75: fast gate attempt 1 session 88035 actual exit 1; the sole failure was server metafile resolution through the worktree dependency link (4,327 passed, one failed). Worker repaired the ignored local contract workspace link and retains the lease for retry; no source PASS or terminal disposition inferred.
 
 S46, S85: source commit add2be3988aca8ef35bd7cbbee2fbf8b1a05759d; root integrity actual exit 0, exact four paths. Root RED and independent review/full gate remain pending.
+
+S46, S85: root redcheck session 93640 actual exit 0. Reverting both production files with final tests retained reproduces classifier and purge-observer assertion failures; no compile-only RED. Log /tmp/whim-beta1-sonar-xhr-usage-redcheck.log.
+
+S22, S75: worker commit 99a8e6d24bfbbad4b639d14cd24b3243d9ac00fa. Fast retry session 63976 actual exit 0, FAST GATE PASSED. Targeted renderer 139/0 and lint passed. Root RED/integrity, independent review and full gate pending.
+
+S1: root stale actual exit 0 (one line); dispatched to fix/beta-1-sonar-evidence-path in .claude/worktrees/beta-1-sonar-evidence-path, immutable BASE 20adf6d06e2759b694244ccbbb10be4d7923e008. Exact one-file acceptance-helper scope.
