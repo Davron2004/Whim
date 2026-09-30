@@ -154,3 +154,5 @@ S22, S75: root integrity actual exit 0, exact four files. Root redcheck session 
 S3, S4, S35: worker commit 90dd017d25e44e6676436798ccf1d055d728c305; fast gate session 2615 actual exit 0, FAST GATE PASSED. Structural source-only changes; no new test/RED required. Root review/integrity/full gate and final native compatibility proof remain pending.
 
 S78: root stale actual exit 0 (two lines); dispatched to fix/beta-1-sonar-appstats-noop in .claude/worktrees/beta-1-sonar-appstats-noop, immutable BASE 720803675c547ea2d6b4288e7c2eb8308314472a. Exact one-file structural promise-contract scope.
+
+S46, S85: independent read-only review CLEAN in reviews/xhr-usage.md, confirming exact scope, single settlement, late-abort taxonomy and private/isolated purge observers. Worker fast, root RED/integrity all passed; hermetic full gate/merge pending.
