@@ -46,6 +46,7 @@ export const COPY = {
   ghostCaptionBuilding: 'Building…',
   ghostCaptionFailed: 'Didn’t finish',
   ghostCaptionInterrupted: 'Interrupted',
+  ghostCaptionUpdate: 'Update needed',
   /** Long-press quick actions (spec "Long-press on a ghost tile offers Cancel or Dismiss, never
    *  both"). Named distinctly from the sheet's own closing `cancel` row so the two never collide
    *  in the same menu. */
@@ -650,7 +651,11 @@ export function appLinkSheetLine(name: string): string {
 /** A ghost/rebuild tile's state caption, by `PendingBuildRecord.state` (kept as the bare literal
  *  union rather than importing `PendingBuildState` — `copy.ts` stays free of any non-`react` /
  *  non-`react-native` module dependency). */
-export function ghostStateCaption(state: 'building' | 'failed' | 'interrupted'): string {
+export function ghostStateCaption(
+  state: 'building' | 'failed' | 'interrupted',
+  remedy?: { kind: 'retry' } | { kind: 'update'; protocolLevel: number },
+): string {
+  if (state === 'failed' && remedy?.kind === 'update') return COPY.ghostCaptionUpdate;
   if (state === 'building') return COPY.ghostCaptionBuilding;
   if (state === 'failed') return COPY.ghostCaptionFailed;
   return COPY.ghostCaptionInterrupted;

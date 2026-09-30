@@ -19,6 +19,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FONT_FAMILY, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { InstalledApp } from './app-index';
 import { isAppBusy, type AppBusyMap } from './app-busy';
@@ -293,6 +294,7 @@ function GhostGridTile({
           name={rec.workingTitle}
           manifest={{ tileColor: ghostTileColorFor(rec.id) }}
           ghost={rec.state}
+          remedy={rec.failure?.remedy}
           width={cellWidth}
         />
       </TouchableOpacity>
@@ -341,12 +343,21 @@ function GhostActionRow({
  *  joined label (#135) and a VoiceOver double-tap only closed it (`SheetModal.tsx`, `Orb.tsx`). */
 function ActionSheet({ visible, onClose, children }: Readonly<{ visible: boolean; onClose: () => void; children: React.ReactNode }>) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.sheetFrame}>
-        <Pressable style={styles.sheetScrim} onPress={onClose} accessibilityRole="none" />
-        <View style={[styles.sheet, { backgroundColor: SHELL_PALETTE.card }]}>{children}</View>
-      </View>
+    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
+      <SafeAreaProvider>
+        <ActionSheetFrame onClose={onClose}>{children}</ActionSheetFrame>
+      </SafeAreaProvider>
     </Modal>
+  );
+}
+
+function ActionSheetFrame({ onClose, children }: Readonly<{ onClose: () => void; children: React.ReactNode }>) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={[styles.sheetFrame, { paddingTop: insets.top + SPACING.md }]}>
+      <Pressable style={styles.sheetScrim} onPress={onClose} accessibilityRole="none" />
+      <View style={[styles.sheet, { backgroundColor: SHELL_PALETTE.card, paddingBottom: insets.bottom + SPACING.md }]}>{children}</View>
+    </View>
   );
 }
 
@@ -426,7 +437,7 @@ const styles = StyleSheet.create({
   sheetFrame: { flex: 1, justifyContent: 'flex-end' },
   // Its insets define it, so it spans the whole frame behind the card.
   sheetScrim: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.5)' },
-  sheet: { borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, paddingTop: SPACING.xs, paddingBottom: SPACING.xl },
+  sheet: { maxHeight: '100%', borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, paddingTop: SPACING.xs },
   sheetTitle: { textAlign: 'center', paddingVertical: SPACING.sm },
   sheetRow: { paddingVertical: SPACING.md, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth },
   sheetRowDisabled: { opacity: 0.45 },

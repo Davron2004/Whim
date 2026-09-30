@@ -96,6 +96,23 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('home grid: an update-remedy failure says update needed and opens the same remedied record, while an ordinary failure keeps its caption', async () => {
+    const records = pendingRecords();
+    const store = new PendingBuildStore(createMmkvBackend('whim.launcher'));
+    store.create({ id: 'ghost-update', prompt: 'A garden planner', workingTitle: 'A garden planner' });
+    store.setFailed('ghost-update', {
+      reason: 'This version needs updating.',
+      remedy: { kind: 'update', protocolLevel: 7 },
+    });
+    const update = store.get('ghost-update')!;
+    await withHome([update, ...records], async (tree, calls) => {
+      h.ok(textOf(cell(tree, update.workingTitle)).includes(COPY.ghostCaptionUpdate), 'the update remedy reaches the ghost caption');
+      h.ok(textOf(cell(tree, 'A dice roller')).includes(COPY.ghostCaptionFailed), 'an ordinary failed record keeps its failed caption');
+      await TestRenderer.act(async () => cell(tree, update.workingTitle).props.onPress());
+      h.eq((calls.openPending[0] as PendingBuildRecord).failure?.remedy, update.failure?.remedy, 'opening the ghost preserves the update remedy for its destination');
+    });
+  });
+
   await h.test('home grid: long-pressing a building ghost offers Cancel only; a failed ghost offers Dismiss only', async () => {
     const records = pendingRecords();
     await withHome(records, async (tree, calls) => {
@@ -131,6 +148,10 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       const controls = () => innermostTouchables(sheets()[0]);
       const row = (label: string) => controls().find((n) => textOf(n) === label)!;
       const readAsButtons = (sheet: string, labels: string[]) => {
+        const modal = sheets()[0];
+        const cards = modal.findAll((n) => n.type === 'View' && typeof flat(n).paddingBottom === 'number' && (flat(n).paddingBottom as number) > 30);
+        h.ok(modal.props.statusBarTranslucent === true && modal.props.navigationBarTranslucent === true, `${sheet}: its window reaches the system bars so the dim covers them`);
+        h.eq(cards.length, 1, `${sheet}: its card leaves room below the controls for the bottom safe area`);
         h.eq(controls().map(textOf), ['', ...labels], `${sheet}: the dim first, behind the card, with no words of its own, then the card's rows`);
         for (const label of labels) {
           h.ok(screenReaderElement(row(label)) === row(label), `${sheet}: "${label}" is an element of its own, not read as part of one around it`);
