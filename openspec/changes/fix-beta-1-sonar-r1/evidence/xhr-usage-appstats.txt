@@ -1,0 +1,20 @@
+## src/host/launcher/xhr-transport.ts
+      httpErrorFrom(fakeResponse, '/v1/generate', opts.baseUrl).then((err) => {
+        opened = true;
+        if (signal?.aborted) {
+          resolveOpen('aborted');
+        } else {
+          rejectOpen(err);
+        }
+      });
+## src/host/launcher/transport-shared.ts
+export async function httpErrorFrom(response: Response, path: string, baseUrl: string): Promise<GenerationClientError> {
+  const bodyJson: unknown = await response.json().catch(() => null);
+## server/src/usage-store.ts
+    Promise.all([ledger, idle]).finally(() => options.onTick?.());
+## server/src/app.ts
+const NO_OP_RESOLVE_TRANSPORT: UsageAndCostTransport = {
+  fetchStats: async () => null,
+};
+## server/src/usage/resolve.ts
+  fetchStats(generationId: string, signal: AbortSignal): Promise<GenerationStats | null>;

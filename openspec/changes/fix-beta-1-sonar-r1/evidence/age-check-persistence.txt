@@ -1,0 +1,10 @@
+## src/host/launcher/LauncherRoot.tsx
+    runAgeCheck(kv, ageSignal, () => new Date(), { significantUpdate: acknowledgment }).then((result) => {
+      if (current) advanceLegalFlowRef.current(checkingAge, result);
+    });
+## src/host/launcher/age-check.ts
+  const stored: StoredAgeCheck = { outcome: result === 'allowed' ? 'allowed' : 'blocked', checkedAt: now().toISOString() };
+  kv.set(AGE_CHECK_KEY, JSON.stringify(stored));
+  return result;
+## src/host/version-store/fs/kv-fs.ts
+  set(key: string, value: string): void;

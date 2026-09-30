@@ -1,0 +1,4 @@
+# DONE: sonar-r1-age-check-persistence
+Finding: S22, typescript:S9383, MAJOR.
+
+Resolve the launcher age-check effect's rejected persistence path deliberately; do not merely discard it. A native read rejection and timeout already reduce to `unavailable`; a synchronous KV write can still reject the async wrapper. Preserve the actual age result, especially `minor-not-approved` and `under-13`: a storage failure must never turn either into permission to continue. Add a small age-check regression with a throwing KV `set` that proves the returned gate remains the observed result, then explicitly discard the now-settling effect promise at the launcher boundary. Preserve 3-second native and guardian deadlines, stored-record shape on successful writes, and the existing cancellation fence. Do not change the KV interface.

@@ -1,0 +1,11 @@
+## server/src/routes/generate.ts
+  constructor(outcome: Promise<LineOutcome>) {
+    outcome.then((settled) => {
+      this.outcome = settled;
+      this.wake?.();
+    });
+  }
+## server/src/admission/slots.ts
+  /** Settles once the ticket leaves the line: with the generation slot it was handed, or with why
+   *  it has none. Never rejects. */
+  readonly outcome: Promise<LineOutcome>;

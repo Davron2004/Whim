@@ -1,0 +1,15 @@
+## src/host/launcher/HistoryScreen.tsx
+    load();
+    fieldsLeavingViewOnRestore(access, app, confirm.row.id, activeId).then(fields => {
+      if (!cancelled) setRestoreDiff({ status: 'ready', fields });
+    });
+    annotationBetween(access, app, predecessorId, row.id).then(fields => {
+      if (!cancelled) setAnnotationFields(fields);
+    });
+## src/host/launcher/history-wait.ts
+  } catch (e) {
+    publish((prev) => ({ ...prev, loading: false }));
+    throw e;
+  }
+## openspec/specs/version-history/spec.md
+The reassurance line's position SHALL show a subtle pending state, rather than staying absent and then popping in unannounced, while the confirm sheet computes which fields would leave view on a restore.
