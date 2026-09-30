@@ -62,7 +62,7 @@ import { ResolveTracker, type ResolveBounds, type UsageAndCostTransport } from '
  *  (design D9: "a stream cancelled before any model call was made credits nothing"); for an
  *  unconfigured server's model calls, cost simply never resolves. */
 const NO_OP_RESOLVE_TRANSPORT: UsageAndCostTransport = {
-  fetchStats: async () => null,
+  fetchStats: () => Promise.resolve(null),
 };
 
 type AppEnv = EdgeEnv;
