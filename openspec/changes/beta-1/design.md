@@ -245,8 +245,10 @@ but cannot enforce a rule they do not know; no retroactive guess is made for unf
 Every setup writes building with true before touching the journal. It creates and verifies the
 new empty journal, then removes the flag and verifies that pending write. Only after those steps
 may the store activate an opaque attempt lease and the shell send HTTP. A later activation for
-the same ID supersedes the old lease. Guard terminal/recovery writes before mutation; reject stale
-retention independently in the store. Failed setup preserves its prior current view/lease and
+the same ID supersedes the old lease. Check ownership before any stream frame changes the journal,
+signals, live handle or screen, and before terminal/recovery mutations. A stale iterator must stop
+without letting EOF, catch or finally cleanup change the newer attempt. Reject stale retention
+independently in the store. Failed setup preserves its prior current view/lease and
 sends no request. Release completed matching leases without clearing retained failure.
 
 Before recovery replaces or resets a journal under a current pending record, including a
