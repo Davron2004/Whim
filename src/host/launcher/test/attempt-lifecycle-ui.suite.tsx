@@ -19,7 +19,7 @@ import { failNativeStorageWritesWhen } from './native-storage';
 import AppLinkMissingScreen from '../AppLinkMissingScreen';
 import { appLinkFor } from '../app-link';
 import { button, press, textOf } from './react-screen';
-import { buildIt, composeAndContinue, hasInstalled, json, planLoaded, resultEvent, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, hasInstalled, json, planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
@@ -145,6 +145,56 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       clearFailure();
     }
   });
+  });
+
+  await h.test('ghosts: a consent-resumed Retry whose terminal write fails returns to generic failure and restores its old pair', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    let rejectTerminalWrite = false;
+    await withLauncher({
+      consent: false,
+      prepare: (kv) => {
+        const pending = new PendingBuildStore(kv);
+        pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+        pending.setFailed('failed', { reason: 'The earlier build stopped.', diagnostics: 'Try again.' });
+        const journal = new RunJournalStore(kv);
+        journal.create('failed');
+        journal.appendTerminal('failed', { failure: { reason: 'The earlier build stopped.' } });
+      },
+      server: streamingServer(streams),
+    }, async ({ tree, kv, sent }) => {
+      const pendingBefore = kv.getString('pending:failed');
+      const journalBefore = kv.getString(JOURNAL_KEY('failed'));
+      const unhandled: unknown[] = [];
+      const captureRejection = (reason: unknown) => { unhandled.push(reason); };
+      process.on('unhandledRejection', captureRejection);
+      const clearFailure = failNativeStorageWritesWhen(({ id, key, value }) =>
+        rejectTerminalWrite && id === 'whim.launcher' && key === JOURNAL_KEY('failed') && value.includes(GENERIC_STREAM_ERROR));
+      try {
+        const failed = new PendingBuildStore(kv).get('failed');
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(failed));
+        await press(button(tree, COPY.screenErrorRetry));
+        await waitFor(() => textOf(tree.root).includes(COPY.consentTitle), 'the retry consent step');
+        await press(button(tree, COPY.consentAgree));
+        await waitFor(() => streams.length === 1, 'the retried stream request');
+        await waitFor(() => on(tree, BuildStep), 'the retried build');
+
+        rejectTerminalWrite = true;
+        streams[0].end();
+        await settle();
+
+        h.eq(unhandled, [], 'the consent-resumed retry handles a terminal-persistence rejection');
+        await waitFor(() => on(tree, FailureScreen), 'the generic terminal-persistence failure');
+        h.eq(sent.filter((request) => request.path === '/v1/generate').length, 1, 'the retry sends exactly one generation request');
+        h.eq(tree.root.findByType(FailureScreen).props.reason, GENERIC_STREAM_ERROR, 'the user sees the established generic failure');
+        h.ok(!textOf(tree.root).includes('native storage write failed'), 'the storage error stays out of the failure screen');
+        h.eq([kv.getString('pending:failed'), kv.getString(JOURNAL_KEY('failed'))], [pendingBefore, journalBefore], 'the old pending record and journal are restored exactly');
+        await press(button(tree, COPY.failureBack));
+        h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [['failed', 'failed']], 'the restored ghost is never shown as building');
+      } finally {
+        clearFailure();
+        process.off('unhandledRejection', captureRejection);
+      }
+    });
   });
 
   await h.test('ghosts: a consent-resumed Retry whose journal write throws after recreating its record restores the old pair', async () => {

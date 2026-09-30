@@ -1460,14 +1460,29 @@ function LauncherShell({
     diagnostics: readonly { hint: string }[],
     observed: RunTerminalCounts,
     remedy?: PendingFailureRemedy,
-  ) => {
+    retrySnapshot?: AttemptSnapshot,
+  ): 'persisted' | 'restored' | 'unresolved' => {
     releaseLiveRef(id);
     // `observed` is the end-of-stream flush: the final cumulative counts (closing the last throttle
     // window, which no aggregate entry can) and how many `diagnostic` events went past. Only the
     // loop that watched the stream can supply them, so they are threaded in rather than re-derived.
-    journal.appendTerminal(id, { failure: { reason, diagnostics }, ...observed });
-    failPendingBuild(pending, id, reason, diagnostics, remedy);
-    refresh();
+    try {
+      journal.appendTerminal(id, { failure: { reason, diagnostics }, ...observed });
+      failPendingBuild(pending, id, reason, diagnostics, remedy);
+      refresh();
+      return 'persisted';
+    } catch (persistenceError) {
+      log.warn(CHANNELS.gen, 'terminal attempt state did not persist', {
+        operation: 'settle-failed-attempt',
+        thrown: persistenceError instanceof Error ? 'error' : 'non-error',
+      });
+      if (!retrySnapshot) {
+        refresh();
+        return 'unresolved';
+      }
+      const [restored] = restoreAttemptSnapshots([id], id, retrySnapshot);
+      return restored?.journal && restored.pending ? 'restored' : 'unresolved';
+    }
   };
 
   /** The abort + record deletion behind an explicit cancel — reachable only from a Cancel chosen on
@@ -1500,18 +1515,27 @@ function LauncherShell({
     hints: readonly { hint: string }[];
     observed: number;
     counts: RunTerminalCounts;
+    retrySnapshot?: AttemptSnapshot;
   }) => {
-    settleFailed(input.attemptId, input.reason, input.hints, input.counts);
+    const terminalPersisted = settleFailed(
+      input.attemptId,
+      input.reason,
+      input.hints,
+      input.counts,
+      undefined,
+      input.retrySnapshot,
+    ) === 'persisted';
+    const failureReason = terminalPersisted ? input.reason : GENERIC_STREAM_ERROR;
+    const failureHints = terminalPersisted ? input.hints : [];
     setScreen({
       kind: 'failure',
       editing: input.editing,
       prompt: input.prompt,
-      reason: input.reason,
-      diagnostics: input.hints,
-      journalId: input.attemptId,
-      // `settleFailed` just persisted the record above, so this live screen HAS an attempt to
-      // discard — and its Discard must delete it rather than merely navigate.
-      recordId: input.attemptId,
+      reason: failureReason,
+      diagnostics: failureHints,
+      // A persistence failure cannot claim this retry's terminal payload exists. If restoration
+      // brought back the prior record, it remains available from its ghost after Back.
+      ...(terminalPersisted ? { journalId: input.attemptId, recordId: input.attemptId } : {}),
       observedRepairAttempts: input.observed,
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: input.editing != null,
@@ -1609,7 +1633,53 @@ function LauncherShell({
     return true;
   };
 
+  const settleUnexpectedAttemptFailure = (input: {
+    error: unknown;
+    ctl: NonNullable<typeof genRef.current>;
+    attemptId: string;
+    isRetry: boolean;
+    fromPlan: PlanScreen | undefined;
+    terminalCounts: () => RunTerminalCounts;
+    streamRequestId: string | undefined;
+    markOnline: () => void;
+    editing: InstalledApp | undefined;
+    prompt: string;
+    observedRepairAttempts: number;
+    retrySnapshot: AttemptSnapshot | undefined;
+  }) => {
+    if (input.ctl.cancelled) return;
+    const attempt = {
+      attemptId: input.attemptId,
+      isRetry: input.isRetry,
+      fromPlan: input.fromPlan,
+      counts: input.terminalCounts(),
+      streamRequestId: input.streamRequestId,
+    };
+    if (settleServerEnding(input.error, input.ctl, attempt, input.markOnline)) return;
+    releaseGenRef(input.ctl);
+    logGenError('build failed', input.error, input.streamRequestId);
+    const reasoned = errorReason(input.error);
+    const terminalPersisted = settleFailed(
+      input.attemptId,
+      reasoned.reason,
+      reasoned.diagnostics,
+      input.terminalCounts(),
+      errorRemedy(input.error),
+      input.retrySnapshot,
+    ) === 'persisted';
+    setScreen(failure(
+      input.editing,
+      input.prompt,
+      terminalPersisted ? input.error : new Error(GENERIC_STREAM_ERROR),
+      'build failed',
+      input.observedRepairAttempts,
+      terminalPersisted ? input.attemptId : undefined,
+      input.streamRequestId,
+    ));
+  };
+
   type AttemptSnapshot = { pending: string | null | undefined; journal: string | null | undefined };
+  type AttemptSnapshotRestore = { journal: boolean; pending: boolean };
 
   const currentPendingIds = (): string[] => kv.getAllKeys()
     .flatMap((key) => key.startsWith('pending:') ? [key.slice('pending:'.length)] : []);
@@ -1626,25 +1696,28 @@ function LauncherShell({
     }
   };
 
-  const restoreAttemptSnapshots = (ids: readonly string[], reuseId: string | undefined, previous: AttemptSnapshot | undefined) => {
-    const restore = (key: string, value: string | null | undefined) => {
+  const restoreAttemptSnapshots = (ids: readonly string[], reuseId: string | undefined, previous: AttemptSnapshot | undefined): AttemptSnapshotRestore[] => {
+    const restore = (key: string, value: string | null | undefined): boolean => {
       try {
         if (value == null) kv.delete(key);
         else kv.set(key, value);
+        return value == null ? kv.getString(key) == null : kv.getString(key) === value;
       } catch (restoreError) {
         log.warn(CHANNELS.gen, 'attempt setup recovery did not persist', {
           operation: 'restore-attempt-snapshot',
           thrown: restoreError instanceof Error ? 'error' : 'non-error',
         });
+        return false;
       }
     };
     // The journal is restored first, matching terminal settlement order. A retry's old ghost and
     // report return together; setup never writes a terminal entry before a generation request.
-    for (const id of ids) {
-      restore(JOURNAL_KEY(id), id === reuseId ? previous?.journal : undefined);
-      restore(`pending:${id}`, id === reuseId ? previous?.pending : undefined);
-    }
+    const restored = ids.map((id) => ({
+      journal: restore(JOURNAL_KEY(id), id === reuseId ? previous?.journal : undefined),
+      pending: restore(`pending:${id}`, id === reuseId ? previous?.pending : undefined),
+    }));
     refresh();
+    return restored;
   };
 
   const beginPendingAttempt = (
@@ -1652,7 +1725,7 @@ function LauncherShell({
     editing: InstalledApp | undefined,
     reuseId: string | undefined,
     ctl: NonNullable<typeof genRef.current>,
-  ): string | undefined => {
+  ): { id: string; retrySnapshot?: AttemptSnapshot } | undefined => {
     let previous: AttemptSnapshot | undefined;
     let snapshotAvailable = false;
     let knownPendingIds: Set<string> | undefined;
@@ -1669,7 +1742,7 @@ function LauncherShell({
       // (`generation-run-journal` "A run journal is created alongside its pending-build record"),
       // and the attempt's derived signals start from the same instant the request does.
       journal.create(attemptId);
-      return attemptId;
+      return { id: attemptId, ...(reuseId != null ? { retrySnapshot: previous } : {}) };
     } catch (setupError) {
       log.warn(CHANNELS.gen, 'attempt setup failed', {
         operation: 'start-pending-build',
@@ -1718,8 +1791,9 @@ function LauncherShell({
 
     // The id this attempt writes to, decided and persisted before the request exists: a new
     // install mints one, a rebuild's id IS the app it rebuilds, a retry reuses its record's.
-    const attemptId = beginPendingAttempt(building, editing, reuseId, ctl);
-    if (attemptId == null) return;
+    const startedAttempt = beginPendingAttempt(building, editing, reuseId, ctl);
+    if (startedAttempt == null) return;
+    const { id: attemptId, retrySnapshot } = startedAttempt;
     const startedAt = Date.now();
     let signals: RunSignals = {
       startedAt,
@@ -1808,6 +1882,7 @@ function LauncherShell({
           hints: [],
           observed: counts.repair,
           counts: terminalCounts(),
+          retrySnapshot,
         });
         return;
       }
@@ -1829,6 +1904,7 @@ function LauncherShell({
           hints: terminal.diagnostics.map((d) => ({ hint: d.hint })),
           observed: counts.repair,
           counts: terminalCounts(),
+          retrySnapshot,
         });
         return;
       }
@@ -1858,15 +1934,21 @@ function LauncherShell({
       refresh();
       // "Leave it running": delivered silently, the user is elsewhere.
       setDoneIfAttached((s) => (s.kind === 'build' ? doneStep(s, delivered) : s));
-    } catch (e) {
-      if (ctl.cancelled) return;
-      const attempt = { attemptId, isRetry: reuseId !== undefined, fromPlan, counts: terminalCounts(), streamRequestId: stream?.requestId };
-      if (settleServerEnding(e, ctl, attempt, markOnline)) return;
-      releaseGenRef(ctl);
-      logGenError('build failed', e, stream?.requestId);
-      const reasoned = errorReason(e);
-      settleFailed(attemptId, reasoned.reason, reasoned.diagnostics, terminalCounts(), errorRemedy(e));
-      setScreen(failure(editing, building.text, e, 'build failed', counts.repair, attemptId, stream?.requestId));
+    } catch (error) {
+      settleUnexpectedAttemptFailure({
+        error,
+        ctl,
+        attemptId,
+        isRetry: reuseId !== undefined,
+        fromPlan,
+        terminalCounts,
+        streamRequestId: stream?.requestId,
+        markOnline,
+        editing,
+        prompt: building.text,
+        observedRepairAttempts: counts.repair,
+        retrySnapshot,
+      });
     }
   };
 
@@ -2004,9 +2086,17 @@ function LauncherShell({
 
   /** Retry from a hydrated failure screen: a NEW generation from the record's stored prompt,
    *  reusing the same launcher id, so the ghost the user is looking at is the one that resolves. */
-  const onRetryPending = async (rec: PendingBuildRecord) => {
+  const onRetryPending = (rec: PendingBuildRecord) => {
     const edited = rec.editingAppId ? index.get(rec.editingAppId) : null;
-    await runAttempt(retryBuildScreen(rec, edited ?? undefined), rec.id);
+    runAttempt(retryBuildScreen(rec, edited ?? undefined), rec.id).catch((error) => {
+      logGenError('retry continuation failed', error);
+      setScreen(failure(
+        edited ?? undefined,
+        rec.prompt,
+        new Error(GENERIC_STREAM_ERROR),
+        'retry continuation failed',
+      ));
+    });
   };
 
   /** The side effect of an arriving link's safe exit (design D15; spec app-links "An arriving link
