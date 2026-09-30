@@ -21,6 +21,7 @@
  * request ended with, validated against those closed sets on write so the ledger still holds no text.
  */
 import { DatabaseSync } from 'node:sqlite';
+import { log } from './logger';
 import { ServiceRefusalCode, type Usage } from '@whim/contract';
 import { MANIFESTS, keepLimit } from '../../contract/src/disclosure-manifest';
 import {
@@ -989,15 +990,27 @@ export function scheduleUsagePurge(
   store: Pick<UsageStore, 'purgeLedger'> & Pick<UsageRecordKeeping, 'purgeIdleUsage'>,
   options: UsagePurgeOptions,
 ): { stop(): void } {
+  const reportPurgeFailure = (message: string, err: unknown): void => {
+    try {
+      options.onError?.(message, err);
+    } catch {
+      // Observer failures must not reject a purge or disclose its database/content details.
+      log.error({ operation: 'usage_purge', hook: 'onError' }, 'usage purge observer failed');
+    }
+  };
   const runOnce = (): void => {
     const now = options.now();
     const ledger = store
       .purgeLedger(utcDayString(now - options.ledgerRetentionDays * DAY_MS))
-      .catch((err: unknown) => options.onError?.('ledger purge failed', err));
+      .catch((err: unknown) => reportPurgeFailure('ledger purge failed', err));
     const idle = store
       .purgeIdleUsage(utcDayString(now - options.usageIdleDays * DAY_MS))
-      .catch((err: unknown) => options.onError?.('idle usage purge failed', err));
-    Promise.all([ledger, idle]).finally(() => options.onTick?.());
+      .catch((err: unknown) => reportPurgeFailure('idle usage purge failed', err));
+    Promise.all([ledger, idle])
+      .then(() => options.onTick?.())
+      .catch(() => {
+        log.error({ operation: 'usage_purge', hook: 'onTick' }, 'usage purge observer failed');
+      });
   };
   runOnce();
   const timer = setInterval(runOnce, options.intervalMs ?? 3_600_000);
