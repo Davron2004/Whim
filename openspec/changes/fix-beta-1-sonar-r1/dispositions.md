@@ -188,3 +188,5 @@ S81, S82, S88: merged, regate-pass at 017c105be2a99ece3d627d6f38febf7b4f51ab35. 
 S46, S85: hermetic fullgate session93206 actual exit 0, FULL GATE PASSED, /tmp/whim-beta1-sonar-xhr-usage-fullgate.log. Committed candidate add2be39 tested in the primary tree; staging checkout restored. Immediate merge and post-merge fast regate follow.
 
 S46, S85: merged, regate-pass at c7a7db2aa10e9111fc9aa9d82c21da2a5a4cb11d. Post-merge fast gate session 66555 actual exit 0, FAST GATE PASSED; /tmp/whim-beta1-sonar-xhr-usage-regate.log. Worker fast gate, root RED/integrity, independent review and primary hermetic full gate passed before merge. Terminal source count: 31, false positives: 60.
+
+S3, S4, S35: hermetic full gate session 4661 actual exit 0, FULL GATE PASSED; /tmp/whim-beta1-sonar-host-guards-fullgate.log. Committed candidate 90dd017d tested in the primary tree and staging restored. Immediate merge and fast regate follow. These three findings remain open until fresh Android and iOS host-Hermes decode receipts exist.
