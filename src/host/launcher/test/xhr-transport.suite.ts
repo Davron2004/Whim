@@ -407,6 +407,50 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
     },
   );
 
+  for (const abortAfterCompletion of [false, true]) {
+    await h.test(`XHR classification rejection settles safely (late abort: ${abortAfterCompletion})`, async () => {
+      const fakeXhr = new FakeXMLHttpRequest();
+      const controller = new AbortController();
+      const secret = 'private-header-parser-content';
+      const unhandled: unknown[] = [];
+      const onUnhandled = (error: unknown): void => { unhandled.push(error); };
+      const before = new Set(log.buffer.snapshot());
+      let headerReads = 0;
+      fakeXhr.getResponseHeader = () => {
+        headerReads++;
+        throw new Error(secret);
+      };
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        const first = generateApp(withFakeXhr(fakeXhr), { prompt: secret }, controller.signal).next();
+        const outcome = outcomeOrHung(first, 200);
+        fakeXhr.respondHeaders(500);
+        fakeXhr.respondIncremental(JSON.stringify({ error: 'internal_error', hint: secret }));
+        fakeXhr.respondComplete();
+        fakeXhr.respondComplete(); // Duplicate native completion must not classify or settle twice.
+        if (abortAfterCompletion) controller.abort();
+        const result = await outcome;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        h.eq(headerReads, 1, 'the completed response is classified only once');
+        h.eq(unhandled, [], 'classification rejection is owned by the transport');
+        if (abortAfterCompletion) {
+          h.eq(result, { done: true, value: undefined }, 'late abort ends iteration silently');
+          h.eq(fakeXhr.abortCount, 0, 'the completed XHR is not aborted again');
+        } else {
+          h.ok(result instanceof GenerationClientError, 'classification failure settles as a client error');
+          if (result instanceof GenerationClientError) {
+            h.eq(result.kind, 'network', 'classification failure uses the existing network taxonomy');
+            h.eq(result.hint, 'The generate request failed', 'the hint contains no classifier content');
+          }
+        }
+        const records = log.buffer.snapshot().filter((record) => !before.has(record));
+        h.ok(!JSON.stringify(records).includes(secret), 'transport logging excludes classifier and request content');
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+  }
+
   // obs-v1: the breadcrumb is a SEAM record on the generation channel, not a console line — read
   // back off the seam's ring buffer and asserted as named fields.
   await h.test(
