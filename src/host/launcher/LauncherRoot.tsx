@@ -1240,10 +1240,12 @@ function LauncherShell({
     observed: number,
     recordId?: string,
     journalId?: string,
+    pendingId?: string,
   ): Screen => ({
     ...failure(editing, prompt, new Error(GENERIC_STREAM_ERROR), stage, observed),
     ...(recordId != null ? { recordId } : {}),
     ...(journalId != null ? { journalId } : {}),
+    ...(pendingId != null ? { pendingId } : {}),
   });
 
   /** Opens compose, optionally scoped to a re-prompt. `about` (the edit flow's shared clarify/
@@ -1779,6 +1781,9 @@ function LauncherShell({
     );
     const terminalPersisted = settlement === 'persisted';
     const ids = genericSettlementIds(settlement, input.attemptId);
+    const retainedVolatile = settlement === 'unresolved'
+      && pending.readCurrent(input.attemptId)?.durability === 'volatile';
+    const retainedPendingId = retainedVolatile ? input.attemptId : undefined;
     setScreen(terminalPersisted
       ? failure(
         input.editing,
@@ -1796,6 +1801,7 @@ function LauncherShell({
         input.observedRepairAttempts,
         ids.recordId,
         ids.journalId,
+        retainedPendingId,
       ));
   };
 

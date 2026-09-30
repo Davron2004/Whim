@@ -22,7 +22,7 @@ import { failNativeStorageRemovalsWhen, failNativeStorageWritesWhen } from './na
 import AppLinkMissingScreen from '../AppLinkMissingScreen';
 import { appLinkFor } from '../app-link';
 import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
-import { buildIt, composeAndContinue, hasInstalled, json, planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, hasInstalled, json, planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 import { stubFutureFrame } from '../../../../server/src/stub-markers';
 import { serverBusyRefusal } from '../../../../server/src/admission/refusals';
@@ -32,6 +32,17 @@ const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => t
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
 const ghosts = (tree: Tree): PendingBuildRecord[] => home(tree).props.pending;
 const ghostTitled = (tree: Tree, title: string) => ghosts(tree).find((ghost) => ghost.prompt === title)!;
+
+function activeThrowingServer(setThrowStream: (throwStream: () => void) => void) {
+  return (request: SentRequest) => {
+    if (request.path === '/v1/clarify') return json({ questions: [] });
+    if (request.path === '/v1/rewrite') return json({ rewrittenPrompt: String(request.body?.prompt), plan: [] });
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => { setThrowStream(() => controller.error(new Error('active stream failed'))); },
+    });
+    return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+}
 
 /** Leave the build screen the way the button does: the run keeps going. */
 async function leaveRunning(tree: Tree): Promise<void> {
@@ -622,6 +633,43 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
         clearWriteFailure();
       }
     });
+  });
+
+  await h.test('ghosts: a thrown active stream failure keeps its volatile live failure actionable', async () => {
+    let throwStream!: () => void;
+    let rejectTerminalWrites = false;
+    const unhandled: unknown[] = [];
+    const captureRejection = (reason: unknown) => { unhandled.push(reason); };
+    process.on('unhandledRejection', captureRejection);
+    try {
+      await withLauncher({
+        server: activeThrowingServer((trigger) => { throwStream = trigger; }),
+      }, async ({ tree, kv, sent }) => {
+      const clearWriteFailure = failNativeStorageWritesWhen(({ id, key }) =>
+        rejectTerminalWrites && id === 'whim.launcher' && (key.startsWith('pending:') || key.startsWith('journal:')));
+      try {
+        await startBuild(tree, 'A tea timer');
+        await settle();
+        h.eq(sent.filter((request) => request.path === '/v1/generate').length, 1, 'the active generation request began before its iterator threw');
+        const id = new PendingBuildStore(kv).list()[0]!.id;
+        rejectTerminalWrites = true;
+        throwStream();
+        await waitFor(() => on(tree, FailureScreen), 'the thrown-stream generic failure');
+
+        const failure = tree.root.findByType(FailureScreen).props;
+        h.eq(unhandled, [], 'the active stream rejection stays inside the attempt flow');
+        h.eq([failure.onDismiss != null, failure.retryable, failure.attemptStarted, failure.journal], [true, true, false, null], 'the retained volatile failure still offers Retry and Discard without claiming a saved record or report');
+        await press(button(tree, COPY.failureBack));
+        h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [[id, 'failed']], 'Back leaves the retained failure as one ghost');
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+        h.eq([tree.root.findByType(FailureScreen).props.attemptStarted, tree.root.findByType(FailureScreen).props.journal], [false, null], 'reopening keeps the unverified report unavailable');
+      } finally {
+        clearWriteFailure();
+      }
+      });
+    } finally {
+      process.off('unhandledRejection', captureRejection);
+    }
   });
 
   await h.test('ghosts: an app link resolves a retained current failure instead of its raw building record', async () => {
