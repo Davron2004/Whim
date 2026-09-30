@@ -42,6 +42,7 @@ stop_old_server() {
 }
 assert_product_source() {
   git diff --quiet "$PRODUCT_SOURCE_SHA"..HEAD -- "${PRODUCT_INPUTS[@]}"
+  test -z "$(git status --porcelain -- "${PRODUCT_INPUTS[@]}")"
 }
 cleanup_android_emulator() {
   if [ "$ANDROID_QA_STARTED" = 1 ]; then
@@ -148,9 +149,9 @@ test "$OLD_SERVER_READY" = 1
 
 (
   cd "$(dirname "$ANDROID_TO")"
-  "$REPO/scripts/release/upgrade-check.sh" --platform android --avd Whim_Verify --emulator-port 5580 --port "$UPGRADE_PORT" \
+  env PATH="/tmp/whim-beta1-native-tools:$PATH" "$REPO/scripts/release/upgrade-check.sh" --platform android --avd Whim_Verify --emulator-port 5580 --port "$UPGRADE_PORT" \
     --from "$HOME/.cache/whim-upgrade/from.apk" --to app-offline.apk \
-    --evidence "$REPO/openspec/changes/beta-1/upgrade-check/android"
+    --evidence "$REPO/openspec/changes/beta-1/upgrade-check/android-final-$BUILD"
 )
 
 stop_old_server
@@ -158,7 +159,7 @@ rm -rf "$UPGRADE_DATA"
 ```
 
 The script owns, wipes, and tears down `emulator-5580`. A pass requires
-`RESULT: PASS` in `upgrade-check/android/result.txt`; commit its
+`RESULT: PASS` in `upgrade-check/android-final-$BUILD/result.txt`; commit its
 `before.json`, `after.json`, and `result.txt`, leaving `raw/` local.
 
 ## 2. iOS Release artifact and 382511 upgrade
@@ -184,18 +185,23 @@ After the artifact is recorded, inspect and retain the exact pod-install diff
 before restoring it. The last successful iOS build changed exactly these three
 tracked generated/order files: `ios/Podfile.lock`,
 `ios/Whim.xcodeproj/project.pbxproj`, and `ios/Whim/Info.plist`. The lockfile
-change was checksum/order-only. If any other tracked iOS path changed, stop
+change was checksum/order-only. Zero changes or a subset of these three paths is valid; do not require all three to change. Inspect the actual diff for dependency or product changes even when its paths are expected. If any other tracked iOS path changed, stop
 and inspect it; do not blanket-restore iOS.
 
 ```sh
 git diff -- ios/Podfile.lock ios/Whim.xcodeproj/project.pbxproj ios/Whim/Info.plist \
   >"$RUN_ROOT/ios-pod-install.diff"
 git diff --name-only -- ios >"$RUN_ROOT/ios-pod-install-files.txt"
-EXPECTED_IOS_POD_DIFF="$(printf '%s\n' \
-  ios/Podfile.lock ios/Whim.xcodeproj/project.pbxproj ios/Whim/Info.plist | sort)"
-ACTUAL_IOS_POD_DIFF="$(sort "$RUN_ROOT/ios-pod-install-files.txt")"
-test "$ACTUAL_IOS_POD_DIFF" = "$EXPECTED_IOS_POD_DIFF"
-git restore -- ios/Podfile.lock ios/Whim.xcodeproj/project.pbxproj ios/Whim/Info.plist
+while IFS= read -r changed; do
+  case "$changed" in
+    ios/Podfile.lock|ios/Whim.xcodeproj/project.pbxproj|ios/Whim/Info.plist) ;;
+    '') ;;
+    *) printf 'Unexpected tracked iOS change: %s\n' "$changed" >&2; exit 1 ;;
+  esac
+done <"$RUN_ROOT/ios-pod-install-files.txt"
+# Pause here to inspect the retained diff. Path membership is not semantic approval.
+# Only after checksum/order/generated changes are verified against the pinned inputs:
+git -C /Users/davrondjabborov/Work/other/Whim restore -- ios/Podfile.lock ios/Whim.xcodeproj/project.pbxproj ios/Whim/Info.plist
 ```
 
 ```sh
@@ -217,12 +223,14 @@ test "$OLD_SERVER_READY" = 1
   cd "$(dirname "$IOS_RELEASE_APP")"
   "$REPO/scripts/release/upgrade-check.sh" --platform ios --port "$UPGRADE_PORT" --manual-seed \
     --from "$HOME/.cache/whim-upgrade/382511/ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app" \
-    --to Whim.app --evidence "$REPO/openspec/changes/beta-1/upgrade-check/ios"
+    --to Whim.app --evidence "$REPO/openspec/changes/beta-1/upgrade-check/ios-final-$BUILD"
 )
 
 stop_old_server
 rm -rf "$UPGRADE_DATA"
 ```
+
+`--manual-seed` reads `/dev/tty`: launch the upgrade checker in an exec PTY session, retain its printed newly-created simulator UDID, and drive only that device while the script is paused. Bound this phase to 15 minutes. Send Enter only after verifying the +2 glasses save, generated app and edited version required by the seed instructions. Stop and retain a failed seed receipt if interaction is unavailable; do not count it as a pass. The script resumes its own serial Maestro work after Enter.
 
 `--manual-seed` is permitted because 382511's compose keyboard can hide
 Continue. The script creates/deletes its own simulator. A failed seed log is
@@ -396,6 +404,16 @@ do not remove a prior QA server or its data.
 
 Use final-native-flow-map.md for source-derived stub controls, existing capture helpers and exact cases. Repeat ordinary failure, both limit exits, `[[future:skip]]` through successful delivery, `[[future:fail]]` plus Try again, and `[[future:update]]` with no installed app on both internal native platforms. These are required section-10 cases; earlier short recapture lists do not waive them.
 
-For the cap-one line, run controlled HTTP clients A and B with fresh QA device IDs against the owned local stub. Prepare the single native host C through Plan before starting them. After A starts and B queues, C must show one build ahead, then next, then begin after B. Retain real A/B SSE traces, C native captures and server ordering. A/B are server clients; only C supplies native UI evidence. The source-derived temporary client is /tmp/whim-beta1-line-clients.mjs; capture its hash and keep its raw trace with the acceptance receipt. This satisfies three distinct builds without three native devices.
+For the cap-one line, run controlled HTTP clients A and B with fresh QA device IDs against the owned local stub. Prepare the single native host C through Plan before starting them. After A starts and B queues, C must show one build ahead, then next, then begin after B. Retain real A/B SSE traces, C native captures and server ordering. A/B are server clients; only C supplies native UI evidence. The source-derived temporary client is /tmp/whim-beta1-line-clients-final.mjs; capture its hash and keep its raw trace with the acceptance receipt. This satisfies three distinct builds without three native devices.
 
 Before any Maestro use, follow maestro-global-log-isolation.md: two clear process/archive scans sixty seconds apart, bounded to ten minutes, then one client per owned device. Do not interrupt another project's QA, change its home/settings or claim debug-output isolates global diagnostic logs.
+
+## Fresh evidence and helper amendment
+
+Existing upgrade result directories are immutable receipts. Use BUILD-suffixed directories above; append an attempt suffix for retries rather than overwriting a failed run. Place native captures in new `android-final-BUILD`, `ios-debug-final-BUILD` and `ios-release-final-BUILD` acceptance directories. Copy the Android helper to its new output directory before using it; it writes beside itself and remains pinned to emulator-5560.
+
+The new evidence-only line helper retains exact A/B response bytes as `a.sse` and `b.sse`, timestamps summary events, hashes itself into metadata, owns early rejection handlers and aborts both requests on failure/deadline/termination. Its `--self-test` performs no network I/O. Preserve the previous helper for audit. Record the actual helper hash at execution; source preparation hash is in the accompanying handoff.
+
+Before Maestro, `/tmp/whim-beta1-maestro-quiet.py` offers the read-only two-clear-scans check, bounded to ten minutes. It changes no global settings. A quiet scan is not a cross-project lock; recheck immediately before the owned command and leave Outsiide's work alone.
+
+Use explicit owned Android IDs (5580 upgrade, 5560 recapture) and record every newly-created iOS UDID. Do not reuse earlier simulator leases. Cap Android Gradle at `--no-daemon --max-workers=2`, every Xcode build at `-jobs 2`, and the recapture emulator at 3072 MB/two cores. The Android upgrade command uses `/tmp/whim-beta1-native-tools/emulator` through a per-command PATH. This Bash 3.2 adapter refuses every AVD/port except Whim_Verify/5580 and appends 3072 MB/two cores before executing the real emulator. It does not alter shared AVD settings, global PATH, HOME or other projects. Preserve and hash the adapter with the receipt.
