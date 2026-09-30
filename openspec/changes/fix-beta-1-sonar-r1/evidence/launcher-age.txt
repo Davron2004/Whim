@@ -1,0 +1,16 @@
+## src/host/launcher/LauncherRoot.tsx
+    runAgeCheck(kv, ageSignal, () => new Date(), { significantUpdate: acknowledgment }).then((result) => {
+      if (current) advanceLegalFlowRef.current(checkingAge, result);
+    });
+
+## src/host/launcher/LauncherRoot.tsx
+    } else {
+      onRetryPending(continuation.record);
+    }
+
+## src/host/launcher/age-check.ts
+  const signal = ageSignalFrom(await answerWithin(read, STORE_ANSWER_DEADLINE_MS, timers));
+  const result = signal === 'minor-approved' ? await approvedMinorResult(kv, options, timers) : ageResultOf(signal);
+  const stored: StoredAgeCheck = { outcome: result === 'allowed' ? 'allowed' : 'blocked', checkedAt: now().toISOString() };
+  kv.set(AGE_CHECK_KEY, JSON.stringify(stored));
+  return result;

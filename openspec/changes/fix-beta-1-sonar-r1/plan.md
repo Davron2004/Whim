@@ -8,6 +8,8 @@ Per-finding dispositions and evidence are recorded before workers start. The che
 
 Ready cohort DONE specs, evidence and allowlists are in done/, evidence/ and allowlists/. Related locations share a single file owner and gate receipt; every location retains a separate terminal disposition.
 
+Current confirmed state: 20 source findings merged and regated; 54 false-positive dispositions confirmed through Sonar. The remaining 22 checkboxes stay open. Initial void sweep plans have been superseded by producer reconciliation and targeted behavior plans; see dispositions.md and the corrected DONE specs.
+
 ## Finding checklist
 
 - [ ] S1
@@ -16,26 +18,26 @@ Ready cohort DONE specs, evidence and allowlists are in done/, evidence/ and all
 - [ ] S4
 - [ ] S5
 - [x] S6
-- [ ] S7
-- [ ] S8
-- [ ] S9
-- [ ] S10
-- [ ] S11
-- [ ] S12
-- [ ] S13
-- [ ] S14
-- [ ] S15
-- [ ] S16
-- [ ] S17
-- [ ] S18
-- [ ] S19
-- [ ] S20
-- [ ] S21
+- [x] S7
+- [x] S8
+- [x] S9
+- [x] S10
+- [x] S11
+- [x] S12
+- [x] S13
+- [x] S14
+- [x] S15
+- [x] S16
+- [x] S17
+- [x] S18
+- [x] S19
+- [x] S20
+- [x] S21
 - [ ] S22
-- [ ] S23
-- [ ] S24
-- [ ] S25
-- [ ] S26
+- [x] S23
+- [x] S24
+- [x] S25
+- [x] S26
 - [ ] S27
 - [ ] S28
 - [ ] S29
@@ -45,10 +47,10 @@ Ready cohort DONE specs, evidence and allowlists are in done/, evidence/ and all
 - [x] S33
 - [x] S34
 - [ ] S35
-- [ ] S36
-- [ ] S37
-- [ ] S38
-- [ ] S39
+- [x] S36
+- [x] S37
+- [x] S38
+- [x] S39
 - [x] S40
 - [x] S41
 - [x] S42
@@ -56,19 +58,19 @@ Ready cohort DONE specs, evidence and allowlists are in done/, evidence/ and all
 - [x] S44
 - [x] S45
 - [ ] S46
-- [ ] S47
+- [x] S47
 - [x] S48
 - [x] S49
 - [x] S50
-- [ ] S51
-- [ ] S52
-- [ ] S53
-- [ ] S54
-- [ ] S55
-- [ ] S56
-- [ ] S57
-- [ ] S58
-- [ ] S59
+- [x] S51
+- [x] S52
+- [x] S53
+- [x] S54
+- [x] S55
+- [x] S56
+- [x] S57
+- [x] S58
+- [x] S59
 - [x] S60
 - [x] S61
 - [x] S62

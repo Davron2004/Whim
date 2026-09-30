@@ -95,3 +95,7 @@ S5 is structural: the probe contract explicitly never rejects. S2/S74-S76/S83 ea
 ## Unverified
 - No Hermes Object.hasOwn support proof exists in source or vendored files.
 - I did not verify a UI error design for ReportSheet/history rejected StoreAccess reads; do not invent one without its governing spec.
+
+## Producer reconciliation after the first worker gates
+
+The initial explicit-void plans conflict with sonarjs/void-use and no-void. A second producer inspection proved the resolver calls already observe both settlement arms; their 13 source changes were restored and those findings were confirmed false positives. Report/history reads, age persistence, retry setup, XHR classification and usage-purge consumer callbacks have actual rejection gaps and need behavioral regressions. Five other launcher sites are evidenced false-positive candidates pending current-key verification. Corrected plans are in done/launcher-age.md and done/xhr-usage.md; latest terminal state is recorded in dispositions.md.

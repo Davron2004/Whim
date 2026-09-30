@@ -55,3 +55,44 @@ S8, S23-S24, S26, S51-S59: dispatched at BASE 757809963baa429b99bccc16e8ce02174f
 S7, S9-S21, S25, S36-S39, S47: worker commit cb57231c914689c6c97717bfa067d5839559826c passed the fast gate (actual exit 0) and root integrity against pinned BASE 4d15c0dde6e3da268f50b8656e895b812d1efcab. All seven changed files are within the revised allowlist. Independent review and hermetic full gate remain pending.
 
 S77: report-draft-recovery dispatched at BASE a8d89cefe2b2ac09700a18e64a8452dcc67cd4d6 to fix/beta-1-sonar-report, .claude/worktrees/beta-1-sonar-report. Stale check passed seven evidence lines. Behavioral recovery needs a rendered rejection regression and root red-check; worker prepares while resolver-routes holds the gate lease.
+
+## Terminal tooling and resolver dispositions
+
+Shell-release: hermetic full gate exited 0 on cb57231c914689c6c97717bfa067d5839559826c; merged as b6575a7b5c3b6f110ba18c3d7ebe57d6dc069a9d; post-merge fast gate exited 0. Independent review and integrity passed. Logs: /tmp/whim-beta1-sonar-tools-fullgate.log and /tmp/whim-beta1-sonar-tools-regate.log.
+- S7: merged, regate-pass; shell-release receipt/review.
+- S9: merged, regate-pass; shell-release receipt/review.
+- S10: merged, regate-pass; shell-release receipt/review.
+- S11: merged, regate-pass; shell-release receipt/review.
+- S12: merged, regate-pass; shell-release receipt/review.
+- S13: merged, regate-pass; shell-release receipt/review.
+- S14: merged, regate-pass; shell-release receipt/review.
+- S15: merged, regate-pass; shell-release receipt/review.
+- S16: merged, regate-pass; shell-release receipt/review.
+- S17: merged, regate-pass; shell-release receipt/review.
+- S18: merged, regate-pass; shell-release receipt/review.
+- S19: merged, regate-pass; shell-release receipt/review.
+- S20: merged, regate-pass; shell-release receipt/review.
+- S21: merged, regate-pass; shell-release receipt/review.
+- S25: merged, regate-pass; shell-release receipt/review.
+- S36: merged, regate-pass; shell-release receipt/review.
+- S37: merged, regate-pass; shell-release receipt/review.
+- S38: merged, regate-pass; shell-release receipt/review.
+- S39: merged, regate-pass; shell-release receipt/review.
+- S47: merged, regate-pass; shell-release receipt/review.
+- S8: false-positive-adjudicated; resolver-fp-rationale.md and resolver-fp-receipt.json.
+- S23: false-positive-adjudicated; resolver-fp-rationale.md and resolver-fp-receipt.json.
+- S24: false-positive-adjudicated; resolver-fp-rationale.md and resolver-fp-receipt.json.
+- S26: false-positive-adjudicated; resolver-fp-rationale.md and resolver-fp-receipt.json.
+- S51: false-positive-adjudicated; resolver-fp-rationale.md and resolver-fp-receipt.json.
+- S52: false-positive-adjudicated; resolver-fp-rationale.md and resolver-fp-receipt.json.
+- S53: false-positive-adjudicated; resolver-fp-rationale.md and resolver-fp-receipt.json.
+- S54: false-positive-adjudicated; resolver-fp-rationale.md and resolver-fp-receipt.json.
+- S55: false-positive-adjudicated; resolver-fp-rationale.md and resolver-fp-receipt.json.
+- S56: false-positive-adjudicated; resolver-fp-rationale.md and resolver-fp-receipt.json.
+- S57: false-positive-adjudicated; resolver-fp-rationale.md and resolver-fp-receipt.json.
+- S58: false-positive-adjudicated; resolver-fp-rationale.md and resolver-fp-receipt.json.
+- S59: false-positive-adjudicated; resolver-fp-rationale.md and resolver-fp-receipt.json.
+
+Resolver API transition: 13 success, 0 ignored/failures, notifications disabled; readback confirms every reviewed current key FALSE_POSITIVE. Worker route edits were restored to its pinned BASE; no source commit/merge. Initial void patch failed lint; the adaptive catch attempt lost its final gate outcome, so no pass was inferred. Total confirmed false-positive dispositions: 54.
+
+S81, S82, S88: dispatched at BASE b6575a7b5c3b6f110ba18c3d7ebe57d6dc069a9d to fix/beta-1-sonar-history in .claude/worktrees/beta-1-sonar-history after 12-line stale check passed. Behavioral regressions and review/gates pending.

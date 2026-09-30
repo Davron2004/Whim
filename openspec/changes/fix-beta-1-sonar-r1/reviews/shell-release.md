@@ -7,3 +7,5 @@ The seven changed paths equal the revised allowlist. No configuration, environme
 runVerifyAab contains no await. CliCommand.run permits number or Promise<number>, and runCli still returns the numeric command result through its async boundary. The standalone node-buffer.d.ts re-exports only the existing Buffer type; env.d.ts is a module and cannot supply this missing module declaration through augmentation.
 
 Structural-no-test classification confirmed. Worker fast gate exited 0 with FAST GATE PASSED; root integrity exited 0. Hermetic full gate remains required before merge.
+
+Hermetic full gate completed with actual exit 0 on the reviewed source commit; staging merge b6575a7b5c3b6f110ba18c3d7ebe57d6dc069a9d passed its post-merge fast gate with actual exit 0.
