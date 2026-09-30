@@ -116,7 +116,7 @@ type OptionalFields<T> = { readonly [K in OptionalKey<T>]: true };
  */
 function withoutNullOptionals<T>(value: T, optional: Readonly<Record<string, true>>): T {
   if (!isRecord(value) || !Object.keys(optional).some((key) => value[key] === null)) return value;
-  const isOptional = (key: string): boolean => Object.prototype.hasOwnProperty.call(optional, key);
+  const isOptional = (key: string): boolean => Object.hasOwn(optional, key);
   return Object.fromEntries(Object.entries(value).filter(([key, field]) => field !== null || !isOptional(key))) as T;
 }
 
@@ -198,7 +198,7 @@ function isRunSummary(value: unknown): value is RunSummary {
     isRecord(value) &&
     typeof value.text === 'string' &&
     typeof value.kind === 'string' &&
-    Object.prototype.hasOwnProperty.call(SUMMARY_KINDS, value.kind) &&
+    Object.hasOwn(SUMMARY_KINDS, value.kind) &&
     Array.isArray(value.touched) &&
     value.touched.every((area) => typeof area === 'string') &&
     Array.isArray(value.marks) &&
@@ -327,7 +327,7 @@ const EVENT_GUARDS: { readonly [K in GenerationEvent['type']]: (value: Record<st
 };
 
 function isKnownEventType(type: string): type is GenerationEvent['type'] {
-  return Object.prototype.hasOwnProperty.call(EVENT_GUARDS, type);
+  return Object.hasOwn(EVENT_GUARDS, type);
 }
 
 /** A frame of a known type as this build reads it (`null` on an optional field read as absent, a
