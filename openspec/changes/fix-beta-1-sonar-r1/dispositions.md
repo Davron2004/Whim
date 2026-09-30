@@ -156,3 +156,9 @@ S3, S4, S35: worker commit 90dd017d25e44e6676436798ccf1d055d728c305; fast gate s
 S78: root stale actual exit 0 (two lines); dispatched to fix/beta-1-sonar-appstats-noop in .claude/worktrees/beta-1-sonar-appstats-noop, immutable BASE 720803675c547ea2d6b4288e7c2eb8308314472a. Exact one-file structural promise-contract scope.
 
 S46, S85: independent read-only review CLEAN in reviews/xhr-usage.md, confirming exact scope, single settlement, late-abort taxonomy and private/isolated purge observers. Worker fast, root RED/integrity all passed; hermetic full gate/merge pending.
+
+S3, S4, S35: root integrity actual exit 0 and independent review CLEAN in reviews/host-guards.md. Full gate/merge and final native compatibility receipts remain pending.
+
+S22, S75: independent review REJECTED candidate 99a8e6d2, two HIGH defects (unguarded guardian acknowledgement persistence and rethrowing journal recovery after pending recreation). See reviews/launcher-age-initial.md. Returned to the same worker/worktree, original immutable BASE and four-file allowlist, with additional guardian/journal/post-record failure regressions. Earlier fast/RED/integrity passes do not close these defects; second review, new fast/RED/full gate remain required.
+
+S1: worker commit dde9bbfb548a6e636313148c7ff1675654ada264, fastgate session71412 actual exit 0. Root redcheck session31559 actual exit 0: restored BASE accepts the valid outside hierarchy and validation fails with an explicit escape assertion. Root integrity exit 0, exact onefile. Independent review/fullgate/merge pending.
