@@ -22,6 +22,7 @@ import { COPY, ghostStateCaption } from './copy';
 import TilePill from './tile-pill-view';
 import type { TilePillKind } from './tile-pill';
 import type { AppManifest } from '../bridge/contract';
+import type { PendingFailureRemedy } from './pending-builds';
 
 /** The tile's geometry (design-extract §2b: 88x88, tile radius) — 88 is now the DEFAULT width a
  *  caller that passes no `width` gets, not a ceiling. Exported so a loading skeleton
@@ -81,6 +82,9 @@ export interface AppTileProps {
    *  the ordinary launchable tile, unchanged. Never combined with `size='done'` — a ghost is
    *  always grid-sized. */
   ghost?: 'building' | 'failed' | 'interrupted';
+  /** A failed record's persisted remedy. An update remedy leaves the record failed but gives its
+   *  ghost a specific caption, matching the update screen it reopens. */
+  remedy?: PendingFailureRemedy;
   /** The tap registered and the app is being opened (`app-launcher` "Opening an app shows an
    *  immediate busy affordance"): a held-down/working look on THIS tile — a dim over the tile's
    *  own fill, not a spinner and not an overlay, since the message is "working", not "wait here".
@@ -102,8 +106,8 @@ export interface AppTileProps {
 }
 
 /** The line under the tile's name, if any: a ghost's state, or the example label. */
-function captionFor(ghost: AppTileProps['ghost'], example: boolean | undefined): string | null {
-  if (ghost) return ghostStateCaption(ghost);
+function captionFor(ghost: AppTileProps['ghost'], remedy: PendingFailureRemedy | undefined, example: boolean | undefined): string | null {
+  if (ghost) return ghostStateCaption(ghost, remedy);
   return example ? COPY.exampleBadge : null;
 }
 
@@ -113,13 +117,13 @@ function isAlertGhost(ghost: AppTileProps['ghost']): boolean {
   return ghost === 'failed' || ghost === 'interrupted';
 }
 
-export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, ghost, busy, pill, example }: Readonly<AppTileProps>) {
+export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, ghost, remedy, busy, pill, example }: Readonly<AppTileProps>) {
   const mono = monogram(name);
   const bg = tileColor(name, manifest);
   const isDone = size === 'done';
   const alertGhost = ghost != null && isAlertGhost(ghost);
   const ghostTileStyle = ghost ? [styles.tileGhost, alertGhost ? styles.tileGhostAlert : null] : null;
-  const caption = captionFor(ghost, example);
+  const caption = captionFor(ghost, remedy, example);
   const captionStyle = alertGhost ? [styles.caption, styles.captionAlert] : styles.caption;
 
   /** See `width` above: the done variant ignores it, so these are `null` there and `rootDone`/

@@ -84,7 +84,7 @@ async function openMakeNewId(tree: Tree) {
   return { modal: sheet, text: textOf(sheet), cancel: control(COPY.cancel), confirm: control(COPY.settingsDeviceIdReset) };
 }
 
-const flatStyle = (node: TestRenderer.ReactTestInstance) => Object.assign({}, ...[node.props.style].flat(Infinity)) as { height?: number; backgroundColor?: string };
+const flatStyle = (node: TestRenderer.ReactTestInstance) => Object.assign({}, ...[node.props.style].flat(Infinity)) as { height?: number; backgroundColor?: string; paddingBottom?: number };
 
 /** Home → compose → Continue, and the `x-whim-device` header the clarify request carried. */
 async function headerOfNextRequest(tree: Tree, sent: SentRequest[]): Promise<string | null> {
@@ -203,6 +203,16 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
       h.eq(tree.root.findAllByType(ConfirmSheet).length, 1, 'the launcher’s own confirm sheet, not a system alert');
       const [cancel, confirm] = [flatStyle(sheet.cancel), flatStyle(sheet.confirm)];
       h.ok((cancel.height ?? 0) > (confirm.height ?? 0) && cancel.backgroundColor !== undefined && confirm.backgroundColor === undefined, 'the safe Cancel is the large filled button; making a new ID is plain text under it');
+    });
+  });
+
+  await h.test('phone ID: the confirmation window dims through both system bars and leaves its controls above the bottom safe area', async () => {
+    await withLauncher({ apps: [APP], server: clarifyServer }, async ({ tree }) => {
+      await openSettings(tree);
+      const sheet = await openMakeNewId(tree);
+      h.ok(sheet.modal.props.statusBarTranslucent === true && sheet.modal.props.navigationBarTranslucent === true, 'the dim uses the modal window through both system bars');
+      const cards = sheet.modal.findAll((node) => node.type === 'View' && (flatStyle(node).paddingBottom ?? 0) > 30);
+      h.eq(cards.length, 1, 'the card leaves room below its last control for the bottom safe area');
     });
   });
 
