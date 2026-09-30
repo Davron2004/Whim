@@ -42,6 +42,12 @@ setFailed(id: string, failure: PendingBuildFailure,
   rejects stale retention. Capture the started record at activation; IDs/timestamps are not leases.
 - Live references carry that lease and release only when it matches. A stale terminal, refusal,
   delivery completion or keepalive cannot clear, replace or update a newer same-ID attempt.
+- Each live attempt retains its own screen, signals and controller by ID. Independent attempts
+  keep their own journal and completion path, while only the selected attempt may update shared
+  screen/signals. Reattach and Cancel resolve that ID's live attempt.
+- Delivery rechecks the captured lease immediately after its awaited producer boundary and before
+  deleting pending state. A stale same-ID delivery cannot delete or promote a newer attempt;
+  an independent delivery still releases and promotes its own report without taking over the UI.
 - Before recovery replaces/resets the current journal (including generic fallback), persist
   and read back true on the current record, or verify the target journal already equals the saved bytes/absence.
   If the guard cannot persist, do not introduce the old journal; still attempt safe pending
@@ -95,6 +101,7 @@ Exact product/test allowlist:
 - src/host/launcher/test/attempt-lifecycle-ui.suite.tsx
 - src/host/launcher/test/native-storage.ts (test seam only)
 - src/host/launcher/test/observability-ui.suite.ts (verified fixture setup only)
+- src/host/launcher/build-lifecycle.ts (captured-lease delivery deletion guard only)
 
 Node-first acceptance: reproduce parked r3 with new LauncherShell over SAME MMKV, not a
 same-mounted reopen; preserve old journal raw bytes while saved generic failed+true withholds

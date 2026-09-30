@@ -39,7 +39,7 @@ import type { PendingAttemptLease, PendingBuildRecord, PendingBuildView, Pending
 import { JOURNAL_KEY, RunJournalStore } from './run-journal';
 import type { RunJournal, RunTerminalCounts } from './run-journal';
 import {
-  deliverAndSettle,
+  deliverAndSettleIfOwned,
   dropPendingBuild,
   hydratedDiagnostics,
   journalStreamEvent,
@@ -738,7 +738,8 @@ function LauncherShell({
   // whether the user left it running (generation-client's abort contract: the caller must track
   // intent itself rather than infer it from the stream's output, since an abort and an unrelated
   // truncated stream look identical). Cleared once the generation settles.
-  const genRef = useRef<{ controller: AbortController; cancelled: boolean; detached: boolean } | null>(null);
+  type GenerationControl = { controller: AbortController; cancelled: boolean; detached: boolean };
+  const genRef = useRef<GenerationControl | null>(null);
 
   // The same bookkeeping for the flow's two unary requests — compose's clarify and plan's rewrite
   // — one controller per step, so leaving a step cancels its own request and nothing else
@@ -781,12 +782,18 @@ function LauncherShell({
   const pendingLinkHolder = useRef(new PendingLinkHolder()).current;
   const openAppLinkRef = useRef<(id: string) => void>(() => {});
 
-  // The build screen of the attempt currently in flight, kept live even while the user is
-  // elsewhere. This is ALL that "tap a building ghost to reattach" needs (design D7): the stream
-  // never left this shell's closure when `onLeaveRunning` detached it, so reattaching is a screen
-  // -state change — reading the screen back out of here — and not a second subscriber, an event
-  // bus or per-tile progress. Cleared the moment the attempt settles.
-  const liveRef = useRef<{ id: string; lease: PendingAttemptLease; screen: BuildScreen } | null>(null);
+  type LiveAttempt = {
+    id: string;
+    lease: PendingAttemptLease;
+    screen: BuildScreen;
+    signals: RunSignals;
+    ctl: GenerationControl;
+  };
+  // Every active attempt keeps its own reattachment state. `liveRef` names the one selected by
+  // the current build screen, so background frames can update their own journal without replacing
+  // the selected run's progress or controls.
+  const liveAttemptsRef = useRef(new Map<string, LiveAttempt>()).current;
+  const liveRef = useRef<LiveAttempt | null>(null);
 
   // The live attempt's derived-signal state (design D6): its start time, the cumulative counts
   // folded from its stream and the arrival that the heartbeat measures quiet from. A REF, not
@@ -1452,10 +1459,50 @@ function LauncherShell({
     if (genRef.current === ctl) genRef.current = null;
   };
   const releaseLiveRef = (lease: PendingAttemptLease) => {
+    if (liveAttemptsRef.get(lease.id)?.lease === lease) liveAttemptsRef.delete(lease.id);
     if (liveRef.current?.lease === lease) liveRef.current = null;
   };
-  const whenLiveAttemptOwns = (lease: PendingAttemptLease, complete: () => void) => {
-    if (liveRef.current?.lease === lease) complete();
+  const whenLiveAttemptOwns = (lease: PendingAttemptLease, complete: (selected: boolean) => void) => {
+    if (liveAttemptsRef.get(lease.id)?.lease === lease) complete(liveRef.current?.lease === lease);
+  };
+  const whenDeliverySettles = (
+    lease: PendingAttemptLease,
+    delivered: InstalledApp | undefined,
+    complete: (delivered: InstalledApp, selected: boolean) => void,
+  ) => {
+    if (delivered) whenLiveAttemptOwns(lease, (selected) => complete(delivered, selected));
+  };
+  const isSelectedLiveAttempt = (lease: PendingAttemptLease): boolean => liveRef.current?.lease === lease;
+  const recordAttemptKeepalive = (attemptId: string, lease: PendingAttemptLease, signals: RunSignals): RunSignals | undefined => {
+    if (!pending.isCurrentAttempt(lease)) return undefined;
+    const currentLive = liveAttemptsRef.get(attemptId);
+    if (currentLive?.lease !== lease) return undefined;
+    const nextSignals = withKeepalive(signals, Date.now());
+    currentLive.signals = nextSignals;
+    if (isSelectedLiveAttempt(lease)) signalsRef.current = nextSignals;
+    return nextSignals;
+  };
+  const recordAttemptFrame = (
+    attemptId: string,
+    lease: PendingAttemptLease,
+    signals: RunSignals,
+    counts: EventCounts,
+    event: GenerationEvent,
+  ): RunSignals | undefined => {
+    if (!pending.isCurrentAttempt(lease)) return undefined;
+    const currentLive = liveAttemptsRef.get(attemptId);
+    if (currentLive?.lease !== lease) return undefined;
+    countEvent(counts, event);
+    const nextSignals = journalStreamEvent(journal, attemptId, signals, event, Date.now());
+    currentLive.signals = nextSignals;
+    const selected = isSelectedLiveAttempt(lease);
+    if (selected) signalsRef.current = nextSignals;
+    const nextScreen = withStreamEvent(currentLive.screen, event);
+    if (nextScreen !== currentLive.screen) {
+      currentLive.screen = nextScreen;
+      if (selected) setScreen((previous) => (previous.kind === 'build' ? withStreamEvent(previous, event) : previous));
+    }
+    return nextSignals;
   };
 
   /** The record deletion the user's two delete gestures share — cancelling an in-flight attempt
@@ -1517,16 +1564,14 @@ function LauncherShell({
    *  `Cancel build` while the build waits in line (`onCancelBuild`). Hardware back on the build
    *  screen no longer calls this (bug fix: it used to, and cancelled the whole run) — see
    *  `prompt-flow.ts#buildBackAction`. */
-  const abortLiveAttempt = () => {
-    const ctl = genRef.current;
-    if (ctl) {
-      ctl.cancelled = true;
-      ctl.controller.abort();
-      genRef.current = null;
+  const abortLiveAttempt = (live = liveRef.current) => {
+    if (live) {
+      live.ctl.cancelled = true;
+      live.ctl.controller.abort();
+      releaseGenRef(live.ctl);
+      releaseLiveRef(live.lease);
+      dropAttempt(live.id);
     }
-    const live = liveRef.current;
-    liveRef.current = null;
-    if (live) dropAttempt(live.id);
     refresh();
   };
 
@@ -1545,6 +1590,7 @@ function LauncherShell({
     retrySnapshot?: AttemptSnapshot;
     lease: PendingAttemptLease;
   }) => {
+    const selected = isSelectedLiveAttempt(input.lease);
     const settlement = settleFailed(
       input.attemptId,
       input.reason,
@@ -1560,6 +1606,7 @@ function LauncherShell({
     const retainedVolatile = settlement === 'retained';
     const failureReason = terminalPersisted ? input.reason : GENERIC_STREAM_ERROR;
     const failureHints = terminalPersisted ? input.hints : [];
+    if (!selected) return;
     setScreen({
       kind: 'failure',
       editing: input.editing,
@@ -1596,11 +1643,12 @@ function LauncherShell({
     settlement: TerminalSettlement,
     attemptId: string,
     detached: boolean,
+    selected: boolean,
     editing: InstalledApp | undefined,
     prompt: string,
     observedRepairAttempts: number,
   ) => {
-    if (detached) return;
+    if (detached || !selected) return;
     const ids = genericSettlementIds(settlement, attemptId);
     setScreen(genericAttemptFailure(
       editing,
@@ -1626,6 +1674,7 @@ function LauncherShell({
     observedRepairAttempts: number,
     lease: PendingAttemptLease,
   ): void => {
+    const selected = isSelectedLiveAttempt(lease);
     logServiceRefusal('generate', refusal);
     const notice = noticeFrom(refusal);
     const outcome = refusedGenerateOutcome(isRetry, detached);
@@ -1634,7 +1683,7 @@ function LauncherShell({
       releaseLiveRef(lease);
       dropAttempt(attemptId);
       refresh();
-      if (fromPlan) {
+      if (selected && fromPlan) {
         const back: PlanScreen = { ...fromPlan, notice: undefined };
         const target = refusalScreen(refusal, back, { kind: 'resume', screen: back }) ?? { ...fromPlan, notice };
         setScreen(onlyOnStep<Screen, 'build'>('build', () => target));
@@ -1651,14 +1700,14 @@ function LauncherShell({
       lease,
     );
     if (settlement !== 'persisted') {
-      showUnpersistedGenerateRefusal(settlement, attemptId, detached, editing, prompt, observedRepairAttempts);
+      showUnpersistedGenerateRefusal(settlement, attemptId, detached, selected, editing, prompt, observedRepairAttempts);
       return;
     }
-    if (detached && REFUSAL_RULES[refusal.code].opens === 'update') {
+    if (selected && detached && REFUSAL_RULES[refusal.code].opens === 'update') {
       setScreen((prev) => (updateMayInterrupt(prev) ? updateScreenFrom(prev) : prev));
       return;
     }
-    if (!isRetry) return;
+    if (!isRetry || !selected) return;
     const updated = pending.get(attemptId);
     if (updated) {
       const back = failureFromRecord(updated);
@@ -1699,6 +1748,7 @@ function LauncherShell({
   ): boolean => {
     const fallback = terminalFallbackOf(e);
     if (fallback?.kind === 'update') {
+      const selected = isSelectedLiveAttempt(attempt.lease);
       markOnline();
       releaseGenRef(ctl);
       logUpdateFallback('generate', e, attempt.streamRequestId);
@@ -1718,9 +1768,11 @@ function LauncherShell({
         ids.journalId,
         ids.pendingId,
       );
-      setScreen((prev) => (!detached || updateMayInterrupt(prev)
-        ? genericFailure ?? updateScreenFrom(prev, notice)
-        : prev));
+      if (selected) {
+        setScreen((prev) => (!detached || updateMayInterrupt(prev)
+          ? genericFailure ?? updateScreenFrom(prev, notice)
+          : prev));
+      }
       return true;
     }
     const refusal = serviceRefusalOf(e);
@@ -1759,6 +1811,7 @@ function LauncherShell({
     lease: PendingAttemptLease;
   }) => {
     if (input.ctl.cancelled || !pending.isCurrentAttempt(input.lease)) return;
+    const selected = isSelectedLiveAttempt(input.lease);
     const attempt = {
       attemptId: input.attemptId,
       isRetry: input.isRetry,
@@ -1786,25 +1839,27 @@ function LauncherShell({
     );
     const terminalPersisted = settlement === 'persisted';
     const ids = genericSettlementIds(settlement, input.attemptId);
-    setScreen(terminalPersisted
-      ? failure(
-        input.editing,
-        input.prompt,
-        input.error,
-        'build failed',
-        input.observedRepairAttempts,
-        input.attemptId,
-        input.streamRequestId,
-      )
-      : genericAttemptFailure(
-        input.editing,
-        input.prompt,
-        'build failed',
-        input.observedRepairAttempts,
-        ids.recordId,
-        ids.journalId,
-        ids.pendingId,
-      ));
+    if (selected) {
+      setScreen(terminalPersisted
+        ? failure(
+          input.editing,
+          input.prompt,
+          input.error,
+          'build failed',
+          input.observedRepairAttempts,
+          input.attemptId,
+          input.streamRequestId,
+        )
+        : genericAttemptFailure(
+          input.editing,
+          input.prompt,
+          'build failed',
+          input.observedRepairAttempts,
+          ids.recordId,
+          ids.journalId,
+          ids.pendingId,
+        ));
+    }
   };
 
   type AttemptSnapshot = { pending: string | null | undefined; journal: string | null | undefined };
@@ -2037,14 +2092,15 @@ function LauncherShell({
       lastThinkingAt: null,
       lastFrameAt: startedAt,
     };
+    const live: LiveAttempt = { id: attemptId, lease, screen: building, signals, ctl };
+    liveAttemptsRef.set(attemptId, live);
+    liveRef.current = live;
     signalsRef.current = signals;
     // The keepalive comment frame (`: keepalive\n\n`, build-liveness B2) is transport noise, never
     // a `GenerationEvent` — it reaches here through `ClientOptions.onKeepalive`, not the stream
     // loop below, and moves ONLY the any-frame clock (`withKeepalive` never touches the journal).
     const onKeepalive = () => {
-      if (!pending.isCurrentAttempt(lease)) return;
-      signals = withKeepalive(signals, Date.now());
-      signalsRef.current = signals;
+      signals = recordAttemptKeepalive(attemptId, lease, signals) ?? signals;
     };
     /** What the terminal entry flushes, read at the instant the stream ends: the final cumulative
      *  counts (the throttle's last window has no later arrival to close it) and the diagnostics
@@ -2053,9 +2109,6 @@ function LauncherShell({
       aggregates: signals.aggregates,
       observedDiagnostics: counts.diagnostic,
     });
-    // The live screen a `building` ghost taps back into; kept in step with the stream below.
-    let live = building;
-    liveRef.current = { id: attemptId, lease, screen: live };
     refresh();
 
     try {
@@ -2074,22 +2127,9 @@ function LauncherShell({
       // handling below stays in one place.
       stream = generateApp({ ...options, onKeepalive }, request, controller.signal);
       for await (const event of stream) {
-        if (!pending.isCurrentAttempt(lease)) return;
-        countEvent(counts, event);
-        // The journal write and the signal fold for this event, in one place and at one clock
-        // reading: `stage` journals immediately, `token` goes through the store's own ~5s
-        // throttle, a `restart` voids the turn's counts, everything else writes nothing
-        // (`build-lifecycle#journalStreamEvent`).
-        signals = journalStreamEvent(journal, attemptId, signals, event, Date.now());
-        signalsRef.current = signals;
-        // `stage` moves the step and `queued` the place in line; any other event ends the
-        // waiting state (`prompt-flow.ts#withStreamEvent`), and a token alone changes nothing.
-        const next = withStreamEvent(live, event);
-        if (next !== live) {
-          live = next;
-          liveRef.current = { id: attemptId, lease, screen: live };
-          setScreen((s) => (s.kind === 'build' ? withStreamEvent(s, event) : s));
-        }
+        const nextSignals = recordAttemptFrame(attemptId, lease, signals, counts, event);
+        if (!nextSignals) return;
+        signals = nextSignals;
         if (event.type === 'result' || event.type === 'failure') terminal = event;
       }
       // The stream loop completed without throwing a transport-classified error — a real server
@@ -2152,31 +2192,34 @@ function LauncherShell({
       // The stream ended with a deliverable result: the terminal entry is written HERE, at the end
       // of the stream and before delivery starts, carrying no failure field.
       if (!pending.isCurrentAttempt(lease)) return;
+      const currentLive = liveAttemptsRef.get(attemptId);
+      if (currentLive?.lease !== lease) return;
       journal.appendTerminal(attemptId, terminalCounts());
-      live = withDelivering(live);
-      liveRef.current = { id: attemptId, lease, screen: live };
-      setScreen((s) => (s.kind === 'build' ? withDelivering(s) : s));
+      currentLive.screen = withDelivering(currentLive.screen);
+      if (liveRef.current?.lease === lease) {
+        setScreen((s) => (s.kind === 'build' ? withDelivering(s) : s));
+      }
       // Store first, index second, pending record deleted LAST (design D5) — a process death
       // anywhere inside this await leaves the record behind to surface as `interrupted`.
-      const delivered = await deliverAndSettle(pending, {
+      const delivered = await deliverAndSettleIfOwned(pending, {
         access,
         appId: attemptId,
         editing,
         text: building.text,
         wire: terminal.app,
         summary: terminal.summary,
-      });
+      }, () => pending.isCurrentAttempt(lease));
       // Delivery landed: the attempt's journal becomes the delivered app's retained last-run
       // report, under the id the app NOW has (a behind-tip rebuild delivers onto a fork, whose id
       // is not the attempt's). After the delivery, never before it — a death in between loses the
       // report and nothing else (design D5).
-      whenLiveAttemptOwns(lease, () => {
-        journal.moveToLastRun(attemptId, delivered.id);
+      whenDeliverySettles(lease, delivered, (installed, selected) => {
+        journal.moveToLastRun(attemptId, installed.id);
         pending.releaseAttempt(lease);
         releaseLiveRef(lease);
         refresh();
         // "Leave it running": delivered silently, the user is elsewhere.
-        setDoneIfAttached((s) => (s.kind === 'build' ? doneStep(s, delivered) : s));
+        if (selected) setDoneIfAttached((s) => (s.kind === 'build' ? doneStep(s, installed) : s));
       });
     } catch (error) {
       settleUnexpectedAttemptFailure({
@@ -2290,18 +2333,15 @@ function LauncherShell({
       setScreen(reopened.kind === 'update' ? updateScreenFrom(screen, reopened.notice) : failureFromRecord(current));
       return;
     }
-    const live = liveRef.current;
-    if (live?.id !== current.id) {
-      // Reachable, and not only after a crash: `liveRef` holds ONE attempt, so two overlapping
-      // attempts (a "Leave it running" plus a Retry or a new build) leave the older one's
-      // `building` ghost pointing at a run this ref no longer names. The `releaseLiveRef` guards
-      // stop an older attempt stranding a NEWER one; they cannot make this branch unreachable.
-      // Nothing is lost either way — the run still delivers or settles on its own — so the honest
-      // response is a logged no-op rather than an invented screen.
+    const live = liveAttemptsRef.get(current.id);
+    if (!live) {
       log.warn(CHANNELS.gen, 'building ghost has no live run to reattach to', { pendingId: current.id });
       return;
     }
-    if (genRef.current) genRef.current.detached = false;
+    liveRef.current = live;
+    genRef.current = live.ctl;
+    live.ctl.detached = false;
+    signalsRef.current = live.signals;
     setScreen(live.screen);
   };
 
@@ -2310,8 +2350,9 @@ function LauncherShell({
    *  screen's own hardware back no longer takes this route (`prompt-flow.ts#buildBackAction`). */
   const onCancelPending = (rec: PendingBuildRecord) => {
     const current = pending.readCurrent(rec.id)?.record ?? rec;
-    if (liveRef.current?.id === current.id) {
-      abortLiveAttempt();
+    const live = liveAttemptsRef.get(current.id);
+    if (live) {
+      abortLiveAttempt(live);
       return;
     }
     dropAttempt(current.id);

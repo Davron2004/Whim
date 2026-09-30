@@ -73,9 +73,60 @@ function delayedRefusalThenActiveStream(releaseRefusals: (() => void)[]) {
   };
 }
 
+type KeepaliveStream = {
+  response: Response;
+  push: (event: unknown) => void;
+  end: () => void;
+  keepalive: () => void;
+};
+
+function keepaliveStreamingServer(streams: KeepaliveStream[]) {
+  return (request: SentRequest) => {
+    if (request.path === '/v1/clarify') return json({ questions: [] });
+    if (request.path === '/v1/rewrite') return json({ rewrittenPrompt: String(request.body?.prompt), plan: [] });
+    const encoder = new TextEncoder();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    let open = true;
+    const body = new ReadableStream<Uint8Array>({ start: (next) => { controller = next; } });
+    request.signal?.addEventListener('abort', () => {
+      if (!open) return;
+      open = false;
+      controller.error(new DOMException('The operation was aborted.', 'AbortError'));
+    });
+    const stream: KeepaliveStream = {
+      response: new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }),
+      push: (event) => { if (open) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)); },
+      end: () => { if (open) { open = false; controller.close(); } },
+      keepalive: () => { if (open) controller.enqueue(encoder.encode(': keepalive\n\n')); },
+    };
+    streams.push(stream);
+    return stream.response;
+  };
+}
+
+function delayInstalls() {
+  let release!: () => void;
+  let started = false;
+  let finished = false;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const original = StoreAccess.prototype.install;
+  StoreAccess.prototype.install = async function (...args) {
+    started = true;
+    await gate;
+    const installed = await original.apply(this, args);
+    finished = true;
+    return installed;
+  };
+  return { release, started: () => started, finished: () => finished, restore: () => { StoreAccess.prototype.install = original; } };
+}
+
 /** Leave the build screen the way the button does: the run keeps going. */
 async function leaveRunning(tree: Tree): Promise<void> {
   await press(button(tree, COPY.buildLeaveRunning));
+}
+
+async function openPending(tree: Tree, record: PendingBuildRecord): Promise<void> {
+  await TestRenderer.act(async () => home(tree).props.onOpenPending(record));
 }
 
 export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
@@ -809,6 +860,102 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('ghosts: an independent background stream keeps its own journal without replacing the selected build', async () => {
+    const streams: KeepaliveStream[] = [];
+    await withLauncher({ server: keepaliveStreamingServer(streams) }, async ({ tree, kv }) => {
+      await startBuild(tree, 'A tea timer');
+      const firstId = new PendingBuildStore(kv).list()[0]!.id;
+      await leaveRunning(tree);
+      await startBuild(tree, 'A dice roller');
+      const secondId = new PendingBuildStore(kv).list().find((record) => record.id !== firstId)!.id;
+      streams[1].push({ type: 'stage', stage: 'check', status: 'start' });
+      await waitFor(() => tree.root.findByType(BuildStep).props.stage === 'check', 'the selected build stage');
+
+      streams[0].keepalive();
+      streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
+      await settle();
+      h.eq(tree.root.findByType(BuildStep).props.stage, 'check', 'the older frame and keepalive leave the selected progress unchanged');
+      h.eq(new RunJournalStore(kv).get(firstId)?.filter((entry) => entry.kind === 'stage').map((entry) => entry.stage), ['generate'], 'the older run still records its own stage');
+
+      await leaveRunning(tree);
+      await openPending(tree, ghosts(tree).find((ghost) => ghost.id === secondId)!);
+      h.eq(tree.root.findByType(BuildStep).props.stage, 'check', 'the selected ghost reattaches to its own run');
+      streams[0].push({ type: 'failure', reason: 'The first build did not complete.', attempts: 0, diagnostics: [] });
+      streams[0].end();
+      await settle();
+      h.eq([new PendingBuildStore(kv).get(firstId)?.state, new PendingBuildStore(kv).get(secondId)?.state], ['failed', 'building'], 'the independent completion persists without replacing the selected run');
+      h.eq(tree.root.findByType(BuildStep).props.stage, 'check', 'the independent failure leaves the selected screen intact');
+    });
+  });
+
+  await h.test('ghosts: delivery settles an independent run without taking over the selected build', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    const delayed = delayInstalls();
+    try {
+      await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+        await startBuild(tree, 'A tea timer');
+        const firstId = new PendingBuildStore(kv).list()[0]!.id;
+        await leaveRunning(tree);
+        streams[0].push(resultEvent('Tea Timer'));
+        streams[0].end();
+        await waitFor(delayed.started, 'the first delivery to reach the real install boundary');
+        await startBuild(tree, 'A dice roller');
+        const secondId = new PendingBuildStore(kv).list().find((record) => record.id !== firstId)!.id;
+        streams[1].push({ type: 'stage', stage: 'check', status: 'start' });
+        await waitFor(() => tree.root.findByType(BuildStep).props.stage === 'check', 'the selected second build');
+
+        delayed.release();
+        await waitFor(delayed.finished, 'the independent delivery to return from the real install boundary');
+        await waitFor(() => new PendingBuildStore(kv).get(firstId) == null, 'the first delivery to settle');
+        h.eq(new PendingBuildStore(kv).get(secondId)?.state, 'building', 'the selected build remains pending');
+        h.ok(new RunJournalStore(kv).getLastRun(firstId) != null, 'the independent delivery promotes its own report');
+        h.eq(tree.root.findByType(BuildStep).props.stage, 'check', 'the independent delivery does not take over the selected screen');
+      });
+    } finally {
+      delayed.restore();
+    }
+  });
+
+  await h.test('ghosts: a superseded delivery cannot delete the newer same-id pending record', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    const delayed = delayInstalls();
+    try {
+      await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+        await startBuild(tree, 'A tea timer');
+        const id = new PendingBuildStore(kv).list()[0]!.id;
+        await leaveRunning(tree);
+        streams[0].push(resultEvent('Tea Timer'));
+        streams[0].end();
+        await waitFor(delayed.started, 'the first delivery to reach the real install boundary');
+        await TestRenderer.act(async () => openLink(appLinkFor('missing')));
+        await waitFor(() => on(tree, AppLinkMissingScreen), 'the temporary app-link screen');
+        await press(button(tree, COPY.appLinkMissingBack));
+        await waitFor(() => on(tree, HomeScreen), 'Home after leaving the delayed delivery');
+        const homeActions = home(tree).props;
+        const started = new PendingBuildStore(kv).get(id)!;
+        kv.set(`pending:${id}`, JSON.stringify({
+          ...started,
+          prompt: 'A dice roller',
+          workingTitle: 'Dice roller',
+          state: 'failed',
+          failure: { reason: 'Retry this instead.' },
+        }));
+        await TestRenderer.act(async () => homeActions.onOpenPending(new PendingBuildStore(kv).get(id)!));
+        await press(button(tree, COPY.screenErrorRetry));
+        await waitFor(() => streams.length === 2 && on(tree, BuildStep), 'the newer same-id retry to activate before the older delivery resumes');
+
+        delayed.release();
+        await waitFor(delayed.finished, 'the superseded delivery to return from the real install boundary');
+        await settle();
+        h.eq(new PendingBuildStore(kv).get(id)?.state, 'building', 'the superseded delivery does not delete the newer pending record');
+        h.eq(kv.getString(JOURNAL_KEY(id)), '[]', 'the superseded delivery leaves the newer journal untouched');
+        await TestRenderer.act(async () => homeActions.onCancelPending(new PendingBuildStore(kv).get(id)!));
+      });
+    } finally {
+      delayed.restore();
+    }
+  });
+
   await h.test('ghosts: a stale same-id refusal keeps the active retry reattachable', async () => {
     const releaseRefusals: (() => void)[] = [];
     await withLauncher({ server: delayedRefusalThenActiveStream(releaseRefusals) }, async ({ tree, kv }) => {
@@ -888,8 +1035,7 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       h.eq(ghosts(tree).map((g) => g.state), ['building', 'building'], 'both runs show as building ghosts');
       // The older run settles first: its settlement must not release the newer run's handles.
       streams[0].end();
-      await waitFor(() => on(tree, FailureScreen), 'the older run to fail');
-      await press(button(tree, COPY.failureBack));
+      await settle();
       await TestRenderer.act(async () => home(tree).props.onOpenPending(byTitle('A dice roller')));
       h.ok(on(tree, BuildStep), 'the newer ghost still reattaches after the older run settled');
       await leaveRunning(tree);
