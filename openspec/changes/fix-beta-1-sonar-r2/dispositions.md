@@ -7,3 +7,5 @@ Read-only researcher reconciled all three producers against current source and l
 S3: initial root stale check returned 7 because a purported verbatim standalone brace did not match HEAD; no dispatch occurred. Researcher corrected the evidence to two exact live statements. Root rerun actual exit 0, EVIDENCE PRESENT (2 lines). Corrected evidence.txt is authoritative.
 
 S1, S2: root verified current key/rule/path/line against the PR, then transitioned only the two reviewed issues with sendNotifications=false. Supported API result: total 2, success 2, ignored 0, failures 0; both keys read back FALSE_POSITIVE. Receipt fp-receipt.json. These two findings are terminal; S3 remains source work. No issue comment or notification was sent.
+
+S3: root created fix/beta-1-sonar-r2-terminal at .claude/worktrees/beta-1-sonar-r2-terminal with immutable BASE f80392a9099a5b5229ef9be24d0e2d4e2a144755. Corrected root stale exit 0 precedes dispatch. One fix-worker owns the exact two-file allowlist and the source gate lease. Superseded 392037 artifacts are preserved byte-for-byte; native work is stopped with no owned devices/servers running.
