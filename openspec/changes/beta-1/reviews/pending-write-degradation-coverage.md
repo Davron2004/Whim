@@ -73,3 +73,5 @@ R8 FAST GATE receipt: `/tmp/whim-beta1-chain10-r8-gate.log` and `/tmp/whim-beta1
 R8 KNIP receipt: `/tmp/whim-beta1-chain10-r8-knip.log`; `npx knip` exited `0` with no findings or output.
 
 VERDICT: required source cases implemented; independent review pending.
+
+Independent r9 review accepted the composed source range from original BASE `874be330` through `c9a73bd3`; see `pending-write-degradation-r9.md`. Staging merge `cba5a130` is complete. Merged gates, whole-change review, current-head CI and rebuilt native restart evidence remain pending.
