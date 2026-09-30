@@ -16,6 +16,9 @@
 | Stale same-ID active retry ownership | `ghosts: a stale same-id stream failure keeps the active retry reattachable and cancellable`: A's delayed iterator error arrives while same-ID retry B still streams. B remains reattachable, and Cancel aborts B's request before removing its ghost. |
 | Stale same-ID refusal ownership | `ghosts: a stale same-id refusal keeps the active retry reattachable`: A's delayed service refusal arrives while same-ID retry B still streams, and B remains reattachable. |
 | Stale same-ID stream frames | `ghosts: a stale same-id stage cannot replace or journal the active retry`: A emits a valid stage after B activates. B retains its progress, and B's verified journal contains only B's stage. |
+| Independent live stream ownership | `ghosts: an independent background stream keeps its own journal without replacing the selected build`: active A emits a keepalive and stage while B is selected; B keeps its `check` screen while A's journal records A's stage and A can settle without replacing B. |
+| Independent delivery completion | `ghosts: delivery settles an independent run without taking over the selected build`: A pauses at the actual `StoreAccess.install` boundary, B is selected, then A's delivery removes A and promotes A's report while B remains building on its `check` screen. |
+| Same-ID delivery supersession | `ghosts: a superseded delivery cannot delete the newer same-id pending record`: A pauses at the actual install boundary, a same-ID B retry activates, and releasing A leaves B's raw building record and new empty journal intact. |
 
 RED receipt: with current suites and native seams but `LauncherRoot.tsx` and `pending-builds.ts` temporarily restored to `a77fd2c6`, `npm run launcher:test` exited `1`. Its footer named both failures: the dangling `pending:order` removal could not return to Back, and the live volatile failure offered no Discard. Current product files were restored to `0b9ba3ca` before the three acceptance additions. No standalone log file was captured.
 
@@ -49,4 +52,14 @@ R6 FAST GATE receipt: `/tmp/whim-beta1-chain10-r6-gate.log`; `GATE_BASE=874be330
 
 R6 KNIP receipt: `/tmp/whim-beta1-chain10-r6-knip.log`; `npx knip` exited `0` with no findings or output.
 
-Worker verdict: source coverage complete at `ddb01da336c2af0d74f66fbd26170d9837382905`. Root acceptance remains pending independent r7 review, integrated gates and fresh native restart smoke. These are Node/rendered checks; they do not claim an on-device write-outage test.
+R7 RED receipt: `/tmp/whim-beta1-chain10-r7-red.log`; with product files restored to `ddb01da336c2af0d74f66fbd26170d9837382905`, `npm run launcher:test` exited `1` with `13839 checks passed, 6 failed`. Named producer assertions recorded A's `generate` progress replacing selected B's `check`, the missing independent delivery report, and `the superseded delivery does not delete the newer pending record (got undefined, want 'building')`.
+
+R7 GREEN receipt: `/tmp/whim-beta1-chain10-r7-green.log`; `npm run launcher:test` exited `0` with `13848 checks passed, 0 failed` and `launcher acceptance green`.
+
+R7 lint receipt: `/tmp/whim-beta1-chain10-r7-lint.log`; `npm run lint` exited `0`.
+
+R7 FAST GATE receipt: `/tmp/whim-beta1-chain10-r7-gate-receipt.log` and `/tmp/whim-beta1-chain10-r7-gate-receipt.exit`; the serial pinned gate returned exit `0`, saved `0`, and printed `FAST GATE PASSED`.
+
+R7 KNIP receipt: `/tmp/whim-beta1-chain10-r7-knip.log`; `npx knip` exited `0` with no findings or output.
+
+Worker verdict: source coverage complete at `b8d16bbf60f9d0a2da760312163ff2c7e35f8f6f`. Root acceptance remains pending independent r8 review, integrated gates and fresh native restart smoke. These are Node/rendered checks; they do not claim an on-device write-outage test.
