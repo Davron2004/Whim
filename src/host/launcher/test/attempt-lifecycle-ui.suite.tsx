@@ -15,10 +15,11 @@ import { GENERIC_STREAM_ERROR } from '../error-reason';
 import type { InstalledApp } from '../app-index';
 import { StoreAccess } from '../store-access';
 import { hardwareBack, openLink } from './native-host';
+import { failNativeStorageWritesWhen } from './native-storage';
 import AppLinkMissingScreen from '../AppLinkMissingScreen';
 import { appLinkFor } from '../app-link';
 import { button, press, textOf } from './react-screen';
-import { composeAndContinue, hasInstalled, json, resultEvent, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, hasInstalled, json, planLoaded, resultEvent, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
@@ -126,7 +127,27 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('ghosts: a consent-resumed Retry whose pending record cannot start leaves its failed ghost and journal untouched', async () => {
+  await h.test('ghosts: a pending-order MMKV write failure after a fresh record is written leaves no building ghost or request', async () => {
+    await withLauncher({ server: streamingServer([]) }, async ({ tree, kv, sent }) => {
+      await composeAndContinue(tree, 'A tea timer');
+      await waitFor(() => planLoaded(tree), 'the plan to load');
+      const clearFailure = failNativeStorageWritesWhen(({ id, key }) => id === 'whim.launcher' && key === 'pending:order');
+    try {
+      await buildIt(tree);
+      await waitFor(() => on(tree, FailureScreen), 'the setup failure screen');
+
+      h.eq(sent.filter((request) => request.path === '/v1/generate').length, 0, 'the failed setup sends no generation request');
+      h.eq(new PendingBuildStore(kv).list(), [], 'the partial record is removed instead of becoming a building ghost');
+      h.eq(kv.getAllKeys().filter((key) => key.startsWith('pending:')), [], 'no hidden pending record survives outside the order list');
+      h.eq(kv.getAllKeys().filter((key) => key.startsWith('journal:')), [], 'no sibling journal remains for the partial record');
+      h.eq(tree.root.findByType(FailureScreen).props.reason, GENERIC_STREAM_ERROR, 'the user sees the established generic failure');
+    } finally {
+      clearFailure();
+    }
+  });
+  });
+
+  await h.test('ghosts: a consent-resumed Retry whose journal write throws after recreating its record restores the old pair', async () => {
     await withLauncher({
       consent: false,
       prepare: (kv) => {
@@ -134,29 +155,27 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
         pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
         pending.setFailed('failed', { reason: 'The earlier build stopped.', diagnostics: '' });
         new RunJournalStore(kv).create('failed');
-    },
-    server: () => { throw new Error('a retry request must not be sent'); },
-  }, async ({ tree, kv, sent }) => {
-    const pendingBefore = kv.getString('pending:failed');
-    const journalBefore = kv.getString(JOURNAL_KEY('failed'));
-    const create = PendingBuildStore.prototype.create;
-    PendingBuildStore.prototype.create = () => { throw new Error('pending storage is unavailable'); };
-    try {
-      const failed = new PendingBuildStore(kv).get('failed');
-      await TestRenderer.act(async () => home(tree).props.onOpenPending(failed));
-      await press(button(tree, COPY.screenErrorRetry));
-      await waitFor(() => textOf(tree.root).includes(COPY.consentTitle), 'the retry consent step');
-      await press(button(tree, COPY.consentAgree));
-      await waitFor(() => on(tree, FailureScreen), 'the setup failure screen');
+      },
+      server: () => { throw new Error('a retry request must not be sent'); },
+    }, async ({ tree, kv, sent }) => {
+      const pendingBefore = kv.getString('pending:failed');
+      const journalBefore = kv.getString(JOURNAL_KEY('failed'));
+      const clearFailure = failNativeStorageWritesWhen(({ id, key }) => id === 'whim.launcher' && key === JOURNAL_KEY('failed'));
+      try {
+        const failed = new PendingBuildStore(kv).get('failed');
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(failed));
+        await press(button(tree, COPY.screenErrorRetry));
+        await waitFor(() => textOf(tree.root).includes(COPY.consentTitle), 'the retry consent step');
+        await press(button(tree, COPY.consentAgree));
+        await waitFor(() => on(tree, FailureScreen), 'the setup failure screen');
 
-      h.eq(sent.filter((request) => request.path === '/v1/generate').length, 0, 'the failed setup sends no generation request');
-      h.eq([kv.getString('pending:failed'), kv.getString(JOURNAL_KEY('failed'))], [pendingBefore, journalBefore], 'the original failed ghost and journal remain paired');
-      h.eq(tree.root.findByType(FailureScreen).props.reason, GENERIC_STREAM_ERROR, 'the user sees the established generic failure');
-      h.ok(!textOf(tree.root).includes('pending storage is unavailable'), 'the storage failure text never reaches the screen');
-    } finally {
-      PendingBuildStore.prototype.create = create;
-    }
-  });
+        h.eq(sent.filter((request) => request.path === '/v1/generate').length, 0, 'the journal failure sends no generation request');
+        h.eq([kv.getString('pending:failed'), kv.getString(JOURNAL_KEY('failed'))], [pendingBefore, journalBefore], 'the pre-retry record and journal are restored exactly');
+        h.eq(tree.root.findByType(FailureScreen).props.reason, GENERIC_STREAM_ERROR, 'the setup failure stays generic');
+      } finally {
+        clearFailure();
+      }
+    });
   });
 
   await h.test('ghosts: Discard on the live failure screen deletes the attempt it just saved', async () => {

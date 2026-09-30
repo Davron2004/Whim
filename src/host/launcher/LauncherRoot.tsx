@@ -36,7 +36,7 @@ import type { AppBusyMap } from './app-busy';
 import { StoreAccess } from './store-access';
 import { PendingBuildStore } from './pending-builds';
 import type { PendingBuildRecord, PendingFailureRemedy } from './pending-builds';
-import { RunJournalStore } from './run-journal';
+import { JOURNAL_KEY, RunJournalStore } from './run-journal';
 import type { RunJournal, RunTerminalCounts } from './run-journal';
 import {
   deliverAndSettle,
@@ -1609,14 +1609,61 @@ function LauncherShell({
     return true;
   };
 
+  type AttemptSnapshot = { pending: string | null | undefined; journal: string | null | undefined };
+
+  const currentPendingIds = (): string[] => kv.getAllKeys()
+    .flatMap((key) => key.startsWith('pending:') ? [key.slice('pending:'.length)] : []);
+
+  const partialPendingIds = (known: ReadonlySet<string>): string[] => {
+    try {
+      return currentPendingIds().filter((id) => !known.has(id));
+    } catch (readError) {
+      log.warn(CHANNELS.gen, 'attempt setup recovery could not read pending records', {
+        operation: 'find-partial-attempt',
+        thrown: readError instanceof Error ? 'error' : 'non-error',
+      });
+      return [];
+    }
+  };
+
+  const restoreAttemptSnapshots = (ids: readonly string[], reuseId: string | undefined, previous: AttemptSnapshot | undefined) => {
+    const restore = (key: string, value: string | null | undefined) => {
+      try {
+        if (value == null) kv.delete(key);
+        else kv.set(key, value);
+      } catch (restoreError) {
+        log.warn(CHANNELS.gen, 'attempt setup recovery did not persist', {
+          operation: 'restore-attempt-snapshot',
+          thrown: restoreError instanceof Error ? 'error' : 'non-error',
+        });
+      }
+    };
+    // The journal is restored first, matching terminal settlement order. A retry's old ghost and
+    // report return together; setup never writes a terminal entry before a generation request.
+    for (const id of ids) {
+      restore(JOURNAL_KEY(id), id === reuseId ? previous?.journal : undefined);
+      restore(`pending:${id}`, id === reuseId ? previous?.pending : undefined);
+    }
+    refresh();
+  };
+
   const beginPendingAttempt = (
     building: BuildScreen,
     editing: InstalledApp | undefined,
     reuseId: string | undefined,
     ctl: NonNullable<typeof genRef.current>,
   ): string | undefined => {
+    let previous: AttemptSnapshot | undefined;
+    let snapshotAvailable = false;
+    let knownPendingIds: Set<string> | undefined;
     let attemptId: string | undefined;
     try {
+      knownPendingIds = new Set(currentPendingIds());
+      if (reuseId != null) previous = {
+        pending: kv.getString(`pending:${reuseId}`),
+        journal: kv.getString(JOURNAL_KEY(reuseId)),
+      };
+      snapshotAvailable = true;
       attemptId = startPendingBuild(pending, { editing, text: building.text, reuseId });
       // The journal is created at the SAME moment as the record it is a sibling of
       // (`generation-run-journal` "A run journal is created alongside its pending-build record"),
@@ -1629,10 +1676,12 @@ function LauncherShell({
         thrown: setupError instanceof Error ? 'error' : 'non-error',
       });
       releaseGenRef(ctl);
-      if (attemptId != null) {
-        settleFailed(attemptId, GENERIC_STREAM_ERROR, [], { aggregates: EMPTY_RUN_AGGREGATES, observedDiagnostics: 0 });
+      if (snapshotAvailable) {
+        const restoredId = reuseId ?? attemptId;
+        const restoredIds = restoredId == null ? partialPendingIds(knownPendingIds!) : [restoredId];
+        restoreAttemptSnapshots(restoredIds, reuseId, previous);
       }
-      setScreen(failure(editing, building.text, new Error(GENERIC_STREAM_ERROR), 'attempt setup failed', 0, attemptId));
+      setScreen(failure(editing, building.text, new Error(GENERIC_STREAM_ERROR), 'attempt setup failed'));
       return undefined;
     }
   };

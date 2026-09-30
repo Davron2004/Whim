@@ -3,12 +3,25 @@
 import { DatabaseSync } from 'node:sqlite';
 
 const stores = new Map<string, Map<string, string>>();
+type WriteFailure = (input: Readonly<{ id: string; key: string; value: string }>) => boolean;
+let writeFailure: WriteFailure | undefined;
+
+/** Test-only fault injection for every MMKV-shaped adapter over the shared named store. */
+export function failNativeStorageWritesWhen(predicate: WriteFailure): () => void {
+  const previous = writeFailure;
+  writeFailure = predicate;
+  return () => { writeFailure = previous; };
+}
+
 export function createMMKV({ id }: { id: string }) {
   if (!stores.has(id)) stores.set(id, new Map());
   const data = stores.get(id)!;
   return {
     getString: (key: string) => data.get(key),
-    set: (key: string, value: string) => data.set(key, value),
+    set: (key: string, value: string) => {
+      if (writeFailure?.({ id, key, value })) throw new Error('native storage write failed');
+      data.set(key, value);
+    },
     remove: (key: string) => data.delete(key),
     getAllKeys: () => [...data.keys()],
   };
@@ -21,6 +34,7 @@ export const closedDatabases = new Map<string, number>();
 
 export function resetNativeStorage(): void {
   stores.clear();
+  writeFailure = undefined;
   for (const db of databases.values()) db.close();
   databases.clear();
   closedDatabases.clear();
