@@ -148,6 +148,14 @@ function useRevealingScroll(
   const metrics = useRef<ScrollMetrics>({ offset: 0, viewport: 0, content: 0 });
   const focusedTarget = useRef<RevealTarget | null>(null);
   const [edges, setEdges] = useState({ above: false, below: false });
+  const pendingReveal = useRef<number | null>(null);
+  const revealVersion = useRef(0);
+
+  const cancelReveal = useCallback(() => {
+    revealVersion.current += 1;
+    if (pendingReveal.current != null) cancelAnimationFrame(pendingReveal.current);
+    pendingReveal.current = null;
+  }, []);
 
   const settle = useCallback((next: Partial<ScrollMetrics>) => {
     metrics.current = { ...metrics.current, ...next };
@@ -156,18 +164,38 @@ function useRevealingScroll(
   }, []);
 
   const reveal = useCallback(() => {
-    const target = focusedTarget.current?.current;
-    const content = inner.current;
-    if (!target || !content) return;
-    target.measureLayout(
-      content,
-      (_x, top, _width, height) => {
-        const next = revealOffset(metrics.current, top, top + height, SPACING.md);
-        if (next != null) scroll.current?.scrollTo({ y: next, animated: true });
-      },
-      () => {},
-    );
-  }, []);
+    cancelReveal();
+    if (!focusedTarget.current) return;
+    const version = revealVersion.current;
+    // onLayout reports Yoga's destination while the native scroll view can still have its old
+    // bounds. Measuring on the next frame lets that commit land before UIKit clamps scrollTo.
+    pendingReveal.current = requestAnimationFrame(() => {
+      pendingReveal.current = null;
+      const target = focusedTarget.current?.current;
+      const content = inner.current;
+      if (!target || !content) return;
+      target.measureLayout(
+        content,
+        (_x, top, _width, height) => {
+          if (version !== revealVersion.current || focusedTarget.current?.current !== target) return;
+          const next = revealOffset(metrics.current, top, top + height, SPACING.md);
+          if (next != null) scroll.current?.scrollTo({ y: next, animated: true });
+        },
+        () => {},
+      );
+    });
+  }, [cancelReveal]);
+
+  useEffect(() => {
+    // iOS can animate native bounds beyond the layout notification and the next frame. Recheck
+    // when showing has finished too; this is a one-shot event, not a scroll/layout retry loop.
+    const subscription = Keyboard.addListener('keyboardDidShow', reveal);
+    return () => {
+      subscription.remove();
+      cancelReveal();
+      focusedTarget.current = null;
+    };
+  }, [cancelReveal, reveal]);
 
   const registry = useMemo<RevealRegistry>(
     () => ({
@@ -176,10 +204,13 @@ function useRevealingScroll(
         reveal();
       },
       blurred: (target) => {
-        if (focusedTarget.current === target) focusedTarget.current = null;
+        if (focusedTarget.current === target) {
+          focusedTarget.current = null;
+          cancelReveal();
+        }
       },
     }),
-    [reveal],
+    [cancelReveal, reveal],
   );
 
   const setScroll = useCallback(
