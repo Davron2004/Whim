@@ -8,13 +8,16 @@
 import { Harness } from './harness';
 import { FakeTimers } from './fake-timers';
 import { MapKVBackend } from '../../version-store';
+import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { runAgeCheck, storedAgeGate, type AgeCheckOptions, type AgeCheckResult } from '../age-check';
 import { nextLegalStep } from '../consent-flow';
 import { acceptTerms, type TermsStatus } from '../terms-acceptance';
 import { TERMS_VERSION } from '../release-config';
 import type { ConsentStatus } from '../ai-consent';
+import { failNativeStorageWritesWhen, resetNativeStorage } from './native-storage';
 
 const AGE_CHECK_KEY = 'whim.age-check:v1';
+const ACKNOWLEDGMENT_KEY = 'whim.significant-update:v1';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CHECKED = new Date('2026-09-24T09:30:00.000Z');
 
@@ -53,6 +56,13 @@ const ACCEPTED: TermsStatus = { kind: 'accepted', version: 1, acceptedAt: '2026-
 const GRANTED: ConsentStatus = { kind: 'granted', version: 2, grantedAt: '2026-09-01T00:00:00.000Z' };
 
 const UPDATE_LINE = 'We’ve updated the terms of use.';
+
+class FailingAgePersistence extends MapKVBackend {
+  override set(key: string, value: string): void {
+    if (key === AGE_CHECK_KEY) throw new Error('age persistence failed');
+    super.set(key, value);
+  }
+}
 
 /** A store whose terms acceptance is for the version before the current one (spec
  *  terms-acceptance: `whim.terms:v1` holds `{ version, acceptedAt }`). */
@@ -96,6 +106,15 @@ export async function runAgeCheckTests(h: Harness): Promise<void> {
       h.eq(storedRecord(check.kv).outcome, stored, `${signal} is stored as ${stored}`);
     });
   }
+
+  await h.test('age-check: an unavailable age-outcome write keeps the derived blocked result and no raw age data', async () => {
+    for (const [signal, expected] of [['minor-not-approved', 'minor-not-approved'], ['under-13', 'under-13']] as const) {
+      const kv = new FailingAgePersistence();
+      const result = await runAgeCheck(kv, () => Promise.resolve(signal), () => CHECKED);
+      h.eq(result, expected, `${signal} still reaches its own held message when persistence fails`);
+      h.eq(kv.getAllKeys(), [], `${signal} leaves no age signal or outcome behind after the failed write`);
+    }
+  });
 
   await h.test('age-check: a user under 13 is held, and the store keeps only "blocked" and its date', async () => {
     const { kv, outcome } = await checkWith(() => Promise.resolve('under-13'));
@@ -161,6 +180,21 @@ export async function runAgeCheckTests(h: Harness): Promise<void> {
     h.ok(!/minor|approved|adult|age/i.test(written[0]), `and nothing about age (got ${written[0]})`);
     h.eq(await approvedMinorCheck(kv, script), 'allowed', 'a later check still continues');
     h.eq([script.asked, script.shown.length], [1, 1], 'without asking the store or the guardian again');
+  });
+
+  await h.test('age-check: an unavailable guardian-acknowledgment MMKV write still allows this check without keeping age data', async () => {
+    resetNativeStorage();
+    const kv = createMmkvBackend('whim.launcher');
+    kv.set('whim.terms:v1', JSON.stringify({ version: TERMS_VERSION - 1, acceptedAt: '2026-01-01T00:00:00.000Z' }));
+    const script = guardian(() => Promise.resolve(true), () => Promise.resolve('acknowledged'));
+    const clearFailure = failNativeStorageWritesWhen(({ id, key }) => id === 'whim.launcher' && key === ACKNOWLEDGMENT_KEY);
+    try {
+      h.eq(await runAgeCheck(kv, () => Promise.resolve('minor-approved'), () => CHECKED, { significantUpdate: { sheet: script.sheet, description: UPDATE_LINE } }), 'allowed', 'the guardian acknowledgment still reaches the terms flow');
+      h.eq(kv.getString(ACKNOWLEDGMENT_KEY), undefined, 'the failed acknowledgment record is not retained');
+      h.eq(JSON.parse(kv.getString(AGE_CHECK_KEY) ?? 'null'), { outcome: 'allowed', checkedAt: CHECKED.toISOString() }, 'the age outcome remains the only check record');
+    } finally {
+      clearFailure();
+    }
   });
 
   await h.test('age-check: a guardian who declines keeps the AI features off, as for an unapproved minor, and is asked again next time', async () => {
