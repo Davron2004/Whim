@@ -1,0 +1,5 @@
+appId: com.anycognition.whim
+---
+- tapOn: "Home"
+- waitForAnimationToEnd
+- assertVisible: "Make something new"

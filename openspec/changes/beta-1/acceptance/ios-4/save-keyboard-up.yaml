@@ -1,0 +1,6 @@
+appId: com.anycognition.whim
+---
+- inputText: " Persist through the next review."
+- tapOn: "Save"
+- waitForAnimationToEnd
+- assertVisible: "Persist through the next review."

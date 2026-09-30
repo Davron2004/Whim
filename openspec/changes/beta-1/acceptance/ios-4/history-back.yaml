@@ -1,0 +1,6 @@
+appId: com.anycognition.whim
+---
+- tapOn:
+    point: "8%, 10%"
+- waitForAnimationToEnd
+- assertVisible: "Water Tracker"

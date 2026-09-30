@@ -1,0 +1,5 @@
+appId: com.anycognition.whim
+---
+- tapOn: "Versions"
+- waitForAnimationToEnd
+- assertVisible: "Water Tracker history"

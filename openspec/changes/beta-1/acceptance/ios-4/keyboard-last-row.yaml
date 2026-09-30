@@ -1,0 +1,17 @@
+appId: com.anycognition.whim
+---
+# Run after ios-repro-resume/compose.yaml, clarify.yaml, continue.yaml, and plan.yaml.
+- swipe:
+    start: "50%, 72%"
+    end: "50%, 35%"
+    duration: 500
+- tapOn:
+    text: ".*[Ww][Hh][Aa][Tt] [Ii][Tt] [Rr][Ee][Mm][Ee][Mm][Bb][Ee][Rr][Ss].*"
+- waitForAnimationToEnd
+- inputText: " Keep entries for 14 days."
+- waitForAnimationToEnd
+- tapOn: "Done"
+- waitForAnimationToEnd
+- tapOn:
+    text: ".*Keep entries for 14 days.*"
+- waitForAnimationToEnd

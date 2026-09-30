@@ -1,0 +1,7 @@
+appId: com.anycognition.whim
+---
+- tapOn: "Report this app"
+- waitForAnimationToEnd
+- tapOn: "Add a note (optional)"
+- inputText: "Keyboard report check"
+- waitForAnimationToEnd

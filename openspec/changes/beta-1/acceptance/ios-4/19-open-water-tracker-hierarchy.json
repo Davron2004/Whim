@@ -1,0 +1,1787 @@
+{
+  "attributes" : {
+    "accessibilityText" : "",
+    "title" : "",
+    "value" : "",
+    "text" : "",
+    "hintText" : "",
+    "resource-id" : "",
+    "bounds" : "[0,0][0,0]",
+    "enabled" : "false",
+    "focused" : "false",
+    "selected" : "false",
+    "checked" : "false"
+  },
+  "children" : [ {
+    "attributes" : {
+      "accessibilityText" : "Whim",
+      "title" : "",
+      "value" : "",
+      "text" : "",
+      "hintText" : "",
+      "resource-id" : "",
+      "bounds" : "[0,0][402,874]",
+      "enabled" : "true",
+      "focused" : "false",
+      "selected" : "false",
+      "checked" : "false"
+    },
+    "children" : [ {
+      "attributes" : {
+        "accessibilityText" : "",
+        "title" : "",
+        "value" : "",
+        "text" : "",
+        "hintText" : "",
+        "resource-id" : "",
+        "bounds" : "[0,0][402,874]",
+        "enabled" : "true",
+        "focused" : "false",
+        "selected" : "false",
+        "checked" : "false"
+      },
+      "children" : [ {
+        "attributes" : {
+          "accessibilityText" : "",
+          "title" : "",
+          "value" : "",
+          "text" : "",
+          "hintText" : "",
+          "resource-id" : "",
+          "bounds" : "[0,0][402,874]",
+          "enabled" : "true",
+          "focused" : "false",
+          "selected" : "false",
+          "checked" : "false"
+        },
+        "children" : [ {
+          "attributes" : {
+            "accessibilityText" : "",
+            "title" : "",
+            "value" : "",
+            "text" : "",
+            "hintText" : "",
+            "resource-id" : "",
+            "bounds" : "[0,0][402,874]",
+            "enabled" : "true",
+            "focused" : "false",
+            "selected" : "false",
+            "checked" : "false"
+          },
+          "children" : [ {
+            "attributes" : {
+              "accessibilityText" : "",
+              "title" : "",
+              "value" : "",
+              "text" : "",
+              "hintText" : "",
+              "resource-id" : "",
+              "bounds" : "[0,0][402,874]",
+              "enabled" : "true",
+              "focused" : "false",
+              "selected" : "false",
+              "checked" : "false"
+            },
+            "children" : [ {
+              "attributes" : {
+                "accessibilityText" : "",
+                "title" : "",
+                "value" : "",
+                "text" : "",
+                "hintText" : "",
+                "resource-id" : "",
+                "bounds" : "[0,0][402,874]",
+                "enabled" : "true",
+                "focused" : "false",
+                "selected" : "false",
+                "checked" : "false"
+              },
+              "children" : [ {
+                "attributes" : {
+                  "accessibilityText" : "",
+                  "title" : "",
+                  "value" : "",
+                  "text" : "",
+                  "hintText" : "",
+                  "resource-id" : "",
+                  "bounds" : "[0,0][402,874]",
+                  "enabled" : "true",
+                  "focused" : "false",
+                  "selected" : "false",
+                  "checked" : "false"
+                },
+                "children" : [ {
+                  "attributes" : {
+                    "accessibilityText" : "",
+                    "title" : "",
+                    "value" : "",
+                    "text" : "",
+                    "hintText" : "",
+                    "resource-id" : "",
+                    "bounds" : "[0,0][402,874]",
+                    "enabled" : "true",
+                    "focused" : "false",
+                    "selected" : "false",
+                    "checked" : "false"
+                  },
+                  "children" : [ {
+                    "attributes" : {
+                      "accessibilityText" : "",
+                      "title" : "",
+                      "value" : "",
+                      "text" : "",
+                      "hintText" : "",
+                      "resource-id" : "",
+                      "bounds" : "[0,0][402,874]",
+                      "enabled" : "true",
+                      "focused" : "false",
+                      "selected" : "false",
+                      "checked" : "false"
+                    },
+                    "children" : [ {
+                      "attributes" : {
+                        "accessibilityText" : "",
+                        "title" : "",
+                        "value" : "",
+                        "text" : "",
+                        "hintText" : "",
+                        "resource-id" : "",
+                        "bounds" : "[0,62][402,874]",
+                        "enabled" : "true",
+                        "focused" : "false",
+                        "selected" : "false",
+                        "checked" : "false"
+                      },
+                      "children" : [ ],
+                      "enabled" : true,
+                      "focused" : false,
+                      "checked" : false,
+                      "selected" : false
+                    }, {
+                      "attributes" : {
+                        "accessibilityText" : "",
+                        "title" : "",
+                        "value" : "",
+                        "text" : "",
+                        "hintText" : "",
+                        "resource-id" : "",
+                        "bounds" : "[0,62][402,874]",
+                        "enabled" : "true",
+                        "focused" : "false",
+                        "selected" : "false",
+                        "checked" : "false"
+                      },
+                      "children" : [ {
+                        "attributes" : {
+                          "accessibilityText" : "",
+                          "title" : "",
+                          "value" : "",
+                          "text" : "",
+                          "hintText" : "",
+                          "resource-id" : "",
+                          "bounds" : "[0,62][402,874]",
+                          "enabled" : "true",
+                          "focused" : "false",
+                          "selected" : "false",
+                          "checked" : "false"
+                        },
+                        "children" : [ {
+                          "attributes" : {
+                            "accessibilityText" : "",
+                            "title" : "",
+                            "value" : "",
+                            "text" : "",
+                            "hintText" : "",
+                            "resource-id" : "",
+                            "bounds" : "[0,62][402,874]",
+                            "enabled" : "true",
+                            "focused" : "false",
+                            "selected" : "false",
+                            "checked" : "false"
+                          },
+                          "children" : [ {
+                            "attributes" : {
+                              "accessibilityText" : "",
+                              "title" : "",
+                              "value" : "",
+                              "text" : "",
+                              "hintText" : "",
+                              "resource-id" : "",
+                              "bounds" : "[0,62][402,874]",
+                              "enabled" : "true",
+                              "focused" : "false",
+                              "selected" : "false",
+                              "checked" : "false"
+                            },
+                            "children" : [ {
+                              "attributes" : {
+                                "accessibilityText" : "",
+                                "title" : "",
+                                "value" : "",
+                                "text" : "",
+                                "hintText" : "",
+                                "resource-id" : "",
+                                "bounds" : "[0,62][402,874]",
+                                "enabled" : "true",
+                                "focused" : "false",
+                                "selected" : "false",
+                                "checked" : "false"
+                              },
+                              "children" : [ {
+                                "attributes" : {
+                                  "accessibilityText" : "",
+                                  "title" : "",
+                                  "value" : "",
+                                  "text" : "",
+                                  "hintText" : "",
+                                  "resource-id" : "",
+                                  "bounds" : "[0,62][402,874]",
+                                  "enabled" : "true",
+                                  "focused" : "false",
+                                  "selected" : "false",
+                                  "checked" : "false"
+                                },
+                                "children" : [ {
+                                  "attributes" : {
+                                    "accessibilityText" : "",
+                                    "title" : "",
+                                    "value" : "",
+                                    "text" : "",
+                                    "hintText" : "",
+                                    "resource-id" : "",
+                                    "bounds" : "[0,0][402,812]",
+                                    "enabled" : "true",
+                                    "focused" : "false",
+                                    "selected" : "false",
+                                    "checked" : "false"
+                                  },
+                                  "children" : [ {
+                                    "attributes" : {
+                                      "accessibilityText" : "",
+                                      "title" : "",
+                                      "value" : "",
+                                      "text" : "",
+                                      "hintText" : "",
+                                      "resource-id" : "",
+                                      "bounds" : "[0,0][402,812]",
+                                      "enabled" : "true",
+                                      "focused" : "false",
+                                      "selected" : "false",
+                                      "checked" : "false"
+                                    },
+                                    "children" : [ {
+                                      "attributes" : {
+                                        "accessibilityText" : "",
+                                        "title" : "",
+                                        "value" : "",
+                                        "text" : "",
+                                        "hintText" : "",
+                                        "resource-id" : "",
+                                        "bounds" : "[0,62][402,874]",
+                                        "enabled" : "true",
+                                        "focused" : "false",
+                                        "selected" : "false",
+                                        "checked" : "false"
+                                      },
+                                      "children" : [ {
+                                        "attributes" : {
+                                          "accessibilityText" : "WHIM:CONTAINED",
+                                          "title" : "",
+                                          "value" : "",
+                                          "text" : "",
+                                          "hintText" : "",
+                                          "resource-id" : "",
+                                          "bounds" : "[0,62][402,874]",
+                                          "enabled" : "true",
+                                          "focused" : "true",
+                                          "selected" : "false",
+                                          "checked" : "false"
+                                        },
+                                        "children" : [ {
+                                          "attributes" : {
+                                            "accessibilityText" : "mini-app",
+                                            "title" : "",
+                                            "value" : "",
+                                            "text" : "",
+                                            "hintText" : "",
+                                            "resource-id" : "",
+                                            "bounds" : "[0,62][402,874]",
+                                            "enabled" : "true",
+                                            "focused" : "true",
+                                            "selected" : "false",
+                                            "checked" : "false"
+                                          },
+                                          "children" : [ {
+                                            "attributes" : {
+                                              "accessibilityText" : "",
+                                              "title" : "",
+                                              "value" : "",
+                                              "text" : "",
+                                              "hintText" : "",
+                                              "resource-id" : "",
+                                              "bounds" : "[0,62][402,874]",
+                                              "enabled" : "true",
+                                              "focused" : "true",
+                                              "selected" : "false",
+                                              "checked" : "false"
+                                            },
+                                            "children" : [ {
+                                              "attributes" : {
+                                                "accessibilityText" : "mini-app",
+                                                "title" : "",
+                                                "value" : "",
+                                                "text" : "",
+                                                "hintText" : "",
+                                                "resource-id" : "",
+                                                "bounds" : "[0,62][402,909]",
+                                                "enabled" : "true",
+                                                "focused" : "true",
+                                                "selected" : "false",
+                                                "checked" : "false"
+                                              },
+                                              "children" : [ {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[20,81][202,116]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "Water Tracker",
+                                                    "title" : "",
+                                                    "value" : "Water Tracker",
+                                                    "text" : "Water Tracker",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[20,81][202,116]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "8 to go",
+                                                  "title" : "",
+                                                  "value" : "8 to go",
+                                                  "text" : "8 to go",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[330,90][374,108]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "Today",
+                                                  "title" : "",
+                                                  "value" : "Today",
+                                                  "text" : "Today",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,156][78,174]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "0",
+                                                  "title" : "",
+                                                  "value" : "0",
+                                                  "text" : "0",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,183][68,233]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "/ 8 glasses",
+                                                  "title" : "",
+                                                  "value" : "/ 8 glasses",
+                                                  "text" : "/ 8 glasses",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[263,204][361,230]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "8 more glasses to reach your goal of 8.",
+                                                  "title" : "",
+                                                  "value" : "8 more glasses to reach your goal of 8.",
+                                                  "text" : "8 more glasses to reach your goal of 8.",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,262][277,280]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "+ Add a glass",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,291][361,338]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "Log a glass each time you drink one.",
+                                                  "title" : "",
+                                                  "value" : "Log a glass each time you drink one.",
+                                                  "text" : "Log a glass each time you drink one.",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,349][262,367]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,429][147,456]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "Last 7 days",
+                                                    "title" : "",
+                                                    "value" : "Last 7 days",
+                                                    "text" : "Last 7 days",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[41,429][147,455]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "Goal 8",
+                                                  "title" : "",
+                                                  "value" : "Goal 8",
+                                                  "text" : "Goal 8",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[321,433][361,451]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,467][50,486]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "0",
+                                                    "title" : "",
+                                                    "value" : "0",
+                                                    "text" : "0",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[70,583][80,602]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,467][50,486]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "0",
+                                                    "title" : "",
+                                                    "value" : "0",
+                                                    "text" : "0",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[112,583][122,602]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,467][50,486]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "0",
+                                                    "title" : "",
+                                                    "value" : "0",
+                                                    "text" : "0",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[154,583][164,602]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,467][50,486]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "0",
+                                                    "title" : "",
+                                                    "value" : "0",
+                                                    "text" : "0",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[196,583][206,602]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,467][50,486]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "0",
+                                                    "title" : "",
+                                                    "value" : "0",
+                                                    "text" : "0",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[238,583][248,602]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,467][50,486]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "0",
+                                                    "title" : "",
+                                                    "value" : "0",
+                                                    "text" : "0",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[280,583][290,602]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,467][50,486]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "0",
+                                                    "title" : "",
+                                                    "value" : "0",
+                                                    "text" : "0",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[322,583][332,602]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[53,609][96,628]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "Thu",
+                                                    "title" : "",
+                                                    "value" : "Thu",
+                                                    "text" : "Thu",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[63,609][87,627]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[95,609][138,628]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "Fri",
+                                                    "title" : "",
+                                                    "value" : "Fri",
+                                                    "text" : "Fri",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[109,609][125,627]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[137,609][180,628]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "Sat",
+                                                    "title" : "",
+                                                    "value" : "Sat",
+                                                    "text" : "Sat",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[148,609][169,627]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[179,609][222,628]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "Sun",
+                                                    "title" : "",
+                                                    "value" : "Sun",
+                                                    "text" : "Sun",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[189,609][213,627]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[222,609][265,628]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "Mon",
+                                                    "title" : "",
+                                                    "value" : "Mon",
+                                                    "text" : "Mon",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[229,609][257,627]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[264,609][307,628]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "Tue",
+                                                    "title" : "",
+                                                    "value" : "Tue",
+                                                    "text" : "Tue",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[274,609][297,627]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[306,609][349,628]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ {
+                                                  "attributes" : {
+                                                    "accessibilityText" : "Wed",
+                                                    "title" : "",
+                                                    "value" : "Wed",
+                                                    "text" : "Wed",
+                                                    "hintText" : "",
+                                                    "resource-id" : "",
+                                                    "bounds" : "[313,609][341,627]",
+                                                    "enabled" : "true",
+                                                    "focused" : "true",
+                                                    "selected" : "false",
+                                                    "checked" : "false"
+                                                  },
+                                                  "children" : [ ],
+                                                  "enabled" : true,
+                                                  "focused" : true,
+                                                  "checked" : false,
+                                                  "selected" : false
+                                                } ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "The last bar is today. Each day resets to zero on its own.",
+                                                  "title" : "",
+                                                  "value" : "The last bar is today. Each day resets to zero on its own.",
+                                                  "text" : "The last bar is today. Each day resets to zero on its own.",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,639][349,675]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "",
+                                                  "title" : "",
+                                                  "value" : "",
+                                                  "text" : "",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,686][361,688]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "Glasses this week",
+                                                  "title" : "",
+                                                  "value" : "Glasses this week",
+                                                  "text" : "Glasses this week",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,700][171,721]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "0",
+                                                  "title" : "",
+                                                  "value" : "0",
+                                                  "text" : "0",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[351,700][361,721]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "Days goal met",
+                                                  "title" : "",
+                                                  "value" : "Days goal met",
+                                                  "text" : "Days goal met",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[41,736][144,757]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              }, {
+                                                "attributes" : {
+                                                  "accessibilityText" : "0",
+                                                  "title" : "",
+                                                  "value" : "0",
+                                                  "text" : "0",
+                                                  "hintText" : "",
+                                                  "resource-id" : "",
+                                                  "bounds" : "[351,736][361,757]",
+                                                  "enabled" : "true",
+                                                  "focused" : "true",
+                                                  "selected" : "false",
+                                                  "checked" : "false"
+                                                },
+                                                "children" : [ ],
+                                                "enabled" : true,
+                                                "focused" : true,
+                                                "checked" : false,
+                                                "selected" : false
+                                              } ],
+                                              "enabled" : true,
+                                              "focused" : true,
+                                              "checked" : false,
+                                              "selected" : false
+                                            } ],
+                                            "enabled" : true,
+                                            "focused" : true,
+                                            "checked" : false,
+                                            "selected" : false
+                                          } ],
+                                          "enabled" : true,
+                                          "focused" : true,
+                                          "checked" : false,
+                                          "selected" : false
+                                        } ],
+                                        "enabled" : true,
+                                        "focused" : true,
+                                        "checked" : false,
+                                        "selected" : false
+                                      } ],
+                                      "enabled" : true,
+                                      "focused" : false,
+                                      "checked" : false,
+                                      "selected" : false
+                                    } ],
+                                    "enabled" : true,
+                                    "focused" : false,
+                                    "checked" : false,
+                                    "selected" : false
+                                  } ],
+                                  "enabled" : true,
+                                  "focused" : false,
+                                  "checked" : false,
+                                  "selected" : false
+                                } ],
+                                "enabled" : true,
+                                "focused" : false,
+                                "checked" : false,
+                                "selected" : false
+                              }, {
+                                "attributes" : {
+                                  "accessibilityText" : "Vertical scroll bar, 1 page",
+                                  "title" : "",
+                                  "value" : "0%",
+                                  "text" : "0%",
+                                  "hintText" : "",
+                                  "resource-id" : "",
+                                  "bounds" : "[369,62][399,812]",
+                                  "enabled" : "true",
+                                  "focused" : "false",
+                                  "selected" : "false",
+                                  "checked" : "false"
+                                },
+                                "children" : [ {
+                                  "attributes" : {
+                                    "accessibilityText" : "",
+                                    "title" : "",
+                                    "value" : "",
+                                    "text" : "",
+                                    "hintText" : "",
+                                    "resource-id" : "",
+                                    "bounds" : "[396,864][399,871]",
+                                    "enabled" : "true",
+                                    "focused" : "false",
+                                    "selected" : "false",
+                                    "checked" : "false"
+                                  },
+                                  "children" : [ ],
+                                  "enabled" : true,
+                                  "focused" : false,
+                                  "checked" : false,
+                                  "selected" : false
+                                } ],
+                                "enabled" : true,
+                                "focused" : false,
+                                "checked" : false,
+                                "selected" : false
+                              }, {
+                                "attributes" : {
+                                  "accessibilityText" : "Horizontal scroll bar, 1 page",
+                                  "title" : "",
+                                  "value" : "0%",
+                                  "text" : "0%",
+                                  "hintText" : "",
+                                  "resource-id" : "",
+                                  "bounds" : "[62,841][340,871]",
+                                  "enabled" : "true",
+                                  "focused" : "false",
+                                  "selected" : "false",
+                                  "checked" : "false"
+                                },
+                                "children" : [ {
+                                  "attributes" : {
+                                    "accessibilityText" : "",
+                                    "title" : "",
+                                    "value" : "",
+                                    "text" : "",
+                                    "hintText" : "",
+                                    "resource-id" : "",
+                                    "bounds" : "[392,868][399,871]",
+                                    "enabled" : "true",
+                                    "focused" : "false",
+                                    "selected" : "false",
+                                    "checked" : "false"
+                                  },
+                                  "children" : [ ],
+                                  "enabled" : true,
+                                  "focused" : false,
+                                  "checked" : false,
+                                  "selected" : false
+                                } ],
+                                "enabled" : true,
+                                "focused" : false,
+                                "checked" : false,
+                                "selected" : false
+                              }, {
+                                "attributes" : {
+                                  "accessibilityText" : "Vertical scroll bar, 1 page",
+                                  "title" : "",
+                                  "value" : "0%",
+                                  "text" : "0%",
+                                  "hintText" : "",
+                                  "resource-id" : "",
+                                  "bounds" : "[369,62][399,812]",
+                                  "enabled" : "true",
+                                  "focused" : "false",
+                                  "selected" : "false",
+                                  "checked" : "false"
+                                },
+                                "children" : [ {
+                                  "attributes" : {
+                                    "accessibilityText" : "",
+                                    "title" : "",
+                                    "value" : "",
+                                    "text" : "",
+                                    "hintText" : "",
+                                    "resource-id" : "",
+                                    "bounds" : "[396,864][399,871]",
+                                    "enabled" : "true",
+                                    "focused" : "false",
+                                    "selected" : "false",
+                                    "checked" : "false"
+                                  },
+                                  "children" : [ ],
+                                  "enabled" : true,
+                                  "focused" : false,
+                                  "checked" : false,
+                                  "selected" : false
+                                } ],
+                                "enabled" : true,
+                                "focused" : false,
+                                "checked" : false,
+                                "selected" : false
+                              }, {
+                                "attributes" : {
+                                  "accessibilityText" : "Horizontal scroll bar, 1 page",
+                                  "title" : "",
+                                  "value" : "0%",
+                                  "text" : "0%",
+                                  "hintText" : "",
+                                  "resource-id" : "",
+                                  "bounds" : "[62,841][340,871]",
+                                  "enabled" : "true",
+                                  "focused" : "false",
+                                  "selected" : "false",
+                                  "checked" : "false"
+                                },
+                                "children" : [ {
+                                  "attributes" : {
+                                    "accessibilityText" : "",
+                                    "title" : "",
+                                    "value" : "",
+                                    "text" : "",
+                                    "hintText" : "",
+                                    "resource-id" : "",
+                                    "bounds" : "[392,868][399,871]",
+                                    "enabled" : "true",
+                                    "focused" : "false",
+                                    "selected" : "false",
+                                    "checked" : "false"
+                                  },
+                                  "children" : [ ],
+                                  "enabled" : true,
+                                  "focused" : false,
+                                  "checked" : false,
+                                  "selected" : false
+                                } ],
+                                "enabled" : true,
+                                "focused" : false,
+                                "checked" : false,
+                                "selected" : false
+                              } ],
+                              "enabled" : true,
+                              "focused" : false,
+                              "checked" : false,
+                              "selected" : false
+                            } ],
+                            "enabled" : true,
+                            "focused" : false,
+                            "checked" : false,
+                            "selected" : false
+                          } ],
+                          "enabled" : true,
+                          "focused" : false,
+                          "checked" : false,
+                          "selected" : false
+                        } ],
+                        "enabled" : true,
+                        "focused" : false,
+                        "checked" : false,
+                        "selected" : false
+                      } ],
+                      "enabled" : true,
+                      "focused" : false,
+                      "checked" : false,
+                      "selected" : false
+                    }, {
+                      "attributes" : {
+                        "accessibilityText" : "Open the app menu",
+                        "title" : "",
+                        "value" : "",
+                        "text" : "",
+                        "hintText" : "",
+                        "resource-id" : "",
+                        "bounds" : "[326,764][380,818]",
+                        "enabled" : "true",
+                        "focused" : "false",
+                        "selected" : "false",
+                        "checked" : "false"
+                      },
+                      "children" : [ ],
+                      "enabled" : true,
+                      "focused" : false,
+                      "checked" : false,
+                      "selected" : false
+                    } ],
+                    "enabled" : true,
+                    "focused" : false,
+                    "checked" : false,
+                    "selected" : false
+                  } ],
+                  "enabled" : true,
+                  "focused" : false,
+                  "checked" : false,
+                  "selected" : false
+                } ],
+                "enabled" : true,
+                "focused" : false,
+                "checked" : false,
+                "selected" : false
+              } ],
+              "enabled" : true,
+              "focused" : false,
+              "checked" : false,
+              "selected" : false
+            } ],
+            "enabled" : true,
+            "focused" : false,
+            "checked" : false,
+            "selected" : false
+          } ],
+          "enabled" : true,
+          "focused" : false,
+          "checked" : false,
+          "selected" : false
+        } ],
+        "enabled" : true,
+        "focused" : false,
+        "checked" : false,
+        "selected" : false
+      } ],
+      "enabled" : true,
+      "focused" : false,
+      "checked" : false,
+      "selected" : false
+    }, {
+      "attributes" : {
+        "accessibilityText" : "",
+        "title" : "",
+        "value" : "",
+        "text" : "",
+        "hintText" : "",
+        "resource-id" : "",
+        "bounds" : "[0,0][402,874]",
+        "enabled" : "true",
+        "focused" : "false",
+        "selected" : "false",
+        "checked" : "false"
+      },
+      "children" : [ {
+        "attributes" : {
+          "accessibilityText" : "",
+          "title" : "",
+          "value" : "",
+          "text" : "",
+          "hintText" : "",
+          "resource-id" : "",
+          "bounds" : "[0,0][402,874]",
+          "enabled" : "true",
+          "focused" : "false",
+          "selected" : "false",
+          "checked" : "false"
+        },
+        "children" : [ {
+          "attributes" : {
+            "accessibilityText" : "",
+            "title" : "",
+            "value" : "",
+            "text" : "",
+            "hintText" : "",
+            "resource-id" : "",
+            "bounds" : "[0,0][402,874]",
+            "enabled" : "true",
+            "focused" : "false",
+            "selected" : "false",
+            "checked" : "false"
+          },
+          "children" : [ ],
+          "enabled" : true,
+          "focused" : false,
+          "checked" : false,
+          "selected" : false
+        } ],
+        "enabled" : true,
+        "focused" : false,
+        "checked" : false,
+        "selected" : false
+      } ],
+      "enabled" : true,
+      "focused" : false,
+      "checked" : false,
+      "selected" : false
+    } ],
+    "enabled" : true,
+    "focused" : false,
+    "checked" : false,
+    "selected" : false
+  }, {
+    "attributes" : {
+      "accessibilityText" : "",
+      "title" : "",
+      "value" : "",
+      "text" : "",
+      "hintText" : "",
+      "resource-id" : "",
+      "bounds" : "[0,0][0,0]",
+      "enabled" : "false",
+      "focused" : "false",
+      "selected" : "false",
+      "checked" : "false"
+    },
+    "children" : [ {
+      "attributes" : {
+        "accessibilityText" : "",
+        "title" : "",
+        "value" : "",
+        "text" : "",
+        "hintText" : "",
+        "resource-id" : "",
+        "bounds" : "[0,0][402,54]",
+        "enabled" : "true",
+        "focused" : "false",
+        "selected" : "false",
+        "checked" : "false"
+      },
+      "children" : [ ],
+      "enabled" : true,
+      "focused" : false,
+      "checked" : false,
+      "selected" : false
+    }, {
+      "attributes" : {
+        "accessibilityText" : "",
+        "title" : "",
+        "value" : "",
+        "text" : "",
+        "hintText" : "",
+        "resource-id" : "",
+        "bounds" : "[0,0][402,54]",
+        "enabled" : "true",
+        "focused" : "false",
+        "selected" : "false",
+        "checked" : "false"
+      },
+      "children" : [ {
+        "attributes" : {
+          "accessibilityText" : "",
+          "title" : "",
+          "value" : "",
+          "text" : "",
+          "hintText" : "",
+          "resource-id" : "",
+          "bounds" : "[0,0][402,54]",
+          "enabled" : "true",
+          "focused" : "false",
+          "selected" : "false",
+          "checked" : "false"
+        },
+        "children" : [ {
+          "attributes" : {
+            "accessibilityText" : "",
+            "title" : "",
+            "value" : "",
+            "text" : "",
+            "hintText" : "",
+            "resource-id" : "",
+            "bounds" : "[0,0][402,54]",
+            "enabled" : "true",
+            "focused" : "false",
+            "selected" : "false",
+            "checked" : "false"
+          },
+          "children" : [ {
+            "attributes" : {
+              "accessibilityText" : "21:23",
+              "title" : "",
+              "value" : "",
+              "text" : "",
+              "hintText" : "",
+              "resource-id" : "",
+              "bounds" : "[50,21][97,43]",
+              "enabled" : "true",
+              "focused" : "false",
+              "selected" : "false",
+              "checked" : "false"
+            },
+            "children" : [ ],
+            "enabled" : true,
+            "focused" : false,
+            "checked" : false,
+            "selected" : false
+          }, {
+            "attributes" : {
+              "accessibilityText" : "",
+              "title" : "",
+              "value" : "",
+              "text" : "",
+              "hintText" : "",
+              "resource-id" : "",
+              "bounds" : "[55,14][92,51]",
+              "enabled" : "true",
+              "focused" : "false",
+              "selected" : "false",
+              "checked" : "false"
+            },
+            "children" : [ ],
+            "enabled" : true,
+            "focused" : false,
+            "checked" : false,
+            "selected" : false
+          }, {
+            "attributes" : {
+              "accessibilityText" : "",
+              "title" : "",
+              "value" : "",
+              "text" : "",
+              "hintText" : "",
+              "resource-id" : "",
+              "bounds" : "[309,14][345,51]",
+              "enabled" : "true",
+              "focused" : "false",
+              "selected" : "false",
+              "checked" : "false"
+            },
+            "children" : [ ],
+            "enabled" : true,
+            "focused" : false,
+            "checked" : false,
+            "selected" : false
+          }, {
+            "attributes" : {
+              "accessibilityText" : "Cellular",
+              "title" : "",
+              "value" : "No signal",
+              "text" : "No signal",
+              "hintText" : "",
+              "resource-id" : "",
+              "bounds" : "[284,25][305,38]",
+              "enabled" : "true",
+              "focused" : "false",
+              "selected" : "false",
+              "checked" : "false"
+            },
+            "children" : [ ],
+            "enabled" : true,
+            "focused" : false,
+            "checked" : false,
+            "selected" : false
+          }, {
+            "attributes" : {
+              "accessibilityText" : "",
+              "title" : "",
+              "value" : "SSID, 3 of 3 Wi-Fi bars",
+              "text" : "SSID, 3 of 3 Wi-Fi bars",
+              "hintText" : "",
+              "resource-id" : "3 of 3 Wi-Fi bars",
+              "bounds" : "[314,26][331,38]",
+              "enabled" : "true",
+              "focused" : "false",
+              "selected" : "false",
+              "checked" : "false"
+            },
+            "children" : [ {
+              "attributes" : {
+                "accessibilityText" : "Wi-Fi",
+                "title" : "",
+                "value" : "",
+                "text" : "",
+                "hintText" : "",
+                "resource-id" : "wifi",
+                "bounds" : "[311,23][334,41]",
+                "enabled" : "true",
+                "focused" : "false",
+                "selected" : "false",
+                "checked" : "false"
+              },
+              "children" : [ ],
+              "enabled" : true,
+              "focused" : false,
+              "checked" : false,
+              "selected" : false
+            } ],
+            "enabled" : true,
+            "focused" : false,
+            "checked" : false,
+            "selected" : false
+          }, {
+            "attributes" : {
+              "accessibilityText" : "100% battery power",
+              "title" : "",
+              "value" : "Not charging",
+              "text" : "Not charging",
+              "hintText" : "",
+              "resource-id" : "",
+              "bounds" : "[340,25][369,39]",
+              "enabled" : "true",
+              "focused" : "false",
+              "selected" : "false",
+              "checked" : "false"
+            },
+            "children" : [ ],
+            "enabled" : true,
+            "focused" : false,
+            "checked" : false,
+            "selected" : false
+          } ],
+          "enabled" : true,
+          "focused" : false,
+          "checked" : false,
+          "selected" : false
+        } ],
+        "enabled" : true,
+        "focused" : false,
+        "checked" : false,
+        "selected" : false
+      } ],
+      "enabled" : true,
+      "focused" : false,
+      "checked" : false,
+      "selected" : false
+    } ],
+    "enabled" : false,
+    "focused" : false,
+    "checked" : false,
+    "selected" : false
+  } ],
+  "enabled" : false,
+  "focused" : false,
+  "checked" : false,
+  "selected" : false
+}

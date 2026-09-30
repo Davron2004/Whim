@@ -1,0 +1,5 @@
+appId: com.anycognition.whim
+---
+- tapOn:
+    point: "86%, 42%"
+- waitForAnimationToEnd
