@@ -1,0 +1,50 @@
+post-01-settings-first-focus
+  android.widget.ScrollView  [0,283][1344,1984] enabled=true
+  android.widget.Button Make a new ID [66,1316][1278,1423] enabled=true
+  android.widget.EditText http://localhost:8787 [66,1733][1278,1862] enabled=true
+post-03-id-confirm
+  android.widget.Button Cancel [72,2566][1272,2734] enabled=true
+  android.widget.Button Make a new ID [72,2734][1272,2872] enabled=true
+post-03-id-confirmed
+  android.widget.ScrollView  [0,283][1344,2920] enabled=true
+  android.widget.Button Make a new ID [66,2073][1278,2180] enabled=true
+  android.widget.EditText http://localhost:8787 [66,2490][1278,2619] enabled=true
+post-04-home-sheet
+  android.widget.Button Cancel [0,2698][1344,2872] enabled=true
+post-05-clarify-other
+  android.widget.ScrollView  [0,283][1344,1707] enabled=true
+  android.widget.EditText gypsy jolly queue [66,1518][1278,1659] enabled=true
+  android.widget.Button Continue [66,1756][1278,1912] enabled=true
+post-05-compose-keyboard
+  android.widget.ScrollView  [0,283][1344,1707] enabled=true
+  android.widget.EditText Android final keyboard checklist [66,498][1278,786] enabled=true
+  android.widget.Button Continue [66,1756][1278,1912] enabled=true
+post-06-fourth-focus
+  android.widget.ScrollView  [0,283][1344,1707] enabled=true
+  android.widget.EditText A bar that fills as tasks are ticked off. [120,1340][1224,1460] enabled=true
+  android.view.ViewGroup Cancel [962,1496][1089,1535] enabled=true
+  android.view.ViewGroup Save [1137,1496][1224,1535] enabled=true
+  android.widget.Button Build it [66,1756][1278,1912] enabled=true
+post-06-last-first-focus
+  android.widget.ScrollView  [0,283][1344,1707] enabled=true
+  android.widget.EditText It stays, ticked [120,1410][1224,1530] enabled=true
+  android.view.ViewGroup Cancel [962,1566][1089,1605] enabled=true
+  android.view.ViewGroup Save [1137,1566][1224,1605] enabled=true
+  android.widget.Button Build it [66,1756][1278,1912] enabled=true
+post-06-last-refocus
+  android.widget.ScrollView  [0,283][1344,1707] enabled=true
+  android.widget.EditText It stays, ticked with gypsy jolly queue and more long text to grow the last row for typing acceptance [120,1404][1224,1530] enabled=true
+  android.view.ViewGroup Cancel [962,1566][1089,1605] enabled=true
+  android.view.ViewGroup Save [1137,1566][1224,1605] enabled=true
+  android.widget.Button Build it [66,1756][1278,1912] enabled=true
+post-06-last-typing
+  android.widget.ScrollView  [0,283][1344,1707] enabled=true
+  android.widget.EditText It stays, ticked with gypsy jolly queue and more long text to grow the last row for typing acceptance [120,1404][1224,1530] enabled=true
+  android.view.ViewGroup Cancel [962,1566][1089,1605] enabled=true
+  android.view.ViewGroup Save [1137,1566][1224,1605] enabled=true
+  android.widget.Button Build it [66,1756][1278,1912] enabled=true
+post-07-report-enabled
+  android.widget.ScrollView  [66,255][1278,1551] enabled=true
+  android.widget.EditText gypsy jolly queue [66,723][1278,939] enabled=true
+  android.widget.Button Send report [66,1618][1278,1774] enabled=true
+  android.widget.Button Cancel [66,1798][1278,1936] enabled=true

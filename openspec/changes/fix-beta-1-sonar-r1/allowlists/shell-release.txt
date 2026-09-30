@@ -1,0 +1,6 @@
+deploy/smoke.sh
+deploy/loadtest/run.sh
+scripts/release/lib/mmkv.ts
+scripts/release/lib/upgrade-record.ts
+scripts/release/upgrade-check.sh
+scripts/release/cli.ts

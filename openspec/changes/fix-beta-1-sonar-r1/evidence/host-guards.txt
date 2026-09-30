@@ -1,0 +1,4 @@
+## src/host/launcher/generation-client.ts
+  const isOptional = (key: string): boolean => Object.prototype.hasOwnProperty.call(optional, key);
+    Object.prototype.hasOwnProperty.call(SUMMARY_KINDS, value.kind) &&
+  return Object.prototype.hasOwnProperty.call(EVENT_GUARDS, type);
