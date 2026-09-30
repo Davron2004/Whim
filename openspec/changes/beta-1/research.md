@@ -74,7 +74,7 @@
 
 ## Pending-write recovery (2026-09-30)
 
-The root accepted this bounded recovery policy after the selective-write R2 fix. The supporting
+The root initially planned this correction after a reviewed R2 integration. The later r3 cold-launch finding below supersedes that dispatch prerequisite: R2 is parked and its candidate is privately carried into chain-10, not merged independently. The supporting
 read-only investigation was recorded in `/tmp/whim-beta1-terminal-recovery-policy.md`,
 `/tmp/whim-beta1-sonar-r2-terminal-review-policy.md`, and
 `/tmp/whim-beta1-pending-write-policy-proposal.md`; the facts needed by implementation follow here
@@ -124,3 +124,63 @@ In particular, deleting after an already completed install and aborting a live g
 separate recovery reasoning; do not relabel either as a failed generation or add tombstones here.
 The chain must preserve those successful paths and release its leases, and report any reproduced
 adjacent fault to the orchestrator rather than silently extending D19.
+
+
+### R2 r3 park and durable journal association (2026-09-30)
+
+The independent r3 review (`/tmp/whim-beta1-sonar-r2-terminal-review-r3.md`) rejects candidate
+`645e7fc6d452b879f0c3e991e6141e7691003084`. Its 13,778 launcher checks and fast gate exit 0 prove
+the tested same-session recovery, not cold-launch report correctness. `unavailableJournalRef`
+is empty in a fresh LauncherShell, so a saved generic failed record can reopen its restored old
+journal as the new attempt's report. The same-mounted Back/reopen test misses that path.
+The mechanical revision cap was reached. Root's canonical park exited 0; the candidate remains
+on `wip/beta-1-sonar-r2-terminal` and was never merged to staging. S3 stays open.
+
+Root authorized a narrow architecture change: `PendingBuildRecord.journalUnavailable?: true`.
+This supersedes the initial unchanged-JSON constraint. The field controls only diagnostic
+association, never building/failed/interrupted state. Absence keeps legacy report eligibility;
+true prevents record-driven journal/report attachment even if raw journal bytes exist.
+
+Compatibility proof from the actual producer/reader:
+
+- `src/host/launcher/pending-builds.ts#get` returns `JSON.parse(raw) as PendingBuildRecord`.
+  No whitelist, zod schema, exact-key check, or record-version gate rejects an added optional key.
+- `list` obtains each record through `get`. `setFailed` and startup demotion spread `...rec`, so
+  those legacy transitions preserve unknown fields. `create` rebuilds an explicit object and
+  would discard the field; the new implementation must explicitly emit true at every setup.
+- `RunJournalStore#create` writes `[]`; journal parsing only checks `Array.isArray`. The existing
+  journal remains an array with no new run ID, timestamp identity rule, or schema/version field.
+- This proves storage read compatibility, not enforcement by obsolete app code. Older code does
+  not know the flag and cannot provide the new report guarantee. Unflagged historical records
+  retain their prior interpretation; no content/timestamp heuristic retroactively guesses which
+  might have been created by the rejected candidate. That candidate has not shipped via staging.
+
+New setup ordering is pending(building, flag=true) → verified empty journal → verified pending
+flag-clear → lease activation/HTTP. A failed setup never clears its previous current view or
+sends a request. If clearing the marker fails, setup failed. If a process dies before clearing,
+startup demotes the flagged raw record while keeping its report unavailable.
+
+Recovery has a provenance prerequisite. Before replacing a journal under a current record,
+including resetting it for a generic fallback, persist/read back flag=true on that record (or verify the target journal already matches
+those bytes, so no association-changing write is needed). If the guard cannot persist, do not
+introduce that old journal; independently attempt safe pending recovery and generic fallback.
+Restore an old pending snapshot with its original flag only after the exact corresponding old
+journal bytes/absence are verified. Otherwise restore its data with flag=true. This allows exact
+old-pair restoration when both siblings are verified while preventing the crash window between
+journal restoration and a failed pending restoration. A failed pending restore leaves a guarded
+record; a generic fallback without a verified current journal writes failed payload plus true
+in the SAME pending write. That atomic write may guard a later generic journal reset; a failed
+guard cannot be followed by that reset. There is no unflagged generic intermediate state.
+
+Clearing is allowed only from verified current provenance: new empty-journal setup, verified
+current terminal journal plus its matching pending settlement, or an exact verified old-pair
+restore whose original marker was absent. An old snapshot with true stays true merely because
+its raw journal can be restored. Generic saved-record readback checks both payload and flag.
+All record-driven report entry points re-read the marker; an in-memory Set cannot replace it.
+
+Dispatch starts at the root-pinned staging tip (reported source tip `4f729788...`), recorded as the
+new lane's original BASE at creation. Root privately carries `2cc74989`, `9712c08a`, `645e7fc6`
+in order into that lane before implementation. All are rejected-candidate work over the same two
+launcher files, not a reviewed staging prerequisite. Review/gate the entire composed five-file
+change against the original BASE. Do not reset the exhausted mechanical cap or mark S3 clean
+because the architecture work has a new chain name.

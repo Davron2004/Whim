@@ -5,8 +5,8 @@
 The host SHALL append a `terminal` journal entry the instant the stream ends — on a `result`
 event, a `failure` event, or a stream error with no terminal event — regardless of how recently an
 `aggregate` entry was last written. If the backend rejects a failed or unexplained-ended attempt's terminal write, the host SHALL
-log the failure through the existing redacted boundary and attempt pending/journal recovery
-independently. This adds no successful-delivery or live-cancellation write-fault recovery. No journal or report association SHALL claim an unverified terminal write.
+log the failure through the existing redacted boundary and attempt safe pending/journal recovery
+independently under the pending record's durable association guard. This adds no successful-delivery or live-cancellation write-fault recovery. No journal or report association SHALL claim an unverified terminal write.
 A current volatile pending failure does not satisfy this persistence requirement; backend
 failure is an explicit durability limit. A `failure` terminal entry SHALL carry the failure detail
 (`reason` and available diagnostics); a `result` terminal entry SHALL carry no failure field.
@@ -40,7 +40,7 @@ useful even when journal recovery fails.
 #### Scenario: Pending recovery succeeds without a terminal journal
 
 - **WHEN** the generic failed pending fallback is persisted and verified but its terminal journal cannot be verified
-- **THEN** the failed record remains usable and its failure screen claims no terminal journal/report association, including after Back and reopening in that process
+- **THEN** the failed record remains usable and its failure screen claims no terminal journal/report association, including after Back, reopening, launcher remount and process restart, because the generic pending write also persisted `journalUnavailable: true`
 
 #### Scenario: Neither sibling can be recovered durably
 
@@ -71,8 +71,9 @@ cross-key atomicity guarantee is made for process death during removal.
 A journal entry SHALL NOT be read to determine a pending-build record's `state`
 (`building`/`failed`/`interrupted`). The journal is a diagnostic history; PendingBuildStore's current pending record
 remains the sole authority for lifecycle state.
-Journal availability bookkeeping MAY guard a report association, but SHALL NOT produce a
-failed/interrupted/building transition or replace attempt ownership evidence.
+The optional pending `journalUnavailable: true` metadata SHALL guard report association across
+processes, but SHALL NOT produce a failed/interrupted/building transition or replace attempt
+ownership evidence. An in-memory unavailable-journal Set alone is insufficient.
 
 #### Scenario: Journal absence does not affect record state
 
@@ -80,3 +81,20 @@ failed/interrupted/building transition or replace attempt ownership evidence.
   record
 - **THEN** the current record's own `state` field, not the journal, determines what the grid and failure
   screen show
+
+
+## ADDED Requirements
+
+### Requirement: Report eligibility survives interrupted setup and partial rollback
+
+The pending record's durable journal-unavailability marker SHALL suppress any unverified report even when its raw journal bytes remain readable. Journal schema SHALL remain unchanged. New empty-journal setup, recovery journal resets, verified current terminal settlement and exact old-pair restoration SHALL follow the pending-builds association guard and marker-clear rules. Reading a raw journal, matching timestamps, restarting a launcher or restoring bytes for an already-unavailable old record SHALL NOT establish report eligibility.
+
+#### Scenario: Generic fallback keeps the old journal without borrowing it
+
+- **WHEN** recovery preserves the exact old raw journal but persists a new generic failed record
+- **THEN** the pending write includes true unless a matching current terminal journal was verified, and the old raw journal stays unavailable as that new failure's report after a fresh launcher instance
+
+#### Scenario: Crash between guarded journal restore and pending restore
+
+- **WHEN** the old journal has been restored under a durably guarded pending record and the process ends before pending restoration completes
+- **THEN** restart preserves the guard during any building-to-interrupted demotion and cannot attach the old journal as the new attempt's report

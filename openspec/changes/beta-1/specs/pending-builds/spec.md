@@ -2,7 +2,7 @@
 
 ### Requirement: A pending-build record has exactly one of three states
 
-A pending-build record SHALL be in exactly one of three states: `building`, `failed`, or `interrupted`. The record's current state MUST reflect the true status known to PendingBuildStore. Persisted reads SHALL remain distinct from current views marked persisted or volatile. The store MAY retain a volatile failed record only from confirmed attempt completion after durable recovery fails, or a volatile interrupted record from cold-process recovery when demotion cannot persist. The persisted JSON schema SHALL remain unchanged; a volatile view SHALL NOT claim a successful write.
+A pending-build record SHALL be in exactly one of three states: `building`, `failed`, or `interrupted`. The record's current state MUST reflect the true status known to PendingBuildStore. Persisted reads SHALL remain distinct from current views marked persisted or volatile. The store MAY retain a volatile failed record only from confirmed attempt completion after durable recovery fails, or a volatile interrupted record from cold-process recovery when demotion cannot persist. The only persisted JSON addition SHALL be optional `journalUnavailable: true`, governing diagnostic association without changing lifecycle. Existing records without the field SHALL remain readable. A volatile view SHALL NOT claim a successful write.
 
 #### Scenario: A fresh record starts building
 
@@ -36,7 +36,7 @@ When a generation ends in a terminal `failure` event, or the stream errors befor
 #### Scenario: Selective failure still permits a saved generic record
 
 - **WHEN** terminal journal/restoration writes fail but a later generic failed pending write succeeds and is read back
-- **THEN** the current pending record is persisted failed, independent of the unavailable journal, and no unverified terminal report is associated with it
+- **THEN** the current pending record is persisted failed with `journalUnavailable: true` in that same write, independent of the unavailable journal, and no unverified terminal report is associated with it after navigation, remount or process restart
 
 ### Requirement: A pending-build record is deleted on delivery, cancel, or dismiss
 
@@ -69,7 +69,7 @@ The host SHALL delete a pending-build record when its generation is successfully
 
 ### Requirement: A live building record is demoted to interrupted at launch
 
-At app launch, the host SHALL demote any pending-build record still in the `building` state to `interrupted` before the first render. A `building` state MUST NOT be shown to the user across a process restart, because the process that owned the generation stream is gone and the state can no longer be truthful. Each demotion SHALL first attempt persistence; if its write fails, the store SHALL retain a volatile interrupted view and continue recovering the remaining records before Home is ready. Process-only failed payloads and attempt leases SHALL NOT survive a new process.
+At app launch, the host SHALL demote any pending-build record still in the `building` state to `interrupted` before the first render. A `building` state MUST NOT be shown to the user across a process restart, because the process that owned the generation stream is gone and the state can no longer be truthful. Each demotion SHALL preserve `journalUnavailable: true` when present and first attempt persistence; if its write fails, the store SHALL retain a volatile interrupted view and continue recovering the remaining records before Home is ready. Process-only failed payloads and attempt leases SHALL NOT survive a new process.
 
 #### Scenario: Process death mid-build surfaces as interrupted
 
@@ -90,7 +90,7 @@ At app launch, the host SHALL demote any pending-build record still in the `buil
 
 ### Requirement: An attempt lease fences terminal recovery and retention
 
-After new pending and empty-journal setup is durably verified, PendingBuildStore SHALL activate an opaque process-only lease for that launcher ID and capture the started record. A later activation for the same ID SHALL supersede the old lease. Terminal settlement and recovery mutations SHALL verify ownership before writing, and volatile retention SHALL reject stale leases. Lease identity MUST NOT be derived from timestamps. Releasing a matching completed lease SHALL preserve any retained current failure; completed attempts MUST NOT accumulate active leases.
+After new pending and empty-journal setup and the provenance-based marker clear are durably verified, PendingBuildStore SHALL activate an opaque process-only lease for that launcher ID and capture the started record. A later activation for the same ID SHALL supersede the old lease. Terminal settlement and recovery mutations SHALL verify ownership before writing, and volatile retention SHALL reject stale leases. Lease identity MUST NOT be derived from timestamps. Releasing a matching completed lease SHALL preserve any retained current failure; completed attempts MUST NOT accumulate active leases.
 
 #### Scenario: An older attempt ends after the ID was reused
 
@@ -104,7 +104,7 @@ After new pending and empty-journal setup is durably verified, PendingBuildStore
 
 ### Requirement: Retry activates only after verified durable setup
 
-A Retry SHALL retain its previous current entry until both new pending and empty-journal setup have succeeded and their required persisted state has been verified. Only then SHALL a new lease activate and the host send the generation request. Failed setup SHALL restore siblings independently, retain the old current entry, and send no HTTP generation request. Current reads SHALL never count as persisted verification.
+A Retry SHALL retain its previous current entry until new pending setup has written `journalUnavailable: true`, the new empty journal has been verified, and a subsequent pending write clearing the marker has been verified. The marker SHALL NOT be cleared by merely recreating a building record. Only then SHALL a new lease activate and the host send the generation request. Failed setup SHALL attempt independent safe sibling recovery under the journal-association guard below, retain the old current entry, and send no HTTP generation request. Current reads SHALL never count as persisted verification.
 
 #### Scenario: Retry remains blocked while writes fail
 
@@ -113,5 +113,52 @@ A Retry SHALL retain its previous current entry until both new pending and empty
 
 #### Scenario: Writes recover before a later Retry
 
-- **WHEN** Retry successfully verifies both setup siblings
+- **WHEN** Retry successfully verifies both setup siblings and the provenance-based marker clear
 - **THEN** the same launcher ID becomes a new building attempt, its old retained view clears, and one generation request is sent
+
+
+### Requirement: Journal unavailability is durable metadata on the pending record
+
+PendingBuildRecord SHALL support only the additive optional `journalUnavailable: true` field for this association policy. True SHALL suppress record-driven journal/report attachment across navigation, fresh launcher instances and process restart; absence SHALL retain legacy eligibility. The field SHALL NOT determine pending lifecycle. Persisted reads SHALL read it from the stored record, not reconstruct it from journal contents, timestamps or an in-memory ref. Legacy records without the field SHALL remain readable, without a migration or retroactive identity guess.
+
+Every new or reused building record SHALL be persisted with true before journal setup. The marker MAY be cleared only after verification of a new empty journal, a matching current terminal journal with its pending settlement, or an exact restored old pair whose original marker was absent. Marker clearance SHALL itself be written and verified before setup activates or report availability is claimed. A generic failed fallback without a verified current journal SHALL write its failure payload and true atomically in one pending write and verify both. Merely restoring journal bytes SHALL NOT clear an original true marker.
+
+#### Scenario: Generic failed record survives a fresh launcher instance
+
+- **WHEN** a generic failure is saved without its verified terminal journal while an old raw journal remains, and a new launcher instance opens the same stored record
+- **THEN** the saved true marker still withholds that old journal/report without depending on an in-memory Set
+
+#### Scenario: Failed Retry setup cannot expose the old report
+
+- **WHEN** Retry recreates building, empty-journal setup or marker clearance fails, and old pending restoration also fails
+- **THEN** no generation request is sent, surviving building metadata remains true whenever it was durably created/guarded, and cold interruption recovery preserves its report suppression
+
+#### Scenario: Verified replacement journal becomes available
+
+- **WHEN** a Retry verifies its new empty journal and its subsequent pending marker-clear write
+- **THEN** activation may send one request and that attempt may expose its own journal under the existing journal rules
+
+### Requirement: Snapshot recovery guards durable journal association
+
+Before replacing or resetting a journal beneath a current pending record, including a generic fallback reset, recovery SHALL durably mark that record unavailable and verify the marker, unless the exact desired journal bytes/absence are already verified and no association-changing write is needed. If this prerequisite fails, recovery SHALL NOT introduce an unassociated old or reset journal, but SHALL still attempt safe independent pending recovery and generic fallback. An old pending snapshot may regain its original marker only after its exact corresponding journal bytes/absence are verified; otherwise its restored data SHALL carry true. A verified exact old pair SHALL preserve its original marker semantics. A generic failed-plus-true pending write MAY establish this guard before its generic journal reset; if that write cannot establish the guard, no reset is permitted. No operation SHALL create an unflagged mixed pair merely because sibling writes are best-effort.
+
+#### Scenario: Pending restoration fails after journal restoration
+
+- **WHEN** rollback verifies the durable guard, restores old journal bytes, then cannot restore the old pending record
+- **THEN** the surviving pending record remains flagged, including across a crash before later fallback writes, and any saved generic fallback also carries true unless its own current journal is verified
+
+#### Scenario: Association guard cannot persist
+
+- **WHEN** the current pending record cannot be durably marked unavailable and the desired old journal differs from the current journal
+- **THEN** rollback leaves the current journal unchanged and still attempts safe pending recovery without claiming an old-pair restoration
+
+#### Scenario: Exact prior pair is recoverable
+
+- **WHEN** both original sibling values can be restored and verified
+- **THEN** the original pending marker is preserved, including true when the old report was already unavailable, and no current report is invented
+
+
+#### Scenario: Generic journal reset also requires the guard
+
+- **WHEN** generic recovery cannot durably guard the pending record and would replace its journal
+- **THEN** it leaves that journal unchanged, attempts only safe pending recovery, and claims neither a generic terminal pair nor restored pair

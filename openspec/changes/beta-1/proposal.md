@@ -65,7 +65,7 @@ gate.
   English copy use an explicit English locale (#89).
 
 **Recovery when pending storage cannot write**
-- A confirmed-ended attempt stays failed and reopenable in the running process even if its terminal pending write and recovery writes fail. `PendingBuildStore` distinguishes current volatile state from verified persisted state, without changing pending JSON. Retry sends no request until both setup records are durable; Discard retains the entry until removal is verified. A new process demotes surviving raw building records to interrupted, with a volatile demotion if that write also fails.
+- A confirmed-ended attempt stays failed and reopenable in the running process even if its terminal pending write and recovery writes fail. `PendingBuildStore` distinguishes current volatile state from verified persisted state, with one backward-compatible optional `journalUnavailable: true` field on the pending record. That field withholds an unverified report across remount/restart; it never determines lifecycle. Retry sends no request until both setup records are durable; Discard retains the entry until removal is verified. A new process demotes surviving raw building records to interrupted, with a volatile demotion if that write also fails.
 
 **Release**
 - Every beta build passes a scripted upgrade check (previous build → new build keeps apps, versions,
@@ -82,7 +82,7 @@ gate.
 
 ### Modified Capabilities
 - `pending-builds`: explicit persisted/current views, attempt ownership, bounded volatile failure and startup interruption, durable Retry setup, and verified removal during storage failure.
-- `generation-run-journal`: independent recovery of sibling keys and no report association for an unverified terminal journal.
+- `generation-run-journal`: independent recovery of sibling keys and durable suppression of unverified report associations across launcher remount and process restart.
 - `generation-contract`: the protocol level header; the `compat` envelope and its frozen fallback
   set; `queued` and `restart` events; the clarify `limit` arm and answer modes (`select`, `other`);
   clarification answers as `choices`/`other`/`decide`; `compat` on `ApiError`.

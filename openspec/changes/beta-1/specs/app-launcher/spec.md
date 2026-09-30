@@ -95,7 +95,7 @@ The home grid SHALL render one greyed, non-launchable tile for every applicable 
 
 ### Requirement: Tapping a ghost tile opens the build or failure screen by state
 
-Tapping a ghost tile whose current store state is `building` SHALL reopen the build-progress screen, reattaching to the in-flight generation. Tapping a `failed` or `interrupted` ghost tile SHALL open the failure screen, hydrated from its current store view under prompt-flow's persisted/volatile failure rules. Pending app-link routing SHALL consume the same current records and open the same handler as tapping the tile; a volatile failed entry SHALL NOT route to stale building or missing behavior.
+Tapping a ghost tile whose current store state is `building` SHALL reopen the build-progress screen, reattaching to the in-flight generation. Tapping a `failed` or `interrupted` ghost tile SHALL open the failure screen, hydrated from its current store view under prompt-flow's persisted/volatile failure rules. Pending app-link routing SHALL consume the same current records and open the same handler as tapping the tile; a volatile failed entry SHALL NOT route to stale building or missing behavior. Ghost and app-link failure opening SHALL honor persisted `journalUnavailable: true` after a fresh launcher instance or process restart; lifecycle still comes only from the current pending record.
 
 #### Scenario: Tap a building ghost
 
@@ -116,3 +116,9 @@ Tapping a ghost tile whose current store state is `building` SHALL reopen the bu
 
 - **WHEN** an app link targets a current volatile failed entry whose raw state is building or whose raw key was partially removed during Discard
 - **THEN** the same generic failure and recovery actions open as for tapping its ghost, with no new generation request
+
+
+#### Scenario: Cold generic failure keeps its durable report guard
+
+- **WHEN** Home or an app link opens a persisted generic failed record marked journalUnavailable after restart while an old raw journal still exists
+- **THEN** the failed screen opens without that old report and the ghost remains failed; journal availability does not change its lifecycle state

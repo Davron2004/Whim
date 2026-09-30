@@ -1,6 +1,6 @@
 # Context chains: beta-1
 
-Ten chains. chain-10 is the later pending-write recovery correction and runs after the reviewed R2 fix is integrated. chain-1 (the wire protocol) goes first: it writes the one contract that three later
+Ten chains. chain-10 composes the parked R2 candidate with pending-write recovery and durable report association; R2 does not merge separately. chain-1 (the wire protocol) goes first: it writes the one contract that three later
 chains consume. After that: the two server chains, the prompt-flow screens, then the app shell,
 runtime and polish chains, then release tooling. Section 10 is attended acceptance and rollout, done
 by the orchestrator, not a chain.
@@ -124,15 +124,20 @@ so nothing is HUMAN-BOOTSTRAP. The owner runs chains one at a time (low-priority
   Retry/Discard, and rendered fault tests; they share the store and LauncherRoot lifecycle paths.
 - reads: design.md D19; research.md §Pending-write recovery (2026-09-30); beta-1 deltas for
   pending-builds, prompt-flow, app-launcher, generation-run-journal; the corresponding live
-  requirements; the reviewed R2 selective terminal recovery diff and receipt;
+  requirements; rejected R2 r3 diff/review and canonical park receipt;
   handoff/pending-write-degradation.md
 - writes-contract: handoff/pending-write-degradation.md (exact signatures, durability/identity,
   lease ownership, setup activation, removal readback, startup and errors; at most 120 lines)
 - after: chain-1, chain-2, chain-3, chain-4, chain-5, chain-6, chain-7, chain-8, chain-9;
-  reviewed R2 selective terminal fix merged onto integration/beta-1
-- dispatch prerequisite: root verifies R2's reviewed source is on staging and its worker has
-  released the sole source-heavy lease. Branch the new worktree from that staging tip; use the
-  existing beta-1 integration/closure lane, never a second integration branch.
+  root-private carry of the parked R2 candidate into this new chain lane
+- dispatch prerequisite: the mechanical lane is canonically parked (actual exit 0), preserving
+  645e7fc6 on wip/beta-1-sonar-r2-terminal, never merged to staging. Root creates the new lane
+  from the current pinned integration/beta-1 tip after this plan is committed, records that
+  original staging BASE, then privately carries 2cc74989, 9712c08a, 645e7fc6 in order before
+  dispatch. These candidate commits are rejected, not an approved baseline. Review and gate
+  the entire composed five-file diff against original BASE. S3 remains open through review,
+  gates and CI; the reached mechanical cap is not reset. Keep the sole source-heavy lease and
+  existing beta-1 integration/closure lane; create no second integration branch.
 - product/test writes: src/host/launcher/pending-builds.ts;
   src/host/launcher/LauncherRoot.tsx; src/host/launcher/test/pending-builds.suite.ts;
   src/host/launcher/test/attempt-lifecycle-ui.suite.tsx;

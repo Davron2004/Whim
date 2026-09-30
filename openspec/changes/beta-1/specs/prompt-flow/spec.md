@@ -90,7 +90,7 @@ SHALL clear its quiet indication as soon as a new `token`, `stage`, `queued` or 
 
 ### Requirement: Failure screens hydrate from the persisted failure payload
 
-When the failure screen is opened from a `failed` or `interrupted` ghost tile rather than from a live terminal `failure` event, it SHALL be populated from PendingBuildStore's current record: the persisted failure payload when verified, its retained generic failed payload during a documented write outage, or the existing interruption explanation for a current interrupted record, and SHALL offer three actions: Retry (start a new generation from the record's stored prompt, reusing the same launcher id only after verified durable pending/journal setup), a non-destructive Back (return to the launcher leaving the record, its ghost tile, and its run journal untouched), and Discard (delete the record). A retained entry SHALL remain available when Discard cannot verify removal, with the established generic failure and Back. A volatile failure SHALL carry no saved-record or journal/report identity; its current-entry ID MAY be used for actions. Unverified terminal journals SHALL remain unassociated across Back and reopening, even if a generic pending fallback itself was persisted. The Discard action's label SHALL state that it discards the attempt; it MUST NOT be labeled as plain navigation. The hardware back gesture on the failure screen SHALL perform the non-destructive Back, never Discard.
+When the failure screen is opened from a `failed` or `interrupted` ghost tile rather than from a live terminal `failure` event, it SHALL be populated from PendingBuildStore's current record: the persisted failure payload when verified, its retained generic failed payload during a documented write outage, or the existing interruption explanation for a current interrupted record, and SHALL offer three actions: Retry (start a new generation from the record's stored prompt, reusing the same launcher id only after verified durable pending/journal setup and its provenance-based marker-clear write), a non-destructive Back (return to the launcher leaving the record, its ghost tile, and its run journal untouched), and Discard (delete the record). A retained entry SHALL remain available when Discard cannot verify removal, with the established generic failure and Back. A volatile failure SHALL carry no saved-record or journal/report identity; its current-entry ID MAY be used for actions. Unverified terminal journals SHALL remain unassociated across Back, reopening, launcher remount and process restart through the pending record's durable `journalUnavailable: true` metadata, even if a generic pending fallback itself was persisted. Report entry points SHALL recheck that marker and SHALL NOT rely solely on a process-local ref or a stale screen journal ID. The Discard action's label SHALL state that it discards the attempt; it MUST NOT be labeled as plain navigation. The hardware back gesture on the failure screen SHALL perform the non-destructive Back, never Discard.
 
 #### Scenario: Reopening a failed ghost hydrates from the stored payload
 
@@ -121,6 +121,16 @@ When the failure screen is opened from a `failed` or `interrupted` ghost tile ra
 
 - **WHEN** Discard of the retained attempt fails to verify complete removal
 - **THEN** the generic failure remains with Back available, and returning Home keeps the current entry
+
+#### Scenario: Fresh launcher does not inherit an old report
+
+- **WHEN** a new LauncherShell reads the same MMKV state containing a generic failed record with true journal-unavailability metadata and the prior attempt's raw journal
+- **THEN** reopening its ghost shows the generic failure without attaching the old report, even though the new shell has no remembered unavailable-journal Set
+
+#### Scenario: Retry setup dies before verified journal replacement
+
+- **WHEN** Retry leaves a persisted flagged building record after failed setup/rollback and a new process recovers it
+- **THEN** the interrupted failure screen withholds the old journal and Retry remains subject to fully verified setup before HTTP
 
 ### Requirement: Live failure screens offer Discard only when an attempt was settled
 

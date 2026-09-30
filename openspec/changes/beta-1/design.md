@@ -220,54 +220,79 @@ check proves that data survives even though the wire broke.
 381237/382511 then already get 426 from the missing protocol header (D16), and the minimum builds keep
 it that way for any future pre-D16 build too.
 
-**D19. Pending lifecycle has an explicit current view when storage cannot write.**
-The failure being corrected is a known-ended attempt whose raw pending record still says
-`building` after all terminal recovery writes fail. Back must leave a failed, reopenable ghost in
-this process. Physical durability is limited by the backend. Evidence and the native deletion
-contract are in `research.md` §Pending-write recovery (2026-09-30).
+**D19. Pending recovery distinguishes current state and durable report availability.**
+A known-ended attempt can retain a raw `building` record when every terminal recovery write
+fails. A different, recoverable fault can save a generic failed record while preserving an old
+journal. The first needs a process-only current view; the second needs durable report metadata.
+Evidence, parser compatibility and the rejected R2 r3 receipt are in `research.md`
+§Pending-write recovery (2026-09-30), including its durable-association subsection.
 
-`PendingBuildStore` owns a process-only current view alongside its persisted reads. Persisted
-`PendingBuildRecord` JSON and its three states stay unchanged. `get`/`list` remain raw persisted
-reads; `readCurrent`/`listCurrent` return `{record, durability: 'persisted' | 'volatile'}`.
-Ordinary reads never write or promote a volatile record. Current list reads substitute by ID,
-retain order, avoid duplicates, and include a retained entry during partial Discard even when
-its raw key/order has already been removed. Edit attempts still create no separate ghost.
+`PendingBuildStore` remains the lifecycle authority. `get`/`list` read persisted bytes;
+`readCurrent`/`listCurrent` return `{record, durability: 'persisted' | 'volatile'}`. The current
+list substitutes by ID, preserves order, avoids duplicates, and includes a retained entry after
+partial Discard removes its raw key/order. Reads never write or promote durability. Edit attempts
+keep their no-separate-ghost rule. Direct completion, not a journal, missing ref or clock,
+authorizes a generic volatile failed view after safe durable recovery is exhausted.
 
-After both new pending and empty-journal setup have succeeded and been verified, the store
-activates an opaque per-attempt lease and captures that building record. HTTP follows this point.
-A lease is current for one launcher ID; a later activation supersedes it. The shell checks ownership
-before terminal settlement/recovery mutations, and the store rejects stale retention. Identical
-timestamps do not imply ownership. Release a matching lease after completion/cancellation without
-clearing a retained failure. A failed Retry setup neither activates nor clears the previous view.
+The only persisted schema addition is `journalUnavailable?: true` on PendingBuildRecord.
+True suppresses record-driven journal/report attachment across navigation, remount and restart;
+absence preserves legacy eligibility. It says nothing about lifecycle. The actual parser accepts
+extra keys; existing spread-based failure/demotion transitions preserve them. The new create
+path must write true explicitly, since the old create reconstructs the record. No new backend,
+journal schema, run ID or timestamp heuristic is needed. Obsolete readers can parse the field
+but cannot enforce a rule they do not know; no retroactive guess is made for unflagged records.
 
-Run R2's selective recovery first. Only when it cannot verify a usable persisted settlement,
-retain a generic failed record from that attempt's captured data. Direct completion supplies the
-fact of failure; no journal, absent ref, or clock does. Home, failure actions, ghost opening, and
-pending app-link routing use the store's current view. Raw readback stays raw. A volatile failure
-has no saved `recordId` or journal/report association; `pendingId` identifies the current entry for
-Retry/Discard without claiming persistence. Keep per-attempt journal verification when navigating
-Back/reopening: a saved generic fallback alone does not verify a leftover journal. Any in-process
-report-availability bookkeeping records only that association, never lifecycle, and clears on a
-verified new setup/removal. Cold-process recovery cannot reconstruct an unwritten terminal fact.
+Every setup writes building with true before touching the journal. It creates and verifies the
+new empty journal, then removes the flag and verifies that pending write. Only after those steps
+may the store activate an opaque attempt lease and the shell send HTTP. A later activation for
+the same ID supersedes the old lease. Guard terminal/recovery writes before mutation; reject stale
+retention independently in the store. Failed setup preserves its prior current view/lease and
+sends no request. Release completed matching leases without clearing retained failure.
 
-Retry retains the previous view until pending and journal setup are both durable. On setup failure,
-restore siblings independently, keep the entry, show the established generic error, and send no
-HTTP request. On success, activation replaces the retained failure with the new building attempt.
-Discard of a retained entry attempts pending and journal removal independently. Read back the
-pending key, order membership, and journal; a thrown error or native false return that leaves a
-key cannot count as success. Keep the entry and generic failure/Back until removal is verified,
-then clear retention. This creates no tombstone and no autonomous retry/flush loop.
+Before recovery replaces or resets a journal under a current pending record, including a
+generic fallback journal reset, persist and read back true on that record. If that guard cannot be established, do not overwrite the current journal
+with unassociated old bytes; continue independent safe pending recovery and generic fallback.
+If the target journal already equals the exact saved bytes/absence, no association-changing
+write is needed. Restore an old pending snapshot with its original marker only when that old
+journal is verified; otherwise restore its fields with true. Preserve an original true marker
+even when its journal bytes restore. This explicit prerequisite replaces unsafe unconditional
+sibling restoration; one sibling failure still must not skip independent safe work on the other.
 
-On cold launch, surviving raw building records mean the owning process was lost. Demote each to
-interrupted before Home is ready. If a demotion cannot persist, retain a volatile interrupted view
-and continue through the remaining records. Never carry a previous process's volatile failed
-payload forward. Valid readable metadata and available process memory are the scope assumptions;
-corruption and atomic recovery across process death during multi-key removal remain outside it.
+A generic failed pending fallback with no verified current journal writes its failure and true
+atomically in one KV set. That write may establish the guard before any generic journal reset;
+if it cannot, the fallback cannot overwrite an unguarded journal. Verify both on readback; a saved generic reason alone is insufficient.
+A verified matching current terminal journal may accompany a failed pending write that removes
+the marker in the same operation. Clear the marker only for verified new-empty setup, a verified
+current terminal pair, or a verified exact old pair whose original marker was absent. No read,
+Retry click, ref reset, raw journal presence or successful pending write alone clears it.
+If all writes fail, retain failed plus true in the store's current view without claiming durability.
 
-The journal remains diagnostic only. No timeline/report identity may imply that an unverified
-terminal journal was saved. Use existing generic copy; never expose native exception text. This
-adds no backend, dependency, SDK/storage-engine change, or general cancellation/delivery recovery.
-The exact API and five-file implementation allowlist are in `handoff/pending-write-degradation.md`.
+Home, ghost opening, failure actions and pending app links use current views. Persisted readback
+stays raw. Record-driven report attachment checks the current record's marker and durability;
+a stale screen journalId or a fresh empty unavailableJournalRef cannot bypass that check.
+A volatile view has pendingId for actions, no saved recordId and no journal/report identity.
+A saved generic failure with true keeps those reports unavailable in a new launcher instance.
+Replace the candidate's unavailableJournalRef with these record/current-view checks rather
+than maintaining a second set of availability state.
+
+Retry keeps the prior current entry until complete verified setup activates the new attempt.
+Retained Discard attempts pending and journal removal independently, verifies pending-key
+absence, order exclusion and journal absence, then clears retention. Throws and native false
+returns that leave data are failures; retain the entry and generic failure/Back. No tombstones
+or autonomous flush/retry loop. Successful delete removes its metadata with the record.
+
+Cold launch demotes each surviving raw building record to interrupted, preserving true. If the
+write fails, retain volatile interrupted and continue before Home is ready. Lost process-only
+failed payloads cannot be reconstructed. Valid readable metadata and available memory are the
+scope assumptions; all rejected writes still impose a physical durability limit. Corruption and
+atomic recovery across process death during multi-key removal remain outside this change.
+
+R2 r3 is parked, not clean or merged. Chain-10 begins from the pinned staging BASE, then root
+privately carries its three candidate commits before implementation. Review the candidate and
+architecture correction together as one five-file diff. S3 stays open through composed-chain
+gates, review and CI; the exhausted mechanical cap is not reset. Existing generic copy, successful
+paths and ownership remain. General cancel/successful-delivery I/O recovery is excluded. Exact
+interfaces and scope are in `handoff/pending-write-degradation.md`.
 
 ## Risks / Trade-offs
 
