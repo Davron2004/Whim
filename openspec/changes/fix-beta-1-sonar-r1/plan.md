@@ -8,7 +8,7 @@ Per-finding dispositions and evidence are recorded before workers start. The che
 
 Ready cohort DONE specs, evidence and allowlists are in done/, evidence/ and allowlists/. Related locations share a single file owner and gate receipt; every location retains a separate terminal disposition.
 
-Current confirmed state: 24 source findings merged and regated; 60 false-positive dispositions confirmed through Sonar. The remaining 12 checkboxes stay open. Initial void sweep plans have been superseded by producer reconciliation and targeted behavior plans; see dispositions.md and the corrected DONE specs.
+Current confirmed state: 26 source findings merged and regated; 60 false-positive dispositions confirmed through Sonar. The remaining 10 checkboxes stay open. Initial void sweep plans have been superseded by producer reconciliation and targeted behavior plans; see dispositions.md and the corrected DONE specs.
 
 ## Finding checklist
 
@@ -33,7 +33,7 @@ Current confirmed state: 24 source findings merged and regated; 60 false-positiv
 - [x] S19
 - [x] S20
 - [x] S21
-- [ ] S22
+- [x] S22
 - [x] S23
 - [x] S24
 - [x] S25
@@ -86,7 +86,7 @@ Current confirmed state: 24 source findings merged and regated; 60 false-positiv
 - [x] S72
 - [x] S73
 - [x] S74
-- [ ] S75
+- [x] S75
 - [x] S76
 - [x] S77
 - [ ] S78
