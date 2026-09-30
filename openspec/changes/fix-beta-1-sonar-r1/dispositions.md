@@ -48,3 +48,6 @@ Staging: `integration/beta-1`; PR #137; initial analysis at `a1586b87b55467b5696
 - S94: false-positive-adjudicated, key AaDv2Go9DHOwsfbTeJih; rationale fp-rationale.md, confirmed by fp-receipt.json.
 - S95: false-positive-adjudicated, key AaDv2G9vDHOwsfbTeJjb; rationale fp-rationale.md, confirmed by fp-receipt.json.
 - S96: false-positive-adjudicated, key AaDv2G_fDHOwsfbTeJjc; rationale fp-rationale.md, confirmed by fp-receipt.json.
+# Dispatch: resolver-routes
+
+S8, S23-S24, S26, S51-S59: dispatched at BASE 757809963baa429b99bccc16e8ce02174ff829d7 to fix/beta-1-sonar-resolvers, .claude/worktrees/beta-1-sonar-resolvers. Stale check passed all 18 evidence lines. Structural only; server-bearing gate lease remains with shell-release until it returns.
