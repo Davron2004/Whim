@@ -732,9 +732,10 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
         h.eq(newer.onDismiss != null, true, 'the completion that retained the current view remains discardable');
 
         throwStreams[0]!();
-        await waitFor(() => on(tree, FailureScreen) && tree.root.findByType(FailureScreen).props.onRephrase !== newer.onRephrase, 'the delayed stale failure');
-        const stale = tree.root.findByType(FailureScreen).props;
-        h.eq([stale.onDismiss != null, stale.retryable, stale.attemptStarted, stale.journal], [false, false, false, null], 'the stale completion cannot authorize actions for the newer retained failure');
+        await settle();
+        const current = tree.root.findByType(FailureScreen).props;
+        h.eq([current.onDismiss != null, current.retryable, current.attemptStarted, current.journal], [true, true, false, null], 'the stale completion leaves the newer retained failure actions unchanged');
+        h.eq(current.onRephrase, newer.onRephrase, 'the stale completion does not replace the newer failure screen');
         await press(button(tree, COPY.failureBack));
         h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.prompt, ghost.state]), [[id, 'A dice roller', 'failed']], 'the stale stream error leaves the newer volatile ghost unchanged');
       } finally {
@@ -766,8 +767,7 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       await leaveRunning(tree);
 
       throwStreams[0]!();
-      await waitFor(() => on(tree, FailureScreen), 'the delayed stale failure');
-      await press(button(tree, COPY.failureBack));
+      await settle();
       const retried = ghosts(tree)[0]!;
       h.eq([retried.id, retried.prompt, retried.state], [id, 'A dice roller', 'building'], 'the newer retry remains the building ghost');
       await TestRenderer.act(async () => home(tree).props.onOpenPending(retried));
@@ -776,6 +776,36 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => home(tree).props.onCancelPending(ghosts(tree)[0]!));
       h.eq(requests[1]?.signal?.aborted, true, 'cancelling the reattached retry aborts its live request');
       h.eq(ghosts(tree), [], 'Cancel removes the record only after aborting the retry');
+    });
+  });
+
+  await h.test('ghosts: a stale same-id stage cannot replace or journal the active retry', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+      await startBuild(tree, 'A tea timer');
+      const id = new PendingBuildStore(kv).list()[0]!.id;
+      await leaveRunning(tree);
+      const started = new PendingBuildStore(kv).get(id)!;
+      kv.set(`pending:${id}`, JSON.stringify({
+        ...started,
+        prompt: 'A dice roller',
+        workingTitle: 'Dice roller',
+        state: 'failed',
+        failure: { reason: 'Retry this instead.' },
+      }));
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+      await press(button(tree, COPY.screenErrorRetry));
+      streams[1].push({ type: 'stage', stage: 'check', status: 'start' });
+      await waitFor(() => tree.root.findByType(BuildStep).props.stage === 'check', 'the active retry stage');
+
+      streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
+      await settle();
+      h.eq(tree.root.findByType(BuildStep).props.stage, 'check', 'the stale stage does not replace the active retry progress');
+
+      streams[1].push({ type: 'failure', reason: 'The retry did not build.', attempts: 0, diagnostics: [] });
+      streams[1].end();
+      await waitFor(() => on(tree, FailureScreen), 'the active retry failure');
+      h.eq(new RunJournalStore(kv).get(id)?.filter((entry) => entry.kind === 'stage').map((entry) => entry.stage), ['check'], 'the verified retry journal excludes the stale stage');
     });
   });
 

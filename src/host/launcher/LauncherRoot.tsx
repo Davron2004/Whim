@@ -1454,6 +1454,9 @@ function LauncherShell({
   const releaseLiveRef = (lease: PendingAttemptLease) => {
     if (liveRef.current?.lease === lease) liveRef.current = null;
   };
+  const whenLiveAttemptOwns = (lease: PendingAttemptLease, complete: () => void) => {
+    if (liveRef.current?.lease === lease) complete();
+  };
 
   /** The record deletion the user's two delete gestures share — cancelling an in-flight attempt
    *  and dismissing a `failed`/`interrupted` ghost — WITH the run journal that rode alongside it
@@ -1755,7 +1758,7 @@ function LauncherShell({
     retrySnapshot: AttemptSnapshot | undefined;
     lease: PendingAttemptLease;
   }) => {
-    if (input.ctl.cancelled) return;
+    if (input.ctl.cancelled || !pending.isCurrentAttempt(input.lease)) return;
     const attempt = {
       attemptId: input.attemptId,
       isRetry: input.isRetry,
@@ -2039,6 +2042,7 @@ function LauncherShell({
     // a `GenerationEvent` — it reaches here through `ClientOptions.onKeepalive`, not the stream
     // loop below, and moves ONLY the any-frame clock (`withKeepalive` never touches the journal).
     const onKeepalive = () => {
+      if (!pending.isCurrentAttempt(lease)) return;
       signals = withKeepalive(signals, Date.now());
       signalsRef.current = signals;
     };
@@ -2070,6 +2074,7 @@ function LauncherShell({
       // handling below stays in one place.
       stream = generateApp({ ...options, onKeepalive }, request, controller.signal);
       for await (const event of stream) {
+        if (!pending.isCurrentAttempt(lease)) return;
         countEvent(counts, event);
         // The journal write and the signal fold for this event, in one place and at one clock
         // reading: `stage` journals immediately, `token` goes through the store's own ~5s
@@ -2090,6 +2095,7 @@ function LauncherShell({
       // The stream loop completed without throwing a transport-classified error — a real server
       // response, proof of connectivity equivalent to a successful dedicated probe (spec "A real
       // generation or rewrite call succeeding...").
+      if (!pending.isCurrentAttempt(lease)) return;
       markOnline();
 
       if (ctl.cancelled) return; // explicit cancel (abortLiveAttempt) already deleted the record
@@ -2164,12 +2170,14 @@ function LauncherShell({
       // report, under the id the app NOW has (a behind-tip rebuild delivers onto a fork, whose id
       // is not the attempt's). After the delivery, never before it — a death in between loses the
       // report and nothing else (design D5).
-      journal.moveToLastRun(attemptId, delivered.id);
-      pending.releaseAttempt(lease);
-      releaseLiveRef(lease);
-      refresh();
-      // "Leave it running": delivered silently, the user is elsewhere.
-      setDoneIfAttached((s) => (s.kind === 'build' ? doneStep(s, delivered) : s));
+      whenLiveAttemptOwns(lease, () => {
+        journal.moveToLastRun(attemptId, delivered.id);
+        pending.releaseAttempt(lease);
+        releaseLiveRef(lease);
+        refresh();
+        // "Leave it running": delivered silently, the user is elsewhere.
+        setDoneIfAttached((s) => (s.kind === 'build' ? doneStep(s, delivered) : s));
+      });
     } catch (error) {
       settleUnexpectedAttemptFailure({
         error,

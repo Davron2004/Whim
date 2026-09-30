@@ -37,8 +37,11 @@ setFailed(id: string, failure: PendingBuildFailure,
 - Every create writes building+true before touching/replacing the journal, including fresh
   starts and reused IDs. Verify new empty journal, clear flag, verify pending again, THEN
   activate/HTTP. A failure at any step keeps the previous current view and sends no request.
-- Guard terminal/recovery mutations by the current lease; the store independently rejects
-  stale retention. Capture the started record at activation; IDs/timestamps are not leases.
+- Guard every stream frame before it changes journal, signal, live reference or UI, and guard
+  terminal/recovery mutations by the current lease; a stale stream no-ops. The store independently
+  rejects stale retention. Capture the started record at activation; IDs/timestamps are not leases.
+- Live references carry that lease and release only when it matches. A stale terminal, refusal,
+  delivery completion or keepalive cannot clear, replace or update a newer same-ID attempt.
 - Before recovery replaces/resets the current journal (including generic fallback), persist
   and read back true on the current record, or verify the target journal already equals the saved bytes/absence.
   If the guard cannot persist, do not introduce the old journal; still attempt safe pending
