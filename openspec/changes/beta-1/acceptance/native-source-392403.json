@@ -1,0 +1,22 @@
+{
+  "status": "source accepted; CI, native builds and acceptance pending",
+  "product_source_sha": "c76191d34343510c5c5af748132c5b2a650067ee",
+  "product_source_tree": "ed0d524754c306f4ba0dd9f060c01d4f8f0791da",
+  "app_version": "1.0.0",
+  "build": 392403,
+  "approved_utc": "2026-09-30T12:36:23.964865+00:00",
+  "full_gate": {
+    "exit": 0,
+    "log": "/tmp/whim-beta1-final-integrated-r3-full.log",
+    "saved_exit": "/tmp/whim-beta1-final-integrated-r3-full.exit"
+  },
+  "review": "openspec/changes/beta-1/reviews/final-integrated-r3-source.md",
+  "latest_store_build_input": 382511,
+  "latest_store_build_input_is_fresh_query": false,
+  "superseded_builds": [
+    392037,
+    392089
+  ],
+  "build_head": null,
+  "artifacts": []
+}

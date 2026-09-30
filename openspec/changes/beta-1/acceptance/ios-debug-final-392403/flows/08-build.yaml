@@ -1,0 +1,10 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: approved Plan; captures immediately, then returns control to root.
+- assertVisible: "Build it"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-before-build"
+- tapOn: "Build it"
+- extendedWaitUntil:
+    visible: "Making it"
+    timeout: 10000
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-build-start"

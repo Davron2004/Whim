@@ -1,0 +1,3 @@
+## src/host/launcher/LauncherRoot.tsx
+      onRetryPending(continuation.record);
+      if (current) advanceLegalFlowRef.current(checkingAge, result);

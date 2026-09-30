@@ -30,6 +30,7 @@ Verdicts:
 |---|---|---|---|---|---|---|
 | [2026-09-23 request-envelope](2026-09-23-request-envelope/) | 8 implementers, reviewer, 2 verifiers, orchestrator | 86 | 9 | 40 | 18 | 19 |
 | [2026-09-24 legal-surface-v2](2026-09-24-legal-surface-v2/) (session 2 only; session 1 lost all but chain-1) | 8 implementers/fix-workers, reviewer, git-cleaner, 2 Sonar workers, orchestrator | ~68 | 11 | 31 | 10 | 16 |
+| [2026-09-25 beta-1](2026-09-25-beta-1/) (resumed closure 2026-09-29) | 9 chains, fixes, reviews, device passes, orchestrator | collection in progress | — | — | — | — |
 
 ## Recurring themes
 
@@ -55,6 +56,11 @@ Run 2 (legal-surface-v2) reinforced T2 (all agents), T3 (#79), T4 (native builds
 - **T14 Cross-change interactions nobody tests.** lsv2's log-age cap truncates a file devobs's Ops Agent tails; found only when a human-style re-apply read both diffs.
 - **T15 Environment drift inside the gate.** Node/ICU version changes a static scan's verdict (#87); a full `node_modules` symlink changes `prod-build.suite` (9b).
 - **T16 Deferred work falls through.** A paragraph deferred by chain-7 "until age signals ship" was never assigned to chain-9 (reviewer H1).
+
+Beta-1 reinforced T1, T4, T7 and T10, and added:
+- **T17 Shared processes need ownership too.** Concurrent server suites interrupted a full gate; dedicated device leases did not prevent a Maestro host-log collision with another project. Gate and device orchestration must account for resources outside source paths.
+- **T18 Acceptance follows the shipping artifact.** Native keyboard and sheet regressions escaped earlier receipts. A source fix after device acceptance requires a rebuilt candidate and receipts naming that candidate.
+- **T19 An absent analysis is not a green gate.** The Sonar probe can exit 0 with GATE:NONE. Closure must also check the current head's settled GitHub result and explicit GATE:OK.
 
 ## What caught real mistakes (keep these)
 

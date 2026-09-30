@@ -1,0 +1,5 @@
+# 10.4 Android final pass agent (emulator-5560, build 386656), Opus
+
+- **What:** the final Android pass, 10 items, run with adb input, screencap, screenrecord and uiautomator (no Maestro). **Mechanism:** for states under 200 ms (the age check, the orb animation), record video and dump every raw frame (5 fps sampling missed the 150 ms age screen); screenrecord works only at 720x1600 on this AVD; the helper-line check compared uiautomator positions with the keyboard top. **Verdict:** CAUGHT-REAL-MISTAKE (re-checking one screen 11 times surfaced a 1-in-11 miss; one screenshot would have been a false PASS or FAIL). **Cost:** ~30 minutes; 69 files. **Friction:** a plain-label tap doesn't close the Settings keyboard (Back does); a selection toolbar's "Open" item launched Chrome once; curl and compound shell commands were denied. **Evidence:** `android-3/05*`, `07g`, `10b2`.
+
+Proposal: an `android-above-keyboard <label> [N]` script in the acceptance kit that focuses a field N times and prints PASS/FAIL with positions, turning keyboard-overlap checks into repeatable counts.

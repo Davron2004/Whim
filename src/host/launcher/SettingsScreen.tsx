@@ -14,17 +14,21 @@
 // policy, terms of use, support, this phone's ID), and — in internal builds only (legal-surface-v2
 // D10) — Advanced (the server address override, collapsed unless one is saved).
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Easing, Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { RADIUS, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
+import { Animated, Easing, Linking, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import type { ScrollView } from 'react-native';
+import { RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { ConsentStatus } from './ai-consent';
 import { aiFeaturesStatusLine, COPY, serverProbeLabel } from './copy';
 import { RELEASE } from './release-config';
+import ConfirmSheet from './ConfirmSheet';
+import { BackHeader, FLOW_HEADER_GAP } from './flow-chrome';
+import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
 import { legalDateLabel, privacyPolicyUrl, termsUrl, type LegalLanguage } from './legal-language';
 import { sanitizeServerUrl } from './server-address';
 import type { ProbeResult } from './server-probe';
 import { probeServer } from './server-probe';
 import { advancedInitiallyOpen } from './settings-sections';
-import { DebouncedProbe } from './settings-probe';
+import { DebouncedProbe, DebouncedSave } from './settings-probe';
 import type { SettingsProbeState } from './settings-probe';
 import { SHELL_PALETTE } from './theme';
 import { useSystemBack } from './use-system-back';
@@ -43,7 +47,8 @@ export interface SettingsScreenProps {
   /** The persisted generation-server address (design D3), or `undefined` when unset. */
   serverUrl?: string;
   /** Persists the entered address — `LauncherRoot` writes it via `saveServerUrl` and re-reads
-   *  the sanitized result back into its own state, same round-trip `server-address.ts` uses. */
+   *  the sanitized result back into its own state, same round-trip `server-address.ts` uses.
+   *  Called once typing pauses, on submit or blur, and on leaving with an unsaved edit. */
   onServerUrlChange: (url: string) => void;
   /** Clears the saved override so the next request targets the compiled-in server (design D7,
    *  app-launcher "Going back to the default"). Shown only while an override is saved. */
@@ -106,6 +111,7 @@ export default function SettingsScreen({
   const [serverUrlDraft, setServerUrlDraft] = useState(serverUrl ?? '');
   const [probeState, setProbeState] = useState<SettingsProbeState>('idle');
   const [advancedOpen, setAdvancedOpen] = useState(() => advancedInitiallyOpen(serverUrl));
+  const [confirmingNewId, setConfirmingNewId] = useState(false);
   const p = SHELL_PALETTE;
 
   // The Advanced disclosure chevron rotates smoothly between closed (right) and open (down)
@@ -131,27 +137,72 @@ export default function SettingsScreen({
     () => new DebouncedProbe({ probe: (url) => probeServer(url), publish: setProbeState }),
   );
 
+  // The save settles once typing pauses (`DebouncedSave`), through the latest `onServerUrlChange`.
+  const saveRef = useRef(onServerUrlChange);
+  useEffect(() => {
+    saveRef.current = onServerUrlChange;
+  }, [onServerUrlChange]);
+  const [addressSave] = useState(() => new DebouncedSave({ save: (url) => saveRef.current(url) }));
+
   useSystemBack(onBack);
 
-  // Cancels any pending debounce timer / in-flight probe on unmount — the screen's own lifetime
-  // is the probe's scope (design.md decision 3: "SettingsScreen owns this local debounce/probe-
-  // state ... the result never needs to outlive the screen").
-  useEffect(() => () => debouncedProbe.cancel(), [debouncedProbe]);
+  // Leaving saves an edit still waiting on its pause, and cancels any pending debounce timer /
+  // in-flight probe — the screen's own lifetime is the probe's scope (design.md decision 3:
+  // "SettingsScreen owns this local debounce/probe-state ... the result never needs to outlive
+  // the screen").
+  useEffect(
+    () => () => {
+      addressSave.flush();
+      debouncedProbe.cancel();
+    },
+    [addressSave, debouncedProbe],
+  );
+
+  const onAddressChange = (next: string) => {
+    setServerUrlDraft(next);
+    addressSave.edit(next);
+    // The informational probe is BOTH debounced (design.md decision 3) AND gated on consent
+    // (server-connectivity "Without a current consent grant the system SHALL NOT probe" — design
+    // D2/D7) — the same normalization `saveServerUrl` applies before persisting, so the probe never
+    // trips over a trailing slash the save itself would have stripped.
+    if (canProbe) debouncedProbe.schedule(sanitizeServerUrl(next) ?? '');
+  };
+
+  // Submitting or leaving the field settles both now instead of at the end of the pause.
+  const settleAddress = () => {
+    addressSave.flush();
+    debouncedProbe.flush();
+  };
 
   const onUseDefault = () => {
     setServerUrlDraft('');
+    addressSave.cancel();
     debouncedProbe.cancel();
     setProbeState('idle');
     onUseDefaultServer();
   };
 
+  // Expanding Advanced reveals the address field: it is the last section, so once the content has
+  // grown by it the scroll view scrolls to its end.
+  const scrollRef = useRef<ScrollView>(null);
+  // The address field with the lines under it, which the shell keeps in view while it is focused.
+  const addressBlock = useRef<View>(null);
+  const revealAdvanced = useRef(false);
+  const toggleAdvanced = () => {
+    revealAdvanced.current = !advancedOpen;
+    setAdvancedOpen(!advancedOpen);
+  };
+  const onContentSizeChange = () => {
+    if (!revealAdvanced.current) return;
+    revealAdvanced.current = false;
+    scrollRef.current?.scrollToEnd({ animated: true });
+  };
+
   // The confirm step before replacing the ID (privacy-settings "Settings shows this phone's ID and
-  // can make a new one"): Cancel changes nothing.
-  const confirmResetDeviceId = () => {
-    Alert.alert(COPY.settingsDeviceIdReset, COPY.settingsDeviceIdResetConfirm, [
-      { text: COPY.cancel, style: 'cancel' },
-      { text: COPY.settingsDeviceIdReset, onPress: onResetDeviceId },
-    ]);
+  // can make a new one"), in the launcher's own confirm sheet: Cancel changes nothing.
+  const makeNewId = () => {
+    setConfirmingNewId(false);
+    onResetDeviceId();
   };
 
   const aiFeaturesSubtitle =
@@ -173,142 +224,133 @@ export default function SettingsScreen({
   }
 
   return (
-    <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <View style={[styles.header, { borderBottomColor: p.cardBorder }]}>
-        <TouchableOpacity
-          onPress={onBack}
-          hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel={COPY.backLabel}
-          style={[styles.backBtn, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-        >
-          <View style={[styles.backChevron, { borderColor: p.text }]} />
-        </TouchableOpacity>
-        {/* `stepTitle` (26/29.9/-0.65/700), NOT `screenTitle`: ruling R12. `screenTitle` was
-            retargeted 26 -> 22 on the strength of the history/confirm-sheet mockups, and this
-            screen has no mockup and no design basis for shrinking. `stepTitle` holds the numbers
-            `screenTitle` used to, so this renders exactly as it does today. */}
-        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.settingsTitle}</Text>
+    <KeyboardShell
+      style={{ backgroundColor: p.bg }}
+      contentContainerStyle={styles.content}
+      scrollRef={scrollRef}
+      onContentSizeChange={onContentSizeChange}
+      header={<BackHeader onBack={onBack} />}
+    >
+      {/* `stepTitle` (26/29.9/-0.65/700), NOT `screenTitle`: ruling R12. `screenTitle` was
+          retargeted 26 -> 22 on the strength of the history/confirm-sheet mockups, and this
+          screen has no mockup and no design basis for shrinking. `stepTitle` holds the numbers
+          `screenTitle` used to. It heads the content under the flow screens' back link, as the
+          plan step's title does. */}
+      <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.settingsTitle}</Text>
+      {/* AI features (ai-data-consent "Settings shows consent and can review or turn it off") */}
+      <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
+        {COPY.settingsAISectionTitle}
+      </Text>
+      <TouchableOpacity
+        onPress={onOpenAIFeatures}
+        accessibilityRole="button"
+        style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+      >
+        <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsAISectionTitle}</Text>
+        <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{aiFeaturesSubtitle}</Text>
+      </TouchableOpacity>
+      <View style={[styles.row, styles.rowFollowing, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
+        <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsErrorDetailsTitle}</Text>
+        <Switch
+          value={errorDetails}
+          onValueChange={onErrorDetailsChange}
+          accessibilityLabel={COPY.settingsErrorDetailsTitle}
+          trackColor={{ false: p.cardBorder, true: p.accent }}
+          thumbColor={p.onAccent}
+        />
       </View>
+      <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.settingsErrorDetailsHint}</Text>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        {/* AI features (ai-data-consent "Settings shows consent and can review or turn it off") */}
-        <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
-          {COPY.settingsAISectionTitle}
+      {/* Highlighting (unchanged) */}
+      <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
+        {COPY.highlightingSectionTitle}
+      </Text>
+      <View style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
+        <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.highlightingSectionTitle}</Text>
+        <Switch
+          value={highlighting}
+          onValueChange={onHighlightingChange}
+          accessibilityLabel={COPY.highlightingSectionTitle}
+          trackColor={{ false: p.cardBorder, true: p.accent }}
+          thumbColor={p.onAccent}
+        />
+      </View>
+      <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.highlightingHint}</Text>
+
+      {/* About */}
+      <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
+        {COPY.settingsAboutSectionTitle}
+      </Text>
+      <TouchableOpacity
+        onPress={() => Linking.openURL(privacyPolicyUrl(legalLanguage))}
+        accessibilityRole="button"
+        style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+      >
+        <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.privacyPolicyLabel}</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={() => Linking.openURL(termsUrl(legalLanguage))}
+        accessibilityRole="button"
+        style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+      >
+        <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.termsOfUseLabel}</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={() => Linking.openURL(RELEASE.supportUrl)}
+        accessibilityRole="button"
+        style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+      >
+        <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.supportLabel}</Text>
+      </TouchableOpacity>
+      <View style={[styles.idCard, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
+        <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsDeviceIdTitle}</Text>
+        <Text selectable style={[TYPE_SCALE.caption, { color: p.text }]}>
+          {deviceId}
         </Text>
+      </View>
+      <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.settingsDeviceIdHint}</Text>
+      <TouchableOpacity onPress={() => setConfirmingNewId(true)} hitSlop={10} accessibilityRole="button">
+        <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>
+          {COPY.settingsDeviceIdReset}
+        </Text>
+      </TouchableOpacity>
+      <ConfirmSheet
+        confirm={confirmingNewId ? { title: COPY.settingsDeviceIdReset, body: COPY.settingsDeviceIdResetConfirm, confirmLabel: COPY.settingsDeviceIdReset } : null}
+        onCancel={() => setConfirmingNewId(false)}
+        onConfirm={makeNewId}
+      />
+
+      {/* Advanced (app-launcher "Settings groups its controls...with the server address under
+          Advanced") — internal builds only; one row that expands inline; already open while an
+          override is saved. */}
+      {internalBuild && (
         <TouchableOpacity
-          onPress={onOpenAIFeatures}
+          onPress={toggleAdvanced}
           accessibilityRole="button"
-          style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+          style={styles.advancedHeader}
         >
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsAISectionTitle}</Text>
-          <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{aiFeaturesSubtitle}</Text>
-        </TouchableOpacity>
-        <View style={[styles.row, styles.rowFollowing, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsErrorDetailsTitle}</Text>
-          <Switch
-            value={errorDetails}
-            onValueChange={onErrorDetailsChange}
-            accessibilityLabel={COPY.settingsErrorDetailsTitle}
-            trackColor={{ false: p.cardBorder, true: p.accent }}
-            thumbColor={p.onAccent}
+          <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.settingsAdvancedSectionTitle}</Text>
+          <Animated.View
+            style={[
+              styles.advancedChevron,
+              { borderColor: p.textMuted, transform: [{ rotate: chevronRotate }] },
+            ]}
           />
-        </View>
-        <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.settingsErrorDetailsHint}</Text>
+        </TouchableOpacity>
+      )}
 
-        {/* Highlighting (unchanged) */}
-        <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
-          {COPY.highlightingSectionTitle}
-        </Text>
-        <View style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.highlightingSectionTitle}</Text>
-          <Switch
-            value={highlighting}
-            onValueChange={onHighlightingChange}
-            accessibilityLabel={COPY.highlightingSectionTitle}
-            trackColor={{ false: p.cardBorder, true: p.accent }}
-            thumbColor={p.onAccent}
-          />
-        </View>
-        <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.highlightingHint}</Text>
-
-        {/* About */}
-        <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
-          {COPY.settingsAboutSectionTitle}
-        </Text>
-        <TouchableOpacity
-          onPress={() => Linking.openURL(privacyPolicyUrl(legalLanguage))}
-          accessibilityRole="button"
-          style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-        >
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.privacyPolicyLabel}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => Linking.openURL(termsUrl(legalLanguage))}
-          accessibilityRole="button"
-          style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-        >
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.termsOfUseLabel}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => Linking.openURL(RELEASE.supportUrl)}
-          accessibilityRole="button"
-          style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-        >
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.supportLabel}</Text>
-        </TouchableOpacity>
-        <View style={[styles.idCard, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsDeviceIdTitle}</Text>
-          <Text selectable style={[TYPE_SCALE.caption, { color: p.text }]}>
-            {deviceId}
+      {internalBuild && advancedOpen && (
+        <>
+          <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
+            {COPY.serverAddressSectionTitle}
           </Text>
-        </View>
-        <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.settingsDeviceIdHint}</Text>
-        <TouchableOpacity onPress={confirmResetDeviceId} hitSlop={10} accessibilityRole="button">
-          <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>
-            {COPY.settingsDeviceIdReset}
-          </Text>
-        </TouchableOpacity>
-
-        {/* Advanced (app-launcher "Settings groups its controls...with the server address under
-            Advanced") — internal builds only; one row that expands inline; already open while an
-            override is saved. */}
-        {internalBuild && (
-          <TouchableOpacity
-            onPress={() => setAdvancedOpen((open) => !open)}
-            accessibilityRole="button"
-            style={styles.advancedHeader}
-          >
-            <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.settingsAdvancedSectionTitle}</Text>
-            <Animated.View
-              style={[
-                styles.advancedChevron,
-                { borderColor: p.textMuted, transform: [{ rotate: chevronRotate }] },
-              ]}
-            />
-          </TouchableOpacity>
-        )}
-
-        {internalBuild && advancedOpen && (
-          <>
-            <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
-              {COPY.serverAddressSectionTitle}
-            </Text>
-            <TextInput
+          <View ref={addressBlock}>
+            <KeyboardTextInput
+              revealTarget={addressBlock}
               value={serverUrlDraft}
-              onChangeText={(next) => {
-                // Save is unchanged: immediate and unconditional, regardless of the probe below.
-                setServerUrlDraft(next);
-                onServerUrlChange(next);
-                // The informational probe is BOTH debounced (design.md decision 3) AND gated on
-                // consent (server-connectivity "Without a current consent grant the system SHALL
-                // NOT probe" — design D2/D7) — the same normalization `saveServerUrl` applies
-                // before persisting, so the probe never trips over a trailing slash the save
-                // itself would have stripped.
-                if (canProbe) {
-                  debouncedProbe.schedule(sanitizeServerUrl(next) ?? '');
-                }
-              }}
+              onChangeText={onAddressChange}
+              onSubmitEditing={settleAddress}
+              onBlur={settleAddress}
               placeholder={RELEASE.serverUrl.replace(/^https?:\/\//, '')}
               placeholderTextColor={p.textMuted}
               autoCapitalize="none"
@@ -324,52 +366,24 @@ export default function SettingsScreen({
             {probeLine != null && (
               <Text style={[TYPE_SCALE.caption, styles.hint, { color: probeLineColor }]}>{probeLine}</Text>
             )}
-            {serverUrlDraft.trim().length > 0 && (
-              <TouchableOpacity onPress={onUseDefault} hitSlop={10}>
-                <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>
-                  {COPY.settingsUseDefaultServer}
-                </Text>
-              </TouchableOpacity>
-            )}
-          </>
-        )}
-      </ScrollView>
-    </View>
+          </View>
+          {serverUrlDraft.trim().length > 0 && (
+            <TouchableOpacity onPress={onUseDefault} hitSlop={10}>
+              <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>
+                {COPY.settingsUseDefaultServer}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </>
+      )}
+    </KeyboardShell>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  // Design :23 — a 42x42 circular button, no text label. There is no SVG library in this app, so
-  // the chevron is a 10x10 box wearing two borders, rotated 45°. RN renders square line-caps where
-  // the design asks for round ones; that is an accepted, unavoidable gap, NOT something to
-  // compensate for with a different stroke width.
-  backBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: RADIUS.chip,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  backChevron: {
-    width: 10,
-    height: 10,
-    borderLeftWidth: 2.4,
-    borderBottomWidth: 2.4,
-    transform: [{ rotate: '45deg' }],
-    marginLeft: 2,
-  },
-  content: { padding: 16, paddingBottom: 40 },
+  // The flow screens' margins and title gap (`PlanStep.tsx`'s content: 26 above the title, in the
+  // design, less what the shared header holds).
+  content: { paddingHorizontal: SPACING.lg, paddingTop: 26 - FLOW_HEADER_GAP, paddingBottom: 40 },
   sectionTitle: { marginTop: 24, marginBottom: 10 },
   row: {
     flexDirection: 'row',

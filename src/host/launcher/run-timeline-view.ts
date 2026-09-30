@@ -109,10 +109,13 @@ function repairAttempts(journal: readonly RunJournalEntry[]): number {
  * output-growth summary, then the failure detail the failure surfaces already permit (`reason` and
  * each diagnostic `hint` — the journal stores nothing else, so no `kind`, `symbol` or raw
  * `message` can reach a row). `devMode` appends the two observed counts and nothing else.
+ * `shownReason` is the reason the surrounding screen already states; a failure reason equal to it
+ * is not repeated.
  */
 export function runTimelineRows(
   journal: readonly RunJournalEntry[],
   devMode = false,
+  shownReason?: string,
 ): readonly TimelineRow[] {
   const rows: TimelineRow[] = [];
 
@@ -136,7 +139,7 @@ export function runTimelineRows(
 
   const failure = lastFailure(journal);
   if (failure != null) {
-    rows.push({ key: 'reason', kind: 'reason', text: failure.reason });
+    if (failure.reason !== shownReason) rows.push({ key: 'reason', kind: 'reason', text: failure.reason });
     for (const [i, diagnostic] of (failure.diagnostics ?? []).entries()) {
       rows.push({ key: `hint:${i}`, kind: 'hint', text: diagnostic.hint });
     }

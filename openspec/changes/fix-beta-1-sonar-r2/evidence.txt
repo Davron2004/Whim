@@ -1,0 +1,3 @@
+## src/host/launcher/LauncherRoot.tsx
+      onRetryPending(continuation.record);
+      settleFailed(attemptId, reasoned.reason, reasoned.diagnostics, terminalCounts(), errorRemedy(e));

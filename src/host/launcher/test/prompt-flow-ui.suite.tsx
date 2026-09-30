@@ -22,7 +22,7 @@ import { hardwareBack } from './native-host';
 import { button, press, textOf } from './react-screen';
 import { buildIt, composeAndContinue, hasInstalled, json, planLoaded, resultEvent, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 
-const QUESTION = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'] };
+const QUESTION = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'], select: 'one', other: false };
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
@@ -74,7 +74,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
     }, async ({ tree, paths, sent }) => {
       await composeAndContinue(tree, 'A tea timer');
       await waitFor(() => on(tree, ClarifyStep) && !tree.root.findByType(ClarifyStep).props.loading, 'the question');
-      await TestRenderer.act(async () => tree.root.findByType(ClarifyStep).props.onAnswer('alert', 'Buzz'));
+      await TestRenderer.act(async () => tree.root.findByType(ClarifyStep).props.onAnswer('alert', { kind: 'pick', option: 'Buzz' }));
       await tap(() => tree.root.findByType(ClarifyStep).props.onContinue());
       await waitFor(() => planLoaded(tree), 'the plan');
       await settle();
@@ -84,7 +84,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       h.eq(paths(), ['/v1/clarify', '/v1/rewrite', '/v1/generate'], 'Build it sends the one generation request');
       const generate = sent.find((r) => r.path === '/v1/generate');
       h.eq(generate?.body?.prompt, 'A tea timer that buzzes', 'generation builds the rewritten prompt');
-      h.eq(generate?.body?.clarifications, [{ id: 'alert', question: QUESTION.question, answer: 'Buzz' }], 'with the answer given on the clarify step');
+      h.eq(generate?.body?.clarifications, [{ id: 'alert', question: QUESTION.question, choices: ['Buzz'] }], 'with the answer given on the clarify step');
       streams[0].push(resultEvent('Tea Timer'));
       streams[0].end();
       await waitFor(() => on(tree, DoneStep), 'the delivered app to land on the done step');
@@ -165,7 +165,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
         await composeAndContinue(tree, 'A dice roller');
         if (from === 'clarify') {
           await waitFor(() => on(tree, ClarifyStep) && !tree.root.findByType(ClarifyStep).props.loading, 'the question');
-          await TestRenderer.act(async () => tree.root.findByType(ClarifyStep).props.onAnswer('alert', 'Sound'));
+          await TestRenderer.act(async () => tree.root.findByType(ClarifyStep).props.onAnswer('alert', { kind: 'pick', option: 'Sound' }));
           await tap(() => tree.root.findByType(ClarifyStep).props.onContinue());
         }
         await waitFor(() => textOf(tree.root).includes('Whim is busy right now.'), 'the refusal to land');
@@ -174,7 +174,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
         h.ok(on(tree, landed), `the refusal lands on ${from}`);
         h.eq(tree.root.findAllByType(other).length + tree.root.findAllByType(PlanStep).length, 0, 'not on a step that did not send it');
         if (from === 'compose') h.eq(tree.root.findByType(ComposeStep).props.text, 'A dice roller', 'the user’s words are kept');
-        else h.eq(tree.root.findByType(ClarifyStep).props.answers, { alert: 'Sound' }, 'the answers are kept');
+        else h.eq(tree.root.findByType(ClarifyStep).props.answers, { alert: { choices: ['Sound'], other: '', decide: false } }, 'the answers are kept');
       });
     });
   }

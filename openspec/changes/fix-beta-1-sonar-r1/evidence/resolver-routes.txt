@@ -1,0 +1,22 @@
+## server/src/routes/generate.ts
+    deps.resolveTracker.track(resolveRequestUsage(requestId, deviceId, ids, unavailable?.usage !== undefined, resolveDeps(deps)));
+    deps.resolveTracker.track(resolveRequestUsage(requestId, deviceId, ids, true, resolveDeps(deps)));
+      deps.resolveTracker.track(resolveRequestUsage('', deviceId, [unavailable.generationId], false, resolveDeps(deps)));
+  deps.resolveTracker.track(resolveRequestUsage(unit.requestId, deviceId, ids, true, resolveDeps(deps)));
+    resolveTracker.track(resolveRequestUsage(requestId, deviceId, pipelineIds, pipelineCredited, rDeps));
+  resolveTracker.track(resolveRequestUsage(requestId, deviceId, [policyGenerationId, ...pipelineIds], true, rDeps));
+    resolveTracker.track(resolveRequestUsage('', deviceId, pipelineIds, pipelineCredited, rDeps));
+## server/src/routes/clarify.ts
+    resolveTracker.track(resolveRequestUsage(requestId, deviceId, generationIds, creditOwned, deps));
+  resolveTracker.track(resolveRequestUsage(requestId, deviceId, [policyGenerationId, ...generationIds], true, deps));
+    resolveTracker.track(resolveRequestUsage('', deviceId, generationIds, false, deps));
+      resolveTracker.track(
+  resolveTracker.track(
+## server/src/routes/rewrite.ts
+        resolveTracker.track(resolveRequestUsage(requestId, deviceId, generationIds, creditedGenerationIds, {
+## server/src/usage/resolve.ts
+  track<T>(promise: Promise<T>): Promise<T> {
+    this.inFlight.add(promise);
+    const untrack = () => this.inFlight.delete(promise);
+    promise.then(untrack, untrack);
+    return promise;

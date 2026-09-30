@@ -16,11 +16,15 @@ import { openStoreListing } from './update-gate';
 import { useSystemBack } from './use-system-back';
 
 export interface UpdateRequiredScreenProps {
+  /** The plain-text notice of the message that opened this screen (beta-1 D16: a message this
+   *  build can't use whose fallback is `update`), shown in place of the standard body. Rendered as
+   *  a plain `Text` — never parsed, linked or formatted. Absent: the standard body. */
+  notice?: string;
   /** `Not now` and system back both call this. */
   onNotNow: () => void;
 }
 
-export default function UpdateRequiredScreen({ onNotNow }: Readonly<UpdateRequiredScreenProps>) {
+export default function UpdateRequiredScreen({ notice, onNotNow }: Readonly<UpdateRequiredScreenProps>) {
   const p = SHELL_PALETTE;
   useSystemBack(onNotNow);
   // The store on the phone in hand: the App Store on iOS, Google Play on Android.
@@ -30,7 +34,7 @@ export default function UpdateRequiredScreen({ onNotNow }: Readonly<UpdateRequir
     <View style={[styles.root, { backgroundColor: p.bg }]}>
       <View style={styles.content}>
         <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.updateTitle}</Text>
-        <Text style={[TYPE_SCALE.body, styles.body, { color: p.textMuted }]}>{COPY.updateBody}</Text>
+        <Text style={[TYPE_SCALE.body, styles.body, { color: p.textMuted }]}>{notice ?? COPY.updateBody}</Text>
       </View>
       <View>
         <TouchableOpacity

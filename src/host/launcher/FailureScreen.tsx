@@ -29,6 +29,7 @@ import {
 } from './copy';
 import RunTimeline from './RunTimeline';
 import type { RunJournalEntry } from './run-journal';
+import { runTimelineRows } from './run-timeline-view';
 import type { FlowNotice } from './prompt-flow';
 import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
@@ -51,6 +52,12 @@ export interface FailureScreenProps {
   hasWorkingVersion?: boolean;
   /** True when a repair recovered the run; the title and panel take the success hue instead. */
   recovered?: boolean;
+  /**
+   * Whether describing the app differently could get past this failure. False (a refusal that isn't
+   * about the words, a message this build can't use) drops the advisory row and labels the primary
+   * `Try again` instead of `Try rephrasing` — the action itself is unchanged. Absent = true.
+   */
+  rephraseHelps?: boolean;
   /**
    * The screen was hydrated from a persisted pending-build record rather than a live stream, so
    * its primary action re-runs the stored prompt instead of reopening the composer, and takes the
@@ -122,6 +129,7 @@ export default function FailureScreen({
   observedRepairAttempts,
   hasWorkingVersion = false,
   recovered = false,
+  rephraseHelps = true,
   retryable = false,
   journal = null,
   attemptStarted = false,
@@ -136,8 +144,15 @@ export default function FailureScreen({
   useSystemBack(onBack);
 
   const outcome = recovered ? STATUS_COLORS.done : p.danger;
-  const rows = failureChecklistRows({ diagnostics, hasWorkingVersion });
+  const rows = failureChecklistRows({ diagnostics, hasWorkingVersion, rephraseHelps });
   const attempts = observedRepairAttempts ?? 0;
+  // The one sentence at the top: the reason line, or the refused Retry's notice in its place.
+  const shownReason = notice ? notice.hint : reason;
+  // A journal whose only news is that sentence adds nothing, and "nothing was recorded" under it
+  // would be false, so the section goes; an attempt whose journal is missing keeps its empty note.
+  const timelineAddsNothing =
+    journal != null && journal.length > 0 && runTimelineRows(journal, devMode, shownReason).length === 0;
+  const showTimeline = (journal != null || attemptStarted) && !timelineAddsNothing;
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
@@ -167,37 +182,39 @@ export default function FailureScreen({
           </View>
         )}
 
-        <View
-          style={[
-            styles.panel,
-            { backgroundColor: outcome + PANEL_FILL_ALPHA, borderColor: outcome + PANEL_BORDER_ALPHA },
-          ]}
-        >
-          {rows.map((row, index) => {
-            const icon = rowIcon(row.kind);
-            return (
-              <View key={`${index}:${row.kind}`} style={styles.row}>
-                <View style={[styles.rowIcon, { borderColor: icon.ring, backgroundColor: icon.fill }]}>
-                  <Text style={[TYPE_SCALE.kindBadge, styles.rowMark, { color: p.onAccent }]}>{icon.mark}</Text>
+        {rows.length > 0 && (
+          <View
+            style={[
+              styles.panel,
+              { backgroundColor: outcome + PANEL_FILL_ALPHA, borderColor: outcome + PANEL_BORDER_ALPHA },
+            ]}
+          >
+            {rows.map((row, index) => {
+              const icon = rowIcon(row.kind);
+              return (
+                <View key={`${index}:${row.kind}`} style={styles.row}>
+                  <View style={[styles.rowIcon, { borderColor: icon.ring, backgroundColor: icon.fill }]}>
+                    <Text style={[TYPE_SCALE.kindBadge, styles.rowMark, { color: p.onAccent }]}>{icon.mark}</Text>
+                  </View>
+                  <Text
+                    style={[TYPE_SCALE.body, styles.rowText, { color: row.kind === 'wait' ? p.textMuted : p.text }]}
+                  >
+                    {row.text}
+                  </Text>
                 </View>
-                <Text
-                  style={[TYPE_SCALE.body, styles.rowText, { color: row.kind === 'wait' ? p.textMuted : p.text }]}
-                >
-                  {row.text}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
+              );
+            })}
+          </View>
+        )}
 
         {/* The what-happened timeline, IN ADDITION to the checklist above and never in place of
             it: the checklist says what to do next, this says what the attempt actually did. Shown
             only when there is a run to speak of — a failure that never started an attempt gets no
             heading and no empty note, because "nothing was recorded" would be answering a question
             the user never had. */}
-        {(journal != null || attemptStarted) && (
+        {showTimeline && (
           <View style={styles.timeline}>
-            <RunTimeline entries={journal} devMode={devMode} />
+            <RunTimeline entries={journal} devMode={devMode} shownReason={shownReason} />
           </View>
         )}
       </View>
@@ -216,7 +233,7 @@ export default function FailureScreen({
         ]}
       >
         <Text style={[TYPE_SCALE.bodyEmphatic, { color: gated ? p.textMuted : p.onAccent }]}>
-          {retryable ? COPY.screenErrorRetry : COPY.failureRephrase}
+          {retryable || !rephraseHelps ? COPY.screenErrorRetry : COPY.failureRephrase}
         </Text>
       </TouchableOpacity>
       {/* The exits, in the order their consequences deserve: leaving is the ordinary way out and
@@ -252,8 +269,9 @@ const styles = StyleSheet.create({
   attemptBars: { flexDirection: 'row', gap: SPACING.xs },
   attemptBar: { flex: 1, height: ATTEMPT_BAR_HEIGHT, borderRadius: RADIUS.chip },
   attemptLabel: { marginTop: SPACING.xs },
+  // Sized to its rows; it only shrinks (clipping) when a long list would push the actions away.
   panel: {
-    flex: 1,
+    flexShrink: 1,
     marginTop: SPACING.lg,
     borderRadius: RADIUS.tile,
     borderWidth: StyleSheet.hairlineWidth,

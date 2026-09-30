@@ -35,23 +35,22 @@ import { AppBusy, runAppOp } from './app-busy';
 import type { AppBusyMap } from './app-busy';
 import { StoreAccess } from './store-access';
 import { PendingBuildStore } from './pending-builds';
-import type { PendingBuildRecord } from './pending-builds';
-import { RunJournalStore } from './run-journal';
+import type { PendingAttemptLease, PendingBuildRecord, PendingBuildView, PendingFailureRemedy } from './pending-builds';
+import { JOURNAL_KEY, RunJournalStore } from './run-journal';
 import type { RunJournal, RunTerminalCounts } from './run-journal';
 import {
-  deliverAndSettle,
+  deliverAndSettleIfOwned,
   dropPendingBuild,
-  failPendingBuild,
   hydratedDiagnostics,
   journalStreamEvent,
   refusedGenerateOutcome,
+  reopenedRecord,
   retryBuildScreen,
-  settleRefusedGenerate,
   startPendingBuild,
 } from './build-lifecycle';
 import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAppContext } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
-import { COPY } from './copy';
+import { COPY, LEGAL_COPY } from './copy';
 import HomeScreen, { HOME_GRID_COLUMNS, HOME_GRID_COLUMN_GAP } from './HomeScreen';
 import MiniAppView from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
@@ -87,6 +86,7 @@ import {
   backFrom,
   buildBackAction,
   buildStep,
+  clarifyLimitOf,
   clarifyStep,
   clarificationsFrom,
   composeStep,
@@ -99,11 +99,14 @@ import {
   withAnswer,
   withDelivering,
   withKeepalive,
+  withLimit,
   withPlan,
   withQuestions,
-  withStage,
+  withStreamEvent,
 } from './prompt-flow';
-import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowNotice, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
+import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowLimit, FlowNotice, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
+import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
+import { PROTOCOL_LEVEL } from './wire-headers';
 import { FlowRequests, onlyOnStep } from './flow-request';
 import { SHELL_PALETTE } from './theme';
 import { clearServerUrl, effectiveServerUrl, saveServerUrl, serverOverride } from './server-address';
@@ -122,18 +125,18 @@ import { installedAppInfo, installedInternalBuild } from './installed-app-info';
 import ReportSheet from './ReportSheet';
 import { consentStatus, grantConsent, outdatedGrantVersion, revokeConsent } from './ai-consent';
 import { acceptTerms, termsStatus } from './terms-acceptance';
-import { runAgeCheck, storedAgeGate, type AgeGate, type AgeHold } from './age-check';
-import { installedAgeSignal } from './installed-age-signal';
+import { runAgeCheck, storedAgeGate, type AgeGate, type AgeHold, type SignificantUpdateSheet } from './age-check';
+import { installedAgeSignal, installedSignificantUpdate } from './installed-age-signal';
 import { activeLegalLanguage, chooseLegalLanguage, type LegalLanguage } from './legal-language';
 import { deviceLocale as installedDeviceLocale } from './device-locale';
 import { declineTarget, nextLegalStep } from './consent-flow';
 import type { ConsentContinuation, LegalFlow } from './consent-flow';
-import { REFUSAL_RULES, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
+import { REFUSAL_RULES, refusalRemedy, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
 import type { ServiceRefusal } from './service-refusal';
 import { rewriteRefusalTarget } from './refusal-target';
 import type { RefusalSentFrom } from './refusal-target';
 import { useNoticeWindowClear } from './ServiceNotice';
-import { errorReason, errorReasonCode, GENERIC_STREAM_ERROR } from './error-reason';
+import { errorReason, errorReasonCode, errorRemedy, errorRephraseHelps, GENERIC_STREAM_ERROR } from './error-reason';
 import { liveClientOptions } from './consent-options';
 import { resolveOptions } from './resolve-options';
 import { probeGateFor } from './probe-gate';
@@ -151,15 +154,18 @@ type Screen =
   | { kind: 'app'; app: InstalledApp; record: AppRecord; source: string; engineAppId: string }
   | { kind: 'dev' }
   | { kind: 'settings' }
-  | { kind: 'history'; app: InstalledApp }
+  // `from`: where History was opened — Home's sheet, or the orb over the running app — and so
+  // where leaving it returns.
+  | { kind: 'history'; app: InstalledApp; from: 'home' | 'app' }
   // An app link's id matched neither an installed app nor a pending build (design D15; spec
   // app-links "A link to an app that isn't on this phone shows a friendly screen").
   | { kind: 'link-missing' }
   // The update screen (request-envelope D5; spec app-update-gate): an `update_required` refusal, or
   // the launch-time check finding this build below its platform's minimum. `heldPrompt` is the
   // prompt typed on the flow step it replaced: `Not now` goes Home (D5), so the next compose for
-  // the same app picks it back up rather than losing it.
-  | { kind: 'update-required'; heldPrompt?: HeldPrompt }
+  // the same app picks it back up rather than losing it. `updateNotice` is the plain-text notice
+  // of a message this build can't use whose fallback opened the screen (beta-1 D16).
+  | { kind: 'update-required'; heldPrompt?: HeldPrompt; updateNotice?: string }
   // The legal flow (legal-surface-v2 design D5; `consent-flow.ts`): the terms step, then the
   // ask-mode consent screen, each open in place of a data-sending action taken without a current
   // terms acceptance / consent grant. Both carry the flow (`LegalFlow`): the continuation to
@@ -189,6 +195,9 @@ type Screen =
       diagnostics: readonly { hint: string }[];
       observedRepairAttempts: number;
       hasWorkingVersion: boolean;
+      /** Whether describing the app differently could get past this failure — the failure
+       *  screen's rephrase advice (`FailureScreenProps.rephraseHelps`). */
+      rephraseHelps: boolean;
       /** Set ONLY when this screen was opened from a `failed`/`interrupted` pending-build record
        *  rather than from a live terminal event — the one thing that distinguishes the two, and
        *  what turns the primary action into Retry and the secondary into Dismiss (`prompt-flow`
@@ -211,12 +220,14 @@ type Screen =
     };
 
 /** The update screen in place of `from`, holding the prompt typed there when `from` is a flow step
- *  that has one. Pure, so it can run inside a `setScreen` updater. */
-function updateScreenFrom(from: Screen): Screen {
+ *  that has one, and showing `notice` when a fallback opened it. Pure, so it can run inside a
+ *  `setScreen` updater. */
+function updateScreenFrom(from: Screen, notice?: string): Screen {
+  const shown = notice === undefined ? {} : { updateNotice: notice };
   if ((from.kind === 'compose' || from.kind === 'clarify' || from.kind === 'plan') && from.text !== '') {
-    return { kind: 'update-required', heldPrompt: { editing: from.editing, text: from.text } };
+    return { kind: 'update-required', heldPrompt: { editing: from.editing, text: from.text }, ...shown };
   }
-  return { kind: 'update-required' };
+  return { kind: 'update-required', ...shown };
 }
 
 /** Where the update screen may open when the user's current action did not ask for it — the
@@ -293,6 +304,18 @@ function logServiceRefusal(request: 'clarify' | 'rewrite' | 'generate', refusal:
   log.warn(CHANNELS.gen, 'service refusal', { request, code: refusal.code, status: refusal.status });
 }
 
+/** A reply this build can't use ended a request on its `update` fallback (beta-1 D16), recorded
+ *  with the request it ended and its id — never the notice, which is the server's own text. (A
+ *  `fail` fallback is recorded by the failure screen's own log record.) */
+function logUpdateFallback(request: 'clarify' | 'rewrite' | 'generate', err: unknown, streamRequestId?: string): void {
+  const clientError = err instanceof GenerationClientError ? err : undefined;
+  log.warn(CHANNELS.gen, 'update fallback applied', {
+    request,
+    status: clientError?.status,
+    requestId: clientError?.requestId ?? streamRequestId,
+  });
+}
+
 /** Every failure screen this shell shows is ALSO recorded on the generation channel (prompt-flow
  *  "The failure is recoverable from the log"): the error class, message, stack and mapped kind,
  *  plus each diagnostic's `kind`/`symbol`/`message` — precisely the taxonomy the screen scrubs,
@@ -361,19 +384,22 @@ function countEvent(counts: EventCounts, event: GenerationEvent): void {
  *  `internalBuild` says whether this is an internal build (only those show and honour a
  *  server-address override, legal-surface-v2 D10); `deviceLocale` reads the phone's preferred
  *  locale, which picks the legal language until the user chooses one (legal-surface-v2 D6);
- *  `ageSignal` asks the store for its age signal before the terms step (legal-surface-v2 D11). All
- *  default to the native seam. Only a suite passes another (the launcher runner has no native
- *  module), to give the shell a build or a phone of its choosing. */
+ *  `ageSignal` asks the store for its age signal before the terms step (legal-surface-v2 D11), and
+ *  `significantUpdate` asks a supervised minor's guardian to acknowledge a terms change (beta-1
+ *  D2; none on Android). All default to the native seam. Only a suite passes another (the
+ *  launcher runner has no native module), to give the shell a build or a phone of its choosing. */
 export default function LauncherRoot({
   appInfo = installedAppInfo,
   internalBuild,
   deviceLocale = installedDeviceLocale,
   ageSignal = installedAgeSignal,
+  significantUpdate = installedSignificantUpdate,
 }: Readonly<{
   appInfo?: () => AppInfo;
   internalBuild?: boolean;
   deviceLocale?: () => string | undefined;
   ageSignal?: () => Promise<unknown>;
+  significantUpdate?: SignificantUpdateSheet;
 }>) {
   // Read once: the installed binary can't change what kind of build it is while the process lives.
   const [internal] = useState(() => internalBuild ?? installedInternalBuild());
@@ -407,6 +433,7 @@ export default function LauncherRoot({
       internalBuild={internal}
       deviceLocale={deviceLocale}
       ageSignal={ageSignal}
+      significantUpdate={significantUpdate}
     />
   );
 }
@@ -543,6 +570,7 @@ function LauncherShell({
   internalBuild,
   deviceLocale,
   ageSignal,
+  significantUpdate,
 }: Readonly<{
   index: AppIndex;
   access: StoreAccess;
@@ -553,6 +581,7 @@ function LauncherShell({
   internalBuild: boolean;
   deviceLocale: () => string | undefined;
   ageSignal: () => Promise<unknown>;
+  significantUpdate: SignificantUpdateSheet | undefined;
 }>) {
   const palette = SHELL_PALETTE;
   // The language every legal screen and link uses (legal-surface-v2 D6): resolved once at launch
@@ -579,7 +608,7 @@ function LauncherShell({
     });
   });
   const [apps, setApps] = useState<InstalledApp[]>([]);
-  const [pendingBuilds, setPendingBuilds] = useState<PendingBuildRecord[]>([]);
+  const [pendingBuilds, setPendingBuilds] = useState<PendingBuildView[]>([]);
   const [ready, setReady] = useState(false);
   // Read by the mount-once app-link listener effect below, which cannot depend on `ready` without
   // resubscribing `Linking`'s event on every first-run tick.
@@ -709,7 +738,8 @@ function LauncherShell({
   // whether the user left it running (generation-client's abort contract: the caller must track
   // intent itself rather than infer it from the stream's output, since an abort and an unrelated
   // truncated stream look identical). Cleared once the generation settles.
-  const genRef = useRef<{ controller: AbortController; cancelled: boolean; detached: boolean } | null>(null);
+  type GenerationControl = { controller: AbortController; cancelled: boolean; detached: boolean };
+  const genRef = useRef<GenerationControl | null>(null);
 
   // The same bookkeeping for the flow's two unary requests — compose's clarify and plan's rewrite
   // — one controller per step, so leaving a step cancels its own request and nothing else
@@ -752,12 +782,18 @@ function LauncherShell({
   const pendingLinkHolder = useRef(new PendingLinkHolder()).current;
   const openAppLinkRef = useRef<(id: string) => void>(() => {});
 
-  // The build screen of the attempt currently in flight, kept live even while the user is
-  // elsewhere. This is ALL that "tap a building ghost to reattach" needs (design D7): the stream
-  // never left this shell's closure when `onLeaveRunning` detached it, so reattaching is a screen
-  // -state change — reading the screen back out of here — and not a second subscriber, an event
-  // bus or per-tile progress. Cleared the moment the attempt settles.
-  const liveRef = useRef<{ id: string; screen: BuildScreen } | null>(null);
+  type LiveAttempt = {
+    id: string;
+    lease: PendingAttemptLease;
+    screen: BuildScreen;
+    signals: RunSignals;
+    ctl: GenerationControl;
+  };
+  // Every active attempt keeps its own reattachment state. `liveRef` names the one selected by
+  // the current build screen, so background frames can update their own journal without replacing
+  // the selected run's progress or controls.
+  const liveAttemptsRef = useRef(new Map<string, LiveAttempt>()).current;
+  const liveRef = useRef<LiveAttempt | null>(null);
 
   // The live attempt's derived-signal state (design D6): its start time, the cumulative counts
   // folded from its stream and the arrival that the heartbeat measures quiet from. A REF, not
@@ -790,7 +826,7 @@ function LauncherShell({
 
   const refresh = () => {
     setApps(index.list());
-    setPendingBuilds(pending.list());
+    setPendingBuilds(pending.listCurrent());
   };
 
   // The sink's destination is the address the device ALREADY persists for `/v1/generate` (design
@@ -858,8 +894,9 @@ function LauncherShell({
 
   /** The tile's tap: busy from the tap until the mini-app screen replaces the grid or the open
    *  fails (`app-launcher` "Opening an app shows an immediate busy affordance" — a tap MUST NOT
-   *  read as unregistered while the active bundle is being read). */
-  const onOpen = (app: InstalledApp) =>
+   *  read as unregistered while the active bundle is being read). `onFailed` runs after a failed
+   *  open's alert, for a caller that must not stay where it is. */
+  const onOpen = (app: InstalledApp, onFailed?: () => void) =>
     runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
       try {
         const source = await access.activeBundle(app);
@@ -869,6 +906,7 @@ function LauncherShell({
         // recoverable from the seam (host-observability "The alert paths now log").
         log.error(CHANNELS.app, 'installed-app action failed', { operation: 'open', ...errorFields(e) });
         Alert.alert('Could not open this app', (e as Error)?.message ?? String(e));
+        onFailed?.();
       }
     });
 
@@ -883,8 +921,16 @@ function LauncherShell({
       }
     });
 
-  const onHistory = (app: InstalledApp) => {
-    setScreen({ kind: 'history', app });
+  const onHistory = (app: InstalledApp, from: 'home' | 'app') => {
+    setScreen({ kind: 'history', app, from });
+  };
+
+  /** Leaving History: back into the app it was opened over, reopened at whatever version is now
+   *  current (a restore there may have moved it), or Home. Home too when that app fails to open, so
+   *  Back never strands the user on History repeating the failing open. */
+  const leaveHistory = (app: InstalledApp, from: 'home' | 'app') => {
+    if (from === 'app') onOpen(index.get(app.id) ?? app, goHome);
+    else goHome();
   };
 
   const onDelete = (app: InstalledApp) =>
@@ -930,13 +976,13 @@ function LauncherShell({
     goHome();
   };
 
-  /** A report refused `update_required`, from any of its three sheets: the update screen replaces
-   *  the screen the sheet sits on — only while that screen still shows, the same never-pull-back
-   *  rule every other refusal follows. */
-  const onReportUpdateRequired = () => {
+  /** A report refused `update_required`, or answered with an `update` fallback carrying `notice`,
+   *  from any of its three sheets: the update screen replaces the screen the sheet sits on — only
+   *  while that screen still shows, the same never-pull-back rule every other refusal follows. */
+  const onReportUpdateRequired = (notice?: string) => {
     setReportTarget(null);
     setScreen((prev) =>
-      prev.kind === 'done' || prev.kind === 'history' || prev.kind === 'app' ? { kind: 'update-required' } : prev,
+      prev.kind === 'done' || prev.kind === 'history' || prev.kind === 'app' ? updateScreenFrom(prev, notice) : prev,
     );
   };
 
@@ -1050,19 +1096,25 @@ function LauncherShell({
   // ask the store, store only the outcome, and move the same flow on with its result — to the
   // terms step, or to the held message for that result. Leaving the screen first (`Back`) drops the answer, so a
   // late one never pulls the user back into the flow.
+  // A guardian asked to acknowledge a terms change (beta-1 D2) is shown the updated-terms line in
+  // the legal language active when the check starts; a ref, so switching language on the
+  // checking screen doesn't start the check again.
   const checkingAge = screen.kind === 'age' && screen.held === undefined ? screen : undefined;
   const advanceLegalFlowRef = useRef(advanceLegalFlow);
   advanceLegalFlowRef.current = advanceLegalFlow;
+  const updateLineRef = useRef(LEGAL_COPY[legalLanguage].termsUpdatedLine);
+  updateLineRef.current = LEGAL_COPY[legalLanguage].termsUpdatedLine;
   useEffect(() => {
     if (checkingAge === undefined) return undefined;
     let current = true;
-    runAgeCheck(kv, ageSignal, () => new Date()).then((result) => {
+    const acknowledgment = significantUpdate === undefined ? undefined : { sheet: significantUpdate, description: updateLineRef.current };
+    runAgeCheck(kv, ageSignal, () => new Date(), { significantUpdate: acknowledgment }).then((result) => {
       if (current) advanceLegalFlowRef.current(checkingAge, result);
     });
     return () => {
       current = false;
     };
-  }, [checkingAge, kv, ageSignal]);
+  }, [checkingAge, kv, ageSignal, significantUpdate]);
 
   /** The one gate every data-sending entry point calls (spec ai-data-consent "The first action
    *  that would send data asks for consent at that moment"; spec terms-acceptance "Terms are
@@ -1118,23 +1170,19 @@ function LauncherShell({
     setScreen(declineTarget<Screen>(returnTo));
   };
 
-  /** Opens the consent screen in review mode, from Settings' AI features row. */
-  const onOpenAIFeaturesReview = () => {
-    setScreen({ kind: 'consent', mode: 'review' });
+  /** Turning AI features on from Settings (spec terms-acceptance "One pass through the legal flow
+   *  shows each legal screen at most once"; beta-1 D6, #104): the legal flow from its first due
+   *  step, so the age check and the terms step when due, then the one consent screen. It ends back
+   *  on Settings, and declining any step returns there too. */
+  const onTurnOnAIFeatures = () => {
+    advanceLegalFlow({ continuation: { kind: 'settings' }, returnTo: { kind: 'settings' }, refused: false });
   };
 
-  /** Review mode with consent off: the one action. When consent is the only step left, this screen
-   *  is that step: it grants and returns to Settings. When the terms (or anything ahead of them)
-   *  aren't current, it enters the legal flow instead, so no grant is stored without a terms
-   *  acceptance (spec terms-acceptance "Terms are accepted in their own step before the consent
-   *  screen"); the flow ends back on Settings, and declining any step returns there too. */
-  const onConsentReviewTurnOn = () => {
-    if (nextLegalStep(storedAgeGate(kv, new Date()), termsStatus(kv), consentStatus(kv), false) === 'consent') {
-      onGrantConsent();
-      setScreen({ kind: 'settings' });
-    } else {
-      advanceLegalFlow({ continuation: { kind: 'settings' }, returnTo: { kind: 'settings' }, refused: false });
-    }
+  /** Settings' AI features row: with AI features on, the consent screen in review mode, to keep
+   *  them on or turn them off whatever the terms say; otherwise turning them on. */
+  const onOpenAIFeatures = () => {
+    if (consentStatus(kv).kind === 'granted') setScreen({ kind: 'consent', mode: 'review' });
+    else onTurnOnAIFeatures();
   };
 
   /** Review mode with consent on: the plain-text action deletes the grant and returns to
@@ -1185,8 +1233,27 @@ function LauncherShell({
       observedRepairAttempts: observed,
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: editing != null,
+      rephraseHelps: errorRephraseHelps(err),
     };
   };
+
+  /** A storage-degraded terminal outcome is generic on screen. The record and journal identities
+   * are carried independently: the failure is discardable when its record read-back verified, but
+   * a timeline is named only after a terminal journal read-back verified too. */
+  const genericAttemptFailure = (
+    editing: InstalledApp | undefined,
+    prompt: string,
+    stage: string,
+    observed: number,
+    recordId?: string,
+    journalId?: string,
+    pendingId?: string,
+  ): Screen => ({
+    ...failure(editing, prompt, new Error(GENERIC_STREAM_ERROR), stage, observed),
+    ...(recordId != null ? { recordId } : {}),
+    ...(journalId != null ? { journalId } : {}),
+    ...(pendingId != null ? { pendingId } : {}),
+  });
 
   /** Opens compose, optionally scoped to a re-prompt. `about` (the edit flow's shared clarify/
    *  rewrite `app.description`) is resolved AFTER the screen is already showing — best effort,
@@ -1253,6 +1320,17 @@ function LauncherShell({
     } catch (e) {
       // A request the user walked away from fails as an abort: no failure screen, no breadcrumb.
       if (request.cancelled) return;
+      // A reply this build can't use, whose fallback is `update` (beta-1 D16): the update screen,
+      // with its notice, holding the prompt — and no build started. A `fail` fallback is the
+      // generic failure below, whose reason is its notice.
+      const fallback = terminalFallbackOf(e);
+      if (fallback?.kind === 'update') {
+        markOnline();
+        logUpdateFallback('rewrite', e);
+        const update = updateScreenFrom(plan, fallbackNotice(fallback));
+        setScreen(onlyOnStep<Screen, 'plan'>('plan', () => update));
+        return;
+      }
       // A structured service refusal proves the server answered — proof of connectivity
       // equivalent to a successful dedicated probe (spec "A real generation or rewrite call
       // succeeding, and any service refusal those paths receive... SHALL be treated as proof of
@@ -1280,6 +1358,39 @@ function LauncherShell({
     }
   };
 
+  /** Where a clarify exchange that threw lands (an abort never gets here — the caller swallows it),
+   *  or `'skip'` for a clarify `502`, which goes on to the plan step. Called outside any `setScreen`
+   *  updater, since the failure screen's construction logs. */
+  const clarifyThrewTo = (from: ComposeScreen, e: unknown, markOnline: () => void): Screen | 'skip' => {
+    const back = composeStep(from.editing, from.text);
+    // A reply this build can't use, whose fallback is `update` (beta-1 D16): the update screen,
+    // with its notice, holding the typed prompt. A `fail` fallback is the failure below, whose
+    // reason is its notice (it is never a clarify skip, which is a 502 alone).
+    const fallback = terminalFallbackOf(e);
+    if (fallback?.kind === 'update') {
+      markOnline();
+      logUpdateFallback('clarify', e);
+      return updateScreenFrom(back, fallbackNotice(fallback));
+    }
+    // A structured service refusal proves the server answered (spec "A real generation or
+    // rewrite call succeeding, and any service refusal those paths receive... SHALL be treated
+    // as proof of connectivity") — checked regardless of `isClarifySkip`, since a refusal never
+    // reads as one (that path is 502-only).
+    const refusal = serviceRefusalOf(e);
+    if (refusal) {
+      markOnline();
+      // Never the failure screen (service-refusals "never opens the failure screen"): a
+      // clarify request's only sender is compose, and a refusal about the words themselves
+      // lands there too, so the landing is always compose. A refusal that opens a screen of its
+      // own goes there, with the compose step (the typed prompt intact) to come back to.
+      logServiceRefusal('clarify', refusal);
+      return refusalScreen(refusal, back, { kind: 'resume', screen: back }) ?? { ...from, notice: noticeFrom(refusal) };
+    }
+    if (isClarifySkip(e)) return 'skip';
+    logGenError('clarify failed', e);
+    return failure(from.editing, from.text, e, 'clarify failed');
+  };
+
   /** compose → clarify, or straight past it when the exchange has nothing to ask. The clarify step
    *  opens IMMEDIATELY, under its own loading state — the wait is that screen, never a grey compose
    *  button (C2) — and the request that fills it in is fired straight after. A clarify `502` means
@@ -1292,20 +1403,19 @@ function LauncherShell({
     setScreen(loading);
     const request = flowRequests.start('compose');
     let questions: FlowQuestion[] = [];
+    let limit: FlowLimit | undefined;
     try {
-      questions = acceptClarifyQuestions(
-        (
-          await clarifyPrompt(
-            options,
-            from.text,
-            // The same context a rewrite would carry (name, collections, description) — so the
-            // clarifier never re-asks what kind of app it is talking to. `aboutFor`, not
-            // `from.about` — see `aboutRef`'s doc comment.
-            buildRewriteAppContext(from.editing, aboutFor(from.editing)),
-            request.controller.signal,
-          )
-        ).questions,
+      const response = await clarifyPrompt(
+        options,
+        from.text,
+        // The same context a rewrite would carry (name, collections, description) — so the
+        // clarifier never re-asks what kind of app it is talking to. `aboutFor`, not
+        // `from.about` — see `aboutRef`'s doc comment.
+        buildRewriteAppContext(from.editing, aboutFor(from.editing)),
+        request.controller.signal,
       );
+      questions = acceptClarifyQuestions(response.questions);
+      limit = clarifyLimitOf(response);
       // A resolved `clarifyPrompt` is a real server response — proof of connectivity equivalent
       // to a successful dedicated probe (spec "A real generation or rewrite call succeeding...").
       markOnline();
@@ -1314,34 +1424,21 @@ function LauncherShell({
       // Home): the abort surfaces here as a plain `AbortError`, and it is swallowed — no failure
       // screen, no breadcrumb.
       if (request.cancelled) return;
-      // A structured service refusal proves the server answered (spec "A real generation or
-      // rewrite call succeeding, and any service refusal those paths receive... SHALL be treated
-      // as proof of connectivity") — checked regardless of `isClarifySkip`, since a refusal never
-      // reads as one (that path is 502-only).
-      const refusal = serviceRefusalOf(e);
-      if (refusal) markOnline();
-      if (refusal) {
-        // Never the failure screen (service-refusals "never opens the failure screen"): a
-        // clarify request's only sender is compose, and a refusal about the words themselves
-        // lands there too, so the landing is always compose. A refusal that opens a screen of its
-        // own goes there, with the compose step (the typed prompt intact) to come back to.
-        logServiceRefusal('clarify', refusal);
-        const back = composeStep(from.editing, from.text);
-        const target = refusalScreen(refusal, back, { kind: 'resume', screen: back }) ?? { ...from, notice: noticeFrom(refusal) };
-        setScreen(onlyOnStep<Screen, 'clarify'>('clarify', () => target));
-        return;
-      }
-      if (!isClarifySkip(e)) {
-        logGenError('clarify failed', e);
-        const failed = failure(from.editing, from.text, e, 'clarify failed');
-        setScreen(onlyOnStep<Screen, 'clarify'>('clarify', () => failed));
+      const landing = clarifyThrewTo(from, e, markOnline);
+      if (landing !== 'skip') {
+        setScreen(onlyOnStep<Screen, 'clarify'>('clarify', () => landing));
         return;
       }
     } finally {
       flowRequests.release('compose', request);
     }
     if (request.cancelled) return;
-    if (stepAfterClarifyExchange(questions) === 'clarify') {
+    if (limit) {
+      // Clarify says this can't be built as asked (beta-1 D9): the step shows why and what could
+      // be built instead, and nothing more happens until the user picks one.
+      const shown = limit;
+      setScreen(onlyOnStep<Screen, 'clarify'>('clarify', (s) => withLimit(s, shown)));
+    } else if (stepAfterClarifyExchange(questions) === 'clarify') {
       setScreen(onlyOnStep<Screen, 'clarify'>('clarify', (s) => withQuestions(s, questions)));
     } else {
       // Zero questions (or a clarify skip): the loading clarify screen goes straight to the plan
@@ -1361,8 +1458,51 @@ function LauncherShell({
   const releaseGenRef = (ctl: NonNullable<typeof genRef.current>) => {
     if (genRef.current === ctl) genRef.current = null;
   };
-  const releaseLiveRef = (attemptId: string) => {
-    if (liveRef.current?.id === attemptId) liveRef.current = null;
+  const releaseLiveRef = (lease: PendingAttemptLease) => {
+    if (liveAttemptsRef.get(lease.id)?.lease === lease) liveAttemptsRef.delete(lease.id);
+    if (liveRef.current?.lease === lease) liveRef.current = null;
+  };
+  const whenLiveAttemptOwns = (lease: PendingAttemptLease, complete: (selected: boolean) => void) => {
+    if (liveAttemptsRef.get(lease.id)?.lease === lease) complete(liveRef.current?.lease === lease);
+  };
+  const whenDeliverySettles = (
+    lease: PendingAttemptLease,
+    delivered: InstalledApp | undefined,
+    complete: (delivered: InstalledApp, selected: boolean) => void,
+  ) => {
+    if (delivered) whenLiveAttemptOwns(lease, (selected) => complete(delivered, selected));
+  };
+  const isSelectedLiveAttempt = (lease: PendingAttemptLease): boolean => liveRef.current?.lease === lease;
+  const recordAttemptKeepalive = (attemptId: string, lease: PendingAttemptLease, signals: RunSignals): RunSignals | undefined => {
+    if (!pending.isCurrentAttempt(lease)) return undefined;
+    const currentLive = liveAttemptsRef.get(attemptId);
+    if (currentLive?.lease !== lease) return undefined;
+    const nextSignals = withKeepalive(signals, Date.now());
+    currentLive.signals = nextSignals;
+    if (isSelectedLiveAttempt(lease)) signalsRef.current = nextSignals;
+    return nextSignals;
+  };
+  const recordAttemptFrame = (
+    attemptId: string,
+    lease: PendingAttemptLease,
+    signals: RunSignals,
+    counts: EventCounts,
+    event: GenerationEvent,
+  ): RunSignals | undefined => {
+    if (!pending.isCurrentAttempt(lease)) return undefined;
+    const currentLive = liveAttemptsRef.get(attemptId);
+    if (currentLive?.lease !== lease) return undefined;
+    countEvent(counts, event);
+    const nextSignals = journalStreamEvent(journal, attemptId, signals, event, Date.now());
+    currentLive.signals = nextSignals;
+    const selected = isSelectedLiveAttempt(lease);
+    if (selected) signalsRef.current = nextSignals;
+    const nextScreen = withStreamEvent(currentLive.screen, event);
+    if (nextScreen !== currentLive.screen) {
+      currentLive.screen = nextScreen;
+      if (selected) setScreen((previous) => (previous.kind === 'build' ? withStreamEvent(previous, event) : previous));
+    }
+    return nextSignals;
   };
 
   /** The record deletion the user's two delete gestures share — cancelling an in-flight attempt
@@ -1385,30 +1525,53 @@ function LauncherShell({
     reason: string,
     diagnostics: readonly { hint: string }[],
     observed: RunTerminalCounts,
-  ) => {
-    releaseLiveRef(id);
+    remedy?: PendingFailureRemedy,
+    retrySnapshot?: AttemptSnapshot,
+    lease?: PendingAttemptLease,
+  ): TerminalSettlement => {
+    if (lease && !pending.isCurrentAttempt(lease)) return 'unresolved';
+    if (lease) releaseLiveRef(lease);
     // `observed` is the end-of-stream flush: the final cumulative counts (closing the last throttle
     // window, which no aggregate entry can) and how many `diagnostic` events went past. Only the
     // loop that watched the stream can supply them, so they are threaded in rather than re-derived.
-    journal.appendTerminal(id, { failure: { reason, diagnostics }, ...observed });
-    failPendingBuild(pending, id, reason, diagnostics);
-    refresh();
+    try {
+      journal.appendTerminal(id, { failure: { reason, diagnostics }, ...observed });
+      pending.setFailed(id, {
+        reason,
+        ...(diagnostics.length > 0 ? { diagnostics: diagnostics.map((diagnostic) => diagnostic.hint).join('\n') } : {}),
+        ...(remedy ? { remedy } : {}),
+      }, 'verified');
+      const saved = pending.get(id);
+      if (saved?.state !== 'failed' || saved.failure?.reason !== reason || saved.journalUnavailable === true) {
+        throw new Error('terminal pending record did not verify');
+      }
+      refresh();
+      if (lease) pending.releaseAttempt(lease);
+      return 'persisted';
+    } catch (persistenceError) {
+      log.warn(CHANNELS.gen, 'terminal attempt state did not persist', {
+        operation: 'settle-failed-attempt',
+        thrown: persistenceError instanceof Error ? 'error' : 'non-error',
+      });
+      return retrySnapshot
+        ? recoverRetryAfterTerminalPersistenceFailure(id, retrySnapshot, observed, remedy, lease)
+        : persistGenericTerminalFailure(id, observed, remedy, lease);
+    }
   };
 
-  /** The abort + record deletion behind an explicit cancel — today reachable only from a Cancel
-   *  chosen on a `building` ghost's quick actions (`onCancelPending`, below). Hardware back on the
-   *  build screen no longer calls this (bug fix: it used to, and cancelled the whole run) — see
+  /** The abort + record deletion behind an explicit cancel — reachable only from a Cancel chosen on
+   *  a `building` ghost's quick actions (`onCancelPending`, below) and from the build screen's
+   *  `Cancel build` while the build waits in line (`onCancelBuild`). Hardware back on the build
+   *  screen no longer calls this (bug fix: it used to, and cancelled the whole run) — see
    *  `prompt-flow.ts#buildBackAction`. */
-  const abortLiveAttempt = () => {
-    const ctl = genRef.current;
-    if (ctl) {
-      ctl.cancelled = true;
-      ctl.controller.abort();
-      genRef.current = null;
+  const abortLiveAttempt = (live = liveRef.current) => {
+    if (live) {
+      live.ctl.cancelled = true;
+      live.ctl.controller.abort();
+      releaseGenRef(live.ctl);
+      releaseLiveRef(live.lease);
+      dropAttempt(live.id);
     }
-    const live = liveRef.current;
-    liveRef.current = null;
-    if (live) dropAttempt(live.id);
     refresh();
   };
 
@@ -1424,21 +1587,43 @@ function LauncherShell({
     hints: readonly { hint: string }[];
     observed: number;
     counts: RunTerminalCounts;
+    retrySnapshot?: AttemptSnapshot;
+    lease: PendingAttemptLease;
   }) => {
-    settleFailed(input.attemptId, input.reason, input.hints, input.counts);
+    const selected = isSelectedLiveAttempt(input.lease);
+    const settlement = settleFailed(
+      input.attemptId,
+      input.reason,
+      input.hints,
+      input.counts,
+      undefined,
+      input.retrySnapshot,
+      input.lease,
+    );
+    const terminalPersisted = settlement === 'persisted';
+    const genericRecordPersisted = settlement === 'generic-pair' || settlement === 'generic-record';
+    const genericJournalPersisted = settlement === 'generic-pair';
+    const retainedVolatile = settlement === 'retained';
+    const failureReason = terminalPersisted ? input.reason : GENERIC_STREAM_ERROR;
+    const failureHints = terminalPersisted ? input.hints : [];
+    if (!selected) return;
     setScreen({
       kind: 'failure',
       editing: input.editing,
       prompt: input.prompt,
-      reason: input.reason,
-      diagnostics: input.hints,
-      journalId: input.attemptId,
-      // `settleFailed` just persisted the record above, so this live screen HAS an attempt to
-      // discard — and its Discard must delete it rather than merely navigate.
-      recordId: input.attemptId,
+      reason: failureReason,
+      diagnostics: failureHints,
+      // A persistence failure cannot claim this retry's terminal payload exists. If restoration
+      // brought back the prior record, it remains available from its ghost after Back.
+      ...((terminalPersisted || genericRecordPersisted) ? { recordId: input.attemptId } : {}),
+      ...(retainedVolatile ? { pendingId: input.attemptId } : {}),
+      ...((terminalPersisted || genericJournalPersisted) ? { journalId: input.attemptId } : {}),
       observedRepairAttempts: input.observed,
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: input.editing != null,
+      // A terminal `failure` or a stream that ended without one: both offer rephrasing (prompt-flow
+      // "Failure is shown honestly, never as a crash").
+      rephraseHelps: true,
     });
   };
 
@@ -1454,38 +1639,407 @@ function LauncherShell({
    * nothing — the user is elsewhere; its ghost keeps the reason — except the update screen, which
    * opens where it interrupts nothing (`updateMayInterrupt`).
    */
-  const handleGenerateRefusal = (
+  const showUnpersistedGenerateRefusal = (
+    settlement: TerminalSettlement,
     attemptId: string,
-    refusal: ServiceRefusal,
-    isRetry: boolean,
     detached: boolean,
-    fromPlan: PlanScreen | undefined,
-    counts: RunTerminalCounts,
+    selected: boolean,
+    editing: InstalledApp | undefined,
+    prompt: string,
+    observedRepairAttempts: number,
+  ) => {
+    if (detached || !selected) return;
+    const ids = genericSettlementIds(settlement, attemptId);
+    setScreen(genericAttemptFailure(
+      editing,
+      prompt,
+      'refused generation state was not persisted',
+      observedRepairAttempts,
+      ids.recordId,
+      ids.journalId,
+      ids.pendingId,
+    ));
+  };
+
+  type GenerateSettlementAttempt = {
+    attemptId: string;
+    isRetry: boolean;
+    fromPlan?: PlanScreen;
+    counts: RunTerminalCounts;
+    streamRequestId?: string;
+    retrySnapshot?: AttemptSnapshot;
+    editing: InstalledApp | undefined;
+    prompt: string;
+    observedRepairAttempts: number;
+    lease: PendingAttemptLease;
+  };
+
+  const handleGenerateRefusal = (
+    refusal: ServiceRefusal,
+    ctl: NonNullable<typeof genRef.current>,
+    attempt: GenerateSettlementAttempt,
   ): void => {
+    const {
+      attemptId,
+      isRetry,
+      fromPlan,
+      counts,
+      retrySnapshot,
+      editing,
+      prompt,
+      observedRepairAttempts,
+      lease,
+    } = attempt;
+    const detached = ctl.detached;
+    const selected = isSelectedLiveAttempt(lease);
     logServiceRefusal('generate', refusal);
     const notice = noticeFrom(refusal);
     const outcome = refusedGenerateOutcome(isRetry, detached);
-    releaseLiveRef(attemptId);
-    settleRefusedGenerate(pending, journal, attemptId, outcome, refusalText(refusal), counts);
-    refresh();
     if (outcome === 'drop') {
-      if (fromPlan) {
+      if (!pending.isCurrentAttempt(lease)) return;
+      releaseLiveRef(lease);
+      dropAttempt(attemptId);
+      refresh();
+      if (selected && fromPlan) {
         const back: PlanScreen = { ...fromPlan, notice: undefined };
         const target = refusalScreen(refusal, back, { kind: 'resume', screen: back }) ?? { ...fromPlan, notice };
         setScreen(onlyOnStep<Screen, 'build'>('build', () => target));
       }
       return;
     }
-    if (detached && REFUSAL_RULES[refusal.code].opens === 'update') {
+    const settlement = settleFailed(
+      attemptId,
+      refusalText(refusal),
+      [],
+      counts,
+      refusalRemedy(refusal),
+      retrySnapshot,
+      lease,
+    );
+    if (settlement !== 'persisted') {
+      showUnpersistedGenerateRefusal(settlement, attemptId, detached, selected, editing, prompt, observedRepairAttempts);
+      return;
+    }
+    if (selected && detached && REFUSAL_RULES[refusal.code].opens === 'update') {
       setScreen((prev) => (updateMayInterrupt(prev) ? updateScreenFrom(prev) : prev));
       return;
     }
-    if (!isRetry) return;
+    if (!isRetry || !selected) return;
     const updated = pending.get(attemptId);
     if (updated) {
       const back = failureFromRecord(updated);
       const target = refusalScreen(refusal, back, { kind: 'retry', record: updated }) ?? { ...back, notice };
       setScreen(onlyOnStep<Screen, 'build'>('build', () => target));
+    }
+  };
+
+  /**
+   * A generate request the server ended with something other than a failed build — an `update`
+   * fallback or a service refusal — settled and routed; `false` for every other error, which the
+   * caller settles as a failure (a `fail` fallback among them: its notice is the failure's reason).
+   *
+   * An `update` fallback (beta-1 D16) ends the build `failed` — nothing installed, nothing updated,
+   * its ghost kept for a Retry, its reason the notice (else the update line) — and the update screen
+   * shows the notice: in place of the build screen, or for a build left running only where it
+   * interrupts nothing, like the update refusal. A refusal never opens the failure screen
+   * (service-refusals); design D10's three-way split lives in `handleGenerateRefusal`. Either proves
+   * the server answered (spec "…any service refusal those paths receive... SHALL be treated as
+   * proof of connectivity").
+   */
+  const settleServerEnding = (
+    e: unknown,
+    ctl: NonNullable<typeof genRef.current>,
+    attempt: GenerateSettlementAttempt,
+    markOnline: () => void,
+  ): boolean => {
+    const fallback = terminalFallbackOf(e);
+    if (fallback?.kind === 'update') {
+      const selected = isSelectedLiveAttempt(attempt.lease);
+      markOnline();
+      releaseGenRef(ctl);
+      logUpdateFallback('generate', e, attempt.streamRequestId);
+      const notice = fallbackNotice(fallback);
+      const detached = ctl.detached;
+      const settlement = settleFailed(attempt.attemptId, notice ?? COPY.updateRequiredLine, [], attempt.counts, {
+        kind: 'update',
+        protocolLevel: PROTOCOL_LEVEL,
+      }, attempt.retrySnapshot, attempt.lease);
+      const ids = genericSettlementIds(settlement, attempt.attemptId);
+      const genericFailure = settlement === 'persisted' ? undefined : genericAttemptFailure(
+        attempt.editing,
+        attempt.prompt,
+        'update fallback state was not persisted',
+        attempt.observedRepairAttempts,
+        ids.recordId,
+        ids.journalId,
+        ids.pendingId,
+      );
+      if (selected) {
+        setScreen((prev) => (!detached || updateMayInterrupt(prev)
+          ? genericFailure ?? updateScreenFrom(prev, notice)
+          : prev));
+      }
+      return true;
+    }
+    const refusal = serviceRefusalOf(e);
+    if (!refusal) return false;
+    markOnline();
+    releaseGenRef(ctl);
+    handleGenerateRefusal(refusal, ctl, attempt);
+    return true;
+  };
+
+  const settleUnexpectedAttemptFailure = (input: {
+    error: unknown;
+    ctl: NonNullable<typeof genRef.current>;
+    attemptId: string;
+    isRetry: boolean;
+    fromPlan: PlanScreen | undefined;
+    terminalCounts: () => RunTerminalCounts;
+    streamRequestId: string | undefined;
+    markOnline: () => void;
+    editing: InstalledApp | undefined;
+    prompt: string;
+    observedRepairAttempts: number;
+    retrySnapshot: AttemptSnapshot | undefined;
+    lease: PendingAttemptLease;
+  }) => {
+    if (input.ctl.cancelled || !pending.isCurrentAttempt(input.lease)) return;
+    const selected = isSelectedLiveAttempt(input.lease);
+    const attempt = {
+      attemptId: input.attemptId,
+      isRetry: input.isRetry,
+      fromPlan: input.fromPlan,
+      counts: input.terminalCounts(),
+      streamRequestId: input.streamRequestId,
+      retrySnapshot: input.retrySnapshot,
+      lease: input.lease,
+      editing: input.editing,
+      prompt: input.prompt,
+      observedRepairAttempts: input.observedRepairAttempts,
+    };
+    if (settleServerEnding(input.error, input.ctl, attempt, input.markOnline)) return;
+    releaseGenRef(input.ctl);
+    logGenError('build failed', input.error, input.streamRequestId);
+    const reasoned = errorReason(input.error);
+    const settlement = settleFailed(
+      input.attemptId,
+      reasoned.reason,
+      reasoned.diagnostics,
+      input.terminalCounts(),
+      errorRemedy(input.error),
+      input.retrySnapshot,
+      input.lease,
+    );
+    const terminalPersisted = settlement === 'persisted';
+    const ids = genericSettlementIds(settlement, input.attemptId);
+    if (selected) {
+      setScreen(terminalPersisted
+        ? failure(
+          input.editing,
+          input.prompt,
+          input.error,
+          'build failed',
+          input.observedRepairAttempts,
+          input.attemptId,
+          input.streamRequestId,
+        )
+        : genericAttemptFailure(
+          input.editing,
+          input.prompt,
+          'build failed',
+          input.observedRepairAttempts,
+          ids.recordId,
+          ids.journalId,
+          ids.pendingId,
+        ));
+    }
+  };
+
+  type AttemptSnapshot = { pending: string | null | undefined; journal: string | null | undefined };
+  type TerminalSettlement = 'persisted' | 'generic-pair' | 'generic-record' | 'restored' | 'retained' | 'unresolved';
+
+  const genericSettlementIds = (settlement: TerminalSettlement, id: string): { recordId?: string; journalId?: string; pendingId?: string } => {
+    if (settlement === 'generic-pair') return { recordId: id, journalId: id };
+    if (settlement === 'generic-record') return { recordId: id };
+    return settlement === 'retained' ? { pendingId: id } : {};
+  };
+
+  const currentPendingIds = (): string[] => kv.getAllKeys()
+    .flatMap((key) => key.startsWith('pending:') ? [key.slice('pending:'.length)] : []);
+
+  const partialPendingIds = (known: ReadonlySet<string>): string[] => {
+    try {
+      return currentPendingIds().filter((id) => !known.has(id));
+    } catch (readError) {
+      log.warn(CHANNELS.gen, 'attempt setup recovery could not read pending records', {
+        operation: 'find-partial-attempt',
+        thrown: readError instanceof Error ? 'error' : 'non-error',
+      });
+      return [];
+    }
+  };
+
+  const sameRaw = (key: string, expected: string | null | undefined): boolean =>
+    expected == null ? kv.getString(key) == null : kv.getString(key) === expected;
+
+  const writeRaw = (key: string, value: string | null | undefined): boolean => {
+    try {
+      if (value == null) kv.delete(key);
+      else kv.set(key, value);
+      return sameRaw(key, value);
+    } catch (error) {
+      log.warn(CHANNELS.gen, 'attempt snapshot write did not persist', {
+        operation: 'restore-attempt-snapshot',
+        thrown: error instanceof Error ? 'error' : 'non-error',
+      });
+      return false;
+    }
+  };
+
+  const guardJournalAssociation = (id: string): boolean => {
+    try {
+      pending.setJournalAvailability(id, 'unavailable');
+      return pending.get(id)?.journalUnavailable === true;
+    } catch (error) {
+      log.warn(CHANNELS.gen, 'journal association guard did not persist', {
+        operation: 'guard-journal-association',
+        thrown: error instanceof Error ? 'error' : 'non-error',
+      });
+      return false;
+    }
+  };
+
+  /** A best-effort terminal fallback uses the established generic stream error, which is all a
+   * storage-failed settlement can honestly persist. The journal and record are attempted and
+   * verified independently. A readable record without a matching readable terminal report still
+   * remains a truthful failed ghost; its timeline is withheld rather than borrowing stale data. */
+  const persistGenericTerminalFailure = (
+    id: string,
+    observed: RunTerminalCounts,
+    remedy?: PendingFailureRemedy,
+    lease?: PendingAttemptLease,
+  ): TerminalSettlement => {
+    if (lease && !pending.isCurrentAttempt(lease)) return 'unresolved';
+    let recordPersisted = false;
+    try {
+      pending.setFailed(id, {
+        reason: GENERIC_STREAM_ERROR,
+        ...(remedy ? { remedy } : {}),
+      }, 'unavailable');
+      const record = pending.get(id);
+      recordPersisted = record?.state === 'failed'
+        && record.failure?.reason === GENERIC_STREAM_ERROR
+        && record.journalUnavailable === true;
+    } catch (fallbackError) {
+      log.warn(CHANNELS.gen, 'generic failed record did not persist', {
+        operation: 'persist-generic-failed-record',
+        thrown: fallbackError instanceof Error ? 'error' : 'non-error',
+      });
+    }
+    refresh();
+    if (recordPersisted) {
+      if (lease) pending.releaseAttempt(lease);
+      return 'generic-record';
+    }
+    if (lease && pending.retainFailed(lease, { reason: GENERIC_STREAM_ERROR, ...(remedy ? { remedy } : {}) })) {
+      pending.releaseAttempt(lease);
+      refresh();
+      return 'retained';
+    }
+    refresh();
+    return 'unresolved';
+  };
+
+  /** A retry can return to its exact old pair only when both siblings verified. If its old pending
+   * record cannot return, the ended retry gets one independent generic terminal-record fallback;
+   * a failed fallback is left unclaimed, because no persisted lifecycle state can then be proved. */
+  const recoverRetryAfterTerminalPersistenceFailure = (
+    id: string,
+    previous: AttemptSnapshot,
+    observed: RunTerminalCounts,
+    remedy?: PendingFailureRemedy,
+    lease?: PendingAttemptLease,
+  ): TerminalSettlement => {
+    if (lease && !pending.isCurrentAttempt(lease)) return 'unresolved';
+    const journalKey = JOURNAL_KEY(id);
+    const journalReady = sameRaw(journalKey, previous.journal) || guardJournalAssociation(id) && writeRaw(journalKey, previous.journal);
+    if (journalReady && writeRaw(`pending:${id}`, previous.pending) && sameRaw(journalKey, previous.journal)) {
+      refresh();
+      if (lease) pending.releaseAttempt(lease);
+      return 'restored';
+    }
+    return persistGenericTerminalFailure(id, observed, remedy, lease);
+  };
+
+  const recoverFailedSetup = (
+    reuseId: string | undefined,
+    attemptId: string | undefined,
+    previous: AttemptSnapshot | undefined,
+    knownPendingIds: ReadonlySet<string>,
+  ) => {
+    const restoredId = reuseId ?? attemptId;
+    if (restoredId != null && reuseId != null && previous) {
+      const journalReady = sameRaw(JOURNAL_KEY(restoredId), previous.journal)
+        || guardJournalAssociation(restoredId) && writeRaw(JOURNAL_KEY(restoredId), previous.journal);
+      if (journalReady && writeRaw(`pending:${restoredId}`, previous.pending) && sameRaw(JOURNAL_KEY(restoredId), previous.journal)) {
+        refresh();
+      } else {
+        persistGenericTerminalFailure(restoredId, { aggregates: EMPTY_RUN_AGGREGATES, observedDiagnostics: 0 });
+      }
+      return;
+    }
+    for (const id of partialPendingIds(knownPendingIds)) {
+      if (guardJournalAssociation(id)) writeRaw(JOURNAL_KEY(id), undefined);
+      try {
+        pending.delete(id);
+      } catch (error) {
+        log.warn(CHANNELS.gen, 'partial attempt cleanup did not persist', {
+          operation: 'clean-partial-attempt',
+          thrown: error instanceof Error ? 'error' : 'non-error',
+        });
+      }
+    }
+    refresh();
+  };
+
+  const beginPendingAttempt = (
+    building: BuildScreen,
+    editing: InstalledApp | undefined,
+    reuseId: string | undefined,
+    ctl: NonNullable<typeof genRef.current>,
+  ): { id: string; lease: PendingAttemptLease; retrySnapshot?: AttemptSnapshot } | undefined => {
+    let previous: AttemptSnapshot | undefined;
+    let snapshotAvailable = false;
+    let knownPendingIds: Set<string> | undefined;
+    let attemptId: string | undefined;
+    try {
+      knownPendingIds = new Set(currentPendingIds());
+      if (reuseId != null) previous = {
+        pending: kv.getString(`pending:${reuseId}`),
+        journal: kv.getString(JOURNAL_KEY(reuseId)),
+      };
+      snapshotAvailable = true;
+      attemptId = startPendingBuild(pending, { editing, text: building.text, reuseId });
+      if (pending.get(attemptId)?.journalUnavailable !== true) throw new Error('pending journal guard did not verify');
+      // The journal is created at the SAME moment as the record it is a sibling of
+      // (`generation-run-journal` "A run journal is created alongside its pending-build record"),
+      // and the attempt's derived signals start from the same instant the request does.
+      journal.create(attemptId);
+      if (kv.getString(JOURNAL_KEY(attemptId)) !== '[]') throw new Error('empty journal did not verify');
+      pending.setJournalAvailability(attemptId, 'verified');
+      if (pending.get(attemptId)?.journalUnavailable === true) throw new Error('pending journal marker did not clear');
+      const lease = pending.activateAttempt(attemptId);
+      return { id: attemptId, lease, ...(reuseId != null ? { retrySnapshot: previous } : {}) };
+    } catch (setupError) {
+      log.warn(CHANNELS.gen, 'attempt setup failed', {
+        operation: 'start-pending-build',
+        thrown: setupError instanceof Error ? 'error' : 'non-error',
+      });
+      releaseGenRef(ctl);
+      if (snapshotAvailable) recoverFailedSetup(reuseId, attemptId, previous, knownPendingIds!);
+      setScreen(failure(editing, building.text, new Error(GENERIC_STREAM_ERROR), 'attempt setup failed'));
+      return undefined;
     }
   };
 
@@ -1510,6 +2064,9 @@ function LauncherShell({
     const controller = new AbortController();
     const ctl = { controller, cancelled: false, detached: false };
     genRef.current = ctl;
+    const setDoneIfAttached = (next: (current: Screen) => Screen) => {
+      if (!ctl.detached) setScreen(next);
+    };
     const editing = building.editing;
     // Declared outside the try so a throw mid-stream still knows what the device observed, and on
     // which request (the stream's `x-whim-request-id`, once it has opened).
@@ -1518,11 +2075,9 @@ function LauncherShell({
 
     // The id this attempt writes to, decided and persisted before the request exists: a new
     // install mints one, a rebuild's id IS the app it rebuilds, a retry reuses its record's.
-    const attemptId = startPendingBuild(pending, { editing, text: building.text, reuseId });
-    // The journal is created at the SAME moment as the record it is a sibling of
-    // (`generation-run-journal` "A run journal is created alongside its pending-build record"),
-    // and the attempt's derived signals start from the same instant the request does.
-    journal.create(attemptId);
+    const startedAttempt = beginPendingAttempt(building, editing, reuseId, ctl);
+    if (startedAttempt == null) return;
+    const { id: attemptId, lease, retrySnapshot } = startedAttempt;
     const startedAt = Date.now();
     let signals: RunSignals = {
       startedAt,
@@ -1531,13 +2086,15 @@ function LauncherShell({
       lastThinkingAt: null,
       lastFrameAt: startedAt,
     };
+    const live: LiveAttempt = { id: attemptId, lease, screen: building, signals, ctl };
+    liveAttemptsRef.set(attemptId, live);
+    liveRef.current = live;
     signalsRef.current = signals;
     // The keepalive comment frame (`: keepalive\n\n`, build-liveness B2) is transport noise, never
     // a `GenerationEvent` — it reaches here through `ClientOptions.onKeepalive`, not the stream
     // loop below, and moves ONLY the any-frame clock (`withKeepalive` never touches the journal).
     const onKeepalive = () => {
-      signals = withKeepalive(signals, Date.now());
-      signalsRef.current = signals;
+      signals = recordAttemptKeepalive(attemptId, lease, signals) ?? signals;
     };
     /** What the terminal entry flushes, read at the instant the stream ends: the final cumulative
      *  counts (the throttle's last window has no later arrival to close it) and the diagnostics
@@ -1546,9 +2103,6 @@ function LauncherShell({
       aggregates: signals.aggregates,
       observedDiagnostics: counts.diagnostic,
     });
-    // The live screen a `building` ghost taps back into; kept in step with the stream below.
-    let live = building;
-    liveRef.current = { id: attemptId, screen: live };
     refresh();
 
     try {
@@ -1561,28 +2115,21 @@ function LauncherShell({
       );
       let terminal: GenerationEvent | null = null;
 
-      // Only `stage` ever reaches UI state (never `token.text` or `diagnostic.kind`/`symbol` —
-      // spec "Generation progress is shown without exposing internals"); `result`/`failure` are
-      // held until the stream ends so the terminal-event handling below stays in one place.
+      // Only `stage` and `queued` ever reach UI state (never `token.text` or
+      // `diagnostic.kind`/`symbol` — spec "Generation progress is shown without exposing
+      // internals"); `result`/`failure` are held until the stream ends so the terminal-event
+      // handling below stays in one place.
       stream = generateApp({ ...options, onKeepalive }, request, controller.signal);
       for await (const event of stream) {
-        countEvent(counts, event);
-        // The journal write and the signal fold for this event, in one place and at one clock
-        // reading: `stage` journals immediately, `token` goes through the store's own ~5s
-        // throttle, everything else writes nothing (`build-lifecycle#journalStreamEvent`).
-        signals = journalStreamEvent(journal, attemptId, signals, event, Date.now());
-        signalsRef.current = signals;
-        if (event.type === 'stage') {
-          live = withStage(live, event.stage);
-          liveRef.current = { id: attemptId, screen: live };
-          setScreen((s) => (s.kind === 'build' ? withStage(s, event.stage) : s));
-        } else if (event.type === 'result' || event.type === 'failure') {
-          terminal = event;
-        }
+        const nextSignals = recordAttemptFrame(attemptId, lease, signals, counts, event);
+        if (!nextSignals) return;
+        signals = nextSignals;
+        if (event.type === 'result' || event.type === 'failure') terminal = event;
       }
       // The stream loop completed without throwing a transport-classified error — a real server
       // response, proof of connectivity equivalent to a successful dedicated probe (spec "A real
       // generation or rewrite call succeeding...").
+      if (!pending.isCurrentAttempt(lease)) return;
       markOnline();
 
       if (ctl.cancelled) return; // explicit cancel (abortLiveAttempt) already deleted the record
@@ -1607,6 +2154,8 @@ function LauncherShell({
           hints: [],
           observed: counts.repair,
           counts: terminalCounts(),
+          retrySnapshot,
+          lease,
         });
         return;
       }
@@ -1628,54 +2177,60 @@ function LauncherShell({
           hints: terminal.diagnostics.map((d) => ({ hint: d.hint })),
           observed: counts.repair,
           counts: terminalCounts(),
+          retrySnapshot,
+          lease,
         });
         return;
       }
 
       // The stream ended with a deliverable result: the terminal entry is written HERE, at the end
       // of the stream and before delivery starts, carrying no failure field.
+      if (!pending.isCurrentAttempt(lease)) return;
+      const currentLive = liveAttemptsRef.get(attemptId);
+      if (currentLive?.lease !== lease) return;
       journal.appendTerminal(attemptId, terminalCounts());
-      live = withDelivering(live);
-      liveRef.current = { id: attemptId, screen: live };
-      setScreen((s) => (s.kind === 'build' ? withDelivering(s) : s));
+      currentLive.screen = withDelivering(currentLive.screen);
+      if (liveRef.current?.lease === lease) {
+        setScreen((s) => (s.kind === 'build' ? withDelivering(s) : s));
+      }
       // Store first, index second, pending record deleted LAST (design D5) — a process death
       // anywhere inside this await leaves the record behind to surface as `interrupted`.
-      const delivered = await deliverAndSettle(pending, {
+      const delivered = await deliverAndSettleIfOwned(pending, {
         access,
         appId: attemptId,
         editing,
         text: building.text,
         wire: terminal.app,
         summary: terminal.summary,
-      });
+      }, () => pending.isCurrentAttempt(lease));
       // Delivery landed: the attempt's journal becomes the delivered app's retained last-run
       // report, under the id the app NOW has (a behind-tip rebuild delivers onto a fork, whose id
       // is not the attempt's). After the delivery, never before it — a death in between loses the
       // report and nothing else (design D5).
-      journal.moveToLastRun(attemptId, delivered.id);
-      releaseLiveRef(attemptId);
-      refresh();
-      if (ctl.detached) return; // "Leave it running": delivered silently, the user is elsewhere
-      setScreen((s) => (s.kind === 'build' ? doneStep(s, delivered) : s));
-    } catch (e) {
-      if (ctl.cancelled) return;
-      // A structured service refusal proves the server answered (spec "A real generation or
-      // rewrite call succeeding, and any service refusal those paths receive... SHALL be treated
-      // as proof of connectivity").
-      const refusal = serviceRefusalOf(e);
-      if (refusal) {
-        markOnline();
-        releaseGenRef(ctl);
-        // Never the failure screen (service-refusals "never opens the failure screen") — design
-        // D10's three-way split lives in `handleGenerateRefusal`.
-        handleGenerateRefusal(attemptId, refusal, reuseId !== undefined, ctl.detached, fromPlan, terminalCounts());
-        return;
-      }
-      releaseGenRef(ctl);
-      logGenError('build failed', e, stream?.requestId);
-      const reasoned = errorReason(e);
-      settleFailed(attemptId, reasoned.reason, reasoned.diagnostics, terminalCounts());
-      setScreen(failure(editing, building.text, e, 'build failed', counts.repair, attemptId, stream?.requestId));
+      whenDeliverySettles(lease, delivered, (installed, selected) => {
+        journal.moveToLastRun(attemptId, installed.id);
+        pending.releaseAttempt(lease);
+        releaseLiveRef(lease);
+        refresh();
+        // "Leave it running": delivered silently, the user is elsewhere.
+        if (selected) setDoneIfAttached((s) => (s.kind === 'build' ? doneStep(s, installed) : s));
+      });
+    } catch (error) {
+      settleUnexpectedAttemptFailure({
+        error,
+        ctl,
+        attemptId,
+        isRetry: reuseId !== undefined,
+        fromPlan,
+        terminalCounts,
+        streamRequestId: stream?.requestId,
+        markOnline,
+        editing,
+        prompt: building.text,
+        observedRepairAttempts: counts.repair,
+        retrySnapshot,
+        lease,
+      });
     }
   };
 
@@ -1691,6 +2246,22 @@ function LauncherShell({
     const ctl = genRef.current;
     if (ctl) ctl.detached = true;
     goHome();
+  };
+
+  /** `Cancel build`, offered on the build screen while the build waits in line (beta-1 D8): the
+   *  request is aborted and the attempt deleted, exactly as a ghost's Cancel does — no ghost is
+   *  left behind — and the user lands on Home. */
+  const onCancelBuild = () => {
+    abortLiveAttempt();
+    goHome();
+  };
+
+  /** The limit step's `Build <alternative> instead` (beta-1 D9): the alternative becomes the prompt
+   *  and clarify is asked about it afresh — its own questions, never the old ones. Nothing is built
+   *  until the user approves a plan, as always. */
+  const onBuildInstead = async (from: ClarifyScreen) => {
+    if (!from.limit) return;
+    await onComposeContinue(composeStep(from.editing, from.limit.alternative));
   };
 
   // `onBuildBack` reads the latest `timeline`/`onLeaveRunning` through refs so its identity never
@@ -1726,41 +2297,45 @@ function LauncherShell({
    *  no live stream is involved, so the observed-repair count is zero rather than invented, and an
    *  `interrupted` record (which never carried a payload, because nothing failed) says so. */
   const failureFromRecord = (rec: PendingBuildRecord): Screen => {
-    const edited = rec.editingAppId ? index.get(rec.editingAppId) : null;
+    const view = pending.readCurrent(rec.id);
+    const current = view?.record ?? rec;
+    const edited = current.editingAppId ? index.get(current.editingAppId) : null;
     return {
       kind: 'failure',
       ...(edited ? { editing: edited } : {}),
-      prompt: rec.prompt,
-      reason: rec.failure?.reason ?? COPY.interruptedBuildReason,
-      diagnostics: hydratedDiagnostics(rec.failure),
+      prompt: current.prompt,
+      reason: current.failure?.reason ?? COPY.interruptedBuildReason,
+      diagnostics: hydratedDiagnostics(current.failure),
       observedRepairAttempts: 0,
       hasWorkingVersion: edited != null,
-      pendingId: rec.id,
-      journalId: rec.id,
+      // A record that names a remedy is one rewording can't get past (`PendingFailureRemedy`).
+      rephraseHelps: current.failure?.remedy == null,
+      pendingId: current.id,
+      ...(view?.durability !== 'volatile' && current.journalUnavailable !== true ? { journalId: current.id } : {}),
     };
   };
 
   /** Tap a ghost. `building` reattaches to the run's own build-progress screen — the stream is
    *  still in this shell's closure, so this is a screen-state change and no new request is sent;
    *  reattaching also un-detaches it, so its done step lands as if the user had never left.
-   *  `failed`/`interrupted` opens the hydrated failure screen instead. */
+   *  `failed`/`interrupted` opens the hydrated failure screen instead — or, for a record an `update`
+   *  fallback ended while this build still needs that update, the update screen with its notice. */
   const onOpenPending = (rec: PendingBuildRecord) => {
-    if (rec.state !== 'building') {
-      setScreen(failureFromRecord(rec));
+    const current = pending.readCurrent(rec.id)?.record ?? rec;
+    if (current.state !== 'building') {
+      const reopened = reopenedRecord(current, PROTOCOL_LEVEL);
+      setScreen(reopened.kind === 'update' ? updateScreenFrom(screen, reopened.notice) : failureFromRecord(current));
       return;
     }
-    const live = liveRef.current;
-    if (live?.id !== rec.id) {
-      // Reachable, and not only after a crash: `liveRef` holds ONE attempt, so two overlapping
-      // attempts (a "Leave it running" plus a Retry or a new build) leave the older one's
-      // `building` ghost pointing at a run this ref no longer names. The `releaseLiveRef` guards
-      // stop an older attempt stranding a NEWER one; they cannot make this branch unreachable.
-      // Nothing is lost either way — the run still delivers or settles on its own — so the honest
-      // response is a logged no-op rather than an invented screen.
-      log.warn(CHANNELS.gen, 'building ghost has no live run to reattach to', { pendingId: rec.id });
+    const live = liveAttemptsRef.get(current.id);
+    if (!live) {
+      log.warn(CHANNELS.gen, 'building ghost has no live run to reattach to', { pendingId: current.id });
       return;
     }
-    if (genRef.current) genRef.current.detached = false;
+    liveRef.current = live;
+    genRef.current = live.ctl;
+    live.ctl.detached = false;
+    signalsRef.current = live.signals;
     setScreen(live.screen);
   };
 
@@ -1768,19 +2343,37 @@ function LauncherShell({
    *  taking the user off the grid. The one remaining reachable path to cancellation — the build
    *  screen's own hardware back no longer takes this route (`prompt-flow.ts#buildBackAction`). */
   const onCancelPending = (rec: PendingBuildRecord) => {
-    if (liveRef.current?.id === rec.id) {
-      abortLiveAttempt();
+    const current = pending.readCurrent(rec.id)?.record ?? rec;
+    const live = liveAttemptsRef.get(current.id);
+    if (live) {
+      abortLiveAttempt(live);
       return;
     }
-    dropAttempt(rec.id);
+    dropAttempt(current.id);
     refresh();
   };
 
   /** Dismiss a `failed`/`interrupted` record, from its quick actions or its failure screen: the
    *  record is deleted and its ghost stops rendering. */
   const onDismissPending = (rec: PendingBuildRecord) => {
-    dropAttempt(rec.id);
-    goHome();
+    const current = pending.readCurrent(rec.id)?.record ?? rec;
+    try {
+      pending.delete(current.id);
+    } catch (error) {
+      log.warn(CHANNELS.gen, 'pending discard did not persist', { operation: 'discard-pending', ...errorFields(error) });
+    }
+    try {
+      journal.delete(current.id);
+    } catch (error) {
+      log.warn(CHANNELS.gen, 'journal discard did not persist', { operation: 'discard-journal', ...errorFields(error) });
+    }
+    const removed = pending.get(current.id) == null
+      && pending.isOrderExcluded(current.id)
+      && kv.getString(JOURNAL_KEY(current.id)) == null;
+    if (removed) pending.forgetRetained(current.id);
+    else pending.retainDiscardFailure(current, { reason: GENERIC_STREAM_ERROR });
+    refresh();
+    if (removed) goHome();
   };
 
   /** Leave a failure screen without acting on the attempt at all — the honest counterpart to
@@ -1793,9 +2386,18 @@ function LauncherShell({
 
   /** Retry from a hydrated failure screen: a NEW generation from the record's stored prompt,
    *  reusing the same launcher id, so the ghost the user is looking at is the one that resolves. */
-  const onRetryPending = async (rec: PendingBuildRecord) => {
-    const edited = rec.editingAppId ? index.get(rec.editingAppId) : null;
-    await runAttempt(retryBuildScreen(rec, edited ?? undefined), rec.id);
+  const onRetryPending = (rec: PendingBuildRecord) => {
+    const current = pending.readCurrent(rec.id)?.record ?? rec;
+    const edited = current.editingAppId ? index.get(current.editingAppId) : null;
+    runAttempt(retryBuildScreen(current, edited ?? undefined), current.id).catch((error) => {
+      logGenError('retry continuation failed', error);
+      setScreen(failure(
+        edited ?? undefined,
+        current.prompt,
+        new Error(GENERIC_STREAM_ERROR),
+        'retry continuation failed',
+      ));
+    });
   };
 
   /** The side effect of an arriving link's safe exit (design D15; spec app-links "An arriving link
@@ -1828,7 +2430,7 @@ function LauncherShell({
    *  settles (the "waits" release, above). */
   const openAppLink = (id: string) => {
     if (screen.kind === 'app' && screen.app.id === id) return;
-    const resolution = resolveAppLink(id, index.list(), pending.list());
+    const resolution = resolveAppLink(id, index.list(), pending.listCurrent().map((view) => view.record));
     leaveForLink(linkExitFor(reportTarget != null ? 'sheet' : screen.kind));
     if (resolution.kind === 'open') {
       onOpen(resolution.app);
@@ -1845,7 +2447,9 @@ function LauncherShell({
    *  unreadable journal reads as `null` and the section falls back to its empty note; nothing else
    *  about the screen depends on it. */
   const failureJournal = useMemo(
-    () => (screen.kind === 'failure' && screen.journalId != null ? journal.get(screen.journalId) : null),
+    () => (screen.kind === 'failure' && screen.journalId != null
+      ? journal.get(screen.journalId)
+      : null),
     [screen, journal],
   );
 
@@ -1869,7 +2473,7 @@ function LauncherShell({
    * no longer there.
    */
   const failureActions = (s: Extract<Screen, { kind: 'failure' }>) => {
-    const ghost = s.pendingId != null ? pending.get(s.pendingId) : null;
+    const ghost = s.pendingId != null ? pending.readCurrent(s.pendingId)?.record ?? null : null;
     if (ghost != null) {
       return {
         retryable: true,
@@ -1881,7 +2485,7 @@ function LauncherShell({
         onDismiss: () => onDismissPending(ghost),
       };
     }
-    const settled = s.recordId != null ? pending.get(s.recordId) : null;
+    const settled = s.recordId != null ? pending.readCurrent(s.recordId)?.record ?? null : null;
     return {
       retryable: false,
       onRephrase: () => openCompose(s.editing, s.prompt),
@@ -1912,7 +2516,7 @@ function LauncherShell({
           engineAppId={screen.engineAppId}
           theme={DEFAULT_THEME}
           onExit={goHome}
-          onVersions={() => onHistory(screen.app)}
+          onVersions={() => onHistory(screen.app, 'app')}
           onChangeIt={() => openWithConsent({ kind: 'compose', editing: screen.app })}
           installedApp={screen.app}
           access={access}
@@ -1935,7 +2539,7 @@ function LauncherShell({
           onHighlightingChange={onHighlightingChange}
           consentStatus={consentStatus(kv)}
           canProbe={clientOptions != null}
-          onOpenAIFeatures={onOpenAIFeaturesReview}
+          onOpenAIFeatures={onOpenAIFeatures}
           errorDetails={errorDetailsShown}
           onErrorDetailsChange={onErrorDetailsChange}
           deviceId={deviceId}
@@ -1960,7 +2564,7 @@ function LauncherShell({
           screen={screen}
           onAskAgree={onConsentAskAgree}
           onAskDecline={onLegalDecline}
-          onReviewTurnOn={onConsentReviewTurnOn}
+          onReviewTurnOn={onTurnOnAIFeatures}
           onReviewTurnOff={onConsentReviewTurnOff}
           onReviewClose={onConsentReviewClose}
           consentOn={consentStatus(kv).kind === 'granted'}
@@ -1974,7 +2578,7 @@ function LauncherShell({
           <HistoryScreen
             app={screen.app}
             access={access}
-            onBack={goHome}
+            onBack={() => leaveHistory(screen.app, screen.from)}
             onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
             onReport={() => setReportTarget(screen.app)}
           />
@@ -1992,7 +2596,7 @@ function LauncherShell({
       return <AppLinkMissingScreen onBackToApps={goHome} />;
     } else if (screen.kind === 'update-required') {
       const held = screen.heldPrompt;
-      return <UpdateRequiredScreen onNotNow={() => onUpdateNotNow(held)} />;
+      return <UpdateRequiredScreen notice={screen.updateNotice} onNotNow={() => onUpdateNotNow(held)} />;
     } else if (screen.kind === 'compose') {
       const from = screen;
       return (
@@ -2017,10 +2621,12 @@ function LauncherShell({
           loading={from.loading}
           startedAt={from.startedAt}
           notice={from.notice}
+          limit={from.limit}
           editing={from.editing != null}
           editingName={from.editing?.name}
-          onAnswer={(id, answer) => setScreen(withAnswer(from, id, answer))}
+          onAnswer={(id, change) => setScreen(withAnswer(from, id, change))}
           onContinue={() => openPlan(from, 'clarify')}
+          onBuildInstead={() => onBuildInstead(from)}
           onBack={() => goBack(from)}
         />
       );
@@ -2046,6 +2652,8 @@ function LauncherShell({
           <BuildStep
             stage={from.stage}
             delivering={from.delivering}
+            queuedPosition={from.queuedPosition}
+            onCancel={onCancelBuild}
             signals={signalsRef.current}
             now={Date.now()}
             editing={from.editing != null}
@@ -2088,6 +2696,7 @@ function LauncherShell({
           diagnostics={screen.diagnostics}
           observedRepairAttempts={screen.observedRepairAttempts}
           hasWorkingVersion={screen.hasWorkingVersion}
+          rephraseHelps={screen.rephraseHelps}
           notice={screen.notice}
           journal={failureJournal}
           attemptStarted={screen.journalId != null}
@@ -2099,12 +2708,12 @@ function LauncherShell({
       return (
         <HomeScreen
           apps={apps}
-          pending={pendingBuilds}
+          pending={pendingBuilds.map((view) => view.record)}
           onOpen={onOpen}
           onFork={onFork}
           onDelete={onDelete}
           appBusy={appBusy}
-          onHistory={onHistory}
+          onHistory={(app) => onHistory(app, 'home')}
           onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
           onCreate={() => openWithConsent({ kind: 'compose' })}
           onSettings={() => setScreen({ kind: 'settings' })}

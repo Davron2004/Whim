@@ -3,7 +3,8 @@
  * `content-reporting`). Reason pills, an optional note, the include-prompt switch,
  * a preview rendered from the SAME `ReportRequest` value Send posts, the phone-ID-and-AnyCognition
  * line plus a privacy-policy link, Send (`One moment` while in flight) and Cancel, the thanks
- * state, and inline failures through the shared `ServiceNotice`/`useRetryGate`.
+ * state, and inline failures through the shared `ServiceNotice`/`useRetryGate`. Send, Cancel and
+ * the notice are pinned below the scrolling draft, so the note's keyboard never hides Send.
  *
  * `app == null` closes the sheet: `SheetModal` stays mounted (so its rise animation survives a
  * close/reopen, the same contract `RunDetailsSheet.tsx` keeps) but the draft, phase and notice are
@@ -12,7 +13,7 @@
  * `reportDraftFor`.
  */
 import React, { useEffect, useState } from 'react';
-import { Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Linking, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { FONT_FAMILY, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
@@ -24,10 +25,12 @@ import type { ReportDraft, ReportPreviewRow } from './report-payload';
 import { sendReport } from './generation-client';
 import type { ClientOptions } from './generation-client';
 import { REFUSAL_RULES, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
+import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 import type { ServiceRefusal } from './service-refusal';
 import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } from './report-send';
 import ServiceNotice, { useNoticeWindowClear, useRetryGate } from './ServiceNotice';
 import SheetModal from './SheetModal';
+import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
 import { COPY, reportCodeSizeLabel } from './copy';
 import { privacyPolicyUrl, type LegalLanguage } from './legal-language';
 import { SHELL_PALETTE } from './theme';
@@ -79,9 +82,10 @@ export interface ReportSheetProps {
   /** Plain `ClientOptions` — sending a report needs no AI-data consent (design D3). */
   options: ClientOptions;
   onClose: () => void;
-  /** A send refused `update_required`: the host opens the update screen in place of the sheet
-   *  (request-envelope D5), and closing the sheet discards the draft as any close does. */
-  onUpdateRequired: () => void;
+  /** A send refused `update_required`, or answered with an `update` fallback: the host opens the
+   *  update screen in place of the sheet (request-envelope D5), showing the fallback's `notice` when
+   *  it has one, and closing the sheet discards the draft as any close does. */
+  onUpdateRequired: (notice?: string) => void;
   /** The active legal language: the privacy link opens its policy page. */
   legalLanguage: LegalLanguage;
 }
@@ -89,6 +93,7 @@ export interface ReportSheetProps {
 export default function ReportSheet({ app, access, options, onClose, onUpdateRequired, legalLanguage }: Readonly<ReportSheetProps>) {
   const p = SHELL_PALETTE;
   const [draft, setDraft] = useState<ReportDraft | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [phase, setPhase] = useState<Phase>('draft');
   const [notice, setNotice] = useState<ReportNotice | null>(null);
   const [promptExpanded, setPromptExpanded] = useState(false);
@@ -102,17 +107,22 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
   });
 
   useEffect(() => {
+    setDraft(null);
+    setLoadFailed(false);
+    setPhase('draft');
+    setNotice(null);
+    setPromptExpanded(false);
+    setSourceExpanded(false);
     if (!app) {
-      setDraft(null);
-      setPhase('draft');
-      setNotice(null);
-      setPromptExpanded(false);
-      setSourceExpanded(false);
       return undefined;
     }
     let cancelled = false;
     reportDraftFor(app, access).then((d) => {
       if (!cancelled) setDraft(d);
+    }, () => {
+      if (cancelled) return;
+      setLoadFailed(true);
+      log.warn(CHANNELS.gen, 'report draft load failed', { outcome: 'failed' });
     });
     return () => {
       cancelled = true;
@@ -138,6 +148,15 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
       setPhase(settled.phase);
       setNotice(settled.notice);
     } catch (err) {
+      // A reply this build can't use whose fallback is `update` opens the update screen with its
+      // notice, as an `update_required` refusal does (beta-1 D16); a `fail` one is an ordinary
+      // failed send below.
+      const fallback = terminalFallbackOf(err);
+      if (fallback?.kind === 'update') {
+        log.warn(CHANNELS.gen, 'report refused', { ...reportLogFields(request, 'update_required') });
+        onUpdateRequired(fallbackNotice(fallback));
+        return;
+      }
       const refusal = serviceRefusalOf(err);
       if (refusal) {
         log.warn(CHANNELS.gen, 'report refused', { ...reportLogFields(request, refusal.code) });
@@ -166,6 +185,18 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
 
   return (
     <SheetModal visible={app != null} onClose={handleClose}>
+      {loadFailed && (
+        <View style={styles.thanks}>
+          <ServiceNotice hint={COPY.reportDraftLoadFailed} tone="danger" />
+          <TouchableOpacity
+            onPress={handleClose}
+            accessibilityRole="button"
+            style={[styles.primary, { backgroundColor: p.accent }]}
+          >
+            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.reportDraftClose}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       {draft && phase === 'thanks' && (
         <View style={styles.thanks}>
           <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.reportThanksTitle}</Text>
@@ -179,7 +210,28 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
         </View>
       )}
       {draft && phase !== 'thanks' && (
-        <ScrollView style={styles.scroller} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <KeyboardShell
+          host="sheet"
+          footer={
+            <>
+              {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
+              <TouchableOpacity
+                onPress={handleSend}
+                disabled={sendDisabled}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: sendDisabled }}
+                style={[styles.primary, sendDisabled && styles.primaryDisabled, { backgroundColor: p.accent }]}
+              >
+                <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>
+                  {phase === 'sending' ? COPY.reportSendBusy : COPY.reportSend}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleClose} accessibilityRole="button" style={styles.plainAction}>
+                <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{COPY.cancel}</Text>
+              </TouchableOpacity>
+            </>
+          }
+        >
           <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.reportSheetTitle}</Text>
 
           <Text style={[TYPE_SCALE.eyebrow, styles.eyebrow, { color: p.textMuted }]}>{COPY.reportReasonEyebrow}</Text>
@@ -190,7 +242,9 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
                 <TouchableOpacity
                   key={reason}
                   onPress={() => setDraft({ ...draft, reason })}
-                  style={[styles.pill, { borderColor: p.cardBorder, backgroundColor: selected ? p.text : p.bg }]}
+                  // An answer pill, picked the way the clarify step's are (design 2a,
+                  // `Whim Mobile.dc.html:889`): the accent, fill and edge.
+                  style={[styles.pill, { borderColor: selected ? p.accent : p.cardBorder, backgroundColor: selected ? p.accent : p.bg }]}
                 >
                   <Text style={[TYPE_SCALE.caption, { color: selected ? p.onAccent : p.textMuted }]}>
                     {REASON_LABEL[reason]}
@@ -200,14 +254,16 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
             })}
           </View>
 
-          <TextInput
+          <KeyboardTextInput
             value={draft.note}
             onChangeText={(text) => setDraft({ ...draft, note: text })}
             placeholder={COPY.reportNotePlaceholder}
             placeholderTextColor={p.textMuted}
             maxLength={1000}
             multiline
-            style={[TYPE_SCALE.body, styles.noteInput, { color: p.text, borderColor: p.cardBorder }]}
+            // Its own background, as every launcher field has: without one Android draws its default
+            // field underline inside the border.
+            style={[TYPE_SCALE.body, styles.noteInput, { color: p.text, borderColor: p.cardBorder, backgroundColor: p.card }]}
           />
 
           {draft.prompt !== undefined && (
@@ -250,24 +306,7 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
           <TouchableOpacity onPress={() => Linking.openURL(privacyPolicyUrl(legalLanguage))} hitSlop={10} style={styles.privacyLink}>
             <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.accent }]}>{COPY.privacyPolicyLabel}</Text>
           </TouchableOpacity>
-
-          {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
-
-          <TouchableOpacity
-            onPress={handleSend}
-            disabled={sendDisabled}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: sendDisabled }}
-            style={[styles.primary, sendDisabled && styles.primaryDisabled, { backgroundColor: p.accent }]}
-          >
-            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>
-              {phase === 'sending' ? COPY.reportSendBusy : COPY.reportSend}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleClose} accessibilityRole="button" style={styles.plainAction}>
-            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{COPY.cancel}</Text>
-          </TouchableOpacity>
-        </ScrollView>
+        </KeyboardShell>
       )}
     </SheetModal>
   );
@@ -293,7 +332,7 @@ function SwitchRow({ label, value, onChange }: Readonly<{ label: string; value: 
   return (
     <View style={styles.switchRow}>
       <Text style={[TYPE_SCALE.body, { color: p.text }]}>{label}</Text>
-      <Switch value={value} onValueChange={onChange} />
+      <Switch value={value} onValueChange={onChange} trackColor={{ false: p.cardBorder, true: p.accent }} thumbColor={p.onAccent} />
     </View>
   );
 }
@@ -341,8 +380,6 @@ function PreviewRow({
 }
 
 const styles = StyleSheet.create({
-  scroller: { flexShrink: 1 },
-  content: { paddingBottom: SPACING.lg },
   eyebrow: { marginTop: SPACING.md, marginBottom: SPACING.xs },
   pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs },
   pill: { borderRadius: RADIUS.chip, borderWidth: 1, paddingHorizontal: SPACING.sm, paddingVertical: 6 },

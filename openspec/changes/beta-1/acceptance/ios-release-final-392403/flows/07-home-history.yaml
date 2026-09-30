@@ -1,0 +1,15 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: successful done. APP_TITLE is the observed installed app title.
+- tapOn: "Back to your apps"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-generated-home"
+- longPressOn: "${APP_TITLE}"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-app-actions"
+- tapOn: "History"
+- extendedWaitUntil:
+    visible: "${APP_TITLE} history"
+    timeout: 10000
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-history"
+- tapOn: "Back"
+- assertVisible: "Describe an app…"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-home-from-history"

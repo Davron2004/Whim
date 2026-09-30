@@ -108,6 +108,9 @@ naming the secret and this section, and builds, uploads or restarts nothing.
 | `WHIM_CLARIFY_MODEL`, `WHIM_SUMMARY_MODEL`, `WHIM_PLAN_MODEL`, `WHIM_REPAIR_MODEL` | no | optional per-role model overrides; see the roster table below |
 | `WHIM_CLARIFY_REASONING`, `WHIM_REWRITE_REASONING`, `WHIM_SUMMARY_REASONING`, `WHIM_PLAN_REASONING`, `WHIM_ENGINEER_REASONING`, `WHIM_REPAIR_REASONING` | no | per-role reasoning setting: `off`, `on`, `low`, `medium`, `high` or `default` |
 | `WHIM_PROVIDER_SORT` | no | OpenRouter provider order: `price`, `throughput` or `latency` |
+| `WHIM_PROVIDER_QUANTIZATIONS` | no | the quantizations OpenRouter may route to, comma-separated from `int4`, `int8`, `fp4`, `fp6`, `fp8`, `fp16`, `bf16`, `fp32`, `unknown`; unset sends no preference. Set it only after a flowbench comparison |
+| `WHIM_QUEUE_MAX` | no | how many generations may wait in line for a slot; unset is `50`. `0` turns the line off: a generation that finds every slot busy is refused `server_busy` at once, as before the line (see "Rolling back and rotating the key") |
+| `WHIM_QUEUE_MAX_WAIT_MS` | no | how long a generation may wait in line before its stream ends in a `failure` saying Whim is busy; unset is `180000` |
 | `WHIM_MIN_BUILD_IOS`, `WHIM_MIN_BUILD_ANDROID` | no | the oldest build each platform may use the AI features with; unset is `0` (off). See "Minimum supported build" |
 | `WHIM_USAGE_IDLE_DAYS` | no | days a phone ID's lifetime usage totals are kept after its last request; unset is `365`, and the server refuses a value above the usage-records maximum the disclosure manifest publishes |
 | `WHIM_BETA_LIMIT_PER_CLIENT_HOUR`, `WHIM_BETA_LIMIT_PER_DAY` | no | the `/beta` signup limits: signups one client address may make per hour (unset is `10`) and signups the whole list takes per day (unset is `2000`). See Operating → Beta waitlist |
@@ -147,6 +150,11 @@ Rule out a candidate `WHIM_REWRITE_MODEL` against this before deploying it.
 
 `WHIM_PROVIDER_SORT` (optional) is `price`, `throughput`, or `latency`; when set, every request
 asks OpenRouter to route by it. Unset (default) sends no provider preference.
+
+`WHIM_PROVIDER_QUANTIZATIONS` (optional) limits every request to providers serving one of the
+listed quantizations (`provider.quantizations`). Entries are trimmed and empty ones dropped; a name
+outside the list above fails server boot, naming the variable. Unset or empty leaves the `provider`
+object exactly as it was without it.
 
 ## First deploy
 
@@ -401,6 +409,23 @@ Two committed profiles tie the VM's machine type to the server's concurrency lim
 The `event` numbers are **estimates** pending task 15.4's recorded load test; treat them as
 provisional until `progress.md`'s "Event profile load test" entry replaces this note.
 
+**`standard` caps, load-tested 2026-09-26** (beta-1, replay model, `e2-standard-2`; details in
+`openspec/changes/beta-1/progress.md` under 10.2). The rule is the highest pair with a normalized CPU p95
+under 70 % and no failed runs. CPU is normalized to the whole machine, so 100 % means both vCPUs are busy.
+
+| Caps (generations / synthetic runs) | Devices | Normalized CPU | Result |
+|---|---|---|---|
+| 3 / 2 | 3 | peak 42 % | all results, no refusals |
+| 3 / 2 | 5 (2 queued) | peak 35 % | all results |
+| 5 / 2 | 5 | peak 80 % (run 2); p95 68 % (run 3) | all results |
+| 5 / 2 | 7 (2 queued) | peak 61 % (run 2); p95 98 % (run 3) | all results |
+
+Only run 3 measured a p95 (runs 1 and 2 reported peaks, which are informative only). In run 3, cap 5 had a
+p95 of 68 % at 5 devices and **98 % at 7 devices**, over the rule, so the default stays at **3 / 2**. The p95 is
+nearest-rank, so with 2-second sampling (16–18 samples) it equals the run's maximum. Measure cap 4 with denser
+sampling and repeated runs before raising it (#134). The synthetic-run concurrency is capped at the machine's
+vCPU count (D25).
+
 **Demo-night checklist:** resize up the day of the event, run the load test once, resize back down
 after.
 
@@ -420,22 +445,40 @@ naming the step — the service never sits on a half-applied resize.
 **Load test** (`deploy/loadtest/run.sh`, no OpenRouter key reachable from its image — design.md D26):
 
 ```sh
-deploy/loadtest/run.sh start                              # swaps in the replay-model image
-deploy/loadtest/run.sh drive --devices 15 --cap 15         # at capacity
-deploy/loadtest/run.sh drive --devices 16 --cap 15         # one over, expect one refusal
-deploy/loadtest/run.sh stop                                # restores production and runs smoke
+deploy/loadtest/run.sh start                                        # swaps in the replay-model image
+deploy/loadtest/run.sh drive --devices 15 --cap 15 --queue-max 50   # at capacity
+deploy/loadtest/run.sh drive --devices 16 --cap 15 --queue-max 50   # one over: it waits in line, then completes
+deploy/loadtest/run.sh stop                                         # restores production and runs smoke
 ```
+
+`--queue-max` is the server's `WHIM_QUEUE_MAX`: `50` unless the operator values file sets it, since
+the load-test server reads the same `config.env`. With `WHIM_QUEUE_MAX=0`, pass `--queue-max 0`, and
+every device past the cap is refused.
 
 `run.sh start` passes the replay image to the VM's compose command through one effective `sudo`
 transition. If startup or its health check fails after production is stopped, it restores the base
 compose service, runs production smoke, and returns the original failure. A restoration or smoke
 failure is reported alongside that original failure; the load-test service is never left running.
 
-`drive` prints a report: `timeToFirstEventMs`/`totalMs` as p50/p95; `terminals` (`result`/`failure`/
-`none` counts); `refusals` by `ApiError` code (`server_busy` is expected once `devices` exceeds
-`cap`, not otherwise); `leakProbe.ok` (two rounds of fresh devices proving no slot leaked); and
-`peak.peakCpuPercent`/`peakMemoryPercent` from the VM's `docker stats` sampler. It exits non-zero on
-any `failure` terminal, an unexpected refusal, or a failed leak probe.
+`drive` prints a report: `timeToFirstEventMs`/`totalMs` as p50/p95 (a `queued` event counts as a
+device's first event); `queued`, the devices that waited in line, and `waitMs`, their wait as
+p50/p95/max; `terminals` (`result`/`failure`/`none` counts); `refusals` by `ApiError` code
+(`server_busy` is expected only once `devices` exceeds `cap` + `queue-max`); `leakProbe.ok` (two
+rounds of `cap` fresh devices that must each get a slot at once, proving no slot leaked and the line
+is empty); `peak.peakCpuPercent`/`peakMemoryPercent`, raw/per-core (`200` means both vCPUs of an
+e2-standard-2), from the VM's `docker stats` sampler; and `cpu: { cores, samples, p50Percent,
+p95Percent, peakPercent }`, the same CPU samples normalized to the whole machine (per-core % ÷
+`cores`, the VM's `nproc`, read once over the same ssh as the sampler — never hardcoded). It exits
+non-zero on any `failure` terminal (a device that waited past `WHIM_QUEUE_MAX_WAIT_MS` is one), an
+unexpected refusal, a number of waiting devices other than the ones past the cap that fit in the
+line, or a failed leak probe. Each device gets 300 seconds before the driver gives up on it: a run's
+own 120 plus the default longest wait in line.
+
+The cap rule (`specs/server-admission-control`) is: pick the highest generation/synthetic-run cap
+pair a load test on the standard machine type sustains with the report's normalized `cpu.p95Percent`
+under 70 %, no `failure` terminal, and no unexpected refusal — never the exit code alone, since a run
+can exit 0 with the verdict silent on capacity. `peak`/`cpu.peakPercent` are informative only (they
+explain a spike the p95 already accounts for); they are never part of the pass/fail decision.
 
 ## Rolling back and rotating the key
 
@@ -452,6 +495,14 @@ Roll back with the **current** checkout's `deploy/deploy.sh --tag <sha>`, never 
 older commit and running its `deploy.sh`: an older `deploy/lib.sh` refuses any `deploy.env` line it
 doesn't know (`unknown variable WHIM_MIN_BUILD_IOS`), even an empty one.
 
+**Never `--tag` below the beta-1 server image once beta-1 builds are installed.** A server from
+before beta-1 rejects the answers beta-1 sends with its clarify questions (it requires the old
+`Clarification.answer`), so every rewrite and generation carrying an answer fails with
+`400 invalid_request`. No later app build can change what an installed beta-1 build sends, and no
+setting on the old image can accept it. To undo a bad server release, `--tag` an earlier image that
+is still beta-1 or later (the `commit` its `/healthz` reported when it was live), or roll forward:
+fix on `main` and run `deploy/deploy.sh` without `--tag`.
+
 Rolling back to an image from before the commit report (developer-observability) leaves a server
 whose `/healthz` has no `commit`: the rollback is live, but smoke fails on that check, so
 `deploy.sh` exits 1 without `done`. Confirm the rest of the smoke output passed, then roll forward
@@ -462,6 +513,13 @@ Rolling back to an image from before the minimum-build gate drops the gate: that
 report, so smoke fails on `commit` as above whatever the minimums; with either minimum raised it
 also fails because the server "cannot enforce the configured minimums". Roll forward to an image
 with the gate as soon as you can.
+
+**Rolling back the generation line** needs no older image. Set `WHIM_QUEUE_MAX=0` in
+`~/.config/whim/deploy.env` and redeploy the running image with `deploy/deploy.sh --tag <sha>`, where
+`<sha>` is the `commit` that `/healthz` reports. From then on a generation that finds every slot busy
+gets `429 server_busy` before any stream opens, as it did before the line. The redeploy drains the
+old server, so anyone still waiting in line gets the busy `failure` on their stream. To bring the line
+back, remove the line (or set a positive number) and redeploy the same way.
 
 Rotating the OpenRouter key: add a new version to `whim-openrouter-api-key` in Secret Manager, then
 run `deploy/deploy.sh` (no `--tag`) so it re-reads the latest enabled version and recreates

@@ -180,13 +180,39 @@ check_health() {
   esac
 }
 
+# Sends the protocol level every /v1 request carries, so the one header missing is the device's.
 check_device_header_required() {
   local url="https://$WHIM_API_HOST/v1/generate"
-  probe "$url" -X POST -H 'content-type: application/json' --data '{}'
+  probe "$url" -X POST -H 'content-type: application/json' -H 'x-whim-protocol: 1' --data '{}'
   if [ "$PROBE_STATUS" = 400 ]; then
     pass "api $url without a device header -> 400"
   else
     flunk "api $url without a device header answered $PROBE_STATUS, expected 400"
+  fi
+}
+
+# Sends a full, well-formed envelope from a build the minimum-build gate alone would admit (382511,
+# above any minimum this deploy config sets), but with no x-whim-protocol: exactly what a pre-D16
+# build (381237, 382511) sends. This is the gate that retires them (design D16 layer 2, D17): it runs
+# in request-edge.ts#readProtocolLevel, mounted before min-build.ts's own gate, so it fires whether or
+# not a minimum is configured. Picking an admitted build proves this 426 comes from the protocol
+# check, not incidentally from the minimum-build gate. It runs before any admission, ledger row or
+# model call (app.ts mounts it ahead of the routes and of minimumBuildGate).
+check_pre_protocol_build_refused() {
+  local url="https://$WHIM_API_HOST/v1/generate" body
+  probe "$url" -X POST \
+    -H 'content-type: application/json' \
+    -H 'x-whim-platform: ios' \
+    -H 'x-whim-app-version: 1.0.0' \
+    -H 'x-whim-build: 382511' \
+    -H 'x-whim-consent: 2' \
+    -H 'x-whim-device: 00000000-0000-4000-8000-000000000000' \
+    --data '{}'
+  body="$(head -c 300 "$work/body")"
+  if [[ "$PROBE_STATUS" = 426 ]] && [[ "$body" == *'"error":"update_required"'* ]]; then
+    pass "api $url from a pre-protocol build (no x-whim-protocol) -> 426 update_required"
+  else
+    flunk "api $url from a pre-protocol build answered $PROBE_STATUS '$body', expected 426 update_required"
   fi
 }
 
@@ -203,7 +229,7 @@ check_stream_probe() {
 check_beta_signup_trap() {
   local url="https://$WHIM_API_HOST/beta/signup" thanks="https://$WHIM_WEB_HOST/beta/thanks"
   probe "$url" -H 'content-type: application/x-www-form-urlencoded' --data 'email=smoke%40example.com&platform=other&hp_ref=smoke'
-  if [ "$PROBE_STATUS" = 303 ] && [ "$PROBE_LOCATION" = "$thanks" ]; then
+  if [[ "$PROBE_STATUS" = 303 ]] && [[ "$PROBE_LOCATION" = "$thanks" ]]; then
     pass "api $url with the trap field filled -> 303 $thanks"
   else
     flunk "api $url with the trap field filled answered $PROBE_STATUS${PROBE_LOCATION:+ redirecting to $PROBE_LOCATION}, expected 303 to $thanks"
@@ -233,7 +259,7 @@ check_page() {
 check_beta_page() {
   local url="https://$WHIM_WEB_HOST/beta"
   probe "$url"
-  if [ "$PROBE_STATUS" = 200 ] && [ -z "$PROBE_LOCATION" ] && [[ "$PROBE_TYPE" == text/html* ]] && [[ "$PROBE_CSP" == *"font-src 'self'"* ]]; then
+  if [[ "$PROBE_STATUS" = 200 ]] && [[ -z "$PROBE_LOCATION" ]] && [[ "$PROBE_TYPE" == text/html* ]] && [[ "$PROBE_CSP" == *"font-src 'self'"* ]]; then
     pass "pages /beta -> 200 HTML, CSP allows font-src 'self'"
   else
     flunk "pages $url answered $PROBE_STATUS ($PROBE_TYPE)${PROBE_LOCATION:+ redirecting to $PROBE_LOCATION} with CSP '$PROBE_CSP', expected 200 HTML whose CSP has font-src 'self'"
@@ -275,6 +301,7 @@ check_dns
 if [ "$pages_only" -eq 0 ]; then
   check_health
   check_device_header_required
+  check_pre_protocol_build_refused
   check_stream_probe
   check_in_container "metadata server egress" "$METADATA_JS" blocked
   check_in_container "react-native in node_modules" "$REACT_NATIVE_JS" absent

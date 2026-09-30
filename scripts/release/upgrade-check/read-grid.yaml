@@ -1,0 +1,10 @@
+# Upgrade check, read step: cold-start Whim onto its home grid. `upgrade-check.sh` dumps the view
+# hierarchy right after this flow; `upgrade-record` looks for every installed app's name in it.
+# The launcher always cold-starts on the grid, so a launch is the whole navigation.
+appId: com.anycognition.whim
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 60000
+- waitForAnimationToEnd

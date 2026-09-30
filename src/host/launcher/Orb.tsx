@@ -19,7 +19,7 @@
 // title. There is nothing left for Orb.tsx itself to show once an action fires, so the orb-local
 // "sheet" concept (and the fourth, undesigned `copy` action) is gone.
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FONT_FAMILY, MOTION, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
@@ -33,8 +33,8 @@ import {
   recordOrbAction,
   type OrbActionId,
 } from './orb-actions';
+import { ORB_BOTTOM_MARGIN, ORB_SIZE } from './orb-geometry';
 
-const ORB_SIZE = 54;
 // The menu rises from the bottom edge — the edge it collapses back to on close/dismiss (design
 // doc "Sheet rise": "Sheets enter from the edge they will return to").
 const MENU_RISE_DISTANCE = 24;
@@ -56,6 +56,11 @@ export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readon
   const kv = useRef(createMmkvBackend('whim.launcher')).current;
   const insets = useSafeAreaInsets();
   const [menuOpen, setMenuOpen] = useState(false);
+  // The rows take taps only once the menu has risen into place. While it rises, a row is drawn
+  // somewhere other than where its touch target is, so a quick tap could land on its neighbour
+  // (a tap on Versions opened Report on device). A press that begins during the rise is refused,
+  // and so never fires on release either.
+  const [menuSettled, setMenuSettled] = useState(false);
   const riseAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -68,20 +73,25 @@ export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readon
       duration: MOTION.sheetRise.durationMs,
       easing: Easing.bezier(0.2, 0.8, 0.2, 1),
       useNativeDriver: true,
-    }).start();
+    }).start(({ finished }) => {
+      if (finished) setMenuSettled(true);
+    });
   }, [menuOpen, riseAnim]);
 
+  // Opening or closing, the menu is not settled until a rise completes.
   const closeAll = () => {
     setMenuOpen(false);
+    setMenuSettled(false);
   };
 
   const onOrbPress = () => {
     setMenuOpen((open) => !open);
+    setMenuSettled(false);
   };
 
   const onAction = (id: OrbActionId) => {
     recordOrbAction(kv, id);
-    setMenuOpen(false);
+    closeAll();
     if (id === 'home') onExit();
     else if (id === 'versions') onVersions();
     else if (id === 'report') onReport();
@@ -92,7 +102,7 @@ export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readon
     <>
       <Pressable
         onPress={onOrbPress}
-        style={[styles.btn, { bottom: insets.bottom + SPACING.lg }, menuOpen && styles.btnMenuOpen]}
+        style={[styles.btn, { bottom: insets.bottom + ORB_BOTTOM_MARGIN }, menuOpen && styles.btnMenuOpen]}
         accessibilityRole="button"
         accessibilityLabel={menuOpen ? COPY.orbMenuCloseLabel : COPY.orbMenuOpenLabel}
       >
@@ -102,41 +112,62 @@ export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readon
       </Pressable>
 
       {menuOpen && (
-        <Pressable
-          style={[styles.scrim, { paddingBottom: insets.bottom + SPACING.lg + ORB_SIZE + SPACING.sm }]}
-          onPress={closeAll}
-          accessibilityRole="none"
-          accessibilityLabel={COPY.orbMenuDismissLabel}
-        >
-          <Animated.View
-            style={[
-              styles.menu,
-              {
-                opacity: riseAnim,
-                transform: [
-                  {
-                    translateY: riseAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [MENU_RISE_DISTANCE, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-            onStartShouldSetResponder={() => true}
+        // A genuine Modal (SheetModal.tsx's rationale applies here too), not an absolutely-
+        // positioned sibling View: it mounts into its own native window, so the dim layer covers
+        // the WHOLE window including the status bar. `statusBarTranslucent` is what makes Android
+        // draw that window behind the (translucent) status bar rather than starting below it —
+        // without it the scrim stops short of the top of the screen (#105).
+        //
+        // The dismiss layer is a SIBLING behind the actions, never their parent: a touchable is one
+        // accessibility element, and a screen reader reads everything inside it as that element —
+        // with the actions nested in it, VoiceOver and TalkBack could reach only "Dismiss".
+        <Modal visible transparent animationType="none" statusBarTranslucent onRequestClose={closeAll}>
+          <View
+            style={[styles.overlay, { paddingBottom: insets.bottom + ORB_BOTTOM_MARGIN + ORB_SIZE + SPACING.sm }]}
           >
-            {ORB_ACTIONS.map((action) => (
-              <Pressable key={action.id} style={styles.row} onPress={() => onAction(action.id)}>
-                <View style={[styles.rowIcon, { backgroundColor: ORB_ROW_TINT[action.id] }]}>
-                  <Text style={[styles.rowIconGlyph, { color: orbRowGlyphColor(action.id) }]}>
-                    {ORB_ROW_GLYPH[action.id]}
-                  </Text>
-                </View>
-                <Text style={styles.rowLabel}>{action.label}</Text>
-              </Pressable>
-            ))}
-          </Animated.View>
-        </Pressable>
+            <Pressable
+              style={styles.scrim}
+              onPress={closeAll}
+              accessibilityRole="button"
+              accessibilityLabel={COPY.orbMenuDismissLabel}
+            />
+            <Animated.View
+              style={[
+                styles.menu,
+                {
+                  opacity: riseAnim,
+                  transform: [
+                    {
+                      translateY: riseAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [MENU_RISE_DISTANCE, 0],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+              onStartShouldSetResponder={() => true}
+            >
+              {ORB_ACTIONS.map((action) => (
+                <Pressable
+                  key={action.id}
+                  style={styles.row}
+                  disabled={!menuSettled}
+                  onPress={() => onAction(action.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={action.label}
+                >
+                  <View style={[styles.rowIcon, { backgroundColor: ORB_ROW_TINT[action.id] }]}>
+                    <Text style={[styles.rowIconGlyph, { color: orbRowGlyphColor(action.id) }]}>
+                      {ORB_ROW_GLYPH[action.id]}
+                    </Text>
+                  </View>
+                  <Text style={styles.rowLabel}>{action.label}</Text>
+                </Pressable>
+              ))}
+            </Animated.View>
+          </View>
+        </Modal>
       )}
     </>
   );
@@ -154,16 +185,28 @@ const styles = StyleSheet.create({
     backgroundColor: inkAlpha(0.58),
     alignItems: 'center',
     justifyContent: 'center',
+    // shadow* is iOS-only (rn-style-platform-gaps): an `elevation` counterpart used to sit here
+    // for Android, but combined with this button's translucent background it drew a solid grey
+    // disc instead of a shadow (#48/#105 polish) — dropped, not replaced.
     shadowColor: '#000',
     shadowOpacity: 0.32,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
   },
   btnMenuOpen: { backgroundColor: SHELL_COLORS.ink, transform: [{ scale: 0.92 }] },
   bar: { width: 12, height: 2, borderRadius: 1, backgroundColor: 'rgba(255,255,255,0.92)' },
   barMenuOpen: { width: 20, backgroundColor: 'rgba(255,255,255,1)' },
   barGap: { marginVertical: 3 },
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'flex-end',
+    alignItems: 'flex-end',
+    paddingRight: SPACING.lg,
+  },
   scrim: {
     position: 'absolute',
     top: 0,
@@ -171,9 +214,6 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     backgroundColor: 'rgba(24,22,20,0.5)',
-    justifyContent: 'flex-end',
-    alignItems: 'flex-end',
-    paddingRight: SPACING.lg,
   },
   menu: { gap: SPACING.xs, alignItems: 'stretch', minWidth: 212 },
   row: {

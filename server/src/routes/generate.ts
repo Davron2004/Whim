@@ -8,6 +8,15 @@
  * the content policy check — all before the stream opens. Every refusal after a resource was taken
  * gives it back first.
  *
+ * The line (beta-1 D8, specs/server-admission-control "A generation that finds every slot busy
+ * waits in line on its stream"): when every slot is busy the acquire joins the controller's line
+ * instead, refusing `server_busy` only once the line is full. A generation in line has its daily
+ * unit CONFIRMED, not spent, and no ledger row: the unit is spent, and the row inserted, only when
+ * it gets a slot. It waits on its open stream, which carries `queued{position}` on entry, on every
+ * move and at least every `QUEUED_HEARTBEAT_MS`. Waiting `queueMaxWaitMs`, a drain, or a global
+ * ceiling reached by the time the slot arrives ends the stream with one terminal `failure`; a client
+ * abort ends it with none. None of these leaves a slot held, a unit spent or a ledger row.
+ *
  * Once admitted, the stream has ONE teardown path: the end of the event source's iteration. A
  * terminal event, a client cancel of the SSE body, the request's own `Request.signal`, a pipeline
  * error, the run's wall-clock expiry, a drain abort (`InFlightGenerations.abortAll`) and the
@@ -21,10 +30,10 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { GenerateRequest, GenerationEvent, type ApiError, type Usage } from '@whim/contract';
 import type { Pipeline } from '../pipeline';
-import type { FailureReason, RequestOutcome, UsageStore } from '../usage-store';
+import type { AdmitResult, FailureReason, RequestOutcome, UsageStore } from '../usage-store';
 import type { RunTrace } from '../generation/machine';
 import type { ServerConfig } from '../config';
-import type { SlotController, SlotHandle } from '../admission/slots';
+import type { LineOutcome, LineTicket, SlotController, SlotHandle } from '../admission/slots';
 import { checkCredit, type CreditTransport } from '../admission/credit';
 import {
   budgetExhaustedRefusal,
@@ -33,6 +42,7 @@ import {
   payloadTooLargeRefusal,
   policyUnavailableRefusal,
   serverBusyCeilingRefusal,
+  serverBusyRefusal,
   slotRefusal,
   type ServiceRefusal,
 } from '../admission/refusals';
@@ -46,6 +56,7 @@ import {
   type UsageAndCostTransport,
 } from '../usage/resolve';
 import { buildSseStream } from '../sse';
+import { eventForLevel, type WireEvent, type WireRegistry } from '../wire-level';
 import type { ServerLogger } from '../logger';
 import { envelopeLogFields, type V1Env } from '../request-edge';
 import { consentPractice } from '../consent-practices';
@@ -83,6 +94,24 @@ export class InFlightGenerations {
   }
 }
 
+/** A generation waiting in line hears its place at least this often (beta-1 D8). */
+const QUEUED_HEARTBEAT_MS = 5000;
+
+/** The line's time source: the `queued` cadence, the longest wait, and the waited time it logs. */
+export interface LineClock {
+  now(): number;
+  /** Arms a one-shot timer and returns its disarm function. */
+  setTimer(delayMs: number, onFire: () => void): () => void;
+}
+
+const HOST_LINE_CLOCK: LineClock = {
+  now: () => performance.now(),
+  setTimer(delayMs, onFire) {
+    const timer = setTimeout(onFire, delayMs);
+    return () => clearTimeout(timer);
+  },
+};
+
 export interface GenerateRouteOptions {
   keepaliveMs?: number;
   config: ServerConfig;
@@ -96,6 +125,10 @@ export interface GenerateRouteOptions {
   resolveTransport: UsageAndCostTransport;
   resolveBounds: Partial<ResolveBounds> | undefined;
   inFlight: InFlightGenerations;
+  /** The line's timers; the host's own when omitted. */
+  lineClock?: LineClock;
+  /** What every event this route sends is adapted against for the client's level (beta-1 D16). */
+  wireRegistry: WireRegistry;
 }
 
 interface AdmissionDeps extends GenerateRouteOptions {
@@ -109,12 +142,22 @@ interface AdmissionDeps extends GenerateRouteOptions {
   signal: AbortSignal;
 }
 
-interface AdmittedGeneration {
+/** A generation holding its slot, its daily unit and its ledger row. */
+interface RunningGeneration {
   requestId: string;
   handle: SlotHandle;
   /** The classifier call's provider generation id, when the check actually called the model. */
   policyGenerationId: string | undefined;
 }
+
+/** A generation admitted to wait in line: its daily unit is confirmed but not spent, and it has no
+ *  ledger row until it gets a slot. */
+interface WaitingGeneration {
+  ticket: LineTicket;
+  policyGenerationId: string | undefined;
+}
+
+type AdmittedGeneration = { kind: 'running'; running: RunningGeneration } | { kind: 'waiting'; waiting: WaitingGeneration };
 
 type Admission = { ok: true; admitted: AdmittedGeneration } | { ok: false; refusal: ServiceRefusal };
 
@@ -179,6 +222,8 @@ export function makeGenerateRoute(pipeline: Pipeline, usageStore: UsageStore, op
         pipeline,
         usageStore,
         log: requestLog,
+        requestId,
+        protocolLevel: c.get('protocolLevel'),
         deviceId,
         request: parsed.data,
         requestSignal,
@@ -228,8 +273,19 @@ async function admitGeneration(deps: AdmissionDeps): Promise<Admission> {
     }
   }
 
-  const acquired = slots.acquire('generate', deviceId);
-  if (!acquired.ok) return { ok: false, refusal: slotRefusal(acquired.reason) };
+  const entry = slots.acquireInLine(deviceId);
+  if (entry.kind === 'refused') return { ok: false, refusal: slotRefusal(entry.reason) };
+  if (entry.kind === 'line') {
+    try {
+      return await admitIntoLine(entry.ticket, deps);
+    } catch (err) {
+      // No ledger row counts yet (a refusal's row is refunded before any throw gets here), so
+      // leaving the line (which also gives back a slot handed over meanwhile) is all there is to undo.
+      entry.ticket.leave();
+      throw err;
+    }
+  }
+  const acquired = entry;
   let admittedRequestId: string | undefined;
   try {
     return await admitWithSlot(acquired.handle, deps, (requestId) => {
@@ -281,7 +337,7 @@ async function admitWithSlot(
   deps: AdmissionDeps,
   onAdmitted: (requestId: string) => void,
 ): Promise<Admission> {
-  const { usageStore, config, clock, deviceId, policy, request, signal } = deps;
+  const { usageStore, config, clock, deviceId } = deps;
 
   const unit = await usageStore.admit({
     requestId: deps.requestId,
@@ -293,21 +349,12 @@ async function admitWithSlot(
   });
   if (!unit.ok) {
     handle.release();
-    return { ok: false, refusal: unit.reason === 'device' ? dailyLimitRefusal(clock) : serverBusyCeilingRefusal(clock) };
+    return { ok: false, refusal: unitRefusal(unit.reason, clock) };
   }
   const { requestId } = unit;
   onAdmitted(requestId);
 
-  // Any failure to produce a verdict is `policy_unavailable` (specs/content-policy "The policy
-  // check fails closed"); `cachedPolicy` has already logged it as `unavailable`.
-  let unavailable: PolicyUnavailableError | undefined;
-  const checked = await policy.check(buildGeneratePolicyInput(request), 'generate', signal, deps.log).then(
-    (result): PolicyCheckResult | undefined => result,
-    (err): undefined => {
-      unavailable = err instanceof PolicyUnavailableError ? err : undefined;
-      return undefined;
-    },
-  );
+  const { checked, unavailable } = await checkPolicy(deps);
   if (!checked) {
     if (unavailable?.usage) await usageStore.credit(deviceId, unavailable.usage);
     await usageStore.settle(requestId, { outcome: 'unavailable', failureReason: 'policy_unavailable', usage: unavailable?.usage, now: clock() });
@@ -329,13 +376,106 @@ async function admitWithSlot(
     return { ok: false, refusal: contentPolicyRefusal() };
   }
 
-  return { ok: true, admitted: { requestId, handle, policyGenerationId: checked.generationId } };
+  return { ok: true, admitted: { kind: 'running', running: { requestId, handle, policyGenerationId: checked.generationId } } };
+}
+
+/**
+ * `admitWithSlot` for a generation in line: the daily unit is confirmed without being spent, then
+ * the content policy runs, all with no ledger row — the row, and the unit with it, come only once
+ * the generation gets a slot. Every refusal leaves the line, which also gives back a slot handed
+ * over meanwhile. The classifier's tokens are the device's either way. A content-policy refusal
+ * still gets its `refused` row (`recordLineRefusal`), which spends no unit; an unavailable check
+ * gets none, so its cost has nowhere to land.
+ */
+async function admitIntoLine(ticket: LineTicket, deps: AdmissionDeps): Promise<Admission> {
+  const { usageStore, config, clock, deviceId } = deps;
+
+  const unit = await usageStore.unitAvailable({
+    deviceId,
+    kind: 'generate',
+    now: clock(),
+    deviceLimit: config.limitGenerationsPerDeviceDay,
+    globalLimit: config.limitGenerationsPerDay,
+  });
+  if (!unit.ok) {
+    ticket.leave();
+    return { ok: false, refusal: unitRefusal(unit.reason, clock) };
+  }
+
+  const { checked, unavailable } = await checkPolicy(deps);
+  if (!checked) {
+    if (unavailable?.usage) await usageStore.credit(deviceId, unavailable.usage);
+    ticket.leave();
+    // requestId '' is the resolver's no-ledger sentinel: tokens only, for a call whose usage never arrived.
+    if (unavailable?.generationId && unavailable.usage === undefined) {
+      deps.resolveTracker.track(resolveRequestUsage('', deviceId, [unavailable.generationId], false, resolveDeps(deps)));
+    }
+    return { ok: false, refusal: policyUnavailableRefusal() };
+  }
+  if (checked.usage) await usageStore.credit(deviceId, checked.usage);
+  if (checked.verdict !== 'allow') {
+    ticket.leave();
+    await recordLineRefusal(deps, checked);
+    return { ok: false, refusal: contentPolicyRefusal() };
+  }
+  return { ok: true, admitted: { kind: 'waiting', waiting: { ticket, policyGenerationId: checked.generationId } } };
+}
+
+/**
+ * The ledger row of a generation the content policy refused while every slot was busy: `refused`
+ * for `content_policy`, as a free slot's refusal writes it, with the classifier's cost resolved onto
+ * it. The row goes in through `admit` (whose unit the check before the policy confirmed) and is then
+ * refunded, even when the settle throws, because a generation spends no daily unit until it gets a
+ * slot (beta-1 D8). A ceiling reached since the check leaves no row.
+ */
+async function recordLineRefusal(deps: AdmissionDeps, checked: PolicyCheckResult): Promise<void> {
+  const { usageStore, config, clock, deviceId } = deps;
+  const unit = await usageStore.admit({
+    requestId: deps.requestId,
+    deviceId,
+    kind: 'generate',
+    now: clock(),
+    deviceLimit: config.limitGenerationsPerDeviceDay,
+    globalLimit: config.limitGenerationsPerDay,
+  });
+  if (!unit.ok) return;
+  try {
+    await usageStore.settle(unit.requestId, { outcome: 'refused', failureReason: 'content_policy', usage: checked.usage, now: clock() });
+  } finally {
+    await usageStore.refund(unit.requestId);
+  }
+  const ids = checked.generationId ? [checked.generationId] : [];
+  deps.resolveTracker.track(resolveRequestUsage(unit.requestId, deviceId, ids, true, resolveDeps(deps)));
+}
+
+/** The content policy's verdict, or `checked: undefined` when there is none. Any failure to produce
+ *  a verdict is `policy_unavailable` (specs/content-policy "The policy check fails closed");
+ *  `cachedPolicy` has already logged it as `unavailable`. */
+async function checkPolicy(deps: AdmissionDeps): Promise<{ checked: PolicyCheckResult | undefined; unavailable: PolicyUnavailableError | undefined }> {
+  let unavailable: PolicyUnavailableError | undefined;
+  const checked = await deps.policy.check(buildGeneratePolicyInput(deps.request), 'generate', deps.signal, deps.log).then(
+    (result): PolicyCheckResult | undefined => result,
+    (err): undefined => {
+      unavailable = err instanceof PolicyUnavailableError ? err : undefined;
+      return undefined;
+    },
+  );
+  return { checked, unavailable };
+}
+
+/** The refusal for a daily unit that is not there: the device's own limit, or the global ceiling. */
+function unitRefusal(reason: 'device' | 'global', clock: () => number): ServiceRefusal {
+  return reason === 'device' ? dailyLimitRefusal(clock) : serverBusyCeilingRefusal(clock);
 }
 
 interface StreamDeps extends GenerateRouteOptions {
   pipeline: Pipeline;
   usageStore: UsageStore;
   log: ServerLogger;
+  /** The request's id: a generation that waited in line inserts its ledger row under it. */
+  requestId: string;
+  /** The client's protocol level (`c.get('protocolLevel')`) the events this route makes go out at. */
+  protocolLevel: number;
   deviceId: string;
   request: GenerateRequest;
   requestSignal: AbortSignal;
@@ -352,7 +492,7 @@ interface StreamEnding {
 }
 
 function openGenerationStream(deps: StreamDeps): ReadableStream<Uint8Array> {
-  const { pipeline, usageStore, deviceId, request, requestSignal, admitted, inFlight } = deps;
+  const { requestSignal, admitted, inFlight } = deps;
 
   // One AbortController per request, wired to every cancellation surface: the SSE stream's own
   // cancel(), the request's Request.signal, and a drain's abortAll(). abort() is idempotent.
@@ -361,23 +501,39 @@ function openGenerationStream(deps: StreamDeps): ReadableStream<Uint8Array> {
   if (requestSignal.aborted) abort();
   else requestSignal.addEventListener('abort', abort, { once: true });
   const untrack = inFlight.track(abort);
+  // Idempotent: a run's teardown detaches first, and a stream that waited in line again at its end.
+  const detach = (): void => {
+    requestSignal.removeEventListener('abort', abort);
+    untrack();
+  };
+
+  const source =
+    admitted.kind === 'running'
+      ? runGeneration(deps, admitted.running, controller.signal, detach)
+      : waitThenRun(deps, admitted.waiting, controller.signal, detach);
+  return buildSseStream(source, deps.keepaliveMs, abort, deps.onSettled);
+}
+
+/** The pipeline run of a generation holding its slot and its ledger row, ending in the stream's ONE
+ *  teardown: it releases the slot, settles the row and resolves the usage. */
+function runGeneration(deps: StreamDeps, running: RunningGeneration, signal: AbortSignal, detach: () => void): AsyncGenerator<WireEvent> {
+  const { pipeline, usageStore, deviceId, request } = deps;
 
   // The pipeline appends each model call's provider generation id and the run's outcome here, and
   // logs every run line under the request's id (== the ledger row id).
-  const trace: RunTrace = { generationIds: [], requestId: admitted.requestId };
+  const trace: RunTrace = { generationIds: [], requestId: running.requestId };
   const ending: StreamEnding = { creditOwned: false, usage: undefined, terminal: undefined };
 
   const teardown = async (): Promise<void> => {
-    requestSignal.removeEventListener('abort', abort);
-    untrack();
-    admitted.handle.release();
-    const outcome = ledgerOutcome(trace, ending, controller.signal.aborted);
+    detach();
+    running.handle.release();
+    const outcome = ledgerOutcome(trace, ending, signal.aborted);
     const settlement = { outcome, failureReason: ledgerFailureReason(outcome, trace), usage: ending.usage, now: deps.clock() };
     // Retry a transient write once. Ledger cleanup must neither replace a pipeline error nor
     // break a terminal event already delivered to the client, and reconciliation still runs.
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        await usageStore.settle(admitted.requestId, settlement);
+        await usageStore.settle(running.requestId, settlement);
         break;
       } catch (err) {
         deps.log.warn({
@@ -388,19 +544,193 @@ function openGenerationStream(deps: StreamDeps): ReadableStream<Uint8Array> {
         }, 'generation ledger settlement failed');
       }
     }
-    resolveGenerationUsage(deps, trace.generationIds, ending.creditOwned);
+    resolveGenerationUsage(deps, running, trace, ending.creditOwned);
   };
 
-  const run = (): AsyncIterable<GenerationEvent> => (pipeline.run as PipelineRun)(request, controller.signal, trace);
-  const source = forwardEvents(run, controller.signal, ending, (usage) => usageStore.credit(deviceId, usage), teardown);
-  return buildSseStream(source, deps.keepaliveMs, abort, deps.onSettled);
+  const run = (): AsyncIterable<GenerationEvent> => (pipeline.run as PipelineRun)(request, signal, trace);
+  return forwardEvents(run, signal, ending, (usage) => usageStore.credit(deviceId, usage), teardown, (event) => forClient(deps, event));
+}
+
+/** `event` as this request's client may receive it: every event the route sends goes through here,
+ *  at the level the client declared (beta-1 D16 layer 2), so a message above that level reaches it
+ *  only as its lower form or its envelope. */
+function forClient(deps: StreamDeps, event: WireEvent): WireEvent {
+  return eventForLevel(event, deps.protocolLevel, deps.wireRegistry);
+}
+
+/** A generation admitted into the line: its wait, then, once it holds a slot and its daily unit,
+ *  its run. */
+async function* waitThenRun(deps: StreamDeps, waiting: WaitingGeneration, signal: AbortSignal, detach: () => void): AsyncGenerator<WireEvent> {
+  try {
+    const running = yield* takeSlot(deps, waiting, signal);
+    if (running) yield* runGeneration(deps, running, signal, detach);
+  } finally {
+    detach();
+  }
+}
+
+/** How a wait in line ended. */
+type LineEnd = { kind: 'slot'; handle: SlotHandle } | { kind: 'timeout' | 'abort' | 'drain' };
+
+/** How a generation left the line, as its `queue leave` log line names it. */
+type LeaveOutcome = 'slot' | 'timeout' | 'abort' | 'drain' | 'ceiling';
+
+function lineEnd(outcome: LineOutcome): LineEnd {
+  if (outcome.ok) return { kind: 'slot', handle: outcome.handle };
+  return { kind: outcome.reason === 'draining' ? 'drain' : 'abort' };
+}
+
+/** The one terminal event of a generation that leaves the line without running. */
+function lineFailure(reason: string, deps: StreamDeps): WireEvent {
+  const failure: GenerationEvent = { type: 'failure', reason, attempts: 0, diagnostics: [] };
+  return forClient(deps, failure);
+}
+
+/**
+ * Waits in line on the open stream, then spends the daily unit on the slot it gets, which inserts
+ * the ledger row. Returns the running generation, or `undefined` once the stream has had its ending:
+ * nothing for a client that left, otherwise one terminal `failure`. Logs the wait without content:
+ * `queue join` (position, line length) and `queue leave` (outcome, waited time).
+ */
+async function* takeSlot(deps: StreamDeps, waiting: WaitingGeneration, signal: AbortSignal): AsyncGenerator<WireEvent, RunningGeneration | undefined> {
+  const { ticket } = waiting;
+  const lineClock = deps.lineClock ?? HOST_LINE_CLOCK;
+  const joinedAt = lineClock.now();
+  // A ticket already out of the line was handed its slot, or sent away by a drain, during the
+  // checks before the stream opened: it never waited on this stream, so it logs no place in line.
+  const position = ticket.position();
+  if (position > 0) deps.log.info({ scope: 'queue', position, lineLength: deps.slots.counts().queued }, 'queue join');
+  // What a stream whose reader stops mid-wait amounts to.
+  let left: LeaveOutcome = 'abort';
+  let waitedMs: number | undefined;
+  try {
+    const end = position > 0 ? yield* waitInLine(ticket, signal, lineClock, deps) : lineEnd(await ticket.outcome);
+    waitedMs = Math.round(lineClock.now() - joinedAt);
+    if (end.kind !== 'slot') {
+      left = end.kind;
+      if (end.kind !== 'abort') yield lineFailure(serverBusyRefusal().body.hint, deps);
+      return undefined;
+    }
+    if (signal.aborted) {
+      end.handle.release();
+      return undefined;
+    }
+
+    let unit: AdmitResult;
+    try {
+      unit = await deps.usageStore.admit({
+        requestId: deps.requestId,
+        deviceId: deps.deviceId,
+        kind: 'generate',
+        now: deps.clock(),
+        deviceLimit: deps.config.limitGenerationsPerDeviceDay,
+        globalLimit: deps.config.limitGenerationsPerDay,
+      });
+    } catch (err) {
+      end.handle.release();
+      throw err;
+    }
+    // Only the global ceiling can refuse here: the device has run nothing else since its check.
+    if (!unit.ok) {
+      end.handle.release();
+      left = 'ceiling';
+      yield lineFailure(unitRefusal(unit.reason, deps.clock).body.hint, deps);
+      return undefined;
+    }
+    left = 'slot';
+    return { requestId: unit.requestId, handle: end.handle, policyGenerationId: waiting.policyGenerationId };
+  } finally {
+    if (position > 0) {
+      deps.log.info({ scope: 'queue', outcome: left, waitedMs: waitedMs ?? Math.round(lineClock.now() - joinedAt) }, 'queue leave');
+    }
+  }
+}
+
+type LineWake = 'move' | 'tick' | 'timeout' | 'abort';
+
+/** What woke a waiting generation, gathered between the turns of its wait. */
+class LineWakes {
+  readonly pending = new Set<LineWake>();
+  outcome: LineOutcome | undefined;
+  private wake: (() => void) | undefined;
+
+  settle(outcome: LineOutcome): void {
+    this.outcome = outcome;
+    this.wake?.();
+  }
+
+  raise(reason: LineWake): void {
+    this.pending.add(reason);
+    this.wake?.();
+  }
+
+  /** Resolves once something is pending or the ticket's outcome has arrived. */
+  async next(): Promise<void> {
+    if (this.pending.size === 0 && this.outcome === undefined) {
+      await new Promise<void>((resolve) => {
+        this.wake = resolve;
+      });
+    }
+    this.wake = undefined;
+  }
+}
+
+/** What a wake means, in priority order: a client that left, then the ticket's outcome (its slot,
+ *  or a drain), then the timeout; `undefined` to keep waiting. */
+async function lineEndAfterWake(ticket: LineTicket, wakes: LineWakes): Promise<LineEnd | undefined> {
+  if (wakes.pending.has('abort')) return { kind: 'abort' };
+  // Out of the line with its outcome not yet delivered: it is a microtask away.
+  const outcome = wakes.outcome ?? (ticket.position() === 0 ? await ticket.outcome : undefined);
+  if (outcome !== undefined) return lineEnd(outcome);
+  if (wakes.pending.has('timeout')) return { kind: 'timeout' };
+  wakes.pending.clear();
+  return undefined;
+}
+
+/**
+ * The wait itself: `queued{position}` on entry, on every move and at least every
+ * `QUEUED_HEARTBEAT_MS`, until the ticket is handed its slot or sent away by a drain, the client
+ * leaves, or `queueMaxWaitMs` passes. Whatever ends it, a ticket that did not come away with a slot
+ * has left the line, including when the stream's reader stops mid-wait.
+ */
+async function* waitInLine(ticket: LineTicket, signal: AbortSignal, lineClock: LineClock, deps: StreamDeps): AsyncGenerator<WireEvent, LineEnd> {
+  const wakes = new LineWakes();
+  ticket.outcome.then((outcome) => wakes.settle(outcome));
+  const stopMoves = ticket.onMove(() => wakes.raise('move'));
+  const onAbort = (): void => wakes.raise('abort');
+  signal.addEventListener('abort', onAbort, { once: true });
+  if (signal.aborted) wakes.raise('abort');
+  const stopTimeout = lineClock.setTimer(deps.config.queueMaxWaitMs, () => wakes.raise('timeout'));
+  let stopTick = (): void => undefined;
+  let end: LineEnd | undefined;
+  try {
+    while (end === undefined) {
+      const position = ticket.position();
+      if (position > 0 && !wakes.pending.has('abort')) {
+        stopTick();
+        stopTick = lineClock.setTimer(QUEUED_HEARTBEAT_MS, () => wakes.raise('tick'));
+        const queued: GenerationEvent = { type: 'queued', position };
+        yield forClient(deps, queued);
+      }
+      await wakes.next();
+      end = await lineEndAfterWake(ticket, wakes);
+    }
+    return end;
+  } finally {
+    stopMoves();
+    stopTick();
+    stopTimeout();
+    signal.removeEventListener('abort', onAbort);
+    if (end?.kind !== 'slot') ticket.leave();
+  }
 }
 
 /**
  * Forwards the pipeline's events and runs `teardown` exactly once, when iteration ends for any
  * reason. Nothing is forwarded once the request was aborted, and nothing after the first terminal
  * event, so a stream carries at most one terminal and none after an abort. A `usage` event is
- * credited before it is forwarded, which is before the terminal event.
+ * credited before it is forwarded, which is before the terminal event. Every event goes out through
+ * `toClient`, at the client's level, like every event this route makes.
  */
 async function* forwardEvents(
   run: () => AsyncIterable<GenerationEvent>,
@@ -408,7 +738,8 @@ async function* forwardEvents(
   ending: StreamEnding,
   credit: (usage: Usage) => Promise<void>,
   teardown: () => Promise<void>,
-): AsyncGenerator<GenerationEvent> {
+  toClient: (event: WireEvent) => WireEvent,
+): AsyncGenerator<WireEvent> {
   try {
     for await (const event of run()) {
       if (event.type === 'usage') {
@@ -418,7 +749,7 @@ async function* forwardEvents(
       }
       if (signal.aborted) return;
       if (event.type === 'result' || event.type === 'failure') ending.terminal = event.type;
-      yield event;
+      yield toClient(event);
       if (ending.terminal) return;
     }
   } finally {
@@ -449,20 +780,35 @@ function ledgerOutcome(trace: RunTrace, ending: StreamEnding, aborted: boolean):
  * the classifier's tokens were credited when the check returned, so they never go through
  * reconciliation a second time.
  */
-function resolveGenerationUsage(deps: StreamDeps, pipelineIds: readonly string[], creditOwned: boolean): void {
-  const { admitted, deviceId, resolveTracker } = deps;
-  const { requestId, policyGenerationId } = admitted;
+function resolveGenerationUsage(deps: StreamDeps, running: RunningGeneration, trace: RunTrace, creditOwned: boolean): void {
+  const { deviceId, resolveTracker } = deps;
+  const { requestId, policyGenerationId } = running;
   const rDeps = resolveDeps(deps);
+  const pipelineIds = trace.generationIds;
+  const pipelineCredited = creditedPipelineCalls(pipelineIds, trace.uncreditedGenerationIds, creditOwned);
 
   if (policyGenerationId === undefined) {
-    resolveTracker.track(resolveRequestUsage(requestId, deviceId, pipelineIds, creditOwned, rDeps));
+    resolveTracker.track(resolveRequestUsage(requestId, deviceId, pipelineIds, pipelineCredited, rDeps));
     return;
   }
   resolveTracker.track(resolveRequestUsage(requestId, deviceId, [policyGenerationId, ...pipelineIds], true, rDeps));
-  if (!creditOwned && pipelineIds.length > 0) {
+  if (pipelineCredited !== true && pipelineIds.length > 0) {
     // requestId '' is the resolver's no-ledger sentinel: tokens only, the cost is recorded above.
-    resolveTracker.track(resolveRequestUsage('', deviceId, pipelineIds, false, rDeps));
+    resolveTracker.track(resolveRequestUsage('', deviceId, pipelineIds, pipelineCredited, rDeps));
   }
+}
+
+/** Which pipeline calls' tokens were credited in-stream, in `resolveRequestUsage`'s terms: none
+ *  without a `usage` event; all of them when it carries every call; otherwise the set it carries,
+ *  leaving out the calls that failed before their usage arrived (a retried attempt, beta-1 D10). */
+function creditedPipelineCalls(
+  pipelineIds: readonly string[],
+  uncredited: readonly string[] | undefined,
+  creditOwned: boolean,
+): boolean | ReadonlySet<string> {
+  if (!creditOwned) return false;
+  if (uncredited === undefined || uncredited.length === 0) return true;
+  return new Set(pipelineIds.filter((id) => !uncredited.includes(id)));
 }
 
 function resolveDeps(deps: GenerateRouteOptions & { usageStore: UsageStore }): ResolveDeps {

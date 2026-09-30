@@ -1,0 +1,8 @@
+# fix-8b (producer-side tile-colour test), implementer, Sonnet
+
+- **What:** Task instructed to typecheck the test file with a scratch tsconfig extending root, `include:[]`/`exclude:[]`, `files` set to the one file. **Mechanism:** root tsconfig excludes `src/host/launcher/test` entirely (it's validated by esbuild-running, not tsc), so this scratch config is the only way to get a real tsc pass on this file without fighting the exclude list. **Verdict:** NEUTRAL — worked as prescribed, no surprises. **Cost:** ~1 min. **Evidence:** `npx tsc -p scratch.tsconfig.json --noEmit` produced no output.
+- **What:** Red-check via local revert-rebuild-restore of a generated-output-adjacent script (`build/build.mjs`). **Mechanism:** gitignored generated artifacts (`src/runtime/generated/app-records.ts`) meant the revert/restore cycle never touched git state — only `npm run build` regenerated the file both times, and diffing `build/build.mjs` against `git show HEAD:build/build.mjs` confirmed exact restoration. **Verdict:** CAUGHT-REAL-MISTAKE-class confidence — this is exactly the kind of red-check that would have caught chain-8's original gap (tileColor never reaching the shipped manifest) had it existed then. **Cost:** ~2 min (two rebuilds). **Evidence:** 3 named failures (`tip-splitter/water-counter/style-gallery: expected a declared tileColor...`) plus a pairwise-distinctness failure, then clean restore to 0 failures.
+
+What helped: the background-command polling guidance (run_in_background + a single `until`-loop Bash poll instead of chained sleeps) made waiting for the ~2min gate.sh clean and didn't need a Monitor tool substitute.
+
+Proposal: none — this chain was small and self-contained.

@@ -1,0 +1,23 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: 08 started fresh [[fail]] attempt. Saved ghost needed for Try again.
+- extendedWaitUntil:
+    visible: "Could not produce a buildable app after maximum attempts."
+    timeout: 120000
+- assertVisible: "Try rephrasing"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-ordinary-terminal-before-back"
+- tapOn: "Back to your apps"
+- assertVisible: "Didn’t finish"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-failed-home-before-reopen"
+- tapOn: "${GHOST_TITLE}"
+- assertVisible: "Try again"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-failed-reopened-before-retry"
+- tapOn: "Try again"
+- extendedWaitUntil:
+    visible: "Making it"
+    timeout: 10000
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-ordinary-retry-destination"
+- extendedWaitUntil:
+    visible: "Could not produce a buildable app after maximum attempts."
+    timeout: 120000
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-ordinary-retry-terminal"

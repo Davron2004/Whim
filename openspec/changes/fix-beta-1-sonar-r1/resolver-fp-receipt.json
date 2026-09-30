@@ -1,0 +1,121 @@
+{
+  "project": "Davron2004_Whim",
+  "pullRequest": 137,
+  "date": "2026-09-29",
+  "sourceTip": "a1586b87b55467b5696ef2da5cf4d07abcc45c89",
+  "transition": "falsepositive",
+  "notifications": false,
+  "rationale": "resolver-fp-rationale.md",
+  "result": {
+    "total": 13,
+    "success": 13,
+    "ignored": 0,
+    "failures": 0
+  },
+  "issues": [
+    {
+      "id": "S8",
+      "key": "AaDv2Gn6DHOwsfbTeJiL",
+      "path": "server/src/routes/generate.ts",
+      "line": 448,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S23",
+      "key": "AaDv2Gn6DHOwsfbTeJiQ",
+      "path": "server/src/routes/generate.ts",
+      "line": 792,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S24",
+      "key": "AaDv2Gn6DHOwsfbTeJiS",
+      "path": "server/src/routes/generate.ts",
+      "line": 798,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S26",
+      "key": "AaDv2Gn6DHOwsfbTeJiK",
+      "path": "server/src/routes/generate.ts",
+      "line": 411,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S51",
+      "key": "AaDv2Gm6DHOwsfbTeJiD",
+      "path": "server/src/routes/clarify.ts",
+      "line": 220,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S52",
+      "key": "AaDv2Gm6DHOwsfbTeJiE",
+      "path": "server/src/routes/clarify.ts",
+      "line": 223,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S53",
+      "key": "AaDv2Gm6DHOwsfbTeJiF",
+      "path": "server/src/routes/clarify.ts",
+      "line": 226,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S54",
+      "key": "AaDv2Gm6DHOwsfbTeJiG",
+      "path": "server/src/routes/clarify.ts",
+      "line": 362,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S55",
+      "key": "AaDv2Gm6DHOwsfbTeJiH",
+      "path": "server/src/routes/clarify.ts",
+      "line": 394,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S56",
+      "key": "AaDv2Gn6DHOwsfbTeJiI",
+      "path": "server/src/routes/generate.ts",
+      "line": 364,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S57",
+      "key": "AaDv2Gn6DHOwsfbTeJiJ",
+      "path": "server/src/routes/generate.ts",
+      "line": 375,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S58",
+      "key": "AaDv2Gn6DHOwsfbTeJiR",
+      "path": "server/src/routes/generate.ts",
+      "line": 795,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S59",
+      "key": "AaDv2Gl8DHOwsfbTeJiC",
+      "path": "server/src/routes/rewrite.ts",
+      "line": 339,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    }
+  ]
+}

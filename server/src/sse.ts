@@ -10,20 +10,21 @@
  * Keepalives are `:` comment lines emitted at an injectable interval while waiting for events
  * (off when keepaliveMs is 0/undefined).
  */
-import type { GenerationEvent } from '@whim/contract';
+import type { WireEvent } from './wire-level';
 
 const enc = new TextEncoder();
 
-function eventFrame(event: GenerationEvent, id: number): string {
+function eventFrame(event: WireEvent, id: number): string {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\nid: ${id}\n\n`;
 }
 
 const KEEPALIVE_FRAME = ': keepalive\n\n';
 
 /**
- * Build a web `ReadableStream<Uint8Array>` from an `AsyncIterable<GenerationEvent>`.
+ * Build a web `ReadableStream<Uint8Array>` from an `AsyncIterable<WireEvent>`.
  *
- * @param source      - The event source to drain.
+ * @param source      - The event source to drain: `GenerationEvent`s, or what `wire-level.ts`
+ *                      made of them for the client's protocol level.
  * @param keepaliveMs - Emit a keepalive comment every N ms while the stream is open.
  *                      0 or undefined = disabled.
  * @param onCancel    - Invoked (in addition to the keepalive cleanup) when the consumer cancels
@@ -35,7 +36,7 @@ const KEEPALIVE_FRAME = ': keepalive\n\n';
  *                      can log "this request finished" without a line per SSE frame.
  */
 export function buildSseStream(
-  source: AsyncIterable<GenerationEvent>,
+  source: AsyncIterable<WireEvent>,
   keepaliveMs?: number,
   onCancel?: () => void,
   onSettled?: () => void,

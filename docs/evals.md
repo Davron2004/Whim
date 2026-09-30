@@ -131,3 +131,17 @@ Repeat the two commands for every roster, then compare the benchmark timings and
 per-case Tier-A/B results. `run --generate` remains the corpus-eval harness's stub-only path; it
 does not replace the flow benchmark for a roster bakeoff. Record the chosen roster in the
 append-only decision log rather than treating temporary reports as the decision record.
+
+## Measuring a clarify rate
+
+One flow benchmark run is one sample of a stochastic clarify call. To measure how often clarify
+answers `limit` for a prompt, run each case several times and stop after clarify, so no run pays
+for a build:
+
+```sh
+node server/flowbench.mjs --url <server> --eval-set <set> --repeat 10 --stop-after clarify --json <report.json>
+```
+
+Each run uses a fresh device id. The Markdown and `summary.tallies` in the JSON give, per case,
+how many runs clarify answered with a `limit`, with questions, with no question, or with a failure.
+`--save-sources` is refused with `--repeat` above 1 and with `--stop-after clarify`.

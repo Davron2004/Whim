@@ -1,0 +1,4 @@
+appId: com.anycognition.whim
+---
+- tapOn: "Build it"
+- waitForAnimationToEnd

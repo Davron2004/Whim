@@ -2,7 +2,7 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { button, press, renderScreen, unmountScreen, textOf } from './react-screen';
-import { hardwareBack, backListenerCount } from './native-host';
+import { finishAnimations, hardwareBack, backListenerCount } from './native-host';
 import { COPY } from '../copy';
 import type { ScreenKind } from '../screen-exits';
 import type { InstalledApp } from '../app-index';
@@ -113,6 +113,7 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
     try {
       const orb = tree.root.findAll(node => node.type === 'Pressable' && typeof node.props.onPress === 'function')[0];
       await press(orb);
+      await TestRenderer.act(async () => { finishAnimations(); });
       await press(tree.root.find(node => node.type === 'Pressable' && textOf(node).endsWith(COPY.orbActionHome)));
       h.eq(leaves, 1, 'orb Home invokes the exit callback');
     } finally { await unmountScreen(tree); }

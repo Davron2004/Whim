@@ -1,0 +1,13 @@
+# iOS final acceptance plan
+
+Target: `469C2821-24D0-4FF4-B72D-DCDB9184048D` only, after the root supplies app build 391705 and an explicit simulator lease. This folder is a draft in the worktree; copy the final evidence to the main-tree `acceptance/ios-4/` only after that lease.
+
+The baseline shows the failure clearly: row 4's editor was y562-625 while the visible viewport ended at y409 and the keyboard began at y546. It accepted text but was entirely hidden. The final run will save screenshots and Maestro hierarchies with visible bounds for each keyboard state.
+
+1. Run the existing serial compose, clarify, continue, plan, and last-row flows. On the first autofocus, after typing, and after Done then refocus, record the editor, Cancel, Save, Build it, keyboard top, and scroll viewport bounds. The field plus both actions must sit above the keyboard and the pinned Build control. Done must retain the unsaved draft. With the keyboard up, exercise Cancel and Save separately and capture their resulting plan state.
+2. In the same prompt attempt, use the first available select-one choice and an available Other field. Capture the focused Other field, Next, and keyboard bounds, then verify the select-one pill responds while the keyboard remains up. Do not create another production request only to force a different question shape; record an absent Other option as an observed coverage limit.
+3. Build the plan once, then reuse the delivered app for Home long-press actions, History navigation and confirmation actions, the running-app orb and report sheet. Capture action labels and accessibility hierarchy: scrim remains a sibling control and every row/action is independently exposed. In the report sheet, verify the draft field and Send/Cancel stay above the keyboard, and that scrim dismissal still closes it.
+4. Inspect the release Settings screen for margins, helper copy, and Back. It has no Advanced server override, so do not treat the missing address field as a defect. Use an existing failure surface for Try again if present; do not manufacture a production failure. Use a weather-style request for the limit result only if the current run has not already consumed that coverage, and record every production request made.
+5. Do not use XCTest/Maestro drag output as evidence for normal GUI drag. The interactive drag finding remains unverified unless a normal Simulator GUI action becomes available.
+
+Expected production traffic: one clarify/rewrite path for the keyboard and Clarify checks, one generation from that plan, and at most one additional clarify path for a limit result. Record actual request counts in the final evidence note.

@@ -1,0 +1,34 @@
+{
+  "setId": "beta-1-limits",
+  "visibility": "visible",
+  "cases": [
+    {
+      "caseId": "weather-p1",
+      "appSlug": "habit-tracker",
+      "prompt": "a weather app that tells me whether to bike or take the train today",
+      "expectation": "Core needs live data. After D9: clarify answers limit with no questions, and no build is spent. appSlug is a placeholder: the tier-0 corpus has no weather slug, and flowbench does not score by slug.",
+      "assertions": [{ "english": "the app renders without throwing an error", "kind": "renders-without-error" }]
+    },
+    {
+      "caseId": "weather-p2",
+      "appSlug": "habit-tracker",
+      "prompt": "show me today's weather forecast for my city",
+      "expectation": "Core needs live data. After D9: clarify answers limit with no questions. appSlug is a placeholder, as in weather-p1.",
+      "assertions": [{ "english": "the app renders without throwing an error", "kind": "renders-without-error" }]
+    },
+    {
+      "caseId": "roommate-ping-p1",
+      "appSlug": "chore-rotation",
+      "prompt": "a chore rotation for my roommates that pings whoever's turn it is on their phone",
+      "expectation": "Buildable core, impossible extra (other people's devices). After D9: no clarify option offers pinging, the plan says it is left out, and the built app never claims it pinged anyone.",
+      "assertions": [{ "english": "the app renders without throwing an error", "kind": "renders-without-error" }]
+    },
+    {
+      "caseId": "roommate-ping-p2",
+      "appSlug": "chore-rotation",
+      "prompt": "split chores with my roommates and send each of them a reminder notification when they fall behind",
+      "expectation": "Buildable core, impossible extras (other devices, notifications while closed). After D9: neither extra is offered in clarify, and the plan says both are left out.",
+      "assertions": [{ "english": "the app renders without throwing an error", "kind": "renders-without-error" }]
+    }
+  ]
+}

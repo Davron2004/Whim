@@ -21,14 +21,23 @@ import type {
 } from '@whim/contract';
 import { scanStorageSurface } from '../../../checks/index';
 import type { StorageSurface } from '../../../checks/index';
+import type { DiagnosticKind } from '../../../checks/contract';
 import { burnedIdFloor } from '../../../src/host/storage-engine/schema';
 import type { AppliedSchema } from '../../../src/host/storage-engine/schema';
-import { isCreditExhaustedError, type ModelCallLabel, type ModelClient, type ModelMessage, type ModelRoster, type RoleSetting } from './model';
+import {
+  isCreditExhaustedError,
+  isUpstreamModelFailure,
+  type ModelCallLabel,
+  type ModelClient,
+  type ModelMessage,
+  type ModelRoster,
+  type RoleSetting,
+} from './model';
 import type { PromptInputs } from './prompts/inputs';
 import { buildGenerateMessages, buildPlanMessages, buildRepairMessages } from './prompts';
 import { type Plan, parsePlan, validatePlan } from './plan';
 import { unwrapSourceFence } from './source-block';
-import type { Summariser } from './summarise';
+import { claimsNoChange, neutralSummary, type SourceChange, type Summariser, type SummariserInput } from './summarise';
 import type { TerminalFailureCode } from './failure-codes';
 import { invalidateCreditCache } from '../admission/credit';
 import { log, type ServerLogger } from '../logger';
@@ -132,9 +141,17 @@ export interface RunInput {
  *  design D12) — the machine, not the stage, decides whether to deliver it or keep repairing, based
  *  on `diagnostics[].severity` (design D6). */
 export type RunOutcome =
-  | { contained: false; diagnostics: Diagnostic[] }
-  | { contained: null; diagnostics: Diagnostic[] }
+  | { contained: false; diagnostics: Diagnostic[]; verdict: RunVerdict<'breach'> }
+  | { contained: null; diagnostics: Diagnostic[]; verdict: RunVerdict<'unobserved'> }
   | { contained: true; diagnostics: Diagnostic[]; record: WireAppRecord };
+
+/** A non-affirmative verdict, content-free (beta-1 D11): which one, and the closed diagnostic kind
+ *  of the check that tripped it. Logged once with the run's terminal failure, never fed back to
+ *  the model, and never carrying source, DOM or console text. */
+export interface RunVerdict<K extends 'breach' | 'unobserved' = 'breach' | 'unobserved'> {
+  kind: K;
+  check: DiagnosticKind;
+}
 
 export interface RunStage {
   run(input: RunInput, signal?: AbortSignal): Promise<RunOutcome> | RunOutcome;
@@ -147,6 +164,10 @@ export type RunTraceOutcome = 'delivered' | 'failed' | 'expired' | 'aborted';
  *  generation id as it resolves. A stub that ignores it stays conforming. */
 export interface RunTrace {
   generationIds: string[];
+  /** The ids, among `generationIds`, of model calls that failed before their usage arrived (a
+   *  retried attempt among them, beta-1 D10). The run's `usage` event does not carry their tokens,
+   *  so the caller reconciles those from the provider. Absent while every call's usage arrived. */
+  uncreditedGenerationIds?: string[];
   /** The request this run serves (`x-whim-request-id`, also its ledger row id). Set by the caller
    *  before the run starts; every run log line carries it as `requestId`. */
   requestId?: string;
@@ -214,7 +235,9 @@ export const CONTAINMENT_FAILURE_REASON = 'This app could not be safely run and 
 /** The unobserved-verdict reason (design D6, settled copy — verbatim). Deliberately NOT
  *  `CONTAINMENT_FAILURE_REASON`: that sentence asserts a breach we did not observe. This one says
  *  only that we could not verify the run, and points at the device's existing one-tap "Try again"
- *  rather than promising an automatic retry (design D3 declines to add one). */
+ *  rather than promising an automatic retry: an unverified candidate is never re-run (design D3).
+ *  The run's one automatic retry is a generate or repair turn resent once after a provider failure
+ *  (`runModelTurn`, beta-1 D10), which voids that turn's partial output and re-runs no candidate. */
 export const UNVERIFIED_RUN_REASON = "We couldn't verify this app ran safely. Please try again.";
 export const GENERIC_INTERNAL_ERROR_REASON = 'Something went wrong while generating this app. Please try again.';
 /** Design D13, verbatim. */
@@ -295,19 +318,50 @@ function logStage(state: RunState, stage: string, status: string, attempt?: numb
   state.log.info({ stage, status, ...(attempt !== undefined ? { attempt } : {}) }, 'stage');
 }
 
-/** Logs a model stream's rejected `usage`/`id` promise before re-throwing it, at the exact point
- *  `runModelTurn` would otherwise `throw settledUsage.error;` / `throw settledId.error;` — never
- *  called from inside the delta iteration loop (design D5 scope). */
-function throwLoggedModelCallFailure(state: RunState, which: 'usage' | 'id', error: unknown): never {
+/** Logs a model stream's rejected `usage`/`id` promise at the point it is observed, before the
+ *  turn reports the failure — never called from inside the delta iteration loop (design D5 scope). */
+function logModelCallFailure(state: RunState, which: 'usage' | 'id', error: unknown): void {
   state.log.error(
     {
       which,
-      errorClass: error instanceof Error ? error.constructor.name : typeof error,
+      errorClass: errorClassOf(error),
       detail: error instanceof Error ? error.message : String(error),
     },
     'model call failed',
   );
-  throw error;
+}
+
+function errorClassOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/** How many times a generate or repair turn is resent after an upstream failure (beta-1 D10). */
+const MODEL_TURN_RETRIES = 1;
+
+/** One model call's ending: its text, or the error it failed with and whether it had already
+ *  streamed `token` events (which a resend has to void with `restart`). */
+type TurnAttempt =
+  | { ok: true; text: string; aborted: boolean }
+  | { ok: false; error: unknown; yieldedTokens: boolean };
+
+/** A failed call, with its generation id recorded as uncredited: its usage never arrived, so the
+ *  run's `usage` event cannot carry its tokens (`RunTrace.uncreditedGenerationIds`). An aborted
+ *  call records nothing more: an aborted run emits no `usage`, so every id is reconciled anyway. */
+async function failedAttempt(
+  error: unknown,
+  yieldedTokens: boolean,
+  idResult: Promise<Settled<string | undefined>>,
+  signal: AbortSignal | undefined,
+  trace: RunTrace | undefined,
+): Promise<TurnAttempt> {
+  if (!signal?.aborted && trace) {
+    const settledId = await idResult;
+    if (settledId.ok && settledId.value !== undefined) {
+      trace.uncreditedGenerationIds ??= [];
+      trace.uncreditedGenerationIds.push(settledId.value);
+    }
+  }
+  return { ok: false, error, yieldedTokens };
 }
 
 /** The wire's applied schema, structurally narrowed to the engine's type. The field is a free-form
@@ -511,29 +565,30 @@ type CandidateOutcome =
   | { kind: 'deliver'; record: WireAppRecord }
   | { kind: 'repair'; diagnostics: Diagnostic[]; warningsOnly: boolean }
   | { kind: 'failed'; reason: string; code: TerminalFailureCode }
-  | { kind: 'contained-failure' }
-  | { kind: 'containment-unobserved' };
+  | { kind: 'contained-failure'; verdict: RunVerdict }
+  | { kind: 'containment-unobserved'; verdict: RunVerdict };
 
 /** Maps a non-affirmative containment verdict onto its own terminal outcome — the one place the
  *  three-valued verdict is turned into a candidate outcome. An exhaustive `switch` over the
  *  verdict's literal type (design D8-local): `contained` is the discriminant, so a fourth
  *  `RunOutcome` arm makes this a compile error at the call site instead of silently reusing one of
  *  these two. Never collapse the two — `null` is absence of evidence, `false` is evidence. */
-function unverifiedRunOutcome(contained: false | null): CandidateOutcome {
-  switch (contained) {
+function unverifiedRunOutcome(outcome: Exclude<RunOutcome, { contained: true }>): CandidateOutcome {
+  switch (outcome.contained) {
     case false:
-      return { kind: 'contained-failure' };
+      return { kind: 'contained-failure', verdict: outcome.verdict };
     case null:
-      return { kind: 'containment-unobserved' };
+      return { kind: 'containment-unobserved', verdict: outcome.verdict };
   }
 }
 
 type FailureEvent = Extract<GenerationEvent, { type: 'failure' }>;
 
-/** A run's one terminal: a `result`, or a `failure` with the code the ledger records for it. */
+/** A run's one terminal: a `result`, or a `failure` with the code the ledger records for it and,
+ *  for a containment ending, the verdict its log line names. */
 type Completion =
-  | { terminal: Extract<GenerationEvent, { type: 'result' }>; code?: never }
-  | { terminal: FailureEvent; code: TerminalFailureCode };
+  | { terminal: Extract<GenerationEvent, { type: 'result' }>; code?: never; verdict?: never }
+  | { terminal: FailureEvent; code: TerminalFailureCode; verdict?: RunVerdict };
 
 /** The `failure` terminal each run-ending, non-delivering candidate outcome produces — the one
  *  place a `reason` is chosen. An exhaustive `switch`, so a new terminal outcome cannot be added
@@ -547,15 +602,39 @@ function failureTerminalFor(
   const attempts = state.candidatesProduced;
   switch (outcome.kind) {
     case 'contained-failure':
-      return { terminal: { type: 'failure', reason: CONTAINMENT_FAILURE_REASON, attempts, diagnostics: [] }, code: 'containment_failed' };
+      return {
+        terminal: { type: 'failure', reason: CONTAINMENT_FAILURE_REASON, attempts, diagnostics: [] },
+        code: 'containment_failed',
+        verdict: outcome.verdict,
+      };
     // Terminal on the same terms as a containment failure — an unverified run is not a candidate to
     // iterate on — but with its OWN reason (design D3/D6). No repair attempt is consumed, no repair
     // prompt is built, and the candidate is never re-run.
     case 'containment-unobserved':
-      return { terminal: { type: 'failure', reason: UNVERIFIED_RUN_REASON, attempts, diagnostics: [] }, code: 'run_unverified' };
+      return {
+        terminal: { type: 'failure', reason: UNVERIFIED_RUN_REASON, attempts, diagnostics: [] },
+        code: 'run_unverified',
+        verdict: outcome.verdict,
+      };
     case 'failed':
       return { terminal: { type: 'failure', reason: outcome.reason, attempts, diagnostics: state.diagnostics }, code: outcome.code };
   }
+}
+
+/** Whether the delivered source is byte-identical to the source the request started from
+ *  (beta-1 D13). A request without `app.source` gives nothing to compare with. */
+function sourceChangeOf(request: GenerateRequest, record: WireAppRecord): SourceChange {
+  const before = request.app?.source;
+  if (before === undefined) return 'unknown';
+  return record.source === before ? 'unchanged' : 'changed';
+}
+
+/** A summary may say the app did not change only when its source did not (beta-1 D13, #106);
+ *  anywhere else that claim is replaced by the neutral line. */
+function honestSummary(summary: RunSummary | undefined, input: SummariserInput, state: RunState): RunSummary | undefined {
+  if (summary === undefined || input.sourceChange === 'unchanged' || !claimsNoChange(summary.text)) return summary;
+  state.log.info({ sourceChange: input.sourceChange }, 'no-change summary replaced');
+  return neutralSummary(input);
 }
 
 // ─── The machine ─────────────────────────────────────────────────────────────
@@ -664,7 +743,7 @@ export class GenerationMachine {
   private async *emitCompletion(
     state: RunState,
     signal: AbortSignal | undefined,
-    { terminal, code }: Completion,
+    { terminal, code, verdict }: Completion,
   ): AsyncGenerator<GenerationEvent, void> {
     if (signal?.aborted) return;
     state.budget.beginCompletion();
@@ -674,8 +753,9 @@ export class GenerationMachine {
     if (terminal.type === 'failure') {
       // The closed code, never `terminal.reason`: a plan_failed sentence quotes model-written
       // screen names that echo the prompt, and this line ships to Cloud Logging. The field is
-      // `reason` because the logger redacts any field named `code`.
-      state.log.info({ reason: code }, 'terminal failure');
+      // `reason` because the logger redacts any field named `code`. A containment ending adds its
+      // content-free verdict (beta-1 D11): two closed-vocabulary values, nothing the candidate wrote.
+      state.log.info({ reason: code, ...(verdict ? { verdict: verdict.kind, check: verdict.check } : {}) }, 'terminal failure');
     } else {
       state.log.info('terminal result');
     }
@@ -689,7 +769,13 @@ export class GenerationMachine {
    *  both, never this shared helper. Reasoning deltas surface as `thinking` events (length only,
    *  never the reasoning text) in EVERY turn regardless of `emitTokens`, whenever the role's own
    *  reasoning setting actually streams one: the device needs to know the model is working during
-   *  the plan turn just as much as during generate/repair — it is the silent one otherwise. */
+   *  the plan turn just as much as during generate/repair — it is the silent one otherwise.
+   *
+   *  A generate or repair turn that fails upstream (`isUpstreamModelFailure`: 5xx, 429, network or
+   *  stream error) is sent once more with the same messages (beta-1 D10). When the failed attempt
+   *  had already streamed `token` events, `restart` goes first, so the device voids them. Any other
+   *  failure, a failure after the run was stopped, and the resend's own failure are thrown to
+   *  `endOnThrow` exactly as before. */
   private async *runModelTurn(
     messages: ModelMessage[],
     roleSetting: RoleSetting,
@@ -699,6 +785,27 @@ export class GenerationMachine {
     state: RunState,
     emitTokens: boolean,
   ): AsyncGenerator<GenerationEvent, { text: string; aborted: boolean }> {
+    const retries = label === 'generate' || label === 'repair' ? MODEL_TURN_RETRIES : 0;
+    for (let resends = 0; ; resends++) {
+      const turn = yield* this.streamModelTurn(messages, roleSetting, label, signal, trace, state, emitTokens);
+      if (turn.ok) return { text: turn.text, aborted: turn.aborted };
+      if (resends >= retries || signal?.aborted || !isUpstreamModelFailure(turn.error)) throw turn.error;
+      state.log.info({ role: label, errorClass: errorClassOf(turn.error), restart: turn.yieldedTokens }, 'model turn retried');
+      if (turn.yieldedTokens) yield { type: 'restart' };
+    }
+  }
+
+  /** One model call of a turn: `runModelTurn`'s stream consumption, reporting a failure instead of
+   *  throwing it so the turn can decide whether to resend. */
+  private async *streamModelTurn(
+    messages: ModelMessage[],
+    roleSetting: RoleSetting,
+    label: ModelCallLabel,
+    signal: AbortSignal | undefined,
+    trace: RunTrace | undefined,
+    state: RunState,
+    emitTokens: boolean,
+  ): AsyncGenerator<GenerationEvent, TurnAttempt> {
     const stream = this.deps.model.stream(
       { model: roleSetting.model, messages, reasoning: roleSetting.reasoning, role: label, logger: state.modelLog },
       signal,
@@ -712,22 +819,36 @@ export class GenerationMachine {
       return result;
     });
     let text = '';
-    for await (const delta of stream.deltas) {
-      if (signal?.aborted) return { text, aborted: true };
-      if (delta.kind === 'reasoning') {
-        yield { type: 'thinking', chars: delta.text.length };
-        continue;
+    let yieldedTokens = false;
+    try {
+      for await (const delta of stream.deltas) {
+        if (signal?.aborted) return { ok: true, text, aborted: true };
+        if (delta.kind === 'reasoning') {
+          yield { type: 'thinking', chars: delta.text.length };
+          continue;
+        }
+        text += delta.text;
+        if (emitTokens) {
+          yieldedTokens = true;
+          yield { type: 'token', text: delta.text };
+        }
       }
-      text += delta.text;
-      if (emitTokens) yield { type: 'token', text: delta.text };
+    } catch (error) {
+      return failedAttempt(error, yieldedTokens, idResult, signal, trace);
     }
-    if (signal?.aborted) return { text, aborted: true };
+    if (signal?.aborted) return { ok: true, text, aborted: true };
     const settledUsage = await usageResult;
-    if (!settledUsage.ok) throwLoggedModelCallFailure(state, 'usage', settledUsage.error);
+    if (!settledUsage.ok) {
+      logModelCallFailure(state, 'usage', settledUsage.error);
+      return failedAttempt(settledUsage.error, yieldedTokens, idResult, signal, trace);
+    }
     state.usage = sumUsage(state.usage, settledUsage.value);
     const settledId = await idResult;
-    if (!settledId.ok) throwLoggedModelCallFailure(state, 'id', settledId.error);
-    return { text, aborted: signal?.aborted ?? false };
+    if (!settledId.ok) {
+      logModelCallFailure(state, 'id', settledId.error);
+      return { ok: false, error: settledId.error, yieldedTokens };
+    }
+    return { ok: true, text, aborted: signal?.aborted ?? false };
   }
 
   private resolvePlan(text: string, request: GenerateRequest): { plan?: Plan; failureReason?: string } {
@@ -946,21 +1067,19 @@ export class GenerationMachine {
     const summariser = this.deps.summariser;
     if (!summariser || signal?.aborted) return undefined;
     const capabilities = record.manifest.capabilities;
+    const input: SummariserInput = {
+      prompt: request.prompt,
+      isEdit: request.app !== undefined,
+      appName: record.name,
+      capabilities: Array.isArray(capabilities) ? capabilities.filter((c): c is string => typeof c === 'string') : [],
+      attempts: state.candidatesProduced,
+      diagnostics: [...state.diagnostics],
+      sourceChange: sourceChangeOf(request, record),
+    };
     try {
-      const result = await summariser.summarise(
-        {
-          prompt: request.prompt,
-          isEdit: request.app !== undefined,
-          appName: record.name,
-          capabilities: Array.isArray(capabilities) ? capabilities.filter((c): c is string => typeof c === 'string') : [],
-          attempts: state.candidatesProduced,
-          diagnostics: [...state.diagnostics],
-        },
-        signal,
-        state.modelLog,
-      );
+      const result = await summariser.summarise(input, signal, state.modelLog);
       if (result.usage) state.usage = sumUsage(state.usage, result.usage);
-      return result.summary;
+      return honestSummary(result.summary, input, state);
     } catch (err) {
       // The summariser's failure still cannot fail the run — but a `402` is authoritative about
       // the operator's credit wherever it is raised, so the next admission must re-query rather
@@ -1075,7 +1194,7 @@ export class GenerationMachine {
     if (runOutcome.contained !== true) {
       logStage(state, 'run', 'done', attemptField.attempt);
       yield { type: 'stage', stage: 'run', status: 'done', ...attemptField };
-      return unverifiedRunOutcome(runOutcome.contained);
+      return unverifiedRunOutcome(runOutcome);
     }
 
     yield* this.emitDiagnosticsAndDone(runOutcome.diagnostics, 'run', attemptField, state, signal);

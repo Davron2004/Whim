@@ -3,13 +3,40 @@
 import { DatabaseSync } from 'node:sqlite';
 
 const stores = new Map<string, Map<string, string>>();
+type WriteFailure = (input: Readonly<{ id: string; key: string; value: string }>) => boolean;
+let writeFailure: WriteFailure | undefined;
+type RemovalFailure = (input: Readonly<{ id: string; key: string }>) => 'throw' | 'return-false' | undefined;
+let removalFailure: RemovalFailure | undefined;
+
+/** Test-only fault injection for every MMKV-shaped adapter over the shared named store. */
+export function failNativeStorageWritesWhen(predicate: WriteFailure): () => void {
+  const previous = writeFailure;
+  writeFailure = predicate;
+  return () => { writeFailure = previous; };
+}
+
+/** Test-only removal faults are independent from set faults and retain the key on either failure. */
+export function failNativeStorageRemovalsWhen(predicate: RemovalFailure): () => void {
+  const previous = removalFailure;
+  removalFailure = predicate;
+  return () => { removalFailure = previous; };
+}
+
 export function createMMKV({ id }: { id: string }) {
   if (!stores.has(id)) stores.set(id, new Map());
   const data = stores.get(id)!;
   return {
     getString: (key: string) => data.get(key),
-    set: (key: string, value: string) => data.set(key, value),
-    remove: (key: string) => data.delete(key),
+    set: (key: string, value: string) => {
+      if (writeFailure?.({ id, key, value })) throw new Error('native storage write failed');
+      data.set(key, value);
+    },
+    remove: (key: string) => {
+      const fault = removalFailure?.({ id, key });
+      if (fault === 'throw') throw new Error('native storage removal failed');
+      if (fault === 'return-false') return false;
+      return data.delete(key);
+    },
     getAllKeys: () => [...data.keys()],
   };
 }
@@ -21,6 +48,8 @@ export const closedDatabases = new Map<string, number>();
 
 export function resetNativeStorage(): void {
   stores.clear();
+  writeFailure = undefined;
+  removalFailure = undefined;
   for (const db of databases.values()) db.close();
   databases.clear();
   closedDatabases.clear();

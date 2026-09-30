@@ -20,7 +20,7 @@ import { check, eq, section } from './harness';
 import { captureLogs } from './log-capture';
 import { runWebSiteTests } from './web-site.suite';
 import { runLoadTestTests } from './loadtest.suite';
-import { TIMED_OUT, machinePipeline, within } from './route-doubles';
+import { PROTOCOL_HEADERS, TIMED_OUT, machinePipeline, within } from './route-doubles';
 import { ScriptedModelClient } from './scripted-model';
 import { readSseResponse } from './sse-reader';
 import { createApp } from '../src/app';
@@ -1093,8 +1093,12 @@ const HEALTH_COMMIT = '0123456789abcdef0123456789abcdef01234567';
 /** The default-configuration `/healthz` body of an image built at HEALTH_COMMIT; `smokeTests` checks
  *  it against the real server's. */
 const DEFAULT_HEALTH = `{"ok":true,"service":"whim-server","commit":"${HEALTH_COMMIT}","minBuild":{"ios":0,"android":0}}`;
+/** The 426 body a pre-protocol build's /v1/generate probe gets: matched by the `x-whim-build:
+ *  382511` header the check sends, ahead of the generic 400 rule below (first glob wins). */
+const PRE_PROTOCOL_GENERATE: StubRule = [`*x-whim-build: 382511*`, 0, '426|application/json|', '{"error":"update_required","hint":"stub"}'];
 const API_UP: readonly StubRule[] = [
   [`*https://${API_HOST}/healthz`, 0, '200|application/json|', DEFAULT_HEALTH],
+  PRE_PROTOCOL_GENERATE,
   [`*https://${API_HOST}/v1/generate`, 0, '400|application/json|', '{}'],
   [`*https://${API_HOST}/healthz/sse`, 0, ': whim-healthz-probe\\n\\n'],
   [`*https://${API_HOST}/beta/signup`, 0, `303|text/plain|https://${WEB_HOST}/beta/thanks`, ''],
@@ -1199,6 +1203,17 @@ function deployPreflightTests(): void {
       writeOperatorFile(sandbox, { [variable]: '0' });
       const run = runScript(sandbox, 'deploy.sh', []);
       check(`deploy.sh refuses ${variable}=0, naming it, as server boot does`, run.status === 1 && run.stderr.includes(variable) && run.stderr.includes('would refuse these values at boot'), run.stderr);
+      eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
+    });
+  }
+
+  // The provider quantizations and the generation line are operator values too (beta-1 D8/D12).
+  for (const [variable, bad] of [['WHIM_PROVIDER_QUANTIZATIONS', 'fp9'], ['WHIM_QUEUE_MAX', '-1'], ['WHIM_QUEUE_MAX_WAIT_MS', '0']] as const) {
+    check(`setup: server boot refuses ${variable}=${bad}`, configRefuses({ [variable]: bad }, variable));
+    withSandbox((sandbox) => {
+      writeOperatorFile(sandbox, { [variable]: bad });
+      const run = runScript(sandbox, 'deploy.sh', []);
+      check(`deploy.sh refuses ${variable}=${bad}, naming it, as server boot does`, run.status === 1 && run.stderr.includes(variable) && run.stderr.includes('would refuse these values at boot'), run.stderr);
       eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
     });
   }
@@ -1387,7 +1402,15 @@ function headOf(sandbox: Sandbox): string {
 function deployFullTests(health: HealthBodies): void {
   section('Deploy scripts: deploy.sh full deploy and rollback');
   withSandbox((sandbox) => {
-    writeOperatorFile(sandbox, { WHIM_MIN_BUILD_ANDROID: '382000', WHIM_USAGE_IDLE_DAYS: '180', WHIM_BETA_LIMIT_PER_CLIENT_HOUR: '200', WHIM_BETA_LIMIT_PER_DAY: '5000' });
+    writeOperatorFile(sandbox, {
+      WHIM_MIN_BUILD_ANDROID: '382000',
+      WHIM_USAGE_IDLE_DAYS: '180',
+      WHIM_BETA_LIMIT_PER_CLIENT_HOUR: '200',
+      WHIM_BETA_LIMIT_PER_DAY: '5000',
+      WHIM_PROVIDER_QUANTIZATIONS: 'fp8,bf16',
+      WHIM_QUEUE_MAX: '0',
+      WHIM_QUEUE_MAX_WAIT_MS: '60000',
+    });
     fullDeployRules(sandbox, true);
     writeRules(sandbox, 'curl', [healthRule(withCommit(health.androidRaised, headOf(sandbox))), ...API_UP, ...PAGES_UP]);
     const run = runScript(sandbox, 'deploy.sh', []);
@@ -1398,6 +1421,11 @@ function deployFullTests(health: HealthBodies): void {
     check('  ... and the operator\'s beta signup limits', config.includes('WHIM_BETA_LIMIT_PER_CLIENT_HOUR=200\n') && config.includes('WHIM_BETA_LIMIT_PER_DAY=5000\n'), config);
     const served = loadServerConfig(Object.fromEntries(envEntries(config)));
     eq('  ... which the server reads as its limits', [served.betaLimitPerClientHour, served.betaLimitPerDay], [200, 5000]);
+    eq(
+      '  ... and the operator\'s quantizations and line, WHIM_QUEUE_MAX=0 kept as the no-line lever',
+      [served.providerQuantizations, served.queueMax, served.queueMaxWaitMs],
+      [['fp8', 'bf16'], 0, 60_000],
+    );
   });
 
   withSandbox((sandbox) => {
@@ -1547,6 +1575,31 @@ function smokeTests(health: HealthBodies): void {
   };
   const defaultRun = smokeAgainst({}, health.defaults);
   eq("smoke passes against the real server's /healthz under the default configuration, run standalone", defaultRun.status, 0);
+  check(
+    '  ... refusing a pre-protocol build (build 382511, no x-whim-protocol) with 426 update_required',
+    defaultRun.stdout.includes('pre-protocol build (no x-whim-protocol) -> 426 update_required'),
+    defaultRun.stdout,
+  );
+
+  // request-envelope beta-1 D16 layer 2: the protocol-level gate, not the minimum-build gate, must
+  // retire a pre-D16 build. A server that answers anything but 426 to this probe fails smoke.
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    writeRules(sandbox, 'gcloud', VM_ANSWERS);
+    writeRules(sandbox, 'dig', DNS_READY);
+    writeRules(sandbox, 'curl', [
+      healthRule(health.defaults),
+      [`*x-whim-build: 382511*`, 0, '400|application/json|', '{}'],
+      ...API_UP.filter((rule) => rule !== PRE_PROTOCOL_GENERATE),
+      ...PAGES_UP,
+    ]);
+    const run = runScript(sandbox, 'smoke.sh', []);
+    check(
+      'red: smoke fails when a pre-protocol build is answered 400 instead of 426, naming it',
+      run.status === 1 && run.stderr.includes("from a pre-protocol build answered 400 '{}', expected 426 update_required"),
+      run.stderr,
+    );
+  });
 
   // specs/server-observability "The server reports which commit it is running".
   const unbuiltRun = smokeAgainst({}, health.unbuilt);
@@ -1921,10 +1974,12 @@ function loadtestDriveTests(): void {
 
   const writeDriveStubs = (sandbox: Sandbox): void => {
     fs.writeFileSync(path.join(sandbox.bin, 'gcloud'), `#!/usr/bin/env bash
+printf '%s\\n' "$@" >"$STUB_DIR/sampler-ssh-args"
 printf '%s' "$$" >"$STUB_DIR/sampler-pid"
 ps -o pgid= -p "$$" | tr -d ' ' >"$STUB_DIR/sampler-pgid"
 heartbeat=0
 trap 'printf "%s" "$$" >"$STUB_DIR/sampler-terminated"; exit 0' TERM
+printf 'cores,4\\n'
 while :; do
   heartbeat=$((heartbeat + 1))
   printf '%s' "$heartbeat" >"$STUB_DIR/sampler-heartbeat"
@@ -1933,6 +1988,7 @@ while :; do
 done
 `, { mode: 0o755 });
     fs.writeFileSync(path.join(sandbox.bin, 'node'), `#!/usr/bin/env bash
+printf '%s\\n' "$@" >"$STUB_DIR/driver-args"
 stats=''
 previous=''
 for arg in "$@"; do [ "$previous" = --stats ] && stats="$arg"; previous="$arg"; done
@@ -1940,10 +1996,11 @@ printf '%s' "$stats" >"$STUB_DIR/driver-stats"
 attempt=0
 while [ ! -s "$STUB_DIR/sampler-pid" ] && [ "$attempt" -lt 100 ]; do attempt=$((attempt + 1)); sleep 0.01; done
 attempt=0
-while [ ! -s "$stats" ] && [ "$attempt" -lt 100 ]; do attempt=$((attempt + 1)); sleep 0.01; done
+while [ "$(wc -l <"$stats" 2>/dev/null || echo 0)" -lt 2 ] && [ "$attempt" -lt 100 ]; do attempt=$((attempt + 1)); sleep 0.01; done
 if [ -s "$stats" ]; then
   printf '%s' "$stats" >"$STUB_DIR/driver-stats-receipt"
-  sed -n '1p' "$stats" >"$STUB_DIR/driver-stats-sample"
+  sed -n '1p' "$stats" >"$STUB_DIR/driver-stats-cores-line"
+  sed -n '2p' "$stats" >"$STUB_DIR/driver-stats-sample"
 fi
 exit "\${STUB_DRIVER_STATUS:-0}"
 `, { mode: 0o755 });
@@ -1955,7 +2012,7 @@ exit "\${STUB_DRIVER_STATUS:-0}"
 
       let samplerPid = 0;
       try {
-        const run = runScript(sandbox, 'loadtest/run.sh', ['drive', '--devices', '2', '--cap', '2'], {
+        const run = runScript(sandbox, 'loadtest/run.sh', ['drive', '--devices', '2', '--cap', '2', '--queue-max', '0'], {
           STUB_DRIVER_STATUS: String(driverStatus),
         });
         samplerPid = Number(stubFile(sandbox, 'sampler-pid'));
@@ -1972,8 +2029,11 @@ exit "\${STUB_DRIVER_STATUS:-0}"
           && samplerStopped
           && stats !== ''
           && statsReceipt === stats
+          && stubFile(sandbox, 'sampler-ssh-args').includes('nproc')
+          && stubFile(sandbox, 'driver-stats-cores-line') === 'cores,4\n'
           && stubFile(sandbox, 'driver-stats-sample') === '1.5,2.5\n'
-          && !fs.existsSync(stats), `${run.stdout}\n${run.stderr}\nstatus=${run.status} sampler=${samplerPid} stopped=${samplerStopped} stats=${stats} receipt=${statsReceipt} exists=${stats !== '' && fs.existsSync(stats)}`);
+          && !fs.existsSync(stats)
+          && stubFile(sandbox, 'driver-args').includes('--cap\n2\n--queue-max\n0\n'), `${run.stdout}\n${run.stderr}\nstatus=${run.status} sampler=${samplerPid} stopped=${samplerStopped} stats=${stats} receipt=${statsReceipt} exists=${stats !== '' && fs.existsSync(stats)}`);
       } finally {
         if (samplerPid === 0) samplerPid = Number(stubFile(sandbox, 'sampler-pid'));
         if (samplerPid > 0) stopTestProcess(samplerPid);
@@ -2275,7 +2335,7 @@ const CREDIT_TEST_DEVICE_ID = 'd4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4';
  *  logged by `generation/machine.ts`'s `endOnThrow`) — plus one `policy_unavailable` refusal, the
  *  filter's red case. */
 async function creditAlertSourceLines(): Promise<Record<string, unknown>[]> {
-  const headers = { 'content-type': 'application/json', 'x-whim-device': CREDIT_TEST_DEVICE_ID };
+  const headers = { 'content-type': 'application/json', 'x-whim-device': CREDIT_TEST_DEVICE_ID, ...PROTOCOL_HEADERS };
   const post = (app: ReturnType<typeof createApp>, route: string, body: unknown): Promise<Response | typeof TIMED_OUT> =>
     within(Promise.resolve(app.request(route, { method: 'POST', headers, body: JSON.stringify(body) })));
 
@@ -2332,6 +2392,7 @@ async function realAlertSourceLines(): Promise<Record<string, unknown>[]> {
     [APP_VERSION_HEADER]: '1.2.0',
     [BUILD_HEADER]: '382000',
     [CONSENT_HEADER]: '2',
+    ...PROTOCOL_HEADERS,
   };
   const post = async (route: string, body: unknown): Promise<number> => {
     const res = await within(Promise.resolve(app.request(route, { method: 'POST', headers, body: JSON.stringify(body) })));
@@ -2362,7 +2423,7 @@ async function planFailureLines(): Promise<Record<string, unknown>[]> {
   try {
     const res = await within(Promise.resolve(app.request('/v1/generate', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-whim-device': 'f5f5f5f5-f5f5-4f5f-8f5f-f5f5f5f5f5f5' },
+      headers: { 'content-type': 'application/json', 'x-whim-device': 'f5f5f5f5-f5f5-4f5f-8f5f-f5f5f5f5f5f5', ...PROTOCOL_HEADERS },
       body: JSON.stringify({ prompt: 'split the Lisbon trip costs' }),
     })));
     if (res === TIMED_OUT) throw new Error('setup: /v1/generate did not answer in time');

@@ -122,4 +122,39 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('launcher: typing a server address in Settings probes the finished address once typing pauses, never a half-typed one', async () => {
+    resetNativeStorage();
+    const kv = createMmkvBackend('whim.launcher');
+    new AppIndex(kv).markSeeded(SEED_VERSION);
+    acceptTerms(kv, '2026-09-18T12:00:00.000Z');
+    grantConsent(kv, '2026-09-18T12:00:00.000Z');
+    saveServerUrl(kv, 'https://s1.example');
+    const clock = captureTimeouts();
+    const originalFetch = globalThis.fetch;
+    const probed: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      if (!String(url).endsWith('/healthz')) throw new Error(`Unexpected request ${url}`);
+      probed.push(String(url));
+      return new Response(JSON.stringify({ service: 'whim-server' }));
+    }) as typeof fetch;
+    let tree: TestRenderer.ReactTestRenderer | undefined;
+    try {
+      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} internalBuild deviceLocale={() => 'en-US'} />);
+      await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onSettings());
+      h.eq(probed, ['https://s1.example/healthz'], 'the saved address was probed once, at startup');
+      const addressField = () => tree!.root.findByType(SettingsScreen).find(node => String(node.type) === 'TextInput');
+      for (const keystroke of ['https://s', 'https://s2', 'https://s2.', 'https://s2.example']) {
+        await TestRenderer.act(async () => addressField().props.onChangeText(keystroke));
+      }
+      h.eq(probed.length, 1, 'typing probes nothing');
+      await TestRenderer.act(async () => clock.fire(600));
+      h.eq(probed.slice(1), ['https://s2.example/healthz', 'https://s2.example/healthz'], 'the pause probes the finished address: the session’s connectivity and Settings’ own check');
+      await TestRenderer.act(async () => tree!.root.findByType(SettingsScreen).props.onBack());
+      h.eq(tree.root.findByType(HomeScreen).props.offline, false, 'the new address is the one the session is online with');
+    } finally {
+      if (tree) await unmountScreen(tree);
+      globalThis.fetch = originalFetch;
+      clock.restore();
+    }
+  });
 }

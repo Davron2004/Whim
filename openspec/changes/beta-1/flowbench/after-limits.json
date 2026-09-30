@@ -1,0 +1,103 @@
+{
+  "setId": "beta-1-limits",
+  "url": "https://api.whim.anycognition.ca",
+  "startedAt": "2026-09-26T02:28:36.359Z",
+  "finishedAt": "2026-09-26T02:28:40.752Z",
+  "cases": [
+    {
+      "caseId": "weather-p1",
+      "appSlug": "habit-tracker",
+      "prompt": "a weather app that tells me whether to bike or take the train today",
+      "deviceId": "31a252f0-db4d-4c6c-9f90-97d1107fc72e",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2409,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data.",
+        "alternative": "a manual weather log where you record conditions and decide for yourself"
+      }
+    },
+    {
+      "caseId": "weather-p2",
+      "appSlug": "habit-tracker",
+      "prompt": "show me today's weather forecast for my city",
+      "deviceId": "d4795379-006a-46a9-bd89-faa3fb6058c7",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2246,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data from the internet.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p1",
+      "appSlug": "chore-rotation",
+      "prompt": "a chore rotation for my roommates that pings whoever's turn it is on their phone",
+      "deviceId": "ae16dfb9-5af6-44b2-8bbd-4c71191fcfe0",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1757,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app can't send pings to other people's phones.",
+        "alternative": "a chore rotation you check on your own phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p2",
+      "appSlug": "chore-rotation",
+      "prompt": "split chores with my roommates and send each of them a reminder notification when they fall behind",
+      "deviceId": "a5631f9c-8e57-4e90-925f-347d649c163c",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1982,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send reminders to other people's phones.",
+        "alternative": "a shared chore tracker on one phone"
+      }
+    }
+  ],
+  "summary": {
+    "phases": {
+      "clarify": {
+        "medianMs": 2114,
+        "maxMs": 2409
+      },
+      "rewrite": {
+        "medianMs": 0,
+        "maxMs": 0
+      },
+      "generate": {
+        "medianMs": 0,
+        "maxMs": 0
+      }
+    },
+    "results": 0,
+    "failures": 0,
+    "limits": 4
+  }
+}

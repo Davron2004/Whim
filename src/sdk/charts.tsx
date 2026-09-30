@@ -46,8 +46,17 @@ const VIEW_H = 50;
 const PAD_X = 4;
 const PAD_TOP = 8;
 const PAD_BOTTOM = 10;
-const LABEL_FONT_SIZE = 5;
 const VALUE_FONT_SIZE = 4.5;
+
+// A bar chart's category labels are HTML, not SVG text, in a row under the plot: SVG text has no
+// width limit, so a long label ran into its neighbours ("GroceriesRentTranspo…"). Each label gets
+// an equal slot and the browser cuts it to that width with an ellipsis. The slots line up with the
+// bars because both divide the same padded width evenly: the row's side padding is PAD_X as a
+// percentage of VIEW_W. The plot's own viewBox drops the label band (PAD_BOTTOM) and keeps a sliver
+// under the baseline, so the plot keeps roughly its old scale above the row.
+const BAR_PAD_BOTTOM = 2;
+const BAR_VIEW_H = VIEW_H - PAD_BOTTOM + BAR_PAD_BOTTOM;
+const LABEL_GUTTER = `calc(${space('xs')} / 2)`;
 
 function ChartFrame({ children }: { children: React.ReactNode }) {
   return React.createElement(
@@ -57,11 +66,11 @@ function ChartFrame({ children }: { children: React.ReactNode }) {
   );
 }
 
-function svgFrame(children: React.ReactNode[]) {
+function svgFrame(children: React.ReactNode[], viewH: number = VIEW_H) {
   return React.createElement(
     'svg',
     {
-      viewBox: `0 0 ${VIEW_W} ${VIEW_H}`,
+      viewBox: `0 0 ${VIEW_W} ${viewH}`,
       preserveAspectRatio: 'none',
       style: { width: '100%', height: '100%', display: 'block' },
     },
@@ -107,7 +116,7 @@ function renderBarChart(data: SeriesPoint[], tone: ChartTone, showValues: boolea
 
   const plotWidth = VIEW_W - PAD_X * 2;
   const plotHeight = VIEW_H - PAD_TOP - PAD_BOTTOM;
-  const baselineY = VIEW_H - PAD_BOTTOM;
+  const baselineY = BAR_VIEW_H - BAR_PAD_BOTTOM;
   const slotWidth = bars.length > 0 ? plotWidth / bars.length : 0;
   const barWidth = slotWidth * 0.6;
 
@@ -143,24 +152,52 @@ function renderBarChart(data: SeriesPoint[], tone: ChartTone, showValues: boolea
         ),
       );
     }
-    marks.push(
-      React.createElement(
-        'text',
-        {
-          key: `label-${i}`,
-          x: barX + barWidth / 2,
-          y: baselineY + 6,
-          fontSize: LABEL_FONT_SIZE,
-          textAnchor: 'middle',
-          fill: mutedColor,
-          style: { fontFamily: FONT },
-        },
-        bar.label,
-      ),
-    );
   });
 
-  return svgFrame(marks);
+  const caption = textSize('caption');
+  const labels = bars.map((bar, i) =>
+    React.createElement(
+      'div',
+      {
+        key: `label-${i}`,
+        style: {
+          flex: '1 1 0',
+          minWidth: 0,
+          // A hair of room each side, so two labels that both fill their slots never touch.
+          paddingLeft: LABEL_GUTTER,
+          paddingRight: LABEL_GUTTER,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          textAlign: 'center',
+          fontFamily: FONT,
+          fontSize: caption.size,
+          lineHeight: caption.line,
+          fontWeight: weight(caption.weight),
+          color: mutedColor,
+        },
+      },
+      bar.label,
+    ),
+  );
+
+  return React.createElement(
+    'div',
+    { style: { display: 'flex', flexDirection: 'column', width: '100%', height: '100%' } },
+    React.createElement('div', { style: { flex: '1 1 0', minHeight: 0 } }, svgFrame(marks, BAR_VIEW_H)),
+    React.createElement(
+      'div',
+      {
+        style: {
+          display: 'flex',
+          flexShrink: 0,
+          paddingLeft: `${(PAD_X / VIEW_W) * 100}%`,
+          paddingRight: `${(PAD_X / VIEW_W) * 100}%`,
+        },
+      },
+      ...labels,
+    ),
+  );
 }
 
 // ── Line (task 2.3) ──────────────────────────────────────────────────────────────────────

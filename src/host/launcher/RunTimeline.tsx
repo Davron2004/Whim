@@ -26,11 +26,13 @@ export interface RunTimelineProps {
   entries: readonly RunJournalEntry[] | null;
   /** The developer-diagnostics gate's verdict, decided by the caller (decision #60(c)). */
   devMode?: boolean;
+  /** The failure reason the caller's screen already states, so the list doesn't repeat it. */
+  shownReason?: string;
 }
 
-export default function RunTimeline({ entries, devMode = false }: Readonly<RunTimelineProps>) {
+export default function RunTimeline({ entries, devMode = false, shownReason }: Readonly<RunTimelineProps>) {
   const p = SHELL_PALETTE;
-  const rows = runTimelineRows(entries ?? [], devMode);
+  const rows = runTimelineRows(entries ?? [], devMode, shownReason);
 
   /** The stage spine reads in the text colour; everything hanging off it is secondary. */
   const rowColor = (row: TimelineRow) => (row.kind === 'stage' ? p.text : p.textMuted);

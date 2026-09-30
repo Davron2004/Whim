@@ -19,8 +19,12 @@
  * longer decides what back means at all: it only forwards the press, once, to the caller's `onBack`
  * — which closes the details sheet if it is open, or otherwise defers to the SAME action as
  * `Leave it running` (`LauncherRoot.tsx`'s build-screen `onBack`, `prompt-flow.ts#buildBackAction`).
- * Cancellation is reachable only from other explicit affordances (a ghost tile's own Cancel), never
- * from this screen's back handling.
+ * Cancellation is reachable only from explicit affordances (a ghost tile's own Cancel, and this
+ * screen's `Cancel build` while the build waits in line), never from this screen's back handling.
+ *
+ * While every build slot is taken the build waits in line (beta-1 D8): the sentence says where it
+ * is in line, no step is live yet, and `Cancel build` sits under `Leave it running`. The first
+ * `stage` event switches the screen to normal progress.
  */
 
 import React from 'react';
@@ -29,15 +33,7 @@ import { RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { buildLivenessLine, buildTitle, COPY } from './copy';
 import { EditingEyebrow } from './flow-chrome';
 import { WorkingLine } from './flow-working';
-import {
-  BUILD_STEPS,
-  buildProgressFraction,
-  buildStepStatuses,
-  currentActionSentence,
-  livenessOf,
-  type RunSignals,
-  type Stage,
-} from './prompt-flow';
+import { BUILD_STEPS, buildProgressView, livenessOf, type RunSignals, type Stage } from './prompt-flow';
 import { SHELL_PALETTE } from './theme';
 import { useSystemBack } from './use-system-back';
 
@@ -51,6 +47,12 @@ export interface BuildStepProps {
   stage: Stage | null;
   /** The stream produced its record and delivery is running — the last named step. */
   delivering: boolean;
+  /** Set while the build waits its turn (the stream's latest event is `queued`, beta-1 D8): the
+   *  screen says where it is in line and offers Cancel beside `Leave it running`. */
+  queuedPosition?: number;
+  /** Cancels the waiting build: the request is aborted and its attempt deleted. Offered only while
+   *  the build is in line. */
+  onCancel?: () => void;
   /** The live attempt's in-memory liveness state, or `null` when the shell has none for this
    *  screen. Derived values are computed from it and `now` per render — the screen never reads the
    *  run journal. */
@@ -76,6 +78,8 @@ export interface BuildStepProps {
 export default function BuildStep({
   stage,
   delivering,
+  queuedPosition,
+  onCancel,
   signals,
   now,
   editing = false,
@@ -84,8 +88,8 @@ export default function BuildStep({
   onShowDetails,
 }: Readonly<BuildStepProps>) {
   const p = SHELL_PALETTE;
-  const statuses = buildStepStatuses(stage, delivering);
-  const pct = buildProgressFraction(stage, delivering);
+  const { statuses, fraction: pct, sentence } = buildProgressView(stage, delivering, queuedPosition);
+  const inLine = queuedPosition !== undefined;
   const liveness = signals === null ? null : livenessOf(signals, now);
   const livenessTone = liveness === 'stalled' ? 'stalled' : 'accent';
 
@@ -102,9 +106,7 @@ export default function BuildStep({
           <View style={[styles.progressFill, { backgroundColor: p.accent, width: `${pct * 100}%` }]} />
         </View>
 
-        <Text style={[TYPE_SCALE.body, styles.current, { color: p.text }]}>
-          {currentActionSentence(stage, delivering)}
-        </Text>
+        <Text style={[TYPE_SCALE.body, styles.current, { color: p.text }]}>{sentence}</Text>
 
         {signals !== null && liveness !== null && (
           <WorkingLine
@@ -141,10 +143,15 @@ export default function BuildStep({
       <TouchableOpacity
         onPress={onBack}
         accessibilityRole="button"
-        style={[styles.leave, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
+        style={[styles.leave, inLine && styles.leaveAboveCancel, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
       >
         <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{COPY.buildLeaveRunning}</Text>
       </TouchableOpacity>
+      {inLine && onCancel && (
+        <TouchableOpacity onPress={onCancel} accessibilityRole="button" style={styles.cancel}>
+          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{COPY.actionCancelBuild}</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -180,4 +187,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // In line, Cancel sits under `Leave it running` as a plain-text action, and takes over the
+  // bottom margin (the update screen's primary + plain-text pair).
+  leaveAboveCancel: { marginBottom: 0 },
+  cancel: { height: 46, marginBottom: SPACING.lg, alignItems: 'center', justifyContent: 'center' },
 });

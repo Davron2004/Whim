@@ -1,0 +1,8 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: filled Compose with ordinary or future/fail/queue prompt; not [[limit]].
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "How much should it hold?"
+    timeout: 30000
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-clarify"

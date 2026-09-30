@@ -221,4 +221,8 @@ export default defineApp({
   initial: 'Home',
   screens: { Home },
   capabilities: [], // Tier-0: manual QA / knip anchor, zero syscalls
+  // Declared, with tip-splitter.app.tsx and water-counter.app.tsx (#48/#52): "Water Counter" and
+  // "Style Gallery" hash to the same appColor(name) palette slot without this. A fuchsia the
+  // palette doesn't hold, so no generated app falls back to it.
+  tileColor: '#a21caf',
 });

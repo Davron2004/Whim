@@ -1,0 +1,57 @@
+{
+  "project": "Davron2004_Whim",
+  "pullRequest": 137,
+  "date": "2026-09-29",
+  "sourceTip": "a1586b87b55467b5696ef2da5cf4d07abcc45c89",
+  "transition": "falsepositive",
+  "notifications": false,
+  "rationale": "launcher-fp-rationale.md",
+  "result": {
+    "total": 5,
+    "success": 5,
+    "ignored": 0,
+    "failures": 0
+  },
+  "issues": [
+    {
+      "id": "S2",
+      "key": "AaDv2GvxDHOwsfbTeJjH",
+      "path": "src/host/launcher/LauncherRoot.tsx",
+      "line": 927,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S5",
+      "key": "AaDv2GusDHOwsfbTeJjF",
+      "path": "src/host/launcher/settings-probe.ts",
+      "line": 107,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S74",
+      "key": "AaDv2GvxDHOwsfbTeJjG",
+      "path": "src/host/launcher/LauncherRoot.tsx",
+      "line": 840,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S76",
+      "key": "AaDv2GvxDHOwsfbTeJjL",
+      "path": "src/host/launcher/LauncherRoot.tsx",
+      "line": 1968,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S83",
+      "key": "AaDv2GvxDHOwsfbTeJjK",
+      "path": "src/host/launcher/LauncherRoot.tsx",
+      "line": 1248,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    }
+  ]
+}

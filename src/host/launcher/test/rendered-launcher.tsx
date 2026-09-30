@@ -16,6 +16,7 @@ import { SEED_VERSION } from '../seed';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import type { AppInfo } from '../app-info';
+import type { SignificantUpdateSheet } from '../age-check';
 import { resetNativeStorage } from './native-storage';
 import { captureTimeouts, renderScreen, unmountScreen } from './react-screen';
 import { testAppInfo } from './client-fixtures';
@@ -53,6 +54,9 @@ export interface LauncherSetup {
   /** Answers the store age check the shell runs before the terms step, as the native module would
    *  (default: `unavailable`, a phone with no signal). */
   ageSignal?: () => Promise<unknown>;
+  /** The platform's significant-change acknowledgment, as the iOS module would answer it
+   *  (default: none, as on Android). */
+  significantUpdate?: SignificantUpdateSheet;
   /** Answers the connectivity probe's `/healthz` (default: healthy, with no `minBuild`). */
   healthz?: () => Response | Promise<Response>;
   /** Answers every request except `/healthz`. */
@@ -156,7 +160,13 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
     const locale = setup.locale ?? 'en-US';
     const ageSignal = setup.ageSignal ?? (() => Promise.resolve('unavailable'));
     tree = await renderScreen(
-      <LauncherRoot appInfo={setup.appInfo ?? testAppInfo} internalBuild={setup.internalBuild ?? true} deviceLocale={() => locale} ageSignal={ageSignal} />,
+      <LauncherRoot
+        appInfo={setup.appInfo ?? testAppInfo}
+        internalBuild={setup.internalBuild ?? true}
+        deviceLocale={() => locale}
+        ageSignal={ageSignal}
+        significantUpdate={setup.significantUpdate}
+      />,
     );
     await body({ tree, kv, sent, probes, paths: () => sent.map((r) => r.path), clock });
   } finally {

@@ -1,0 +1,47 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: Plan from 05/06. DRAFT_MARKER and SAVE_MARKER are fresh plain words.
+# No corrective scroll follows focus: the first-focus capture preserves autofocus geometry.
+- scrollUntilVisible:
+    element: "Progress"
+    direction: DOWN
+    timeout: 10000
+- tapOn: "Progress"
+- waitForAnimationToEnd
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-row-four-first-focus"
+- assertVisible: "Save"
+- assertVisible: "Cancel"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-row-four-before-cancel"
+- tapOn: "Cancel"
+- scrollUntilVisible:
+    element: "What happens when something is done?"
+    direction: DOWN
+    timeout: 10000
+- tapOn: "What happens when something is done?"
+- waitForAnimationToEnd
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-last-row-first-focus"
+- inputText: " ${DRAFT_MARKER}"
+- assertVisible: "Build it"
+- assertVisible: "Save"
+- assertVisible: "Cancel"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-last-row-before-done"
+- tapOn: "Done"
+- waitForAnimationToEnd
+- assertVisible: ".*${DRAFT_MARKER}.*"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-last-row-done-draft"
+- tapOn: ".*${DRAFT_MARKER}.*"
+- waitForAnimationToEnd
+- assertVisible: "Done"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-last-row-refocus-before-cancel"
+- tapOn: "Cancel"
+- waitForAnimationToEnd
+- assertNotVisible: ".*${DRAFT_MARKER}.*"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-last-row-cancelled"
+- tapOn: "What happens when something is done?"
+- inputText: " ${SAVE_MARKER}"
+- assertVisible: "Done"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-last-row-before-save"
+- tapOn: "Save"
+- waitForAnimationToEnd
+- assertVisible: ".*${SAVE_MARKER}.*"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-last-row-saved"

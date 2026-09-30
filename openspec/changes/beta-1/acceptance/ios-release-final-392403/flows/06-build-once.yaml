@@ -1,0 +1,9 @@
+appId: com.anycognition.whim
+---
+# Exactly ONE production generation attempt. Do not rerun if terminal is failure/update/refusal.
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-before-build"
+- tapOn: "Build it"
+- extendedWaitUntil:
+    visible: ".*is ready"
+    timeout: 240000
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-done-before-action"

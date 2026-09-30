@@ -1,0 +1,30 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: real Plan. LAST_ROW is the actual final observed row label, not a guessed label.
+# DRAFT_MARKER/SAVE_MARKER are fresh plain words; first focus gets no corrective scroll.
+- scrollUntilVisible:
+    element: "${LAST_ROW}"
+    direction: DOWN
+    timeout: 10000
+- tapOn: "${LAST_ROW}"
+- waitForAnimationToEnd
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-last-row-first-focus"
+- inputText: " ${DRAFT_MARKER}"
+- assertVisible: "Save"
+- assertVisible: "Cancel"
+- assertVisible: "Build it"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-last-row-before-done"
+- tapOn: "Done"
+- assertVisible: ".*${DRAFT_MARKER}.*"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-done-draft"
+- tapOn: ".*${DRAFT_MARKER}.*"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-refocus-before-cancel"
+- tapOn: "Cancel"
+- assertNotVisible: ".*${DRAFT_MARKER}.*"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-cancelled"
+- tapOn: "${LAST_ROW}"
+- inputText: " ${SAVE_MARKER}"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-before-save"
+- tapOn: "Save"
+- assertVisible: ".*${SAVE_MARKER}.*"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-saved"

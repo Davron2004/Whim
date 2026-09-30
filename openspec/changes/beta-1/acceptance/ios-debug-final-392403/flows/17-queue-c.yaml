@@ -1,0 +1,25 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: C parked at Plan. Root's external A/B helper printed READY_FOR_NATIVE_C.
+# One invocation covers position 2 -> position 1 -> first stage without a second client.
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-queue-c-plan-before-build"
+- tapOn: "Build it"
+- extendedWaitUntil:
+    visible: "You’re in line, 1 build ahead."
+    timeout: 10000
+- assertVisible: "Cancel build"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-queue-c-position-2"
+- extendedWaitUntil:
+    visible: "You’re next in line."
+    timeout: 90000
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-queue-c-position-1"
+- extendedWaitUntil:
+    notVisible: "Cancel build"
+    timeout: 90000
+- assertVisible: "Making it"
+- assertNotVisible: "You’re next in line."
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-queue-c-started"
+- extendedWaitUntil:
+    visible: "Hello App is ready"
+    timeout: 120000
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-queue-c-done"

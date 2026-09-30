@@ -30,35 +30,28 @@ const SCHEMA: SchemaArtifact = {
   },
 };
 
-/** Pull a fix-hint out of a rejected syscall's structured error (the §8.1 shape). */
-function hintOf(e: unknown): string {
-  const detail = (e as { detail?: { hint?: string; kind?: string } } | undefined)?.detail;
-  if (detail && typeof detail.hint === 'string') return detail.hint;
-  const message = (e as { message?: string } | undefined)?.message;
-  return message ?? JSON.stringify(e) ?? 'unknown error';
-}
-
 function Home() {
   const [total, setTotal] = useState(0);
   const [history, setHistory] = useState(0);
-  const [status, setStatus] = useState('loading…');
+  // The line under the title speaks to the person using the app. It changes only once the reads
+  // or the writes have landed, which is what the release upgrade check waits on.
+  const [status, setStatus] = useState('Loading…');
 
   // Load the persisted count + history on mount (the cross-restart proof: this is what shows
   // the count survived a kill).
   useEffect(() => {
     let live = true;
     (async () => {
-      try {
-        const saved = await storage.kv.get('total');
-        const drinks = await storage.records.list('Drinks');
-        if (!live) return;
-        setTotal(typeof saved === 'number' ? saved : 0);
-        setHistory(drinks.length);
-        setStatus('loaded from storage');
-      } catch (e) {
-        if (live) setStatus('load failed: ' + hintOf(e));
-      }
-    })();
+      const saved = await storage.kv.get('total');
+      const drinks = await storage.records.list('Drinks');
+      if (!live) return;
+      setTotal(typeof saved === 'number' ? saved : 0);
+      setHistory(drinks.length);
+      setStatus('Tap a button after each glass.');
+    })().catch(() => {
+      // A read that fails is told to the person on the status line.
+      if (live) setStatus('Couldn’t load your saved glasses.');
+    });
     return () => {
       live = false;
     };
@@ -70,23 +63,28 @@ function Home() {
     setTotal(next); // optimistic; the syscall persists it
     let kvSaved = false;
     let landed = 0;
-    try {
+    const save = async () => {
       await storage.kv.set('total', next);
       kvSaved = true;
       for (let i = 0; i < count; i++) {
         await storage.records.append('Drinks', { at: Date.now() });
         landed++;
       }
-      setHistory((h) => h + landed);
-      setStatus('saved');
-    } catch (e) {
-      // kv.set already landed → `next` is the durable truth, so keep it displayed (reverting
-      // here would diverge from what a reload shows). Only undo the optimistic bump if the kv
-      // write itself never made it to storage.
-      if (!kvSaved) setTotal(previous);
-      if (landed > 0) setHistory((h) => h + landed);
-      setStatus('save failed: ' + hintOf(e));
-    }
+    };
+    await save()
+      .then(() => {
+        setHistory((h) => h + landed);
+        setStatus('Saved.');
+      })
+      .catch(() => {
+        // A write that fails is told to the person on the status line. If kv.set already
+        // landed, `next` is the durable truth, so keep it displayed (reverting here would diverge
+        // from what a reload shows). Only undo the optimistic bump if the kv write itself never
+        // made it to storage.
+        if (!kvSaved) setTotal(previous);
+        if (landed > 0) setHistory((h) => h + landed);
+        setStatus('Couldn’t save that. Try again.');
+      });
   };
 
   return (
@@ -117,4 +115,8 @@ export default defineApp({
   screens: { Home },
   capabilities: ['storage'],
   schema: SCHEMA,
+  // Declared, with tip-splitter.app.tsx and style-gallery.app.tsx (#48/#52): "Water Counter" and
+  // "Style Gallery" hash to the same appColor(name) palette slot without this. A sky the palette
+  // doesn't hold, so no generated app falls back to it.
+  tileColor: '#0369a1',
 });

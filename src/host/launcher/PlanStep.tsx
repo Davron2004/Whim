@@ -9,19 +9,21 @@
  * row, the original prompt and the clarify answers stay exactly as they were
  * (`prompt-flow.ts#updatePlanRow`). Only one row is ever editable at a time. No SDK-specific or
  * engineering-internal detail appears here: the rows are the model's own plain words, rendered
- * through the shared Whim Syntax renderer when not being edited.
+ * through the shared Whim Syntax renderer when not being edited — except a row the user rewrote,
+ * which shows their words as typed, in the body face.
  */
 
-import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useRef, useState } from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import WhimProse from '../ui/whim-prose/WhimProse';
 import { COPY, planHeadline, workingPlanPhrase } from './copy';
 import { BreathingView } from './flow-skeletons';
-import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
+import { EditingEyebrow, FLOW_HEADER_GAP, FlowHeader, PrimaryAction, StepNotice } from './flow-chrome';
 import { WorkingLine } from './flow-working';
+import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
 import { planBackAction, type FlowNotice, type FlowPlanRow } from './prompt-flow';
-import ServiceNotice, { useRetryGate } from './ServiceNotice';
+import { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
 import { useSystemBack } from './use-system-back';
 
@@ -95,6 +97,8 @@ export default function PlanStep({
   // the row's position is the one identity that survives that (`updatePlanRow` uses the same key).
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
+  // The open row, field and Save/Cancel together: what the shell keeps in view while typing.
+  const editingRow = useRef<View>(null);
 
   /** One decision (`planBackAction`, design D4) for both the header `Back` and system back: mid-edit
    *  it cancels the open row instead of leaving the step. */
@@ -123,87 +127,97 @@ export default function PlanStep({
   };
 
   return (
-    <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <FlowHeader step="plan" onBack={handleBack} />
+    <KeyboardShell
+      style={{ backgroundColor: p.bg }}
+      contentContainerStyle={styles.content}
+      header={<FlowHeader step="plan" onBack={handleBack} />}
+      footer={
+        <>
+          <StepNotice notice={notice} />
+          {/* A disabled button under a skeleton is noise — there is nothing to approve yet. The
+              action mounts once the rewrite response has landed; `WorkingLine` is the only liveness
+              element while loading. No validation gate of its own — the retry window is the only
+              thing that can disable it. */}
+          {!loading && <PrimaryAction step="plan" enabled={!gated} editing={editing} onPress={onBuild} />}
+        </>
+      }
+    >
+      {editing && editingName != null && <EditingEyebrow name={editingName} />}
+      <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{planHeadline(editing)}</Text>
+      <Text style={[TYPE_SCALE.caption, styles.subhead, { color: p.textMuted }]}>{COPY.planSubhead}</Text>
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {editing && editingName != null && <EditingEyebrow name={editingName} />}
-        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{planHeadline(editing)}</Text>
-        <Text style={[TYPE_SCALE.caption, styles.subhead, { color: p.textMuted }]}>{COPY.planSubhead}</Text>
-
-        {loading ? (
-          <>
-            <PlanRowsSkeleton color={p.card} />
-            <WorkingLine phrase={workingPlanPhrase(editing)} startedAt={startedAt ?? Date.now()} />
-          </>
-        ) : (
-          rows.map((row, index) => {
-            const key = `${index}:${row.label}`;
-            if (editingIndex === index) {
-              return (
-                <View
-                  key={key}
-                  style={[styles.row, styles.rowEditing, { backgroundColor: p.card, borderColor: p.accent }]}
-                >
-                  {row.label.length > 0 && (
-                    <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{row.label}</Text>
-                  )}
-                  <TextInput
-                    value={draft}
-                    onChangeText={setDraft}
-                    style={[TYPE_SCALE.body, styles.rowInput, { color: p.text }]}
-                    multiline
-                    autoFocus
-                    textAlignVertical="top"
-                  />
-                  <View style={styles.rowActions}>
-                    <TouchableOpacity onPress={cancelEditing} hitSlop={10}>
-                      <Text style={[TYPE_SCALE.controlLabel, { color: p.textMuted }]}>{COPY.cancel}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={saveEditing} disabled={!canSave} hitSlop={10}>
-                      <Text
-                        style={[TYPE_SCALE.controlLabel, { color: canSave ? p.accent : p.textMuted }]}
-                      >
-                        {COPY.planRowSave}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            }
+      {loading ? (
+        <>
+          <PlanRowsSkeleton color={p.card} />
+          <WorkingLine phrase={workingPlanPhrase(editing)} startedAt={startedAt ?? Date.now()} />
+        </>
+      ) : (
+        rows.map((row, index) => {
+          const key = `${index}:${row.label}`;
+          if (editingIndex === index) {
             return (
-              <TouchableOpacity
+              <View
                 key={key}
-                onPress={() => startEditing(index, row.text)}
-                style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+                ref={editingRow}
+                style={[styles.row, styles.rowEditing, { backgroundColor: p.card, borderColor: p.accent }]}
               >
                 {row.label.length > 0 && (
                   <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{row.label}</Text>
                 )}
-                <WhimProse text={row.text} style={[TYPE_SCALE.body, styles.rowText, { color: p.text }]} />
-              </TouchableOpacity>
+                <KeyboardTextInput
+                  value={draft}
+                  onChangeText={setDraft}
+                  style={[TYPE_SCALE.body, styles.rowInput, { color: p.text, backgroundColor: p.card }]}
+                  multiline
+                  autoFocus
+                  textAlignVertical="top"
+                  revealTarget={editingRow}
+                />
+                <View style={styles.rowActions}>
+                  <TouchableOpacity onPress={cancelEditing} hitSlop={10}>
+                    <Text style={[TYPE_SCALE.controlLabel, { color: p.textMuted }]}>{COPY.cancel}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={saveEditing} disabled={!canSave} hitSlop={10}>
+                    <Text
+                      style={[TYPE_SCALE.controlLabel, { color: canSave ? p.accent : p.textMuted }]}
+                    >
+                      {COPY.planRowSave}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             );
-          })
-        )}
+          }
+          return (
+            <TouchableOpacity
+              key={key}
+              onPress={() => startEditing(index, row.text)}
+              style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+            >
+              {row.label.length > 0 && (
+                <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{row.label}</Text>
+              )}
+              <PlanRowText row={row} />
+            </TouchableOpacity>
+          );
+        })
+      )}
 
-        <Text style={[TYPE_SCALE.caption, styles.footer, { color: p.textMuted }]}>{COPY.planFooter}</Text>
-      </ScrollView>
-
-      {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
-
-      {/* A disabled button under a skeleton is noise — there is nothing to approve yet. The
-          action mounts once the rewrite response has landed; `WorkingLine` is the only liveness
-          element while loading. No validation gate of its own — the retry window is the only
-          thing that can disable it. */}
-      {!loading && <PrimaryAction step="plan" enabled={!gated} editing={editing} onPress={onBuild} />}
-    </View>
+      <Text style={[TYPE_SCALE.caption, styles.footer, { color: p.textMuted }]}>{COPY.planFooter}</Text>
+    </KeyboardShell>
   );
 }
 
+/** A plan row's words: the model's through the Whim Syntax renderer, the user's own as typed. */
+function PlanRowText({ row }: Readonly<{ row: FlowPlanRow }>) {
+  const style = [TYPE_SCALE.body, styles.rowText, { color: SHELL_PALETTE.text }];
+  return row.edited ? <Text style={style}>{row.text}</Text> : <WhimProse text={row.text} style={style} />;
+}
+
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  // paddingTop 26: design `Whim Mobile.dc.html:474` — no SPACING counterpart (ruling R9).
-  content: { paddingHorizontal: SPACING.lg, paddingTop: 26, paddingBottom: SPACING.xl },
+  // design `Whim Mobile.dc.html:474` is `padding:26px 22px 0` — 26 has no SPACING counterpart
+  // (ruling R9); the gap below the footer note is the shell footer's 16, above Build it.
+  content: { paddingHorizontal: SPACING.lg, paddingTop: 26 - FLOW_HEADER_GAP, paddingBottom: 0 },
   subhead: { marginTop: SPACING.xs, marginBottom: SPACING.md },
   row: {
     minHeight: PLAN_ROW_MIN_HEIGHT,

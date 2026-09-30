@@ -1,0 +1,105 @@
+/**
+ * ConfirmSheet — the launcher's one confirm step (design `4a`, `Whim Mobile.dc.html:58-68`; README
+ * "In any confirm sheet the safe option is the large button and the consequential action is
+ * demoted to plain text"). History's restore and copy confirms and Settings' "Make a new ID" ask
+ * through it, on both platforms, instead of the system alert.
+ *
+ * A bottom sheet over a dim: the title, the body, whatever the caller adds beneath the body, then
+ * `Cancel` as the large button and the consequential action as plain text under it. A tap on the
+ * dim, and system back, cancel.
+ *
+ * The dim is a SIBLING behind the card, never its parent: a touchable is one accessibility element,
+ * so with the card inside it iOS read the whole sheet as one element and a VoiceOver double-tap ran
+ * the dim's Cancel. Each action is its own labelled button (`SheetModal.tsx`, `Orb.tsx`).
+ */
+import React from 'react';
+import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { COPY } from './copy';
+import { SHELL_PALETTE } from './theme';
+
+/** What a confirm step says: its title and body, and its consequential action's label, idle and
+ *  while it runs. */
+export interface ConfirmSheetContent {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  busyLabel?: string;
+}
+
+export interface ConfirmSheetProps {
+  /** The confirm step to show, or null for none. */
+  confirm: ConfirmSheetContent | null;
+  /** The confirmed action is running: its control says so and takes no more taps. */
+  busy?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  /** Anything more the sheet says, between its body and its buttons. */
+  children?: React.ReactNode;
+}
+
+/** The consequential action's words: its busy label while it runs. */
+const actionLabel = (confirm: ConfirmSheetContent, busy: boolean) => (busy ? (confirm.busyLabel ?? confirm.confirmLabel) : confirm.confirmLabel);
+
+export default function ConfirmSheet({ confirm, busy = false, onCancel, onConfirm, children }: Readonly<ConfirmSheetProps>) {
+  return (
+    <Modal
+      visible={confirm != null}
+      transparent
+      animationType="slide"
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={onCancel}
+    >
+      <SafeAreaProvider>
+        <ConfirmSheetFrame confirm={confirm} busy={busy} onCancel={onCancel} onConfirm={onConfirm}>
+          {children}
+        </ConfirmSheetFrame>
+      </SafeAreaProvider>
+    </Modal>
+  );
+}
+
+function ConfirmSheetFrame({ confirm, busy = false, onCancel, onConfirm, children }: Readonly<ConfirmSheetProps>) {
+  const p = SHELL_PALETTE;
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={[styles.frame, { paddingTop: insets.top + SPACING.md }]}>
+      <Pressable style={styles.scrim} onPress={onCancel} accessibilityRole="none" />
+      <View style={[styles.sheet, { backgroundColor: p.card, paddingBottom: insets.bottom + SPACING.md }]}>
+        {confirm && (
+          <>
+            <Text style={[TYPE_SCALE.screenTitle, { color: p.text }]}>{confirm.title}</Text>
+            <Text style={[TYPE_SCALE.body, { color: p.textMuted, marginTop: SPACING.xs }]}>{confirm.body}</Text>
+            {children}
+            <TouchableOpacity onPress={onCancel} accessibilityRole="button" accessibilityLabel={COPY.cancel} style={[styles.safe, { backgroundColor: p.text }]}>
+              <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.cancel}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={onConfirm}
+              disabled={busy}
+              accessibilityRole="button"
+              accessibilityLabel={actionLabel(confirm, busy)}
+              accessibilityState={{ disabled: busy, busy }}
+              style={[styles.consequential, busy ? styles.consequentialBusy : null]}
+            >
+              <Text style={[TYPE_SCALE.body, { color: p.textMuted }]}>{actionLabel(confirm, busy)}</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  frame: { flex: 1, justifyContent: 'flex-end' },
+  // Its insets define it, so it spans the whole frame behind the card.
+  scrim: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(24,22,20,0.5)' },
+  sheet: { maxHeight: '100%', borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, paddingTop: 24, paddingHorizontal: 24 },
+  safe: { borderRadius: RADIUS.card, height: 56, alignItems: 'center', justifyContent: 'center', marginTop: SPACING.lg },
+  consequential: { height: 46, alignItems: 'center', justifyContent: 'center' },
+  // Opacity, not a shadow or an elevation: `shadow*` renders as nothing on Android.
+  consequentialBusy: { opacity: 0.5 },
+});

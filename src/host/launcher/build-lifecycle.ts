@@ -29,10 +29,10 @@ import type { AppManifest, AppRecord } from '../bridge';
 import type { SchemaArtifact } from '../storage-engine';
 import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
-import type { PendingBuildFailure, PendingBuildRecord, PendingBuildStore } from './pending-builds';
+import type { PendingBuildFailure, PendingBuildRecord, PendingBuildStore, PendingFailureRemedy } from './pending-builds';
 import type { BuildScreen, RunSignals } from './prompt-flow';
 import type { RunJournalStore, RunTerminalCounts } from './run-journal';
-import { accumulateRunAggregates, ghostTileColorFor, workingTitleFromPrompt } from './prompt-flow';
+import { accumulateRunAggregates, ghostTileColorFor, withRestart, withTurnStart, workingTitleFromPrompt } from './prompt-flow';
 import { promptEnvelope } from './prompt-envelope';
 import { liftManifestTileColor } from './manifest-tile-color';
 import { isAtTip } from './history-logic';
@@ -160,8 +160,17 @@ export function journalStreamEvent(
     // also the edge the shell's own repair tally counts, so the timeline's repair-attempt count and
     // the failure screen's can never disagree. A `done` edge is still LIVENESS — it moves the
     // any-frame clock, it just writes nothing.
-    if (event.status === 'start') journal.appendStage(launcherId, event.stage);
+    // A `start` edge also begins the model turn a later `restart` returns to (beta-1 D10).
+    if (event.status === 'start') {
+      journal.appendStage(launcherId, event.stage);
+      return { ...withTurnStart(signals), lastFrameAt: at };
+    }
     return { ...signals, lastFrameAt: at };
+  }
+  if (event.type === 'restart') {
+    // The turn's tokens are void: its counts go back to where it began. No journal entry — the
+    // build carries on as the same build, with nothing to add to its history.
+    return withRestart(signals, at);
   }
   if (event.type === 'token') {
     const aggregates = accumulateRunAggregates(signals.aggregates, event);
@@ -175,9 +184,10 @@ export function journalStreamEvent(
     journal.appendAggregate(launcherId, aggregates);
     return { ...signals, aggregates, lastThinkingAt: at, lastFrameAt: at };
   }
-  // `diagnostic`, `usage`, and the terminal events (handled by the caller, not here) still count
-  // as liveness — the stream is plainly still alive if the server just sent one of these — but
-  // none of them writes a journal entry or moves a counter.
+  // `queued` (the build waiting its turn, beta-1 D8), `diagnostic`, `usage`, and the terminal
+  // events (handled by the caller, not here) still count as liveness — the stream is plainly still
+  // alive if the server just sent one of these — but none of them writes a journal entry or moves
+  // a counter.
   return { ...signals, lastFrameAt: at };
 }
 
@@ -262,6 +272,19 @@ export async function deliverAndSettle(pending: PendingBuildStore, spec: Deliver
   return delivered;
 }
 
+/** Delivery can outlive the attempt that started it. Keep the pending mutation at this awaited
+ * boundary so a same-ID retry can supersede an older delivery without losing its own record. */
+export async function deliverAndSettleIfOwned(
+  pending: PendingBuildStore,
+  spec: DeliverSpec,
+  ownsAttempt: () => boolean,
+): Promise<InstalledApp | undefined> {
+  const delivered = await deliverResult(spec);
+  if (!ownsAttempt()) return undefined;
+  pending.delete(spec.appId);
+  return delivered;
+}
+
 /** The one separator packing the failure screen's hint rows into the record's single
  *  `diagnostics` string and back. Hints are one-line product sentences, so a newline is a
  *  separator no hint can contain. */
@@ -270,10 +293,18 @@ const HINT_SEPARATOR = '\n';
 /** The failure payload persisted on the record: the same plain-English `reason` the screen shows
  *  plus its HINT-ONLY rows — never a `Diagnostic`'s `kind`/`symbol`/`message`, since the record is
  *  read straight back into that same screen. No hints at all writes no field, so "none" and
- *  "absent" stay the same state they are on the wire. */
-export function pendingFailure(reason: string, diagnostics: readonly { hint: string }[]): PendingBuildFailure {
+ *  "absent" stay the same state they are on the wire; no `remedy` (rewording may help) likewise. */
+export function pendingFailure(
+  reason: string,
+  diagnostics: readonly { hint: string }[],
+  remedy?: PendingFailureRemedy,
+): PendingBuildFailure {
   const hints = diagnostics.map((d) => d.hint).filter((hint) => hint.length > 0);
-  return { reason, ...(hints.length > 0 ? { diagnostics: hints.join(HINT_SEPARATOR) } : {}) };
+  return {
+    reason,
+    ...(hints.length > 0 ? { diagnostics: hints.join(HINT_SEPARATOR) } : {}),
+    ...(remedy ? { remedy } : {}),
+  };
 }
 
 /** The failure screen's hint rows rebuilt from a persisted payload — the inverse of
@@ -295,8 +326,25 @@ export function failPendingBuild(
   id: string,
   reason: string,
   diagnostics: readonly { hint: string }[],
+  remedy?: PendingFailureRemedy,
 ): void {
-  pending.setFailed(id, pendingFailure(reason, diagnostics));
+  pending.setFailed(id, pendingFailure(reason, diagnostics, remedy));
+}
+
+/** What reopening a `failed`/`interrupted` record shows. A record an `update` fallback ended opens
+ *  the update screen with its notice while this build is still at or below the protocol level it
+ *  ended on; the notice is the record's reason unless that is the phone's own update line, which
+ *  stands in for a fallback that sent none (the live screen then showed its standard body). Every
+ *  other record, and that one once the build is past its level, opens the failure screen. */
+export type ReopenedRecord = { readonly kind: 'update'; readonly notice?: string } | { readonly kind: 'failure' };
+
+export function reopenedRecord(rec: PendingBuildRecord, protocolLevel: number): ReopenedRecord {
+  const remedy = rec.failure?.remedy;
+  if (remedy?.kind === 'update' && protocolLevel <= remedy.protocolLevel) {
+    const reason = rec.failure?.reason;
+    return { kind: 'update', ...(reason && reason !== COPY.updateRequiredLine ? { notice: reason } : {}) };
+  }
+  return { kind: 'failure' };
 }
 
 /**
@@ -318,7 +366,8 @@ export function refusedGenerateOutcome(isRetry: boolean, detached: boolean): Ref
  * The refusal settlement itself, for the outcome `refusedGenerateOutcome` decided: `'drop'`
  * deletes the record and its journal exactly as a cancel does (no generation took place); `'settle'`
  * writes the journal's terminal entry and persists the record `failed` with the refusal's hint as
- * its reason, the same shape `failPendingBuild` gives any other stream failure. Pure over
+ * its reason (and `remedy`, when rewording can't get past the refusal), the same shape
+ * `failPendingBuild` gives any other stream failure. Pure over
  * `pending`/`journal` — the caller (`LauncherRoot.tsx#handleGenerateRefusal`) still owns releasing
  * its own `liveRef` and refreshing the grid, neither of which this module can see.
  */
@@ -329,6 +378,7 @@ export function settleRefusedGenerate(
   outcome: RefusedGenerateOutcome,
   hint: string,
   counts: RunTerminalCounts,
+  remedy?: PendingFailureRemedy,
 ): void {
   if (outcome === 'drop') {
     dropPendingBuild(pending, id);
@@ -336,7 +386,7 @@ export function settleRefusedGenerate(
     return;
   }
   journal.appendTerminal(id, { failure: { reason: hint, diagnostics: [] }, ...counts });
-  failPendingBuild(pending, id, hint, []);
+  failPendingBuild(pending, id, hint, [], remedy);
 }
 
 /** The ONE deletion path a user can trigger: cancelling an in-flight attempt and dismissing a

@@ -1,12 +1,13 @@
 /** The rendered home grid: what a ghost tile does when tapped and long-pressed, the rebuild pill on
- *  an installed tile, and how a tile's colour and status are painted. */
+ *  an installed tile, how an example is labelled, and how a tile's colour and status are painted. */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { COPY, ghostStateCaption } from '../copy';
 import HomeScreen from '../HomeScreen';
-import AppTile from '../app-tile';
-import { tileColor } from '../tiles';
+import AppTile, { APP_TILE_SIZE } from '../app-tile';
+import { homeGridCellWidth } from '../home-grid';
+import { monogram, tileColor } from '../tiles';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { ghostTileColorFor } from '../prompt-flow';
 import type { InstalledApp } from '../app-index';
@@ -14,13 +15,32 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { STATUS_COLORS } from '../../../sdk/theme';
 import { resetNativeStorage } from './native-storage';
 import { StyleSheet } from './native-host';
-import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen } from './react-screen';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Style = Record<string, unknown>;
 const flat = (node: TestRenderer.ReactTestInstance): Style => StyleSheet.flatten(node.props.style) as Style;
 
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
+const EXAMPLE: InstalledApp = { id: 'tip-splitter', name: 'Tip Splitter', example: true, createdAt: 1, lineageId: 'main', record: { appId: 'tip-splitter', name: 'Tip Splitter', manifest: { capabilities: [], tileColor: '#15803d' } } };
+
+/** The tile's art: the one square filled with the app's own colour. */
+function art(root: TestRenderer.ReactTestInstance, app: Pick<InstalledApp, 'name' | 'record'>): TestRenderer.ReactTestInstance {
+  const fill = tileColor(app.name, app.record.manifest);
+  const squares = root.findAll((n) => n.type === 'View' && flat(n).backgroundColor === fill);
+  if (squares.length !== 1) throw new Error(`expected one tile filled ${fill} for "${app.name}", got ${squares.length}`);
+  return squares[0];
+}
+
+function isInside(node: TestRenderer.ReactTestInstance, ancestor: TestRenderer.ReactTestInstance): boolean {
+  for (let up = node.parent; up; up = up.parent) if (up === ancestor) return true;
+  return false;
+}
+
+const lines = (root: TestRenderer.ReactTestInstance) => root.findAll((n) => n.type === 'Text');
+/** What is written on the tile's art, and the lines written around it, in reading order. */
+const onArt = (square: TestRenderer.ReactTestInstance) => lines(square).map(textOf);
+const offArt = (root: TestRenderer.ReactTestInstance, square: TestRenderer.ReactTestInstance) => lines(root).filter((n) => !isInside(n, square));
 
 /** Pending records as the store writes them: a building ghost, a failed one, and a failed rebuild of APP. */
 function pendingRecords(): PendingBuildRecord[] {
@@ -52,6 +72,12 @@ async function withHome(pending: PendingBuildRecord[], body: (tree: Tree, calls:
   try { await body(tree, calls); } finally { await unmountScreen(tree); }
 }
 
+const touchable = (n: TestRenderer.ReactTestInstance) => ['Pressable', 'TouchableOpacity'].includes(String(n.type));
+
+/** Every touchable under `root` that holds no other touchable, in render order. */
+const innermostTouchables = (root: TestRenderer.ReactTestInstance) =>
+  root.findAll((n) => touchable(n) && n.findAll((m) => m !== n && touchable(m)).length === 0);
+
 /** The grid cell (tap + long-press target) whose tile is labelled `name`. */
 function cell(tree: Tree, name: string): TestRenderer.ReactTestInstance {
   const cells = tree.root.findAll((n) => n.type === 'TouchableOpacity' && typeof n.props.onLongPress === 'function' && textOf(n).includes(name));
@@ -70,6 +96,23 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('home grid: an update-remedy failure says update needed and opens the same remedied record, while an ordinary failure keeps its caption', async () => {
+    const records = pendingRecords();
+    const store = new PendingBuildStore(createMmkvBackend('whim.launcher'));
+    store.create({ id: 'ghost-update', prompt: 'A garden planner', workingTitle: 'A garden planner' });
+    store.setFailed('ghost-update', {
+      reason: 'This version needs updating.',
+      remedy: { kind: 'update', protocolLevel: 7 },
+    });
+    const update = store.get('ghost-update')!;
+    await withHome([update, ...records], async (tree, calls) => {
+      h.ok(textOf(cell(tree, update.workingTitle)).includes(COPY.ghostCaptionUpdate), 'the update remedy reaches the ghost caption');
+      h.ok(textOf(cell(tree, 'A dice roller')).includes(COPY.ghostCaptionFailed), 'an ordinary failed record keeps its failed caption');
+      await TestRenderer.act(async () => cell(tree, update.workingTitle).props.onPress());
+      h.eq((calls.openPending[0] as PendingBuildRecord).failure?.remedy, update.failure?.remedy, 'opening the ghost preserves the update remedy for its destination');
+    });
+  });
+
   await h.test('home grid: long-pressing a building ghost offers Cancel only; a failed ghost offers Dismiss only', async () => {
     const records = pendingRecords();
     await withHome(records, async (tree, calls) => {
@@ -83,6 +126,61 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       h.eq(calls.dismiss.map((r) => (r as PendingBuildRecord).id), ['ghost-failed'], 'Dismiss dismisses that attempt');
       h.eq(calls.cancel.length, 1, 'and never cancels');
     });
+  });
+
+  await h.test('home grid: to VoiceOver the tile, fork and ghost sheets are rows of labelled buttons, activating a row runs that row rather than closing the sheet, and a tap on the dim still closes it', async () => {
+    const records = pendingRecords();
+    const ran: string[] = [];
+    const noop = () => {};
+    const tree = await renderScreen(
+      <HomeScreen
+        apps={[APP]}
+        pending={records}
+        onOpen={noop} onDelete={noop} onPromptAgain={noop} onCreate={noop} onSettings={noop}
+        onFork={(a, opts) => { ran.push(`fork ${a.id}, shareData ${opts.shareData}`); }}
+        onHistory={(a) => { ran.push(`history ${a.id}`); }}
+        onCancelPending={(r) => { ran.push(`cancel ${r.id}`); }}
+        onDismissPending={(r) => { ran.push(`dismiss ${r.id}`); }}
+      />,
+    );
+    try {
+      const sheets = () => tree.root.findAll((n) => String(n.type) === 'Modal');
+      const controls = () => innermostTouchables(sheets()[0]);
+      const row = (label: string) => controls().find((n) => textOf(n) === label)!;
+      const readAsButtons = (sheet: string, labels: string[]) => {
+        const modal = sheets()[0];
+        const cards = modal.findAll((n) => n.type === 'View' && typeof flat(n).paddingBottom === 'number' && (flat(n).paddingBottom as number) > 30);
+        h.ok(modal.props.statusBarTranslucent === true && modal.props.navigationBarTranslucent === true, `${sheet}: its window reaches the system bars so the dim covers them`);
+        h.eq(cards.length, 1, `${sheet}: its card leaves room below the controls for the bottom safe area`);
+        h.eq(controls().map(textOf), ['', ...labels], `${sheet}: the dim first, behind the card, with no words of its own, then the card's rows`);
+        for (const label of labels) {
+          h.ok(screenReaderElement(row(label)) === row(label), `${sheet}: "${label}" is an element of its own, not read as part of one around it`);
+          h.eq([row(label).props.accessibilityRole, row(label).props.accessibilityLabel], ['button', label], `${sheet}: "${label}" is announced as a button, in its own words`);
+        }
+      };
+
+      await TestRenderer.act(async () => cell(tree, APP.name).props.onLongPress());
+      readAsButtons('the tile sheet', [COPY.actionOpen, COPY.actionFork, COPY.actionHistory, COPY.actionPromptAgain, COPY.actionAppLink, COPY.actionDelete, COPY.actionCancelBuild, COPY.cancel]);
+      await activate(row(COPY.actionHistory));
+      h.eq([ran, sheets().length], [[`history ${APP.id}`], 0], 'activating History opens History and closes the sheet');
+
+      await TestRenderer.act(async () => cell(tree, APP.name).props.onLongPress());
+      await activate(row(COPY.actionFork));
+      readAsButtons('the fork question', [COPY.forkShareData, COPY.forkStartFresh, COPY.cancel]);
+      await activate(row(COPY.forkStartFresh));
+      h.eq(ran.slice(1), [`fork ${APP.id}, shareData false`], 'activating Fork asks the fork question, and activating Start fresh forks without the data');
+
+      await TestRenderer.act(async () => cell(tree, 'A dice roller').props.onLongPress());
+      readAsButtons('the ghost sheet', [COPY.actionDismissBuild, COPY.cancel]);
+      await activate(row(COPY.actionDismissBuild));
+      h.eq(ran.slice(2), ['dismiss ghost-failed'], 'activating Dismiss dismisses that attempt');
+
+      await TestRenderer.act(async () => cell(tree, APP.name).props.onLongPress());
+      await press(row(''));
+      h.eq([ran.length, sheets().length], [3, 0], 'a tap on the dim closes the sheet and runs nothing');
+    } finally {
+      await unmountScreen(tree);
+    }
   });
 
   await h.test('home grid: a failed rebuild’s pill on the installed tile opens the attempt; a building one is a passive badge', async () => {
@@ -100,6 +198,44 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('home grid: an example tile says “Example” under its name, in a ghost caption’s style, with nothing on its art; a generated app’s tile has neither', async () => {
+    const noop = () => {};
+    const home = await renderScreen(<HomeScreen apps={[EXAMPLE, APP]} onOpen={noop} onFork={noop} onDelete={noop} onHistory={noop} onPromptAgain={noop} onCreate={noop} onSettings={noop} />);
+    const ghost = await renderScreen(<AppTile name="A tea timer" ghost="building" />);
+    try {
+      const example = cell(home, EXAMPLE.name);
+      const exampleArt = art(example, EXAMPLE);
+      const mono = monogram(EXAMPLE.name);
+      h.eq(onArt(exampleArt), [mono, mono], 'the example’s art carries only its monogram: no pill over it');
+      const around = offArt(example, exampleArt);
+      h.eq(around.map(textOf), [EXAMPLE.name, COPY.exampleBadge], 'it says “Example” on the line under its name');
+      const ghostCaption = lines(ghost.root).find((n) => textOf(n) === ghostStateCaption('building'));
+      h.eq(around[1] && flat(around[1]), ghostCaption && flat(ghostCaption), 'in the muted caption style a ghost tile uses for its state');
+
+      const generatedArt = art(cell(home, APP.name), APP);
+      h.eq(onArt(generatedArt), [monogram(APP.name), monogram(APP.name)], 'a generated app’s art carries only its monogram');
+      h.eq(offArt(cell(home, APP.name), generatedArt).map(textOf), [APP.name], 'and its name alone: no “Example” caption');
+    } finally {
+      await unmountScreen(home);
+      await unmountScreen(ghost);
+    }
+  });
+
+  await h.test('tile: the “Example” caption sits in the column below the art at every grid width, never on it', async () => {
+    for (const frame of [320, 390, 430, 900]) {
+      const width = homeGridCellWidth(frame, APP_TILE_SIZE);
+      const tree = await renderScreen(<AppTile name={EXAMPLE.name} manifest={EXAMPLE.record.manifest} example width={width} />);
+      try {
+        const square = art(tree.root, EXAMPLE);
+        const caption = offArt(tree.root, square).filter((n) => textOf(n) === COPY.exampleBadge);
+        h.eq(caption.length, 1, `on a ${frame}pt screen (${width}pt tiles) the caption is drawn outside the art`);
+        h.ok(caption.every((n) => flat(n).position !== 'absolute'), `on a ${frame}pt screen it is laid out below the art, not floated onto it`);
+      } finally {
+        await unmountScreen(tree);
+      }
+    }
+  });
+
   await h.test('tile: the done tile is filled and glows in the app’s own colour; a grid tile has no glow', async () => {
     const manifest = { capabilities: [], tileColor: '#2f7d5b' };
     const expected = tileColor('Timer', manifest);
@@ -115,6 +251,25 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     } finally {
       await unmountScreen(done);
       await unmountScreen(plain);
+    }
+  });
+
+  await h.test('tile: the done tile lays out its art as Home’s tile does, whatever the monogram — the watermark bleeding off the top-right, the initials at the bottom-left', async () => {
+    const layout = (root: TestRenderer.ReactTestInstance, app: Pick<InstalledApp, 'name' | 'record'>) => {
+      const square = art(root, app);
+      const { padding, borderRadius, justifyContent, alignItems, overflow } = flat(square);
+      return { square: { padding, borderRadius, justifyContent, alignItems, overflow }, monograms: lines(square).map(flat) };
+    };
+    for (const name of ['Hello App', 'Water Counter', 'Pour Timer']) {
+      const app = { name, record: { appId: name, name, manifest: { capabilities: [] } } };
+      const done = await renderScreen(<AppTile name={name} size="done" />);
+      const home = await renderScreen(<AppTile name={name} width={homeGridCellWidth(448, APP_TILE_SIZE)} />);
+      try {
+        h.eq(layout(done.root, app), layout(home.root, app), `${monogram(name)}: the done tile’s art is laid out as Home’s`);
+      } finally {
+        await unmountScreen(done);
+        await unmountScreen(home);
+      }
     }
   });
 

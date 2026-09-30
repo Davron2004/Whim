@@ -1,0 +1,5 @@
+appId: com.anycognition.whim
+---
+- tapOn: "Cancel"
+- waitForAnimationToEnd
+- assertVisible: "Water Tracker"

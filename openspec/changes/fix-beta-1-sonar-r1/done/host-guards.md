@@ -1,0 +1,3 @@
+# DONE: sonar-r1-host-guards
+Findings: S3, S4, S35, typescript:S6653, MINOR.
+Replace the three hasOwnProperty.call guards with Object.hasOwn. Preserve optional-null normalization, known summary-kind validation, and known event-type validation. No source-grep test. A successful source-pinned Android offline generation and iOS Release production generation must exercise Object.hasOwn in the launcher host before terminal acceptance; current WebView SDK usage is not Hermes proof. Existing wire-future-frames semantic tests cover all three distinct guards. The same host intrinsic serves all three; see host-guards-native-evidence.md. Do not add a production marker solely to force optional-null device branch coverage.

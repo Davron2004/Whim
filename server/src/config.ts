@@ -17,7 +17,7 @@
  * `server/config-check.mjs` runs this same parse for `deploy/deploy.sh`.
  */
 import { MANIFESTS, keepLimit, latestVersion, type CategoryId } from '../../contract/src/disclosure-manifest';
-import type { ProviderSort } from './openrouter';
+import type { ProviderQuantization, ProviderRouting, ProviderSort } from './openrouter';
 
 export interface ServerConfig {
   readonly nodeEnv: string;
@@ -26,6 +26,10 @@ export interface ServerConfig {
   readonly dataDir: string;
   /** `'stub'` selects the no-spend UI pipeline; anything else (including unset) is the real one. */
   readonly pipeline: 'real' | 'stub';
+  /** `WHIM_STUB_DELAY_MS`: how long the stub pipeline waits before each event it emits (default
+   *  200), so a device test can make a stub build slow enough to line others up behind it.
+   *  Stub-only: set without `WHIM_PIPELINE=stub`, which production refuses, it refuses to load. */
+  readonly stubDelayMs: number;
   readonly devLogSink: boolean;
   readonly devLogFile: string;
   readonly logLevel: string;
@@ -34,11 +38,20 @@ export interface ServerConfig {
   readonly openRouterApiKey: string | undefined;
   readonly rewriteModel: string | undefined;
   readonly engineerModel: string | undefined;
-  /** `WHIM_PROVIDER_SORT` (design D3) — unset means no `provider` field on any request. */
+  /** `WHIM_PROVIDER_SORT` (design D3) — unset means no `provider.sort` on any request. */
   readonly providerSort: ProviderSort | undefined;
+  /** `WHIM_PROVIDER_QUANTIZATIONS` (beta-1 D12) — the quantizations OpenRouter may route to; unset
+   *  means no `provider.quantizations` on any request. */
+  readonly providerQuantizations: readonly ProviderQuantization[] | undefined;
   readonly limitGenerationsPerDeviceDay: number;
   readonly limitGenerationsPerDay: number;
   readonly maxConcurrentGenerations: number;
+  /** `WHIM_QUEUE_MAX` (beta-1 D8): how many generations may wait in line for a slot. `0` means no
+   *  line: a generation that finds every slot busy is refused `server_busy` at once. */
+  readonly queueMax: number;
+  /** `WHIM_QUEUE_MAX_WAIT_MS` (beta-1 D8): how long a generation may wait in line before its stream
+   *  ends in a `failure`. */
+  readonly queueMaxWaitMs: number;
   readonly synthrunConcurrency: number;
   readonly limitClarifyPerDeviceDay: number;
   readonly limitRewritePerDeviceDay: number;
@@ -118,6 +131,16 @@ function readPositiveInt(env: NodeJS.ProcessEnv, name: string, fallback: number)
   return n;
 }
 
+function readNonNegativeInt(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = env[name];
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  if (raw.trim() === '' || !Number.isInteger(n) || n < 0) {
+    throw new ServerConfigError(name, `${name} must be a non-negative integer, got ${JSON.stringify(raw)}.`);
+  }
+  return n;
+}
+
 /** Each keep-period variable and the manifest category whose published maximum caps it. Server log
  *  retention is not here because the server sets none: Docker's size-rotated log files hold it. */
 const KEEP_PERIOD_CATEGORIES = {
@@ -186,6 +209,15 @@ function readCommit(env: NodeJS.ProcessEnv, name: string): string {
   return raw;
 }
 
+/** `WHIM_STUB_DELAY_MS`, 200 when unset. Only the stub pipeline reads it, so it refuses to load
+ *  without `WHIM_PIPELINE=stub`, which production refuses in turn. */
+function readStubDelay(env: NodeJS.ProcessEnv, pipeline: ServerConfig['pipeline']): number {
+  if (env.WHIM_STUB_DELAY_MS !== undefined && pipeline !== 'stub') {
+    throw new ServerConfigError('WHIM_STUB_DELAY_MS', 'WHIM_STUB_DELAY_MS only applies with WHIM_PIPELINE=stub.');
+  }
+  return readNonNegativeInt(env, 'WHIM_STUB_DELAY_MS', 200);
+}
+
 function readFlag(env: NodeJS.ProcessEnv, name: string): boolean {
   return env[name] === '1';
 }
@@ -220,6 +252,26 @@ function readProviderSort(env: NodeJS.ProcessEnv, name: string): ProviderSort | 
   return raw as ProviderSort;
 }
 
+const PROVIDER_QUANTIZATIONS: readonly ProviderQuantization[] = ['int4', 'int8', 'fp4', 'fp6', 'fp8', 'fp16', 'bf16', 'fp32', 'unknown'];
+
+/** `WHIM_PROVIDER_QUANTIZATIONS` (beta-1 D12): a comma-separated list of OpenRouter quantization
+ *  names, entries trimmed and empty ones dropped. Unset or empty means no preference; a name outside
+ *  OpenRouter's set fails configuration loading naming the variable and the allowed values. */
+function readProviderQuantizations(env: NodeJS.ProcessEnv, name: string): readonly ProviderQuantization[] | undefined {
+  const entries = (env[name] ?? '').split(',').map((entry) => entry.trim()).filter((entry) => entry !== '');
+  if (entries.length === 0) return undefined;
+  const unknown = entries.find((entry) => !(PROVIDER_QUANTIZATIONS as readonly string[]).includes(entry));
+  if (unknown !== undefined) {
+    throw new ServerConfigError(name, `${name} entries must each be one of ${PROVIDER_QUANTIZATIONS.join(', ')}, got ${JSON.stringify(unknown)}.`);
+  }
+  return Object.freeze(entries as ProviderQuantization[]);
+}
+
+/** The provider routing the composition root hands the OpenRouter client (design D3, beta-1 D12). */
+export function providerRouting(config: Pick<ServerConfig, 'providerSort' | 'providerQuantizations'>): ProviderRouting {
+  return { sort: config.providerSort, quantizations: config.providerQuantizations };
+}
+
 export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => number }): ServerConfig {
   const nodeEnv = readString(env, 'NODE_ENV', 'development');
   const pipeline: ServerConfig['pipeline'] = env.WHIM_PIPELINE === 'stub' ? 'stub' : 'real';
@@ -235,6 +287,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     serverPort: readPositiveInt(env, 'WHIM_SERVER_PORT', 8787),
     dataDir: readString(env, 'WHIM_DATA_DIR', 'server/.data'),
     pipeline,
+    stubDelayMs: readStubDelay(env, pipeline),
     devLogSink,
     devLogFile: readString(env, 'WHIM_DEV_LOG_FILE', 'server/.logs/device.jsonl'),
     logLevel: readString(env, 'WHIM_LOG_LEVEL', 'info'),
@@ -243,9 +296,12 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     rewriteModel,
     engineerModel,
     providerSort: readProviderSort(env, 'WHIM_PROVIDER_SORT'),
+    providerQuantizations: readProviderQuantizations(env, 'WHIM_PROVIDER_QUANTIZATIONS'),
     limitGenerationsPerDeviceDay: readPositiveInt(env, 'WHIM_LIMIT_GENERATIONS_PER_DEVICE_DAY', 15),
     limitGenerationsPerDay: readPositiveInt(env, 'WHIM_LIMIT_GENERATIONS_PER_DAY', 400),
     maxConcurrentGenerations: readPositiveInt(env, 'WHIM_MAX_CONCURRENT_GENERATIONS', 3),
+    queueMax: readNonNegativeInt(env, 'WHIM_QUEUE_MAX', 50),
+    queueMaxWaitMs: readPositiveInt(env, 'WHIM_QUEUE_MAX_WAIT_MS', 180_000),
     synthrunConcurrency: readPositiveInt(env, 'WHIM_SYNTHRUN_CONCURRENCY', 2),
     limitClarifyPerDeviceDay: readPositiveInt(env, 'WHIM_LIMIT_CLARIFY_PER_DEVICE_DAY', 60),
     limitRewritePerDeviceDay: readPositiveInt(env, 'WHIM_LIMIT_REWRITE_PER_DEVICE_DAY', 60),

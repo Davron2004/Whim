@@ -62,7 +62,7 @@ export async function runReportSendTests(h: Harness): Promise<void> {
       h.ok(textOf(tree.root).includes(COPY.reportTooLarge), 'a size refusal offers the remaining prompt option');
       h.eq(lastLog('report refused')?.outcome, 'payload_too_large', 'and is logged with its refusal code');
 
-      answers.push(async () => json({ error: 'internal' }, 500));
+      answers.push(async () => json({ error: 'internal_error', hint: 'Something went wrong on our side. Please try again.' }, 500));
       await press(button(tree, COPY.reportSend));
       h.ok(textOf(tree.root).includes(COPY.reportSendFailedGeneric), 'an unrecognised failure shows the generic notice');
       h.eq(lastLog('report failed')?.outcome, '500', 'and is logged with the status the server answered');

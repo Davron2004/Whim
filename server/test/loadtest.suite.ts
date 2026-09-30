@@ -2,8 +2,8 @@
  * server/test/loadtest.suite.ts — chain-16's suite (design D26; specs/server-deployment "A load
  * test measures capacity without spending provider credit"). Node-only, no Chromium: it never calls
  * the real `startServer` (which would launch a browser) — the browser-backed integration case (three
- * concurrent generations, the fourth refused, the leak probe, the `fetch` trap counting zero calls
- * for real) lives in `server/test/e2e.ts` (task 17.5).
+ * concurrent generations, the fourth waiting in line, the fifth refused, the leak probe, the `fetch`
+ * trap counting zero calls for real) lives in `server/test/e2e.ts` (task 17.5).
  *
  * Covers: `runLoadtestServer`'s key refusal and its override/env/fetch-trap plumbing against an
  * injected `start`; `createReplayModel`'s per-role replies and fixture rotation; a full
@@ -29,12 +29,19 @@ import { defaultModelRoster, type ModelRoster, type ModelStream } from '../src/g
 import type { GenerateRequest, GenerationEvent, Usage } from '@whim/contract';
 import {
   buildReport,
+  cpuReport,
   feedSseBuffer,
   isRealFrame,
+  leakVerdict,
+  parseArgs,
+  parseCoresLine,
   parseGenerationEvent,
+  parseStatsCsv,
+  readCpuReport,
   verdict,
   type DeviceOutcome,
   type LeakProbeOutcome,
+  type StatsSample,
 } from '../src/loadtest/drive';
 
 const ROOT = process.cwd();
@@ -314,29 +321,29 @@ const REFUSED_OUTCOME = (id: string, code: string): DeviceOutcome => ({ deviceId
 const OK_LEAK: LeakProbeOutcome = { ok: true, rounds: [[], []] };
 
 function testReportAndVerdict(): void {
-  section('drive.ts: buildReport aggregation and the exit-rule verdict');
+  section('drive.ts: buildReport aggregation and the exit-rule verdict, for a server with no line (WHIM_QUEUE_MAX=0)');
 
   const clean = [OK_OUTCOME('a', 100), OK_OUTCOME('b', 200), OK_OUTCOME('c', 300)];
-  const cleanReport = buildReport(3, 3, clean, OK_LEAK);
+  const cleanReport = buildReport(3, 3, 0, clean, OK_LEAK);
   eq('terminals tally correctly', cleanReport.terminals, { result: 3, failure: 0, none: 0 });
   eq('p50 time-to-first-event over [100,200,300]', cleanReport.timeToFirstEventMs.p50, 200);
   check('a clean report with a passing probe verdicts ok', verdict(cleanReport).ok);
 
   const failing = [OK_OUTCOME('a', 100), { deviceId: 'b', totalMs: 50, terminal: 'failure' as const }];
-  check('any failure terminal fails the verdict', verdict(buildReport(2, 2, failing, OK_LEAK)).ok === false);
+  check('any failure terminal fails the verdict', verdict(buildReport(2, 2, 0, failing, OK_LEAK)).ok === false);
 
   const refusedWithinCap = [OK_OUTCOME('a', 100), REFUSED_OUTCOME('b', 'server_busy')];
-  check('a refusal when devices <= cap fails the verdict', verdict(buildReport(2, 3, refusedWithinCap, OK_LEAK)).ok === false);
+  check('a refusal when devices <= cap fails the verdict', verdict(buildReport(2, 3, 0, refusedWithinCap, OK_LEAK)).ok === false);
 
   const refusedOverCap = [OK_OUTCOME('a', 100), REFUSED_OUTCOME('b', 'server_busy'), REFUSED_OUTCOME('c', 'server_busy')];
   check(
     'a refusal when devices EXCEEDS the cap is expected and does not fail the verdict on its own',
-    verdict(buildReport(3, 1, refusedOverCap, OK_LEAK)).ok === true,
+    verdict(buildReport(3, 1, 0, refusedOverCap, OK_LEAK)).ok === true,
   );
 
-  check('a clean run below capacity passes', verdict(buildReport(2, 3, clean.slice(0, 2), OK_LEAK)).ok);
+  check('a clean run below capacity passes', verdict(buildReport(2, 3, 0, clean.slice(0, 2), OK_LEAK)).ok);
   const capPlusOne = [...clean, REFUSED_OUTCOME('d', 'server_busy')];
-  check('cap + 1 passes with exactly one server_busy refusal', verdict(buildReport(4, 3, capPlusOne, OK_LEAK)).ok);
+  check('cap + 1 passes with exactly one server_busy refusal', verdict(buildReport(4, 3, 0, capPlusOne, OK_LEAK)).ok);
   const invalidRuns: [string, number, number, DeviceOutcome[]][] = [
     ['missing terminal', 2, 2, [clean[0], { deviceId: 'b', totalMs: 5 }]],
     ['missing outcome', 3, 3, clean.slice(0, 2)],
@@ -348,11 +355,123 @@ function testReportAndVerdict(): void {
     ['missing terminal above capacity', 2, 1, [{ deviceId: 'a', totalMs: 5 }, REFUSED_OUTCOME('b', 'server_busy')]],
   ];
   for (const [label, devices, cap, outcomes] of invalidRuns) {
-    check(`${label} fails the capacity verdict`, !verdict(buildReport(devices, cap, outcomes, OK_LEAK)).ok);
+    check(`${label} fails the capacity verdict`, !verdict(buildReport(devices, cap, 0, outcomes, OK_LEAK)).ok);
   }
 
   const leaked: LeakProbeOutcome = { ok: false, rounds: [[REFUSED_OUTCOME('probe-1', 'server_busy')], []], detail: 'leaked' };
-  check('a failed leak probe fails the verdict even with a clean run', verdict(buildReport(2, 2, clean.slice(0, 2), leaked)).ok === false);
+  check('a failed leak probe fails the verdict even with a clean run', verdict(buildReport(2, 2, 0, clean.slice(0, 2), leaked)).ok === false);
+}
+
+const WAITED_OUTCOME = (id: string, waitMs: number): DeviceOutcome => ({ ...OK_OUTCOME(id, 5), totalMs: waitMs + 50, waitMs });
+
+function testLineReportAndVerdict(): void {
+  section('drive.ts: the generation line (beta-1 D8): past the cap devices wait then complete; only past cap + line are they refused');
+
+  const running = [OK_OUTCOME('a', 100), OK_OUTCOME('b', 200), OK_OUTCOME('c', 300)];
+  const waited = [WAITED_OUTCOME('d', 4000), WAITED_OUTCOME('e', 9000)];
+  const report = buildReport(6, 3, 2, [...running, ...waited, REFUSED_OUTCOME('f', 'server_busy')], OK_LEAK);
+  eq('the report counts the devices that waited', report.queued, 2);
+  eq('and their wait as p50/p95/max', report.waitMs, { p50: 4000, p95: 9000, max: 9000 });
+  check('two over the cap wait and complete, the one past the full line is refused: ok', verdict(report).ok, JSON.stringify(verdict(report)));
+
+  check('one over the cap waits and completes, nothing refused: ok', verdict(buildReport(4, 3, 2, [...running, waited[0]], OK_LEAK)).ok);
+  eq('a run with nobody waiting reports zero waits', buildReport(3, 3, 2, running, OK_LEAK).waitMs, { p50: 0, p95: 0, max: 0 });
+  const invalid: [string, number, DeviceOutcome[]][] = [
+    ['a refusal while the line still had room', 4, [...running, REFUSED_OUTCOME('d', 'server_busy')]],
+    ['a device past the cap that never waited (the server runs more than the stated cap)', 4, [...running, OK_OUTCOME('d', 5)]],
+    ['a device that waited past the longest wait and failed', 4, [...running, { ...WAITED_OUTCOME('d', 180_000), terminal: 'failure' }]],
+    ['a device still waiting when the driver gave up', 4, [...running, { deviceId: 'd', totalMs: 300_000, waitMs: 299_000 }]],
+  ];
+  for (const [label, devices, outcomes] of invalid) {
+    check(`${label} fails the verdict`, !verdict(buildReport(devices, 3, 2, outcomes, OK_LEAK)).ok);
+  }
+
+  section('drive.ts: the leak probe fails on a device that waited or was refused');
+  const probe = (id: string): DeviceOutcome => ({ deviceId: id, timeToFirstEventMs: 30, totalMs: 31 });
+  check('two rounds of devices that all got a slot at once pass', leakVerdict([[probe('p1'), probe('p2')], [probe('p3'), probe('p4')]]).ok);
+  const waitedProbe = leakVerdict([[probe('p1'), probe('p2')], [probe('p3'), { ...probe('p4'), waitMs: 1 }]]);
+  eq('a probe device that waited in line fails it, named', [waitedProbe.ok, waitedProbe.detail], [false, 'device p4 waited in line during the leak probe']);
+  const refusedProbe = leakVerdict([[REFUSED_OUTCOME('p1', 'server_busy'), probe('p2')], []]);
+  eq('a probe device refused server_busy fails it, named', [refusedProbe.ok, refusedProbe.detail], [false, 'device p1 was refused server_busy during the leak probe']);
+
+  section('drive.ts: --queue-max is required and may be 0');
+  const base = ['--target', 'https://api.example.test', '--devices', '4', '--cap', '3'];
+  eq('--queue-max reaches the args', parseArgs([...base, '--queue-max', '0']).queueMax, 0);
+  for (const raw of [undefined, '-1', '1.5', '']) {
+    const argv = raw === undefined ? base : [...base, '--queue-max', raw];
+    const threw = (() => {
+      try {
+        parseArgs(argv);
+        return undefined;
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    })();
+    check(`--queue-max ${JSON.stringify(raw ?? 'missing')} is refused, naming the flag`, threw?.includes('--queue-max') === true, String(threw));
+  }
+}
+
+function testCpuNormalization(): void {
+  section('drive.ts: the report normalizes per-core CPU% to the whole machine (fix-9, 10.2/R18)');
+
+  eq('parseCoresLine reads the sampler\'s leading cores line', parseCoresLine('cores,4\n40,10\n80,20\n'), 4);
+  eq('parseCoresLine finds the cores line anywhere in the text', parseCoresLine('40,10\ncores,8\n80,20\n'), 8);
+  for (const bad of ['', '40,10\n80,20\n', 'cores,0\n', 'cores,-2\n', 'cores,1.5\n', 'cores,nope\n']) {
+    eq(`parseCoresLine rejects ${JSON.stringify(bad)}`, parseCoresLine(bad), undefined);
+  }
+
+  const samplesWithCoresLine = parseStatsCsv('cores,4\n40.0,10.0\n80.0,20.0\n');
+  eq('parseStatsCsv skips the cores line as an unparseable row', samplesWithCoresLine, [
+    { cpuPercent: 40, memoryPercent: 10 },
+    { cpuPercent: 80, memoryPercent: 20 },
+  ] satisfies StatsSample[]);
+
+  // Fixed sample list: per-core % of [40, 80, 120, 160, 200] on a 2-core machine normalizes to
+  // [20, 40, 60, 80, 100] — nearest-rank p50 is the 3rd of 5 (60), p95 the 5th (100, also the peak).
+  const fixed: StatsSample[] = [40, 80, 120, 160, 200].map((cpuPercent) => ({ cpuPercent, memoryPercent: 0 }));
+  eq('cpuReport normalizes a fixed sample list by dividing per-core % by cores', cpuReport(fixed, 2), {
+    cores: 2,
+    samples: 5,
+    p50Percent: 60,
+    p95Percent: 100,
+    peakPercent: 100,
+  });
+
+  // The tiny-sample case: one sample, still divided by cores, not left raw.
+  eq('cpuReport normalizes the tiny-sample (single-sample) case', cpuReport([{ cpuPercent: 150, memoryPercent: 0 }], 2), {
+    cores: 2,
+    samples: 1,
+    p50Percent: 75,
+    p95Percent: 75,
+    peakPercent: 75,
+  });
+
+  eq('cpuReport is undefined with no samples', cpuReport([], 4), undefined);
+  for (const badCores of [0, -1, 1.5]) {
+    eq(`cpuReport is undefined for a non-positive-integer core count (${badCores})`, cpuReport(fixed, badCores), undefined);
+  }
+
+  const statsPath = path.join(os.tmpdir(), `whim-loadtest-cpu-${process.pid}-${Date.now()}.csv`);
+  try {
+    fs.writeFileSync(statsPath, 'cores,2\n40,5\n80,10\n120,15\n160,20\n200,25\n');
+    eq('readCpuReport reads cores and samples from a stats file end to end', readCpuReport(statsPath), {
+      cores: 2,
+      samples: 5,
+      p50Percent: 60,
+      p95Percent: 100,
+      peakPercent: 100,
+    });
+  } finally {
+    fs.rmSync(statsPath, { force: true });
+  }
+  eq('readCpuReport is undefined with no --stats path', readCpuReport(undefined), undefined);
+  const noCoresPath = path.join(os.tmpdir(), `whim-loadtest-cpu-nocores-${process.pid}-${Date.now()}.csv`);
+  try {
+    fs.writeFileSync(noCoresPath, '40,5\n80,10\n');
+    eq('readCpuReport is undefined when the sampler never wrote a cores line', readCpuReport(noCoresPath), undefined);
+  } finally {
+    fs.rmSync(noCoresPath, { force: true });
+  }
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────
@@ -366,4 +485,6 @@ export async function runLoadTestTests(): Promise<void> {
   testDeployFilesExcludeLoadtest();
   testSseFraming();
   testReportAndVerdict();
+  testLineReportAndVerdict();
+  testCpuNormalization();
 }

@@ -15,6 +15,8 @@ import {
   type RequestOutcome,
   type SettleParams,
   type SummaryParams,
+  type UnitAvailability,
+  type UnitQuery,
   type UsageStore,
   type UsageSummary,
 } from '../src/usage-store';
@@ -22,9 +24,16 @@ import { GenerationMachine, type Clock, type RunTrace } from '../src/generation/
 import type { Pipeline } from '../src/pipeline';
 import type { ModelClient, ModelDelta, ModelRequest, ModelRoster, ModelStream } from '../src/generation/model';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
-import type { GenerateRequest, Usage } from '@whim/contract';
+import { PROTOCOL_HEADER, PROTOCOL_LEVEL, type GenerateRequest, type Usage } from '@whim/contract';
 
 const WAIT_MS = 5000;
+
+/** The protocol level every `/v1` request declares (beta-1 D16), as the header a suite's request
+ *  carries beside its device header. Without it the request edge answers `426`. */
+export const PROTOCOL_HEADERS: Readonly<Record<string, string>> = Object.freeze({ [PROTOCOL_HEADER]: String(PROTOCOL_LEVEL) });
+
+/** `PROTOCOL_HEADERS` as a raw HTTP/1.1 header line, for the suites that write requests by hand. */
+export const PROTOCOL_HEADER_LINE = `${PROTOCOL_HEADER}: ${PROTOCOL_LEVEL}`;
 
 // ─── Bounded waits ───────────────────────────────────────────────────────────
 
@@ -90,6 +99,10 @@ export class RecordingUsageStore implements UsageStore {
     const result = await this.inner.admit(params);
     if (result.ok) this.admitted.push(result.requestId);
     return result;
+  }
+
+  unitAvailable(params: UnitQuery): Promise<UnitAvailability> {
+    return this.inner.unitAvailable(params);
   }
 
   refund(requestId: string): Promise<void> {

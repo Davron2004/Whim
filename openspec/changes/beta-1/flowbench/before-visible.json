@@ -1,0 +1,1539 @@
+{
+  "setId": "visible-dev-v1",
+  "url": "https://api.whim.anycognition.ca",
+  "startedAt": "2026-09-25T17:15:40.351Z",
+  "finishedAt": "2026-09-25T17:28:15.096Z",
+  "cases": [
+    {
+      "caseId": "tip-splitter-p1",
+      "appSlug": "tip-splitter",
+      "prompt": "make a tip calculator that splits the bill between friends",
+      "deviceId": "888fb333-1517-45da-be87-aaf87931fbf4",
+      "clarifications": [
+        {
+          "id": "rounding",
+          "question": "How should the final amount per person be rounded?",
+          "answer": "To the nearest cent"
+        },
+        {
+          "id": "tip_percent",
+          "question": "Should the tip percentage be adjustable or fixed?",
+          "answer": "Adjustable with a slider"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1588,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1504,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 36154,
+          "retries": 0,
+          "firstEventMs": 236,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 3857
+            },
+            {
+              "stage": "generate",
+              "durationMs": 26847
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 4711
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 503,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 5464
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "tip-splitter-p2",
+      "appSlug": "tip-splitter",
+      "prompt": "I enter the bill, pick a tip percent, and see what each person owes",
+      "deviceId": "dacae756-56ab-41fb-9a8c-0427488b0abe",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 503,
+          "durationMs": 10385,
+          "retries": 0,
+          "error": {
+            "error": "policy_unavailable",
+            "hint": "We couldn't check this request right now. Please try again in a moment."
+          }
+        }
+      },
+      "outcome": {
+        "type": "failure",
+        "phase": "clarify",
+        "reason": "policy_unavailable",
+        "attempts": 1
+      }
+    },
+    {
+      "caseId": "spending-tracker-p1",
+      "appSlug": "spending-tracker",
+      "prompt": "track my spending and show me a weekly graph",
+      "deviceId": "2b4d38c1-4c4a-40c9-b9ef-983f33b29700",
+      "clarifications": [
+        {
+          "id": "data_source",
+          "question": "How do you want to record your spending?",
+          "answer": "Manually enter each expense"
+        },
+        {
+          "id": "graph_type",
+          "question": "What kind of weekly graph do you prefer?",
+          "answer": "Bar chart showing daily totals"
+        },
+        {
+          "id": "category_focus",
+          "question": "Should the graph break down spending by category?",
+          "answer": "Yes, show categories"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1140,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 5577,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 78229,
+          "retries": 0,
+          "firstEventMs": 1382,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1754
+            },
+            {
+              "stage": "generate",
+              "durationMs": 52215
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 6257
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 10513
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 5335
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 773,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 19046
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "spending-tracker-p2",
+      "appSlug": "spending-tracker",
+      "prompt": "an expense tracker with categories and a chart of where my money goes each month",
+      "deviceId": "747f9311-273f-4977-af18-2aab7957e2a8",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 578,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1869,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 74589,
+          "retries": 0,
+          "firstEventMs": 552,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1563
+            },
+            {
+              "stage": "generate",
+              "durationMs": 52274
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 3859
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 12224
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 3495
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 622,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 21566
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "habit-tracker-p1",
+      "appSlug": "habit-tracker",
+      "prompt": "habit tracker with streaks — show a calendar of the days I did it",
+      "deviceId": "37837c03-72cc-433d-95ea-11260ad0158b",
+      "clarifications": [
+        {
+          "id": "reset_rule",
+          "question": "What should happen to your streak if you miss a day?",
+          "answer": "Streak resets to zero"
+        },
+        {
+          "id": "calendar_view",
+          "question": "How do you want the calendar to show your days?",
+          "answer": "Simple checkmarks on each day"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1254,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1362,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 110991,
+          "retries": 0,
+          "firstEventMs": 299,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 4219
+            },
+            {
+              "stage": "generate",
+              "durationMs": 21781
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 18272
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 4722
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 17395
+            },
+            {
+              "stage": "repair",
+              "attempt": 2,
+              "durationMs": 5046
+            },
+            {
+              "stage": "check",
+              "attempt": 2,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 2,
+              "durationMs": 17540
+            },
+            {
+              "stage": "repair",
+              "attempt": 3,
+              "durationMs": 4355
+            },
+            {
+              "stage": "check",
+              "attempt": 3,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 3,
+              "durationMs": 17362
+            }
+          ],
+          "repairs": 3,
+          "tailMs": 0,
+          "terminal": {
+            "type": "failure",
+            "reason": "Could not produce a working app after several attempts. Try describing it differently or more specifically.",
+            "attempts": 4
+          }
+        }
+      },
+      "outcome": {
+        "type": "failure",
+        "phase": "generate",
+        "reason": "Could not produce a working app after several attempts. Try describing it differently or more specifically.",
+        "attempts": 4
+      }
+    },
+    {
+      "caseId": "habit-tracker-p2",
+      "appSlug": "habit-tracker",
+      "prompt": "track a few daily habits and show my current streak for each",
+      "deviceId": "17e6e0c1-7641-412e-99d9-906a01f021bc",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 519,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1546,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 46817,
+          "retries": 0,
+          "firstEventMs": 243,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 3112
+            },
+            {
+              "stage": "generate",
+              "durationMs": 36834
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2494
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 4134,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 10915
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "water-counter-p1",
+      "appSlug": "water-counter",
+      "prompt": "a water counter — one big button to log a glass, today's total vs my goal",
+      "deviceId": "bffd18e8-9a81-4d3d-9ed6-c5748897a99b",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 535,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1081,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 28820,
+          "retries": 0,
+          "firstEventMs": 219,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 2016
+            },
+            {
+              "stage": "generate",
+              "durationMs": 22283
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 3866
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 436,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 8265
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "water-counter-p2",
+      "appSlug": "water-counter",
+      "prompt": "count my calories today with a progress bar toward my daily limit, keep history",
+      "deviceId": "991031ae-1513-499d-8b5b-b809ed08b5c2",
+      "clarifications": [
+        {
+          "id": "limit",
+          "question": "What is your daily calorie limit?",
+          "answer": "1,500"
+        },
+        {
+          "id": "history",
+          "question": "How should I keep your calorie history?",
+          "answer": "Daily totals only"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1519,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1367,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 35292,
+          "retries": 0,
+          "firstEventMs": 262,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 2318
+            },
+            {
+              "stage": "generate",
+              "durationMs": 29877
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2292
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 543,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 13047
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "workout-log-p1",
+      "appSlug": "workout-log",
+      "prompt": "a workout log — each session has exercises with sets, reps and weight",
+      "deviceId": "c62d0897-568f-4a26-a14a-256e61340926",
+      "clarifications": [
+        {
+          "id": "data_scope",
+          "question": "Should the workout log track additional details for each session, like duration or notes?",
+          "answer": "Just exercises, sets, reps, and weight"
+        },
+        {
+          "id": "history_view",
+          "question": "How would you like to review past workouts?",
+          "answer": "Simple list of sessions"
+        },
+        {
+          "id": "editing",
+          "question": "Should you be able to edit or delete past sessions after logging them?",
+          "answer": "Yes, edit and delete"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1763,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2040,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 142830,
+          "retries": 0,
+          "firstEventMs": 1888,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1674
+            },
+            {
+              "stage": "generate",
+              "durationMs": 53585
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 20236
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 8893
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 18863
+            },
+            {
+              "stage": "repair",
+              "attempt": 2,
+              "durationMs": 7883
+            },
+            {
+              "stage": "check",
+              "attempt": 2,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 2,
+              "durationMs": 19998
+            },
+            {
+              "stage": "repair",
+              "attempt": 3,
+              "durationMs": 7651
+            },
+            {
+              "stage": "check",
+              "attempt": 3,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 3,
+              "durationMs": 1562
+            }
+          ],
+          "repairs": 3,
+          "tailMs": 597,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 12569
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "workout-log-p2",
+      "appSlug": "workout-log",
+      "prompt": "log my gym workouts and let me look back at what I lifted last time",
+      "deviceId": "85a6a53e-b231-49ec-8c0b-3e6010233d88",
+      "clarifications": [
+        {
+          "id": "exercise_detail",
+          "question": "How much detail do you want to record for each workout?",
+          "answer": "Just the exercises and weights"
+        },
+        {
+          "id": "viewing",
+          "question": "How do you want to look back at past workouts?",
+          "answer": "By date"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1175,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2335,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 88387,
+          "retries": 0,
+          "firstEventMs": 246,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1103
+            },
+            {
+              "stage": "generate",
+              "durationMs": 83783
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2643
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 612,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 14555
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "flashcards-p1",
+      "appSlug": "flashcards",
+      "prompt": "flashcards with spaced repetition — show me the cards due today",
+      "deviceId": "faabd12b-acba-4fb9-9856-82249c5a8de6",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 622,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2831,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 90588,
+          "retries": 0,
+          "firstEventMs": 259,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 9620
+            },
+            {
+              "stage": "generate",
+              "durationMs": 66801
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2448
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 8070
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 2763
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 627,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 14003
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "flashcards-p2",
+      "appSlug": "flashcards",
+      "prompt": "I make flashcards and review them; ones I get wrong come back sooner",
+      "deviceId": "8a1d8dc0-c3a0-4a7b-af68-bcbf7dd33440",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 529,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2545,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 87689,
+          "retries": 0,
+          "firstEventMs": 304,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 2867
+            },
+            {
+              "stage": "generate",
+              "durationMs": 67343
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2568
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 11367
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 2475
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 765,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 17861
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "score-keeper-p1",
+      "appSlug": "score-keeper",
+      "prompt": "score keeper for board game night — add players and bump their scores",
+      "deviceId": "5167f36b-389d-4f45-85ef-976360c4a117",
+      "clarifications": [
+        {
+          "id": "scoring",
+          "question": "When a player's score goes up, how should that work?",
+          "answer": "Tap a button to add 1 point at a time"
+        },
+        {
+          "id": "undo",
+          "question": "Should you be able to undo a score change?",
+          "answer": "Yes, undo the last change"
+        },
+        {
+          "id": "reset",
+          "question": "Do you need a way to start a new game or reset all scores?",
+          "answer": "Yes, a reset button"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1404,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 4897,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 45632,
+          "retries": 0,
+          "firstEventMs": 2110,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1255
+            },
+            {
+              "stage": "generate",
+              "durationMs": 38838
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2292
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1137,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 10324
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "score-keeper-p2",
+      "appSlug": "score-keeper",
+      "prompt": "keep score for games, plus and minus buttons per player",
+      "deviceId": "3ee984ee-e8aa-4040-b6ec-4b742db780f2",
+      "clarifications": [
+        {
+          "id": "player_count",
+          "question": "How many players will you typically have?",
+          "answer": "2"
+        },
+        {
+          "id": "score_reset",
+          "question": "Should there be a way to reset scores for a new game?",
+          "answer": "Yes, with a reset button"
+        },
+        {
+          "id": "score_range",
+          "question": "Can scores go below zero?",
+          "answer": "Yes, allow negative scores"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1386,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 13241,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 18748,
+          "retries": 0,
+          "firstEventMs": 236,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 985
+            },
+            {
+              "stage": "generate",
+              "durationMs": 7373
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 9503
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 651,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 3167
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "packing-checklist-p1",
+      "appSlug": "packing-checklist",
+      "prompt": "packing checklist with templates — I make a 'beach trip' template and reuse it",
+      "deviceId": "fd98de15-cb3e-4288-b1d6-baeda53e008f",
+      "clarifications": [
+        {
+          "id": "items_source",
+          "question": "Where do the items for your packing checklist come from?",
+          "answer": "I add them manually each time"
+        },
+        {
+          "id": "template_customization",
+          "question": "When you reuse a template, do you need to change the items for a specific trip?",
+          "answer": "No, I reuse the template as-is"
+        },
+        {
+          "id": "checklist_behavior",
+          "question": "How do you want to track items as you pack?",
+          "answer": "Simple checkbox to mark done"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 4782,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 3326,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 51373,
+          "retries": 0,
+          "firstEventMs": 219,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 2983
+            },
+            {
+              "stage": "generate",
+              "durationMs": 36563
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2571
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 6066
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 2421
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 550,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 13636
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "packing-checklist-p2",
+      "appSlug": "packing-checklist",
+      "prompt": "checklist app where I save a list as a template and start a new trip from it",
+      "deviceId": "1c01e95a-f414-4231-b1bd-1d2c4392c348",
+      "clarifications": [
+        {
+          "id": "template_edit",
+          "question": "When you start a new trip from a template, can you adjust the checklist items before the trip begins?",
+          "answer": "Yes, edit items before starting"
+        },
+        {
+          "id": "multiple_templates",
+          "question": "Do you want to manage multiple templates, or is a single template enough?",
+          "answer": "Multiple templates"
+        },
+        {
+          "id": "template_update",
+          "question": "After saving a template, should you be able to update or delete it later?",
+          "answer": "Yes, manage templates later"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2747,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2959,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 76852,
+          "retries": 0,
+          "firstEventMs": 205,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1860
+            },
+            {
+              "stage": "generate",
+              "durationMs": 50646
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 6814
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 9464
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 6717
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 1146,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 19773
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "recipe-box-p1",
+      "appSlug": "recipe-box",
+      "prompt": "a recipe box — save recipes with ingredients and steps, search by name",
+      "deviceId": "4d068121-f846-4336-b275-6ed110c068e1",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 600,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 6500,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 59415,
+          "retries": 0,
+          "firstEventMs": 282,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1130
+            },
+            {
+              "stage": "generate",
+              "durationMs": 44440
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2449
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 7556
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 2494
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 1064,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 12842
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "recipe-box-p2",
+      "appSlug": "recipe-box",
+      "prompt": "store my recipes and filter them by a tag like 'quick'",
+      "deviceId": "d24c60c1-da50-4151-af4c-33bd762b5a26",
+      "clarifications": [
+        {
+          "id": "q1",
+          "question": "What should the main view show first?",
+          "answer": "All recipes"
+        },
+        {
+          "id": "q2",
+          "question": "How do you want to add tags to a recipe?",
+          "answer": "During recipe entry"
+        },
+        {
+          "id": "q3",
+          "question": "Do you need to combine multiple tags when filtering?",
+          "answer": "Yes, filter by several tags at once"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2405,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1478,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 35600,
+          "retries": 0,
+          "firstEventMs": 297,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 2355
+            },
+            {
+              "stage": "generate",
+              "durationMs": 29767
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2194
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 987,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 12392
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "tic-tac-toe-p1",
+      "appSlug": "tic-tac-toe",
+      "prompt": "tic-tac-toe for two people on one phone",
+      "deviceId": "7e87499c-f659-458a-a23b-dec305d5a9ae",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 901,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 4724,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 35143,
+          "retries": 0,
+          "firstEventMs": 266,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 2461
+            },
+            {
+              "stage": "generate",
+              "durationMs": 30217
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 1448
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 750,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 8655
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "tic-tac-toe-p2",
+      "appSlug": "tic-tac-toe",
+      "prompt": "tic-tac-toe that keeps a running tally of wins",
+      "deviceId": "52c2de26-8fbc-4d7f-9817-1f70f09b96b7",
+      "clarifications": [
+        {
+          "id": "tally_scope",
+          "question": "Should the win tally be for the current session or persist after the page is closed?",
+          "answer": "Current session only"
+        },
+        {
+          "id": "tie_count",
+          "question": "Do you want a tie/draw count included in the tally?",
+          "answer": "Yes, include ties"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1673,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2897,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 38313,
+          "retries": 0,
+          "firstEventMs": 326,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 11359
+            },
+            {
+              "stage": "generate",
+              "durationMs": 22047
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 3906
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 674,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 6682
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "chore-rotation-p1",
+      "appSlug": "chore-rotation",
+      "prompt": "chore rotation — it tells us whose turn it is to do dishes and rotates fairly",
+      "deviceId": "378278dd-2f87-4d6d-b573-7ac73c8ddeec",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 613,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1095,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 51251,
+          "retries": 0,
+          "firstEventMs": 277,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 4814
+            },
+            {
+              "stage": "generate",
+              "durationMs": 41680
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 3828
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 652,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 10732
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "chore-rotation-p2",
+      "appSlug": "chore-rotation",
+      "prompt": "rotate chores between roommates and remember who did what last",
+      "deviceId": "5e2e2489-1b7a-4d82-98bf-5ab7332e0792",
+      "clarifications": [
+        {
+          "id": "q1",
+          "question": "How many roommates will be in the rotation?",
+          "answer": "2"
+        },
+        {
+          "id": "q2",
+          "question": "How often should the chores rotate?",
+          "answer": "Weekly"
+        },
+        {
+          "id": "q3",
+          "question": "Should the app automatically assign the next person, or let you pick who does what?",
+          "answer": "Auto-assign"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1538,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1536,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 107015,
+          "retries": 0,
+          "firstEventMs": 264,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 10917
+            },
+            {
+              "stage": "generate",
+              "durationMs": 73194
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 5074
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 13759
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 2813
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 994,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 17890
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    }
+  ],
+  "summary": {
+    "phases": {
+      "clarify": {
+        "medianMs": 1320,
+        "maxMs": 10385
+      },
+      "rewrite": {
+        "medianMs": 2335,
+        "maxMs": 13241
+      },
+      "generate": {
+        "medianMs": 51373,
+        "maxMs": 142830
+      }
+    },
+    "results": 20,
+    "failures": 2
+  }
+}

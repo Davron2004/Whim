@@ -46,6 +46,7 @@ export const COPY = {
   ghostCaptionBuilding: 'Building…',
   ghostCaptionFailed: 'Didn’t finish',
   ghostCaptionInterrupted: 'Interrupted',
+  ghostCaptionUpdate: 'Update needed',
   /** Long-press quick actions (spec "Long-press on a ghost tile offers Cancel or Dismiss, never
    *  both"). Named distinctly from the sheet's own closing `cancel` row so the two never collide
    *  in the same menu. */
@@ -83,6 +84,16 @@ export const COPY = {
   clarifyHeadlineTwo: 'Two quick things',
   clarifyHeadlineThree: 'Three quick things',
   clarifyHelper: 'Skip these and Whim will pick sensible answers.',
+  /** Under a question that takes several picks (beta-1 D18). */
+  clarifyPickMany: 'Pick any that fit.',
+  /** The pill every question carries, which hands that question to Whim (beta-1 D18). */
+  clarifyDecide: 'Decide for me',
+  /** The typed "Other" answer's placeholder, on a question that allows one. */
+  clarifyOtherPlaceholder: 'Or type your own answer',
+  /** The clarify step when the request can't be built as asked (beta-1 D9): the reason follows in
+   *  the server's own words, then the alternative to build instead (`clarifyBuildInstead`). */
+  clarifyLimitHeadline: 'Whim can’t build this as asked',
+  clarifyLimitChangeIdea: 'Change my idea',
   /** The one-line liveness phrase under the clarify skeleton (`WorkingLine`, `flow-working.tsx`). */
   workingClarify: 'Thinking about what to ask',
   planHeadline: 'Here’s the plan',
@@ -106,6 +117,9 @@ export const COPY = {
   buildStepChecking: 'Checking it runs safely',
   buildStepInstalling: 'Putting it on your home screen',
   buildLeaveRunning: 'Leave it running',
+  /** The build screen while every build slot is taken and this one is first in line (beta-1 D8);
+   *  further back, `buildQueuedLine` counts the builds ahead. */
+  buildQueuedNext: 'You’re next in line.',
   /** Opens the run timeline for the attempt on screen. */
   buildDetails: 'Details',
   // ── the run timeline (generation-observability, design D7) ──────────────────
@@ -206,6 +220,8 @@ export const COPY = {
   reportShowLess: 'Show less',
   reportThanksTitle: 'Thanks. We’ll look into it.',
   reportThanksDone: 'Done',
+  reportDraftLoadFailed: 'Couldn’t open the report. Close it and try again.',
+  reportDraftClose: 'Close',
   reportSendFailedGeneric: 'Couldn’t send the report. Check your connection and try again.',
   reportTooLarge: 'This report is too large to send. You can try leaving out the prompt.',
 
@@ -332,7 +348,8 @@ export const COPY = {
   // ── store age check (store-age-signals; legal-surface-v2 design D11) ─────────
   // Shown in place of the terms step when the store says the user is a minor without a parent's
   // approval (`ageBlocked*`) or under 13 (`ageUnder13*`). The AI features stay off; the apps on
-  // the phone keep working. `ageBack` also leaves the brief screen shown while the store is asked.
+  // the phone keep working. `ageBack` also leaves the brief screen shown while the store is asked,
+  // which says only `ageChecking` so it never reads as a blank, broken screen.
   ageBlockedTitle: 'A parent needs to approve Whim',
   ageBlockedBody:
     'Whim’s AI features need a parent’s approval on this account. A parent can approve Whim through the App Store or Google Play, then you can try again. The apps you already have keep working.',
@@ -340,6 +357,7 @@ export const COPY = {
   ageUnder13Body:
     'The App Store or Google Play says this account belongs to someone under 13, so Whim can’t make new apps for you. The apps you already have keep working.',
   ageBack: 'Back',
+  ageChecking: 'One moment…',
   // The one-tap switch the terms step and the consent screen show (legal-text-localization): it
   // names the OTHER language, in that language, so English's own entry is the French label.
   legalLanguageSwitch: 'Continuer en français',
@@ -387,6 +405,11 @@ export const COPY = {
     'Apps made with Whim stay on the phone that made them, so this link only opens there.',
   appLinkMissingBack: 'Back to your apps',
   appLinkSheetClose: 'Done',
+
+  // ── the keyboard (beta-1 D3) ────────────────────────────────────────────────
+  /** The iOS keyboard bar's one action on a multiline field: puts the keyboard away and submits
+   *  nothing. */
+  keyboardDone: 'Done',
 } as const;
 
 /** One what's-new line (legal-surface-v2 design D4): shown under `consentOutdatedLine` when the
@@ -480,6 +503,7 @@ export const LEGAL_COPY_KEYS = [
   'ageUnder13Title',
   'ageUnder13Body',
   'ageBack',
+  'ageChecking',
   'consentTitle',
   'consentLead',
   'consentSentTitle',
@@ -535,6 +559,7 @@ const FRENCH: LegalCopyTable = {
   ageUnder13Body:
     'Selon l’App Store ou Google Play, ce compte appartient à une personne de moins de 13\u00a0ans, donc Whim ne peut pas créer de nouvelles apps pour vous. Les apps que vous avez déjà continuent de fonctionner.',
   ageBack: 'Retour',
+  ageChecking: 'Un instant…',
   consentTitle: 'Avant que Whim crée des apps pour vous',
   consentLead:
     'Pour créer ou modifier une app, Whim envoie ce que vous demandez à notre serveur. Des entreprises d’IA qui travaillent pour nous écrivent le code.',
@@ -628,7 +653,11 @@ export function appLinkSheetLine(name: string): string {
 /** A ghost/rebuild tile's state caption, by `PendingBuildRecord.state` (kept as the bare literal
  *  union rather than importing `PendingBuildState` — `copy.ts` stays free of any non-`react` /
  *  non-`react-native` module dependency). */
-export function ghostStateCaption(state: 'building' | 'failed' | 'interrupted'): string {
+export function ghostStateCaption(
+  state: 'building' | 'failed' | 'interrupted',
+  remedy?: { kind: 'retry' } | { kind: 'update'; protocolLevel: number },
+): string {
+  if (state === 'failed' && remedy?.kind === 'update') return COPY.ghostCaptionUpdate;
   if (state === 'building') return COPY.ghostCaptionBuilding;
   if (state === 'failed') return COPY.ghostCaptionFailed;
   return COPY.ghostCaptionInterrupted;
@@ -691,7 +720,9 @@ export function buildLivenessLine(
   now: number,
 ): string {
   if (liveness === 'writing') {
-    return `Writing · ${s.aggregates.chars.toLocaleString()} characters`;
+    // en-CA, not the phone's locale (#89): this is English copy, and a French-locale phone would
+    // otherwise render the count with a non-breaking space and no comma (e.g. "1 204").
+    return `Writing · ${s.aggregates.chars.toLocaleString('en-CA')} characters`;
   }
   if (liveness === 'thinking') {
     return `Thinking it through · ${livenessElapsedLabel(s.startedAt, now)}`;
@@ -747,6 +778,19 @@ export function timelineGrowthLine(chars: number, thinkingChars = 0): string {
   return `${written} after thinking through ${thinking}`;
 }
 
+/** The build screen's place in line (beta-1 D8), from the `queued` event's `position` — the builds
+ *  ahead plus one: "You’re next in line." at the front, otherwise how many builds are ahead. */
+export function buildQueuedLine(position: number): string {
+  const ahead = position - 1;
+  if (ahead < 1) return COPY.buildQueuedNext;
+  return ahead === 1 ? 'You’re in line, 1 build ahead.' : `You’re in line, ${ahead} builds ahead.`;
+}
+
+/** The limit step's primary action (beta-1 D9): the alternative clarify suggested, as plain words. */
+export function clarifyBuildInstead(alternative: string): string {
+  return `Build ${alternative} instead`;
+}
+
 /** The clarify step's headline, counted: one, two or three quick things. */
 export function clarifyHeadline(questionCount: number): string {
   if (questionCount <= 1) return COPY.clarifyHeadlineOne;
@@ -800,6 +844,12 @@ export function historySubtitle(versionCount: number, startedWhen: string): stri
   return `${versions} · started ${startedWhen}`;
 }
 
+/** A history row's headline under `You said` (design 4a, "the prompt is the headline"): the
+ *  user's own words, verbatim, in quotation marks. */
+export function historyQuotedPrompt(prompt: string): string {
+  return `“${prompt}”`;
+}
+
 /** The all-versions filter pill, whose count is live: "All 7". */
 export function historyFilterAll(versionCount: number): string {
   return `All ${versionCount}`;
@@ -850,16 +900,18 @@ export interface FailureRow {
 /**
  * The terminal failure state's rows (design `3b` RP[5]): the reassurance that the last working
  * version survived — OMITTED when the app has none, because there is nothing honest to reassure
- * about — then one row per diagnostic hint, then the advisory line.
+ * about — then one row per diagnostic hint, then the advisory line, OMITTED when rewording can't
+ * get past the failure (`rephraseHelps: false`: a refusal, a message this build can't use).
  */
 export function failureChecklistRows(input: {
   readonly diagnostics: readonly { hint: string }[];
   readonly hasWorkingVersion: boolean;
+  readonly rephraseHelps?: boolean;
 }): readonly FailureRow[] {
   const rows: FailureRow[] = [];
   if (input.hasWorkingVersion) rows.push({ kind: 'done', text: COPY.failureRowLastVersionWorks });
   for (const diagnostic of input.diagnostics) rows.push({ kind: 'bad', text: diagnostic.hint });
-  rows.push({ kind: 'wait', text: COPY.failureRowSayItDifferently });
+  if (input.rephraseHelps !== false) rows.push({ kind: 'wait', text: COPY.failureRowSayItDifferently });
   return rows;
 }
 
