@@ -19,6 +19,8 @@
 | Independent live stream ownership | `ghosts: an independent background stream keeps its own journal without replacing the selected build`: active A emits a keepalive and stage while B is selected; B keeps its `check` screen while A's journal records A's stage and A can settle without replacing B. |
 | Independent delivery completion | `ghosts: delivery settles an independent run without taking over the selected build`: A pauses at the actual `StoreAccess.install` boundary, B is selected, then A's delivery removes A and promotes A's report while B remains building on its `check` screen. |
 | Same-ID delivery supersession | `ghosts: a superseded delivery cannot delete the newer same-id pending record`: A pauses at the actual install boundary, a same-ID B retry activates, and releasing A leaves B's raw building record and new empty journal intact. |
+| Partial Discard then same-ID Retry | `ghosts: Retry after a partial Discard keeps one same-id building ghost`: a pending-order write failure removes the raw key but retains the current failed view; after clearing the fault, Retry sends one request and `listCurrent()` contains one same-ID building entry. |
+| Duplicate raw order metadata | `pending-builds: current views dedupe duplicated order metadata without rewriting it`: a pre-existing `[b,a,b]` raw order produces stable `[b,a]` current views without changing persisted entries. |
 
 RED receipt: with current suites and native seams but `LauncherRoot.tsx` and `pending-builds.ts` temporarily restored to `a77fd2c6`, `npm run launcher:test` exited `1`. Its footer named both failures: the dangling `pending:order` removal could not return to Back, and the live volatile failure offered no Discard. Current product files were restored to `0b9ba3ca` before the three acceptance additions. No standalone log file was captured.
 
@@ -62,4 +64,12 @@ R7 FAST GATE receipt: `/tmp/whim-beta1-chain10-r7-gate-receipt.log` and `/tmp/wh
 
 R7 KNIP receipt: `/tmp/whim-beta1-chain10-r7-knip.log`; `npx knip` exited `0` with no findings or output.
 
-Worker verdict: source coverage complete at `b8d16bbf60f9d0a2da760312163ff2c7e35f8f6f`. Root acceptance remains pending independent r8 review, integrated gates and fresh native restart smoke. These are Node/rendered checks; they do not claim an on-device write-outage test.
+R8 RED receipt: `/tmp/whim-beta1-chain10-r8-red.log`; against `b8d16bbf`, `npm run launcher:test` exited `1` with `13848 checks passed, 2 failed`. The footer named duplicate raw current views `[b,a,b]` and two same-ID building ghosts after partial Discard then Retry.
+
+R8 GREEN receipt: `/tmp/whim-beta1-chain10-r8-green.log`; `npm run launcher:test` exited `0` with `13850 checks passed, 0 failed` and `launcher acceptance green`.
+
+R8 FAST GATE receipt: `/tmp/whim-beta1-chain10-r8-gate.log` and `/tmp/whim-beta1-chain10-r8-gate.exit`; the attached serial pinned gate returned and saved exit `0`, with `FAST GATE PASSED` in its final footer.
+
+R8 KNIP receipt: `/tmp/whim-beta1-chain10-r8-knip.log`; `npx knip` exited `0` with no findings or output.
+
+VERDICT: required source cases implemented; independent review pending.
