@@ -47,7 +47,6 @@ import {
   refusedGenerateOutcome,
   reopenedRecord,
   retryBuildScreen,
-  settleRefusedGenerate,
   startPendingBuild,
 } from './build-lifecycle';
 import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAppContext } from './generation-request';
@@ -789,6 +788,10 @@ function LauncherShell({
   // -state change — reading the screen back out of here — and not a second subscriber, an event
   // bus or per-tile progress. Cleared the moment the attempt settles.
   const liveRef = useRef<{ id: string; screen: BuildScreen } | null>(null);
+  // A partial retry rollback may restore the old record while its matching journal remains
+  // unwritable. That surviving journal belongs to neither complete attempt pair, so the failure
+  // screen deliberately withholds it rather than showing a report it cannot substantiate.
+  const unavailableJournalRef = useRef(new Set<string>());
 
   // The live attempt's derived-signal state (design D6): its start time, the cumulative counts
   // folded from its stream and the arrival that the heartbeat measures quiet from. A REF, not
@@ -1232,6 +1235,22 @@ function LauncherShell({
     };
   };
 
+  /** A storage-degraded terminal outcome is generic on screen. The record and journal identities
+   * are carried independently: the failure is discardable when its record read-back verified, but
+   * a timeline is named only after a terminal journal read-back verified too. */
+  const genericAttemptFailure = (
+    editing: InstalledApp | undefined,
+    prompt: string,
+    stage: string,
+    observed: number,
+    recordId?: string,
+    journalId?: string,
+  ): Screen => ({
+    ...failure(editing, prompt, new Error(GENERIC_STREAM_ERROR), stage, observed),
+    ...(recordId != null ? { recordId } : {}),
+    ...(journalId != null ? { journalId } : {}),
+  });
+
   /** Opens compose, optionally scoped to a re-prompt. `about` (the edit flow's shared clarify/
    *  rewrite `app.description`) is resolved AFTER the screen is already showing — best effort,
    *  never blocking the field the user is about to type into — and lands directly in `aboutRef`,
@@ -1461,7 +1480,7 @@ function LauncherShell({
     observed: RunTerminalCounts,
     remedy?: PendingFailureRemedy,
     retrySnapshot?: AttemptSnapshot,
-  ): 'persisted' | 'restored' | 'unresolved' => {
+  ): TerminalSettlement => {
     releaseLiveRef(id);
     // `observed` is the end-of-stream flush: the final cumulative counts (closing the last throttle
     // window, which no aggregate entry can) and how many `diagnostic` events went past. Only the
@@ -1476,12 +1495,9 @@ function LauncherShell({
         operation: 'settle-failed-attempt',
         thrown: persistenceError instanceof Error ? 'error' : 'non-error',
       });
-      if (!retrySnapshot) {
-        refresh();
-        return 'unresolved';
-      }
-      const [restored] = restoreAttemptSnapshots([id], id, retrySnapshot);
-      return restored?.journal && restored.pending ? 'restored' : 'unresolved';
+      return retrySnapshot
+        ? recoverRetryAfterTerminalPersistenceFailure(id, retrySnapshot, observed, remedy)
+        : persistGenericTerminalFailure(id, observed, remedy);
     }
   };
 
@@ -1517,14 +1533,17 @@ function LauncherShell({
     counts: RunTerminalCounts;
     retrySnapshot?: AttemptSnapshot;
   }) => {
-    const terminalPersisted = settleFailed(
+    const settlement = settleFailed(
       input.attemptId,
       input.reason,
       input.hints,
       input.counts,
       undefined,
       input.retrySnapshot,
-    ) === 'persisted';
+    );
+    const terminalPersisted = settlement === 'persisted';
+    const genericRecordPersisted = settlement === 'generic-pair' || settlement === 'generic-record';
+    const genericJournalPersisted = settlement === 'generic-pair';
     const failureReason = terminalPersisted ? input.reason : GENERIC_STREAM_ERROR;
     const failureHints = terminalPersisted ? input.hints : [];
     setScreen({
@@ -1535,7 +1554,8 @@ function LauncherShell({
       diagnostics: failureHints,
       // A persistence failure cannot claim this retry's terminal payload exists. If restoration
       // brought back the prior record, it remains available from its ghost after Back.
-      ...(terminalPersisted ? { journalId: input.attemptId, recordId: input.attemptId } : {}),
+      ...((terminalPersisted || genericRecordPersisted) ? { recordId: input.attemptId } : {}),
+      ...((terminalPersisted || genericJournalPersisted) ? { journalId: input.attemptId } : {}),
       observedRepairAttempts: input.observed,
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: input.editing != null,
@@ -1557,6 +1577,26 @@ function LauncherShell({
    * nothing — the user is elsewhere; its ghost keeps the reason — except the update screen, which
    * opens where it interrupts nothing (`updateMayInterrupt`).
    */
+  const showUnpersistedGenerateRefusal = (
+    settlement: TerminalSettlement,
+    attemptId: string,
+    detached: boolean,
+    editing: InstalledApp | undefined,
+    prompt: string,
+    observedRepairAttempts: number,
+  ) => {
+    if (detached) return;
+    const ids = genericSettlementIds(settlement, attemptId);
+    setScreen(genericAttemptFailure(
+      editing,
+      prompt,
+      'refused generation state was not persisted',
+      observedRepairAttempts,
+      ids.recordId,
+      ids.journalId,
+    ));
+  };
+
   const handleGenerateRefusal = (
     attemptId: string,
     refusal: ServiceRefusal,
@@ -1564,19 +1604,35 @@ function LauncherShell({
     detached: boolean,
     fromPlan: PlanScreen | undefined,
     counts: RunTerminalCounts,
+    retrySnapshot: AttemptSnapshot | undefined,
+    editing: InstalledApp | undefined,
+    prompt: string,
+    observedRepairAttempts: number,
   ): void => {
     logServiceRefusal('generate', refusal);
     const notice = noticeFrom(refusal);
     const outcome = refusedGenerateOutcome(isRetry, detached);
     releaseLiveRef(attemptId);
-    settleRefusedGenerate(pending, journal, attemptId, outcome, refusalText(refusal), counts, refusalRemedy(refusal));
-    refresh();
     if (outcome === 'drop') {
+      dropAttempt(attemptId);
+      refresh();
       if (fromPlan) {
         const back: PlanScreen = { ...fromPlan, notice: undefined };
         const target = refusalScreen(refusal, back, { kind: 'resume', screen: back }) ?? { ...fromPlan, notice };
         setScreen(onlyOnStep<Screen, 'build'>('build', () => target));
       }
+      return;
+    }
+    const settlement = settleFailed(
+      attemptId,
+      refusalText(refusal),
+      [],
+      counts,
+      refusalRemedy(refusal),
+      retrySnapshot,
+    );
+    if (settlement !== 'persisted') {
+      showUnpersistedGenerateRefusal(settlement, attemptId, detached, editing, prompt, observedRepairAttempts);
       return;
     }
     if (detached && REFUSAL_RULES[refusal.code].opens === 'update') {
@@ -1608,7 +1664,17 @@ function LauncherShell({
   const settleServerEnding = (
     e: unknown,
     ctl: NonNullable<typeof genRef.current>,
-    attempt: { attemptId: string; isRetry: boolean; fromPlan?: PlanScreen; counts: RunTerminalCounts; streamRequestId?: string },
+    attempt: {
+      attemptId: string;
+      isRetry: boolean;
+      fromPlan?: PlanScreen;
+      counts: RunTerminalCounts;
+      streamRequestId?: string;
+      retrySnapshot?: AttemptSnapshot;
+      editing: InstalledApp | undefined;
+      prompt: string;
+      observedRepairAttempts: number;
+    },
     markOnline: () => void,
   ): boolean => {
     const fallback = terminalFallbackOf(e);
@@ -1618,18 +1684,40 @@ function LauncherShell({
       logUpdateFallback('generate', e, attempt.streamRequestId);
       const notice = fallbackNotice(fallback);
       const detached = ctl.detached;
-      settleFailed(attempt.attemptId, notice ?? COPY.updateRequiredLine, [], attempt.counts, {
+      const settlement = settleFailed(attempt.attemptId, notice ?? COPY.updateRequiredLine, [], attempt.counts, {
         kind: 'update',
         protocolLevel: PROTOCOL_LEVEL,
-      });
-      setScreen((prev) => (!detached || updateMayInterrupt(prev) ? updateScreenFrom(prev, notice) : prev));
+      }, attempt.retrySnapshot);
+      const ids = genericSettlementIds(settlement, attempt.attemptId);
+      const genericFailure = settlement === 'persisted' ? undefined : genericAttemptFailure(
+        attempt.editing,
+        attempt.prompt,
+        'update fallback state was not persisted',
+        attempt.observedRepairAttempts,
+        ids.recordId,
+        ids.journalId,
+      );
+      setScreen((prev) => (!detached || updateMayInterrupt(prev)
+        ? genericFailure ?? updateScreenFrom(prev, notice)
+        : prev));
       return true;
     }
     const refusal = serviceRefusalOf(e);
     if (!refusal) return false;
     markOnline();
     releaseGenRef(ctl);
-    handleGenerateRefusal(attempt.attemptId, refusal, attempt.isRetry, ctl.detached, attempt.fromPlan, attempt.counts);
+    handleGenerateRefusal(
+      attempt.attemptId,
+      refusal,
+      attempt.isRetry,
+      ctl.detached,
+      attempt.fromPlan,
+      attempt.counts,
+      attempt.retrySnapshot,
+      attempt.editing,
+      attempt.prompt,
+      attempt.observedRepairAttempts,
+    );
     return true;
   };
 
@@ -1654,32 +1742,53 @@ function LauncherShell({
       fromPlan: input.fromPlan,
       counts: input.terminalCounts(),
       streamRequestId: input.streamRequestId,
+      retrySnapshot: input.retrySnapshot,
+      editing: input.editing,
+      prompt: input.prompt,
+      observedRepairAttempts: input.observedRepairAttempts,
     };
     if (settleServerEnding(input.error, input.ctl, attempt, input.markOnline)) return;
     releaseGenRef(input.ctl);
     logGenError('build failed', input.error, input.streamRequestId);
     const reasoned = errorReason(input.error);
-    const terminalPersisted = settleFailed(
+    const settlement = settleFailed(
       input.attemptId,
       reasoned.reason,
       reasoned.diagnostics,
       input.terminalCounts(),
       errorRemedy(input.error),
       input.retrySnapshot,
-    ) === 'persisted';
-    setScreen(failure(
-      input.editing,
-      input.prompt,
-      terminalPersisted ? input.error : new Error(GENERIC_STREAM_ERROR),
-      'build failed',
-      input.observedRepairAttempts,
-      terminalPersisted ? input.attemptId : undefined,
-      input.streamRequestId,
-    ));
+    );
+    const terminalPersisted = settlement === 'persisted';
+    const ids = genericSettlementIds(settlement, input.attemptId);
+    setScreen(terminalPersisted
+      ? failure(
+        input.editing,
+        input.prompt,
+        input.error,
+        'build failed',
+        input.observedRepairAttempts,
+        input.attemptId,
+        input.streamRequestId,
+      )
+      : genericAttemptFailure(
+        input.editing,
+        input.prompt,
+        'build failed',
+        input.observedRepairAttempts,
+        ids.recordId,
+        ids.journalId,
+      ));
   };
 
   type AttemptSnapshot = { pending: string | null | undefined; journal: string | null | undefined };
   type AttemptSnapshotRestore = { journal: boolean; pending: boolean };
+  type TerminalSettlement = 'persisted' | 'generic-pair' | 'generic-record' | 'restored' | 'unresolved';
+
+  const genericSettlementIds = (settlement: TerminalSettlement, id: string): { recordId?: string; journalId?: string } => {
+    if (settlement === 'generic-pair') return { recordId: id, journalId: id };
+    return settlement === 'generic-record' ? { recordId: id } : {};
+  };
 
   const currentPendingIds = (): string[] => kv.getAllKeys()
     .flatMap((key) => key.startsWith('pending:') ? [key.slice('pending:'.length)] : []);
@@ -1720,6 +1829,61 @@ function LauncherShell({
     return restored;
   };
 
+  /** A best-effort terminal fallback uses the established generic stream error, which is all a
+   * storage-failed settlement can honestly persist. The journal and record are attempted and
+   * verified independently. A readable record without a matching readable terminal report still
+   * remains a truthful failed ghost; its timeline is withheld rather than borrowing stale data. */
+  const persistGenericTerminalFailure = (
+    id: string,
+    observed: RunTerminalCounts,
+    remedy?: PendingFailureRemedy,
+  ): TerminalSettlement => {
+    let journalPersisted = false;
+    try {
+      journal.create(id);
+      journal.appendTerminal(id, { failure: { reason: GENERIC_STREAM_ERROR, diagnostics: [] }, ...observed });
+      journalPersisted = journal.get(id)?.at(-1)?.failure?.reason === GENERIC_STREAM_ERROR;
+    } catch (fallbackError) {
+      log.warn(CHANNELS.gen, 'generic terminal report did not persist', {
+        operation: 'persist-generic-terminal-report',
+        thrown: fallbackError instanceof Error ? 'error' : 'non-error',
+      });
+    }
+    let recordPersisted = false;
+    try {
+      failPendingBuild(pending, id, GENERIC_STREAM_ERROR, [], remedy);
+      const record = pending.get(id);
+      recordPersisted = record?.state === 'failed' && record.failure?.reason === GENERIC_STREAM_ERROR;
+    } catch (fallbackError) {
+      log.warn(CHANNELS.gen, 'generic failed record did not persist', {
+        operation: 'persist-generic-failed-record',
+        thrown: fallbackError instanceof Error ? 'error' : 'non-error',
+      });
+    }
+    if (!journalPersisted) unavailableJournalRef.current.add(id);
+    refresh();
+    if (!recordPersisted) return 'unresolved';
+    return journalPersisted ? 'generic-pair' : 'generic-record';
+  };
+
+  /** A retry can return to its exact old pair only when both siblings verified. If its old pending
+   * record cannot return, the ended retry gets one independent generic terminal-record fallback;
+   * a failed fallback is left unclaimed, because no persisted lifecycle state can then be proved. */
+  const recoverRetryAfterTerminalPersistenceFailure = (
+    id: string,
+    previous: AttemptSnapshot,
+    observed: RunTerminalCounts,
+    remedy?: PendingFailureRemedy,
+  ): TerminalSettlement => {
+    const [restored] = restoreAttemptSnapshots([id], id, previous);
+    if (restored?.pending) {
+      if (!restored.journal) unavailableJournalRef.current.add(id);
+      refresh();
+      return 'restored';
+    }
+    return persistGenericTerminalFailure(id, observed, remedy);
+  };
+
   const beginPendingAttempt = (
     building: BuildScreen,
     editing: InstalledApp | undefined,
@@ -1738,6 +1902,7 @@ function LauncherShell({
       };
       snapshotAvailable = true;
       attemptId = startPendingBuild(pending, { editing, text: building.text, reuseId });
+      unavailableJournalRef.current.delete(attemptId);
       // The journal is created at the SAME moment as the record it is a sibling of
       // (`generation-run-journal` "A run journal is created alongside its pending-build record"),
       // and the attempt's derived signals start from the same instant the request does.
@@ -2146,7 +2311,9 @@ function LauncherShell({
    *  unreadable journal reads as `null` and the section falls back to its empty note; nothing else
    *  about the screen depends on it. */
   const failureJournal = useMemo(
-    () => (screen.kind === 'failure' && screen.journalId != null ? journal.get(screen.journalId) : null),
+    () => (screen.kind === 'failure' && screen.journalId != null && !unavailableJournalRef.current.has(screen.journalId)
+      ? journal.get(screen.journalId)
+      : null),
     [screen, journal],
   );
 

@@ -8,6 +8,7 @@ import HomeScreen from '../HomeScreen';
 import BuildStep from '../BuildStep';
 import DoneStep from '../DoneStep';
 import FailureScreen from '../FailureScreen';
+import UpdateRequiredScreen from '../UpdateRequiredScreen';
 import RunDetailsSheet from '../RunDetailsSheet';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { JOURNAL_KEY, LAST_RUN_KEY, RunJournalStore } from '../run-journal';
@@ -21,6 +22,8 @@ import { appLinkFor } from '../app-link';
 import { button, press, textOf } from './react-screen';
 import { buildIt, composeAndContinue, hasInstalled, json, planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
+import { stubFutureFrame } from '../../../../server/src/stub-markers';
+import { serverBusyRefusal } from '../../../../server/src/admission/refusals';
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
@@ -190,6 +193,143 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
         h.eq([kv.getString('pending:failed'), kv.getString(JOURNAL_KEY('failed'))], [pendingBefore, journalBefore], 'the old pending record and journal are restored exactly');
         await press(button(tree, COPY.failureBack));
         h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [['failed', 'failed']], 'the restored ghost is never shown as building');
+      } finally {
+        clearFailure();
+        process.off('unhandledRejection', captureRejection);
+      }
+    });
+  });
+
+  await h.test('ghosts: a consent-resumed Retry whose old pending record cannot be restored persists a generic failed record instead of a dead build', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    let rejectTerminalWrite = false;
+    await withLauncher({
+      consent: false,
+      prepare: (kv) => {
+        const pending = new PendingBuildStore(kv);
+        pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+        pending.setFailed('failed', { reason: 'The earlier build stopped.', diagnostics: 'Try again.' });
+        const journal = new RunJournalStore(kv);
+        journal.create('failed');
+        journal.appendTerminal('failed', { failure: { reason: 'The earlier build stopped.' } });
+      },
+      server: streamingServer(streams),
+    }, async ({ tree, kv, sent }) => {
+      const pendingBefore = kv.getString('pending:failed')!;
+      const clearFailure = failNativeStorageWritesWhen(({ id, key, value }) =>
+        rejectTerminalWrite && id === 'whim.launcher' && (
+          key === JOURNAL_KEY('failed') && value.includes(GENERIC_STREAM_ERROR)
+          || key === 'pending:failed' && value === pendingBefore
+        ));
+      try {
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get('failed')));
+        await press(button(tree, COPY.screenErrorRetry));
+        await waitFor(() => textOf(tree.root).includes(COPY.consentTitle), 'the retry consent step');
+        await press(button(tree, COPY.consentAgree));
+        await waitFor(() => streams.length === 1 && on(tree, BuildStep), 'the retried build');
+
+        rejectTerminalWrite = true;
+        streams[0].end();
+        await waitFor(() => on(tree, FailureScreen), 'the generic terminal-persistence failure');
+
+        const failed = new PendingBuildStore(kv).get('failed');
+        h.eq(sent.filter((request) => request.path === '/v1/generate').length, 1, 'the retry sends exactly one generation request');
+        h.eq([failed?.state, failed?.failure?.reason], ['failed', GENERIC_STREAM_ERROR], 'the persisted record truthfully says the ended retry failed');
+        h.ok(kv.getString('pending:failed') !== pendingBefore, 'the failed restore is never claimed as an old-pair rollback');
+        const failure = tree.root.findByType(FailureScreen).props;
+        h.eq([failure.onDismiss != null, failure.attemptStarted, failure.journal], [true, false, null], 'the verified record is discardable without claiming a terminal report');
+        await press(button(tree, COPY.failureBack));
+        h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [['failed', 'failed']], 'Back never exposes the ended retry as building');
+      } finally {
+        clearFailure();
+      }
+    });
+  });
+
+  await h.test('ghosts: a consent-resumed Retry whose update fallback cannot persist restores its old pair and shows generic failure', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    const update = stubFutureFrame('update');
+    const notice = update.compat?.notice ?? '';
+    let rejectTerminalWrite = false;
+    await withLauncher({
+      consent: false,
+      prepare: (kv) => {
+        const pending = new PendingBuildStore(kv);
+        pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+        pending.setFailed('failed', { reason: 'The earlier build stopped.', diagnostics: 'Try again.' });
+        const journal = new RunJournalStore(kv);
+        journal.create('failed');
+        journal.appendTerminal('failed', { failure: { reason: 'The earlier build stopped.' } });
+      },
+      server: streamingServer(streams),
+    }, async ({ tree, kv, sent }) => {
+      const pendingBefore = kv.getString('pending:failed');
+      const journalBefore = kv.getString(JOURNAL_KEY('failed'));
+      const clearFailure = failNativeStorageWritesWhen(({ id, key, value }) =>
+        rejectTerminalWrite && id === 'whim.launcher' && key === JOURNAL_KEY('failed') && value.includes(notice));
+      try {
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get('failed')));
+        await press(button(tree, COPY.screenErrorRetry));
+        await waitFor(() => textOf(tree.root).includes(COPY.consentTitle), 'the retry consent step');
+        await press(button(tree, COPY.consentAgree));
+        await waitFor(() => streams.length === 1 && on(tree, BuildStep), 'the retried build');
+
+        rejectTerminalWrite = true;
+        streams[0].push(update);
+        await waitFor(() => on(tree, FailureScreen), 'the generic update-persistence failure');
+
+        h.eq(sent.filter((request) => request.path === '/v1/generate').length, 1, 'the retry sends exactly one generation request');
+        h.eq(tree.root.findByType(FailureScreen).props.reason, GENERIC_STREAM_ERROR, 'the update write failure stays generic');
+        h.ok(!on(tree, UpdateRequiredScreen), 'the update screen does not claim a failed terminal settlement');
+        h.eq([kv.getString('pending:failed'), kv.getString(JOURNAL_KEY('failed'))], [pendingBefore, journalBefore], 'the old pair is restored exactly');
+        await press(button(tree, COPY.failureBack));
+        h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [['failed', 'failed']], 'Back returns to the old failed ghost');
+      } finally {
+        clearFailure();
+      }
+    });
+  });
+
+  await h.test('ghosts: a consent-resumed Retry whose service refusal cannot persist restores its old pair without rejecting', async () => {
+    const refusal = serverBusyRefusal();
+    let rejectTerminalWrite = false;
+    await withLauncher({
+      consent: false,
+      prepare: (kv) => {
+        const pending = new PendingBuildStore(kv);
+        pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+        pending.setFailed('failed', { reason: 'The earlier build stopped.', diagnostics: 'Try again.' });
+        const journal = new RunJournalStore(kv);
+        journal.create('failed');
+        journal.appendTerminal('failed', { failure: { reason: 'The earlier build stopped.' } });
+      },
+      server: () => new Response(JSON.stringify(refusal.body), {
+        status: refusal.status,
+        headers: { 'Content-Type': 'application/json', ...refusal.headers },
+      }),
+    }, async ({ tree, kv, sent }) => {
+      const pendingBefore = kv.getString('pending:failed');
+      const journalBefore = kv.getString(JOURNAL_KEY('failed'));
+      const unhandled: unknown[] = [];
+      const captureRejection = (reason: unknown) => { unhandled.push(reason); };
+      process.on('unhandledRejection', captureRejection);
+      const clearFailure = failNativeStorageWritesWhen(({ id, key, value }) =>
+        rejectTerminalWrite && id === 'whim.launcher' && key === JOURNAL_KEY('failed') && value.includes(refusal.body.hint));
+      try {
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get('failed')));
+        await press(button(tree, COPY.screenErrorRetry));
+        await waitFor(() => textOf(tree.root).includes(COPY.consentTitle), 'the retry consent step');
+        rejectTerminalWrite = true;
+        await press(button(tree, COPY.consentAgree));
+        await waitFor(() => on(tree, FailureScreen), 'the generic refusal-persistence failure');
+        await settle();
+
+        h.eq(unhandled, [], 'the refusal settlement does not reject its continuation');
+        h.eq(sent.filter((request) => request.path === '/v1/generate').length, 1, 'the retry sends exactly one generation request');
+        h.eq(tree.root.findByType(FailureScreen).props.reason, GENERIC_STREAM_ERROR, 'the storage failure stays generic');
+        h.eq([kv.getString('pending:failed'), kv.getString(JOURNAL_KEY('failed'))], [pendingBefore, journalBefore], 'the old pair is restored exactly');
+        await press(button(tree, COPY.failureBack));
+        h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [['failed', 'failed']], 'Back returns to the old failed ghost');
       } finally {
         clearFailure();
         process.off('unhandledRejection', captureRejection);
