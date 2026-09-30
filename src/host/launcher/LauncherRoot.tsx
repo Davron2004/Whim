@@ -1609,6 +1609,34 @@ function LauncherShell({
     return true;
   };
 
+  const beginPendingAttempt = (
+    building: BuildScreen,
+    editing: InstalledApp | undefined,
+    reuseId: string | undefined,
+    ctl: NonNullable<typeof genRef.current>,
+  ): string | undefined => {
+    let attemptId: string | undefined;
+    try {
+      attemptId = startPendingBuild(pending, { editing, text: building.text, reuseId });
+      // The journal is created at the SAME moment as the record it is a sibling of
+      // (`generation-run-journal` "A run journal is created alongside its pending-build record"),
+      // and the attempt's derived signals start from the same instant the request does.
+      journal.create(attemptId);
+      return attemptId;
+    } catch (setupError) {
+      log.warn(CHANNELS.gen, 'attempt setup failed', {
+        operation: 'start-pending-build',
+        thrown: setupError instanceof Error ? 'error' : 'non-error',
+      });
+      releaseGenRef(ctl);
+      if (attemptId != null) {
+        settleFailed(attemptId, GENERIC_STREAM_ERROR, [], { aggregates: EMPTY_RUN_AGGREGATES, observedDiagnostics: 0 });
+      }
+      setScreen(failure(editing, building.text, new Error(GENERIC_STREAM_ERROR), 'attempt setup failed', 0, attemptId));
+      return undefined;
+    }
+  };
+
   /**
    * ONE generation attempt, end to end: the launcher id and its `building` record are written
    * BEFORE the request goes out (design D3/D4), the stream runs, and exactly one of three
@@ -1630,6 +1658,9 @@ function LauncherShell({
     const controller = new AbortController();
     const ctl = { controller, cancelled: false, detached: false };
     genRef.current = ctl;
+    const setDoneIfAttached = (next: (current: Screen) => Screen) => {
+      if (!ctl.detached) setScreen(next);
+    };
     const editing = building.editing;
     // Declared outside the try so a throw mid-stream still knows what the device observed, and on
     // which request (the stream's `x-whim-request-id`, once it has opened).
@@ -1638,11 +1669,8 @@ function LauncherShell({
 
     // The id this attempt writes to, decided and persisted before the request exists: a new
     // install mints one, a rebuild's id IS the app it rebuilds, a retry reuses its record's.
-    const attemptId = startPendingBuild(pending, { editing, text: building.text, reuseId });
-    // The journal is created at the SAME moment as the record it is a sibling of
-    // (`generation-run-journal` "A run journal is created alongside its pending-build record"),
-    // and the attempt's derived signals start from the same instant the request does.
-    journal.create(attemptId);
+    const attemptId = beginPendingAttempt(building, editing, reuseId, ctl);
+    if (attemptId == null) return;
     const startedAt = Date.now();
     let signals: RunSignals = {
       startedAt,
@@ -1779,8 +1807,8 @@ function LauncherShell({
       journal.moveToLastRun(attemptId, delivered.id);
       releaseLiveRef(attemptId);
       refresh();
-      if (ctl.detached) return; // "Leave it running": delivered silently, the user is elsewhere
-      setScreen((s) => (s.kind === 'build' ? doneStep(s, delivered) : s));
+      // "Leave it running": delivered silently, the user is elsewhere.
+      setDoneIfAttached((s) => (s.kind === 'build' ? doneStep(s, delivered) : s));
     } catch (e) {
       if (ctl.cancelled) return;
       const attempt = { attemptId, isRetry: reuseId !== undefined, fromPlan, counts: terminalCounts(), streamRequestId: stream?.requestId };

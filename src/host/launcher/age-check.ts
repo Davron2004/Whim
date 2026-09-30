@@ -29,6 +29,8 @@
  */
 
 import type { KVBackend } from '../version-store/fs/kv-fs';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 import type { TimerLike } from './connectivity';
 import { TERMS_VERSION } from './release-config';
 import { termsStatus } from './terms-acceptance';
@@ -189,6 +191,10 @@ export async function runAgeCheck(kv: KVBackend, read: () => Promise<unknown>, n
   const signal = ageSignalFrom(await answerWithin(read, STORE_ANSWER_DEADLINE_MS, timers));
   const result = signal === 'minor-approved' ? await approvedMinorResult(kv, options, timers) : ageResultOf(signal);
   const stored: StoredAgeCheck = { outcome: result === 'allowed' ? 'allowed' : 'blocked', checkedAt: now().toISOString() };
-  kv.set(AGE_CHECK_KEY, JSON.stringify(stored));
+  try {
+    kv.set(AGE_CHECK_KEY, JSON.stringify(stored));
+  } catch {
+    log.warn(CHANNELS.app, 'age check outcome was not stored', {});
+  }
   return result;
 }

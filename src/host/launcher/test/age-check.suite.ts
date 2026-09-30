@@ -54,6 +54,13 @@ const GRANTED: ConsentStatus = { kind: 'granted', version: 2, grantedAt: '2026-0
 
 const UPDATE_LINE = 'We’ve updated the terms of use.';
 
+class FailingAgePersistence extends MapKVBackend {
+  override set(key: string, value: string): void {
+    if (key === AGE_CHECK_KEY) throw new Error('age persistence failed');
+    super.set(key, value);
+  }
+}
+
 /** A store whose terms acceptance is for the version before the current one (spec
  *  terms-acceptance: `whim.terms:v1` holds `{ version, acceptedAt }`). */
 function withOlderTerms(): MapKVBackend {
@@ -96,6 +103,15 @@ export async function runAgeCheckTests(h: Harness): Promise<void> {
       h.eq(storedRecord(check.kv).outcome, stored, `${signal} is stored as ${stored}`);
     });
   }
+
+  await h.test('age-check: an unavailable age-outcome write keeps the derived blocked result and no raw age data', async () => {
+    for (const [signal, expected] of [['minor-not-approved', 'minor-not-approved'], ['under-13', 'under-13']] as const) {
+      const kv = new FailingAgePersistence();
+      const result = await runAgeCheck(kv, () => Promise.resolve(signal), () => CHECKED);
+      h.eq(result, expected, `${signal} still reaches its own held message when persistence fails`);
+      h.eq(kv.getAllKeys(), [], `${signal} leaves no age signal or outcome behind after the failed write`);
+    }
+  });
 
   await h.test('age-check: a user under 13 is held, and the store keeps only "blocked" and its date', async () => {
     const { kv, outcome } = await checkWith(() => Promise.resolve('under-13'));

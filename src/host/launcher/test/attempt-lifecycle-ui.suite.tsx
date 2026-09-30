@@ -11,12 +11,13 @@ import FailureScreen from '../FailureScreen';
 import RunDetailsSheet from '../RunDetailsSheet';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { JOURNAL_KEY, LAST_RUN_KEY, RunJournalStore } from '../run-journal';
+import { GENERIC_STREAM_ERROR } from '../error-reason';
 import type { InstalledApp } from '../app-index';
 import { StoreAccess } from '../store-access';
 import { hardwareBack, openLink } from './native-host';
 import AppLinkMissingScreen from '../AppLinkMissingScreen';
 import { appLinkFor } from '../app-link';
-import { button, press } from './react-screen';
+import { button, press, textOf } from './react-screen';
 import { composeAndContinue, hasInstalled, json, resultEvent, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
@@ -123,6 +124,39 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       h.eq(generates[1]?.body?.prompt, 'A tea timer', 'for the stored prompt');
       h.eq(new PendingBuildStore(kv).list().map((r) => [r.id, r.state]), [[failed.id, 'building']], 'under the same record, now building again');
     });
+  });
+
+  await h.test('ghosts: a consent-resumed Retry whose pending record cannot start leaves its failed ghost and journal untouched', async () => {
+    await withLauncher({
+      consent: false,
+      prepare: (kv) => {
+        const pending = new PendingBuildStore(kv);
+        pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+        pending.setFailed('failed', { reason: 'The earlier build stopped.', diagnostics: '' });
+        new RunJournalStore(kv).create('failed');
+    },
+    server: () => { throw new Error('a retry request must not be sent'); },
+  }, async ({ tree, kv, sent }) => {
+    const pendingBefore = kv.getString('pending:failed');
+    const journalBefore = kv.getString(JOURNAL_KEY('failed'));
+    const create = PendingBuildStore.prototype.create;
+    PendingBuildStore.prototype.create = () => { throw new Error('pending storage is unavailable'); };
+    try {
+      const failed = new PendingBuildStore(kv).get('failed');
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(failed));
+      await press(button(tree, COPY.screenErrorRetry));
+      await waitFor(() => textOf(tree.root).includes(COPY.consentTitle), 'the retry consent step');
+      await press(button(tree, COPY.consentAgree));
+      await waitFor(() => on(tree, FailureScreen), 'the setup failure screen');
+
+      h.eq(sent.filter((request) => request.path === '/v1/generate').length, 0, 'the failed setup sends no generation request');
+      h.eq([kv.getString('pending:failed'), kv.getString(JOURNAL_KEY('failed'))], [pendingBefore, journalBefore], 'the original failed ghost and journal remain paired');
+      h.eq(tree.root.findByType(FailureScreen).props.reason, GENERIC_STREAM_ERROR, 'the user sees the established generic failure');
+      h.ok(!textOf(tree.root).includes('pending storage is unavailable'), 'the storage failure text never reaches the screen');
+    } finally {
+      PendingBuildStore.prototype.create = create;
+    }
+  });
   });
 
   await h.test('ghosts: Discard on the live failure screen deletes the attempt it just saved', async () => {
