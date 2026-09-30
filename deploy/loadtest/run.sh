@@ -141,7 +141,7 @@ cmd_drive() {
         shift 2
         ;;
       --queue-max)
-        [ "$#" -ge 2 ] || whim_usage_error "--queue-max needs a number"
+        [[ "$#" -ge 2 ]] || whim_usage_error "--queue-max needs a number"
         queue_max="$2"
         shift 2
         ;;

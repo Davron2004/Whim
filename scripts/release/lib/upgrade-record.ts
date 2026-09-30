@@ -20,7 +20,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Buffer as NodeBuffer } from 'buffer';
+import type { Buffer as NodeBuffer } from 'node:buffer';
 import { readMmkv, type MmkvStore } from './mmkv';
 
 declare module 'node:fs' {

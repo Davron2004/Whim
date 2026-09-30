@@ -17,7 +17,7 @@
  * fails rather than misreading the store.
  */
 
-import type { Buffer as NodeBuffer } from 'buffer';
+import type { Buffer as NodeBuffer } from 'node:buffer';
 
 interface ZlibModule {
   crc32(data: Uint8Array): number;
