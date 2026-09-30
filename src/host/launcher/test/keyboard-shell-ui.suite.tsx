@@ -65,7 +65,19 @@ const windowStaysPut = (device: Device) => device.os === 'ios' || Number(device.
 /** Where things sit, as the native views would measure them. `frame` is a padding frame's place on
  *  its root's page (which fills the window); `field` and `block` are a field's and a named block's
  *  place in the scroll content. */
-interface Geometry { frame: Rect; field: Rect; block?: Rect }
+interface Geometry {
+  frame: Rect; field: Rect; block?: Rect;
+  nativeScroll?: { viewport: number; content: number; offset: number };
+}
+
+// Native layout can finish after its JS onLayout notification. Advance frames explicitly so
+// tests can place the native commit between the notification and a reveal measurement.
+const revealFrames = new Map<number, FrameRequestCallback>();
+function flushRevealFrames(): void {
+  const pending = [...revealFrames.values()];
+  revealFrames.clear();
+  for (const callback of pending) callback(0);
+}
 /** A screen's frame sits under the status bar and above the home indicator of an 844-high window. */
 const SCREEN_FRAME: Rect = [20, 794];
 const KEYBOARD_TOP = 500;
@@ -76,6 +88,10 @@ interface Mounted { tree: Tree; geometry: Geometry; scrolls: number[]; focused: 
  *  says, and unmounts and restores the platform after `body`. */
 async function on(device: Device, element: React.ReactElement, body: (m: Mounted) => Promise<void>, geometry: Geometry = { frame: SCREEN_FRAME, field: [300, 60] }): Promise<void> {
   const before = { OS: Platform.OS, Version: Platform.Version };
+  const animationFrames = { request: globalThis.requestAnimationFrame, cancel: globalThis.cancelAnimationFrame };
+  let frameId = 0;
+  globalThis.requestAnimationFrame = (callback) => { revealFrames.set(++frameId, callback); return frameId; };
+  globalThis.cancelAnimationFrame = (id) => { revealFrames.delete(id); };
   Platform.OS = device.os;
   Platform.Version = device.version;
   Keyboard.visible = false;
@@ -83,7 +99,11 @@ async function on(device: Device, element: React.ReactElement, body: (m: Mounted
   let focusCalls = 0;
   const createNodeMock = (node: React.ReactElement<{ collapsable?: boolean }>) => {
     const type = String(node.type);
-    if (type === 'ScrollView') return { scrollTo: ({ y }: { y: number }) => { scrolls.push(y); }, scrollToEnd: noop };
+    if (type === 'ScrollView') return { scrollTo: ({ y }: { y: number }) => {
+      scrolls.push(y);
+      const native = geometry.nativeScroll;
+      if (native) native.offset = Math.max(0, Math.min(y, native.content - native.viewport));
+    }, scrollToEnd: noop };
     if (type === 'TextInput') {
       return { focus: () => { focusCalls += 1; }, measureLayout: (_to: unknown, ok: (x: number, y: number, w: number, h: number) => void) => ok(0, geometry.field[0], 350, geometry.field[1]) };
     }
@@ -99,6 +119,9 @@ async function on(device: Device, element: React.ReactElement, body: (m: Mounted
       await body({ tree, geometry, scrolls, focused: () => focusCalls });
     } finally { await unmountScreen(tree); }
   } finally {
+    revealFrames.clear();
+    globalThis.requestAnimationFrame = animationFrames.request;
+    globalThis.cancelAnimationFrame = animationFrames.cancel;
     Object.assign(Platform, before);
     Keyboard.visible = false;
   }
@@ -112,13 +135,16 @@ async function keyboard(device: Device, shown: boolean): Promise<void> {
   const events = device.os === 'ios'
     ? [shown ? 'keyboardWillShow' : 'keyboardWillHide', 'keyboardWillChangeFrame'] as const
     : [shown ? 'keyboardDidShow' : 'keyboardDidHide'] as const;
-  await TestRenderer.act(async () => { for (const event of events) Keyboard.emit(event, top); });
+  await TestRenderer.act(async () => {
+    for (const event of events) { Keyboard.emit(event, top); }
+    flushRevealFrames();
+  });
 }
 
 /** Plays the scroll view's own reports: the height it shows, its content's height, an offset. */
 const scrollReports = (tree: Tree) => ({
-  viewport: (height: number) => TestRenderer.act(async () => scrollView(tree).props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } })),
-  content: (height: number) => TestRenderer.act(async () => scrollView(tree).props.onContentSizeChange(390, height)),
+  viewport: (height: number) => TestRenderer.act(async () => { scrollView(tree).props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } }); flushRevealFrames(); }),
+  content: (height: number) => TestRenderer.act(async () => { scrollView(tree).props.onContentSizeChange(390, height); flushRevealFrames(); }),
   offset: (y: number) => TestRenderer.act(async () => scrollView(tree).props.onScroll({ nativeEvent: { contentOffset: { x: 0, y } } })),
 });
 
@@ -314,6 +340,59 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
       h.eq(field(tree).props.value, 'A big dial', 'leaving the row open');
       h.eq([s.count('row'), s.count('build')], [0, 0], 'saving and building nothing');
     });
+  });
+
+  await h.test('iOS plan: focus before native keyboard layout settles still reveals the whole row, including later typing and refocus', async () => {
+    for (const settledBy of ['frame', 'keyboard'] as const) {
+      // 08-edit-settled device evidence: viewport y103–409 (306pt), row bottom y668,
+      // content offset 77. Before the keyboard, the viewport is 644pt high.
+      const native = { viewport: 644, content: 812, offset: 77 };
+      const geometry: Geometry = { frame: SCREEN_FRAME, field: [536, 63], block: [497, 145], nativeScroll: native };
+      await on(IOS, plan(), async ({ tree, scrolls }) => {
+        const reports = scrollReports(tree);
+        await reports.viewport(644);
+        await reports.content(native.content);
+        await reports.offset(native.offset);
+        mountContent(tree);
+        await editFourthRow(tree);
+        await TestRenderer.act(async () => field(tree).props.onFocus({}));
+        await keyboard(IOS, true);
+        // JS has the final Yoga viewport before the native view has adopted it. An immediate
+        // scroll command is clamped against the old 644pt viewport by RCTScrollViewComponentView.
+        await TestRenderer.act(async () => {
+          scrollView(tree).props.onLayout({ nativeEvent: { layout: { height: 306 } } });
+          if (settledBy === 'frame') native.viewport = 306;
+          flushRevealFrames();
+        });
+        if (settledBy === 'keyboard') {
+          await reports.offset(native.offset);
+          native.viewport = 306;
+          await TestRenderer.act(async () => { Keyboard.emit('keyboardDidShow', KEYBOARD_TOP); flushRevealFrames(); });
+        }
+        const wholeRowVisible = () => geometry.block![0] >= native.offset &&
+          geometry.block![0] + geometry.block![1] + SPACING.md <= native.offset + native.viewport;
+        h.ok(wholeRowVisible(), 'after the native commit, the full row and its actions clear the keyboard and pinned footer');
+        await reports.offset(native.offset);
+        geometry.block = [497, 210];
+        await TestRenderer.act(async () => {
+          scrollView(tree).props.onContentSizeChange(390, 877);
+          native.content = 877;
+          flushRevealFrames();
+        });
+        h.ok(wholeRowVisible(), 'typing reveals the grown row after native content layout');
+        await reports.offset(native.offset);
+        await TestRenderer.act(async () => field(tree).props.onBlur({}));
+        await reports.offset(77);
+        native.offset = 77;
+        await TestRenderer.act(async () => { field(tree).props.onFocus({}); flushRevealFrames(); });
+        h.ok(wholeRowVisible(), 'refocus reveals the same unsaved row');
+        const settledScrolls = scrolls.length;
+        await TestRenderer.act(async () => { flushRevealFrames(); flushRevealFrames(); });
+        h.eq(scrolls.length, settledScrolls, 'a reveal does not schedule itself in a layout loop');
+        await TestRenderer.act(async () => { field(tree).props.onFocus({}); field(tree).props.onBlur({}); flushRevealFrames(); });
+        h.eq(scrolls.length, settledScrolls, 'blur cancels a pending reveal');
+      }, geometry);
+    }
   });
 
   await h.test('clarify "Other", and the Settings server field with the helper line under it, are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
