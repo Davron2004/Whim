@@ -220,7 +220,58 @@ check proves that data survives even though the wire broke.
 381237/382511 then already get 426 from the missing protocol header (D16), and the minimum builds keep
 it that way for any future pre-D16 build too.
 
+**D19. Pending lifecycle has an explicit current view when storage cannot write.**
+The failure being corrected is a known-ended attempt whose raw pending record still says
+`building` after all terminal recovery writes fail. Back must leave a failed, reopenable ghost in
+this process. Physical durability is limited by the backend. Evidence and the native deletion
+contract are in `research.md` §Pending-write recovery (2026-09-30).
+
+`PendingBuildStore` owns a process-only current view alongside its persisted reads. Persisted
+`PendingBuildRecord` JSON and its three states stay unchanged. `get`/`list` remain raw persisted
+reads; `readCurrent`/`listCurrent` return `{record, durability: 'persisted' | 'volatile'}`.
+Ordinary reads never write or promote a volatile record. Current list reads substitute by ID,
+retain order, avoid duplicates, and include a retained entry during partial Discard even when
+its raw key/order has already been removed. Edit attempts still create no separate ghost.
+
+After both new pending and empty-journal setup have succeeded and been verified, the store
+activates an opaque per-attempt lease and captures that building record. HTTP follows this point.
+A lease is current for one launcher ID; a later activation supersedes it. The shell checks ownership
+before terminal settlement/recovery mutations, and the store rejects stale retention. Identical
+timestamps do not imply ownership. Release a matching lease after completion/cancellation without
+clearing a retained failure. A failed Retry setup neither activates nor clears the previous view.
+
+Run R2's selective recovery first. Only when it cannot verify a usable persisted settlement,
+retain a generic failed record from that attempt's captured data. Direct completion supplies the
+fact of failure; no journal, absent ref, or clock does. Home, failure actions, ghost opening, and
+pending app-link routing use the store's current view. Raw readback stays raw. A volatile failure
+has no saved `recordId` or journal/report association; `pendingId` identifies the current entry for
+Retry/Discard without claiming persistence. Keep per-attempt journal verification when navigating
+Back/reopening: a saved generic fallback alone does not verify a leftover journal. Any in-process
+report-availability bookkeeping records only that association, never lifecycle, and clears on a
+verified new setup/removal. Cold-process recovery cannot reconstruct an unwritten terminal fact.
+
+Retry retains the previous view until pending and journal setup are both durable. On setup failure,
+restore siblings independently, keep the entry, show the established generic error, and send no
+HTTP request. On success, activation replaces the retained failure with the new building attempt.
+Discard of a retained entry attempts pending and journal removal independently. Read back the
+pending key, order membership, and journal; a thrown error or native false return that leaves a
+key cannot count as success. Keep the entry and generic failure/Back until removal is verified,
+then clear retention. This creates no tombstone and no autonomous retry/flush loop.
+
+On cold launch, surviving raw building records mean the owning process was lost. Demote each to
+interrupted before Home is ready. If a demotion cannot persist, retain a volatile interrupted view
+and continue through the remaining records. Never carry a previous process's volatile failed
+payload forward. Valid readable metadata and available process memory are the scope assumptions;
+corruption and atomic recovery across process death during multi-key removal remain outside it.
+
+The journal remains diagnostic only. No timeline/report identity may imply that an unverified
+terminal journal was saved. Use existing generic copy; never expose native exception text. This
+adds no backend, dependency, SDK/storage-engine change, or general cancellation/delivery recovery.
+The exact API and five-file implementation allowlist are in `handoff/pending-write-degradation.md`.
+
 ## Risks / Trade-offs
+
+- Pending recovery can confuse current memory with persisted state. Keep separate read APIs and test both against raw KV values. The volatile terminal fact is lost with its process; startup reports interruption from surviving building records.
 
 - [A wrong `compat`/level on a new message ships a bad fallback] → an emitter-side test: every
   event or code above level 1 carries `compat`, and a client-side "future frames" fixture suite covers

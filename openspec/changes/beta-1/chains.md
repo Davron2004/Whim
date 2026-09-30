@@ -1,6 +1,6 @@
 # Context chains: beta-1
 
-Nine chains. chain-1 (the wire protocol) goes first: it writes the one contract that three later
+Ten chains. chain-10 is the later pending-write recovery correction and runs after the reviewed R2 fix is integrated. chain-1 (the wire protocol) goes first: it writes the one contract that three later
 chains consume. After that: the two server chains, the prompt-flow screens, then the app shell,
 runtime and polish chains, then release tooling. Section 10 is attended acceptance and rollout, done
 by the orchestrator, not a chain.
@@ -115,3 +115,28 @@ so nothing is HUMAN-BOOTSTRAP. The owner runs chains one at a time (low-priority
 - reads: specs/release-upgrade-check/spec.md; design.md D15; the memories
   `maestro-sees-through-sandbox-iframe` and `android-emu-run-recipe` (via the chain block); handoff: none
 - writes-contract: none
+
+
+## chain-10: pending-write-degradation
+
+- tasks: 11.1–11.4
+- rationale: one owner must coordinate current/persisted reads, attempt leases, terminal recovery,
+  Retry/Discard, and rendered fault tests; they share the store and LauncherRoot lifecycle paths.
+- reads: design.md D19; research.md §Pending-write recovery (2026-09-30); beta-1 deltas for
+  pending-builds, prompt-flow, app-launcher, generation-run-journal; the corresponding live
+  requirements; the reviewed R2 selective terminal recovery diff and receipt;
+  handoff/pending-write-degradation.md
+- writes-contract: handoff/pending-write-degradation.md (exact signatures, durability/identity,
+  lease ownership, setup activation, removal readback, startup and errors; at most 120 lines)
+- after: chain-1, chain-2, chain-3, chain-4, chain-5, chain-6, chain-7, chain-8, chain-9;
+  reviewed R2 selective terminal fix merged onto integration/beta-1
+- dispatch prerequisite: root verifies R2's reviewed source is on staging and its worker has
+  released the sole source-heavy lease. Branch the new worktree from that staging tip; use the
+  existing beta-1 integration/closure lane, never a second integration branch.
+- product/test writes: src/host/launcher/pending-builds.ts;
+  src/host/launcher/LauncherRoot.tsx; src/host/launcher/test/pending-builds.suite.ts;
+  src/host/launcher/test/attempt-lifecycle-ui.suite.tsx;
+  src/host/launcher/test/native-storage.ts (independent removal fault seam only)
+- scope exclusions: live-spec edits, SDK, runtime, mini-app storage engine, version store/backend,
+  dependencies, suite registry, gates/configuration, general cancel/delivery write recovery.
+  Root owns progress/task acceptance and the final native/full-gate review receipts.

@@ -70,3 +70,57 @@
 
 ## Risks and unknowns
 - Not verified: the clarify contract schema file; whether a keepalive comment disarms the device's first-chunk timer; `usage-store.ts` columns; the Android age-signal hang risk; the #105 status-bar cause; the #106 save call site; whether #48 still reproduces.
+
+
+## Pending-write recovery (2026-09-30)
+
+The root accepted this bounded recovery policy after the selective-write R2 fix. The supporting
+read-only investigation was recorded in `/tmp/whim-beta1-terminal-recovery-policy.md`,
+`/tmp/whim-beta1-sonar-r2-terminal-review-policy.md`, and
+`/tmp/whim-beta1-pending-write-policy-proposal.md`; the facts needed by implementation follow here
+so the change does not depend on temporary files. No product changes or tests were made in this
+planning pass. The graph query located the modules but returned older, truncated line locations;
+these facts were checked against current targeted source and spec reads.
+
+- The live `pending-builds` spec requires truthful state, persisted terminal failure, and launch-time
+  `building` → `interrupted` demotion. `interrupted` denotes process loss, not a known terminal
+  failure whose write failed. The journal spec explicitly forbids journal-derived lifecycle state.
+  `app-launcher` requires every applicable pending entry to remain represented; edit attempts keep
+  their existing no-separate-ghost rule.
+- `pending-builds.ts` is a synchronous KV wrapper. `get`/`list` read persisted keys; writes throw
+  through to callers, and `demoteBuildingToInterrupted` presently stops on a write error. It has
+  no current-state fallback. Keep those raw reads separate from the new current-state reads.
+- `LauncherRoot.tsx#refresh`, `#onOpenPending`, `#failureActions`, and `#openAppLink` own the UI
+  decisions. `openAppLink` passes `pending.list()` to `resolveAppLink`, then calls the same pending
+  handler as a tile. `link-routing.ts` only consumes records, so passing current records needs no
+  routing-module or Home change. These call sites all fit the existing LauncherRoot allowlist.
+- The shell explicitly allows overlapping attempts and retains one `liveRef`. Its absence cannot
+  prove that another pending attempt ended. Use an opaque lease from completed durable setup;
+  fence terminal writes/recovery and retention by that lease, including reuse of one launcher ID.
+- Setup writes pending then an empty journal before the generation call. Restoring the two raw
+  snapshots already attempts each sibling independently. Preserve this behavior and the R2
+  selective-write fix: after failed restoration, a verified generic failed pending write is useful
+  even when the journal remains unavailable. Never treat a current volatile read as this readback.
+- `native-storage.ts#failNativeStorageWritesWhen` faults only `set`, globally across adapters over
+  a named store. `remove` currently returns `data.delete(key)`. The installed producer declares
+  `remove(key): boolean` in `react-native-mmkv/src/specs/MMKV.nitro.ts`; its
+  `cpp/HybridMMKV.cpp#remove` returns `removeValueForKey`'s boolean and notifies only on true.
+  The host `mmkv-backend.ts` exposes this through `KVBackend.delete(): void`; callers do not inspect
+  the native boolean. A non-throwing call is therefore insufficient evidence of deletion.
+- Add a separate test-only seam in `src/host/launcher/test/native-storage.ts`:
+  `failNativeStorageRemovalsWhen(({id, key}) => 'throw' | 'return-false' | undefined)`.
+  `throw` leaves the key and throws; `return-false` leaves the key and returns false; undefined
+  delegates to the existing Map deletion. Its returned cleanup restores the previous predicate;
+  `resetNativeStorage` clears both independent predicates. Do not widen or change the existing
+  write-failure hook. Include both modes in rendered Discard acceptance with actual readback.
+
+All relevant writes can fail. No policy can guarantee a durable old pair or terminal state in
+that condition. D19 instead preserves direct completion evidence in the owning store instance.
+The memory state ends with that process; a later process knows only the surviving persisted
+records and its predecessor's loss. Read failures/corruption keep their existing policy.
+
+Cancel and successful-delivery write faults are adjacent but not covered by this correction.
+In particular, deleting after an already completed install and aborting a live generation need
+separate recovery reasoning; do not relabel either as a failed generation or add tombstones here.
+The chain must preserve those successful paths and release its leases, and report any reproduced
+adjacent fault to the orchestrator rather than silently extending D19.

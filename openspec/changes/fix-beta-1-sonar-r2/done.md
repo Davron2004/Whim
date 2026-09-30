@@ -11,6 +11,8 @@ Required behavior:
 3. Show the established generic, content-free failure surface, with exactly one request. Do not expose storage errors, prompts, diagnostic internals or start another request.
 4. Preserve normal retry identity, cancellation, delivery, ordinary terminal failure and the existing pre-request rollback.
 
+Adjudicated scope: recoverable partial writes must reach a read-back verified failed pending record without clobbering a successfully restored journal sibling. A completely unwritable store cannot provide durable rollback under the existing contract. This correction must contain that failure without claiming saved state; beta-1 chain-10 separately defines and implements the store-owned current-session fallback so Back cannot expose a dead building ghost. R2 closure remains pending that composed behavior and current-head Sonar verification.
+
 Run `npm run -s launcher:test` for the rendered acceptance. No single-suite selector exists. Additional assertions must target a distinct boundary, not repeat implementation literals. No void, dummy/empty catch, suppression, transitional flag, constant branch or checker/config change.
 
 Read docs/capabilities.md and its pending-builds/prompt-flow/generation-run-journal specs, plus relevant launcher/storage decisions before editing. Use research.md for the reconciled producer graph and evidence.txt for root-verified live statements. Root stale check initially returned 7 for an inexact standalone brace, then returned 0 on corrected exact statements; no dispatch occurred on 7.

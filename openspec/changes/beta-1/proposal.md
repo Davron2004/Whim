@@ -64,6 +64,9 @@ gate.
 - The orb scrim covers the status bar, and there's no stray grey disc on Android (#105). Counts in
   English copy use an explicit English locale (#89).
 
+**Recovery when pending storage cannot write**
+- A confirmed-ended attempt stays failed and reopenable in the running process even if its terminal pending write and recovery writes fail. `PendingBuildStore` distinguishes current volatile state from verified persisted state, without changing pending JSON. Retry sends no request until both setup records are durable; Discard retains the entry until removal is verified. A new process demotes surviving raw building records to interrupted, with a volatile demotion if that write also fails.
+
 **Release**
 - Every beta build passes a scripted upgrade check (previous build → new build keeps apps, versions,
   data, consent, device id) before it ships (#72, first half). For beta-1 the "previous build" is
@@ -78,12 +81,14 @@ gate.
   release, with recorded evidence.
 
 ### Modified Capabilities
+- `pending-builds`: explicit persisted/current views, attempt ownership, bounded volatile failure and startup interruption, durable Retry setup, and verified removal during storage failure.
+- `generation-run-journal`: independent recovery of sibling keys and no report association for an unverified terminal journal.
 - `generation-contract`: the protocol level header; the `compat` envelope and its frozen fallback
   set; `queued` and `restart` events; the clarify `limit` arm and answer modes (`select`, `other`);
   clarification answers as `choices`/`other`/`decide`; `compat` on `ApiError`.
 - `prompt-flow`: the in-line build screen; the "can't build this" answer; multi-select, "Other"
   and "Decide for me" on clarify questions; restart handling;
-  fallbacks for unusable messages; the stall heartbeat counts `queued`/`restart`.
+  fallbacks for unusable messages; the stall heartbeat counts `queued`/`restart`; reopenable generic failures during pending-write outages, with guarded Retry and Discard.
 - `server-admission-control`: the line (queue) on the stream; caps from a load test.
 - `generation-pipeline`: capability limits in clarify/plan, including the `limit` arm; answer modes
   chosen by clarify and delegated questions decided in the plan; the single
@@ -92,7 +97,7 @@ gate.
 - `store-age-signals`: the age-check deadline; the significant-change acknowledgment.
 - `terms-acceptance`: each legal screen at most once per pass.
 - `app-launcher`: shell keyboard handling; the orb footprint; orb scrim/disc; tiles; locale; post-paint
-  render failure → failure screen.
+  render failure → failure screen; ghosts and app-link pending routing use the store's current state during a write outage.
 - `sandbox-rendering`: the root error boundary's `render` frame; `Screen` pads for the host inset;
   focused inputs scroll into view.
 - `device-diagnostics`: stack frames reduced to file names.
