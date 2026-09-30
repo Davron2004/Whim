@@ -10,20 +10,22 @@ import DoneStep from '../DoneStep';
 import FailureScreen from '../FailureScreen';
 import UpdateRequiredScreen from '../UpdateRequiredScreen';
 import RunDetailsSheet from '../RunDetailsSheet';
+import LauncherRoot from '../LauncherRoot';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { JOURNAL_KEY, LAST_RUN_KEY, RunJournalStore } from '../run-journal';
 import { GENERIC_STREAM_ERROR } from '../error-reason';
 import type { InstalledApp } from '../app-index';
 import { StoreAccess } from '../store-access';
 import { hardwareBack, openLink } from './native-host';
-import { failNativeStorageWritesWhen } from './native-storage';
+import { failNativeStorageRemovalsWhen, failNativeStorageWritesWhen } from './native-storage';
 import AppLinkMissingScreen from '../AppLinkMissingScreen';
 import { appLinkFor } from '../app-link';
-import { button, press, textOf } from './react-screen';
+import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
 import { buildIt, composeAndContinue, hasInstalled, json, planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 import { stubFutureFrame } from '../../../../server/src/stub-markers';
 import { serverBusyRefusal } from '../../../../server/src/admission/refusals';
+import { testAppInfo } from './client-fixtures';
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
@@ -256,6 +258,57 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('ghosts: a fresh launcher over the same MMKV withholds an old journal from a generic failed retry', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    let rejectTerminalWrite = false;
+    await withLauncher({
+      prepare: (kv) => {
+        const pending = new PendingBuildStore(kv);
+        pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+        pending.setFailed('failed', { reason: 'The earlier build stopped.' });
+        const journal = new RunJournalStore(kv);
+        journal.create('failed');
+        journal.appendTerminal('failed', { failure: { reason: 'The earlier build stopped.' } });
+      },
+      server: streamingServer(streams),
+    }, async ({ tree, kv }) => {
+      const oldJournal = kv.getString(JOURNAL_KEY('failed'));
+      const oldPending = kv.getString('pending:failed')!;
+      const clearFailure = failNativeStorageWritesWhen(({ id, key, value }) =>
+        rejectTerminalWrite && id === 'whim.launcher' && (
+          key === JOURNAL_KEY('failed') && value.includes(GENERIC_STREAM_ERROR)
+          || key === 'pending:failed' && value === oldPending
+        ));
+      let fresh: Tree | undefined;
+      try {
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get('failed')));
+        await press(button(tree, COPY.screenErrorRetry));
+        await waitFor(() => streams.length === 1 && on(tree, BuildStep), 'the retried build');
+        rejectTerminalWrite = true;
+        streams[0].end();
+        await waitFor(() => on(tree, FailureScreen), 'the generic failure');
+        h.eq(kv.getString(JOURNAL_KEY('failed')), oldJournal, 'the raw old journal survives recovery');
+        await unmountScreen(tree);
+        fresh = await renderScreen(
+          <LauncherRoot
+            appInfo={testAppInfo}
+            internalBuild
+            deviceLocale={() => 'en-US'}
+            ageSignal={() => Promise.resolve('unavailable')}
+          />,
+        );
+        await waitFor(() => fresh!.root.findAllByType(HomeScreen).length === 1, 'the fresh launcher home screen');
+        const freshGhost = fresh.root.findByType(HomeScreen).props.pending[0];
+        await TestRenderer.act(async () => fresh!.root.findByType(HomeScreen).props.onOpenPending(freshGhost));
+        const failure = fresh.root.findByType(FailureScreen).props;
+        h.eq([failure.reason, failure.attemptStarted, failure.journal], [GENERIC_STREAM_ERROR, false, null], 'a cold launcher cannot borrow the old report');
+      } finally {
+        if (fresh) await unmountScreen(fresh);
+        clearFailure();
+      }
+    });
+  });
+
   await h.test('ghosts: a consent-resumed Retry whose update fallback cannot persist restores its old pair and shows generic failure', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     const update = stubFutureFrame('update');
@@ -389,6 +442,119 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       await press(button(tree, COPY.failureDismiss));
       h.eq(ghosts(tree), [], 'Discard leaves no ghost');
       h.eq(kv.getString(JOURNAL_KEY(id!)) ?? null, null, 'and no journal');
+    });
+  });
+
+  await h.test('ghosts: a native false-return pending removal keeps the failed ghost actionable through Back and reopen', async () => {
+    await withLauncher({
+      prepare: (kv) => {
+        const pending = new PendingBuildStore(kv);
+        pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+        pending.setJournalAvailability('failed', 'verified');
+        pending.setFailed('failed', { reason: 'The earlier build stopped.' });
+        new RunJournalStore(kv).create('failed');
+      },
+      server: () => json({}),
+    }, async ({ tree, kv }) => {
+      const clearRemovalFailure = failNativeStorageRemovalsWhen(({ id, key }) =>
+        id === 'whim.launcher' && key === 'pending:failed' ? 'return-false' : undefined);
+      try {
+        const failed = home(tree).props.pending[0];
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(failed));
+        await press(button(tree, COPY.failureDismiss));
+        h.ok(on(tree, FailureScreen), 'a failed removal leaves the failure screen available for Back');
+        await press(button(tree, COPY.failureBack));
+        h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [['failed', 'failed']], 'Home retains exactly one actionable ghost');
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+        h.eq(tree.root.findByType(FailureScreen).props.reason, GENERIC_STREAM_ERROR, 'reopening reaches the retained generic failure');
+        h.ok(kv.getString('pending:failed') != null, 'the false-returning native removal retained the pending key');
+      } finally {
+        clearRemovalFailure();
+      }
+    });
+  });
+
+  await h.test('ghosts: a thrown journal removal retains a partial Discard until a later verified retry clears it', async () => {
+    await withLauncher({
+      prepare: (kv) => {
+        const pending = new PendingBuildStore(kv);
+        pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+        pending.setJournalAvailability('failed', 'verified');
+        pending.setFailed('failed', { reason: 'The earlier build stopped.' });
+        new RunJournalStore(kv).create('failed');
+      },
+      server: () => json({}),
+    }, async ({ tree, kv }) => {
+      const clearRemovalFailure = failNativeStorageRemovalsWhen(({ id, key }) =>
+        id === 'whim.launcher' && key === JOURNAL_KEY('failed') ? 'throw' : undefined);
+      try {
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(home(tree).props.pending[0]));
+        await press(button(tree, COPY.failureDismiss));
+        await press(button(tree, COPY.failureBack));
+        h.eq(ghosts(tree).map((ghost) => ghost.id), ['failed'], 'a partial sibling removal retains one ghost');
+        h.eq([kv.getString('pending:failed') ?? null, kv.getString(JOURNAL_KEY('failed')) ?? null], [null, '[]'], 'the successful sibling stays removed while the thrown journal remains');
+      } finally {
+        clearRemovalFailure();
+      }
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+      await press(button(tree, COPY.failureDismiss));
+      h.eq(ghosts(tree), [], 'a recovered Discard clears the retained entry after every readback succeeds');
+      h.eq(kv.getString(JOURNAL_KEY('failed')) ?? null, null, 'the remaining journal is deleted on the recovered attempt');
+    });
+  });
+
+  await h.test('ghosts: a pending-order write failure after key removal retains the ghost until a recovered Discard removes the dangling order', async () => {
+    await withLauncher({
+      prepare: (kv) => {
+        const pending = new PendingBuildStore(kv);
+        pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+        pending.setJournalAvailability('failed', 'verified');
+        pending.setFailed('failed', { reason: 'The earlier build stopped.' });
+        new RunJournalStore(kv).create('failed');
+      },
+      server: () => json({}),
+    }, async ({ tree, kv }) => {
+      const clearWriteFailure = failNativeStorageWritesWhen(({ id, key }) =>
+        id === 'whim.launcher' && key === 'pending:order');
+      try {
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(home(tree).props.pending[0]));
+        await press(button(tree, COPY.failureDismiss));
+        await press(button(tree, COPY.failureBack));
+        h.eq(ghosts(tree).map((ghost) => ghost.id), ['failed'], 'the dangling raw order does not erase the retained ghost');
+        h.eq([kv.getString('pending:failed') ?? null, kv.getString('pending:order'), kv.getString(JOURNAL_KEY('failed')) ?? null], [null, JSON.stringify(['failed']), null], 'independent siblings leave the raw order for recovery');
+      } finally {
+        clearWriteFailure();
+      }
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+      await press(button(tree, COPY.failureDismiss));
+      h.eq(ghosts(tree), [], 'the recovered Discard removes the retained ghost');
+      h.eq(kv.getString('pending:order'), JSON.stringify([]), 'the dangling order entry is removed only after its write verifies');
+    });
+  });
+
+  await h.test('ghosts: a fully unwritable terminal settlement keeps a volatile live failure actionable', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    let rejectTerminalWrites = false;
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+      const clearWriteFailure = failNativeStorageWritesWhen(({ id, key }) =>
+        rejectTerminalWrites && id === 'whim.launcher' && (key.startsWith('pending:') || key.startsWith('journal:')));
+      try {
+        await startBuild(tree, 'A tea timer');
+        rejectTerminalWrites = true;
+        streams[0].end();
+        await waitFor(() => on(tree, FailureScreen), 'the volatile live failure');
+        const shown = tree.root.findByType(FailureScreen).props;
+        h.ok(shown.onDismiss != null, 'the live volatile failure still offers Discard');
+        h.eq([shown.attemptStarted, shown.journal], [false, null], 'it claims neither a saved record nor a report');
+        const raw = new PendingBuildStore(kv).list()[0];
+        h.eq(raw?.state, 'building', 'raw bytes remain building while the live failure owns the current view');
+        await press(button(tree, COPY.failureBack));
+        h.eq(ghosts(tree).map((ghost) => ghost.state), ['failed'], 'Back exposes the volatile failed ghost once');
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+        h.eq(tree.root.findByType(FailureScreen).props.journal, null, 'reopen never borrows an unverified journal');
+      } finally {
+        clearWriteFailure();
+      }
     });
   });
 

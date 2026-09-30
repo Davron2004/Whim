@@ -1,10 +1,7 @@
-# Pending-write recovery contract (D19, revised after parked R2 r3)
+# Pending-write recovery contract (D19)
 
-Planned interface; reconcile final signatures here before handoff. No implementation receipt.
-R2 645e7fc6 is rejected/parked on wip/beta-1-sonar-r2-terminal, never merged to staging.
-Root records the new lane's original staging BASE, then privately carries 2cc74989,
-9712c08a, 645e7fc6 in order. Review all five files from original BASE; S3 remains open
-through composed gates/review/CI. The mechanical cap was reached, not reset.
+`PendingBuildStore` owns lifecycle current views and process-only attempt leases. Persisted
+reads remain raw and report association is decided by the record's durable marker.
 
 ```ts
 // The ONLY persisted-schema addition to PendingBuildRecord:
@@ -19,9 +16,11 @@ type PendingAttemptLease = { readonly id: string; readonly token: symbol };
 // PendingBuildStore additions/extensions:
 readCurrent(id: string): PendingBuildView | null;
 listCurrent(): PendingBuildView[];
+isOrderExcluded(id: string): boolean;
 activateAttempt(id: string): PendingAttemptLease;
 isCurrentAttempt(lease: PendingAttemptLease): boolean;
 retainFailed(lease: PendingAttemptLease, failure: PendingBuildFailure): boolean;
+retainDiscardFailure(record: PendingBuildRecord, failure: PendingBuildFailure): void;
 releaseAttempt(lease: PendingAttemptLease): void;
 forgetRetained(id: string): void;
 setJournalAvailability(id: string, availability: PendingJournalAvailability): void;
@@ -92,6 +91,7 @@ Exact product/test allowlist:
 - src/host/launcher/test/pending-builds.suite.ts
 - src/host/launcher/test/attempt-lifecycle-ui.suite.tsx
 - src/host/launcher/test/native-storage.ts (test seam only)
+- src/host/launcher/test/observability-ui.suite.ts (verified fixture setup only)
 
 Node-first acceptance: reproduce parked r3 with new LauncherShell over SAME MMKV, not a
 same-mounted reopen; preserve old journal raw bytes while saved generic failed+true withholds
