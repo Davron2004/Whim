@@ -654,11 +654,9 @@ class LineWakes {
   outcome: LineOutcome | undefined;
   private wake: (() => void) | undefined;
 
-  constructor(outcome: Promise<LineOutcome>) {
-    outcome.then((settled) => {
-      this.outcome = settled;
-      this.wake?.();
-    });
+  settle(outcome: LineOutcome): void {
+    this.outcome = outcome;
+    this.wake?.();
   }
 
   raise(reason: LineWake): void {
@@ -696,7 +694,8 @@ async function lineEndAfterWake(ticket: LineTicket, wakes: LineWakes): Promise<L
  * has left the line, including when the stream's reader stops mid-wait.
  */
 async function* waitInLine(ticket: LineTicket, signal: AbortSignal, lineClock: LineClock, deps: StreamDeps): AsyncGenerator<WireEvent, LineEnd> {
-  const wakes = new LineWakes(ticket.outcome);
+  const wakes = new LineWakes();
+  ticket.outcome.then((outcome) => wakes.settle(outcome));
   const stopMoves = ticket.onMove(() => wakes.raise('move'));
   const onAbort = (): void => wakes.raise('abort');
   signal.addEventListener('abort', onAbort, { once: true });

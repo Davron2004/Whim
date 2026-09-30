@@ -183,11 +183,13 @@ export function createSlotController(limits: SlotLimits): SlotController {
 
   /** Tells every waiter whose position changed since it last heard. */
   function notifyMoves(): void {
-    for (const waiter of [...line]) {
+    const lineSnapshot = [...line];
+    for (const waiter of lineSnapshot) {
       const position = line.indexOf(waiter) + 1;
       if (position === 0 || position === waiter.heard) continue;
       waiter.heard = position;
-      for (const listener of [...waiter.listeners]) listener(position);
+      const listenerSnapshot = [...waiter.listeners];
+      for (const listener of listenerSnapshot) listener(position);
     }
   }
 
