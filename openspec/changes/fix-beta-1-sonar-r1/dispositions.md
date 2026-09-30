@@ -51,3 +51,7 @@ Staging: `integration/beta-1`; PR #137; initial analysis at `a1586b87b55467b5696
 # Dispatch: resolver-routes
 
 S8, S23-S24, S26, S51-S59: dispatched at BASE 757809963baa429b99bccc16e8ce02174ff829d7 to fix/beta-1-sonar-resolvers, .claude/worktrees/beta-1-sonar-resolvers. Stale check passed all 18 evidence lines. Structural only; server-bearing gate lease remains with shell-release until it returns.
+
+S7, S9-S21, S25, S36-S39, S47: worker commit cb57231c914689c6c97717bfa067d5839559826c passed the fast gate (actual exit 0) and root integrity against pinned BASE 4d15c0dde6e3da268f50b8656e895b812d1efcab. All seven changed files are within the revised allowlist. Independent review and hermetic full gate remain pending.
+
+S77: report-draft-recovery dispatched at BASE a8d89cefe2b2ac09700a18e64a8452dcc67cd4d6 to fix/beta-1-sonar-report, .claude/worktrees/beta-1-sonar-report. Stale check passed seven evidence lines. Behavioral recovery needs a rendered rejection regression and root red-check; worker prepares while resolver-routes holds the gate lease.
