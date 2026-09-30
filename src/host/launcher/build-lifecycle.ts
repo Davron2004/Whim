@@ -272,6 +272,19 @@ export async function deliverAndSettle(pending: PendingBuildStore, spec: Deliver
   return delivered;
 }
 
+/** Delivery can outlive the attempt that started it. Keep the pending mutation at this awaited
+ * boundary so a same-ID retry can supersede an older delivery without losing its own record. */
+export async function deliverAndSettleIfOwned(
+  pending: PendingBuildStore,
+  spec: DeliverSpec,
+  ownsAttempt: () => boolean,
+): Promise<InstalledApp | undefined> {
+  const delivered = await deliverResult(spec);
+  if (!ownsAttempt()) return undefined;
+  pending.delete(spec.appId);
+  return delivered;
+}
+
 /** The one separator packing the failure screen's hint rows into the record's single
  *  `diagnostics` string and back. Hints are one-line product sentences, so a newline is a
  *  separator no hint can contain. */

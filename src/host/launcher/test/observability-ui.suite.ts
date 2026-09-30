@@ -23,7 +23,7 @@ import ScreenErrorFallback from '../ScreenErrorFallback';
 import DevLogOverlay from '../DevLogOverlay';
 import HomeScreen from '../HomeScreen';
 import { PendingBuildStore } from '../pending-builds';
-import { JOURNAL_KEY } from '../run-journal';
+import { JOURNAL_KEY, RunJournalStore } from '../run-journal';
 import { withLauncher } from './rendered-launcher';
 import { button, press, textOf } from './react-screen';
 import type { ScreenFallbackProps } from '../ScreenBoundary';
@@ -296,6 +296,10 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
       prepare: (kv) => {
         const pending = new PendingBuildStore(kv);
         pending.create({ id: 'broken', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+        const journal = new RunJournalStore(kv);
+        journal.create('broken');
+        if (kv.getString(JOURNAL_KEY('broken')) !== '[]') throw new Error('empty journal setup did not persist');
+        pending.setJournalAvailability('broken', 'verified');
         pending.setFailed('broken', { reason: 'It did not build.', diagnostics: '' });
         kv.set(JOURNAL_KEY('broken'), JSON.stringify([{ t: 1, kind: 'terminal', failure: { reason: 'It did not build.', diagnostics: 5 } }]));
       },
