@@ -86,3 +86,11 @@ Opus 5.5, main thread. 9 chains, 16 fix chains, 2 whole-change reviews, 2 scoped
 - **A corrected plan can preserve the original BASE.** The release-tooling worker's first gate exposed a missing node:buffer type declaration. The seventh-file scope correction is compile-only; its allowlist and DONE spec were updated. The original BASE remains pinned, so integrity still checks the actual dispatched work.
 
 Closure is still in progress. Store rollout, the owner-phone check, the minimum-build increase and archive have not yet completed.
+
+## Resource ownership during closure
+
+The owner found a stale headless FilmKit emulator using about 10 GB and Docker VM memory growing. Root shut down the old headless process, but initially inferred ownership from its AVD name and also stopped a replacement headed emulator before tracing it. That inference was wrong: active Outsiide Claude QA was restarting emulator-5556. Trace launch commands, session cwd and timestamps before stopping a shared emulator; its AVD name alone does not identify the active job. Root apologized and left the confirmed Outsiide QA process running.
+
+Only Anyworkflow PostgreSQL was explicitly authorized to stop. Docker, Omvi and Outsiide stayed running. Root interrupted its own report full gate (exit 130, requiring rerun), stopped its own QA servers and shut down its idle Whim iOS simulator. Gate/server/native verification now shares one lease; owned devices and servers must be shut down immediately after acceptance.
+
+Redcheck builds a temporary checkout. Isolated test wrappers must select that cwd; an absolute primary-tree argument silently tests old source/tests and can produce an invalid RED receipt. The corrected report command obtained six actual assertion failures; history reproduced an unhandled rejected read.
