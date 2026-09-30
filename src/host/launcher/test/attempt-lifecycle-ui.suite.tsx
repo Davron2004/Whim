@@ -55,6 +55,24 @@ function activeThrowingStreamsServer(throwStreams: (() => void)[]) {
   };
 }
 
+function delayedRefusalThenActiveStream(releaseRefusals: (() => void)[]) {
+  let generateCount = 0;
+  const refusal = serverBusyRefusal();
+  return (request: SentRequest) => {
+    if (request.path === '/v1/clarify') return json({ questions: [] });
+    if (request.path === '/v1/rewrite') return json({ rewrittenPrompt: String(request.body?.prompt), plan: [] });
+    if (generateCount++ === 0) {
+      return new Promise<Response>((resolve) => {
+        releaseRefusals.push(() => resolve(new Response(JSON.stringify(refusal.body), {
+          status: refusal.status,
+          headers: { 'Content-Type': 'application/json', ...refusal.headers },
+        })));
+      });
+    }
+    return new Response(new ReadableStream<Uint8Array>(), { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+}
+
 /** Leave the build screen the way the button does: the run keeps going. */
 async function leaveRunning(tree: Tree): Promise<void> {
   await press(button(tree, COPY.buildLeaveRunning));
@@ -722,6 +740,73 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       } finally {
         clearWriteFailure();
       }
+    });
+  });
+
+  await h.test('ghosts: a stale same-id stream failure keeps the active retry reattachable and cancellable', async () => {
+    const throwStreams: (() => void)[] = [];
+    await withLauncher({ server: activeThrowingStreamsServer(throwStreams) }, async ({ tree, kv, sent }) => {
+      await startBuild(tree, 'A tea timer');
+      await settle();
+      const id = new PendingBuildStore(kv).list()[0]!.id;
+      await leaveRunning(tree);
+      const started = new PendingBuildStore(kv).get(id)!;
+      kv.set(`pending:${id}`, JSON.stringify({
+        ...started,
+        prompt: 'A dice roller',
+        workingTitle: 'Dice roller',
+        state: 'failed',
+        failure: { reason: 'Retry this instead.' },
+      }));
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+      await press(button(tree, COPY.screenErrorRetry));
+      await settle();
+      const requests = sent.filter((request) => request.path === '/v1/generate');
+      h.eq(requests.length, 2, 'the same-id retry is active before the stale stream fails');
+      await leaveRunning(tree);
+
+      throwStreams[0]!();
+      await waitFor(() => on(tree, FailureScreen), 'the delayed stale failure');
+      await press(button(tree, COPY.failureBack));
+      const retried = ghosts(tree)[0]!;
+      h.eq([retried.id, retried.prompt, retried.state], [id, 'A dice roller', 'building'], 'the newer retry remains the building ghost');
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(retried));
+      h.ok(on(tree, BuildStep), 'the stale completion leaves the active retry reattachable');
+      await leaveRunning(tree);
+      await TestRenderer.act(async () => home(tree).props.onCancelPending(ghosts(tree)[0]!));
+      h.eq(requests[1]?.signal?.aborted, true, 'cancelling the reattached retry aborts its live request');
+      h.eq(ghosts(tree), [], 'Cancel removes the record only after aborting the retry');
+    });
+  });
+
+  await h.test('ghosts: a stale same-id refusal keeps the active retry reattachable', async () => {
+    const releaseRefusals: (() => void)[] = [];
+    await withLauncher({ server: delayedRefusalThenActiveStream(releaseRefusals) }, async ({ tree, kv }) => {
+      await startBuild(tree, 'A tea timer');
+      await settle();
+      const id = new PendingBuildStore(kv).list()[0]!.id;
+      await leaveRunning(tree);
+      const started = new PendingBuildStore(kv).get(id)!;
+      kv.set(`pending:${id}`, JSON.stringify({
+        ...started,
+        prompt: 'A dice roller',
+        workingTitle: 'Dice roller',
+        state: 'failed',
+        failure: { reason: 'Retry this instead.' },
+      }));
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+      await press(button(tree, COPY.screenErrorRetry));
+      await settle();
+      await leaveRunning(tree);
+
+      await TestRenderer.act(async () => {
+        releaseRefusals[0]!();
+        await settle();
+      });
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]!));
+      h.ok(on(tree, BuildStep), 'the stale refusal leaves the active retry reattachable');
+      await leaveRunning(tree);
+      await TestRenderer.act(async () => home(tree).props.onCancelPending(ghosts(tree)[0]!));
     });
   });
 

@@ -786,7 +786,7 @@ function LauncherShell({
   // never left this shell's closure when `onLeaveRunning` detached it, so reattaching is a screen
   // -state change — reading the screen back out of here — and not a second subscriber, an event
   // bus or per-tile progress. Cleared the moment the attempt settles.
-  const liveRef = useRef<{ id: string; screen: BuildScreen } | null>(null);
+  const liveRef = useRef<{ id: string; lease: PendingAttemptLease; screen: BuildScreen } | null>(null);
 
   // The live attempt's derived-signal state (design D6): its start time, the cumulative counts
   // folded from its stream and the arrival that the heartbeat measures quiet from. A REF, not
@@ -1451,8 +1451,8 @@ function LauncherShell({
   const releaseGenRef = (ctl: NonNullable<typeof genRef.current>) => {
     if (genRef.current === ctl) genRef.current = null;
   };
-  const releaseLiveRef = (attemptId: string) => {
-    if (liveRef.current?.id === attemptId) liveRef.current = null;
+  const releaseLiveRef = (lease: PendingAttemptLease) => {
+    if (liveRef.current?.lease === lease) liveRef.current = null;
   };
 
   /** The record deletion the user's two delete gestures share — cancelling an in-flight attempt
@@ -1479,8 +1479,8 @@ function LauncherShell({
     retrySnapshot?: AttemptSnapshot,
     lease?: PendingAttemptLease,
   ): TerminalSettlement => {
-    releaseLiveRef(id);
     if (lease && !pending.isCurrentAttempt(lease)) return 'unresolved';
+    if (lease) releaseLiveRef(lease);
     // `observed` is the end-of-stream flush: the final cumulative counts (closing the last throttle
     // window, which no aggregate entry can) and how many `diagnostic` events went past. Only the
     // loop that watched the stream can supply them, so they are threaded in rather than re-derived.
@@ -1626,8 +1626,9 @@ function LauncherShell({
     logServiceRefusal('generate', refusal);
     const notice = noticeFrom(refusal);
     const outcome = refusedGenerateOutcome(isRetry, detached);
-    releaseLiveRef(attemptId);
     if (outcome === 'drop') {
+      if (!pending.isCurrentAttempt(lease)) return;
+      releaseLiveRef(lease);
       dropAttempt(attemptId);
       refresh();
       if (fromPlan) {
@@ -2050,7 +2051,7 @@ function LauncherShell({
     });
     // The live screen a `building` ghost taps back into; kept in step with the stream below.
     let live = building;
-    liveRef.current = { id: attemptId, screen: live };
+    liveRef.current = { id: attemptId, lease, screen: live };
     refresh();
 
     try {
@@ -2081,7 +2082,7 @@ function LauncherShell({
         const next = withStreamEvent(live, event);
         if (next !== live) {
           live = next;
-          liveRef.current = { id: attemptId, screen: live };
+          liveRef.current = { id: attemptId, lease, screen: live };
           setScreen((s) => (s.kind === 'build' ? withStreamEvent(s, event) : s));
         }
         if (event.type === 'result' || event.type === 'failure') terminal = event;
@@ -2147,7 +2148,7 @@ function LauncherShell({
       if (!pending.isCurrentAttempt(lease)) return;
       journal.appendTerminal(attemptId, terminalCounts());
       live = withDelivering(live);
-      liveRef.current = { id: attemptId, screen: live };
+      liveRef.current = { id: attemptId, lease, screen: live };
       setScreen((s) => (s.kind === 'build' ? withDelivering(s) : s));
       // Store first, index second, pending record deleted LAST (design D5) — a process death
       // anywhere inside this await leaves the record behind to surface as `interrupted`.
@@ -2165,7 +2166,7 @@ function LauncherShell({
       // report and nothing else (design D5).
       journal.moveToLastRun(attemptId, delivered.id);
       pending.releaseAttempt(lease);
-      releaseLiveRef(attemptId);
+      releaseLiveRef(lease);
       refresh();
       // "Leave it running": delivered silently, the user is elsewhere.
       setDoneIfAttached((s) => (s.kind === 'build' ? doneStep(s, delivered) : s));
