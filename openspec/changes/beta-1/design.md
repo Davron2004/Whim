@@ -251,6 +251,15 @@ without letting EOF, catch or finally cleanup change the newer attempt. Reject s
 independently in the store. Failed setup preserves its prior current view/lease and
 sends no request. Release completed matching leases without clearing retained failure.
 
+Independent IDs keep their own current leases. Their frames and successful completion may update
+their own journals, records and reports while another build is selected. Shared signals, the
+selected live handle and the visible build screen must stay with their owning attempt. Reopening
+a building ghost must attach to its own live run. Check captured lease ownership at delivery's
+actual pending-state mutation after awaited work; a post-delivery UI check cannot protect an
+earlier deletion. Release and promote an independent completed attempt without taking over the
+other build's screen. This adds delivery ownership checks, with general delivery write-fault
+recovery still outside this change.
+
 Before recovery replaces or resets a journal under a current pending record, including a
 generic fallback journal reset, persist and read back true on that record. If that guard cannot be established, do not overwrite the current journal
 with unassociated old bytes; continue independent safe pending recovery and generic fallback.

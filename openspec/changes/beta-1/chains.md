@@ -139,10 +139,15 @@ so nothing is HUMAN-BOOTSTRAP. The owner runs chains one at a time (low-priority
   gates and CI; the reached mechanical cap is not reset. Keep the sole source-heavy lease and
   existing beta-1 integration/closure lane; create no second integration branch.
 - product/test writes: src/host/launcher/pending-builds.ts;
-  src/host/launcher/LauncherRoot.tsx; src/host/launcher/test/pending-builds.suite.ts;
+  src/host/launcher/LauncherRoot.tsx;
+  src/host/launcher/build-lifecycle.ts (captured-lease delivery ownership only);
+  src/host/launcher/test/pending-builds.suite.ts;
   src/host/launcher/test/attempt-lifecycle-ui.suite.tsx;
   src/host/launcher/test/native-storage.ts (independent removal fault seam only);
   src/host/launcher/test/observability-ui.suite.ts (existing corrupt-journal fixture setup only)
 - scope exclusions: live-spec edits, SDK, runtime, mini-app storage engine, version store/backend,
   dependencies, suite registry, gates/configuration, general cancel/delivery write recovery.
   Root owns progress/task acceptance and the final native/full-gate review receipts.
+  Root's r7 scope amendment adds delivery ownership and independent live/UI ownership to this
+  existing chain. Original BASE and capped mechanical lane remain unchanged. Review the whole
+  composed seven-file product/test diff plus handoff, including privately carried commits.
