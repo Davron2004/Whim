@@ -104,3 +104,21 @@ S2, S5, S74, S76, S83: root accepted the closed product-callback evidence in lau
 S77: worker commit 244597d2f46df4a0613a138bcfd73a5273ab0ed4 passed fast gate with actual exit 0; root integrity passed. Independent review CLEAN. Root redcheck2 exited 0, confirming 6 assertion failures with ReportSheet and copy reverted to BASE (81 passed). The first redcheck incorrectly targeted the primary checkout, ran its older 61-check suite and exited 5; the corrected command uses the redcheck temporary checkout cwd. No assertion was changed to obtain the RED. Hermetic full gate and merge remain pending.
 
 Launcher-age initial stale check exited 7: the evidence block did not match HEAD. No worktree was created and no worker dispatched. Planner supplied corrected verbatim evidence for the next stale check.
+
+## Resource interruption and queued verification
+
+Report hermetic full gate session 66337 was voluntarily interrupted (actual exit 130) during the owner's memory investigation; primary checkout restored to integration/beta-1. This is not a source-failure verdict or a full-gate pass; rerun remains required. Root shut down its Whim iOS simulator 469C2821-24D0-4FF4-B72D-DCDB9184048D and stopped its local QA servers on 8787/8790. Stored device/server data remains for final-candidate acceptance.
+
+Owner constraints: keep Docker, omvi-postgres and outsiide-postgres running. Only anyworkflow-postgres was explicitly authorized to stop, and was stopped at 2026-09-30T03:14:31Z. Do not restart Docker or mutate the other projects' containers. The original headless FilmKit Android process was shut down; later headed emulator-5556 instances were traced to Outsiide's active Claude test-health subagent, so do not interfere with its QA run. Whim heavy verification jobs are serialized.
+
+History fast gate retries 1 and 2 failed test-helper lint; retry 1 also exposed a missing ignored worktree-local contract link. Worker fixed only its allowed test helpers and that local link. Retry 3 is now leased; no source commit/pass has been inferred from earlier runs.
+
+S27, S28, S30: dispatched to fix/beta-1-sonar-queue, .claude/worktrees/beta-1-sonar-queue, pinned BASE b6b8c58fd1ea3c541fc3ea274b9bcba1c38999d5 after 20-line stale check passed. Structural source patch prepared, build/targeted lint passed; fast/full gates and review pending. S29 is separately reconciled against its resolve-only producer.
+
+S29: false-positive-adjudicated. Supported Sonar transition succeeded for the single verified issue, with notifications disabled; readback confirms FALSE_POSITIVE. Producer and observer are resolve-only. See queue-fp-rationale.md and queue-fp-receipt.json. Total confirmed false positives: 60.
+
+S81, S82, S88: worker commit eeec0f08 passed fast gate retry 3, session 29004 actual exit 0. The isolated history runner passed 46/0; root RED, integrity, independent review and full gate remain pending.
+
+S27, S28, S30: worker commit 5c01cf6e8d666e0e99565df40dcdb21cbd549e88 passed fast gate session 10431, actual exit 0. Existing server checks passed 4,328/0. Root integrity, independent review and full gate remain pending.
+
+Launcher-age and appstats-noop evidence: corrected verbatim blocks passed root stale checks with actual exit 0. The earlier stale failures did not create a worktree or authorize a source dispatch.

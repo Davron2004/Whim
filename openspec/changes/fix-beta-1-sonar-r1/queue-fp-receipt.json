@@ -1,0 +1,25 @@
+{
+  "project": "Davron2004_Whim",
+  "pullRequest": 137,
+  "date": "2026-09-29",
+  "sourceTip": "a1586b87b55467b5696ef2da5cf4d07abcc45c89",
+  "transition": "falsepositive",
+  "notifications": false,
+  "rationale": "queue-fp-rationale.md",
+  "result": {
+    "total": 1,
+    "success": 1,
+    "ignored": 0,
+    "failures": 0
+  },
+  "issues": [
+    {
+      "id": "S29",
+      "key": "AaDv2Gn6DHOwsfbTeJiM",
+      "path": "server/src/routes/generate.ts",
+      "line": 658,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    }
+  ]
+}
