@@ -86,7 +86,7 @@ Current confirmed state: 32 source findings closed; 60 false-positive dispositio
 - [x] S72
 - [x] S73
 - [x] S74
-- [ ] S75
+- [x] S75
 - [x] S76
 - [x] S77
 - [x] S78

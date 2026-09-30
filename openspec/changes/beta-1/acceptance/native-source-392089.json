@@ -1,5 +1,5 @@
 {
-  "status": "source accepted; native builds and acceptance pending",
+  "status": "built/preserved; no native acceptance; signature refactor pending before final source pin",
   "product_source_sha": "2327d2081ed94c1def213c742652b8e9286c678a",
   "product_source_tree": "a35771ecdf652dea44e2a8a949b8e04dc75b7b32",
   "app_version": "1.0.0",
@@ -14,6 +14,45 @@
   "latest_store_build_input": 382511,
   "latest_store_build_input_is_fresh_query": false,
   "superseded_build": 392037,
-  "build_head": null,
-  "artifacts": []
+  "build_head": "3a23babe56c7aa2e6db8f1667bd8bb2ed6b2082c",
+  "artifacts": [
+    {
+      "platform": "android",
+      "kind": "offline APK",
+      "path": "/tmp/whim-beta1-final-392089/artifacts/app-offline-392089.apk",
+      "sha256": "b30a3080488373053a693b6cdbd2e32e20ccc0a333ce6943cdf10e06df21c428",
+      "bytes": 25630989,
+      "version": "1.0.0",
+      "build": 392089,
+      "build_exit": 0,
+      "metadata_receipt": "/tmp/whim-beta1-final-392089/android-badging.txt",
+      "acceptance": "pending",
+      "preserved_utc": "2026-09-30T11:43:10.468657+00:00"
+    },
+    {
+      "platform": "ios",
+      "kind": "Release simulator app",
+      "path": "/tmp/whim-beta1-final-392089/artifacts/Whim-392089.app",
+      "version": "1.0.0",
+      "build": "392089",
+      "bundle_id": "com.anycognition.whim",
+      "executable": "Whim",
+      "executable_sha256": "6fc02237720680624a769416bf42695e3de372ddbda955b81aa210e9ef453201",
+      "build_exit": 0,
+      "manifest_path": "/tmp/whim-beta1-final-392089/artifacts/Whim-392089-manifest.json",
+      "manifest_sha256": "ecab630b7592fdaf26e0051f802375bdac0a75082cb36b500883c08fa2287b9d",
+      "manifest_entries": 47,
+      "copy_verified_complete": true,
+      "acceptance": "pending",
+      "preserved_utc": "2026-09-30T11:47:21.495151+00:00"
+    }
+  ],
+  "build_tree": "16555bd8761ae13b9b94df7ec2ff30724ebe4f69",
+  "build_started_utc": "2026-09-30T11:41:19.329090+00:00",
+  "preflight": {
+    "android": 0,
+    "ios": 0,
+    "store_latest_input": 382511,
+    "fresh_store_query": false
+  }
 }
