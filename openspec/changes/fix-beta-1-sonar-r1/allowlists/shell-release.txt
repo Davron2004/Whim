@@ -4,3 +4,4 @@ scripts/release/lib/mmkv.ts
 scripts/release/lib/upgrade-record.ts
 scripts/release/upgrade-check.sh
 scripts/release/cli.ts
+scripts/release/node-buffer.d.ts
