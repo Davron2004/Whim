@@ -135,13 +135,14 @@ so nothing is HUMAN-BOOTSTRAP. The owner runs chains one at a time (low-priority
   from the current pinned integration/beta-1 tip after this plan is committed, records that
   original staging BASE, then privately carries 2cc74989, 9712c08a, 645e7fc6 in order before
   dispatch. These candidate commits are rejected, not an approved baseline. Review and gate
-  the entire composed five-file diff against original BASE. S3 remains open through review,
+  the entire composed six-file diff against original BASE. S3 remains open through review,
   gates and CI; the reached mechanical cap is not reset. Keep the sole source-heavy lease and
   existing beta-1 integration/closure lane; create no second integration branch.
 - product/test writes: src/host/launcher/pending-builds.ts;
   src/host/launcher/LauncherRoot.tsx; src/host/launcher/test/pending-builds.suite.ts;
   src/host/launcher/test/attempt-lifecycle-ui.suite.tsx;
-  src/host/launcher/test/native-storage.ts (independent removal fault seam only)
+  src/host/launcher/test/native-storage.ts (independent removal fault seam only);
+  src/host/launcher/test/observability-ui.suite.ts (existing corrupt-journal fixture setup only)
 - scope exclusions: live-spec edits, SDK, runtime, mini-app storage engine, version store/backend,
   dependencies, suite registry, gates/configuration, general cancel/delivery write recovery.
   Root owns progress/task acceptance and the final native/full-gate review receipts.

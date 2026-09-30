@@ -181,6 +181,6 @@ All record-driven report entry points re-read the marker; an in-memory Set canno
 Dispatch starts at the root-pinned staging tip (reported source tip `4f729788...`), recorded as the
 new lane's original BASE at creation. Root privately carries `2cc74989`, `9712c08a`, `645e7fc6`
 in order into that lane before implementation. All are rejected-candidate work over the same two
-launcher files, not a reviewed staging prerequisite. Review/gate the entire composed five-file
+launcher files, not a reviewed staging prerequisite. Review/gate the entire composed six-file
 change against the original BASE. Do not reset the exhausted mechanical cap or mark S3 clean
 because the architecture work has a new chain name.

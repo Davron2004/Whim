@@ -289,9 +289,9 @@ atomic recovery across process death during multi-key removal remain outside thi
 
 R2 r3 is parked, not clean or merged. Chain-10 begins from the pinned staging BASE, then root
 privately carries its three candidate commits before implementation. Review the candidate and
-architecture correction together as one five-file diff. S3 stays open through composed-chain
+architecture correction together as one six-file diff. S3 stays open through composed-chain
 gates, review and CI; the exhausted mechanical cap is not reset. Existing generic copy, successful
-paths and ownership remain. General cancel/successful-delivery I/O recovery is excluded. Exact
+paths and ownership remain. General cancel/successful-delivery I/O recovery is excluded. One existing observability test fixture also needs verified setup before intentional journal corruption; its fallback assertions remain intact. Exact
 interfaces and scope are in `handoff/pending-write-degradation.md`.
 
 ## Risks / Trade-offs
