@@ -3,9 +3,9 @@
 Use this only after the final full gate/review selects a committed candidate. The
 receipt names that SHA and build; it must not reuse 391705 evidence.
 
-Build 392089 is reserved for the composed chain-10 correction. Its source pin remains
-unset until full gating and independent review accept it. Build 392037 artifacts are
-superseded; no acceptance was run on them. Execute each native phase separately as root,
+Build 392403 is reserved for the composed chain-10 correction. Its source pin remains
+unset until full gating and independent review accept it. Builds 392037 and 392089 artifacts are
+superseded for the final corrected source; no acceptance was run on either. Execute each native phase separately as root,
 with saved resource ownership and cleanup; the earlier combined wrapper was rejected.
 
 ## Evidence boundary
@@ -26,8 +26,8 @@ cd "$REPO"
 set -euo pipefail
 PRODUCT_SOURCE_SHA="${ROOT_APPROVED_FINAL_SHA:?root must first accept the committed source}"
 CANDIDATE_SHA="$PRODUCT_SOURCE_SHA"
-BUILD=392089
-RUN_ROOT=/tmp/whim-beta1-final-392089
+BUILD=392403
+RUN_ROOT=/tmp/whim-beta1-final-392403
 PRODUCT_INPUTS=(android ios src server contract build scripts fixtures assets synthrun release fastlane Gemfile Gemfile.lock package.json package-lock.json tsconfig*.json babel.config.js metro.config.js)
 git diff --exit-code "$PRODUCT_SOURCE_SHA" HEAD -- "${PRODUCT_INPUTS[@]}"
 test -z "$(git status --porcelain -- "${PRODUCT_INPUTS[@]}")"

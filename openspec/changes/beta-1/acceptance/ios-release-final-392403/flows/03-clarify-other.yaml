@@ -1,0 +1,13 @@
+appId: com.anycognition.whim
+---
+# Optional ONLY if real response has Other. Root supplies an observed ONE-choice PILL.
+- scrollUntilVisible:
+    element: "Or type your own answer"
+    direction: DOWN
+    timeout: 10000
+- tapOn: "Or type your own answer"
+- inputText: "gypsy jolly queue"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-other-before-pill"
+- tapOn: "${PILL}"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-other-after-pill"
+- tapOn: "Done"

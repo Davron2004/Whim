@@ -6,10 +6,10 @@ name `a1586b87`, not a later product artifact; rebuild if a product input change
 There is no checked-in `.maestro/`. The 33 iOS YAML fragments (26 `ios-4`, 7
 `ios-repro-resume`) preserve Water Tracker paths, not a complete new acceptance run;
 the upgrade-check YAML is 10.5 only. Android reuses the `emulator-5560`-targeted
-`acceptance/android-final-392089/post-ui.py` hierarchy/capture helper, copied byte-for-byte
-from android-4. Build 392089 is reserved; its approved source SHA is still unset.
-Candidate iOS material is in `ios-debug-final-392089/flows` (20 files) and
-`ios-release-final-392089/flows` (9 files). Both syntax checks passed; native execution
+`acceptance/android-final-392403/post-ui.py` hierarchy/capture helper, copied byte-for-byte
+from android-4. Build 392403 is reserved; its approved source SHA is still unset.
+Candidate iOS material is in `ios-debug-final-392403/flows` (20 files) and
+`ios-release-final-392403/flows` (9 files). Both syntax checks passed; native execution
 and Maestro runtime validation remain pending. The older fragments below are references.
 Before Maestro, require two clear scans 60 seconds apart from
 `/tmp/whim-beta1-maestro-isolation.md`, one client per owned device, and no parallel
@@ -45,7 +45,7 @@ Debug is the only iOS build that accepts Settings -> Advanced routing. Build wit
 Release deliberately ignores that override (`WhimAppInfoModule.mm`); keep its pass on
 production. A reusable serial invocation is:
 ```sh
-maestro --udid "$IOS_DEBUG_UDID" test --debug-output "$RUN_ROOT/maestro/$NAME" -e "EVIDENCE_DIR=$REPO/openspec/changes/beta-1/acceptance/ios-debug-final-392089" -e "CASE=$NAME" "$FLOW"
+maestro --udid "$IOS_DEBUG_UDID" test --debug-output "$RUN_ROOT/maestro/$NAME" -e "EVIDENCE_DIR=$REPO/openspec/changes/beta-1/acceptance/ios-debug-final-392403" -e "CASE=$NAME" "$FLOW"
 ```
 The existing production keyboard path is serial: `ios-repro-resume/compose.yaml`,
 `clarify.yaml`, `continue.yaml`, `plan.yaml`, then `ios-4/keyboard-last-row.yaml`.
@@ -86,10 +86,10 @@ reach the Hello App done state; future update must have no installed app.
 derives taps from the current hierarchy, refuses evidence-name overwrites, and writes a
 screenshot, XML, and window dump together:
 ```sh
-python3 "$REPO/openspec/changes/beta-1/acceptance/android-final-392089/post-ui.py" show
-python3 "$REPO/openspec/changes/beta-1/acceptance/android-final-392089/post-ui.py" capture post-<new-name>
-python3 "$REPO/openspec/changes/beta-1/acceptance/android-final-392089/post-ui.py" tap '<exact label>'
-python3 "$REPO/openspec/changes/beta-1/acceptance/android-final-392089/post-ui.py" longtap '<exact tile label>'
+python3 "$REPO/openspec/changes/beta-1/acceptance/android-final-392403/post-ui.py" show
+python3 "$REPO/openspec/changes/beta-1/acceptance/android-final-392403/post-ui.py" capture post-<new-name>
+python3 "$REPO/openspec/changes/beta-1/acceptance/android-final-392403/post-ui.py" tap '<exact label>'
+python3 "$REPO/openspec/changes/beta-1/acceptance/android-final-392403/post-ui.py" longtap '<exact tile label>'
 ```
 It is only for the fresh, owned `emulator-5560`. First set Android's internal-build
 Advanced address to `http://localhost:$QA_PORT` after the matching `adb reverse`.

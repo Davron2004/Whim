@@ -1,0 +1,8 @@
+appId: com.anycognition.whim
+---
+# Sends one production clarify request. Stop after observing actual response, do not force Other.
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: ".*(quick thing|Build it).*"
+    timeout: 120000
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-clarify-or-plan"

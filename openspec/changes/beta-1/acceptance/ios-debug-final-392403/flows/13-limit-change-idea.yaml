@@ -1,0 +1,8 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: a SECOND fresh limit attempt, not the alternative's Clarify.
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-limit-before-change-idea"
+- tapOn: "Change my idea"
+- assertVisible: "What should it do?"
+- assertVisible: "Continue"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-change-idea-compose"

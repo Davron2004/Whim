@@ -1,0 +1,11 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: fresh limit screen; must re-clarify the packing-list alternative.
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-limit-before-alternative"
+- tapOn: "Build a packing list you fill in yourself instead"
+- extendedWaitUntil:
+    visible: "How much should it hold?"
+    timeout: 30000
+- assertVisible: "Three quick things"
+- assertNotVisible: "Build it"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-alternative-clarify"
