@@ -194,3 +194,5 @@ S3, S4, S35: hermetic full gate session 4661 actual exit 0, FULL GATE PASSED; /t
 S3, S4, S35: merged and regated at a4de109f674972e6ef9a99e0d6ed4a60d56e7169. Post-merge fast gate session 83990 actual exit 0, FAST GATE PASSED; /tmp/whim-beta1-sonar-host-guards-regate.log. Independent source review, integrity and full gate passed. Native compatibility remains pending, so these three checkboxes are not terminal. Closed source count remains 31; confirmed false positives remain 60.
 
 S1: hermetic full gate session 41360 actual exit 0, FULL GATE PASSED; /tmp/whim-beta1-sonar-evidence-path-fullgate.log. Committed candidate dde9bbfb tested in the primary tree and staging restored. Immediate merge and fast regate follow.
+
+S1: merged, regate-pass at 7700b91e8aac0b7a1065b5aceee55bdfc0498bc9. Post-merge fast gate session 82278 actual exit 0, FAST GATE PASSED; /tmp/whim-beta1-sonar-evidence-path-regate.log. Worker fast gate, root behavioral RED/integrity, independent review and primary full gate passed before merge. Closed source count: 32; confirmed false positives: 60. The three host-guard findings still await native compatibility evidence.

@@ -23,7 +23,7 @@ PRODUCT_SOURCE_SHA="$(git rev-parse HEAD)"
 CANDIDATE_SHA="$PRODUCT_SOURCE_SHA"
 BUILD="$(node scripts/release/run.mjs build-number)"
 RUN_ROOT="$(mktemp -d "/tmp/whim-beta1-final-$BUILD.XXXXXX")"
-PRODUCT_INPUTS=(android ios src server contract build scripts package.json package-lock.json tsconfig.json babel.config.js metro.config.js)
+PRODUCT_INPUTS=(android ios src server contract build scripts fixtures assets synthrun Gemfile Gemfile.lock package.json package-lock.json tsconfig*.json babel.config.js metro.config.js)
 test -z "$(git status --porcelain -- "${PRODUCT_INPUTS[@]}")"
 OLD_SERVER_PID=''
 QA_SERVER_PID=''
@@ -251,7 +251,7 @@ assert_product_source
 QA_PORT=8790
 QA_DATA="$(mktemp -d "/tmp/whim-final-qa-$BUILD.XXXXXX")"
 cd "$REPO"
-env -u OPENROUTER_API_KEY WHIM_PIPELINE=stub WHIM_SERVER_HOST=127.0.0.1 WHIM_SERVER_PORT="$QA_PORT" \
+env -u OPENROUTER_API_KEY NODE_ENV=development WHIM_PIPELINE=stub WHIM_SERVER_HOST=127.0.0.1 WHIM_SERVER_PORT="$QA_PORT" \
   WHIM_DATA_DIR="$QA_DATA" WHIM_MAX_CONCURRENT_GENERATIONS=1 WHIM_STUB_DELAY_MS=4000 \
   node server/dev.mjs >"$RUN_ROOT/qa-server.log" 2>&1 &
 QA_SERVER_PID=$!
@@ -372,7 +372,7 @@ decode on this iOS Release build proves that the changed Object.hasOwn
 intrinsic executes in the host Hermes engine. The Android offline generation
 does the same on Android Hermes. A result summary is useful product evidence
 but is optional and is not required for engine compatibility. See
-/tmp/whim-beta1-host-guards-evidence.md.
+openspec/changes/fix-beta-1-sonar-r1/host-guards-native-evidence.md.
 
 ## 6. Remaining ownership and cleanup
 
@@ -417,3 +417,5 @@ The new evidence-only line helper retains exact A/B response bytes as `a.sse` an
 Before Maestro, `/tmp/whim-beta1-maestro-quiet.py` offers the read-only two-clear-scans check, bounded to ten minutes. It changes no global settings. A quiet scan is not a cross-project lock; recheck immediately before the owned command and leave Outsiide's work alone.
 
 Use explicit owned Android IDs (5580 upgrade, 5560 recapture) and record every newly-created iOS UDID. Do not reuse earlier simulator leases. Cap Android Gradle at `--no-daemon --max-workers=2`, every Xcode build at `-jobs 2`, and the recapture emulator at 3072 MB/two cores. The Android upgrade command uses `/tmp/whim-beta1-native-tools/emulator` through a per-command PATH. This Bash 3.2 adapter refuses every AVD/port except Whim_Verify/5580 and appends 3072 MB/two cores before executing the real emulator. It does not alter shared AVD settings, global PATH, HOME or other projects. Preserve and hash the adapter with the receipt.
+
+The source preflight confirms that fresh stub data, no provider key and the default daily limits support the planned cases. At a four-second stub delay, each normal A/B generation holds its slot for about 56 seconds; C starts after both within the default 180-second queue deadline. Keep those defaults. Old 382511 seeding differs: rewrite is model-backed, so record its actual model requests separately from the candidate's deterministic stub traffic.
