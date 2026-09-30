@@ -162,3 +162,7 @@ S3, S4, S35: root integrity actual exit 0 and independent review CLEAN in review
 S22, S75: independent review REJECTED candidate 99a8e6d2, two HIGH defects (unguarded guardian acknowledgement persistence and rethrowing journal recovery after pending recreation). See reviews/launcher-age-initial.md. Returned to the same worker/worktree, original immutable BASE and four-file allowlist, with additional guardian/journal/post-record failure regressions. Earlier fast/RED/integrity passes do not close these defects; second review, new fast/RED/full gate remain required.
 
 S1: worker commit dde9bbfb548a6e636313148c7ff1675654ada264, fastgate session71412 actual exit 0. Root redcheck session31559 actual exit 0: restored BASE accepts the valid outside hierarchy and validation fails with an explicit escape assertion. Root integrity exit 0, exact onefile. Independent review/fullgate/merge pending.
+
+S1: independent review CLEAN in reviews/evidence-path.md, confirming resolved confinement, symlink escape refusal and preserved bounds. Fast/root RED/integrity passed; full gate and merge pending.
+
+S78: worker commit 1c7b4a8c6c8f5a839eb18c191b9b4346b746d16e, fastgate session9880 actual exit 0, FAST GATE PASSED. Root integrity actual exit 0, exact onefile. Structural scope; independent review/fullgate/merge remain pending.
