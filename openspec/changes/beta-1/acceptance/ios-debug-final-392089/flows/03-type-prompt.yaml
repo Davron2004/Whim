@@ -1,0 +1,6 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: empty Compose. PROMPT may contain literal stub markers.
+- tapOn: "Describe an app…"
+- inputText: "${PROMPT}"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-prompt-before-submit"

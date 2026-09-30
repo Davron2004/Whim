@@ -6,7 +6,11 @@ name `a1586b87`, not a later product artifact; rebuild if a product input change
 There is no checked-in `.maestro/`. The 33 iOS YAML fragments (26 `ios-4`, 7
 `ios-repro-resume`) preserve Water Tracker paths, not a complete new acceptance run;
 the upgrade-check YAML is 10.5 only. Android reuses the `emulator-5560`-targeted
-`acceptance/android-4/post-ui.py` hierarchy/capture helper.
+`acceptance/android-final-392089/post-ui.py` hierarchy/capture helper, copied byte-for-byte
+from android-4. Build 392089 is reserved; its approved source SHA is still unset.
+Candidate iOS material is in `ios-debug-final-392089/flows` (20 files) and
+`ios-release-final-392089/flows` (9 files). Both syntax checks passed; native execution
+and Maestro runtime validation remain pending. The older fragments below are references.
 Before Maestro, require two clear scans 60 seconds apart from
 `/tmp/whim-beta1-maestro-isolation.md`, one client per owned device, and no parallel
 hierarchy call; `fix-8.md` records that it restarts the driver.
@@ -15,7 +19,7 @@ Start only the current candidate's local server with `WHIM_PIPELINE=stub`. The
 stub-only `WHIM_STUB_DELAY_MS=4000` delays each emitted event; the default is 200 ms
 and production refuses both it and the stub selector. For the cap-one line, use:
 ```sh
-env -u OPENROUTER_API_KEY WHIM_PIPELINE=stub WHIM_SERVER_HOST=127.0.0.1 \
+env -u OPENROUTER_API_KEY NODE_ENV=development WHIM_PIPELINE=stub WHIM_SERVER_HOST=127.0.0.1 \
   WHIM_SERVER_PORT="$QA_PORT" WHIM_DATA_DIR="$QA_DATA" \
   WHIM_MAX_CONCURRENT_GENERATIONS=1 WHIM_STUB_DELAY_MS=4000 \
   node server/dev.mjs
@@ -41,7 +45,7 @@ Debug is the only iOS build that accepts Settings -> Advanced routing. Build wit
 Release deliberately ignores that override (`WhimAppInfoModule.mm`); keep its pass on
 production. A reusable serial invocation is:
 ```sh
-maestro --udid "$IOS_DEBUG_UDID" test --debug-output "$RUN_ROOT/maestro/$NAME" "$FLOW"
+maestro --udid "$IOS_DEBUG_UDID" test --debug-output "$RUN_ROOT/maestro/$NAME" -e "EVIDENCE_DIR=$REPO/openspec/changes/beta-1/acceptance/ios-debug-final-392089" -e "CASE=$NAME" "$FLOW"
 ```
 The existing production keyboard path is serial: `ios-repro-resume/compose.yaml`,
 `clarify.yaml`, `continue.yaml`, `plan.yaml`, then `ios-4/keyboard-last-row.yaml`.
@@ -82,10 +86,10 @@ reach the Hello App done state; future update must have no installed app.
 derives taps from the current hierarchy, refuses evidence-name overwrites, and writes a
 screenshot, XML, and window dump together:
 ```sh
-python3 "$REPO/openspec/changes/beta-1/acceptance/android-4/post-ui.py" show
-python3 "$REPO/openspec/changes/beta-1/acceptance/android-4/post-ui.py" capture post-<new-name>
-python3 "$REPO/openspec/changes/beta-1/acceptance/android-4/post-ui.py" tap '<exact label>'
-python3 "$REPO/openspec/changes/beta-1/acceptance/android-4/post-ui.py" longtap '<exact tile label>'
+python3 "$REPO/openspec/changes/beta-1/acceptance/android-final-392089/post-ui.py" show
+python3 "$REPO/openspec/changes/beta-1/acceptance/android-final-392089/post-ui.py" capture post-<new-name>
+python3 "$REPO/openspec/changes/beta-1/acceptance/android-final-392089/post-ui.py" tap '<exact label>'
+python3 "$REPO/openspec/changes/beta-1/acceptance/android-final-392089/post-ui.py" longtap '<exact tile label>'
 ```
 It is only for the fresh, owned `emulator-5560`. First set Android's internal-build
 Advanced address to `http://localhost:$QA_PORT` after the matching `adb reverse`.
@@ -95,7 +99,9 @@ For cap + 2 at `WHIM_MAX_CONCURRENT_GENERATIONS=1`, the three builds need distin
 device IDs; a second live build from one ID returns `device_busy`, not a position.
 Section 10.4 says “three builds,” and the recorded receipt says “distinct device IDs”; neither requires three literal native devices. Prepare native C through its plan screen,
 then run controlled A and B holders with fresh UUIDs from
-`/tmp/whim-beta1-line-clients.mjs`. When it prints `READY_FOR_NATIVE_C`, tap C's Build.
+`/tmp/whim-beta1-line-clients-final.mjs`. Complete the full quiet window before starting
+these holders; after `READY_FOR_NATIVE_C`, scan immediately and tap C's Build without
+another 60-second delay.
 C must first show “You're in line, 1 build ahead.” (position 2), then “You're next in
 line.” (position 1) after A completes, then begin only after B completes. The script
 records A running, B queued, and B handoff; C's screenshots/hierarchy and server event
@@ -103,7 +109,7 @@ order are the native/FIFO evidence. This proves C's native queue handling, not a
 UI for A or B. It creates no children: its 150-second abort is its own cleanup. If run in
 the background, add only its saved `LINE_CLIENT_PID` to the existing owned-PID trap.
 ```sh
-node /tmp/whim-beta1-line-clients.mjs --base-url "http://127.0.0.1:$QA_PORT" --build "$BUILD" --platform "$NATIVE_PLATFORM" --app-version "$APP_VERSION" --out "$RUN_ROOT/line-clients" --timeout-ms 150000 &
+node /tmp/whim-beta1-line-clients-final.mjs --base-url "http://127.0.0.1:$QA_PORT" --build "$BUILD" --platform "$NATIVE_PLATFORM" --app-version "$APP_VERSION" --out "$RUN_ROOT/line-$NATIVE_PLATFORM" --timeout-ms 150000 &
 LINE_CLIENT_PID=$!
 ```
 ## What remains manual or owner-only

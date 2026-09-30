@@ -1,0 +1,9 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: real Clarify answered or left for sensible defaults. Sends ONE rewrite request.
+# Skip if zero-question response has already entered Plan; do not resubmit a request.
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "Build it"
+    timeout: 120000
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-plan"

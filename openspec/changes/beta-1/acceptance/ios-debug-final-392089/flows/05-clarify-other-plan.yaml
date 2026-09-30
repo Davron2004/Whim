@@ -1,0 +1,26 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: canned stub Clarify. Captures keyboard before and after the active-pill tap.
+- tapOn: "Just today"
+- tapOn: "Type it"
+- tapOn: "Pick from a list"
+- scrollUntilVisible:
+    element: "Or type your own answer"
+    direction: DOWN
+    timeout: 10000
+- tapOn: "Or type your own answer"
+- inputText: "gypsy jolly queue"
+- assertVisible: "Continue"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-other-before-pill"
+- tapOn: "It stays, ticked"
+- waitForAnimationToEnd
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-other-after-pill"
+- assertNotVisible: "gypsy jolly queue"
+- assertVisible: "Done"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-pill-keyboard-before-done"
+- tapOn: "Done"
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "Build it"
+    timeout: 30000
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-plan"

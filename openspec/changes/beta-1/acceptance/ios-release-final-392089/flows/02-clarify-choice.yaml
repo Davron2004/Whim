@@ -1,0 +1,10 @@
+appId: com.anycognition.whim
+---
+# Optional: actual real Clarify response is visible; CHOICE is an observed exact option.
+# One invocation per chosen option; no Continue and no provider call in this fragment.
+- scrollUntilVisible:
+    element: "${CHOICE}"
+    direction: DOWN
+    timeout: 10000
+- tapOn: "${CHOICE}"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-choice"

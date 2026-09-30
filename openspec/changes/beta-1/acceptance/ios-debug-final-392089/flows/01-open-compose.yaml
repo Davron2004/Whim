@@ -1,0 +1,6 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: Home. Output: Compose, with no field focus requested.
+- tapOn: "Describe an app…"
+- assertVisible: "What should it do?"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-compose-before-focus"

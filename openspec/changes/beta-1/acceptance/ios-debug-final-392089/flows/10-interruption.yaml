@@ -1,0 +1,22 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: a DIFFERENT fresh ordinary attempt parked at Plan; slow owned stub, slot free.
+# stopApp/launchApp never clear saved data. Stop only this installed app on the supplied UDID.
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-interruption-plan"
+- tapOn: "Build it"
+- extendedWaitUntil:
+    visible: "Making it"
+    timeout: 10000
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-active-before-process-stop"
+- stopApp
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible: "Describe an app…"
+    timeout: 15000
+- assertVisible: "Interrupted"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-fresh-launch-interrupted-home"
+- tapOn: "${GHOST_TITLE}"
+- assertVisible: "This build stopped when the app closed. You can try it again."
+- assertVisible: "Try again"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-interrupted-reopened"

@@ -3,6 +3,11 @@
 Use this only after the final full gate/review selects a committed candidate. The
 receipt names that SHA and build; it must not reuse 391705 evidence.
 
+Build 392089 is reserved for the composed chain-10 correction. Its source pin remains
+unset until full gating and independent review accept it. Build 392037 artifacts are
+superseded; no acceptance was run on them. Execute each native phase separately as root,
+with saved resource ownership and cleanup; the earlier combined wrapper was rejected.
+
 ## Evidence boundary
 
 - Android 391705 (source `a1586b87`) passed the keyboard, full-window sheets,
@@ -19,11 +24,12 @@ receipt names that SHA and build; it must not reuse 391705 evidence.
 REPO=/Users/davrondjabborov/Work/other/Whim
 cd "$REPO"
 set -euo pipefail
-PRODUCT_SOURCE_SHA="$(git rev-parse HEAD)"
+PRODUCT_SOURCE_SHA="${ROOT_APPROVED_FINAL_SHA:?root must first accept the committed source}"
 CANDIDATE_SHA="$PRODUCT_SOURCE_SHA"
-BUILD="$(node scripts/release/run.mjs build-number)"
-RUN_ROOT="$(mktemp -d "/tmp/whim-beta1-final-$BUILD.XXXXXX")"
-PRODUCT_INPUTS=(android ios src server contract build scripts fixtures assets synthrun Gemfile Gemfile.lock package.json package-lock.json tsconfig*.json babel.config.js metro.config.js)
+BUILD=392089
+RUN_ROOT=/tmp/whim-beta1-final-392089
+PRODUCT_INPUTS=(android ios src server contract build scripts fixtures assets synthrun release fastlane Gemfile Gemfile.lock package.json package-lock.json tsconfig*.json babel.config.js metro.config.js)
+git diff --exit-code "$PRODUCT_SOURCE_SHA" HEAD -- "${PRODUCT_INPUTS[@]}"
 test -z "$(git status --porcelain -- "${PRODUCT_INPUTS[@]}")"
 OLD_SERVER_PID=''
 QA_SERVER_PID=''

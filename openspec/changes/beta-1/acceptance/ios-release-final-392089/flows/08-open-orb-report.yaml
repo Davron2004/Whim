@@ -1,0 +1,24 @@
+appId: com.anycognition.whim
+---
+# Prerequisite: Home, generated app present. APP_TITLE is observed title.
+- longPressOn: "${APP_TITLE}"
+- tapOn: "Open"
+- extendedWaitUntil:
+    visible: "Open the app menu"
+    timeout: 15000
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-mini-app-orb-bounds"
+- tapOn: "Open the app menu"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-orb-menu"
+- tapOn: "Report this app"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-report-before-focus"
+- tapOn: "Add a note (optional)"
+- inputText: "Keyboard bounds check 392089"
+- assertVisible: "Cancel"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-report-keyboard-before-cancel"
+- tapOn: "Cancel"
+- assertVisible: "Open the app menu"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-report-cancelled"
+- tapOn: "Open the app menu"
+- tapOn: "Home"
+- assertVisible: "Describe an app…"
+- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-release-orb-home"

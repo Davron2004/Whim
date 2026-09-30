@@ -1,0 +1,135 @@
+{
+  "status": "preparation only; no native execution",
+  "reserved_build": 392089,
+  "accepted_source_sha": null,
+  "created_at": "2026-09-30T08:37:20.669697+00:00",
+  "ios_yaml_files": 29,
+  "reported_syntax_exits": [
+    0,
+    0
+  ],
+  "maestro_runtime_validation": "pending",
+  "owned_resources_started": [],
+  "files": [
+    {
+      "path": "openspec/changes/beta-1/acceptance/android-final-392089/post-ui.py",
+      "sha256": "a9866b3ddc2087fa715149068777b4a7d864e7f303bf772599cb5f8e90486100"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/00-home.yaml",
+      "sha256": "edc3de771e0827f306009c798fc2702fa4e0a6318fed4f9def775ea85d38bb65"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/01-open-compose.yaml",
+      "sha256": "97b2d0474429e364a76b104801197460b4e02030721850a0929bba1e018e33c0"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/02-compose-keyboard.yaml",
+      "sha256": "c3e1170c90435f75781f2130b7738db4b83971bfd74cfe478ac72c5431cd8894"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/03-type-prompt.yaml",
+      "sha256": "f7ec2ec498f196c4d3eaa7e2dc76518f9d7aee80d8c405dc79aaeabeb9c0179e"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/04-submit-clarify.yaml",
+      "sha256": "4dfc2e9c9682e0bbc7048cdf8863e941c449b6c0f2a9361e6b405fcb7eff9a51"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/05-clarify-other-plan.yaml",
+      "sha256": "b221f6b1d3bb5797aa1ac740a9f6d5184affd970720e0770eb319740491d5285"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/06-clarify-plan.yaml",
+      "sha256": "19e4d05cc8642a513e3ed827e6ab2c078f9479f205f2a77afc2a862cea7be7b2"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/07-plan-keyboard.yaml",
+      "sha256": "34ca74f76da0894d039aaecef592b501309b0a01bac44b4b5175c32b281cbdb9"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/08-build.yaml",
+      "sha256": "a827b1413389135936738409bd3d22c3e79da14d6a993c086af5f04a9c897d07"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/09-ordinary-failure.yaml",
+      "sha256": "6b042384a8637e9b6801e80ed0ac0549405c48b17a4d8a80cd194ea400eeee01"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/10-interruption.yaml",
+      "sha256": "6fa86915ced3a030d56f05537c162e1aefb7cba1073bd02d52c69089b27e13c8"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/11-limit-submit.yaml",
+      "sha256": "ac02bfac7ee0ed8f36f6a0544ec8dc535cece2c9507cf739a1ba1be272b90bdc"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/12-limit-alternative.yaml",
+      "sha256": "8797398c5aaea55b2183217cd83ac8356098407a910bf9a346e12b10c5e7ca1d"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/13-limit-change-idea.yaml",
+      "sha256": "37a71adcfd9bb36a0e049371077563ff5148cd02cac04a471c48c0955c7a65ed"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/14-future-skip.yaml",
+      "sha256": "0d81d6c897091921515bd75b4c875d3df53c6b6ac281bc283ea3c4e8b2792954"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/15-future-fail.yaml",
+      "sha256": "cc7e6cb64c732baceb6698334f0658cc8f7e948f6ba9005900ad49c785848ea7"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/16-future-update.yaml",
+      "sha256": "52eea486be1c20e03bc03638707cac5c729973d2499693bee9dd42a8074bc3b6"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/17-queue-c.yaml",
+      "sha256": "90e8e96d44aa3b5790bf096611f7207b5e643f2350d18bfbcbf2d310de08dc43"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/18-saved-failure-fresh-launch-observe.yaml",
+      "sha256": "ce0f48a52c1a2eec170fb9269eb85e49ccfa359e573a8d56b843c8a3024c237c"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-debug-final-392089/flows/19-back-home.yaml",
+      "sha256": "ece437deae34b08f2d40c9b4e8a7bc0e74434113304e5ac93c305bbf985f85aa"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-release-final-392089/flows/00-home-compose.yaml",
+      "sha256": "d93cef4783a950dcbf14f9f590210adbd5528215f6b867a486c97ff866a09a81"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-release-final-392089/flows/01-submit-observe.yaml",
+      "sha256": "b4244fe71efc4321546d38999ad48d6806f6837527f6054618399832bc4ba7e7"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-release-final-392089/flows/02-clarify-choice.yaml",
+      "sha256": "13fd288fab44501b998b6189db4aa84b6560c9cfa4cbaaa7e603c5a366fa5765"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-release-final-392089/flows/03-clarify-other.yaml",
+      "sha256": "31b1678aa2d9ed5aa6426c5190445ddf7bf6f286248b9d8a59dc07df5ad2d18f"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-release-final-392089/flows/04-clarify-continue.yaml",
+      "sha256": "8d9b54ae4097c309e40f81278d65ee46970e83b707e855e0027e85bfa878287c"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-release-final-392089/flows/05-plan-last-row.yaml",
+      "sha256": "3306838eb763c60e0242ce8636a502cd6db8ea49a80a0650321485c7f6dc1c76"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-release-final-392089/flows/06-build-once.yaml",
+      "sha256": "2b1db4328f72b99f7497edff416cc61d9afa0e1aaac23178efab744eeef10aad"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-release-final-392089/flows/07-home-history.yaml",
+      "sha256": "4247c09722f332442b2cdfaba30cb6fde3aa4cafd33ab84c3c51c691f9434b60"
+    },
+    {
+      "path": "openspec/changes/beta-1/acceptance/ios-release-final-392089/flows/08-open-orb-report.yaml",
+      "sha256": "1f198c070e9e3c936db70d26ffd132f914a01afc20760f0bf57768380d02c48b"
+    }
+  ]
+}
