@@ -1,5 +1,5 @@
 {
-  "status": "source accepted; CI, native builds and acceptance pending",
+  "status": "source/CI accepted; both artifacts built and preserved; native acceptance pending",
   "product_source_sha": "c76191d34343510c5c5af748132c5b2a650067ee",
   "product_source_tree": "ed0d524754c306f4ba0dd9f060c01d4f8f0791da",
   "app_version": "1.0.0",
@@ -17,6 +17,55 @@
     392037,
     392089
   ],
-  "build_head": null,
-  "artifacts": []
+  "build_head": "a58403876ffb62977f414e87bba8b4093f338eeb",
+  "artifacts": [
+    {
+      "platform": "android",
+      "kind": "offline APK",
+      "path": "/tmp/whim-beta1-final-392403/artifacts/app-offline-392403.apk",
+      "sha256": "a64392eec9160c171609fc4fb9f83c0722a2bc6d8bba2142b8431b7051876731",
+      "bytes": 25630989,
+      "version": "1.0.0",
+      "build": 392403,
+      "build_exit": 0,
+      "metadata_receipt": "/tmp/whim-beta1-final-392403/android-badging.txt",
+      "acceptance": "pending",
+      "preserved_utc": "2026-09-30T12:40:47.369753+00:00"
+    },
+    {
+      "platform": "ios",
+      "kind": "Release simulator app",
+      "path": "/tmp/whim-beta1-final-392403/artifacts/Whim-392403.app",
+      "version": "1.0.0",
+      "build": "392403",
+      "bundle_id": "com.anycognition.whim",
+      "executable": "Whim",
+      "executable_sha256": "4e5456d25fcbdee16784ef4e8853d26d8ac7828ad8dda661652d0f9edb40581a",
+      "build_exit": 0,
+      "manifest_path": "/tmp/whim-beta1-final-392403/artifacts/Whim-392403-manifest.json",
+      "manifest_sha256": "ee1d40b5a811c4e03acf8591c5584ebdf1b31ea0e4f8df7ba57d5d44961d3733",
+      "manifest_entries": 47,
+      "copy_verified_complete": true,
+      "acceptance": "pending",
+      "preserved_utc": "2026-09-30T12:46:05.346114+00:00"
+    }
+  ],
+  "build_tree": "d8c1b2ea0953aa81eade9739841cf2f1eb7d33f9",
+  "build_started_utc": "2026-09-30T12:38:16.921426+00:00",
+  "preflight": {
+    "android": 0,
+    "ios": 0,
+    "store_latest_input": 382511,
+    "fresh_store_query": false
+  },
+  "current_head_ci": {
+    "head": "a58403876ffb62977f414e87bba8b4093f338eeb",
+    "all_required_checks": 3,
+    "checkverdict_exit": 0,
+    "checks": "/tmp/whim-beta1-ci-a584-poll2.txt",
+    "sonar_exit": 0,
+    "sonar_gate": "OK",
+    "sonar_open_issues": 0,
+    "sonar": "/tmp/whim-beta1-sonar-a584.txt"
+  }
 }
