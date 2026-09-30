@@ -132,3 +132,7 @@ S81, S82, S88: root integrity exit 0; independent review CLEAN in reviews/histor
 S27, S28, S30: root integrity exit 0; independent review CLEAN in reviews/queue-source.md. Structural cohort, no added test/RED required. Full gate remains pending.
 
 S77: merged, regate-pass at 5656a631f9891d74c2c99d26ef0e40afa4273404. Report full gate retry 2 session 15338 actual exit 0, FULL GATE PASSED; post-merge fast gate session 51009 actual exit 0, FAST GATE PASSED. Logs /tmp/whim-beta1-sonar-report-fullgate2.log and /tmp/whim-beta1-sonar-report-regate.log. Independent review and root RED/integrity receipts above. Terminal source count: 21.
+
+S46, S85: worker fast gate session 25629 actual exit 0, FAST GATE PASSED, /tmp/whim-beta1-sonar-xhr-usage-fast.log. Commit, independent review, root RED/integrity and full gate remain pending.
+
+S3, S4, S35: root stale exit 0 (three lines); created fix/beta-1-sonar-host-guards in .claude/worktrees/beta-1-sonar-host-guards at immutable BASE b40f7fab23972492ee6b9c50b0a4770b4739f570. One-file structural scope; final host-Hermes compatibility proof remains a distinct acceptance requirement.
