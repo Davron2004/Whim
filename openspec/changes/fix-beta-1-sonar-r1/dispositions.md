@@ -172,3 +172,5 @@ S22, S75: root authorized exactly one additional nonprotected, same-subsystem te
 S78: independent review CLEAN in reviews/appstats-noop.md, confirming exact structural promise-null contract. Full gate/merge pending.
 
 S27, S28, S30: hermetic fullgate session99597 actual exit 0, FULL GATE PASSED. Log /tmp/whim-beta1-sonar-queue-fullgate.log. Primary restored to integration/beta-1; immediate merge and post-merge fast regate follow.
+
+S27, S28, S30: merged, regate-pass at 9d0818f5f16748725d9a87594e4093f3a724b469. Post-merge fastgate session37867 actual exit 0, FAST GATE PASSED; /tmp/whim-beta1-sonar-queue-regate.log. Fullgate, integrity and independent review passed above. Terminal source count: 24; false positives: 60.
