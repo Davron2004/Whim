@@ -130,3 +130,5 @@ S46, S85: dispatched to fix/beta-1-sonar-xhr-usage in .claude/worktrees/beta-1-s
 S81, S82, S88: root integrity exit 0; independent review CLEAN in reviews/history-rejection-recovery.md. Root redcheck session 10687 actual exit 0: reverting HistoryScreen to BASE with final tests triggers the real unhandled listing rejection. Selected-root runner prevents reading tests from the primary checkout. Full gate remains pending.
 
 S27, S28, S30: root integrity exit 0; independent review CLEAN in reviews/queue-source.md. Structural cohort, no added test/RED required. Full gate remains pending.
+
+S77: merged, regate-pass at 5656a631f9891d74c2c99d26ef0e40afa4273404. Report full gate retry 2 session 15338 actual exit 0, FULL GATE PASSED; post-merge fast gate session 51009 actual exit 0, FAST GATE PASSED. Logs /tmp/whim-beta1-sonar-report-fullgate2.log and /tmp/whim-beta1-sonar-report-regate.log. Independent review and root RED/integrity receipts above. Terminal source count: 21.
