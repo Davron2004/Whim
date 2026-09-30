@@ -216,6 +216,10 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       server: streamingServer(streams),
     }, async ({ tree, kv, sent }) => {
       const pendingBefore = kv.getString('pending:failed')!;
+      const journalBefore = kv.getString(JOURNAL_KEY('failed'));
+      const unhandled: unknown[] = [];
+      const captureRejection = (reason: unknown) => { unhandled.push(reason); };
+      process.on('unhandledRejection', captureRejection);
       const clearFailure = failNativeStorageWritesWhen(({ id, key, value }) =>
         rejectTerminalWrite && id === 'whim.launcher' && (
           key === JOURNAL_KEY('failed') && value.includes(GENERIC_STREAM_ERROR)
@@ -233,15 +237,21 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
         await waitFor(() => on(tree, FailureScreen), 'the generic terminal-persistence failure');
 
         const failed = new PendingBuildStore(kv).get('failed');
+        h.eq(unhandled, [], 'the partial recovery does not reject its retry continuation');
         h.eq(sent.filter((request) => request.path === '/v1/generate').length, 1, 'the retry sends exactly one generation request');
         h.eq([failed?.state, failed?.failure?.reason], ['failed', GENERIC_STREAM_ERROR], 'the persisted record truthfully says the ended retry failed');
         h.ok(kv.getString('pending:failed') !== pendingBefore, 'the failed restore is never claimed as an old-pair rollback');
+        h.eq(kv.getString(JOURNAL_KEY('failed')), journalBefore, 'the restored old journal is never wiped for the generic record fallback');
         const failure = tree.root.findByType(FailureScreen).props;
-        h.eq([failure.onDismiss != null, failure.attemptStarted, failure.journal], [true, false, null], 'the verified record is discardable without claiming a terminal report');
+        h.eq([failure.onDismiss != null, failure.attemptStarted, failure.journal], [true, false, null], 'the verified record is discardable without claiming the old report');
         await press(button(tree, COPY.failureBack));
         h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [['failed', 'failed']], 'Back never exposes the ended retry as building');
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+        const reopened = tree.root.findByType(FailureScreen).props;
+        h.eq([reopened.reason, reopened.attemptStarted, reopened.journal], [GENERIC_STREAM_ERROR, false, null], 'reopening the generic ghost still withholds the old report');
       } finally {
         clearFailure();
+        process.off('unhandledRejection', captureRejection);
       }
     });
   });

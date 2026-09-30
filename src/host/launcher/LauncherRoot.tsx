@@ -1837,17 +1837,22 @@ function LauncherShell({
     id: string,
     observed: RunTerminalCounts,
     remedy?: PendingFailureRemedy,
+    preservedJournal = false,
   ): TerminalSettlement => {
     let journalPersisted = false;
-    try {
-      journal.create(id);
-      journal.appendTerminal(id, { failure: { reason: GENERIC_STREAM_ERROR, diagnostics: [] }, ...observed });
-      journalPersisted = journal.get(id)?.at(-1)?.failure?.reason === GENERIC_STREAM_ERROR;
-    } catch (fallbackError) {
-      log.warn(CHANNELS.gen, 'generic terminal report did not persist', {
-        operation: 'persist-generic-terminal-report',
-        thrown: fallbackError instanceof Error ? 'error' : 'non-error',
-      });
+    if (preservedJournal) {
+      unavailableJournalRef.current.add(id);
+    } else {
+      try {
+        journal.create(id);
+        journal.appendTerminal(id, { failure: { reason: GENERIC_STREAM_ERROR, diagnostics: [] }, ...observed });
+        journalPersisted = journal.get(id)?.at(-1)?.failure?.reason === GENERIC_STREAM_ERROR;
+      } catch (fallbackError) {
+        log.warn(CHANNELS.gen, 'generic terminal report did not persist', {
+          operation: 'persist-generic-terminal-report',
+          thrown: fallbackError instanceof Error ? 'error' : 'non-error',
+        });
+      }
     }
     let recordPersisted = false;
     try {
@@ -1881,7 +1886,7 @@ function LauncherShell({
       refresh();
       return 'restored';
     }
-    return persistGenericTerminalFailure(id, observed, remedy);
+    return persistGenericTerminalFailure(id, observed, remedy, restored?.journal === true);
   };
 
   const beginPendingAttempt = (
@@ -2192,7 +2197,7 @@ function LauncherShell({
       // A record that names a remedy is one rewording can't get past (`PendingFailureRemedy`).
       rephraseHelps: rec.failure?.remedy == null,
       pendingId: rec.id,
-      journalId: rec.id,
+      ...(!unavailableJournalRef.current.has(rec.id) ? { journalId: rec.id } : {}),
     };
   };
 
