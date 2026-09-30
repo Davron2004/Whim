@@ -1,0 +1,6 @@
+appId: com.anycognition.whim
+---
+- tapOn: "Fixed at 8 glasses"
+- tapOn: "Last 7 days"
+- tapOn: "Continue"
+- waitForAnimationToEnd

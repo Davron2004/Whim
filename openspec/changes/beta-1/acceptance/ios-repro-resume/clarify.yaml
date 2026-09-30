@@ -1,0 +1,5 @@
+appId: com.anycognition.whim
+---
+- tapOn: "Describe an app…"
+- inputText: "A water tracker with a daily goal of 8 glasses, a button to add a glass, today's progress, and a saved daily history."
+- tapOn: "Continue"
