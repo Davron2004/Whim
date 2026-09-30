@@ -112,6 +112,22 @@ the background, add only its saved `LINE_CLIENT_PID` to the existing owned-PID t
 node /tmp/whim-beta1-line-clients-final.mjs --base-url "http://127.0.0.1:$QA_PORT" --build "$BUILD" --platform "$NATIVE_PLATFORM" --app-version "$APP_VERSION" --out "$RUN_ROOT/line-$NATIVE_PLATFORM" --timeout-ms 150000 &
 LINE_CLIENT_PID=$!
 ```
+## Cold restart after an ended failure
+
+Task 11.4 needs a restart smoke on the rebuilt candidate. After line holders and other clients
+finish, reserve one generation within the device's supported quota. Capture an active ordinary
+stub build, stop only the saved Whim QA server PID, and wait up to 90 seconds for a generic
+failure to settle. Capture its actions and absence of a report, then go Back and confirm one
+matching failed ghost. Terminate and relaunch only the owned native app, reopen that ghost, and
+capture the same generic failure without an attached report. Read the actual UI for selectors.
+
+Keep the QA data directory if the server must restart; record its new PID and refuse an occupied
+port. Do not stop the app while it is still building, which would test startup interruption.
+This is a native ended-failure/cold-restart smoke with writable storage. The controlled Node
+tests provide the write-outage and stale-journal proofs. Flow 18 alone observes a saved entry
+and cannot claim either fault injection or this full smoke. The detailed preparation is
+`/tmp/whim-beta1-native-cold-failure-plan.md`; no result is claimed yet.
+
 ## What remains manual or owner-only
 `acceptance/section-10-plan.md` still lists every Tier-0 path, cap + 2, limit, and all
 three future fallbacks for both platforms. The newer final-candidate sheet only calls out
