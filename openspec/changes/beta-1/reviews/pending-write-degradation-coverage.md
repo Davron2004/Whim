@@ -12,6 +12,7 @@
 | Cold demotion during a selective write outage | `ghosts: cold recovery retains an unwritable interruption while recovering the other building record`: a fresh `LauncherRoot` over two persisted building records lists both as interrupted; the unwritable raw record remains flagged `building`, its sibling raw record persists interrupted, and opening the retained entry exposes no old report. |
 | Native app-link routing for a retained current view | `ghosts: an app link resolves a retained current failure instead of its raw building record`: under fully unwritable terminal writes, the native `openLink(appLinkFor(id))` handler opens a discardable failed screen with no report, then Back leaves exactly one failed ghost. |
 | Thrown active-stream failure action identity | `ghosts: a thrown active stream failure keeps its volatile live failure actionable`: a real active generation response body throws after activation while terminal pending/journal writes fail; the live generic failure has Retry and Discard, emits no unhandled rejection, then Back/reopen leaves one failed ghost and no report. |
+| Stale same-ID action authorization | `ghosts: a stale same-id stream failure cannot borrow the newer volatile failure actions`: active A is superseded by same-ID retry B, B retains its volatile failure, then delayed A throws. A gets no Retry or Discard, while Home keeps B's one failed ghost unchanged. |
 
 RED receipt: with current suites and native seams but `LauncherRoot.tsx` and `pending-builds.ts` temporarily restored to `a77fd2c6`, `npm run launcher:test` exited `1`. Its footer named both failures: the dangling `pending:order` removal could not return to Back, and the live volatile failure offered no Discard. Current product files were restored to `0b9ba3ca` before the three acceptance additions. No standalone log file was captured.
 
@@ -21,8 +22,12 @@ R3 RED receipt: before the action-identity fix, `npm run launcher:test` exited `
 
 R3 GREEN receipt: after the fix, `npm run launcher:test` exited `0` with `13825 checks passed, 0 failed` and `launcher acceptance green`.
 
-FAST GATE receipt: `GATE_BASE=874be3307cabf29906be17137401723237a8ee3a ./scripts/gate.sh` exited `0` and printed `FAST GATE PASSED`.
+R4 RED receipt: `/tmp/whim-beta1-chain10-r4-red.log`; `npm run launcher:test` exited `1` with `13828 checks passed, 1 failed`. The named assertion recorded `got [ true, true, false, null ], want [ false, false, false, null ]` for stale same-ID action authorization.
 
-KNIP receipt: `npx knip` exited `0` with no findings or output.
+R4 GREEN receipt: `/tmp/whim-beta1-chain10-r4-green.log`; `npm run launcher:test` exited `0` with `13829 checks passed, 0 failed` and `launcher acceptance green`.
+
+R4 FAST GATE receipt: `/tmp/whim-beta1-chain10-r4-gate.log`; `GATE_BASE=874be3307cabf29906be17137401723237a8ee3a ./scripts/gate.sh` exited `0` and printed `FAST GATE PASSED`.
+
+R4 KNIP receipt: `/tmp/whim-beta1-chain10-r4-knip.log`; `npx knip` exited `0` with no findings or output.
 
 VERDICT: coverage complete.
