@@ -12,9 +12,10 @@
 | Cold demotion during a selective write outage | `ghosts: cold recovery retains an unwritable interruption while recovering the other building record`: a fresh `LauncherRoot` over two persisted building records lists both as interrupted; the unwritable raw record remains flagged `building`, its sibling raw record persists interrupted, and opening the retained entry exposes no old report. |
 | Native app-link routing for a retained current view | `ghosts: an app link resolves a retained current failure instead of its raw building record`: under fully unwritable terminal writes, the native `openLink(appLinkFor(id))` handler opens a discardable failed screen with no report, then Back leaves exactly one failed ghost. |
 | Thrown active-stream failure action identity | `ghosts: a thrown active stream failure keeps its volatile live failure actionable`: a real active generation response body throws after activation while terminal pending/journal writes fail; the live generic failure has Retry and Discard, emits no unhandled rejection, then Back/reopen leaves one failed ghost and no report. |
-| Stale same-ID action authorization | `ghosts: a stale same-id stream failure cannot borrow the newer volatile failure actions`: active A is superseded by same-ID retry B, B retains its volatile failure, then delayed A throws. A gets no Retry or Discard, while Home keeps B's one failed ghost unchanged. |
+| Stale same-ID action authorization | `ghosts: a stale same-id stream failure cannot borrow the newer volatile failure actions`: active A is superseded by same-ID retry B, B retains its volatile failure, then delayed A throws. B's Retry and Discard remain unchanged, while Home keeps B's one failed ghost unchanged. |
 | Stale same-ID active retry ownership | `ghosts: a stale same-id stream failure keeps the active retry reattachable and cancellable`: A's delayed iterator error arrives while same-ID retry B still streams. B remains reattachable, and Cancel aborts B's request before removing its ghost. |
 | Stale same-ID refusal ownership | `ghosts: a stale same-id refusal keeps the active retry reattachable`: A's delayed service refusal arrives while same-ID retry B still streams, and B remains reattachable. |
+| Stale same-ID stream frames | `ghosts: a stale same-id stage cannot replace or journal the active retry`: A emits a valid stage after B activates. B retains its progress, and B's verified journal contains only B's stage. |
 
 RED receipt: with current suites and native seams but `LauncherRoot.tsx` and `pending-builds.ts` temporarily restored to `a77fd2c6`, `npm run launcher:test` exited `1`. Its footer named both failures: the dangling `pending:order` removal could not return to Back, and the live volatile failure offered no Discard. Current product files were restored to `0b9ba3ca` before the three acceptance additions. No standalone log file was captured.
 
@@ -34,10 +35,18 @@ R4 KNIP receipt: `/tmp/whim-beta1-chain10-r4-knip.log`; `npx knip` exited `0` wi
 
 R5 RED receipt: `/tmp/whim-beta1-chain10-r5-red.log`; `npm run launcher:test` exited `1` with `13831 checks passed, 2 failed`. The named assertion reported that the stale completion did not leave the active retry reattachable.
 
-R5 GREEN receipt: `/tmp/whim-beta1-chain10-r5-green.log`; `npm run launcher:test` exited `0` with `13835 checks passed, 0 failed` and `launcher acceptance green`. Root corrected the received matrix's earlier 13,834 count after inspecting the final footer and the worker's final report; the refusal check accounts for the additional assertion.
+R5 GREEN receipt: `/tmp/whim-beta1-chain10-r5-green.log`; `npm run launcher:test` exited `0` with `13835 checks passed, 0 failed` and `launcher acceptance green`.
 
 R5 FAST GATE receipt: `/tmp/whim-beta1-chain10-r5-gate.log`; `GATE_BASE=874be3307cabf29906be17137401723237a8ee3a ./scripts/gate.sh` exited `0` and printed `FAST GATE PASSED`.
 
 R5 KNIP receipt: `/tmp/whim-beta1-chain10-r5-knip.log`; `npx knip` exited `0` with no findings or output.
 
-Worker verdict: source coverage complete. Root acceptance remains pending independent r6 review, integrated gates and fresh native restart smoke. This table describes Node/rendered acceptance; it does not claim an on-device write-outage test.
+R6 RED receipt: `/tmp/whim-beta1-chain10-r6-red.log`; `npm run launcher:test` exited `1` with `13835 checks passed, 2 failed`. The stale stage replaced B's progress (`generate` rather than `check`) and appeared in B's verified journal.
+
+R6 GREEN receipt: `/tmp/whim-beta1-chain10-r6-green.log`; `npm run launcher:test` exited `0` with `13838 checks passed, 0 failed` and `launcher acceptance green`.
+
+R6 FAST GATE receipt: `/tmp/whim-beta1-chain10-r6-gate.log`; `GATE_BASE=874be3307cabf29906be17137401723237a8ee3a ./scripts/gate.sh` exited `0` and printed `FAST GATE PASSED`.
+
+R6 KNIP receipt: `/tmp/whim-beta1-chain10-r6-knip.log`; `npx knip` exited `0` with no findings or output.
+
+Worker verdict: source coverage complete at `ddb01da336c2af0d74f66fbd26170d9837382905`. Root acceptance remains pending independent r7 review, integrated gates and fresh native restart smoke. These are Node/rendered checks; they do not claim an on-device write-outage test.
