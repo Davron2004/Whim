@@ -1661,19 +1661,36 @@ function LauncherShell({
     ));
   };
 
+  type GenerateSettlementAttempt = {
+    attemptId: string;
+    isRetry: boolean;
+    fromPlan?: PlanScreen;
+    counts: RunTerminalCounts;
+    streamRequestId?: string;
+    retrySnapshot?: AttemptSnapshot;
+    editing: InstalledApp | undefined;
+    prompt: string;
+    observedRepairAttempts: number;
+    lease: PendingAttemptLease;
+  };
+
   const handleGenerateRefusal = (
-    attemptId: string,
     refusal: ServiceRefusal,
-    isRetry: boolean,
-    detached: boolean,
-    fromPlan: PlanScreen | undefined,
-    counts: RunTerminalCounts,
-    retrySnapshot: AttemptSnapshot | undefined,
-    editing: InstalledApp | undefined,
-    prompt: string,
-    observedRepairAttempts: number,
-    lease: PendingAttemptLease,
+    ctl: NonNullable<typeof genRef.current>,
+    attempt: GenerateSettlementAttempt,
   ): void => {
+    const {
+      attemptId,
+      isRetry,
+      fromPlan,
+      counts,
+      retrySnapshot,
+      editing,
+      prompt,
+      observedRepairAttempts,
+      lease,
+    } = attempt;
+    const detached = ctl.detached;
     const selected = isSelectedLiveAttempt(lease);
     logServiceRefusal('generate', refusal);
     const notice = noticeFrom(refusal);
@@ -1732,18 +1749,7 @@ function LauncherShell({
   const settleServerEnding = (
     e: unknown,
     ctl: NonNullable<typeof genRef.current>,
-    attempt: {
-      attemptId: string;
-      isRetry: boolean;
-      fromPlan?: PlanScreen;
-      counts: RunTerminalCounts;
-      streamRequestId?: string;
-      retrySnapshot?: AttemptSnapshot;
-      editing: InstalledApp | undefined;
-      prompt: string;
-      observedRepairAttempts: number;
-      lease: PendingAttemptLease;
-    },
+    attempt: GenerateSettlementAttempt,
     markOnline: () => void,
   ): boolean => {
     const fallback = terminalFallbackOf(e);
@@ -1779,19 +1785,7 @@ function LauncherShell({
     if (!refusal) return false;
     markOnline();
     releaseGenRef(ctl);
-    handleGenerateRefusal(
-      attempt.attemptId,
-      refusal,
-      attempt.isRetry,
-      ctl.detached,
-      attempt.fromPlan,
-      attempt.counts,
-      attempt.retrySnapshot,
-      attempt.editing,
-      attempt.prompt,
-      attempt.observedRepairAttempts,
-      attempt.lease,
-    );
+    handleGenerateRefusal(refusal, ctl, attempt);
     return true;
   };
 
