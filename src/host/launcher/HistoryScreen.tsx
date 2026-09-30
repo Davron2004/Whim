@@ -59,6 +59,8 @@ import { SHELL_PALETTE } from './theme';
 import { tileColor } from './tiles';
 import { useSystemBack } from './use-system-back';
 import WhimProse from '../ui/whim-prose/WhimProse';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 
 export interface HistoryScreenProps {
   app: InstalledApp;
@@ -95,6 +97,10 @@ const TOAST_TIMEOUT_MS = 2200;
  *  tokens module (`KIND_BADGE_COLORS`, `src/sdk/design-tokens.ts`) so no inline hex lives on this
  *  screen. */
 const KIND_BADGE = KIND_BADGE_COLORS;
+
+function historyOperationFailed(operation: 'list' | 'restore-diff' | 'annotation'): void {
+  log.warn(CHANNELS.app, 'history operation failed', { operation });
+}
 
 /** The ring around the current version's timeline dot — design `4a` writes it as
  *  `rgba(13,148,136,.3)` (`Whim Mobile.dc.html:848`), which is exactly the reserved done/working
@@ -154,7 +160,9 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
     }, setLoad);
 
   useEffect(() => {
-    load();
+    load().catch(() => {
+      historyOperationFailed('list');
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [access, app]);
 
@@ -173,9 +181,16 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
     }
     setRestoreDiff({ status: 'pending' });
     let cancelled = false;
-    fieldsLeavingViewOnRestore(access, app, confirm.row.id, activeId).then(fields => {
-      if (!cancelled) setRestoreDiff({ status: 'ready', fields });
-    });
+    fieldsLeavingViewOnRestore(access, app, confirm.row.id, activeId)
+      .then(fields => {
+        if (!cancelled) setRestoreDiff({ status: 'ready', fields });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRestoreDiff(RESTORE_DIFF_NONE);
+          historyOperationFailed('restore-diff');
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -198,7 +213,9 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
     const ran = await runConfirmOp(confirmFlight, setConfirmBusy, () => access.rollback(app, row.id));
     if (!ran) return;
     setConfirm(null);
-    await load();
+    await load().catch(() => {
+      historyOperationFailed('list');
+    });
     showToast(restoredToast(row.version));
   };
 
@@ -369,9 +386,17 @@ function HistoryRowView({
       return;
     }
     let cancelled = false;
-    annotationBetween(access, app, predecessorId, row.id).then(fields => {
-      if (!cancelled) setAnnotationFields(fields);
-    });
+    setAnnotationFields([]);
+    annotationBetween(access, app, predecessorId, row.id)
+      .then(fields => {
+        if (!cancelled) setAnnotationFields(fields);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAnnotationFields([]);
+          historyOperationFailed('annotation');
+        }
+      });
     return () => {
       cancelled = true;
     };

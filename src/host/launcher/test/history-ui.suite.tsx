@@ -24,6 +24,7 @@ import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
 type Tree = TestRenderer.ReactTestRenderer;
 const envelope = (text: string) => JSON.stringify({ v: 2, text });
+const noop = () => {};
 
 /** A real store holding three versions of one app: the install, a middle one, and the current. */
 async function threeVersions() {
@@ -37,20 +38,41 @@ async function threeVersions() {
   return { access, app, current, middle };
 }
 
-function held<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => { resolve = r; });
-  return { promise, resolve };
+interface Held<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
 }
 
+function held<T>(): Held<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((r, j) => { resolve = r; reject = j; });
+  return { promise, resolve, reject };
+}
+
+const historyScreen = (access: StoreAccess, app: InstalledApp) => <HistoryScreen app={app} access={access} onBack={noop} onChangeIt={noop} onReport={noop} />;
+
 async function withHistory(access: StoreAccess, app: InstalledApp, body: (tree: Tree) => Promise<void>): Promise<void> {
-  const noop = () => {};
-  const tree = await renderScreen(<HistoryScreen app={app} access={access} onBack={noop} onChangeIt={noop} onReport={noop} />);
+  const tree = await renderScreen(historyScreen(access, app));
   try { await body(tree); } finally { await unmountScreen(tree); }
+}
+
+async function reloadHistory(tree: Tree, access: StoreAccess, app: InstalledApp): Promise<void> {
+  await TestRenderer.act(async () => { tree.update(historyScreen(access, app)); });
+}
+
+async function rejectInAct<T>(pending: Held<T>, message: string): Promise<void> {
+  await TestRenderer.act(async () => { pending.reject(new Error(message)); });
+}
+
+async function waitForReassuranceToClear(tree: Tree): Promise<void> {
+  await waitFor(() => !hasPendingReassurance(tree), 'the failed restore reassurance to clear');
 }
 
 /** How many loading placeholders the screen shows. */
 const loadingRows = (tree: Tree) => tree.root.findAll((n) => n.type === 'View' && n.props.accessibilityLabel === COPY.historyLoadingLabel).length;
+const hasPendingReassurance = (tree: Tree) => tree.root.findAll((n) => n.props.accessibilityLabel === COPY.historyReassurancePending).length > 0;
 
 /** The row card whose headline is `text`. */
 const row = (tree: Tree, text: string) => tree.root.find((n) => n.type === 'TouchableOpacity' && typeof n.props.onPress === 'function' && textOf(n).includes(text) && textOf(n).includes(COPY.historyOriginYouSaid));
@@ -79,6 +101,69 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       await waitFor(() => loading() === 0, 'the versions to load');
       h.eq(loading(), 0, 'the loading rows go when the versions land');
       h.ok(textOf(tree.root).includes('add a chime'), 'and the versions show');
+    });
+  });
+
+  await h.test('history screen: rejected initial and reload reads settle without losing already-rendered versions', async () => {
+    const { access, app } = await threeVersions();
+    const timeline = access.timeline.bind(access);
+    let rejectRead = true;
+    access.timeline = async (entry) => {
+      if (rejectRead) throw new Error('history listing is unavailable');
+      return timeline(entry);
+    };
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => loadingRows(tree) === 0, 'the rejected initial read to settle');
+      h.ok(!hasRow(tree, 'add a chime'), 'the unavailable initial read does not leave a loading row behind');
+
+      rejectRead = false;
+      await reloadHistory(tree, access, { ...app });
+      await waitFor(() => hasRow(tree, 'add a chime'), 'the later successful read to render its versions');
+
+      rejectRead = true;
+      await reloadHistory(tree, access, { ...app });
+      await waitFor(() => loadingRows(tree) === 0, 'the rejected reload to settle');
+      h.ok(hasRow(tree, 'add a chime'), 'the rejected reload keeps the previously rendered versions visible');
+    });
+  });
+
+  await h.test('history screen: a rejected restore diff removes its pending reassurance', async () => {
+    const { access, app } = await threeVersions();
+    const diff = held<Awaited<ReturnType<StoreAccess['diff']>>>();
+    access.diff = async () => diff.promise;
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => hasRow(tree, 'add a chime'), 'the versions to load');
+      await press(row(tree, 'add a chime'));
+      await press(button(tree, COPY.historyGoBackToThis));
+      await rejectInAct(diff, 'diff is unavailable');
+      await waitForReassuranceToClear(tree);
+      h.ok(!textOf(tree.root).includes('Added:'), 'a failed restore diff does not invent a reassurance');
+    });
+  });
+
+  await h.test('history screen: a rejected expanded-row annotation clears without showing an annotation', async () => {
+    const { access, app } = await threeVersions();
+    const diff = held<Awaited<ReturnType<StoreAccess['diff']>>>();
+    access.diff = async () => diff.promise;
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => hasRow(tree, 'add a chime'), 'the versions to load');
+      await press(row(tree, 'add a chime'));
+      await rejectInAct(diff, 'annotation is unavailable');
+      await waitFor(() => !textOf(tree.root).includes('Added:'), 'the failed annotation to remain absent');
+      h.ok(!textOf(tree.root).includes('Added:'), 'a rejected annotation does not reuse a field list from another row');
+    });
+  });
+
+  await h.test('history screen: a cancelled annotation rejection cannot update a collapsed row', async () => {
+    const { access, app } = await threeVersions();
+    const diff = held<Awaited<ReturnType<StoreAccess['diff']>>>();
+    access.diff = async () => diff.promise;
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => hasRow(tree, 'add a chime'), 'the versions to load');
+      await press(row(tree, 'add a chime'));
+      await press(row(tree, 'add a chime'));
+      await rejectInAct(diff, 'cancelled annotation is unavailable');
+      h.ok(!textOf(tree.root).includes('Added:'), 'the cancelled row stays free of an annotation after its rejected read');
     });
   });
 
@@ -261,7 +346,6 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
   await h.test('history screen: Home’s long-press sheet opens History for that app', async () => {
     const app: InstalledApp = { id: 'tea', name: 'Tea', createdAt: 1, lineageId: 'main', record: { appId: 'tea', name: 'Tea', manifest: { capabilities: [] } } };
     const opened: InstalledApp[] = [];
-    const noop = () => {};
     const tree = await renderScreen(<HomeScreen apps={[app]} onOpen={noop} onFork={noop} onDelete={noop} onHistory={(a) => { opened.push(a); }} onPromptAgain={noop} onCreate={noop} onSettings={noop} />);
     try {
       await TestRenderer.act(async () => tree.root.find((n) => n.type === 'TouchableOpacity' && typeof n.props.onLongPress === 'function').props.onLongPress());
