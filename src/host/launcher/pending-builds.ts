@@ -129,10 +129,10 @@ export class PendingBuildStore {
   }
 
   /** Create a fresh `building` record and return it. Appends `id` to the order (newest-first: new
-   *  ids are unshifted, so `list()` needs no separate sort). Re-creating an id that already
-   *  exists overwrites the record in place without duplicating the order entry. */
+  *  ids are unshifted, so `list()` needs no separate sort). Re-creating an id that already
+  *  exists overwrites the record in place without duplicating the order entry. */
   create(input: CreatePendingBuildInput): PendingBuildRecord {
-    const existed = this.get(input.id) != null;
+    const order = this.readOrder();
     const now = Date.now();
     const record: PendingBuildRecord = {
       id: input.id,
@@ -145,8 +145,8 @@ export class PendingBuildStore {
       journalUnavailable: true,
     };
     this.kv.set(PENDING_KEY(input.id), JSON.stringify(record));
-    if (!existed) {
-      this.writeOrder([input.id, ...this.readOrder()]);
+    if (!order.includes(input.id)) {
+      this.writeOrder([input.id, ...order]);
     }
     this.current.set(input.id, { record, durability: 'persisted' });
     return record;
@@ -180,6 +180,7 @@ export class PendingBuildStore {
     const out: PendingBuildView[] = [];
     const seen = new Set<string>();
     for (const id of this.readOrder()) {
+      if (seen.has(id)) continue;
       const view = this.readCurrent(id);
       if (view) {
         out.push(view);

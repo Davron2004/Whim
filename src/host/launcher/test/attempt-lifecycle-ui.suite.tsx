@@ -660,7 +660,8 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('ghosts: a pending-order write failure after key removal retains the ghost until a recovered Discard removes the dangling order', async () => {
+  await h.test('ghosts: Retry after a partial Discard keeps one same-id building ghost', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
     await withLauncher({
       prepare: (kv) => {
         const pending = new PendingBuildStore(kv);
@@ -669,8 +670,8 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
         pending.setFailed('failed', { reason: 'The earlier build stopped.' });
         new RunJournalStore(kv).create('failed');
       },
-      server: () => json({}),
-    }, async ({ tree, kv }) => {
+      server: streamingServer(streams),
+    }, async ({ tree, kv, sent }) => {
       const clearWriteFailure = failNativeStorageWritesWhen(({ id, key }) =>
         id === 'whim.launcher' && key === 'pending:order');
       try {
@@ -683,9 +684,10 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
         clearWriteFailure();
       }
       await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
-      await press(button(tree, COPY.failureDismiss));
-      h.eq(ghosts(tree), [], 'the recovered Discard removes the retained ghost');
-      h.eq(kv.getString('pending:order'), JSON.stringify([]), 'the dangling order entry is removed only after its write verifies');
+      await press(button(tree, COPY.screenErrorRetry));
+      await waitFor(() => streams.length === 1 && on(tree, BuildStep), 'the same-id Retry to activate before a recovered Discard');
+      h.eq(sent.filter((request) => request.path === '/v1/generate').length, 1, 'Retry sends exactly one new generation request');
+      h.eq(new PendingBuildStore(kv).listCurrent().map((view) => [view.record.id, view.record.state]), [['failed', 'building']], 'the raw dangling order and retained view produce one current building ghost');
     });
   });
 

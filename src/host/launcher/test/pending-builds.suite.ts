@@ -49,6 +49,19 @@ export async function runPendingBuildsTests(h: Harness): Promise<void> {
     h.eq(store.get('a')!.prompt, 'first, retried', 're-create overwrites the record');
   });
 
+  await h.test('pending-builds: current views dedupe duplicated order metadata without rewriting it', async () => {
+    const map = new Map<string, string>();
+    const kv = new MapKVBackend(map);
+    const store = new PendingBuildStore(kv);
+    store.create({ id: 'a', prompt: 'first', workingTitle: 'first' });
+    store.create({ id: 'b', prompt: 'second', workingTitle: 'second' });
+    kv.set('pending:order', JSON.stringify(['b', 'a', 'b']));
+    const before = [...map.entries()];
+
+    h.eq(store.listCurrent().map((view) => view.record.id), ['b', 'a'], 'duplicate raw order entries yield one stable current view per id');
+    h.eq([...map.entries()], before, 'reading the duplicated order does not rewrite its persisted bytes');
+  });
+
   // ── setFailed ────────────────────────────────────────────────────────────────
   await h.test('pending-builds: setFailed transitions to failed and persists the payload, never deletes', async () => {
     const store = new PendingBuildStore(new MapKVBackend());
