@@ -148,3 +148,9 @@ S46, S85: root redcheck session 93640 actual exit 0. Reverting both production f
 S22, S75: worker commit 99a8e6d24bfbbad4b639d14cd24b3243d9ac00fa. Fast retry session 63976 actual exit 0, FAST GATE PASSED. Targeted renderer 139/0 and lint passed. Root RED/integrity, independent review and full gate pending.
 
 S1: root stale actual exit 0 (one line); dispatched to fix/beta-1-sonar-evidence-path in .claude/worktrees/beta-1-sonar-evidence-path, immutable BASE 20adf6d06e2759b694244ccbbb10be4d7923e008. Exact one-file acceptance-helper scope.
+
+S22, S75: root integrity actual exit 0, exact four files. Root redcheck session 63163 actual exit 0; reverting LauncherRoot and age-check with final tests retained reproduces the real consent-resumed pending-store rejection (no compile failure). Log /tmp/whim-beta1-sonar-launcher-age-redcheck.log. Review and full gate still pending.
+
+S3, S4, S35: worker commit 90dd017d25e44e6676436798ccf1d055d728c305; fast gate session 2615 actual exit 0, FAST GATE PASSED. Structural source-only changes; no new test/RED required. Root review/integrity/full gate and final native compatibility proof remain pending.
+
+S78: root stale actual exit 0 (two lines); dispatched to fix/beta-1-sonar-appstats-noop in .claude/worktrees/beta-1-sonar-appstats-noop, immutable BASE 720803675c547ea2d6b4288e7c2eb8308314472a. Exact one-file structural promise-contract scope.
