@@ -8,7 +8,7 @@ Per-finding dispositions and evidence are recorded before workers start. The che
 
 Ready cohort DONE specs, evidence and allowlists are in done/, evidence/ and allowlists/. Related locations share a single file owner and gate receipt; every location retains a separate terminal disposition.
 
-Current confirmed state: 33 source findings closed; 60 false-positive dispositions confirmed through Sonar. All 36 source corrections are merged and regated. Three source findings (S3, S4, S35) await fresh Android and iOS host-Hermes decode receipts, so their checkboxes stay open. Initial void sweep plans have been superseded by producer reconciliation and targeted behavior plans; see dispositions.md and the corrected DONE specs.
+Current confirmed state: 32 source findings closed; 60 false-positive dispositions confirmed through Sonar. All prepared source cohorts were merged and regated, but fresh analysis reopened S75 for a remaining post-stream terminal-persistence path (nested round 2). S3, S4 and S35 await fresh Android and iOS host-Hermes decode receipts. These four checkboxes stay open. Initial void sweep plans have been superseded by producer reconciliation and targeted behavior plans; see dispositions.md and the corrected DONE specs.
 
 ## Finding checklist
 
@@ -86,7 +86,7 @@ Current confirmed state: 33 source findings closed; 60 false-positive dispositio
 - [x] S72
 - [x] S73
 - [x] S74
-- [x] S75
+- [ ] S75
 - [x] S76
 - [x] S77
 - [x] S78

@@ -1,0 +1,33 @@
+{
+  "project": "Davron2004_Whim",
+  "pullRequest": 137,
+  "date": "2026-09-30",
+  "sourceTip": "46dbc32f6fa5349065b1558fb2af48e9def7354a",
+  "transition": "falsepositive",
+  "notifications": false,
+  "rationale": "research.md",
+  "result": {
+    "total": 2,
+    "success": 2,
+    "ignored": 0,
+    "failures": 0
+  },
+  "issues": [
+    {
+      "id": "S1",
+      "key": "AaDw7l8d1jYWi4I5U-jc",
+      "path": "server/src/routes/generate.ts",
+      "line": 698,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    },
+    {
+      "id": "S2",
+      "key": "AaDv2GvxDHOwsfbTeJjJ",
+      "path": "src/host/launcher/LauncherRoot.tsx",
+      "line": 1106,
+      "rule": "typescript:S9383",
+      "status": "FALSE_POSITIVE"
+    }
+  ]
+}

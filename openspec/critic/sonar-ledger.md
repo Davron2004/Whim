@@ -102,3 +102,6 @@
 - 2026-09-29 fix-beta-1-sonar-r1 S9382 fixtures/water-counter.app.tsx:70
 - 2026-09-29 fix-beta-1-sonar-r1 S9382 build/build.mjs:223
 
+- 2026-09-30 fix-beta-1-sonar-r2 S9383 server/src/routes/generate.ts:698
+- 2026-09-30 fix-beta-1-sonar-r2 S9383 src/host/launcher/LauncherRoot.tsx:1106
+- 2026-09-30 fix-beta-1-sonar-r2 S9383 src/host/launcher/LauncherRoot.tsx:1058
