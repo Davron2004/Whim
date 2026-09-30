@@ -33,7 +33,8 @@ usage() {
 }
 
 abspath() {
-  if [[ $1 == /* ]]; then printf '%s\n' "$1"; else printf '%s/%s\n' "$PWD" "$1"; fi
+  local path=$1
+  if [[ $path == /* ]]; then printf '%s\n' "$path"; else printf '%s/%s\n' "$PWD" "$path"; fi
 }
 
 while (($# > 0)); do
@@ -143,14 +144,15 @@ run_flow() {
 
 # dump <path without extension>: the screen's view hierarchy (what upgrade-record reads) and a screenshot.
 dump() {
-  if ! with_deadline 180 maestro --device "$DEVICE" hierarchy </dev/null >"$1.json" 2>>"$RAW/maestro/hierarchy.log"; then
+  local path=$1
+  if ! with_deadline 180 maestro --device "$DEVICE" hierarchy </dev/null >"$path.json" 2>>"$RAW/maestro/hierarchy.log"; then
     maestro_ios_hint
-    fail "maestro hierarchy failed for $1.json"
+    fail "maestro hierarchy failed for $path.json"
   fi
   if [[ $PLATFORM == android ]]; then
-    adb -s "$DEVICE" exec-out screencap -p </dev/null >"$1.png"
+    adb -s "$DEVICE" exec-out screencap -p </dev/null >"$path.png"
   else
-    xcrun simctl io "$DEVICE" screenshot "$1.png" </dev/null >/dev/null 2>&1
+    xcrun simctl io "$DEVICE" screenshot "$path.png" </dev/null >/dev/null 2>&1
   fi
 }
 
@@ -202,28 +204,30 @@ capture() {
 }
 
 install_app() {
+  local artifact=$1
   if [[ $PLATFORM == android ]]; then
-    adb -s "$DEVICE" install -r "$1" </dev/null >"$RAW/install.log" 2>&1 || { cat "$RAW/install.log" >&2; fail "adb install $1 failed"; }
+    adb -s "$DEVICE" install -r "$artifact" </dev/null >"$RAW/install.log" 2>&1 || { cat "$RAW/install.log" >&2; fail "adb install $artifact failed"; }
     adb -s "$DEVICE" shell run-as "$APP_ID" true </dev/null ||
       fail "run-as $APP_ID failed: the APKs must be debuggable (the offline build, :app:assembleOffline)"
   else
-    xcrun simctl install "$DEVICE" "$1"
+    xcrun simctl install "$DEVICE" "$artifact"
   fi
 }
 
 # build_of <artifact>: the build number, read from the installed package (android) or the bundle (ios).
 build_of() {
-  local out
+  local artifact=$1 out
   if [[ $PLATFORM == android ]]; then
     out="$(adb -s "$DEVICE" shell dumpsys package "$APP_ID" </dev/null)"
     awk 'match($0, /versionCode=[0-9]+/) { print substr($0, RSTART + 12, RLENGTH - 12); exit }' <<<"$out"
   else
-    bundle_value "$1" CFBundleVersion
+    bundle_value "$artifact" CFBundleVersion
   fi
 }
 
 bundle_value() {
-  plutil -extract "$2" raw -o - "$1/Info.plist"
+  local artifact=$1 key=$2
+  plutil -extract "$key" raw -o - "$artifact/Info.plist"
 }
 
 record_artifact() {

@@ -164,7 +164,7 @@ function runPreflight(args: string[]): number {
   }
 }
 
-async function runVerifyAab(args: string[]): Promise<number> {
+function runVerifyAab(args: string[]): number {
   const aabPath = args.find((a) => !a.startsWith('--'));
   const buildNumber = parseIntegerFlag(args, '--build');
   if (aabPath === undefined || buildNumber === undefined) {

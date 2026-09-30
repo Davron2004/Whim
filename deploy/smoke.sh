@@ -209,7 +209,7 @@ check_pre_protocol_build_refused() {
     -H 'x-whim-device: 00000000-0000-4000-8000-000000000000' \
     --data '{}'
   body="$(head -c 300 "$work/body")"
-  if [ "$PROBE_STATUS" = 426 ] && [[ "$body" == *'"error":"update_required"'* ]]; then
+  if [[ "$PROBE_STATUS" = 426 ]] && [[ "$body" == *'"error":"update_required"'* ]]; then
     pass "api $url from a pre-protocol build (no x-whim-protocol) -> 426 update_required"
   else
     flunk "api $url from a pre-protocol build answered $PROBE_STATUS '$body', expected 426 update_required"
@@ -229,7 +229,7 @@ check_stream_probe() {
 check_beta_signup_trap() {
   local url="https://$WHIM_API_HOST/beta/signup" thanks="https://$WHIM_WEB_HOST/beta/thanks"
   probe "$url" -H 'content-type: application/x-www-form-urlencoded' --data 'email=smoke%40example.com&platform=other&hp_ref=smoke'
-  if [ "$PROBE_STATUS" = 303 ] && [ "$PROBE_LOCATION" = "$thanks" ]; then
+  if [[ "$PROBE_STATUS" = 303 ]] && [[ "$PROBE_LOCATION" = "$thanks" ]]; then
     pass "api $url with the trap field filled -> 303 $thanks"
   else
     flunk "api $url with the trap field filled answered $PROBE_STATUS${PROBE_LOCATION:+ redirecting to $PROBE_LOCATION}, expected 303 to $thanks"
@@ -259,7 +259,7 @@ check_page() {
 check_beta_page() {
   local url="https://$WHIM_WEB_HOST/beta"
   probe "$url"
-  if [ "$PROBE_STATUS" = 200 ] && [ -z "$PROBE_LOCATION" ] && [[ "$PROBE_TYPE" == text/html* ]] && [[ "$PROBE_CSP" == *"font-src 'self'"* ]]; then
+  if [[ "$PROBE_STATUS" = 200 ]] && [[ -z "$PROBE_LOCATION" ]] && [[ "$PROBE_TYPE" == text/html* ]] && [[ "$PROBE_CSP" == *"font-src 'self'"* ]]; then
     pass "pages /beta -> 200 HTML, CSP allows font-src 'self'"
   else
     flunk "pages $url answered $PROBE_STATUS ($PROBE_TYPE)${PROBE_LOCATION:+ redirecting to $PROBE_LOCATION} with CSP '$PROBE_CSP', expected 200 HTML whose CSP has font-src 'self'"
