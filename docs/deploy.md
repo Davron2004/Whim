@@ -366,6 +366,10 @@ Both default to `0`, which serves every build. A value is `0` or a positive whol
 leading zero. `deploy/deploy.sh` refuses anything else before it builds or changes anything; the
 server would refuse to boot on it.
 
+**A self-hosted server's minimum must stay at or below the store build.** The app's update check
+asks whichever server it is pointed at, so a self-hosted server's minimum build can open the
+update screen, which sends people to the store. A minimum above the store build can never be met.
+
 **A legacy client is refused as soon as either minimum is above `0`.** A build from before the
 client envelope (TestFlight build 381237, for one) sends no platform and no build number, so the
 server counts it as build `0` on both platforms. Raising only the iOS minimum also turns away every

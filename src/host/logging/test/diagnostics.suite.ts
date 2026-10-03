@@ -353,6 +353,22 @@ export async function runDiagnosticsTests(h: Harness): Promise<void> {
     seam.diagnostics.stop();
   });
 
+  await h.test('upload: discarding clears a rate-limit pause, so the next server is not silenced by the last one', async () => {
+    const uploads: Upload[] = [];
+    const refuseFirst: PostDiagnostics = async (url, headers, body) => {
+      uploads.push({ url, headers, batch: JSON.parse(body) as DiagnosticsBatch, body });
+      return uploads.length === 1 ? { ok: false, status: 429, retryAfter: null } : { ok: true, status: 204 };
+    };
+    const seam = uploadingSeam(uploads, { post: refuseFirst });
+    seam.error(CHANNELS.gen, 'transport failed', { where: 'refused' });
+    await seam.diagnostics.flush();
+    seam.diagnostics.discard();
+    seam.error(CHANNELS.gen, 'transport failed', { where: 'new-server' });
+    await seam.diagnostics.flush();
+    h.eq(uploaded(uploads.slice(1)).map(r => r.where), ['new-server'], 'a record logged after the discard uploads');
+    seam.diagnostics.stop();
+  });
+
   await h.test('upload: a gate that logs an error itself neither recurses nor uploads', async () => {
     const uploads: Upload[] = [];
     let asked = 0;

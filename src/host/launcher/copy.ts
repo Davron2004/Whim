@@ -386,7 +386,7 @@ export const COPY = {
   // under an active override. Legal keys, so each has a French twin; the refusal note is not.
   ownServerAction: 'Use your own server',
   ownServerConfirmBody:
-    'That server gets everything Whim sends: your prompts and answers, reports, error details and this phone’s ID. Whoever runs it decides what it keeps. Whim’s privacy policy doesn’t cover it.',
+    'That server gets everything Whim sends: your prompts and answers, the apps you change, reports, error details and this phone’s ID. Whoever runs it decides what it keeps. Whim’s privacy policy doesn’t cover it.',
   ownServerConfirm: 'Use my own server',
   ownServerCaption:
     'You chose this server, so what happens to what Whim sends there is up to you and whoever runs it. Whim’s privacy policy doesn’t cover it.',
@@ -614,7 +614,7 @@ const FRENCH: LegalCopyTable = {
   legalLanguageSwitch: 'Continue in English',
   ownServerAction: 'Utiliser votre propre serveur',
   ownServerConfirmBody:
-    'Ce serveur reçoit tout ce que Whim envoie\u00a0: vos demandes et vos réponses, les signalements, les détails d’erreur et l’identifiant de ce téléphone. La personne qui l’exploite décide de ce qu’il conserve. La politique de confidentialité de Whim ne s’applique pas à ce serveur.',
+    'Ce serveur reçoit tout ce que Whim envoie\u00a0: vos demandes et vos réponses, les apps que vous modifiez, les signalements, les détails d’erreur et l’identifiant de ce téléphone. La personne qui l’exploite décide de ce qu’il conserve. La politique de confidentialité de Whim ne s’applique pas à ce serveur.',
   ownServerConfirm: 'Utiliser mon propre serveur',
   ownServerCaption:
     'Vous avez choisi ce serveur\u00a0: ce qu’il advient de ce que Whim y envoie dépend de vous et de la personne qui l’exploite. La politique de confidentialité de Whim ne s’applique pas à ce serveur.',
