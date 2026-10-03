@@ -980,10 +980,19 @@ function LauncherShell({
     );
   };
 
+  /** After a write that may have moved where requests go: when it did, the connectivity session
+   *  restarts and diagnostics waiting to upload are dropped, so a record about one server never
+   *  reaches another (design D20). */
+  const afterServerWrite = (previous: string) => {
+    if (effectiveServerUrl(kv) === previous) return;
+    invalidateConnectivity();
+    log.diagnostics.discard();
+  };
+
   const onServerUrlChange = (url: string) => {
     const previous = effectiveServerUrl(kv);
     saveServerUrl(kv, url);
-    if (effectiveServerUrl(kv) !== previous) invalidateConnectivity();
+    afterServerWrite(previous);
     setServerUrl(serverOverride(kv));
   };
 
@@ -1008,7 +1017,7 @@ function LauncherShell({
   const onAcknowledgeOwnServer = (): string | undefined => {
     const previous = effectiveServerUrl(kv);
     acknowledgeOwnServer(kv);
-    if (effectiveServerUrl(kv) !== previous) invalidateConnectivity();
+    afterServerWrite(previous);
     const honoured = serverOverride(kv);
     setServerUrl(honoured);
     setOwnServerAck(true);
@@ -1018,7 +1027,7 @@ function LauncherShell({
   const onUseDefaultServer = () => {
     const previous = effectiveServerUrl(kv);
     clearServerUrl(kv);
-    if (effectiveServerUrl(kv) !== previous) invalidateConnectivity();
+    afterServerWrite(previous);
     setServerUrl(serverOverride(kv));
   };
 

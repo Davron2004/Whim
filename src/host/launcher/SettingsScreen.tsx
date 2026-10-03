@@ -395,7 +395,7 @@ export default function SettingsScreen({
               onChangeText={onAddressChange}
               onSubmitEditing={settleAddress}
               onBlur={settleAddress}
-              placeholder={RELEASE.serverUrl.replace(/^https?:\/\//, '')}
+              placeholder={RELEASE.serverUrl}
               placeholderTextColor={p.textMuted}
               autoCapitalize="none"
               autoCorrect={false}

@@ -1,11 +1,11 @@
 /**
  * Checks the Android project's identity-independent shape: the app-link intent filter,
- * `singleTask` + portrait on `MainActivity`, and the cleartext split between the main and debug
- * network security configs (specs/app-links/spec.md "The Android app verifies and delivers app
- * links"; specs/native-release-config/spec.md "Store builds carry no cleartext exception" as beta-1
- * D20 amends it, "The iOS app declares its export, device and permission surface" Android portrait
- * sentence; design D4, D5). Pure text reading, no shelling out, so it runs in the Linux devcontainer gate
- * (chains.md's suite-portability rule).
+ * `singleTask` + portrait on `MainActivity`, and the one network security config every build type
+ * uses (specs/app-links/spec.md "The Android app verifies and delivers app links";
+ * specs/native-release-config/spec.md "Store builds carry no cleartext exception" as beta-1 D20
+ * amends it, "The iOS app declares its export, device and permission surface" Android portrait
+ * sentence; design D4, D5). Pure text reading, no shelling out, so it runs in the Linux
+ * devcontainer gate (chains.md's suite-portability rule).
  */
 
 import fs from 'node:fs';
@@ -13,7 +13,6 @@ import path from 'node:path';
 
 export const ANDROID_MANIFEST_PATH = 'android/app/src/main/AndroidManifest.xml';
 export const ANDROID_MAIN_NETWORK_CONFIG_PATH = 'android/app/src/main/res/xml/network_security_config.xml';
-export const ANDROID_DEBUG_NETWORK_CONFIG_PATH = 'android/app/src/debug/res/xml/network_security_config.xml';
 
 export interface AndroidProjectFinding {
   readonly file: string;
@@ -93,7 +92,7 @@ function checkManifest(repoRoot: string): AndroidProjectFinding[] {
   return problems.map((message) => ({ file: ANDROID_MANIFEST_PATH, message }));
 }
 
-/** The store build's config (beta-1 design D20): cleartext permitted at the base, so a user's own
+/** The config every build type uses (beta-1 design D20): cleartext permitted at the base, so a user's own
  *  server on a LAN IP is reachable (a <domain> can't name an arbitrary address), and no
  *  <domain-config> overriding it. The launcher's address rule is the guard against plain http to
  *  a public host; the sandbox's CSP keeps mini-app bundles off the network either way. */
@@ -105,35 +104,18 @@ function checkMainNetworkConfig(repoRoot: string): AndroidProjectFinding[] {
   const problems: string[] = [];
   const base = /<base-config\b([^>]*)>/.exec(text);
   if (base === null || !/cleartextTrafficPermitted\s*=\s*"true"/.test(base[1])) {
-    problems.push('the store build\'s <base-config> must set cleartextTrafficPermitted="true", so a user\'s own LAN server is reachable');
+    problems.push('the network security config\'s <base-config> must set cleartextTrafficPermitted="true", so a user\'s own LAN server is reachable');
   }
   if (/<domain-config\b/.test(text)) {
-    problems.push('the store build\'s network security config must carry no <domain-config>: per-host rules would override the base for those hosts');
+    problems.push('the network security config must carry no <domain-config>: per-host rules would override the base for those hosts');
   }
   return problems.map((message) => ({ file: ANDROID_MAIN_NETWORK_CONFIG_PATH, message }));
 }
 
-function checkDebugNetworkConfig(repoRoot: string): AndroidProjectFinding[] {
-  const text = readXml(repoRoot, ANDROID_DEBUG_NETWORK_CONFIG_PATH);
-  if (text === undefined) {
-    return [{ file: ANDROID_DEBUG_NETWORK_CONFIG_PATH, message: 'file not found' }];
-  }
-  const holdsDevHosts = [...text.matchAll(/<domain-config\s+cleartextTrafficPermitted="true"\s*>([\s\S]*?)<\/domain-config>/g)]
-    .some((m) => /<domain\b[^>]*>\s*[^<\s]+\s*<\/domain>/.test(m[1]));
-  if (!holdsDevHosts) {
-    return [{
-      file: ANDROID_DEBUG_NETWORK_CONFIG_PATH,
-      message: 'the dev hosts must sit in a <domain-config cleartextTrafficPermitted="true"> with at least one <domain>',
-    }];
-  }
-  return [];
-}
-
-/** Every finding across the manifest and both network security configs. Empty means the project passes. */
+/** Every finding across the manifest and the network security config. Empty means the project passes. */
 export function checkAndroidProject(repoRoot: string): AndroidProjectFinding[] {
   return [
     ...checkManifest(repoRoot),
     ...checkMainNetworkConfig(repoRoot),
-    ...checkDebugNetworkConfig(repoRoot),
   ];
 }

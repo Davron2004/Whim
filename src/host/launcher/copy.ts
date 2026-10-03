@@ -392,7 +392,7 @@ export const COPY = {
     'You chose this server, so what happens to what Whim sends there is up to you and whoever runs it. Whim’s privacy policy doesn’t cover it.',
   // Shown under the field when the address settles on one the address rule refuses; it isn't saved.
   serverAddressRefused:
-    'Use an https:// address. Plain http:// only works for a server on your own network, like 192.168.1.20 or a .local name.',
+    'Use an https:// address. Plain http:// works only on your own network: a private IP like 192.168.1.20, localhost, a .local name or a one-word name like devbox.',
   // The debounced save-time probe's three-way inline result (server-connectivity, design.md
   // decision 3) — shown under the server-address field a moment after the user stops typing.
   serverProbeVerified: 'Verified — this is a Whim server.',

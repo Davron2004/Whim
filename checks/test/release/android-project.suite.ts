@@ -13,7 +13,6 @@ import {
   checkAndroidProject,
   ANDROID_MANIFEST_PATH,
   ANDROID_MAIN_NETWORK_CONFIG_PATH,
-  ANDROID_DEBUG_NETWORK_CONFIG_PATH,
 } from '../../../scripts/release/lib/android-project';
 
 const REPO_ROOT = process.cwd();
@@ -83,7 +82,7 @@ const MAIN_NETWORK_CONFIG_WITHOUT_CLEARTEXT = [
   '',
 ].join('\n');
 
-/** Cleartext to a fixed host list only, as the dev config does: it carries a cleartext permit, but
+/** Cleartext to a fixed host list only, as the deleted dev config did: it carries a cleartext permit, but
  *  an arbitrary LAN IP stays unreachable. */
 const MAIN_NETWORK_CONFIG_WITH_HOST_LIST = [
   '<?xml version="1.0" encoding="utf-8"?>',
@@ -108,25 +107,9 @@ const MAIN_NETWORK_CONFIG_WITH_OVERRIDE = [
   '',
 ].join('\n');
 
-const DEBUG_NETWORK_CONFIG = [
-  '<?xml version="1.0" encoding="utf-8"?>',
-  '<network-security-config>',
-  '    <base-config cleartextTrafficPermitted="false">',
-  '        <trust-anchors>',
-  '            <certificates src="system" />',
-  '        </trust-anchors>',
-  '    </base-config>',
-  '    <domain-config cleartextTrafficPermitted="true">',
-  '        <domain includeSubdomains="false">10.0.2.2</domain>',
-  '    </domain-config>',
-  '</network-security-config>',
-  '',
-].join('\n');
-
 function writeValidFixture(root: string): void {
   writeFile(root, ANDROID_MANIFEST_PATH, VALID_MANIFEST);
   writeFile(root, ANDROID_MAIN_NETWORK_CONFIG_PATH, MAIN_NETWORK_CONFIG);
-  writeFile(root, ANDROID_DEBUG_NETWORK_CONFIG_PATH, DEBUG_NETWORK_CONFIG);
 }
 
 export async function run(): Promise<void> {

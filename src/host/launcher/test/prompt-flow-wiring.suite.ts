@@ -103,16 +103,31 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
   // ── the address rule (design D20; native-release-config "Store builds carry no cleartext
   // exception"): plain http only for a server on the user's own network ─────────────────────
 
-  await h.test('server-address: http:// is allowed for IP literals, localhost, .local and single-label hosts', () => {
+  await h.test('server-address: http:// is allowed for loopback and private-range IP literals, localhost, .local and non-numeric single-label hosts', () => {
     for (const address of [
-      'http://192.168.1.20:8787', 'http://10.0.2.2:8787/', 'http://127.0.0.1', 'http://[::1]:8787', 'http://[fe80::1ff:fe23:4567:890a]',
-      'http://localhost:8787', 'HTTP://LocalHost', 'http://whim-box.local:8787', 'http://devbox', 'http://devbox:8787/base',
+      'http://127.0.0.1', 'http://127.8.9.10:8787', 'http://10.0.2.2:8787/', 'http://172.16.0.1', 'http://172.31.255.255',
+      'http://192.168.1.20:8787', 'http://169.254.10.20', 'http://100.64.0.1', 'http://100.127.255.254:8787',
+      'http://[::1]:8787', 'http://[fe80::1ff:fe23:4567:890a]', 'http://[febf::1]', 'http://[fd12:3456::1]', 'http://[fc00::1]',
+      'http://[::ffff:192.168.1.20]:8787', 'http://[::ffff:c0a8:114]',
+      'http://localhost:8787', 'HTTP://LocalHost', 'http://whim-box.local:8787', 'http://devbox', 'http://devbox:8787/base', 'http://box-2',
     ]) {
       h.eq(serverAddressAllowed(address), true, `${address} is allowed`);
     }
   });
 
-  await h.test('server-address: any other http:// host, a missing or other scheme, and a forged host are refused', () => {
+  await h.test('server-address: a public IP literal, a numeric single label and any other http:// host are refused', () => {
+    for (const address of [
+      'http://8.8.8.8', 'http://8.8.8.8:8787', 'http://1.1.1.1', 'http://0.0.0.0', 'http://172.32.0.1', 'http://172.15.255.255',
+      'http://192.169.0.1', 'http://169.255.0.1', 'http://100.128.0.1', 'http://100.63.255.255', 'http://11.0.0.1',
+      'http://[::ffff:8.8.8.8]', 'http://[::ffff:808:808]', 'http://[2001:4860:4860::8888]', 'http://[fec0::1]', 'http://[::]',
+      'http://[::1::1]', 'http://[1:2:3:4:5:6:7:8:9]', 'http://[fe80::1%25en0]',
+      'http://0x08080808', 'http://0X7F000001', 'http://134744072', 'http://2130706433', 'http://0177.0.0.1', 'http://192.168.1',
+    ]) {
+      h.eq(serverAddressAllowed(address), false, `${address} is refused`);
+    }
+  });
+
+  await h.test('server-address: a non-local host, a missing or other scheme, and a forged host are refused', () => {
     for (const address of [
       'http://example.com', 'http://api.example.com:8787', 'http://192.168.1.256', 'http://devbox.local.example.com',
       'http://evil.com@192.168.1.20', 'http://192.168.1.20@evil.com', 'http://evil.com\\x.local', 'http://192.168.1.20:port',
@@ -120,7 +135,7 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     ]) {
       h.eq(serverAddressAllowed(address), false, `${address} is refused`);
     }
-    for (const address of ['https://example.com', 'https://api.example.com:8443/whim', '   ']) {
+    for (const address of ['https://example.com', 'https://8.8.8.8', 'https://api.example.com:8443/whim', '   ']) {
       h.eq(serverAddressAllowed(address), true, `${JSON.stringify(address)} is allowed: https anywhere, or blank for no override`);
     }
   });

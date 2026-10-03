@@ -405,6 +405,19 @@ export async function runDiagnosticsTests(h: Harness): Promise<void> {
     h.eq(uploaded(uploads).map(r => r.kind), ['after-grant'], 'only a record emitted under the grant goes');
   });
 
+  await h.test('discard: records waiting when discard() runs are never sent; later ones are', async () => {
+    const kv = consentedStore();
+    const uploads: Upload[] = [];
+    const seam = gatedSeam(kv, uploads);
+    seam.error(CHANNELS.gen, 'transport failed', { kind: 'before-switch' });
+    seam.diagnostics.discard();
+    await seam.diagnostics.flush();
+    h.eq(uploads.length, 0, 'nothing waiting at the discard is uploaded');
+    seam.error(CHANNELS.gen, 'render failed', { kind: 'after-switch' });
+    await seam.diagnostics.flush();
+    h.eq(uploaded(uploads).map(r => r.message), ['render failed'], 'only the record made after the discard goes');
+  });
+
   await h.test('consent: turning AI features off stops uploads, including what was waiting', async () => {
     const kv = consentedStore();
     const uploads: Upload[] = [];

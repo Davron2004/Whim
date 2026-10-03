@@ -163,14 +163,15 @@ android {
             keyPassword whimUploadProperty('WHIM_UPLOAD_KEY_PASSWORD')
         }
     }
-    // Three build types (design D4), all under the one application id:
-    //   • debug   — debug-signed, debuggable, JS from Metro, dev cleartext hosts (src/debug/res).
+    // Three build types (design D4), all under the one application id and the one network
+    // security config (src/main/res/xml), which permits cleartext at its base so a user's own LAN
+    // server is reachable; the launcher's address rule is the guard (beta-1 D20):
+    //   • debug   — debug-signed, debuggable, JS from Metro.
     //   • offline — the dev loop without Metro: release's configuration with the JS bundle baked
-    //     in, but debug-signed, debuggable, and with the dev cleartext hosts. `npm run
-    //     android:release` builds it, because the emulator's NAT route to Metro is dead and the
-    //     LAN generation server speaks http. Never uploaded.
+    //     in, but debug-signed and debuggable. `npm run android:release` builds it, because the
+    //     emulator's NAT route to Metro is dead. Never uploaded.
     //   • release — the store build: upload-signed from the four WHIM_UPLOAD_* values, never the
-    //     debug key, not debuggable, no cleartext exception, shipped as an AAB.
+    //     debug key, not debuggable, shipped as an AAB.
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
@@ -202,11 +203,6 @@ android {
                     arguments "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
                 }
             }
-        }
-    }
-    sourceSets {
-        offline {
-            res.srcDirs += 'src/debug/res'
         }
     }
 }

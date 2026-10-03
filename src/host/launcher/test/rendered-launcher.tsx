@@ -66,6 +66,8 @@ export interface Launcher {
   sent: SentRequest[];
   /** The headers of every `/healthz` probe, in order. */
   probes: Headers[];
+  /** The full URL of every `/healthz` probe, in order, so a test can tell which server it went to. */
+  probeUrls: string[];
   paths: () => string[];
   /** Every `setTimeout` is held here instead of scheduled (connect timeouts, probe retries). */
   clock: ReturnType<typeof captureTimeouts>;
@@ -136,10 +138,12 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
   const originalFetch = globalThis.fetch;
   const sent: SentRequest[] = [];
   const probes: Headers[] = [];
+  const probeUrls: string[] = [];
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     const path = new URL(String(url)).pathname;
     if (path === '/healthz') {
       probes.push(new Headers(init?.headers));
+      probeUrls.push(String(url));
       return setup.healthz ? setup.healthz() : json({ service: 'whim-server' });
     }
     const request: SentRequest = {
@@ -164,7 +168,7 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
         significantUpdate={setup.significantUpdate}
       />,
     );
-    await body({ tree, kv, sent, probes, paths: () => sent.map((r) => r.path), clock });
+    await body({ tree, kv, sent, probes, probeUrls, paths: () => sent.map((r) => r.path), clock });
   } finally {
     if (tree) await unmountScreen(tree);
     globalThis.fetch = originalFetch;

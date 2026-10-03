@@ -35,6 +35,9 @@ const OVERRIDE = 'https://lan.example:8787';
 /** A server on the user's own network: plain http, allowed for an IP literal. */
 // eslint-disable-next-line sonarjs/no-clear-text-protocols -- a LAN server over plain http is the case under test; the test's fetch stub answers it
 const LAN = 'http://192.168.1.20:8787';
+/** A public IP literal over plain http: refused, since it isn't on the user's own network. */
+// eslint-disable-next-line sonarjs/no-clear-text-protocols -- the refused address under test; nothing is sent to it
+const PUBLIC_IP = 'http://8.8.8.8';
 
 /** Answers clarify with no questions; nothing else is expected. */
 const clarifyServer = (r: SentRequest): Response | Promise<Response> =>
@@ -327,14 +330,16 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('own server: http:// to a public host is refused inline and not saved; a LAN address then saves and clears the note', async () => {
+  await h.test('own server: http:// to a public host or a public IP is refused inline and not saved; a LAN address then saves and clears the note', async () => {
     await withLauncher({ server: clarifyServer }, async ({ tree, kv, sent }) => {
       await openSettings(tree);
       await openAdvanced(tree);
       await press((await openOwnServerSheet(tree)).confirm);
-      await typeAddress(tree, 'http://example.com');
-      h.ok(textOf(tree.root).includes(COPY.serverAddressRefused), 'the refusal is explained under the field');
-      h.eq(loadServerUrl(kv), undefined, 'nothing was saved');
+      for (const refused of ['http://example.com', PUBLIC_IP]) {
+        await typeAddress(tree, refused);
+        h.ok(textOf(tree.root).includes(COPY.serverAddressRefused), `${refused}: the refusal is explained under the field`);
+        h.eq(loadServerUrl(kv), undefined, `${refused}: nothing was saved`);
+      }
       await typeAddress(tree, LAN);
       h.ok(!textOf(tree.root).includes(COPY.serverAddressRefused), 'an allowed address clears the note');
       h.eq(loadServerUrl(kv), LAN, 'and is saved');

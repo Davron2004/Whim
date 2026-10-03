@@ -60,8 +60,10 @@ export function saveServerUrl(kv: KVBackend, raw: string): boolean {
 
 const IPV4_OCTET = String.raw`(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)`;
 const IPV4_RE = new RegExp(String.raw`^${IPV4_OCTET}(?:\.${IPV4_OCTET}){3}$`);
-const IPV6_RE = /^\[[0-9a-f.]*:[0-9a-f:.]*\]$/i;
 const HOST_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+/** A label a URL parser reads as a number (decimal, or `0x` hex), which turns the host into an IPv4
+ *  address: `http://134744072` and `http://0x08080808` are both 8.8.8.8. */
+const NUMERIC_LABEL_RE = /^(?:\d+|0x[0-9a-f]*)$/;
 const ADDRESS_RE = /^(https?):\/\/([^/?#]+)(?:[/?#].*)?$/i;
 
 /** The host an http authority names, lower-cased, or `undefined` when it carries user info or a
@@ -71,20 +73,80 @@ function hostOf(authority: string): string | undefined {
   return match?.[1].toLowerCase();
 }
 
-/** An IP literal (v4, or bracketed v6), `localhost`, a `.local` name or a single-label host. */
+/** Whether four IPv4 octets are loopback (127/8), private (10/8, 172.16/12, 192.168/16),
+ *  link-local (169.254/16) or carrier-grade NAT (100.64/10, which Tailscale uses). */
+function isPrivateIpv4([a, b]: readonly number[]): boolean {
+  return (
+    a === 127 ||
+    a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) ||
+    (a === 100 && b >= 64 && b <= 127)
+  );
+}
+
+/** A dotted-quad IPv4 literal's four octets, or `undefined`. */
+function ipv4Octets(text: string): number[] | undefined {
+  return IPV4_RE.test(text) ? text.split('.').map(Number) : undefined;
+}
+
+/** An IPv6 literal's eight 16-bit groups (`::` expanded, a trailing dotted IPv4 folded into the
+ *  last two), or `undefined` when it isn't one. */
+function ipv6Groups(text: string): number[] | undefined {
+  let body = text;
+  const lastColon = body.lastIndexOf(':');
+  if (body.includes('.', lastColon)) {
+    const octets = ipv4Octets(body.slice(lastColon + 1));
+    if (octets === undefined) return undefined;
+    const hex = (high: number, low: number) => (high * 256 + low).toString(16);
+    body = `${body.slice(0, lastColon + 1)}${hex(octets[0], octets[1])}:${hex(octets[2], octets[3])}`;
+  }
+  const halves = body.split('::');
+  if (halves.length > 2) return undefined;
+  const groupsOf = (part: string) => (part === '' ? [] : part.split(':'));
+  const head = groupsOf(halves[0]);
+  const rest = halves.length === 2 ? groupsOf(halves[1]) : [];
+  if (![...head, ...rest].every((group) => /^[0-9a-f]{1,4}$/.test(group))) return undefined;
+  const given = head.length + rest.length;
+  if (halves.length === 2 ? given > 7 : given !== 8) return undefined;
+  const zeros = new Array<string>(8 - given).fill('0');
+  return [...head, ...zeros, ...rest].map((group) => Number.parseInt(group, 16));
+}
+
+/** Whether a bracketed IPv6 literal is loopback (::1), link-local (fe80::/10), unique-local
+ *  (fc00::/7), or an IPv4-mapped address (::ffff:a.b.c.d) whose IPv4 address is private. */
+function isPrivateIpv6(bracketed: string): boolean {
+  const groups = ipv6Groups(bracketed.slice(1, -1));
+  if (groups === undefined) return false;
+  if (groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff) {
+    const octets = (group: number) => [Math.floor(group / 256), group % 256];
+    return isPrivateIpv4([...octets(groups[6]), ...octets(groups[7])]);
+  }
+  const loopback = groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1;
+  const linkLocal = groups[0] >= 0xfe80 && groups[0] <= 0xfebf;
+  const uniqueLocal = groups[0] >= 0xfc00 && groups[0] <= 0xfdff;
+  return loopback || linkLocal || uniqueLocal;
+}
+
+/** A loopback or private-range IP literal (`isPrivateIpv4`, `isPrivateIpv6`), `localhost`, a
+ *  `.local` name, or a single-label host that isn't numeric. */
 function isLocalHost(host: string): boolean {
-  if (IPV4_RE.test(host) || IPV6_RE.test(host)) return true;
+  if (host.startsWith('[')) return host.endsWith(']') && isPrivateIpv6(host);
+  const octets = ipv4Octets(host);
+  if (octets !== undefined) return isPrivateIpv4(octets);
   const labels = host.split('.');
   if (!labels.every((label) => HOST_LABEL_RE.test(label))) return false;
-  return labels.length === 1 || labels.at(-1) === 'local';
+  if (labels.length === 1) return !NUMERIC_LABEL_RE.test(labels[0]);
+  return labels.at(-1) === 'local';
 }
 
 /**
  * The address rule (design D20; spec native-release-config "Store builds carry no cleartext
- * exception"): an `https://` address is always allowed, an `http://` one only for a local host
- * (`isLocalHost`), and anything else (another scheme, no scheme) never. A blank value is allowed:
- * it means "no override". The Android release build permits cleartext at its base, so this rule,
- * not the OS, keeps plain http off the public internet.
+ * exception"): an `https://` address is always allowed; an `http://` one only for a host on the
+ * user's own network (`isLocalHost`); anything else (another scheme, no scheme) never. A blank
+ * value is allowed: it means "no override". Every Android build type permits cleartext at its
+ * base, so this rule, not the OS, keeps plain http off the public internet.
  */
 export function serverAddressAllowed(raw: string): boolean {
   const sanitized = sanitizeServerUrl(raw);

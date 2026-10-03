@@ -324,10 +324,11 @@ curl -sI https://whim.<domain>/.well-known/assetlinks.json
   as a stopgap, and retry the three-ABI build for the next release.
 - **A tester needs the app talking to a LAN dev server.** Any store build can (beta-1 D20): in
   Settings → Advanced, take `Use your own server`, confirm, and enter the address. The app takes
-  `http://` only for an IP literal, `localhost`, a `.local` name or a single-label host; anything
-  else needs `https://`. The store AAB's network config permits cleartext at its base for this,
-  and iOS ATS exempts numeric hosts and local networking. The `debug` and `offline` APKs still use
-  the dev config's fixed cleartext host list (`android/app/src/debug/res/xml/`).
+  `http://` only for a loopback or private-range IP literal (loopback, RFC 1918, link-local, IPv6
+  unique-local, carrier-grade NAT such as Tailscale's 100.64.0.0/10), `localhost`, a `.local` name
+  or a single-label host that isn't numeric; anything else needs `https://`. Every Android build
+  type uses the one network config, which permits cleartext at its base for this, and iOS ATS
+  exempts numeric hosts and local networking.
 - **fastlane reports a version below `2.237.0`.** `brew upgrade fastlane`; the Fastfile's
   `min_fastlane_version` refuses to load otherwise.
 - **A lane crashes instead of naming a clean preflight finding.** Every lane calls the preflight

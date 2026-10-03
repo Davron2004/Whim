@@ -1280,10 +1280,12 @@ self-hosted server is a feature, not a dev tool. The owner reversed D10 on 2026-
   (`whim.server-ack:v1`). Until then a saved address stays unread, so one saved by an earlier build
   doesn't silently take effect. "Use Whim's server" clears the address and keeps the
   acknowledgement.
-- **Plain http only for local addresses, enforced by the app.** `http://` is accepted only for an
-  IP literal, `localhost`, a `.local` name or a single-label host; anything else needs `https://`
-  and is refused before it is saved. Android can't name an arbitrary LAN IP in its network config,
-  so the release config permits cleartext at its base and this rule is the guard. The sandbox's CSP
+- **Plain http only for local addresses, enforced by the app.** `http://` is accepted only for a
+  loopback or private-range IP literal (loopback, RFC 1918, link-local, IPv6 unique-local,
+  carrier-grade NAT), `localhost`, a `.local` name or a single-label host that isn't numeric;
+  anything else needs `https://` and is refused before it is saved. Android can't name an
+  arbitrary LAN IP in its network config, so every build type's config permits cleartext at its
+  base and this rule is the guard. The sandbox's CSP
   keeps mini-app bundles off the network whatever that setting is. iOS ATS is unchanged.
 - **Policy text, not a manifest role.** Whim neither receives nor shares what goes to a user's own
   server, so the disclosure manifest and `AI_CONSENT_VERSION` don't change and nobody re-consents.
