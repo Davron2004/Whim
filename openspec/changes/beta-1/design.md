@@ -321,7 +321,7 @@ legal-surface-v2 D10).** Whim is open source, and a self-hosted backend is a fea
   While an override is active, a persistent caption under the field restates the responsibility.
   "Use Whim's server" clears the address and keeps the acknowledgement.
 - **Plain http only for local addresses, enforced by the app on both platforms.** An `http://` address is
-  accepted only for IP literals, `localhost`, `.local` and single-label hosts; any other host must be
+  accepted only for loopback/private-range IP literals, `localhost`, `.local` and non-numeric single-label hosts; any other host must be
   `https://`. Android's network config can't name an arbitrary LAN IP, so the release base config permits
   cleartext and this app rule is the guard; the mini-app sandbox's CSP keeps bundles off the network
   regardless. iOS ATS is unchanged (local networking already allowed).
