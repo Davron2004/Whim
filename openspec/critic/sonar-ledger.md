@@ -105,3 +105,13 @@
 - 2026-09-30 fix-beta-1-sonar-r2 S9383 server/src/routes/generate.ts:698
 - 2026-09-30 fix-beta-1-sonar-r2 S9383 src/host/launcher/LauncherRoot.tsx:1106
 - 2026-09-30 fix-beta-1-sonar-r2 S9383 src/host/launcher/LauncherRoot.tsx:1058
+- 2026-10-03 fix-beta-1-sonar-r4 S8705 openspec/changes/beta-1/acceptance/android-final-392403/action-adapter.py:16
+- 2026-10-03 fix-beta-1-sonar-r4 S5443 openspec/changes/beta-1/acceptance/android-final-392403/observe.py:14
+- 2026-10-03 fix-beta-1-sonar-r4 S6353 openspec/changes/beta-1/acceptance/android-final-392403/observe.py:35
+- 2026-10-03 fix-beta-1-sonar-r4 S3776 openspec/changes/beta-1/acceptance/android-final-392403/observe.py:68
+- 2026-10-03 fix-beta-1-sonar-r4 S5443 openspec/changes/beta-1/acceptance/android-final-392403/serial-case-v2.py:3
+- 2026-10-03 fix-beta-1-sonar-r4 S8705 openspec/changes/beta-1/acceptance/android-final-392403/serial-case-v2.py:7
+- 2026-10-03 fix-beta-1-sonar-r4 S8705 openspec/changes/beta-1/acceptance/android-final-392403/serial-case-v2.py:38
+- 2026-10-03 fix-beta-1-sonar-r4 S5443 openspec/changes/beta-1/acceptance/android-final-392403/serial-case.py:3
+- 2026-10-03 fix-beta-1-sonar-r4 S8705 openspec/changes/beta-1/acceptance/android-final-392403/serial-case.py:7
+- 2026-10-03 fix-beta-1-sonar-r4 S8705 openspec/changes/beta-1/acceptance/android-final-392403/serial-case.py:38
