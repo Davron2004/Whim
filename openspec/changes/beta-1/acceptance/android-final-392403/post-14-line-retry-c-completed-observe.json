@@ -1,0 +1,41 @@
+{
+  "status": "captured",
+  "capture": "post-14-line-retry-c-completed",
+  "label": "Hello App is ready",
+  "serial": "emulator-5560",
+  "helper": "/tmp/whim-beta1-android-observe.py",
+  "helper_sha256": "e654eb258e10a96ba1f3553f13c87b126b2d4d77f72ad8101f7d7da46ec77848",
+  "action": "/tmp/whim-beta1-android-action.py",
+  "action_sha256": "26d54a54d26702e1871d9dc84f829ed3ea753bec6066620c98f9f13590a5154d",
+  "adb": "/Users/davrondjabborov/Library/Android/sdk/platform-tools/adb",
+  "started_utc": "2026-09-30T15:27:24.581818+00:00",
+  "requested_seconds": 120,
+  "attempts": 7,
+  "observation_error_retries": 1,
+  "timing_seconds_since_start": {
+    "show_started": 50.72982125001727,
+    "show_finished": 53.33856920801918,
+    "xml_copy_started": 53.338751333008986,
+    "xml_copy_finished": 53.3672895830241,
+    "png_started": 53.36745575000532,
+    "png_finished": 53.86174862500047,
+    "window_started": 53.86178025000845,
+    "window_finished": 53.915543000010075
+  },
+  "deadline_overrun_at_match_seconds": 0,
+  "artifacts": {
+    "xml": {
+      "path": "/Users/davrondjabborov/Work/other/Whim/openspec/changes/beta-1/acceptance/android-final-392403/post-14-line-retry-c-completed.xml",
+      "sha256": "e605822a6aca476863a1de6c2785bfc41f30e42488cb1333f8edc8203abd4fff"
+    },
+    "png": {
+      "path": "/Users/davrondjabborov/Work/other/Whim/openspec/changes/beta-1/acceptance/android-final-392403/post-14-line-retry-c-completed.png",
+      "sha256": "dab96925666ca3673b914aa0721351826321d8ba6481989d56a941045eb778bf"
+    },
+    "window": {
+      "path": "/Users/davrondjabborov/Work/other/Whim/openspec/changes/beta-1/acceptance/android-final-392403/post-14-line-retry-c-completed-window.txt",
+      "sha256": "e19ad60d62939a8f4d816d0199140729604a6d50b7099bc96104015198a0b840"
+    }
+  },
+  "visual_validation": "Pending root visual check: PNG/window may follow a UI transition after the XML dump."
+}

@@ -7,7 +7,7 @@ There is no checked-in `.maestro/`. The 33 iOS YAML fragments (26 `ios-4`, 7
 `ios-repro-resume`) preserve Water Tracker paths, not a complete new acceptance run;
 the upgrade-check YAML is 10.5 only. Android reuses the `emulator-5560`-targeted
 `acceptance/android-final-392403/post-ui.py` hierarchy/capture helper, copied byte-for-byte
-from android-4. Build 392403 is reserved; its approved source SHA is still unset.
+from android-4. Build 392403 is built and preserved from approved product source `c76191d34343510c5c5af748132c5b2a650067ee` (artifact build HEAD `a58403876ffb62977f414e87bba8b4093f338eeb`). Full gate, independent review, all three required CI checks and Sonar with zero open issues passed; native execution remains pending.
 Candidate iOS material is in `ios-debug-final-392403/flows` (20 files) and
 `ios-release-final-392403/flows` (9 files). Both syntax checks passed; native execution
 and Maestro runtime validation remain pending. The older fragments below are references.
@@ -102,7 +102,7 @@ then run controlled A and B holders with fresh UUIDs from
 `/tmp/whim-beta1-line-clients-final.mjs`. Complete the full quiet window before starting
 these holders; after `READY_FOR_NATIVE_C`, scan immediately and tap C's Build without
 another 60-second delay.
-C must first show “You're in line, 1 build ahead.” (position 2), then “You're next in
+C must first show “You’re in line, 1 build ahead.” (position 2), then “You're next in
 line.” (position 1) after A completes, then begin only after B completes. The script
 records A running, B queued, and B handoff; C's screenshots/hierarchy and server event
 order are the native/FIFO evidence. This proves C's native queue handling, not a native
@@ -126,7 +126,7 @@ port. Do not stop the app while it is still building, which would test startup i
 This is a native ended-failure/cold-restart smoke with writable storage. The controlled Node
 tests provide the write-outage and stale-journal proofs. Flow 18 alone observes a saved entry
 and cannot claim either fault injection or this full smoke. The detailed preparation is
-`/tmp/whim-beta1-native-cold-failure-plan.md`; no result is claimed yet.
+`/tmp/whim-beta1-native-cold-failure-plan-392403.md`; no result is claimed yet.
 
 ## What remains manual or owner-only
 `acceptance/section-10-plan.md` still lists every Tier-0 path, cap + 2, limit, and all

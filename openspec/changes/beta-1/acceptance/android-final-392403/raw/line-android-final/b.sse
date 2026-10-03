@@ -1,0 +1,114 @@
+event: queued
+data: {"type":"queued","position":1}
+id: 1
+
+event: queued
+data: {"type":"queued","position":1}
+id: 2
+
+event: queued
+data: {"type":"queued","position":1}
+id: 3
+
+: keepalive
+
+event: queued
+data: {"type":"queued","position":1}
+id: 4
+
+event: queued
+data: {"type":"queued","position":1}
+id: 5
+
+event: queued
+data: {"type":"queued","position":1}
+id: 6
+
+: keepalive
+
+event: queued
+data: {"type":"queued","position":1}
+id: 7
+
+event: queued
+data: {"type":"queued","position":1}
+id: 8
+
+event: queued
+data: {"type":"queued","position":1}
+id: 9
+
+: keepalive
+
+event: queued
+data: {"type":"queued","position":1}
+id: 10
+
+event: queued
+data: {"type":"queued","position":1}
+id: 11
+
+event: stage
+data: {"type":"stage","stage":"plan","status":"start"}
+id: 12
+
+: keepalive
+
+event: stage
+data: {"type":"stage","stage":"plan","status":"done"}
+id: 13
+
+event: stage
+data: {"type":"stage","stage":"generate","status":"start"}
+id: 14
+
+event: token
+data: {"type":"token","text":"Hello"}
+id: 15
+
+event: token
+data: {"type":"token","text":" "}
+id: 16
+
+: keepalive
+
+event: token
+data: {"type":"token","text":"World"}
+id: 17
+
+event: token
+data: {"type":"token","text":"!"}
+id: 18
+
+event: stage
+data: {"type":"stage","stage":"generate","status":"done"}
+id: 19
+
+event: stage
+data: {"type":"stage","stage":"check","status":"start"}
+id: 20
+
+: keepalive
+
+event: stage
+data: {"type":"stage","stage":"check","status":"done"}
+id: 21
+
+event: stage
+data: {"type":"stage","stage":"run","status":"start"}
+id: 22
+
+event: stage
+data: {"type":"stage","stage":"run","status":"done"}
+id: 23
+
+event: usage
+data: {"type":"usage","usage":{"promptTokens":42,"completionTokens":128,"totalTokens":170}}
+id: 24
+
+: keepalive
+
+event: result
+data: {"type":"result","app":{"name":"Hello App","source":"import { defineApp, Screen, Stack, Row, Heading, Text, TextInput, Button, Checkbox, ProgressBar, useState } from 'vc-sdk';\n\nconst STARTERS = [\n  'Drink a glass of water',\n  'Stretch for five minutes',\n  'Make the bed',\n  'Reply to one message',\n  'Plan lunch',\n  'Take a short walk',\n  'Tidy the desk',\n  'Water the plants',\n  'Read ten pages',\n  'Call someone you like',\n  'Put the laundry on',\n  'Check the calendar for tomorrow',\n  'Take out the recycling',\n  'Write down one good thing',\n  'Charge your phone',\n  'Lay out clothes for tomorrow',\n];\n\nfunction Today() {\n  const [tasks, setTasks] = useState(STARTERS.map((title, id) => ({ id, title, done: false })));\n  const [draft, setDraft] = useState('');\n  const [nextId, setNextId] = useState(STARTERS.length);\n  const done = tasks.filter((task) => task.done).length;\n\n  const add = () => {\n    const title = draft.trim();\n    if (title === '') return;\n    setTasks([...tasks, { id: nextId, title, done: false }]);\n    setNextId(nextId + 1);\n    setDraft('');\n  };\n  const tick = (id: number, checked: boolean) => {\n    setTasks(tasks.map((task) => (task.id === id ? { ...task, done: checked } : task)));\n  };\n\n  return (\n    <Screen padding=\"lg\">\n      <Stack gap=\"lg\">\n        <Heading size=\"title\">Today</Heading>\n        <Text color=\"text-muted\">{done + ' of ' + tasks.length + ' done'}</Text>\n        <ProgressBar value={tasks.length === 0 ? 0 : done / tasks.length} tone=\"positive\" />\n        <Row gap=\"sm\" align=\"center\">\n          <TextInput value={draft} placeholder=\"Add a task\" onChange={setDraft} />\n          <Button label=\"Add\" disabled={draft.trim() === ''} onPress={add} />\n        </Row>\n        <Stack gap=\"sm\">\n          {tasks.map((task) => (\n            <Checkbox key={task.id} label={task.title} checked={task.done} onChange={(checked) => tick(task.id, checked)} />\n          ))}\n        </Stack>\n        <Button label=\"Clear done\" variant=\"secondary\" disabled={done === 0} onPress={() => setTasks(tasks.filter((task) => !task.done))} />\n      </Stack>\n    </Screen>\n  );\n}\n\nexport default defineApp({ name: 'Hello App', initial: 'Today', screens: { Today }, capabilities: [] });\n","bundle":"var __WHIM_APP_MODULE__ = (() => {\n  var __create = Object.create;\n  var __defProp = Object.defineProperty;\n  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;\n  var __getOwnPropNames = Object.getOwnPropertyNames;\n  var __getProtoOf = Object.getPrototypeOf;\n  var __hasOwnProp = Object.prototype.hasOwnProperty;\n  var __require = /* @__PURE__ */ ((x) => typeof require !== \"undefined\" ? require : typeof Proxy !== \"undefined\" ? new Proxy(x, {\n    get: (a, b) => (typeof require !== \"undefined\" ? require : a)[b]\n  }) : x)(function(x) {\n    if (typeof require !== \"undefined\") return require.apply(this, arguments);\n    throw Error('Dynamic require of \"' + x + '\" is not supported');\n  });\n  var __export = (target, all) => {\n    for (var name in all)\n      __defProp(target, name, { get: all[name], enumerable: true });\n  };\n  var __copyProps = (to, from, except, desc) => {\n    if (from && typeof from === \"object\" || typeof from === \"function\") {\n      for (let key of __getOwnPropNames(from))\n        if (!__hasOwnProp.call(to, key) && key !== except)\n          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });\n    }\n    return to;\n  };\n  var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(\n    // If the importer is in node compatibility mode or this is not an ESM\n    // file that has been converted to a CommonJS file using a Babel-\n    // compatible transform (i.e. \"__esModule\" has not been set), then set\n    // \"default\" to the CommonJS \"module.exports\" for node compatibility.\n    isNodeMode || !mod || !mod.__esModule ? __defProp(target, \"default\", { value: mod, enumerable: true }) : target,\n    mod\n  ));\n  var __toCommonJS = (mod) => __copyProps(__defProp({}, \"__esModule\", { value: true }), mod);\n\n  // ../../../../../var/folders/nh/5nhmjb6s5_z379gtw26xk8n00000gn/T/synthrun-candidate-8RYyr3/stub-app.app.tsx\n  var stub_app_app_exports = {};\n  __export(stub_app_app_exports, {\n    default: () => stub_app_app_default\n  });\n\n  // build/react-inject-shim.ts\n  var React = __toESM(__require(\"react\"));\n\n  // ../../../../../var/folders/nh/5nhmjb6s5_z379gtw26xk8n00000gn/T/synthrun-candidate-8RYyr3/stub-app.app.tsx\n  var import_vc_sdk = __require(\"vc-sdk\");\n  var STARTERS = [\n    \"Drink a glass of water\",\n    \"Stretch for five minutes\",\n    \"Make the bed\",\n    \"Reply to one message\",\n    \"Plan lunch\",\n    \"Take a short walk\",\n    \"Tidy the desk\",\n    \"Water the plants\",\n    \"Read ten pages\",\n    \"Call someone you like\",\n    \"Put the laundry on\",\n    \"Check the calendar for tomorrow\",\n    \"Take out the recycling\",\n    \"Write down one good thing\",\n    \"Charge your phone\",\n    \"Lay out clothes for tomorrow\"\n  ];\n  function Today() {\n    const [tasks, setTasks] = (0, import_vc_sdk.useState)(STARTERS.map((title, id) => ({ id, title, done: false })));\n    const [draft, setDraft] = (0, import_vc_sdk.useState)(\"\");\n    const [nextId, setNextId] = (0, import_vc_sdk.useState)(STARTERS.length);\n    const done = tasks.filter((task) => task.done).length;\n    const add = () => {\n      const title = draft.trim();\n      if (title === \"\") return;\n      setTasks([...tasks, { id: nextId, title, done: false }]);\n      setNextId(nextId + 1);\n      setDraft(\"\");\n    };\n    const tick = (id, checked) => {\n      setTasks(tasks.map((task) => task.id === id ? { ...task, done: checked } : task));\n    };\n    return /* @__PURE__ */ React.createElement(import_vc_sdk.Screen, { padding: \"lg\" }, /* @__PURE__ */ React.createElement(import_vc_sdk.Stack, { gap: \"lg\" }, /* @__PURE__ */ React.createElement(import_vc_sdk.Heading, { size: \"title\" }, \"Today\"), /* @__PURE__ */ React.createElement(import_vc_sdk.Text, { color: \"text-muted\" }, done + \" of \" + tasks.length + \" done\"), /* @__PURE__ */ React.createElement(import_vc_sdk.ProgressBar, { value: tasks.length === 0 ? 0 : done / tasks.length, tone: \"positive\" }), /* @__PURE__ */ React.createElement(import_vc_sdk.Row, { gap: \"sm\", align: \"center\" }, /* @__PURE__ */ React.createElement(import_vc_sdk.TextInput, { value: draft, placeholder: \"Add a task\", onChange: setDraft }), /* @__PURE__ */ React.createElement(import_vc_sdk.Button, { label: \"Add\", disabled: draft.trim() === \"\", onPress: add })), /* @__PURE__ */ React.createElement(import_vc_sdk.Stack, { gap: \"sm\" }, tasks.map((task) => /* @__PURE__ */ React.createElement(import_vc_sdk.Checkbox, { key: task.id, label: task.title, checked: task.done, onChange: (checked) => tick(task.id, checked) }))), /* @__PURE__ */ React.createElement(import_vc_sdk.Button, { label: \"Clear done\", variant: \"secondary\", disabled: done === 0, onPress: () => setTasks(tasks.filter((task) => !task.done)) })));\n  }\n  var stub_app_app_default = (0, import_vc_sdk.defineApp)({ name: \"Hello App\", initial: \"Today\", screens: { Today }, capabilities: [] });\n  return __toCommonJS(stub_app_app_exports);\n})();\n","sourceMap":"{\n  \"version\": 3,\n  \"sources\": [\"synthrun-candidate-8RYyr3/stub-app.app.tsx\", \"../../../../../Users/davrondjabborov/Work/other/Whim/build/react-inject-shim.ts\"],\n  \"sourcesContent\": [\"import { defineApp, Screen, Stack, Row, Heading, Text, TextInput, Button, Checkbox, ProgressBar, useState } from 'vc-sdk';\\n\\nconst STARTERS = [\\n  'Drink a glass of water',\\n  'Stretch for five minutes',\\n  'Make the bed',\\n  'Reply to one message',\\n  'Plan lunch',\\n  'Take a short walk',\\n  'Tidy the desk',\\n  'Water the plants',\\n  'Read ten pages',\\n  'Call someone you like',\\n  'Put the laundry on',\\n  'Check the calendar for tomorrow',\\n  'Take out the recycling',\\n  'Write down one good thing',\\n  'Charge your phone',\\n  'Lay out clothes for tomorrow',\\n];\\n\\nfunction Today() {\\n  const [tasks, setTasks] = useState(STARTERS.map((title, id) => ({ id, title, done: false })));\\n  const [draft, setDraft] = useState('');\\n  const [nextId, setNextId] = useState(STARTERS.length);\\n  const done = tasks.filter((task) => task.done).length;\\n\\n  const add = () => {\\n    const title = draft.trim();\\n    if (title === '') return;\\n    setTasks([...tasks, { id: nextId, title, done: false }]);\\n    setNextId(nextId + 1);\\n    setDraft('');\\n  };\\n  const tick = (id: number, checked: boolean) => {\\n    setTasks(tasks.map((task) => (task.id === id ? { ...task, done: checked } : task)));\\n  };\\n\\n  return (\\n    <Screen padding=\\\"lg\\\">\\n      <Stack gap=\\\"lg\\\">\\n        <Heading size=\\\"title\\\">Today</Heading>\\n        <Text color=\\\"text-muted\\\">{done + ' of ' + tasks.length + ' done'}</Text>\\n        <ProgressBar value={tasks.length === 0 ? 0 : done / tasks.length} tone=\\\"positive\\\" />\\n        <Row gap=\\\"sm\\\" align=\\\"center\\\">\\n          <TextInput value={draft} placeholder=\\\"Add a task\\\" onChange={setDraft} />\\n          <Button label=\\\"Add\\\" disabled={draft.trim() === ''} onPress={add} />\\n        </Row>\\n        <Stack gap=\\\"sm\\\">\\n          {tasks.map((task) => (\\n            <Checkbox key={task.id} label={task.title} checked={task.done} onChange={(checked) => tick(task.id, checked)} />\\n          ))}\\n        </Stack>\\n        <Button label=\\\"Clear done\\\" variant=\\\"secondary\\\" disabled={done === 0} onPress={() => setTasks(tasks.filter((task) => !task.done))} />\\n      </Stack>\\n    </Screen>\\n  );\\n}\\n\\nexport default defineApp({ name: 'Hello App', initial: 'Today', screens: { Today }, capabilities: [] });\\n\", \"// esbuild `inject` shim for the app-bundle build: provides the `React` binding the classic\\n// JSX transform (`React.createElement`) needs, resolved from the EXTERNAL `react` (\\u2192 the host-\\n// injected `window.React` at runtime via H1b). The fixture imports only from `vc-sdk` and\\n// never names React itself; this makes its compiled `React.createElement(...)` calls resolve\\n// to the one shared instance without bundling a second copy of React into the app.\\nimport * as React from 'react';\\nexport { React };\\n\"],\n  \"mappings\": \";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;AAAA;AAAA;AAAA;AAAA;;;ACKA,cAAuB;;;ADLvB,sBAAiH;AAEjH,MAAM,WAAW;AAAA,IACf;AAAA,IACA;AAAA,IACA;AAAA,IACA;AAAA,IACA;AAAA,IACA;AAAA,IACA;AAAA,IACA;AAAA,IACA;AAAA,IACA;AAAA,IACA;AAAA,IACA;AAAA,IACA;AAAA,IACA;AAAA,IACA;AAAA,IACA;AAAA,EACF;AAEA,WAAS,QAAQ;AACf,UAAM,CAAC,OAAO,QAAQ,QAAI,wBAAS,SAAS,IAAI,CAAC,OAAO,QAAQ,EAAE,IAAI,OAAO,MAAM,MAAM,EAAE,CAAC;AAC5F,UAAM,CAAC,OAAO,QAAQ,QAAI,wBAAS,EAAE;AACrC,UAAM,CAAC,QAAQ,SAAS,QAAI,wBAAS,SAAS,MAAM;AACpD,UAAM,OAAO,MAAM,OAAO,CAAC,SAAS,KAAK,IAAI,EAAE;AAE/C,UAAM,MAAM,MAAM;AAChB,YAAM,QAAQ,MAAM,KAAK;AACzB,UAAI,UAAU,GAAI;AAClB,eAAS,CAAC,GAAG,OAAO,EAAE,IAAI,QAAQ,OAAO,MAAM,MAAM,CAAC,CAAC;AACvD,gBAAU,SAAS,CAAC;AACpB,eAAS,EAAE;AAAA,IACb;AACA,UAAM,OAAO,CAAC,IAAY,YAAqB;AAC7C,eAAS,MAAM,IAAI,CAAC,SAAU,KAAK,OAAO,KAAK,EAAE,GAAG,MAAM,MAAM,QAAQ,IAAI,IAAK,CAAC;AAAA,IACpF;AAEA,WACE,oCAAC,wBAAO,SAAQ,QACd,oCAAC,uBAAM,KAAI,QACT,oCAAC,yBAAQ,MAAK,WAAQ,OAAK,GAC3B,oCAAC,sBAAK,OAAM,gBAAc,OAAO,SAAS,MAAM,SAAS,OAAQ,GACjE,oCAAC,6BAAY,OAAO,MAAM,WAAW,IAAI,IAAI,OAAO,MAAM,QAAQ,MAAK,YAAW,GAClF,oCAAC,qBAAI,KAAI,MAAK,OAAM,YAClB,oCAAC,2BAAU,OAAO,OAAO,aAAY,cAAa,UAAU,UAAU,GACtE,oCAAC,wBAAO,OAAM,OAAM,UAAU,MAAM,KAAK,MAAM,IAAI,SAAS,KAAK,CACnE,GACA,oCAAC,uBAAM,KAAI,QACR,MAAM,IAAI,CAAC,SACV,oCAAC,0BAAS,KAAK,KAAK,IAAI,OAAO,KAAK,OAAO,SAAS,KAAK,MAAM,UAAU,CAAC,YAAY,KAAK,KAAK,IAAI,OAAO,GAAG,CAC/G,CACH,GACA,oCAAC,wBAAO,OAAM,cAAa,SAAQ,aAAY,UAAU,SAAS,GAAG,SAAS,MAAM,SAAS,MAAM,OAAO,CAAC,SAAS,CAAC,KAAK,IAAI,CAAC,GAAG,CACpI,CACF;AAAA,EAEJ;AAEA,MAAO,2BAAQ,yBAAU,EAAE,MAAM,aAAa,SAAS,SAAS,SAAS,EAAE,MAAM,GAAG,cAAc,CAAC,EAAE,CAAC;\",\n  \"names\": []\n}\n","manifest":{"capabilities":[]},"schema":{}}}
+id: 25
+
