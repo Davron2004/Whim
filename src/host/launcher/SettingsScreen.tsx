@@ -11,20 +11,20 @@
 // Four sections, in order (design D7; app-launcher "Settings groups its controls into titled
 // sections, with the server address under Advanced"): AI features (opens the consent screen in
 // review mode, and the "Send error details" switch), Highlighting (unchanged), About (privacy
-// policy, terms of use, support, this phone's ID), and — in internal builds only (legal-surface-v2
-// D10) — Advanced (the server address override, collapsed unless one is saved).
+// policy, terms of use, support, this phone's ID), and Advanced (the user's own server, behind a
+// once-per-install acknowledgement — beta-1 D20 — collapsed unless an override is saved).
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Linking, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import type { ScrollView } from 'react-native';
 import { RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { ConsentStatus } from './ai-consent';
-import { aiFeaturesStatusLine, COPY, serverProbeLabel } from './copy';
+import { aiFeaturesStatusLine, COPY, LEGAL_COPY, serverProbeLabel } from './copy';
 import { RELEASE } from './release-config';
 import ConfirmSheet from './ConfirmSheet';
 import { BackHeader, FLOW_HEADER_GAP } from './flow-chrome';
 import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
 import { legalDateLabel, privacyPolicyUrl, termsUrl, type LegalLanguage } from './legal-language';
-import { sanitizeServerUrl } from './server-address';
+import { sanitizeServerUrl, serverAddressAllowed } from './server-address';
 import type { ProbeResult } from './server-probe';
 import { probeServer } from './server-probe';
 import { advancedInitiallyOpen } from './settings-sections';
@@ -41,14 +41,18 @@ export interface SettingsScreenProps {
   /** The phone's preferred locale, which writes the AI features row's date in English; without
    *  one, `Intl`'s default. */
   deviceLocale?: string;
-  /** Whether this is an internal build (`installed-app-info.ts#installedInternalBuild`). A store
-   *  build renders no Advanced section and no server address field at all (legal-surface-v2 D10). */
-  internalBuild: boolean;
-  /** The persisted generation-server address (design D3), or `undefined` when unset. */
+  /** Whether the user has confirmed that their own server is their responsibility (design D20).
+   *  Until then Advanced holds only "Use your own server", and no address field. */
+  ownServerAcknowledged: boolean;
+  /** Records the acknowledgement after the confirm step; returns the saved address it now
+   *  honours, if any, for the field to show. */
+  onAcknowledgeOwnServer: () => string | undefined;
+  /** The override requests follow (`server-address.ts#serverOverride`), or `undefined` for none. */
   serverUrl?: string;
   /** Persists the entered address — `LauncherRoot` writes it via `saveServerUrl` and re-reads
    *  the sanitized result back into its own state, same round-trip `server-address.ts` uses.
-   *  Called once typing pauses, on submit or blur, and on leaving with an unsaved edit. */
+   *  Called once typing pauses, on submit or blur, and on leaving with an unsaved edit; never with
+   *  an address the address rule refuses. */
   onServerUrlChange: (url: string) => void;
   /** Clears the saved override so the next request targets the compiled-in server (design D7,
    *  app-launcher "Going back to the default"). Shown only while an override is saved. */
@@ -100,7 +104,8 @@ export default function SettingsScreen({
   consentStatus,
   canProbe,
   onOpenAIFeatures,
-  internalBuild,
+  ownServerAcknowledged,
+  onAcknowledgeOwnServer,
   errorDetails,
   onErrorDetailsChange,
   deviceId,
@@ -112,7 +117,11 @@ export default function SettingsScreen({
   const [probeState, setProbeState] = useState<SettingsProbeState>('idle');
   const [advancedOpen, setAdvancedOpen] = useState(() => advancedInitiallyOpen(serverUrl));
   const [confirmingNewId, setConfirmingNewId] = useState(false);
+  const [confirmingOwnServer, setConfirmingOwnServer] = useState(false);
+  // The last settled draft was refused by the address rule, so it wasn't saved.
+  const [addressRefused, setAddressRefused] = useState(false);
   const p = SHELL_PALETTE;
+  const legal = LEGAL_COPY[legalLanguage];
 
   // The Advanced disclosure chevron rotates smoothly between closed (right) and open (down)
   // rather than snapping — bare `Easing.ease` is CSS ease-IN (accelerates); `Easing.inOut(Easing.
@@ -137,12 +146,22 @@ export default function SettingsScreen({
     () => new DebouncedProbe({ probe: (url) => probeServer(url), publish: setProbeState }),
   );
 
-  // The save settles once typing pauses (`DebouncedSave`), through the latest `onServerUrlChange`.
+  // The save settles once typing pauses (`DebouncedSave`), through the latest `onServerUrlChange`,
+  // and only for an address the rule allows: a refused one is explained inline and dropped.
   const saveRef = useRef(onServerUrlChange);
   useEffect(() => {
     saveRef.current = onServerUrlChange;
   }, [onServerUrlChange]);
-  const [addressSave] = useState(() => new DebouncedSave({ save: (url) => saveRef.current(url) }));
+  const [addressSave] = useState(
+    () =>
+      new DebouncedSave({
+        save: (url) => {
+          const allowed = serverAddressAllowed(url);
+          setAddressRefused(!allowed);
+          if (allowed) saveRef.current(url);
+        },
+      }),
+  );
 
   useSystemBack(onBack);
 
@@ -160,12 +179,15 @@ export default function SettingsScreen({
 
   const onAddressChange = (next: string) => {
     setServerUrlDraft(next);
+    setAddressRefused(false);
     addressSave.edit(next);
     // The informational probe is BOTH debounced (design.md decision 3) AND gated on consent
     // (server-connectivity "Without a current consent grant the system SHALL NOT probe" — design
     // D2/D7) — the same normalization `saveServerUrl` applies before persisting, so the probe never
-    // trips over a trailing slash the save itself would have stripped.
-    if (canProbe) debouncedProbe.schedule(sanitizeServerUrl(next) ?? '');
+    // trips over a trailing slash the save itself would have stripped. An address the rule refuses
+    // is never probed: the launcher sends nothing to it.
+    const sanitized = sanitizeServerUrl(next) ?? '';
+    if (canProbe) debouncedProbe.schedule(serverAddressAllowed(sanitized) ? sanitized : '');
   };
 
   // Submitting or leaving the field settles both now instead of at the end of the pause.
@@ -176,6 +198,7 @@ export default function SettingsScreen({
 
   const onUseDefault = () => {
     setServerUrlDraft('');
+    setAddressRefused(false);
     addressSave.cancel();
     debouncedProbe.cancel();
     setProbeState('idle');
@@ -196,6 +219,14 @@ export default function SettingsScreen({
     if (!revealAdvanced.current) return;
     revealAdvanced.current = false;
     scrollRef.current?.scrollToEnd({ animated: true });
+  };
+
+  // The confirm step before the user's own server is honoured (design D20): Cancel leaves no
+  // field; confirming records the acknowledgement and shows the field, with any saved address.
+  const acknowledgeOwnServer = () => {
+    setConfirmingOwnServer(false);
+    setServerUrlDraft(onAcknowledgeOwnServer() ?? '');
+    revealAdvanced.current = true;
   };
 
   // The confirm step before replacing the ID (privacy-settings "Settings shows this phone's ID and
@@ -321,25 +352,38 @@ export default function SettingsScreen({
       />
 
       {/* Advanced (app-launcher "Settings groups its controls...with the server address under
-          Advanced") — internal builds only; one row that expands inline; already open while an
-          override is saved. */}
-      {internalBuild && (
+          Advanced") — one row that expands inline; already open while an override is saved. */}
+      <TouchableOpacity
+        onPress={toggleAdvanced}
+        accessibilityRole="button"
+        style={styles.advancedHeader}
+      >
+        <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.settingsAdvancedSectionTitle}</Text>
+        <Animated.View
+          style={[
+            styles.advancedChevron,
+            { borderColor: p.textMuted, transform: [{ rotate: chevronRotate }] },
+          ]}
+        />
+      </TouchableOpacity>
+
+      {/* The user's own server, behind its confirm step (design D20). */}
+      {advancedOpen && !ownServerAcknowledged && (
         <TouchableOpacity
-          onPress={toggleAdvanced}
+          onPress={() => setConfirmingOwnServer(true)}
           accessibilityRole="button"
-          style={styles.advancedHeader}
+          style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
         >
-          <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.settingsAdvancedSectionTitle}</Text>
-          <Animated.View
-            style={[
-              styles.advancedChevron,
-              { borderColor: p.textMuted, transform: [{ rotate: chevronRotate }] },
-            ]}
-          />
+          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{legal.ownServerAction}</Text>
         </TouchableOpacity>
       )}
+      <ConfirmSheet
+        confirm={confirmingOwnServer ? { title: legal.ownServerAction, body: legal.ownServerConfirmBody, confirmLabel: legal.ownServerConfirm } : null}
+        onCancel={() => setConfirmingOwnServer(false)}
+        onConfirm={acknowledgeOwnServer}
+      />
 
-      {internalBuild && advancedOpen && (
+      {advancedOpen && ownServerAcknowledged && (
         <>
           <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
             {COPY.serverAddressSectionTitle}
@@ -351,7 +395,7 @@ export default function SettingsScreen({
               onChangeText={onAddressChange}
               onSubmitEditing={settleAddress}
               onBlur={settleAddress}
-              placeholder={RELEASE.serverUrl.replace(/^https?:\/\//, '')}
+              placeholder={RELEASE.serverUrl}
               placeholderTextColor={p.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
@@ -363,8 +407,14 @@ export default function SettingsScreen({
               ]}
             />
             <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.serverAddressHint}</Text>
-            {probeLine != null && (
+            {addressRefused && (
+              <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.danger }]}>{COPY.serverAddressRefused}</Text>
+            )}
+            {!addressRefused && probeLine != null && (
               <Text style={[TYPE_SCALE.caption, styles.hint, { color: probeLineColor }]}>{probeLine}</Text>
+            )}
+            {serverUrl != null && (
+              <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{legal.ownServerCaption}</Text>
             )}
           </View>
           {serverUrlDraft.trim().length > 0 && (

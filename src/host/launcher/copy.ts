@@ -382,6 +382,17 @@ export const COPY = {
   settingsProbeNeutral: 'Checked once AI features are on',
   serverAddressSectionTitle: 'Server address',
   serverAddressHint: 'Where Whim sends your prompts to build apps.',
+  // Your own server (beta-1 design D20): the Advanced action, its confirm step, and the caption
+  // under an active override. Legal keys, so each has a French twin; the refusal note is not.
+  ownServerAction: 'Use your own server',
+  ownServerConfirmBody:
+    'That server gets everything Whim sends: your prompts and answers, reports, error details and this phone’s ID. Whoever runs it decides what it keeps. Whim’s privacy policy doesn’t cover it.',
+  ownServerConfirm: 'Use my own server',
+  ownServerCaption:
+    'You chose this server, so what happens to what Whim sends there is up to you and whoever runs it. Whim’s privacy policy doesn’t cover it.',
+  // Shown under the field when the address settles on one the address rule refuses; it isn't saved.
+  serverAddressRefused:
+    'Use an https:// address. Plain http:// works only on your own network: a private IP like 192.168.1.20, localhost, a .local name or a one-word name like devbox.',
   // The debounced save-time probe's three-way inline result (server-connectivity, design.md
   // decision 3) — shown under the server-address field a moment after the user stops typing.
   serverProbeVerified: 'Verified — this is a Whim server.',
@@ -532,6 +543,10 @@ export const LEGAL_COPY_KEYS = [
   'permissionRequiredLine',
   'privacyPolicyLabel',
   'legalLanguageSwitch',
+  'ownServerAction',
+  'ownServerConfirmBody',
+  'ownServerConfirm',
+  'ownServerCaption',
 ] as const;
 
 type LegalCopyKey = (typeof LEGAL_COPY_KEYS)[number];
@@ -597,6 +612,12 @@ const FRENCH: LegalCopyTable = {
   permissionRequiredLine: 'Whim a de nouveau besoin de votre permission pour envoyer ceci.',
   privacyPolicyLabel: 'Politique de confidentialité',
   legalLanguageSwitch: 'Continue in English',
+  ownServerAction: 'Utiliser votre propre serveur',
+  ownServerConfirmBody:
+    'Ce serveur reçoit tout ce que Whim envoie\u00a0: vos demandes et vos réponses, les signalements, les détails d’erreur et l’identifiant de ce téléphone. La personne qui l’exploite décide de ce qu’il conserve. La politique de confidentialité de Whim ne s’applique pas à ce serveur.',
+  ownServerConfirm: 'Utiliser mon propre serveur',
+  ownServerCaption:
+    'Vous avez choisi ce serveur\u00a0: ce qu’il advient de ce que Whim y envoie dépend de vous et de la personne qui l’exploite. La politique de confidentialité de Whim ne s’applique pas à ce serveur.',
 };
 
 /** Every legal language's copy table. The terms step and the consent screen read

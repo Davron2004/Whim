@@ -199,9 +199,11 @@ inside that label and tap the tile menu's rows by position (the script measures 
 The seed gets past 382511's undismissable compose keyboard (#50) by switching to the emoji keyboard,
 after which a tap on the headline drops it. Maestro has crashed SpringBoard on this machine before;
 if the seed step fails there, rerun with `--manual-seed`: the script waits while you seed by hand,
-then reads and diffs as usual. From beta-1 on, a Release iOS build ignores the server-address
-override (legal-surface-v2 D10), so the iOS seed for the release after beta-1 needs a
-previous-release build that honours the override.
+then reads and diffs as usual. Release builds made under legal-surface-v2 D10, 392403 among them,
+ignore the server-address override. From beta-1 D20 on, every build honours it, but only after the
+user takes Advanced → `Use your own server` and confirms once; an address saved before that stays
+unread. So a seed against a D20 build has to confirm that step before typing the address, and an
+address seeded into an older build reaches a D20 build unread until someone confirms there.
 
 ## Per-release commands
 
@@ -320,10 +322,13 @@ curl -sI https://whim.<domain>/.well-known/assetlinks.json
   ```
   This ships a store build that only 64-bit ARM devices can install (design D13) — use it only
   as a stopgap, and retry the three-ABI build for the next release.
-- **A tester needs the app talking to a LAN dev server.** The store AAB and the TestFlight
-  archive both forbid cleartext traffic, so neither can use an http Advanced Settings override
-  (compliance D7) — only the `offline` APK (`npm run android:release`) can. iOS can still reach a
-  LAN IP directly, since ATS exempts numeric hosts and local networking stays enabled.
+- **A tester needs the app talking to a LAN dev server.** Any store build can (beta-1 D20): in
+  Settings → Advanced, take `Use your own server`, confirm, and enter the address. The app takes
+  `http://` only for a loopback or private-range IP literal (loopback, RFC 1918, link-local, IPv6
+  unique-local, carrier-grade NAT such as Tailscale's 100.64.0.0/10), `localhost`, a `.local` name
+  or a single-label host that isn't numeric; anything else needs `https://`. Every Android build
+  type uses the one network config, which permits cleartext at its base for this, and iOS ATS
+  exempts numeric hosts and local networking.
 - **fastlane reports a version below `2.237.0`.** `brew upgrade fastlane`; the Fastfile's
   `min_fastlane_version` refuses to load otherwise.
 - **A lane crashes instead of naming a clean preflight finding.** Every lane calls the preflight

@@ -449,7 +449,6 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
         fresh = await renderScreen(
           <LauncherRoot
             appInfo={testAppInfo}
-            internalBuild
             deviceLocale={() => 'en-US'}
             ageSignal={() => Promise.resolve('unavailable')}
           />,

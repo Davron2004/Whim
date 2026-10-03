@@ -30,18 +30,26 @@ env:
     visible: "(.*, )?Water Counter(, .*)?"
     timeout: 60000
 
-# 1. Settings → Advanced → Server address. The field saves as it is typed. While the keyboard is up
-#    on Android, its own back key is labelled "Back" too (android:id/input_method_nav_back), and
-#    Maestro taps that one: it only drops the keyboard. So drop the keyboard first, with a tap on a
-#    plain label in the ScrollView (the field and its label sit under the keyboard there), and tap
-#    the header's Back once the keyboard's key is gone.
+# 1. Settings → Advanced → Server address. A build with beta-1 D20 shows "Use your own server"
+#    under Advanced first, and the field only once that is confirmed; an older build shows the
+#    field at once. The field saves as it is typed. While the keyboard is up on Android, its own
+#    back key is labelled "Back" too (android:id/input_method_nav_back), and Maestro taps that one:
+#    it only drops the keyboard. So drop the keyboard first, with a tap on a plain label in the
+#    ScrollView (the field and its label sit under the keyboard there), and tap the header's Back
+#    once the keyboard's key is gone.
 - tapOn: "Settings"
 - scrollUntilVisible:
     element:
       text: "ADVANCED|Advanced"
     timeout: 15000
 - tapOn: "ADVANCED|Advanced"
-- tapOn: "api\\.whim\\..*"
+- runFlow:
+    when:
+      visible: "Use your own server"
+    commands:
+      - tapOn: "Use your own server"
+      - tapOn: "Use my own server"
+- tapOn: "(https://)?api\\.whim\\..*"
 - inputText: ${SERVER_URL}
 - tapOn: "ABOUT|About"
 - extendedWaitUntil:

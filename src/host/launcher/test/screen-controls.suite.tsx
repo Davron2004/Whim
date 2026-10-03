@@ -32,7 +32,7 @@ const access = { timeline: async () => [], activeId: async () => null } as unkno
 // Adding a screen kind requires a behavioral fixture (home and mini-app exits have separate
 // contracts). These are real screens with only their outside callbacks/storage supplied.
 const cases: Record<Exclude<ScreenKind, 'home' | 'app' | 'dev'>, { label: string; render: (leave: () => void) => React.ReactElement }> = {
-  settings: { label: COPY.backLabel, render: leave => <SettingsScreen onBack={leave} highlighting canProbe={false} consentStatus={{ kind: 'absent' }} onServerUrlChange={noop} onUseDefaultServer={noop} onHighlightingChange={noop} onOpenAIFeatures={noop} internalBuild errorDetails onErrorDetailsChange={noop} deviceId="test-device" onResetDeviceId={noop} legalLanguage="en" /> },
+  settings: { label: COPY.backLabel, render: leave => <SettingsScreen onBack={leave} highlighting canProbe={false} consentStatus={{ kind: 'absent' }} onServerUrlChange={noop} onUseDefaultServer={noop} onHighlightingChange={noop} onOpenAIFeatures={noop} ownServerAcknowledged onAcknowledgeOwnServer={() => undefined} errorDetails onErrorDetailsChange={noop} deviceId="test-device" onResetDeviceId={noop} legalLanguage="en" /> },
   history: { label: COPY.backLabel, render: leave => <HistoryScreen app={SCREEN_APP} access={access} onBack={leave} onReport={noop} /> },
   'link-missing': { label: COPY.appLinkMissingBack, render: leave => <AppLinkMissingScreen onBackToApps={leave} /> },
   'update-required': { label: COPY.updateNotNow, render: leave => <UpdateRequiredScreen onNotNow={leave} /> },

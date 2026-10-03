@@ -1,18 +1,21 @@
 /**
- * server-address — the manually entered generation-server address (design D3; spec "The
- * Settings screen persists a server address for the prompt flow").
+ * server-address — the user's own server (beta-1 design D20; spec app-launcher "The Settings
+ * screen persists a server address for the prompt flow").
  *
- * Persisted under `whim.server-url:v1` in the same `whim.launcher` KVBackend as the theme pref
- * and installed-apps index (`theme.ts`'s `THEME_KEY` / `app-index.ts`'s `SEED_KEY` precedent).
- * Tolerant, never throws: an absent key or a blank/whitespace-only value both resolve to
- * `undefined` ("not configured") rather than an empty string, so callers can gate on a single
- * nullish check (`clientOptions != null` / `serverConfigured`).
+ * The address is persisted under `whim.server-url:v1`, and the once-per-install acknowledgement
+ * that has to come before it is honoured under `whim.server-ack:v1`, both in the same
+ * `whim.launcher` KVBackend as the theme pref and installed-apps index (`theme.ts`'s `THEME_KEY` /
+ * `app-index.ts`'s `SEED_KEY` precedent). Tolerant, never throws: an absent key or a
+ * blank/whitespace-only value both resolve to `undefined` ("not configured") rather than an empty
+ * string, so callers can gate on a single nullish check (`clientOptions != null` /
+ * `serverConfigured`).
  */
 
 import type { KVBackend } from '../version-store/fs/kv-fs';
 import { RELEASE } from './release-config';
 
 const SERVER_URL_KEY = 'whim.server-url:v1';
+const SERVER_ACK_KEY = 'whim.server-ack:v1';
 
 /**
  * Trims, strips trailing slashes (one or more — `host:8787///` → `host:8787`), and drops a blank
@@ -41,39 +44,154 @@ export function loadServerUrl(kv: KVBackend): string | undefined {
   return sanitizeServerUrl(kv.getString(SERVER_URL_KEY));
 }
 
-/** Persist a (possibly blank) address; a blank value clears the key rather than storing "". */
-export function saveServerUrl(kv: KVBackend, raw: string): void {
+/** Persist a (possibly blank) address; a blank value clears the key rather than storing "". An
+ *  address the rule refuses (`serverAddressAllowed`) is not saved, and the saved one stays.
+ *  Returns whether the value was taken. */
+export function saveServerUrl(kv: KVBackend, raw: string): boolean {
   const sanitized = sanitizeServerUrl(raw);
   if (sanitized == null) {
     kv.delete(SERVER_URL_KEY);
-  } else {
-    kv.set(SERVER_URL_KEY, sanitized);
+    return true;
   }
+  if (!serverAddressAllowed(sanitized)) return false;
+  kv.set(SERVER_URL_KEY, sanitized);
+  return true;
+}
+
+const IPV4_OCTET = String.raw`(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)`;
+const IPV4_RE = new RegExp(String.raw`^${IPV4_OCTET}(?:\.${IPV4_OCTET}){3}$`);
+const HOST_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+/** A label a URL parser reads as a number (decimal, or `0x` hex), which turns the host into an IPv4
+ *  address: `http://134744072` and `http://0x08080808` are both 8.8.8.8. */
+const NUMERIC_LABEL_RE = /^(?:\d+|0x[0-9a-f]*)$/;
+const ADDRESS_RE = /^(https?):\/\/([^/?#]+)(?:[/?#].*)?$/i;
+
+/** The host an http authority names, lower-cased, or `undefined` when it carries user info or a
+ *  malformed port: either could make the host a fetch reaches differ from the one checked here. */
+function hostOf(authority: string): string | undefined {
+  const match = /^(\[[^\]]*\]|[^:@[\]]+)(?::\d{1,5})?$/.exec(authority);
+  return match?.[1].toLowerCase();
+}
+
+/** Whether four IPv4 octets are loopback (127/8), private (10/8, 172.16/12, 192.168/16),
+ *  link-local (169.254/16) or carrier-grade NAT (100.64/10, which Tailscale uses). */
+function isPrivateIpv4([a, b]: readonly number[]): boolean {
+  return (
+    a === 127 ||
+    a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) ||
+    (a === 100 && b >= 64 && b <= 127)
+  );
+}
+
+/** A dotted-quad IPv4 literal's four octets, or `undefined`. */
+function ipv4Octets(text: string): number[] | undefined {
+  return IPV4_RE.test(text) ? text.split('.').map(Number) : undefined;
+}
+
+/** An IPv6 literal's eight 16-bit groups (`::` expanded, a trailing dotted IPv4 folded into the
+ *  last two), or `undefined` when it isn't one. */
+function ipv6Groups(text: string): number[] | undefined {
+  let body = text;
+  const lastColon = body.lastIndexOf(':');
+  if (body.includes('.', lastColon)) {
+    const octets = ipv4Octets(body.slice(lastColon + 1));
+    if (octets === undefined) return undefined;
+    const hex = (high: number, low: number) => (high * 256 + low).toString(16);
+    body = `${body.slice(0, lastColon + 1)}${hex(octets[0], octets[1])}:${hex(octets[2], octets[3])}`;
+  }
+  const halves = body.split('::');
+  if (halves.length > 2) return undefined;
+  const groupsOf = (part: string) => (part === '' ? [] : part.split(':'));
+  const head = groupsOf(halves[0]);
+  const rest = halves.length === 2 ? groupsOf(halves[1]) : [];
+  if (![...head, ...rest].every((group) => /^[0-9a-f]{1,4}$/.test(group))) return undefined;
+  const given = head.length + rest.length;
+  if (halves.length === 2 ? given > 7 : given !== 8) return undefined;
+  const zeros = new Array<string>(8 - given).fill('0');
+  return [...head, ...zeros, ...rest].map((group) => Number.parseInt(group, 16));
+}
+
+/** Whether a bracketed IPv6 literal is loopback (::1), link-local (fe80::/10), unique-local
+ *  (fc00::/7), or an IPv4-mapped address (::ffff:a.b.c.d) whose IPv4 address is private. */
+function isPrivateIpv6(bracketed: string): boolean {
+  const groups = ipv6Groups(bracketed.slice(1, -1));
+  if (groups === undefined) return false;
+  if (groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff) {
+    const octets = (group: number) => [Math.floor(group / 256), group % 256];
+    return isPrivateIpv4([...octets(groups[6]), ...octets(groups[7])]);
+  }
+  const loopback = groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1;
+  const linkLocal = groups[0] >= 0xfe80 && groups[0] <= 0xfebf;
+  const uniqueLocal = groups[0] >= 0xfc00 && groups[0] <= 0xfdff;
+  return loopback || linkLocal || uniqueLocal;
+}
+
+/** A loopback or private-range IP literal (`isPrivateIpv4`, `isPrivateIpv6`), `localhost`, a
+ *  `.local` name, or a single-label host that isn't numeric. */
+function isLocalHost(host: string): boolean {
+  if (host.startsWith('[')) return host.endsWith(']') && isPrivateIpv6(host);
+  const octets = ipv4Octets(host);
+  if (octets !== undefined) return isPrivateIpv4(octets);
+  const labels = host.split('.');
+  if (!labels.every((label) => HOST_LABEL_RE.test(label))) return false;
+  if (labels.length === 1) return !NUMERIC_LABEL_RE.test(labels[0]);
+  return labels.at(-1) === 'local';
 }
 
 /**
- * The override this build honours (legal-surface-v2 design D10; spec app-launcher "Store builds
- * SHALL … ignore any override saved by an earlier build"): the saved address in an internal build,
- * always `undefined` in a store build. A store build leaves the saved value in place, unread.
- * `internalBuild` comes from `installed-app-info.ts#installedInternalBuild`.
+ * The address rule (design D20; spec native-release-config "Store builds carry no cleartext
+ * exception"): an `https://` address is always allowed; an `http://` one only for a host on the
+ * user's own network (`isLocalHost`); anything else (another scheme, no scheme) never. A blank
+ * value is allowed: it means "no override". Every Android build type permits cleartext at its
+ * base, so this rule, not the OS, keeps plain http off the public internet.
  */
-export function serverOverride(kv: KVBackend, { internalBuild }: { internalBuild: boolean }): string | undefined {
-  return internalBuild ? loadServerUrl(kv) : undefined;
+export function serverAddressAllowed(raw: string): boolean {
+  const sanitized = sanitizeServerUrl(raw);
+  if (sanitized == null) return true;
+  const match = ADDRESS_RE.exec(sanitized);
+  if (match == null) return false;
+  if (match[1].toLowerCase() === 'https') return true;
+  const host = hostOf(match[2]);
+  return host != null && isLocalHost(host);
+}
+
+/** Whether the user has confirmed, on this install, that their own server isn't Whim's
+ *  responsibility. Nothing un-records it: "Use Whim's server" keeps it. */
+export function ownServerAcknowledged(kv: KVBackend): boolean {
+  return kv.getString(SERVER_ACK_KEY) === '1';
+}
+
+/** Records the acknowledgement. The saved address, if any, is honoured from now on. */
+export function acknowledgeOwnServer(kv: KVBackend): void {
+  kv.set(SERVER_ACK_KEY, '1');
+}
+
+/**
+ * The override every request follows (design D20): the saved address once the acknowledgement is
+ * recorded and only while it passes the address rule, else `undefined`. An address saved by an
+ * earlier build stays in place, unread, until the user confirms.
+ */
+export function serverOverride(kv: KVBackend): string | undefined {
+  if (!ownServerAcknowledged(kv)) return undefined;
+  const saved = loadServerUrl(kv);
+  return saved != null && serverAddressAllowed(saved) ? saved : undefined;
 }
 
 /**
  * The server every request actually goes to (release-config "The compiled-in server is used
- * unless the user sets an override"): the override this build honours (`serverOverride` — a blank
- * or whitespace-only saved value already reads as "no override") — else the compiled-in
- * production server.
+ * unless the user sets an override"): the honoured override (`serverOverride`), else the
+ * compiled-in production server.
  */
-export function effectiveServerUrl(kv: KVBackend, internalBuild: boolean): string {
-  return serverOverride(kv, { internalBuild }) ?? RELEASE.serverUrl;
+export function effectiveServerUrl(kv: KVBackend): string {
+  return serverOverride(kv) ?? RELEASE.serverUrl;
 }
 
 /**
  * Remove the saved override so the next request goes to the compiled-in server, with no restart
- * needed (same spec, "Clearing the override restores the default").
+ * needed (same spec, "Going back to the default"). The acknowledgement stays.
  */
 export function clearServerUrl(kv: KVBackend): void {
   kv.delete(SERVER_URL_KEY);

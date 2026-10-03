@@ -80,6 +80,15 @@ native leg lands.
   features blocked, and Whim keeps only the outcome (allowed or blocked), on the device, never the
   range itself.
 
+- **Your own server (optional).** Whim is open source, so anyone can run its server. Settings →
+  Advanced → `Use your own server` lets a user point the app at one they choose, after a confirm
+  step saying that server gets everything Whim sends and that Whim's privacy policy doesn't cover
+  it. It is off by default: a fresh install, and every step in §1, uses Whim's own server, so
+  review needs nothing set up. Whatever server answers, its output runs under the same containment
+  as above (opaque-origin iframe, CSP, neutralized globals, the same capability bridge, the same
+  on-device age gate), so 4.7's guarantees don't depend on which server built the app. Each user
+  builds only for themselves there, and Whim offers no catalogue of what such a server makes.
+
 ## 3. Guideline 2.5.2 context
 
 Apple's guideline 2.5.2 bars an app from downloading or executing code that changes its own
