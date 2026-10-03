@@ -77,7 +77,7 @@ export async function runDiagnosticsUiTests(h: Harness): Promise<void> {
     const bodies: string[] = [];
     const post = recordingPost(bodies);
     await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
-      log.diagnostics.configure({ target: diagnosticsTarget(kv, testAppInfo, true), post, osVersion: '15' });
+      log.diagnostics.configure({ target: diagnosticsTarget(kv, testAppInfo), post, osVersion: '15' });
       try {
         await startBuild(tree, "A shared tab for Alice's Lisbon trip");
         const request = sent.find((r) => r.path === '/v1/generate')?.body as GenerateRequest | undefined;
@@ -107,7 +107,7 @@ export async function runDiagnosticsUiTests(h: Harness): Promise<void> {
     acceptTerms(kv, '2026-09-24T00:00:00.000Z');
     grantConsent(kv, '2026-09-24T00:00:00.000Z');
     saveServerUrl(kv, 'http://127.0.0.1:8787');
-    const target = diagnosticsTarget(kv, testAppInfo, true);
+    const target = diagnosticsTarget(kv, testAppInfo);
     const seam = createSeam({ console: false, diagnostics: { target, osVersion: '15', post: recordingPost([]) } });
     const onError = renderCrashRecorder({ seam, keepFatal: (record) => keepFatalRecord(kv, seam.diagnostics, record) });
     const error = new TypeError("cannot read 'Alice' of undefined");

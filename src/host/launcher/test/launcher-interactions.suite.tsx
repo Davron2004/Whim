@@ -13,7 +13,7 @@ import { AppIndex } from '../app-index';
 import { SEED_VERSION } from '../seed';
 import { grantConsent } from '../ai-consent';
 import { acceptTerms } from '../terms-acceptance';
-import { saveServerUrl } from '../server-address';
+import { acknowledgeOwnServer, saveServerUrl } from '../server-address';
 import { resetNativeStorage } from './native-storage';
 import { renderScreen, unmountScreen, captureTimeouts } from './react-screen';
 import { testAppInfo } from './client-fixtures';
@@ -27,6 +27,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     new AppIndex(kv).markSeeded(SEED_VERSION);
     acceptTerms(kv, '2026-09-18T12:00:00.000Z');
     grantConsent(kv, '2026-09-18T12:00:00.000Z');
+    acknowledgeOwnServer(kv);
     saveServerUrl(kv, 'https://s1.example');
     const clock = captureTimeouts();
     const originalFetch = globalThis.fetch;
@@ -40,7 +41,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     }) as typeof fetch;
     let tree: TestRenderer.ReactTestRenderer | undefined;
     try {
-      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} internalBuild deviceLocale={() => 'en-US'} />);
+      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
       await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onCreate());
       await TestRenderer.act(async () => tree!.root.findByType(ComposeStep).props.onChangeText('A timer'));
       await TestRenderer.act(async () => tree!.root.findByType(ComposeStep).props.onContinue());
@@ -88,6 +89,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     new AppIndex(kv).markSeeded(SEED_VERSION);
     acceptTerms(kv, '2026-09-18T12:00:00.000Z');
     grantConsent(kv, '2026-09-18T12:00:00.000Z');
+    acknowledgeOwnServer(kv);
     saveServerUrl(kv, 'https://current.example');
     const clock = captureTimeouts();
     const originalFetch = globalThis.fetch;
@@ -102,7 +104,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     }) as typeof fetch;
     let tree: TestRenderer.ReactTestRenderer | undefined;
     try {
-      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} internalBuild deviceLocale={() => 'en-US'} />);
+      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
       h.eq(tree.root.findByType(HomeScreen).props.offline, true, 'startup probe reports offline');
       await TestRenderer.act(async () => clock.fire(2000));
       h.eq(probes, 2, 'retry probe is now in flight');
@@ -128,6 +130,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     new AppIndex(kv).markSeeded(SEED_VERSION);
     acceptTerms(kv, '2026-09-18T12:00:00.000Z');
     grantConsent(kv, '2026-09-18T12:00:00.000Z');
+    acknowledgeOwnServer(kv);
     saveServerUrl(kv, 'https://s1.example');
     const clock = captureTimeouts();
     const originalFetch = globalThis.fetch;
@@ -139,7 +142,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     }) as typeof fetch;
     let tree: TestRenderer.ReactTestRenderer | undefined;
     try {
-      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} internalBuild deviceLocale={() => 'en-US'} />);
+      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
       await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onSettings());
       h.eq(probed, ['https://s1.example/healthz'], 'the saved address was probed once, at startup');
       const addressField = () => tree!.root.findByType(SettingsScreen).find(node => String(node.type) === 'TextInput');

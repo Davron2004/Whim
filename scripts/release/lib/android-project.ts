@@ -2,9 +2,9 @@
  * Checks the Android project's identity-independent shape: the app-link intent filter,
  * `singleTask` + portrait on `MainActivity`, and the cleartext split between the main and debug
  * network security configs (specs/app-links/spec.md "The Android app verifies and delivers app
- * links"; specs/native-release-config/spec.md "Store builds carry no cleartext exception", "The
- * iOS app declares its export, device and permission surface" Android portrait sentence; design
- * D4, D5). Pure text reading, no shelling out, so it runs in the Linux devcontainer gate
+ * links"; specs/native-release-config/spec.md "Store builds carry no cleartext exception" as beta-1
+ * D20 amends it, "The iOS app declares its export, device and permission surface" Android portrait
+ * sentence; design D4, D5). Pure text reading, no shelling out, so it runs in the Linux devcontainer gate
  * (chains.md's suite-portability rule).
  */
 
@@ -93,19 +93,24 @@ function checkManifest(repoRoot: string): AndroidProjectFinding[] {
   return problems.map((message) => ({ file: ANDROID_MANIFEST_PATH, message }));
 }
 
+/** The store build's config (beta-1 design D20): cleartext permitted at the base, so a user's own
+ *  server on a LAN IP is reachable (a <domain> can't name an arbitrary address), and no
+ *  <domain-config> overriding it. The launcher's address rule is the guard against plain http to
+ *  a public host; the sandbox's CSP keeps mini-app bundles off the network either way. */
 function checkMainNetworkConfig(repoRoot: string): AndroidProjectFinding[] {
   const text = readXml(repoRoot, ANDROID_MAIN_NETWORK_CONFIG_PATH);
   if (text === undefined) {
     return [{ file: ANDROID_MAIN_NETWORK_CONFIG_PATH, message: 'file not found' }];
   }
-  // Any element, not just <base-config>: a cleartext <domain-config> is the store-build leak.
-  if (/cleartextTrafficPermitted\s*=\s*"true"/.test(text)) {
-    return [{
-      file: ANDROID_MAIN_NETWORK_CONFIG_PATH,
-      message: 'the store build\'s network security config must permit cleartext to no host (found cleartextTrafficPermitted="true")',
-    }];
+  const problems: string[] = [];
+  const base = /<base-config\b([^>]*)>/.exec(text);
+  if (base === null || !/cleartextTrafficPermitted\s*=\s*"true"/.test(base[1])) {
+    problems.push('the store build\'s <base-config> must set cleartextTrafficPermitted="true", so a user\'s own LAN server is reachable');
   }
-  return [];
+  if (/<domain-config\b/.test(text)) {
+    problems.push('the store build\'s network security config must carry no <domain-config>: per-host rules would override the base for those hosts');
+  }
+  return problems.map((message) => ({ file: ANDROID_MAIN_NETWORK_CONFIG_PATH, message }));
 }
 
 function checkDebugNetworkConfig(repoRoot: string): AndroidProjectFinding[] {

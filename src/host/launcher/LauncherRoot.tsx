@@ -109,7 +109,7 @@ import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 import { PROTOCOL_LEVEL } from './wire-headers';
 import { FlowRequests, onlyOnStep } from './flow-request';
 import { SHELL_PALETTE } from './theme';
-import { clearServerUrl, effectiveServerUrl, saveServerUrl, serverOverride } from './server-address';
+import { acknowledgeOwnServer, clearServerUrl, effectiveServerUrl, ownServerAcknowledged, saveServerUrl, serverOverride } from './server-address';
 import { probeServerHealth } from './server-probe';
 import { ConnectivityLoop } from './connectivity';
 import type { Connectivity } from './connectivity';
@@ -121,7 +121,7 @@ import { GenerationClientError, clarifyPrompt, consentedClientOptions, generateA
 import type { ClientOptions, ConsentedClientOptions, GenerationStream } from './generation-client';
 import { reportClientOptions } from './transport-shared';
 import type { AppInfo } from './app-info';
-import { installedAppInfo, installedInternalBuild } from './installed-app-info';
+import { installedAppInfo } from './installed-app-info';
 import ReportSheet from './ReportSheet';
 import { consentStatus, grantConsent, outdatedGrantVersion, revokeConsent } from './ai-consent';
 import { acceptTerms, termsStatus } from './terms-acceptance';
@@ -381,8 +381,7 @@ function countEvent(counts: EventCounts, event: GenerationEvent): void {
 }
 
 /** `appInfo` reads the installed app's platform, version and build for the request envelope;
- *  `internalBuild` says whether this is an internal build (only those show and honour a
- *  server-address override, legal-surface-v2 D10); `deviceLocale` reads the phone's preferred
+ *  `deviceLocale` reads the phone's preferred
  *  locale, which picks the legal language until the user chooses one (legal-surface-v2 D6);
  *  `ageSignal` asks the store for its age signal before the terms step (legal-surface-v2 D11), and
  *  `significantUpdate` asks a supervised minor's guardian to acknowledge a terms change (beta-1
@@ -390,19 +389,15 @@ function countEvent(counts: EventCounts, event: GenerationEvent): void {
  *  launcher runner has no native module), to give the shell a build or a phone of its choosing. */
 export default function LauncherRoot({
   appInfo = installedAppInfo,
-  internalBuild,
   deviceLocale = installedDeviceLocale,
   ageSignal = installedAgeSignal,
   significantUpdate = installedSignificantUpdate,
 }: Readonly<{
   appInfo?: () => AppInfo;
-  internalBuild?: boolean;
   deviceLocale?: () => string | undefined;
   ageSignal?: () => Promise<unknown>;
   significantUpdate?: SignificantUpdateSheet;
 }>) {
-  // Read once: the installed binary can't change what kind of build it is while the process lives.
-  const [internal] = useState(() => internalBuild ?? installedInternalBuild());
   // Construct the persistent host services once (device native modules — lazy under the hood).
   // The device id, server address and highlighting flag all read from the SAME `whim.launcher`
   // KVBackend instance the installed-apps index uses (one MMKV instance, several consumers).
@@ -430,7 +425,6 @@ export default function LauncherRoot({
       journal={journal}
       kv={kv}
       appInfo={appInfo}
-      internalBuild={internal}
       deviceLocale={deviceLocale}
       ageSignal={ageSignal}
       significantUpdate={significantUpdate}
@@ -567,7 +561,6 @@ function LauncherShell({
   journal,
   kv,
   appInfo,
-  internalBuild,
   deviceLocale,
   ageSignal,
   significantUpdate,
@@ -578,7 +571,6 @@ function LauncherShell({
   journal: RunJournalStore;
   kv: KVBackend;
   appInfo: () => AppInfo;
-  internalBuild: boolean;
   deviceLocale: () => string | undefined;
   ageSignal: () => Promise<unknown>;
   significantUpdate: SignificantUpdateSheet | undefined;
@@ -614,8 +606,10 @@ function LauncherShell({
   // resubscribing `Linking`'s event on every first-run tick.
   const readyRef = useRef(ready);
   readyRef.current = ready;
-  // The override this build honours: always `undefined` in a store build (legal-surface-v2 D10).
-  const [serverUrl, setServerUrl] = useState<string | undefined>(() => serverOverride(kv, { internalBuild }));
+  // The override every request follows: `undefined` until the user has acknowledged that their
+  // own server is their responsibility (design D20), whatever an earlier build saved.
+  const [serverUrl, setServerUrl] = useState<string | undefined>(() => serverOverride(kv));
+  const [ownServerAck, setOwnServerAck] = useState<boolean>(() => ownServerAcknowledged(kv));
   const [highlighting, setHighlighting] = useState<boolean>(() => loadHighlighting(kv));
   const [errorDetailsShown, setErrorDetailsShown] = useState<boolean>(() => errorDetailsEnabled(kv));
   // The report sheet's target for the done-step and history-header entry points (design D13) —
@@ -637,12 +631,12 @@ function LauncherShell({
   // dependency).
   const [consentTick, setConsentTick] = useState(0);
   const clientOptions = useMemo<ConsentedClientOptions | null>(
-    () => consentedClientOptions(termsStatus(kv), consentStatus(kv), effectiveServerUrl(kv, internalBuild), deviceId, appInfo),
+    () => consentedClientOptions(termsStatus(kv), consentStatus(kv), effectiveServerUrl(kv), deviceId, appInfo),
     // consentTick/serverUrl stand in for the KV reads above (acceptTerms/grantConsent/revokeConsent/
     // saveServerUrl mutate `kv` directly, which is not itself a React dependency) — the same
     // "extra dep forces a re-read" idiom this file's other KV-backed memos and effects already use.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [consentTick, serverUrl, deviceId, kv, appInfo, internalBuild],
+    [consentTick, serverUrl, deviceId, kv, appInfo],
   );
 
   /** The options a data-sending entry point acts with, RIGHT NOW: the memo when it already reflects
@@ -651,16 +645,16 @@ function LauncherShell({
    *  retire the memo until the render AFTER this call returns (spec ai-data-consent "After the user
    *  agrees, the action they started SHALL continue as if consent had already existed"). */
   const resolveClientOptions = (): ConsentedClientOptions | null =>
-    resolveOptions(clientOptions, liveClientOptions(kv, deviceId, appInfo, internalBuild));
+    resolveOptions(clientOptions, liveClientOptions(kv, deviceId, appInfo));
 
   // Plain `ClientOptions` for the report sheet's `sendReport` call (design D3 — reporting is the
   // ONE request that needs no AI-data consent and no terms acceptance, so this is never gated the
   // way `clientOptions` above is). It still reads the grant, for the consent version its envelope
   // names, so it is keyed on `consentTick` too.
   const reportOptions = useMemo<ClientOptions>(
-    () => reportClientOptions(consentStatus(kv), effectiveServerUrl(kv, internalBuild), deviceId, appInfo),
+    () => reportClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId, appInfo),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [consentTick, serverUrl, deviceId, kv, appInfo, internalBuild],
+    [consentTick, serverUrl, deviceId, kv, appInfo],
   );
 
   const [connectivity, setConnectivity] = useState<Connectivity>('unknown');
@@ -672,7 +666,7 @@ function LauncherShell({
   const onlineForRequest = (options: ConsentedClientOptions): (() => void) => {
     const epoch = connectivityEpoch.current;
     return () => {
-      if (epoch === connectivityEpoch.current && options.baseUrl === effectiveServerUrl(kv, internalBuild)) {
+      if (epoch === connectivityEpoch.current && options.baseUrl === effectiveServerUrl(kv)) {
         connectivityLoopRef.current?.markOnline();
       }
     };
@@ -987,10 +981,10 @@ function LauncherShell({
   };
 
   const onServerUrlChange = (url: string) => {
-    const previous = effectiveServerUrl(kv, internalBuild);
+    const previous = effectiveServerUrl(kv);
     saveServerUrl(kv, url);
-    if (effectiveServerUrl(kv, internalBuild) !== previous) invalidateConnectivity();
-    setServerUrl(serverOverride(kv, { internalBuild }));
+    if (effectiveServerUrl(kv) !== previous) invalidateConnectivity();
+    setServerUrl(serverOverride(kv));
   };
 
   const onHighlightingChange = (enabled: boolean) => {
@@ -1009,11 +1003,23 @@ function LauncherShell({
     setDeviceId(resetDeviceId(kv));
   };
 
+  /** Settings' confirmed "Use your own server": records the acknowledgement, so a saved address is
+   *  honoured from now on, and returns it for the field to show. */
+  const onAcknowledgeOwnServer = (): string | undefined => {
+    const previous = effectiveServerUrl(kv);
+    acknowledgeOwnServer(kv);
+    if (effectiveServerUrl(kv) !== previous) invalidateConnectivity();
+    const honoured = serverOverride(kv);
+    setServerUrl(honoured);
+    setOwnServerAck(true);
+    return honoured;
+  };
+
   const onUseDefaultServer = () => {
-    const previous = effectiveServerUrl(kv, internalBuild);
+    const previous = effectiveServerUrl(kv);
     clearServerUrl(kv);
-    if (effectiveServerUrl(kv, internalBuild) !== previous) invalidateConnectivity();
-    setServerUrl(serverOverride(kv, { internalBuild }));
+    if (effectiveServerUrl(kv) !== previous) invalidateConnectivity();
+    setServerUrl(serverOverride(kv));
   };
 
   /** Forces `clientOptions` (and every other `termsStatus(kv)`/`consentStatus(kv)` read this render
@@ -2531,7 +2537,8 @@ function LauncherShell({
       return (
         <SettingsScreen
           onBack={goHome}
-          internalBuild={internalBuild}
+          ownServerAcknowledged={ownServerAck}
+          onAcknowledgeOwnServer={onAcknowledgeOwnServer}
           serverUrl={serverUrl}
           onServerUrlChange={onServerUrlChange}
           onUseDefaultServer={onUseDefaultServer}

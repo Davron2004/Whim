@@ -1,7 +1,8 @@
 /**
  * Acceptance for `scripts/release/lib/android-project.ts` (chain-4, platform-release-readiness).
  * specs/app-links/spec.md "The Android app verifies and delivers app links";
- * specs/native-release-config/spec.md "Store builds carry no cleartext exception"; task 5.6.
+ * specs/native-release-config/spec.md "Store builds carry no cleartext exception" as beta-1 D20
+ * amends it (cleartext at the base, no per-host rules); task 5.6.
  */
 
 import fs from 'node:fs';
@@ -65,7 +66,16 @@ function manifest(opts: { autoVerify: boolean; host: string; linkActivity?: stri
 
 const VALID_MANIFEST = manifest({ autoVerify: true, host: '${whimWebHost}' });
 
-const STRICT_MAIN_NETWORK_CONFIG = [
+const MAIN_NETWORK_CONFIG = [
+  '<?xml version="1.0" encoding="utf-8"?>',
+  '<network-security-config>',
+  '    <base-config cleartextTrafficPermitted="true"/>',
+  '</network-security-config>',
+  '',
+].join('\n');
+
+/** The pre-D20 store config: cleartext to no host, so a user's LAN server is unreachable. */
+const MAIN_NETWORK_CONFIG_WITHOUT_CLEARTEXT = [
   '<?xml version="1.0" encoding="utf-8"?>',
   '<network-security-config>',
   '    <base-config cleartextTrafficPermitted="false"/>',
@@ -73,12 +83,26 @@ const STRICT_MAIN_NETWORK_CONFIG = [
   '',
 ].join('\n');
 
-const MAIN_NETWORK_CONFIG_WITH_CLEARTEXT_DOMAIN = [
+/** Cleartext to a fixed host list only, as the dev config does: it carries a cleartext permit, but
+ *  an arbitrary LAN IP stays unreachable. */
+const MAIN_NETWORK_CONFIG_WITH_HOST_LIST = [
   '<?xml version="1.0" encoding="utf-8"?>',
   '<network-security-config>',
   '    <base-config cleartextTrafficPermitted="false"/>',
   '    <domain-config cleartextTrafficPermitted="true">',
-  '        <domain includeSubdomains="false">evil.example.com</domain>',
+  '        <domain includeSubdomains="false">10.0.2.2</domain>',
+  '    </domain-config>',
+  '</network-security-config>',
+  '',
+].join('\n');
+
+/** Cleartext at the base, then refused again for one host by a <domain-config>. */
+const MAIN_NETWORK_CONFIG_WITH_OVERRIDE = [
+  '<?xml version="1.0" encoding="utf-8"?>',
+  '<network-security-config>',
+  '    <base-config cleartextTrafficPermitted="true"/>',
+  '    <domain-config cleartextTrafficPermitted="false">',
+  '        <domain includeSubdomains="false">192.168.1.20</domain>',
   '    </domain-config>',
   '</network-security-config>',
   '',
@@ -101,7 +125,7 @@ const DEBUG_NETWORK_CONFIG = [
 
 function writeValidFixture(root: string): void {
   writeFile(root, ANDROID_MANIFEST_PATH, VALID_MANIFEST);
-  writeFile(root, ANDROID_MAIN_NETWORK_CONFIG_PATH, STRICT_MAIN_NETWORK_CONFIG);
+  writeFile(root, ANDROID_MAIN_NETWORK_CONFIG_PATH, MAIN_NETWORK_CONFIG);
   writeFile(root, ANDROID_DEBUG_NETWORK_CONFIG_PATH, DEBUG_NETWORK_CONFIG);
 }
 
@@ -151,11 +175,25 @@ export async function run(): Promise<void> {
       matches: /host/,
     },
     {
-      name: 'a main config with a cleartext domain-config fails (discriminating: a check of base-config alone would miss it)',
+      name: 'a main config that refuses cleartext at the base fails',
       file: ANDROID_MAIN_NETWORK_CONFIG_PATH,
-      content: () => MAIN_NETWORK_CONFIG_WITH_CLEARTEXT_DOMAIN,
+      content: () => MAIN_NETWORK_CONFIG_WITHOUT_CLEARTEXT,
       expectFile: ANDROID_MAIN_NETWORK_CONFIG_PATH,
-      matches: /./,
+      matches: /base-config/,
+    },
+    {
+      name: 'a main config permitting cleartext to a host list only fails (discriminating: a check for any cleartext permit would pass it)',
+      file: ANDROID_MAIN_NETWORK_CONFIG_PATH,
+      content: () => MAIN_NETWORK_CONFIG_WITH_HOST_LIST,
+      expectFile: ANDROID_MAIN_NETWORK_CONFIG_PATH,
+      matches: /base-config/,
+    },
+    {
+      name: 'a main config overriding the base for one host fails',
+      file: ANDROID_MAIN_NETWORK_CONFIG_PATH,
+      content: () => MAIN_NETWORK_CONFIG_WITH_OVERRIDE,
+      expectFile: ANDROID_MAIN_NETWORK_CONFIG_PATH,
+      matches: /domain-config/,
     },
   ];
 

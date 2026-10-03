@@ -48,9 +48,6 @@ export interface LauncherSetup {
   prepare?: (kv: KVBackend) => void;
   /** The installed app's info reader the shell builds its envelope from (default `testAppInfo`). */
   appInfo?: () => AppInfo;
-  /** Whether the shell runs as an internal build, which shows and honours a server-address
-   *  override (default true); false runs it as a store build. */
-  internalBuild?: boolean;
   /** Answers the store age check the shell runs before the terms step, as the native module would
    *  (default: `unavailable`, a phone with no signal). */
   ageSignal?: () => Promise<unknown>;
@@ -162,7 +159,6 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
     tree = await renderScreen(
       <LauncherRoot
         appInfo={setup.appInfo ?? testAppInfo}
-        internalBuild={setup.internalBuild ?? true}
         deviceLocale={() => locale}
         ageSignal={ageSignal}
         significantUpdate={setup.significantUpdate}

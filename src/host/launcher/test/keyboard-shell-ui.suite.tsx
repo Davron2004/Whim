@@ -220,7 +220,8 @@ const settings = () => (
   <SettingsScreen
     onBack={noop}
     legalLanguage="en"
-    internalBuild
+    ownServerAcknowledged
+    onAcknowledgeOwnServer={() => undefined}
     serverUrl="https://saved.example"
     onServerUrlChange={noop}
     onUseDefaultServer={noop}

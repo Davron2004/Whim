@@ -29,7 +29,7 @@ const props: SettingsScreenProps = {
   consentStatus: { kind: 'granted', version: AI_CONSENT_VERSION, grantedAt: '2026-09-18' },
   onBack: noop, onServerUrlChange: noop, onUseDefaultServer: noop,
   onHighlightingChange: noop, onOpenAIFeatures: noop,
-  internalBuild: true, errorDetails: true, onErrorDetailsChange: noop, deviceId: 'test-device', onResetDeviceId: noop,
+  ownServerAcknowledged: true, onAcknowledgeOwnServer: () => undefined, errorDetails: true, onErrorDetailsChange: noop, deviceId: 'test-device', onResetDeviceId: noop,
   legalLanguage: 'en',
 };
 export async function runSettingsScreenTests(h: Harness): Promise<void> {
@@ -85,6 +85,28 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
       h.eq(tree.root.findAll(node => String(node.type) === 'Text' && node.children.includes(COPY.settingsProbeNeutral)).length, 1, 'neutral consent explanation is visible');
     } finally { await unmountScreen(tree); clock.restore(); }
   });
+  await h.test('Settings: a plain-http public address is neither saved nor probed, and the note says why', async () => {
+    const clock = captureTimeouts();
+    const originalFetch = globalThis.fetch;
+    const requested: string[] = [];
+    const saved: string[] = [];
+    globalThis.fetch = (async (url: string) => { requested.push(String(url)); return new Response(JSON.stringify({ service: 'whim-server' })); }) as typeof fetch;
+    const tree = await renderScreen(<SettingsScreen {...props} onServerUrlChange={url => saved.push(url)} />);
+    try {
+      await type(tree, 'http://api.example.com');
+      await TestRenderer.act(async () => clock.fire(600));
+      await TestRenderer.act(async () => addressField(tree).props.onSubmitEditing());
+      h.eq([saved, requested], [[], []], 'nothing saved and no request sent, after the pause or on submit');
+      h.ok(textOf(tree.root).includes(COPY.serverAddressRefused), 'the refusal is explained inline');
+      await type(tree, 'http://api.example.org');
+      h.ok(!textOf(tree.root).includes(COPY.serverAddressRefused), 'a new edit clears the note until it settles');
+    } finally {
+      await unmountScreen(tree);
+      globalThis.fetch = originalFetch;
+      clock.restore();
+    }
+    h.eq(saved, [], 'leaving with the refused edit saves nothing either');
+  });
   await h.test('Settings: Advanced starts collapsed with no saved address, and open with one', async () => {
     for (const serverUrl of [undefined, '   ']) {
       const tree = await renderScreen(<SettingsScreen {...props} serverUrl={serverUrl} />);
@@ -94,7 +116,7 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
         h.eq(tree.root.findAll(node => String(node.type) === 'TextInput').length, 1, 'opening Advanced shows the address field');
       } finally { await unmountScreen(tree); }
     }
-    const saved = await renderScreen(<SettingsScreen {...props} serverUrl="192.168.1.20:4000" />);
+    const saved = await renderScreen(<SettingsScreen {...props} serverUrl="http://localhost:4000" />);
     try {
       h.eq(saved.root.findAll(node => String(node.type) === 'TextInput').length, 1, 'a saved override opens Advanced already');
     } finally { await unmountScreen(saved); }
@@ -135,19 +157,19 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
     const tree = await renderScreen(<SettingsScreen {...props} canProbe={false} onServerUrlChange={url => saved.push(url)} onUseDefaultServer={() => { cleared.count += 1; }} />);
     let mounted = true;
     try {
-      for (const keystroke of ['localhost:', 'localhost:8', 'localhost:87', 'localhost:8787']) await type(tree, keystroke);
+      for (const keystroke of ['http://localhost:', 'http://localhost:8', 'http://localhost:87', 'http://localhost:8787']) await type(tree, keystroke);
       h.eq([saved, clock.count(600)], [[], 1], 'four keystrokes save nothing yet and leave one pause pending');
       await TestRenderer.act(async () => clock.fire(600));
-      h.eq(saved, ['localhost:8787'], 'the pause saves the finished address once');
-      await type(tree, 'localhost:9');
+      h.eq(saved, ['http://localhost:8787'], 'the pause saves the finished address once');
+      await type(tree, 'http://localhost:9');
       await TestRenderer.act(async () => addressField(tree).props.onSubmitEditing());
-      h.eq([saved.at(-1), clock.count(600)], ['localhost:9', 0], 'submitting saves at once, with nothing left pending');
-      await type(tree, 'localhost:90');
+      h.eq([saved.at(-1), clock.count(600)], ['http://localhost:9', 0], 'submitting saves at once, with nothing left pending');
+      await type(tree, 'http://localhost:90');
       await TestRenderer.act(async () => addressField(tree).props.onBlur());
-      h.eq([saved.at(-1), clock.count(600)], ['localhost:90', 0], 'leaving the field saves at once');
+      h.eq([saved.at(-1), clock.count(600)], ['http://localhost:90', 0], 'leaving the field saves at once');
       await TestRenderer.act(async () => addressField(tree).props.onBlur());
       h.eq(saved.length, 3, 'a blur with nothing new saves nothing');
-      await type(tree, 'localhost:900');
+      await type(tree, 'http://localhost:900');
       await press(button(tree, COPY.settingsUseDefaultServer));
       mounted = false;
       await unmountScreen(tree);
@@ -201,7 +223,7 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
       await grow(collapsed);
       h.eq(scrolls.length, 1, 'collapsing Advanced scrolls nowhere');
     } finally { await unmountScreen(collapsed); }
-    const alreadyOpen = await open('192.168.1.20:4000');
+    const alreadyOpen = await open('http://localhost:4000');
     try {
       await grow(alreadyOpen);
       h.eq(scrolls.length, 1, 'Advanced already open for a saved address scrolls nowhere on arrival');

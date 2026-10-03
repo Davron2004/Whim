@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The store build's network security config (design D5): cleartext to no host. The dev cleartext
-  hosts live in src/debug/res/xml/network_security_config.xml, which replaces this whole file in
-  the `debug` and `offline` build types (same resource name; see android/app/build.gradle).
+  The store build's network security config (beta-1 design D20, amending D5): cleartext is
+  permitted at the base so a user's own server on their network (an arbitrary LAN IP, which a
+  <domain> can't name) is reachable over http. The launcher's address rule
+  (src/host/launcher/server-address.ts) is the guard: it accepts http:// only for an IP literal,
+  localhost, a .local name or a single-label host, and sends nothing to any other http:// address.
+  Mini-app bundles stay off the network through the sandbox's CSP, whatever this file says.
+  The dev cleartext hosts live in src/debug/res/xml/network_security_config.xml, which replaces
+  this whole file in the `debug` and `offline` build types (same resource name; see
+  android/app/build.gradle).
 -->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="false"/>
+    <base-config cleartextTrafficPermitted="true"/>
 </network-security-config>

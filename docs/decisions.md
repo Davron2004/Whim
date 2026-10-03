@@ -1263,3 +1263,30 @@ are in `docs/research/generation-speed-2026-09.md`.
 - **Model choice is re-made by measurement, not by feel.** `server/flowbench.mjs` drives the phone's
   flow against any roster and saves the apps for `evals/cli.mjs`; the judge method is in the change's
   `bench/` folder. Rerun both before changing a model.
+
+### 70. Anyone can point Whim at their own server, on their own responsibility `[DECIDED — openspec: beta-1 D20; reverses legal-surface-v2 D10]`
+
+legal-surface-v2 D10 kept the server-address override out of store builds: only debug and offline
+builds showed or honoured it, behind a native `internalBuild` flag. Whim is open source, so a
+self-hosted server is a feature, not a dev tool. The owner reversed D10 on 2026-10-03. Research:
+`openspec/changes/beta-1/research-self-hosted.md`.
+
+- **Every build shows and honours the override.** The `internalBuild` flag existed only for D10, so
+  it is gone end to end: both native constants, `WHIM_INTERNAL_BUILD`, the TurboModule field and
+  every prop that carried it. Settings → Advanced is always there.
+- **An acknowledgement comes first.** "Use your own server" opens the launcher's confirm sheet: that
+  server gets everything Whim sends, whoever runs it decides what it keeps, and Whim's privacy
+  policy doesn't cover it. Confirming records a once-per-install acknowledgement
+  (`whim.server-ack:v1`). Until then a saved address stays unread, so one saved by an earlier build
+  doesn't silently take effect. "Use Whim's server" clears the address and keeps the
+  acknowledgement.
+- **Plain http only for local addresses, enforced by the app.** `http://` is accepted only for an
+  IP literal, `localhost`, a `.local` name or a single-label host; anything else needs `https://`
+  and is refused before it is saved. Android can't name an arbitrary LAN IP in its network config,
+  so the release config permits cleartext at its base and this rule is the guard. The sandbox's CSP
+  keeps mini-app bundles off the network whatever that setting is. iOS ATS is unchanged.
+- **Policy text, not a manifest role.** Whim neither receives nor shares what goes to a user's own
+  server, so the disclosure manifest and `AI_CONSENT_VERSION` don't change and nobody re-consents.
+  The privacy policy (English and French) gains "If you point Whim at your own server".
+- **Store review gets told, not surprised.** The review notes disclose the feature and argue 4.7:
+  the default is Whim's server, and any server's output runs in the same sandbox.

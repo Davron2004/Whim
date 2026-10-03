@@ -1,8 +1,8 @@
-/** Settings' privacy controls and build-dependent sections in the rendered launcher
- *  (legal-surface-v2 tasks 5.1–5.3; specs privacy-settings and app-launcher): the "Send error
- *  details" switch, this phone's ID and "Make a new ID", the server address only in internal
- *  builds, the section order, and "Turn on AI features" showing each legal screen at most once and
- *  never granting without a terms record (beta-1 D6). */
+/** Settings' privacy controls and sections in the rendered launcher (legal-surface-v2 tasks
+ *  5.1–5.3; specs privacy-settings and app-launcher): the "Send error details" switch, this phone's
+ *  ID and "Make a new ID", the user's own server behind its acknowledgement (beta-1 D20), the
+ *  section order, and "Turn on AI features" showing each legal screen at most once and never
+ *  granting without a terms record (beta-1 D6). */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
@@ -13,22 +13,28 @@ import TermsScreen from '../TermsScreen';
 import AgeScreen from '../AgeScreen';
 import ConfirmSheet from '../ConfirmSheet';
 import LauncherRoot from '../LauncherRoot';
+import HistoryScreen from '../HistoryScreen';
+import BuildStep from '../BuildStep';
 import { AppIndex, type InstalledApp } from '../app-index';
-import { COPY } from '../copy';
+import { COPY, LEGAL_COPY } from '../copy';
 import { consentStatus, grantConsent } from '../ai-consent';
 import { termsStatus } from '../terms-acceptance';
 import { getDeviceId } from '../device-id';
 import { errorDetailsEnabled } from '../error-details';
 import { RELEASE, TERMS_VERSION } from '../release-config';
-import { saveServerUrl } from '../server-address';
+import { loadServerUrl, saveServerUrl } from '../server-address';
+import { StoreAccess } from '../store-access';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen } from './react-screen';
-import { composeAndContinue, json, waitFor, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, json, planLoaded, sseStream, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { Alert } from './native-host';
 import { testAppInfo } from './client-fixtures';
 
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 const OVERRIDE = 'https://lan.example:8787';
+/** A server on the user's own network: plain http, allowed for an IP literal. */
+// eslint-disable-next-line sonarjs/no-clear-text-protocols -- a LAN server over plain http is the case under test; the test's fetch stub answers it
+const LAN = 'http://192.168.1.20:8787';
 
 /** Answers clarify with no questions; nothing else is expected. */
 const clarifyServer = (r: SentRequest): Response | Promise<Response> =>
@@ -84,6 +90,42 @@ async function openMakeNewId(tree: Tree) {
   return { modal: sheet, text: textOf(sheet), cancel: control(COPY.cancel), confirm: control(COPY.settingsDeviceIdReset) };
 }
 
+/** Answers clarify with no questions, rewrite with an empty plan, a report as accepted, and a
+ *  generation with a stream that stays open. */
+const ownServer = (r: SentRequest): Response | Promise<Response> => {
+  if (r.path === '/v1/clarify') return json({ questions: [] });
+  if (r.path === '/v1/rewrite') return json({ rewrittenPrompt: String(r.body?.prompt), plan: [] });
+  if (r.path === '/v1/report') return json({ reportId: 'r-1' }, 202);
+  return sseStream(r.signal).response;
+};
+
+const addressFields = (tree: Tree) => tree.root.findAll((node) => node.type === 'TextInput');
+
+async function openAdvanced(tree: Tree): Promise<void> {
+  await press(button(tree, COPY.settingsAdvancedSectionTitle));
+}
+
+/** Takes "Use your own server" and returns what the confirm sheet shows, and its two controls. */
+async function openOwnServerSheet(tree: Tree, copy = LEGAL_COPY.en) {
+  await press(button(tree, copy.ownServerAction));
+  const sheet = tree.root.find((node) => String(node.type) === 'Modal');
+  const control = (label: string) => sheet.find((node) => String(node.type) === 'TouchableOpacity' && textOf(node) === label);
+  return { text: textOf(sheet), cancel: control(COPY.cancel), confirm: control(copy.ownServerConfirm) };
+}
+
+/** Types an address into the field and submits it, which settles its save at once. */
+async function typeAddress(tree: Tree, address: string): Promise<void> {
+  const [field] = addressFields(tree);
+  await TestRenderer.act(async () => field.props.onChangeText(address));
+  await TestRenderer.act(async () => addressFields(tree)[0].props.onSubmitEditing());
+}
+
+/** Home → compose → Continue, until the plan has loaded. */
+async function composeToPlan(tree: Tree): Promise<void> {
+  await composeAndContinue(tree, 'a timer');
+  await waitFor(() => planLoaded(tree), 'the plan');
+}
+
 const flatStyle = (node: TestRenderer.ReactTestInstance) => Object.assign({}, ...[node.props.style].flat(Infinity)) as { height?: number; backgroundColor?: string; paddingBottom?: number };
 
 /** Home → compose → Continue, and the `x-whim-device` header the clarify request carried. */
@@ -121,7 +163,7 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
       h.eq(errorDetailsEnabled(kv), false, 'the module reports off before any next upload decision');
       h.eq(errorDetailsSwitch(tree).props.value, false, 'the switch reads off');
       await unmountScreen(tree);
-      const restarted = await renderScreen(<LauncherRoot appInfo={testAppInfo} internalBuild deviceLocale={() => 'en-US'} />);
+      const restarted = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
       try {
         await openSettings(restarted);
         h.eq(errorDetailsEnabled(kv), false, 'after a restart the module still reports off');
@@ -200,7 +242,7 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
     await withLauncher({ apps: [APP], server: clarifyServer }, async ({ tree }) => {
       await openSettings(tree);
       const sheet = await openMakeNewId(tree);
-      h.eq(tree.root.findAllByType(ConfirmSheet).length, 1, 'the launcher’s own confirm sheet, not a system alert');
+      h.eq(tree.root.findAllByType(ConfirmSheet).filter((open) => open.props.confirm != null).length, 1, 'the launcher’s own confirm sheet, not a system alert');
       const [cancel, confirm] = [flatStyle(sheet.cancel), flatStyle(sheet.confirm)];
       h.ok((cancel.height ?? 0) > (confirm.height ?? 0) && cancel.backgroundColor !== undefined && confirm.backgroundColor === undefined, 'the safe Cancel is the large filled button; making a new ID is plain text under it');
     });
@@ -219,29 +261,125 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
   // ── app-launcher "The Settings screen persists a server address…" / "Settings groups its
   //    controls into titled sections…" ─────────────────────────────────────────────────────────
 
-  await h.test('store build: a saved override is ignored — no Advanced section or address field, and requests go to the compiled-in server', async () => {
-    await withLauncher({ internalBuild: false, prepare: (kv) => saveServerUrl(kv, OVERRIDE), server: clarifyServer }, async ({ tree, sent }) => {
+  await h.test('own server: an address an earlier build saved stays unread until acknowledged — Advanced closed, no field, every request to the compiled-in server', async () => {
+    await withLauncher({ prepare: (kv) => saveServerUrl(kv, OVERRIDE), server: clarifyServer }, async ({ tree, sent }) => {
       await openSettings(tree);
       const text = textOf(tree.root);
-      for (const title of [COPY.settingsAISectionTitle, COPY.highlightingSectionTitle, COPY.settingsAboutSectionTitle]) {
+      for (const title of [COPY.settingsAISectionTitle, COPY.highlightingSectionTitle, COPY.settingsAboutSectionTitle, COPY.settingsAdvancedSectionTitle]) {
         h.ok(text.includes(title), `the ${title} section is visible`);
       }
-      h.ok(!text.includes(COPY.settingsAdvancedSectionTitle), 'no Advanced section');
-      h.eq(tree.root.findAll((node) => node.type === 'TextInput').length, 0, 'no server address field');
+      h.eq(addressFields(tree).length, 0, 'Advanced starts collapsed: the saved address does not open it');
+      await openAdvanced(tree);
+      h.eq(addressFields(tree).length, 0, 'opened, Advanced shows no address field');
+      h.ok(textOf(tree.root).includes(LEGAL_COPY.en.ownServerAction), 'only the "Use your own server" action');
       await leaveSettings(tree);
       await composeAndContinue(tree, 'a timer');
       h.ok(sent.length > 0 && sent.every((r) => r.url.startsWith(`${RELEASE.serverUrl}/`)), `every request targets ${RELEASE.serverUrl} (got ${sent.map((r) => r.url).join(', ')})`);
     });
   });
 
-  await h.test('internal build: a saved override opens Advanced on the saved address, and requests go there', async () => {
-    await withLauncher({ internalBuild: true, prepare: (kv) => saveServerUrl(kv, OVERRIDE), server: clarifyServer }, async ({ tree, sent }) => {
+  await h.test('own server: the confirm step says what that server gets and that the policy does not cover it; Cancel leaves no field and no override', async () => {
+    await withLauncher({ prepare: (kv) => saveServerUrl(kv, OVERRIDE), server: clarifyServer }, async ({ tree, sent }) => {
       await openSettings(tree);
-      const fields = tree.root.findAll((node) => node.type === 'TextInput');
-      h.eq(fields.map((field) => field.props.value), [OVERRIDE], 'Advanced is already open, showing the saved address');
+      await openAdvanced(tree);
+      const sheet = await openOwnServerSheet(tree);
+      h.ok(sheet.text.includes(LEGAL_COPY.en.ownServerConfirmBody), 'the sheet carries the acknowledgement text');
+      await press(sheet.cancel);
+      h.eq(tree.root.findAll((node) => String(node.type) === 'Modal').length, 0, 'the sheet is gone');
+      h.eq(addressFields(tree).length, 0, 'no address field');
       await leaveSettings(tree);
       await composeAndContinue(tree, 'a timer');
-      h.ok(sent.length > 0 && sent.every((r) => r.url.startsWith(`${OVERRIDE}/`)), `every request targets the override (got ${sent.map((r) => r.url).join(', ')})`);
+      h.ok(sent.length > 0 && sent.every((r) => r.url.startsWith(`${RELEASE.serverUrl}/`)), `no override: every request targets ${RELEASE.serverUrl} (got ${sent.map((r) => r.url).join(', ')})`);
+    });
+  });
+
+  await h.test('own server: confirming shows the field; a LAN http:// address typed there gets clarify, rewrite, generate and report, under the responsibility caption', async () => {
+    const { timeline, activeId, activeDescription, activeSource } = StoreAccess.prototype;
+    const original = { timeline, activeId, activeDescription, activeSource };
+    StoreAccess.prototype.timeline = async () => [];
+    StoreAccess.prototype.activeId = async () => null;
+    StoreAccess.prototype.activeDescription = async () => 'A tea timer';
+    StoreAccess.prototype.activeSource = async () => 'export default {}';
+    try {
+      await withLauncher({ apps: [APP], server: ownServer }, async ({ tree, sent }) => {
+        await openSettings(tree);
+        await openAdvanced(tree);
+        await press((await openOwnServerSheet(tree)).confirm);
+        h.eq(addressFields(tree).map((field) => field.props.value), [''], 'the empty address field shows');
+        h.ok(!textOf(tree.root).includes(LEGAL_COPY.en.ownServerCaption), 'no caption while no override is saved');
+        await typeAddress(tree, LAN);
+        h.ok(textOf(tree.root).includes(LEGAL_COPY.en.ownServerCaption), 'the saved override carries the responsibility caption');
+        await leaveSettings(tree);
+        await composeToPlan(tree);
+        await buildIt(tree);
+        await waitFor(() => wasSent(sent, '/v1/generate'), 'the generate request');
+        await TestRenderer.act(async () => tree.root.findByType(BuildStep).props.onBack());
+        await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onHistory(APP));
+        await TestRenderer.act(async () => tree.root.findByType(HistoryScreen).props.onReport());
+        await waitFor(() => textOf(tree.root).includes(COPY.reportReasonBroken), 'the report draft');
+        await press(button(tree, COPY.reportReasonBroken));
+        await press(button(tree, COPY.reportSend));
+        await waitFor(() => wasSent(sent, '/v1/report'), 'the report request');
+        h.eq(sent.map((r) => r.url), ['/v1/clarify', '/v1/rewrite', '/v1/generate', '/v1/report'].map((path) => LAN + path), 'every request targets the typed address');
+      });
+    } finally {
+      Object.assign(StoreAccess.prototype, original);
+    }
+  });
+
+  await h.test('own server: http:// to a public host is refused inline and not saved; a LAN address then saves and clears the note', async () => {
+    await withLauncher({ server: clarifyServer }, async ({ tree, kv, sent }) => {
+      await openSettings(tree);
+      await openAdvanced(tree);
+      await press((await openOwnServerSheet(tree)).confirm);
+      await typeAddress(tree, 'http://example.com');
+      h.ok(textOf(tree.root).includes(COPY.serverAddressRefused), 'the refusal is explained under the field');
+      h.eq(loadServerUrl(kv), undefined, 'nothing was saved');
+      await typeAddress(tree, LAN);
+      h.ok(!textOf(tree.root).includes(COPY.serverAddressRefused), 'an allowed address clears the note');
+      h.eq(loadServerUrl(kv), LAN, 'and is saved');
+      await typeAddress(tree, 'http://example.com');
+      await leaveSettings(tree);
+      h.eq(loadServerUrl(kv), LAN, 'leaving with a refused draft keeps the saved address');
+      await composeAndContinue(tree, 'a timer');
+      h.ok(sent.length > 0 && sent.every((r) => r.url.startsWith(`${LAN}/`)), `requests target the saved LAN address, never the refused one (got ${sent.map((r) => r.url).join(', ')})`);
+    });
+  });
+
+  await h.test('own server: "Use Whim’s server" clears the address and keeps the acknowledgement, across a restart', async () => {
+    await withLauncher({ server: clarifyServer }, async ({ tree, kv, sent }) => {
+      await openSettings(tree);
+      await openAdvanced(tree);
+      await press((await openOwnServerSheet(tree)).confirm);
+      await typeAddress(tree, LAN);
+      await unmountScreen(tree);
+      const restarted = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
+      try {
+        await openSettings(restarted);
+        h.eq(addressFields(restarted).map((field) => field.props.value), [LAN], 'after a restart Advanced is already open on the saved address');
+        h.ok(textOf(restarted.root).includes(LEGAL_COPY.en.ownServerCaption), 'under the responsibility caption');
+        await press(button(restarted, COPY.settingsUseDefaultServer));
+        h.eq(addressFields(restarted).map((field) => field.props.value), [''], 'the field is empty and still there');
+        h.eq(loadServerUrl(kv), undefined, 'the saved address is gone');
+        await TestRenderer.act(async () => settings(restarted).props.onBack());
+        await openSettings(restarted);
+        await openAdvanced(restarted);
+        h.eq(addressFields(restarted).length, 1, 'the field is available again with no second acknowledgement');
+        await TestRenderer.act(async () => settings(restarted).props.onBack());
+        await composeAndContinue(restarted, 'a timer');
+        h.ok(sent.length > 0 && sent.every((r) => r.url.startsWith(`${RELEASE.serverUrl}/`)), `the next request targets ${RELEASE.serverUrl} (got ${sent.map((r) => r.url).join(', ')})`);
+      } finally {
+        await unmountScreen(restarted);
+      }
+    });
+  });
+
+  await h.test('own server: with the French legal text the confirm step speaks French', async () => {
+    await withLauncher({ locale: 'fr-CA', server: clarifyServer }, async ({ tree }) => {
+      await openSettings(tree);
+      await openAdvanced(tree);
+      const sheet = await openOwnServerSheet(tree, LEGAL_COPY.fr);
+      h.ok(sheet.text.includes(LEGAL_COPY.fr.ownServerConfirmBody) && sheet.text.includes(LEGAL_COPY.fr.ownServerConfirm), 'in the French table’s words');
     });
   });
 

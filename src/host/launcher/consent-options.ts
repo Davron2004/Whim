@@ -24,7 +24,6 @@ export function liveClientOptions(
   kv: KVBackend,
   deviceId: string,
   appInfo: () => AppInfo,
-  internalBuild: boolean,
 ): ConsentedClientOptions | null {
-  return consentedClientOptions(termsStatus(kv), consentStatus(kv), effectiveServerUrl(kv, internalBuild), deviceId, appInfo);
+  return consentedClientOptions(termsStatus(kv), consentStatus(kv), effectiveServerUrl(kv), deviceId, appInfo);
 }

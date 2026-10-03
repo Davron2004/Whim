@@ -25,11 +25,10 @@ import { requestHeaders } from './transport-shared';
 export function diagnosticsTarget(
   kv: KVBackend,
   appInfo: () => AppInfo,
-  internalBuild: boolean,
 ): () => DiagnosticsTarget | null {
   return () => {
     if (!errorDetailsEnabled(kv)) return null;
-    const options = liveClientOptions(kv, getDeviceId(kv), appInfo, internalBuild);
+    const options = liveClientOptions(kv, getDeviceId(kv), appInfo);
     if (options === null) return null;
     // Read the installed app's info here rather than inside `requestHeaders`: a read that fails
     // there is logged as an error record, which would come straight back into this gate.

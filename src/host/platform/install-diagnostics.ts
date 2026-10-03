@@ -23,13 +23,13 @@ import type { RejectionTracking, RejectionTrackerHost } from '../logging/crash-c
 import type { DiagnosticRecord } from '@whim/contract';
 import { keepFatalRecord, sendFatalRecord } from '../logging/fatal-slot';
 import { diagnosticsTarget } from '../launcher/diagnostics-target';
-import { installedAppInfo, installedInternalBuild } from '../launcher/installed-app-info';
+import { installedAppInfo } from '../launcher/installed-app-info';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 
 const kv = createMmkvBackend('whim.launcher');
 
 log.diagnostics.configure({
-  target: diagnosticsTarget(kv, installedAppInfo, installedInternalBuild()),
+  target: diagnosticsTarget(kv, installedAppInfo),
   osVersion: String(Platform.Version),
 });
 

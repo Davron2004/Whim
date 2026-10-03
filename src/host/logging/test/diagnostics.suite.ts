@@ -23,7 +23,7 @@ import { MapKVBackend } from '../../version-store/fs/kv-fs';
 import { acceptTerms } from '../../launcher/terms-acceptance';
 import { grantConsent, revokeConsent } from '../../launcher/ai-consent';
 import { setErrorDetails } from '../../launcher/error-details';
-import { saveServerUrl } from '../../launcher/server-address';
+import { acknowledgeOwnServer, saveServerUrl } from '../../launcher/server-address';
 import { getDeviceId } from '../../launcher/device-id';
 import { appInfoFrom } from '../../launcher/app-info';
 import { diagnosticsTarget } from '../../launcher/diagnostics-target';
@@ -103,16 +103,17 @@ function consentedStore(): MapKVBackend {
   const kv = new MapKVBackend();
   acceptTerms(kv, '2026-09-24T00:00:00.000Z');
   grantConsent(kv, '2026-09-24T00:00:00.000Z');
+  acknowledgeOwnServer(kv);
   saveServerUrl(kv, SERVER);
   return kv;
 }
 
-/** A seam uploading through the real gate over `kv` (an internal build, so the saved address is
- *  honoured and the upload lands at `SERVER`). */
+/** A seam uploading through the real gate over `kv` (the user's own server is acknowledged, so the
+ *  saved address is honoured and the upload lands at `SERVER`). */
 function gatedSeam(kv: MapKVBackend, uploads: Upload[]): Seam {
   return createSeam({
     console: false,
-    diagnostics: { target: diagnosticsTarget(kv, () => APP_INFO, true), osVersion: '15', post: recordingPost(uploads) },
+    diagnostics: { target: diagnosticsTarget(kv, () => APP_INFO), osVersion: '15', post: recordingPost(uploads) },
   });
 }
 
