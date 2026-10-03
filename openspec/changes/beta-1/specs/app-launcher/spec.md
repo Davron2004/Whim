@@ -122,3 +122,51 @@ Tapping a ghost tile whose current store state is `building` SHALL reopen the bu
 
 - **WHEN** Home or an app link opens a persisted generic failed record marked journalUnavailable after restart while an old raw journal still exists
 - **THEN** the failed screen opens without that old report and the ghost remains failed; journal availability does not change its lifecycle state
+
+### Requirement: The Settings screen persists a server address for the prompt flow
+Every build of the launcher SHALL let the user point Whim at their own server: an optional override of the compiled-in production server (see `release-config`), used by every request the launcher sends, including reports and diagnostics. The override SHALL be honoured only after the user has confirmed, once per install, that the chosen server sees everything Whim sends, that its operator decides what it keeps, and that Whim's privacy policy doesn't cover it. Until that acknowledgement is recorded, a saved address (including one saved by an earlier build) SHALL stay unread and every request SHALL go to the compiled-in server. The field SHALL live in the Settings screen's Advanced section and SHALL be editable only after the acknowledgement. While an override is active, a caption under the field SHALL restate that the user's server is the user's responsibility. A blank address SHALL mean "no override" and SHALL never cause a crash. An `http://` address SHALL be accepted only for an IP literal, `localhost`, a `.local` name or a single-label host; any other host SHALL require `https://`, and a refused address SHALL be explained inline and not saved. When an override is saved, a plain-text action SHALL offer to go back to the default server, and taking it SHALL clear the override and keep the acknowledgement. The field's placeholder SHALL name the default server's host so the user can see what "no override" means.
+
+#### Scenario: Configured address is used
+- **WHEN** the user has confirmed the acknowledgement, entered a server address in Settings and submits a prompt
+- **THEN** the clarify, rewrite, generation and report requests target that address
+
+#### Scenario: No override uses the default server
+- **WHEN** no server address has been entered and the user submits a prompt with consent granted
+- **THEN** the requests target the compiled-in production server, and no "set an address in Settings" message is shown
+
+#### Scenario: The acknowledgement comes first
+- **WHEN** a user opens Advanced for the first time and takes "Use your own server"
+- **THEN** a confirm sheet explains that the server sees everything Whim sends and that Whim's privacy policy doesn't cover it; cancelling leaves no field and no override, and confirming shows the field
+
+#### Scenario: An address from an earlier build waits for the acknowledgement
+- **WHEN** a build starts on a phone where an earlier build saved an override and no acknowledgement is recorded
+- **THEN** every request targets the compiled-in production server, and Settings shows the saved address only after the user confirms
+
+#### Scenario: Plain http only for a local server
+- **WHEN** the user enters `http://192.168.1.20:8787` and then `http://example.com`
+- **THEN** the first is saved and used, and the second is refused inline with a note that non-local servers need `https://`
+
+#### Scenario: Going back to the default
+- **WHEN** an override is saved and the user takes the use-the-default action
+- **THEN** the field is empty, the next request targets the compiled-in production server, and the field stays available without a second acknowledgement
+
+### Requirement: Settings groups its controls into titled sections, with the server address under Advanced
+The Settings screen SHALL present, in order:
+- an AI features section, holding the consent row (see `ai-data-consent`) and the "Send error details" switch (see `privacy-settings`);
+- the existing Highlighting section;
+- an About section, with the privacy policy, terms of use and support links and the "This phone's ID" row (see `privacy-settings`);
+- an Advanced section holding the own-server action and, once acknowledged, the server address.
+
+The Advanced section SHALL be collapsed by default behind one row, SHALL open with a tap, and SHALL render already open while an acknowledged override is saved. Whether it is open SHALL NOT be persisted. Every string SHALL come from the copy table, and every style from the shell palette and SDK tokens.
+
+#### Scenario: Advanced is in every build
+- **WHEN** a user of a store build opens Settings
+- **THEN** AI features, Highlighting, About and a collapsed Advanced section are visible
+
+#### Scenario: An override keeps Advanced open
+- **WHEN** a user with an acknowledged, saved override opens Settings
+- **THEN** the Advanced section is already open and shows the saved address with the responsibility caption
+
+#### Scenario: About carries the legal links and the ID
+- **WHEN** the user opens Settings
+- **THEN** the About section shows the privacy policy, terms of use and support links and this phone's ID

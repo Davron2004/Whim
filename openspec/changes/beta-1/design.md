@@ -305,6 +305,34 @@ gates, review and CI; the exhausted mechanical cap is not reset. Existing generi
 paths and ownership remain. General cancel/successful-delivery I/O recovery is excluded. One existing observability test fixture also needs verified setup before intentional journal corruption; its fallback assertions remain intact. Exact
 interfaces and scope are in `handoff/pending-write-degradation.md`.
 
+**D20. Anyone can point Whim at their own server, on their own responsibility (owner, 2026-10-03; reverses
+legal-surface-v2 D10).** Whim is open source, and a self-hosted backend is a feature, not a dev tool. Research:
+`research-self-hosted.md`.
+- **Every build shows and honours the override.** The `internalBuild` flag existed only for D10, so it is
+  deleted end to end: the native `internalBuild` constant on both platforms, `WHIM_INTERNAL_BUILD`, the spec
+  field, `internalBuildFrom`/`installedInternalBuild`, and every prop and argument that threads it.
+  Settings → Advanced is always present.
+- **An acknowledgement comes first, and the override is honoured only once it is recorded.** Advanced shows a
+  "Use your own server" action. It opens the existing confirm sheet: that server sees everything Whim sends
+  (prompts, answers, reports, diagnostics, the phone ID), its operator decides what it keeps, and Whim's
+  privacy policy doesn't cover it. Confirming persists a once-per-install acknowledgement (its own KV key),
+  then shows the field. `serverOverride` returns the saved address only when the acknowledgement is recorded,
+  so an address saved by an earlier build (382511 showed the field) stays unread until the user confirms.
+  While an override is active, a persistent caption under the field restates the responsibility.
+  "Use Whim's server" clears the address and keeps the acknowledgement.
+- **Plain http only for local addresses, enforced by the app on both platforms.** An `http://` address is
+  accepted only for IP literals, `localhost`, `.local` and single-label hosts; any other host must be
+  `https://`. Android's network config can't name an arbitrary LAN IP, so the release base config permits
+  cleartext and this app rule is the guard; the mini-app sandbox's CSP keeps bundles off the network
+  regardless. iOS ATS is unchanged (local networking already allowed).
+- **Policy text, not a manifest role.** Whim doesn't receive or share what goes to a user's own server, so the
+  disclosure manifest and `AI_CONSENT_VERSION` don't change and there's no re-consent. The privacy policy
+  (en + fr) gains "If you point Whim at your own server", and "Changes to this policy" a dated bullet.
+- **Store review.** The review notes disclose the feature and argue 4.7: the default is Whim's server, and
+  the same sandbox applies to any server's output. App Privacy and Data safety answers are unchanged.
+- **Acceptance.** 392403's native and upgrade evidence is superseded; a new candidate is rebuilt, upgrade-checked
+  and uploaded to TestFlight and the Play closed track, and the site is redeployed with the new policy.
+
 ## Risks / Trade-offs
 
 - Pending recovery can confuse current memory with persisted state. Keep separate read APIs and test both against raw KV values. The volatile terminal fact is lost with its process; startup reports interruption from surviving building records.

@@ -151,3 +151,26 @@ so nothing is HUMAN-BOOTSTRAP. The owner runs chains one at a time (low-priority
   Root's r7 scope amendment adds delivery ownership and independent live/UI ownership to this
   existing chain. Original BASE and capped mechanical lane remain unchanged. Review the whole
   composed seven-file product/test diff plus handoff, including privately carried commits.
+
+## chain-11: own-server-override
+
+- tasks: 12.1–12.4
+- rationale: the flag deletion, the acknowledgement gate, the address rule and the policy text are one
+  feature with one reviewer story; they share SettingsScreen, server-address and LauncherRoot.
+- reads: design.md D20; research-self-hosted.md; beta-1 deltas specs/app-launcher (the two server-address
+  requirements at the end) and specs/native-release-config; legal-surface-v2 D10 for what is reversed.
+- writes-contract: none (no later chain consumes it).
+- after: chain-1 … chain-10 (all merged).
+- product/test writes: src/host/launcher/{server-address.ts,SettingsScreen.tsx,LauncherRoot.tsx,
+  consent-options.ts,copy.ts,app-info.ts,installed-app-info.ts,settings-sections.ts}; src/host/launcher/
+  diagnostics-target.ts; src/host/launcher/platform/install-diagnostics.ts; src/native/NativeWhimAppInfo.ts;
+  android/app/src/main/java/com/whim/tone/WhimAppInfoModule.kt; ios/Whim/WhimAppInfoModule.mm;
+  android/app/build.gradle (WHIM_INTERNAL_BUILD only); android/app/src/main/res/xml/network_security_config.xml;
+  scripts/release/lib/android-project.ts; checks/test/release/android-project.suite.ts;
+  src/host/launcher/test/** (suites and hosts that pass or assert internalBuild, plus new override tests);
+  src/host/logging/test/diagnostics.suite.ts (comment only).
+- docs/legal writes: deploy/site/privacy.html; deploy/site/fr/privacy.html; docs/store/review-notes.md;
+  docs/release/mobile.md; docs/decisions.md.
+- scope exclusions: invariants/, the runtime/sandbox CSP, SDK, server/, contract/ (no manifest change, no
+  AI_CONSENT_VERSION bump), release/store answers, gate/config files, live specs. Root owns tasks/progress.
+
