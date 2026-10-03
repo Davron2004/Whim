@@ -1,6 +1,11 @@
+## RENAMED Requirements
+
+- FROM: `### Requirement: Store builds carry no cleartext exception`
+- TO: `### Requirement: Store builds permit cleartext only for a user-chosen local server`
+
 ## MODIFIED Requirements
 
-### Requirement: Store builds carry no cleartext exception
+### Requirement: Store builds permit cleartext only for a user-chosen local server
 The Android `release` build type SHALL permit cleartext traffic only so that a user-chosen local server is reachable, with the launcher's address rule (see `app-launcher`) as the guard: it accepts `http://` only for a loopback or private-range IP literal, `localhost`, a `.local` name or a non-numeric single-label host, and nothing in the launcher sends a request to any other `http://` address.
 The iOS app SHALL keep App Transport Security's arbitrary loads disabled, with local networking as its only exception, and SHALL declare a non-empty local-network usage description. Mini-app bundles SHALL stay off the network in every build through the sandbox's content security policy, whatever the platform's cleartext setting.
 
