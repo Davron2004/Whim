@@ -378,3 +378,5 @@
 - 2026-10-03: Sonar on `1127d47b` (after the acceptance-evidence exclusion): gate OK, 0 issues (/tmp/whim-beta1-sonar-r4b.md). fix-14 dispatched at BASE `4f4e2e06`, worktree `.claude/worktrees/beta-1-fix-14` (npm ci 0, build 0).
 
 - 2026-10-03: fix-14 report at `863358d2`: complete 4/4. Red (discard keeps the 429 pause) exit 1, 14,194/1 (/tmp/whim-fix14-red.log); green 14,195/0; fast gate exit 0 FAST GATE PASSED. Policy encryption claim scoped to Whim's server plus an own-network http note (en+fr); acknowledgement list adds the apps you change (en+fr); self-hoster minimum-build note in docs/deploy.md. Root integrity exit 0 vs BASE `4f4e2e06`, 6 files; root read the copy diff. Accepted for merge.
+
+- 2026-10-03: fix-14 merged; 12.6 ticked; merged fast regate exit 0 FAST GATE PASSED; worktree/branch/owner retired. Full gate on clean `324290c4bc08b27ce6de4eb17c0480a879620c4d` exit 0, FULL GATE PASSED, OpenSpec 48/48 (/tmp/whim-fix14-fullgate.log). Root pins `324290c4` as the D20 candidate's product source; documentation HEAD may advance only with an empty product diff.
