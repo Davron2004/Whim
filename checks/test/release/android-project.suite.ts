@@ -172,6 +172,13 @@ export async function run(): Promise<void> {
       matches: /base-config/,
     },
     {
+      name: 'a build-variant network config that would replace the main one fails',
+      file: 'android/app/src/debug/res/xml/network_security_config.xml',
+      content: () => MAIN_NETWORK_CONFIG_WITH_HOST_LIST,
+      expectFile: 'android/app/src/debug/res/xml/network_security_config.xml',
+      matches: /replace/,
+    },
+    {
       name: 'a main config overriding the base for one host fails',
       file: ANDROID_MAIN_NETWORK_CONFIG_PATH,
       content: () => MAIN_NETWORK_CONFIG_WITH_OVERRIDE,

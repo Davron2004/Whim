@@ -13,6 +13,7 @@ import path from 'node:path';
 
 export const ANDROID_MANIFEST_PATH = 'android/app/src/main/AndroidManifest.xml';
 export const ANDROID_MAIN_NETWORK_CONFIG_PATH = 'android/app/src/main/res/xml/network_security_config.xml';
+const ANDROID_SOURCE_SETS_DIR = 'android/app/src';
 
 export interface AndroidProjectFinding {
   readonly file: string;
@@ -112,10 +113,24 @@ function checkMainNetworkConfig(repoRoot: string): AndroidProjectFinding[] {
   return problems.map((message) => ({ file: ANDROID_MAIN_NETWORK_CONFIG_PATH, message }));
 }
 
-/** Every finding across the manifest and the network security config. Empty means the project passes. */
+/** A network security config under any other source set (`debug`, `offline`, ...) replaces main's
+ *  whole file in that build type, so every build type must use main's (beta-1 design D20). */
+function checkVariantNetworkConfigs(repoRoot: string): AndroidProjectFinding[] {
+  const sourceSets = path.join(repoRoot, ANDROID_SOURCE_SETS_DIR);
+  if (!fs.existsSync(sourceSets)) return [];
+  return fs
+    .readdirSync(sourceSets, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name !== 'main')
+    .map((entry) => `${ANDROID_SOURCE_SETS_DIR}/${entry.name}/res/xml/network_security_config.xml`)
+    .filter((file) => fs.existsSync(path.join(repoRoot, file)))
+    .map((file) => ({ file, message: `a build-variant network security config would replace ${ANDROID_MAIN_NETWORK_CONFIG_PATH} in that build type; delete it` }));
+}
+
+/** Every finding across the manifest and the network security configs. Empty means the project passes. */
 export function checkAndroidProject(repoRoot: string): AndroidProjectFinding[] {
   return [
     ...checkManifest(repoRoot),
     ...checkMainNetworkConfig(repoRoot),
+    ...checkVariantNetworkConfigs(repoRoot),
   ];
 }

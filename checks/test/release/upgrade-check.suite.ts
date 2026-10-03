@@ -189,7 +189,9 @@ function appStrings(): string[] {
     // Eyebrow text renders uppercase ("YOUR APPS", "ADVANCED").
     ...copy.map((value) => value.toUpperCase()),
     historySubtitle(2, 'just now'),
-    // The server-address field's placeholder (SettingsScreen).
+    // The server-address field's placeholder (SettingsScreen): the full address in a build with
+    // beta-1 D20, the bare host in 382511.
+    RELEASE.serverUrl,
     RELEASE.serverUrl.replace(/^https?:\/\//, ''),
     ...literalsIn('fixtures/water-counter.app.tsx'),
   ];
