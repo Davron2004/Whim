@@ -216,9 +216,11 @@ export class DiagnosticsTransport {
     }
   }
 
-  /** Drop every record waiting to be sent, unsent. Records that arrive afterwards upload as usual. */
+  /** Drop every record waiting to be sent, unsent, and lift any rate-limit pause (it belonged to the
+   *  server being left). Records that arrive afterwards upload as usual. */
   discard(): void {
     this.cancelTimer();
+    this.pausedUntil = undefined;
     this.discardWaiting();
   }
 
