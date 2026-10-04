@@ -213,6 +213,7 @@ Run the [upgrade check](#upgrade-check-required-before-any-beta-build-ships) fir
 fastlane ios testflight
 # ⇒ preflight, archive, source-map upload, TestFlight upload, prints the build number it used
 fastlane android closed build:<the number ios printed>
+# ⇒ preflight, AAB build and verify, source-map upload, AAB-only upload to the Play alpha track as a draft
 ```
 
 Passing the number the first platform's lane prints to the second gives both platforms the same
