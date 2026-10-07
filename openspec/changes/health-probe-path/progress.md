@@ -7,3 +7,5 @@ Ledger, appended as events happen.
 - 2026-10-07T15:56:28Z dispatched chain-2 BASE=4fdb562e57431211a081651fde683f50d278ffbc worktree=.claude/worktrees/health-probe-path-chain-2
 - 2026-10-07T16:09:46Z chain-2 report complete GATE PASS; integrity OK; merged
 - 2026-10-07T16:12:37Z chain-2 regate-pass; tripwire candidate: pre-create @whim symlinks in EVERY chain worktree (server check fails without them even for app-only chains)
+- 2026-10-07T16:13:06Z chain-1 report complete GATE PASS; integrity OK; merged
+- 2026-10-07T16:15:47Z chain-1 regate-pass

@@ -1,8 +1,8 @@
 ## 1. Server: `/health`
 
-- [ ] 1.1 Register `GET /health` in `server/src/app.ts` on the same handler as `/healthz` (one function, two routes), outside `/v1` and before the `/v1` middleware.
-- [ ] 1.2 Make the load-test wrapper (`server/src/loadtest/server.ts`) answer `/health` with the same `whim-server-loadtest` body it gives `/healthz`.
-- [ ] 1.3 Server tests:
+- [x] 1.1 Register `GET /health` in `server/src/app.ts` on the same handler as `/healthz` (one function, two routes), outside `/v1` and before the `/v1` middleware.
+- [x] 1.2 Make the load-test wrapper (`server/src/loadtest/server.ts`) answer `/health` with the same `whim-server-loadtest` body it gives `/healthz`.
+- [x] 1.3 Server tests:
   - `/health` and `/healthz` return identical bodies anonymously with no request-id header.
   - A junk envelope is ignored on both.
   - Each health hit logs exactly one request record with its own path.
