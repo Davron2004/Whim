@@ -277,8 +277,10 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
 
   // Health check — no auth. It also reports the commit the image was built from and the live
   // minimum builds, so smoke can confirm a deploy took and the app can check the minimums without
-  // a `/v1` call.
-  app.get('/healthz', (c) => c.json({ ok: true, service: 'whim-server', commit: config.commit, minBuild }, 200));
+  // a `/v1` call. Served on two paths by ONE handler so the bodies cannot drift: Google's front end
+  // answers its own 404 for exactly `GET /healthz` on the Cloud Run domain (issue #140), so the app
+  // and smoke probe `/health`; `/healthz` stays for every client already built against it.
+  app.on('GET', ['/health', '/healthz'], (c) => c.json({ ok: true, service: 'whim-server', commit: config.commit, minBuild }, 200));
 
   // The anonymous stream probe — outside /v1, no device header, and counted against its OWN small
   // pool (`WHIM_LIMIT_PROBE_CONCURRENCY`), never the paid clarify/rewrite one: it is unauthenticated

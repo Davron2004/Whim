@@ -58,7 +58,7 @@ export const LOADTEST_ROSTER: ModelRoster = defaultModelRoster('loadtest/rewrite
  *  would reject it (design D26's third no-spend guarantee). */
 export const LOADTEST_INERT_API_KEY = 'loadtest-no-network';
 
-/** The identity `/healthz` answers under the load-test server — never the production string. */
+/** The identity `/health` and `/healthz` answer under the load-test server — never the production string. */
 export const LOADTEST_HEALTHZ_SERVICE = 'whim-server-loadtest';
 
 export interface RunLoadtestServerOptions {
@@ -101,11 +101,11 @@ const noLimitCreditTransport: CreditTransport = {
 
 type AppInstance = Parameters<NonNullable<StartServerOverrides['wrapApp']>>[0];
 
-/** Shadows `/healthz` with the load-test identity; every other route falls through to the real
- *  app unchanged. */
+/** Shadows `/health` and `/healthz` with the load-test identity; every other route falls through to
+ *  the real app unchanged. */
 function wrapWithLoadtestHealthz(app: AppInstance): Servable {
   const outer = new Hono();
-  outer.get('/healthz', (c) => c.json({ ok: true, service: LOADTEST_HEALTHZ_SERVICE }, 200));
+  outer.on('GET', ['/health', '/healthz'], (c) => c.json({ ok: true, service: LOADTEST_HEALTHZ_SERVICE }, 200));
   outer.all('*', (c) => app.fetch(c.req.raw, c.env));
   return outer;
 }
