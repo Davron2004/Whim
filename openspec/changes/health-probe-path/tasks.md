@@ -13,9 +13,9 @@
 
 ## 2. App: probe `/health`, fall back on 404
 
-- [ ] 2.1 In `src/host/launcher/server-probe.ts`, request `${baseUrl}/health` first. Only a `404` answer triggers one `${baseUrl}/healthz` request. One `AbortController` deadline (default 4000 ms) covers both. Classification and `minBuild` parsing are unchanged, applied to whichever answer is final.
-- [ ] 2.2 Update the shared launcher test harness (`rendered-launcher.tsx`) and the fixtures that answer by path so a "current server" answers `/health`. Keep at least one fixture of an "older server" that 404s `/health` and answers `/healthz`.
-- [ ] 2.3 Probe tests:
+- [x] 2.1 In `src/host/launcher/server-probe.ts`, request `${baseUrl}/health` first. Only a `404` answer triggers one `${baseUrl}/healthz` request. One `AbortController` deadline (default 4000 ms) covers both. Classification and `minBuild` parsing are unchanged, applied to whichever answer is final.
+- [x] 2.2 Update the shared launcher test harness (`rendered-launcher.tsx`) and the fixtures that answer by path so a "current server" answers `/health`. Keep at least one fixture of an "older server" that 404s `/health` and answers `/healthz`.
+- [x] 2.3 Probe tests:
   - `/health` 200 is verified and makes no `/healthz` request.
   - `/health` 404 with `/healthz` 200 is verified with minimums read from `/healthz`.
   - A `/health` network error or timeout is unreachable with exactly one request.
