@@ -37,7 +37,7 @@ What changed from the VM, and what it costs:
   provider-side credit limit is now the only spend bound that survives a restart. The VM's last
   data (2026-10-07) is backed up off-cloud, outside the repo.
 - **Cold start.** An idle service has no instance. The first request waits for boot: Chromium
-  launch plus the boot self-test, about 7–10 s. The app's 4 s `/healthz` probe can miss it once and
+  launch plus the boot self-test, about 7–10 s. The app's 4 s `/health` probe can miss it once and
   report offline until its next probe.
 - **Chromium sometimes crashes at launch.** One boot in ten died with a SIGSEGV in
   `chrome-headless-shell` before the self-test (measured 2026-10-07, 10 deploys). Boot refuses to listen
@@ -71,8 +71,12 @@ the apex). At GoDaddy:
 | `whim` | A ×4 | `216.239.32.21`, `216.239.34.21`, `216.239.36.21`, `216.239.38.21` |
 
 `whim` keeps its Zoho MX and SPF TXT records. A CNAME can't share a name with them, which is why
-that host uses A records to Google's front end. Paths ending in `z` (`/healthz`) are reserved on
-the `*.run.app` URLs, so check the server through the mapped hostname.
+that host uses A records to Google's front end. Google's front end answers its own 404 for exactly
+`GET /healthz` on a Cloud Run custom domain (issue #140), so the health check is `/health`, which
+reaches the server. The server still serves `/healthz` with the identical body, for app builds
+shipped before `/health` existed and for the container-local checks that don't pass through Google
+(`deploy/compose.yaml`, the load test). Never point an operator check at `/healthz` on the Cloud Run
+domain.
 
 ## 1. One-time provisioning (orchestrator, `gcloud` auth as the project owner)
 
@@ -260,10 +264,10 @@ deploy/smoke.sh --pages-only  # DNS + pages only
 What each check means:
 
 - **DNS** — both hostnames resolve to `WHIM_STATIC_IP` only, no `AAAA`.
-- **`/healthz`** — `200` with a JSON body holding `"ok":true`, `"service":"whim-server"`, the
+- **`/health`** — `200` with a JSON body holding `"ok":true`, `"service":"whim-server"`, the
   `"commit"` the image was built from and `"minBuild":{"ios":0,"android":0}`, with the two minimums
   your values file sets in place of the zeros: the boot self-test (a real generation through the
-  sandbox) passed, this isn't a stray load-test container (its `/healthz` would name
+  sandbox) passed, this isn't a stray load-test container (its `/health` would name
   `whim-server-loadtest`), and the minimum builds you deployed are the ones the server enforces.
   `commit` is baked into the image by Cloud Build (`WHIM_COMMIT`, from the same SHA that tags it);
   standalone, smoke accepts any full 40-character SHA and fails on `"unknown"` (an image the
@@ -343,7 +347,7 @@ string the deploy scripts use, from `deploy/lib.sh`).
 
   | Alert | Fires when | Rate | First command |
   | --- | --- | --- | --- |
-  | Whim: API down | `https://<WHIM_API_HOST>/healthz` (checked every 5 min from 3 regions) failed its last two checks in at least two regions | while it lasts | `deploy/smoke.sh` from a laptop: it names the failing layer |
+  | Whim: API down | `https://<WHIM_API_HOST>/health` (checked every 5 min from 3 regions) failed its last two checks in at least two regions | while it lasts | `deploy/smoke.sh` from a laptop: it names the failing layer |
   | Whim: new report | a user sent a report; the email names its id and reason only | at most 1 per 5 min | `$C exec -T whim-server node server/whim-admin.mjs reports show <id>` (then `reports list` for any the rate limit folded in) |
   | Whim: generation failures | more than 5 `terminal failure` lines in an hour (log metric `whim-terminal-failures`) | while it lasts | `$C exec -T whim-server node server/whim-admin.mjs usage --days 1` for counts by reason, then the "Terminal failures" query above |
   | Whim: credit exhausted | a `budget_exhausted` refusal (`jsonPayload.msg="request" jsonPayload.error="budget_exhausted"`), or a mid-generation provider `402` (`jsonPayload.msg="provider credit exhausted"`) | at most 1 per hour | check the OpenRouter credit balance at https://openrouter.ai/credits and top it up |
@@ -424,7 +428,7 @@ This covers only the log files on the VM. What reaches Cloud Logging is kept 30 
 
 The server turns away any `/v1` request whose build is below its platform's minimum with
 `426 update_required` ("Update Whim to the latest version to keep using its AI features."), before
-any admission, ledger row or model call. It covers every `/v1` route. `/healthz` stays open and
+any admission, ledger row or model call. It covers every `/v1` route. `/health` stays open and
 reports the live values as `minBuild`. There is one value per platform, because a bug usually
 belongs to one:
 
@@ -457,16 +461,16 @@ To raise or lower a minimum:
 3. **Deploy.** From the commit production runs, `deploy/deploy.sh` reuses that commit's image,
    writes the new value to `/etc/whim/config.env` and restarts the server through the drain.
    `deploy/deploy.sh --tag <that commit's sha>` does the same from any clean, pushed checkout.
-4. **Confirm on `/healthz`.** The deploy's smoke fails unless `/healthz` reports exactly the values
+4. **Confirm on `/health`.** The deploy's smoke fails unless `/health` reports exactly the values
    in your values file. To check by hand:
 
    ```sh
-   curl -s https://api.whim.anycognition.ca/healthz
+   curl -s https://api.whim.anycognition.ca/health
    # {"ok":true,"service":"whim-server","minBuild":{"ios":382000,"android":0}}
    ```
 
 **Rollback:** set the value back (its previous number, or `0` or no line at all to switch that
-platform's gate off), redeploy the same way, and confirm on `/healthz`. It takes effect on the next
+platform's gate off), redeploy the same way, and confirm on `/health`. It takes effect on the next
 request, with no app update involved.
 
 ## Capacity profiles, resizing, and the load test
@@ -575,13 +579,14 @@ before beta-1 rejects the answers beta-1 sends with its clarify questions (it re
 `Clarification.answer`), so every rewrite and generation carrying an answer fails with
 `400 invalid_request`. No later app build can change what an installed beta-1 build sends, and no
 setting on the old image can accept it. To undo a bad server release, `--tag` an earlier image that
-is still beta-1 or later (the `commit` its `/healthz` reported when it was live), or roll forward:
+is still beta-1 or later (the `commit` its `/health` reported when it was live), or roll forward:
 fix on `main` and run `deploy/deploy.sh` without `--tag`.
 
-Rolling back to an image from before the commit report (developer-observability) leaves a server
-whose `/healthz` has no `commit`: the rollback is live, but smoke fails on that check, so
-`deploy.sh` exits 1 without `done`. Confirm the rest of the smoke output passed, then roll forward
-as soon as you can.
+Rolling back to an image from before `/health` (health-probe-path) leaves a server that only
+answers `/healthz`, which Google's front end blocks on the Cloud Run domain: smoke's `/health` check
+fails, so `deploy.sh` exits 1 without `done`. An image from before the commit report
+(developer-observability) also lacks `commit`, so smoke fails on that check too. The rollback is
+live either way. Confirm the rest of the smoke output passed, then roll forward as soon as you can.
 
 Rolling back to an image from before the minimum-build gate drops the gate: that server answers
 `/healthz` without `minBuild` and serves every build. Such an image also predates the commit

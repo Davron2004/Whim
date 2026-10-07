@@ -142,7 +142,7 @@ document, it doesn't restate the values.
       to check by hand.
 - [ ] `/privacy` and `/support` are live at the real domain and the privacy page says what the
       consent screen says (§1, §4) plus report retention.
-- [ ] Production `/healthz` answers on the real domain.
+- [ ] Production `/health` answers on the real domain.
 - [ ] The Google Play closed test track has at least 12 opted-in testers who have held the build
       for at least 14 days — required before this account can promote a release to production.
 - [ ] After the first Play upload (App Signing assigns the Play signing key at that point, and

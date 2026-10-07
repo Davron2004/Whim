@@ -1090,14 +1090,14 @@ const PAGES_UP: readonly StubRule[] = [
 ];
 /** The commit the fixture server's image reports: any full SHA, since smoke run standalone accepts any. */
 const HEALTH_COMMIT = '0123456789abcdef0123456789abcdef01234567';
-/** The default-configuration `/healthz` body of an image built at HEALTH_COMMIT; `smokeTests` checks
+/** The default-configuration `/health` body of an image built at HEALTH_COMMIT; `smokeTests` checks
  *  it against the real server's. */
 const DEFAULT_HEALTH = `{"ok":true,"service":"whim-server","commit":"${HEALTH_COMMIT}","minBuild":{"ios":0,"android":0}}`;
 /** The 426 body a pre-protocol build's /v1/generate probe gets: matched by the `x-whim-build:
  *  382511` header the check sends, ahead of the generic 400 rule below (first glob wins). */
 const PRE_PROTOCOL_GENERATE: StubRule = [`*x-whim-build: 382511*`, 0, '426|application/json|', '{"error":"update_required","hint":"stub"}'];
 const API_UP: readonly StubRule[] = [
-  [`*https://${API_HOST}/healthz`, 0, '200|application/json|', DEFAULT_HEALTH],
+  [`*https://${API_HOST}/health`, 0, '200|application/json|', DEFAULT_HEALTH],
   PRE_PROTOCOL_GENERATE,
   [`*https://${API_HOST}/v1/generate`, 0, '400|application/json|', '{}'],
   [`*https://${API_HOST}/healthz/sse`, 0, ': whim-healthz-probe\\n\\n'],
@@ -1350,7 +1350,7 @@ function deploySiteOnlyTests(): void {
   });
 }
 
-/** What the real server's `/healthz` answers, taken from the producer rather than written beside
+/** What the real server's `/health` answers, taken from the producer rather than written beside
  *  smoke.sh: an image built at HEALTH_COMMIT under the default configuration, and with the Android
  *  minimum at 382000. `preGate` is the default body without `minBuild`: what a server from before
  *  the minimum-build gate answers. `unbuilt` is a server outside the release image (no WHIM_COMMIT). */
@@ -1380,13 +1380,13 @@ function withoutCommit(body: string): string {
 
 async function realHealthBody(env: NodeJS.ProcessEnv): Promise<string> {
   const app = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), config: loadServerConfig(env) });
-  const body = await within(Promise.resolve(app.request('/healthz')).then((res) => res.text()));
-  if (body === TIMED_OUT) throw new Error('setup: /healthz did not answer in time');
+  const body = await within(Promise.resolve(app.request('/health')).then((res) => res.text()));
+  if (body === TIMED_OUT) throw new Error('setup: /health did not answer in time');
   return body;
 }
 
 function healthRule(body: string): StubRule {
-  return [`*https://${API_HOST}/healthz`, 0, '200|application/json|', body];
+  return [`*https://${API_HOST}/health`, 0, '200|application/json|', body];
 }
 
 function fullDeployRules(sandbox: Sandbox, imageExists: boolean): void {
@@ -1415,7 +1415,7 @@ function deployFullTests(health: HealthBodies): void {
     writeRules(sandbox, 'curl', [healthRule(withCommit(health.androidRaised, headOf(sandbox))), ...API_UP, ...PAGES_UP]);
     const run = runScript(sandbox, 'deploy.sh', []);
     const config = stubFile(sandbox, 'upload/config.env');
-    eq('a full deploy with a raised Android minimum succeeds, its smoke confirming the value on /healthz', run.status, 0);
+    eq('a full deploy with a raised Android minimum succeeds, its smoke confirming the value on /health', run.status, 0);
     check('  ... carrying WHIM_MIN_BUILD_ANDROID to config.env and leaving the unset iOS minimum out', config.includes('WHIM_MIN_BUILD_ANDROID=382000\n') && !config.includes('WHIM_MIN_BUILD_IOS'), config);
     check('  ... and carrying the operator\'s WHIM_USAGE_IDLE_DAYS, which passed the keep-period preflight', config.includes('WHIM_USAGE_IDLE_DAYS=180\n'), config);
     check('  ... and the operator\'s beta signup limits', config.includes('WHIM_BETA_LIMIT_PER_CLIENT_HOUR=200\n') && config.includes('WHIM_BETA_LIMIT_PER_DAY=5000\n'), config);
@@ -1476,7 +1476,7 @@ function deployFullTests(health: HealthBodies): void {
     const run = runScript(sandbox, 'deploy.sh', ['--tag', TAG]);
     const calls = toolLog(sandbox, 'gcloud');
     const ssh = calls.filter((line) => line.includes('compute ssh'));
-    eq('a rollback to a pushed tag succeeds, its smoke finding that tag\'s commit on /healthz', run.status, 0);
+    eq('a rollback to a pushed tag succeeds, its smoke finding that tag\'s commit on /health', run.status, 0);
     check('  ... without building', indexOfCall(calls, 'builds submit') === -1, calls.join(' / '));
     check('  ... deploying that tag with the standard profile', stubFile(sandbox, 'upload/compose.env').includes(`server:${TAG}\n`) && stubFile(sandbox, 'upload/compose.env').includes('WHIM_PROFILE=standard') && stubFile(sandbox, 'upload/config.env') === `WHIM_ENGINEER_MODEL=vendor/engineer-1\nWHIM_REWRITE_MODEL=vendor/rewrite-1\nWHIM_WEB_ORIGIN=https://${WEB_HOST}\n`);
     check(
@@ -1486,7 +1486,7 @@ function deployFullTests(health: HealthBodies): void {
     );
   });
 
-  // Rolling back below the minimum-build gate: the old server answers /healthz without minBuild.
+  // Rolling back below the minimum-build gate: the old server answers /health without minBuild.
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox);
     fullDeployRules(sandbox, true);
@@ -1514,7 +1514,7 @@ function deployFullTests(health: HealthBodies): void {
   });
 
   // specs/server-observability "A deploy that didn't take is caught": the container still serves
-  // the previous image, whose /healthz names the previous commit.
+  // the previous image, whose /health names the previous commit.
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox);
     fullDeployRules(sandbox, true);
@@ -1556,12 +1556,12 @@ function smokeTests(health: HealthBodies): void {
   withSandbox((sandbox) => {
     writeRules(sandbox, 'gcloud', VM_ANSWERS);
     writeRules(sandbox, 'dig', DNS_READY);
-    writeRules(sandbox, 'curl', [[`*https://${API_HOST}/healthz`, 0, '200|application/json|', '{"ok":true,"service":"whim-server-loadtest"}'], ...API_UP, ...PAGES_UP]);
+    writeRules(sandbox, 'curl', [[`*https://${API_HOST}/health`, 0, '200|application/json|', '{"ok":true,"service":"whim-server-loadtest"}'], ...API_UP, ...PAGES_UP]);
     const run = runScript(sandbox, 'smoke.sh', []);
     check('smoke fails on a load-test server identity', run.status === 1 && run.stderr.includes('whim-server-loadtest'), run.stderr);
   });
 
-  eq("the smoke fixtures' /healthz body is the real server's default body", DEFAULT_HEALTH, health.defaults);
+  eq("the smoke fixtures' /health body is the real server's default body", DEFAULT_HEALTH, health.defaults);
   const smokeAgainst = (operatorValues: Readonly<Record<string, string>>, body: string, args: readonly string[] = []): ScriptRun => {
     let run: ScriptRun = { status: null, stdout: '', stderr: '' };
     withSandbox((sandbox) => {
@@ -1574,7 +1574,7 @@ function smokeTests(health: HealthBodies): void {
     return run;
   };
   const defaultRun = smokeAgainst({}, health.defaults);
-  eq("smoke passes against the real server's /healthz under the default configuration, run standalone", defaultRun.status, 0);
+  eq("smoke passes against the real server's /health under the default configuration, run standalone", defaultRun.status, 0);
   check(
     '  ... refusing a pre-protocol build (build 382511, no x-whim-protocol) with 426 update_required',
     defaultRun.stdout.includes('pre-protocol build (no x-whim-protocol) -> 426 update_required'),
@@ -1604,19 +1604,19 @@ function smokeTests(health: HealthBodies): void {
   // specs/server-observability "The server reports which commit it is running".
   const unbuiltRun = smokeAgainst({}, health.unbuilt);
   check(
-    'smoke fails against a server outside the release image, whose /healthz reports commit "unknown"',
+    'smoke fails against a server outside the release image, whose /health reports commit "unknown"',
     unbuiltRun.status === 1 && unbuiltRun.stderr.includes('commit "unknown" is not a full 40-character SHA'),
     unbuiltRun.stderr,
   );
   const shortRun = smokeAgainst({}, withCommit(health.defaults, HEALTH_COMMIT.slice(0, 12)));
-  check('smoke fails when /healthz reports an abbreviated commit', shortRun.status === 1 && shortRun.stderr.includes(`commit "${HEALTH_COMMIT.slice(0, 12)}" is not a full 40-character SHA`), shortRun.stderr);
+  check('smoke fails when /health reports an abbreviated commit', shortRun.status === 1 && shortRun.stderr.includes(`commit "${HEALTH_COMMIT.slice(0, 12)}" is not a full 40-character SHA`), shortRun.stderr);
   const noCommitRun = smokeAgainst({}, withoutCommit(health.defaults));
-  check('smoke fails when /healthz reports no commit at all', noCommitRun.status === 1 && noCommitRun.stderr.includes('no commit: this server predates the commit report'), noCommitRun.stderr);
+  check('smoke fails when /health reports no commit at all', noCommitRun.status === 1 && noCommitRun.stderr.includes('no commit: this server predates the commit report'), noCommitRun.stderr);
   const matchedRun = smokeAgainst({}, health.defaults, ['--commit', HEALTH_COMMIT]);
-  eq('smoke --commit passes when /healthz reports exactly that commit', matchedRun.status, 0);
+  eq('smoke --commit passes when /health reports exactly that commit', matchedRun.status, 0);
   const mismatchedRun = smokeAgainst({}, health.defaults, ['--commit', TAG]);
   check(
-    'smoke --commit fails when /healthz reports another commit, naming both SHAs',
+    'smoke --commit fails when /health reports another commit, naming both SHAs',
     mismatchedRun.status === 1 && mismatchedRun.stderr.includes(`commit is ${HEALTH_COMMIT}, but this deploy rolled out ${TAG}`),
     mismatchedRun.stderr,
   );
@@ -1630,11 +1630,11 @@ function smokeTests(health: HealthBodies): void {
     });
   }
   const raisedRun = smokeAgainst({ WHIM_MIN_BUILD_ANDROID: '382000' }, health.androidRaised);
-  eq('smoke passes when /healthz reports the Android minimum the operator values set', raisedRun.status, 0);
+  eq('smoke passes when /health reports the Android minimum the operator values set', raisedRun.status, 0);
   const staleRun = smokeAgainst({ WHIM_MIN_BUILD_ANDROID: '382000' }, health.defaults);
-  check('smoke fails when /healthz still reports the old minimum, showing the live body', staleRun.status === 1 && staleRun.stderr.includes(health.defaults), staleRun.stderr);
+  check('smoke fails when /health still reports the old minimum, showing the live body', staleRun.status === 1 && staleRun.stderr.includes(health.defaults), staleRun.stderr);
 
-  // A rollback to an image from before the minimum-build gate: its /healthz carries no minBuild.
+  // A rollback to an image from before the minimum-build gate: its /health carries no minBuild.
   const preGateRun = smokeAgainst({}, health.preGate);
   eq('smoke passes against a server from before the minimum-build gate when both minimums are 0', preGateRun.status, 0);
   eq(
@@ -2543,7 +2543,7 @@ function provisionMonitoringTests(): void {
   check('  ... the API-down policy watches the uptime check the run created', JSON.stringify(first.files.get('policy-api-down.json')).includes(`check_id=\\"${UPTIME_NAME.split('/').at(-1)}\\"`));
   const uptimeCall = callMatching(first.calls, / monitoring uptime create /);
   const regions = /--regions (\S+)/.exec(uptimeCall)?.[1]?.split(',') ?? [];
-  check(`  ... the uptime check probes https://${API_HOST}/healthz every 5 minutes from at least three regions`, uptimeCall.includes(`host=${API_HOST},`) && uptimeCall.includes('--protocol https') && uptimeCall.includes('--path /healthz') && uptimeCall.includes('--period 5') && regions.length >= 3, uptimeCall);
+  check(`  ... the uptime check probes https://${API_HOST}/health every 5 minutes from at least three regions`, uptimeCall.includes(`host=${API_HOST},`) && uptimeCall.includes('--protocol https') && /--path \/health(?!\S)/.test(uptimeCall) && uptimeCall.includes('--period 5') && regions.length >= 3, uptimeCall);
   const budgetCall = callMatching(first.calls, / billing budgets create /);
   check(
     '  ... the budget covers WHIM_MONTHLY_BUDGET on WHIM_BILLING_ACCOUNT at 50, 90 and 100 %, emailing the channel',

@@ -46,7 +46,7 @@ COPY --from=build /src/server/dist/app ./
 # which would otherwise land as plain text in the server's JSON log and in every whim-admin output.
 ENV NODE_ENV=production HOME=/tmp NODE_OPTIONS=--disable-warning=ExperimentalWarning
 # The commit this image is built from (developer-observability D13): deploy/cloudbuild.yaml passes
-# Cloud Build's $COMMIT_SHA, the same SHA that tags the image, so /healthz and the boot log describe
+# Cloud Build's $COMMIT_SHA, the same SHA that tags the image, so /health and the boot log describe
 # these bytes and a rollback reports its own commit. Any other build reports "unknown". Declared
 # last so a new commit rebuilds only this layer.
 ARG WHIM_COMMIT=unknown

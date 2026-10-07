@@ -126,4 +126,4 @@ deploy_site() {
 
 [ "$site_only" -eq 1 ] || deploy_server
 [ -n "$tag" ] || deploy_site
-echo "deployed. Check: https://$WHIM_API_HOST/healthz and https://$WHIM_WEB_HOST/privacy"
+echo "deployed. Check: https://$WHIM_API_HOST/health and https://$WHIM_WEB_HOST/privacy"

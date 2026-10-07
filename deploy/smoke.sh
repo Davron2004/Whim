@@ -165,7 +165,7 @@ probe() {
 }
 
 check_health() {
-  local url="https://$WHIM_API_HOST/healthz" body verdict code=0
+  local url="https://$WHIM_API_HOST/health" body verdict code=0
   probe "$url"
   body="$(head -c 300 "$work/body")"
   if [[ "$PROBE_STATUS" != 200 ]]; then
