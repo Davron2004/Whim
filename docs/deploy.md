@@ -596,7 +596,7 @@ with the gate as soon as you can.
 
 **Rolling back the generation line** needs no older image. Set `WHIM_QUEUE_MAX=0` in
 `~/.config/whim/deploy.env` and redeploy the running image with `deploy/deploy.sh --tag <sha>`, where
-`<sha>` is the `commit` that `/healthz` reports. From then on a generation that finds every slot busy
+`<sha>` is the `commit` that `/health` reports. From then on a generation that finds every slot busy
 gets `429 server_busy` before any stream opens, as it did before the line. The redeploy drains the
 old server, so anyone still waiting in line gets the busy `failure` on their stream. To bring the line
 back, remove the line (or set a positive number) and redeploy the same way.

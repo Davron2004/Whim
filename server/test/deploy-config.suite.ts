@@ -2544,6 +2544,16 @@ function provisionMonitoringTests(): void {
   const uptimeCall = callMatching(first.calls, / monitoring uptime create /);
   const regions = /--regions (\S+)/.exec(uptimeCall)?.[1]?.split(',') ?? [];
   check(`  ... the uptime check probes https://${API_HOST}/health every 5 minutes from at least three regions`, uptimeCall.includes(`host=${API_HOST},`) && uptimeCall.includes('--protocol https') && /--path \/health(?!\S)/.test(uptimeCall) && uptimeCall.includes('--period 5') && regions.length >= 3, uptimeCall);
+  const uptimeUpdateProblems = (script?: string): string[] => {
+    const oldCheck = `${/ monitoring uptime create (.+?) --resource-type/.exec(callMatching(first.calls, / monitoring uptime create /))?.[1] ?? ''}\\t${UPTIME_NAME}\\t${'0'.repeat(40)}\\t${API_HOST}\\n`;
+    const updated = provisionAgainst([['*monitoring uptime list-configs*', 0, oldCheck], ...stateAfter(first)], PROVISION_VALUES, script);
+    const updateCall = callMatching(updated.calls, / monitoring uptime update /);
+    if (updated.status !== 0) return [`provision failed: ${updated.stderr}`];
+    return /--path \/health(?!\S)/.test(updateCall) ? [] : [`the uptime update call does not carry --path /health: ${updateCall || 'no update call'}`];
+  };
+  checkClean('  ... an existing uptime check with a stale spec is updated in place, carrying --path /health', uptimeUpdateProblems());
+  const provisionSource = readRepoFile('deploy/provision.sh');
+  checkCaught('  red: an uptime update that omits --path fails', uptimeUpdateProblems(plant(provisionSource, 'monitoring uptime update "${uptime_name##*/}" "${uptime_settings[@]}"', 'monitoring uptime update "${uptime_name##*/}" --period "$uptime_PERIOD_MINUTES"')), 'does not carry --path /health');
   const budgetCall = callMatching(first.calls, / billing budgets create /);
   check(
     '  ... the budget covers WHIM_MONTHLY_BUDGET on WHIM_BILLING_ACCOUNT at 50, 90 and 100 %, emailing the channel',
