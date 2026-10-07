@@ -35,5 +35,5 @@
 
 ## 4. Rollout (orchestrator, attended, after merge)
 
-- [ ] 4.1 Deploy the merged tip with `deploy/cloudrun/deploy.sh`. Confirm `https://<api host>/health` returns the new commit and both minimums.
-- [ ] 4.2 `gcloud monitoring uptime update` the "Whim API healthz" check to `--path /health`, re-enable the "Whim: API down" policy, and confirm the uptime check reports passing.
+- [x] 4.1 Deploy the merged tip with `deploy/cloudrun/deploy.sh`. Confirm `https://<api host>/health` returns the new commit and both minimums.
+- [x] 4.2 `gcloud monitoring uptime update` the "Whim API healthz" check to `--path /health`, re-enable the "Whim: API down" policy, and confirm the uptime check reports passing.
