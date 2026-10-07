@@ -31,6 +31,7 @@ Verdicts:
 | [2026-09-23 request-envelope](2026-09-23-request-envelope/) | 8 implementers, reviewer, 2 verifiers, orchestrator | 86 | 9 | 40 | 18 | 19 |
 | [2026-09-24 legal-surface-v2](2026-09-24-legal-surface-v2/) (session 2 only; session 1 lost all but chain-1) | 8 implementers/fix-workers, reviewer, git-cleaner, 2 Sonar workers, orchestrator | ~68 | 11 | 31 | 10 | 16 |
 | [2026-09-25 beta-1](2026-09-25-beta-1/) (resumed closure 2026-09-29) | 9 chains, fixes, reviews, device passes, orchestrator | collection in progress | — | — | — | — |
+| [2026-10-07 health-probe-path](2026-10-07-health-probe-path/) (on integration/beta-1) | 3 implementers, fix-1, reviewer, orchestrator | 11 tagged (chain-3, fix-1 untagged) | 2 | 4 | 0 | 5 |
 
 ## Recurring themes
 

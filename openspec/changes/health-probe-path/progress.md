@@ -16,3 +16,6 @@ Ledger, appended as events happen.
 - 2026-10-07T16:48:44Z rollout 4.1: deployed server+site 44514ff0 (us-east4); live /health 200 commit 44514ff0, /healthz still Google 404 (expected); /v1/generate 400; privacy 200
 - 2026-10-07T16:48:44Z rollout 4.2: uptime check path -> /health; 'Whim: API down' re-enabled; awaiting first passing results
 - 2026-10-07T16:55:07Z rollout 4.2 confirmed: uptime check passes in usa-virginia, usa-oregon, eur-belgium on /health (16:53-16:54Z)
+- 2026-10-07T16:56:22Z fix-1 complete GATE PASS; integrity OK; merged
+- 2026-10-07T17:00:57Z fix-1 regate-pass; worktree removed
+- 2026-10-07T17:00:57Z CLOSING SUMMARY: chains 1-3 + fix-1 merged on integration/beta-1, 0 redispatches, deviations all class A, gate-full PASS, reviewer SHIP (6 low: 4 fixed in fix-1, 1 filed #141, 1 accepted: e2e covers /health only at unit level). Rollout done; uptime passing in 3 regions. Ready for /opsx:archive.
