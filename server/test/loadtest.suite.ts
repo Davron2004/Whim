@@ -141,8 +141,10 @@ async function testOverridesEnvAndFetchTrap(): Promise<void> {
 
     const fakeInner = { fetch: async () => new Response('inner-ok') } as unknown as Parameters<NonNullable<StartServerOverrides['wrapApp']>>[0];
     const outer = overrides.wrapApp?.(fakeInner);
-    const healthzRes = (await outer?.fetch(new Request('http://127.0.0.1/healthz'), {} as never)) as Response;
-    eq('wrapApp intercepts /healthz with the load-test identity', await healthzRes.json(), { ok: true, service: LOADTEST_HEALTHZ_SERVICE });
+    for (const route of ['/health', '/healthz']) {
+      const healthRes = (await outer?.fetch(new Request(`http://127.0.0.1${route}`), {} as never)) as Response;
+      eq(`wrapApp intercepts ${route} with the load-test identity`, await healthRes.json(), { ok: true, service: LOADTEST_HEALTHZ_SERVICE });
+    }
     const otherRes = (await outer?.fetch(new Request('http://127.0.0.1/v1/generate'), {} as never)) as Response;
     eq('every other route falls through to the wrapped app unchanged', await otherRes.text(), 'inner-ok');
   } finally {

@@ -206,7 +206,9 @@ async function testRequestIdOnEveryResponse(): Promise<void> {
       const first = await send(app, '/v1/usage', { 'x-whim-device': DEVICE_ID });
       const second = await send(app, '/v1/usage', { 'x-whim-device': DEVICE_ID });
       check('two requests get two ids', first.headers.get(REQUEST_ID_HEADER) !== second.headers.get(REQUEST_ID_HEADER));
-      eq('a route outside /v1 carries no request id', (await send(app, '/healthz', {})).headers.get(REQUEST_ID_HEADER), null);
+      for (const route of ['/health', '/healthz']) {
+        eq(`${route} outside /v1 carries no request id`, (await send(app, route, {})).headers.get(REQUEST_ID_HEADER), null);
+      }
     }
   } finally {
     capture.stop();
@@ -588,26 +590,39 @@ async function testLegacyAndDefaults(): Promise<void> {
     const res = await send(app, '/v1/clarify', { ...legacy, ...ENVELOPE, [PLATFORM_HEADER]: platform, [BUILD_HEADER]: '1' }, { prompt: 'a timer' });
     eq(`neither minimum configured: ${platform} build 1 is served`, res.status, 200);
   }
-  eq('neither minimum configured: /healthz reports both as 0', await (await send(app, '/healthz', {})).json(), { ok: true, service: 'whim-server', commit: 'unknown', minBuild: { ios: 0, android: 0 } });
+  for (const route of ['/health', '/healthz']) {
+    eq(`neither minimum configured: ${route} reports both as 0`, await (await send(app, route, {})).json(), { ok: true, service: 'whim-server', commit: 'unknown', minBuild: { ios: 0, android: 0 } });
+  }
 }
 
 async function testHealthzReportsMinimums(): Promise<void> {
   section('Minimum build — /healthz reports the live minimums, anonymously and outside /v1');
 
   const app = testApp({ config: minimumsFrom({ WHIM_MIN_BUILD_IOS: '381000', WHIM_MIN_BUILD_ANDROID: '382000' }) });
-  const res = await send(app, '/healthz', {});
-  eq('no device header or envelope needed: 200', res.status, 200);
-  eq('the body carries both minimums, every other field unchanged', await res.json(), { ok: true, service: 'whim-server', commit: 'unknown', minBuild: { ios: 381000, android: 382000 } });
-  const junkEnvelope = await send(app, '/healthz', { [BUILD_HEADER]: 'junk' });
-  eq('a malformed envelope header does not reach /healthz (no envelope is read there)', junkEnvelope.status, 200);
+  const expected = { ok: true, service: 'whim-server', commit: 'unknown', minBuild: { ios: 381000, android: 382000 } };
+  const bodies: unknown[] = [];
+  for (const route of ['/health', '/healthz']) {
+    const res = await send(app, route, {});
+    eq(`${route}: no device header or envelope needed: 200`, res.status, 200);
+    const body: unknown = await res.json();
+    bodies.push(body);
+    eq(`${route}: the body carries both minimums, every other field unchanged`, body, expected);
+    const junkEnvelope = await send(app, route, { [BUILD_HEADER]: 'junk' });
+    eq(`${route}: a malformed envelope header does not reach it (no envelope is read there)`, junkEnvelope.status, 200);
+    eq(`${route}: a malformed envelope header leaves the body unchanged`, await junkEnvelope.json(), expected);
+  }
+  eq('/health and /healthz answer identical bodies', bodies[0], bodies[1]);
 }
 
 async function testHealthzReportsCommit(): Promise<void> {
   section('Commit — /healthz names the commit the image was built from (specs/server-observability)');
 
   const sha = '89abcdef0123456789abcdef0123456789abcdef';
-  const built = await send(testApp({ config: { commit: loadServerConfig({ WHIM_COMMIT: sha }).commit } }), '/healthz', {});
-  eq('an image built with WHIM_COMMIT reports it, beside ok, service and minBuild', await built.json(), { ok: true, service: 'whim-server', commit: sha, minBuild: { ios: 0, android: 0 } });
+  const builtApp = testApp({ config: { commit: loadServerConfig({ WHIM_COMMIT: sha }).commit } });
+  for (const route of ['/health', '/healthz']) {
+    const built = await send(builtApp, route, {});
+    eq(`an image built with WHIM_COMMIT reports it on ${route}, beside ok, service and minBuild`, await built.json(), { ok: true, service: 'whim-server', commit: sha, minBuild: { ios: 0, android: 0 } });
+  }
   const local = await send(testApp(), '/healthz', {});
   eq('a server outside the release image reports "unknown"', ((await local.json()) as { commit?: unknown }).commit, 'unknown');
 }

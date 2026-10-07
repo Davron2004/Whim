@@ -69,14 +69,14 @@ async function post(
 async function testDeviceIdentity(): Promise<void> {
   section('Device-identity middleware (SPEC §3)');
 
-  // §3.3 — /healthz is exempt (no device header needed) and identifies the service
-  {
+  // §3.3 — /health and /healthz are exempt (no device header needed) and identify the service
+  for (const path of ['/health', '/healthz']) {
     const app = testApp();
-    const res = await app.request('/healthz');
-    eq('/healthz anonymous (no x-whim-device) 200', res.status, 200);
+    const res = await app.request(path);
+    eq(`${path} anonymous (no x-whim-device) 200`, res.status, 200);
     const body = (await res.json()) as { ok?: unknown; service?: unknown };
-    eq('/healthz body ok field', body.ok, true);
-    eq('/healthz body service field', body.service, 'whim-server');
+    eq(`${path} body ok field`, body.ok, true);
+    eq(`${path} body service field`, body.service, 'whim-server');
   }
 
 
@@ -424,6 +424,16 @@ async function testRequestLogging(): Promise<void> {
       eq('healthz record path field', matches[0]!.path, '/healthz');
       eq('healthz record status field', matches[0]!.status, 200);
       check('healthz record carries a duration field', typeof matches[0]!.durationMs === 'number');
+    }
+
+    // The second health path is logged by the same middleware, under its own path.
+    {
+      capture.records.length = 0;
+      await testApp().request('/health');
+      const matches = withMessage(capture, 'request');
+      eq('health logs exactly one record', matches.length, 1);
+      eq('health record path field', matches[0]!.path, '/health');
+      eq('health record status field', matches[0]!.status, 200);
     }
 
     // Non-streaming error path: a validation 400 still logs exactly once with the real status.
