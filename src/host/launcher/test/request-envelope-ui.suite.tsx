@@ -1,9 +1,9 @@
 /** The request envelope and the two refusals about the phone itself, driven through the rendered
  *  launcher against a scripted server (request-envelope chain-4/chain-5): what every `/v1` request
- *  carries and what `/healthz` never does, what a build without the native app-info module does
+ *  carries and what `/health` never does, what a build without the native app-info module does
  *  instead of sending, where a `consent_required` or `update_required` refusal takes the user —
  *  from clarify, rewrite, a fresh build, a Retry, a build left running and a report — without
- *  losing what they typed, and what the launch-time `/healthz` minimum does (and, when it is
+ *  losing what they typed, and what the launch-time `/health` minimum does (and, when it is
  *  missing, malformed or slow, doesn't do). */
 import TestRenderer from 'react-test-renderer';
 import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER, REQUEST_ID_HEADER } from '@whim/contract';
@@ -48,7 +48,7 @@ const refused = (refusal: ServiceRefusal): Response =>
 const consentRefused = () => refused(consentRequiredRefusal());
 const updateRefused = () => refused(updateRequiredRefusal());
 
-// `/healthz` as the server's `GET /healthz` route answers it (`server/src/app.ts`, inline in
+// `/health` as the server's `GET /health` route answers it (`server/src/app.ts`, inline in
 // `createApp`, so mirrored here); production answers without `minBuild` until the server that
 // reports it is deployed.
 const healthy = (minBuild?: unknown) => () =>
@@ -127,7 +127,7 @@ function flowServer(rest: (r: SentRequest) => Response | Promise<Response>, ques
 }
 
 export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
-  await h.test('envelope: every /v1 request of a build carries the installed app and the grant; no /healthz probe carries any of it', async () => {
+  await h.test('envelope: every /v1 request of a build carries the installed app and the grant; no /health probe carries any of it', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     await withLauncher({ server: streamingServer(streams) }, async ({ tree, sent, probes, kv }) => {
       await startBuild(tree, 'A tea timer');
@@ -459,7 +459,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
   }
 
   await h.test('launch check: below this platform’s minimum, the update screen replaces Home without waiting for a request; Not now leaves installed apps running; the next AI action shows it again', async () => {
-    await withLauncher({ examples: true, healthz: healthy(ABOVE), server: () => updateRefused() }, async ({ tree, sent }) => {
+    await withLauncher({ examples: true, health: healthy(ABOVE), server: () => updateRefused() }, async ({ tree, sent }) => {
       await waitFor(() => updateShown(tree), 'the update screen');
       h.eq([tree.root.findAllByType(HomeScreen).length, sent.length], [0, 0], 'in place of Home, before any /v1 request');
       await press(button(tree, COPY.updateNotNow));
@@ -475,11 +475,11 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
 
   await h.test('launch check: a minimum that lands while a prompt is being typed replaces compose with the update screen, holding the typed prompt', async () => {
     const health = heldResponse();
-    await withLauncher({ healthz: () => health.promise, server: () => updateRefused() }, async ({ tree, sent, probes }) => {
+    await withLauncher({ health: () => health.promise, server: () => updateRefused() }, async ({ tree, sent, probes }) => {
       await waitFor(() => probes.length > 0, 'the launch probe');
       await TestRenderer.act(async () => home(tree).props.onCreate());
       await TestRenderer.act(async () => tree.root.findByType(ComposeStep).props.onChangeText('A tea timer'));
-      h.ok(on(tree, ComposeStep) && !updateShown(tree), 'while /healthz has not answered, the user types in compose');
+      h.ok(on(tree, ComposeStep) && !updateShown(tree), 'while /health has not answered, the user types in compose');
       await TestRenderer.act(async () => { health.resolve(healthy(ABOVE)()); });
       await waitFor(() => updateShown(tree), 'the update screen, once the minimum arrives');
       h.eq([tree.root.findAllByType(ComposeStep).length, sent.length], [0, 0], 'in place of compose, with nothing sent');
@@ -492,11 +492,11 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
 
   await h.test('launch check: a request sent before the check lands is refused update_required and shows the same screen, holding the typed prompt', async () => {
     const health = heldResponse();
-    await withLauncher({ healthz: () => health.promise, server: () => updateRefused() }, async ({ tree, sent, probes }) => {
+    await withLauncher({ health: () => health.promise, server: () => updateRefused() }, async ({ tree, sent, probes }) => {
       await waitFor(() => probes.length > 0, 'the launch probe');
       await composeAndContinue(tree, 'A tea timer');
       await waitFor(() => updateShown(tree), 'the update screen');
-      h.eq(sent.map((r) => r.path), ['/v1/clarify'], 'shown by the server refusing the clarify, while /healthz is still unanswered');
+      h.eq(sent.map((r) => r.path), ['/v1/clarify'], 'shown by the server refusing the clarify, while /health is still unanswered');
       await press(button(tree, COPY.updateNotNow));
       h.ok(on(tree, HomeScreen), 'Not now goes Home');
       await TestRenderer.act(async () => home(tree).props.onCreate());
@@ -504,22 +504,22 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
     });
   });
 
-  const noMinimum: { name: string; healthz: () => Response | Promise<Response> }[] = [
-    { name: 'no minBuild (production today)', healthz: healthy() },
-    { name: 'the default configuration, both 0', healthz: healthy({ ios: 0, android: 0 }) },
-    { name: 'a minimum equal to this build', healthz: healthy({ ios: TEST_APP_INFO.build, android: 0 }) },
-    { name: 'only the other platform above', healthz: healthy({ ios: 0, android: TEST_APP_INFO.build + 1 }) },
-    { name: 'a minimum sent as a string', healthz: healthy({ ios: String(ABOVE.ios), android: 0 }) },
-    { name: 'a platform missing', healthz: healthy({ ios: ABOVE.ios }) },
-    { name: 'a fractional minimum', healthz: healthy({ ios: ABOVE.ios + 0.5, android: 0 }) },
-    { name: 'minBuild not an object', healthz: healthy(ABOVE.ios) },
-    { name: 'another service’s minimum', healthz: () => json({ ok: true, service: 'whim-server-loadtest', minBuild: ABOVE }) },
-    { name: 'an unhealthy /healthz', healthz: () => json({ ok: true, service: 'whim-server', minBuild: ABOVE }, 503) },
-    { name: 'an unreachable /healthz', healthz: () => { throw new TypeError('fetch failed'); } },
+  const noMinimum: { name: string; health: () => Response | Promise<Response> }[] = [
+    { name: 'no minBuild (production today)', health: healthy() },
+    { name: 'the default configuration, both 0', health: healthy({ ios: 0, android: 0 }) },
+    { name: 'a minimum equal to this build', health: healthy({ ios: TEST_APP_INFO.build, android: 0 }) },
+    { name: 'only the other platform above', health: healthy({ ios: 0, android: TEST_APP_INFO.build + 1 }) },
+    { name: 'a minimum sent as a string', health: healthy({ ios: String(ABOVE.ios), android: 0 }) },
+    { name: 'a platform missing', health: healthy({ ios: ABOVE.ios }) },
+    { name: 'a fractional minimum', health: healthy({ ios: ABOVE.ios + 0.5, android: 0 }) },
+    { name: 'minBuild not an object', health: healthy(ABOVE.ios) },
+    { name: 'another service’s minimum', health: () => json({ ok: true, service: 'whim-server-loadtest', minBuild: ABOVE }) },
+    { name: 'an unhealthy /health', health: () => json({ ok: true, service: 'whim-server', minBuild: ABOVE }, 503) },
+    { name: 'an unreachable /health', health: () => { throw new TypeError('fetch failed'); } },
   ];
   for (const entry of noMinimum) {
     await h.test(`launch check: ${entry.name} — no update screen, and the prompt works as before`, async () => {
-      await withLauncher({ healthz: entry.healthz, server: flowServer(() => json({})) }, async ({ tree, probes }) => {
+      await withLauncher({ health: entry.health, server: flowServer(() => json({})) }, async ({ tree, probes }) => {
         await waitFor(() => probes.length > 0, 'the launch probe');
         await settle();
         h.ok(on(tree, HomeScreen), 'Home, not the update screen');
@@ -530,8 +530,15 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
     });
   }
 
-  await h.test('launch check: a /healthz that never answers holds nothing up — the prompt works as before', async () => {
-    await withLauncher({ healthz: () => new Promise<Response>(() => {}), server: flowServer(() => json({})) }, async ({ tree, probes }) => {
+  await h.test('launch check: a server from before /health (404 there, minimums on /healthz) still opens the update screen', async () => {
+    await withLauncher({ examples: true, olderServer: true, health: healthy(ABOVE), server: () => updateRefused() }, async ({ tree, probeUrls }) => {
+      await waitFor(() => updateShown(tree), 'the update screen');
+      h.eq(probeUrls.map((url) => new URL(url).pathname), ['/health', '/healthz'], 'the minimum was read from the fallback');
+    });
+  });
+
+  await h.test('launch check: a /health that never answers holds nothing up — the prompt works as before', async () => {
+    await withLauncher({ health: () => new Promise<Response>(() => {}), server: flowServer(() => json({})) }, async ({ tree, probes }) => {
       await waitFor(() => probes.length > 0, 'the launch probe');
       await composeAndContinue(tree, 'A tea timer');
       await waitFor(() => planLoaded(tree), 'the plan');
@@ -545,7 +552,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
     const opener = stubStoreOpener((url) => url.startsWith('market:'));
     const androidBuild = () => appInfoFrom('android', { version: '1.4.0', build: '380642' });
     try {
-      await withLauncher({ appInfo: androidBuild, healthz: healthy({ ios: 0, android: 380643 }), server: () => updateRefused() }, async ({ tree }) => {
+      await withLauncher({ appInfo: androidBuild, health: healthy({ ios: 0, android: 380643 }), server: () => updateRefused() }, async ({ tree }) => {
         await waitFor(() => updateShown(tree), 'the update screen');
         await press(button(tree, COPY.updateAction));
         await waitFor(() => opener.tried.length === 2, 'the fallback');
@@ -562,7 +569,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
   await h.test('Update Whim on iOS: when neither link opens, the screen stays up and nothing crashes', async () => {
     const opener = stubStoreOpener(() => true);
     try {
-      await withLauncher({ healthz: healthy(ABOVE), server: () => updateRefused() }, async ({ tree }) => {
+      await withLauncher({ health: healthy(ABOVE), server: () => updateRefused() }, async ({ tree }) => {
         await waitFor(() => updateShown(tree), 'the update screen');
         await press(button(tree, COPY.updateAction));
         await waitFor(() => opener.tried.length === 2, 'both links tried');

@@ -278,7 +278,7 @@ export function fallbackError(fallback: TerminalFallback, detail?: { status?: nu
 /** Build the headers of a `/v1` request — `content-type`, `x-whim-device`, the four envelope
  *  headers and the protocol level (beta-1 D16) — shared by every `/v1` call and both stream
  *  transports, so no path can drift in how it builds them (design D2 mitigation). Only `/v1` calls
- *  use this; `/healthz` sends none of it.
+ *  use this; `/health` sends none of it.
  *
  *  The installed app's version is read here, per request. A reader that throws fails the request
  *  before anything is sent — `GenerationClientError{kind:'client'}`, with a breadcrumb for `path`

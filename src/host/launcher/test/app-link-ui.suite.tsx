@@ -104,7 +104,7 @@ export async function runAppLinkUiTests(h: Harness): Promise<void> {
     let finish!: (response: Response) => void;
     const response = new Promise<Response>(resolve => { finish = resolve; });
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      if (String(url).endsWith('/healthz')) return new Response(JSON.stringify({ service: 'whim-server' }));
+      if (String(url).endsWith('/health')) return new Response(JSON.stringify({ service: 'whim-server' }));
       signal = init?.signal ?? undefined;
       return response;
     }) as typeof fetch;

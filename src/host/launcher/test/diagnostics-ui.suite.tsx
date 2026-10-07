@@ -128,14 +128,14 @@ function recordingPost(bodies: string[]): PostDiagnostics {
 export async function runDiagnosticsUiTests(h: Harness): Promise<void> {
   // ── beta-1 D20: diagnostics follow the server the user chose, and never cross to another ─────
 
-  await h.test('own server: an address saved with no acknowledgement leaves diagnostics and the /healthz probe on the compiled-in server', async () => {
+  await h.test('own server: an address saved with no acknowledgement leaves diagnostics and the /health probe on the compiled-in server', async () => {
     await withLauncher({ prepare: (kv) => saveServerUrl(kv, LAN), server: nothingElse }, async ({ kv, probeUrls }) => {
       await withDiagnostics(kv, async (urls) => {
         log.error(CHANNELS.gen, 'transport failed', { kind: 'network' });
         await flushDiagnostics();
         h.eq(urls, [toServer(RELEASE.serverUrl)], 'the upload goes to the compiled-in server');
       });
-      h.ok(probeUrls.length > 0 && probeUrls.every((url) => url === `${RELEASE.serverUrl}/healthz`), `every probe targets the compiled-in server (got ${probeUrls.join(', ')})`);
+      h.ok(probeUrls.length > 0 && probeUrls.every((url) => url === `${RELEASE.serverUrl}/health`), `every probe targets the compiled-in server (got ${probeUrls.join(', ')})`);
     });
   });
 

@@ -3,11 +3,16 @@
  * the launcher startup/retry loop (chain-3), per design.md decisions 1-2 and spec
  * "A shared probe classifies a server address as verified, unverified, or unreachable".
  *
- * Issues `GET <baseUrl>/healthz` and classifies the outcome against the `generation-server`
- * healthz identity stamp (`{ ok: true, service: 'whim-server' }`, `server/src/app.ts`'s `/healthz`
- * route): a 200 response whose body parses and carries `service === 'whim-server'` is
+ * Issues `GET <baseUrl>/health` and classifies the outcome against the `generation-server`
+ * health identity stamp (`{ ok: true, service: 'whim-server' }`, `server/src/app.ts`'s health
+ * routes): a 200 response whose body parses and carries `service === 'whim-server'` is
  * `'verified'`; a 200 response with any other or unparseable body is `'unverified'`; a non-200
  * response, a network error, or a timeout is `'unreachable'`. Never throws.
+ *
+ * Only a `404` on `/health` triggers one `GET <baseUrl>/healthz`: Cloud Run's front end answers its
+ * own 404 for `/healthz`, so `/health` is the path production serves, while a self-hosted server on
+ * older code (decision #70) only has `/healthz`. Any other `/health` outcome is final, so a down
+ * server costs one request, and both requests share one deadline.
  *
  * The same response also carries the minimum supported build per platform (`minBuild`,
  * request-envelope D4), which `probeServerHealth` reads for the launch-time update check (D5):
@@ -34,7 +39,7 @@ export interface ProbeServerOptions {
   fetchImpl?: typeof fetch;
 }
 
-/** The minimum supported build per platform, as `/healthz` reports it. `0` means that platform
+/** The minimum supported build per platform, as the health route reports it. `0` means that platform
  *  has no minimum. */
 export interface MinimumBuilds {
   readonly ios: number;
@@ -50,6 +55,9 @@ interface ServerHealth {
 
 const DEFAULT_TIMEOUT_MS = 4000;
 const SERVICE_IDENTITY = 'whim-server';
+const HEALTH_PATH = '/health';
+/** What servers from before `/health` existed serve the same body on. */
+const LEGACY_HEALTH_PATH = '/healthz';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -69,16 +77,16 @@ function minimumBuildsOf(body: Record<string, unknown>): MinimumBuilds | undefin
 }
 
 /**
- * `GET ${baseUrl}/healthz`, aborted via `AbortController` + `setTimeout` at `opts.timeoutMs`
- * (default 4000ms), classified per this module's doc comment above. Every failure path
- * (non-200, thrown network error, or the timeout firing) resolves to `'unreachable'` rather than
+ * `GET ${baseUrl}/health` (then `/healthz` on a 404), aborted via one `AbortController` +
+ * `setTimeout` at `opts.timeoutMs` (default 4000ms), classified per this module's doc comment
+ * above. Every failure path (non-200, thrown network error, or the timeout firing) resolves to `'unreachable'` rather than
  * rejecting — callers never need a try/catch around this call.
  */
 export async function probeServer(baseUrl: string, opts: ProbeServerOptions = {}): Promise<ProbeResult> {
   return (await probeServerHealth(baseUrl, opts)).result;
 }
 
-/** `probeServer`'s one request and classification, with the reported minimums alongside. Never
+/** `probeServer`'s request(s) and classification, with the reported minimums alongside. Never
  *  rejects, for the same reasons. */
 export async function probeServerHealth(baseUrl: string, opts: ProbeServerOptions = {}): Promise<ServerHealth> {
   const fetchImpl = opts.fetchImpl ?? fetch;
@@ -88,7 +96,10 @@ export async function probeServerHealth(baseUrl: string, opts: ProbeServerOption
 
   let response: Response;
   try {
-    response = await fetchImpl(`${baseUrl}/healthz`, { method: 'GET', signal: controller.signal });
+    response = await fetchImpl(`${baseUrl}${HEALTH_PATH}`, { method: 'GET', signal: controller.signal });
+    if (response.status === 404) {
+      response = await fetchImpl(`${baseUrl}${LEGACY_HEALTH_PATH}`, { method: 'GET', signal: controller.signal });
+    }
   } catch (err) {
     // Expected, routine outcome for this probe (a misconfigured or currently-down address, or the
     // ~4s timeout firing) — logged at debug so a real regression is still traceable through the

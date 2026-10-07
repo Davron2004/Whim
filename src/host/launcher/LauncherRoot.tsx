@@ -685,7 +685,7 @@ function LauncherShell({
   // fresh `ConnectivityLoop` here and revoking it tears the old one down through the SAME cleanup
   // that runs on an address change or unmount — one effect serves startup, grant and revoke alike.
   //
-  // The launch-time update check (request-envelope D5) rides on this loop's own `/healthz` probe —
+  // The launch-time update check (request-envelope D5) rides on this loop's own `/health` probe —
   // no request and no wait of its own. Only a minimum the probe actually read, above the installed
   // build, opens the update screen; a slow, failed or minimum-less probe leaves everything as it was.
   useEffect(() => {
