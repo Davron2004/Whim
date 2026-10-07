@@ -54,9 +54,12 @@ export interface LauncherSetup {
   /** The platform's significant-change acknowledgment, as the iOS module would answer it
    *  (default: none, as on Android). */
   significantUpdate?: SignificantUpdateSheet;
-  /** Answers the connectivity probe's `/healthz` (default: healthy, with no `minBuild`). */
-  healthz?: () => Response | Promise<Response>;
-  /** Answers every request except `/healthz`. */
+  /** Answers the connectivity probe's health route (default: healthy, with no `minBuild`). */
+  health?: () => Response | Promise<Response>;
+  /** A server from before `/health` existed (decision #70, a self-hosted server on older code):
+   *  `/health` is Hono's plain-text 404 and `health` answers on `/healthz` instead. */
+  olderServer?: boolean;
+  /** Answers every request except the health routes. */
   server: (request: SentRequest) => Response | Promise<Response>;
 }
 
@@ -64,9 +67,9 @@ export interface Launcher {
   tree: Tree;
   kv: KVBackend;
   sent: SentRequest[];
-  /** The headers of every `/healthz` probe, in order. */
+  /** The headers of every health probe request (`/health` and `/healthz`), in order. */
   probes: Headers[];
-  /** The full URL of every `/healthz` probe, in order, so a test can tell which server it went to. */
+  /** The full URL of every health probe request, in order, so a test can tell which server it went to. */
   probeUrls: string[];
   paths: () => string[];
   /** Every `setTimeout` is held here instead of scheduled (connect timeouts, probe retries). */
@@ -141,10 +144,13 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
   const probeUrls: string[] = [];
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     const path = new URL(String(url)).pathname;
-    if (path === '/healthz') {
+    if (path === '/health' || path === '/healthz') {
       probes.push(new Headers(init?.headers));
       probeUrls.push(String(url));
-      return setup.healthz ? setup.healthz() : json({ service: 'whim-server' });
+      if (setup.olderServer ? path === '/health' : path === '/healthz') {
+        return new Response('404 Not Found', { status: 404, headers: { 'Content-Type': 'text/plain' } });
+      }
+      return setup.health ? setup.health() : json({ service: 'whim-server' });
     }
     const request: SentRequest = {
       url: String(url),

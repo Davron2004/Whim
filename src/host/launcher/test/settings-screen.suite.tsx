@@ -56,7 +56,7 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
         h.eq(clock.count(600), 2, 'the edit waits on one pause for the save and one for the probe');
         await TestRenderer.act(async () => clock.fire(600));
         h.eq(saved, ['https://edited.example/'], 'the pause saves the edit');
-        h.eq(requested, ['https://edited.example/healthz'], 'probe uses the sanitized saved address');
+        h.eq(requested, ['https://edited.example/health'], 'probe uses the sanitized saved address');
         h.eq(results().length, 0, 'in-flight probe has no settled result');
         await TestRenderer.act(async () => { resolve(new Response(JSON.stringify(body), { status })); await response; });
         h.eq(results().map(node => node.children.join('')), [label], 'the actual screen renders the classification');
@@ -190,7 +190,7 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
       await type(tree, 'https://typed.example');
       h.eq(requested, [], 'typing alone sends nothing');
       await TestRenderer.act(async () => addressField(tree).props.onSubmitEditing());
-      h.eq([requested, clock.count(600)], [['https://typed.example/healthz'], 0], 'submitting probes the address without waiting for the pause');
+      h.eq([requested, clock.count(600)], [['https://typed.example/health'], 0], 'submitting probes the address without waiting for the pause');
     } finally {
       await unmountScreen(tree);
       globalThis.fetch = originalFetch;

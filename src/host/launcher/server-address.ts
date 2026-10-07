@@ -27,7 +27,7 @@ const SERVER_ACK_KEY = 'whim.server-ack:v1';
  * apply the same normalization to a draft address before probing it (`handoff/server-probe.md`:
  * "`baseUrl` is passed through unvalidated ... already sanitized by `server-address.ts`'s
  * `loadServerUrl`/`saveServerUrl` before it reaches this module") — without it, a trailing slash
- * in the draft would double up against `probeServer`'s leading-slash `/healthz` the same way.
+ * in the draft would double up against `probeServer`'s leading-slash `/health` the same way.
  */
 export function sanitizeServerUrl(raw: string | null | undefined): string | undefined {
   const trimmed = typeof raw === 'string' ? raw.trim() : '';

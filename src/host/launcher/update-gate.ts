@@ -1,6 +1,6 @@
 /**
  * update-gate — the RN-free half of the update screen (request-envelope D5; spec app-update-gate):
- * whether the minimums the launch-time `/healthz` check read put the installed build below its
+ * whether the minimums the launch-time `/health` check read put the installed build below its
  * platform's, and opening Whim's own store listing with its https fallback. `UpdateRequiredScreen`
  * and `LauncherRoot` are the only callers; this module holds no state.
  */

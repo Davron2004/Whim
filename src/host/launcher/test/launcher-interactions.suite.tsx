@@ -34,7 +34,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     let finish!: (response: Response) => void;
     const generation = new Promise<Response>(resolve => { finish = resolve; });
     globalThis.fetch = (async (url: string) => {
-      if (String(url).endsWith('/healthz')) return new Response('', { status: 503 });
+      if (String(url).endsWith('/health')) return new Response('', { status: 503 });
       if (String(url).endsWith('/clarify')) return new Response(JSON.stringify({ questions: [] }));
       if (String(url).endsWith('/rewrite')) return new Response(JSON.stringify({ rewrittenPrompt: 'A timer', plan: [] }));
       return generation;
@@ -97,7 +97,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     const probe = new Promise<Response>(resolve => { finishProbe = resolve; });
     let probes = 0;
     globalThis.fetch = (async (url: string) => {
-      if (String(url).endsWith('/healthz')) return ++probes === 1 ? new Response('', { status: 503 }) : probe;
+      if (String(url).endsWith('/health')) return ++probes === 1 ? new Response('', { status: 503 }) : probe;
       if (String(url).endsWith('/clarify')) return new Response('{}', { status: 502 });
       if (String(url).endsWith('/rewrite')) return new Response(JSON.stringify({ rewrittenPrompt: 'A timer' }));
       throw new Error(`Unexpected request ${url}`);
@@ -136,7 +136,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     const originalFetch = globalThis.fetch;
     const probed: string[] = [];
     globalThis.fetch = (async (url: string) => {
-      if (!String(url).endsWith('/healthz')) throw new Error(`Unexpected request ${url}`);
+      if (!String(url).endsWith('/health')) throw new Error(`Unexpected request ${url}`);
       probed.push(String(url));
       return new Response(JSON.stringify({ service: 'whim-server' }));
     }) as typeof fetch;
@@ -144,14 +144,14 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     try {
       tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
       await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onSettings());
-      h.eq(probed, ['https://s1.example/healthz'], 'the saved address was probed once, at startup');
+      h.eq(probed, ['https://s1.example/health'], 'the saved address was probed once, at startup');
       const addressField = () => tree!.root.findByType(SettingsScreen).find(node => String(node.type) === 'TextInput');
       for (const keystroke of ['https://s', 'https://s2', 'https://s2.', 'https://s2.example']) {
         await TestRenderer.act(async () => addressField().props.onChangeText(keystroke));
       }
       h.eq(probed.length, 1, 'typing probes nothing');
       await TestRenderer.act(async () => clock.fire(600));
-      h.eq(probed.slice(1), ['https://s2.example/healthz', 'https://s2.example/healthz'], 'the pause probes the finished address: the session’s connectivity and Settings’ own check');
+      h.eq(probed.slice(1), ['https://s2.example/health', 'https://s2.example/health'], 'the pause probes the finished address: the session’s connectivity and Settings’ own check');
       await TestRenderer.act(async () => tree!.root.findByType(SettingsScreen).props.onBack());
       h.eq(tree.root.findByType(HomeScreen).props.offline, false, 'the new address is the one the session is online with');
     } finally {
