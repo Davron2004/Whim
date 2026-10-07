@@ -3,10 +3,10 @@
 #
 #   deploy/smoke.sh                  DNS, the API, the server container, the pages and association files,
 #                                    and a trap post to the beta signup route (it stores nothing)
-#   deploy/smoke.sh --commit <sha>   the same, and /healthz must report exactly that commit
+#   deploy/smoke.sh --commit <sha>   the same, and /health must report exactly that commit
 #   deploy/smoke.sh --pages-only     DNS, the pages and association files
 #
-# Standalone, /healthz may report any full 40-character commit SHA. deploy.sh passes --commit with
+# Standalone, /health may report any full 40-character commit SHA. deploy.sh passes --commit with
 # the SHA it just rolled out, so a container still serving the previous image fails, naming both.
 #
 # DNS is checked first. Until both hostnames resolve only to WHIM_STATIC_IP, with no AAAA record,
@@ -36,7 +36,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 if [[ -n "$expected_commit" ]]; then
-  [[ "$pages_only" -eq 0 ]] || whim_usage_error "--pages-only checks no /healthz, so it takes no --commit"
+  [[ "$pages_only" -eq 0 ]] || whim_usage_error "--pages-only checks no /health, so it takes no --commit"
   [[ "$expected_commit" =~ ^[0-9a-f]{40}$ ]] || whim_usage_error "--commit must be a full 40-character git commit sha"
 fi
 
@@ -52,7 +52,7 @@ done
 readonly MIN_BUILD_IOS="${WHIM_MIN_BUILD_IOS:-0}"
 readonly MIN_BUILD_ANDROID="${WHIM_MIN_BUILD_ANDROID:-0}"
 readonly EXPECTED_HEALTH="{\"ok\":true,\"service\":\"whim-server\",\"commit\":\"${expected_commit:-<40-hex sha>}\",\"minBuild\":{\"ios\":$MIN_BUILD_IOS,\"android\":$MIN_BUILD_ANDROID}}"
-# Judges the /healthz body on stdin by structure, given the configured iOS and Android minimums and
+# Judges the /health body on stdin by structure, given the configured iOS and Android minimums and
 # the expected commit (empty: any full SHA) as arguments, and prints why. Exits 0 when ok is true,
 # the service is whim-server, commit is a full SHA (that one, when given) and minBuild holds exactly
 # those minimums; 2 when minBuild is absent (a server from before the minimum-build gate) and both
