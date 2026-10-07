@@ -3,6 +3,74 @@
 A runbook for operating `api.whim.anycognition.ca` and `whim.anycognition.ca` (design.md D6, D17,
 D19–D26). Every command below is run from a clean, pushed checkout unless it says otherwise.
 
+## Cloud Run (production since 2026-10-07)
+
+Production runs on Cloud Run in `WHIM_GCP_REGION`, scaled to zero when idle (decision #71). Every
+section after this one describes the retired VM; its scripts stay in the repo for a return to a VM.
+
+```sh
+deploy/cloudrun/deploy.sh                 # server image for HEAD (built unless it exists) + pages site
+deploy/cloudrun/deploy.sh --tag <sha>     # server only, from an existing image (rollback, config change)
+deploy/cloudrun/deploy.sh --site-only     # pages site only
+```
+
+Prefix each with `CLOUDSDK_CORE_ACCOUNT=j.ruzimetova@gmail.com` when the active gcloud account
+isn't the project's owner. Values load as for the VM (`deploy/defaults.env`, then
+`~/.config/whim/deploy.env`); `WHIM_GCP_ZONE` and `WHIM_STATIC_IP` are unused.
+
+| Service | Serves | Shape |
+|---|---|---|
+| `whim-server` | the API host | the `deploy/Dockerfile` image, gen2, port 8787, 2 vCPU / 4 GiB, 0–1 instances, concurrency 40, 900 s request timeout |
+| `whim-site` | the pages host | Caddy with the rendered site and `deploy/cloudrun/Caddyfile` baked in (`deploy/cloudrun/site.Dockerfile`), 0–2 instances |
+
+Both run as service account `whim-run`, which holds only `secretmanager.secretAccessor` on
+`whim-openrouter-api-key` and `logging.logWriter`. The OpenRouter key reaches the server as a
+Cloud Run secret env var (`latest` version); adding a secret version takes effect on the next deploy.
+
+What changed from the VM, and what it costs:
+
+- **No durable state.** `WHIM_DATA_DIR` is `/tmp/whim-data`, in instance memory. The usage ledger,
+  reports and beta waitlist rows last only as long as the instance; the daily ceilings reset with
+  it. The cap of one instance keeps them one set of counters while it lives. The OpenRouter key's
+  provider-side credit limit is now the only spend bound that survives a restart. The VM's last
+  data (2026-10-07) is backed up off-cloud, outside the repo.
+- **Cold start.** An idle service has no instance. The first request waits for boot: Chromium
+  launch plus the boot self-test, about 7–10 s. The app's 4 s `/healthz` probe can miss it once and
+  report offline until its next probe.
+- **Chromium sometimes crashes at launch.** One boot in ten died with a SIGSEGV in
+  `chrome-headless-shell` before the self-test (measured 2026-10-07, 10 deploys). Boot refuses to listen
+  without the sandbox, so Cloud Run discards that instance and starts another; the request waits
+  longer. Chromium launches once per instance, so a running generation never hits it.
+- **No host egress firewall.** `deploy/vm/whim-egress.sh` has no Cloud Run equivalent. The
+  synthetic run's egress lock is in-process (proxy and resolver rules, verified by the boot
+  self-test) and still holds. The server process itself can reach the metadata server, which
+  hands it a `whim-run` token. That token can read only the OpenRouter key the process already has.
+- **Drain.** Cloud Run gives a stopping instance 10 s and only stops idle ones, so
+  `WHIM_DRAIN_TIMEOUT_MS` is 8000.
+- **Logs** land in Cloud Logging under `run.googleapis.com/stdout`, not `log_id("docker")`. The
+  saved queries and log-based alerts under Operating below filter on the Docker log id and need
+  `resource.type="cloud_run_revision"` instead. `smoke.sh` checks VM specifics (static IP, the
+  container, the metadata block) and doesn't apply.
+- **Admin commands** (`whim-admin`, `whim-waitlist`) have no shell to run in. Their data is
+  ephemeral anyway.
+
+### Domains
+
+Each hostname is a Cloud Run domain mapping (`gcloud beta run domain-mappings`), API host to
+`whim-server` and pages host to `whim-site`. Google issues and renews the certificates. A mapping
+needs `anycognition.ca` verified in Search Console for the deploying account (a DNS TXT record on
+the apex). At GoDaddy:
+
+| Host | Type | Value |
+|---|---|---|
+| `@` | TXT | the `google-site-verification=…` value Search Console shows |
+| `api.whim` | CNAME | `ghs.googlehosted.com.` |
+| `whim` | A ×4 | `216.239.32.21`, `216.239.34.21`, `216.239.36.21`, `216.239.38.21` |
+
+`whim` keeps its Zoho MX and SPF TXT records. A CNAME can't share a name with them, which is why
+that host uses A records to Google's front end. Paths ending in `z` (`/healthz`) are reserved on
+the `*.run.app` URLs, so check the server through the mapped hostname.
+
 ## 1. One-time provisioning (orchestrator, `gcloud` auth as the project owner)
 
 ```sh

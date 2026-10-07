@@ -1292,3 +1292,22 @@ self-hosted server is a feature, not a dev tool. The owner reversed D10 on 2026-
   The privacy policy (English and French) gains "If you point Whim at your own server".
 - **Store review gets told, not surprised.** The review notes disclose the feature and argue 4.7:
   the default is Whim's server, and any server's output runs in the same sandbox.
+
+### 71. Production moves from the VM to Cloud Run, scaled to zero `[DECIDED — owner, 2026-10-07; supersedes the VM half of public-server D17]`
+
+The VM (an e2-standard-2, two 20 GB disks, a static IP and daily snapshots) cost about $2.50 a day
+with no users. The owner chose zero idle cost over durable state and a host-level egress firewall.
+The server image is unchanged. The runbook is `docs/deploy.md`, section "Cloud Run".
+
+- **Two services.** `whim-server` runs the existing image on Cloud Run gen2, at most one instance.
+  `whim-site` is Caddy with the rendered pages baked in. Domain mappings serve both hostnames.
+- **Chromium's sandbox works on gen2.** The boot self-test passes there with no seccomp profile or
+  `SYS_CHROOT` grant. One launch in ten crashes. Boot refuses without the sandbox, so the
+  platform retries on a new instance. `--no-sandbox` stays forbidden.
+- **No durable state.** The usage ledger, reports and waitlist live in instance memory and reset
+  with it, and so do the daily ceilings. The OpenRouter key's provider-side credit limit is the
+  only spend bound that survives a restart. Persistent storage (Firestore, or SQLite on a volume)
+  is the step to take before real users arrive.
+- **What the move gave up:** the VM's iptables egress firewall, the metadata-server block for the
+  server process, and the Docker-log-id alert filters. The in-process egress lock on the synthetic
+  run is unaffected.
