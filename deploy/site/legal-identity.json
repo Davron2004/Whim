@@ -32,9 +32,9 @@
         "ko": "앱이 보내는 모든 정보(요청 내용, 앱 자료, 휴대폰 ID, 오류 정보, 앱 무결성 확인, 접속 정보, 신고)"
       },
       "country": {
-        "en": "Canada (Montreal)",
-        "fr": "Canada (Montréal)",
-        "ko": "캐나다(몬트리올)"
+        "en": "Canada (Montreal) and the United States (Virginia)",
+        "fr": "Canada (Montréal) et États-Unis (Virginie)",
+        "ko": "캐나다(몬트리올) 및 미국(버지니아)"
       },
       "retention": {
         "en": "As long as we keep each kind of information, as “How long we keep it” says",

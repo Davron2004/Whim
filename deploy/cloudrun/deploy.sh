@@ -52,7 +52,7 @@ trap 'rm -rf "$stage"' EXIT
 server_optional_keys="WHIM_CLARIFY_MODEL WHIM_SUMMARY_MODEL WHIM_PLAN_MODEL WHIM_REPAIR_MODEL WHIM_CLARIFY_REASONING WHIM_REWRITE_REASONING WHIM_SUMMARY_REASONING WHIM_PLAN_REASONING WHIM_ENGINEER_REASONING WHIM_REPAIR_REASONING WHIM_PROVIDER_SORT WHIM_PROVIDER_QUANTIZATIONS WHIM_QUEUE_MAX WHIM_QUEUE_MAX_WAIT_MS WHIM_MIN_BUILD_IOS WHIM_MIN_BUILD_ANDROID WHIM_USAGE_IDLE_DAYS WHIM_BETA_LIMIT_PER_CLIENT_HOUR WHIM_BETA_LIMIT_PER_DAY"
 
 whim_load_values
-whim_require_values WHIM_GCP_PROJECT WHIM_GCP_REGION WHIM_API_HOST WHIM_WEB_HOST \
+whim_require_values WHIM_GCP_PROJECT WHIM_GCP_REGION WHIM_RUN_REGION WHIM_API_HOST WHIM_WEB_HOST \
   WHIM_SUPPORT_EMAIL WHIM_ENGINEER_MODEL WHIM_REWRITE_MODEL
 [ "$WHIM_API_HOST" = "api.$WHIM_WEB_HOST" ] \
   || whim_fail "WHIM_API_HOST must be api.$WHIM_WEB_HOST, got $WHIM_API_HOST"
@@ -97,7 +97,7 @@ deploy_server() {
   echo "==> cloud run $RUN_SERVER_SERVICE"
   # gen2: Chromium's namespace sandbox needs it, and boot refuses to listen without the sandbox.
   # One instance at most, so the in-memory daily ceilings stay one set of counters.
-  whim_gcloud run deploy "$RUN_SERVER_SERVICE" --region "$WHIM_GCP_REGION" --image "$image" \
+  whim_gcloud run deploy "$RUN_SERVER_SERVICE" --region "$WHIM_RUN_REGION" --image "$image" \
     --execution-environment gen2 --port 8787 --cpu 2 --memory 4Gi --cpu-boost \
     --min-instances 0 --max-instances 1 --concurrency 40 --timeout 900 \
     --service-account "$service_account" --allow-unauthenticated \
@@ -119,7 +119,7 @@ deploy_site() {
   echo "==> cloud build $image"
   whim_gcloud builds submit "$stage/site-image" --region "$WHIM_GCP_REGION" --tag "$image"
   echo "==> cloud run $RUN_SITE_SERVICE"
-  whim_gcloud run deploy "$RUN_SITE_SERVICE" --region "$WHIM_GCP_REGION" --image "$image" \
+  whim_gcloud run deploy "$RUN_SITE_SERVICE" --region "$WHIM_RUN_REGION" --image "$image" \
     --port 8080 --cpu 1 --memory 256Mi --min-instances 0 --max-instances 2 --concurrency 80 \
     --service-account "$service_account" --allow-unauthenticated --quiet
 }
