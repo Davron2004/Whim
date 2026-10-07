@@ -26,9 +26,9 @@
 
 ## 3. Deploy and docs: operator surfaces on `/health`
 
-- [ ] 3.1 `deploy/smoke.sh`: the health check requests `/health` with the same body rules (`ok`, `service`, 40-character `commit`, `minBuild`, `--commit` pin). Update `deploy-config.suite.ts` expectations that pin `/healthz`, including the stubbed `--path` assertion.
-- [ ] 3.2 `deploy/monitoring/uptime-healthz.env` `CHECK_PATH=/health`, plus `policy-api-down.json` strings and the `deploy/cloudrun/deploy.sh` closing echo.
-- [ ] 3.3 Docs: `docs/deploy.md`.
+- [x] 3.1 `deploy/smoke.sh`: the health check requests `/health` with the same body rules (`ok`, `service`, 40-character `commit`, `minBuild`, `--commit` pin). Update `deploy-config.suite.ts` expectations that pin `/healthz`, including the stubbed `--path` assertion.
+- [x] 3.2 `deploy/monitoring/uptime-healthz.env` `CHECK_PATH=/health`, plus `policy-api-down.json` strings and the `deploy/cloudrun/deploy.sh` closing echo.
+- [x] 3.3 Docs: `docs/deploy.md`.
   - Change the health-check mentions to `/health`, including the minimum-build runbook and Cloud Run section.
   - Explain that `/healthz` is kept and is blocked by Google's front end on Cloud Run custom domains.
   - Update `docs/store/review-notes.md` to match.
