@@ -1311,3 +1311,16 @@ The server image is unchanged. The runbook is `docs/deploy.md`, section "Cloud R
 - **What the move gave up:** the VM's iptables egress firewall, the metadata-server block for the
   server process, and the Docker-log-id alert filters. The in-process egress lock on the synthetic
   run is unaffected.
+
+### 72. Cloud Run compute runs in us-east4; data stays in Montreal `[DECIDED — 2026-10-07; amends #71]`
+
+Cloud Run refuses custom-domain mappings in `northamerica-northeast1` (`501 … not allowed`). The free
+alternatives were the nearest region that supports mappings, or a global external load balancer at
+about $18 a month. The owner's constraint is no idle spend, so the load balancer was ruled out.
+
+- `whim-server` and `whim-site` run in `us-east4` (Virginia), under `WHIM_RUN_REGION` in
+  `deploy/defaults.env`. Artifact Registry, Cloud Build, Firestore and logs stay in `WHIM_GCP_REGION`.
+- The privacy policy's Google Cloud row reads "Canada (Montreal) and the United States (Virginia)" in
+  en, fr and ko. The policy already said information is handled in Canada and the United States. This
+  is a provider-table value, not a manifest change, so nobody re-consents.
+- Every image pull and every Firestore call crosses regions (about 15 ms). That cost is accepted.

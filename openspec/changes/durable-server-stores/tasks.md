@@ -36,7 +36,7 @@
 
 - [ ] 6.1 `deploy/cloudrun/deploy.sh`: set `WHIM_STORE_BACKEND=firestore` on `whim-server`, and apply `deploy/firestore/indexes.json` idempotently (create only the missing indexes; existing ones are left alone) before deploying the server.
 - [ ] 6.2 `docs/deploy.md` "Cloud Run": replace "No durable state" with the Firestore backend. Document operator commands from a laptop (`gcloud auth application-default login`, then `WHIM_STORE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=… node server/admin.mjs …` / `node server/waitlist.mjs …`), the import procedure, and rollback to `sqlite`.
-- [ ] 6.3 Append decision #72 to `docs/decisions.md` and add the `server-storage-backends` row to `docs/capabilities.md`.
+- [ ] 6.3 Append the next-numbered decision to `docs/decisions.md` and add the `server-storage-backends` row to `docs/capabilities.md`.
 
 ## 7. Rollout (orchestrator, attended, after merge)
 

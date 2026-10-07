@@ -64,7 +64,7 @@ SQLite's `secure_delete=ON` overwrites purged pages. Firestore has no equivalent
 
 ## Risks / Trade-offs
 
-- **Hot-path latency:** about 4 Firestore round trips per generation at 10–30 ms each in-region. That is under 150 ms against a run that takes minutes. Clarify and rewrite add about 80 ms. → Accepted; measure on the first production run.
+- **Hot-path latency:** about 4 Firestore round trips per generation at 15–40 ms each (Cloud Run in `us-east4` → Firestore in Montreal, decision #72). That is under 200 ms against a run that takes minutes. Clarify and rewrite add about 80 ms. → Accepted; measure on the first production run.
 - **Transaction contention on the global counter under bursts.** At one instance and current traffic this is negligible, and the SDK retries. → Revisit if multi-instance ever lands.
 - **Emulator drift from production Firestore.** → The deploy smoke runs one real admission round trip, and boot does a probe read.
 - **Archive ordering:** the unarchived `public-generation-server` change also modifies "Token metering — the only server state". → Whichever change archives second must reconcile. This change's delta keeps the counter wording and only lifts the backend pin.

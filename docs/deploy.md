@@ -5,7 +5,9 @@ D19–D26). Every command below is run from a clean, pushed checkout unless it s
 
 ## Cloud Run (production since 2026-10-07)
 
-Production runs on Cloud Run in `WHIM_GCP_REGION`, scaled to zero when idle (decision #71). Every
+Production runs on Cloud Run in `WHIM_RUN_REGION` (`us-east4`), scaled to zero when idle (decisions #71, #72).
+Images, Cloud Build and Firestore stay in `WHIM_GCP_REGION` (Montreal). Cloud Run refuses domain mappings
+there, so the services run in Virginia. Every
 section after this one describes the retired VM; its scripts stay in the repo for a return to a VM.
 
 ```sh
@@ -56,7 +58,8 @@ What changed from the VM, and what it costs:
 
 ### Domains
 
-Each hostname is a Cloud Run domain mapping (`gcloud beta run domain-mappings`), API host to
+Each hostname is a Cloud Run domain mapping (`gcloud beta run domain-mappings … --region us-east4`; a
+mapping can't be created in `northamerica-northeast1`), API host to
 `whim-server` and pages host to `whim-site`. Google issues and renews the certificates. A mapping
 needs `anycognition.ca` verified in Search Console for the deploying account (a DNS TXT record on
 the apex). At GoDaddy:

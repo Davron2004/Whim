@@ -27,5 +27,5 @@ Since decision #71, production runs on Cloud Run scaled to zero. The server's th
 - **Code:** `server/src/usage-store.ts`, `server/src/reports/store.ts` and `server/src/waitlist/store.ts`, plus new Firestore implementations and a store factory. Also `server/src/lifecycle.ts` (boot step, `Opened`, cost sweep), `server/src/routes/beta-signup.ts`, `server/src/admin/main.ts`, `server/src/waitlist/cli.ts` and `server/src/config.ts` (backend settings).
 - **Dependencies:** `@google-cloud/firestore` in the server workspace only (Metro must stay unaffected: `guard:metro`). The Firestore emulator, which needs Java, is used for the backend's acceptance suite.
 - **Tests:** a backend conformance suite runs every store contract against SQLite, in-memory and the Firestore emulator. The existing SQLite-shaped suites stay.
-- **Deploy and ops:** `deploy/cloudrun/deploy.sh` (env and indexes), `docs/deploy.md` (Cloud Run section, operator commands), `docs/decisions.md` (#72) and `docs/capabilities.md`.
+- **Deploy and ops:** `deploy/cloudrun/deploy.sh` (env and indexes), `docs/deploy.md` (Cloud Run section, operator commands), `docs/decisions.md` (next number) and `docs/capabilities.md`.
 - **Spend:** Firestore's free tier (1 GiB, 50k reads and 20k writes a day) covers expected volume, and nothing is billed while idle.
