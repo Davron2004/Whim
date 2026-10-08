@@ -17,7 +17,8 @@ import path from 'node:path';
 import { check, section } from './harness';
 import { loadServerConfig } from '../src/config';
 import { openStores, type OpenedStores, type StoreConfig } from '../src/stores';
-import { InMemoryUsageStore, type AdmitParams, type AdmitResult, type FailureReason, type LedgerRow } from '../src/usage-store';
+import { InMemoryUsageStore, NodeSqliteUsageStore, type AdmitParams, type AdmitResult, type FailureReason, type LedgerRow, type UsageRecordKeeping, type UsageStore } from '../src/usage-store';
+import { firestoreKey } from '../src/firestore/usage-store';
 import { InMemoryReportStore, type InsertReportParams } from '../src/reports/store';
 import { InMemoryWaitlistStore, WAITLIST_RETENTION_DAYS, type WaitlistPlatform, type WaitlistSignup } from '../src/waitlist/store';
 
@@ -696,9 +697,116 @@ async function factoryTests(): Promise<void> {
     },
   });
   check('firestore: the injected opener receives the config and its stores are returned', seen?.firestoreDatabase === 'whim-test' && opened === injected);
+
+  let outcome: string;
+  try {
+    outcome = await openStores(firestoreConfig, {
+      openFirestore: () => {
+        throw new Error('boom');
+      },
+    }).then(
+      () => 'resolved',
+      (err: unknown) => `rejected: ${messageOf(err)}`,
+    );
+  } catch (err) {
+    outcome = `threw: ${messageOf(err)}`;
+  }
+  check('firestore: an opener that throws makes openStores reject with its error', outcome === 'rejected: boom', outcome);
+}
+
+/** How `call` ends: `rejected`, `resolved`, or `threw: …` when it throws before returning a promise. */
+async function outcomeOf(call: () => Promise<unknown>): Promise<string> {
+  let pending: Promise<unknown>;
+  try {
+    pending = call();
+  } catch (err) {
+    return `threw: ${messageOf(err)}`;
+  }
+  return pending.then(
+    () => 'resolved',
+    () => 'rejected',
+  );
+}
+
+/** Every usage-store call with arguments that reach the database. */
+function usageCalls(usage: UsageStore & UsageRecordKeeping): [string, () => Promise<unknown>][] {
+  return [
+    ['credit', () => usage.credit('dev-a', { promptTokens: 1, completionTokens: 1, totalTokens: 2 })],
+    ['read', () => usage.read('dev-a')],
+    ['admit', () => usage.admit(admitParams('r2', 'dev-a'))],
+    ['unitAvailable', () => usage.unitAvailable({ deviceId: 'dev-a', kind: 'generate', now: T0, deviceLimit: 5 })],
+    ['refund', () => usage.refund('r1')],
+    ['settle', () => usage.settle('r1', { outcome: 'delivered', now: T0 })],
+    ['recordCost', () => usage.recordCost('r1', { state: 'resolved', costUsd: 1 })],
+    ['listUnresolvedCostRows', () => usage.listUnresolvedCostRows({ now: T0, stalePendingAfterMs: HOUR_MS, maxAgeMs: DAY_MS, limit: 10 })],
+    ['summary', () => usage.summary({ days: 1, now: T0 })],
+    ['purgeLedger', () => usage.purgeLedger(utcDay(T0))],
+    ['purgeIdleUsage', () => usage.purgeIdleUsage(utcDay(T0))],
+    ['deviceRecords', () => usage.deviceRecords('dev-a')],
+    ['deleteDeviceRecords', () => usage.deleteDeviceRecords('dev-a')],
+    ['close', () => usage.close()],
+  ];
+}
+
+/** A failure inside a usage-store call must reach the caller as a rejection: callers such as the
+ *  scheduled purge only `.catch` the returned promise, so a synchronous throw escapes them. */
+async function failureRejectsTests(): Promise<void> {
+  section('Usage stores: a call that fails rejects, never throws');
+
+  const unknownReason = { outcome: 'failed' as const, failureReason: 'not_a_code' as FailureReason, now: T0 };
+  for (const [label, usage] of [
+    ['in-memory', new InMemoryUsageStore({ now: () => T0 })],
+    ['sqlite', new NodeSqliteUsageStore(':memory:', { now: () => T0 })],
+  ] as const) {
+    await usage.admit(admitParams('r1', 'dev-a'));
+    const outcome = await outcomeOf(() => usage.settle('r1', unknownReason));
+    check(`${label}: settle with an unknown failure reason rejects`, outcome === 'rejected', outcome);
+    await usage.close();
+  }
+
+  const closed = new NodeSqliteUsageStore(':memory:', { now: () => T0 });
+  await closed.close();
+  for (const [method, call] of usageCalls(closed)) {
+    const outcome = await outcomeOf(call);
+    check(`sqlite: ${method} on a closed store rejects`, outcome === 'rejected', outcome);
+  }
+}
+
+/** `firestoreKey` names stored documents, so its output for any key is fixed for good: an encoding
+ *  change would orphan every document written under the old id. */
+function firestoreKeyTests(): void {
+  section('firestoreKey: document ids never change');
+
+  const golden: [string, string][] = [
+    ['dev-A9', 'dev-A9'],
+    ['a/b', 'a%2Fb'],
+    ['.', '%2E'],
+    ['..', '%2E%2E'],
+    ['__x__', '%5F%5Fx%5F%5F'],
+    ['%', '%25'],
+    ['', '%'],
+    ["!~*'()", '%21%7E%2A%27%28%29'],
+    ['é', '%C3%A9'],
+    ['', '%EE%80%80'],
+    ['😀', '%F0%9F%98%80'],
+  ];
+  for (const [key, id] of golden) {
+    check(`firestoreKey(${JSON.stringify(key)}) is ${id}`, firestoreKey(key) === id, firestoreKey(key));
+  }
+  for (const lone of ['\uD83D', '\uDE00']) {
+    let thrown: unknown;
+    try {
+      firestoreKey(lone);
+    } catch (err) {
+      thrown = err;
+    }
+    check(`firestoreKey(${JSON.stringify(lone)}) refuses a lone surrogate`, thrown instanceof URIError, messageOf(thrown));
+  }
 }
 
 export async function runStoreConformanceTests(): Promise<void> {
+  firestoreKeyTests();
+  await failureRejectsTests();
   section('Store conformance: in-memory');
   await runStoreConformance(inMemoryBackend);
   section('Store conformance: sqlite (through openStores)');

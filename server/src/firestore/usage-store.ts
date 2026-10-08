@@ -31,6 +31,7 @@ import {
 import type { Usage } from '@whim/contract';
 import { deleteInBatches, type FirestoreRoot } from './client';
 import { byUtf8Bytes } from '../text-order';
+import { settle } from '../settle';
 import {
   assertFailureReason,
   computeSummary,
@@ -108,7 +109,7 @@ const EMPTY_KEY = '%';
  */
 export function firestoreKey(key: string): string {
   if (key === '') return EMPTY_KEY;
-  return encodeURIComponent(key).replace(/[_.!~*'()]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+  return encodeURIComponent(key).replace(/[_.!~*'()]/g, (ch) => `%${ch.codePointAt(0)!.toString(16).toUpperCase()}`);
 }
 
 /** The key `firestoreKey` encoded as `id`. */
@@ -248,46 +249,49 @@ export class FirestoreUsageStore implements UsageStore, UsageRecordKeeping {
     return undefined;
   }
 
-  async admit(params: AdmitParams): Promise<AdmitResult> {
+  admit(params: AdmitParams): Promise<AdmitResult> {
     const { requestId, deviceId, kind, now } = params;
-    const counters = this.limitCounters(params);
-    const ref = this.request(requestId);
-    // Identifies the row this call writes across the client's retries of its transaction; a second
-    // call with the same parameters is a reuse, not a retry.
-    const admissionId = randomUUID();
-    return this.db.runTransaction(
-      async (tx): Promise<AdmitResult> => {
-        const [existing, ...snapshots] = await tx.getAll(ref, ...counters);
-        // The client retries a commit whose reply was lost (DEADLINE_EXCEEDED, UNAVAILABLE, ...) even
-        // when it landed. That retry finds this call's own row, already counted: it is the same
-        // admission, so it answers as the first attempt did, before the limits its own unit now fills.
-        if (existing.exists && existing.get('admissionId') === admissionId) return { ok: true, requestId };
-        const refused = FirestoreUsageStore.refusal(params, snapshots);
-        if (refused) return refused;
-        // As in the SQLite store, a reused id is rejected after the limit checks; nothing is written.
-        if (existing.exists) throw new Error(`request id ${requestId} is already in the ledger`);
-        const row: RequestDoc = {
-          deviceId,
-          kind,
-          utcDay: utcDayString(now),
-          startedAt: now,
-          endedAt: null,
-          outcome: null,
-          failureReason: null,
-          promptTokens: 0,
-          completionTokens: 0,
-          costUsd: null,
-          costState: 'pending',
-          generationIds: null,
-          refunded: false,
-          admissionId,
-        };
-        tx.create(ref, row);
-        this.shiftCounters(tx, row, 1);
-        return { ok: true, requestId };
-      },
-      { maxAttempts: ADMISSION_MAX_ATTEMPTS },
-    );
+    // Naming the documents throws for a malformed clock reading; `settle` keeps that a rejection.
+    return settle(() => {
+      const counters = this.limitCounters(params);
+      const ref = this.request(requestId);
+      // Identifies the row this call writes across the client's retries of its transaction; a second
+      // call with the same parameters is a reuse, not a retry.
+      const admissionId = randomUUID();
+      return this.db.runTransaction(
+        async (tx): Promise<AdmitResult> => {
+          const [existing, ...snapshots] = await tx.getAll(ref, ...counters);
+          // The client retries a commit whose reply was lost (DEADLINE_EXCEEDED, UNAVAILABLE, ...) even
+          // when it landed. That retry finds this call's own row, already counted: it is the same
+          // admission, so it answers as the first attempt did, before the limits its own unit now fills.
+          if (existing.exists && existing.get('admissionId') === admissionId) return { ok: true, requestId };
+          const refused = FirestoreUsageStore.refusal(params, snapshots);
+          if (refused) return refused;
+          // As in the SQLite store, a reused id is rejected after the limit checks; nothing is written.
+          if (existing.exists) throw new Error(`request id ${requestId} is already in the ledger`);
+          const row: RequestDoc = {
+            deviceId,
+            kind,
+            utcDay: utcDayString(now),
+            startedAt: now,
+            endedAt: null,
+            outcome: null,
+            failureReason: null,
+            promptTokens: 0,
+            completionTokens: 0,
+            costUsd: null,
+            costState: 'pending',
+            generationIds: null,
+            refunded: false,
+            admissionId,
+          };
+          tx.create(ref, row);
+          this.shiftCounters(tx, row, 1);
+          return { ok: true, requestId };
+        },
+        { maxAttempts: ADMISSION_MAX_ATTEMPTS },
+      );
+    });
   }
 
   async unitAvailable(params: UnitQuery): Promise<UnitAvailability> {
@@ -370,8 +374,8 @@ export class FirestoreUsageStore implements UsageStore, UsageRecordKeeping {
     return deleted;
   }
 
-  async purgeIdleUsage(beforeUtcDay: string): Promise<number> {
-    return deleteInBatches(this.db, this.usage().where('lastCreditedDay', '<', beforeUtcDay));
+  purgeIdleUsage(beforeUtcDay: string): Promise<number> {
+    return settle(() => deleteInBatches(this.db, this.usage().where('lastCreditedDay', '<', beforeUtcDay)));
   }
 
   async deviceRecords(deviceId: string): Promise<DeviceUsageRecords> {
@@ -444,5 +448,7 @@ export class FirestoreUsageStore implements UsageStore, UsageRecordKeeping {
   }
 
   /** The client belongs to whoever opened it (`OpenedStores.close` terminates it). */
-  async close(): Promise<void> {}
+  close(): Promise<void> {
+    return Promise.resolve();
+  }
 }

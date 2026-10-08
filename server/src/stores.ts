@@ -12,6 +12,7 @@
 import path from 'node:path';
 import type { ServerConfig } from './config';
 import { log } from './logger';
+import { settle } from './settle';
 import { NodeSqliteUsageStore, type UsageRecordKeeping, type UsageStore } from './usage-store';
 import { NodeSqliteReportStore, type ReportRecordKeeping, type ReportStore } from './reports/store';
 import { NodeSqliteWaitlistStore, type WaitlistStore } from './waitlist/store';
@@ -136,7 +137,7 @@ async function openSqliteStores(config: StoreConfig): Promise<OpenedStores> {
     return { usage, reports, waitlist, close: () => closeAll([reports, waitlist, usage]) };
   } catch (err) {
     // A store that failed to open leaves the ones before it open; release them before reporting.
-    await closeAll(opened.reverse()).catch((closeErr: unknown) => {
+    await closeAll([...opened].reverse()).catch((closeErr: unknown) => {
       log.warn({ detail: closeErr instanceof Error ? closeErr.message : String(closeErr) }, 'a store opened before the failure did not close');
     });
     throw err;
@@ -145,7 +146,8 @@ async function openSqliteStores(config: StoreConfig): Promise<OpenedStores> {
 
 /** Opens every server store on `config.storeBackend`. Rejects when a store cannot be opened, with
  *  nothing left open. */
-export async function openStores(config: StoreConfig, deps: OpenStoresDeps = {}): Promise<OpenedStores> {
-  if (config.storeBackend === 'firestore') return (deps.openFirestore ?? openFirestoreStores)(config);
+export function openStores(config: StoreConfig, deps: OpenStoresDeps = {}): Promise<OpenedStores> {
+  // An opener that throws rather than rejects still rejects here.
+  if (config.storeBackend === 'firestore') return settle(() => (deps.openFirestore ?? openFirestoreStores)(config));
   return openSqliteStores(config);
 }
