@@ -1,0 +1,11 @@
+# Fix plan
+
+Nested fix loop from `durable-server-stores` closure (staging branch `integration/beta-1`, PR #137). Findings: `findings.md` (SonarCloud round 1, gate ERROR, 18 issues). Mechanical fixes only. No protected config, no dependencies, no spec-visible behaviour change.
+
+Sonar analysed the PREVIOUS push (c5b60b0f); line numbers for `deploy.sh` are stale. Lane L1 therefore covers every single-bracket test in the file at HEAD (19, up from 13: the change added 6 that the next analysis would flag).
+
+- [ ] L1 — S1–S13 `shelldre:S7688` — `deploy/cloudrun/deploy.sh`: every `[ … ]` test → `[[ … ]]`. Structural, no behavioural delta; no new test (the stubbed-gcloud `deploy-config.suite.ts` cases and `bash -n` are the assurance). Allowlist: `deploy/cloudrun/deploy.sh`. Severity low.
+- [ ] L2 — S14 `docker:S6471` + S15 `docker:S8431` — `deploy/cloudrun/site.Dockerfile:4`: run Caddy as a non-root user (Cloud Run gives a non-privileged port; verify the listen port and file ownership still work), and reference the image by version tag OR digest, not both (keep the digest for immutability; record the tag in a comment). Config, behaviour must be unchanged; assurance: whatever suite pins site.Dockerfile, else inspection. Allowlist: `deploy/cloudrun/site.Dockerfile`, `deploy/cloudrun/Caddyfile`, `server/test/deploy-config.suite.ts`. Severity low.
+- [ ] L3 — S16–S18 `typescript:S7503` — `server/src/loadtest/server.ts:89,97,116`: async functions with no `await`. Make them non-async returning `Promise.resolve(...)` / `Promise.reject(...)` (or otherwise match the interface they implement) without changing what callers observe. Structural; existing loadtest suites are the assurance. Also remove the unused `IDLE_DEVICE` constant in `server/test/admin-purge.suite.ts:23` (dead code from durable-server-stores fix-B). Allowlist: `server/src/loadtest/server.ts`, `server/test/admin-purge.suite.ts`. Severity low.
+
+Each lane: fix-worker in its own worktree from the staging tip, self-gate, integrity against its allowlist, reviewer verify, `fixloop.sh gatefull`, serialized merge + regate.
