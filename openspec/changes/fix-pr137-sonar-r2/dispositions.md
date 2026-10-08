@@ -15,3 +15,4 @@
 - gatefull R2-B PASS 413 s, R2-C PASS 402 s.
 - merged (serial) — R2-C c2e394f8, R2-A c4333aed, R2-B 88ce542a, R2-D 90df91e8; regate PASS after each; settle.ts canonical on tip (identical add/add merged cleanly). Worktrees removed (-f -f, ancestor-checked), branches deleted.
 - ACCEPT candidates for the owner (Sonar S9382, deliberate sequencing): stores.ts drain-until-empty loop; stores.ts ordered closeAll; firestore/usage-store.ts deleteDeviceRecords paging-by-deletion; import-sqlite.ts chunked getAll/commit (one ≤500 batch in flight, stop at first failure, idempotent rerun).
+- Sonar after round 2 (7b91ee79): CI PASS, gate OK, 44 → 9 issues. 4 = ACCEPT set; 5 new from round 1 L4 / R2-D → lane R2-E.
