@@ -16,7 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { check, section } from './harness';
 import { loadServerConfig } from '../src/config';
-import { openStores, openFirestoreStores, type OpenedStores, type StoreConfig } from '../src/stores';
+import { openStores, type OpenedStores, type StoreConfig } from '../src/stores';
 import { InMemoryUsageStore, type AdmitParams, type AdmitResult, type FailureReason, type LedgerRow } from '../src/usage-store';
 import { InMemoryReportStore, type InsertReportParams } from '../src/reports/store';
 import { InMemoryWaitlistStore, WAITLIST_RETENTION_DAYS, type WaitlistPlatform, type WaitlistSignup } from '../src/waitlist/store';
@@ -371,6 +371,16 @@ const waitlistRows: StoreConformanceCase = {
   },
 };
 
+const waitlistConcurrentSignups: StoreConformanceCase = {
+  name: 'concurrent signups of one new email store it exactly once',
+  async run({ waitlist }) {
+    const spellings = ['new@example.com', 'NEW@example.com', ' new@example.com', 'New@Example.com ', 'new@EXAMPLE.com', '  nEw@example.COM'];
+    const outcomes = await Promise.all(spellings.map((email) => waitlist.upsert(signup(email, 'ios', T0))));
+    nodeAssert.strictEqual(outcomes.filter((outcome) => outcome === 'stored').length, 1, `one signup stores the row, the rest update it: ${outcomes.join(', ')}`);
+    nodeAssert.deepStrictEqual((await waitlist.export()).map((row) => [row.email, row.createdAt]), [['new@example.com', T0]]);
+  },
+};
+
 const deviceRecords: StoreConformanceCase = {
   name: 'device export and delete cover every record keyed by one device id',
   async run({ usage, reports }) {
@@ -460,9 +470,15 @@ export const STORE_CONFORMANCE_CASES: readonly StoreConformanceCase[] = [
   creditIncrements,
   reportListing,
   waitlistRows,
+  waitlistConcurrentSignups,
   deviceRecords,
   retention,
 ];
+
+/** The cases that exercise the report and waitlist stores. `deviceRecords` and `retention` also
+ *  drive the usage store, so a backend that opens these with another backend's usage store tests
+ *  only its own reports and waitlist. */
+export const REPORT_AND_WAITLIST_CASES: readonly StoreConformanceCase[] = [reportListing, waitlistRows, waitlistConcurrentSignups, deviceRecords, retention];
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -600,9 +616,6 @@ async function factoryTests(): Promise<void> {
     },
   });
   check('firestore: the injected opener receives the config and its stores are returned', seen?.firestoreDatabase === 'whim-test' && opened === injected);
-  const refusal = await openStores(firestoreConfig).then(() => undefined, messageOf);
-  check('firestore: the default opener rejects, naming the backend', refusal?.includes('firestore') === true, refusal);
-  check('  ... the same opener `openFirestoreStores` exports', (await openFirestoreStores(firestoreConfig).then(() => undefined, messageOf)) === refusal);
 }
 
 export async function runStoreConformanceTests(): Promise<void> {

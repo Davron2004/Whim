@@ -3,37 +3,54 @@
  * through `npm run stores:firestore:test`, which starts the Firestore emulator via a pinned
  * firebase-tools and sets FIRESTORE_EMULATOR_HOST before invoking this file.
  *
- * Bootstrap: no Firestore store exists yet, so it registers zero conformance cases. It does prove
- * the client reaches the emulator (one write, read back) so the store chains start from a working
- * connection. The Firestore chains replace the body with the shared store-conformance cases.
+ * Bundles `server/test/firestore-conformance.ts` the way `server/test/run.mjs` bundles the
+ * acceptance suite and runs it under Node. Exits non-zero on any failure.
  *
  *   npm run stores:firestore:test
  */
 
-import { Firestore } from '@google-cloud/firestore';
+import { build } from 'esbuild';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import path from 'node:path';
+import fs from 'node:fs';
 
 if (!process.env.FIRESTORE_EMULATOR_HOST) {
   console.error('stores:firestore:test FAILED — FIRESTORE_EMULATOR_HOST is unset; run via the npm script.');
   process.exit(1);
 }
 
-// The client retries an unreachable emulator indefinitely; fail by name instead of hanging the gate.
+const WATCHDOG_MS = 30_000;
+// The client retries an unreachable emulator for about a minute per call; fail by name instead of
+// hanging the gate. Each conformance case also has its own 20 s timeout.
 const watchdog = setTimeout(() => {
-  console.error('stores:firestore:test FAILED — emulator round-trip did not finish within 30s.');
+  console.error(`stores:firestore:test FAILED — the run did not finish within ${WATCHDOG_MS / 1000}s.`);
   process.exit(1);
-}, 30_000);
+}, WATCHDOG_MS);
 
-const db = new Firestore({ projectId: process.env.GCLOUD_PROJECT ?? 'demo-whim-conformance' });
-const ref = db.collection('_bootstrap').doc(`probe-${process.pid}`);
-const written = Date.now();
-await ref.set({ written });
-const read = (await ref.get()).get('written');
-await db.terminate();
-clearTimeout(watchdog);
+const here = path.dirname(fileURLToPath(import.meta.url));
+const outfile = path.join(process.cwd(), `.firestore-conformance.${process.pid}.tmp.mjs`);
 
-if (read !== written) {
-  console.error(`stores:firestore:test FAILED — emulator round-trip returned ${String(read)}, expected ${written}.`);
-  process.exit(1);
+await build({
+  entryPoints: [path.join(here, 'firestore-conformance.ts')],
+  outfile,
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  target: 'node22',
+  logLevel: 'warning',
+  // As in `server/test/run.mjs`: these load files relative to their own package at run time.
+  external: ['typescript', 'esbuild', 'pino', '@google-cloud/firestore'],
+});
+
+process.env.WHIM_LOG_JSON = '1';
+
+try {
+  await import(pathToFileURL(outfile));
+} finally {
+  fs.rmSync(outfile, { force: true });
 }
 
-console.log(`firestore conformance: 0 cases; emulator round-trip OK (${process.env.FIRESTORE_EMULATOR_HOST})`);
+clearTimeout(watchdog);
+// The unreachable-database case leaves its client retrying in the background (terminating it would
+// wait for the retries), so the process exits here rather than when that client gives up.
+process.exit(0);

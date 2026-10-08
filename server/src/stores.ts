@@ -15,6 +15,10 @@ import { log } from './logger';
 import { NodeSqliteUsageStore, type UsageRecordKeeping, type UsageStore } from './usage-store';
 import { NodeSqliteReportStore, type ReportRecordKeeping, type ReportStore } from './reports/store';
 import { NodeSqliteWaitlistStore, type WaitlistStore } from './waitlist/store';
+import type { Firestore } from '@google-cloud/firestore';
+import { openFirestoreClient, type FirestoreClientOptions, type FirestoreRoot } from './firestore/client';
+import { FirestoreReportStore } from './firestore/report-store';
+import { FirestoreWaitlistStore } from './firestore/waitlist-store';
 
 /** The configuration `openStores` reads. */
 export type StoreConfig = Pick<ServerConfig, 'storeBackend' | 'firestoreDatabase' | 'dataDir' | 'now' | 'usageIdleDays'>;
@@ -36,9 +40,53 @@ export interface OpenStoresDeps {
   readonly openFirestore?: FirestoreStoresOpener;
 }
 
-/** The `firestore` backend's opener. Not built yet: it rejects naming the backend. */
-export const openFirestoreStores: FirestoreStoresOpener = () =>
-  Promise.reject(new Error('WHIM_STORE_BACKEND=firestore: the firestore store backend is not built'));
+/** Builds the `firestore` backend's usage store on the opened client, under `root`. */
+export type FirestoreUsageOpener = (db: Firestore, root: FirestoreRoot, config: StoreConfig) => UsageStore & UsageRecordKeeping;
+
+/** The `firestore` backend's usage store. Not built yet: it throws naming the backend, so a boot
+ *  that reaches it (the probe read passed) still refuses to start. */
+export const openFirestoreUsageStore: FirestoreUsageOpener = () => {
+  throw new Error('WHIM_STORE_BACKEND=firestore: the firestore usage store is not built');
+};
+
+export interface FirestoreStoresOptions extends FirestoreClientOptions {
+  /** Where the stores' collections live. Defaults to the database root. */
+  readonly root?: (db: Firestore) => FirestoreRoot;
+  /** Defaults to `openFirestoreUsageStore`. */
+  readonly openUsage?: FirestoreUsageOpener;
+}
+
+/** An opener for the `firestore` backend: one client for `config.firestoreDatabase` that has
+ *  passed its probe read, and every store on it. `close()` terminates the client. */
+export function createFirestoreStoresOpener(options: FirestoreStoresOptions = {}): FirestoreStoresOpener {
+  return async (config) => {
+    const db = await openFirestoreClient(config.firestoreDatabase, options);
+    try {
+      const root = options.root?.(db) ?? db;
+      const reports = new FirestoreReportStore(db, root);
+      const waitlist = new FirestoreWaitlistStore(db, root);
+      const usage = (options.openUsage ?? openFirestoreUsageStore)(db, root, config);
+      return {
+        usage,
+        reports,
+        waitlist,
+        close: async () => {
+          try {
+            await closeAll([reports, waitlist, usage]);
+          } finally {
+            await db.terminate();
+          }
+        },
+      };
+    } catch (err) {
+      await db.terminate();
+      throw err;
+    }
+  };
+}
+
+/** The `firestore` backend's opener, on the database root with the default probe timeout. */
+export const openFirestoreStores: FirestoreStoresOpener = createFirestoreStoresOpener();
 
 /** Closes each store in order, attempting every one even when an earlier close fails, then rethrows
  *  the first failure. */

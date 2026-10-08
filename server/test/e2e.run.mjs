@@ -28,7 +28,7 @@ await build({
   format: 'esm',
   target: 'node22',
   // `pino` joins the list for the same reason (`server/src/logger.ts`; see `server/test/run.mjs`).
-  external: ['esbuild', 'playwright', 'typescript', 'pino'],
+  external: ['esbuild', 'playwright', 'typescript', 'pino', '@google-cloud/firestore'],
   logLevel: 'warning',
 });
 
