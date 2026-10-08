@@ -137,14 +137,17 @@ update whim-purge --env-vars-file … --set-secrets …` with the server's envir
 period changed with `--tag` reaches the job too. Its schedule and alert are left alone. When no
 `whim-purge` job exists, a `--tag` deploy creates none, prints `WARNING: no Cloud Run job
 whim-purge exists, so retention is NOT enforced`, and still succeeds: run a plain deploy to create
-the job. The next plain deploy points the job at the new image.
+the job. Only gcloud's NOT_FOUND answer counts as no job; any other failure to look it up (a
+permission or network error) stops the deploy after the server, naming the error. The next plain
+deploy points the job at the new image.
 
 **Purge failure alert.** Cloud Run records a job's plain text output at `DEFAULT` severity, so a
 failing `whim-admin purge` also prints one structured line to stdout,
 `{"severity":"ERROR","message":"purge failed","detail":"<what failed>"}`, which Cloud Logging
-records at `ERROR`. It prints it after the per-store lines when any purge failed (`detail` names
-each failed store and why), and alone when the command fails before or around the purges (bad
-configuration, stores that cannot open or close; the stack goes to stderr). Either way it exits 1.
+records at `ERROR`. It prints it after the per-store lines when any purge or the closing of the
+stores failed (`detail` names each failed store and why, then `close: <why>`), after the usage line
+when `purge` is given arguments, and alone when the command fails before the purges (bad
+configuration, stores that cannot open; the stack goes to stderr). Either way it exits 1.
 The alert policy "Whim: purge job failed" (`deploy/monitoring/policy-purge-failed.json`) emails the
 "Whim alerts" channel, at most once an hour, on that line (`resource.type="cloud_run_job"
 resource.labels.job_name="whim-purge" severity>=ERROR`). Every plain Firestore deploy applies the
@@ -464,7 +467,10 @@ string the deploy scripts use, from `deploy/lib.sh`).
   `journalctl -u google-cloud-ops-agent` on the VM.
 - **Alerts** — `provision.sh` applies `deploy/monitoring/` (policy JSON, the uptime check's
   settings, the log metric) and emails everything to `WHIM_ALERT_EMAIL`. Tune a threshold by editing
-  the file and rerunning `provision.sh`. What each email means and the first thing to run:
+  the file and rerunning `provision.sh`. "Whim: purge job failed" is the Cloud Run purge job's alert:
+  every plain `deploy/cloudrun/deploy.sh` (no `--tag`) applies it (section "Firestore stores"), so an
+  edit to it lands with the next plain deploy and needs no `provision.sh` run. What each email means
+  and the first thing to run:
 
   | Alert | Fires when | Rate | First command |
   | --- | --- | --- | --- |

@@ -30,14 +30,22 @@ export function purgeFailedLine(detail: string): string {
   return `${JSON.stringify({ severity: 'ERROR', message: 'purge failed', detail })}\n`;
 }
 
-/** Runs the purges against `stores` and prints `<store>: N purged` (or `<store>: failed: <why>`)
- *  for reports, ledger, usage and waitlist, in that order. */
-export async function runPurge(
-  argv: readonly string[],
-  stores: Pick<OpenedStores, 'reports' | 'usage' | 'waitlist'>,
-  config: PurgeConfig,
-): Promise<AdminCliResult> {
-  if (argv.length > 0) return { exitCode: 1, output: 'purge takes no arguments\n' };
+/** What a purge run printed, and why it failed (empty when it did not). */
+interface PurgeOutcome {
+  readonly output: string;
+  readonly failures: string[];
+}
+
+/** The run's result: its output, then (when anything failed) the one structured ERROR line. */
+function resultOf({ output, failures }: PurgeOutcome): AdminCliResult {
+  if (failures.length === 0) return { exitCode: 0, output };
+  return { exitCode: 1, output: output + purgeFailedLine(failures.join('; ')) };
+}
+
+/** Runs the four purges at once, as the server's scheduled purges do; one failing does not stop
+ *  the others, and the lines keep the order reports, ledger, usage, waitlist. */
+async function purgeAll(argv: readonly string[], stores: Pick<OpenedStores, 'reports' | 'usage' | 'waitlist'>, config: PurgeConfig): Promise<PurgeOutcome> {
+  if (argv.length > 0) return { output: 'purge takes no arguments\n', failures: ['purge takes no arguments'] };
   const now = config.now();
   const { ledgerBeforeUtcDay, idleBeforeUtcDay } = usagePurgeCutoffs(now, config);
   const purges: ReadonlyArray<readonly [string, () => Promise<number>]> = [
@@ -46,17 +54,39 @@ export async function runPurge(
     ['usage', () => stores.usage.purgeIdleUsage(idleBeforeUtcDay)],
     ['waitlist', () => stores.waitlist.purge(now)],
   ];
+  const settled = await Promise.allSettled(purges.map(([, purge]) => Promise.resolve().then(purge)));
   const lines: string[] = [];
   const failures: string[] = [];
-  for (const [store, purge] of purges) {
-    try {
-      lines.push(`${store}: ${await purge()} purged`);
-    } catch (err) {
-      failures.push(`${store}: ${messageOf(err)}`);
-      lines.push(`${store}: failed: ${messageOf(err)}`);
+  settled.forEach((outcome, i) => {
+    const store = purges[i]![0];
+    if (outcome.status === 'fulfilled') {
+      lines.push(`${store}: ${outcome.value} purged`);
+    } else {
+      failures.push(`${store}: ${messageOf(outcome.reason)}`);
+      lines.push(`${store}: failed: ${messageOf(outcome.reason)}`);
     }
+  });
+  return { output: lines.join('\n') + '\n', failures };
+}
+
+/** Runs the purges against `stores` and prints `<store>: N purged` (or `<store>: failed: <why>`)
+ *  for reports, ledger, usage and waitlist, in that order. */
+export async function runPurge(
+  argv: readonly string[],
+  stores: Pick<OpenedStores, 'reports' | 'usage' | 'waitlist'>,
+  config: PurgeConfig,
+): Promise<AdminCliResult> {
+  return resultOf(await purgeAll(argv, stores, config));
+}
+
+/** `runPurge`, then closes `stores`, also when the run itself throws. A close that fails is one more
+ *  failure: the one ERROR line names it after the purges' own, so it never hides which store failed. */
+export async function runPurgeThenClose(argv: readonly string[], stores: Pick<OpenedStores, 'reports' | 'usage' | 'waitlist' | 'close'>, config: PurgeConfig): Promise<AdminCliResult> {
+  const outcome = await purgeAll(argv, stores, config).catch((err: unknown): PurgeOutcome => ({ output: '', failures: [messageOf(err)] }));
+  try {
+    await stores.close();
+  } catch (err) {
+    outcome.failures.push(`close: ${messageOf(err)}`);
   }
-  const output = lines.join('\n') + '\n';
-  if (failures.length === 0) return { exitCode: 0, output };
-  return { exitCode: 1, output: output + purgeFailedLine(failures.join('; ')) };
+  return resultOf(outcome);
 }

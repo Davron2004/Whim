@@ -1651,6 +1651,25 @@ function cloudRunStoreTests(): void {
   });
 
   withSandbox((sandbox) => {
+    const notFound = "ERROR: (gcloud.run.jobs.describe) NOT_FOUND: Resource 'whim-purge' of kind 'JOB' in region 'us-east4' in project 'anycognition-whim' does not exist.\n";
+    const { run, calls } = deployTagged(sandbox, [], {}, [['*run jobs describe*', 1, notFound]]);
+    eq('a firestore rollback (--tag) whose job lookup answers NOT_FOUND counts as no purge job', [run.status, calls.filter((line) => / run jobs (?!describe)/.test(line))], [0, []]);
+    check('  ... and warns that retention is not enforced', run.stderr.includes('WARNING: no Cloud Run job whim-purge exists'), run.stderr);
+  });
+
+  withSandbox((sandbox) => {
+    const denied = "ERROR: (gcloud.run.jobs.describe) PERMISSION_DENIED: Permission 'run.jobs.get' denied on resource 'whim-purge'\n";
+    const { run, calls } = deployTagged(sandbox, [], {}, [['*run jobs describe*', 1, denied]]);
+    check(
+      'a firestore rollback (--tag) whose job lookup fails otherwise stops, naming the lookup and its error',
+      run.status === 1 && run.stderr.includes('looking up the purge job whim-purge failed') && run.stderr.includes('PERMISSION_DENIED') && run.stderr.includes('The server is deployed'),
+      run.stderr,
+    );
+    check('  ... without claiming the job does not exist', !run.stderr.includes('WARNING: no Cloud Run job'), run.stderr);
+    eq('  ... after the server deploy, touching the job no further', [serverDeploy(calls) !== -1, calls.filter((line) => / run jobs (?!describe)/.test(line))], [true, []]);
+  });
+
+  withSandbox((sandbox) => {
     const { run, calls } = deployFull(sandbox, [['*scheduler jobs describe*', 0, 'name: whim-purge-hourly\\n']]);
     eq('a redeploy with the schedule in place succeeds', run.status, 0);
     const update = calls.find((line) => line.includes('scheduler jobs update http whim-purge-hourly')) ?? '';
