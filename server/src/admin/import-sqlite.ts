@@ -124,7 +124,7 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
 /** Lowers the `field` of the existing document at `ref` to `data[field]` when that is smaller, in
  *  one transaction, so a concurrent write of the server's is never replaced. Whether the document
  *  then equals `data`; `false` when it no longer exists. */
-async function keepEarliest(db: Firestore, ref: DocumentReference, data: DocumentData, field: string): Promise<boolean> {
+function keepEarliest(db: Firestore, ref: DocumentReference, data: DocumentData, field: string): Promise<boolean> {
   return db.runTransaction(async (tx) => {
     const snapshot = await tx.get(ref);
     const current = snapshot.data();
@@ -158,9 +158,10 @@ async function copyInto(db: Firestore, collection: CollectionReference, docs: re
       }
     });
     if (writes > 0) await batch.commit();
-    for (const i of differing) {
-      const equal = earliest !== undefined && (await keepEarliest(db, refs[i]!, chunk[i]!.data, earliest));
-      if (equal) count.imported++;
+    // Each differing document is its own transaction on its own document, at most one batch of them.
+    const equal = await Promise.all(differing.map((i) => (earliest === undefined ? false : keepEarliest(db, refs[i]!, chunk[i]!.data, earliest))));
+    for (const isEqual of equal) {
+      if (isEqual) count.imported++;
       else count.kept++;
     }
   }
@@ -169,7 +170,7 @@ async function copyInto(db: Firestore, collection: CollectionReference, docs: re
 
 /** Sets the admission counters of `kinds` on `utcDay` to the day's non-refunded `requests`
  *  documents of those kinds, in one transaction. Returns how many counters it set. */
-async function rebuildDay(db: Firestore, root: FirestoreRoot, utcDay: string, kinds: readonly RequestKind[]): Promise<number> {
+function rebuildDay(db: Firestore, root: FirestoreRoot, utcDay: string, kinds: readonly RequestKind[]): Promise<number> {
   const admission = root.collection(ADMISSION_COLLECTION);
   const day = root.collection(REQUESTS_COLLECTION).where('utcDay', '==', utcDay);
   return db.runTransaction(async (tx) => {
@@ -202,8 +203,9 @@ async function importSource(db: Firestore, root: FirestoreRoot, source: SqliteSo
   for (const { data } of source.requests) {
     if (data.utcDay >= keptFrom) days.set(data.utcDay, (days.get(data.utcDay) ?? new Set()).add(data.kind));
   }
-  let counters = 0;
-  for (const [utcDay, kinds] of [...days].sort(([a], [b]) => a.localeCompare(b))) counters += await rebuildDay(db, root, utcDay, [...kinds].sort((a, b) => a.localeCompare(b)));
+  // Each day is its own transaction over that day's documents only, and the days are bounded by retention.
+  const perDay = await Promise.all([...days].map(([utcDay, kinds]) => rebuildDay(db, root, utcDay, [...kinds].sort((a, b) => a.localeCompare(b)))));
+  const counters = perDay.reduce((sum, set) => sum + set, 0);
   return { waitlist, reports, usage, requests, counters, counterDays: days.size };
 }
 

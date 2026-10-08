@@ -15,7 +15,7 @@ import { check, eq, section } from './harness';
 import { TIMED_OUT, within } from './route-doubles';
 import { loadServerConfig } from '../src/config';
 import { openStores, type OpenedStores } from '../src/stores';
-import { runPurge } from '../src/admin/purge';
+import { runPurge, runPurgeThenClose } from '../src/admin/purge';
 
 const DAY_MS = 86_400_000;
 const NOW = Date.UTC(2026, 9, 8, 12, 0, 0);
@@ -97,7 +97,13 @@ async function purgeDeletesExpiredRows(): Promise<void> {
     eq('a second run deletes nothing', second.output, 'reports: 0 purged\nledger: 0 purged\nusage: 0 purged\nwaitlist: 0 purged\n');
 
     const extra = await openSqlite(dir, () => NOW);
-    eq('an argument is a usage error', (await runPurge(['--all'], extra, config).finally(() => extra.close())).exitCode, 1);
+    const usage = await runPurge(['--all'], extra, config).finally(() => extra.close());
+    eq('an argument is a usage error', usage.exitCode, 1);
+    eq(
+      '  ... that prints one structured ERROR line for the alert, purging nothing',
+      [usage.output, (await remaining(dir, ages)).reports],
+      ['purge takes no arguments\n{"severity":"ERROR","message":"purge failed","detail":"purge takes no arguments"}\n', ['report-89d', 'report-1d']],
+    );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -124,6 +130,45 @@ async function failedPurgeFailsTheCommand(): Promise<void> {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+async function failedPurgeAndCloseNameBoth(): Promise<void> {
+  section('whim-admin purge: a failed purge followed by a failed close names both in one ERROR line');
+  const dir = tempDir('close');
+  try {
+    await seed(dir, NOW, [1, 91]);
+    const config = { ...loadServerConfig({ WHIM_DATA_DIR: dir, WHIM_STORE_BACKEND: 'sqlite' }), now: () => NOW };
+    const stores = await openSqlite(dir, () => NOW);
+    const failingUsage = new Proxy(stores.usage, {
+      get: (target, property) => (property === 'purgeLedger' ? () => Promise.reject(new Error('database is locked')) : Reflect.get(target, property, target)),
+    });
+    let closed = false;
+    const close = async (): Promise<void> => {
+      await stores.close();
+      closed = true;
+      throw new Error('close timed out');
+    };
+    const result = await runPurgeThenClose([], { reports: stores.reports, usage: failingUsage, waitlist: stores.waitlist, close }, config);
+    eq('the purge exits 1, having closed the stores', [result.exitCode, closed], [1, true]);
+    eq(
+      '  ... printing every store line, then one ERROR line naming the failed store and the failed close',
+      result.output,
+      'reports: 1 purged\nledger: failed: database is locked\nusage: 0 purged\nwaitlist: 0 purged\n{"severity":"ERROR","message":"purge failed","detail":"ledger: database is locked; close: close timed out"}\n',
+    );
+    const again = await openSqlite(dir, () => NOW);
+    const clean = await runPurgeThenClose([], { ...pickStores(again), close: () => Promise.reject(new Error('close timed out')) }, config).finally(() => again.close());
+    eq(
+      'a clean purge whose close fails exits 1, keeping its counts and naming the close',
+      [clean.exitCode, clean.output],
+      [1, 'reports: 0 purged\nledger: 1 purged\nusage: 0 purged\nwaitlist: 0 purged\n{"severity":"ERROR","message":"purge failed","detail":"close: close timed out"}\n'],
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function pickStores(stores: OpenedStores): Pick<OpenedStores, 'reports' | 'usage' | 'waitlist'> {
+  return { reports: stores.reports, usage: stores.usage, waitlist: stores.waitlist };
 }
 
 /** A port nothing listens on right now. */
@@ -253,6 +298,7 @@ async function crashedPurgeLogsAnError(): Promise<void> {
 export async function runAdminPurgeTests(): Promise<void> {
   await purgeDeletesExpiredRows();
   await failedPurgeFailsTheCommand();
+  await failedPurgeAndCloseNameBoth();
   await crashedPurgeLogsAnError();
   await sameCutoffsAsTheServer();
 }

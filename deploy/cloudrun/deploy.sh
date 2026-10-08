@@ -158,6 +158,8 @@ apply_firestore_indexes() {
       case "$kind" in
         building) building="${building:+$building, }$index" ;;
         broken) broken="${broken:+$broken, }$index is $state" ;;
+        create | '') ;;
+        *) whim_fail "the Firestore index plan has a line of unexpected kind '$kind'. The server was not deployed." ;;
       esac
     done <<<"$plan"
     [[ -z "$broken" ]] || whim_fail "Firestore index $broken, not READY. Repair or delete it in the console, then deploy again. The server was not deployed."
@@ -211,11 +213,16 @@ deploy_purge_job() {
 }
 
 # A --tag deploy: points the existing purge job at the server's environment and secret, leaving its
-# image. With no job, warns that retention is not enforced and creates none (the tagged image may
-# lack `whim-admin purge`); a plain deploy creates it.
+# image. With no job (gcloud answers NOT_FOUND for the job), warns that retention is not enforced and creates
+# none (the tagged image may lack `whim-admin purge`); a plain deploy creates it. Any other failure
+# to look the job up stops the deploy, naming the error.
 update_purge_job_config() {
-  local env_file="$1"
-  if ! whim_gcloud run jobs describe "$RUN_PURGE_JOB" --region "$WHIM_RUN_REGION" --format='value(name)' >/dev/null 2>&1; then
+  local env_file="$1" described
+  if ! described="$(whim_gcloud run jobs describe "$RUN_PURGE_JOB" --region "$WHIM_RUN_REGION" --format='value(name)' 2>&1)"; then
+    case "$described" in
+      *NOT_FOUND*"$RUN_PURGE_JOB"* | *'Cannot find job'*) ;;
+      *) whim_fail "looking up the purge job $RUN_PURGE_JOB failed: $described. The server is deployed; deploy again to retry the job." ;;
+    esac
     printf '%s: WARNING: no Cloud Run job %s exists, so retention is NOT enforced: nothing purges records past their keep period. Run a plain deploy (no --tag) to create it.\n' \
       "$WHIM_SCRIPT" "$RUN_PURGE_JOB" >&2
     return 0

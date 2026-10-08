@@ -8,30 +8,28 @@
  *
  * `import-sqlite` opens no store: it writes into the configured Firestore database directly
  * (`runImportSqlite`, durable-server-stores D7). `purge` runs the server's retention purges once
- * (`runPurge`) on the opened stores, like every other subcommand. When `purge` fails outright (the
- * configuration, opening the stores, closing them), it prints the same structured ERROR line a
- * failed purge does (`purgeFailedLine`) and exits 1, so the purge-failure alert sees it.
+ * (`runPurgeThenClose`, which also reports a failed close) on the opened stores, like every other
+ * subcommand. When `purge` fails outright (the configuration, opening the stores), it prints the
+ * same structured ERROR line a failed purge does (`purgeFailedLine`) and exits 1, so the
+ * purge-failure alert sees it.
  */
 import { loadServerConfig, type ServerConfig } from '../config';
 import { openStores } from '../stores';
 import { runAdminCli, type AdminCliResult } from './cli';
 import { runImportSqlite } from './import-sqlite';
-import { messageOf, purgeFailedLine, runPurge } from './purge';
+import { messageOf, purgeFailedLine, runPurgeThenClose } from './purge';
 
 const argv = process.argv.slice(2);
 
 async function runStoreCommand(config: ServerConfig): Promise<AdminCliResult> {
   const stores = await openStores(config);
-  const command =
-    argv[0] === 'purge'
-      ? runPurge(argv.slice(1), stores, config)
-      : runAdminCli(argv, {
-          reportStore: stores.reports,
-          usageStore: stores.usage,
-          now: config.now,
-          reportRetentionDays: config.reportRetentionDays,
-        });
-  return command.finally(() => stores.close());
+  if (argv[0] === 'purge') return runPurgeThenClose(argv.slice(1), stores, config);
+  return runAdminCli(argv, {
+    reportStore: stores.reports,
+    usageStore: stores.usage,
+    now: config.now,
+    reportRetentionDays: config.reportRetentionDays,
+  }).finally(() => stores.close());
 }
 
 async function run(): Promise<AdminCliResult> {
