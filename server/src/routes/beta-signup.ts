@@ -105,7 +105,7 @@ export function makeBetaSignupRoute(deps: BetaSignupDeps): Hono<EdgeEnv> {
       const now = clock();
       if (!limiter.admit(c.req.header('x-forwarded-for'), now)) return answer('limited', retry);
       try {
-        return answer(store.upsert({ ...form, noticeId, now }), thanks);
+        return answer(await store.upsert({ ...form, noticeId, now }), thanks);
       } catch (err) {
         signupLog.error({ outcome: 'error' satisfies SignupOutcome, errorClass: err instanceof Error ? err.constructor.name : typeof err }, 'beta signup');
         return c.redirect(retry, 303);

@@ -1680,7 +1680,7 @@ async function realSignupAnswer(form: string): Promise<readonly [number, string 
   } finally {
     capture.stop();
   }
-  return res === TIMED_OUT ? 'timed out' : [res.status, res.headers.get('location'), store.export().length];
+  return res === TIMED_OUT ? 'timed out' : [res.status, res.headers.get('location'), (await store.export()).length];
 }
 
 async function smokeBetaTests(): Promise<void> {

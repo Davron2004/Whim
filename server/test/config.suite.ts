@@ -102,6 +102,25 @@ function runProviderQuantizationTests(): void {
   }
 }
 
+function runStoreBackendTests(defaults: ServerConfig): void {
+  section('WHIM_STORE_BACKEND and WHIM_FIRESTORE_DATABASE (durable-server-stores D1)');
+
+  eq('unset: the sqlite backend, on the (default) Firestore database name', [defaults.storeBackend, defaults.firestoreDatabase], ['sqlite', '(default)']);
+  eq('an empty WHIM_STORE_BACKEND is unset', loadServerConfig(baseEnv({ WHIM_STORE_BACKEND: '' })).storeBackend, 'sqlite');
+  for (const backend of ['sqlite', 'firestore'] as const) {
+    eq(`"${backend}" reaches ServerConfig.storeBackend`, loadServerConfig(baseEnv({ WHIM_STORE_BACKEND: backend })).storeBackend, backend);
+  }
+  eq('WHIM_FIRESTORE_DATABASE reaches ServerConfig.firestoreDatabase', loadServerConfig(baseEnv({ WHIM_FIRESTORE_DATABASE: 'whim-prod' })).firestoreDatabase, 'whim-prod');
+  for (const raw of ['postgres', 'Firestore', 'sqlite ']) {
+    const err = configError(() => loadServerConfig(baseEnv({ WHIM_STORE_BACKEND: raw })));
+    check(
+      `WHIM_STORE_BACKEND=${JSON.stringify(raw)} fails startup naming the variable and both allowed values`,
+      err?.variable === 'WHIM_STORE_BACKEND' && err.message.includes('WHIM_STORE_BACKEND') && err.message.includes('sqlite') && err.message.includes('firestore'),
+      err?.message,
+    );
+  }
+}
+
 function runGenerationLineTests(defaults: ServerConfig): void {
   section('The generation line (beta-1 D8): WHIM_QUEUE_MAX and WHIM_QUEUE_MAX_WAIT_MS');
 
@@ -373,6 +392,7 @@ export function runConfigTests(): void {
   );
 
   runProviderQuantizationTests();
+  runStoreBackendTests(defaults);
   runGenerationLineTests(defaults);
   runStubDelayTests();
 

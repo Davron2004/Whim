@@ -131,6 +131,10 @@ export class RecordingUsageStore implements UsageStore {
     return this.inner.purgeLedger(beforeUtcDay);
   }
 
+  close(): Promise<void> {
+    return this.inner.close();
+  }
+
   /** Non-refunded generation units on `now`'s UTC day, across every device. */
   async generationUnits(now: number): Promise<number> {
     const summary = await this.inner.summary({ days: 1, now });

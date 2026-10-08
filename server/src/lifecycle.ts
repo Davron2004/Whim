@@ -27,9 +27,10 @@ import { loadServerConfig, providerRouting, type ServerConfig } from './config';
 import { runPreflight } from './preflight';
 import { SELF_TEST_FIXTURE } from './runtime-assets';
 import { createStubPipeline, type Pipeline } from './pipeline';
-import { NodeSqliteUsageStore, scheduleUsagePurge } from './usage-store';
-import { NodeSqliteReportStore, schedulePurge, type PurgeSchedule } from './reports/store';
-import { NodeSqliteWaitlistStore, scheduleWaitlistPurge } from './waitlist/store';
+import { scheduleUsagePurge, type UsageStore } from './usage-store';
+import { schedulePurge, type PurgeSchedule } from './reports/store';
+import { scheduleWaitlistPurge } from './waitlist/store';
+import { openStores, type OpenedStores } from './stores';
 import { buildModelDepsFromEnv, createGenerationPipeline, MissingApiKeyError } from './generation';
 import { modelRosterFromEnv, ModelRosterEnvError, type ModelClient, type ModelRoster } from './generation/model';
 import { loadContentPolicyDocument } from './generation/prompts/inputs';
@@ -130,6 +131,15 @@ function atStep<T>(reason: BootFailureReason, work: () => T): T {
   }
 }
 
+async function atAsyncStep<T>(reason: BootFailureReason, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (err) {
+    if (err instanceof BootError) throw err;
+    throw new BootError(reason, messageOf(err));
+  }
+}
+
 /**
  * The boot self-test (design D16): the curated `fixtures/tip-splitter.app.tsx` must run contained
  * with no error diagnostic, and an egress attempt from a run context must be blocked. Rejects with
@@ -162,7 +172,7 @@ export async function runBootSelfTest(session: SynthRunSession, cwd: string = pr
  * the drain's window for the resolutions already in flight.
  */
 function scheduleCostSweep(
-  usageStore: NodeSqliteUsageStore,
+  usageStore: UsageStore,
   config: ServerConfig,
   slots: SlotController,
   transport: UsageAndCostTransport,
@@ -196,9 +206,7 @@ function scheduleCostSweep(
 
 /** Everything boot opened, closed on a boot failure or at the end of a drain. */
 class Opened {
-  usageStore: NodeSqliteUsageStore | undefined;
-  reportStore: NodeSqliteReportStore | undefined;
-  waitlistStore: NodeSqliteWaitlistStore | undefined;
+  stores: OpenedStores | undefined;
   purges: PurgeSchedule[] = [];
   session: SynthRunSession | undefined;
 
@@ -214,9 +222,7 @@ class Opened {
       clearTimeout(timer);
       if (outcome !== 'closed') log.warn({ detail: outcome }, 'the synthetic-run session did not close cleanly');
     }
-    this.reportStore?.close();
-    this.waitlistStore?.close();
-    this.usageStore?.close();
+    await this.stores?.close();
   }
 }
 
@@ -351,13 +357,10 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
 
   const opened = new Opened();
   try {
-    const { usageStore, reportStore, waitlistStore } = atStep('stores', () => {
-      const usage = new NodeSqliteUsageStore(path.join(dataDir, 'usage.db'), { now: config.now, usageIdleDays: config.usageIdleDays });
-      opened.usageStore = usage;
-      const reports = new NodeSqliteReportStore(path.join(dataDir, 'reports.db'));
-      opened.reportStore = reports;
-      const waitlist = new NodeSqliteWaitlistStore(path.join(dataDir, 'waitlist.db'));
-      opened.waitlistStore = waitlist;
+    const { usageStore, reportStore, waitlistStore } = await atAsyncStep('stores', async () => {
+      const stores = await openStores({ ...config, dataDir });
+      opened.stores = stores;
+      const { usage, reports, waitlist } = stores;
       opened.purges.push(
         schedulePurge(reports, { retentionDays: config.reportRetentionDays, now: config.now }),
         scheduleUsagePurge(usage, {

@@ -74,11 +74,11 @@ async function signupRouteTests(): Promise<void> {
     const { app, store } = harness();
     const res = await post(app, VALID);
     eq('a valid form post answers 303 to the pages host\'s /beta/thanks', redirectsTo(res), `303 ${THANKS}`);
-    eq('  ... storing one row for the normalized email, android, no opt-out, the current notice id', store.export().map((row) => ({ email: row.email, platform: row.platform, updatesOptOut: row.updatesOptOut, noticeId: row.noticeId })), [
+    eq('  ... storing one row for the normalized email, android, no opt-out, the current notice id', (await store.export()).map((row) => ({ email: row.email, platform: row.platform, updatesOptOut: row.updatesOptOut, noticeId: row.noticeId })), [
       { email: 'person@example.com', platform: 'android', updatesOptOut: false, noticeId: CURRENT_NOTICE_ID },
     ]);
     const optedOut = await post(app, { email: 'quiet@example.com', platform: 'ios', updates_opt_out: '1' });
-    eq('the opt-out box (value 1) is stored as an opt-out', [redirectsTo(optedOut), store.export().find((row) => row.email === 'quiet@example.com')?.updatesOptOut], [`303 ${THANKS}`, true]);
+    eq('the opt-out box (value 1) is stored as an opt-out', [redirectsTo(optedOut), (await store.export()).find((row) => row.email === 'quiet@example.com')?.updatesOptOut], [`303 ${THANKS}`, true]);
   }
 
   section('Beta signup: an invalid signup stores nothing and goes to retry');
@@ -100,17 +100,17 @@ async function signupRouteTests(): Promise<void> {
   for (const [what, fields] of invalid) {
     const { app, store } = harness();
     const res = await post(app, fields);
-    eq(`${what}: 303 to /beta/retry, nothing stored`, [redirectsTo(res), store.export().length], [`303 ${RETRY}`, 0]);
+    eq(`${what}: 303 to /beta/retry, nothing stored`, [redirectsTo(res), (await store.export()).length], [`303 ${RETRY}`, 0]);
   }
   {
     const { app, store } = harness();
     const res = await post(app, { email: longest, platform: 'other' });
-    eq(`exactly ${MAX_EMAIL_BYTES} bytes is still a valid email`, [redirectsTo(res), store.export().length], [`303 ${THANKS}`, 1]);
+    eq(`exactly ${MAX_EMAIL_BYTES} bytes is still a valid email`, [redirectsTo(res), (await store.export()).length], [`303 ${THANKS}`, 1]);
   }
   {
     const { app, store } = harness();
     const res = await post(app, JSON.stringify(VALID), undefined, 'application/json');
-    eq('a JSON body is not the form: retry, nothing stored', [redirectsTo(res), store.export().length], [`303 ${RETRY}`, 0]);
+    eq('a JSON body is not the form: retry, nothing stored', [redirectsTo(res), (await store.export()).length], [`303 ${RETRY}`, 0]);
   }
 
   section('Beta signup: no device header, and /v1 still refuses without one');
@@ -118,7 +118,7 @@ async function signupRouteTests(): Promise<void> {
   {
     const { app, store } = harness();
     const res = await post(app, VALID, { 'x-forwarded-for': CLIENT });
-    eq('a signup with no x-whim-device is stored', [redirectsTo(res), store.export().length], [`303 ${THANKS}`, 1]);
+    eq('a signup with no x-whim-device is stored', [redirectsTo(res), (await store.export()).length], [`303 ${THANKS}`, 1]);
     const expected = await shapeOnlyVerifier.verify(new Headers());
     const v1 = await within(Promise.resolve(app.request('/v1/usage')));
     if (v1 === TIMED_OUT) throw new Error('/v1/usage did not answer in time');
@@ -130,12 +130,11 @@ async function signupRouteTests(): Promise<void> {
 
   {
     const failing: WaitlistStore = {
-      upsert: () => {
-        throw new Error('database is locked');
-      },
-      export: () => [],
-      remove: () => false,
-      purge: () => 0,
+      upsert: () => Promise.reject(new Error('database is locked')),
+      export: async () => [],
+      remove: async () => false,
+      purge: async () => 0,
+      close: async () => {},
     };
     const { app } = harness({}, { waitlistStore: failing });
     eq('303 to /beta/retry', redirectsTo(await post(app, VALID)), `303 ${RETRY}`);
@@ -149,9 +148,9 @@ async function abuseLimitTests(): Promise<void> {
     const { app, store } = harness();
     const padding = 'x'.repeat(5000);
     const res = await post(app, { ...VALID, padding });
-    eq('a post over WHIM_MAX_BODY_BYTES_BETA (4096) goes to retry and stores nothing', [redirectsTo(res), store.export().length], [`303 ${RETRY}`, 0]);
+    eq('a post over WHIM_MAX_BODY_BYTES_BETA (4096) goes to retry and stores nothing', [redirectsTo(res), (await store.export()).length], [`303 ${RETRY}`, 0]);
     const under = await post(app, { ...VALID, padding: 'x'.repeat(3000) });
-    eq('  ... while the same form under the cap is stored', [redirectsTo(under), store.export().length], [`303 ${THANKS}`, 1]);
+    eq('  ... while the same form under the cap is stored', [redirectsTo(under), (await store.export()).length], [`303 ${THANKS}`, 1]);
   }
 
   {
@@ -159,9 +158,9 @@ async function abuseLimitTests(): Promise<void> {
     const answers: string[] = [];
     for (const n of [1, 2, 3]) answers.push(redirectsTo(await post(app, { email: `person${n}@example.com`, platform: 'ios' })));
     eq('one client address over its hourly limit: the third signup goes to retry', answers, [`303 ${THANKS}`, `303 ${THANKS}`, `303 ${RETRY}`]);
-    eq('  ... and is not stored', store.export().map((row) => row.email), ['person1@example.com', 'person2@example.com']);
+    eq('  ... and is not stored', (await store.export()).map((row) => row.email), ['person1@example.com', 'person2@example.com']);
     const other = await post(app, { email: 'neighbour@example.com', platform: 'ios' }, { 'x-forwarded-for': OTHER_CLIENT });
-    eq('  ... while a different client address is still accepted', [redirectsTo(other), store.export().length], [`303 ${THANKS}`, 3]);
+    eq('  ... while a different client address is still accepted', [redirectsTo(other), (await store.export()).length], [`303 ${THANKS}`, 3]);
   }
 
   {
@@ -169,23 +168,23 @@ async function abuseLimitTests(): Promise<void> {
     const answers: string[] = [];
     for (const n of [1, 2, 3]) answers.push(redirectsTo(await post(app, { email: `day${n}@example.com`, platform: 'ios' }, { 'x-forwarded-for': `192.0.2.${n}` })));
     eq('over the global daily cap, a signup from a fresh address goes to retry', answers, [`303 ${THANKS}`, `303 ${THANKS}`, `303 ${RETRY}`]);
-    eq('  ... and is not stored', store.export().length, 2);
+    eq('  ... and is not stored', (await store.export()).length, 2);
   }
 
   {
     const { app, store } = harness();
     const res = await post(app, { ...VALID, [TRAP_FIELD]: 'Acme Corp' });
-    eq('a filled trap field redirects to thanks and stores nothing', [redirectsTo(res), store.export().length], [`303 ${THANKS}`, 0]);
+    eq('a filled trap field redirects to thanks and stores nothing', [redirectsTo(res), (await store.export()).length], [`303 ${THANKS}`, 0]);
     const trappedInvalid = await post(app, { email: 'not-an-email', platform: 'nope', [TRAP_FIELD]: 'x' });
     eq('  ... even when the rest of the form is invalid, so a bot learns nothing', redirectsTo(trappedInvalid), `303 ${THANKS}`);
     const empty = await post(app, { ...VALID, [TRAP_FIELD]: '' });
-    eq('an empty trap field is a person: stored', [redirectsTo(empty), store.export().length], [`303 ${THANKS}`, 1]);
+    eq('an empty trap field is a person: stored', [redirectsTo(empty), (await store.export()).length], [`303 ${THANKS}`, 1]);
   }
 
   {
     const { app, store } = harness();
     const res = await post(app, { ...VALID, [TRAP_FIELD]: '', company: 'Acme Corp', organization: 'Acme Corp' });
-    eq('a person whose browser autofilled an organization field is stored, not trapped', [redirectsTo(res), store.export().length], [`303 ${THANKS}`, 1]);
+    eq('a person whose browser autofilled an organization field is stored, not trapped', [redirectsTo(res), (await store.export()).length], [`303 ${THANKS}`, 1]);
   }
 }
 
