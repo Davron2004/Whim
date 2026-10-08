@@ -697,6 +697,21 @@ async function factoryTests(): Promise<void> {
     },
   });
   check('firestore: the injected opener receives the config and its stores are returned', seen?.firestoreDatabase === 'whim-test' && opened === injected);
+
+  let outcome: string;
+  try {
+    outcome = await openStores(firestoreConfig, {
+      openFirestore: () => {
+        throw new Error('boom');
+      },
+    }).then(
+      () => 'resolved',
+      (err: unknown) => `rejected: ${messageOf(err)}`,
+    );
+  } catch (err) {
+    outcome = `threw: ${messageOf(err)}`;
+  }
+  check('firestore: an opener that throws makes openStores reject with its error', outcome === 'rejected: boom', outcome);
 }
 
 /** How `call` ends: `rejected`, `resolved`, or `threw: …` when it throws before returning a promise. */
