@@ -9,6 +9,7 @@
 import { randomUUID } from 'node:crypto';
 import type { CollectionReference, DocumentSnapshot, Firestore, Query } from '@google-cloud/firestore';
 import { deleteInBatches, type FirestoreRoot } from './client';
+import { settle } from '../settle';
 import {
   byReportId,
   toListItem,
@@ -86,8 +87,8 @@ export class FirestoreReportStore implements ReportStore, ReportRecordKeeping {
     return snapshot.exists ? fromSnapshot(snapshot) : undefined;
   }
 
-  async purgeOlderThan(cutoffMs: number): Promise<number> {
-    return deleteInBatches(this.db, this.collection().where('receivedAt', '<', cutoffMs));
+  purgeOlderThan(cutoffMs: number): Promise<number> {
+    return settle(() => this.collection().where('receivedAt', '<', cutoffMs)).then((query) => deleteInBatches(this.db, query));
   }
 
   async listByDevice(deviceId: string): Promise<ReportRow[]> {
@@ -95,10 +96,12 @@ export class FirestoreReportStore implements ReportStore, ReportRecordKeeping {
     return snapshot.docs.map(fromSnapshot).sort((a, b) => a.receivedAt - b.receivedAt || byReportId(a, b));
   }
 
-  async deleteByDevice(deviceId: string): Promise<number> {
-    return deleteInBatches(this.db, this.collection().where('deviceId', '==', deviceId));
+  deleteByDevice(deviceId: string): Promise<number> {
+    return settle(() => this.collection().where('deviceId', '==', deviceId)).then((query) => deleteInBatches(this.db, query));
   }
 
   /** The client belongs to whoever opened it (`OpenedStores.close` terminates it). */
-  async close(): Promise<void> {}
+  close(): Promise<void> {
+    return Promise.resolve();
+  }
 }
