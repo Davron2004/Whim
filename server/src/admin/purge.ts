@@ -6,6 +6,11 @@
  * Each purge cuts where the server's scheduled one does (`reportPurgeCutoff`, `usagePurgeCutoffs`,
  * `WaitlistStore.purge`), from the same configuration. A failed purge does not stop the others; the
  * command prints one line per store and exits 1 when any failed.
+ *
+ * Cloud Logging records a plain text line at DEFAULT severity, so a failing run also prints one
+ * structured line, `{"severity":"ERROR","message":"purge failed","detail":…}`: the line the
+ * purge-failure alert (`deploy/monitoring/policy-purge-failed.json`, `severity>=ERROR`) matches.
+ * `main.ts` prints the same line when the command fails before or around the purges.
  */
 import type { ServerConfig } from '../config';
 import { reportPurgeCutoff } from '../reports/store';
@@ -16,8 +21,13 @@ import type { AdminCliResult } from './cli';
 /** The configuration the purges read. */
 export type PurgeConfig = Pick<ServerConfig, 'reportRetentionDays' | 'ledgerRetentionDays' | 'usageIdleDays' | 'now'>;
 
-function messageOf(err: unknown): string {
+export function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** The one structured line a failed purge run prints, which Cloud Logging records at ERROR. */
+export function purgeFailedLine(detail: string): string {
+  return `${JSON.stringify({ severity: 'ERROR', message: 'purge failed', detail })}\n`;
 }
 
 /** Runs the purges against `stores` and prints `<store>: N purged` (or `<store>: failed: <why>`)
@@ -37,14 +47,16 @@ export async function runPurge(
     ['waitlist', () => stores.waitlist.purge(now)],
   ];
   const lines: string[] = [];
-  let failed = false;
+  const failures: string[] = [];
   for (const [store, purge] of purges) {
     try {
       lines.push(`${store}: ${await purge()} purged`);
     } catch (err) {
-      failed = true;
+      failures.push(`${store}: ${messageOf(err)}`);
       lines.push(`${store}: failed: ${messageOf(err)}`);
     }
   }
-  return { exitCode: failed ? 1 : 0, output: lines.join('\n') + '\n' };
+  const output = lines.join('\n') + '\n';
+  if (failures.length === 0) return { exitCode: 0, output };
+  return { exitCode: 1, output: output + purgeFailedLine(failures.join('; ')) };
 }

@@ -14,6 +14,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import type { ReportReason } from '@whim/contract';
+import { byUtf8Bytes } from '../text-order';
 
 export interface InsertReportParams {
   deviceId: string;
@@ -190,10 +191,10 @@ export class InMemoryReportStore implements ReportStore, ReportRecordKeeping {
   async close(): Promise<void> {}
 }
 
-/** Report-id order as SQLite sorts its `id` column: by code unit, never by locale. */
+/** Report-id order as SQLite sorts its `id` column (BINARY collation): by UTF-8 bytes, never by
+ *  locale, and not by JS `<`, whose UTF-16 code units put an astral character before U+E000–U+FFFF. */
 export function byReportId(a: Pick<ReportRow, 'reportId'>, b: Pick<ReportRow, 'reportId'>): number {
-  if (a.reportId === b.reportId) return 0;
-  return a.reportId < b.reportId ? -1 : 1;
+  return byUtf8Bytes(a.reportId, b.reportId);
 }
 
 /** The list shape of `row`: byte sizes in place of prompt and source. */

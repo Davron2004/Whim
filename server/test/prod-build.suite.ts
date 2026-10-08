@@ -22,6 +22,7 @@ import type { Readable } from 'node:stream';
 import { createRequire, isBuiltin } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
+import { build } from 'esbuild';
 import { check, eq, section } from './harness';
 import { PROTOCOL_HEADER_LINE, TIMED_OUT, waitFor, within } from './route-doubles';
 import { productionEntryInputs } from './build-fixtures';
@@ -44,6 +45,10 @@ const BUNDLES = [
 ];
 const BOOT_MS = 20_000;
 const EXIT_MS = 15_000;
+/** The ceiling on a boot refusal: the case waits for the process to exit, which takes about half a
+ *  second idle, and this only bounds a hang. A starved machine stretches a boot (loading the
+ *  Firestore client most of all) far past EXIT_MS, so a refusal never times out first. */
+const BOOT_REFUSAL_MS = 120_000;
 const DEVICE_A = 'a11a11a1-a11a-41a1-81a1-a11a11a11a11';
 const DEVICE_B = 'b22b22b2-b22b-42b2-82b2-b22b22b22b22';
 
@@ -159,8 +164,8 @@ class TreeProcess {
   }
 }
 
-async function exitOf(proc: TreeProcess): Promise<Exit | typeof TIMED_OUT> {
-  return within(proc.exited, EXIT_MS);
+async function exitOf(proc: TreeProcess, ms: number = EXIT_MS): Promise<Exit | typeof TIMED_OUT> {
+  return within(proc.exited, ms);
 }
 
 /** An HTTP/1.1 request written straight onto a TCP socket, accumulating the raw response. */
@@ -382,7 +387,7 @@ async function denyingFirestore(message: string): Promise<{ host: string; calls:
 async function expectBootRefusal(what: string, root: string, env: Record<string, string>, named: string): Promise<void> {
   const proc = new TreeProcess(root, { WHIM_SERVER_HOST: '127.0.0.1', WHIM_SERVER_PORT: String(await freePort()), ...env });
   try {
-    const exit = await exitOf(proc);
+    const exit = await exitOf(proc, BOOT_REFUSAL_MS);
     check(`${what}: the process exits non-zero`, exit !== TIMED_OUT && exit.code !== 0 && exit.code !== null, JSON.stringify(exit));
     check(`${what}: its output names ${named}`, proc.text().includes(named), proc.text().slice(-2000));
     eq(`${what}: it never listened`, proc.logs('whim-server listening').length, 0);
@@ -478,7 +483,7 @@ async function testBootRefusals(fixture: Fixture): Promise<void> {
       WHIM_SERVER_PORT: String(await freePort()),
     });
     try {
-      const exit = await exitOf(proc);
+      const exit = await exitOf(proc, BOOT_REFUSAL_MS);
       const failure = proc.logs('boot failed')[0];
       const detail = typeof failure?.detail === 'string' ? failure.detail : '';
       check('WHIM_REPORT_RETENTION_DAYS=400: the process exits non-zero', exit !== TIMED_OUT && exit.code !== 0 && exit.code !== null, JSON.stringify(exit));
@@ -724,8 +729,10 @@ function serverSources(dir: string, rel: string): string[] {
  *  in whichever runner missed one. */
 function testBundlesKeepRuntimePackagesExternal(): void {
   const declared = declaredRuntimePackages();
-  const configs = serverSources(path.join(ROOT, 'server'), 'server').flatMap((file) => bundleExternals(file, fs.readFileSync(path.join(ROOT, file), 'utf8')));
-  for (const runner of ['server/test/run.mjs', 'server/test/e2e.run.mjs', 'server/test/e2e.ts', 'server/test/firestore.run.mjs', 'server/dev.mjs', 'server/build.mjs']) {
+  // evals/cli.mjs bundles server/src/pipeline.ts for `--generate`.
+  const files = [...serverSources(path.join(ROOT, 'server'), 'server'), 'evals/cli.mjs'];
+  const configs = files.flatMap((file) => bundleExternals(file, fs.readFileSync(path.join(ROOT, file), 'utf8')));
+  for (const runner of ['server/test/run.mjs', 'server/test/e2e.run.mjs', 'server/test/e2e.ts', 'server/test/firestore.run.mjs', 'server/dev.mjs', 'server/build.mjs', 'evals/cli.mjs']) {
     check(`the scan finds the bundle config in ${runner}`, configs.some((config) => config.at.startsWith(`${runner}:`)));
   }
   for (const config of configs) {
@@ -738,9 +745,30 @@ function testBundlesKeepRuntimePackagesExternal(): void {
   );
 }
 
+/** `node server/build.mjs` writes the runtime tree; a bundle that inlines build.mjs (for its
+ *  externals) shares that module code, and started directly it must build nothing. */
+async function testInlinedBuildModuleBuildsNothing(): Promise<void> {
+  section('server/build.mjs: a bundle that inlines it, started directly, builds nothing');
+  fs.mkdirSync(path.join(ROOT, 'server', 'dist'), { recursive: true });
+  // Inside the checkout, so the bundle resolves esbuild as build.mjs does.
+  const dir = fs.mkdtempSync(path.join(ROOT, 'server', 'dist', 'inlined-build-'));
+  try {
+    const entry = path.join(dir, 'entry.tmp.mjs');
+    const outfile = path.join(dir, 'bundle.tmp.mjs');
+    fs.writeFileSync(entry, `import { devBundleExternals } from ${JSON.stringify(path.join(ROOT, 'server', 'build.mjs'))};\nconsole.log(devBundleExternals().length > 0);\n`);
+    await build({ entryPoints: [entry], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: devBundleExternals() });
+    check('setup: the bundle inlines build.mjs', fs.readFileSync(outfile, 'utf8').includes('buildRuntimeTree'));
+    const run = spawnSync(process.execPath, [outfile], { cwd: ROOT, encoding: 'utf8', timeout: BOOT_REFUSAL_MS });
+    eq('it runs its own code and exits 0, building no tree', [run.status, run.stdout, run.stderr], [0, 'true\n', '']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 export async function runProdBuildTests(): Promise<void> {
   section('Production build');
   testBundlesKeepRuntimePackagesExternal();
+  await testInlinedBuildModuleBuildsNothing();
   await testUsageAndCostTransport();
 
   const fixture = await prepareTree();

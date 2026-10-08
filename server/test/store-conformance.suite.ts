@@ -480,27 +480,35 @@ const retention: StoreConformanceCase = {
   },
 };
 
-/** Plain `<` order, which is how SQLite compares text; `localeCompare` would put `_` before `.`. */
-function codeUnitOrder(a: string, b: string): number {
-  if (a === b) return 0;
-  return a < b ? -1 : 1;
+/** UTF-8 byte order, which is how SQLite compares text; `localeCompare` would put `_` before `.`. */
+function utf8Order(a: string, b: string): number {
+  return Buffer.compare(Buffer.from(a), Buffer.from(b));
 }
 
-const tiesInCodeUnitOrder: StoreConformanceCase = {
-  name: 'rows that tie on time are ordered by id or email in code-unit order, as SQLite orders text',
+/** U+E000 sorts before U+1F600 by UTF-8 bytes (EE.. < F0..) but after it by UTF-16 code units
+ *  (U+1F600 is the surrogate pair D83D DE00, and D83D < E000). */
+const PRIVATE_USE = '\uE000';
+const ASTRAL = '\u{1F600}';
+
+const tiesInByteOrder: StoreConformanceCase = {
+  name: 'rows that tie on time are ordered by id or email in UTF-8 byte order, as SQLite orders text',
   async run(stores) {
     const { usage, reports, waitlist } = stores;
     await waitlist.upsert(signup('a_b@x.com', 'ios', T0));
     await waitlist.upsert(signup('a.b@x.com', 'ios', T0));
-    nodeAssert.deepStrictEqual((await waitlist.export()).map((row) => row.email), ['a.b@x.com', 'a_b@x.com'], 'the waitlist export');
+    await waitlist.upsert(signup(`${ASTRAL}@x.com`, 'ios', T0));
+    await waitlist.upsert(signup(`${PRIVATE_USE}@x.com`, 'ios', T0));
+    nodeAssert.deepStrictEqual((await waitlist.export()).map((row) => row.email), ['a.b@x.com', 'a_b@x.com', `${PRIVATE_USE}@x.com`, `${ASTRAL}@x.com`], 'the waitlist export');
 
     await usage.admit(admitParams('r_1', 'dev-t'));
     await usage.admit(admitParams('r.1', 'dev-t'));
-    nodeAssert.deepStrictEqual(await ledgerIds(stores, 'dev-t'), ['r.1', 'r_1'], 'a device\'s ledger rows');
+    await usage.admit(admitParams(ASTRAL, 'dev-t'));
+    await usage.admit(admitParams(PRIVATE_USE, 'dev-t'));
+    nodeAssert.deepStrictEqual(await ledgerIds(stores, 'dev-t'), ['r.1', 'r_1', PRIVATE_USE, ASTRAL], 'a device\'s ledger rows');
 
     const ids: string[] = [];
     for (let i = 0; i < 6; i++) ids.push(await reports.insert(report('dev-t', T0)));
-    const ascending = [...ids].sort(codeUnitOrder);
+    const ascending = [...ids].sort(utf8Order);
     nodeAssert.deepStrictEqual((await reports.list({ now: T0 })).map((item) => item.reportId), [...ascending].reverse(), 'the newest-first report list');
     nodeAssert.deepStrictEqual((await reports.listByDevice('dev-t')).map((row) => row.reportId), ascending, 'a device\'s reports');
   },
@@ -509,7 +517,8 @@ const tiesInCodeUnitOrder: StoreConformanceCase = {
 const unstorableIds: StoreConformanceCase = {
   name: 'an id no document can be named by reads as not found, and the empty id is a key like any other',
   async run({ usage, reports, waitlist }) {
-    for (const id of ['', 'a/b', 'a/b/c', '.', '..', '__x__']) {
+    // Firestore's document ids are at most 1500 UTF-8 bytes: 751 'é' are 1502 bytes in 751 code units.
+    for (const id of ['', 'a/b', 'a/b/c', '.', '..', '__x__', 'r'.repeat(1501), 'é'.repeat(751)]) {
       nodeAssert.strictEqual(await reports.get(id), undefined, `reports.get(${JSON.stringify(id)})`);
     }
     nodeAssert.deepStrictEqual(await reports.listByDevice(''), []);
@@ -547,7 +556,7 @@ export const STORE_CONFORMANCE_CASES: readonly StoreConformanceCase[] = [
   deviceRecords,
   deviceDeleteReleasesUnits,
   retention,
-  tiesInCodeUnitOrder,
+  tiesInByteOrder,
   unstorableIds,
 ];
 

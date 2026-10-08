@@ -1363,12 +1363,19 @@ default `(default)`). `deploy/cloudrun/deploy.sh` deploys with `firestore`. The 
 - **Retention runs without traffic.** The in-process purges run only at boot and hourly inside a
   live instance, and a scaled-to-zero service usually has none. An hourly Cloud Scheduler job runs
   the Cloud Run Job `whim-purge` (`whim-admin purge`: the server's four purges at the same
-  cut-offs), which `deploy.sh` creates or updates on every Firestore deploy. No HTTP route, for the
-  same reason as above. A record can outlive its keep period by up to an hour.
+  cut-offs), which `deploy.sh` creates or updates on every Firestore deploy. A `--tag` deploy
+  updates only the job's environment and secret and leaves its image (an older one may lack
+  `whim-admin purge`); with no job it creates none and warns that retention is not enforced. No
+  HTTP route, for the same reason as above. A record can outlive its keep period by up to an hour
+  (up to a UTC day plus an hour for the ledger and idle usage, which are cut on whole UTC days). A
+  failing run prints one structured `{"severity":"ERROR","message":"purge failed",…}` line, since
+  Cloud Run records plain text at DEFAULT severity; the alert "Whim: purge job failed"
+  (`deploy/monitoring/policy-purge-failed.json`, which every plain Firestore deploy creates or
+  updates by fingerprint) emails on it.
 - **Deletion is weaker than SQLite's.** `secure_delete` overwrote purged pages; a deleted Firestore
   document leaves Google's storage on Google's deletion timeline, and with PITR off old versions
   are kept for 1 hour. The published keep periods are about our retention, which the purge job
   above enforces.
 - **Not done:** more than one instance (`--max-instances` stays 1), TTL policies, PITR, backups.
   Rollback is a deploy with `WHIM_STORE_BACKEND=sqlite`, back to instance-memory state; the
-  Firestore data stays untouched.
+  Firestore data stays, and the `whim-purge` job keeps enforcing retention on it.

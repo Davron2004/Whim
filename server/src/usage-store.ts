@@ -22,6 +22,7 @@
  */
 import { DatabaseSync } from 'node:sqlite';
 import { log } from './logger';
+import { byUtf8Bytes } from './text-order';
 import { ServiceRefusalCode, type Usage } from '@whim/contract';
 import { MANIFESTS, keepLimit } from '../../contract/src/disclosure-manifest';
 import {
@@ -273,12 +274,6 @@ export function assertFailureReason(params: SettleParams): void {
   if (SUCCESS_OUTCOMES.has(params.outcome)) {
     throw new Error(`failure_reason ${reason} cannot settle a request whose outcome is ${params.outcome}`);
   }
-}
-
-/** Text order as SQLite sorts a column: by code unit, never by locale. */
-function byCodeUnits(a: string, b: string): number {
-  if (a === b) return 0;
-  return a < b ? -1 : 1;
 }
 
 /** Reads back the JSON array `recordCost` persisted. A value that is not an array of strings (a
@@ -584,7 +579,7 @@ export class InMemoryUsageStore implements UsageStore, UsageRecordKeeping {
   async deviceRecords(deviceId: string): Promise<DeviceUsageRecords> {
     const ledger = [...this.ledger.values()]
       .filter((row) => row.deviceId === deviceId)
-      .sort((a, b) => a.startedAt - b.startedAt || byCodeUnits(a.id, b.id))
+      .sort((a, b) => a.startedAt - b.startedAt || byUtf8Bytes(a.id, b.id))
       .map((row) => ({ ...row }));
     const totals = this.store.get(deviceId);
     const usage = totals ? { deviceId, ...totals, lastCreditedDay: this.lastCreditedDay.get(deviceId) ?? null } : null;

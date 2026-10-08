@@ -6,7 +6,8 @@
  * - `usage/{deviceId}`: a device's lifetime token totals and the UTC day it was last credited.
  *   `credit` is a merge write of `FieldValue.increment`s, atomic without a transaction.
  * - `requests/{requestId}`: one content-free ledger row per admitted request, every `LedgerRow`
- *   field but the id (the document id), `generationIds` as a native array.
+ *   field but the id (the document id), `generationIds` as a native array, plus the
+ *   `admissionId` of the `admit` call that created it (absent on an imported row).
  * - `admission/{counterId}`: the daily counts admission checks, kept beside the ledger so a check is
  *   a document read rather than a query. `{utcDay}:{kind}:{deviceId}` counts one device's
  *   non-refunded rows of one kind on one day, `{utcDay}:global:{kind}` every device's. A limit
@@ -29,6 +30,7 @@ import {
 } from '@google-cloud/firestore';
 import type { Usage } from '@whim/contract';
 import { deleteInBatches, type FirestoreRoot } from './client';
+import { byUtf8Bytes } from '../text-order';
 import {
   assertFailureReason,
   computeSummary,
@@ -153,10 +155,9 @@ function toLedgerRow(snapshot: DocumentSnapshot): LedgerRow {
   };
 }
 
+/** Ledger order as the SQLite store's `ORDER BY started_at, id`. */
 function byStart(a: LedgerRow, b: LedgerRow): number {
-  if (a.startedAt !== b.startedAt) return a.startedAt - b.startedAt;
-  if (a.id === b.id) return 0;
-  return a.id < b.id ? -1 : 1;
+  return a.startedAt - b.startedAt || byUtf8Bytes(a.id, b.id);
 }
 
 export interface FirestoreUsageStoreOptions {

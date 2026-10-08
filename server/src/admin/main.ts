@@ -8,20 +8,21 @@
  *
  * `import-sqlite` opens no store: it writes into the configured Firestore database directly
  * (`runImportSqlite`, durable-server-stores D7). `purge` runs the server's retention purges once
- * (`runPurge`) on the opened stores, like every other subcommand.
+ * (`runPurge`) on the opened stores, like every other subcommand. When `purge` fails outright (the
+ * configuration, opening the stores, closing them), it prints the same structured ERROR line a
+ * failed purge does (`purgeFailedLine`) and exits 1, so the purge-failure alert sees it.
  */
-import { loadServerConfig } from '../config';
+import { loadServerConfig, type ServerConfig } from '../config';
 import { openStores } from '../stores';
 import { runAdminCli, type AdminCliResult } from './cli';
 import { runImportSqlite } from './import-sqlite';
-import { runPurge } from './purge';
+import { messageOf, purgeFailedLine, runPurge } from './purge';
 
-const config = loadServerConfig(process.env);
 const argv = process.argv.slice(2);
 
-async function runStoreCommand(): Promise<AdminCliResult> {
+async function runStoreCommand(config: ServerConfig): Promise<AdminCliResult> {
   const stores = await openStores(config);
-  const run =
+  const command =
     argv[0] === 'purge'
       ? runPurge(argv.slice(1), stores, config)
       : runAdminCli(argv, {
@@ -30,10 +31,25 @@ async function runStoreCommand(): Promise<AdminCliResult> {
           now: config.now,
           reportRetentionDays: config.reportRetentionDays,
         });
-  return run.finally(() => stores.close());
+  return command.finally(() => stores.close());
 }
 
-const result = argv[0] === 'import-sqlite' ? await runImportSqlite(argv.slice(1), config) : await runStoreCommand();
+async function run(): Promise<AdminCliResult> {
+  const config = loadServerConfig(process.env);
+  return argv[0] === 'import-sqlite' ? runImportSqlite(argv.slice(1), config) : runStoreCommand(config);
+}
+
+async function runOrReportPurgeFailure(): Promise<AdminCliResult> {
+  if (argv[0] !== 'purge') return run();
+  try {
+    return await run();
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error && err.stack ? err.stack : messageOf(err)}\n`);
+    return { exitCode: 1, output: purgeFailedLine(messageOf(err)) };
+  }
+}
+
+const result = await runOrReportPurgeFailure();
 
 process.stdout.write(result.output);
 process.exitCode = result.exitCode;

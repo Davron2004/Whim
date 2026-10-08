@@ -13,6 +13,7 @@
  * same number (the site suite holds the two together).
  */
 import { DatabaseSync } from 'node:sqlite';
+import { byUtf8Bytes } from '../text-order';
 
 export const WAITLIST_PLATFORMS = ['ios', 'android', 'other'] as const;
 export type WaitlistPlatform = (typeof WAITLIST_PLATFORMS)[number];
@@ -83,12 +84,11 @@ export function matches(row: WaitlistRow, filter: WaitlistFilter): boolean {
   return !(filter.updatesOk === true && row.updatesOptOut);
 }
 
-/** Export order: oldest signup first, ties by email in code-unit order — SQLite's
- *  `ORDER BY created_at, email`, never the locale's. */
+/** Export order: oldest signup first, ties by email in UTF-8 byte order — SQLite's
+ *  `ORDER BY created_at, email`, never the locale's, and not JS `<`, whose UTF-16 code units put an
+ *  astral character before U+E000–U+FFFF. */
 export function byCreated(a: WaitlistRow, b: WaitlistRow): number {
-  if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
-  if (a.email === b.email) return 0;
-  return a.email < b.email ? -1 : 1;
+  return a.createdAt - b.createdAt || byUtf8Bytes(a.email, b.email);
 }
 
 /** In-memory twin for tests: same semantics, no file. */
