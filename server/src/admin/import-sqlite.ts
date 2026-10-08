@@ -159,7 +159,11 @@ async function copyInto(db: Firestore, collection: CollectionReference, docs: re
     });
     if (writes > 0) await batch.commit();
     // Each differing document is its own transaction on its own document, at most one batch of them.
-    const equal = await Promise.all(differing.map((i) => (earliest === undefined ? false : keepEarliest(db, refs[i]!, chunk[i]!.data, earliest))));
+    if (earliest === undefined) {
+      count.kept += differing.length;
+      continue;
+    }
+    const equal = await Promise.all(differing.map((i) => keepEarliest(db, refs[i]!, chunk[i]!.data, earliest)));
     for (const isEqual of equal) {
       if (isEqual) count.imported++;
       else count.kept++;
