@@ -132,7 +132,8 @@ fi
 
 # YAML for --env-vars-file: single-quoted, so a comma-separated value stays one value.
 yaml_line() {
-  printf "%s: '%s'\n" "$1" "${2//\'/\'\'}"
+  local key="$1" value="$2"
+  printf "%s: '%s'\n" "$key" "${value//\'/\'\'}"
 }
 
 # Prints the index plan (INDEX_PLAN_JS) for the database as it is now.
@@ -235,9 +236,9 @@ update_purge_job_config() {
 
 # The top-level displayName of a deploy/monitoring JSON file (two-space indent, one key per line).
 display_name_of() {
-  local name
-  name="$(sed -n 's/^  "displayName": "\([^"]*\)",$/\1/p' "$1")"
-  [[ -n "$name" ]] || whim_fail "$1 has no top-level displayName"
+  local file="$1" name
+  name="$(sed -n 's/^  "displayName": "\([^"]*\)",$/\1/p' "$file")"
+  [[ -n "$name" ]] || whim_fail "$file has no top-level displayName"
   printf '%s' "$name"
 }
 
@@ -245,9 +246,9 @@ display_name_of() {
 # is $1, and nothing when there is none. Rows are gcloud `value(displayName,name,...)` lines. $3
 # names the rows, for the refusal when two share the display name.
 named_row() {
-  local found
-  found="$(awk -F '\t' -v wanted="$1" '$1 == wanted { sub(/^[^\t]*\t/, ""); print }' <<<"$2")"
-  [[ "$found" != *$'\n'* ]] || whim_fail "two $3 are named '$1'; delete one, then deploy again. The server and the purge job are deployed."
+  local wanted="$1" rows="$2" what="$3" found
+  found="$(awk -F '\t' -v wanted="$wanted" '$1 == wanted { sub(/^[^\t]*\t/, ""); print }' <<<"$rows")"
+  [[ "$found" != *$'\n'* ]] || whim_fail "two $what are named '$wanted'; delete one, then deploy again. The server and the purge job are deployed."
   printf '%s' "$found"
 }
 
