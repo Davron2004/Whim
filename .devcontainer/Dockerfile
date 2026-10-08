@@ -11,7 +11,8 @@
 #   are UNCHANGED — they run inside, exactly as on the host.
 #
 # Toolchain is the fix loop's ONLY: Node 22 + Chromium + the repo's own
-# node_modules. NO Android SDK / JDK / emulator — the loop never builds the device app.
+# node_modules, plus a Java 21 runtime and the Firestore emulator JAR for gate-full's
+# firestore-stores step. NO Android SDK / Android emulator — the loop never builds the device app.
 
 FROM node:22-bookworm
 
@@ -48,6 +49,22 @@ RUN npx -y --ignore-scripts playwright@1.60.0 install --with-deps chromium \
     && git config --system --add safe.directory /workspace \
     && mkdir -p /etc/claude-code \
     && printf '{ "sandbox": { "enabled": false } }\n' > /etc/claude-code/managed-settings.json
+
+# gate-full's firestore-stores step (npm run stores:firestore:test) runs the Firestore emulator:
+# a JAR that firebase-tools runs with `java` from PATH and otherwise downloads from Google on
+# first use, which the egress firewall refuses. So the image carries Temurin 21's JRE and the JAR,
+# fetched here by the same pinned firebase-tools (package.json) into FIREBASE_EMULATORS_PATH,
+# where firebase-tools looks before downloading. Outside $HOME for the same reason as
+# PLAYWRIGHT_BROWSERS_PATH. The gate itself then runs the repo's installed firebase-tools.
+COPY --from=eclipse-temurin:21-jre /opt/java/openjdk /opt/java/openjdk
+ENV JAVA_HOME=/opt/java/openjdk \
+    PATH=/opt/java/openjdk/bin:$PATH \
+    FIREBASE_EMULATORS_PATH=/opt/firebase-emulators
+RUN java -version \
+    && npx -y --ignore-scripts --package=firebase-tools@15.32.1 firebase setup:emulators:firestore \
+    && ls /opt/firebase-emulators/cloud-firestore-emulator-v*.jar \
+    && chmod -R a+rX /opt/firebase-emulators \
+    && rm -rf /root/.npm
 
 # Quiet git's "dubious ownership" on the bind-mounted (host-owned) /workspace.
 

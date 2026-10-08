@@ -1344,7 +1344,8 @@ default `(default)`). `deploy/cloudrun/deploy.sh` deploys with `firestore`. The 
   two different sets. The transaction reads every summed counter, so two requests cannot both take
   the last unit.
 - **Hot documents.** Each kind's global counter is one document, under Firestore's per-document
-  write-rate limit. Transactions retry up to 25 times. Load-test before launch traffic.
+  write-rate limit. `admit`, `refund` and each chunk of a device delete retry their transaction up
+  to 25 times; every other transaction keeps the SDK default of 5. Load-test before launch traffic.
 - **Indexes are checked statically.** The emulator does not enforce composite indexes in Native
   mode (`--require_indexes` is Datastore-mode only). `server/test/firestore-index-coverage.ts`
   records each query the conformance run sends and fails when one needs an entry
@@ -1356,10 +1357,18 @@ default `(default)`). `deploy/cloudrun/deploy.sh` deploys with `firestore`. The 
 - **Operators work from a laptop.** `whim-admin` and `whim-waitlist` reach Firestore through the
   owner's Application Default Credentials. No HTTP admin route: it would be new attack surface,
   and the database's IAM already is the access control. `whim-admin import-sqlite` carries the VM's
-  last data (backed up 2026-10-07) into Firestore.
+  last data (backed up 2026-10-07) into Firestore, before the first Firestore deploy. It never
+  overwrites a document: an existing one that differs is kept as found (a waitlist row's
+  `createdAt` becomes the earlier of the two), and a live `usage` document keeps its totals.
+- **Retention runs without traffic.** The in-process purges run only at boot and hourly inside a
+  live instance, and a scaled-to-zero service usually has none. An hourly Cloud Scheduler job runs
+  the Cloud Run Job `whim-purge` (`whim-admin purge`: the server's four purges at the same
+  cut-offs), which `deploy.sh` creates or updates on every Firestore deploy. No HTTP route, for the
+  same reason as above. A record can outlive its keep period by up to an hour.
 - **Deletion is weaker than SQLite's.** `secure_delete` overwrote purged pages; a deleted Firestore
   document leaves Google's storage on Google's deletion timeline, and with PITR off old versions
-  are kept for 1 hour. The published keep periods are about our retention and still hold.
+  are kept for 1 hour. The published keep periods are about our retention, which the purge job
+  above enforces.
 - **Not done:** more than one instance (`--max-instances` stays 1), TTL policies, PITR, backups.
   Rollback is a deploy with `WHIM_STORE_BACKEND=sqlite`, back to instance-memory state; the
   Firestore data stays untouched.

@@ -1437,6 +1437,16 @@ function envVarsFileValues(text: string): Record<string, string> {
   return Object.fromEntries([...text.matchAll(/^([A-Z0-9_]+): '(.*)'$/gm)].map(([, key, value]) => [key, value.replaceAll("''", "'")]));
 }
 
+/** A `sleep` on the sandbox PATH that returns at once, logs its argument, and on its first call
+ *  swaps `gcloud.after-sleep.rules` in as the gcloud rules: the database as it is after the wait. */
+const SLEEP_STUB_SCRIPT = [
+  '#!/usr/bin/env bash',
+  'printf \'%s\\n\' "$*" >>"$STUB_DIR/sleep.log"',
+  '[ ! -f "$STUB_DIR/gcloud.after-sleep.rules" ] || mv "$STUB_DIR/gcloud.after-sleep.rules" "$STUB_DIR/gcloud.rules"',
+  'exit 0',
+  '',
+].join('\n');
+
 function cloudRunStoreTests(): void {
   section('Deploy scripts: cloudrun/deploy.sh store backend and Firestore indexes');
   const wanted = wantedIndexes();
@@ -1495,11 +1505,80 @@ function cloudRunStoreTests(): void {
     eq('  ... before the server deploy', serverDeploy(calls), -1);
   });
 
+  const listedIn = (state: string): unknown[] => wanted.map((index, i) => ({ ...(listedIndex(index, `s${i}`) as object), state }));
+  const readyListing = JSON.stringify(wanted.map((index, i) => listedIndex(index, `r${i}`)));
+  const withSleepStub = (sandbox: Sandbox, afterSleep?: readonly StubRule[]): void => {
+    fs.writeFileSync(path.join(sandbox.bin, 'sleep'), SLEEP_STUB_SCRIPT, { mode: 0o755 });
+    if (!afterSleep) return;
+    const lines = afterSleep.map(([pattern, code, output = '', body = '']) => [pattern, String(code), output, body].join(RULE_SEPARATOR));
+    fs.writeFileSync(path.join(sandbox.stubs, 'gcloud.after-sleep.rules'), `${lines.join('\n')}\n`);
+  };
+
+  withSandbox((sandbox) => {
+    withSleepStub(sandbox, [['*artifacts docker images describe*', 0, ''], ['*firestore indexes composite list*', 0, readyListing]]);
+    const { run, calls } = deployTagged(sandbox, listedIn('CREATING'));
+    eq('a deploy that finds its indexes still building succeeds once they are READY', run.status, 0);
+    check('  ... saying it waits for them, by name', wanted.every((index) => run.stdout.includes(`waiting for ${index.collectionGroup} (`)), run.stdout);
+    eq('  ... listing them again after one wait', [toolLog(sandbox, 'sleep').length, calls.filter((line) => line.includes('firestore indexes composite list')).length], [1, 2]);
+    eq('  ... creating none of them', creates(calls), []);
+    check('  ... and deploys the server after', serverDeploy(calls) > calls.map((line) => line.includes('firestore indexes composite list')).lastIndexOf(true), calls.join(' / '));
+  });
+
+  withSandbox((sandbox) => {
+    withSleepStub(sandbox);
+    const { run, calls } = deployTagged(sandbox, listedIn('CREATING'));
+    check('an index that stays CREATING stops the deploy after the bounded wait, naming it', run.status === 1 && run.stderr.includes(`Firestore index ${wanted[0]!.collectionGroup} (`) && run.stderr.includes('still building after 20 minutes'), run.stderr);
+    eq('  ... after 60 waits', toolLog(sandbox, 'sleep').length, 60);
+    eq('  ... before the server deploy, creating nothing', [serverDeploy(calls), creates(calls)], [-1, []]);
+  });
+
+  withSandbox((sandbox) => {
+    withSleepStub(sandbox);
+    const { run, calls } = deployTagged(sandbox, listedIn('NEEDS_REPAIR'));
+    check('an index in NEEDS_REPAIR stops the deploy, naming it and its state', run.status === 1 && run.stderr.includes(`Firestore index ${wanted[0]!.collectionGroup} (`) && run.stderr.includes('is NEEDS_REPAIR'), run.stderr);
+    eq('  ... at once, before the server deploy, creating nothing', [toolLog(sandbox, 'sleep').length, serverDeploy(calls), creates(calls)], [0, -1, []]);
+  });
+
+  const purgeJobDeploy = (calls: readonly string[]): number => indexOfCall(calls, 'run jobs deploy whim-purge');
+  const serviceAccount = 'whim-run@anycognition-whim.iam.gserviceaccount.com';
+  withSandbox((sandbox) => {
+    const { run, calls } = deployTagged(sandbox, [], {}, [['*scheduler jobs describe*', 1, '']]);
+    eq('a firestore deploy succeeds with the purge job', run.status, 0);
+    const job = calls[purgeJobDeploy(calls)] ?? '';
+    const server = calls[serverDeploy(calls)] ?? '';
+    check('  ... deploying the purge job after the server, in its region', serverDeploy(calls) !== -1 && purgeJobDeploy(calls) > serverDeploy(calls) && job.includes('--region us-east4'), calls.join(' / '));
+    const flagValue = (line: string, flag: string): string => new RegExp(`${flag} (\\S+)`).exec(line)?.[1] ?? '';
+    check('  ... from the server\'s image, environment, secret and service account', ['--image', '--env-vars-file', '--set-secrets', '--service-account'].every((flag) => flagValue(job, flag) !== '' && flagValue(job, flag) === flagValue(server, flag)), `${job} / ${server}`);
+    const script = /--args=\S*?(server\/[\w-]+\.mjs),purge/.exec(job)?.[1];
+    const buildSource = readRepoFile('server/build.mjs');
+    check('  ... running `purge` through the operator command the image ships', job.includes('--command node') && script === 'server/whim-admin.mjs' && buildSource.includes("bundleServerEntry({ entry: 'server/src/admin/main.ts', outfile: path.join(target, 'server', 'whim-admin.mjs') })"), job);
+    const binding = calls.find((line) => line.includes('run jobs add-iam-policy-binding whim-purge')) ?? '';
+    check('  ... granting the service account run.invoker on the job', binding.includes(`--member serviceAccount:${serviceAccount}`) && binding.includes('--role roles/run.invoker') && binding.includes('--region us-east4'), binding);
+    const create = calls.findIndex((line) => line.includes('scheduler jobs create http whim-purge-hourly'));
+    const schedule = calls[create] ?? '';
+    check('  ... then creating the hourly schedule that runs the job as that account', create > calls.indexOf(binding) && schedule.includes('--schedule 0 * * * *') && schedule.includes('--location us-east4') && schedule.includes('--uri https://run.googleapis.com/v2/projects/anycognition-whim/locations/us-east4/jobs/whim-purge:run') && schedule.includes('--http-method POST') && schedule.includes(`--oauth-service-account-email ${serviceAccount}`), schedule);
+    eq('  ... and updating none', calls.filter((line) => line.includes('scheduler jobs update')), []);
+  });
+
+  withSandbox((sandbox) => {
+    const { run, calls } = deployTagged(sandbox, [], {}, [['*scheduler jobs describe*', 0, 'name: whim-purge-hourly\\n']]);
+    eq('a redeploy with the schedule in place succeeds', run.status, 0);
+    const update = calls.find((line) => line.includes('scheduler jobs update http whim-purge-hourly')) ?? '';
+    check('  ... updating the schedule in place', update.includes('--schedule 0 * * * *') && update.includes('jobs/whim-purge:run'), update);
+    eq('  ... creating no second one', calls.filter((line) => line.includes('scheduler jobs create')), []);
+  });
+
+  withSandbox((sandbox) => {
+    const { run, calls } = deployTagged(sandbox, [], {}, [['*run jobs deploy*', 1, 'ERROR: (gcloud.run.jobs.deploy) PERMISSION_DENIED\n']]);
+    check('a failed purge job deploy fails the deploy, naming the job and that the server is deployed', run.status === 1 && run.stderr.includes('deploying the purge job failed. The server is deployed'), run.stderr);
+    eq('  ... touching no schedule', calls.filter((line) => line.includes('scheduler')), []);
+  });
+
   withSandbox((sandbox) => {
     const { run, calls, serverEnv } = deployTagged(sandbox, [], { WHIM_STORE_BACKEND: 'sqlite' });
     eq('WHIM_STORE_BACKEND=sqlite deploys the server (the rollback)', run.status, 0);
     eq('  ... with the sqlite backend in its env file', loadServerConfig(envVarsFileValues(serverEnv)).storeBackend, 'sqlite');
-    eq('  ... and no Firestore call', calls.filter((line) => line.includes('firestore')), []);
+    eq('  ... and no Firestore, purge job or Scheduler call', calls.filter((line) => /firestore|run jobs|scheduler|services enable/.test(line)), []);
   });
 
   withSandbox((sandbox) => {
