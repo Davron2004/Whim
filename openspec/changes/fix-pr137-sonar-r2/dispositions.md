@@ -18,3 +18,4 @@
 - Sonar after round 2 (7b91ee79): CI PASS, gate OK, 44 → 9 issues. 4 = ACCEPT set; 5 new from round 1 L4 / R2-D → lane R2-E.
 - R2-E — complete, commit 39891588, GATE PASS, firestore 40/0: S4123 (no-earliest branch counts kept without the aggregator), S7679 (yaml_line, display_name_of, named_row → locals). Gap reported: no test covers a differing non-waitlist doc on re-import (kept-as-found rule) → rev 1 adds it (allowlist + firestore-import.ts). Accept script written: ~/.cache/whim-sonar/accept-await-loop.sh (owner runs with SONAR_TOKEN).
 - R2-E rev 1 — commit 1e42a9a4: differingReportKept emulator case (red: counting differing as imported). integrity exit 0, verify APPROVE, gatefull PASS, merged, regate PASS.
+- Sonar after R2-E (c6fbb6d4): CI PASS, gate OK, 5 issues = exactly the S9382 ACCEPT set (stores.ts:100,121; import-sqlite.ts:144,160,166) → owner runs ~/.cache/whim-sonar/accept-await-loop.sh. All lanes terminal; batch archived.
