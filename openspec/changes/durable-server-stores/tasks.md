@@ -1,8 +1,8 @@
 ## 1. Bootstrap: dependency and gate wiring (config files, committed into the run's base)
 
-- [ ] 1.1 Add `@google-cloud/firestore` at an exact version to `server/package.json` dependencies and update `package-lock.json`. Confirm `npm run guard:metro` still passes and that the Dockerfile's `deps` stage (`npm ci --omit=dev --workspace server`) carries it.
-- [ ] 1.2 Add an npm script `stores:firestore:test`. It starts the Firestore emulator through a pinned `firebase-tools` (`npx --ignore-scripts --package=firebase-tools@<exact> firebase emulators:exec --only firestore --project whim-conformance "<run the Firestore conformance entry>"`; Java 21 is required) and runs the conformance suite's Firestore entry, exiting non-zero on any failure.
-- [ ] 1.3 Run `stores:firestore:test` from `scripts/gate-full.sh`, and install Java 21 in the CI job that runs `gate-full.sh`. With no Firestore entry yet, the script runs an empty suite and passes.
+- [x] 1.1 Add `@google-cloud/firestore` at an exact version to `server/package.json` dependencies and update `package-lock.json`. Confirm `npm run guard:metro` still passes and that the Dockerfile's `deps` stage (`npm ci --omit=dev --workspace server`) carries it.
+- [x] 1.2 Add an npm script `stores:firestore:test`. It starts the Firestore emulator through a pinned `firebase-tools` (`npx --ignore-scripts --package=firebase-tools@<exact> firebase emulators:exec --only firestore --project demo-whim-conformance "<run the Firestore conformance entry>"`; Java 21 is required) and runs the conformance suite's Firestore entry, exiting non-zero on any failure.
+- [x] 1.3 Run `stores:firestore:test` from `scripts/gate-full.sh`, and install Java 21 in the CI job that runs `gate-full.sh`. With no Firestore entry yet, the script runs an empty suite and passes.
 
 ## 2. Async store ports, backend config and factory
 
