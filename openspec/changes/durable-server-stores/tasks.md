@@ -21,11 +21,11 @@
 
 ## 4. Firestore usage store and atomic admission
 
-- [ ] 4.1 Implement `FirestoreUsageStore` reads and writes: `credit` (merge plus `FieldValue.increment`, stamping `lastCreditedDay`), `read`, `settle` (first outcome wins, `utcDay` unchanged, failure reasons validated as in SQLite), `recordCost` (the `costWriteLands` state machine, `generationIds` as an array cleared on resolve), `listUnresolvedCostRows`, and `summary`.
-- [ ] 4.2 Implement `admit` and `refund` per design D2 with counter documents in one transaction. Device limit before global, a reused request id rejected without consuming a unit, `retryAfterSec` to the next UTC midnight, refund idempotent. Implement `unitAvailable` as a counter read.
-- [ ] 4.3 Implement `purgeLedger` (requests and that day's admission counters), `purgeIdleUsage`, `deviceRecords` and `deleteDeviceRecords` (ledger rows and usage doc, batched).
-- [ ] 4.4 Write `deploy/firestore/indexes.json` with every composite index the Firestore queries need, and add a conformance case asserting that no Firestore query in the suite fails with a missing-index error under the emulator's index enforcement.
-- [ ] 4.5 All usage and admission conformance cases pass on Firestore, including a concurrent last-unit race (many parallel `admit`s for one remaining unit admit exactly one).
+- [x] 4.1 Implement `FirestoreUsageStore` reads and writes: `credit` (merge plus `FieldValue.increment`, stamping `lastCreditedDay`), `read`, `settle` (first outcome wins, `utcDay` unchanged, failure reasons validated as in SQLite), `recordCost` (the `costWriteLands` state machine, `generationIds` as an array cleared on resolve), `listUnresolvedCostRows`, and `summary`.
+- [x] 4.2 Implement `admit` and `refund` per design D2 with counter documents in one transaction. Device limit before global, a reused request id rejected without consuming a unit, `retryAfterSec` to the next UTC midnight, refund idempotent. Implement `unitAvailable` as a counter read.
+- [x] 4.3 Implement `purgeLedger` (requests and that day's admission counters), `purgeIdleUsage`, `deviceRecords` and `deleteDeviceRecords` (ledger rows and usage doc, batched).
+- [x] 4.4 Write `deploy/firestore/indexes.json` with every composite index the Firestore queries need, and add a conformance case asserting that no Firestore query in the suite fails with a missing-index error under the emulator's index enforcement.
+- [x] 4.5 All usage and admission conformance cases pass on Firestore, including a concurrent last-unit race (many parallel `admit`s for one remaining unit admit exactly one).
 
 ## 5. SQLite-to-Firestore import
 
