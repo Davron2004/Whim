@@ -15,4 +15,4 @@
 - L2 rev 2 — commit 0bfa56ee: comment corrected (no compose.yaml comparison); setcap -r /usr/bin/caddy (libcap added+removed in one RUN). RED/GREEN by running: rev-1 image under --cap-drop=ALL → 'exec /usr/bin/caddy: operation not permitted'; rev-2 image under --cap-drop=ALL → uid 10001, :8080, /config+/data writable, 200 + headers. GATE PASS. Build now needs Alpine repo access for apk (Cloud Build has egress).
 - L2 re-verify — APPROVE. Residual (→ L4): base image declares VOLUME /data /config; the legacy builder can discard a later chown on a VOLUME path → point XDG_DATA_HOME/XDG_CONFIG_HOME at user-owned non-volume dirs so it holds under either builder (Cloud Build `gcloud builds submit --tag`).
 - gatefull (sequential, quiet machine) — L1 PASS 393 s, L3 PASS 400 s, L2 PASS 395 s. Confirms L1's earlier red was load.
-- merged (serial) — L1 0f1f406a regate PASS; L3 5f46f82d regate PASS; L2 a6b0ce6d regate PASS. Worktrees + branches removed.
+- merged (serial) — L1 0f1f406a regate PASS; L3 5f46f82d regate PASS; L2 a6b0ce6d regate PASS. Worktrees (harness-locked) removed with -f -f after confirming each branch is an ancestor of HEAD; branches deleted.
