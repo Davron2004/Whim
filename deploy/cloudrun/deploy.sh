@@ -79,10 +79,10 @@ for (const index of wanted) {
 
 tag=""
 site_only=0
-while [ "$#" -gt 0 ]; do
+while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --tag)
-      [ "$#" -ge 2 ] || whim_usage_error "--tag needs a commit sha"
+      [[ "$#" -ge 2 ]] || whim_usage_error "--tag needs a commit sha"
       tag="$2"
       shift 2
       ;;
@@ -93,8 +93,8 @@ while [ "$#" -gt 0 ]; do
     *) whim_usage_error "unknown argument: $1" ;;
   esac
 done
-if [ -n "$tag" ]; then
-  [ "$site_only" -eq 0 ] || whim_usage_error "--site-only builds no image and takes no --tag"
+if [[ -n "$tag" ]]; then
+  [[ "$site_only" -eq 0 ]] || whim_usage_error "--site-only builds no image and takes no --tag"
   [[ "$tag" =~ ^[0-9a-f]{40}$ ]] || whim_usage_error "--tag must be a full 40-character git commit sha"
 fi
 store_backend="${WHIM_STORE_BACKEND:-firestore}"
@@ -111,16 +111,16 @@ server_optional_keys="WHIM_CLARIFY_MODEL WHIM_SUMMARY_MODEL WHIM_PLAN_MODEL WHIM
 whim_load_values
 whim_require_values WHIM_GCP_PROJECT WHIM_GCP_REGION WHIM_RUN_REGION WHIM_API_HOST WHIM_WEB_HOST \
   WHIM_SUPPORT_EMAIL WHIM_ENGINEER_MODEL WHIM_REWRITE_MODEL
-[ "$WHIM_API_HOST" = "api.$WHIM_WEB_HOST" ] \
+[[ "$WHIM_API_HOST" = "api.$WHIM_WEB_HOST" ]] \
   || whim_fail "WHIM_API_HOST must be api.$WHIM_WEB_HOST, got $WHIM_API_HOST"
 service_account="$RUN_SERVICE_ACCOUNT_NAME@$WHIM_GCP_PROJECT.iam.gserviceaccount.com"
 
 # A rollback (--tag) needs no checkout state; anything built from HEAD must be committed and pushed.
 head_sha=""
-if [ -z "$tag" ]; then
-  [ -z "$(git -C "$WHIM_REPO_ROOT" status --porcelain)" ] || whim_fail "the working tree is dirty. Nothing was built or changed."
+if [[ -z "$tag" ]]; then
+  [[ -z "$(git -C "$WHIM_REPO_ROOT" status --porcelain)" ]] || whim_fail "the working tree is dirty. Nothing was built or changed."
   head_sha="$(git -C "$WHIM_REPO_ROOT" rev-parse HEAD)"
-  [ -n "$(git -C "$WHIM_REPO_ROOT" branch -r --contains "$head_sha")" ] \
+  [[ -n "$(git -C "$WHIM_REPO_ROOT" branch -r --contains "$head_sha")" ]] \
     || whim_fail "HEAD $head_sha is not pushed. Nothing was built or changed."
 fi
 
@@ -154,16 +154,16 @@ apply_firestore_indexes() {
         broken) broken="${broken:+$broken, }$index is $state" ;;
       esac
     done <<<"$plan"
-    [ -z "$broken" ] || whim_fail "Firestore index $broken, not READY. Repair or delete it in the console, then deploy again. The server was not deployed."
-    [ -n "$building" ] || break
-    [ "$polls" -lt "$RUN_INDEX_WAIT_POLLS" ] \
+    [[ -z "$broken" ]] || whim_fail "Firestore index $broken, not READY. Repair or delete it in the console, then deploy again. The server was not deployed."
+    [[ -n "$building" ]] || break
+    [[ "$polls" -lt "$RUN_INDEX_WAIT_POLLS" ]] \
       || whim_fail "Firestore index $building is still building after $((RUN_INDEX_WAIT_POLLS * RUN_INDEX_WAIT_SECONDS / 60)) minutes. Deploy again once it is READY. The server was not deployed."
     echo "firestore indexes: waiting for $building to finish building"
     sleep "$RUN_INDEX_WAIT_SECONDS"
     polls=$((polls + 1))
     plan="$(firestore_index_plan)"
   done
-  if [ -z "$plan" ]; then
+  if [[ -z "$plan" ]]; then
     echo "firestore indexes: all ready"
     return 0
   fi
@@ -210,7 +210,7 @@ deploy_server() {
   if whim_gcloud artifacts docker images describe "$image" >/dev/null 2>&1; then
     echo "image: $image (exists)"
   else
-    [ -z "$tag" ] || whim_fail "image $image is not in Artifact Registry. Nothing was changed."
+    [[ -z "$tag" ]] || whim_fail "image $image is not in Artifact Registry. Nothing was changed."
     echo "==> cloud build $image"
     whim_gcloud builds submit "$WHIM_REPO_ROOT" --region "$WHIM_GCP_REGION" --config "$WHIM_DEPLOY_DIR/cloudbuild.yaml" \
       --substitutions "COMMIT_SHA=$image_tag,_REGION=$WHIM_GCP_REGION"
@@ -227,7 +227,7 @@ deploy_server() {
       [[ -z "${!key}" ]] || yaml_line "$key" "${!key}"
     done
   } >"$env_file"
-  [ "$store_backend" != firestore ] || apply_firestore_indexes
+  [[ "$store_backend" != firestore ]] || apply_firestore_indexes
   echo "==> cloud run $RUN_SERVER_SERVICE"
   # gen2: Chromium's namespace sandbox needs it, and boot refuses to listen without the sandbox.
   # One instance at most, so the in-memory daily ceilings stay one set of counters.
@@ -236,7 +236,7 @@ deploy_server() {
     --min-instances 0 --max-instances 1 --concurrency 40 --timeout 900 \
     --service-account "$service_account" --allow-unauthenticated \
     --env-vars-file "$env_file" --set-secrets "OPENROUTER_API_KEY=$WHIM_OPENROUTER_SECRET_ID:latest" --quiet
-  [ "$store_backend" != firestore ] || deploy_purge_job "$image" "$env_file"
+  [[ "$store_backend" != firestore ]] || deploy_purge_job "$image" "$env_file"
 }
 
 deploy_site() {
@@ -244,8 +244,8 @@ deploy_site() {
   local -a site_env=(env -u WHIM_APP_STORE_URL -u WHIM_PLAY_STORE_URL
     "WHIM_SUPPORT_EMAIL=$WHIM_SUPPORT_EMAIL" "WHIM_BETA_SIGNUP_URL=https://$WHIM_API_HOST/beta/signup"
     "WHIM_ENGINEER_MODEL=$WHIM_ENGINEER_MODEL" "WHIM_REWRITE_MODEL=$WHIM_REWRITE_MODEL")
-  [ -z "$WHIM_APP_STORE_URL" ] || site_env+=("WHIM_APP_STORE_URL=$WHIM_APP_STORE_URL")
-  [ -z "$WHIM_PLAY_STORE_URL" ] || site_env+=("WHIM_PLAY_STORE_URL=$WHIM_PLAY_STORE_URL")
+  [[ -z "$WHIM_APP_STORE_URL" ]] || site_env+=("WHIM_APP_STORE_URL=$WHIM_APP_STORE_URL")
+  [[ -z "$WHIM_PLAY_STORE_URL" ]] || site_env+=("WHIM_PLAY_STORE_URL=$WHIM_PLAY_STORE_URL")
   echo "==> site build"
   (cd "$WHIM_REPO_ROOT" && "${site_env[@]}" node server/site.mjs build --out "$stage/site-image/site") \
     || whim_fail "the site build failed. Nothing was changed."
@@ -259,6 +259,6 @@ deploy_site() {
     --service-account "$service_account" --allow-unauthenticated --quiet
 }
 
-[ "$site_only" -eq 1 ] || deploy_server
-[ -n "$tag" ] || deploy_site
+[[ "$site_only" -eq 1 ]] || deploy_server
+[[ -n "$tag" ]] || deploy_site
 echo "deployed. Check: https://$WHIM_API_HOST/health and https://$WHIM_WEB_HOST/privacy"
