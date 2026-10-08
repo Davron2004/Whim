@@ -29,8 +29,8 @@
 
 ## 5. SQLite-to-Firestore import
 
-- [ ] 5.1 Add `whim-admin import-sqlite --data-dir <dir>`. It reads `usage.db`, `reports.db` and `waitlist.db` read-only and writes Firestore docs with original ids and timestamps (set by id, so reruns change nothing). It rebuilds admission counters for imported ledger days within retention and prints per-store counts. It refuses unless the configured backend is `firestore`.
-- [ ] 5.2 Test with fixtures produced by the real `NodeSqlite*` stores (not hand-written rows): import twice into the emulator and assert equal counts and an equal document set, and assert that admission after import honours the imported day's counts.
+- [x] 5.1 Add `whim-admin import-sqlite --data-dir <dir>`. It reads `usage.db`, `reports.db` and `waitlist.db` read-only and writes Firestore docs with original ids and timestamps (set by id, so reruns change nothing). It rebuilds admission counters for imported ledger days within retention and prints per-store counts. It refuses unless the configured backend is `firestore`.
+- [x] 5.2 Test with fixtures produced by the real `NodeSqlite*` stores (not hand-written rows): import twice into the emulator and assert equal counts and an equal document set, and assert that admission after import honours the imported day's counts.
 
 ## 6. Deploy and documentation
 
