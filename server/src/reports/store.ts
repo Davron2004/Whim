@@ -294,6 +294,21 @@ export class NodeSqliteReportStore implements ReportStore, ReportRecordKeeping {
   }
 }
 
+/** Every report in the `reports.db` at `dbPath`, oldest first, read through a read-only connection
+ *  so the file is never written (the SQLite-to-Firestore import). */
+export function readReportsFile(dbPath: string): ReportRow[] {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const rows = db.prepare(`
+      SELECT id, device_id, reason, received_at, note, app_name, prompt, source
+      FROM reports ORDER BY received_at, id
+    `).all() as unknown as RawRow[];
+    return rows.map(fromRawRow);
+  } finally {
+    db.close();
+  }
+}
+
 interface RawRow {
   id: string;
   device_id: string;
