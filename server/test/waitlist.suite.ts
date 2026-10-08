@@ -9,7 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { check, eq, section } from './harness';
+import { caught, check, eq, section } from './harness';
 import {
   InMemoryWaitlistStore,
   NodeSqliteWaitlistStore,
@@ -131,6 +131,37 @@ async function storeTests(): Promise<void> {
     raw.close();
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  section('Waitlist store: a failing operation rejects, never throws');
+
+  const failDir = tempDir('rejects');
+  try {
+    const closed = new NodeSqliteWaitlistStore(path.join(failDir, 'waitlist.db'));
+    await closed.close();
+    let pending: Promise<unknown> | undefined;
+    const syncThrow = await caught(() => {
+      pending = closed.upsert(signup('late@example.com', 'ios', T0));
+    });
+    eq('upsert on a closed SQLite store does not throw synchronously', syncThrow, undefined);
+    check('it returns a promise', pending instanceof Promise);
+    check('that promise rejects', (await caught(() => pending as Promise<unknown> as Promise<void>)) !== undefined);
+  } finally {
+    fs.rmSync(failDir, { recursive: true, force: true });
+  }
+
+  const memory = new InMemoryWaitlistStore();
+  await memory.upsert(signup('row@example.com', 'ios', T0));
+  for (const [label, run] of [
+    ['purge with a BigInt clock', () => memory.purge(1n as never)],
+    ['export with a null filter', () => memory.export(null as never)],
+  ] as const) {
+    let pending: Promise<unknown> | undefined;
+    const syncThrow = await caught(() => {
+      pending = run();
+    });
+    eq(`in-memory ${label} does not throw synchronously`, syncThrow, undefined);
+    check(`in-memory ${label} returns a rejected promise`, (await caught(() => pending as Promise<unknown> as Promise<void>)) !== undefined);
   }
 }
 

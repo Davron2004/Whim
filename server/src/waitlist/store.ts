@@ -13,6 +13,7 @@
  * same number (the site suite holds the two together).
  */
 import { DatabaseSync } from 'node:sqlite';
+import { settle } from '../settle';
 import { byUtf8Bytes } from '../text-order';
 
 export const WAITLIST_PLATFORMS = ['ios', 'android', 'other'] as const;
@@ -95,42 +96,48 @@ export function byCreated(a: WaitlistRow, b: WaitlistRow): number {
 export class InMemoryWaitlistStore implements WaitlistStore {
   private readonly rows = new Map<string, WaitlistRow>();
 
-  async upsert(signup: WaitlistSignup): Promise<UpsertOutcome> {
-    const email = normalizeEmail(signup.email);
-    const existing = this.rows.get(email);
-    this.rows.set(email, {
-      email,
-      platform: signup.platform,
-      updatesOptOut: signup.updatesOptOut,
-      noticeId: signup.noticeId,
-      createdAt: existing?.createdAt ?? signup.now,
-      updatedAt: signup.now,
+  upsert(signup: WaitlistSignup): Promise<UpsertOutcome> {
+    return settle(() => {
+      const email = normalizeEmail(signup.email);
+      const existing = this.rows.get(email);
+      this.rows.set(email, {
+        email,
+        platform: signup.platform,
+        updatesOptOut: signup.updatesOptOut,
+        noticeId: signup.noticeId,
+        createdAt: existing?.createdAt ?? signup.now,
+        updatedAt: signup.now,
+      });
+      return existing === undefined ? 'stored' : 'updated';
     });
-    return existing === undefined ? 'stored' : 'updated';
   }
 
-  async export(filter: WaitlistFilter = {}): Promise<WaitlistRow[]> {
-    return [...this.rows.values()].filter((row) => matches(row, filter)).sort(byCreated).map((row) => ({ ...row }));
+  export(filter: WaitlistFilter = {}): Promise<WaitlistRow[]> {
+    return settle(() => [...this.rows.values()].filter((row) => matches(row, filter)).sort(byCreated).map((row) => ({ ...row })));
   }
 
-  async remove(email: string): Promise<boolean> {
-    return this.rows.delete(normalizeEmail(email));
+  remove(email: string): Promise<boolean> {
+    return settle(() => this.rows.delete(normalizeEmail(email)));
   }
 
-  async purge(now: number): Promise<number> {
-    const cutoff = purgeCutoff(now);
-    let deleted = 0;
-    for (const [email, row] of this.rows) {
-      if (row.updatedAt < cutoff) {
-        this.rows.delete(email);
-        deleted++;
+  purge(now: number): Promise<number> {
+    return settle(() => {
+      const cutoff = purgeCutoff(now);
+      let deleted = 0;
+      for (const [email, row] of this.rows) {
+        if (row.updatedAt < cutoff) {
+          this.rows.delete(email);
+          deleted++;
+        }
       }
-    }
-    return deleted;
+      return deleted;
+    });
   }
 
   /** Nothing to release. */
-  async close(): Promise<void> {}
+  close(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 interface RawRow {
@@ -189,40 +196,44 @@ export class NodeSqliteWaitlistStore implements WaitlistStore {
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_waitlist_updated_at ON waitlist (updated_at)');
   }
 
-  async upsert(signup: WaitlistSignup): Promise<UpsertOutcome> {
-    const email = normalizeEmail(signup.email);
-    const existed = this.db.prepare('SELECT 1 FROM waitlist WHERE email = ?').get(email) !== undefined;
-    this.db
-      .prepare(`
-        INSERT INTO waitlist (email, platform, updates_opt_out, notice_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT (email) DO UPDATE SET
-          platform = excluded.platform,
-          updates_opt_out = excluded.updates_opt_out,
-          notice_id = excluded.notice_id,
-          updated_at = excluded.updated_at
-      `)
-      .run(email, signup.platform, signup.updatesOptOut ? 1 : 0, signup.noticeId, signup.now, signup.now);
-    return existed ? 'updated' : 'stored';
+  upsert(signup: WaitlistSignup): Promise<UpsertOutcome> {
+    return settle(() => {
+      const email = normalizeEmail(signup.email);
+      const existed = this.db.prepare('SELECT 1 FROM waitlist WHERE email = ?').get(email) !== undefined;
+      this.db
+        .prepare(`
+          INSERT INTO waitlist (email, platform, updates_opt_out, notice_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT (email) DO UPDATE SET
+            platform = excluded.platform,
+            updates_opt_out = excluded.updates_opt_out,
+            notice_id = excluded.notice_id,
+            updated_at = excluded.updated_at
+        `)
+        .run(email, signup.platform, signup.updatesOptOut ? 1 : 0, signup.noticeId, signup.now, signup.now);
+      return existed ? 'updated' : 'stored';
+    });
   }
 
-  async export(filter: WaitlistFilter = {}): Promise<WaitlistRow[]> {
-    const rows = this.db
-      .prepare('SELECT email, platform, updates_opt_out, notice_id, created_at, updated_at FROM waitlist ORDER BY created_at, email')
-      .all() as unknown as RawRow[];
-    return rows.map(fromRaw).filter((row) => matches(row, filter));
+  export(filter: WaitlistFilter = {}): Promise<WaitlistRow[]> {
+    return settle(() => {
+      const rows = this.db
+        .prepare('SELECT email, platform, updates_opt_out, notice_id, created_at, updated_at FROM waitlist ORDER BY created_at, email')
+        .all() as unknown as RawRow[];
+      return rows.map(fromRaw).filter((row) => matches(row, filter));
+    });
   }
 
-  async remove(email: string): Promise<boolean> {
-    return Number(this.db.prepare('DELETE FROM waitlist WHERE email = ?').run(normalizeEmail(email)).changes) > 0;
+  remove(email: string): Promise<boolean> {
+    return settle(() => Number(this.db.prepare('DELETE FROM waitlist WHERE email = ?').run(normalizeEmail(email)).changes) > 0);
   }
 
-  async purge(now: number): Promise<number> {
-    return Number(this.db.prepare('DELETE FROM waitlist WHERE updated_at < ?').run(purgeCutoff(now)).changes);
+  purge(now: number): Promise<number> {
+    return settle(() => Number(this.db.prepare('DELETE FROM waitlist WHERE updated_at < ?').run(purgeCutoff(now)).changes));
   }
 
-  async close(): Promise<void> {
-    this.db.close();
+  close(): Promise<void> {
+    return settle(() => this.db.close());
   }
 }
 

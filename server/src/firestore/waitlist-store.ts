@@ -64,7 +64,7 @@ export class FirestoreWaitlistStore implements WaitlistStore {
 
   async upsert(signup: WaitlistSignup): Promise<UpsertOutcome> {
     const ref = this.doc(signup.email);
-    return this.db.runTransaction(async (tx): Promise<UpsertOutcome> => {
+    return await this.db.runTransaction(async (tx): Promise<UpsertOutcome> => {
       const existing = await tx.get(ref);
       const answers = { platform: signup.platform, updatesOptOut: signup.updatesOptOut, noticeId: signup.noticeId, updatedAt: signup.now };
       if (existing.exists) {
@@ -84,7 +84,7 @@ export class FirestoreWaitlistStore implements WaitlistStore {
 
   async remove(email: string): Promise<boolean> {
     const ref = this.doc(email);
-    return this.db.runTransaction(async (tx) => {
+    return await this.db.runTransaction(async (tx) => {
       const existing = await tx.get(ref);
       if (existing.exists) tx.delete(ref);
       return existing.exists;
@@ -92,9 +92,11 @@ export class FirestoreWaitlistStore implements WaitlistStore {
   }
 
   async purge(now: number): Promise<number> {
-    return deleteInBatches(this.db, this.root.collection(WAITLIST_COLLECTION).where('updatedAt', '<', purgeCutoff(now)));
+    return await deleteInBatches(this.db, this.root.collection(WAITLIST_COLLECTION).where('updatedAt', '<', purgeCutoff(now)));
   }
 
   /** The client belongs to whoever opened it (`OpenedStores.close` terminates it). */
-  async close(): Promise<void> {}
+  close(): Promise<void> {
+    return Promise.resolve();
+  }
 }
