@@ -14,10 +14,10 @@
 
 ## 3. Firestore stores: waitlist, reports, factory branch
 
-- [ ] 3.1 Implement `FirestoreWaitlistStore` per design D3: doc id is sha256 of the normalized email, `upsert` runs in a transaction so `stored`/`updated` is exact, `export` is oldest first with ties by email, and `purge` deletes in batches.
-- [ ] 3.2 Implement `FirestoreReportStore` per design D3: optional text stored as `''`, `list` newest first with the default limit 50 and byte sizes, plus `listByDevice`/`deleteByDevice` and batched `purgeOlderThan`.
-- [ ] 3.3 Wire the factory's `firestore` branch: build a `Firestore` client for `WHIM_FIRESTORE_DATABASE`, honour `FIRESTORE_EMULATOR_HOST`, and do one probe read at boot so missing credentials fail boot naming the store backend (test against an unreachable emulator host).
-- [ ] 3.4 Add the Firestore conformance entry run by `stores:firestore:test` (a fresh emulator project namespace per run). Waitlist and report cases pass on Firestore.
+- [x] 3.1 Implement `FirestoreWaitlistStore` per design D3: doc id is sha256 of the normalized email, `upsert` runs in a transaction so `stored`/`updated` is exact, `export` is oldest first with ties by email, and `purge` deletes in batches.
+- [x] 3.2 Implement `FirestoreReportStore` per design D3: optional text stored as `''`, `list` newest first with the default limit 50 and byte sizes, plus `listByDevice`/`deleteByDevice` and batched `purgeOlderThan`.
+- [x] 3.3 Wire the factory's `firestore` branch: build a `Firestore` client for `WHIM_FIRESTORE_DATABASE`, honour `FIRESTORE_EMULATOR_HOST`, and do one probe read at boot so missing credentials fail boot naming the store backend (test against an unreachable emulator host).
+- [x] 3.4 Add the Firestore conformance entry run by `stores:firestore:test` (a fresh emulator project namespace per run). Waitlist and report cases pass on Firestore.
 
 ## 4. Firestore usage store and atomic admission
 
