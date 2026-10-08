@@ -177,3 +177,8 @@
 - 2026-10-08 durable-server-stores S7503 server/src/reports/store.ts:260
 - 2026-10-08 durable-server-stores S7503 server/src/reports/store.ts:276
 - 2026-10-08 durable-server-stores S7503 server/src/reports/store.ts:284
+- 2026-10-08 durable-server-stores S4123 server/src/admin/import-sqlite.ts:162
+- 2026-10-08 durable-server-stores S7679 deploy/cloudrun/deploy.sh:250
+- 2026-10-08 durable-server-stores S7679 deploy/cloudrun/deploy.sh:250
+- 2026-10-08 durable-server-stores S7679 deploy/cloudrun/deploy.sh:240
+- 2026-10-08 durable-server-stores S9382 server/src/admin/import-sqlite.ts:162
