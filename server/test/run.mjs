@@ -53,9 +53,10 @@ await build({
   // synthrun/builder.ts), prompts.suite.ts imports the `typescript` package directly, and
   // `src/logger.ts` imports `pino`; all three ship CJS `require()` calls that bundle into an
   // unsupported dynamic require under esbuild's ESM output (`pino` throws `Dynamic require of
-  // "node:os" is not supported` at import time). Externalize rather than bundle them — Node
+  // "node:os" is not supported` at import time). `src/stores.ts` imports `@google-cloud/firestore`,
+  // a runtime dependency of the production bundle too. Externalize rather than bundle them — Node
   // resolves them from node_modules at runtime instead.
-  external: ['typescript', 'esbuild', 'pino'],
+  external: ['typescript', 'esbuild', 'pino', '@google-cloud/firestore'],
 });
 
 // The logger's pretty transport (dev default) writes from a worker thread, which no in-process

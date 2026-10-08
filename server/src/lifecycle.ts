@@ -360,6 +360,10 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
     const { usageStore, reportStore, waitlistStore } = await atAsyncStep('stores', async () => {
       const stores = await openStores({ ...config, dataDir });
       opened.stores = stores;
+      bootLog.info(
+        config.storeBackend === 'firestore' ? { storeBackend: 'firestore', database: config.firestoreDatabase } : { storeBackend: 'sqlite', dataDir },
+        'stores opened',
+      );
       const { usage, reports, waitlist } = stores;
       opened.purges.push(
         schedulePurge(reports, { retentionDays: config.reportRetentionDays, now: config.now }),

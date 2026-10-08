@@ -185,7 +185,8 @@ export class InMemoryReportStore implements ReportStore, ReportRecordKeeping {
   async close(): Promise<void> {}
 }
 
-function toListItem(row: ReportRow): ReportListItem {
+/** The list shape of `row`: byte sizes in place of prompt and source. */
+export function toListItem(row: ReportRow): ReportListItem {
   return {
     reportId: row.reportId,
     receivedAt: row.receivedAt,

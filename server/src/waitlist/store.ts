@@ -77,12 +77,14 @@ export function purgeCutoff(now: number): number {
   return now - WAITLIST_RETENTION_DAYS * DAY_MS;
 }
 
-function matches(row: WaitlistRow, filter: WaitlistFilter): boolean {
+/** Whether `row` passes `filter`. */
+export function matches(row: WaitlistRow, filter: WaitlistFilter): boolean {
   if (filter.platform !== undefined && row.platform !== filter.platform) return false;
   return !(filter.updatesOk === true && row.updatesOptOut);
 }
 
-function byCreated(a: WaitlistRow, b: WaitlistRow): number {
+/** Export order: oldest signup first, ties by email. */
+export function byCreated(a: WaitlistRow, b: WaitlistRow): number {
   return a.createdAt - b.createdAt || a.email.localeCompare(b.email);
 }
 

@@ -13,6 +13,7 @@
  * Also covers the OpenRouter usage-and-cost transport composition wires (`usage/openrouter-stats.ts`).
  */
 import fs from 'node:fs';
+import http2 from 'node:http2';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -320,6 +321,8 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
     check('the tree started and listened', await proc.waitForLog('whim-server listening', BOOT_MS), proc.text().slice(-2000));
     eq('it logs the bound URL', proc.logs('whim-server listening')[0]?.url, `http://127.0.0.1:${port}`);
     eq('the boot line carries the commit the image was built from', proc.logs('whim-server listening')[0]?.commit, commit);
+    const stores = proc.logs('stores opened')[0];
+    eq('boot logs the store backend it opened, with its data directory', [stores?.storeBackend, stores?.dataDir], ['sqlite', dataDir]);
     const res = await fetch(`http://127.0.0.1:${port}/healthz`);
     eq('GET /healthz answers 200', res.status, 200);
     eq('with the service identity, the same commit and both minimum builds off', await res.json(), { ok: true, service: 'whim-server', commit, minBuild: { ios: 0, android: 0 } });
@@ -361,6 +364,24 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
     env: { PATH: process.env.PATH ?? '', WHIM_DATA_DIR: dataDir },
   });
   eq('the tree\'s whim-waitlist.mjs exports the signup the server stored', [exported.status, exported.stdout.split('\n')[1]?.split(',').slice(0, 3)], [0, ['tree.person@example.com', 'android', 'false']]);
+}
+
+/** A loopback stand-in for a Firestore the server's credentials cannot read: every call is answered
+ *  `PERMISSION_DENIED` with `message`. Point `FIRESTORE_EMULATOR_HOST` at `host`. */
+async function denyingFirestore(message: string): Promise<{ host: string; calls: () => number; close: () => Promise<void> }> {
+  let calls = 0;
+  const server = http2.createServer();
+  server.on('stream', (stream: http2.ServerHttp2Stream) => {
+    calls++;
+    stream.respond({ ':status': 200, 'content-type': 'application/grpc', 'grpc-status': '7', 'grpc-message': message }, { endStream: true });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as net.AddressInfo;
+  return {
+    host: `127.0.0.1:${port}`,
+    calls: () => calls,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
 }
 
 async function expectBootRefusal(what: string, root: string, env: Record<string, string>, named: string): Promise<void> {
@@ -421,6 +442,28 @@ async function testBootRefusals(fixture: Fixture): Promise<void> {
     { WHIM_PIPELINE: 'stub', WHIM_STORE_BACKEND: 'postgres', WHIM_DATA_DIR: fixture.dataDir('postgres-backend') },
     'WHIM_STORE_BACKEND must be one of sqlite, firestore',
   );
+  // specs/server-storage-backends "An unreachable Firestore refuses to boot": the probe read fails
+  // boot at its `stores` step, naming the backend and the database, before the server listens.
+  const denied = 'whim-test credentials cannot read this database';
+  const firestore = await denyingFirestore(denied);
+  try {
+    await expectBootRefusal(
+      'WHIM_STORE_BACKEND=firestore with credentials that cannot read the database',
+      fixture.tree,
+      {
+        WHIM_PIPELINE: 'stub',
+        WHIM_STORE_BACKEND: 'firestore',
+        WHIM_DATA_DIR: fixture.dataDir('firestore-denied'),
+        FIRESTORE_EMULATOR_HOST: firestore.host,
+        GOOGLE_CLOUD_PROJECT: 'demo-whim-denied',
+      },
+      // As the JSON `boot failed` line carries it, quotes escaped.
+      JSON.stringify(`WHIM_STORE_BACKEND=firestore: cannot read Firestore database "(default)": 7 PERMISSION_DENIED: ${denied}`).slice(1, -1),
+    );
+    check('  ... after its probe reached the database', firestore.calls() > 0, String(firestore.calls()));
+  } finally {
+    await firestore.close();
+  }
   await expectBootRefusal(
     'the stub delay without the stub selector',
     fixture.tree,
