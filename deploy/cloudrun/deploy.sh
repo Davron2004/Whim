@@ -213,14 +213,14 @@ deploy_purge_job() {
 }
 
 # A --tag deploy: points the existing purge job at the server's environment and secret, leaving its
-# image. With no job (gcloud answers NOT_FOUND), warns that retention is not enforced and creates
+# image. With no job (gcloud answers NOT_FOUND for the job), warns that retention is not enforced and creates
 # none (the tagged image may lack `whim-admin purge`); a plain deploy creates it. Any other failure
 # to look the job up stops the deploy, naming the error.
 update_purge_job_config() {
   local env_file="$1" described
   if ! described="$(whim_gcloud run jobs describe "$RUN_PURGE_JOB" --region "$WHIM_RUN_REGION" --format='value(name)' 2>&1)"; then
     case "$described" in
-      *NOT_FOUND* | *'Cannot find job'*) ;;
+      *NOT_FOUND*"$RUN_PURGE_JOB"* | *'Cannot find job'*) ;;
       *) whim_fail "looking up the purge job $RUN_PURGE_JOB failed: $described. The server is deployed; deploy again to retry the job." ;;
     esac
     printf '%s: WARNING: no Cloud Run job %s exists, so retention is NOT enforced: nothing purges records past their keep period. Run a plain deploy (no --tag) to create it.\n' \

@@ -1658,7 +1658,19 @@ function cloudRunStoreTests(): void {
   });
 
   withSandbox((sandbox) => {
-    const denied = "ERROR: (gcloud.run.jobs.describe) PERMISSION_DENIED: Permission 'run.jobs.get' denied on resource 'whim-purge'\n";
+    const otherNotFound = 'ERROR: (gcloud.run.jobs.describe) NOT_FOUND: project [anycognition-whim] not found\n';
+    const { run, calls } = deployTagged(sandbox, [], {}, [['*run jobs describe*', 1, otherNotFound]]);
+    check(
+      'a firestore rollback (--tag) whose job lookup answers NOT_FOUND about another resource stops, naming the error',
+      run.status === 1 && run.stderr.includes('looking up the purge job whim-purge failed') && run.stderr.includes('project [anycognition-whim] not found'),
+      run.stderr,
+    );
+    check('  ... without claiming the job does not exist', !run.stderr.includes('WARNING: no Cloud Run job'), run.stderr);
+    eq('  ... touching the job no further', calls.filter((line) => / run jobs (?!describe)/.test(line)), []);
+  });
+
+  withSandbox((sandbox) => {
+    const denied ="ERROR: (gcloud.run.jobs.describe) PERMISSION_DENIED: Permission 'run.jobs.get' denied on resource 'whim-purge'\n";
     const { run, calls } = deployTagged(sandbox, [], {}, [['*run jobs describe*', 1, denied]]);
     check(
       'a firestore rollback (--tag) whose job lookup fails otherwise stops, naming the lookup and its error',
