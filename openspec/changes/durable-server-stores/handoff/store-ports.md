@@ -83,7 +83,7 @@ export interface StoreConformanceCase {
   readonly name: string;
   run(stores: OpenedStores, clock: ConformanceClock): Promise<void>;  // rejects on a violation
 }
-export const STORE_CONFORMANCE_CASES: readonly StoreConformanceCase[];  // 13 cases
+export const STORE_CONFORMANCE_CASES: readonly StoreConformanceCase[];  // 17 cases
 export function runConformanceCase(f: StoreBackendFactory, c: StoreConformanceCase, timeoutMs?: number): Promise<string | undefined>;
 export function runStoreConformance(f: StoreBackendFactory, cases?: readonly StoreConformanceCase[]): Promise<void>;
 export function runStoreConformanceTests(): Promise<void>;  // in-memory + sqlite + negative control (server:test)
@@ -116,4 +116,5 @@ Write it to a temp `.mjs` under `process.cwd()` (so `node_modules` resolves), se
   insert" is no longer the contract; it was a SQLite mechanism.
 - `settle` with an unknown failure code, or one beside `delivered`/`ok`, rejects and writes nothing.
 - `purgeLedger(day)` also deletes that day's admission counts. Afterwards the purged day admits again.
-- Everything else (strictly-before cutoffs, `''` report fields, list default 50, ordering) is pinned by the cases.
+- Everything else (strictly-before cutoffs, `''` report fields, list default 50, ordering with ties
+  in code-unit order as SQLite sorts text, unstorable ids as not found) is pinned by the cases.

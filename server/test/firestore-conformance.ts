@@ -20,9 +20,10 @@ import { needsComposite, recordQueryShapes, uncoveredShapes, unusedIndexes, type
 import { loadServerConfig } from '../src/config';
 import { startServer } from '../src/lifecycle';
 import { createFirestoreStoresOpener, openStores, type FirestoreStoresOptions, type OpenedStores, type StoreConfig } from '../src/stores';
-import type { DocumentReference } from '@google-cloud/firestore';
+import type { DocumentReference, Firestore } from '@google-cloud/firestore';
 import { deleteInBatches, openFirestoreClient } from '../src/firestore/client';
 import { runFirestoreImportTests } from './firestore-import';
+import { FirestoreUsageStore } from '../src/firestore/usage-store';
 
 const RUN_ID = randomUUID();
 const T0 = Date.UTC(2026, 9, 7, 12, 0, 0);
@@ -191,6 +192,51 @@ async function unsafeKeysTest(): Promise<void> {
   }).finally(() => stores.close());
 }
 
+/** `db` whose transactions each commit, then run again as the client's retry does when a commit's
+ *  reply is lost (DEADLINE_EXCEEDED, UNAVAILABLE, ...) although the commit landed. */
+function losingCommitReplies(db: Firestore): Firestore {
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === 'runTransaction') {
+        return async (...args: Parameters<Firestore['runTransaction']>): Promise<unknown> => {
+          await target.runTransaction(...args);
+          return target.runTransaction(...args);
+        };
+      }
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+}
+
+async function lostCommitReplyTest(): Promise<void> {
+  section('Firestore: an admission whose commit landed but whose reply was lost');
+  const db = await openFirestoreClient('(default)');
+  const root = db.collection('conformance').doc(`${RUN_ID}-lost-reply`);
+  const retrying = new FirestoreUsageStore(losingCommitReplies(db), root);
+  const plain = new FirestoreUsageStore(db, root);
+  const day = '2026-10-07';
+  const count = async (counter: string): Promise<unknown> => (await root.collection('admission').doc(counter).get()).get('count');
+  try {
+    await verify('the retry answers the admission it already made, counted once, even on the last unit', async () => {
+      const result = await retrying.admit({ requestId: 'retried', deviceId: 'dev-a', kind: 'generate', now: T0, deviceLimit: 1, globalLimit: 1 });
+      nodeAssert.deepStrictEqual(result, { ok: true, requestId: 'retried' });
+      nodeAssert.deepStrictEqual((await plain.deviceRecords('dev-a')).ledger.map((row) => row.id), ['retried']);
+      nodeAssert.deepStrictEqual([await count(`${day}:generate:dev-a`), await count(`${day}:global:generate`)], [1, 1]);
+    });
+    await verify('another admission reusing that request id is still rejected, consuming nothing', async () => {
+      const reuse = await plain.admit({ requestId: 'retried', deviceId: 'dev-b', kind: 'generate', now: T0, deviceLimit: 1, globalLimit: 5 }).then(
+        () => 'admitted',
+        messageOf,
+      );
+      nodeAssert.strictEqual(reuse, 'request id retried is already in the ledger');
+      nodeAssert.deepStrictEqual([await count(`${day}:generate:dev-b`), await count(`${day}:global:generate`)], [undefined, 1]);
+    });
+  } finally {
+    await db.terminate();
+  }
+}
+
 async function closeWhileBusyTest(): Promise<void> {
   section('Firestore: closing the stores while their calls are in flight');
   const stores = await openNamespace(`${RUN_ID}-busy`);
@@ -273,6 +319,7 @@ await runStoreConformance(firestoreBackend);
 await persistenceTest();
 await documentModelTest();
 await unsafeKeysTest();
+await lostCommitReplyTest();
 await batchedDeleteTest();
 await closeWhileBusyTest();
 await firestoreBootTest();

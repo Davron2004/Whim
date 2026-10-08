@@ -24,12 +24,35 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const TREE_DIR = path.join('server', 'dist', 'app');
 
-/** `server/package.json`'s dependencies minus the workspace packages the bundle carries. */
-function declaredRuntimePackages() {
-  const manifest = JSON.parse(fs.readFileSync(path.resolve('server', 'package.json'), 'utf8'));
+/**
+ * `server/package.json`'s dependencies minus the workspace packages the bundle carries: the one
+ * list of packages every bundle of server code keeps external. They ship CJS `require()` calls
+ * that esbuild's ESM output turns into an unsupported dynamic require, or load files relative to
+ * their own package directory, so bundling one breaks at import time.
+ *
+ * @param {string} [serverDir] the `server/` workspace directory; defaults to the repo-root convention
+ * @returns {string[]}
+ */
+export function declaredRuntimePackages(serverDir = path.resolve('server')) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(serverDir, 'package.json'), 'utf8'));
   return Object.keys(manifest.dependencies)
     .filter((name) => !name.startsWith('@whim/'))
     .sort((a, b) => a.localeCompare(b));
+}
+
+/** Packages a dev or test bundle loads through `synthrun/` (and `checks/`) at run time, whether or
+ *  not the server declares them. */
+const TOOL_PACKAGES = ['esbuild', 'playwright', 'typescript'];
+
+/**
+ * Externals for a dev or test bundle of server code: Node built-ins, the declared runtime packages
+ * and the tool packages.
+ *
+ * @param {string} [serverDir] as for `declaredRuntimePackages`
+ * @returns {string[]}
+ */
+export function devBundleExternals(serverDir) {
+  return [...new Set(['node:*', ...declaredRuntimePackages(serverDir), ...TOOL_PACKAGES])];
 }
 
 /**
@@ -66,6 +89,7 @@ async function runtimeAssets() {
     platform: 'node',
     format: 'esm',
     write: false,
+    external: declaredRuntimePackages(),
     logLevel: 'warning',
   });
   const source = Buffer.from(compiled.outputFiles[0].text).toString('base64');

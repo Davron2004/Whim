@@ -25,7 +25,7 @@ import ts from 'typescript';
 import { check, eq, section } from './harness';
 import { PROTOCOL_HEADER_LINE, TIMED_OUT, waitFor, within } from './route-doubles';
 import { productionEntryInputs } from './build-fixtures';
-import { buildRuntimeTree } from '../build.mjs';
+import { buildRuntimeTree, declaredRuntimePackages, devBundleExternals } from '../build.mjs';
 import { RUNTIME_ASSETS } from '../src/runtime-assets';
 import { loadFewShotExamples } from '../src/generation/prompts/inputs';
 import { openRouterUsageAndCostTransport } from '../src/usage/openrouter-stats';
@@ -46,11 +46,6 @@ const BOOT_MS = 20_000;
 const EXIT_MS = 15_000;
 const DEVICE_A = 'a11a11a1-a11a-41a1-81a1-a11a11a11a11';
 const DEVICE_B = 'b22b22b2-b22b-42b2-82b2-b22b22b22b22';
-
-function declaredRuntimePackages(): string[] {
-  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'server', 'package.json'), 'utf8')) as { dependencies: Record<string, string> };
-  return Object.keys(manifest.dependencies).filter((name) => !name.startsWith('@whim/'));
-}
 
 function listFiles(dir: string, prefix = ''): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -668,8 +663,84 @@ async function testUsageAndCostTransport(): Promise<void> {
   check('a transport failure rejects, for the resolver to retry', rejected);
 }
 
+/** Calls that stand for a list `server/build.mjs` derives from `server/package.json`. */
+const DERIVED_EXTERNALS: Readonly<Record<string, () => string[]>> = { declaredRuntimePackages, devBundleExternals };
+
+/** The packages a `derived` call above stands for, or `undefined` for any other expression. */
+function derivedExternals(node: ts.Expression): string[] | undefined {
+  if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return undefined;
+  return DERIVED_EXTERNALS[node.expression.text]?.();
+}
+
+/** The packages an `external` option's value names. A list entry that is neither a string nor a
+ *  derived call is reported as `?<its text>`, so it can never pass for a package. */
+function externalsOf(value: ts.Expression | undefined, sourceFile: ts.SourceFile): string[] {
+  if (value === undefined) return [];
+  const unknown = (node: ts.Node): string[] => [`?${node.getText(sourceFile)}`];
+  if (!ts.isArrayLiteralExpression(value)) return derivedExternals(value) ?? unknown(value);
+  return value.elements.flatMap((element) => {
+    if (ts.isStringLiteralLike(element)) return [element.text];
+    return (ts.isSpreadElement(element) && derivedExternals(element.expression)) || unknown(element);
+  });
+}
+
+/** The value of the property `name` an object literal assigns, if any. */
+function propertyValue(options: ts.ObjectLiteralExpression, name: string): ts.Expression | undefined {
+  for (const property of options.properties) {
+    if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) && property.name.text === name) return property.initializer;
+  }
+  return undefined;
+}
+
+/** Every esbuild `build({ bundle: true, ... })` call in `source`, with the packages its `external`
+ *  option keeps out of the bundle. */
+function bundleExternals(file: string, source: string): { at: string; externals: string[] }[] {
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, file.endsWith('.ts') ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+  const found: { at: string; externals: string[] }[] = [];
+  const visit = (node: ts.Node): void => {
+    const options = ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'build' ? node.arguments[0] : undefined;
+    if (options && ts.isObjectLiteralExpression(options) && propertyValue(options, 'bundle')?.kind === ts.SyntaxKind.TrueKeyword) {
+      const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+      found.push({ at: `${file}:${line}`, externals: externalsOf(propertyValue(options, 'external'), sourceFile) });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found;
+}
+
+/** Server sources that may hold a bundle config: every `.ts`/`.mjs` outside dependencies and build
+ *  output. */
+function serverSources(dir: string, rel: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const child = `${rel}/${entry.name}`;
+    if (entry.isDirectory()) return entry.name === 'node_modules' || entry.name === 'dist' ? [] : serverSources(path.join(dir, entry.name), child);
+    return /\.(ts|mjs)$/.test(entry.name) && !entry.name.endsWith('.d.mts') && !entry.name.includes('.tmp.') ? [child] : [];
+  });
+}
+
+/** Every esbuild bundle of server code — production, dev runner or test runner — keeps each
+ *  declared runtime package external: bundled, they throw "Dynamic require of …" at import time,
+ *  in whichever runner missed one. */
+function testBundlesKeepRuntimePackagesExternal(): void {
+  const declared = declaredRuntimePackages();
+  const configs = serverSources(path.join(ROOT, 'server'), 'server').flatMap((file) => bundleExternals(file, fs.readFileSync(path.join(ROOT, file), 'utf8')));
+  for (const runner of ['server/test/run.mjs', 'server/test/e2e.run.mjs', 'server/test/e2e.ts', 'server/test/firestore.run.mjs', 'server/dev.mjs', 'server/build.mjs']) {
+    check(`the scan finds the bundle config in ${runner}`, configs.some((config) => config.at.startsWith(`${runner}:`)));
+  }
+  for (const config of configs) {
+    eq(`${config.at} keeps every declared runtime package external`, declared.filter((name) => !config.externals.includes(name)), []);
+  }
+  eq(
+    'red-check: the scan reads a hand-kept list as written and never credits an unrecognised spread',
+    bundleExternals('fixture.mjs', "build({ bundle: true, external: ['pino', ...declaredRuntimePackages().slice(1)] });\nbuild({ bundle: false });").map((config) => config.externals),
+    [['pino', '?...declaredRuntimePackages().slice(1)']],
+  );
+}
+
 export async function runProdBuildTests(): Promise<void> {
   section('Production build');
+  testBundlesKeepRuntimePackagesExternal();
   await testUsageAndCostTransport();
 
   const fixture = await prepareTree();

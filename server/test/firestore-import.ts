@@ -84,11 +84,13 @@ async function idempotentImport(open: (namespace: string) => Promise<OpenedStore
 
     const stores = await open(namespace);
     try {
-      const liveSignup = { email: CHANGED_EMAIL, platform: 'ios', updatesOptOut: false, noticeId: 'notice-3', createdAt: IMPORT_T0 + 6000, updatedAt: IMPORT_T0 + 6000 };
+      const earliest = views.waitlist.find((row) => row.email === CHANGED_EMAIL)?.createdAt;
+      nodeAssert.ok(earliest !== undefined && earliest < IMPORT_T0 + 6000, 'setup: SQLite holds the earlier signup');
+      const liveSignup = { email: CHANGED_EMAIL, platform: 'ios', updatesOptOut: false, noticeId: 'notice-3', createdAt: earliest, updatedAt: IMPORT_T0 + 6000 };
       nodeAssert.deepStrictEqual(
         await stores.waitlist.export(),
-        [...views.waitlist.filter((row) => row.email !== CHANGED_EMAIL), liveSignup],
-        'the waitlist holds the SQLite rows, and the live signup as the server wrote it',
+        [liveSignup, ...views.waitlist.filter((row) => row.email !== CHANGED_EMAIL)].sort((x, y) => x.createdAt - y.createdAt),
+        'the waitlist holds the SQLite rows, and the live signup with the server\'s answers and the earlier signup time',
       );
       for (const device of [DEVICE_A, DEVICE_UNSAFE]) {
         nodeAssert.deepStrictEqual(await stores.reports.listByDevice(device), views.reportsByDevice[device], `${device}'s reports read back with their ids and timestamps`);

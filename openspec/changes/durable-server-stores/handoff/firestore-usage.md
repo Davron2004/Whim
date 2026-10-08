@@ -10,15 +10,15 @@ export interface FirestoreUsageStoreOptions { readonly now?: () => number }   //
 export class FirestoreUsageStore implements UsageStore, UsageRecordKeeping {
   constructor(db: Firestore, root?: FirestoreRoot /* = db */, options?: FirestoreUsageStoreOptions);
 }
-/** Document id for a caller's key: [A-Za-z0-9-] kept, every other char -> %XX of its UTF-8 bytes. */
-export function firestoreKey(key: string): string;          // decodeURIComponent reverses it
+/** Document id for a caller's key: [A-Za-z0-9-] kept, every other char -> %XX of its UTF-8 bytes, '' -> '%'. */
+export function firestoreKey(key: string): string;          // `%XX`-escapes all but [A-Za-z0-9-]; `''` → `%`
 export function deviceCounterId(utcDay: string, kind: RequestKind, deviceId: string): string;
 export function globalCounterId(utcDay: string, kind: RequestKind): string;
 export interface RequestDoc { /* below */ }
 ```
 
-`server/src/stores.ts`: `openFirestoreUsageStore = (db, root, config) => new FirestoreUsageStore(db, root,
-{ now: config.now })`. `createFirestoreStoresOpener` now wraps each store in a proxy that tracks
+`server/src/stores.ts`: the opener constructs `new FirestoreUsageStore(db, root, { now: config.now })`
+inline. `createFirestoreStoresOpener` now wraps each store in a proxy that tracks
 every promise-returning call; `close()` = close the stores, wait until no call is in flight, then
 `db.terminate()` (terminating under a call that has not reached the pool throws uncaught inside the
 library: "The client has already been terminated").
@@ -42,6 +42,7 @@ export interface RequestDoc {
   promptTokens: number; completionTokens: number; costUsd: number | null; costState: CostState;
   generationIds: string[] | null;   // native array; null once resolved or never registered
   refunded: boolean;
+  admissionId?: string;             // written by `admit`, one per call; an import omits it
 }
 ```
 
@@ -55,7 +56,8 @@ Counter ids: device `${utcDay}:${kind}:${firestoreKey(deviceId)}`, global `${utc
   SUM of those kinds' global counters, so any kind set counts exactly as SQLite's `kind IN (...)`.
   (Design D2 named one counter per sorted kind set; per-kind counters keep that sum exact.)
 - `admit`: one `runTransaction` (maxAttempts 25) reads the request doc + device counter + (when
-  `globalLimit` is set) the global counters, refuses device-first then global, rejects a reused id
+  `globalLimit` is set) the global counters, answers `{ ok: true }` unchanged when the row holds this
+  call's `admissionId` (a commit retried after its reply was lost), refuses device-first then global, rejects a reused id
   (`request id <id> is already in the ledger`) after the limit checks, then `create`s the row and
   `FieldValue.increment(1)`s the device counter and the row kind's global counter (always, limit or not).
 - `refund`: transaction; flips `refunded` once, `increment(-1)` on both counters. `unitAvailable`:
@@ -101,9 +103,9 @@ conformance case sends it.
 
 ## Conformance entry
 
-- `firestore-conformance.ts` runs all `STORE_CONFORMANCE_CASES` (now 15: adds
-  `deviceDeleteReleasesUnits`); `REPORT_AND_WAITLIST_CASES` is gone. No `openUsage` override.
+- `firestore-conformance.ts` runs all `STORE_CONFORMANCE_CASES` (now 17: adds
+  `deviceDeleteReleasesUnits`, `tiesInCodeUnitOrder`, `unstorableIds`).
 - Firestore-only: restart keeps the daily ceiling, usage document model + imported counters,
-  unsafe ids, close-while-busy, in-process firestore boot logging
+  unsafe ids, a commit retried after its reply was lost, close-while-busy, in-process firestore boot logging
   `{ storeBackend: 'firestore', database: '(default)' }`, index coverage, unreachable host.
 - `firestore.run.mjs`: whole-run watchdog 60 s (run ~13 s), `playwright` added to externals.

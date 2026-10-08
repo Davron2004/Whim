@@ -83,9 +83,12 @@ export function matches(row: WaitlistRow, filter: WaitlistFilter): boolean {
   return !(filter.updatesOk === true && row.updatesOptOut);
 }
 
-/** Export order: oldest signup first, ties by email. */
+/** Export order: oldest signup first, ties by email in code-unit order — SQLite's
+ *  `ORDER BY created_at, email`, never the locale's. */
 export function byCreated(a: WaitlistRow, b: WaitlistRow): number {
-  return a.createdAt - b.createdAt || a.email.localeCompare(b.email);
+  if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+  if (a.email === b.email) return 0;
+  return a.email < b.email ? -1 : 1;
 }
 
 /** In-memory twin for tests: same semantics, no file. */

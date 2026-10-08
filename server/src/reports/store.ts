@@ -143,7 +143,7 @@ export class InMemoryReportStore implements ReportStore, ReportRecordKeeping {
     const cutoff = params.sinceDays !== undefined ? params.now - params.sinceDays * 86_400_000 : undefined;
     const rows = [...this.rows.values()]
       .filter((r) => cutoff === undefined || r.receivedAt >= cutoff)
-      .sort((a, b) => b.receivedAt - a.receivedAt)
+      .sort((a, b) => b.receivedAt - a.receivedAt || -byReportId(a, b))
       .slice(0, params.limit ?? 50);
     return rows.map(toListItem);
   }
@@ -166,7 +166,7 @@ export class InMemoryReportStore implements ReportStore, ReportRecordKeeping {
   async listByDevice(deviceId: string): Promise<ReportRow[]> {
     return [...this.rows.values()]
       .filter((row) => row.deviceId === deviceId)
-      .sort((a, b) => a.receivedAt - b.receivedAt || a.reportId.localeCompare(b.reportId))
+      .sort((a, b) => a.receivedAt - b.receivedAt || byReportId(a, b))
       .map((row) => ({ ...row }));
   }
 
@@ -183,6 +183,12 @@ export class InMemoryReportStore implements ReportStore, ReportRecordKeeping {
 
   /** Nothing to release. */
   async close(): Promise<void> {}
+}
+
+/** Report-id order as SQLite sorts its `id` column: by code unit, never by locale. */
+export function byReportId(a: Pick<ReportRow, 'reportId'>, b: Pick<ReportRow, 'reportId'>): number {
+  if (a.reportId === b.reportId) return 0;
+  return a.reportId < b.reportId ? -1 : 1;
 }
 
 /** The list shape of `row`: byte sizes in place of prompt and source. */
@@ -252,11 +258,11 @@ export class NodeSqliteReportStore implements ReportStore, ReportRecordKeeping {
       params.sinceDays !== undefined
         ? this.db.prepare(`
             SELECT id, device_id, reason, received_at, note, app_name, prompt, source
-            FROM reports WHERE received_at >= ? ORDER BY received_at DESC LIMIT ?
+            FROM reports WHERE received_at >= ? ORDER BY received_at DESC, id DESC LIMIT ?
           `).all(params.now - params.sinceDays * 86_400_000, limit)
         : this.db.prepare(`
             SELECT id, device_id, reason, received_at, note, app_name, prompt, source
-            FROM reports ORDER BY received_at DESC LIMIT ?
+            FROM reports ORDER BY received_at DESC, id DESC LIMIT ?
           `).all(limit)
     ) as unknown as RawRow[];
     return rows.map((r) => toListItem(fromRawRow(r)));

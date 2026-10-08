@@ -9,9 +9,12 @@
  *
  * A document that does not exist yet is created. One that already exists is never overwritten: when
  * it equals what the import would write it counts as imported (an earlier run wrote it), otherwise
- * it counts as kept (a server on the Firestore backend has written there since). So a rerun writes
- * nothing and prints the same counts, and an import that runs after the server started on Firestore
- * never replaces what the server wrote.
+ * it counts as kept (a server on the Firestore backend has written there since). The one field an
+ * import does write on an existing document is a signup's `createdAt`, lowered to the SQLite row's
+ * when that is earlier, so a person who signed up again on Firestore keeps their place in line; the
+ * document then counts as imported only if it now equals the SQLite row. Taking the minimum is
+ * idempotent, so a rerun writes nothing and prints the same counts, and an import that runs after
+ * the server started on Firestore never replaces the server's answers.
  *
  * Then, for every imported ledger day still inside `WHIM_LEDGER_RETENTION_DAYS`, the admission
  * counters of the kinds imported on that day are set to absolute counts of that day's non-refunded
@@ -23,7 +26,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import type { CollectionReference, DocumentData, Firestore } from '@google-cloud/firestore';
+import type { CollectionReference, DocumentData, DocumentReference, Firestore } from '@google-cloud/firestore';
 import type { ServerConfig } from '../config';
 import { openFirestoreClient, type FirestoreRoot } from '../firestore/client';
 import { REPORTS_COLLECTION } from '../firestore/report-store';
@@ -118,14 +121,30 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
   return out;
 }
 
-/** Creates each document of `docs` that `collection` does not hold yet, `WRITE_BATCH_SIZE` per batch. */
-async function copyInto(db: Firestore, collection: CollectionReference, docs: readonly SourceDoc[]): Promise<CopyCount> {
+/** Lowers the `field` of the existing document at `ref` to `data[field]` when that is smaller, in
+ *  one transaction, so a concurrent write of the server's is never replaced. Whether the document
+ *  then equals `data`; `false` when it no longer exists. */
+async function keepEarliest(db: Firestore, ref: DocumentReference, data: DocumentData, field: string): Promise<boolean> {
+  return db.runTransaction(async (tx) => {
+    const snapshot = await tx.get(ref);
+    const current = snapshot.data();
+    if (current === undefined) return false;
+    const imported = data[field] as number;
+    if ((current[field] as number) > imported) tx.update(ref, { [field]: imported });
+    return isDeepStrictEqual({ ...current, [field]: Math.min(current[field] as number, imported) }, data);
+  });
+}
+
+/** Creates each document of `docs` that `collection` does not hold yet, `WRITE_BATCH_SIZE` per
+ *  batch. With `earliest`, an existing document's field of that name is lowered to the source's. */
+async function copyInto(db: Firestore, collection: CollectionReference, docs: readonly SourceDoc[], earliest?: string): Promise<CopyCount> {
   const count: CopyCount = { imported: 0, kept: 0 };
   for (const chunk of chunks(docs, WRITE_BATCH_SIZE)) {
     const refs = chunk.map((doc) => collection.doc(doc.id));
     const existing = await db.getAll(...refs);
     const batch = db.batch();
     let writes = 0;
+    const differing: number[] = [];
     existing.forEach((snapshot, i) => {
       const { data } = chunk[i]!;
       if (!snapshot.exists) {
@@ -135,10 +154,15 @@ async function copyInto(db: Firestore, collection: CollectionReference, docs: re
       } else if (isDeepStrictEqual(snapshot.data(), data)) {
         count.imported++;
       } else {
-        count.kept++;
+        differing.push(i);
       }
     });
     if (writes > 0) await batch.commit();
+    for (const i of differing) {
+      const equal = earliest !== undefined && (await keepEarliest(db, refs[i]!, chunk[i]!.data, earliest));
+      if (equal) count.imported++;
+      else count.kept++;
+    }
   }
   return count;
 }
@@ -170,7 +194,7 @@ async function rebuildDay(db: Firestore, root: FirestoreRoot, utcDay: string, ki
 
 /** Copies `source` under `root` and rebuilds the admission counters of its ledger days on or after `keptFrom`. */
 async function importSource(db: Firestore, root: FirestoreRoot, source: SqliteSource, keptFrom: string): Promise<ImportCounts> {
-  const waitlist = await copyInto(db, root.collection(WAITLIST_COLLECTION), source.waitlist);
+  const waitlist = await copyInto(db, root.collection(WAITLIST_COLLECTION), source.waitlist, 'createdAt');
   const reports = await copyInto(db, root.collection(REPORTS_COLLECTION), source.reports);
   const usage = await copyInto(db, root.collection(USAGE_COLLECTION), source.usage);
   const requests = await copyInto(db, root.collection(REQUESTS_COLLECTION), source.requests);
