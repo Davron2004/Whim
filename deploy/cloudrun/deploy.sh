@@ -3,7 +3,8 @@
 # clean, pushed checkout:
 #
 #   deploy/cloudrun/deploy.sh                 the server image for HEAD (built unless it exists) and the pages site
-#   deploy/cloudrun/deploy.sh --tag <sha>     the server only, from an image already in Artifact Registry (rollback)
+#   deploy/cloudrun/deploy.sh --tag <sha>     the server only, from an image already in Artifact Registry (rollback);
+#                                             the purge job stays on its image
 #   deploy/cloudrun/deploy.sh --site-only     the pages site only; the server is untouched
 #
 # Values come from deploy/defaults.env, then ~/.config/whim/deploy.env, then the environment, as for
@@ -11,9 +12,10 @@
 # pages). Both run as the whim-run service account, which can read the OpenRouter secret and use
 # Firestore. The server keeps usage, reports and waitlist rows in the project's Firestore database
 # (WHIM_STORE_BACKEND=firestore), and the whim-purge job, run hourly by Cloud Scheduler, deletes the
-# ones past their keep period. WHIM_STORE_BACKEND=sqlite in the environment deploys the server on
-# SQLite stores under /tmp instead, which last only as long as the instance (the rollback); it makes
-# no Firestore or Scheduler call and leaves an existing purge job as it was.
+# ones past their keep period; the alert deploy/monitoring/policy-purge-failed.json emails when it
+# logs an error. WHIM_STORE_BACKEND=sqlite in the environment deploys the server on SQLite stores
+# under /tmp instead, which last only as long as the instance (the rollback); it makes no Firestore,
+# Scheduler or Monitoring call and leaves an existing purge job as it was.
 set -euo pipefail
 
 WHIM_SCRIPT=cloudrun/deploy.sh
@@ -28,6 +30,10 @@ readonly RUN_SERVICE_ACCOUNT_NAME=whim-run
 # time while the scaled-to-zero server has no instance to run its own hourly purge.
 readonly RUN_PURGE_JOB=whim-purge
 readonly RUN_PURGE_SCHEDULE=whim-purge-hourly
+# The alert that emails when the purge job logs an error, and the channel it emails (both applied by
+# deploy/provision.sh too).
+readonly RUN_PURGE_ALERT="$WHIM_DEPLOY_DIR/monitoring/policy-purge-failed.json"
+readonly RUN_ALERT_CHANNEL="$WHIM_DEPLOY_DIR/monitoring/channel-email.json"
 # The server's drain must finish inside Cloud Run's 10 s SIGTERM grace. Cloud Run only stops an idle
 # instance, so there is normally nothing to drain.
 readonly RUN_SERVER_DRAIN_MS=8000
@@ -204,6 +210,51 @@ deploy_purge_job() {
     || whim_fail "the purge job's hourly schedule failed. The server and the purge job are deployed; deploy again to retry the schedule."
 }
 
+# The top-level displayName of a deploy/monitoring JSON file (two-space indent, one key per line).
+display_name_of() {
+  local name
+  name="$(sed -n 's/^  "displayName": "\([^"]*\)",$/\1/p' "$1")"
+  [[ -n "$name" ]] || whim_fail "$1 has no top-level displayName"
+  printf '%s' "$name"
+}
+
+# Prints the resource name of the one row of $2 (tab-separated: display name, name) whose display
+# name is $1, and nothing when there is none. $3 names the rows, for the refusal when two share it.
+named_row() {
+  local names
+  names="$(awk -F '\t' -v wanted="$1" '$1 == wanted { print $2 }' <<<"$2")"
+  [[ "$names" != *$'\n'* ]] || whim_fail "two $3 are named '$1'; delete one, then deploy again. The server and the purge job are deployed."
+  printf '%s' "$names"
+}
+
+# Creates the purge job's failure alert when no alert policy carries its display name, emailing the
+# alert channel. It is rendered and fingerprinted as deploy/provision.sh renders it, so provision.sh
+# finds it unchanged, and provision.sh applies any later edit to the file.
+apply_purge_alert() {
+  local display rows policy channel_display channel text spec rendered="$stage/policy-purge-failed.json"
+  display="$(display_name_of "$RUN_PURGE_ALERT")"
+  rows="$(whim_gcloud monitoring policies list --format='value(displayName,name)')" \
+    || whim_fail "listing the alert policies failed. The server and the purge job are deployed; deploy again to retry the alert."
+  policy="$(named_row "$display" "$rows" "alert policies")"
+  if [[ -n "$policy" ]]; then
+    echo "alert policy '$display': exists"
+    return 0
+  fi
+  channel_display="$(display_name_of "$RUN_ALERT_CHANNEL")"
+  rows="$(whim_gcloud beta monitoring channels list --format='value(displayName,name)')" \
+    || whim_fail "listing the notification channels failed. The server and the purge job are deployed; deploy again to retry the alert."
+  channel="$(named_row "$channel_display" "$rows" "notification channels")"
+  [[ -n "$channel" ]] \
+    || whim_fail "no notification channel is named '$channel_display', so the purge job's failure alert has nowhere to email. Create it (docs/deploy.md, Operating: Alerts), then deploy again. The server and the purge job are deployed."
+  text="$(<"$RUN_PURGE_ALERT")"
+  text="${text//\{\{CHANNEL\}\}/$channel}"
+  spec="$(printf '%s' "$text" | git hash-object --stdin)"
+  printf '%s\n' "${text//\{\{SPEC\}\}/$spec}" >"$rendered"
+  echo "==> alert policy '$display'"
+  whim_gcloud monitoring policies create --policy-from-file="$rendered" --format='value(name)' >/dev/null \
+    || whim_fail "creating the alert policy '$display' failed. The server and the purge job are deployed; deploy again to retry the alert."
+}
+
 deploy_server() {
   local image_tag="${tag:-$head_sha}" image key env_file="$stage/server-env.yaml"
   image="$(whim_image_ref "$image_tag")"
@@ -236,7 +287,14 @@ deploy_server() {
     --min-instances 0 --max-instances 1 --concurrency 40 --timeout 900 \
     --service-account "$service_account" --allow-unauthenticated \
     --env-vars-file "$env_file" --set-secrets "OPENROUTER_API_KEY=$WHIM_OPENROUTER_SECRET_ID:latest" --quiet
-  [[ "$store_backend" != firestore ]] || deploy_purge_job "$image" "$env_file"
+  [[ "$store_backend" = firestore ]] || return 0
+  # A rollback leaves the purge job on its image: an older one may predate `whim-admin purge`.
+  if [[ -n "$tag" ]]; then
+    echo "cloud run job $RUN_PURGE_JOB: left as it is (--tag deploys the server only)"
+    return 0
+  fi
+  deploy_purge_job "$image" "$env_file"
+  apply_purge_alert
 }
 
 deploy_site() {

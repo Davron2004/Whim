@@ -1,0 +1,26 @@
+{
+  "displayName": "Whim: purge job failed",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "The whim-purge Cloud Run Job logged an error",
+      "conditionMatchedLog": {
+        "filter": "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"whim-purge\" AND severity>=ERROR"
+      }
+    }
+  ],
+  "alertStrategy": {
+    "notificationRateLimit": {
+      "period": "3600s"
+    },
+    "autoClose": "3600s"
+  },
+  "notificationChannels": ["{{CHANNEL}}"],
+  "documentation": {
+    "mimeType": "text/markdown",
+    "content": "The hourly retention purge (Cloud Run Job `whim-purge`) logged an error: records past their keep period may not be deleted. At most one email per hour. See its recent runs with `gcloud run jobs executions list --job whim-purge --region us-east4 --limit 5` and its lines with `gcloud logging read 'resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"whim-purge\"' --freshness 1d` (docs/deploy.md, Firestore stores: Retention purges)."
+  },
+  "userLabels": {
+    "whim_spec": "{{SPEC}}"
+  }
+}

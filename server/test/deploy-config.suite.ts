@@ -1541,8 +1541,27 @@ function cloudRunStoreTests(): void {
 
   const purgeJobDeploy = (calls: readonly string[]): number => indexOfCall(calls, 'run jobs deploy whim-purge');
   const serviceAccount = 'whim-run@anycognition-whim.iam.gserviceaccount.com';
+  const channelDisplay = String((JSON.parse(readRepoFile('deploy/monitoring/channel-email.json')) as { displayName: string }).displayName);
+  const alertDisplay = String((JSON.parse(readRepoFile('deploy/monitoring/policy-purge-failed.json')) as { displayName: string }).displayName);
+  /** A plain (untagged) deploy: the server image for the sandbox's HEAD, which exists, then the site.
+   *  The alert channel provision.sh created is in place unless `extra` says otherwise. */
+  const deployFull = (sandbox: Sandbox, extra: readonly StubRule[] = []): { run: ScriptRun; calls: string[] } => {
+    writeOperatorFile(sandbox);
+    writeRules(sandbox, 'gcloud', [
+      ...extra,
+      ['*monitoring channels list*', 0, `${channelDisplay}\\t${CHANNEL_NAME}\\n`],
+      ['*artifacts docker images describe*', 0, ''],
+      ['*firestore indexes composite list*', 0, '[]'],
+    ]);
+    return { run: runScript(sandbox, 'cloudrun/deploy.sh', []), calls: toolLog(sandbox, 'gcloud') };
+  };
+  const renderedPurgeAlert = (sandbox: Sandbox): Record<string, unknown> | undefined => {
+    const captured = path.join(sandbox.stubs, 'from-file');
+    const name = fs.existsSync(captured) ? fs.readdirSync(captured).find((file) => file.endsWith('-policy-purge-failed.json')) : undefined;
+    return name ? (JSON.parse(fs.readFileSync(path.join(captured, name), 'utf8')) as Record<string, unknown>) : undefined;
+  };
   withSandbox((sandbox) => {
-    const { run, calls } = deployTagged(sandbox, [], {}, [['*scheduler jobs describe*', 1, '']]);
+    const { run, calls } = deployFull(sandbox, [['*scheduler jobs describe*', 1, '']]);
     eq('a firestore deploy succeeds with the purge job', run.status, 0);
     const job = calls[purgeJobDeploy(calls)] ?? '';
     const server = calls[serverDeploy(calls)] ?? '';
@@ -1558,10 +1577,36 @@ function cloudRunStoreTests(): void {
     const schedule = calls[create] ?? '';
     check('  ... then creating the hourly schedule that runs the job as that account', create > calls.indexOf(binding) && schedule.includes('--schedule 0 * * * *') && schedule.includes('--location us-east4') && schedule.includes('--uri https://run.googleapis.com/v2/projects/anycognition-whim/locations/us-east4/jobs/whim-purge:run') && schedule.includes('--http-method POST') && schedule.includes(`--oauth-service-account-email ${serviceAccount}`), schedule);
     eq('  ... and updating none', calls.filter((line) => line.includes('scheduler jobs update')), []);
+    const alertCreate = indexOfCall(calls, 'monitoring policies create --policy-from-file=');
+    check('  ... then creating the purge-failure alert policy', alertCreate > create, calls.join(' / '));
+    const alert = renderedPurgeAlert(sandbox) as { notificationChannels?: unknown; conditions?: Array<{ conditionMatchedLog?: { filter?: string } }> } | undefined;
+    eq('  ... emailing the alert channel', alert?.notificationChannels, [CHANNEL_NAME]);
+    const filter = alert?.conditions?.[0]?.conditionMatchedLog?.filter ?? '';
+    check('  ... on an error the whim-purge Cloud Run Job logs', filter.includes('resource.type="cloud_run_job"') && filter.includes('resource.labels.job_name="whim-purge"') && filter.includes('severity>=ERROR'), filter);
+    eq('  ... rendered exactly as provision.sh renders it, so provision.sh finds it unchanged', alert, provisionAgainst(NOTHING_PROVISIONED).files.get('policy-purge-failed.json'));
   });
 
   withSandbox((sandbox) => {
-    const { run, calls } = deployTagged(sandbox, [], {}, [['*scheduler jobs describe*', 0, 'name: whim-purge-hourly\\n']]);
+    const { run, calls } = deployFull(sandbox, [['*monitoring policies list*', 0, `${alertDisplay}\\tprojects/anycognition-whim/alertPolicies/5\\n`]]);
+    eq('a firestore deploy with the purge-failure alert in place succeeds', run.status, 0);
+    eq('  ... creating no second alert policy', calls.filter((line) => line.includes('monitoring policies create')), []);
+  });
+
+  withSandbox((sandbox) => {
+    const { run, calls } = deployFull(sandbox, [['*monitoring channels list*', 0, '']]);
+    check('a firestore deploy with no alert channel fails, naming the channel and that the server and purge job are deployed', run.status === 1 && run.stderr.includes(`no notification channel is named '${channelDisplay}'`) && run.stderr.includes('The server and the purge job are deployed'), run.stderr);
+    check('  ... after deploying the purge job, creating no alert policy', purgeJobDeploy(calls) !== -1 && !calls.some((line) => line.includes('monitoring policies create')), calls.join(' / '));
+  });
+
+  withSandbox((sandbox) => {
+    const { run, calls } = deployTagged(sandbox, []);
+    eq('a firestore rollback (--tag) deploys the server', [run.status, serverDeploy(calls) !== -1], [0, true]);
+    eq('  ... leaving the purge job, its schedule and its alert as they are (an older image may lack `whim-admin purge`)', calls.filter((line) => /run jobs|scheduler|monitoring/.test(line)), []);
+    check('  ... and saying so', run.stdout.includes('cloud run job whim-purge: left as it is'), run.stdout);
+  });
+
+  withSandbox((sandbox) => {
+    const { run, calls } = deployFull(sandbox, [['*scheduler jobs describe*', 0, 'name: whim-purge-hourly\\n']]);
     eq('a redeploy with the schedule in place succeeds', run.status, 0);
     const update = calls.find((line) => line.includes('scheduler jobs update http whim-purge-hourly')) ?? '';
     check('  ... updating the schedule in place', update.includes('--schedule 0 * * * *') && update.includes('jobs/whim-purge:run'), update);
@@ -1569,7 +1614,7 @@ function cloudRunStoreTests(): void {
   });
 
   withSandbox((sandbox) => {
-    const { run, calls } = deployTagged(sandbox, [], {}, [['*run jobs deploy*', 1, 'ERROR: (gcloud.run.jobs.deploy) PERMISSION_DENIED\n']]);
+    const { run, calls } = deployFull(sandbox, [['*run jobs deploy*', 1, 'ERROR: (gcloud.run.jobs.deploy) PERMISSION_DENIED\n']]);
     check('a failed purge job deploy fails the deploy, naming the job and that the server is deployed', run.status === 1 && run.stderr.includes('deploying the purge job failed. The server is deployed'), run.stderr);
     eq('  ... touching no schedule', calls.filter((line) => line.includes('scheduler')), []);
   });
@@ -1578,7 +1623,7 @@ function cloudRunStoreTests(): void {
     const { run, calls, serverEnv } = deployTagged(sandbox, [], { WHIM_STORE_BACKEND: 'sqlite' });
     eq('WHIM_STORE_BACKEND=sqlite deploys the server (the rollback)', run.status, 0);
     eq('  ... with the sqlite backend in its env file', loadServerConfig(envVarsFileValues(serverEnv)).storeBackend, 'sqlite');
-    eq('  ... and no Firestore, purge job or Scheduler call', calls.filter((line) => /firestore|run jobs|scheduler|services enable/.test(line)), []);
+    eq('  ... and no Firestore, purge job, Scheduler or Monitoring call', calls.filter((line) => /firestore|run jobs|scheduler|services enable|monitoring/.test(line)), []);
   });
 
   withSandbox((sandbox) => {

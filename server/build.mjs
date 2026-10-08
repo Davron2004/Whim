@@ -20,7 +20,7 @@
 import { build } from 'esbuild';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const TREE_DIR = path.join('server', 'dist', 'app');
 
@@ -120,8 +120,11 @@ export async function buildRuntimeTree({ outDir }) {
   }
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(fs.realpathSync(process.argv[1])).href : '';
-if (invokedPath === pathToFileURL(fs.realpathSync(fileURLToPath(import.meta.url))).href) {
+// Run directly: the process's script is this file. A bundle that inlines this module has its own
+// `import.meta.url`, so the file name is checked too: started directly, such a bundle builds nothing.
+const ownPath = fs.realpathSync(fileURLToPath(import.meta.url));
+const invokedPath = process.argv[1] ? fs.realpathSync(process.argv[1]) : '';
+if (path.basename(ownPath) === 'build.mjs' && invokedPath === ownPath) {
   process.chdir(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'));
   await buildRuntimeTree({ outDir: TREE_DIR });
   console.log(`runtime tree written to ${TREE_DIR}`);

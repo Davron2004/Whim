@@ -41,10 +41,11 @@ function fromSnapshot(snapshot: DocumentSnapshot): ReportRow {
   };
 }
 
-/** Whether `id` can name a document of one collection: Firestore refuses an empty id, `.`, `..` and
- *  `__x__`, and reads `/` as a path. No report can be stored under any other id. */
+/** Whether `id` can name a document of one collection: Firestore refuses an empty id, `.`, `..`,
+ *  `__x__` and an id over 1500 UTF-8 bytes, and reads `/` as a path. No report can be stored under
+ *  any other id. */
 function isDocumentId(id: string): boolean {
-  return id !== '' && !id.includes('/') && id !== '.' && id !== '..' && !/^__.*__$/.test(id);
+  return id !== '' && !id.includes('/') && id !== '.' && id !== '..' && !/^__.*__$/.test(id) && Buffer.byteLength(id) <= 1500;
 }
 
 export class FirestoreReportStore implements ReportStore, ReportRecordKeeping {

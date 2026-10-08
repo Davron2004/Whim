@@ -12,7 +12,7 @@ section after this one describes the retired VM; its scripts stay in the repo fo
 
 ```sh
 deploy/cloudrun/deploy.sh                 # server image for HEAD (built unless it exists) + pages site
-deploy/cloudrun/deploy.sh --tag <sha>     # server only, from an existing image (rollback, config change)
+deploy/cloudrun/deploy.sh --tag <sha>     # server only, from an existing image (rollback, config change); purge job untouched
 deploy/cloudrun/deploy.sh --site-only     # pages site only
 ```
 
@@ -127,8 +127,21 @@ Scheduler job `whim-purge-hourly` in `WHIM_RUN_REGION`, which runs it at the top
 through `run.googleapis.com/v2/.../jobs/whim-purge:run` with a `whim-run` OAuth token. The job runs
 `node server/whim-admin.mjs purge`: the same four purges at the same cut-offs, one line per store
 (`reports: N purged`, `ledger: …`, `usage: …`, `waitlist: …`), exit 1 when any failed. A record
-can outlive its keep period by up to an hour, as with the in-process hourly purge. Both fit inside
+can outlive its keep period by up to an hour (up to a UTC day plus an hour for the ledger and idle
+usage, which are cut on whole UTC days), as with the in-process hourly purge. Both fit inside
 the free tiers (3 Scheduler jobs per billing account; seconds of CPU per run).
+
+A `--tag` deploy (a rollback) leaves the job, its schedule and its alert as they are: the job keeps
+the image it has, since an older image may predate `whim-admin purge`, and every hourly run would
+fail. The next plain deploy points it at the new image.
+
+**Purge failure alert.** The alert policy "Whim: purge job failed"
+(`deploy/monitoring/policy-purge-failed.json`) emails the "Whim alerts" channel, at most once an
+hour, when the job logs at `ERROR` or above (`resource.type="cloud_run_job"
+resource.labels.job_name="whim-purge" severity>=ERROR`). A Firestore deploy creates it after the
+job when no policy carries that display name, rendered as `provision.sh` renders it, and stops
+(the server and the job already deployed) when the "Whim alerts" channel is missing. It never
+updates an existing policy: after editing the file, rerun `provision.sh`, or apply it by hand.
 
 ```sh
 gcloud run jobs executions list --job whim-purge --region us-east4 --limit 5   # recent runs
@@ -140,8 +153,8 @@ WHIM_STORE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=anycognition-whim node server/
 **Rolling back to SQLite.** `WHIM_STORE_BACKEND=sqlite deploy/cloudrun/deploy.sh --tag <sha>`
 deploys the server with its stores under `/tmp/whim-data` again: everything lasts only as long as
 the instance, the daily ceilings reset with it, and the OpenRouter key's provider-side credit
-limit is the only spend bound that survives a restart. The deploy makes no Firestore or Scheduler
-call, so the data there stays as it was, and the purge job, if one exists, keeps purging it
+limit is the only spend bound that survives a restart. The deploy makes no Firestore, Scheduler or
+Monitoring call, so the data there stays as it was, and the purge job, if one exists, keeps purging it
 hourly; the next plain deploy goes back to it.
 
 **Deletion.** SQLite's `secure_delete` overwrote purged pages. Firestore has no equivalent: a
@@ -444,6 +457,7 @@ string the deploy scripts use, from `deploy/lib.sh`).
   | Whim: generation failures | more than 5 `terminal failure` lines in an hour (log metric `whim-terminal-failures`) | while it lasts | `$C exec -T whim-server node server/whim-admin.mjs usage --days 1` for counts by reason, then the "Terminal failures" query above |
   | Whim: credit exhausted | a `budget_exhausted` refusal (`jsonPayload.msg="request" jsonPayload.error="budget_exhausted"`), or a mid-generation provider `402` (`jsonPayload.msg="provider credit exhausted"`) | at most 1 per hour | check the OpenRouter credit balance at https://openrouter.ai/credits and top it up |
   | Whim: device error | a phone sent a diagnostic at `ERROR` or above | at most 1 per hour | the "Device errors" query above, plus `severity>=ERROR` |
+  | Whim: purge job failed | the Cloud Run Job `whim-purge` logged at `ERROR` or above (Cloud Run only) | at most 1 per hour | `gcloud run jobs executions list --job whim-purge --region us-east4 --limit 5` (section "Firestore stores") |
   | Whim monthly spend (budget) | GCP spend on `WHIM_BILLING_ACCOUNT` for this project passes 50, 90 or 100 % of `WHIM_MONTHLY_BUDGET` | once per threshold per month | the Billing reports page for the project, by service |
 
   "While it lasts" means one email when the condition starts and one when it clears. The budget
