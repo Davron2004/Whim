@@ -923,10 +923,14 @@ const STUB_SCRIPT = [
   'case "$tool $*" in',
   '  "gcloud "*" compute ssh "*server.env*) cat >"$STUB_DIR/server-env-stdin" ;;',
   'esac',
-  // Keeps each file a gcloud call reads (--policy-from-file=... and the like) as from-file/<n>-<name>.
+  // Keeps each file a gcloud call reads (--policy-from-file=... and the like) as from-file/<n>-<name>,
+  // and the last --env-vars-file as env-vars-file.
   'if [ "$tool" = gcloud ]; then',
+  '  previous_arg=""',
   '  for arg in "$@"; do',
   '    case "$arg" in --*-from-file=*) mkdir -p "$STUB_DIR/from-file"; n=$(ls "$STUB_DIR/from-file" | wc -l); cp "${arg#*=}" "$STUB_DIR/from-file/$((n + 1))-${arg##*/}" ;; esac',
+  '    [ "$previous_arg" != --env-vars-file ] || cp "$arg" "$STUB_DIR/env-vars-file"',
+  '    previous_arg="$arg"',
   '  done',
   'fi',
   'out_file=""',
@@ -950,6 +954,7 @@ const STUB_SCRIPT = [
   '  "node -p "*) echo "${STUB_NODE_VERSION:-22.11.0}" ;;',
   '  "node -e const { spawnSync }"*) exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node -e let healthText"*) exec "$STUB_REAL_NODE" "$@" ;;',
+  '  "node -e const indexFile"*) exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node server/config-check.mjs"*) cd "$STUB_REAL_ROOT" && exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node server/site.mjs "*)',
   '    printf \'%s\\n\' "${WHIM_BETA_SIGNUP_URL:-}" >"$STUB_DIR/site-signup-url"',
@@ -1397,6 +1402,111 @@ function fullDeployRules(sandbox: Sandbox, imageExists: boolean): void {
 
 function headOf(sandbox: Sandbox): string {
   return runFromPath('git', ['rev-parse', 'HEAD'], { cwd: sandbox.repo, encoding: 'utf8' }).stdout.trim();
+}
+
+interface WantedIndex {
+  readonly collectionGroup: string;
+  readonly queryScope: string;
+  readonly fields: readonly { readonly fieldPath: string; readonly order: string }[];
+}
+
+/** The composite indexes deploy/firestore/indexes.json asks for, in this repo. */
+function wantedIndexes(): readonly WantedIndex[] {
+  return (JSON.parse(readRepoFile('deploy/firestore/indexes.json')) as { indexes: WantedIndex[] }).indexes;
+}
+
+/** An index as `gcloud firestore indexes composite list --format=json` reports it: the collection
+ *  group inside the resource name, and `__name__` appended to the fields. */
+function listedIndex(index: WantedIndex, id: string): unknown {
+  return {
+    name: `projects/anycognition-whim/databases/(default)/collectionGroups/${index.collectionGroup}/indexes/${id}`,
+    queryScope: index.queryScope,
+    fields: [...index.fields, { fieldPath: '__name__', order: index.fields.at(-1)?.order ?? 'ASCENDING' }],
+    state: 'READY',
+  };
+}
+
+/** The create call's arguments for an index, in gcloud's flag vocabulary. */
+function createArgsFor(index: WantedIndex): string {
+  const fields = index.fields.map((field) => `--field-config=field-path=${field.fieldPath},order=${field.order.toLowerCase()}`);
+  return [`--collection-group=${index.collectionGroup}`, `--query-scope=${index.queryScope.toLowerCase()}`, ...fields].join(' ');
+}
+
+/** The values of a Cloud Run --env-vars-file, as cloudrun/deploy.sh writes it: `KEY: 'value'`. */
+function envVarsFileValues(text: string): Record<string, string> {
+  return Object.fromEntries([...text.matchAll(/^([A-Z0-9_]+): '(.*)'$/gm)].map(([, key, value]) => [key, value.replaceAll("''", "'")]));
+}
+
+function cloudRunStoreTests(): void {
+  section('Deploy scripts: cloudrun/deploy.sh store backend and Firestore indexes');
+  const wanted = wantedIndexes();
+  check('deploy/firestore/indexes.json asks for at least one composite index', wanted.length > 0);
+  const deployTagged = (sandbox: Sandbox, listed: readonly unknown[], env: Readonly<Record<string, string>> = {}, extra: readonly StubRule[] = []): { run: ScriptRun; calls: string[]; serverEnv: string } => {
+    writeOperatorFile(sandbox);
+    writeRules(sandbox, 'gcloud', [
+      ...extra,
+      ['*artifacts docker images describe*', 0, ''],
+      ['*firestore indexes composite list*', 0, JSON.stringify(listed)],
+    ]);
+    const run = runScript(sandbox, 'cloudrun/deploy.sh', ['--tag', TAG], env);
+    return { run, calls: toolLog(sandbox, 'gcloud'), serverEnv: stubFile(sandbox, 'env-vars-file') };
+  };
+  const creates = (calls: readonly string[]): string[] => calls.filter((line) => line.includes('firestore indexes composite create'));
+  const serverDeploy = (calls: readonly string[]): number => indexOfCall(calls, 'run deploy whim-server');
+
+  withSandbox((sandbox) => {
+    const { run, calls, serverEnv } = deployTagged(sandbox, []);
+    eq('a deploy against a database with no composite indexes succeeds', run.status, 0);
+    const created = creates(calls);
+    eq('  ... creating each index the file asks for, once', created.length, wanted.length);
+    check('  ... with its collection group, scope and fields in order, in the (default) database', wanted.every((index) => created.some((line) => line.includes('--database=(default)') && line.includes(createArgsFor(index)))), created.join(' / '));
+    check('  ... before the server deploy', serverDeploy(calls) !== -1 && calls.every((line, i) => !line.includes('firestore indexes composite create') || i < serverDeploy(calls)), calls.join(' / '));
+    eq('  ... and the server reads the firestore backend from its env file', loadServerConfig(envVarsFileValues(serverEnv)).storeBackend, 'firestore');
+  });
+
+  withSandbox((sandbox) => {
+    const listed = [
+      ...wanted.map((index, i) => listedIndex(index, `present${i}`)),
+      listedIndex({ collectionGroup: 'reports', queryScope: 'COLLECTION', fields: [{ fieldPath: 'receivedAt', order: 'DESCENDING' }, { fieldPath: 'deviceId', order: 'ASCENDING' }] }, 'other'),
+    ];
+    const { run, calls } = deployTagged(sandbox, listed);
+    eq('a deploy against a database that already has every index succeeds', run.status, 0);
+    eq('  ... creating nothing and leaving the extra index alone', calls.filter((line) => /firestore indexes composite (create|delete|update)/.test(line)), []);
+    check('  ... and deploys the server', serverDeploy(calls) !== -1, calls.join(' / '));
+  });
+
+  withSandbox((sandbox) => {
+    const reversed = wanted.map((index) => ({ ...index, fields: index.fields.map((field) => ({ ...field, order: field.order === 'ASCENDING' ? 'DESCENDING' : 'ASCENDING' })) }));
+    const { run, calls } = deployTagged(sandbox, reversed.map((index, i) => listedIndex(index, `reversed${i}`)));
+    eq('an index on the same fields in the other order does not count as present', creates(calls).length, wanted.length);
+    eq('  ... and the deploy succeeds', run.status, 0);
+  });
+
+  withSandbox((sandbox) => {
+    fs.writeFileSync(path.join(sandbox.repo, 'deploy/firestore/indexes.json'), '{ "indexes": [], "fieldOverrides": [] }\n');
+    const { run, calls } = deployTagged(sandbox, []);
+    eq('an index file with no composite indexes deploys the server', run.status, 0);
+    eq('  ... creating nothing', creates(calls), []);
+  });
+
+  withSandbox((sandbox) => {
+    const { run, calls } = deployTagged(sandbox, [], {}, [['*firestore indexes composite create*', 1, 'ERROR: (gcloud.firestore.indexes.composite.create) PERMISSION_DENIED\n']]);
+    check('a failed index create stops the deploy, naming the step', run.status === 1 && run.stderr.includes('creating a Firestore index failed'), run.stderr);
+    eq('  ... before the server deploy', serverDeploy(calls), -1);
+  });
+
+  withSandbox((sandbox) => {
+    const { run, calls, serverEnv } = deployTagged(sandbox, [], { WHIM_STORE_BACKEND: 'sqlite' });
+    eq('WHIM_STORE_BACKEND=sqlite deploys the server (the rollback)', run.status, 0);
+    eq('  ... with the sqlite backend in its env file', loadServerConfig(envVarsFileValues(serverEnv)).storeBackend, 'sqlite');
+    eq('  ... and no Firestore call', calls.filter((line) => line.includes('firestore')), []);
+  });
+
+  withSandbox((sandbox) => {
+    const { run, calls } = deployTagged(sandbox, [], { WHIM_STORE_BACKEND: 'postgres' });
+    check('an unknown WHIM_STORE_BACKEND is refused, naming it', run.status === 1 && run.stderr.includes('WHIM_STORE_BACKEND must be firestore or sqlite, got postgres'), run.stderr);
+    eq('  ... before any gcloud call', calls, []);
+  });
 }
 
 function deployFullTests(health: HealthBodies): void {
@@ -3381,6 +3491,7 @@ export async function runDeployConfigTests(): Promise<void> {
   deploySecretTests();
   deploySiteOnlyTests();
   deployFullTests(health);
+  cloudRunStoreTests();
   smokeTests(health);
   await smokeBetaTests();
   resizeTests();

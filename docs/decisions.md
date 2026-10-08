@@ -1324,3 +1324,42 @@ about $18 a month. The owner's constraint is no idle spend, so the load balancer
   en, fr and ko. The policy already said information is handled in Canada and the United States. This
   is a provider-table value, not a manifest change, so nobody re-consents.
 - Every image pull and every Firestore call crosses regions (about 15 ms). That cost is accepted.
+
+### 73. Server stores move to Firestore on Cloud Run `[DECIDED — openspec: durable-server-stores; amends #71's "No durable state"]`
+
+On Cloud Run (#71) the usage ledger, reports, beta waitlist and daily ceilings lived in instance
+memory and reset on every restart, so the provider's credit limit was the only spend bound that
+outlived an instance. Every server store now has a second backend, selected by
+`WHIM_STORE_BACKEND` (`sqlite`, the default, or `firestore`; database `WHIM_FIRESTORE_DATABASE`,
+default `(default)`). `deploy/cloudrun/deploy.sh` deploys with `firestore`. The runbook is
+`docs/deploy.md`, section "Firestore stores".
+
+- **One contract, two backends.** Both pass the same store conformance suite. The Firestore run
+  (`npm run stores:firestore:test`: the emulator from pinned firebase-tools 15.32.1, Java 21, a
+  `demo-` project) is a gate-full and CI step.
+- **Admission counters are per kind.** A device's counter is `admission/{day}:{kind}:{device}`;
+  the global counter is `admission/{day}:global:{kind}`, and a ceiling across several kinds sums
+  them inside the admitting transaction. This corrects design D2, which named one counter per
+  sorted kind set: that form disagrees with SQLite's `kind IN (...)` once one kind is checked under
+  two different sets. The transaction reads every summed counter, so two requests cannot both take
+  the last unit.
+- **Hot documents.** Each kind's global counter is one document, under Firestore's per-document
+  write-rate limit. Transactions retry up to 25 times. Load-test before launch traffic.
+- **Indexes are checked statically.** The emulator does not enforce composite indexes in Native
+  mode (`--require_indexes` is Datastore-mode only). `server/test/firestore-index-coverage.ts`
+  records each query the conformance run sends and fails when one needs an entry
+  `deploy/firestore/indexes.json` lacks. `deploy.sh` creates the missing indexes before deploying
+  the server and never touches existing ones. A query no conformance case sends is unchecked, and
+  would first fail in production.
+- **Boot.** The server probes the database with `listCollections()`, bounded at 10 s, and logs
+  `stores opened` with `{ storeBackend, database }`.
+- **Operators work from a laptop.** `whim-admin` and `whim-waitlist` reach Firestore through the
+  owner's Application Default Credentials. No HTTP admin route: it would be new attack surface,
+  and the database's IAM already is the access control. `whim-admin import-sqlite` carries the VM's
+  last data (backed up 2026-10-07) into Firestore.
+- **Deletion is weaker than SQLite's.** `secure_delete` overwrote purged pages; a deleted Firestore
+  document leaves Google's storage on Google's deletion timeline, and with PITR off old versions
+  are kept for 1 hour. The published keep periods are about our retention and still hold.
+- **Not done:** more than one instance (`--max-instances` stays 1), TTL policies, PITR, backups.
+  Rollback is a deploy with `WHIM_STORE_BACKEND=sqlite`, back to instance-memory state; the
+  Firestore data stays untouched.

@@ -8,9 +8,10 @@
 #
 # Values come from deploy/defaults.env, then ~/.config/whim/deploy.env, then the environment, as for
 # the VM deploy. Two services: whim-server (the API host) and whim-site (Caddy serving the rendered
-# pages). Both run as the whim-run service account, which can read the OpenRouter secret and nothing
-# else. The server keeps its SQLite stores under /tmp, so usage, reports and waitlist rows last only
-# as long as the instance.
+# pages). Both run as the whim-run service account, which can read the OpenRouter secret and use
+# Firestore. The server keeps usage, reports and waitlist rows in the project's Firestore database
+# (WHIM_STORE_BACKEND=firestore). WHIM_STORE_BACKEND=sqlite in the environment deploys the server on
+# SQLite stores under /tmp instead, which last only as long as the instance (the rollback).
 set -euo pipefail
 
 WHIM_SCRIPT=cloudrun/deploy.sh
@@ -24,6 +25,32 @@ readonly RUN_SERVICE_ACCOUNT_NAME=whim-run
 # The server's drain must finish inside Cloud Run's 10 s SIGTERM grace. Cloud Run only stops an idle
 # instance, so there is normally nothing to drain.
 readonly RUN_SERVER_DRAIN_MS=8000
+# The server's default WHIM_FIRESTORE_DATABASE, so the server env does not set it.
+readonly RUN_FIRESTORE_DATABASE='(default)'
+# Reads deploy/firestore/indexes.json (argv[1]) and gcloud's JSON list of the database's composite
+# indexes (argv[2]); prints one tab-separated line of `gcloud firestore indexes composite create`
+# arguments per wanted index the database lacks. Indexes match on collection group, query scope and
+# fields in order; the API appends __name__ to a listed index's fields, so a trailing __name__ is
+# ignored on both sides.
+readonly MISSING_INDEXES_JS='const indexFile = process.argv[1];
+const fs = require("node:fs");
+const wanted = JSON.parse(fs.readFileSync(indexFile, "utf8")).indexes || [];
+const listed = JSON.parse(fs.readFileSync(process.argv[2], "utf8") || "[]");
+const fieldConfig = (field) => {
+  if (field.order) return "field-path=" + field.fieldPath + ",order=" + field.order.toLowerCase();
+  if (field.arrayConfig) return "field-path=" + field.fieldPath + ",array-config=" + field.arrayConfig.toLowerCase();
+  throw new Error("index field " + JSON.stringify(field) + " has neither order nor arrayConfig");
+};
+const fieldsOf = (fields) => fields.filter((field, i) => !(field.fieldPath === "__name__" && i === fields.length - 1));
+const key = (group, scope, fields) => [group, scope || "COLLECTION", ...fieldsOf(fields).map(fieldConfig)].join(" ");
+const present = new Set(listed.map((index) => key((/\/collectionGroups\/([^/]+)\//.exec(index.name) || [])[1], index.queryScope, index.fields)));
+for (const index of wanted) {
+  if (present.has(key(index.collectionGroup, index.queryScope, index.fields))) continue;
+  const scope = (index.queryScope || "COLLECTION").toLowerCase().replace(/_/g, "-");
+  const args = ["--collection-group=" + index.collectionGroup, "--query-scope=" + scope];
+  for (const field of fieldsOf(index.fields)) args.push("--field-config=" + fieldConfig(field));
+  console.log(args.join("\t"));
+}'
 
 tag=""
 site_only=0
@@ -45,6 +72,11 @@ if [ -n "$tag" ]; then
   [ "$site_only" -eq 0 ] || whim_usage_error "--site-only builds no image and takes no --tag"
   [[ "$tag" =~ ^[0-9a-f]{40}$ ]] || whim_usage_error "--tag must be a full 40-character git commit sha"
 fi
+store_backend="${WHIM_STORE_BACKEND:-firestore}"
+case "$store_backend" in
+  firestore | sqlite) ;;
+  *) whim_fail "WHIM_STORE_BACKEND must be firestore or sqlite, got $store_backend. Nothing was changed." ;;
+esac
 
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
@@ -72,6 +104,27 @@ yaml_line() {
   printf "%s: '%s'\n" "$1" "${2//\'/\'\'}"
 }
 
+# Creates each composite index in deploy/firestore/indexes.json that the database lacks. An existing
+# index is never changed or deleted. gcloud waits for each new index to finish building, so the
+# server never runs a query its index does not serve yet.
+apply_firestore_indexes() {
+  local listed="$stage/firestore-indexes.json" missing
+  local -a create_args
+  whim_gcloud firestore indexes composite list --database="$RUN_FIRESTORE_DATABASE" --format=json >"$listed" \
+    || whim_fail "could not list the Firestore indexes. The server was not deployed."
+  missing="$(node -e "$MISSING_INDEXES_JS" "$WHIM_DEPLOY_DIR/firestore/indexes.json" "$listed")" \
+    || whim_fail "could not compare deploy/firestore/indexes.json with the database's indexes. The server was not deployed."
+  if [ -z "$missing" ]; then
+    echo "firestore indexes: all present"
+    return 0
+  fi
+  while IFS=$'\t' read -r -a create_args; do
+    echo "==> firestore index ${create_args[*]}"
+    whim_gcloud firestore indexes composite create --database="$RUN_FIRESTORE_DATABASE" "${create_args[@]}" --quiet \
+      || whim_fail "creating a Firestore index failed. The server was not deployed."
+  done <<<"$missing"
+}
+
 deploy_server() {
   local image_tag="${tag:-$head_sha}" image key env_file="$stage/server-env.yaml"
   image="$(whim_image_ref "$image_tag")"
@@ -88,12 +141,14 @@ deploy_server() {
     yaml_line WHIM_REWRITE_MODEL "$WHIM_REWRITE_MODEL"
     # Where the beta signup route redirects: the pages host (beta-waitlist D1).
     yaml_line WHIM_WEB_ORIGIN "https://$WHIM_WEB_HOST"
+    yaml_line WHIM_STORE_BACKEND "$store_backend"
     yaml_line WHIM_DATA_DIR /tmp/whim-data
     yaml_line WHIM_DRAIN_TIMEOUT_MS "$RUN_SERVER_DRAIN_MS"
     for key in $server_optional_keys; do
       [[ -z "${!key}" ]] || yaml_line "$key" "${!key}"
     done
   } >"$env_file"
+  [ "$store_backend" != firestore ] || apply_firestore_indexes
   echo "==> cloud run $RUN_SERVER_SERVICE"
   # gen2: Chromium's namespace sandbox needs it, and boot refuses to listen without the sandbox.
   # One instance at most, so the in-memory daily ceilings stay one set of counters.
