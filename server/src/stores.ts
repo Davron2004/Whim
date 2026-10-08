@@ -19,6 +19,7 @@ import type { Firestore } from '@google-cloud/firestore';
 import { openFirestoreClient, type FirestoreClientOptions, type FirestoreRoot } from './firestore/client';
 import { FirestoreReportStore } from './firestore/report-store';
 import { FirestoreWaitlistStore } from './firestore/waitlist-store';
+import { FirestoreUsageStore } from './firestore/usage-store';
 
 /** The configuration `openStores` reads. */
 export type StoreConfig = Pick<ServerConfig, 'storeBackend' | 'firestoreDatabase' | 'dataDir' | 'now' | 'usageIdleDays'>;
@@ -43,11 +44,8 @@ export interface OpenStoresDeps {
 /** Builds the `firestore` backend's usage store on the opened client, under `root`. */
 export type FirestoreUsageOpener = (db: Firestore, root: FirestoreRoot, config: StoreConfig) => UsageStore & UsageRecordKeeping;
 
-/** The `firestore` backend's usage store. Not built yet: it throws naming the backend, so a boot
- *  that reaches it (the probe read passed) still refuses to start. */
-export const openFirestoreUsageStore: FirestoreUsageOpener = () => {
-  throw new Error('WHIM_STORE_BACKEND=firestore: the firestore usage store is not built');
-};
+/** The `firestore` backend's usage store, on the store clock. */
+export const openFirestoreUsageStore: FirestoreUsageOpener = (db, root, config) => new FirestoreUsageStore(db, root, { now: config.now });
 
 export interface FirestoreStoresOptions extends FirestoreClientOptions {
   /** Where the stores' collections live. Defaults to the database root. */
@@ -56,16 +54,48 @@ export interface FirestoreStoresOptions extends FirestoreClientOptions {
   readonly openUsage?: FirestoreUsageOpener;
 }
 
+/**
+ * `store` with every call that returns a promise held in `inFlight` until it settles. Terminating a
+ * Firestore client under a call that has not reached its connection pool yet throws "The client
+ * has already been terminated" from inside the library, uncaught, so the opener's `close()` waits
+ * for these first. Nothing awaits a scheduled purge, so a drain can close the stores under one.
+ */
+function trackInFlight<T extends object>(store: T, inFlight: Set<Promise<void>>): T {
+  return new Proxy(store, {
+    get(target, property) {
+      const value: unknown = Reflect.get(target, property, target);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]): unknown => {
+        const result: unknown = Reflect.apply(value, target, args);
+        if (result instanceof Promise) {
+          const settled: Promise<void> = result.then(
+            () => {
+              inFlight.delete(settled);
+            },
+            () => {
+              inFlight.delete(settled);
+            },
+          );
+          inFlight.add(settled);
+        }
+        return result;
+      };
+    },
+  });
+}
+
 /** An opener for the `firestore` backend: one client for `config.firestoreDatabase` that has
- *  passed its probe read, and every store on it. `close()` terminates the client. */
+ *  passed its probe read, and every store on it. `close()` waits for the stores' calls in flight,
+ *  then terminates the client. */
 export function createFirestoreStoresOpener(options: FirestoreStoresOptions = {}): FirestoreStoresOpener {
   return async (config) => {
     const db = await openFirestoreClient(config.firestoreDatabase, options);
     try {
       const root = options.root?.(db) ?? db;
-      const reports = new FirestoreReportStore(db, root);
-      const waitlist = new FirestoreWaitlistStore(db, root);
-      const usage = (options.openUsage ?? openFirestoreUsageStore)(db, root, config);
+      const inFlight = new Set<Promise<void>>();
+      const reports = trackInFlight(new FirestoreReportStore(db, root), inFlight);
+      const waitlist = trackInFlight(new FirestoreWaitlistStore(db, root), inFlight);
+      const usage = trackInFlight((options.openUsage ?? openFirestoreUsageStore)(db, root, config), inFlight);
       return {
         usage,
         reports,
@@ -74,6 +104,7 @@ export function createFirestoreStoresOpener(options: FirestoreStoresOptions = {}
           try {
             await closeAll([reports, waitlist, usage]);
           } finally {
+            while (inFlight.size > 0) await Promise.all(inFlight);
             await db.terminate();
           }
         },

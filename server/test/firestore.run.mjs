@@ -19,7 +19,8 @@ if (!process.env.FIRESTORE_EMULATOR_HOST) {
   process.exit(1);
 }
 
-const WATCHDOG_MS = 30_000;
+// The whole run takes about 13 s locally; the bound leaves several times that for a loaded CI host.
+const WATCHDOG_MS = 60_000;
 // The client retries an unreachable emulator for about a minute per call; fail by name instead of
 // hanging the gate. Each conformance case also has its own 20 s timeout.
 const watchdog = setTimeout(() => {
@@ -38,8 +39,9 @@ await build({
   format: 'esm',
   target: 'node22',
   logLevel: 'warning',
-  // As in `server/test/run.mjs`: these load files relative to their own package at run time.
-  external: ['typescript', 'esbuild', 'pino', '@google-cloud/firestore'],
+  // As in `server/test/e2e.run.mjs` (the firestore boot case reaches `synthrun/` through
+  // `lifecycle.ts`): these load files relative to their own package at run time.
+  external: ['typescript', 'esbuild', 'playwright', 'pino', '@google-cloud/firestore'],
 });
 
 process.env.WHIM_LOG_JSON = '1';
