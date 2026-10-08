@@ -154,7 +154,33 @@ async function partialImport(namespace: string, root: DocumentReference): Promis
   }
 }
 
-/** Runs both import checks, each in its own namespace under `conformance/`. */
+/** A report that differs from its SQLite source is kept as found, never overwritten, on every re-import. */
+async function differingReportKept(namespace: string, root: DocumentReference): Promise<void> {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-firestore-import-differing-'));
+  try {
+    await writeReportsFixture(dataDir);
+    const first = await importInto(dataDir, namespace);
+    nodeAssert.strictEqual(first.exitCode, 0, first.output);
+    nodeAssert.strictEqual(first.output.split('\n')[1], 'reports: 2 imported, 0 kept as found');
+
+    const target = (await root.collection('reports').get()).docs[0]!;
+    const [field] = Object.keys(target.data());
+    nodeAssert.ok(field !== undefined, 'setup: a report document has a field to change');
+    await target.ref.update({ [field]: 'changed in Firestore' });
+    const modified = await documentSet(root);
+
+    const second = await importInto(dataDir, namespace);
+    const third = await importInto(dataDir, namespace);
+    nodeAssert.deepStrictEqual([second.exitCode, third.exitCode], [0, 0], `${second.output}${third.output}`);
+    nodeAssert.strictEqual(second.output.split('\n')[1], 'reports: 1 imported, 1 kept as found', 'the differing report is kept, the other counted as imported');
+    nodeAssert.strictEqual(third.output, second.output, 'a further rerun prints the same counts');
+    nodeAssert.deepStrictEqual(await documentSet(root), modified, 'the modified document is left exactly as modified');
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
+/** Runs the import checks, each in its own namespace under `conformance/`. */
 export async function runFirestoreImportTests(open: (namespace: string) => Promise<OpenedStores>, runId: string, verify: (name: string, run: () => Promise<void>) => Promise<void>): Promise<void> {
   section('Firestore: import-sqlite copies a SQLite data directory, idempotently');
   const db = await openFirestoreClient('(default)');
@@ -165,6 +191,8 @@ export async function runFirestoreImportTests(open: (namespace: string) => Promi
     );
     const partial = `${runId}-import-partial`;
     await verify('a data directory with only some files imports those and counts 0 for the rest', () => partialImport(partial, db.collection('conformance').doc(partial)));
+    const differing = `${runId}-import-differing`;
+    await verify('a report that differs from its SQLite source is kept as found and never overwritten', () => differingReportKept(differing, db.collection('conformance').doc(differing)));
   } finally {
     await db.terminate();
   }
