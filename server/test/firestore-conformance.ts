@@ -22,6 +22,7 @@ import { startServer } from '../src/lifecycle';
 import { createFirestoreStoresOpener, openStores, type FirestoreStoresOptions, type OpenedStores, type StoreConfig } from '../src/stores';
 import type { DocumentReference } from '@google-cloud/firestore';
 import { deleteInBatches, openFirestoreClient } from '../src/firestore/client';
+import { runFirestoreImportTests } from './firestore-import';
 
 const RUN_ID = randomUUID();
 const T0 = Date.UTC(2026, 9, 7, 12, 0, 0);
@@ -275,6 +276,7 @@ await unsafeKeysTest();
 await batchedDeleteTest();
 await closeWhileBusyTest();
 await firestoreBootTest();
+await runFirestoreImportTests((namespace) => openNamespace(namespace), RUN_ID, verify);
 indexCoverageTest(shapes);
 await unreachableDatabaseTest();
 report();

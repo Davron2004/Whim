@@ -937,6 +937,60 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
   }
 }
 
+/** Every record in a `usage.db`. */
+export interface UsageFileContents {
+  usage: (UsageRecord & { lastCreditedDay: string })[];
+  ledger: LedgerRow[];
+}
+
+/** Columns a `usage.db` gains through the store's additive migrations, which `readUsageFile` will
+ *  not run. */
+const MIGRATED_COLUMNS = [
+  ['requests', 'generation_ids'],
+  ['requests', 'failure_reason'],
+  ['usage', 'last_credited_day'],
+] as const;
+
+/**
+ * Every lifetime row and ledger row in the `usage.db` at `dbPath`, read through a read-only
+ * connection, so the file is never written (the SQLite-to-Firestore import). Throws for a file the
+ * store's migrations have not finished on (a missing column or a lifetime row with no
+ * `last_credited_day`), since only a writable open may date those rows.
+ */
+export function readUsageFile(dbPath: string): UsageFileContents {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const missing = MIGRATED_COLUMNS.filter(
+      ([table, column]) => !(db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === column),
+    ).map(([table, column]) => `${table}.${column}`);
+    const undated = missing.length === 0 && db.prepare('SELECT 1 FROM usage WHERE last_credited_day IS NULL LIMIT 1').get() !== undefined;
+    if (missing.length > 0 || undated) {
+      const gap = missing.length > 0 ? `it has no ${missing.join(', ')} column` : 'it holds lifetime rows with no last_credited_day';
+      throw new Error(`${dbPath} predates the current usage schema (${gap}); start the server once on it with WHIM_STORE_BACKEND=sqlite to migrate it, then import`);
+    }
+    const usage = db
+      .prepare('SELECT device_id, prompt_tokens, completion_tokens, total_tokens, last_credited_day FROM usage ORDER BY device_id')
+      .all() as unknown as { device_id: string; prompt_tokens: number; completion_tokens: number; total_tokens: number; last_credited_day: string }[];
+    const ledger = db.prepare(`
+      SELECT id, device_id, kind, utc_day, started_at, ended_at, outcome, failure_reason, prompt_tokens, completion_tokens,
+             cost_usd, cost_state, generation_ids, refunded
+      FROM requests ORDER BY started_at, id
+    `).all() as unknown as RawLedgerRow[];
+    return {
+      usage: usage.map((row) => ({
+        deviceId: row.device_id,
+        promptTokens: row.prompt_tokens,
+        completionTokens: row.completion_tokens,
+        totalTokens: row.total_tokens,
+        lastCreditedDay: row.last_credited_day,
+      })),
+      ledger: ledger.map(fromRawLedgerRow),
+    };
+  } finally {
+    db.close();
+  }
+}
+
 interface RawLedgerRow {
   id: string;
   device_id: string;

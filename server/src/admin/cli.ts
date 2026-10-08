@@ -16,6 +16,7 @@
  *   usage [--days N] [--top N] [--json]
  *   device export <id>
  *   device delete <id>
+ *   import-sqlite --data-dir <dir>   (`main.ts` routes it to `runImportSqlite`)
  *
  * `list`/`show`/`usage`/`device export` never call a mutating store method — only `purge` and
  * `device delete` do. Device ids and the records they key appear only in this module's returned
@@ -52,7 +53,8 @@ const USAGE_TEXT =
   '  reports purge\n' +
   '  usage [--days N] [--top N] [--json]\n' +
   '  device export <id>\n' +
-  '  device delete <id>\n';
+  '  device delete <id>\n' +
+  '  import-sqlite --data-dir <dir>\n';
 
 /** Everything `device export` prints: every server record keyed by one device id. */
 export interface DeviceExport {

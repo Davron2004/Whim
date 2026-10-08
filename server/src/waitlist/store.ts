@@ -150,6 +150,20 @@ function fromRaw(row: RawRow): WaitlistRow {
   };
 }
 
+/** Every row in the `waitlist.db` at `dbPath`, oldest signup first, read through a read-only
+ *  connection so the file is never written (the SQLite-to-Firestore import). */
+export function readWaitlistFile(dbPath: string): WaitlistRow[] {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const rows = db
+      .prepare('SELECT email, platform, updates_opt_out, notice_id, created_at, updated_at FROM waitlist ORDER BY created_at, email')
+      .all() as unknown as RawRow[];
+    return rows.map(fromRaw);
+  } finally {
+    db.close();
+  }
+}
+
 /** Durable store on its own file. `close()` releases the handle. */
 export class NodeSqliteWaitlistStore implements WaitlistStore {
   private readonly db: DatabaseSync;
