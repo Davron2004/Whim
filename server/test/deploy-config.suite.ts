@@ -1555,6 +1555,7 @@ function cloudRunStoreTests(): void {
     ]);
     return { run: runScript(sandbox, 'cloudrun/deploy.sh', []), calls: toolLog(sandbox, 'gcloud') };
   };
+  const provisionedAlert = provisionAgainst(NOTHING_PROVISIONED).files.get('policy-purge-failed.json');
   const renderedPurgeAlert = (sandbox: Sandbox): Record<string, unknown> | undefined => {
     const captured = path.join(sandbox.stubs, 'from-file');
     const name = fs.existsSync(captured) ? fs.readdirSync(captured).find((file) => file.endsWith('-policy-purge-failed.json')) : undefined;
@@ -1583,26 +1584,70 @@ function cloudRunStoreTests(): void {
     eq('  ... emailing the alert channel', alert?.notificationChannels, [CHANNEL_NAME]);
     const filter = alert?.conditions?.[0]?.conditionMatchedLog?.filter ?? '';
     check('  ... on an error the whim-purge Cloud Run Job logs', filter.includes('resource.type="cloud_run_job"') && filter.includes('resource.labels.job_name="whim-purge"') && filter.includes('severity>=ERROR'), filter);
-    eq('  ... rendered exactly as provision.sh renders it, so provision.sh finds it unchanged', alert, provisionAgainst(NOTHING_PROVISIONED).files.get('policy-purge-failed.json'));
+    eq('  ... rendered exactly as provision.sh renders it, so provision.sh finds it unchanged', alert, provisionedAlert);
+  });
+
+  const alertPolicy = 'projects/anycognition-whim/alertPolicies/5';
+  const policyChanges = (calls: readonly string[]): string[] => calls.filter((line) => / monitoring policies (?:create|update|delete) /.test(line));
+  withSandbox((sandbox) => {
+    const { run, calls } = deployFull(sandbox, [['*monitoring policies list*', 0, `${alertDisplay}\\t${alertPolicy}\\t${specOf(provisionedAlert)}\\n`]]);
+    eq('a firestore deploy with the purge-failure alert in place, as rendered, succeeds', run.status, 0);
+    eq('  ... creating or updating no alert policy', policyChanges(calls), []);
+    check('  ... and saying it is unchanged', run.stdout.includes(`unchanged alert policy '${alertDisplay}'`), run.stdout);
   });
 
   withSandbox((sandbox) => {
-    const { run, calls } = deployFull(sandbox, [['*monitoring policies list*', 0, `${alertDisplay}\\tprojects/anycognition-whim/alertPolicies/5\\n`]]);
-    eq('a firestore deploy with the purge-failure alert in place succeeds', run.status, 0);
-    eq('  ... creating no second alert policy', calls.filter((line) => line.includes('monitoring policies create')), []);
+    const { run, calls } = deployFull(sandbox, [['*monitoring policies list*', 0, `${alertDisplay}\\t${alertPolicy}\\t${'0'.repeat(40)}\\n`]]);
+    eq('a firestore deploy with an outdated purge-failure alert succeeds', run.status, 0);
+    const changes = policyChanges(calls);
+    check('  ... updating that policy in place from the rendered file, creating none', changes.length === 1 && changes[0]!.includes(`monitoring policies update ${alertPolicy} --policy-from-file=`), changes.join(' / '));
+    eq('  ... to the definition provision.sh renders', renderedPurgeAlert(sandbox), provisionedAlert);
+  });
+
+  withSandbox((sandbox) => {
+    const policyPath = path.join(sandbox.repo, 'deploy', 'monitoring', 'policy-purge-failed.json');
+    fs.writeFileSync(policyPath, fs.readFileSync(policyPath, 'utf8').replace('"{{SPEC}}"', '"{{SPEC}}-{{REGION}}"'));
+    commitAndPush(sandbox, 'unfilled placeholder');
+    const { run, calls } = deployFull(sandbox);
+    check('a purge-failure alert with a placeholder no value fills fails the deploy, naming the file', run.status === 1 && run.stderr.includes('policy-purge-failed.json: a {{placeholder}} is left unfilled'), run.stderr);
+    eq('  ... applying no alert policy', policyChanges(calls), []);
   });
 
   withSandbox((sandbox) => {
     const { run, calls } = deployFull(sandbox, [['*monitoring channels list*', 0, '']]);
     check('a firestore deploy with no alert channel fails, naming the channel and that the server and purge job are deployed', run.status === 1 && run.stderr.includes(`no notification channel is named '${channelDisplay}'`) && run.stderr.includes('The server and the purge job are deployed'), run.stderr);
-    check('  ... after deploying the purge job, creating no alert policy', purgeJobDeploy(calls) !== -1 && !calls.some((line) => line.includes('monitoring policies create')), calls.join(' / '));
+    check(
+      '  ... giving the commands that create the channel from deploy/monitoring/channel-email.json',
+      run.stderr.includes('deploy/monitoring/channel-email.json') && run.stderr.includes('beta monitoring channels create --channel-content-from-file=') && !run.stderr.includes('provision.sh'),
+      run.stderr,
+    );
+    check('  ... after deploying the purge job, creating no alert policy', purgeJobDeploy(calls) !== -1 && policyChanges(calls).length === 0, calls.join(' / '));
   });
 
   withSandbox((sandbox) => {
-    const { run, calls } = deployTagged(sandbox, []);
+    const { run, calls, serverEnv } = deployTagged(sandbox, []);
     eq('a firestore rollback (--tag) deploys the server', [run.status, serverDeploy(calls) !== -1], [0, true]);
-    eq('  ... leaving the purge job, its schedule and its alert as they are (an older image may lack `whim-admin purge`)', calls.filter((line) => /run jobs|scheduler|monitoring/.test(line)), []);
-    check('  ... and saying so', run.stdout.includes('cloud run job whim-purge: left as it is'), run.stdout);
+    const jobCalls = calls.filter((line) => / run jobs (?!describe)/.test(line));
+    const update = jobCalls[0] ?? '';
+    check(
+      '  ... and points the existing purge job at the same environment and secret, leaving its image',
+      jobCalls.length === 1 && update.includes('run jobs update whim-purge --region us-east4') && update.includes('--env-vars-file ') && update.includes('--set-secrets OPENROUTER_API_KEY=') && !update.includes('--image'),
+      calls.join(' / '),
+    );
+    const envFileOf = (line: string): string => /--env-vars-file (\S+)/.exec(line)?.[1] ?? 'none';
+    check(
+      "  ... the server's own env file, so a keep period deployed with --tag reaches the job",
+      envFileOf(update) === envFileOf(calls[serverDeploy(calls)] ?? '') && envVarsFileValues(serverEnv).WHIM_STORE_BACKEND === 'firestore',
+      `${update} / ${calls[serverDeploy(calls)] ?? ''}`,
+    );
+    eq('  ... touching no schedule or alert', calls.filter((line) => /scheduler|monitoring/.test(line)), []);
+  });
+
+  withSandbox((sandbox) => {
+    const { run, calls } = deployTagged(sandbox, [], {}, [['*run jobs describe*', 1, 'ERROR: (gcloud.run.jobs.describe) Cannot find job [whim-purge].\n']]);
+    eq('a firestore rollback (--tag) with no purge job still deploys the server', [run.status, serverDeploy(calls) !== -1], [0, true]);
+    eq('  ... creating no job (the tagged image may lack `whim-admin purge`)', calls.filter((line) => / run jobs (?!describe)/.test(line)), []);
+    check('  ... warning loudly that retention is not enforced and a plain deploy creates the job', run.stderr.includes('WARNING: no Cloud Run job whim-purge exists') && run.stderr.includes('retention is NOT enforced') && run.stderr.includes('plain deploy'), run.stderr);
   });
 
   withSandbox((sandbox) => {

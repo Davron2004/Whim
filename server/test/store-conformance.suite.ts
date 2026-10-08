@@ -487,7 +487,7 @@ function utf8Order(a: string, b: string): number {
 
 /** U+E000 sorts before U+1F600 by UTF-8 bytes (EE.. < F0..) but after it by UTF-16 code units
  *  (U+1F600 is the surrogate pair D83D DE00, and D83D < E000). */
-const PRIVATE_USE = '';
+const PRIVATE_USE = '\uE000';
 const ASTRAL = '\u{1F600}';
 
 const tiesInByteOrder: StoreConformanceCase = {

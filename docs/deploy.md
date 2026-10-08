@@ -12,7 +12,7 @@ section after this one describes the retired VM; its scripts stay in the repo fo
 
 ```sh
 deploy/cloudrun/deploy.sh                 # server image for HEAD (built unless it exists) + pages site
-deploy/cloudrun/deploy.sh --tag <sha>     # server only, from an existing image (rollback, config change); purge job untouched
+deploy/cloudrun/deploy.sh --tag <sha>     # server only, from an existing image (rollback, config change); purge job keeps its image
 deploy/cloudrun/deploy.sh --site-only     # pages site only
 ```
 
@@ -131,17 +131,33 @@ can outlive its keep period by up to an hour (up to a UTC day plus an hour for t
 usage, which are cut on whole UTC days), as with the in-process hourly purge. Both fit inside
 the free tiers (3 Scheduler jobs per billing account; seconds of CPU per run).
 
-A `--tag` deploy (a rollback) leaves the job, its schedule and its alert as they are: the job keeps
-the image it has, since an older image may predate `whim-admin purge`, and every hourly run would
-fail. The next plain deploy points it at the new image.
+A `--tag` deploy (a rollback or a config change) keeps the job on the image it has, since an older
+image may predate `whim-admin purge` and every hourly run would fail, but runs `gcloud run jobs
+update whim-purge --env-vars-file … --set-secrets …` with the server's environment, so a keep
+period changed with `--tag` reaches the job too. Its schedule and alert are left alone. When no
+`whim-purge` job exists, a `--tag` deploy creates none, prints `WARNING: no Cloud Run job
+whim-purge exists, so retention is NOT enforced`, and still succeeds: run a plain deploy to create
+the job. The next plain deploy points the job at the new image.
 
-**Purge failure alert.** The alert policy "Whim: purge job failed"
-(`deploy/monitoring/policy-purge-failed.json`) emails the "Whim alerts" channel, at most once an
-hour, when the job logs at `ERROR` or above (`resource.type="cloud_run_job"
-resource.labels.job_name="whim-purge" severity>=ERROR`). A Firestore deploy creates it after the
-job when no policy carries that display name, rendered as `provision.sh` renders it, and stops
-(the server and the job already deployed) when the "Whim alerts" channel is missing. It never
-updates an existing policy: after editing the file, rerun `provision.sh`, or apply it by hand.
+**Purge failure alert.** Cloud Run records a job's plain text output at `DEFAULT` severity, so a
+failing `whim-admin purge` also prints one structured line to stdout,
+`{"severity":"ERROR","message":"purge failed","detail":"<what failed>"}`, which Cloud Logging
+records at `ERROR`. It prints it after the per-store lines when any purge failed (`detail` names
+each failed store and why), and alone when the command fails before or around the purges (bad
+configuration, stores that cannot open or close; the stack goes to stderr). Either way it exits 1.
+The alert policy "Whim: purge job failed" (`deploy/monitoring/policy-purge-failed.json`) emails the
+"Whim alerts" channel, at most once an hour, on that line (`resource.type="cloud_run_job"
+resource.labels.job_name="whim-purge" severity>=ERROR`). Every plain Firestore deploy applies the
+file after the job, rendered and fingerprinted exactly as `provision.sh` renders it: it creates the
+policy when none carries that display name, updates it in place when the fingerprint
+(`userLabels.whim_spec`) differs, and otherwise leaves it. So an edit to the file lands with the
+next plain deploy. When the "Whim alerts" channel is missing, the deploy stops (the server and the
+job already deployed) and prints the commands that create it:
+
+```sh
+sed -e 's/{{ALERT_EMAIL}}/<WHIM_ALERT_EMAIL>/' -e 's/{{SPEC}}/manual/' deploy/monitoring/channel-email.json >"$TMPDIR/whim-channel.json"
+gcloud --project anycognition-whim beta monitoring channels create --channel-content-from-file="$TMPDIR/whim-channel.json"
+```
 
 ```sh
 gcloud run jobs executions list --job whim-purge --region us-east4 --limit 5   # recent runs

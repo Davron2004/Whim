@@ -115,7 +115,11 @@ async function failedPurgeFailsTheCommand(): Promise<void> {
     });
     const result = await runPurge([], { reports: stores.reports, usage: failingUsage, waitlist: stores.waitlist }, config).finally(() => stores.close());
     eq('the purge exits 1', result.exitCode, 1);
-    eq('  ... naming the failed store and why, and counting the others', result.output, 'reports: 1 purged\nledger: failed: database is locked\nusage: 0 purged\nwaitlist: 0 purged\n');
+    eq(
+      '  ... naming the failed store and why, and counting the others, then one structured ERROR line for the alert',
+      result.output,
+      'reports: 1 purged\nledger: failed: database is locked\nusage: 0 purged\nwaitlist: 0 purged\n{"severity":"ERROR","message":"purge failed","detail":"ledger: database is locked"}\n',
+    );
     eq('  ... whose deletions landed', (await remaining(dir, [1, 91])).reports, ['report-1d']);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -211,8 +215,44 @@ async function sameCutoffsAsTheServer(): Promise<void> {
   }
 }
 
+/** The stdout lines of a run that parse as JSON with `severity` ERROR: what Cloud Logging records
+ *  at ERROR from a Cloud Run Job, and so what the purge-failure alert can match. */
+function errorLines(stdout: string): Array<Record<string, unknown>> {
+  // The per-store lines are plain text; only the structured line is a JSON object.
+  return stdout
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter((record) => record.severity === 'ERROR');
+}
+
+async function crashedPurgeLogsAnError(): Promise<void> {
+  section('whim-admin purge: a run that fails before it can purge prints one structured ERROR line and exits non-zero');
+  const dir = tempDir('crash');
+  try {
+    const badConfig = adminPurge(dir, { WHIM_REPORT_RETENTION_DAYS: '400' });
+    eq('a configuration the server refuses exits 1', badConfig.status, 1);
+    const configLines = errorLines(badConfig.stdout);
+    check(
+      '  ... printing one {"severity":"ERROR","message":"purge failed"} line naming the setting',
+      configLines.length === 1 && configLines[0]?.message === 'purge failed' && String(configLines[0]?.detail).includes('WHIM_REPORT_RETENTION_DAYS'),
+      badConfig.stdout + badConfig.stderr,
+    );
+    // A data directory that is a file: the SQLite stores cannot open under it.
+    const file = path.join(dir, 'not-a-directory');
+    fs.writeFileSync(file, '');
+    const badOpen = adminPurge(file, {});
+    eq('stores that cannot open exit 1', badOpen.status, 1);
+    const openLines = errorLines(badOpen.stdout);
+    check('  ... printing one {"severity":"ERROR","message":"purge failed"} line', openLines.length === 1 && openLines[0]?.message === 'purge failed', badOpen.stdout + badOpen.stderr);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 export async function runAdminPurgeTests(): Promise<void> {
   await purgeDeletesExpiredRows();
   await failedPurgeFailsTheCommand();
+  await crashedPurgeLogsAnError();
   await sameCutoffsAsTheServer();
 }

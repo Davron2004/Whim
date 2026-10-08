@@ -30,9 +30,9 @@ import {
 } from '@google-cloud/firestore';
 import type { Usage } from '@whim/contract';
 import { deleteInBatches, type FirestoreRoot } from './client';
+import { byUtf8Bytes } from '../text-order';
 import {
   assertFailureReason,
-  byUtf8Bytes,
   computeSummary,
   costWriteLands,
   effectiveGlobalKinds,

@@ -22,6 +22,7 @@
  */
 import { DatabaseSync } from 'node:sqlite';
 import { log } from './logger';
+import { byUtf8Bytes } from './text-order';
 import { ServiceRefusalCode, type Usage } from '@whim/contract';
 import { MANIFESTS, keepLimit } from '../../contract/src/disclosure-manifest';
 import {
@@ -273,13 +274,6 @@ export function assertFailureReason(params: SettleParams): void {
   if (SUCCESS_OUTCOMES.has(params.outcome)) {
     throw new Error(`failure_reason ${reason} cannot settle a request whose outcome is ${params.outcome}`);
   }
-}
-
-/** Text order as SQLite's BINARY collation and Firestore sort it: by UTF-8 bytes (code point order),
- *  never by locale. JS `<` compares UTF-16 code units, which puts an astral character before
- *  U+E000–U+FFFF. */
-export function byUtf8Bytes(a: string, b: string): number {
-  return Buffer.compare(Buffer.from(a), Buffer.from(b));
 }
 
 /** Reads back the JSON array `recordCost` persisted. A value that is not an array of strings (a

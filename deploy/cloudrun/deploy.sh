@@ -4,7 +4,7 @@
 #
 #   deploy/cloudrun/deploy.sh                 the server image for HEAD (built unless it exists) and the pages site
 #   deploy/cloudrun/deploy.sh --tag <sha>     the server only, from an image already in Artifact Registry (rollback);
-#                                             the purge job stays on its image
+#                                             the purge job keeps its image but takes the new config
 #   deploy/cloudrun/deploy.sh --site-only     the pages site only; the server is untouched
 #
 # Values come from deploy/defaults.env, then ~/.config/whim/deploy.env, then the environment, as for
@@ -210,6 +210,22 @@ deploy_purge_job() {
     || whim_fail "the purge job's hourly schedule failed. The server and the purge job are deployed; deploy again to retry the schedule."
 }
 
+# A --tag deploy: points the existing purge job at the server's environment and secret, leaving its
+# image. With no job, warns that retention is not enforced and creates none (the tagged image may
+# lack `whim-admin purge`); a plain deploy creates it.
+update_purge_job_config() {
+  local env_file="$1"
+  if ! whim_gcloud run jobs describe "$RUN_PURGE_JOB" --region "$WHIM_RUN_REGION" --format='value(name)' >/dev/null 2>&1; then
+    printf '%s: WARNING: no Cloud Run job %s exists, so retention is NOT enforced: nothing purges records past their keep period. Run a plain deploy (no --tag) to create it.\n' \
+      "$WHIM_SCRIPT" "$RUN_PURGE_JOB" >&2
+    return 0
+  fi
+  echo "==> cloud run job $RUN_PURGE_JOB (environment and secret; image left as it is)"
+  whim_gcloud run jobs update "$RUN_PURGE_JOB" --region "$WHIM_RUN_REGION" \
+    --env-vars-file "$env_file" --set-secrets "OPENROUTER_API_KEY=$WHIM_OPENROUTER_SECRET_ID:latest" --quiet \
+    || whim_fail "updating the purge job's environment failed. The server is deployed; deploy again to retry the job."
+}
+
 # The top-level displayName of a deploy/monitoring JSON file (two-space indent, one key per line).
 display_name_of() {
   local name
@@ -218,41 +234,59 @@ display_name_of() {
   printf '%s' "$name"
 }
 
-# Prints the resource name of the one row of $2 (tab-separated: display name, name) whose display
-# name is $1, and nothing when there is none. $3 names the rows, for the refusal when two share it.
+# Prints the fields after the display name (tab-separated) of the one row of $2 whose display name
+# is $1, and nothing when there is none. Rows are gcloud `value(displayName,name,...)` lines. $3
+# names the rows, for the refusal when two share the display name.
 named_row() {
-  local names
-  names="$(awk -F '\t' -v wanted="$1" '$1 == wanted { print $2 }' <<<"$2")"
-  [[ "$names" != *$'\n'* ]] || whim_fail "two $3 are named '$1'; delete one, then deploy again. The server and the purge job are deployed."
-  printf '%s' "$names"
+  local found
+  found="$(awk -F '\t' -v wanted="$1" '$1 == wanted { sub(/^[^\t]*\t/, ""); print }' <<<"$2")"
+  [[ "$found" != *$'\n'* ]] || whim_fail "two $3 are named '$1'; delete one, then deploy again. The server and the purge job are deployed."
+  printf '%s' "$found"
 }
 
-# Creates the purge job's failure alert when no alert policy carries its display name, emailing the
-# alert channel. It is rendered and fingerprinted as deploy/provision.sh renders it, so provision.sh
-# finds it unchanged, and provision.sh applies any later edit to the file.
+# Applies the purge job's failure alert as deploy/provision.sh's apply_rendered applies a policy:
+# rendered with the alert channel and fingerprinted as provision.sh renders it, it is created when
+# no alert policy carries its display name, updated in place when that policy's fingerprint
+# (userLabels.whim_spec) differs, and otherwise left alone.
 apply_purge_alert() {
-  local display rows policy channel_display channel text spec rendered="$stage/policy-purge-failed.json"
+  local display channel_display row channel policy policy_spec text spec rendered="$stage/policy-purge-failed.json"
   display="$(display_name_of "$RUN_PURGE_ALERT")"
-  rows="$(whim_gcloud monitoring policies list --format='value(displayName,name)')" \
-    || whim_fail "listing the alert policies failed. The server and the purge job are deployed; deploy again to retry the alert."
-  policy="$(named_row "$display" "$rows" "alert policies")"
-  if [[ -n "$policy" ]]; then
-    echo "alert policy '$display': exists"
-    return 0
-  fi
   channel_display="$(display_name_of "$RUN_ALERT_CHANNEL")"
-  rows="$(whim_gcloud beta monitoring channels list --format='value(displayName,name)')" \
+  row="$(whim_gcloud beta monitoring channels list --format='value(displayName,name)')" \
     || whim_fail "listing the notification channels failed. The server and the purge job are deployed; deploy again to retry the alert."
-  channel="$(named_row "$channel_display" "$rows" "notification channels")"
-  [[ -n "$channel" ]] \
-    || whim_fail "no notification channel is named '$channel_display', so the purge job's failure alert has nowhere to email. Create it (docs/deploy.md, Operating: Alerts), then deploy again. The server and the purge job are deployed."
+  row="$(named_row "$channel_display" "$row" "notification channels")"
+  channel="${row%%$'\t'*}"
+  if [[ -z "$channel" ]]; then
+    whim_fail "no notification channel is named '$channel_display', so the purge job's failure alert has nowhere to email. The server and the purge job are deployed. Create the channel, then deploy again:
+  sed -e 's/{{ALERT_EMAIL}}/${WHIM_ALERT_EMAIL:-<alert email>}/' -e 's/{{SPEC}}/manual/' deploy/monitoring/channel-email.json >\"\$TMPDIR/whim-channel.json\"
+  gcloud --project $WHIM_GCP_PROJECT beta monitoring channels create --channel-content-from-file=\"\$TMPDIR/whim-channel.json\""
+  fi
   text="$(<"$RUN_PURGE_ALERT")"
   text="${text//\{\{CHANNEL\}\}/$channel}"
   spec="$(printf '%s' "$text" | git hash-object --stdin)"
-  printf '%s\n' "${text//\{\{SPEC\}\}/$spec}" >"$rendered"
-  echo "==> alert policy '$display'"
-  whim_gcloud monitoring policies create --policy-from-file="$rendered" --format='value(name)' >/dev/null \
-    || whim_fail "creating the alert policy '$display' failed. The server and the purge job are deployed; deploy again to retry the alert."
+  text="${text//\{\{SPEC\}\}/$spec}"
+  case "$text" in
+    *'{{'*) whim_fail "$RUN_PURGE_ALERT: a {{placeholder}} is left unfilled. The server and the purge job are deployed." ;;
+    *) ;;
+  esac
+  printf '%s\n' "$text" >"$rendered"
+  row="$(whim_gcloud monitoring policies list --format='value(displayName,name,userLabels.whim_spec)')" \
+    || whim_fail "listing the alert policies failed. The server and the purge job are deployed; deploy again to retry the alert."
+  row="$(named_row "$display" "$row" "alert policies")"
+  policy="${row%%$'\t'*}"
+  policy_spec=""
+  [[ "$row" != *$'\t'* ]] || policy_spec="${row#*$'\t'}"
+  if [[ -z "$policy" ]]; then
+    whim_gcloud monitoring policies create --policy-from-file="$rendered" --format='value(name)' >/dev/null \
+      || whim_fail "creating the alert policy '$display' failed. The server and the purge job are deployed; deploy again to retry the alert."
+    echo "created alert policy '$display'"
+  elif [[ "$policy_spec" != "$spec" ]]; then
+    whim_gcloud monitoring policies update "$policy" --policy-from-file="$rendered" >/dev/null \
+      || whim_fail "updating the alert policy '$display' failed. The server and the purge job are deployed; deploy again to retry the alert."
+    echo "updated alert policy '$display'"
+  else
+    echo "unchanged alert policy '$display'"
+  fi
 }
 
 deploy_server() {
@@ -288,9 +322,11 @@ deploy_server() {
     --service-account "$service_account" --allow-unauthenticated \
     --env-vars-file "$env_file" --set-secrets "OPENROUTER_API_KEY=$WHIM_OPENROUTER_SECRET_ID:latest" --quiet
   [[ "$store_backend" = firestore ]] || return 0
-  # A rollback leaves the purge job on its image: an older one may predate `whim-admin purge`.
+  # A rollback leaves the purge job on its image: an older one may predate `whim-admin purge`. Its
+  # environment and secret follow the server's, so a configuration change deployed with --tag (a
+  # keep period, say) reaches the job too.
   if [[ -n "$tag" ]]; then
-    echo "cloud run job $RUN_PURGE_JOB: left as it is (--tag deploys the server only)"
+    update_purge_job_config "$env_file"
     return 0
   fi
   deploy_purge_job "$image" "$env_file"
