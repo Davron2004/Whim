@@ -60,14 +60,16 @@ export interface WaitlistFilter {
 export type UpsertOutcome = 'stored' | 'updated';
 
 export interface WaitlistStore {
-  upsert(signup: WaitlistSignup): UpsertOutcome;
+  upsert(signup: WaitlistSignup): Promise<UpsertOutcome>;
   /** Matching rows, oldest signup first. */
-  export(filter?: WaitlistFilter): WaitlistRow[];
+  export(filter?: WaitlistFilter): Promise<WaitlistRow[]>;
   /** Removes the row for `email` in any casing; whether one was there. */
-  remove(email: string): boolean;
+  remove(email: string): Promise<boolean>;
   /** Deletes rows whose `updated_at` is more than `WAITLIST_RETENTION_DAYS` before `now`. Returns
    *  how many went. */
-  purge(now: number): number;
+  purge(now: number): Promise<number>;
+  /** Releases the store's handle or client. Nothing is called on the store after it. */
+  close(): Promise<void>;
 }
 
 /** A row is kept while its `updated_at` is at or after this. */
@@ -88,7 +90,7 @@ function byCreated(a: WaitlistRow, b: WaitlistRow): number {
 export class InMemoryWaitlistStore implements WaitlistStore {
   private readonly rows = new Map<string, WaitlistRow>();
 
-  upsert(signup: WaitlistSignup): UpsertOutcome {
+  async upsert(signup: WaitlistSignup): Promise<UpsertOutcome> {
     const email = normalizeEmail(signup.email);
     const existing = this.rows.get(email);
     this.rows.set(email, {
@@ -102,15 +104,15 @@ export class InMemoryWaitlistStore implements WaitlistStore {
     return existing === undefined ? 'stored' : 'updated';
   }
 
-  export(filter: WaitlistFilter = {}): WaitlistRow[] {
+  async export(filter: WaitlistFilter = {}): Promise<WaitlistRow[]> {
     return [...this.rows.values()].filter((row) => matches(row, filter)).sort(byCreated).map((row) => ({ ...row }));
   }
 
-  remove(email: string): boolean {
+  async remove(email: string): Promise<boolean> {
     return this.rows.delete(normalizeEmail(email));
   }
 
-  purge(now: number): number {
+  async purge(now: number): Promise<number> {
     const cutoff = purgeCutoff(now);
     let deleted = 0;
     for (const [email, row] of this.rows) {
@@ -121,6 +123,9 @@ export class InMemoryWaitlistStore implements WaitlistStore {
     }
     return deleted;
   }
+
+  /** Nothing to release. */
+  async close(): Promise<void> {}
 }
 
 interface RawRow {
@@ -165,7 +170,7 @@ export class NodeSqliteWaitlistStore implements WaitlistStore {
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_waitlist_updated_at ON waitlist (updated_at)');
   }
 
-  upsert(signup: WaitlistSignup): UpsertOutcome {
+  async upsert(signup: WaitlistSignup): Promise<UpsertOutcome> {
     const email = normalizeEmail(signup.email);
     const existed = this.db.prepare('SELECT 1 FROM waitlist WHERE email = ?').get(email) !== undefined;
     this.db
@@ -182,22 +187,22 @@ export class NodeSqliteWaitlistStore implements WaitlistStore {
     return existed ? 'updated' : 'stored';
   }
 
-  export(filter: WaitlistFilter = {}): WaitlistRow[] {
+  async export(filter: WaitlistFilter = {}): Promise<WaitlistRow[]> {
     const rows = this.db
       .prepare('SELECT email, platform, updates_opt_out, notice_id, created_at, updated_at FROM waitlist ORDER BY created_at, email')
       .all() as unknown as RawRow[];
     return rows.map(fromRaw).filter((row) => matches(row, filter));
   }
 
-  remove(email: string): boolean {
+  async remove(email: string): Promise<boolean> {
     return Number(this.db.prepare('DELETE FROM waitlist WHERE email = ?').run(normalizeEmail(email)).changes) > 0;
   }
 
-  purge(now: number): number {
+  async purge(now: number): Promise<number> {
     return Number(this.db.prepare('DELETE FROM waitlist WHERE updated_at < ?').run(purgeCutoff(now)).changes);
   }
 
-  close(): void {
+  async close(): Promise<void> {
     this.db.close();
   }
 }
@@ -217,11 +222,7 @@ export interface WaitlistPurgeOptions {
 /** Purges at once, then every `intervalMs` on an unref'd timer. */
 export function scheduleWaitlistPurge(store: WaitlistStore, options: WaitlistPurgeOptions): WaitlistPurgeSchedule {
   const runOnce = (): void => {
-    try {
-      store.purge(options.now());
-    } catch (err) {
-      options.onError(err);
-    }
+    store.purge(options.now()).catch((err: unknown) => options.onError(err));
   };
   runOnce();
   const timer = setInterval(runOnce, options.intervalMs ?? 3_600_000);

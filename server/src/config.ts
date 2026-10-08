@@ -24,6 +24,12 @@ export interface ServerConfig {
   readonly serverHost: string;
   readonly serverPort: number;
   readonly dataDir: string;
+  /** `WHIM_STORE_BACKEND` (durable-server-stores D1): where every server store lives — `'sqlite'`
+   *  (the default: `node:sqlite` files under `dataDir`) or `'firestore'`. */
+  readonly storeBackend: StoreBackend;
+  /** `WHIM_FIRESTORE_DATABASE`: the Firestore Native database the `'firestore'` backend opens, in
+   *  the project of the server's Google credentials. Defaults to `(default)`. */
+  readonly firestoreDatabase: string;
   /** `'stub'` selects the no-spend UI pipeline; anything else (including unset) is the real one. */
   readonly pipeline: 'real' | 'stub';
   /** `WHIM_STUB_DELAY_MS`: how long the stub pipeline waits before each event it emits (default
@@ -108,6 +114,9 @@ export interface ServerConfig {
    *  `Date.now`; override via `loadServerConfig`'s `opts.now`. */
   readonly now: () => number;
 }
+
+export const STORE_BACKENDS = ['sqlite', 'firestore'] as const;
+export type StoreBackend = (typeof STORE_BACKENDS)[number];
 
 /** Thrown by `loadServerConfig` naming the exact offending variable — never a batch of unrelated
  *  failures, so a caller (or an operator reading boot output) fixes one thing and re-runs. */
@@ -239,6 +248,17 @@ function readWebOrigin(env: NodeJS.ProcessEnv, name: string, production: boolean
   return raw;
 }
 
+/** `WHIM_STORE_BACKEND` (durable-server-stores D1): unset (or empty) means `sqlite`; any other
+ *  value fails configuration loading naming the variable and the allowed values. */
+function readStoreBackend(env: NodeJS.ProcessEnv, name: string): StoreBackend {
+  const raw = env[name];
+  if (raw === undefined || raw === '') return 'sqlite';
+  if (!(STORE_BACKENDS as readonly string[]).includes(raw)) {
+    throw new ServerConfigError(name, `${name} must be one of ${STORE_BACKENDS.join(', ')}, got ${JSON.stringify(raw)}.`);
+  }
+  return raw as StoreBackend;
+}
+
 const PROVIDER_SORTS: readonly ProviderSort[] = ['price', 'throughput', 'latency'];
 
 /** `WHIM_PROVIDER_SORT` (design D3): unset (or empty) means no provider preference; any other
@@ -286,6 +306,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     serverHost: readString(env, 'WHIM_SERVER_HOST', '0.0.0.0'),
     serverPort: readPositiveInt(env, 'WHIM_SERVER_PORT', 8787),
     dataDir: readString(env, 'WHIM_DATA_DIR', 'server/.data'),
+    storeBackend: readStoreBackend(env, 'WHIM_STORE_BACKEND'),
+    firestoreDatabase: env.WHIM_FIRESTORE_DATABASE || '(default)',
     pipeline,
     stubDelayMs: readStubDelay(env, pipeline),
     devLogSink,

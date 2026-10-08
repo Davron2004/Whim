@@ -67,6 +67,8 @@ export interface ReportStore {
   /** Deletes rows with `receivedAt` strictly before `cutoffMs` and reclaims their storage.
    *  Returns the number of rows deleted. */
   purgeOlderThan(cutoffMs: number): Promise<number>;
+  /** Releases the store's handle or client. Nothing is called on the store after it. */
+  close(): Promise<void>;
 }
 
 /** The reports keyed by one device id (specs/device-records), for the operator command only. */
@@ -178,6 +180,9 @@ export class InMemoryReportStore implements ReportStore, ReportRecordKeeping {
     }
     return deleted;
   }
+
+  /** Nothing to release. */
+  async close(): Promise<void> {}
 }
 
 function toListItem(row: ReportRow): ReportListItem {
@@ -283,7 +288,7 @@ export class NodeSqliteReportStore implements ReportStore, ReportRecordKeeping {
   }
 
   /** Release the database handle. Required before re-opening the same file path. */
-  close(): void {
+  async close(): Promise<void> {
     this.db.close();
   }
 }

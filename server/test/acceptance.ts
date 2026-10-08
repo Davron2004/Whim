@@ -36,6 +36,7 @@ import { runWaitlistTests } from './waitlist.suite';
 import { runBetaSignupTests } from './beta-signup.suite';
 import { runBetaSiteTests } from './beta-site.suite';
 import { runWireLevelTests } from './wire-level.suite';
+import { runStoreConformanceTests } from './store-conformance.suite';
 
 runContractTests();
 await runServerCoreTests();
@@ -64,9 +65,10 @@ await runDeployConfigTests();
 await runFlowbenchTests();
 await runRequestEdgeTests();
 await runDiagnosticsTests();
-runWaitlistTests();
+await runWaitlistTests();
 await runBetaSignupTests();
 await runBetaSiteTests();
 await runWireLevelTests();
+await runStoreConformanceTests();
 
 report();

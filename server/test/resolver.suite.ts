@@ -66,6 +66,7 @@ function countingCreditStore(inner: UsageStore): { store: UsageStore; creditCall
     listUnresolvedCostRows: (query) => inner.listUnresolvedCostRows(query),
     summary: (params) => inner.summary(params),
     purgeLedger: (beforeUtcDay) => inner.purgeLedger(beforeUtcDay),
+    close: () => inner.close(),
   };
   return { store, creditCalls };
 }
@@ -410,6 +411,7 @@ async function testSweepStandsDownWhileDraining(): Promise<void> {
     },
     summary: (params) => store.summary(params),
     purgeLedger: (beforeUtcDay) => store.purgeLedger(beforeUtcDay),
+    close: () => store.close(),
   };
 
   const draining = await runCostResolutionSweep({

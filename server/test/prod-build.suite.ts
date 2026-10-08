@@ -304,9 +304,9 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
   // the privacy policy publishes and one inside it: boot's scheduled purge must take only the first.
   const dayMs = 86_400_000;
   const seed = new NodeSqliteWaitlistStore(path.join(dataDir, 'waitlist.db'));
-  seed.upsert({ email: 'expired@example.com', platform: 'ios', updatesOptOut: false, noticeId: CURRENT_NOTICE_ID, now: Date.now() - (WAITLIST_RETENTION_DAYS + 1) * dayMs });
-  seed.upsert({ email: 'kept@example.com', platform: 'ios', updatesOptOut: false, noticeId: CURRENT_NOTICE_ID, now: Date.now() - (WAITLIST_RETENTION_DAYS - 1) * dayMs });
-  seed.close();
+  await seed.upsert({ email: 'expired@example.com', platform: 'ios', updatesOptOut: false, noticeId: CURRENT_NOTICE_ID, now: Date.now() - (WAITLIST_RETENTION_DAYS + 1) * dayMs });
+  await seed.upsert({ email: 'kept@example.com', platform: 'ios', updatesOptOut: false, noticeId: CURRENT_NOTICE_ID, now: Date.now() - (WAITLIST_RETENTION_DAYS - 1) * dayMs });
+  await seed.close();
   const waitlistWal = path.join(dataDir, 'waitlist.db-wal');
   const proc = new TreeProcess(fixture.tree, {
     WHIM_PIPELINE: 'stub',
@@ -412,6 +412,14 @@ async function testBootRefusals(fixture: Fixture): Promise<void> {
     fixture.tree,
     { NODE_ENV: 'production', WHIM_PIPELINE: 'stub', WHIM_DATA_DIR: fixture.dataDir('prod-stub') },
     'WHIM_PIPELINE',
+  );
+  // specs/server-storage-backends: an unknown store backend fails boot naming the variable and both
+  // allowed values.
+  await expectBootRefusal(
+    'WHIM_STORE_BACKEND=postgres',
+    fixture.tree,
+    { WHIM_PIPELINE: 'stub', WHIM_STORE_BACKEND: 'postgres', WHIM_DATA_DIR: fixture.dataDir('postgres-backend') },
+    'WHIM_STORE_BACKEND must be one of sqlite, firestore',
   );
   await expectBootRefusal(
     'the stub delay without the stub selector',

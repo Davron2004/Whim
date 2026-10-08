@@ -6,16 +6,16 @@
  *   remove <email>                                         deletes that person, in any casing
  *
  * `runWaitlistCli` is the testable half: arguments and a store in, output and an exit code out.
- * `waitlistMain` opens `waitlist.db` under `WHIM_DATA_DIR` around it. Run as a process — `node
+ * `waitlistMain` opens the stores on the configured backend (`openStores`) around it. Run as a process — `node
  * server/waitlist.mjs …` in dev, which bundles this file, or `node server/whim-waitlist.mjs …` in the
  * production image, which `server/build.mjs` bundles from it — it writes the result and sets the
  * exit code; imported, it does nothing on its own.
  */
 import fs from 'node:fs';
-import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadServerConfig } from '../config';
-import { isWaitlistPlatform, NodeSqliteWaitlistStore, type WaitlistFilter, type WaitlistRow, type WaitlistStore } from './store';
+import { openStores } from '../stores';
+import { isWaitlistPlatform, type WaitlistFilter, type WaitlistRow, type WaitlistStore } from './store';
 
 export interface WaitlistCliResult {
   readonly stdout: string;
@@ -43,7 +43,7 @@ function usageError(problem: string): WaitlistCliResult {
   return { stdout: '', stderr: `waitlist: ${problem}\n${WAITLIST_USAGE}`, exitCode: 2 };
 }
 
-function exportRows(args: readonly string[], store: WaitlistStore): WaitlistCliResult {
+async function exportRows(args: readonly string[], store: WaitlistStore): Promise<WaitlistCliResult> {
   let filter: WaitlistFilter = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -58,32 +58,32 @@ function exportRows(args: readonly string[], store: WaitlistStore): WaitlistCliR
       return usageError(`unknown export option ${JSON.stringify(arg)}`);
     }
   }
-  const lines = [CSV_COLUMNS.join(','), ...store.export(filter).map(csvLine)];
+  const lines = [CSV_COLUMNS.join(','), ...(await store.export(filter)).map(csvLine)];
   return { stdout: `${lines.join('\n')}\n`, stderr: '', exitCode: 0 };
 }
 
-function removeRow(args: readonly string[], store: WaitlistStore): WaitlistCliResult {
+async function removeRow(args: readonly string[], store: WaitlistStore): Promise<WaitlistCliResult> {
   const [email, ...extra] = args;
   if (email === undefined || email.trim() === '' || extra.length > 0) return usageError('remove takes exactly one email');
-  return store.remove(email)
+  return (await store.remove(email))
     ? { stdout: `removed ${email.trim().toLowerCase()}\n`, stderr: '', exitCode: 0 }
     : { stdout: '', stderr: `waitlist: ${email.trim().toLowerCase()} is not on the list\n`, exitCode: 1 };
 }
 
-export function runWaitlistCli(argv: readonly string[], store: WaitlistStore): WaitlistCliResult {
+export async function runWaitlistCli(argv: readonly string[], store: WaitlistStore): Promise<WaitlistCliResult> {
   const [command, ...args] = argv;
   if (command === 'export') return exportRows(args, store);
   if (command === 'remove') return removeRow(args, store);
   return usageError(command === undefined ? 'no command given' : `unknown command ${JSON.stringify(command)}`);
 }
 
-/** Opens `waitlist.db` under `env`'s `WHIM_DATA_DIR`, runs the command, and closes it. */
-export function waitlistMain(argv: readonly string[], env: NodeJS.ProcessEnv): WaitlistCliResult {
-  const store = new NodeSqliteWaitlistStore(path.join(loadServerConfig(env).dataDir, 'waitlist.db'));
+/** Opens the stores `env` configures, runs the command against the waitlist, and closes them. */
+export async function waitlistMain(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<WaitlistCliResult> {
+  const stores = await openStores(loadServerConfig(env));
   try {
-    return runWaitlistCli(argv, store);
+    return await runWaitlistCli(argv, stores.waitlist);
   } finally {
-    store.close();
+    await stores.close();
   }
 }
 
@@ -94,7 +94,7 @@ function invokedAsProcess(): boolean {
 }
 
 if (invokedAsProcess()) {
-  const result = waitlistMain(process.argv.slice(2), process.env);
+  const result = await waitlistMain(process.argv.slice(2), process.env);
   process.stdout.write(result.stdout);
   process.stderr.write(result.stderr);
   process.exitCode = result.exitCode;

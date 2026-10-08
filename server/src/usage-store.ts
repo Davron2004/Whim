@@ -38,15 +38,15 @@ export interface UsageStore {
   read(deviceId: string): Promise<Usage>;
 
   /**
-   * Atomically counts today's non-refunded rows for `deviceId` (and, when `globalLimit` is given,
-   * for every device across `globalKinds`) and inserts a new `pending` ledger row, keyed by
-   * `params.requestId`, when under both limits. The device limit is checked first, so a request
-   * over BOTH limits refuses as `'device'` (spec: "the device limit's daily_limit refusal SHALL
-   * win"). `now` drives the UTC-day bucket and the
-   * `retryAfterSec` computation — never `Date.now()` read internally — so callers control day
-   * rollover in tests. Implementations MUST perform the count-then-insert with no `await` between
-   * them, so two overlapping calls (`Promise.all`) can never both observe room for the last unit.
-   * A `requestId` already in the ledger rejects rather than replacing its row.
+   * Admits a request in ONE atomic step: checks today's non-refunded count for `deviceId` against
+   * `deviceLimit`, then (when `globalLimit` is given) the count for every device across
+   * `globalKinds`, and records a new `pending` ledger row keyed by `params.requestId` when under
+   * both. The device limit is checked first, so a request over BOTH limits refuses as `'device'`
+   * (spec: "the device limit's daily_limit refusal SHALL win"). `now` drives the UTC-day bucket
+   * and the `retryAfterSec` computation — never `Date.now()` read internally — so callers control
+   * day rollover in tests. Two concurrent admissions never both take the last device or global
+   * unit (specs/server-storage-backends "Admission is atomic on every backend"). A `requestId`
+   * already in the ledger rejects rather than replacing its row, and consumes no unit.
    */
   admit(params: AdmitParams): Promise<AdmitResult>;
   /** `admit`'s two limit checks without the insert: whether a unit is free right now, and if not,
@@ -86,6 +86,8 @@ export interface UsageStore {
   /** Deletes ledger rows whose `utc_day` is strictly before `beforeUtcDay` (an `'YYYY-MM-DD'`
    *  string, lexicographically comparable). Returns the number of rows deleted. */
   purgeLedger(beforeUtcDay: string): Promise<number>;
+  /** Releases the store's handle or client. Nothing is called on the store after it. */
+  close(): Promise<void>;
 }
 
 /** A device's lifetime totals row, as the operator's device export prints it. `lastCreditedDay` is
@@ -595,6 +597,9 @@ export class InMemoryUsageStore implements UsageStore, UsageRecordKeeping {
     this.lastCreditedDay.delete(deviceId);
     return { ledger, usage };
   }
+
+  /** Nothing to release. */
+  async close(): Promise<void> {}
 }
 
 /**
@@ -927,7 +932,7 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
   }
 
   /** Release the database handle. Required before re-opening the same file path. */
-  close(): void {
+  async close(): Promise<void> {
     this.db.close();
   }
 }

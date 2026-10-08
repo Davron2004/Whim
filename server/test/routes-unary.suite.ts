@@ -125,6 +125,9 @@ class RecordingUsageStore implements UsageStore {
   purgeLedger(beforeUtcDay: string) {
     return this.inner.purgeLedger(beforeUtcDay);
   }
+  close() {
+    return this.inner.close();
+  }
 }
 
 /** A `UsageAndCostTransport` double keyed by generation id — resolves instantly, so the resolver's
@@ -182,6 +185,7 @@ function creditThrowingStore(): CreditThrowingStore {
     listUnresolvedCostRows: (query) => inner.listUnresolvedCostRows(query),
     summary: (params) => inner.summary(params),
     purgeLedger: (beforeUtcDay) => inner.purgeLedger(beforeUtcDay),
+    close: () => inner.close(),
   };
   return { store, admitted, settles };
 }
@@ -215,6 +219,7 @@ function reportInsertFailureStore(): {
     listUnresolvedCostRows: (query) => inner.listUnresolvedCostRows(query),
     summary: (params) => inner.summary(params),
     purgeLedger: (beforeUtcDay) => inner.purgeLedger(beforeUtcDay),
+    close: () => inner.close(),
   };
   const reports = new InMemoryReportStore();
   const reportStore: ReportStore = {
@@ -222,6 +227,7 @@ function reportInsertFailureStore(): {
     list: (params) => reports.list(params),
     get: (reportId) => reports.get(reportId),
     purgeOlderThan: (beforeMs) => reports.purgeOlderThan(beforeMs),
+    close: () => reports.close(),
   };
   return { usageStore, reportStore, admitted, settles };
 }
@@ -254,6 +260,7 @@ function reportOkSettlementFailureStore(): {
     listUnresolvedCostRows: (query) => inner.listUnresolvedCostRows(query),
     summary: (params) => inner.summary(params),
     purgeLedger: (beforeUtcDay) => inner.purgeLedger(beforeUtcDay),
+    close: () => inner.close(),
   };
   return { usageStore, reportStore: new InMemoryReportStore(), settles };
 }

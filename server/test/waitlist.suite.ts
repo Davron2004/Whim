@@ -34,14 +34,14 @@ interface StoreUnderTest {
   readonly store: WaitlistStore;
 }
 
-function eachStore(label: string, body: (subject: StoreUnderTest) => void): void {
-  body({ label: `${label} (in-memory)`, store: new InMemoryWaitlistStore() });
+async function eachStore(label: string, body: (subject: StoreUnderTest) => Promise<void>): Promise<void> {
+  await body({ label: `${label} (in-memory)`, store: new InMemoryWaitlistStore() });
   const dir = tempDir(label);
   const store = new NodeSqliteWaitlistStore(path.join(dir, 'waitlist.db'));
   try {
-    body({ label: `${label} (sqlite)`, store });
+    await body({ label: `${label} (sqlite)`, store });
   } finally {
-    store.close();
+    await store.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
@@ -50,66 +50,66 @@ function signup(email: string, platform: WaitlistPlatform, now: number, updatesO
   return { email, platform, updatesOptOut, noticeId: 'beta-1', now };
 }
 
-function storeTests(): void {
+async function storeTests(): Promise<void> {
   section('Waitlist store: one row per person, normalized');
 
-  eachStore('round trip', ({ label, store }) => {
-    eq(`${label}: a first signup is stored`, store.upsert(signup('  Person@Example.COM ', 'android', T0)), 'stored');
-    eq(`${label}: it reads back normalized, with every column`, store.export(), [
+  await eachStore('round trip', async ({ label, store }) => {
+    eq(`${label}: a first signup is stored`, await store.upsert(signup('  Person@Example.COM ', 'android', T0)), 'stored');
+    eq(`${label}: it reads back normalized, with every column`, await store.export(), [
       { email: 'person@example.com', platform: 'android', updatesOptOut: false, noticeId: 'beta-1', createdAt: T0, updatedAt: T0 },
     ]);
   });
 
-  eachStore('repeat signup', ({ label, store }) => {
-    store.upsert(signup('A@Example.com ', 'ios', T0));
+  await eachStore('repeat signup', async ({ label, store }) => {
+    await store.upsert(signup('A@Example.com ', 'ios', T0));
     const later = T0 + 3 * DAY_MS;
-    eq(`${label}: the same person in another casing updates`, store.upsert({ ...signup('a@example.com', 'android', later, true), noticeId: 'beta-2' }), 'updated');
-    eq(`${label}: one row, the new answers and notice, the first signup's created_at`, store.export(), [
+    eq(`${label}: the same person in another casing updates`, await store.upsert({ ...signup('a@example.com', 'android', later, true), noticeId: 'beta-2' }), 'updated');
+    eq(`${label}: one row, the new answers and notice, the first signup's created_at`, await store.export(), [
       { email: 'a@example.com', platform: 'android', updatesOptOut: true, noticeId: 'beta-2', createdAt: T0, updatedAt: later },
     ]);
   });
 
   section('Waitlist store: export filters');
 
-  eachStore('filters', ({ label, store }) => {
-    store.upsert(signup('ios-ok@example.com', 'ios', T0));
-    store.upsert(signup('android-ok@example.com', 'android', T0 + 1));
-    store.upsert(signup('android-out@example.com', 'android', T0 + 2, true));
-    store.upsert(signup('other-out@example.com', 'other', T0 + 3, true));
-    const emails = (filter?: Parameters<WaitlistStore['export']>[0]): string[] => store.export(filter).map((row) => row.email);
-    eq(`${label}: no filter lists everyone, oldest signup first`, emails(), [
+  await eachStore('filters', async ({ label, store }) => {
+    await store.upsert(signup('ios-ok@example.com', 'ios', T0));
+    await store.upsert(signup('android-ok@example.com', 'android', T0 + 1));
+    await store.upsert(signup('android-out@example.com', 'android', T0 + 2, true));
+    await store.upsert(signup('other-out@example.com', 'other', T0 + 3, true));
+    const emails = async (filter?: Parameters<WaitlistStore['export']>[0]): Promise<string[]> => (await store.export(filter)).map((row) => row.email);
+    eq(`${label}: no filter lists everyone, oldest signup first`, await emails(), [
       'ios-ok@example.com',
       'android-ok@example.com',
       'android-out@example.com',
       'other-out@example.com',
     ]);
-    eq(`${label}: --platform android lists exactly the Android rows`, emails({ platform: 'android' }), ['android-ok@example.com', 'android-out@example.com']);
-    eq(`${label}: updates-ok drops everyone who opted out`, emails({ updatesOk: true }), ['ios-ok@example.com', 'android-ok@example.com']);
-    eq(`${label}: both filters together`, emails({ platform: 'android', updatesOk: true }), ['android-ok@example.com']);
+    eq(`${label}: --platform android lists exactly the Android rows`, await emails({ platform: 'android' }), ['android-ok@example.com', 'android-out@example.com']);
+    eq(`${label}: updates-ok drops everyone who opted out`, await emails({ updatesOk: true }), ['ios-ok@example.com', 'android-ok@example.com']);
+    eq(`${label}: both filters together`, await emails({ platform: 'android', updatesOk: true }), ['android-ok@example.com']);
   });
 
   section('Waitlist store: removal in any casing');
 
-  eachStore('removal', ({ label, store }) => {
-    store.upsert(signup('leave@example.com', 'ios', T0));
-    store.upsert(signup('stay@example.com', 'ios', T0));
-    check(`${label}: removing in another casing finds the row`, store.remove('  LEAVE@Example.com'));
-    eq(`${label}: a later export omits it and keeps the rest`, store.export().map((row) => row.email), ['stay@example.com']);
-    check(`${label}: removing again finds nothing`, !store.remove('leave@example.com'));
+  await eachStore('removal', async ({ label, store }) => {
+    await store.upsert(signup('leave@example.com', 'ios', T0));
+    await store.upsert(signup('stay@example.com', 'ios', T0));
+    check(`${label}: removing in another casing finds the row`, await store.remove('  LEAVE@Example.com'));
+    eq(`${label}: a later export omits it and keeps the rest`, (await store.export()).map((row) => row.email), ['stay@example.com']);
+    check(`${label}: removing again finds nothing`, !(await store.remove('leave@example.com')));
   });
 
   section(`Waitlist store: rows go ${WAITLIST_RETENTION_DAYS} days after updated_at`);
 
-  eachStore('purge', ({ label, store }) => {
+  await eachStore('purge', async ({ label, store }) => {
     const now = T0 + 1000 * DAY_MS;
     const cutoff = now - WAITLIST_RETENTION_DAYS * DAY_MS;
-    store.upsert(signup('at-cutoff@example.com', 'ios', cutoff));
-    store.upsert(signup('past-cutoff@example.com', 'ios', cutoff - 1));
+    await store.upsert(signup('at-cutoff@example.com', 'ios', cutoff));
+    await store.upsert(signup('past-cutoff@example.com', 'ios', cutoff - 1));
     // Signed up long before the cutoff, answered again after it: updated_at, not created_at, counts.
-    store.upsert(signup('renewed@example.com', 'android', cutoff - 200 * DAY_MS));
-    store.upsert(signup('renewed@example.com', 'android', cutoff + DAY_MS));
-    eq(`${label}: the purge deletes exactly the row older than the cutoff`, store.purge(now), 1);
-    eq(`${label}: the row at the cutoff and the renewed row remain`, store.export().map((row) => row.email).sort((a, b) => a.localeCompare(b)), [
+    await store.upsert(signup('renewed@example.com', 'android', cutoff - 200 * DAY_MS));
+    await store.upsert(signup('renewed@example.com', 'android', cutoff + DAY_MS));
+    eq(`${label}: the purge deletes exactly the row older than the cutoff`, await store.purge(now), 1);
+    eq(`${label}: the row at the cutoff and the renewed row remain`, (await store.export()).map((row) => row.email).sort((a, b) => a.localeCompare(b)), [
       'at-cutoff@example.com',
       'renewed@example.com',
     ]);
@@ -121,11 +121,11 @@ function storeTests(): void {
   try {
     const file = path.join(dir, 'waitlist.db');
     const first = new NodeSqliteWaitlistStore(file);
-    first.upsert(signup('kept@example.com', 'other', T0, true));
-    first.close();
+    await first.upsert(signup('kept@example.com', 'other', T0, true));
+    await first.close();
     const reopened = new NodeSqliteWaitlistStore(file);
-    eq('a row survives closing and reopening the file', reopened.export().map((row) => [row.email, row.updatesOptOut]), [['kept@example.com', true]]);
-    reopened.close();
+    eq('a row survives closing and reopening the file', (await reopened.export()).map((row) => [row.email, row.updatesOptOut]), [['kept@example.com', true]]);
+    await reopened.close();
     const raw = new DatabaseSync(file);
     eq('the file is in WAL mode', (raw.prepare('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode, 'wal');
     raw.close();
@@ -176,34 +176,34 @@ function csvRows(stdout: string): string[] {
   return stdout.trimEnd().split('\n');
 }
 
-function commandTests(): void {
+async function commandTests(): Promise<void> {
   section('Waitlist command: export and remove');
 
   const store = new InMemoryWaitlistStore();
-  store.upsert(signup('droid@example.com', 'android', T0));
-  store.upsert(signup('apple@example.com', 'ios', T0 + 1));
-  store.upsert(signup('quiet-droid@example.com', 'android', T0 + 2, true));
+  await store.upsert(signup('droid@example.com', 'android', T0));
+  await store.upsert(signup('apple@example.com', 'ios', T0 + 1));
+  await store.upsert(signup('quiet-droid@example.com', 'android', T0 + 2, true));
 
-  const android = runWaitlistCli(['export', '--platform', 'android'], store);
+  const android = await runWaitlistCli(['export', '--platform', 'android'], store);
   eq('export --platform android exits 0', android.exitCode, 0);
   eq('  ... printing a header and exactly the Android rows', csvRows(android.stdout), [
     'email,platform,updates_opt_out,created_at,updated_at',
     `droid@example.com,android,false,${new Date(T0).toISOString()},${new Date(T0).toISOString()}`,
     `quiet-droid@example.com,android,true,${new Date(T0 + 2).toISOString()},${new Date(T0 + 2).toISOString()}`,
   ]);
-  eq('export --updates-ok leaves out whoever opted out', csvRows(runWaitlistCli(['export', '--updates-ok'], store).stdout).slice(1).map((line) => line.split(',')[0]), [
+  eq('export --updates-ok leaves out whoever opted out', csvRows((await runWaitlistCli(['export', '--updates-ok'], store)).stdout).slice(1).map((line) => line.split(',')[0]), [
     'droid@example.com',
     'apple@example.com',
   ]);
 
-  const removed = runWaitlistCli(['remove', 'Apple@EXAMPLE.com'], store);
+  const removed = await runWaitlistCli(['remove', 'Apple@EXAMPLE.com'], store);
   eq('remove in another casing exits 0', removed.exitCode, 0);
-  check('  ... and a later export omits that person', !runWaitlistCli(['export'], store).stdout.includes('apple@example.com'));
-  const missing = runWaitlistCli(['remove', 'apple@example.com'], store);
+  check('  ... and a later export omits that person', !(await runWaitlistCli(['export'], store)).stdout.includes('apple@example.com'));
+  const missing = await runWaitlistCli(['remove', 'apple@example.com'], store);
   check('removing someone not on the list exits 1, saying so on stderr', missing.exitCode === 1 && missing.stderr.includes('not on the list'), missing.stderr);
 
   for (const argv of [[], ['list'], ['export', '--platform', 'windows'], ['export', '--platform'], ['export', '--all'], ['remove'], ['remove', 'a@example.com', 'b@example.com']]) {
-    const result = runWaitlistCli(argv, store);
+    const result = await runWaitlistCli(argv, store);
     check(`${JSON.stringify(argv)} is a usage error: exit 2, usage on stderr, nothing on stdout`, result.exitCode === 2 && result.stderr.includes('usage:') && result.stdout === '', JSON.stringify(result));
   }
 
@@ -212,12 +212,12 @@ function commandTests(): void {
   const dir = tempDir('cli');
   try {
     const seeded = new NodeSqliteWaitlistStore(path.join(dir, 'waitlist.db'));
-    seeded.upsert(signup('droid@example.com', 'android', T0));
-    seeded.upsert(signup('apple@example.com', 'ios', T0 + 1));
-    seeded.close();
+    await seeded.upsert(signup('droid@example.com', 'android', T0));
+    await seeded.upsert(signup('apple@example.com', 'ios', T0 + 1));
+    await seeded.close();
     const env = { WHIM_DATA_DIR: dir };
 
-    eq('waitlistMain exports the Android rows from the file', csvRows(waitlistMain(['export', '--platform', 'android'], env).stdout).slice(1).map((line) => line.split(',')[0]), ['droid@example.com']);
+    eq('waitlistMain exports the Android rows from the file', csvRows((await waitlistMain(['export', '--platform', 'android'], env)).stdout).slice(1).map((line) => line.split(',')[0]), ['droid@example.com']);
 
     const runner = path.join(process.cwd(), 'server', 'waitlist.mjs');
     const run = (args: readonly string[]) => spawnSync(process.execPath, [runner, ...args], { encoding: 'utf8', timeout: 60_000, env: { ...process.env, ...env } });
@@ -233,8 +233,8 @@ function commandTests(): void {
   }
 }
 
-export function runWaitlistTests(): void {
-  storeTests();
+export async function runWaitlistTests(): Promise<void> {
+  await storeTests();
   limiterTests();
-  commandTests();
+  await commandTests();
 }
