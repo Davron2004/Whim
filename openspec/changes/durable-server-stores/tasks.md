@@ -6,11 +6,11 @@
 
 ## 2. Async store ports, backend config and factory
 
-- [ ] 2.1 Make `WaitlistStore` asynchronous (every method returns a `Promise`). Update `InMemoryWaitlistStore`, `NodeSqliteWaitlistStore`, `routes/beta-signup.ts`, `waitlist/cli.ts` (`runWaitlistCli`, `waitlistMain`), `scheduleWaitlistPurge` and the waitlist suites to await it, with no behaviour change.
-- [ ] 2.2 Add `close(): Promise<void>` to `UsageStore`, `ReportStore` and `WaitlistStore`, and implement it on every existing class. Retype `Opened` (`lifecycle.ts`) and `scheduleCostSweep` to the interfaces instead of the `NodeSqlite*` classes.
-- [ ] 2.3 Parse `WHIM_STORE_BACKEND` (`sqlite` default | `firestore`) and `WHIM_FIRESTORE_DATABASE` (default `(default)`) in `server/src/config.ts`. Any other backend value fails config, naming the variable and both allowed values, with a test.
-- [ ] 2.4 Add `openStores(config, deps)`, which returns `{ usage, reports, waitlist, close }` and is the only production constructor of store classes. Make the boot `stores` step async on it, and switch `admin/main.ts` and `waitlistMain` to it. The `firestore` branch calls an injected opener that this chain leaves throwing "not built".
-- [ ] 2.5 Add `server/test/store-conformance.suite.ts`, parametrized by a backend factory. It covers every case listed in `specs/server-storage-backends` "Every backend honours the same store contracts", runs against the in-memory and SQLite backends in `npm run server:test`, and exports the case list for the Firestore entry.
+- [x] 2.1 Make `WaitlistStore` asynchronous (every method returns a `Promise`). Update `InMemoryWaitlistStore`, `NodeSqliteWaitlistStore`, `routes/beta-signup.ts`, `waitlist/cli.ts` (`runWaitlistCli`, `waitlistMain`), `scheduleWaitlistPurge` and the waitlist suites to await it, with no behaviour change.
+- [x] 2.2 Add `close(): Promise<void>` to `UsageStore`, `ReportStore` and `WaitlistStore`, and implement it on every existing class. Retype `Opened` (`lifecycle.ts`) and `scheduleCostSweep` to the interfaces instead of the `NodeSqlite*` classes.
+- [x] 2.3 Parse `WHIM_STORE_BACKEND` (`sqlite` default | `firestore`) and `WHIM_FIRESTORE_DATABASE` (default `(default)`) in `server/src/config.ts`. Any other backend value fails config, naming the variable and both allowed values, with a test.
+- [x] 2.4 Add `openStores(config, deps)`, which returns `{ usage, reports, waitlist, close }` and is the only production constructor of store classes. Make the boot `stores` step async on it, and switch `admin/main.ts` and `waitlistMain` to it. The `firestore` branch calls an injected opener that this chain leaves throwing "not built".
+- [x] 2.5 Add `server/test/store-conformance.suite.ts`, parametrized by a backend factory. It covers every case listed in `specs/server-storage-backends` "Every backend honours the same store contracts", runs against the in-memory and SQLite backends in `npm run server:test`, and exports the case list for the Firestore entry.
 
 ## 3. Firestore stores: waitlist, reports, factory branch
 
