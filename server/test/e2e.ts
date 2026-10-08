@@ -19,6 +19,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { build } from 'esbuild';
+import { devBundleExternals } from '../build.mjs';
 import { check, eq, report, section } from './harness';
 import { ScriptedModelClient } from './scripted-model';
 import { E2E_ROSTER, heldRunTurns, MOUNT_HANG } from './e2e-fixtures';
@@ -434,7 +435,7 @@ async function spawnDrainServer(dataDir: string): Promise<DrainServer> {
     platform: 'node',
     format: 'esm',
     target: 'node22',
-    external: ['esbuild', 'playwright', 'typescript', 'pino'],
+    external: devBundleExternals(path.join(ROOT, 'server')),
     logLevel: 'warning',
   });
 

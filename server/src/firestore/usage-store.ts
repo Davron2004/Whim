@@ -17,6 +17,7 @@
  * Every document id built from a caller's key goes through `firestoreKey`, which leaves UUIDs as
  * they are and percent-encodes anything a document id cannot hold.
  */
+import { randomUUID } from 'node:crypto';
 import {
   FieldValue,
   type CollectionReference,
@@ -84,6 +85,8 @@ export interface RequestDoc {
   costState: CostState;
   generationIds: string[] | null;
   refunded: boolean;
+  /** Set by the `admit` call that created the row, one value per call; absent on an imported row. */
+  admissionId?: string;
 }
 
 /** A device's lifetime totals document. */
@@ -91,13 +94,24 @@ interface UsageDoc extends Usage {
   lastCreditedDay: string;
 }
 
+/** The document id of the empty key. An encoded key holds `%` only before two hex digits, so no
+ *  other key maps here. */
+const EMPTY_KEY = '%';
+
 /**
  * `key` as a document id: ASCII letters, digits and `-` stay, every other character becomes the
- * `%XX` escapes of its UTF-8 bytes. So a UUID is its own id, while `/`, `.`, `..` and `__x__` can
- * never reach Firestore's path rules. `decodeURIComponent` reverses it.
+ * `%XX` escapes of its UTF-8 bytes, and the empty key, which no document id can be, is `%`. So a
+ * UUID is its own id, while `''`, `/`, `.`, `..` and `__x__` can never reach Firestore's path rules.
+ * `fromFirestoreKey` reverses it.
  */
 export function firestoreKey(key: string): string {
+  if (key === '') return EMPTY_KEY;
   return encodeURIComponent(key).replace(/[_.!~*'()]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+/** The key `firestoreKey` encoded as `id`. */
+function fromFirestoreKey(id: string): string {
+  return id === EMPTY_KEY ? '' : decodeURIComponent(id);
 }
 
 /** The id of the counter of `deviceId`'s non-refunded `kind` rows on `utcDay`. */
@@ -122,7 +136,7 @@ function idsOf(raw: unknown): readonly string[] {
 function toLedgerRow(snapshot: DocumentSnapshot): LedgerRow {
   const doc = snapshot.data() as RequestDoc;
   return {
-    id: decodeURIComponent(snapshot.id),
+    id: fromFirestoreKey(snapshot.id),
     deviceId: doc.deviceId,
     kind: doc.kind,
     utcDay: doc.utcDay,
@@ -237,9 +251,16 @@ export class FirestoreUsageStore implements UsageStore, UsageRecordKeeping {
     const { requestId, deviceId, kind, now } = params;
     const counters = this.limitCounters(params);
     const ref = this.request(requestId);
+    // Identifies the row this call writes across the client's retries of its transaction; a second
+    // call with the same parameters is a reuse, not a retry.
+    const admissionId = randomUUID();
     return this.db.runTransaction(
       async (tx): Promise<AdmitResult> => {
         const [existing, ...snapshots] = await tx.getAll(ref, ...counters);
+        // The client retries a commit whose reply was lost (DEADLINE_EXCEEDED, UNAVAILABLE, ...) even
+        // when it landed. That retry finds this call's own row, already counted: it is the same
+        // admission, so it answers as the first attempt did, before the limits its own unit now fills.
+        if (existing.exists && existing.get('admissionId') === admissionId) return { ok: true, requestId };
         const refused = FirestoreUsageStore.refusal(params, snapshots);
         if (refused) return refused;
         // As in the SQLite store, a reused id is rejected after the limit checks; nothing is written.
@@ -258,6 +279,7 @@ export class FirestoreUsageStore implements UsageStore, UsageRecordKeeping {
           costState: 'pending',
           generationIds: null,
           refunded: false,
+          admissionId,
         };
         tx.create(ref, row);
         this.shiftCounters(tx, row, 1);

@@ -56,25 +56,17 @@ only while `WHIM_MAX_BODY_BYTES_REPORT` (default 512 KiB) does.
 ## Factory (`server/src/stores.ts`)
 
 ```ts
-export type FirestoreUsageOpener = (db: Firestore, root: FirestoreRoot, config: StoreConfig) => UsageStore & UsageRecordKeeping;
-/** TODAY: throws 'WHIM_STORE_BACKEND=firestore: the firestore usage store is not built'. */
-export const openFirestoreUsageStore: FirestoreUsageOpener;
 export interface FirestoreStoresOptions extends FirestoreClientOptions {
   readonly root?: (db: Firestore) => FirestoreRoot;      // default: the database root
-  readonly openUsage?: FirestoreUsageOpener;             // default: openFirestoreUsageStore
 }
 export function createFirestoreStoresOpener(options?: FirestoreStoresOptions): FirestoreStoresOpener;
 export const openFirestoreStores: FirestoreStoresOpener = createFirestoreStoresOpener();
 ```
 
-Opener order: `openFirestoreClient` (probe) → reports → waitlist → `openUsage(db, root, config)`.
+Opener order: `openFirestoreClient` (probe) → reports → waitlist →
+`new FirestoreUsageStore(db, root, { now: config.now })`.
 A throw after the probe terminates the client and rejects. `close()` = `closeAll([reports,
 waitlist, usage])`, then `db.terminate()`.
-
-**Usage slot — what chain-3 replaces:** the body of `openFirestoreUsageStore` (return
-`new FirestoreUsageStore(db, root, { now: config.now, usageIdleDays: config.usageIdleDays })` or
-equivalent). Until then a `firestore` boot passes its probe and then refuses at `stores` with the
-"not built" message, so no half-working server starts.
 
 ## Boot log (`lifecycle.ts`, `stores` step)
 
@@ -86,16 +78,13 @@ until a firestore boot can succeed; chain-3 adds that assertion.
 ## Conformance entry
 
 - `server/test/firestore.run.mjs` bundles `server/test/firestore-conformance.ts` (externals
-  `typescript`, `esbuild`, `pino`, `@google-cloud/firestore`), keeps the emulator-host refusal and a
+  `devBundleExternals()`, see Runners), keeps the emulator-host refusal and a
   30 s ref'd run watchdog, and ends with `process.exit(0)` (the unreachable case leaves a retrying
   client). Raise the watchdog if the usage races need it; each case also has its 20 s timeout.
 - Isolation: per open, `root = db.collection('conformance').doc(\`${RUN_ID}-${++opens}\`)`
-  (`RUN_ID` = `randomUUID()` per run), passed as `createFirestoreStoresOpener({ root, openUsage })`
+  (`RUN_ID` = `randomUUID()` per run), passed as `createFirestoreStoresOpener({ root })`
   through `openStores(..., { openFirestore })`. Never clear the emulator.
-- Today `openUsage` returns `InMemoryUsageStore({ now: config.now })` and the run uses
-  `REPORT_AND_WAITLIST_CASES` (exported by `store-conformance.suite.ts`: reportListing,
-  waitlistRows, waitlistConcurrentSignups, deviceRecords, retention). **Chain-3:** drop the
-  `openUsage` override from `namespacedOpener` and run `STORE_CONFORMANCE_CASES` (now 14 cases).
+- The run calls `runStoreConformance` (exported by `store-conformance.suite.ts`) with that opener.
 - Firestore-only checks in the entry: persistence across clients, the document model above,
   `deleteInBatches` across several batches, and an unreachable emulator host (env swapped around the
   synchronous start of `openStores`) rejecting within `probeTimeoutMs + 2 s`.
@@ -105,6 +94,7 @@ until a firestore boot can succeed; chain-3 adds that assertion.
 
 ## Runners
 
-`@google-cloud/firestore` is external in `server/dev.mjs`, `server/test/run.mjs`,
-`server/test/e2e.run.mjs`; `server/build.mjs`, `admin.mjs`, `waitlist.mjs` take it from
-`server/package.json` already.
+`server/build.mjs` exports `declaredRuntimePackages(serverDir?)` (`server/package.json` dependencies
+minus `@whim/*`) and `devBundleExternals(serverDir?)` (`node:*` + those + `esbuild`, `playwright`,
+`typescript`). Every esbuild bundle under `server/` takes its externals from one of them;
+`prod-build.suite.ts` fails any `build({ bundle: true })` there whose externals miss a declared package.

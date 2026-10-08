@@ -13,6 +13,7 @@ import { build } from 'esbuild';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { devBundleExternals } from '../build.mjs';
 
 if (!process.env.FIRESTORE_EMULATOR_HOST) {
   console.error('stores:firestore:test FAILED — FIRESTORE_EMULATOR_HOST is unset; run via the npm script.');
@@ -40,8 +41,8 @@ await build({
   target: 'node22',
   logLevel: 'warning',
   // As in `server/test/e2e.run.mjs` (the firestore boot case reaches `synthrun/` through
-  // `lifecycle.ts`): these load files relative to their own package at run time.
-  external: ['typescript', 'esbuild', 'playwright', 'pino', '@google-cloud/firestore'],
+  // `lifecycle.ts`): the declared runtime packages and the tool packages (`server/build.mjs`).
+  external: devBundleExternals(path.join(here, '..')),
 });
 
 process.env.WHIM_LOG_JSON = '1';

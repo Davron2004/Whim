@@ -12,6 +12,7 @@ import { build } from 'esbuild';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { declaredRuntimePackages } from './build.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const entry = path.join(here, 'src', 'waitlist', 'cli.ts');
@@ -19,9 +20,6 @@ const outfile = path.join(here, `.waitlist-cli.${process.pid}.tmp.mjs`);
 
 // The server's declared runtime packages stay external, as in the production bundle
 // (`server/build.mjs`): pino and @google-cloud/firestore are CJS that cannot bundle into ESM.
-const runtimePackages = Object.keys(JSON.parse(fs.readFileSync(path.join(here, 'package.json'), 'utf8')).dependencies)
-  .filter((name) => !name.startsWith('@whim/'));
-
 await build({
   entryPoints: [entry],
   outfile,
@@ -29,7 +27,7 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node22',
-  external: ['node:*', ...runtimePackages],
+  external: ['node:*', ...declaredRuntimePackages(here)],
   logLevel: 'warning',
 });
 

@@ -480,6 +480,56 @@ const retention: StoreConformanceCase = {
   },
 };
 
+/** Plain `<` order, which is how SQLite compares text; `localeCompare` would put `_` before `.`. */
+function codeUnitOrder(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+const tiesInCodeUnitOrder: StoreConformanceCase = {
+  name: 'rows that tie on time are ordered by id or email in code-unit order, as SQLite orders text',
+  async run(stores) {
+    const { usage, reports, waitlist } = stores;
+    await waitlist.upsert(signup('a_b@x.com', 'ios', T0));
+    await waitlist.upsert(signup('a.b@x.com', 'ios', T0));
+    nodeAssert.deepStrictEqual((await waitlist.export()).map((row) => row.email), ['a.b@x.com', 'a_b@x.com'], 'the waitlist export');
+
+    await usage.admit(admitParams('r_1', 'dev-t'));
+    await usage.admit(admitParams('r.1', 'dev-t'));
+    nodeAssert.deepStrictEqual(await ledgerIds(stores, 'dev-t'), ['r.1', 'r_1'], 'a device\'s ledger rows');
+
+    const ids: string[] = [];
+    for (let i = 0; i < 6; i++) ids.push(await reports.insert(report('dev-t', T0)));
+    const ascending = [...ids].sort(codeUnitOrder);
+    nodeAssert.deepStrictEqual((await reports.list({ now: T0 })).map((item) => item.reportId), [...ascending].reverse(), 'the newest-first report list');
+    nodeAssert.deepStrictEqual((await reports.listByDevice('dev-t')).map((row) => row.reportId), ascending, 'a device\'s reports');
+  },
+};
+
+const unstorableIds: StoreConformanceCase = {
+  name: 'an id no document can be named by reads as not found, and the empty id is a key like any other',
+  async run({ usage, reports, waitlist }) {
+    for (const id of ['', 'a/b', 'a/b/c', '.', '..', '__x__']) {
+      nodeAssert.strictEqual(await reports.get(id), undefined, `reports.get(${JSON.stringify(id)})`);
+    }
+    nodeAssert.deepStrictEqual(await reports.listByDevice(''), []);
+    nodeAssert.strictEqual(await reports.deleteByDevice(''), 0);
+    nodeAssert.strictEqual(await waitlist.remove(''), false);
+    nodeAssert.deepStrictEqual(await usage.read(''), { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+    nodeAssert.deepStrictEqual(await usage.deviceRecords(''), { ledger: [], usage: null });
+    nodeAssert.deepStrictEqual(await usage.deleteDeviceRecords(''), { ledger: 0, usage: 0 });
+    await usage.refund('');
+    await usage.settle('', { outcome: 'delivered', now: T0 });
+    await usage.recordCost('', { state: 'pending', generationIds: ['gen-1'] });
+
+    nodeAssert.deepStrictEqual(await usage.admit(admitParams('', '')), { ok: true, requestId: '' });
+    await usage.credit('', { promptTokens: 1, completionTokens: 1, totalTokens: 2 });
+    const records = await usage.deviceRecords('');
+    nodeAssert.deepStrictEqual([records.ledger.map((row) => [row.id, row.deviceId]), records.usage?.deviceId, records.usage?.totalTokens], [[['', '']], '', 2]);
+    nodeAssert.deepStrictEqual(await usage.deleteDeviceRecords(''), { ledger: 1, usage: 1 });
+  },
+};
+
 /** Every case the spec's conformance requirement lists, in run order. */
 export const STORE_CONFORMANCE_CASES: readonly StoreConformanceCase[] = [
   admissionLimits,
@@ -497,6 +547,8 @@ export const STORE_CONFORMANCE_CASES: readonly StoreConformanceCase[] = [
   deviceRecords,
   deviceDeleteReleasesUnits,
   retention,
+  tiesInCodeUnitOrder,
+  unstorableIds,
 ];
 
 function messageOf(err: unknown): string {

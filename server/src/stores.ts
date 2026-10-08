@@ -41,17 +41,9 @@ export interface OpenStoresDeps {
   readonly openFirestore?: FirestoreStoresOpener;
 }
 
-/** Builds the `firestore` backend's usage store on the opened client, under `root`. */
-export type FirestoreUsageOpener = (db: Firestore, root: FirestoreRoot, config: StoreConfig) => UsageStore & UsageRecordKeeping;
-
-/** The `firestore` backend's usage store, on the store clock. */
-export const openFirestoreUsageStore: FirestoreUsageOpener = (db, root, config) => new FirestoreUsageStore(db, root, { now: config.now });
-
 export interface FirestoreStoresOptions extends FirestoreClientOptions {
   /** Where the stores' collections live. Defaults to the database root. */
   readonly root?: (db: Firestore) => FirestoreRoot;
-  /** Defaults to `openFirestoreUsageStore`. */
-  readonly openUsage?: FirestoreUsageOpener;
 }
 
 /**
@@ -95,7 +87,7 @@ export function createFirestoreStoresOpener(options: FirestoreStoresOptions = {}
       const inFlight = new Set<Promise<void>>();
       const reports = trackInFlight(new FirestoreReportStore(db, root), inFlight);
       const waitlist = trackInFlight(new FirestoreWaitlistStore(db, root), inFlight);
-      const usage = trackInFlight((options.openUsage ?? openFirestoreUsageStore)(db, root, config), inFlight);
+      const usage = trackInFlight(new FirestoreUsageStore(db, root, { now: config.now }), inFlight);
       return {
         usage,
         reports,

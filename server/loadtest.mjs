@@ -14,6 +14,7 @@ import { build } from 'esbuild';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { devBundleExternals } from './build.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const entry = path.join(here, 'src', 'loadtest', 'drive.ts');
@@ -26,6 +27,7 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node22',
+  external: devBundleExternals(here),
   logLevel: 'warning',
 });
 

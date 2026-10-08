@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import type { CollectionReference, DocumentSnapshot, Firestore, Query } from '@google-cloud/firestore';
 import { deleteInBatches, type FirestoreRoot } from './client';
 import {
+  byReportId,
   toListItem,
   type InsertReportParams,
   type ListReportsParams,
@@ -38,6 +39,12 @@ function fromSnapshot(snapshot: DocumentSnapshot): ReportRow {
     prompt: doc.prompt,
     source: doc.source,
   };
+}
+
+/** Whether `id` can name a document of one collection: Firestore refuses an empty id, `.`, `..` and
+ *  `__x__`, and reads `/` as a path. No report can be stored under any other id. */
+function isDocumentId(id: string): boolean {
+  return id !== '' && !id.includes('/') && id !== '.' && id !== '..' && !/^__.*__$/.test(id);
 }
 
 export class FirestoreReportStore implements ReportStore, ReportRecordKeeping {
@@ -73,6 +80,7 @@ export class FirestoreReportStore implements ReportStore, ReportRecordKeeping {
   }
 
   async get(reportId: string): Promise<ReportRow | undefined> {
+    if (!isDocumentId(reportId)) return undefined;
     const snapshot = await this.collection().doc(reportId).get();
     return snapshot.exists ? fromSnapshot(snapshot) : undefined;
   }
@@ -83,7 +91,7 @@ export class FirestoreReportStore implements ReportStore, ReportRecordKeeping {
 
   async listByDevice(deviceId: string): Promise<ReportRow[]> {
     const snapshot = await this.collection().where('deviceId', '==', deviceId).get();
-    return snapshot.docs.map(fromSnapshot).sort((a, b) => a.receivedAt - b.receivedAt || a.reportId.localeCompare(b.reportId));
+    return snapshot.docs.map(fromSnapshot).sort((a, b) => a.receivedAt - b.receivedAt || byReportId(a, b));
   }
 
   async deleteByDevice(deviceId: string): Promise<number> {

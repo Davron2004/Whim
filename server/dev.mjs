@@ -1,7 +1,8 @@
 /**
  * Dev runner for @whim/server. Mirrors the repo's esbuild-bundle-then-run idiom:
  * bundles src/main.ts → a temp ESM file, then imports it so the server starts.
- * Node built-ins (node:*, hono, @hono/node-server) are kept external.
+ * Node built-ins, the server's declared runtime packages and the tool packages are kept external
+ * (`devBundleExternals` in `server/build.mjs`, the one source every server bundle takes them from).
  *
  * `esbuild`/`playwright`/`typescript` are external for the same reason every other runner that
  * reaches `synthrun/` keeps them external (`synthrun/test/run.mjs`, `server/test/e2e.run.mjs`,
@@ -10,7 +11,7 @@
  * `chromium-bidi` paths esbuild cannot resolve statically, and the dependency graph reaches
  * `fsevents`' native `.node` binary, for which there is no loader. All three are real runtime
  * dependencies resolvable from node_modules, so leaving them external is correct, not a
- * workaround. Keep this list in step with `server/test/e2e.run.mjs` — it bundles the same graph.
+ * workaround.
  *
  *   npm run server:dev
  */
@@ -19,6 +20,7 @@ import { build } from 'esbuild';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { devBundleExternals } from './build.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const entry = path.join(here, 'src', 'main.ts');
@@ -31,10 +33,7 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node22',
-  // `pino` (src/logger.ts) is external for the same reason: bundling it throws `Dynamic require of
-  // "node:os" is not supported` at import time, and its pretty transport resolves its worker
-  // relative to its own package directory.
-  external: ['node:*', 'hono', '@hono/node-server', '@hono/*', 'esbuild', 'playwright', 'typescript', 'pino', '@google-cloud/firestore'],
+  external: devBundleExternals(here),
   logLevel: 'info',
 });
 
