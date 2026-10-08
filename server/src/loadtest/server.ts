@@ -86,16 +86,16 @@ function readPositiveIntEnv(env: NodeJS.ProcessEnv, name: string, fallback: numb
 }
 
 const zeroCostStatsTransport: UsageAndCostTransport = {
-  async fetchStats() {
-    return { usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, totalCostUsd: 0 };
+  fetchStats() {
+    return Promise.resolve({ usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, totalCostUsd: 0 });
   },
 };
 
 /** `limit_remaining: null` is `checkCredit`'s own "no limit" value (`admission/credit.ts`) — never
  *  refuses, and never touches `fetch` (the value is returned directly, not fetched). */
 const noLimitCreditTransport: CreditTransport = {
-  async lookupKey() {
-    return { status: 200, bodyText: JSON.stringify({ data: { limit_remaining: null } }) };
+  lookupKey() {
+    return Promise.resolve({ status: 200, bodyText: JSON.stringify({ data: { limit_remaining: null } }) });
   },
 };
 
@@ -113,10 +113,12 @@ function wrapWithLoadtestHealthz(app: AppInstance): Servable {
 function installFetchTrap(): { restore: () => void; count: () => number } {
   const original = globalThis.fetch;
   let count = 0;
-  const throwing: typeof fetch = (async (...args: Parameters<typeof fetch>) => {
+  const throwing: typeof fetch = ((...args: Parameters<typeof fetch>) => {
     count += 1;
-    throw new Error(
-      `the load-test server attempted a network fetch (call #${count}) — this must never happen (design D26). args: ${JSON.stringify(String(args[0]))}`,
+    return Promise.reject(
+      new Error(
+        `the load-test server attempted a network fetch (call #${count}) — this must never happen (design D26). args: ${JSON.stringify(String(args[0]))}`,
+      ),
     );
   }) as typeof fetch;
   Object.defineProperty(globalThis, 'fetch', { value: throwing, writable: true, configurable: true });
