@@ -412,6 +412,29 @@ const deviceRecords: StoreConformanceCase = {
   },
 };
 
+const deviceDeleteReleasesUnits: StoreConformanceCase = {
+  name: 'deleting a device\'s records frees the units its rows held, and no others',
+  async run({ usage }) {
+    const limits = { deviceLimit: 2, globalLimit: 3 };
+    await usage.admit(admitParams('a1', 'dev-a', limits));
+    await usage.admit(admitParams('a2', 'dev-a', limits));
+    await usage.admit(admitParams('b1', 'dev-b', limits));
+    await usage.refund('a1');
+    nodeAssert.strictEqual((await usage.admit(admitParams('a3', 'dev-a', limits))).ok, true, 'the refund freed one unit');
+    nodeAssert.deepStrictEqual(await usage.unitAvailable({ deviceId: 'dev-c', kind: 'generate', now: T0, ...limits }), { ok: false, reason: 'global', retryAfterSec: 12 * 3600 });
+
+    nodeAssert.deepStrictEqual(await usage.deleteDeviceRecords('dev-a'), { ledger: 3, usage: 0 });
+    // What is left to count is b1 alone: dev-a has no unit in use and the day has one.
+    nodeAssert.deepStrictEqual(await usage.unitAvailable({ deviceId: 'dev-a', kind: 'generate', now: T0, deviceLimit: 1, globalLimit: 2 }), { ok: true }, 'the deleted rows count toward neither limit');
+    nodeAssert.strictEqual((await usage.admit(admitParams('c1', 'dev-c', { deviceLimit: 5, globalLimit: 2 }))).ok, true);
+    nodeAssert.deepStrictEqual(
+      await usage.admit(admitParams('c2', 'dev-c', { deviceLimit: 5, globalLimit: 2 })),
+      { ok: false, reason: 'global', retryAfterSec: 12 * 3600 },
+      'the refunded row freed its unit once, at the refund, not again at the delete',
+    );
+  },
+};
+
 const retention: StoreConformanceCase = {
   name: 'each retention purge deletes strictly before its cutoff, admission counts with their day',
   async run(stores, clock) {
@@ -472,13 +495,9 @@ export const STORE_CONFORMANCE_CASES: readonly StoreConformanceCase[] = [
   waitlistRows,
   waitlistConcurrentSignups,
   deviceRecords,
+  deviceDeleteReleasesUnits,
   retention,
 ];
-
-/** The cases that exercise the report and waitlist stores. `deviceRecords` and `retention` also
- *  drive the usage store, so a backend that opens these with another backend's usage store tests
- *  only its own reports and waitlist. */
-export const REPORT_AND_WAITLIST_CASES: readonly StoreConformanceCase[] = [reportListing, waitlistRows, waitlistConcurrentSignups, deviceRecords, retention];
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

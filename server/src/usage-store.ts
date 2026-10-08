@@ -264,7 +264,7 @@ export interface UsageSummary {
 
 /** Rejects a settle whose failure reason is not a known code, or that names one for a successful
  *  outcome — the one check both stores run before writing, so the ledger never holds free text. */
-function assertFailureReason(params: SettleParams): void {
+export function assertFailureReason(params: SettleParams): void {
   const reason: unknown = params.failureReason;
   if (reason === undefined) return;
   if (typeof reason !== 'string' || !FAILURE_REASONS.has(reason)) {
@@ -298,13 +298,13 @@ const DAY_MS = 86_400_000;
 const PRE_LAST_CREDITED_KEEP_DAYS = keepLimit(MANIFESTS[1], 'usage-records')?.days ?? 0;
 
 /** Returns the request's UTC calendar day as `'YYYY-MM-DD'`. */
-function utcDayString(ms: number): string {
+export function utcDayString(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
 /** Whole seconds from `nowMs` to the next UTC midnight, never less than 1 (spec: "Retry-After
  *  SHALL be the whole number of seconds until the next 00:00 UTC, and at least 1"). */
-function secondsUntilNextUtcMidnight(nowMs: number): number {
+export function secondsUntilNextUtcMidnight(nowMs: number): number {
   const d = new Date(nowMs);
   const nextMidnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0, 0);
   return Math.max(1, Math.round((nextMidnight - nowMs) / 1000));
@@ -327,7 +327,7 @@ function percentile(sorted: readonly number[], p: number): number {
 
 /** Shared summary computation over a flat list of rows — used by both implementations so their
  *  `summary()` semantics can never drift apart. */
-function computeSummary(
+export function computeSummary(
   rows: readonly {
     deviceId: string;
     kind: RequestKind;
@@ -396,14 +396,14 @@ function computeSummary(
  *  implementation mirrors it in a single `WHERE` clause). `'pending'` accepts anything (including
  *  another `'pending'` write, which is how the resolver registers its generation ids before it has
  *  a verdict); `'unresolved'` accepts only the upgrade to `'resolved'`; `'resolved'` is final. */
-function costWriteLands(current: CostState, next: CostState): boolean {
+export function costWriteLands(current: CostState, next: CostState): boolean {
   if (current === 'pending') return true;
   return current === 'unresolved' && next === 'resolved';
 }
 
 /** `globalKinds` defaults to the admitted kind — and an EMPTY array means the same thing, never
  *  "count across nothing" (which SQLite would render as `kind IN ()`, a syntax error). */
-function effectiveGlobalKinds(kind: RequestKind, globalKinds: readonly RequestKind[] | undefined): readonly RequestKind[] {
+export function effectiveGlobalKinds(kind: RequestKind, globalKinds: readonly RequestKind[] | undefined): readonly RequestKind[] {
   return globalKinds && globalKinds.length > 0 ? globalKinds : [kind];
 }
 
