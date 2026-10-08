@@ -10,8 +10,10 @@
 # the VM deploy. Two services: whim-server (the API host) and whim-site (Caddy serving the rendered
 # pages). Both run as the whim-run service account, which can read the OpenRouter secret and use
 # Firestore. The server keeps usage, reports and waitlist rows in the project's Firestore database
-# (WHIM_STORE_BACKEND=firestore). WHIM_STORE_BACKEND=sqlite in the environment deploys the server on
-# SQLite stores under /tmp instead, which last only as long as the instance (the rollback).
+# (WHIM_STORE_BACKEND=firestore), and the whim-purge job, run hourly by Cloud Scheduler, deletes the
+# ones past their keep period. WHIM_STORE_BACKEND=sqlite in the environment deploys the server on
+# SQLite stores under /tmp instead, which last only as long as the instance (the rollback); it makes
+# no Firestore or Scheduler call and leaves an existing purge job as it was.
 set -euo pipefail
 
 WHIM_SCRIPT=cloudrun/deploy.sh
@@ -22,17 +24,27 @@ WHIM_USAGE='usage: deploy/cloudrun/deploy.sh [--tag <full git commit sha>] [--si
 readonly RUN_SERVER_SERVICE=whim-server
 readonly RUN_SITE_SERVICE=whim-site
 readonly RUN_SERVICE_ACCOUNT_NAME=whim-run
+# The retention purges as a Cloud Run Job, run hourly by a Cloud Scheduler job, so records go on
+# time while the scaled-to-zero server has no instance to run its own hourly purge.
+readonly RUN_PURGE_JOB=whim-purge
+readonly RUN_PURGE_SCHEDULE=whim-purge-hourly
 # The server's drain must finish inside Cloud Run's 10 s SIGTERM grace. Cloud Run only stops an idle
 # instance, so there is normally nothing to drain.
 readonly RUN_SERVER_DRAIN_MS=8000
 # The server's default WHIM_FIRESTORE_DATABASE, so the server env does not set it.
 readonly RUN_FIRESTORE_DATABASE='(default)'
+# How long a deploy waits for a composite index that is still building (another deploy's, or one
+# an interrupted deploy left): RUN_INDEX_WAIT_POLLS lists, RUN_INDEX_WAIT_SECONDS apart (20 minutes).
+readonly RUN_INDEX_WAIT_POLLS=60
+readonly RUN_INDEX_WAIT_SECONDS=20
 # Reads deploy/firestore/indexes.json (argv[1]) and gcloud's JSON list of the database's composite
-# indexes (argv[2]); prints one tab-separated line of `gcloud firestore indexes composite create`
-# arguments per wanted index the database lacks. Indexes match on collection group, query scope and
-# fields in order; the API appends __name__ to a listed index's fields, so a trailing __name__ is
-# ignored on both sides.
-readonly MISSING_INDEXES_JS='const indexFile = process.argv[1];
+# indexes (argv[2]); prints one tab-separated line per wanted index that is not READY:
+#   create<TAB><`gcloud firestore indexes composite create` arguments, tab-separated>   none listed
+#   building<TAB><index>                                                                CREATING
+#   broken<TAB><index><TAB><state>                                                      any other state
+# Indexes match on collection group, query scope and fields in order; the API appends __name__ to a
+# listed index's fields, so a trailing __name__ is ignored on both sides.
+readonly INDEX_PLAN_JS='const indexFile = process.argv[1];
 const fs = require("node:fs");
 const wanted = JSON.parse(fs.readFileSync(indexFile, "utf8")).indexes || [];
 const listed = JSON.parse(fs.readFileSync(process.argv[2], "utf8") || "[]");
@@ -43,13 +55,26 @@ const fieldConfig = (field) => {
 };
 const fieldsOf = (fields) => fields.filter((field, i) => !(field.fieldPath === "__name__" && i === fields.length - 1));
 const key = (group, scope, fields) => [group, scope || "COLLECTION", ...fieldsOf(fields).map(fieldConfig)].join(" ");
-const present = new Set(listed.map((index) => key((/\/collectionGroups\/([^/]+)\//.exec(index.name) || [])[1], index.queryScope, index.fields)));
+const states = new Map();
+for (const index of listed) {
+  const k = key((/\/collectionGroups\/([^/]+)\//.exec(index.name) || [])[1], index.queryScope, index.fields);
+  states.set(k, [...(states.get(k) || []), index.state || "STATE_UNSPECIFIED"]);
+}
 for (const index of wanted) {
-  if (present.has(key(index.collectionGroup, index.queryScope, index.fields))) continue;
-  const scope = (index.queryScope || "COLLECTION").toLowerCase().replace(/_/g, "-");
-  const args = ["--collection-group=" + index.collectionGroup, "--query-scope=" + scope];
-  for (const field of fieldsOf(index.fields)) args.push("--field-config=" + fieldConfig(field));
-  console.log(args.join("\t"));
+  const k = key(index.collectionGroup, index.queryScope, index.fields);
+  const found = states.get(k) || [];
+  if (found.includes("READY")) continue;
+  const label = index.collectionGroup + " (" + fieldsOf(index.fields).map(fieldConfig).join(" ") + ")";
+  if (found.includes("CREATING")) {
+    console.log(["building", label].join("\t"));
+  } else if (found.length > 0) {
+    console.log(["broken", label, found.join(",")].join("\t"));
+  } else {
+    const scope = (index.queryScope || "COLLECTION").toLowerCase().replace(/_/g, "-");
+    const args = ["create", "--collection-group=" + index.collectionGroup, "--query-scope=" + scope];
+    for (const field of fieldsOf(index.fields)) args.push("--field-config=" + fieldConfig(field));
+    console.log(args.join("\t"));
+  }
 }'
 
 tag=""
@@ -104,25 +129,79 @@ yaml_line() {
   printf "%s: '%s'\n" "$1" "${2//\'/\'\'}"
 }
 
-# Creates each composite index in deploy/firestore/indexes.json that the database lacks. An existing
-# index is never changed or deleted. gcloud waits for each new index to finish building, so the
-# server never runs a query its index does not serve yet.
-apply_firestore_indexes() {
-  local listed="$stage/firestore-indexes.json" missing
-  local -a create_args
+# Prints the index plan (INDEX_PLAN_JS) for the database as it is now.
+firestore_index_plan() {
+  local listed="$stage/firestore-indexes.json"
   whim_gcloud firestore indexes composite list --database="$RUN_FIRESTORE_DATABASE" --format=json >"$listed" \
     || whim_fail "could not list the Firestore indexes. The server was not deployed."
-  missing="$(node -e "$MISSING_INDEXES_JS" "$WHIM_DEPLOY_DIR/firestore/indexes.json" "$listed")" \
+  node -e "$INDEX_PLAN_JS" "$WHIM_DEPLOY_DIR/firestore/indexes.json" "$listed" \
     || whim_fail "could not compare deploy/firestore/indexes.json with the database's indexes. The server was not deployed."
-  if [ -z "$missing" ]; then
-    echo "firestore indexes: all present"
+}
+
+# Makes every composite index in deploy/firestore/indexes.json READY before the server deploys. A
+# missing index is created, and gcloud waits for it to build. One still building is waited for, up to
+# 20 minutes. One in any other state (NEEDS_REPAIR) stops the deploy, naming it. An existing index is
+# never changed or deleted.
+apply_firestore_indexes() {
+  local plan kind index state polls=0 building broken
+  local -a create_args
+  plan="$(firestore_index_plan)"
+  while :; do
+    building="" broken=""
+    while IFS=$'\t' read -r kind index state; do
+      case "$kind" in
+        building) building="${building:+$building, }$index" ;;
+        broken) broken="${broken:+$broken, }$index is $state" ;;
+      esac
+    done <<<"$plan"
+    [ -z "$broken" ] || whim_fail "Firestore index $broken, not READY. Repair or delete it in the console, then deploy again. The server was not deployed."
+    [ -n "$building" ] || break
+    [ "$polls" -lt "$RUN_INDEX_WAIT_POLLS" ] \
+      || whim_fail "Firestore index $building is still building after $((RUN_INDEX_WAIT_POLLS * RUN_INDEX_WAIT_SECONDS / 60)) minutes. Deploy again once it is READY. The server was not deployed."
+    echo "firestore indexes: waiting for $building to finish building"
+    sleep "$RUN_INDEX_WAIT_SECONDS"
+    polls=$((polls + 1))
+    plan="$(firestore_index_plan)"
+  done
+  if [ -z "$plan" ]; then
+    echo "firestore indexes: all ready"
     return 0
   fi
   while IFS=$'\t' read -r -a create_args; do
+    create_args=("${create_args[@]:1}")
     echo "==> firestore index ${create_args[*]}"
     whim_gcloud firestore indexes composite create --database="$RUN_FIRESTORE_DATABASE" "${create_args[@]}" --quiet \
       || whim_fail "creating a Firestore index failed. The server was not deployed."
-  done <<<"$missing"
+  done <<<"$plan"
+}
+
+# Points the purge job at the server's image, environment and secret (the image runs with
+# NODE_ENV=production, whose config needs them) and lets the scheduler's service account run it,
+# then creates or updates the hourly trigger. Every call is create-or-update, so a rerun is a no-op.
+deploy_purge_job() {
+  local image="$1" env_file="$2" schedule_verb=create
+  local run_uri="https://run.googleapis.com/v2/projects/$WHIM_GCP_PROJECT/locations/$WHIM_RUN_REGION/jobs/$RUN_PURGE_JOB:run"
+  echo "==> cloud run job $RUN_PURGE_JOB"
+  whim_gcloud run jobs deploy "$RUN_PURGE_JOB" --region "$WHIM_RUN_REGION" --image "$image" \
+    --command node --args=--enable-source-maps,server/whim-admin.mjs,purge \
+    --cpu 1 --memory 512Mi --tasks 1 --max-retries 1 --task-timeout 10m \
+    --service-account "$service_account" \
+    --env-vars-file "$env_file" --set-secrets "OPENROUTER_API_KEY=$WHIM_OPENROUTER_SECRET_ID:latest" --quiet \
+    || whim_fail "deploying the purge job failed. The server is deployed; deploy again to retry the job."
+  whim_gcloud run jobs add-iam-policy-binding "$RUN_PURGE_JOB" --region "$WHIM_RUN_REGION" \
+    --member "serviceAccount:$service_account" --role roles/run.invoker --quiet >/dev/null \
+    || whim_fail "granting $service_account run.invoker on the purge job failed. The server is deployed; deploy again to retry."
+  whim_gcloud services enable cloudscheduler.googleapis.com --quiet \
+    || whim_fail "enabling Cloud Scheduler failed. The server and the purge job are deployed; deploy again to retry the schedule."
+  if whim_gcloud scheduler jobs describe "$RUN_PURGE_SCHEDULE" --location "$WHIM_RUN_REGION" >/dev/null 2>&1; then
+    schedule_verb=update
+  fi
+  echo "==> cloud scheduler $RUN_PURGE_SCHEDULE ($schedule_verb)"
+  whim_gcloud scheduler jobs "$schedule_verb" http "$RUN_PURGE_SCHEDULE" --location "$WHIM_RUN_REGION" \
+    --schedule "0 * * * *" --time-zone Etc/UTC --uri "$run_uri" --http-method POST \
+    --oauth-service-account-email "$service_account" \
+    --oauth-token-scope https://www.googleapis.com/auth/cloud-platform --quiet \
+    || whim_fail "the purge job's hourly schedule failed. The server and the purge job are deployed; deploy again to retry the schedule."
 }
 
 deploy_server() {
@@ -157,6 +236,7 @@ deploy_server() {
     --min-instances 0 --max-instances 1 --concurrency 40 --timeout 900 \
     --service-account "$service_account" --allow-unauthenticated \
     --env-vars-file "$env_file" --set-secrets "OPENROUTER_API_KEY=$WHIM_OPENROUTER_SECRET_ID:latest" --quiet
+  [ "$store_backend" != firestore ] || deploy_purge_job "$image" "$env_file"
 }
 
 deploy_site() {

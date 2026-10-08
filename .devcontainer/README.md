@@ -32,8 +32,10 @@ that the no-prompt finding exposed as illusory is **gone**.
 
 Node 22 · the repo's `node_modules` (incl. workspaces `contract`, `server`) ·
 Playwright Chromium (in `/ms-playwright`, outside `node_modules`) · `git` · the
-Claude Code CLI. **No** Android SDK / JDK / emulator — the loop never builds the
-device app. `openspec` and `playwright` come from `node_modules` (both are repo
+Claude Code CLI · Temurin 21's JRE and the Firestore emulator JAR (in
+`/opt/firebase-emulators`, `FIREBASE_EMULATORS_PATH`), fetched at image build so
+gate-full's `firestore-stores` step needs no egress. **No** Android SDK / Android
+emulator — the loop never builds the device app. `openspec` and `playwright` come from `node_modules` (both are repo
 devDependencies); nothing is globally installed beyond the Claude CLI.
 
 ## Two ways to run

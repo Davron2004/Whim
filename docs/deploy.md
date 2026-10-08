@@ -26,7 +26,9 @@ isn't the project's owner. Values load as for the VM (`deploy/defaults.env`, the
 | `whim-site` | the pages host | Caddy with the rendered site and `deploy/cloudrun/Caddyfile` baked in (`deploy/cloudrun/site.Dockerfile`), 0–2 instances |
 
 Both run as service account `whim-run`, which holds only `secretmanager.secretAccessor` on
-`whim-openrouter-api-key`, `logging.logWriter` and `datastore.user` (the Firestore stores below). The OpenRouter key reaches the server as a
+`whim-openrouter-api-key`, `logging.logWriter` and `datastore.user` (the Firestore stores below),
+plus `run.invoker` on the `whim-purge` job, so Cloud Scheduler can start it as `whim-run` (section
+"Firestore stores"). The OpenRouter key reaches the server as a
 Cloud Run secret env var (`latest` version); adding a secret version takes effect on the next deploy.
 
 What changed from the VM, and what it costs:
@@ -60,7 +62,9 @@ The server's stores live in the project's Firestore database `(default)` (Native
 free tier, delete protection on). `WHIM_FIRESTORE_DATABASE` names another database; production
 leaves it unset. Before each server deploy, `deploy/cloudrun/deploy.sh` lists the database's
 composite indexes and creates each one in `deploy/firestore/indexes.json` that is missing, waiting
-for it to build. It never changes or deletes an existing index. An index the stores need but the
+for it to build. Only a `READY` index counts as present. One still `CREATING` (another deploy's, or
+one an interrupted deploy left) is waited for, up to 20 minutes; one in any other state
+(`NEEDS_REPAIR`) stops the deploy, naming it. It never changes or deletes an existing index. An index the stores need but the
 file lacks fails only in production, so a new store query needs its entry in that file
 (`server/test/firestore-index-coverage.ts` checks the queries the conformance suite sends).
 
@@ -82,28 +86,67 @@ write to production: `reports purge` and `remove` delete for real.
 
 **Importing a SQLite data directory.** `whim-admin import-sqlite` copies every waitlist row, report,
 lifetime usage counter and ledger request from a directory holding `usage.db`, `reports.db` and
-`waitlist.db`, keeping ids and timestamps, and rebuilds the admission counters for the imported
-days. It prints a count per store. Rerunning it changes nothing. Run it while no server admits
-requests against the database (right after a deploy, before traffic, is fine at beta volume):
+`waitlist.db`, keeping ids and timestamps, and rebuilds the admission counters for the ledger days
+inside retention. It never overwrites a document: a missing one is created, one already equal to
+the SQLite row counts as imported, and one that differs is kept as found and left alone. The one
+exception is a waitlist row, whose `createdAt` becomes the earlier of the two. A device with a live
+`usage` document keeps its live totals; the SQLite lifetime totals are not added in, because
+summing would double-count on every rerun. It prints five lines, and a rerun prints the same five:
+
+```
+waitlist: N imported, M kept as found
+reports: N imported, M kept as found
+usage: N imported, M kept as found
+requests: N imported, M kept as found
+admission counters: N set for D ledger day(s) inside retention
+```
+
+It refuses a `usage.db` that predates the `last_credited_day` column (the column is missing, or a
+row holds NULL) before it opens Firestore. Start the server once on that directory with
+`WHIM_STORE_BACKEND=sqlite` to migrate it, then import.
+
+Run the import **before** the first Firestore deploy. It needs only Firestore and your
+Application Default Credentials, not the new server, so no live traffic overlaps it and nothing
+lands as kept as found:
 
 ```sh
 WHIM_STORE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=anycognition-whim \
-  node server/admin.mjs import-sqlite --data-dir ~/.config/whim/vm-backup-2026-10-07
+  node server/admin.mjs import-sqlite --data-dir <extracted-backup-dir>
 ```
 
 Then check the counts: `node server/waitlist.mjs export | tail -n +2 | wc -l` and
 `node server/admin.mjs reports list` with the same two variables set.
 
+**Retention purges.** The keep periods are reports 90 days (`WHIM_REPORT_RETENTION_DAYS`), ledger
+90 days (`WHIM_LEDGER_RETENTION_DAYS`), lifetime usage 365 days idle (`WHIM_USAGE_IDLE_DAYS`) and
+waitlist 730 days after the last signup. The server purges at boot and hourly while it runs, but a
+scaled-to-zero service has no instance most of the time, and its CPU is throttled between
+requests. So every Firestore deploy also creates or updates the Cloud Run Job `whim-purge` (the
+server's image, environment and secret, as `whim-run`, 1 vCPU / 512 MiB, one retry) and the Cloud
+Scheduler job `whim-purge-hourly` in `WHIM_RUN_REGION`, which runs it at the top of every hour (UTC)
+through `run.googleapis.com/v2/.../jobs/whim-purge:run` with a `whim-run` OAuth token. The job runs
+`node server/whim-admin.mjs purge`: the same four purges at the same cut-offs, one line per store
+(`reports: N purged`, `ledger: …`, `usage: …`, `waitlist: …`), exit 1 when any failed. A record
+can outlive its keep period by up to an hour, as with the in-process hourly purge. Both fit inside
+the free tiers (3 Scheduler jobs per billing account; seconds of CPU per run).
+
+```sh
+gcloud run jobs executions list --job whim-purge --region us-east4 --limit 5   # recent runs
+gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="whim-purge"' --limit 20 --freshness 1d
+gcloud run jobs execute whim-purge --region us-east4 --wait                    # run it now
+WHIM_STORE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=anycognition-whim node server/admin.mjs purge   # or from the laptop
+```
+
 **Rolling back to SQLite.** `WHIM_STORE_BACKEND=sqlite deploy/cloudrun/deploy.sh --tag <sha>`
 deploys the server with its stores under `/tmp/whim-data` again: everything lasts only as long as
 the instance, the daily ceilings reset with it, and the OpenRouter key's provider-side credit
-limit is the only spend bound that survives a restart. The deploy makes no Firestore call, so the
-data there stays as it was; the next plain deploy goes back to it.
+limit is the only spend bound that survives a restart. The deploy makes no Firestore or Scheduler
+call, so the data there stays as it was, and the purge job, if one exists, keeps purging it
+hourly; the next plain deploy goes back to it.
 
 **Deletion.** SQLite's `secure_delete` overwrote purged pages. Firestore has no equivalent: a
 deleted document leaves Google's storage on Google's standard deletion timeline, and with PITR off
-old versions are kept for 1 hour. The retention purges still delete on schedule, so the keep
-periods the privacy policy publishes hold.
+old versions are kept for 1 hour.
 
 ### Domains
 

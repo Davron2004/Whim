@@ -16,9 +16,10 @@
  *   usage [--days N] [--top N] [--json]
  *   device export <id>
  *   device delete <id>
+ *   purge                            (`main.ts` routes it to `runPurge`)
  *   import-sqlite --data-dir <dir>   (`main.ts` routes it to `runImportSqlite`)
  *
- * `list`/`show`/`usage`/`device export` never call a mutating store method — only `purge` and
+ * `list`/`show`/`usage`/`device export` never call a mutating store method — only the purges and
  * `device delete` do. Device ids and the records they key appear only in this module's returned
  * text (the operator's own terminal), never through `log`.
  *
@@ -27,7 +28,7 @@
  * operator can export and delete one phone ID's records"). Both succeed, empty, for an unknown id. A
  * record type later keyed by device id joins both here.
  */
-import type { ReportRecordKeeping, ReportRow, ReportStore } from '../reports/store';
+import { reportPurgeCutoff, type ReportRecordKeeping, type ReportRow, type ReportStore } from '../reports/store';
 import type { DeviceUsageRecords, UsageRecordKeeping, UsageStore } from '../usage-store';
 
 export interface AdminCliDeps {
@@ -54,6 +55,7 @@ const USAGE_TEXT =
   '  usage [--days N] [--top N] [--json]\n' +
   '  device export <id>\n' +
   '  device delete <id>\n' +
+  '  purge\n' +
   '  import-sqlite --data-dir <dir>\n';
 
 /** Everything `device export` prints: every server record keyed by one device id. */
@@ -174,8 +176,7 @@ async function showReport(deps: AdminCliDeps, reportId: string | undefined, json
 }
 
 async function purgeReports(deps: AdminCliDeps): Promise<AdminCliResult> {
-  const cutoffMs = deps.now() - deps.reportRetentionDays * 86_400_000;
-  const deleted = await deps.reportStore.purgeOlderThan(cutoffMs);
+  const deleted = await deps.reportStore.purgeOlderThan(reportPurgeCutoff(deps.now(), deps.reportRetentionDays));
   return { exitCode: 0, output: `purged ${deleted} report(s)\n` };
 }
 

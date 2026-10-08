@@ -96,6 +96,12 @@ export interface PurgeSchedule {
   stop(): void;
 }
 
+/** The `receivedAt` the reports purge keeps from: `retentionDays` before `now`. The scheduled purge,
+ *  `reports purge` and `whim-admin purge` all cut here. */
+export function reportPurgeCutoff(now: number, retentionDays: number): number {
+  return now - retentionDays * 86_400_000;
+}
+
 /** Runs a purge immediately, then every `intervalMs` on an unref'd timer, for the process's
  *  lifetime — the timer never keeps the process alive on its own (composition calls `stop()` on
  *  shutdown, but exit does not depend on it). Errors from a scheduled purge are never thrown into
@@ -105,8 +111,7 @@ export function schedulePurge(store: ReportStore, options: PurgeScheduleOptions)
   const intervalMs = options.intervalMs ?? 3_600_000;
 
   const runOnce = (): void => {
-    const cutoffMs = now() - options.retentionDays * 86_400_000;
-    store.purgeOlderThan(cutoffMs)
+    store.purgeOlderThan(reportPurgeCutoff(now(), options.retentionDays))
       .catch(() => {
         // Swallowed deliberately: a failed scheduled purge must not crash the process or stop
         // future ticks. The operator's `reports purge` subcommand surfaces a failure explicitly.

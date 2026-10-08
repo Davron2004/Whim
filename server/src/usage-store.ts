@@ -1042,6 +1042,18 @@ export interface UsagePurgeOptions {
   onTick?: () => void;
 }
 
+/** The UTC days the usage purges keep from: ledger rows from an earlier day and lifetime rows last
+ *  credited on an earlier day go. The scheduled purge and `whim-admin purge` both cut here. */
+export function usagePurgeCutoffs(
+  now: number,
+  periods: Pick<UsagePurgeOptions, 'ledgerRetentionDays' | 'usageIdleDays'>,
+): { ledgerBeforeUtcDay: string; idleBeforeUtcDay: string } {
+  return {
+    ledgerBeforeUtcDay: utcDayString(now - periods.ledgerRetentionDays * DAY_MS),
+    idleBeforeUtcDay: utcDayString(now - periods.usageIdleDays * DAY_MS),
+  };
+}
+
 /** The usage database's keep-periods (design D7; legal-surface-v2 D9): at once, then every
  *  `intervalMs` on an unref'd timer, delete the ledger rows past their retention and the lifetime
  *  rows idle past the idle period. A failed purge goes to `onError`, never into the timer. */
@@ -1058,12 +1070,12 @@ export function scheduleUsagePurge(
     }
   };
   const runOnce = (): void => {
-    const now = options.now();
+    const { ledgerBeforeUtcDay, idleBeforeUtcDay } = usagePurgeCutoffs(options.now(), options);
     const ledger = store
-      .purgeLedger(utcDayString(now - options.ledgerRetentionDays * DAY_MS))
+      .purgeLedger(ledgerBeforeUtcDay)
       .catch((err: unknown) => reportPurgeFailure('ledger purge failed', err));
     const idle = store
-      .purgeIdleUsage(utcDayString(now - options.usageIdleDays * DAY_MS))
+      .purgeIdleUsage(idleBeforeUtcDay)
       .catch((err: unknown) => reportPurgeFailure('idle usage purge failed', err));
     Promise.all([ledger, idle])
       .then(() => options.onTick?.())
