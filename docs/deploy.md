@@ -26,16 +26,14 @@ isn't the project's owner. Values load as for the VM (`deploy/defaults.env`, the
 | `whim-site` | the pages host | Caddy with the rendered site and `deploy/cloudrun/Caddyfile` baked in (`deploy/cloudrun/site.Dockerfile`), 0–2 instances |
 
 Both run as service account `whim-run`, which holds only `secretmanager.secretAccessor` on
-`whim-openrouter-api-key` and `logging.logWriter`. The OpenRouter key reaches the server as a
+`whim-openrouter-api-key`, `logging.logWriter` and `datastore.user` (the Firestore stores below). The OpenRouter key reaches the server as a
 Cloud Run secret env var (`latest` version); adding a secret version takes effect on the next deploy.
 
 What changed from the VM, and what it costs:
 
-- **No durable state.** `WHIM_DATA_DIR` is `/tmp/whim-data`, in instance memory. The usage ledger,
-  reports and beta waitlist rows last only as long as the instance; the daily ceilings reset with
-  it. The cap of one instance keeps them one set of counters while it lives. The OpenRouter key's
-  provider-side credit limit is now the only spend bound that survives a restart. The VM's last
-  data (2026-10-07) is backed up off-cloud, outside the repo.
+- **State lives in Firestore.** `deploy/cloudrun/deploy.sh` sets `WHIM_STORE_BACKEND=firestore`, so
+  the usage ledger, reports, beta waitlist and daily admission counters survive restarts and
+  scale-to-zero (decision #73, section "Firestore stores" below). One instance stays the cap.
 - **Cold start.** An idle service has no instance. The first request waits for boot: Chromium
   launch plus the boot self-test, about 7–10 s. The app's 4 s `/health` probe can miss it once and
   report offline until its next probe.
@@ -53,8 +51,59 @@ What changed from the VM, and what it costs:
   saved queries and log-based alerts under Operating below filter on the Docker log id and need
   `resource.type="cloud_run_revision"` instead. `smoke.sh` checks VM specifics (static IP, the
   container, the metadata block) and doesn't apply.
-- **Admin commands** (`whim-admin`, `whim-waitlist`) have no shell to run in. Their data is
-  ephemeral anyway.
+- **Admin commands** (`whim-admin`, `whim-waitlist`) have no shell to run in. They run from your
+  laptop against Firestore instead (below).
+
+### Firestore stores
+
+The server's stores live in the project's Firestore database `(default)` (Native mode, Montreal,
+free tier, delete protection on). `WHIM_FIRESTORE_DATABASE` names another database; production
+leaves it unset. Before each server deploy, `deploy/cloudrun/deploy.sh` lists the database's
+composite indexes and creates each one in `deploy/firestore/indexes.json` that is missing, waiting
+for it to build. It never changes or deletes an existing index. An index the stores need but the
+file lacks fails only in production, so a new store query needs its entry in that file
+(`server/test/firestore-index-coverage.ts` checks the queries the conformance suite sends).
+
+**Operator commands from a laptop.** No HTTP route reads these records; the database's IAM is the
+access control. Log in once as the project owner, then run the same commands as on the VM through
+the dev runners:
+
+```sh
+gcloud auth application-default login            # as the project owner
+export WHIM_STORE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=anycognition-whim
+node server/admin.mjs reports list --since 7
+node server/admin.mjs usage --days 1
+node server/waitlist.mjs export --platform android > android.csv
+node server/waitlist.mjs remove someone@example.com
+```
+
+Output is the same as against SQLite (CSV columns, report fields, usage tables). These commands
+write to production: `reports purge` and `remove` delete for real.
+
+**Importing a SQLite data directory.** `whim-admin import-sqlite` copies every waitlist row, report,
+lifetime usage counter and ledger request from a directory holding `usage.db`, `reports.db` and
+`waitlist.db`, keeping ids and timestamps, and rebuilds the admission counters for the imported
+days. It prints a count per store. Rerunning it changes nothing. Run it while no server admits
+requests against the database (right after a deploy, before traffic, is fine at beta volume):
+
+```sh
+WHIM_STORE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=anycognition-whim \
+  node server/admin.mjs import-sqlite --data-dir ~/.config/whim/vm-backup-2026-10-07
+```
+
+Then check the counts: `node server/waitlist.mjs export | tail -n +2 | wc -l` and
+`node server/admin.mjs reports list` with the same two variables set.
+
+**Rolling back to SQLite.** `WHIM_STORE_BACKEND=sqlite deploy/cloudrun/deploy.sh --tag <sha>`
+deploys the server with its stores under `/tmp/whim-data` again: everything lasts only as long as
+the instance, the daily ceilings reset with it, and the OpenRouter key's provider-side credit
+limit is the only spend bound that survives a restart. The deploy makes no Firestore call, so the
+data there stays as it was; the next plain deploy goes back to it.
+
+**Deletion.** SQLite's `secure_delete` overwrote purged pages. Firestore has no equivalent: a
+deleted document leaves Google's storage on Google's standard deletion timeline, and with PITR off
+old versions are kept for 1 hour. The retention purges still delete on schedule, so the keep
+periods the privacy policy publishes hold.
 
 ### Domains
 
