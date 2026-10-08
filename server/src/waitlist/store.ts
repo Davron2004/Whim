@@ -113,7 +113,7 @@ export class InMemoryWaitlistStore implements WaitlistStore {
   }
 
   export(filter: WaitlistFilter = {}): Promise<WaitlistRow[]> {
-    return Promise.resolve([...this.rows.values()].filter((row) => matches(row, filter)).sort(byCreated).map((row) => ({ ...row })));
+    return settle(() => [...this.rows.values()].filter((row) => matches(row, filter)).sort(byCreated).map((row) => ({ ...row })));
   }
 
   remove(email: string): Promise<boolean> {
@@ -121,15 +121,17 @@ export class InMemoryWaitlistStore implements WaitlistStore {
   }
 
   purge(now: number): Promise<number> {
-    const cutoff = purgeCutoff(now);
-    let deleted = 0;
-    for (const [email, row] of this.rows) {
-      if (row.updatedAt < cutoff) {
-        this.rows.delete(email);
-        deleted++;
+    return settle(() => {
+      const cutoff = purgeCutoff(now);
+      let deleted = 0;
+      for (const [email, row] of this.rows) {
+        if (row.updatedAt < cutoff) {
+          this.rows.delete(email);
+          deleted++;
+        }
       }
-    }
-    return Promise.resolve(deleted);
+      return deleted;
+    });
   }
 
   /** Nothing to release. */

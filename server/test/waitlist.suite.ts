@@ -149,6 +149,20 @@ async function storeTests(): Promise<void> {
   } finally {
     fs.rmSync(failDir, { recursive: true, force: true });
   }
+
+  const memory = new InMemoryWaitlistStore();
+  await memory.upsert(signup('row@example.com', 'ios', T0));
+  for (const [label, run] of [
+    ['purge with a BigInt clock', () => memory.purge(1n as never)],
+    ['export with a null filter', () => memory.export(null as never)],
+  ] as const) {
+    let pending: Promise<unknown> | undefined;
+    const syncThrow = await caught(() => {
+      pending = run();
+    });
+    eq(`in-memory ${label} does not throw synchronously`, syncThrow, undefined);
+    check(`in-memory ${label} returns a rejected promise`, (await caught(() => pending as Promise<unknown> as Promise<void>)) !== undefined);
+  }
 }
 
 function limiterTests(): void {
