@@ -30,6 +30,7 @@
     "server:test": "node server/test/run.mjs",
     "server:e2e": "node server/test/e2e.run.mjs",
     "guard:metro": "node server/guard-metro.mjs",
+    "stores:firestore:test": "npx --ignore-scripts --package=firebase-tools@15.32.1 firebase emulators:exec --config server/test/firebase.json --only firestore --project demo-whim-conformance \"node server/test/firestore.run.mjs\"",
     "whim:logs": "node server/logs-tail.mjs"
   },
   "dependencies": {
@@ -68,6 +69,7 @@
     "esbuild": "^0.25.0",
     "eslint": "^8.19.0",
     "eslint-plugin-sonarjs": "^4.1.0",
+    "firebase-tools": "15.32.1",
     "jest": "^29.6.3",
     "knip": "^6.16.1",
     "metro-symbolicate": "0.84.4",
