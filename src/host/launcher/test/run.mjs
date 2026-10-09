@@ -37,6 +37,7 @@ await build({
     'react-native-worklets': path.join(here, 'native-reanimated.tsx'),
     'react-native-gesture-handler': path.join(here, 'native-gesture-handler.tsx'),
     'react-native-keyboard-controller': path.join(here, 'native-keyboard-controller.tsx'),
+    'react-native-screens': path.join(here, 'native-screens.tsx'),
     'react-native-mmkv': path.join(here, 'native-storage.ts'),
     '@op-engineering/op-sqlite': path.join(here, 'native-storage.ts'),
   },

@@ -4,7 +4,9 @@ export type ScreenKind =
   | 'app'
   | 'dev'
   | 'settings'
+  | 'advanced'
   | 'history'
+  | 'report'
   | 'link-missing'
   | 'update-required'
   | 'age'
@@ -22,7 +24,9 @@ export const SCREEN_EXITS: Readonly<Record<ScreenKind, { back: 'root' | 'mini-ap
   'app': { back: 'mini-app' },
   'dev': { back: 'mini-app' },
   'settings': { back: 'screen' },
+  'advanced': { back: 'screen' },
   'history': { back: 'screen' },
+  'report': { back: 'screen' },
   'link-missing': { back: 'screen' },
   'update-required': { back: 'screen' },
   'age': { back: 'screen' },
@@ -42,8 +46,10 @@ export const SCREEN_EXITS: Readonly<Record<ScreenKind, { back: 'root' | 'mini-ap
  * keeps its full-height frame and applies the bottom inset itself (the orb, its sheets); the
  * developer probe (`dev`) applies its own `SafeAreaView`. Every other kind gets both edges so an
  * in-flow control anchored to the bottom is never drawn under the home indicator or a navigation
- * bar.
+ * bar. A screen on the native stack (`NativeStack.tsx`) gets none: the stack lays its header out
+ * under the status bar itself, and each of its screens applies the edges its own header leaves.
  */
-export function frameEdgesFor(kind: ScreenKind): readonly ('top' | 'bottom')[] {
+export function frameEdgesFor(kind: ScreenKind, onNativeStack: boolean): readonly ('top' | 'bottom')[] {
+  if (onNativeStack) return [];
   return kind === 'app' || kind === 'dev' ? ['top'] : ['top', 'bottom'];
 }

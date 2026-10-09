@@ -104,7 +104,9 @@ export async function runLegalLanguageUiTests(h: Harness): Promise<void> {
       try {
         await reviewConsentFromSettings(restarted);
         h.ok(on(restarted, ConsentScreen) && consentIn(textOf(restarted.root), COPY, FR), 'the fr-CA phone still gets the consent screen in English');
-        h.eq(await opens(restarted, COPY.privacyPolicyLabel), [RELEASE.privacyPolicyUrl], 'and its privacy link opens /privacy');
+        const before = Linking.opened.length;
+        await press(restarted.root.findByType(ConsentScreen).find((node) => String(node.type) === 'TouchableOpacity' && textOf(node) === COPY.privacyPolicyLabel));
+        h.eq(Linking.opened.slice(before), [RELEASE.privacyPolicyUrl], 'and its privacy link opens /privacy');
       } finally {
         await unmountScreen(restarted);
       }

@@ -35,10 +35,12 @@ export function pinsFooter(footer: unknown): boolean {
 
 /** How far a keyboard `keyboardHeight` tall covers a frame whose bottom edge is at `frameBottom`, in a
  *  window `windowHeight` tall (both measured from the window's top): the padding that ends the
- *  frame's content above the keyboard. A worklet: frames run it on the UI thread every keyboard frame. */
+ *  frame's content above the keyboard. A frame never ends below the window: one measured while the
+ *  native stack was still sliding it in reads as reaching the window's bottom, so a keyboard that is
+ *  down covers nothing. A worklet: frames run it on the UI thread every keyboard frame. */
 export function keyboardOverlap(keyboardHeight: number, frameBottom: number, windowHeight: number): number {
   'worklet';
-  return Math.max(0, frameBottom - (windowHeight - keyboardHeight));
+  return Math.max(0, Math.min(frameBottom, windowHeight) - (windowHeight - keyboardHeight));
 }
 
 /** How far a focused field sits above the keyboard (and a pinned footer) once revealed: 16 pt

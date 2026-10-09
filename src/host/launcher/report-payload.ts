@@ -19,12 +19,13 @@ const MAX_APP_NAME_LENGTH = 200;
 /** Everything the report sheet holds before Send: a reason (`null` until chosen), the note as
  *  typed (unbounded here — the sheet's `maxLength` stops it at input time, task 5.2), the app's
  *  display name, and the prompt/source pulled from the version store alongside each field's
- *  prompt include-switch state (on by default). `prompt`/`source` are `undefined` exactly
- *  when the entry has none to offer — never a placeholder string. */
+ *  prompt include-switch state (on by default). `appName`/`prompt`/`source` are `undefined`
+ *  exactly when the entry has none to offer — never a placeholder string; a report started from
+ *  Settings is about no particular app and has none of the three. */
 export interface ReportDraft {
   readonly reason: ReportReason | null;
   readonly note: string;
-  readonly appName: string;
+  readonly appName?: string;
   readonly prompt?: string;
   readonly promptIncluded: boolean;
   readonly source?: string;
@@ -44,7 +45,7 @@ export function buildReportRequest(draft: ReportDraft): ReportRequest | null {
   return {
     reason: draft.reason,
     ...(note !== undefined ? { note } : {}),
-    appName: draft.appName.slice(0, MAX_APP_NAME_LENGTH),
+    ...(draft.appName !== undefined ? { appName: draft.appName.slice(0, MAX_APP_NAME_LENGTH) } : {}),
     ...(prompt !== undefined ? { prompt } : {}),
     ...(source !== undefined ? { source } : {}),
   };
@@ -67,7 +68,9 @@ export function reportPreview(request: ReportRequest): readonly ReportPreviewRow
   if (request.note !== undefined) {
     rows.push({ field: 'note', value: request.note });
   }
-  rows.push({ field: 'appName', value: request.appName ?? '' });
+  if (request.appName !== undefined) {
+    rows.push({ field: 'appName', value: request.appName });
+  }
   if (request.prompt !== undefined) {
     rows.push({ field: 'prompt', value: request.prompt });
   }
@@ -105,8 +108,10 @@ export function reportLogFields(request: ReportRequest, outcome: string): Report
 /** The draft every report entry point starts from (design D13): the app's display name
  *  (`InstalledApp.name`), the prompt behind its current version (`StoreAccess.activeDescription`),
  *  and its stored original source (`StoreAccess.activeSource`) — prompt included by default, no
- *  reason chosen yet. Opening the sheet sends nothing: this only reads. */
-export async function reportDraftFor(entry: InstalledApp, access: StoreAccess): Promise<ReportDraft> {
+ *  reason chosen yet. Opening the sheet sends nothing: this only reads. With no `entry` (Settings'
+ *  "Report a problem") the draft carries no app at all. */
+export async function reportDraftFor(entry: InstalledApp | null, access: StoreAccess): Promise<ReportDraft> {
+  if (entry === null) return { reason: null, note: '', promptIncluded: false };
   const [prompt, source] = await Promise.all([access.activeDescription(entry), access.activeSource(entry)]);
   return {
     reason: null,

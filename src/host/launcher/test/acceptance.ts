@@ -10,6 +10,7 @@
 import { Harness } from './harness';
 import { runLauncherInteractionTests } from './launcher-interactions.suite';
 import { runScreenControlTests } from './screen-controls.suite';
+import { runNativeStackUiTests } from './native-stack-ui.suite';
 import { runSettingsScreenTests } from './settings-screen.suite';
 import { runBackPolicyTests } from './back-policy.suite';
 import { runAppIndexTests } from './app-index.suite';
@@ -148,6 +149,7 @@ await runErrorReasonTests(h);
 await runReportSendTests(h);
 await runScreenExitsTests(h);
 await runScreenControlTests(h);
+await runNativeStackUiTests(h);
 await runLauncherInteractionTests(h);
 await runSchemeHostTests(h);
 await runPromptFlowUiTests(h);
