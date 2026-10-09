@@ -4,11 +4,11 @@
  *
  * One keyboard model on every platform:
  * - A frame (a screen, or a sheet's card) pads its own bottom by the keyboard's overlap with it,
- *   measured from the top of the window, wherever the OS doesn't resize the window for the keyboard: iOS,
- *   and Android 15 and later, which draws an app that targets API 35 or later (Whim does) edge to
- *   edge. Android before 15 resizes the window (`adjustResize`, `AndroidManifest.xml`), so a screen
- *   pads nothing there. A sheet's window is drawn under the system bars on every Android version (so
- *   its dim covers them), and such a window never resizes, so a sheet always pads.
+ *   measured from the top of the window. No window resizes for the keyboard: iOS never does, and on
+ *   Android Whim draws edge to edge on every version (`edgeToEdgeEnabled` in
+ *   `android/gradle.properties`; 15+ would force it anyway), which leaves the keyboard to the app.
+ *   Were a window resized after all, the frame would end above the keyboard, so its overlap and
+ *   padding would be 0: nothing is ever lifted twice.
  * - No scroll view insets itself by the keyboard: the padding already ends it above the keyboard and
  *   the pinned footer, and an inset as well would count the keyboard twice.
  * - When the visible part of the scroll view or its content changes while a field in it is focused,
@@ -18,18 +18,9 @@
 
 import { SELECTION_HIGHLIGHT, SHELL_PALETTE } from './theme';
 
-/** Who pads for the keyboard: a whole screen, or the sheet (`SheetModal`) a shell sits in. */
+/** Who pads for the keyboard: a whole screen, or the sheet (`SheetModal`) a shell sits in, which
+ *  pads for the shell inside it. */
 export type KeyboardShellHost = 'screen' | 'sheet';
-
-/** The platform a frame renders on, as React Native's `Platform` reports it: `Version` is the API
- *  level on Android and a version string on iOS. */
-export interface KeyboardPlatform {
-  readonly OS: string;
-  readonly Version: string | number;
-}
-
-/** Android 15: from this API level an app targeting it draws edge to edge. */
-const ANDROID_EDGE_TO_EDGE_API = 35;
 
 /** The keyboard events a frame places itself by (`moved`, carrying the keyboard's frame) and resets
  *  on (`hidden`). iOS reports every change of the keyboard's frame before it happens: showing,
@@ -45,17 +36,6 @@ export type KeyboardEventName = 'keyboardWillChangeFrame' | 'keyboardWillHide' |
 /** Whether a footer slot holds anything to pin: React renders nothing for these values. */
 export function pinsFooter(footer: unknown): boolean {
   return footer !== undefined && footer !== null && typeof footer !== 'boolean' && footer !== '';
-}
-
-/** Whether the OS itself resizes the app's window when the keyboard opens: only Android before 15. */
-export function windowResizesForKeyboard(platform: KeyboardPlatform): boolean {
-  return platform.OS === 'android' && Number(platform.Version) < ANDROID_EDGE_TO_EDGE_API;
-}
-
-/** Whether a frame of `host` pads itself by the keyboard. Where the window resizes, padding as well
- *  would lift everything twice. */
-export function padsForKeyboard(platform: KeyboardPlatform, host: KeyboardShellHost): boolean {
-  return host === 'sheet' || !windowResizesForKeyboard(platform);
 }
 
 /** How far the keyboard, whose top edge is at `keyboardTop`, covers a frame whose bottom edge is at

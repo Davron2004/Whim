@@ -1,8 +1,8 @@
 /** The keyboard never hides the field or the action it belongs to (app-launcher "Text input never
  *  hides the content or action it belongs to", beta-1 D3): every launcher screen and sheet with a
  *  text field, rendered on each platform, for how its keyboard comes up and goes away. Android is
- *  rendered both before 15, where the window resizes for the keyboard, and from 15, where the app is
- *  drawn edge to edge and nothing resizes. Native geometry is played in through the host views'
+ *  rendered before 15 and from 15: the app is drawn edge to edge on both, so no window resizes for
+ *  the keyboard and every frame lifts itself. Native geometry is played in through the host views'
  *  measurements: a frame's place in the window, and a field's place in its scroll content. */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
@@ -53,14 +53,12 @@ const flat = (node: Node) => StyleSheet.flatten(node.props.style) as Record<stri
 
 interface Device { readonly name: string; readonly os: 'ios' | 'android'; readonly version: string | number }
 const IOS: Device = { name: 'iOS', os: 'ios', version: '26.0' };
-/** Android 14: `adjustResize` still resizes the window. */
+/** Android 14, which draws edge to edge only because Whim asks it to (`edgeToEdgeEnabled`). */
 const ANDROID_14: Device = { name: 'Android 14', os: 'android', version: 34 };
-/** Android 15 and the acceptance emulator's Android 17: drawn edge to edge, nothing resizes. */
+/** Android 15 and the acceptance emulator's Android 17, which force edge to edge. */
 const ANDROID_15: Device = { name: 'Android 15', os: 'android', version: 35 };
 const ANDROID_17: Device = { name: 'Android 17', os: 'android', version: 37 };
 const DEVICES = [IOS, ANDROID_14, ANDROID_15, ANDROID_17] as const;
-/** Whether the device's window stays put when the keyboard opens, so a screen lifts itself. */
-const windowStaysPut = (device: Device) => device.os === 'ios' || Number(device.version) >= 35;
 
 /** Where things sit, as the native views would measure them. `frame` is a padding frame's place on
  *  its root's page (which fills the window); `field` and `block` are a field's and a named block's
@@ -257,7 +255,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('every screen pads its frame by the keyboard where the window stays put (iOS, Android 15+) and nowhere it resizes (Android 14); no scroll view insets itself as well', async () => {
+  await h.test('every screen pads its frame by the keyboard on iOS and every Android version, Android 14 included; no scroll view insets itself as well', async () => {
     const screens = [
       { name: 'compose', element: compose(), action: primaryActionLabel('compose', false) },
       { name: 'clarify', element: clarify(), action: primaryActionLabel('clarify', false) },
@@ -269,8 +267,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
       for (const screen of screens) {
         await on(device, screen.element, async ({ tree }) => {
           h.eq(frames(tree).length, 1, `${device.name} ${screen.name}: one frame, the screen's`);
-          h.eq(await paddingAcrossKeyboard(tree, device), windowStaysPut(device) ? [0, overlap, 0] : [0, 0, 0],
-            `${device.name} ${screen.name}: ${windowStaysPut(device) ? 'the frame ends at the keyboard while it is up' : 'the resized window lifts everything, so nothing pads twice'}`);
+          h.eq(await paddingAcrossKeyboard(tree, device), [0, overlap, 0], `${device.name} ${screen.name}: the frame ends at the keyboard while it is up`);
           h.ok(scrollView(tree).props.automaticallyAdjustKeyboardInsets !== true, `${device.name} ${screen.name}: the scroll view adds no keyboard inset on top of the frame's padding`);
           if (screen.action) {
             const action = button(tree, screen.action);
@@ -507,18 +504,18 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
 
   await h.test('a keyboard frame, a screen’s or a sheet’s, removes every keyboard subscription it added once it unmounts', async () => {
     for (const device of DEVICES) {
-      const frameHosts: [string, React.ReactElement, () => Promise<void>, boolean][] = [
-        ['compose', compose(), async () => {}, windowStaysPut(device)],
-        ['report sheet', report(), draftLoaded, true],
+      const frameHosts: [string, React.ReactElement, () => Promise<void>][] = [
+        ['compose', compose(), async () => {}],
+        ['report sheet', report(), draftLoaded],
       ];
-      for (const [name, element, open, pads] of frameHosts) {
+      for (const [name, element, open] of frameHosts) {
         const before = Keyboard.listening();
         let added: KeyboardListener[] = [];
         await on(device, element, async () => {
           await open();
           added = [...Keyboard.listening()].filter((listener) => !before.has(listener));
         });
-        if (pads) h.ok(added.length > 0, `${device.name} ${name}: setup: the frame listens to the keyboard while it pads`);
+        h.ok(added.length > 0, `${device.name} ${name}: setup: the frame listens to the keyboard while it pads`);
         const after = Keyboard.listening();
         h.eq(added.filter((listener) => after.has(listener)).length, 0, `${device.name} ${name}: none of the subscriptions it added outlive it`);
       }
