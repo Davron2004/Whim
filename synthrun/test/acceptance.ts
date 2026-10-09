@@ -25,6 +25,7 @@ import type { AppRecord } from '../../src/host/bridge';
 import { storageError, type StorageEngine } from '../../src/host/storage-engine/contract';
 import { sweepApp, getScreenInfo, awaitSettledScreen, findAppFrame, type SweptElement } from '../sweep';
 import { createRunCandidate, denialDiagnostic } from '../report';
+import { RUNTIME_ASSETS } from '../../server/src/runtime-assets';
 import nodeAssert from 'node:assert';
 import { recordAssertion, results, test } from './harness';
 import { testIsolation } from './isolation';
@@ -1086,6 +1087,50 @@ function Orphan() {
 export default defineApp({ name: 'Coverage', initial: 'Home', screens: { Home, Orphan }, capabilities: [] });
 `;
 
+// A hub whose first branch dead-ends: Detail has no title (so no header Back) and nothing to
+// press, so the only way back to Home — and on to Settings — is the device's system back.
+const FIXTURE_DEAD_END_BRANCH = `import { defineApp, nav, Screen, Stack, Heading, Button, Text } from 'vc-sdk';
+function Home() {
+  return (
+    <Screen>
+      <Stack>
+        <Heading size="title">Home</Heading>
+        <Button label="Alpha" onPress={() => nav.navigate('Detail')} />
+        <Button label="Zeta" onPress={() => nav.navigate('Settings')} />
+      </Stack>
+    </Screen>
+  );
+}
+function Detail() {
+  return <Screen><Text>Read-only detail</Text></Screen>;
+}
+function Settings() {
+  return <Screen><Stack><Heading size="title">Settings</Heading></Stack></Screen>;
+}
+export default defineApp({ name: 'DeadEnd', initial: 'Home', screens: { Home, Detail, Settings }, capabilities: [] });
+`;
+
+// A single screen that claims, on every press, a navigation stack 50 deep (the depth frame is an
+// unauthenticated hint the bundle can post itself).
+const FIXTURE_FORGED_DEPTH = `import { defineApp, Screen, Stack, Button } from 'vc-sdk';
+const w = globalThis;
+function claimDeepStack() {
+  w.parent.postMessage(JSON.stringify({ __whimNavDepth: true, depth: 50, generation: 1 }), '*');
+}
+claimDeepStack();
+function Home() {
+  return (
+    <Screen>
+      <Stack>
+        <Button label="One" onPress={claimDeepStack} />
+        <Button label="Two" onPress={claimDeepStack} />
+      </Stack>
+    </Screen>
+  );
+}
+export default defineApp({ name: 'ForgedDepth', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
 function actionSignature(el: SweptElement): string {
   return `${el.kind}|${el.label}|${el.domPath}`;
 }
@@ -1188,6 +1233,51 @@ async function testSweep(): Promise<void> {
       }
     });
 
+    await test('back step: a sibling reachable only past a dead-end branch is visited live via system back, so no unreachable_screen', async () => {
+      const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_DEAD_END_BRANCH);
+      try {
+        await awaitMount(obs, mergeBudgets({ mountBudgetMs: 3000 }));
+        const result = await sweepApp(ctx, obs, FIXTURE_DEAD_END_BRANCH, sweepBudgets);
+        ok(result.diagnostics.length === 0, `no unreachable_screen diagnostics (got ${JSON.stringify(result.diagnostics)})`);
+        ok(result.visitedScreens.join(',') === 'Home,Detail,Settings', `Home, the dead-end Detail, then Settings were visited live (got ${result.visitedScreens.join(',')})`);
+        ok(result.actionsLog.map((el) => el.label).join(',') === 'Alpha,Zeta', `Alpha then Zeta were each pressed once (got ${result.actionsLog.map((el) => el.label).join(',')})`);
+      } finally {
+        obs.detach();
+        await dispose();
+      }
+    });
+
+    await test('back step: a forged nav-depth claim cannot loop the sweep (back steps never outnumber actions)', async () => {
+      const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_FORGED_DEPTH);
+      try {
+        await awaitMount(obs, mergeBudgets({ mountBudgetMs: 3000 }));
+        // Count back steps on the outer page itself (no host binding: provenance policy).
+        await ctx.page.evaluate(() => {
+          const g = globalThis as unknown as { __whimControl: { navBack(): void }; __synthrunTestNavBacks: number };
+          const original = g.__whimControl.navBack.bind(g.__whimControl);
+          g.__synthrunTestNavBacks = 0;
+          g.__whimControl.navBack = () => {
+            g.__synthrunTestNavBacks += 1;
+            original();
+          };
+        });
+        // A regression that loops would hang a bare await (and the whole suite) — race it.
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+        const timedOut = new Promise<null>((resolve) => {
+          timeoutHandle = setTimeout(() => resolve(null), 30_000);
+        });
+        const result = await Promise.race([sweepApp(ctx, obs, FIXTURE_FORGED_DEPTH, sweepBudgets), timedOut]).finally(() => clearTimeout(timeoutHandle));
+        const navBacks = { count: await ctx.page.evaluate(() => (globalThis as unknown as { __synthrunTestNavBacks: number }).__synthrunTestNavBacks).catch(() => -1) };
+        ok(result !== null, 'the sweep terminated');
+        ok(result?.actionsLog.length === 2, `both buttons were pressed once (got ${result?.actionsLog.length})`);
+        ok(navBacks.count >= 1 && navBacks.count <= 2, `the forged depth drew at most one back step per action (got ${navBacks.count})`);
+        ok(result?.diagnostics.length === 0, `no diagnostics (got ${JSON.stringify(result?.diagnostics)})`);
+      } finally {
+        obs.detach();
+        await dispose();
+      }
+    });
+
     await test('determinism: two independent runs of the same candidate produce the same action sequence + diagnostics', async () => {
       // FIXTURE_MINT_ONE has interactive elements (Mint, then the state-minted Extra) — a fixture
       // with nothing to sweep would make both runs' action sequences the empty string, so the
@@ -1264,6 +1354,31 @@ function diagnosticSignature(d: { kind: string }): string {
 async function testRunCandidate(): Promise<void> {
   const session = await SynthRunSession.launch({ concurrency: 2 });
   try {
+    // Every few-shot exemplar the generator is shown must itself pass the synthetic run clean —
+    // a false diagnostic here (e.g. a push the sweep fails to follow) would teach the model that
+    // correct multi-screen apps need repairing. The list is the server's own (`RUNTIME_ASSETS`),
+    // never a copy, so a new exemplar is covered the moment it is added.
+    const fewShotFixtures = RUNTIME_ASSETS.filter((p) => p.startsWith('fixtures/') && p.endsWith('.app.tsx'));
+    await test('few-shot exemplars: every fixture the generator is shown runs clean (ok:true, no diagnostics, every screen visited live)', async () => {
+      ok(fewShotFixtures.length >= 5, `the server's few-shot list was found (got ${fewShotFixtures.join(',')})`);
+      const runCandidate = createRunCandidate(session);
+      const reports = await Promise.all(
+        fewShotFixtures.map(async (rel) => ({
+          rel,
+          report: await runCandidate(await readFile(path.join(ROOT, rel), 'utf8'), {
+            budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 },
+          }),
+        })),
+      );
+      for (const { rel, report } of reports) {
+        ok(report.ok === true && report.diagnostics.length === 0, `${rel} runs clean (got diagnostics: ${JSON.stringify(report.diagnostics)})`);
+      }
+      ok(
+        reports.some(({ report }) => report.screens.declared.length > 1),
+        'at least one exemplar is multi-screen, so a live push is exercised',
+      );
+    });
+
     await test('clean report: a well-formed multi-screen candidate (sdk-navigation 4.2 fixture) yields ok:true', async () => {
       const runCandidate = createRunCandidate(session);
       const source = await readFile(NAVIGATION_DEMO_FIXTURE, 'utf8');
