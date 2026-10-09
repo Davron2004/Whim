@@ -78,11 +78,11 @@
 
 ## 10. Shell primitives: base
 
-- [ ] 10.1 `src/host/ui/tokens.ts`: `useTokens()` (scheme from `useColorScheme`, Increase Contrast, Reduce Motion, `fontScale`) and `makeStyles()` memoised per scheme; pure parts in a non-RN sibling for Node tests
-- [ ] 10.2 `Text` primitives on the type scale (tracking per size, tabular figures helper), `Button` (all seven variants, sizes, busy/disabled/focus, press M1 with Reanimated), `IconButton`, back control
-- [ ] 10.3 `Chip` (selected `ink` with `check`, "Decide for me" ember variant, suggestion), `Notice`, `Skeleton` (`breathe`, exported geometry)
-- [ ] 10.4 `Ember` (sizes, working/stuck/out, `activity` prop, spark trigger, reduced form) and `AmbientLight`, hidden from screen readers
-- [ ] 10.5 Switch `src/host/launcher/theme.ts` consumers to `useTokens()` screen by screen only where a primitive replaces them; keep `SHELL_PALETTE` for untouched screens until chain 21; Node/UI suites for each primitive
+- [x] 10.1 `src/host/ui/tokens.ts`: `useTokens()` (scheme from `useColorScheme`, Increase Contrast, Reduce Motion, `fontScale`) and `makeStyles()` memoised per scheme; pure parts in a non-RN sibling for Node tests
+- [x] 10.2 `Text` primitives on the type scale (tracking per size, tabular figures helper), `Button` (all seven variants, sizes, busy/disabled/focus, press M1 with Reanimated), `IconButton`, back control
+- [x] 10.3 `Chip` (selected `ink` with `check`, "Decide for me" ember variant, suggestion), `Notice`, `Skeleton` (`breathe`, exported geometry)
+- [x] 10.4 `Ember` (sizes, working/stuck/out, `activity` prop, spark trigger, reduced form) and `AmbientLight`, hidden from screen readers
+- [x] 10.5 Switch `src/host/launcher/theme.ts` consumers to `useTokens()` screen by screen only where a primitive replaces them; keep `SHELL_PALETTE` for untouched screens until chain 21; Node/UI suites for each primitive
 
 ## 11. Shell primitives: surfaces and keyboard
 
