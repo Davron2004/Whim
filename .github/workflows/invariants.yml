@@ -70,6 +70,16 @@ jobs:
       # byte count assertion only (no APK produced).
       - name: Run the Metro bundle guard (blocks on red)
         run: npm run guard:metro
+      # ── Firestore store conformance (durable-server-stores, design D5) ──────────
+      # Runs the shared store-conformance cases against the Firestore emulator, started by a
+      # pinned firebase-tools. The emulator is a Java program, so Java 21 is installed first.
+      # The `demo-` project id keeps it fully offline: no credentials, no Google calls.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Run the Firestore store conformance suite (blocks on red)
+        run: npm run stores:firestore:test
       # ── Storage-engine injection invariant (Decision #40, D5a/D7) ──────────────
       # The §C block of storage:test is a never-regress security invariant on par with
       # sandbox containment (§16.4): caller text is bound or rejected, never interpolated
