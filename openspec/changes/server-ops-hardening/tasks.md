@@ -96,17 +96,17 @@ Constraints for every task: no `CONFIG_SET` file (`package.json`, lockfile, `scr
 
 ## 6. Runbook, decision, capability map
 
-- [ ] 6.1 `docs/deploy.md` "Cloud Run":
+- [x] 6.1 `docs/deploy.md` "Cloud Run":
   - replace the "Logs" and "Chromium sometimes crashes" bullets with the new behaviour;
   - document the Cloud Run smoke (checks, live clarify, smoke device id, `--no-live`);
   - rewrite the Operating saved-query and alert tables with the Cloud Run filters from `handoff/cloudrun-ops.md`;
   - add the three new env vars to the limits documentation.
-- [ ] 6.2 `docs/deploy.md` "Firestore stores":
+- [x] 6.2 `docs/deploy.md` "Firestore stores":
   - credit markers (`creditMarks`, purge cutoff);
   - the Firestore admission load test (emulator default, the throwaway-database rules, how to read the report);
   - a note that the capacity table's caps are the VM's, carried over unmeasured on Cloud Run (#134).
-- [ ] 6.3a Record in the decision entry and `docs/deploy.md` that a refusal in line writes a `policy-check` row AND a non-refunded `generate` row (ruling 3), and make the usage summary's `failureReasonCounts` count that refusal once (attribute `content_policy` to the `generate` row only), with a test that fails on the double count.
-- [ ] 6.3 Append the next-numbered entry to `docs/decisions.md`, covering D1, D3 and D4 plus #134's exclusion. Update the `server-deployment` and `server-admission-control` rows in `docs/capabilities.md`.
+- [x] 6.3a Record in the decision entry and `docs/deploy.md` that a refusal in line writes a `policy-check` row AND a non-refunded `generate` row (ruling 3), and make the usage summary's `failureReasonCounts` count that refusal once (attribute `content_policy` to the `generate` row only), with a test that fails on the double count.
+- [x] 6.3 Append the next-numbered entry to `docs/decisions.md`, covering D1, D3 and D4 plus #134's exclusion. Update the `server-deployment` and `server-admission-control` rows in `docs/capabilities.md`.
 
 ## 7. Rollout and verification (orchestrator, attended, after merge)
 
