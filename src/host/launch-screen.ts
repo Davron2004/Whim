@@ -1,7 +1,8 @@
 /**
  * launch-screen — ends the cold-start hold of the native launch screen (design-system-v1 D12;
  * specs/app-icon-and-launch "Launch shows the ember on the scheme's canvas with no flash";
- * docs/design/system.md §4.4 M27). Home calls `hideLaunchScreen()` on its first frame; the native
+ * docs/design/system.md §4.4 M27). The launcher shell calls `hideLaunchScreen()` on the frame after its
+ * first real screen commits (task 15.2; `LauncherRoot.tsx`); the native
  * side then fades the ember out over 160 ms. Calling it again, or on a warm start, does nothing.
  */
 import WhimLaunchScreen, { type Spec } from '../native/NativeWhimLaunchScreen';
@@ -32,7 +33,7 @@ export function createLaunchScreen(native: Spec | null): LaunchScreen {
 
 const launchScreen = createLaunchScreen(WhimLaunchScreen);
 
-/** Ends the native launch screen's cold-start hold. Home calls it on its first frame. */
+/** Ends the native launch screen's cold-start hold. The launcher shell calls it once its first screen is up. */
 export function hideLaunchScreen(): void {
   launchScreen.hide();
 }

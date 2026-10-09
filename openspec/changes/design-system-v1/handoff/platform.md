@@ -16,8 +16,8 @@ export function createLaunchScreen(native: Spec | null): LaunchScreen;  // for s
 - Idempotent; never throws (null module = no-op, a throwing module is logged on `whim:screen` and swallowed).
   A warm start (process alive, activity/scene recreated) does not hold: calling `hide` then does nothing.
 - **Cap: if `hide` never runs, each platform ends the hold itself after 3 s** (`LaunchScreen.CAP_MS`,
-  `WhimLaunchScreenOverlay.capSeconds`). Until 15.2 lands nothing calls `hide`, so every cold start shows
-  the launch screen for 3 s.
+  `WhimLaunchScreenOverlay.capSeconds`). `LauncherShell` calls it (prop `hideLaunchScreen`) on the frame
+  after its first real screen commits, Home or a link's landing; 15.2 keeps that call at the shell root.
 - Call it from an effect after Home's first commit (not during render). Calling it earlier (e.g. at
   `LauncherRoot` mount) ends the hold before Home has drawn.
 
