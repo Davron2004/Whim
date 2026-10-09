@@ -10,7 +10,8 @@
 // resolves ColorToken roles against the ACTIVE theme (theme.ts) — a theme switch re-renders
 // with no app-side handling, and no new color token is introduced anywhere below (D4).
 import * as React from 'react';
-import { space, color, weight, textSize, FONT } from './tokens';
+import { space, color, weight, textSize, textColor, FONT, TABULAR_NUMS } from './tokens';
+import { RADII } from '../design/tokens';
 import {
   computeBarLayout,
   computeLineLayout,
@@ -47,16 +48,17 @@ const PAD_X = 4;
 const PAD_TOP = 8;
 const PAD_BOTTOM = 10;
 const VALUE_FONT_SIZE = 4.5;
+const LINE_STROKE_PX = 2.5;
 
-// A bar chart's category labels are HTML, not SVG text, in a row under the plot: SVG text has no
-// width limit, so a long label ran into its neighbours ("GroceriesRentTranspo…"). Each label gets
-// an equal slot and the browser cuts it to that width with an ellipsis. The slots line up with the
-// bars because both divide the same padded width evenly: the row's side padding is PAD_X as a
-// percentage of VIEW_W. The plot's own viewBox drops the label band (PAD_BOTTOM) and keeps a sliver
-// under the baseline, so the plot keeps roughly its old scale above the row.
-const BAR_PAD_BOTTOM = 2;
-const BAR_VIEW_H = VIEW_H - PAD_BOTTOM + BAR_PAD_BOTTOM;
+// A bar chart is HTML, not SVG: the plot stretches to the frame (`preserveAspectRatio: 'none'`
+// below), which would turn a bar's rounded top into an ellipse and stretch its value label. In HTML
+// each bar keeps r-xs top corners and every label its own shape; the category labels sit in equal
+// slots under the bars and the browser cuts each one to its slot with an ellipsis.
 const LABEL_GUTTER = `calc(${space('xs')} / 2)`;
+/** Room above the tallest bar for its value label, when values show. */
+const VALUE_ROOM = '22px';
+/** Gridlines at the baseline, half and full scale. */
+const GRID_FRACTIONS = [0, 0.5, 1];
 
 function ChartFrame({ children }: { children: React.ReactNode }) {
   return React.createElement(
@@ -66,11 +68,11 @@ function ChartFrame({ children }: { children: React.ReactNode }) {
   );
 }
 
-function svgFrame(children: React.ReactNode[], viewH: number = VIEW_H) {
+function svgFrame(children: React.ReactNode[]) {
   return React.createElement(
     'svg',
     {
-      viewBox: `0 0 ${VIEW_W} ${viewH}`,
+      viewBox: `0 0 ${VIEW_W} ${VIEW_H}`,
       preserveAspectRatio: 'none',
       style: { width: '100%', height: '100%', display: 'block' },
     },
@@ -99,7 +101,7 @@ function placeholderContent() {
           fontSize: textSize('body').size,
           lineHeight: textSize('body').line,
           fontWeight: weight(textSize('body').weight),
-          color: color('text-muted'),
+          color: textColor('text-muted'),
         },
       },
       'No data yet',
@@ -108,95 +110,91 @@ function placeholderContent() {
 }
 
 // ── Bar (task 2.2) ───────────────────────────────────────────────────────────────────────
+/** The footnote-size, `text-muted`, tabular style of every chart label. */
+function chartLabelStyle(): Record<string, unknown> {
+  const caption = textSize('caption');
+  return {
+    fontFamily: FONT,
+    fontSize: caption.size,
+    lineHeight: caption.line,
+    color: textColor('text-muted'),
+    ...TABULAR_NUMS,
+  };
+}
+
+function gridline(fraction: number, key: string): React.ReactElement {
+  return React.createElement('div', {
+    key,
+    style: { position: 'absolute', left: 0, right: 0, bottom: `${fraction * 100}%`, height: '1px', background: color('separator') },
+  });
+}
+
 function renderBarChart(data: SeriesPoint[], tone: ChartTone, showValues: boolean, maxValue?: number) {
   const { bars } = computeBarLayout(data, maxValue);
   const toneColor = color(tone);
-  const textColor = color('text');
-  const mutedColor = color('text-muted');
-
-  const plotWidth = VIEW_W - PAD_X * 2;
-  const plotHeight = VIEW_H - PAD_TOP - PAD_BOTTOM;
-  const baselineY = BAR_VIEW_H - BAR_PAD_BOTTOM;
-  const slotWidth = bars.length > 0 ? plotWidth / bars.length : 0;
-  const barWidth = slotWidth * 0.6;
-
-  const marks: React.ReactNode[] = [];
-  bars.forEach((bar, i) => {
-    const barX = PAD_X + i * slotWidth + (slotWidth - barWidth) / 2;
-    const barHeight = bar.heightFraction * plotHeight;
-    const barY = baselineY - barHeight;
-    marks.push(
-      React.createElement('rect', {
-        key: `bar-${i}`,
-        x: barX,
-        y: barY,
-        width: barWidth,
-        height: barHeight,
-        fill: toneColor,
-      }),
-    );
-    if (showValues) {
-      marks.push(
-        React.createElement(
-          'text',
-          {
-            key: `value-${i}`,
-            x: barX + barWidth / 2,
-            y: barY - 1.5,
-            fontSize: VALUE_FONT_SIZE,
-            textAnchor: 'middle',
-            fill: textColor,
-            style: { fontFamily: FONT },
-          },
-          String(bar.value),
-        ),
-      );
-    }
-  });
-
-  const caption = textSize('caption');
-  const labels = bars.map((bar, i) =>
+  const label = chartLabelStyle();
+  const slot = (child: React.ReactNode, key: string, extra: Record<string, unknown> = {}) =>
     React.createElement(
       'div',
-      {
-        key: `label-${i}`,
-        style: {
-          flex: '1 1 0',
-          minWidth: 0,
-          // A hair of room each side, so two labels that both fill their slots never touch.
-          paddingLeft: LABEL_GUTTER,
-          paddingRight: LABEL_GUTTER,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          textAlign: 'center',
-          fontFamily: FONT,
-          fontSize: caption.size,
-          lineHeight: caption.line,
-          fontWeight: weight(caption.weight),
-          color: mutedColor,
+      { key, style: { flex: '1 1 0', minWidth: 0, paddingLeft: LABEL_GUTTER, paddingRight: LABEL_GUTTER, ...extra } },
+      child,
+    );
+
+  const columns = bars.map((bar, i) =>
+    slot(
+      React.createElement(
+        'div',
+        {
+          style: {
+            position: 'relative',
+            width: '60%',
+            height: `${bar.heightFraction * 100}%`,
+            margin: '0 auto',
+            background: toneColor,
+            borderRadius: `${RADII.xs.radius}px ${RADII.xs.radius}px 0 0`,
+          },
         },
-      },
-      bar.label,
+        showValues
+          ? React.createElement(
+              'span',
+              {
+                style: {
+                  ...label,
+                  position: 'absolute',
+                  bottom: '100%',
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  paddingBottom: '2px',
+                  whiteSpace: 'nowrap',
+                  color: textColor('text'),
+                },
+              },
+              String(bar.value),
+            )
+          : null,
+      ),
+      `bar-${i}`,
+      { height: '100%', display: 'flex', alignItems: 'flex-end' },
     ),
+  );
+  const labels = bars.map((bar, i) =>
+    slot(bar.label, `label-${i}`, { ...label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'center' }),
   );
 
   return React.createElement(
     'div',
     { style: { display: 'flex', flexDirection: 'column', width: '100%', height: '100%' } },
-    React.createElement('div', { style: { flex: '1 1 0', minHeight: 0 } }, svgFrame(marks, BAR_VIEW_H)),
     React.createElement(
       'div',
-      {
-        style: {
-          display: 'flex',
-          flexShrink: 0,
-          paddingLeft: `${(PAD_X / VIEW_W) * 100}%`,
-          paddingRight: `${(PAD_X / VIEW_W) * 100}%`,
-        },
-      },
-      ...labels,
+      { style: { position: 'relative', flex: '1 1 0', minHeight: 0, paddingTop: showValues ? VALUE_ROOM : space('xs') } },
+      React.createElement(
+        'div',
+        { style: { position: 'relative', height: '100%', display: 'flex', alignItems: 'flex-end' } },
+        ...GRID_FRACTIONS.map((f) => gridline(f, `grid-${f}`)),
+        ...columns,
+      ),
     ),
+    React.createElement('div', { style: { display: 'flex', flexShrink: 0, paddingTop: space('xs') } }, ...labels),
   );
 }
 
@@ -204,7 +202,7 @@ function renderBarChart(data: SeriesPoint[], tone: ChartTone, showValues: boolea
 function renderLineChart(data: SeriesPoint[], tone: ChartTone, showValues: boolean, maxValue?: number) {
   const { points } = computeLineLayout(data, maxValue);
   const toneColor = color(tone);
-  const textColor = color('text');
+  const valueColor = textColor('text');
 
   const plotWidth = VIEW_W - PAD_X * 2;
   const plotHeight = VIEW_H - PAD_TOP - PAD_BOTTOM;
@@ -214,7 +212,19 @@ function renderLineChart(data: SeriesPoint[], tone: ChartTone, showValues: boole
   });
   const coords = points.map(toXY);
 
-  const marks: React.ReactNode[] = [];
+  const marks: React.ReactNode[] = GRID_FRACTIONS.map((f) => {
+    const y = PAD_TOP + (1 - f) * plotHeight;
+    return React.createElement('line', {
+      key: `grid-${f}`,
+      x1: PAD_X,
+      x2: VIEW_W - PAD_X,
+      y1: y,
+      y2: y,
+      stroke: color('separator'),
+      strokeWidth: 1,
+      vectorEffect: 'non-scaling-stroke',
+    });
+  });
   if (coords.length > 0) {
     marks.push(
       React.createElement('polyline', {
@@ -222,7 +232,9 @@ function renderLineChart(data: SeriesPoint[], tone: ChartTone, showValues: boole
         points: coords.map((c) => `${c.x},${c.y}`).join(' '),
         fill: 'none',
         stroke: toneColor,
-        strokeWidth: 1.5,
+        // In screen pixels, whatever the frame's aspect (the viewBox is stretched to fit).
+        strokeWidth: LINE_STROKE_PX,
+        vectorEffect: 'non-scaling-stroke',
         strokeLinejoin: 'round',
         strokeLinecap: 'round',
       }),
@@ -245,8 +257,8 @@ function renderLineChart(data: SeriesPoint[], tone: ChartTone, showValues: boole
             y: y - 2.5,
             fontSize: VALUE_FONT_SIZE,
             textAnchor: 'middle',
-            fill: textColor,
-            style: { fontFamily: FONT },
+            fill: valueColor,
+            style: { fontFamily: FONT, ...TABULAR_NUMS },
           },
           String(p.value),
         ),

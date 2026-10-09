@@ -35,7 +35,9 @@ import {
   type WeightToken,
 } from './tokens';
 import { emitUiEvent } from './events';
-import { CONTROL_RESET, TAP_RESET, usePressed } from './press';
+import { CONTROL_RESET, usePressed } from './press';
+import { stacks, typeStyle } from './kit';
+import { TextField } from './controls';
 import { chromeInsetContext } from './chrome-inset';
 import { navDepthContext, nav } from './navigation';
 import { Glyph } from './icon';
@@ -378,9 +380,20 @@ function ScreenHeader({ title, action, depth }: { title: string; action?: Screen
   );
 }
 
+// Whether a Screen sits inside another Screen. Only the outermost one adds the chrome inset; the
+// inset context itself stays the root's, so a `Modal` anywhere under a Screen still reads it.
+// Created on first use, like the other SDK contexts.
+let nestedScreenContext: React.Context<boolean> | undefined;
+function screenNesting(): React.Context<boolean> {
+  nestedScreenContext ??= React.createContext(false);
+  return nestedScreenContext;
+}
+
 export function Screen({ padding = 'lg', title, action, children }: ScreenProps) {
-  const insetContext = chromeInsetContext();
-  const chromeInset = React.useContext(insetContext);
+  const nestedContext = screenNesting();
+  const nested = React.useContext(nestedContext);
+  const rootInset = React.useContext(chromeInsetContext());
+  const chromeInset = nested ? 0 : rootInset;
   const depthContext = navDepthContext();
   const depth = React.useContext(depthContext);
   const body = textSize('body');
@@ -403,8 +416,8 @@ export function Screen({ padding = 'lg', title, action, children }: ScreenProps)
     // Only the outermost Screen is the scrollable content and the navigation stack's page: one
     // nested inside it pads as before and never shows a back control.
     React.createElement(
-      insetContext.Provider,
-      { value: 0 },
+      nestedContext.Provider,
+      { value: true },
       React.createElement(depthContext.Provider, { value: 0 }, children),
     ),
   );
@@ -423,10 +436,10 @@ export function Stack({ gap = 'md', children }: StackProps) {
 }
 
 export interface RowProps extends StackProps {
-  /** Cross-axis alignment (`alignItems`). Absent = today's `'baseline'` default, unchanged. */
+  /** Cross-axis alignment (`alignItems`), `'center'` by default. */
   align?: 'start' | 'center' | 'end';
-  /** Main-axis distribution (`justifyContent`). Absent = today's `'space-between'` default,
-   *  unchanged; `'between'` maps to `'space-between'`. */
+  /** Main-axis distribution (`justifyContent`), `'start'` by default; `'between'` maps to
+   *  `'space-between'`. */
   justify?: 'start' | 'center' | 'end' | 'between';
 }
 const ALIGN_ITEMS: Record<NonNullable<RowProps['align']>, string> = {
@@ -440,7 +453,7 @@ const JUSTIFY_CONTENT: Record<NonNullable<RowProps['justify']>, string> = {
   end: 'flex-end',
   between: 'space-between',
 };
-export function Row({ gap = 'md', align, justify, children }: RowProps) {
+export function Row({ gap = 'md', align = 'center', justify = 'start', children }: RowProps) {
   return React.createElement(
     'div',
     {
@@ -448,8 +461,9 @@ export function Row({ gap = 'md', align, justify, children }: RowProps) {
         display: 'flex',
         flexDirection: 'row',
         flexWrap: 'wrap',
-        alignItems: align ? ALIGN_ITEMS[align] : 'baseline',
-        justifyContent: justify ? JUSTIFY_CONTENT[justify] : 'space-between',
+        // Own-property reads: an old bundle can pass any string, and `'constructor' in {}` is true.
+        alignItems: Object.hasOwn(ALIGN_ITEMS, align) ? ALIGN_ITEMS[align] : ALIGN_ITEMS.center,
+        justifyContent: Object.hasOwn(JUSTIFY_CONTENT, justify) ? JUSTIFY_CONTENT[justify] : JUSTIFY_CONTENT.start,
         gap: space(gap),
       },
     },
@@ -465,52 +479,34 @@ export interface TextProps {
   align?: 'start' | 'center' | 'end';
   children?: React.ReactNode;
 }
-export function Text({
-  size = 'body',
-  color: colorToken = 'text',
-  weight: weightToken,
-  align,
-  children,
-}: TextProps) {
+/** The style of `Text` (and of `Heading`, its deprecated alias). */
+function textStyle({ size = 'body', color: colorToken = 'text', weight: weightToken, align }: Omit<TextProps, 'children'>) {
   const t = textSize(size);
-  return React.createElement(
-    'span',
-    {
-      style: {
-        fontSize: t.size,
-        lineHeight: t.line,
-        letterSpacing: t.tracking,
-        fontWeight: weight(weightToken ?? t.weight),
-        color: textColor(colorToken),
-        ...(size === 'display' ? TABULAR_NUMS : {}),
-        ...(align ? { textAlign: align } : {}),
-      },
-    },
-    children,
-  );
+  return {
+    fontSize: t.size,
+    lineHeight: t.line,
+    letterSpacing: t.tracking,
+    fontWeight: weight(weightToken ?? t.weight),
+    color: textColor(colorToken),
+    ...(size === 'display' ? TABULAR_NUMS : {}),
+    ...(align ? { textAlign: align } : {}),
+  };
 }
 
+export function Text({ children, ...props }: TextProps) {
+  return React.createElement('span', { style: textStyle(props) }, children);
+}
+
+/** @deprecated Use `<Text size="title">`. */
 export interface HeadingProps {
   size?: Extract<TextSizeToken, 'subtitle' | 'title' | 'display'>;
   color?: TextColorToken;
   children?: React.ReactNode;
 }
-export function Heading({ size = 'title', color: colorToken = 'text', children }: HeadingProps) {
-  const t = textSize(size);
-  return React.createElement(
-    'div',
-    {
-      style: {
-        fontSize: t.size,
-        lineHeight: t.line,
-        letterSpacing: t.tracking,
-        fontWeight: weight('bold'),
-        color: textColor(colorToken),
-        margin: 0,
-      },
-    },
-    children,
-  );
+/** @deprecated Use `<Text size="title">`. Kept so apps built before it went keep rendering: it is
+ *  `Text` at its size (default `title`), on a line of its own as it always was. */
+export function Heading({ size = 'title', color: colorToken, children }: HeadingProps) {
+  return React.createElement('div', { style: { ...textStyle({ size, color: colorToken }), margin: 0 } }, children);
 }
 
 export interface NumberInputProps {
@@ -522,91 +518,53 @@ export interface NumberInputProps {
   onChange?: (n: number) => void;
 }
 export function NumberInput({ label, value, min, max, step, onChange }: NumberInputProps) {
-  const field = React.createElement('input', {
-    type: 'number',
-    value: Number.isFinite(value) ? value : 0,
-    min,
-    max,
-    step,
-    inputMode: 'decimal',
-    onChange: (e: { target: { value: string } }) => {
-      const n = parseFloat(e.target.value);
-      if (onChange) onChange(Number.isNaN(n) ? 0 : n);
-    },
-    style: {
-      font: 'inherit',
-      fontSize: textSize('subtitle').size,
-      padding: `${space('sm')} ${space('md')}`,
-      borderRadius: radius('md'),
-      border: `1px solid ${color('border')}`,
-      background: color('bg'),
-      color: color('text'),
-      width: '100%',
-      boxSizing: 'border-box',
-      outline: 'none',
-      WebkitAppearance: 'none',
-      MozAppearance: 'textfield',
-      userSelect: 'text',
-      WebkitUserSelect: 'text',
-      ...TABULAR_NUMS,
-      ...TAP_RESET,
+  return React.createElement(TextField, {
+    label,
+    tabular: true,
+    input: {
+      type: 'number',
+      value: Number.isFinite(value) ? value : 0,
+      min,
+      max,
+      step,
+      inputMode: 'decimal',
+      onChange: (e: { target: { value: string } }) => {
+        const n = Number.parseFloat(e.target.value);
+        if (onChange) onChange(Number.isNaN(n) ? 0 : n);
+      },
     },
   });
-  if (!label) return field;
-  return React.createElement(
-    'label',
-    { style: { display: 'flex', flexDirection: 'column', gap: space('xs') } },
-    React.createElement(Text, { size: 'caption', color: 'text-muted' }, label),
-    field,
-  );
 }
 
 export interface ButtonProps {
   label: string;
   /** An icon name, drawn at 20 before the label in the label's colour. */
   icon?: string;
+  /** @deprecated Buttons are capsules; this is accepted and ignored. */
   radius?: RadiusToken;
-  /** `'primary'` (default) renders byte-identical to the pre-D6 Button. */
+  /** `'primary'` (default): the app's tint, the one filled button on a screen. `'secondary'`: a
+   *  neutral fill. `'ghost'`: no fill, tint text. `'danger'`: a soft red capsule, never a fill. */
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
   disabled?: boolean;
   onPress?: () => void;
 }
-// Per-variant chrome (design D6): secondary = surface bg + 1px border + text; ghost =
-// transparent + no border + primary text; danger = danger bg + on-primary text. Computed inside
-// the component (not module scope) so it re-resolves through the render-time `color()` call,
-// matching how every other component here reads the active theme.
-function buttonVariantStyle(variant: NonNullable<ButtonProps['variant']>) {
+/** Fill and label of each variant (system.md §7.2); disabled is `fill` + `text-3` whatever the
+ *  variant, never a lowered opacity. */
+function buttonColors(variant: ButtonProps['variant'], disabled: boolean): { background: string; color: string } {
+  if (disabled) return { background: color('fill'), color: color('text-3') };
   switch (variant) {
     case 'secondary':
-      return { background: color('surface'), border: `1px solid ${color('border')}`, color: color('text') };
+      return { background: color('fill'), color: textColor('text') };
     case 'ghost':
-      return { background: 'transparent', border: 'none', color: color('primary') };
+      return { background: 'transparent', color: textColor('primary') };
     case 'danger':
-      return { background: color('danger'), border: 'none', color: color('on-primary') };
-    case 'primary':
+      return { background: color('danger-soft'), color: textColor('danger') };
     default:
-      return { background: color('primary'), border: 'none', color: color('on-primary') };
+      return { background: color('primary'), color: color('on-primary') };
   }
 }
-// Disabled takes precedence over pressed (a disabled button never dips further on press —
-// its pointer handlers aren't attached in the first place, see below).
-function buttonOpacity(disabled: boolean, pressed: boolean): number {
-  if (disabled) return 0.5;
-  if (pressed) return 0.8;
-  return 1;
-}
-export function Button({
-  label,
-  icon,
-  radius: radiusToken = 'md',
-  variant = 'primary',
-  disabled = false,
-  onPress,
-}: ButtonProps) {
-  // Button has no intrinsic visual response to a press (unlike Switch/Checkbox's own state
-  // change), so it gets a deliberate opacity dip instead of relying on Android's system tap
-  // highlight (which CONTROL_RESET below suppresses). Disabled buttons keep their existing 0.5
-  // opacity and never attach the pointer handlers — nothing to dip.
+export function Button({ label, icon, variant = 'primary', disabled = false, onPress }: ButtonProps) {
+  // The press dip until the press motion replaces it; a disabled button has no pointer handlers.
   const { pressed, pressHandlers } = usePressed();
   return React.createElement(
     'button',
@@ -623,15 +581,26 @@ export function Button({
       },
       ...(disabled ? {} : pressHandlers),
       style: {
-        font: `600 17px ${FONT}`,
-        padding: `${space('md')} ${space('lg')}`,
-        borderRadius: radius(radiusToken),
+        boxSizing: 'border-box',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: space('sm'),
+        minHeight: `${LAYOUT.buttonHeight.large}px`,
+        margin: 0,
+        padding: `${space('sm')} ${space('lg')}`,
+        border: 'none',
+        borderRadius: radius('full'),
+        fontFamily: FONT,
+        ...typeStyle('headline'),
+        textAlign: 'center',
         cursor: disabled ? 'default' : 'pointer',
-        opacity: buttonOpacity(disabled, pressed),
+        opacity: pressed ? 0.8 : 1,
         transition: 'opacity 80ms',
+        // From 135%, a button takes a line of its own, so paired buttons stack (system.md §6).
+        ...(stacks() ? { flex: '1 1 100%' } : {}),
         ...CONTROL_RESET,
-        ...buttonVariantStyle(variant),
-        ...(icon ? { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: space('sm') } : {}),
+        ...buttonColors(variant, disabled),
       },
     },
     icon ? React.createElement(Glyph, { name: icon, sizePx: 20 }) : null,

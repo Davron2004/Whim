@@ -44,7 +44,7 @@ export type TileRequest =
 export const EXAMPLE_TILES: Readonly<Record<string, TileIdentity>> = {
   'tip-splitter': { tint: 'slate', icon: 'receipt' },
   'water-counter': { tint: 'blue', icon: 'glass-water' },
-  'style-gallery': { tint: 'orchid', icon: 'palette' },
+  'style-gallery': { tint: 'purple', icon: 'palette' },
 };
 
 /** The model ranks up to three tints (system.md §2.4). */

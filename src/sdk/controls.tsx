@@ -7,34 +7,119 @@
 // only ambient capability touched is the one-way `ReactNativeWebView.postMessage` transport via
 // `emitUiEvent` (constraint #2, shared from `events.ts` — not duplicated).
 import * as React from 'react';
-import { space, radius, color, weight, textSize, textColor, activeTheme, FONT, TABULAR_NUMS } from './tokens';
+import { space, radius, color, weight, textSize, textColor, activeTheme, FONT, TABULAR_NUMS, WEIGHT, type PaintRole } from './tokens';
+import { raisedShadow, stacks, touchTarget, typeStyle, useGroupSurface } from './kit';
 import { emitUiEvent } from './events';
 import { CONTROL_RESET, TAP_RESET } from './press';
 import { Glyph } from './icon';
 import { LAYOUT } from '../design/tokens';
 
-// Shared small-print label — mirrors `Text({size:'caption', color:'text-muted'})` from
-// index.tsx exactly (same style keys/values) without importing the barrel back into this
-// module (would make index.tsx <-> controls.tsx circular).
+// ── Field anatomy (system.md §7.1, §7.2) ─────────────────────────────────────
+// The label every labelled control shares: `footnote` 600 in `text-muted`, 6 px above its field.
+const LABEL_GAP = '6px';
+
 function FieldLabel({ children }: { children?: React.ReactNode }) {
-  const t = textSize('caption');
+  return React.createElement('span', { style: { ...typeStyle('footnote', WEIGHT.semibold), color: textColor('text-muted') } }, children);
+}
+
+/** `field` with its label above it, or the bare field. */
+function labelled(label: string | undefined, field: React.ReactElement): React.ReactElement {
+  if (!label) return field;
   return React.createElement(
-    'span',
-    {
-      style: {
-        fontSize: t.size,
-        lineHeight: t.line,
-        fontWeight: weight(t.weight),
-        color: color('text-muted'),
-      },
-    },
-    children,
+    'label',
+    { style: { display: 'flex', flexDirection: 'column', gap: LABEL_GAP } },
+    React.createElement(FieldLabel, null, label),
+    field,
   );
 }
 
+/** The field box: `surface` (`sheet-group` in a Modal), 1 px `border`, r-md, 12 × 14, body text;
+ *  focused, a 2 px border in the app's tint (the padding gives back the extra pixel). */
+function fieldBox(focused: boolean, surface: PaintRole): Record<string, unknown> {
+  const body = textSize('body');
+  return {
+    boxSizing: 'border-box',
+    width: '100%',
+    margin: 0,
+    padding: focused ? '11px 13px' : '12px 14px',
+    border: focused ? `2px solid ${color('primary')}` : `1px solid ${color('border')}`,
+    borderRadius: radius('md'),
+    background: color(surface),
+    color: textColor('text'),
+    caretColor: color('text'),
+    fontFamily: FONT,
+    fontSize: body.size,
+    lineHeight: body.line,
+    outline: 'none',
+  };
+}
+
+interface TextFieldProps {
+  label?: string;
+  /** The native input's own props (type, value, placeholder, onChange, …). */
+  input: Record<string, unknown>;
+  tabular?: boolean;
+}
+
+/** A native text-like input in the field anatomy; `TextInput` and `NumberInput` draw through it.
+ *  The placeholder is drawn by the SDK in `text-muted`: the native one can't be coloured inline,
+ *  and the WebView's own grey falls under 4.5:1 on the dark `surface`. */
+export function TextField({ label, input, tabular = false }: TextFieldProps) {
+  const [focused, setFocused] = React.useState(false);
+  const surface = useGroupSurface();
+  const { placeholder, ...native } = input;
+  const box = fieldBox(focused, surface);
+  const field = React.createElement('input', {
+    ...native,
+    ...(typeof placeholder === 'string' ? { 'aria-placeholder': placeholder } : {}),
+    onFocus: () => setFocused(true),
+    onBlur: () => setFocused(false),
+    style: {
+      ...box,
+      WebkitAppearance: 'none',
+      MozAppearance: 'textfield',
+      appearance: 'none',
+      userSelect: 'text',
+      WebkitUserSelect: 'text',
+      ...(tabular ? TABULAR_NUMS : {}),
+      ...TAP_RESET,
+    },
+  });
+  const empty = native.value === '' || native.value === undefined;
+  // One tree shape whether or not the placeholder shows, so typing the first character never
+  // remounts the input (and never drops its focus).
+  const shown = React.createElement(
+    'div',
+    { style: { position: 'relative' } },
+    field,
+    typeof placeholder === 'string' && placeholder !== '' && empty
+      ? React.createElement(
+          'span',
+          {
+            'aria-hidden': true,
+            style: {
+              position: 'absolute',
+              inset: 0,
+              // The field's padding plus its 1 px border, so the text sits where typing starts.
+              padding: '13px 15px',
+              color: textColor('text-muted'),
+              fontFamily: FONT,
+              fontSize: box.fontSize,
+              lineHeight: box.lineHeight,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              pointerEvents: 'none',
+            },
+          },
+          placeholder,
+        )
+      : null,
+  );
+  return labelled(label, shown);
+}
+
 // ── TextInput ──────────────────────────────────────────────────────────────────
-// Same chrome discipline as NumberInput (index.tsx): label block, border, radius 'md', bg
-// token, appearance/outline resets — just a string field instead of a numeric one.
 export interface TextInputProps {
   label?: string;
   value: string;
@@ -42,49 +127,73 @@ export interface TextInputProps {
   onChange?: (s: string) => void;
 }
 export function TextInput({ label, value, placeholder, onChange }: TextInputProps) {
-  const field = React.createElement('input', {
-    type: 'text',
-    value,
-    placeholder,
-    onChange: (e: { target: { value: string } }) => {
-      if (onChange) onChange(e.target.value);
-    },
-    style: {
-      font: `16px ${FONT}`,
-      fontSize: textSize('subtitle').size,
-      padding: `${space('sm')} ${space('md')}`,
-      borderRadius: radius('md'),
-      border: `1px solid ${color('border')}`,
-      background: color('bg'),
-      color: color('text'),
-      width: '100%',
-      boxSizing: 'border-box',
-      outline: 'none',
-      WebkitAppearance: 'none',
-      MozAppearance: 'none',
-      userSelect: 'text',
-      WebkitUserSelect: 'text',
-      ...TAP_RESET,
+  return React.createElement(TextField, {
+    label,
+    input: {
+      type: 'text',
+      value,
+      placeholder,
+      onChange: (e: { target: { value: string } }) => {
+        if (onChange) onChange(e.target.value);
+      },
     },
   });
-  if (!label) return field;
+}
+
+/** A labelled control's row: the whole row is the button, at least the platform's touch target
+ *  high, the label in `body` `text` filling the space before the control. */
+function controlRow(props: Record<string, unknown>, children: React.ReactNode[]): React.ReactElement {
+  const body = textSize('body');
   return React.createElement(
-    'label',
-    { style: { display: 'flex', flexDirection: 'column', gap: space('xs') } },
-    React.createElement(FieldLabel, null, label),
-    field,
+    'button',
+    {
+      type: 'button',
+      ...props,
+      style: {
+        boxSizing: 'border-box',
+        display: 'flex',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: space('md'),
+        width: '100%',
+        minHeight: `${touchTarget()}px`,
+        margin: 0,
+        padding: 0,
+        border: 'none',
+        background: 'transparent',
+        cursor: 'pointer',
+        textAlign: 'start',
+        fontFamily: FONT,
+        fontSize: body.size,
+        lineHeight: body.line,
+        color: textColor('text'),
+        ...CONTROL_RESET,
+      },
+    },
+    ...children,
   );
 }
 
+function rowLabel(label: string): React.ReactElement {
+  return React.createElement('span', { key: 'label', style: { flex: '1 1 auto', minWidth: 0 } }, label);
+}
+
 // ── Switch ────────────────────────────────────────────────────────────────────
-// Custom div track+knob (no native checkbox chrome) — the knob's position transitions via CSS
-// `transform`. The outer row is the ONLY click target (no handler on the inner track), so the
-// whole control — label included — toggles from a single event, never double-fires.
-const SWITCH_TRACK_W = 44;
-const SWITCH_TRACK_H = 24;
-const SWITCH_KNOB = 18;
-const SWITCH_INSET = 3;
-const SWITCH_KNOB_OFFSET = SWITCH_TRACK_W - SWITCH_KNOB - SWITCH_INSET * 2;
+// The platform's own shape (system.md §7.2): iOS a 48 × 28 track with a 24 knob; Android Material's
+// outlined 52 × 32 track whose knob grows from 16 to 24 when on. Off, the iOS track is `fill-strong`
+// under a `thumb` knob; on, the track is the app's tint under an on-tint knob.
+interface SwitchShape {
+  width: number;
+  height: number;
+  border: number;
+  /** Knob side and offset from the inner top-left corner, off and on. */
+  off: { size: number; inset: number };
+  on: { size: number; inset: number };
+}
+const SWITCH_SHAPE: Readonly<Record<'ios' | 'android', SwitchShape>> = {
+  ios: { width: 48, height: 28, border: 0, off: { size: 24, inset: 2 }, on: { size: 24, inset: 2 } },
+  android: { width: 52, height: 32, border: 2, off: { size: 16, inset: 6 }, on: { size: 24, inset: 2 } },
+};
 
 export interface SwitchProps {
   label?: string;
@@ -92,65 +201,65 @@ export interface SwitchProps {
   onChange?: (b: boolean) => void;
 }
 export function Switch({ label, value, onChange }: SwitchProps) {
+  const platform = activeTheme().platform;
+  const shape = SWITCH_SHAPE[platform];
+  const inner = shape.width - shape.border * 2;
+  const knob = value ? shape.on : shape.off;
+  const knobLeft = value ? inner - knob.size - knob.inset : knob.inset;
+  const android = platform === 'android';
+  const offTrack = android ? color('fill') : color('fill-strong');
+  const offKnob = android ? color('text-muted') : color('thumb');
+  const onOrOff = value ? color('primary') : color('border');
   const track = React.createElement(
-    'div',
+    'span',
     {
+      key: 'track',
       style: {
         position: 'relative',
-        width: `${SWITCH_TRACK_W}px`,
-        height: `${SWITCH_TRACK_H}px`,
-        borderRadius: radius('full'),
-        background: value ? color('primary') : color('surface'),
-        border: `1px solid ${value ? color('primary') : color('border')}`,
+        display: 'block',
         boxSizing: 'border-box',
+        width: `${shape.width}px`,
+        height: `${shape.height}px`,
+        borderRadius: radius('full'),
+        background: value ? color('primary') : offTrack,
+        border: android ? `${shape.border}px solid ${onOrOff}` : 'none',
         flexShrink: 0,
       },
     },
-    React.createElement('div', {
+    React.createElement('span', {
       style: {
         position: 'absolute',
-        top: `${SWITCH_INSET}px`,
-        left: `${SWITCH_INSET}px`,
-        width: `${SWITCH_KNOB}px`,
-        height: `${SWITCH_KNOB}px`,
+        top: `${knob.inset}px`,
+        left: 0,
+        width: `${knob.size}px`,
+        height: `${knob.size}px`,
         borderRadius: radius('full'),
-        background: color('on-primary'),
-        transform: value ? `translateX(${SWITCH_KNOB_OFFSET}px)` : 'translateX(0)',
+        background: value ? color('on-primary') : offKnob,
+        boxShadow: !android && !value ? raisedShadow() : 'none',
+        transform: `translateX(${knobLeft}px)`,
         transition: 'transform 150ms ease',
       },
     }),
   );
-  return React.createElement(
-    'div',
+  return controlRow(
     {
       role: 'switch',
       'aria-checked': value,
+      'aria-label': label,
       onClick: () => {
         emitUiEvent('press', label ?? 'switch');
         if (onChange) onChange(!value);
       },
-      style: {
-        display: 'flex',
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: label ? 'space-between' : 'flex-start',
-        gap: space('md'),
-        cursor: 'pointer',
-        font: `16px ${FONT}`,
-        color: color('text'),
-        ...CONTROL_RESET,
-      },
     },
-    ...(label ? [React.createElement(FieldLabel, { key: 'label' }, label)] : []),
-    track,
+    [...(label ? [rowLabel(label)] : []), track],
   );
 }
 
 // ── Checkbox ──────────────────────────────────────────────────────────────────
-// Custom div box (native `input type="checkbox"` renders a bright white unchecked square that
-// clashes on dark themes) speaking the same visual language as `Switch` above: the whole row is
-// the ONLY click target (no handler on the box itself), so label + box always toggle together
-// from a single event.
+// A 24 box, r-sm, 2 px `border`; checked, the app's tint with an on-tint `check`. The whole row is
+// the target and the only click handler, so box and label always toggle together.
+const CHECKBOX_SIZE = 24;
+
 export interface CheckboxProps {
   label: string;
   checked: boolean;
@@ -158,12 +267,13 @@ export interface CheckboxProps {
 }
 export function Checkbox({ label, checked, onChange }: CheckboxProps) {
   const box = React.createElement(
-    'div',
+    'span',
     {
+      key: 'box',
       style: {
         boxSizing: 'border-box',
-        width: '22px',
-        height: '22px',
+        width: `${CHECKBOX_SIZE}px`,
+        height: `${CHECKBOX_SIZE}px`,
         borderRadius: radius('sm'),
         display: 'flex',
         alignItems: 'center',
@@ -171,26 +281,11 @@ export function Checkbox({ label, checked, onChange }: CheckboxProps) {
         flexShrink: 0,
         background: checked ? color('primary') : 'transparent',
         border: `2px solid ${checked ? color('primary') : color('border')}`,
-        transition: 'background 120ms ease, border 120ms ease',
       },
     },
-    checked
-      ? React.createElement(
-          'span',
-          {
-            style: {
-              fontSize: '14px',
-              fontWeight: weight('bold'),
-              lineHeight: '1',
-              color: color('on-primary'),
-            },
-          },
-          '✓',
-        )
-      : null,
+    checked ? React.createElement(Glyph, { name: 'check', sizePx: 16, colorValue: color('on-primary') }) : null,
   );
-  return React.createElement(
-    'div',
+  return controlRow(
     {
       role: 'checkbox',
       'aria-checked': checked,
@@ -198,29 +293,15 @@ export function Checkbox({ label, checked, onChange }: CheckboxProps) {
         emitUiEvent('press', label);
         if (onChange) onChange(!checked);
       },
-      style: {
-        display: 'flex',
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: space('sm'),
-        cursor: 'pointer',
-        font: `16px ${FONT}`,
-        color: color('text'),
-        ...CONTROL_RESET,
-      },
     },
-    box,
-    label,
+    [box, rowLabel(label)],
   );
 }
 
 // ── Slider ────────────────────────────────────────────────────────────────────
-// Custom pointer-driven track — the native `input type="range"` renders a glaring white
-// unfilled track on dark themes and its thumb is not stylable with inline styles, so this is a
-// plain div track/fill/thumb driven by Pointer Events instead of `accent-color`. The touch
-// region is a taller, invisible container around a slim visual track (so the draggable area
-// stays comfortable while the rendered track stays thin); pointer capture on that container
-// keeps the drag live even once the pointer leaves the track's own bounds.
+// A 6 px `fill-strong` track with the app's tint up to a 28 `thumb`, driven by Pointer Events with
+// pointer capture (the native range input can't be styled inline). The touch area is the platform's
+// target high, and the track is inset by half a thumb so the thumb never leaves the control.
 interface SliderTrackEl {
   getBoundingClientRect(): { left: number; width: number };
 }
@@ -232,6 +313,8 @@ type SliderPointerEvent = {
     releasePointerCapture(pointerId: number): void;
   };
 };
+const SLIDER_TRACK = 6;
+const SLIDER_THUMB = 28;
 
 export interface SliderProps {
   label?: string;
@@ -263,6 +346,12 @@ export function Slider({ label, value, min = 0, max = 100, step = 1, onChange }:
       if (onChange) onChange(next);
     }
   };
+  const release = (e: SliderPointerEvent) => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    emitUiEvent('press', label ?? 'slider');
+  };
 
   const clampedValue = Math.min(max, Math.max(min, safeValue));
   const pct = max > min ? ((clampedValue - min) / (max - min)) * 100 : 0;
@@ -270,12 +359,20 @@ export function Slider({ label, value, min = 0, max = 100, step = 1, onChange }:
   const touchArea = React.createElement(
     'div',
     {
+      role: 'slider',
+      'aria-label': label,
+      'aria-valuenow': clampedValue,
+      'aria-valuemin': min,
+      'aria-valuemax': max,
       style: {
         boxSizing: 'border-box',
         width: '100%',
-        paddingTop: space('sm'),
-        paddingBottom: space('sm'),
+        height: `${touchTarget()}px`,
+        padding: `0 ${SLIDER_THUMB / 2}px`,
+        display: 'flex',
+        alignItems: 'center',
         touchAction: 'none',
+        cursor: 'pointer',
         ...CONTROL_RESET,
       },
       onPointerDown: (e: SliderPointerEvent) => {
@@ -287,18 +384,8 @@ export function Slider({ label, value, min = 0, max = 100, step = 1, onChange }:
         if (!draggingRef.current) return;
         commit(e.clientX);
       },
-      onPointerUp: (e: SliderPointerEvent) => {
-        if (!draggingRef.current) return;
-        draggingRef.current = false;
-        e.currentTarget.releasePointerCapture(e.pointerId);
-        emitUiEvent('press', label ?? 'slider');
-      },
-      onPointerCancel: (e: SliderPointerEvent) => {
-        if (!draggingRef.current) return;
-        draggingRef.current = false;
-        e.currentTarget.releasePointerCapture(e.pointerId);
-        emitUiEvent('press', label ?? 'slider');
-      },
+      onPointerUp: release,
+      onPointerCancel: release,
     },
     React.createElement(
       'div',
@@ -306,11 +393,10 @@ export function Slider({ label, value, min = 0, max = 100, step = 1, onChange }:
         ref: trackRef,
         style: {
           position: 'relative',
-          height: '8px',
+          flexGrow: 1,
+          height: `${SLIDER_TRACK}px`,
           borderRadius: radius('full'),
-          background: color('surface'),
-          border: `1px solid ${color('border')}`,
-          overflow: 'visible',
+          background: color('fill-strong'),
         },
       },
       React.createElement('div', {
@@ -327,92 +413,132 @@ export function Slider({ label, value, min = 0, max = 100, step = 1, onChange }:
       React.createElement('div', {
         style: {
           position: 'absolute',
-          width: '22px',
-          height: '22px',
+          width: `${SLIDER_THUMB}px`,
+          height: `${SLIDER_THUMB}px`,
           borderRadius: radius('full'),
-          background: color('primary'),
-          border: `2px solid ${color('on-primary')}`,
-          left: `calc(${pct}% - 11px)`,
-          top: '50%',
-          transform: 'translateY(-50%)',
+          background: color('thumb'),
+          boxShadow: raisedShadow(),
+          left: `calc(${pct}% - ${SLIDER_THUMB / 2}px)`,
+          top: `${(SLIDER_TRACK - SLIDER_THUMB) / 2}px`,
         },
       }),
     ),
   );
 
   if (!label) return touchArea;
+  const body = textSize('body');
   return React.createElement(
     'div',
-    { style: { display: 'flex', flexDirection: 'column', gap: space('xs') } },
+    { style: { display: 'flex', flexDirection: 'column' } },
     React.createElement(
       'div',
-      { style: { display: 'flex', flexDirection: 'row', justifyContent: 'space-between' } },
-      React.createElement(FieldLabel, null, label),
-      React.createElement(
-        'span',
-        {
-          style: {
-            fontSize: textSize('caption').size,
-            lineHeight: textSize('caption').line,
-            fontWeight: weight('semibold'),
-            color: color('text'),
-          },
+      {
+        style: {
+          display: 'flex',
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          justifyContent: 'space-between',
+          columnGap: space('md'),
+          fontSize: body.size,
+          lineHeight: body.line,
         },
-        String(value),
-      ),
+      },
+      React.createElement('span', { style: { color: textColor('text') } }, label),
+      React.createElement('span', { style: { color: textColor('text-muted'), ...TABULAR_NUMS } }, String(value)),
     ),
     touchArea,
   );
 }
 
 // ── SegmentedControl ──────────────────────────────────────────────────────────
-// Rounded surface container (outer radius 'md'), equal-width segments; the selected segment
-// gets `primary`/`on-primary` at a radius one step smaller than the container ('sm') — the
-// unselected segments stay transparent with the plain text color.
+// A `fill` capsule 36 high with a `thumb` under the selected option, labels `callout` 600 in `text`.
+// Like the Stepper, the capsule is drawn behind buttons that are the platform's target high.
+const SEGMENT_VISUAL = LAYOUT.minHitVisual;
+const SEGMENT_INSET = 2;
+
 export interface SegmentedControlProps {
   options: string[];
   value: string;
   onChange?: (s: string) => void;
 }
 export function SegmentedControl({ options, value, onChange }: SegmentedControlProps) {
+  const target = touchTarget();
+  const capsuleTop = (target - SEGMENT_VISUAL) / 2;
+  const label = typeStyle('callout', WEIGHT.semibold);
+  const dark = activeTheme().scheme === 'dark';
   return React.createElement(
     'div',
     {
+      role: 'radiogroup',
       style: {
+        position: 'relative',
         display: 'flex',
         flexDirection: 'row',
-        background: color('surface'),
-        border: `1px solid ${color('border')}`,
-        borderRadius: radius('md'),
-        padding: '2px',
-        gap: '2px',
+        minHeight: `${target}px`,
+        padding: `0 ${SEGMENT_INSET}px`,
         boxSizing: 'border-box',
       },
     },
-    ...options.map((option) => {
+    React.createElement('div', {
+      key: 'capsule',
+      style: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: `${capsuleTop}px`,
+        bottom: `${capsuleTop}px`,
+        borderRadius: radius('full'),
+        background: color('fill'),
+      },
+    }),
+    ...options.map((option, i) => {
       const selected = option === value;
       return React.createElement(
         'button',
         {
-          key: option,
+          key: `${i}:${option}`,
           type: 'button',
+          role: 'radio',
+          'aria-checked': selected,
           onClick: () => {
             emitUiEvent('press', option);
             if (onChange) onChange(option);
           },
           style: {
+            position: 'relative',
             flex: '1 1 0',
-            font: `500 14px ${FONT}`,
-            padding: `${space('xs')} ${space('sm')}`,
+            minWidth: 0,
+            margin: 0,
+            minHeight: `${target}px`,
+            padding: `0 ${space('md')}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
             border: 'none',
-            borderRadius: radius('sm'),
-            background: selected ? color('primary') : 'transparent',
-            color: selected ? color('on-primary') : color('text'),
+            background: 'transparent',
+            fontFamily: FONT,
+            ...label,
+            color: textColor('text'),
             cursor: 'pointer',
             ...CONTROL_RESET,
           },
         },
-        option,
+        selected
+          ? React.createElement('span', {
+              key: 'thumb',
+              style: {
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                top: `${capsuleTop + SEGMENT_INSET}px`,
+                bottom: `${capsuleTop + SEGMENT_INSET}px`,
+                borderRadius: radius('full'),
+                background: color('thumb'),
+                boxShadow: dark ? 'none' : raisedShadow(),
+              },
+            })
+          : null,
+        React.createElement('span', { key: 'label', style: { position: 'relative' } }, option),
       );
     }),
   );
@@ -525,7 +651,7 @@ export function Stepper({ label, value, onChange, min = 0, max, step = 1 }: Step
     );
   };
 
-  const target = LAYOUT.touchTarget[activeTheme().platform];
+  const target = touchTarget();
   const valueSize = textSize('subtitle');
   const group = React.createElement(
     'div',
@@ -581,15 +707,17 @@ export function Stepper({ label, value, onChange, min = 0, max, step = 1 }: Step
   );
   if (!label) return group;
   const body = textSize('body');
+  // From 135% the label goes above the capsule (system.md §6).
+  const stacked = stacks();
   return React.createElement(
     'div',
     {
       style: {
         display: 'flex',
-        flexDirection: 'row',
-        alignItems: 'center',
+        flexDirection: stacked ? 'column' : 'row',
+        alignItems: stacked ? 'flex-start' : 'center',
         justifyContent: 'space-between',
-        gap: space('md'),
+        gap: stacked ? space('xs') : space('md'),
         fontSize: body.size,
         lineHeight: body.line,
         color: textColor('text'),
@@ -601,8 +729,7 @@ export function Stepper({ label, value, onChange, min = 0, max, step = 1 }: Step
 }
 
 // ── Field shell (DateInput, Picker) ───────────────────────────────────────────
-// The field anatomy of system.md §7.1 (surface, 1 px border, r-md, padding 12 × 14, body text, a
-// 2 pt text-colour border while focused) drawn around the value, with the platform's own control
+// The field anatomy (`fieldBox`) drawn around the value, with the platform's own control
 // laid over it fully transparent: a tap lands on the native element and opens the native picker or
 // list, while no native chrome ever shows. Pure SDK styles; nothing in the sandbox changes.
 interface FieldShellProps {
@@ -618,6 +745,7 @@ interface FieldShellProps {
 
 function FieldShell({ label, shown, placeholder, leadingIcon, trailingIcon, renderNative }: FieldShellProps) {
   const [focused, setFocused] = React.useState(false);
+  const surface = useGroupSurface();
   const body = textSize('body');
   const overlay = {
     position: 'absolute',
@@ -641,20 +769,12 @@ function FieldShell({ label, shown, placeholder, leadingIcon, trailingIcon, rend
     'div',
     {
       style: {
+        ...fieldBox(focused, surface),
         position: 'relative',
-        boxSizing: 'border-box',
         display: 'flex',
         flexDirection: 'row',
         alignItems: 'center',
         gap: space('sm'),
-        width: '100%',
-        padding: focused ? '11px 13px' : '12px 14px',
-        border: focused ? `2px solid ${color('text')}` : `1px solid ${color('border')}`,
-        borderRadius: radius('md'),
-        background: color('surface'),
-        fontFamily: FONT,
-        fontSize: body.size,
-        lineHeight: body.line,
       },
     },
     ...(leadingIcon ? [icon(leadingIcon, 'leading')] : []),
@@ -677,13 +797,7 @@ function FieldShell({ label, shown, placeholder, leadingIcon, trailingIcon, rend
       { key: 'native' },
     ),
   );
-  if (!label) return field;
-  return React.createElement(
-    'label',
-    { style: { display: 'flex', flexDirection: 'column', gap: space('xs') } },
-    React.createElement(FieldLabel, null, label),
-    field,
-  );
+  return labelled(label, field);
 }
 
 // ── DateInput ─────────────────────────────────────────────────────────────────
