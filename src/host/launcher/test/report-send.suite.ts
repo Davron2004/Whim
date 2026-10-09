@@ -52,6 +52,7 @@ export async function runReportSendTests(h: Harness): Promise<void> {
       h.ok(!textOf(tree.root).includes('Include the code'), 'code has no opt-out');
       await press(button(tree, COPY.reportReasonBroken));
       h.ok(textOf(tree.root).includes(COPY.reportPreviewTitle), 'choosing a reason reveals the preview');
+      h.eq(tree.root.findByType('Switch').props.accessibilityLabel, COPY.reportIncludePrompt, 'a screen reader announces the prompt switch by what it includes');
       await TestRenderer.act(async () => tree.root.findByType('Switch').props.onValueChange(false));
 
       answers.push(async () => json({ error: 'payload_too_large', hint: 'That report is too large to send.' }, 413));

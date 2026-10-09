@@ -337,7 +337,13 @@ function SwitchRow({ label, value, onChange }: Readonly<{ label: string; value: 
   return (
     <View style={styles.switchRow}>
       <Text style={[TYPE_SCALE.body, { color: p.text }]}>{label}</Text>
-      <Switch value={value} onValueChange={onChange} trackColor={{ false: p.cardBorder, true: p.accent }} thumbColor={p.onAccent} />
+      <Switch
+        value={value}
+        onValueChange={onChange}
+        accessibilityLabel={label}
+        trackColor={{ false: p.cardBorder, true: p.accent }}
+        thumbColor={p.onAccent}
+      />
     </View>
   );
 }
