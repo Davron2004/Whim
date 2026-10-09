@@ -40,5 +40,5 @@
 
 ## 7. Rollout (orchestrator, attended, after merge)
 
-- [ ] 7.1 (run AFTER 7.2 — see progress.md rollout ordering) Deploy with `deploy/cloudrun/deploy.sh`. Confirm boot logs the Firestore backend, then send one real `/v1/clarify` and check its ledger row exists in Firestore.
-- [ ] 7.2 Run `import-sqlite` against `~/.config/whim/vm-backup-2026-10-07` (extracted). Verify 5 waitlist rows and 11 reports through the laptop CLIs, and rerun it to confirm nothing changes.
+- [x] 7.1 (run AFTER 7.2 — see progress.md rollout ordering) Deploy with `deploy/cloudrun/deploy.sh`. Confirm boot logs the Firestore backend, then send one real `/v1/clarify` and check its ledger row exists in Firestore.
+- [x] 7.2 Run `import-sqlite` against `~/.config/whim/vm-backup-2026-10-07` (extracted). Verify 5 waitlist rows and 11 reports through the laptop CLIs, and rerun it to confirm nothing changes.
