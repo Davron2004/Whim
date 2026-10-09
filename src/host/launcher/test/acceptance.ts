@@ -85,6 +85,9 @@ import { runFlowMessagesUiTests } from './flow-messages-ui.suite';
 import { runKeyboardShellUiTests } from './keyboard-shell-ui.suite';
 import { runIconUiTests } from './icon-ui.suite';
 import { runHapticsTests } from './haptics.suite';
+import { runShellTokensTests } from './shell-tokens.suite';
+import { runShellControlsUiTests } from './shell-controls-ui.suite';
+import { runShellStatusUiTests } from './shell-status-ui.suite';
 
 const h = new Harness();
 
@@ -167,6 +170,9 @@ await runFlowMessagesUiTests(h);
 await runKeyboardShellUiTests(h);
 await runIconUiTests(h);
 await runHapticsTests(h);
+await runShellTokensTests(h);
+await runShellControlsUiTests(h);
+await runShellStatusUiTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

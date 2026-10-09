@@ -2,10 +2,11 @@
  * theme — the launcher shell's named RN colors (v2; the v2 handoff README (removed by decision #75; in git history) "Two systems, not
  * one").
  *
- * The shell keeps its v2 palette, `SHELL_PALETTE` below, until it moves to `src/design/tokens.ts`
- * (design-system-v1): the values are pinned here, not derived from the SDK's `DEFAULT_THEME`,
- * which now resolves from the token module. There is no theme parameter anywhere in the
- * launcher: every shell color reads from this one constant.
+ * Screens not yet moved onto the `src/host/ui/` primitives keep this v2 palette, `SHELL_PALETTE`
+ * below, pinned here rather than derived from the SDK's `DEFAULT_THEME` (which now resolves from
+ * the token module). New and moved shell code reads colours from `useTokens()`
+ * (`src/host/ui/tokens.ts`), which follows the phone's appearance; this file goes once the last
+ * screen has moved (design-system-v1 chain 21). Neither path takes a theme parameter.
  */
 
 import { SHELL_COLORS, STATUS_COLORS } from '../../sdk/theme';

@@ -63,9 +63,42 @@ export function FlatList({ data, renderItem, ...props }: HostProps & { data: unk
   return React.createElement('FlatList', props, data.map((item, index) => React.createElement(React.Fragment, { key: index }, renderItem({ item, index }))));
 }
 export const Platform = { OS: 'ios', Version: '26.0' as string | number, select: (options: Record<string, unknown>) => options.ios ?? options.default };
-export const StyleSheet = { create: <T,>(styles: T): T => styles, hairlineWidth: 1, absoluteFillObject: {}, flatten: (styles: unknown) => Object.assign({}, ...([styles].flat(Infinity))) };
+export const StyleSheet = { create: <T,>(styles: T): T => styles, hairlineWidth: 1, absoluteFill: {}, absoluteFillObject: {}, flatten: (styles: unknown) => Object.assign({}, ...([styles].flat(Infinity))) };
 export const useSafeAreaInsets = () => ({ top: 20, bottom: 30, left: 0, right: 0 });
-export const useWindowDimensions = () => ({ width: 390, height: 844, scale: 1, fontScale: 1 });
+/** The phone's text size; set it before rendering to test Dynamic Type. */
+export const windowMetrics = { fontScale: 1 };
+export const useWindowDimensions = () => ({ width: 390, height: 844, scale: 1, fontScale: windowMetrics.fontScale });
+let colorScheme: 'light' | 'dark' | null = 'light';
+const schemeListeners = new Set<() => void>();
+const subscribeScheme = (listener: () => void) => { schemeListeners.add(listener); return () => { schemeListeners.delete(listener); }; };
+/** The phone's appearance, as `useColorScheme` reports it and re-renders on (call inside act). */
+export function setColorScheme(scheme: 'light' | 'dark' | null): void {
+  colorScheme = scheme;
+  for (const listener of [...schemeListeners]) listener();
+}
+export const useColorScheme = () => React.useSyncExternalStore(subscribeScheme, () => colorScheme);
+type AccessibilityEvent = 'reduceMotionChanged' | 'darkerSystemColorsChanged' | 'highTextContrastChanged';
+const accessibilityListeners = new Map<AccessibilityEvent, Set<(on: boolean) => void>>();
+/** The OS accessibility settings the `is…Enabled` queries answer with. Increase Contrast is one
+ *  setting answered by both platform queries; `emitAccessibility` plays one platform's event. */
+export const accessibilitySettings = { reduceMotion: false, increaseContrast: false };
+export const AccessibilityInfo = {
+  isReduceMotionEnabled: async () => accessibilitySettings.reduceMotion,
+  isDarkerSystemColorsEnabled: async () => accessibilitySettings.increaseContrast,
+  isHighTextContrastEnabled: async () => accessibilitySettings.increaseContrast,
+  addEventListener: (event: AccessibilityEvent, listener: (on: boolean) => void) => {
+    const listeners = accessibilityListeners.get(event) ?? new Set<(on: boolean) => void>();
+    accessibilityListeners.set(event, listeners);
+    listeners.add(listener);
+    return { remove: () => { listeners.delete(listener); } };
+  },
+};
+export function emitAccessibility(event: AccessibilityEvent, on: boolean): void {
+  for (const listener of [...(accessibilityListeners.get(event) ?? [])]) listener(on);
+}
+export function accessibilityListenerCount(): number {
+  return [...accessibilityListeners.values()].reduce((n, listeners) => n + listeners.size, 0);
+}
 export const Dimensions = { get: useWindowDimensions };
 class Value {
   constructor(public value: number) {}
