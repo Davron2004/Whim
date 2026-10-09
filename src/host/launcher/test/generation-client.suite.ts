@@ -262,6 +262,28 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     h.eq(bodies[2], { prompt: 'a dice roller' }, 'and an omitted app argument sends the same shape');
   });
 
+  // clarifyPrompt against a server from before answer modes (beta-1 D18): its questions carry no
+  // `select` and no `other`, and a rolled-back server must not strand this build on them.
+  const clarifyAnswering = (body: unknown) => ({ ...BASE, fetchImpl: (async () => new Response(JSON.stringify(body), { status: 200 })) as typeof fetch });
+
+  await h.test('clarifyPrompt: a question with no answer mode is one pick with no typed answer; a mode that is sent is kept', async () => {
+    const result = await clarifyPrompt(clarifyAnswering({
+      questions: [
+        { id: 'units', question: 'Which units?', options: ['Kilometres', 'Miles'] },
+        { id: 'days', question: 'Which days?', options: ['Monday', 'Wednesday'], select: 'many', other: true },
+      ],
+    }), 'a running log');
+    h.eq(result.questions.map((q) => [q.id, q.select, q.other]), [['units', 'one', false], ['days', 'many', true]], 'the missing modes take the server’s defaults');
+  });
+
+  await h.test('clarifyPrompt: a select or other of the wrong kind is still a malformed reply', async () => {
+    for (const wrong of [{ select: 'several' }, { select: 1 }, { other: 'yes' }]) {
+      const reply = { questions: [{ id: 'units', question: 'Which units?', options: ['Kilometres', 'Miles'], ...wrong }] };
+      const err = await clarifyPrompt(clarifyAnswering(reply), 'a running log').then(() => undefined, (e: unknown) => e);
+      h.ok(err instanceof GenerationClientError && err.kind === 'http' && err.hint === 'Unexpected clarify response shape', `${JSON.stringify(wrong)} is refused`);
+    }
+  });
+
   // rewritePrompt: generic HTTP error
   await h.test('rewritePrompt: a non-2xx response raises GenerationClientError{kind:"http"}', async () => {
     const fetchImpl = (async () =>
@@ -352,7 +374,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
   });
 
   // Parity test (build-liveness review finding): every arm of the CONTRACT'S union must have a
-  // matching arm in this client's hand-rolled `isGenerationEvent` guard, or the device throws
+  // matching arm in this client's hand-rolled `EVENT_GUARDS` table, or the device throws
   // `stream_parse` on a perfectly valid frame the moment the server starts sending it — exactly
   // what happened here for `thinking` before this change. One canned frame per union arm, fed
   // through the real SSE path, is what makes "the guard accepts everything the contract allows"
@@ -364,6 +386,8 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       { type: 'thinking', chars: 1 },
       { type: 'diagnostic', diagnostic: { kind: 'type-error', hint: 'declare a type' } },
       { type: 'usage', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+      { type: 'queued', position: 2 },
+      { type: 'restart' },
       {
         type: 'result',
         app: { name: 'Tip Splitter', source: 'src', bundle: 'window.__WHIM_APP_MODULE__ = {};', manifest: {}, schema: {} },
@@ -401,9 +425,10 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     h.eq(keepalives, 2, 'and the caller hears about both keepalive frames');
   });
 
-  // generateApp: malformed frame — unrecognized discriminant
-  await h.test('generateApp: a malformed frame raises GenerationClientError{kind:"stream_parse"}', async () => {
-    const badFrame = 'event: stage\ndata: {"type":"not-a-real-type"}\nid: 1\n\n';
+  // generateApp: malformed frame — no event envelope at all. (An unrecognized `type` is not
+  // malformed: it goes through its fallback, `wire-future-frames.suite.ts`.)
+  await h.test('generateApp: a frame whose type is not a string raises GenerationClientError{kind:"stream_parse"}', async () => {
+    const badFrame = 'event: stage\ndata: {"type":42}\nid: 1\n\n';
     const fetchImpl = (async () => sseResponse([badFrame])) as typeof fetch;
     try {
       await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
@@ -568,7 +593,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       const classified = new GenerationClientError('http', { status: 503, hint: 'The service is warming up' });
       const opts = {
         ...BASE,
-        streamTransport: async () => ({ read: async () => { throw classified; } }),
+        streamTransport: async () => ({ read: async () => { throw classified; }, cancel: () => undefined }),
       } as ConsentedClientOptions;
       const err = await settledOrHung(collect(generateApp(opts, { prompt: 'p' })), 1000);
       h.ok(err === classified, 'the transport’s own error instance is what surfaces');
@@ -615,7 +640,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     'clarifyPrompt: a non-2xx response still throws AND records a structured breadcrumb on the generation channel',
     async () => {
       const fetchImpl = (async () =>
-        new Response(JSON.stringify({ error: 'not_found' }), { status: 404 })) as typeof fetch;
+        new Response('404 Not Found', { status: 404 })) as typeof fetch;
 
       const before = log.buffer.snapshot().length;
       await h.throws(

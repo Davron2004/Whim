@@ -6,11 +6,14 @@
  *
  * `generateApp` parses the same `event:`/`data:`/`id:`/blank-line SSE framing the server writes
  * (`server/src/sse.ts`) directly off the `Response.body` reader, incrementally — frames are
- * yielded as they arrive, not buffered to stream completion. Every frame is validated against
- * `GenerationEvent`'s shape (hand-rolled structural guards below, mirroring `@whim/contract`'s
- * zod schema field-for-field — see the guards' doc comment for why) before being yielded; a
- * frame that fails to parse as valid JSON or fails shape validation raises
- * `GenerationClientError{kind:'stream_parse'}` rather than silently passing bad data to the UI.
+ * yielded as they arrive, not buffered to stream completion. Every frame, and every unary body, is
+ * decoded in two phases (beta-1 D16, `wire-compat.ts`): its envelope first, then — only for a type
+ * this build knows at its protocol level — its full shape (hand-rolled structural guards below,
+ * mirroring `@whim/contract`'s zod schemas field-for-field — see the guards' doc comment for why).
+ * A frame whose fallback is `skip` is dropped; one whose fallback is `fail` or `update` raises
+ * `GenerationClientError{kind:'fallback'}`. A frame that fails to parse as JSON, is no envelope, or
+ * is a known event failing its shape raises `GenerationClientError{kind:'stream_parse'}` rather
+ * than silently passing bad data to the UI.
  * Keepalive comment lines (`: ...`) are recognized and skipped, never treated as malformed
  * frames — but they still fire `ClientOptions.onKeepalive` (build-liveness B2), since a keepalive
  * is real evidence the connection is alive even though it carries no `GenerationEvent`.
@@ -31,20 +34,27 @@ import type {
   Diagnostic,
   GenerateRequest,
   GenerationEvent,
+  PlanRow,
   ReportRequest,
   ReportResponse,
   RewriteRequest,
   RewriteResponse,
+  RunSummary,
+  SummaryKind,
+  SummaryMark,
   Usage,
   WireAppRecord,
 } from '@whim/contract';
 
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 import { openXhrGenerateStream } from './xhr-transport';
 import {
   CONNECT_TIMEOUT_HINT,
   GenerationClientError,
   connectTimeoutOf,
   consentedClientOptions,
+  fallbackError,
   httpErrorFrom,
   isNonEmptyString,
   isRecord,
@@ -52,6 +62,7 @@ import {
   requestHeaders,
   requestIdOf,
 } from './transport-shared';
+import { gateMessage } from './wire-compat';
 import type { ClientOptions, ConsentedClientOptions } from './transport-shared';
 
 /** Re-exported for callers that historically imported these from this module (`LauncherRoot.tsx`,
@@ -75,7 +86,11 @@ function withRequestId<T extends object>(body: T, response: Response): WithReque
  * TYPE-ONLY import at the top of this file — importing the zod schema VALUES here would pull
  * zod into the Metro bundle graph, and zod's dist uses `export * from` namespace syntax that RN's
  * babel config doesn't transform (`guard:metro`). These guards mirror each schema's shape
- * field-for-field; keep them in sync by hand if `contract/src/index.ts` changes.
+ * field-for-field; keep them in sync by hand if `contract/src/index.ts` changes. Two deliberate
+ * differences: they judge a message after `withoutNullOptionals`, so `null` on an optional field
+ * passes as absent where the zod schema would refuse it; and a result's `summary` and a rewrite's
+ * `plan` are judged apart (`withoutMalformedOptional`), so a malformed one is dropped where the zod
+ * schema would refuse the whole message.
  */
 function isOptionalString(value: unknown): boolean {
   return value === undefined || typeof value === 'string';
@@ -85,6 +100,118 @@ function isOptionalNumber(value: unknown): boolean {
   return value === undefined || typeof value === 'number';
 }
 
+/** The keys a message of type `T` may leave out. */
+type OptionalKey<T> = { [K in keyof T]-?: Record<never, never> extends Pick<T, K> ? K : never }[keyof T];
+
+/** A message's optional fields, as a set: exactly the contract's optional keys, so a field the
+ *  contract makes optional fails the typecheck until it is listed, and a required one can't be. */
+type OptionalFields<T> = { readonly [K in OptionalKey<T>]: true };
+
+/**
+ * `null` on an OPTIONAL field reads as the field left out (beta-1 D16 layer 1): this build is the
+ * oldest reader every later server must serve, and "none" written as `null` is a likely shape for
+ * one. `value` without each field in `optional` that holds `null`; a non-record is returned as it
+ * is. Runs before the guards, so a REQUIRED field holding `null` is still there for its guard to
+ * refuse. Unknown fields are kept, as the tolerant reader keeps them.
+ */
+function withoutNullOptionals<T>(value: T, optional: Readonly<Record<string, true>>): T {
+  if (!isRecord(value) || !Object.keys(optional).some((key) => value[key] === null)) return value;
+  const isOptional = (key: string): boolean => Object.hasOwn(optional, key);
+  return Object.fromEntries(Object.entries(value).filter(([key, field]) => field !== null || !isOptional(key))) as T;
+}
+
+const DIAGNOSTIC_OPTIONAL: OptionalFields<Diagnostic> = { severity: true, message: true, symbol: true, line: true };
+const APP_RECORD_OPTIONAL: OptionalFields<WireAppRecord> = { sourceMap: true };
+const REWRITE_OPTIONAL: OptionalFields<RewriteResponse> = { plan: true, compat: true };
+const REPORT_OPTIONAL: OptionalFields<ReportResponse> = { compat: true };
+const CLARIFY_OPTIONAL: OptionalFields<ClarifyResponse> = { limit: true, compat: true };
+const QUESTION_OPTIONAL: OptionalFields<WireClarifyQuestion> = { select: true, other: true };
+
+/** Each event arm's optional fields. A mapped type over the contract's `type` union, like
+ *  `EVENT_GUARDS`: an arm added to the contract fails the typecheck until it is listed here. */
+const EVENT_OPTIONAL: { readonly [K in GenerationEvent['type']]: OptionalFields<Extract<GenerationEvent, { type: K }>> } = {
+  stage: { attempt: true, compat: true },
+  token: { compat: true },
+  thinking: { compat: true },
+  diagnostic: { compat: true },
+  usage: { compat: true },
+  queued: { compat: true },
+  restart: { compat: true },
+  result: { summary: true, compat: true },
+  failure: { compat: true },
+};
+
+/** A clarify body with `null` read as absent on its optional fields and on its questions'. */
+function clarifyWithoutNullOptionals(value: unknown): unknown {
+  const body = withoutNullOptionals(value, CLARIFY_OPTIONAL);
+  if (!isRecord(body) || !Array.isArray(body.questions)) return body;
+  return { ...body, questions: body.questions.map((question: unknown) => withoutNullOptionals(question, QUESTION_OPTIONAL)) };
+}
+
+/** A frame of a known type with `null` read as absent on its optional fields and on those of the
+ *  records it carries: a `Diagnostic` (one, or a failure's list) and a result's `WireAppRecord`. */
+function eventWithoutNullOptionals(type: GenerationEvent['type'], frame: Record<string, unknown>): Record<string, unknown> {
+  const event = withoutNullOptionals(frame, EVENT_OPTIONAL[type]);
+  switch (type) {
+    case 'diagnostic':
+      return { ...event, diagnostic: withoutNullOptionals(event.diagnostic, DIAGNOSTIC_OPTIONAL) };
+    case 'failure':
+      return Array.isArray(event.diagnostics)
+        ? { ...event, diagnostics: event.diagnostics.map((diagnostic: unknown) => withoutNullOptionals(diagnostic, DIAGNOSTIC_OPTIONAL)) }
+        : event;
+    case 'result':
+      return { ...event, app: withoutNullOptionals(event.app, APP_RECORD_OPTIONAL) };
+    default:
+      return event;
+  }
+}
+
+/**
+ * `message` without its optional `field` when that field holds a value `isReadable` refuses: a
+ * result's `summary` and a rewrite's `plan` are extras on the message they ride on, so a malformed
+ * one reads as left out (beta-1 D16 layer 1) rather than failing the message or reaching a screen.
+ * The drop is recorded at warn on the generation channel by route and field name only, never the
+ * value. Runs after the message's own guard, so only a message that is otherwise used records one.
+ */
+function withoutMalformedOptional<T extends Record<string, unknown>>(
+  message: T,
+  field: string,
+  isReadable: (value: unknown) => boolean,
+  route: string,
+): T {
+  if (message[field] === undefined || isReadable(message[field])) return message;
+  log.warn(CHANNELS.gen, 'malformed optional field dropped', { route, field });
+  return Object.fromEntries(Object.entries(message).filter(([key]) => key !== field)) as T;
+}
+
+/** The contract's `SummaryKind` values, as a set: a kind added there fails the typecheck until it
+ *  is listed here. */
+const SUMMARY_KINDS: Readonly<Record<SummaryKind, true>> = { Start: true, Added: true, Changed: true, Removed: true, Look: true, Fixed: true };
+
+function isSummaryMark(value: unknown): value is SummaryMark {
+  return isRecord(value) && (value.cls === 'chg' || value.cls === 'hedge') && Number.isInteger(value.start) && Number.isInteger(value.end);
+}
+
+/** The contract's `RunSummary`, field for field. */
+function isRunSummary(value: unknown): value is RunSummary {
+  return (
+    isRecord(value) &&
+    typeof value.text === 'string' &&
+    typeof value.kind === 'string' &&
+    Object.hasOwn(SUMMARY_KINDS, value.kind) &&
+    Array.isArray(value.touched) &&
+    value.touched.every((area) => typeof area === 'string') &&
+    Array.isArray(value.marks) &&
+    value.marks.every(isSummaryMark)
+  );
+}
+
+/** The contract's `RewriteResponse.plan`: a list of `PlanRow`s. */
+function isPlan(value: unknown): value is PlanRow[] {
+  return Array.isArray(value) && value.every((row) => isRecord(row) && typeof row.label === 'string' && typeof row.text === 'string');
+}
+
+/** Its `plan` is judged apart: a malformed one is dropped, never the reply. */
 function isRewriteResponse(value: unknown): value is RewriteResponse {
   return isRecord(value) && typeof value.rewrittenPrompt === 'string';
 }
@@ -93,18 +220,44 @@ function isReportResponse(value: unknown): value is ReportResponse {
   return isRecord(value) && isNonEmptyString(value.reportId);
 }
 
-function isClarifyQuestion(value: unknown): value is ClarifyQuestion {
+/** A clarify question as it may arrive: a server from before answer modes (beta-1 D18) sends no
+ *  `select` and no `other`. */
+type WireClarifyQuestion = Omit<ClarifyQuestion, 'select' | 'other'> & Partial<Pick<ClarifyQuestion, 'select' | 'other'>>;
+type WireClarifyResponse = Omit<ClarifyResponse, 'questions'> & { questions: WireClarifyQuestion[] };
+
+/** A missing `select` or `other` is read as the server's own default (tolerant reader, beta-1 D16
+ *  layer 1), so an older server's questions still work; a `null` one is missing by the time this
+ *  runs (`withoutNullOptionals`), and a present value of the wrong kind still fails the guard. */
+function isClarifyQuestion(value: unknown): value is WireClarifyQuestion {
   return (
     isRecord(value) &&
     typeof value.id === 'string' &&
     typeof value.question === 'string' &&
     Array.isArray(value.options) &&
-    value.options.every((option) => typeof option === 'string')
+    value.options.every((option) => typeof option === 'string') &&
+    (value.select === undefined || value.select === 'one' || value.select === 'many') &&
+    (value.other === undefined || typeof value.other === 'boolean')
   );
 }
 
-function isClarifyResponse(value: unknown): value is ClarifyResponse {
-  return isRecord(value) && Array.isArray(value.questions) && value.questions.every(isClarifyQuestion);
+/** The question with the server's defaults for an answer mode it didn't send: one pick, no typed
+ *  answer (`server/src/routes/clarify.ts#shapeClarify`). */
+function withAnswerModeDefaults(question: WireClarifyQuestion): ClarifyQuestion {
+  return { ...question, select: question.select ?? 'one', other: question.other ?? false };
+}
+
+function isClarifyLimit(value: unknown): boolean {
+  return isRecord(value) && isNonEmptyString(value.reason) && isNonEmptyString(value.alternative);
+}
+
+/** A `limit` answers with no questions, so a response carrying both is malformed. */
+function isClarifyResponse(value: unknown): value is WireClarifyResponse {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.questions) &&
+    value.questions.every(isClarifyQuestion) &&
+    (value.limit === undefined || (isClarifyLimit(value.limit) && value.questions.length === 0))
+  );
 }
 
 function isDiagnostic(value: unknown): value is Diagnostic {
@@ -146,44 +299,43 @@ function isWireAppRecord(value: unknown): value is WireAppRecord {
   );
 }
 
-/** Structural guard for `GenerationEvent`'s discriminated union — one arm per `type` literal,
- *  matching `contract/src/index.ts`'s zod union exactly. An unrecognized `type` (or a `type` that
- *  isn't a string at all) fails, same as the zod union rejecting an unknown discriminant. */
-function isGenerationEvent(value: unknown): value is GenerationEvent {
-  if (!isRecord(value) || typeof value.type !== 'string') {
-    return false;
-  }
-  switch (value.type) {
-    case 'stage':
-      return (
-        (value.stage === 'plan' ||
-          value.stage === 'generate' ||
-          value.stage === 'check' ||
-          value.stage === 'run' ||
-          value.stage === 'repair') &&
-        (value.status === 'start' || value.status === 'done') &&
-        isOptionalNumber(value.attempt)
-      );
-    case 'token':
-      return typeof value.text === 'string';
-    case 'thinking':
-      return typeof value.chars === 'number' && Number.isInteger(value.chars) && value.chars > 0;
-    case 'diagnostic':
-      return isDiagnostic(value.diagnostic);
-    case 'usage':
-      return isUsage(value.usage);
-    case 'result':
-      return isWireAppRecord(value.app);
-    case 'failure':
-      return (
-        typeof value.reason === 'string' &&
-        typeof value.attempts === 'number' &&
-        Array.isArray(value.diagnostics) &&
-        value.diagnostics.every(isDiagnostic)
-      );
-    default:
-      return false;
-  }
+/** One structural guard per `GenerationEvent` arm, matching `contract/src/index.ts`'s zod union
+ *  field-for-field. A mapped type over the contract's `type` union: an arm added to the contract
+ *  without a guard here fails the typecheck. Its keys are the event types this build knows. */
+const EVENT_GUARDS: { readonly [K in GenerationEvent['type']]: (value: Record<string, unknown>) => boolean } = {
+  stage: (value) =>
+    (value.stage === 'plan' ||
+      value.stage === 'generate' ||
+      value.stage === 'check' ||
+      value.stage === 'run' ||
+      value.stage === 'repair') &&
+    (value.status === 'start' || value.status === 'done') &&
+    isOptionalNumber(value.attempt),
+  token: (value) => typeof value.text === 'string',
+  thinking: (value) => typeof value.chars === 'number' && Number.isInteger(value.chars) && value.chars > 0,
+  diagnostic: (value) => isDiagnostic(value.diagnostic),
+  usage: (value) => isUsage(value.usage),
+  queued: (value) => typeof value.position === 'number' && Number.isInteger(value.position) && value.position >= 1,
+  restart: () => true,
+  // Its `summary` is judged apart: a malformed one is dropped, never the result.
+  result: (value) => isWireAppRecord(value.app),
+  failure: (value) =>
+    typeof value.reason === 'string' &&
+    typeof value.attempts === 'number' &&
+    Array.isArray(value.diagnostics) &&
+    value.diagnostics.every(isDiagnostic),
+};
+
+function isKnownEventType(type: string): type is GenerationEvent['type'] {
+  return Object.hasOwn(EVENT_GUARDS, type);
+}
+
+/** A frame of a known type as this build reads it (`null` on an optional field read as absent, a
+ *  result's malformed `summary` dropped), or `undefined` when it fails its arm's guard. */
+function knownEventOf(type: GenerationEvent['type'], frame: Record<string, unknown>): GenerationEvent | undefined {
+  const event = eventWithoutNullOptionals(type, frame);
+  if (!EVENT_GUARDS[type](event)) return undefined;
+  return (type === 'result' ? withoutMalformedOptional(event, 'summary', isRunSummary, '/v1/generate') : event) as GenerationEvent;
 }
 
 function isAbortError(err: unknown): boolean {
@@ -192,6 +344,19 @@ function isAbortError(err: unknown): boolean {
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** Phase one for a unary success body (beta-1 D16): the route's body is always a known message,
+ *  so only a `compat.min` above this build's level applies a fallback. `skip` still reads the body
+ *  with this build's own guard; `fail` and `update` end the call here with
+ *  `GenerationClientError{kind:'fallback'}`. */
+function gateUnaryBody(bodyJson: unknown, response: Response, path: string, baseUrl: string): void {
+  if (!isRecord(bodyJson)) return;
+  const gate = gateMessage(bodyJson, true);
+  if (gate.kind === 'decode' || gate.fallback.kind === 'skip') return;
+  const requestId = requestIdOf(response.headers);
+  logMappedError(path, baseUrl, 'fallback', { status: response.status, message: gate.fallback.kind, requestId });
+  throw fallbackError(gate.fallback, { status: response.status, requestId });
 }
 
 /**
@@ -235,10 +400,12 @@ export async function clarifyPrompt(
   }
 
   const bodyJson: unknown = await response.json().catch(() => null);
-  if (!isClarifyResponse(bodyJson)) {
+  gateUnaryBody(bodyJson, response, '/v1/clarify', opts.baseUrl);
+  const reply = clarifyWithoutNullOptionals(bodyJson);
+  if (!isClarifyResponse(reply)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected clarify response shape' });
   }
-  return withRequestId(bodyJson, response);
+  return withRequestId({ ...reply, questions: reply.questions.map(withAnswerModeDefaults) }, response);
 }
 
 /** `POST /v1/rewrite` — fast and unary, plain JSON, no stream. `clarifications` carries the
@@ -282,10 +449,12 @@ export async function rewritePrompt(
   }
 
   const bodyJson: unknown = await response.json().catch(() => null);
-  if (!isRewriteResponse(bodyJson)) {
+  gateUnaryBody(bodyJson, response, '/v1/rewrite', opts.baseUrl);
+  const reply = withoutNullOptionals(bodyJson, REWRITE_OPTIONAL);
+  if (!isRewriteResponse(reply)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected rewrite response shape' });
   }
-  return withRequestId(bodyJson, response);
+  return withRequestId(withoutMalformedOptional(reply, 'plan', isPlan, '/v1/rewrite'), response);
 }
 
 /** `POST /v1/report` (design D14) — the ONE call that does NOT require AI-data consent (design
@@ -322,21 +491,25 @@ export async function sendReport(
   }
 
   const bodyJson: unknown = await response.json().catch(() => null);
-  if (!isReportResponse(bodyJson)) {
+  gateUnaryBody(bodyJson, response, '/v1/report', opts.baseUrl);
+  const reply = withoutNullOptionals(bodyJson, REPORT_OPTIONAL);
+  if (!isReportResponse(reply)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected report response shape' });
   }
-  return withRequestId(bodyJson, response);
+  return withRequestId(reply, response);
 }
 
 /** One parsed SSE block: a validated event, the server's keepalive comment (`: keepalive\n\n`,
  *  build-liveness B2 — transport noise, never a `GenerationEvent`), or a truly empty block (an
  *  incidental extra blank line, distinct from a keepalive so only the real keepalive frame ever
- *  invokes `onKeepalive`). */
-type SseBlockResult = { kind: 'event'; event: GenerationEvent } | { kind: 'keepalive' } | { kind: 'empty' };
+ *  invokes `onKeepalive`), or `skipped`: a frame this build cannot use whose fallback is `skip`. */
+type SseBlockResult = { kind: 'event'; event: GenerationEvent } | { kind: 'keepalive' } | { kind: 'empty' } | { kind: 'skipped' };
 
-/** Parse one SSE block (the text between blank-line separators, `\n\n`-delimited). Raises
- *  `GenerationClientError{kind:'stream_parse'}` for anything that looks like a real frame but
- *  fails to parse. */
+/** Parse one SSE block (the text between blank-line separators, `\n\n`-delimited) in the two
+ *  phases of beta-1 D16: the envelope (`type` plus `compat`), then — for a type this build knows at
+ *  its level — the event's full shape. Raises `GenerationClientError{kind:'fallback'}` for a frame
+ *  whose fallback ends the flow, and `GenerationClientError{kind:'stream_parse'}` for anything that
+ *  looks like a real frame but fails to parse. */
 function parseSseBlock(block: string): SseBlockResult {
   const lines = block.split('\n').filter((l) => l.length > 0);
   if (lines.length === 0) {
@@ -358,10 +531,22 @@ function parseSseBlock(block: string): SseBlockResult {
     throw new GenerationClientError('stream_parse', { hint: 'SSE frame data is not valid JSON' });
   }
 
-  if (!isGenerationEvent(dataJson)) {
+  if (!isRecord(dataJson) || typeof dataJson.type !== 'string') {
+    throw new GenerationClientError('stream_parse', { hint: 'SSE frame data is not an event envelope' });
+  }
+  const { type } = dataJson;
+  const gate = gateMessage(dataJson, isKnownEventType(type));
+  if (gate.kind === 'fallback') {
+    if (gate.fallback.kind === 'skip') return { kind: 'skipped' };
+    throw fallbackError(gate.fallback);
+  }
+  // Phase two. `gateMessage` only lets a known type through, so the type test never fails here;
+  // it narrows `type` for the guard lookup.
+  const event = isKnownEventType(type) ? knownEventOf(type, dataJson) : undefined;
+  if (event === undefined) {
     throw new GenerationClientError('stream_parse', { hint: 'SSE frame did not match GenerationEvent' });
   }
-  return { kind: 'event', event: dataJson };
+  return { kind: 'event', event };
 }
 
 function connectTimeoutError(opts: ClientOptions): GenerationClientError {
@@ -456,6 +641,10 @@ async function openFetchGenerateStream(
   const inner = response.body.getReader();
   return {
     requestId: requestIdOf(response.headers),
+    cancel() {
+      cleanup();
+      controller.abort();
+    },
     async read() {
       try {
         const chunk = await inner.read();
@@ -590,6 +779,7 @@ function concatBytes(chunks: Uint8Array[]): Uint8Array {
  *
  * An aborted stream (via `signal`) ends the iteration silently — no terminal event, no throw.
  * Any other stream failure (network error mid-read) raises `GenerationClientError{kind:'network'}`.
+ * Whatever ends the stream on the client's side also aborts its request (`streamEvents`).
  *
  * Hermes ships a TextDecoder polyfill whose streaming-decode option is unverified (this
  * project's own ambient TextDecoder type — `src/host/version-store/env.d.ts` — declares only the
@@ -629,7 +819,13 @@ export function generateApp(
  *  before that and when the response had none. */
 export type GenerationStream = AsyncGenerator<GenerationEvent, void, undefined> & { readonly requestId?: string };
 
-/** `generateApp`'s event loop; records the opened stream's request id on `opened`. */
+/** `generateApp`'s event loop; records the opened stream's request id on `opened`.
+ *
+ *  A stream the client ends — a fallback that ends the flow, a frame that fails to parse, a read
+ *  that fails, or a consumer that stops iterating — is cancelled here, on every one of those paths,
+ *  so the transport aborts the request. Otherwise the server would build on for nobody: holding the
+ *  slot, spending, recording a delivery, and refusing the device's retry `device_busy`. A stream
+ *  the server ended, or the caller's signal aborted, has nothing left to cancel. */
 async function* streamEvents(
   opts: ConsentedClientOptions,
   request: GenerateRequest,
@@ -642,6 +838,18 @@ async function* streamEvents(
   }
   opened.requestId = reader.requestId;
 
+  let ended = false;
+  try {
+    yield* eventsOn(reader, opts.onKeepalive);
+    ended = true;
+  } finally {
+    if (!ended) reader.cancel();
+  }
+}
+
+/** The events on an opened stream's SSE body, until the body ends or the caller's signal aborts
+ *  it (see `generateApp` for why each byte is decoded exactly once). */
+async function* eventsOn(reader: ResponseBodyReader, onKeepalive: (() => void) | undefined): AsyncGenerator<GenerationEvent, void, undefined> {
   const decoder = new TextDecoder();
   // The bytes that have arrived and are NOT yet part of a completed block: at most one partial
   // frame, never the accumulated body.
@@ -664,7 +872,7 @@ async function* streamEvents(
       // Nothing follows, so the trailing block (if any) is final too — the one case where a block
       // with no separator after it is still complete.
       if (pending.length > 0) {
-        yield* framesIn(decoder.decode(pending).split('\n\n'), opts.onKeepalive);
+        yield* framesIn(decoder.decode(pending).split('\n\n'), onKeepalive);
       }
       break;
     }
@@ -676,7 +884,7 @@ async function* streamEvents(
       // few bytes of the next partial frame.
       pending = concatBytes([pending.subarray(separator + SEPARATOR_LENGTH)]);
       searchedThrough = Math.max(0, pending.length - SEPARATOR_LENGTH + 1);
-      yield* framesIn(completed.split('\n\n'), opts.onKeepalive);
+      yield* framesIn(completed.split('\n\n'), onKeepalive);
     } else {
       searchedThrough = Math.max(0, pending.length - SEPARATOR_LENGTH + 1);
     }
