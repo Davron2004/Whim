@@ -45,9 +45,11 @@ if (ready?.status !== "True") fail("is not ready: " + (ready ? ready.status + (r
 console.log("ready, routing to " + route);'
 # Reads `gcloud run services describe --format=json` from the file argv[1]; passes when the newest
 # revision is the ready one and takes all traffic, runs the image for the commit argv[2] (when given),
-# and has request-based billing (CPU only during requests).
+# has request-based billing (CPU only during requests), and runs within the instance bounds argv[3]
+# (minimum; an absent annotation is 0) and argv[4] (maximum; an absent annotation is no cap), as
+# deploy.sh deploys it, so no deploy or console edit leaves instances billing unseen.
 readonly SERVICE_JS='const service = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-const expectedCommit = process.argv[2];
+const [, , expectedCommit, minInstances, maxInstances] = process.argv;
 const fail = (why) => { console.log(why); process.exit(1); };
 const status = service.status || {};
 const ready = status.latestReadyRevisionName;
@@ -60,7 +62,14 @@ const image = service.spec?.template?.spec?.containers?.[0]?.image || "";
 if (expectedCommit && !image.endsWith(":" + expectedCommit)) fail("revision " + ready + " runs " + (image || "no image") + ", not the image for " + expectedCommit);
 const throttling = service.spec?.template?.metadata?.annotations?.["run.googleapis.com/cpu-throttling"];
 if (throttling === "false") fail("revision " + ready + " has CPU always allocated (instance-based billing), so an idle instance is billed; deploy with --cpu-throttling");
-console.log(ready + " takes all traffic" + (expectedCommit ? " at " + expectedCommit : "") + ", CPU only during requests");'
+const templateAnnotations = service.spec?.template?.metadata?.annotations || {};
+const minScale = templateAnnotations["autoscaling.knative.dev/minScale"] ?? "0";
+if (minScale !== minInstances) fail("revision " + ready + " keeps " + minScale + " instance(s) warm, not " + minInstances + ", so idle instances are billed; deploy with --min-instances " + minInstances);
+const serviceMinScale = service.metadata?.annotations?.["run.googleapis.com/minScale"] ?? "0";
+if (serviceMinScale !== minInstances) fail("has a service-level minimum of " + serviceMinScale + " instance(s), not " + minInstances + ", so idle instances are billed");
+const maxScale = templateAnnotations["autoscaling.knative.dev/maxScale"];
+if (maxScale !== maxInstances) fail("revision " + ready + " may scale to " + (maxScale ?? "an uncapped number of") + " instance(s), not " + maxInstances + "; deploy with --max-instances " + maxInstances);
+console.log(ready + " takes all traffic" + (expectedCommit ? " at " + expectedCommit : "") + ", CPU only during requests, " + minInstances + "-" + maxInstances + " instances");'
 
 pages_only=0
 live=1
@@ -140,7 +149,7 @@ check_serving_revision() {
   local verdict
   if ! whim_gcloud run services describe "$RUN_SERVER_SERVICE" --region "$WHIM_RUN_REGION" --format=json >"$work/service.json" 2>"$work/service.err"; then
     whim_smoke_flunk "cloud run $RUN_SERVER_SERVICE: $(head -c 300 "$work/service.err")"
-  elif verdict="$(node -e "$SERVICE_JS" "$work/service.json" "$expected_commit")"; then
+  elif verdict="$(node -e "$SERVICE_JS" "$work/service.json" "$expected_commit" "$WHIM_RUN_SERVER_MIN_INSTANCES" "$WHIM_RUN_SERVER_MAX_INSTANCES")"; then
     whim_smoke_pass "cloud run $RUN_SERVER_SERVICE -> $verdict"
   else
     whim_smoke_flunk "cloud run $RUN_SERVER_SERVICE $verdict"

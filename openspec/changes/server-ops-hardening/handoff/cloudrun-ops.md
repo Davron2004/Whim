@@ -27,7 +27,11 @@ Checks, in order (full mode):
 2. `gcloud run services describe whim-server --format=json`: `latestCreatedRevisionName ==
    latestReadyRevisionName`; traffic with percent > 0 sums to 100, all on that revision; with
    `--commit`, the template image ends `:<sha>`; template annotation
-   `run.googleapis.com/cpu-throttling` is not `"false"` (request-based billing, ruling 4).
+   `run.googleapis.com/cpu-throttling` is not `"false"` (request-based billing, ruling 4); template
+   `autoscaling.knative.dev/minScale` (absent = 0) and service `run.googleapis.com/minScale` (absent =
+   0) equal `WHIM_RUN_SERVER_MIN_INSTANCES`, and template `autoscaling.knative.dev/maxScale` equals
+   `WHIM_RUN_SERVER_MAX_INSTANCES` (absent = uncapped, a failure). Both constants live in `deploy/lib.sh`
+   (0 and 1), and `deploy.sh` deploys with them.
 3. Shared HTTP checks (`deploy/lib.sh`): `/health` (commit, `minBuild` = `WHIM_MIN_BUILD_*`), device
    gate `400` (POST `/v1/generate` without `x-whim-device`), pre-protocol `426 update_required`,
    `/healthz/sse` 3 frames over >= 1.5 s, beta signup trap `303` to `/beta/thanks` (stores nothing).

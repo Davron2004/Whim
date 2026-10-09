@@ -55,7 +55,7 @@ It SHALL check that:
 - `/healthz/sse` frames arrive spaced;
 - the pages host serves its pages and association files exactly as the site build published them;
 - the `whim-purge` job and its hourly scheduler exist;
-- the serving revision is the one just deployed, with all traffic.
+- the serving revision is the one just deployed, with all traffic, and runs with the instance bounds the deploy script sets (a minimum of 0, at revision and service level, and a maximum of 1), so no revision bills idle or extra instances unseen.
 
 A site-only deploy SHALL run only the pages checks.
 

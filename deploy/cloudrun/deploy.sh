@@ -278,12 +278,12 @@ deploy_server() {
   [[ "$store_backend" != firestore ]] || apply_firestore_indexes
   echo "==> cloud run $RUN_SERVER_SERVICE"
   # gen2: Chromium's namespace sandbox needs it, and boot refuses to listen without the sandbox.
-  # One instance at most, so the in-memory daily ceilings stay one set of counters. Request-based
+  # Instance bounds from deploy/lib.sh (one instance at most, scale to zero). Request-based
   # billing (--cpu-throttling): CPU is allocated, and billed, only while a request is in flight, so an
   # idle instance the uptime check keeps warm costs nothing.
   whim_gcloud run deploy "$RUN_SERVER_SERVICE" --region "$WHIM_RUN_REGION" --image "$image" \
     --execution-environment gen2 --port 8787 --cpu 2 --memory 4Gi --cpu-boost --cpu-throttling \
-    --min-instances 0 --max-instances 1 --concurrency 40 --timeout 900 \
+    --min-instances "$WHIM_RUN_SERVER_MIN_INSTANCES" --max-instances "$WHIM_RUN_SERVER_MAX_INSTANCES" --concurrency 40 --timeout 900 \
     --service-account "$service_account" --allow-unauthenticated \
     --env-vars-file "$env_file" --set-secrets "OPENROUTER_API_KEY=$WHIM_OPENROUTER_SECRET_ID:latest" --quiet
   [[ "$store_backend" = firestore ]] || return 0
