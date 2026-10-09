@@ -1,10 +1,13 @@
 /**
- * The brand-asset generator (design D10; task 7.3). `generateAssets(repoRoot)` renders every
- * icon and launch asset from one SVG or PNG foreground + `release/assets/brand.json`
- * through Playwright's Chromium, composites the two outputs whose format forbids alpha over
- * `iconBackground`, and writes `release/assets/generated.json`. `checkAssets(repoRoot)` re-hashes
- * everything and reads PNG headers — it never touches Playwright (chains.md: suites never shell
- * out to it), so it alone is safe for `checks/test/release/assets.suite.ts` to import.
+ * The brand-asset generator (design D10; task 7.3; design-system-v1 D12). `generateAssets(repoRoot)`
+ * renders every icon and launch asset from one SVG or PNG foreground + `release/assets/brand.json`
+ * through Playwright's Chromium — the mark on the warm-dark icon background, the mark alone, its
+ * monochrome silhouette and its tinted grey — composites the outputs whose format forbids alpha,
+ * writes the light and dark launch backgrounds for both platforms, and writes
+ * `release/assets/generated.json`. `checkAssets(repoRoot)` re-hashes everything, reads PNG headers
+ * and holds brand.json and the mark to the design tokens — it never touches Playwright (chains.md:
+ * suites never shell out to it), so it alone is safe for `checks/test/release/assets.suite.ts` to
+ * import.
  */
 
 import path from 'node:path';
@@ -12,7 +15,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type { Buffer as NodeBuffer } from 'buffer';
 import { readPngInfo, decodeRgba8, encodeRgb8, encodeRgba8 } from './png';
-import { SHELL_COLORS } from '../../../src/sdk/design-tokens';
+import { COLORS, SCHEMES, type Scheme } from '../../../src/design/tokens';
+import { EMBER_PATH } from '../../../src/design/icons/ember';
 
 // Merges additively with `scripts/release/env.d.ts` (handoff/release-tooling.md) — this file
 // owns only the fs/crypto slice it uses beyond what that file and native-config.ts declare.
@@ -35,12 +39,17 @@ export const ICON_FOREGROUND_PNG_PATH = 'release/assets/icon-foreground.png';
 export const GENERATED_JSON_PATH = 'release/assets/generated.json';
 export const GENERATE_ASSETS_COMMAND = 'node scripts/release/run.mjs generate-assets';
 
-interface Brand {
-  readonly iconBackground: string;
-  readonly launchBackground: string;
+/** `release/assets/brand.json`: the icon's warm-dark background, a vertical gradient (system.md
+ *  §3.3), and the launch background per scheme, which must equal each scheme's `bg` token. */
+export interface Brand {
+  readonly iconBackground: { readonly top: string; readonly bottom: string };
+  readonly launchBackground: Readonly<Record<Scheme, string>>;
 }
 
-export type AssetKind = 'square' | 'circle' | 'foreground' | 'feature';
+/** How an output draws the mark: on the icon background (`square`, `circle`, `feature`), alone on
+ *  transparency (`mark`), as a white silhouette on transparency (`monochrome`, Android's themed
+ *  icon), or grey on black (`tinted`, iOS's tinted icon). */
+export type AssetKind = 'square' | 'circle' | 'feature' | 'mark' | 'monochrome' | 'tinted';
 
 /** One row of design D10's output table: where it goes, its required pixel size, whether it
  *  keeps an alpha channel, and how its background/mark are composed (see `markHtml` below). */
@@ -79,26 +88,40 @@ function androidAdaptiveLayers(): AssetSpec[] {
       width: size,
       height: size,
       alpha: true,
-      kind: 'foreground',
+      kind: 'mark',
     });
     specs.push({
       path: `android/app/src/main/res/mipmap-${suffix}/ic_launcher_monochrome.png`,
       width: size,
       height: size,
       alpha: true,
-      kind: 'foreground',
+      kind: 'monochrome',
     });
   }
   return specs;
 }
 
+/** The launch mark's size in pt/dp: the mark's 48 grid fills half the source, so the ember draws
+ *  at 128, its launch size (system.md §3.3). */
+const LAUNCH_MARK_SIZE = 256;
+
 function androidLaunchMarks(): AssetSpec[] {
   return ANDROID_DENSITIES.map(({ suffix, scale }) => ({
     path: `android/app/src/main/res/drawable-${suffix}/launch_mark.png`,
-    width: Math.round(160 * scale),
-    height: Math.round(160 * scale),
+    width: Math.round(LAUNCH_MARK_SIZE * scale),
+    height: Math.round(LAUNCH_MARK_SIZE * scale),
     alpha: true,
-    kind: 'circle' as const,
+    kind: 'mark' as const,
+  }));
+}
+
+function iosLaunchMarks(): AssetSpec[] {
+  return [1, 2, 3].map((scale) => ({
+    path: `ios/Whim/Images.xcassets/LaunchMark.imageset/LaunchMark${scale === 1 ? '' : '@' + String(scale) + 'x'}.png`,
+    width: LAUNCH_MARK_SIZE * scale,
+    height: LAUNCH_MARK_SIZE * scale,
+    alpha: true,
+    kind: 'mark' as const,
   }));
 }
 
@@ -107,9 +130,11 @@ function androidLaunchMarks(): AssetSpec[] {
  *  only carries hashes for staleness detection). */
 export const ASSET_TABLE: readonly AssetSpec[] = [
   { path: 'ios/Whim/Images.xcassets/AppIcon.appiconset/AppIcon-1024.png', width: 1024, height: 1024, alpha: false, kind: 'square' },
-  { path: 'ios/Whim/Images.xcassets/LaunchMark.imageset/LaunchMark.png', width: 160, height: 160, alpha: true, kind: 'circle' },
-  { path: 'ios/Whim/Images.xcassets/LaunchMark.imageset/LaunchMark@2x.png', width: 320, height: 320, alpha: true, kind: 'circle' },
-  { path: 'ios/Whim/Images.xcassets/LaunchMark.imageset/LaunchMark@3x.png', width: 480, height: 480, alpha: true, kind: 'circle' },
+  // iOS 18 appearances: dark is the mark on transparency (the system draws its dark backdrop),
+  // tinted a grey mark on black (the system tints by luminance).
+  { path: 'ios/Whim/Images.xcassets/AppIcon.appiconset/AppIcon-1024-dark.png', width: 1024, height: 1024, alpha: true, kind: 'mark' },
+  { path: 'ios/Whim/Images.xcassets/AppIcon.appiconset/AppIcon-1024-tinted.png', width: 1024, height: 1024, alpha: false, kind: 'tinted' },
+  ...iosLaunchMarks(),
   ...androidLegacyIcons(),
   ...androidAdaptiveLayers(),
   ...androidLaunchMarks(),
@@ -124,6 +149,8 @@ const NON_IMAGE_OUTPUTS: readonly string[] = [
   'ios/Whim/Images.xcassets/LaunchMark.imageset/Contents.json',
   'ios/Whim/Images.xcassets/LaunchBackground.colorset/Contents.json',
   'android/app/src/main/res/values/brand_colors.xml',
+  'android/app/src/main/res/values-night/brand_colors.xml',
+  'android/app/src/main/res/drawable/ic_launcher_background.xml',
   'android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml',
   'android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml',
 ];
@@ -165,29 +192,69 @@ function compositeOverBackground(decoded: { readonly width: number; readonly hei
   return out;
 }
 
-/** The background layer behind the mark: none for the adaptive foreground/monochrome layers
- *  (transparent), a filled square or circle of `iconBackground` for everything else. */
-function backgroundFor(spec: AssetSpec, iconBackground: string): { readonly color: string; readonly shape: 'square' | 'circle' } | null {
-  if (spec.kind === 'foreground') return null;
-  const shape: 'square' | 'circle' = spec.kind === 'circle' ? 'circle' : 'square';
-  return { color: iconBackground, shape };
+interface Background {
+  readonly css: string;
+  readonly shape: 'square' | 'circle';
+}
+
+/** The CSS of the warm-dark icon background, top to bottom (the mockup's `linear-gradient`). */
+function iconBackgroundCss(brand: Brand): string {
+  return `linear-gradient(${brand.iconBackground.top},${brand.iconBackground.bottom})`;
+}
+
+/** The layer behind the mark: none for the transparent kinds, black for the tinted icon, a square
+ *  or circle of the icon background for everything else. */
+function backgroundFor(spec: AssetSpec, brand: Brand): Background | null {
+  if (spec.kind === 'mark' || spec.kind === 'monochrome') return null;
+  if (spec.kind === 'tinted') return { css: '#000000', shape: 'square' };
+  return { css: iconBackgroundCss(brand), shape: spec.kind === 'circle' ? 'circle' : 'square' };
+}
+
+/** The colour an output without alpha is flattened onto (only pixels the render left
+ *  transparent take it). */
+function flattenColor(spec: AssetSpec, brand: Brand): string {
+  return spec.kind === 'tinted' ? '#000000' : brand.iconBackground.bottom;
+}
+
+/** The variant styles an SVG source gets, by its classes: the monochrome silhouette drops the
+ *  light around the mark (`glow`) and fills the mark (`mark`) white. */
+const SVG_VARIANT_STYLE: Partial<Record<AssetKind, string>> = {
+  monochrome: '.glow{display:none}.mark{fill:#FFFFFF}',
+};
+
+/** The CSS filter every source gets per kind: monochrome turns whatever is drawn white (keeping
+ *  its alpha), tinted turns it grey. */
+const VARIANT_FILTER: Partial<Record<AssetKind, string>> = {
+  monochrome: 'brightness(0) invert(1)',
+  tinted: 'grayscale(1)',
+};
+
+/** The source as a data URI for `kind`: an SVG gets the kind's variant stylesheet. */
+function sourceDataUriFor(source: { readonly bytes: NodeBuffer; readonly svg: boolean }, kind: AssetKind): string {
+  if (!source.svg) return `data:image/png;base64,${source.bytes.toString('base64')}`;
+  const style = SVG_VARIANT_STYLE[kind];
+  const text = source.bytes.toString('utf8');
+  const svg = style === undefined ? text : text.replace(/<svg\b[^>]*>/, (open) => `${open}<style>${style}</style>`);
+  return `data:image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')}`;
 }
 
 function markHtml(
   sourceDataUri: string,
   canvasWidth: number,
   canvasHeight: number,
-  background: { readonly color: string; readonly shape: 'square' | 'circle' } | null,
+  background: Background | null,
   markSize: number,
+  filter: string | undefined,
 ): string {
   const markLeft = (canvasWidth - markSize) / 2;
   const markTop = (canvasHeight - markSize) / 2;
   let bgDiv = '';
   if (background) {
     const borderRadius = background.shape === 'circle' ? 'border-radius:50%;' : '';
-    bgDiv = `<div style="position:absolute;left:0;top:0;width:${canvasWidth}px;height:${canvasHeight}px;background:${background.color};${borderRadius}"></div>`;
+    bgDiv = `<div style="position:absolute;left:0;top:0;width:${canvasWidth}px;height:${canvasHeight}px;background:${background.css};${borderRadius}"></div>`;
   }
-  return `<!doctype html><html><head><style>html,body{margin:0;padding:0;background:transparent;width:${canvasWidth}px;height:${canvasHeight}px;overflow:hidden;}</style></head><body>${bgDiv}<img src="${sourceDataUri}" width="${markSize}" height="${markSize}" style="position:absolute;left:${markLeft}px;top:${markTop}px;display:block;"></body></html>`;
+  const filterCss = filter === undefined ? '' : `filter:${filter};`;
+  return `<!doctype html><html><head><style>html,body{margin:0;padding:0;background:transparent;width:${canvasWidth}px;height:${canvasHeight}px;overflow:hidden;}</style></head><body>${bgDiv}<img src="${sourceDataUri}" width="${markSize}" height="${markSize}" style="position:absolute;left:${markLeft}px;top:${markTop}px;display:block;${filterCss}"></body></html>`;
 }
 
 // Kept out of a static `import` so `checks/test/run.mjs`'s esbuild bundle (unlike
@@ -237,7 +304,14 @@ function sha256File(absPath: string): string {
 }
 
 const APPICON_CONTENTS_JSON = `${JSON.stringify(
-  { images: [{ filename: 'AppIcon-1024.png', idiom: 'universal', platform: 'ios', size: '1024x1024' }], info: { author: 'xcode', version: 1 } },
+  {
+    images: [
+      { filename: 'AppIcon-1024.png', idiom: 'universal', platform: 'ios', size: '1024x1024' },
+      { appearances: [{ appearance: 'luminosity', value: 'dark' }], filename: 'AppIcon-1024-dark.png', idiom: 'universal', platform: 'ios', size: '1024x1024' },
+      { appearances: [{ appearance: 'luminosity', value: 'tinted' }], filename: 'AppIcon-1024-tinted.png', idiom: 'universal', platform: 'ios', size: '1024x1024' },
+    ],
+    info: { author: 'xcode', version: 1 },
+  },
   null,
   2,
 )}\n`;
@@ -255,16 +329,18 @@ const LAUNCHMARK_CONTENTS_JSON = `${JSON.stringify(
   2,
 )}\n`;
 
-function launchBackgroundContentsJson(hex: string): string {
-  const [r, g, b] = hexToRgb(hex);
-  const component = (n: number): string => `0x${n.toString(16).toUpperCase().padStart(2, '0')}`;
+/** The launch background colour set: the light `bg`, and the dark `bg` for the dark appearance. */
+function launchBackgroundContentsJson(launch: Brand['launchBackground']): string {
+  const color = (hex: string) => {
+    const [r, g, b] = hexToRgb(hex);
+    const component = (n: number): string => `0x${n.toString(16).toUpperCase().padStart(2, '0')}`;
+    return { 'color-space': 'srgb', components: { red: component(r), green: component(g), blue: component(b), alpha: '1.000' } };
+  };
   return `${JSON.stringify(
     {
       colors: [
-        {
-          color: { 'color-space': 'srgb', components: { red: component(r), green: component(g), blue: component(b), alpha: '1.000' } },
-          idiom: 'universal',
-        },
+        { color: color(launch.light), idiom: 'universal' },
+        { appearances: [{ appearance: 'luminosity', value: 'dark' }], color: color(launch.dark), idiom: 'universal' },
       ],
       info: { author: 'xcode', version: 1 },
     },
@@ -273,11 +349,17 @@ function launchBackgroundContentsJson(hex: string): string {
   )}\n`;
 }
 
-function brandColorsXml(iconBackground: string, launchBackground: string): string {
-  return `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">${iconBackground}</color>\n    <color name="launch_background">${launchBackground}</color>\n</resources>\n`;
+/** `values/` (light) and `values-night/` (dark) each hold their scheme's launch background. */
+function brandColorsXml(launchBackground: string): string {
+  return `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="launch_background">${launchBackground}</color>\n</resources>\n`;
 }
 
-const ADAPTIVE_ICON_XML = `<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n    <background android:drawable="@color/ic_launcher_background"/>\n    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>\n    <monochrome android:drawable="@mipmap/ic_launcher_monochrome"/>\n</adaptive-icon>\n`;
+/** The adaptive icon's background layer: the warm-dark gradient, top to bottom. */
+function iconBackgroundXml(brand: Brand): string {
+  return `<?xml version="1.0" encoding="utf-8"?>\n<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">\n    <gradient android:angle="270" android:startColor="${brand.iconBackground.top}" android:endColor="${brand.iconBackground.bottom}"/>\n</shape>\n`;
+}
+
+const ADAPTIVE_ICON_XML = `<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n    <background android:drawable="@drawable/ic_launcher_background"/>\n    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>\n    <monochrome android:drawable="@mipmap/ic_launcher_monochrome"/>\n</adaptive-icon>\n`;
 
 /**
  * Renders every output in `ASSET_TABLE`, writes the non-pixel outputs (`Contents.json`
@@ -292,12 +374,11 @@ export async function generateAssets(repoRoot: string, render: typeof renderPng 
   const sourcePath = checkSourceCount(repoRoot, sourceFindings);
   if (sourceFindings.length > 0) throw new Error(sourceFindings.map((finding) => finding.message).join('; '));
   const sourceBytes = fs.readFileSync(path.join(repoRoot, sourcePath));
-  const mime = sourcePath === ICON_FOREGROUND_SVG_PATH ? 'image/svg+xml' : 'image/png';
-  const sourceDataUri = `data:${mime};base64,${sourceBytes.toString('base64')}`;
+  const source = { bytes: sourceBytes, svg: sourcePath === ICON_FOREGROUND_SVG_PATH };
 
   for (const spec of ASSET_TABLE) {
     const markSize = Math.min(spec.width, spec.height);
-    const html = markHtml(sourceDataUri, spec.width, spec.height, backgroundFor(spec, brand.iconBackground), markSize);
+    const html = markHtml(sourceDataUriFor(source, spec.kind), spec.width, spec.height, backgroundFor(spec, brand), markSize, VARIANT_FILTER[spec.kind]);
     const rendered = await render(html, spec.width, spec.height);
     const info = readPngInfo(rendered);
     if (info.width !== spec.width || info.height !== spec.height) {
@@ -308,7 +389,7 @@ export async function generateAssets(repoRoot: string, render: typeof renderPng 
     // transparent, so an alpha:true output (e.g. the legacy square icons, which ARE fully
     // opaque but still required to carry the channel) needs `encodeRgba8` to put it back.
     const decoded = decodeRgba8(rendered);
-    const bytes = spec.alpha ? encodeRgba8(spec.width, spec.height, decoded.pixels) : encodeRgb8(spec.width, spec.height, compositeOverBackground(decoded, brand.iconBackground));
+    const bytes = spec.alpha ? encodeRgba8(spec.width, spec.height, decoded.pixels) : encodeRgb8(spec.width, spec.height, compositeOverBackground(decoded, flattenColor(spec, brand)));
     writeOutput(repoRoot, spec.path, bytes);
   }
 
@@ -319,7 +400,9 @@ export async function generateAssets(repoRoot: string, render: typeof renderPng 
     'ios/Whim/Images.xcassets/LaunchBackground.colorset/Contents.json',
     Buffer.from(launchBackgroundContentsJson(brand.launchBackground), 'utf8'),
   );
-  writeOutput(repoRoot, 'android/app/src/main/res/values/brand_colors.xml', Buffer.from(brandColorsXml(brand.iconBackground, brand.launchBackground), 'utf8'));
+  writeOutput(repoRoot, 'android/app/src/main/res/values/brand_colors.xml', Buffer.from(brandColorsXml(brand.launchBackground.light), 'utf8'));
+  writeOutput(repoRoot, 'android/app/src/main/res/values-night/brand_colors.xml', Buffer.from(brandColorsXml(brand.launchBackground.dark), 'utf8'));
+  writeOutput(repoRoot, 'android/app/src/main/res/drawable/ic_launcher_background.xml', Buffer.from(iconBackgroundXml(brand), 'utf8'));
   writeOutput(repoRoot, 'android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml', Buffer.from(ADAPTIVE_ICON_XML, 'utf8'));
   writeOutput(repoRoot, 'android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml', Buffer.from(ADAPTIVE_ICON_XML, 'utf8'));
 
@@ -407,24 +490,47 @@ function checkNonImageOutput(repoRoot: string, findings: AssetFinding[], outPath
   checkOutputHash(repoRoot, findings, outPath, recorded);
 }
 
-function checkBrandMatchesShell(repoRoot: string, findings: AssetFinding[]): void {
+/** Each scheme's launch background must be that scheme's `bg` token (specs/app-icon-and-launch
+ *  "Launch shows the ember on the scheme's canvas with no flash"). */
+function checkBrandMatchesTokens(repoRoot: string, findings: AssetFinding[]): void {
   const brandAbs = path.join(repoRoot, BRAND_JSON_PATH);
   if (!fs.existsSync(brandAbs)) return;
-  const brand = JSON.parse(fs.readFileSync(brandAbs, 'utf8')) as Partial<Brand>;
-  if (brand.launchBackground !== SHELL_COLORS.paper) {
+  const brand = JSON.parse(fs.readFileSync(brandAbs, 'utf8')) as { readonly launchBackground?: Partial<Record<Scheme, unknown>> };
+  for (const scheme of SCHEMES) {
+    const value = brand.launchBackground?.[scheme];
+    const token = COLORS[scheme].bg;
+    if (typeof value !== 'string' || value.toUpperCase() !== token.toUpperCase()) {
+      findings.push({
+        path: BRAND_JSON_PATH,
+        message: `${BRAND_JSON_PATH}'s launchBackground.${scheme} is ${JSON.stringify(value)}, but the ${scheme} bg token is ${JSON.stringify(token)}`,
+      });
+    }
+  }
+}
+
+/** An SVG source's mark (its `class="mark"` path) must be the ember of the icon set
+ *  (specs/app-icon-and-launch "The app icon is the ember on warm dark"). A PNG source can't be
+ *  read back as a path and is left to review. */
+function checkMarkIsEmber(repoRoot: string, findings: AssetFinding[], sourcePath: string): void {
+  if (sourcePath !== ICON_FOREGROUND_SVG_PATH || !fs.existsSync(path.join(repoRoot, sourcePath))) return;
+  const svg = fs.readFileSync(path.join(repoRoot, sourcePath), 'utf8');
+  const mark = /<path\b[^>]*\bclass="mark"[^>]*>/.exec(svg)?.[0];
+  const d = mark === undefined ? undefined : /\bd="([^"]*)"/.exec(mark)?.[1];
+  if (d !== EMBER_PATH) {
     findings.push({
-      path: BRAND_JSON_PATH,
-      message: `${BRAND_JSON_PATH}'s launchBackground is ${JSON.stringify(brand.launchBackground)}, but SHELL_COLORS.paper is ${JSON.stringify(SHELL_COLORS.paper)}`,
+      path: sourcePath,
+      message: `${sourcePath}'s mark (the class="mark" path) is not the ember: expected EMBER_PATH from src/design/icons/ember.ts, got ${JSON.stringify(d ?? null)}`,
     });
   }
 }
 
 /**
  * Re-hashes every output against `generated.json`, reads PNG headers for required size and
- * alpha (from `ASSET_TABLE`, not from `generated.json`), and compares `brand.json`'s
- * `launchBackground` with `SHELL_COLORS.paper` (specs/app-icon-and-launch/spec.md "The checks
- * detect stale, missing or mis-sized assets", "Launch shows the mark on the shell paper color
- * with no flash"). Every finding names its file.
+ * alpha (from `ASSET_TABLE`, not from `generated.json`), compares `brand.json`'s light and dark
+ * `launchBackground` with the `bg` tokens and the SVG source's mark with the ember
+ * (specs/app-icon-and-launch/spec.md "The checks detect stale, missing or mis-sized assets",
+ * "Launch shows the ember on the scheme's canvas with no flash", "The app icon is the ember on
+ * warm dark"). Every finding names its file.
  */
 export function checkAssets(repoRoot: string): AssetFinding[] {
   const findings: AssetFinding[] = [];
@@ -438,6 +544,7 @@ export function checkAssets(repoRoot: string): AssetFinding[] {
   }
   const generated = JSON.parse(fs.readFileSync(generatedAbs, 'utf8')) as GeneratedAssetsFile;
   checkSourceAndBrandHashes(repoRoot, findings, sourcePath, generated);
+  checkMarkIsEmber(repoRoot, findings, sourcePath);
 
   const recordedByPath = new Map(generated.outputs.map((o) => [o.path, o] as const));
   for (const spec of ASSET_TABLE) {
@@ -446,7 +553,7 @@ export function checkAssets(repoRoot: string): AssetFinding[] {
   for (const outPath of NON_IMAGE_OUTPUTS) {
     checkNonImageOutput(repoRoot, findings, outPath, recordedByPath.get(outPath));
   }
-  checkBrandMatchesShell(repoRoot, findings);
+  checkBrandMatchesTokens(repoRoot, findings);
 
   return findings;
 }

@@ -1,17 +1,18 @@
 <resources>
 
-    <!-- Base application theme. -->
+    <!-- Base application theme. DayNight: the app follows the phone's appearance, so every
+         `@color/` below resolves from values-night/ in dark mode. -->
     <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <!-- Customize your theme here. -->
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
         <item name="android:windowBackground">@color/launch_background</item>
-        <!-- AppCompat's default accent is teal; cursors, selection handles and switches take Whim's. -->
-        <item name="colorAccent">@color/whim_accent</item>
-        <item name="android:textColorHighlight">@color/whim_accent_highlight</item>
+        <!-- AppCompat's default accent is teal; the caret, selection handles and switches are ink. -->
+        <item name="colorAccent">@color/whim_caret</item>
+        <item name="android:textColorHighlight">@color/whim_selection</item>
     </style>
 
-    <!-- Launch wiring (design D10): the mark centered on the launch background color, shown
-         while the app cold-starts, before AppTheme takes over in MainActivity.onCreate. -->
+    <!-- Launch wiring: the ember centred on the scheme's `bg`, shown while the app cold-starts
+         (below Android 12; values-v31 hands the first frame to the system splash screen). -->
     <style name="Theme.Whim.Launch" parent="AppTheme">
         <item name="android:windowBackground">@drawable/launch_screen</item>
     </style>

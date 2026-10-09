@@ -63,6 +63,6 @@ export function primaryButtonColors(enabled: boolean): { backgroundColor: string
 
 /** Selected text's highlight where the platform paints it in exactly the colour it is given (an
  *  Android field): the accent at 30%, so the text under it stays readable — the solid accent put
- *  it at about 2:1. `whim_accent_highlight` in `android/app/src/main/res/values/colors.xml` is the
- *  same colour, for the text Android selects under the app's theme. */
+ *  it at about 2:1. The app's Android theme already selects in ink (`whim_selection`,
+ *  `android/app/src/main/res/values/colors.xml`); this goes when the fields move to the primitives. */
 export const SELECTION_HIGHLIGHT = withAlpha(SHELL_PALETTE.accent, 0.3);

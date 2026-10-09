@@ -1,18 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <!--
-    Placeholder brand mark (design D10): a plain lowercase "w" in the shell paper color,
-    built from a single stroked path (no fonts, no fills, no rendering dependency on
-    installed typefaces). It sits inside the adaptive icon's central 626px safe-zone circle
-    (radius 313 around the 1024x1024 canvas's center), leaving comfortable margin on every
-    side. Replacing this with real artwork is a one-file swap — nothing downstream reads
-    the path data itself.
+    Whim's mark, the ember (docs/design/system.md §3.3; specs/app-icon-and-launch "The app icon is
+    the ember on warm dark"): the 48-grid flame of src/design/icons/ember.ts (`EMBER_PATH`, which
+    the release checks hold this file to) drawn at 512 px, centred, as the mockup's app icon draws
+    it (a 48 ember on a 96 plate), filled with the glow stops (`GLOW` in src/design/tokens.ts) and
+    lit by the halo at the working intensity 0.9; the halo spills past the 48 grid unclipped.
+    Transparent: the generator lays it on the warm-dark background of brand.json. Class `mark` is
+    the silhouette and class `glow` the light around it; the monochrome variant is rendered from
+    these classes (scripts/release/lib/assets.ts).
   -->
-  <path
-    d="M 362 390 L 437 650 L 512 490 L 587 650 L 662 390"
-    fill="none"
-    stroke="#fbfaf8"
-    stroke-width="52"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
+  <svg x="256" y="256" width="512" height="512" viewBox="0 0 48 48" overflow="visible">
+    <defs>
+      <radialGradient id="body" cx="50%" cy="74%" r="72%">
+        <stop offset="0" stop-color="#FFC96A"/>
+        <stop offset=".5" stop-color="#FF9127"/>
+        <stop offset="1" stop-color="#F25914"/>
+      </radialGradient>
+      <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+        <stop offset="0" stop-color="rgba(255,145,39,0.45)"/>
+        <stop offset=".55" stop-color="rgba(255,145,39,0.45)" stop-opacity=".35"/>
+        <stop offset="1" stop-color="rgba(255,145,39,0.45)" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <circle class="glow" cx="24" cy="29" r="24" fill="url(#halo)" opacity=".93"/>
+    <path class="mark" fill="url(#body)" d="M26.6 3.2C28.4 9.6 37.6 15 37.6 28.4C37.6 37.6 31.6 44.6 24 44.6C16.4 44.6 10.4 38.4 10.4 30.6C10.4 23.6 14.4 19.4 17.8 15.8C18.2 19.6 19.8 22.4 22.6 23.4C21.4 16.6 24.2 9.6 26.6 3.2Z"/>
+  </svg>
 </svg>

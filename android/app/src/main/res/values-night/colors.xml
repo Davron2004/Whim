@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The dark scheme's caret and selection (values/colors.xml explains both). -->
+    <color name="whim_caret">#F2F0EC</color>
+    <color name="whim_selection">#4DF2F0EC</color>
+</resources>
