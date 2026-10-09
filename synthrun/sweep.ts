@@ -128,9 +128,16 @@ export interface ScreenInfo {
   /** `Object.keys(window.__WHIM_APP_MODULE__.default.screens)` — the live app module's own
    *  declared-screens map, read directly (never the bundle's self-report). */
   declared: string[];
-  /** The declared-screen name whose component reference (`===`) matches the fiber currently
-   *  mounted under `#whim-root`, resolved by walking the DOM node's `__reactFiber$…` return
-   *  chain — `null` when nothing mounted yet or no match was found. */
+  /** The declared-screen names of every screen page currently mounted under `#whim-root`, in
+   *  DOM order — one entry per distinct mounted screen INSTANCE (resolved by walking each child
+   *  node's `__reactFiber$…` return chain and matching component references `===`). Two entries
+   *  mean a push/pop transition is in flight: the SDK keeps the leaving screen mounted beside the
+   *  arriving one until the motion ends (`NavRoot`, system.md §4.4 M24). */
+  mounted: string[];
+  /** The screen on top of the navigation stack — the sole mounted screen, or `null` while
+   *  nothing is mounted OR a transition is in flight (DOM order cannot tell the top: a push lays
+   *  the covered screen out first, a pop lays the leaving one out last). Read through
+   *  `awaitSettledScreen` to wait a transition out. */
   current: string | null;
 }
 
@@ -141,9 +148,10 @@ export async function getScreenInfo(frame: Frame): Promise<ScreenInfo> {
     interface Fiber {
       type: unknown;
       return: Fiber | null;
+      alternate: Fiber | null;
     }
     interface DomNode {
-      firstChild?: DomNode | null;
+      childNodes: ArrayLike<DomNode>;
     }
     interface DomDocument {
       getElementById(id: string): DomNode | null;
@@ -161,24 +169,46 @@ export async function getScreenInfo(frame: Frame): Promise<ScreenInfo> {
       }
       return null;
     }
-    const root = w.document.getElementById('whim-root');
-    let current: string | null = null;
-    const child = root && root.firstChild;
-    if (child) {
-      const record = child as unknown as Record<string, unknown>;
+    /** The nearest declared-screen fiber above `node`, or `null` (e.g. the toast host). */
+    function screenOf(node: DomNode): { fiber: Fiber; name: string } | null {
+      const record = node as unknown as Record<string, unknown>;
       const fiberKey = Object.keys(record).find((k) => k.indexOf('__reactFiber$') === 0);
-      let f: Fiber | null = fiberKey ? (record[fiberKey] as Fiber) : null;
-      while (f) {
-        const match = screenNameForType(f.type);
-        if (match) {
-          current = match;
-          break;
-        }
-        f = f.return;
+      for (let f: Fiber | null = fiberKey ? (record[fiberKey] as Fiber) : null; f; f = f.return) {
+        const name = screenNameForType(f.type);
+        if (name) return { fiber: f, name };
       }
+      return null;
     }
-    return { declared, current };
+    const root = w.document.getElementById('whim-root');
+    // One entry per mounted screen instance. A screen rendering a fragment owns several root
+    // children; React's double-buffered fibers mean two of them may reach the same instance
+    // through its `alternate`, so identity is checked both ways.
+    const instances: { fiber: Fiber; name: string }[] = [];
+    const children = root ? root.childNodes : [];
+    for (let i = 0; i < children.length; i += 1) {
+      const screen = screenOf(children[i]);
+      if (screen && !instances.some((s) => s.fiber === screen.fiber || s.fiber === screen.fiber.alternate)) instances.push(screen);
+    }
+    const mounted = instances.map((s) => s.name);
+    return { declared, mounted, current: mounted.length === 1 ? mounted[0] : null };
   });
+}
+
+/** Upper bound on one push/pop transition — the SDK's longest is its `smooth` spring (~0.6 s);
+ *  the margin covers a loaded CI host. Past it the screen is reported unsettled (`current:
+ *  null`), which the sweep reads as "no navigation", never as a different screen. */
+const SETTLE_TIMEOUT_MS = 3000;
+
+/** `getScreenInfo` once no navigation transition is in flight (at most one screen mounted), so
+ *  the caller sees the stack's top and enumerates only its elements — never the leaving screen's
+ *  inert, `position:fixed` layer, whose `nth-child` paths go stale the moment it unmounts. */
+export async function awaitSettledScreen(frame: Frame, timeoutMs = SETTLE_TIMEOUT_MS): Promise<ScreenInfo> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const info = await getScreenInfo(frame);
+    if (info.mounted.length <= 1 || Date.now() >= deadline) return info;
+    await sleep(30);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -359,20 +389,33 @@ interface ScreenSweepOutcome {
   navigatedTo: string | null;
 }
 
+/** One declared screen's sweep progress, kept across visits: a screen left by navigation and
+ *  entered again (a hub after its first spoke's Back) resumes where it stopped instead of being
+ *  re-swept or abandoned. Its fingerprint set and action count are what bound the live sweep. */
+interface ScreenProgress {
+  visited: Set<string>;
+  actions: number;
+}
+
+function newScreenProgress(): ScreenProgress {
+  return { visited: new Set<string>(), actions: 0 };
+}
+
 /** Sweeps ONE currently-rendered screen: sorted-fingerprint order, one action per fingerprint,
  *  re-enumerate after every action, stop on no-unvisited / the per-screen cap / a detected
- *  navigation (spec requirement + design D1). */
+ *  navigation (spec requirement + design D1). `progress` carries the screen's earlier visits. */
 async function sweepOneScreen(
   frame: Frame,
   screenName: string,
+  progress: ScreenProgress,
   obs: AttachedObservers,
   budgets: RunBudgets,
   opts: ResolvedSweepOptions,
 ): Promise<ScreenSweepOutcome> {
-  const visited = new Set<string>();
+  const { visited } = progress;
   const actionsLog: SweptElement[] = [];
 
-  while (actionsLog.length < opts.maxActionsPerScreen) {
+  while (progress.actions < opts.maxActionsPerScreen) {
     const elements = await enumerateInteractiveElements(frame);
     const unvisited = sortedUnvisited(elements, visited);
     if (unvisited.length === 0) return { actionsLog, truncated: false, navigatedTo: null };
@@ -381,9 +424,10 @@ async function sweepOneScreen(
     await performAction(frame, next, opts);
     visited.add(fingerprintKey(next));
     actionsLog.push(next);
+    progress.actions += 1;
 
     await awaitQuiet(obs, budgets);
-    const info = await getScreenInfo(frame).catch((): ScreenInfo => ({ declared: [], current: screenName }));
+    const info = await awaitSettledScreen(frame).catch((): ScreenInfo => ({ declared: [], mounted: [screenName], current: screenName }));
     if (info.current && info.current !== screenName) {
       return { actionsLog, truncated: false, navigatedTo: info.current };
     }
@@ -392,6 +436,30 @@ async function sweepOneScreen(
   const remaining = await enumerateInteractiveElements(frame).catch(() => [] as SweptElement[]);
   const truncated = sortedUnvisited(remaining, visited).length > 0;
   return { actionsLog, truncated, navigatedTo: null };
+}
+
+/** The navigation-stack depth the SDK last announced (`__whimNavDepth`, relayed by the outer
+ *  page as `nav-depth`), or 0 when none arrived. A hint for whether a back step can go anywhere,
+ *  never authority over which screen is shown — that is always re-read from the fiber tree. */
+function latestNavDepth(obs: AttachedObservers): number {
+  for (let i = obs.state.events.length - 1; i >= 0; i -= 1) {
+    const e = obs.state.events[i];
+    if (e.kind !== 'nav-depth') continue;
+    const depth = (e.payload as { depth?: unknown } | null)?.depth;
+    return typeof depth === 'number' ? depth : 0;
+  }
+  return 0;
+}
+
+/** Pops one screen through the host's own system-back channel (`__whimControl.navBack`, the frame
+ *  the device back button sends) and resolves the screen it settles on. */
+async function navigateBack(ctx: RunContext, frame: Frame, obs: AttachedObservers, budgets: RunBudgets): Promise<string | null> {
+  await ctx.page.evaluate(() => {
+    (globalThis as unknown as { __whimControl: { navBack(): void } }).__whimControl.navBack();
+  });
+  await awaitQuiet(obs, budgets);
+  const info = await awaitSettledScreen(frame).catch(() => null);
+  return info ? info.current : null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -447,10 +515,56 @@ async function coldMountScreen(ctx: RunContext, obs: AttachedObservers, source: 
 // Top-level orchestration (tasks 4.2/4.3/4.4 composed)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** What the live and cold-mount passes accumulate into one `SweepResult`. */
+interface SweepTally {
+  visited: Set<string>;
+  perScreenMs: Record<string, number>;
+  actionsLog: SweptElement[];
+  truncated: boolean;
+}
+
+/** The nav-reachable live sweep, from the screen the app mounted on (see `sweepApp`). */
+async function sweepLive(
+  ctx: RunContext,
+  frame: Frame,
+  firstScreen: string | null,
+  obs: AttachedObservers,
+  budgets: RunBudgets,
+  opts: ResolvedSweepOptions,
+  tally: SweepTally,
+): Promise<void> {
+  const progress = new Map<string, ScreenProgress>();
+  let currentName = firstScreen;
+  let backSteps = 0;
+  while (currentName !== null) {
+    const name = currentName;
+    tally.visited.add(name);
+    const screenProgress = progress.get(name) ?? newScreenProgress();
+    progress.set(name, screenProgress);
+    const start = Date.now();
+    const outcome = await sweepOneScreen(frame, name, screenProgress, obs, budgets, opts);
+    tally.perScreenMs[name] = (tally.perScreenMs[name] ?? 0) + Date.now() - start;
+    tally.actionsLog.push(...outcome.actionsLog);
+    if (outcome.truncated) tally.truncated = true;
+    if (outcome.navigatedTo) {
+      currentName = outcome.navigatedTo;
+      continue;
+    }
+    // This screen is done: return to the one below it, as the system back button would, so a
+    // sibling reachable only from a screen further down is still reached live. Every pop undoes a
+    // push some action caused, so back steps never outnumber actions — the nav-depth hint is
+    // unauthenticated (F4) and a candidate claiming a deeper stack cannot loop the sweep.
+    if (backSteps >= tally.actionsLog.length || latestNavDepth(obs) <= 0) return;
+    backSteps += 1;
+    currentName = await navigateBack(ctx, frame, obs, budgets);
+  }
+}
+
 /**
- * Sweeps the candidate already mounted on `ctx.page`: the nav-reachable live sweep first (a
- * single depth-first chain — an action's observed `__whimNavDepth` change is followed to the
- * newly-rendered screen, bounded by a visited-screen-NAME set so no screen is ever re-swept),
+ * Sweeps the candidate already mounted on `ctx.page`: the nav-reachable live sweep first (depth
+ * first — an action that changes the settled screen is followed to it; a screen entered again
+ * resumes its own remaining fingerprints rather than being re-swept; a finished screen steps
+ * back to the one below it while the SDK reports one, so every sibling of a hub is reached),
  * then a cold-mount pass (task 4.4) for every declared `spec.screens` entry the live sweep never
  * reached, each producing an `unreachable_screen` warning. `obs` must already be attached
  * (`attachObserversEarly`/`EarlyObservers.finish`, `handoff/observe-api.md`) — this function only
@@ -459,27 +573,13 @@ async function coldMountScreen(ctx: RunContext, obs: AttachedObservers, source: 
  */
 export async function sweepApp(ctx: RunContext, obs: AttachedObservers, source: string, budgets: RunBudgets, opts?: SweepOptions): Promise<SweepResult> {
   const resolved = resolveOptions(opts);
-  const visited = new Set<string>();
-  const perScreenMs: Record<string, number> = {};
-  const actionsLog: SweptElement[] = [];
-  let truncated = false;
+  const tally: SweepTally = { visited: new Set<string>(), perScreenMs: {}, actionsLog: [], truncated: false };
+  const { visited, perScreenMs, actionsLog } = tally;
 
   const frame = await findAppFrame(ctx.page);
-  const seedInfo = await getScreenInfo(frame);
+  const seedInfo = await awaitSettledScreen(frame);
   const declared = seedInfo.declared;
-  let liveFrame = frame;
-  let currentName = seedInfo.current;
-
-  while (currentName !== null && !visited.has(currentName)) {
-    const name = currentName;
-    visited.add(name);
-    const start = Date.now();
-    const outcome = await sweepOneScreen(liveFrame, name, obs, budgets, resolved);
-    perScreenMs[name] = Date.now() - start;
-    actionsLog.push(...outcome.actionsLog);
-    if (outcome.truncated) truncated = true;
-    currentName = outcome.navigatedTo && !visited.has(outcome.navigatedTo) ? outcome.navigatedTo : null;
-  }
+  await sweepLive(ctx, frame, seedInfo.current, obs, budgets, resolved, tally);
 
   const diagnostics: SweepDiagnostic[] = [];
   for (const name of declared) {
@@ -493,9 +593,9 @@ export async function sweepApp(ctx: RunContext, obs: AttachedObservers, source: 
     const start = Date.now();
     try {
       const coldFrame = await coldMountScreen(ctx, obs, source, name, budgets);
-      const outcome = await sweepOneScreen(coldFrame, name, obs, budgets, resolved);
+      const outcome = await sweepOneScreen(coldFrame, name, newScreenProgress(), obs, budgets, resolved);
       actionsLog.push(...outcome.actionsLog);
-      if (outcome.truncated) truncated = true;
+      if (outcome.truncated) tally.truncated = true;
     // eslint-disable-next-line no-restricted-syntax -- intentional: best-effort — the unreachable_screen diagnostic already recorded the failure, so move on rather than abort the sweep.
     } catch {
       // best-effort (a cold-mount build/deliver failure still leaves the unreachable_screen
@@ -505,5 +605,5 @@ export async function sweepApp(ctx: RunContext, obs: AttachedObservers, source: 
     visited.add(name);
   }
 
-  return { declaredScreens: declared, visitedScreens: [...visited], truncated, diagnostics, perScreenMs, actionsLog };
+  return { declaredScreens: declared, visitedScreens: [...visited], truncated: tally.truncated, diagnostics, perScreenMs, actionsLog };
 }
