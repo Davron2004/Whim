@@ -834,8 +834,9 @@ Each item is one C2 spec delta (capability-bridge or sdk-runtime).
 3. **Opening uses the loader's existing post-mount control frame.** Realm to host, written by the trusted
    loader and nonce-authenticated as today; the host holds the opening morph until it arrives (cap 600 ms). If
    that frame turns out to precede paint, the loader adds a `firstPaint` field to it. A bundle can't forge a
-   loader frame (F4); the worst a slow or hostile app can do is make the plate wait 600 ms. Fenced by
-   generation like every other loader frame.
+   loader frame (F4); the worst a slow or hostile app can do is make the plate wait 600 ms. The field inherits
+   whatever fence that frame has today; only nav-depth is restamped with the host generation, so C2 checks
+   that a stale realm's frame is dropped on `trusted` before the morph relies on it.
 4. **`cues.haptic`.** Same syscall, same manifest gate, same closed set, played through `WhimHaptics`, with a
    host-side cap of 10 per second and a burst of 3 (extra calls dropped, not queued). Authority stays
    `ev.source === window.parent` (#41); the dispatcher's generation fence drops calls from a reset realm. The
