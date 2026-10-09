@@ -68,10 +68,10 @@ Warm low-chroma greys (OKLCH hue 60–75). Contrast is WCAG 2.2.
 | `sheet-group` | `#FFFFFF` | `#252220` | Groups, question groups, plan rows, cards inside a sheet | |
 | `raised` | `#FFFFFF` + `shadow-raised` | `#252220` + top highlight | Menus, toasts, popovers, the orb, the composer | |
 | `fill` | `#EBE9E6` | `#2E2B28` | Secondary buttons, segmented track, chips | |
-| `fill-strong` | `#E0DDDA` | `#3C3936` | Pressed fills, skeletons, tracks | |
+| `fill-strong` | `#E0DDDA` | `#3C3936` | Pressed fills, skeletons, progress tracks | |
 | `thumb` | `#FFFFFF` + `shadow-raised` | `#3C3936` | Segmented thumb, slider thumb, switch knob when off | |
 | `separator` | `#E2DFDB` | `#34312F` | Hairlines between rows (holds no edge: 1.21:1) | |
-| `border` | `#908B86` | `#6E6862` | Input and outlined-control edges | 3.37 / 3.19 on `surface` |
+| `border` | `#908B86` | `#6E6862` | Input and outlined-control edges; the off switch track and the slider track | 3.37 / 3.19 on `surface` |
 | `text` | `#1A1614` | `#F2F0EC` | Primary text | ≥ 14.83 / ≥ 12.36 on `bg`, `surface`, `sheet`, `sheet-group`, `fill` |
 | `text-2` | `#6D6660` | `#ADA8A3` | Secondary text, placeholders, waiting steps | ≥ 4.66 / ≥ 5.97 on `bg`, `surface`, `sheet`, `sheet-group`, `fill` |
 | `text-3` | `#908B86` | `#78746E` | **Disabled only** | Exempt (disabled) |
@@ -652,9 +652,9 @@ No export is removed; every installed bundle keeps working.
 | `Stepper` (new) | `label?`, `value`, `onChange`, `min = 0`, `max?`, `step = 1`. Label left; a `fill` capsule group with `minus`, tabular `subtitle` value, `plus`, buttons 44 × 36 visual in 44/48 boxes. Hold repeats after 400 ms at 8/s; bounds disable. Digit roll M15. Role `spinbutton`, buttons "Decrease"/"Increase" |
 | `DateInput` (new) | `label?`, `value: number \| null` (epoch ms), `onChange`, `mode: 'date' \| 'time' \| 'datetime' = 'date'`. Locale-formatted field with `calendar`/`clock`; opens the native picker; `date` mode stores local midnight |
 | `Picker` (new) | `label?`, `options: string[]`, `value`, `onChange`, `placeholder?`; field with `chevron-down`, native list. 2–4 options: the reference points to `SegmentedControl` |
-| `Switch` | iOS or Material shape from `platform`. Off `fill-strong` track + `thumb` knob; on tint track + on-tint knob; rAF spring; whole row is the target, label `body` `text`. Role `switch` |
+| `Switch` | iOS or Material shape from `platform`. Off: iOS a `border` track + `thumb` knob, Material a `fill` track in a `border` outline + `text-2` knob, so the off track's edge holds 3:1 on `surface` in both schemes (WCAG 1.4.11; the floor wins over iOS mimicry); on tint track + on-tint knob; rAF spring; whole row is the target, label `body` `text`. Role `switch` |
 | `Checkbox` | 24 pt, `r-sm`, 2 px `border`; checked: tint fill, on-tint `check` drawn over 160 ms; whole row, 44/48 high. Role `checkbox` |
-| `Slider` | 6 pt `fill-strong` track, tint fill, 28 pt `thumb`; optional label and tabular value; `touch-action: none`; pointer capture 1:1; tap springs the thumb (rAF) |
+| `Slider` | 6 pt `border` track (3:1 on `surface`), tint fill, 28 pt `thumb`; optional label and tabular value; `touch-action: none`; pointer capture 1:1; tap springs the thumb (rAF) |
 | `SegmentedControl` | `fill` capsule track 36 visual (44/48 target), `thumb` under the selected option, labels `callout` 600 `text`; rAF thumb. Role `radiogroup` |
 | `Card` | `surface` (`sheet-group` in a `Modal`), `r-lg`, padding 20, no border; `onPress` adds press 0.98 |
 | `List`, `ListItem` | Inset group, `separator` inset 16; `ListItem` `title`, `subtitle?`, `trailing?`, `icon?`, `onPress?` (adds `chevron-right`), min 52, pressed `fill`. `<List items keyBy renderItem>` animates enter/leave (M24); `keyBy` is a property name or function. Children-style `<List>` is static. Duplicate or index-shaped keys give a dev diagnostic and switch motion off |

@@ -6,8 +6,10 @@
 // component, variant and prop, the disabled, empty and error states, in the places an app would use
 // them: a home screen that reaches one screen per topic with `nav`, each a `Screen title` (so the
 // header's back control is automatic), one filled button per screen, `danger` beside `secondary`, and
-// keyed lists that add and remove rows. It holds no colour of its own: it renders in whichever
-// scheme the phone delivers, and its `primary` is its tint.
+// keyed lists that add and remove rows. Every motion preset plays somewhere: screens push and pop,
+// presses, the controls' selection, keyed rows entering and leaving (and the rows below closing the
+// gap), progress moving, the sheet and the toast. It holds no colour of its own: it renders in
+// whichever scheme the phone delivers, and its `primary` is its tint.
 import {
   defineApp,
   Screen,
@@ -102,7 +104,8 @@ function useWalks() {
     setNextId(nextId + 1);
   };
   const removeLast = () => setWalks(walks.slice(0, -1));
-  return { walks, add, removeLast, nextId };
+  const remove = (id: number) => setWalks(walks.filter((walk) => walk.id !== id));
+  return { walks, add, remove, removeLast, nextId };
 }
 
 // ── Home: one row per topic ───────────────────────────────────────────────────
@@ -299,8 +302,9 @@ function Controls() {
 
 // ── Surfaces ──────────────────────────────────────────────────────────────────
 function Surfaces() {
-  const { walks, add, removeLast, nextId } = useWalks();
+  const { walks, add, remove, removeLast, nextId } = useWalks();
   const [starred, setStarred] = useState(false);
+  const [km, setKm] = useState(9);
   const addWalk = () => add(MORE_WALKS[nextId % MORE_WALKS.length]);
 
   return (
@@ -315,7 +319,7 @@ function Surfaces() {
               <Badge label="Due soon" tone="warning" />
               <Badge label="Missed" tone="danger" />
             </Row>
-            <ProgressBar value={0.62} label="9.4 of 15 km" />
+            <ProgressBar value={km / 15} label={`${km} of 15 km`} />
             <ProgressBar value={1} tone="positive" label="Sleep goal met" />
             <ProgressBar value={0.8} tone="warning" label="80% of the budget" />
             <ProgressBar value={1} tone="danger" label="Over by 12" />
@@ -324,7 +328,10 @@ function Surfaces() {
 
         <Grid columns={2}>
           <Card>
-            <ProgressBar variant="ring" value={0.7} label="7" />
+            <Stack gap="sm">
+              <ProgressBar variant="ring" value={km / 15} label={String(km)} />
+              <Button label="Log 1 km" variant="secondary" disabled={km >= 15} onPress={() => setKm(km + 1)} />
+            </Stack>
           </Card>
           <Card onPress={() => toast('Cards can be tapped')}>
             <Stack gap="xs">
@@ -337,6 +344,7 @@ function Surfaces() {
 
         <Stack gap="sm">
           <Text size="subtitle">Walks</Text>
+          <Text size="caption" color="text-muted">Tap a walk to remove it.</Text>
           {walks.length === 0 ? (
             <Card>
               <EmptyState icon="footprints" title="No walks yet" hint="Tap + to add one." />
@@ -345,7 +353,7 @@ function Surfaces() {
             <List
               items={walks}
               keyBy="id"
-              renderItem={(walk) => <ListItem title={walk.name} subtitle={walk.when} icon={walk.icon} />}
+              renderItem={(walk) => <ListItem title={walk.name} subtitle={walk.when} icon={walk.icon} onPress={() => remove(walk.id)} />}
             />
           )}
           <Grid columns={2}>

@@ -35,11 +35,12 @@ import {
   type WeightToken,
 } from './tokens';
 import { emitUiEvent } from './events';
-import { CONTROL_RESET, usePressed } from './press';
+import { CONTROL_RESET } from './press';
 import { stacks, typeStyle } from './kit';
 import { TextField } from './controls';
 import { chromeInsetContext } from './chrome-inset';
-import { navDepthContext, nav } from './navigation';
+import { navDepthContext, nav, screenLayerContext, layerStyle, playLayer, IDLE_LAYER, type LayerRole } from './navigation';
+import { motionElement, usePressMotion } from './motion';
 import { Glyph } from './icon';
 import { LAYOUT } from '../design/tokens';
 
@@ -309,11 +310,14 @@ interface HeaderButtonProps {
 function HeaderButton({ icon, label, edge, onPress }: HeaderButtonProps) {
   const target = LAYOUT.touchTarget[activeTheme().platform];
   const pull = `-${(target - HEADER_ICON_PX) / 2}px`;
+  const { ref, ...press } = usePressMotion('icon');
   return React.createElement(
     'button',
     {
       type: 'button',
       'aria-label': label,
+      ref,
+      ...press,
       onClick: () => {
         emitUiEvent('press', label);
         onPress();
@@ -396,10 +400,26 @@ export function Screen({ padding = 'lg', title, action, children }: ScreenProps)
   const chromeInset = nested ? 0 : rootInset;
   const depthContext = navDepthContext();
   const depth = React.useContext(depthContext);
+  const layerContext = screenLayerContext();
+  // Only the outermost Screen is the navigation stack's page, so only it moves on a push or pop: it
+  // gives the screens inside it the idle part.
+  const layer = React.useContext(layerContext);
+  const element = React.useRef<unknown>(null);
+  const shownRole = React.useRef<LayerRole | null>(null);
+  React.useLayoutEffect(() => {
+    const previous = shownRole.current;
+    shownRole.current = layer.role;
+    const el = motionElement(element.current);
+    if (!el || layer.role === 'idle' || layer.role === previous) return;
+    playLayer(el, layer.role, previous === null);
+  }, [layer.role]);
+  const leaving = layer.role === 'cover' || layer.role === 'exit';
   const body = textSize('body');
   return React.createElement(
     'div',
     {
+      ref: element,
+      ...(leaving ? { 'aria-hidden': true } : {}),
       style: {
         boxSizing: 'border-box',
         minHeight: '100%',
@@ -410,6 +430,7 @@ export function Screen({ padding = 'lg', title, action, children }: ScreenProps)
         // An app, not a document: no rubber-band or pull-to-refresh past the content. Text stays
         // selectable; controls opt out of selection themselves (CONTROL_RESET).
         overscrollBehavior: 'none',
+        ...layerStyle(layer),
       },
     },
     title ? React.createElement(ScreenHeader, { title, action, depth }) : null,
@@ -418,7 +439,11 @@ export function Screen({ padding = 'lg', title, action, children }: ScreenProps)
     React.createElement(
       nestedContext.Provider,
       { value: true },
-      React.createElement(depthContext.Provider, { value: 0 }, children),
+      React.createElement(
+        depthContext.Provider,
+        { value: 0 },
+        React.createElement(layerContext.Provider, { value: IDLE_LAYER }, children),
+      ),
     ),
   );
 }
@@ -564,12 +589,13 @@ function buttonColors(variant: ButtonProps['variant'], disabled: boolean): { bac
   }
 }
 export function Button({ label, icon, variant = 'primary', disabled = false, onPress }: ButtonProps) {
-  // The press dip until the press motion replaces it; a disabled button has no pointer handlers.
-  const { pressed, pressHandlers } = usePressed();
+  // Press feedback (M1); a disabled button has no pointer handlers.
+  const { ref, ...press } = usePressMotion('button');
   return React.createElement(
     'button',
     {
       type: 'button',
+      ref,
       disabled,
       onClick: () => {
         // (b) surface the tap to the host over the one-way transport (constraint #2), then
@@ -579,7 +605,7 @@ export function Button({ label, icon, variant = 'primary', disabled = false, onP
         emitUiEvent('press', label);
         if (onPress) onPress();
       },
-      ...(disabled ? {} : pressHandlers),
+      ...(disabled ? {} : press),
       style: {
         boxSizing: 'border-box',
         display: 'inline-flex',
@@ -595,8 +621,6 @@ export function Button({ label, icon, variant = 'primary', disabled = false, onP
         ...typeStyle('headline'),
         textAlign: 'center',
         cursor: disabled ? 'default' : 'pointer',
-        opacity: pressed ? 0.8 : 1,
-        transition: 'opacity 80ms',
         // From 135%, a button takes a line of its own, so paired buttons stack (system.md §6).
         ...(stacks() ? { flex: '1 1 100%' } : {}),
         ...CONTROL_RESET,

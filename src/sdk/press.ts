@@ -5,8 +5,8 @@
 // the FULL border box of any element carrying a click/pointer handler, independent of the
 // element's own visual response — a Switch's whole row flashes cyan, a ghost Button flashes
 // blue. `TAP_RESET` is spread into every such element's style to suppress that native paint;
-// `usePressed` gives the few components with no intrinsic visual state change (Button, Card,
-// ListItem) a deliberate, correctly-sized replacement instead. Not part of the public `vc-sdk`
+// `usePressed` gives a pressable `ListItem` its pressed `fill` (the press scale itself is
+// `motion.ts`'s `usePressMotion`). Not part of the public `vc-sdk`
 // surface — `index.tsx` never re-exports this module, only consumes it internally (same
 // pattern as `events.ts`).
 import * as React from 'react';

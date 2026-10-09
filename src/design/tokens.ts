@@ -41,7 +41,7 @@ export const NEUTRAL_ROLES = {
     material: { light: '+ `shadow-raised`', dark: '+ top highlight' },
   },
   fill: { light: '#EBE9E6', dark: '#2E2B28', use: 'Secondary buttons, segmented track, chips' },
-  'fill-strong': { light: '#E0DDDA', dark: '#3C3936', use: 'Pressed fills, skeletons, tracks' },
+  'fill-strong': { light: '#E0DDDA', dark: '#3C3936', use: 'Pressed fills, skeletons, progress tracks' },
   thumb: {
     light: '#FFFFFF',
     dark: '#3C3936',
@@ -49,7 +49,7 @@ export const NEUTRAL_ROLES = {
     material: { light: '+ `shadow-raised`', dark: '' },
   },
   separator: { light: '#E2DFDB', dark: '#34312F', use: 'Hairlines between rows (holds no edge: 1.21:1)' },
-  border: { light: '#908B86', dark: '#6E6862', use: 'Input and outlined-control edges' },
+  border: { light: '#908B86', dark: '#6E6862', use: 'Input and outlined-control edges; the off switch track and the slider track' },
   text: { light: '#1A1614', dark: '#F2F0EC', use: 'Primary text' },
   'text-2': { light: '#6D6660', dark: '#ADA8A3', use: 'Secondary text, placeholders, waiting steps' },
   'text-3': { light: '#908B86', dark: '#78746E', use: '**Disabled only**' },

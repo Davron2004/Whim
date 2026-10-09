@@ -6,9 +6,10 @@
 import assert from 'node:assert';
 import * as React from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { Badge, Button, Card, Checkbox, Heading, Modal, ProgressBar, Row, Screen, Switch, Text, type AppSpec } from '../index';
+import { Badge, Button, Card, Checkbox, Heading, Modal, ProgressBar, Row, Screen, Slider, Switch, Text, type AppSpec } from '../index';
 import { NavRoot } from '../navigation';
 import { COLORS, LAYOUT, ON_TINT, STATUS, TINTS } from '../../design/tokens';
+import { contrastRatio } from '../../design/tints';
 
 const THEME = { scheme: 'light', tint: 'purple', platform: 'android', fontScale: 1, increaseContrast: false, reduceMotion: false };
 (globalThis as { __WHIM_THEME__?: unknown }).__WHIM_THEME__ = THEME;
@@ -69,7 +70,8 @@ try {
     let presses = 0;
     const disabledNode = only(<Button label="Sync" variant="danger" disabled onPress={() => presses++} />, 'button');
     const disabled = styleOf(disabledNode);
-    assert.deepStrictEqual([disabled.background, disabled.color, disabled.opacity], [light.fill, light['text-3'], 1], 'disabled is fill + text-3 at full opacity, whatever the variant');
+    assert.deepStrictEqual([disabled.background, disabled.color], [light.fill, light['text-3']], 'disabled is fill + text-3, whatever the variant');
+    assert.ok(disabled.opacity === undefined || disabled.opacity === 1, `never a lowered opacity (${String(disabled.opacity)})`);
     act(() => disabledNode.props.onClick());
     assert.deepStrictEqual(presses, 0, 'and a disabled tap does nothing');
     assert.ok(disabled.flex === undefined, 'at the default text scale a button keeps its own width');
@@ -107,6 +109,14 @@ try {
     const track = sw.findAll((n) => n.type === 'span' && styleOf(n).width === '52px');
     assert.deepStrictEqual(track.length, 1, 'Android draws the Material 52-wide track');
     assert.ok(String(styleOf(track[0]).border).startsWith('2px solid'), 'with its outline');
+    // WCAG 1.4.11 (product-owner ruling, design-system-v1 task 6.0): the Material off track is
+    // bounded by its outline, which must hold 3:1 against the surface it sits on.
+    const outline = String(styleOf(track[0]).border).replace('2px solid ', '');
+    const offEdge = contrastRatio(outline, light.surface);
+    assert.ok(offEdge >= 3, `the light Material off track's outline holds 3:1 on surface (${offEdge.toFixed(2)}:1)`);
+    const sliderTrack = mount(<Slider value={0} onChange={() => {}} />).root.find((n) => n.type === 'div' && styleOf(n).height === '6px');
+    const empty = contrastRatio(String(styleOf(sliderTrack).background), light.surface);
+    assert.ok(empty >= 3, `the light slider's empty track holds 3:1 on surface (${empty.toFixed(2)}:1)`);
   }
 
   // ── Badge: soft fills, the status tones carry their icon ─────────────────────
