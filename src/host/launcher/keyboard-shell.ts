@@ -25,7 +25,10 @@ export type KeyboardShellHost = 'screen' | 'sheet';
 /** The keyboard events a frame places itself by (`moved`, carrying the keyboard's frame) and resets
  *  on (`hidden`). iOS reports every change of the keyboard's frame before it happens: showing,
  *  hiding, and a keyboard that grows or shrinks while up (another keyboard, the Done bar arriving).
- *  Android reports only showing and hiding, after the keyboard has moved. */
+ *  Android reports them after the keyboard has moved, a keyboard that grows or shrinks while up
+ *  (the emoji or voice panel) as another show: React Native itself on Android 10 and older, and
+ *  `MainActivity`'s `KeyboardFrameReporter` on 11 and later, where React Native reports only
+ *  showing and hiding. */
 export function keyboardEvents(os: string): { readonly moved: KeyboardEventName; readonly hidden: KeyboardEventName } {
   return os === 'ios'
     ? { moved: 'keyboardWillChangeFrame', hidden: 'keyboardWillHide' }
