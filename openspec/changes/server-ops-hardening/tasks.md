@@ -30,16 +30,16 @@ Constraints for every task: no `CONFIG_SET` file (`package.json`, lockfile, `scr
 
 ## 3. Browser launch resilience (#139)
 
-- [ ] 3.1 `synthrun/session.ts`: make the single launch call site (`startBrowser`) retry a failed launch up to three attempts in total, 500 ms apart, reusing the same `browserLaunchOptions()` result object on every attempt. Log each failure with its attempt number and exit signal or error message only. Boot and relaunch-after-disconnect share the loop. Keep the `synthrun/test/isolation.ts` single-call-site scan passing.
-- [ ] 3.2 `server/src/lifecycle.ts`: before the first launch, log one `boot host` record with the CPU `model name`, the presence of the `pku`/`ospke` flags (from `/proc/cpuinfo`) and `os.release()`, using `unknown` when they are unavailable. After the final failed attempt, `BootError('browser_launch')` and exit 1 behave as today.
-- [ ] 3.3 Tests in the existing suites that already cover launch failure (`synthrun/test/resilience.ts` for the session, and `server/test/prod-build.suite.ts` for boot's `browser_launch`), using an injected launcher that records options:
+- [x] 3.1 `synthrun/session.ts`: make the single launch call site (`startBrowser`) retry a failed launch up to three attempts in total, 500 ms apart, reusing the same `browserLaunchOptions()` result object on every attempt. Log each failure with its attempt number and exit signal or error message only. Boot and relaunch-after-disconnect share the loop. Keep the `synthrun/test/isolation.ts` single-call-site scan passing.
+- [x] 3.2 `server/src/lifecycle.ts`: before the first launch, log one `boot host` record with the CPU `model name`, the presence of the `pku`/`ospke` flags (from `/proc/cpuinfo`) and `os.release()`, using `unknown` when they are unavailable. After the final failed attempt, `BootError('browser_launch')` and exit 1 behave as today.
+- [x] 3.3 Tests in the existing suites that already cover launch failure (`synthrun/test/resilience.ts` for the session, and `server/test/prod-build.suite.ts` for boot's `browser_launch`), using an injected launcher that records options:
   - fail twice then succeed → boot listens, two logged failures;
   - fail three times → boot exits non-zero naming the browser launch, with no port bound;
   - every recorded attempt's options are deep-equal to the production options with `chromiumSandbox: true`;
   - the host record is logged before the first attempt.
 
   Red-check the "fail once then succeed" case against today's code.
-- [ ] 3.4 Write `handoff/browser-launch.md`: the log message names and fields, and the attempt bound.
+- [x] 3.4 Write `handoff/browser-launch.md`: the log message names and fields, and the attempt bound.
 
 ## 4. Cloud Run alerts and smoke (#138, #146)
 
