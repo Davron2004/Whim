@@ -133,13 +133,13 @@ Constraints for every task:
 
 ## 6. Site build allowlist, referrer policy and profile tripwire (#113, #109, #112)
 
-- [ ] 6.1 `server/src/site/build.ts`: replace `fs.cpSync` of `deploy/site/assets` with the design D8 walk:
+- [x] 6.1 `server/src/site/build.ts`: replace `fs.cpSync` of `deploy/site/assets` with the design D8 walk:
   - skip any name starting with `.` at any depth;
   - copy `.woff2 .txt .svg .png .ico .webp`;
   - throw a build error naming any other file.
-- [ ] 6.2 `server/test/beta-site.suite.ts`: "every allowlisted file is published byte for byte", a hidden `.DS_Store` that is not published, and `notes.md` failing the build. Build from a temp copy of the assets dir. Red-check the hidden-file case against today's `cpSync`.
-- [ ] 6.3 `deploy/cloudrun/Caddyfile` and the retired `deploy/Caddyfile` pages block: add `Referrer-Policy strict-origin-when-cross-origin` to the pages `header` block. `server/test/deploy-config.suite.ts` asserts it for both. The site suite asserts that no built page has `<meta name="referrer">`.
-- [ ] 6.4 `deploy-config.suite.ts` `isForbiddenProfileKey`: forbid any key containing `_LIMIT_`, and add a case where a profile setting `WHIM_BETA_LIMIT_PER_DAY` is refused. Red-check against today's prefix rule.
+- [x] 6.2 `server/test/beta-site.suite.ts`: "every allowlisted file is published byte for byte", a hidden `.DS_Store` that is not published, and `notes.md` failing the build. Build from a temp copy of the assets dir. Red-check the hidden-file case against today's `cpSync`.
+- [x] 6.3 `deploy/cloudrun/Caddyfile` and the retired `deploy/Caddyfile` pages block: add `Referrer-Policy strict-origin-when-cross-origin` to the pages `header` block. `server/test/deploy-config.suite.ts` asserts it for both. The site suite asserts that no built page has `<meta name="referrer">`.
+- [x] 6.4 `deploy-config.suite.ts` `isForbiddenProfileKey`: forbid any key containing `_LIMIT_`, and add a case where a profile setting `WHIM_BETA_LIMIT_PER_DAY` is refused. Red-check against today's prefix rule.
 
 ## 7. Runbook, decision and capability map
 
