@@ -1,6 +1,8 @@
 /**
  * `npm run stores:firestore:test`: runs `server/test/firestore.run.mjs` against a Firestore emulator
- * started by the repo's pinned firebase-tools, on ports picked free for this run.
+ * started by the repo's pinned firebase-tools, on ports picked free for this run. Given a script
+ * (and its arguments), runs that instead: `deploy/loadtest/firestore-admission.sh` passes
+ * `server/test/firestore-admission.run.mjs`.
  *
  * The emulator used to listen on fixed ports (8085, with the hub on 4400 and logging on 4500), so
  * two checkouts gating at once collided: the second run failed with "port taken" (#144). Each run
@@ -9,6 +11,7 @@
  * and the emulator's bind, so a run that fails to start on a taken port is retried on new ports.
  *
  *   npm run stores:firestore:test
+ *   node scripts/firestore-emulator-test.mjs <node script> [args...]
  */
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -23,6 +26,13 @@ const firebaseBin = fileURLToPath(import.meta.resolve('firebase-tools/lib/bin/fi
 const HOST = '127.0.0.1';
 const ATTEMPTS = 3;
 const PORT_TAKEN = /port taken|EADDRINUSE|address already in use/i;
+const [scriptArg, ...scriptArgs] = process.argv.slice(2);
+const scriptPath = scriptArg ? path.resolve(scriptArg) : path.join(root, 'server', 'test', 'firestore.run.mjs');
+
+/** `word` single-quoted for the shell `emulators:exec` runs its script in. */
+function shellQuote(word) {
+  return `'${word.replaceAll("'", "'\\''")}'`;
+}
 
 /** A port the OS reports free right now. */
 function freePort() {
@@ -59,7 +69,7 @@ async function runOnce() {
     },
   }, null, 2)}\n`);
   const project = `demo-whim-conformance-${randomBytes(4).toString('hex')}`;
-  const script = `"${process.execPath}" "${path.join(root, 'server', 'test', 'firestore.run.mjs')}"`;
+  const script = [process.execPath, scriptPath, ...scriptArgs].map(shellQuote).join(' ');
   console.log(`firestore emulator on ${HOST}:${ports.firestore} (hub ${ports.hub}, logging ${ports.logging}, websocket ${ports.websocket}), project ${project}`);
   let output = '';
   const child = spawn(process.execPath, [firebaseBin, 'emulators:exec', '--config', config, '--only', 'firestore', '--project', project, script], {
