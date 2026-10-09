@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { AppSpec } from './index';
 import { chromeInsetContext } from './chrome-inset';
+import { ToastHost } from './toast';
 
 // ── Navigation (sdk-navigation D1–D4) ────────────────────────────────────────
 // `nav` is deliberately a stable module-scope object rather than a hook: mini-app event
@@ -32,6 +33,16 @@ export const nav = {
     emitNavAction({ type: 'back' });
   },
 };
+
+// How many screens sit under the current one (0 = the app's initial screen). `NavRoot` provides
+// it and `Screen` reads it to decide whether its header shows a back control. Repository-internal
+// like the chrome inset, and created on first use for the same reason (the build's React stub).
+let depthContext: React.Context<number> | undefined;
+
+export function navDepthContext(): React.Context<number> {
+  depthContext ??= React.createContext(0);
+  return depthContext;
+}
 
 export interface NavRootProps {
   spec: AppSpec;
@@ -131,6 +142,12 @@ export function NavRoot({ spec, chromeInsetBottom = 0 }: NavRootProps): React.Re
   return React.createElement(
     chromeInsetContext().Provider,
     { value: chromeInsetBottom },
-    React.createElement(CurrentScreen, { key: stack.length - 1 }),
+    React.createElement(
+      navDepthContext().Provider,
+      { value: stack.length - 1 },
+      React.createElement(CurrentScreen, { key: stack.length - 1 }),
+    ),
+    // After the screen, so the toast subscription runs after the app's first effects.
+    React.createElement(ToastHost, { bottomInset: chromeInsetBottom }),
   );
 }
