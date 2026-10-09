@@ -308,6 +308,16 @@ export function runContractTests(): void {
     'result event validates with only generation outputs',
     GenerationEvent.safeParse({ type: 'result', app: tinyRecord }).success,
   );
+  // Tile identity has one home: inside `manifest`, round-tripped untouched; never top-level, and an
+  // assigned tint (install state) never survives on the record.
+  const tiled = WireAppRecord.parse({
+    ...tinyRecord,
+    manifest: { ...tinyRecord.manifest, tint: ['ocean', 'blue'], icon: 'glass-water' },
+    tint: 'rose',
+    assignedTint: 'rose',
+  });
+  eq('WireAppRecord keeps tint and icon inside manifest', [tiled.manifest.tint, tiled.manifest.icon], [['ocean', 'blue'], 'glass-water']);
+  eq('WireAppRecord drops a top-level tint or an assigned tint', Object.keys(tiled).filter((key) => /tint|icon/i.test(key)), []);
 
   // §1.5 — Usage requires integers (one shape; identity is asserted in the modules that reuse it).
   check(

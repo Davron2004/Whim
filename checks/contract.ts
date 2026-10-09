@@ -6,8 +6,12 @@
  * module, so it stands alone and is importable by the checker itself, its test suite, and
  * (task 9.1) the shared server contract package's re-export. `AppliedSchema` is deliberately
  * NOT declared here — it is owned by `src/host/storage-engine/schema.ts` and the checker's
- * public entry (`checks/index.ts`) imports it from there.
+ * public entry (`checks/index.ts`) imports it from there. The tile-identity names are imported
+ * TYPE-ONLY from `src/design/` (pure data modules), so this file still loads nothing at runtime.
  */
+
+import type { TintName } from '../src/design/tokens';
+import type { FALLBACK_ICON, GlyphName } from '../src/design/icons/names';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Diagnostic shape (harness-diagnostics spec, all 4 requirements)
@@ -92,6 +96,15 @@ export type Severity = 'error' | 'warning';
  *      - `raw_timer`           — raw `setTimeout`/`setInterval`/`requestAnimationFrame`
  *                                (function-arg form) instead of the SDK's `delay`/`interval`
  *                                (req "SDK lint steers toward the taught path")
+ *  - TILE IDENTITY (design-system-v1 D5, `handoff/generator.md`): WARNING-ONLY, emitted by the
+ *    manifest-extraction pass when it resolves a declared `tint`/`icon` name. A name never fails a
+ *    build or costs a repair turn, so the server's check stage keeps these out of the repair loop
+ *    (`TILE_DIAGNOSTIC_KINDS` below). The three icon kinds reuse `src/design/icons/names.ts`'s
+ *    `IconDiagnosticKind` verbatim.
+ *      - `tint_alias`    — a declared tint was an alias (`teal` → `ocean`)
+ *      - `tint_fallback` — a declared tint resolved to none of the ten (or was not a string
+ *                          literal) and was dropped; the device falls back by app id
+ *      - `icon_alias` / `icon_keyword` / `icon_fallback` — the glyph resolver's own three outcomes
  *
  * Array-first: `DiagnosticKind` (below) is derived from `DIAGNOSTIC_KINDS` via `typeof …
  * [number]` so the type and the runtime self-check list (task 2.3's harness self-test)
@@ -146,9 +159,21 @@ export const DIAGNOSTIC_KINDS = [
   'unknown_record',
   'unqueryable_field',
   'kv_too_large',
+  // — tile identity (design-system-v1 D5): warning-only, never repaired —
+  'tint_alias',
+  'tint_fallback',
+  'icon_alias',
+  'icon_keyword',
+  'icon_fallback',
 ] as const;
 
 export type DiagnosticKind = (typeof DIAGNOSTIC_KINDS)[number];
+
+/** The tile-identity kinds: always `warning`, recorded for the build and the eval, and never fed
+ *  to the repair loop (generation-pipeline "The delivered app record is harness-validated"). */
+export const TILE_DIAGNOSTIC_KINDS = ['tint_alias', 'tint_fallback', 'icon_alias', 'icon_keyword', 'icon_fallback'] as const satisfies readonly DiagnosticKind[];
+
+export type TileDiagnosticKind = (typeof TILE_DIAGNOSTIC_KINDS)[number];
 
 /**
  * A single structured diagnostic (harness-diagnostics req 1). `hint` is REQUIRED and
@@ -187,10 +212,16 @@ export interface ExtractedManifest {
   capabilities: string[];
   /** The raw `schema` literal, when declared — validated separately by the schema pass. */
   schema?: unknown;
-  /** The app's declared tile colour, when it was declared AS A STRING LITERAL. Carried through
-   *  this one extraction (never a second parse); a non-literal declaration is simply absent here,
-   *  and the colour's *validity* (hex shape, reserved-hue collision) is the consumer's call. */
+  /** The app's declared tile colour, when it was declared AS A STRING LITERAL. Legacy (deprecated
+   *  by `tint`): carried through this one extraction unvalidated, for the host to map to a tint. */
   tileColor?: string;
+  /** The declared `tint` (a name or a list), resolved to the closed set: ranked, aliases applied,
+   *  unknown names dropped, duplicates removed, at most three. Absent when nothing resolved — the
+   *  device then falls back by app id. */
+  tint?: TintName[];
+  /** The declared `icon`, resolved against the glyph set (aliases, keywords on the name then the
+   *  app name, else `circle`). Absent when no string literal was declared. */
+  icon?: GlyphName | typeof FALLBACK_ICON;
 }
 
 /**

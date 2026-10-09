@@ -44,6 +44,8 @@ import {
   STORAGE_LOCATIONS_HEADING,
   IDENTITY_CONTINUITY,
   MINI_APP_LIMITS,
+  CLARIFY_OPTION_MAX_CHARS,
+  TILE_IDENTITY_SECTION,
   type MiniAppLimit,
   type PromptPlan,
 } from '../src/generation/prompts';
@@ -53,6 +55,8 @@ import { parseJsonBlock } from '../src/generation/json-block';
 import { runStaticChecks } from '../../checks/index';
 import { FIELD_TYPES } from '../../src/host/storage-engine/contract';
 import { clarifyBuildInstead } from '../../src/host/launcher/copy';
+import { TINT_NAMES } from '../../src/design/tokens';
+import { CHROME_NAMES, GLYPH_GROUPS, GLYPH_NAMES } from '../../src/design/icons/names';
 import { ClarifyLimit, ClarifyQuestion, type Clarification, type GenerateRequest, type Diagnostic, type GenerationEvent } from '@whim/contract';
 
 const repoRoot = path.resolve(process.cwd());
@@ -865,7 +869,76 @@ function testAnswerModeInstructions(): void {
     check(`${turn}: several picks render together on their question’s row`, rows.some((row) => row.includes('Which days?') && row.includes('Monday') && row.includes('Wednesday')));
   }
   const delegation = userContent(rewrite).split('\n').find((row) => row.includes('Which units?'))?.split('→ ')[1]?.trim() ?? '';
-  check('plan writing is told to decide exactly the questions rendered as delegated', delegation.length > 0 && systemOf(rewrite).includes(delegation), delegation);
+  const sentenceWith = (text: string, phrase: string): string => text.split(/(?<=[.:])\s+/).find((sentence) => sentence.includes(phrase)) ?? '';
+  const rewriteSentence = sentenceWith(systemOf(rewrite), delegation);
+  check('plan writing is told a question rendered as delegated is still open', delegation.length > 0 && /still open/.test(rewriteSentence), rewriteSentence);
+  check('plan writing is never told to decide it', !/\bdecide every\b/i.test(systemOf(rewrite)), rewriteSentence);
+  const generateSystem = systemOf(turns[2]!.messages);
+  const generateSentence = sentenceWith(generateSystem.slice(0, generateSystem.indexOf(TILE_IDENTITY_SECTION)), delegation);
+  check('generation is told to decide exactly the questions rendered as delegated', /^Decide every question/.test(generateSentence), generateSentence);
+}
+
+// ── §Prompts for the design system (design-system-v1 tasks 13.2–13.3) ─────────
+
+function testClarifyOptionsReadAsAnswers(): void {
+  section('Tripwire: clarify options are capped, and the prompt’s own examples sit on the right side of the cap');
+
+  const clarifySystem = buildClarifyMessages({ request: { prompt: 'a pour-over timer' } }).find((m) => m.role === 'system')?.content ?? '';
+  check('the clarify prompt states the option cap', clarifySystem.includes(`at most ${CLARIFY_OPTION_MAX_CHARS} characters`));
+  const examples = /for example "([^"]+)", never "([^"]+)"/.exec(clarifySystem);
+  const [good, bad] = [examples?.[1] ?? '', examples?.[2] ?? ''];
+  check('the good example option fits the cap', good.length > 0 && good.length <= CLARIFY_OPTION_MAX_CHARS, good);
+  check('the bad example option breaks the cap', bad.length > CLARIFY_OPTION_MAX_CHARS, bad);
+}
+
+function testUserFacingPromptsUseTheGlossary(): void {
+  section('Tripwire: clarify and plan writing speak of "apps", never "mini-apps" (limit reasons, plan rows)');
+
+  const systemOf = (messages: { role: string; content: string }[]): string => messages.find((m) => m.role === 'system')?.content ?? '';
+  const ban = 'never a "mini-app"';
+  const clarifySystem = systemOf(buildClarifyMessages({ request: { prompt: 'a weather app' } }));
+  check('the clarify prompt bans the word for the limit reason', clarifySystem.includes(ban));
+  // The rewrite system message ends with the content policy's rating rule, a document this prompt
+  // does not own; only the instructions before it are checked.
+  const rewriteSystem = systemOf(buildRewriteMessages({ request: { prompt: 'a weather app' } }));
+  const rewriteInstructions = rewriteSystem.slice(0, rewriteSystem.indexOf(loadContentPolicyDocument(repoRoot).ratingRule));
+  check('the rewrite instructions precede the rating rule', rewriteInstructions.length > 0);
+  for (const [turn, system] of [['clarify', clarifySystem], ['rewrite', rewriteInstructions]] as const) {
+    const offenders = system.split(ban).join('').match(/mini-?apps?/gi) ?? [];
+    eq(`${turn}: no other "mini-app" in the instructions`, offenders, []);
+  }
+}
+
+function testGenerateDoesNotDictateALayout(): void {
+  section('Tripwire: the generate instructions point at SDK defaults and name no component as a layout recipe');
+
+  const system = buildGenerateMessages({ request: { prompt: 'a water counter' }, plan: PLAN, schemaContext: '' }, loadPromptInputs(repoRoot))
+    .find((m) => m.role === 'system')?.content ?? '';
+  const instructions = system.slice(0, system.indexOf(TILE_IDENTITY_SECTION));
+  check('the instructions precede the tile section', instructions.length > 0);
+  const components = vcSdkValueExportNames().filter((name) => /^[A-Z]/.test(name));
+  check('vc-sdk barrel: components found (sanity)', components.length > 5);
+  const named = components.filter((name) => new RegExp(`\\b${name}\\b`).test(instructions));
+  eq('no vc-sdk component is named by the instructions', named, []);
+}
+
+function testTileSectionListsTheSharedModules(): void {
+  section('Tripwire: the generate prompt’s tile section lists exactly the shared tint and glyph modules');
+
+  const system = buildGenerateMessages({ request: { prompt: 'a water counter' }, plan: PLAN, schemaContext: '' }, loadPromptInputs(repoRoot))
+    .find((m) => m.role === 'system')?.content ?? '';
+  check('the generate system prompt carries the tile section', system.includes(TILE_IDENTITY_SECTION));
+  const lines = TILE_IDENTITY_SECTION.split('\n');
+  const tints = lines.find((line) => line.startsWith('Tints: '))?.slice('Tints: '.length).replace(/\.$/, '').split(', ') ?? [];
+  eq('the tint line lists the ten tints in table order', tints, [...TINT_NAMES]);
+  for (const [group, glyphs] of Object.entries(GLYPH_GROUPS)) {
+    const listed = lines.find((line) => line.startsWith(`- ${group}: `))?.slice(`- ${group}: `.length).split(', ') ?? [];
+    eq(`the "${group}" line lists that group's glyphs`, listed, [...glyphs]);
+  }
+  const listedGlyphs = lines.filter((line) => line.startsWith('- ')).flatMap((line) => line.slice(line.indexOf(': ') + 2).split(', '));
+  eq('every glyph is offered exactly once', [...listedGlyphs].sort((a, b) => a.localeCompare(b)), [...GLYPH_NAMES].sort((a, b) => a.localeCompare(b)));
+  const chromeOnly = CHROME_NAMES.filter((name) => !(GLYPH_NAMES as readonly string[]).includes(name));
+  eq('no chrome-only name is offered for a tile', listedGlyphs.filter((name) => (chromeOnly as readonly string[]).includes(name)), []);
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────
@@ -888,4 +961,8 @@ export async function runPromptsTests(): Promise<void> {
   testLimitAlternativeFitsTheButton();
   testLimitDecisionComesFirst();
   testAnswerModeInstructions();
+  testClarifyOptionsReadAsAnswers();
+  testUserFacingPromptsUseTheGlossary();
+  testGenerateDoesNotDictateALayout();
+  testTileSectionListsTheSharedModules();
 }
