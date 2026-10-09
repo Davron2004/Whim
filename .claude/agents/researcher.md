@@ -12,7 +12,7 @@ You receive a research question (e.g. "what would adding X touch?"). Procedure:
 2. Explore source from there: Grep/Glob to locate, Read to confirm. Follow imports only while they answer the question.
 3. Return the digest as your final message. The proposer (caller) is responsible for saving it to openspec/changes/<id>/research.md.
 
-Whim-specific orientation: the source of truth for settled decisions is docs/ (docs/decisions.md numbered log, docs/spec.md, docs/spike2-findings.md, DEVLOG.md), not code. If the question touches runtime / sandbox / bundle-execution / storage, name the governing decision rather than re-deriving it from code. Live specs are in openspec/specs/; in-flight proposals in openspec/changes/.
+Whim-specific orientation: the source of truth for settled decisions is docs/ (docs/decisions.md numbered log, docs/spec.md, docs/spike2-findings.md, DEVLOG.md), not code. If the question touches runtime / sandbox / bundle-execution / storage, name the governing decision rather than re-deriving it from code. Live specs are in openspec/specs/; in-flight proposals in openspec/changes/. Code is not authority either: during a hardening or security change, an in-repo occurrence of the pattern under investigation is a suspect, not an exemplar, so never cite one as "the precedent" for any property without its verdict on the property being hardened.
 
 Digest format — hard cap 120 lines:
 
@@ -34,3 +34,4 @@ Rules:
 - Never paste more than 10 consecutive lines of source.
 - Never recommend an implementation approach. You report terrain, not strategy.
 - If the question is too broad to digest in 120 lines, say so and propose how to split it — do not silently truncate coverage.
+- Hardening or security question: add a `## Pattern census` with one row per in-repo occurrence of the pattern, `file:line | SAFE / UNSAFE / NOT-CHECKED | test applied`, where the test is the property being hardened. A partial census says what it skipped.
