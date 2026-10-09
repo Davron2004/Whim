@@ -60,3 +60,12 @@ Out of scope: launcher or app UI (a design-system redesign is in flight elsewher
 - **Tests:** existing suites only (`beta-signup`, `waitlist`, `beta-site`, `web-site`, `store-conformance`, `import-sqlite`, `admin-purge`, `request-edge`, `deploy-config`, the disclosure suite, `firestore-conformance`/`firestore-import` under the emulator), plus one new migration suite. No `CONFIG_SET` file changes, so no chain is HUMAN-BOOTSTRAP.
 - **Production (attended, after merge):** one Cloud Run server deploy, one migration of 5 Firestore docs (dry run, apply, verify), and one site deploy. No new GCP resources, no DNS changes, and no spend change (one extra document read per signup).
 - **Docs:** `docs/deploy.md` (waitlist operations, beta-email procedure, migration), `docs/decisions.md`, `docs/capabilities.md`.
+
+## Product-owner rulings (2026-10-09)
+
+1. **Opt-in is approved** (unticked opt-in box; the opt-out-with-implied-consent alternative in design D1 is rejected). The 5 existing rows migrate as "no news consent" — the old unticked opt-out box never gave express consent. Beta invitations remain allowed (requested messages).
+2. **Removal fingerprints are kept for 730 days**, matching the published waitlist retention maximum; a longer block would contradict published policy text.
+3. **Open owner question (non-blocking):** whether anyone already asked to be removed before this change; if the owner still has such addresses they are blocked at migration time via the operator CLI. Tasks must not wait on the answer.
+4. **Sticky withdrawal stands:** after withdrawal or removal, news consent comes back only through a written request to support — not by resubmitting the form — because without a confirmation email the form cannot prove the address owner is the one ticking the box.
+5. **Amendment — keyed fingerprint:** the removal fingerprint MUST be HMAC-SHA-256 with a server-side key held in Secret Manager (read by the server like the OpenRouter secret; free tier), not an unkeyed SHA-256, so database read access alone cannot confirm a guessed address. Add the secret's creation to the attended rollout tasks and to `docs/deploy.md`; the key is never logged or exported.
+6. **Sequencing:** this change shares files with `server-ops-hardening` (docs/deploy.md, deploy-config.suite.ts, firestore-conformance.ts); it is applied after that change merges, rebasing as needed.
