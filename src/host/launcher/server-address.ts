@@ -158,6 +158,12 @@ export function serverAddressAllowed(raw: string): boolean {
   return host != null && isLocalHost(host);
 }
 
+/** A server address as the user reads it: its host and port, without the scheme or any path. An
+ *  address that isn't an http(s) URL is returned as it is. */
+export function serverLabel(url: string): string {
+  return ADDRESS_RE.exec(url)?.[2] ?? url;
+}
+
 /** Whether the user has confirmed, on this install, that their own server isn't Whim's
  *  responsibility. Nothing un-records it: "Use Whim's server" keeps it. */
 export function ownServerAcknowledged(kv: KVBackend): boolean {

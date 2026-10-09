@@ -1,8 +1,8 @@
 /** The keyboard never hides the field or the action it belongs to (app-launcher "Text input never
  *  hides the content or action it belongs to", beta-1 D3): every launcher screen and sheet with a
  *  text field, rendered on each platform, for how its keyboard comes up and goes away. Android is
- *  rendered both before 15, where the window resizes for the keyboard, and from 15, where the app is
- *  drawn edge to edge and nothing resizes. Native geometry is played in through the host views'
+ *  rendered before 15 and from 15: the app is drawn edge to edge on both, so no window resizes for
+ *  the keyboard and every frame lifts itself. Native geometry is played in through the host views'
  *  measurements: a frame's place in the window, and a field's place in its scroll content. */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
@@ -13,6 +13,7 @@ import ComposeStep from '../ComposeStep';
 import ClarifyStep from '../ClarifyStep';
 import PlanStep from '../PlanStep';
 import ReportSheet from '../ReportSheet';
+import { KeyboardTextInput } from '../KeyboardShell';
 import SettingsScreen from '../SettingsScreen';
 import { SHELL_PALETTE } from '../theme';
 import { SPACING } from '../../../sdk/theme';
@@ -53,14 +54,12 @@ const flat = (node: Node) => StyleSheet.flatten(node.props.style) as Record<stri
 
 interface Device { readonly name: string; readonly os: 'ios' | 'android'; readonly version: string | number }
 const IOS: Device = { name: 'iOS', os: 'ios', version: '26.0' };
-/** Android 14: `adjustResize` still resizes the window. */
+/** Android 14, which draws edge to edge only because Whim asks it to (`edgeToEdgeEnabled`). */
 const ANDROID_14: Device = { name: 'Android 14', os: 'android', version: 34 };
-/** Android 15 and the acceptance emulator's Android 17: drawn edge to edge, nothing resizes. */
+/** Android 15 and the acceptance emulator's Android 17, which force edge to edge. */
 const ANDROID_15: Device = { name: 'Android 15', os: 'android', version: 35 };
 const ANDROID_17: Device = { name: 'Android 17', os: 'android', version: 37 };
 const DEVICES = [IOS, ANDROID_14, ANDROID_15, ANDROID_17] as const;
-/** Whether the device's window stays put when the keyboard opens, so a screen lifts itself. */
-const windowStaysPut = (device: Device) => device.os === 'ios' || Number(device.version) >= 35;
 
 /** Where things sit, as the native views would measure them. `frame` is a padding frame's place on
  *  its root's page (which fills the window); `field` and `block` are a field's and a named block's
@@ -257,7 +256,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('every screen pads its frame by the keyboard where the window stays put (iOS, Android 15+) and nowhere it resizes (Android 14); no scroll view insets itself as well', async () => {
+  await h.test('every screen pads its frame by the keyboard on iOS and every Android version, Android 14 included; no scroll view insets itself as well', async () => {
     const screens = [
       { name: 'compose', element: compose(), action: primaryActionLabel('compose', false) },
       { name: 'clarify', element: clarify(), action: primaryActionLabel('clarify', false) },
@@ -269,8 +268,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
       for (const screen of screens) {
         await on(device, screen.element, async ({ tree }) => {
           h.eq(frames(tree).length, 1, `${device.name} ${screen.name}: one frame, the screen's`);
-          h.eq(await paddingAcrossKeyboard(tree, device), windowStaysPut(device) ? [0, overlap, 0] : [0, 0, 0],
-            `${device.name} ${screen.name}: ${windowStaysPut(device) ? 'the frame ends at the keyboard while it is up' : 'the resized window lifts everything, so nothing pads twice'}`);
+          h.eq(await paddingAcrossKeyboard(tree, device), [0, overlap, 0], `${device.name} ${screen.name}: the frame ends at the keyboard while it is up`);
           h.ok(scrollView(tree).props.automaticallyAdjustKeyboardInsets !== true, `${device.name} ${screen.name}: the scroll view adds no keyboard inset on top of the frame's padding`);
           if (screen.action) {
             const action = button(tree, screen.action);
@@ -396,7 +394,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('clarify "Other", and the Settings server field with the helper line under it, are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
+  await h.test('clarify "Other", and the Settings server field with the lines and the Use Whim’s server action under it, are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
     // The Settings field names its block: the field, its helper line and the probe's line, 100 tall.
     const cases: [string, React.ReactElement, Geometry, string][] = [
       ['clarify', clarify(), { frame: SCREEN_FRAME, field: [500, 60] }, 'the field'],
@@ -417,6 +415,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
           h.eq(scrolls.at(-1), top + height + SPACING.md - 400, `${device.name} ${name}: once the keyboard shrinks the scroll view, ${shown} scroll clear above its end`);
           h.eq([field(tree).props.multiline === true, doneBars(tree).length], [false, 0], `${device.name} ${name}: one line, with no Done bar`);
           h.eq(scrollView(tree).props.keyboardShouldPersistTaps, 'handled', `${device.name} ${name}: the controls around it take their taps while typing`);
+          if (name === 'settings') h.ok(revealedBlock(tree).findAll((n) => String(n.type) === 'TouchableOpacity' && textOf(n) === COPY.settingsUseDefaultServer).length === 1, `${device.name} settings: Use Whim’s server is in the block kept above the keyboard`);
         }, geometry);
       }
     }
@@ -452,6 +451,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         h.ok(nearest(button(tree, COPY.reportSend), 'ScrollView') == null && nearest(button(tree, COPY.cancel), 'ScrollView') == null, `${device.name}: Send and Cancel are pinned below the note`);
         const note = around(field(tree));
         h.eq([note.scrolls, note.doneBarLinked(tree)], [true, device.os === 'ios'], `${device.name}: the note scrolls in the sheet; iOS links a Done bar`);
+        h.eq(revealedBlock(tree).findAll(isType('Switch')).length, 1, `${device.name}: the note keeps the include-prompt row under it in view too, so Send never cuts its switch`);
       }, { frame: [0, 844], field: [300, 90] });
     }
     await on(IOS, report(s.fn('close')), async ({ tree }) => {
@@ -507,18 +507,18 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
 
   await h.test('a keyboard frame, a screen’s or a sheet’s, removes every keyboard subscription it added once it unmounts', async () => {
     for (const device of DEVICES) {
-      const frameHosts: [string, React.ReactElement, () => Promise<void>, boolean][] = [
-        ['compose', compose(), async () => {}, windowStaysPut(device)],
-        ['report sheet', report(), draftLoaded, true],
+      const frameHosts: [string, React.ReactElement, () => Promise<void>][] = [
+        ['compose', compose(), async () => {}],
+        ['report sheet', report(), draftLoaded],
       ];
-      for (const [name, element, open, pads] of frameHosts) {
+      for (const [name, element, open] of frameHosts) {
         const before = Keyboard.listening();
         let added: KeyboardListener[] = [];
         await on(device, element, async () => {
           await open();
           added = [...Keyboard.listening()].filter((listener) => !before.has(listener));
         });
-        if (pads) h.ok(added.length > 0, `${device.name} ${name}: setup: the frame listens to the keyboard while it pads`);
+        h.ok(added.length > 0, `${device.name} ${name}: setup: the frame listens to the keyboard while it pads`);
         const after = Keyboard.listening();
         h.eq(added.filter((listener) => after.has(listener)).length, 0, `${device.name} ${name}: none of the subscriptions it added outlive it`);
       }
@@ -545,6 +545,13 @@ function nearestFrame(node: Node): Node {
 }
 
 /** Whether a field scrolls, and whether iOS linked its Done bar. */
+/** What a screen's one field keeps in view while focused: the block it names (`revealTarget`, the
+ *  view wrapping it), or the field alone. */
+function revealedBlock(tree: Tree): Node {
+  const input = tree.root.findByType(KeyboardTextInput);
+  return input.props.revealTarget != null && input.parent != null ? input.parent : input;
+}
+
 function around(input: Node) {
   return {
     scrolls: nearest(input, 'ScrollView') != null,

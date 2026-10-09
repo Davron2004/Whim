@@ -21,17 +21,16 @@
  * The dim covers the whole window, status bar, navigation bar and keyboard included (#105's class,
  * which the orb menu fixed the same way): the Modal's window draws under both bars on every Android
  * version, and the sheet keeps clear of them with that window's own safe-area insets, read through a
- * `SafeAreaProvider` inside the Modal (the app's outer insets describe the app's window, which on
- * Android before 15 stops at the bars). A window drawn under the bars doesn't resize for the
+ * `SafeAreaProvider` inside the Modal (the app's outer insets describe the app's window, not the
+ * Modal's). A window drawn under the bars doesn't resize for the
  * keyboard, so the sheet pads its own bottom by the keyboard (`useKeyboardInset`, keyboard-shell.ts):
  * its card continues behind the keyboard rather than stopping at its top edge. It is the sheet's only
  * avoidance: a `KeyboardShell` inside a sheet (`host="sheet"`) adds none.
  */
 import React, { useEffect, useRef } from 'react';
-import { Animated, Easing, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, Easing, Modal, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MOTION, RADIUS, SPACING } from '../../sdk/theme';
-import { padsForKeyboard } from './keyboard-shell';
 import { useKeyboardInset } from './KeyboardShell';
 import { inkAlpha } from './theme';
 import { SHELL_PALETTE } from './theme';
@@ -86,7 +85,7 @@ function SheetFrame({
   const p = SHELL_PALETTE;
   const insets = useSafeAreaInsets();
   const frame = useRef<View>(null);
-  const keyboard = useKeyboardInset(frame, padsForKeyboard(Platform, 'sheet'));
+  const keyboard = useKeyboardInset(frame, true);
   return (
     <View ref={frame} collapsable={false} style={[styles.frame, { paddingTop: insets.top + SPACING.md }]}>
       <Pressable style={[styles.scrim, { backgroundColor: inkAlpha(0.5) }]} onPress={onClose} accessibilityRole="none" />

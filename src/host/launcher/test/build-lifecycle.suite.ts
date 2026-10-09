@@ -30,8 +30,9 @@ import {
   startPendingBuild,
 } from '../build-lifecycle';
 import { RunJournalStore } from '../run-journal';
-import { EMPTY_RUN_AGGREGATES, STALL_MS, ghostTileColorFor, livenessOf } from '../prompt-flow';
-import type { RunSignals } from '../prompt-flow';
+import { EMPTY_RUN_AGGREGATES, STALL_MS, ghostTileColorFor, livenessOf, livenessPhaseOf } from '../prompt-flow';
+import type { RunSignals, Stage } from '../prompt-flow';
+import { buildLivenessLine } from '../copy';
 import type { GenerationEvent } from '@whim/contract';
 import { tileColor } from '../tiles';
 import { appColor } from '../../../sdk/theme';
@@ -493,6 +494,23 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     const rec = store.get(id)!;
     h.eq(rec.state, 'failed', 'the ghost tile can explain itself');
     h.eq(rec.failure!.reason, 'Something is over its daily limit.', 'the reason is the refusal’s hint, not a generic one');
+  });
+
+  await h.test('the build’s status line: in line it says so and counts the time in line; once the turn comes its clock starts over; checking names the checks', () => {
+    const journal = new RunJournalStore(new MapKVBackend());
+    journal.create('run-1');
+    let s: RunSignals = { startedAt: 0, aggregates: EMPTY_RUN_AGGREGATES, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: 0 };
+    const fold = (event: GenerationEvent, at: number) => { s = journalStreamEvent(journal, 'run-1', s, event, at); };
+    const line = (now: number, stage: Stage | null, queuedPosition?: number) =>
+      buildLivenessLine(livenessOf(s, now), s, now, livenessPhaseOf(stage, queuedPosition));
+    fold({ type: 'queued', position: 2 }, 1_000);
+    h.eq(line(16_000, null, 2), 'Waiting in line · 0:16', 'in line, the line says so, with the time in line');
+    fold({ type: 'queued', position: 1 }, 30_000);
+    fold({ type: 'stage', stage: 'plan', status: 'start' }, 150_000);
+    h.eq(line(157_000, 'plan'), 'Connected, waiting for a reply · 0:07', 'once its turn comes, the clock reads from then, not from joining the line');
+    fold({ type: 'stage', stage: 'check', status: 'start' }, 170_000);
+    fold({ type: 'stage', stage: 'run', status: 'start' }, 175_000);
+    h.eq(line(179_000, 'run'), 'Running the checks · 0:29', 'while the app is checked, the line names the checks rather than a reply');
   });
 
   // ── retry ────────────────────────────────────────────────────────────────────────────────────

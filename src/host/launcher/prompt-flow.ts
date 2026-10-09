@@ -643,6 +643,28 @@ export interface RunSignals {
   /** The written-output counts when the current model turn began (its `stage` start), which a
    *  `restart` returns to (beta-1 D10). Absent means the attempt's own start: nothing written. */
   turnStart?: { readonly chars: number; readonly tokens: number };
+  /** The latest event put the build in line (`queued`, beta-1 D8): it is waiting its turn. */
+  inLine?: boolean;
+  /** When the build's turn came after it waited in line: its build clock reads from here, so the
+   *  time in line isn't counted as building. Absent for a build that never waited. */
+  turnCameAt?: number;
+}
+
+/** One stream event's effect on the build's place in line: `queued` puts it in line, and the first
+ *  other event after that is the moment its turn came. Same object when nothing changes. */
+export function withLinePlace(signals: RunSignals, event: GenerationEvent, at: number): RunSignals {
+  if (event.type === 'queued') return signals.inLine === true ? signals : { ...signals, inLine: true };
+  if (signals.inLine !== true) return signals;
+  return { ...signals, inLine: false, turnCameAt: at };
+}
+
+/** What the build is doing, as its liveness line tells it: waiting in line, waiting on or reading
+ *  a model turn, or checking the app it wrote (`check`/`run`, where no model writes anything). */
+export type LivenessPhase = 'line' | 'model' | 'checking';
+
+export function livenessPhaseOf(stage: Stage | null, queuedPosition: number | undefined): LivenessPhase {
+  if (queuedPosition !== undefined) return 'line';
+  return stage === 'check' || stage === 'run' ? 'checking' : 'model';
 }
 
 /** A `stage` start begins a new model turn: the counts so far are where a restart of it returns. */

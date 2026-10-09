@@ -81,12 +81,16 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       streams[0].push({ type: 'queued', position: 3 });
       await waitFor(() => build(tree).props.queuedPosition === 3, 'the place in line');
       h.ok(textOf(tree.root).includes('2 builds ahead'), 'the build screen says it is in line with 2 ahead');
+      h.ok(textOf(tree.root).includes('Waiting in line · ') && !textOf(tree.root).includes('waiting for a reply'), 'and its status line says it is waiting in line, not for a reply');
       h.ok(button(tree, COPY.actionCancelBuild) != null && button(tree, COPY.buildLeaveRunning) != null, 'with Cancel and Leave it running');
       streams[0].push({ type: 'queued', position: 1 });
       await waitFor(() => textOf(tree.root).includes(COPY.buildQueuedNext), 'the front of the line');
       streams[0].push(STAGE);
       await waitFor(() => build(tree).props.stage === 'plan', 'the first stage');
       h.ok(!textOf(tree.root).includes('in line'), 'the in-line message is replaced by normal progress');
+      streams[0].push({ type: 'stage', stage: 'check', status: 'start' });
+      await waitFor(() => build(tree).props.stage === 'check', 'the check stage');
+      h.ok(textOf(tree.root).includes('Running the checks · ') && !textOf(tree.root).includes('waiting for a reply'), 'while the app is checked, the status line names the checks');
       await h.throws(() => { button(tree, COPY.actionCancelBuild); }, 'Expected one visible button', 'and Cancel goes with it');
       streams[0].push(resultEvent('Tea Timer'));
       streams[0].end();

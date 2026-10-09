@@ -114,14 +114,16 @@ export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readon
       {menuOpen && (
         // A genuine Modal (SheetModal.tsx's rationale applies here too), not an absolutely-
         // positioned sibling View: it mounts into its own native window, so the dim layer covers
-        // the WHOLE window including the status bar. `statusBarTranslucent` is what makes Android
-        // draw that window behind the (translucent) status bar rather than starting below it —
-        // without it the scrim stops short of the top of the screen (#105).
+        // the WHOLE window including both system bars. `statusBarTranslucent` and
+        // `navigationBarTranslucent` are what make Android draw that window behind the status bar
+        // and the navigation bar rather than between them — without them the scrim stops short of
+        // the top of the screen (#105) and leaves the navigation bar undimmed, as SheetModal,
+        // ConfirmSheet and HomeScreen's sheet already ask.
         //
         // The dismiss layer is a SIBLING behind the actions, never their parent: a touchable is one
         // accessibility element, and a screen reader reads everything inside it as that element —
         // with the actions nested in it, VoiceOver and TalkBack could reach only "Dismiss".
-        <Modal visible transparent animationType="none" statusBarTranslucent onRequestClose={closeAll}>
+        <Modal visible transparent animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={closeAll}>
           <View
             style={[styles.overlay, { paddingBottom: insets.bottom + ORB_BOTTOM_MARGIN + ORB_SIZE + SPACING.sm }]}
           >

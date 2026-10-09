@@ -141,6 +141,31 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('ghosts: an interrupted build’s failure screen says its last stage didn’t finish, and offers no rewording advice', async () => {
+    await withLauncher({
+      prepare: (kv) => {
+        // What a live run had written when its process died, in the order it writes it: the record,
+        // its journal (then marked readable), and two stage starts with no terminal entry.
+        const pending = new PendingBuildStore(kv);
+        pending.create({ id: 'orphan', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+        const journal = new RunJournalStore(kv);
+        journal.create('orphan');
+        pending.setJournalAvailability('orphan', 'verified');
+        journal.appendStage('orphan', 'plan');
+        journal.appendStage('orphan', 'generate');
+      },
+      server: () => json({}),
+    }, async ({ tree }) => {
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+      const shown = textOf(tree.root.findByType(FailureScreen));
+      h.ok(shown.includes(COPY.timelineTitle), 'the failure screen shows what happened');
+      h.ok(shown.includes(`${COPY.timelineStageGenerate} · ${COPY.timelineDidNotFinish}`), 'the stage the build was in when the app closed didn’t finish');
+      h.ok(!shown.includes(COPY.timelineStillGoing), 'and nothing on it is still going');
+      h.ok(!shown.includes(COPY.failureRowSayItDifferently) && !shown.includes(COPY.failureRephrase), 'rewording the request is not offered: the interruption wasn’t the request’s doing');
+      h.ok(button(tree, COPY.screenErrorRetry) != null, 'Try again is');
+    });
+  });
+
   await h.test('ghosts: cold recovery retains an unwritable interruption while recovering the other building record', async () => {
     let clearWriteFailure: (() => void) | undefined;
     await withLauncher({

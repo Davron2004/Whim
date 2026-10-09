@@ -208,14 +208,15 @@ Because this project's working build recipe is a release build, in which `__DEV_
 - **THEN** the dev log overlay is reachable from the same developer affordance that opens the device probe screen, even though `__DEV__` is false
 
 ### Requirement: Launcher surfaces respect the system status-bar inset
-In Android edge-to-edge mode, launcher and mini-app content SHALL be inset below the system status bar so app content does not draw underneath the clock, signal, and battery icons.
+The app SHALL draw edge to edge on every supported Android version, and launcher and mini-app content SHALL be inset below the system status bar so app content does not draw underneath the clock, signal, and battery icons.
 
 #### Scenario: Viewing the home screen edge-to-edge
-- **WHEN** the home screen renders on Android 15+ with edge-to-edge enabled
-- **THEN** the top of the app content begins below the system status bar
+- **WHEN** the home screen renders on any supported Android version, Android 14 and earlier included
+- **THEN** the app's own background shows behind the status bar and the navigation bar, with no opaque system band
+- **AND** the top of the app content begins below the system status bar
 
 #### Scenario: Viewing a mini-app edge-to-edge
-- **WHEN** a mini-app view renders on Android 15+ with edge-to-edge enabled
+- **WHEN** a mini-app view renders on any supported Android version
 - **THEN** the top of the mini-app content begins below the system status bar
 
 ### Requirement: A launched mini-app receives the active theme at delivery

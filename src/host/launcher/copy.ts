@@ -128,8 +128,11 @@ export const COPY = {
   /** No journal survived for this attempt — the section says so rather than inventing a run. */
   timelineEmpty: 'Nothing was recorded for this attempt.',
   timelineClose: 'Close',
-  /** A stage the attempt was still in when the journal stops — no duration is invented for it. */
+  /** A stage the attempt is still in, on the live build's timeline — no duration is invented for it. */
   timelineStillGoing: 'still going',
+  /** A stage an attempt that has ended was still in when its journal stops (the app closed mid-build,
+   *  say): it didn't finish, and no duration is invented for it either. */
+  timelineDidNotFinish: 'didn’t finish',
   // One plain-words label per generation stage. `check`, `run` and `repair` share ONE named build
   // step on the progress screen, but the timeline is a list of what happened in order, so each
   // stage the device actually saw gets its own line.
@@ -213,6 +216,8 @@ export const COPY = {
   reportIncludePrompt: 'Include the prompt for this version',
   reportCodeDisclosure: 'Your report includes this app’s code so we can investigate what went wrong.',
   reportNoCodeDisclosure: 'This version has no saved code to include.',
+  /** The recipient line while reports go to Whim's own server; `reportRecipientLine` words it for
+   *  a server the user chose (beta-1 D20). */
   reportDeviceIdLine: 'This phone’s Whim ID goes with your report. The report goes to AnyCognition, the company that makes Whim.',
   reportSend: 'Send report',
   reportSendBusy: 'One moment',
@@ -705,6 +710,14 @@ export function addedFieldsLine(fields: readonly string[]): string {
   return `Added: ${fields.join(', ')}`;
 }
 
+/** The report sheet's recipient line: AnyCognition while the report goes to Whim's own server, else
+ *  the server the user chose (`ownServer`, as `server-address#serverLabel` shows it), which gets the
+ *  report instead (beta-1 D20). */
+export function reportRecipientLine(ownServer?: string): string {
+  if (ownServer === undefined) return COPY.reportDeviceIdLine;
+  return `This phone’s Whim ID goes with your report. The report goes to the server you chose, ${ownServer}, not to AnyCognition.`;
+}
+
 /** The done step's title: "<App name> is ready". */
 export function readyTitle(name: string): string {
   return `${name} is ready`;
@@ -729,7 +742,10 @@ function livenessElapsedLabel(startedAt: number, now: number): string {
  * `livenessOf`). `s`/`now` are typed structurally rather than importing `RunSignals` from
  * `prompt-flow.ts` — this module imports nothing else, the same discipline `timelineDurationLabel`
  * already keeps. `liveness` is the bare literal union for the same reason `ghostStateCaption`'s
- * `state` parameter is.
+ * `state` parameter is, and so is `phase` (`prompt-flow.ts#livenessPhaseOf`): in line, the line
+ * says so and counts the time in line; while the app is checked, nothing is being written, so it
+ * names the checks rather than a reply. Once the build's turn has come, its clock reads from then
+ * (`turnCameAt`), never from when it joined the line.
  *
  * No word here is "model" or "server" (`product-verbs.suite.ts` "the launcher surface speaks
  * product verbs only" — mechanism words, not merely git vocabulary, are the ones this line has to
@@ -737,22 +753,31 @@ function livenessElapsedLabel(startedAt: number, now: number): string {
  */
 export function buildLivenessLine(
   liveness: 'writing' | 'thinking' | 'connected' | 'stalled',
-  s: { readonly startedAt: number; readonly aggregates: { readonly chars: number }; readonly lastFrameAt: number },
+  s: {
+    readonly startedAt: number;
+    readonly turnCameAt?: number;
+    readonly aggregates: { readonly chars: number };
+    readonly lastFrameAt: number;
+  },
   now: number,
+  phase: 'line' | 'model' | 'checking' = 'model',
 ): string {
+  if (liveness === 'stalled') {
+    const quietSeconds = Math.max(0, Math.floor((now - s.lastFrameAt) / MS_PER_SECOND));
+    return `Nothing has arrived for ${quietSeconds}s`;
+  }
+  // In line, the clock is the time in line; once the build's turn comes, it starts over.
+  if (phase === 'line') return `Waiting in line · ${livenessElapsedLabel(s.startedAt, now)}`;
+  const clock = livenessElapsedLabel(s.turnCameAt ?? s.startedAt, now);
   if (liveness === 'writing') {
     // en-CA, not the phone's locale (#89): this is English copy, and a French-locale phone would
     // otherwise render the count with a non-breaking space and no comma (e.g. "1 204").
     return `Writing · ${s.aggregates.chars.toLocaleString('en-CA')} characters`;
   }
-  if (liveness === 'thinking') {
-    return `Thinking it through · ${livenessElapsedLabel(s.startedAt, now)}`;
-  }
-  if (liveness === 'connected') {
-    return `Connected, waiting for a reply · ${livenessElapsedLabel(s.startedAt, now)}`;
-  }
-  const quietSeconds = Math.max(0, Math.floor((now - s.lastFrameAt) / MS_PER_SECOND));
-  return `Nothing has arrived for ${quietSeconds}s`;
+  if (liveness === 'thinking') return `Thinking it through · ${clock}`;
+  // Checking writes nothing to wait for: the connection is up and the checks are running.
+  if (phase === 'checking') return `Running the checks · ${clock}`;
+  return `Connected, waiting for a reply · ${clock}`;
 }
 
 // ── the run timeline's lines (generation-observability, design D7) ───────────
@@ -782,9 +807,11 @@ export function timelineDurationLabel(ms: number): string {
   return `${minutes}m ${String(totalSeconds % SECONDS_PER_MINUTE).padStart(2, '0')}s`;
 }
 
-/** One stage transition's row: what happened, then how long it took. */
-export function timelineStageLine(label: string, durationMs: number | null): string {
-  return `${label} · ${durationMs == null ? COPY.timelineStillGoing : timelineDurationLabel(durationMs)}`;
+/** One stage transition's row: what happened, then how long it took. A stage with no end reads as
+ *  still going while the attempt runs, and as unfinished once the attempt has `ended`. */
+export function timelineStageLine(label: string, durationMs: number | null, ended = false): string {
+  if (durationMs != null) return `${label} · ${timelineDurationLabel(durationMs)}`;
+  return `${label} · ${ended ? COPY.timelineDidNotFinish : COPY.timelineStillGoing}`;
 }
 
 /** The output-growth row: cumulative character COUNTS — sizes, never any of the text itself.

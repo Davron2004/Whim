@@ -43,7 +43,6 @@ import {
   keyboardDismissMode,
   keyboardEvents,
   keyboardOverlap,
-  padsForKeyboard,
   pinsFooter,
   revealOffset,
   scrollEdges,
@@ -260,7 +259,7 @@ export default function KeyboardShell({
 }: Readonly<KeyboardShellProps>) {
   const inSheet = host === 'sheet';
   const frameRef = useRef<View>(null);
-  const inset = useKeyboardInset(frameRef, !inSheet && padsForKeyboard(Platform, 'screen'));
+  const inset = useKeyboardInset(frameRef, !inSheet);
   const { scrollProps, edges, registry } = useRevealingScroll(scrollRef, onContentSizeChange);
   const frame = (
     <KeyboardShellContext.Provider value={registry}>
