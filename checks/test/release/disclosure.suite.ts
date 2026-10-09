@@ -7,6 +7,9 @@
  */
 
 import nodeAssert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from '../harness';
 import {
   MANIFESTS,
@@ -16,8 +19,9 @@ import {
   type DisclosureCategory,
   type DisclosureManifest,
   type DisclosureReleaseInput,
+  RELEASED_SNAPSHOT_DIR,
 } from '../../../contract/src/disclosure-manifest';
-import { checkDisclosureRelease } from '../../../scripts/release/lib/disclosure-check';
+import { checkDisclosureRelease, loadReleasedSnapshots } from '../../../scripts/release/lib/disclosure-check';
 import { CONSENT_WHATS_NEW } from '../../../src/host/launcher/copy';
 
 const REPO_ROOT = process.cwd();
@@ -28,6 +32,7 @@ const V2: DisclosureManifest = MANIFESTS[2];
 function category(id: string, overrides: Partial<DisclosureCategory> = {}): DisclosureCategory {
   return {
     id,
+    surface: 'app',
     rows: [{ name: id, description: `The ${id} fixture` }],
     excludes: {},
     keep: { kind: 'max-days', days: 90, after: 'collection' },
@@ -307,7 +312,51 @@ async function releaseCheckTests(): Promise<void> {
   });
 }
 
+async function surfaceTests(): Promise<void> {
+  await test('release check: a category of released version 2 moving between the app and the website is refused, naming both', () => {
+    const toWebsite = disclosureReleaseFindings(releaseInput({ manifests: { 1: V1, 2: editCategory(V2, 'reports', { surface: 'website' }) } }));
+    assertFinding(toWebsite, ["version 2's category reports changed surface since release"], 'app to website');
+    const releasedAsApp = editCategory(V2, 'waitlist', { surface: 'app' });
+    const toApp = disclosureReleaseFindings(releaseInput({ released: { 1: V1, 2: releasedAsApp } }));
+    assertFinding(toApp, ["version 2's category waitlist changed surface since release"], 'website to app');
+  });
+
+  await test('release check: a snapshot frozen without surfaces reads every category as app', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-disclosure-'));
+    try {
+      const dir = path.join(root, RELEASED_SNAPSHOT_DIR);
+      fs.mkdirSync(dir, { recursive: true });
+      const frozen = fs.readFileSync(path.join(REPO_ROOT, RELEASED_SNAPSHOT_DIR, 'v2.json'), 'utf8');
+      const raw = JSON.parse(frozen) as { categories: Array<Record<string, unknown>> };
+      nodeAssert.ok(raw.categories.every((c) => !('surface' in c)), 'fixture: the frozen v2 snapshot predates the surface field');
+      fs.writeFileSync(path.join(dir, 'v2.json'), frozen);
+      const { released, findings } = loadReleasedSnapshots(root);
+      nodeAssert.deepStrictEqual(findings, []);
+      nodeAssert.deepStrictEqual([...new Set(released[2].categories.map((c) => c.surface))], ['app']);
+      // Read that way, the live version 2 passes, and only the category moved to the website is named.
+      const live = { manifests: { 1: V1, 2: V2 }, released: { 1: V1, 2: released[2] } };
+      nodeAssert.ok(!disclosureReleaseFindings(releaseInput(live)).some((f) => f.includes('changed surface')));
+      const moved = disclosureReleaseFindings(releaseInput({ ...live, manifests: { 1: V1, 2: editCategory(V2, 'connection-logs', { surface: 'website' }) } }));
+      nodeAssert.deepStrictEqual(
+        moved.filter((f) => f.includes('changed surface')),
+        [`version 2's category connection-logs changed surface since release: ${RELEASED_SNAPSHOT_DIR}/v2.json has app, the manifest has website`],
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await test('release check: the website waitlist joined released version 2 without widening it, so the consent version stays', () => {
+    const snapshot = loadReleasedSnapshots(REPO_ROOT).released[2];
+    nodeAssert.ok(!snapshot.categories.some((c) => c.id === 'waitlist'), 'fixture: the frozen v2 snapshot predates the waitlist');
+    nodeAssert.strictEqual(V2.categories.find((c) => c.id === 'waitlist')?.surface, 'website');
+    // No widening means no new version: the live check above holds AI_CONSENT_VERSION to the highest.
+    nodeAssert.deepStrictEqual(diffManifests(snapshot, V2), []);
+  });
+}
+
 export async function run(): Promise<void> {
   await widensTests();
   await releaseCheckTests();
+  await surfaceTests();
 }

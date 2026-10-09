@@ -633,14 +633,19 @@ function testPermits(): void {
   section('Consent practices — permits() reads the table derived from the disclosure manifest');
 
   // Version 1 keeps every category request-envelope gave it, plus the phone ID v1 disclosed;
-  // version 2 adds error details, the app-integrity check and the website's beta waitlist.
+  // version 2 adds error details and the app-integrity check. The website's beta waitlist, which
+  // version 2's manifest also lists, is no practice of any version.
   const versionOne: readonly PracticeCategory[] = ['request-material', 'usage-records', 'connection-logs', 'reports', 'phone-id'];
-  const versionTwo: readonly PracticeCategory[] = [...versionOne, 'error-details', 'app-integrity', 'waitlist'];
+  const versionTwo: readonly PracticeCategory[] = [...versionOne, 'error-details', 'app-integrity'];
   for (const category of PRACTICE_CATEGORIES) {
     eq(`version 1 covers ${category} exactly when v1 disclosed it`, permits(1, category), versionOne.includes(category));
     eq(`version 2 covers ${category} exactly when v2 discloses it`, permits(2, category), versionTwo.includes(category));
     check(`consent none covers no ${category}`, !permits('none', category));
     eq(`a version above the highest known reads as it for ${category}`, permits(99, category), permits(highestConsentVersion(), category));
+  }
+  check('version 2 lists the waitlist on the website surface', MANIFESTS[2].categories.some((c) => c.id === 'waitlist' && c.surface === 'website'));
+  for (const version of [...Object.keys(PRACTICES).map(Number), 99]) {
+    check(`consent ${version} does not permit the waitlist`, !permits(version, 'waitlist'));
   }
   check('a diagnostics request under consent 2 may send error details', permits(2, 'error-details'));
   check('a diagnostics request under consent 1 may not, so the consent_required refusal applies', !permits(1, 'error-details'));
@@ -656,6 +661,14 @@ function testPermits(): void {
   const derived = practicesFrom({ 1: MANIFESTS[1], 2: { ...MANIFESTS[1], categories: [...MANIFESTS[1].categories, ...errorDetails] } });
   check('a category a new manifest version adds is permitted for that version', permits(2, 'error-details', derived));
   check('  ... and not for the version before it', !permits(1, 'error-details', derived));
+
+  // A website category is never a practice, even in a version that lists it next to app categories.
+  const websiteCategory = MANIFESTS[2].categories.filter((c) => c.id === 'waitlist');
+  const forged = practicesFrom({ 1: { ...MANIFESTS[1], categories: [...MANIFESTS[1].categories, ...websiteCategory] } });
+  check('a forged version 1 listing a website category does not permit it', !permits(1, 'waitlist', forged));
+  check('  ... while it permits its app categories', permits(1, 'request-material', forged));
+  const movedToWebsite = practicesFrom({ 1: { ...MANIFESTS[1], categories: MANIFESTS[1].categories.map((c) => (c.id === 'reports' ? { ...c, surface: 'website' as const } : c)) } });
+  check('an app category marked website stops being a practice', !permits(1, 'reports', movedToWebsite) && permits(1, 'phone-id', movedToWebsite));
 
   const table: PracticeTable = {
     1: new Set(['request-material']),
@@ -708,6 +721,17 @@ function undeclaredPracticeRoutes(files: ReadonlyArray<{ name: string; text: str
     .map(({ name }) => name);
 }
 
+/** Every route file that declares a practice of a `website` category (waitlist-hardening D6): a
+ *  `/v1` route serves the app, so the website's data is never its practice. */
+const DECLARED_PRACTICE = /\bconsentPractice\(\s*['"]([\w-]+)['"]/g;
+const WEBSITE_CATEGORIES = new Set<string>(Object.values(MANIFESTS).flatMap((m) => m.categories.filter((c) => c.surface === 'website').map((c) => c.id)));
+
+function websitePracticeRoutes(files: ReadonlyArray<{ name: string; text: string }>): string[] {
+  return files.flatMap(({ name, text }) =>
+    [...withoutComments(text).matchAll(DECLARED_PRACTICE)].filter(([, category]) => WEBSITE_CATEGORIES.has(category)).map(([, category]) => `${name}: ${category}`),
+  );
+}
+
 function routeFiles(): Array<{ name: string; text: string }> {
   return fs
     .readdirSync(ROUTES_DIR)
@@ -732,6 +756,10 @@ export function makeSummaryRoute(model: ModelClient) {
   eq('a planted route that stores data without a practice fails, named', undeclaredPracticeRoutes([{ name: 'notes.ts', text: storing }]), ['notes.ts']);
   const declared = `${planted}\nconst gate = consentPractice('request-material', 'required');`;
   eq('the same route declaring its practice passes', undeclaredPracticeRoutes([{ name: 'planted.ts', text: declared }]), []);
+
+  eq('no real /v1 route declares a website category', websitePracticeRoutes(files), []);
+  const signups = `${planted}\nconst gate = consentPractice('waitlist', 'exempt');`;
+  eq('a planted route declaring the website waitlist fails, naming the route and the category', websitePracticeRoutes([...files, { name: 'signups.ts', text: signups }]), ['signups.ts: waitlist']);
 }
 
 // ─── The traffic generators send a real envelope ─────────────────────────────

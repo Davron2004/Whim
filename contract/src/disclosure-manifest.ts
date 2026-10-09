@@ -33,6 +33,10 @@ export type ConsentPath = 'main' | 'own-opt-in' | 'user-act';
 /** Whether a Settings switch controls the category, and where it starts. */
 export type Toggle = 'none' | 'default-on' | 'default-off';
 
+/** Who collects the category: the app, or Whim's website. Only `app` categories are consent
+ *  practices; a website category is never part of what a phone's grant covers. */
+export type CategorySurface = 'app' | 'website';
+
 /** The form in which the category carries anything saved inside a mini-app. */
 export type SavedDataForm = 'none' | 'encrypted-on-phone' | 'readable';
 
@@ -75,6 +79,8 @@ export interface DisclosureRow {
 
 export interface DisclosureCategory<C extends string = string> {
   readonly id: C;
+  /** Required, with no default: every category says which side collects it. */
+  readonly surface: CategorySurface;
   /** Display rows; `request-material` has two (the request and the app material). */
   readonly rows: readonly DisclosureRow[];
   /** What the category never carries, by stable id. Dropping an id is a widening. */
@@ -161,6 +167,7 @@ const MANIFEST_V1: DisclosureManifest<CategoryId> = {
   categories: [
     {
       id: 'request-material',
+      surface: 'app',
       rows: [
         { name: 'Request', description: 'What you ask for: your description, your answers to Whim’s questions, and the plan you approve' },
         { name: 'App material', description: 'When you change an app: its name, its code, its current description, and the layout of its saved data' },
@@ -178,6 +185,7 @@ const MANIFEST_V1: DisclosureManifest<CategoryId> = {
     },
     {
       id: 'phone-id',
+      surface: 'app',
       rows: [{ name: 'Phone ID', description: 'An anonymous ID for this phone, used for daily limits' }],
       excludes: {},
       keep: { kind: 'with', categories: ['usage-records', 'reports'] },
@@ -192,6 +200,7 @@ const MANIFEST_V1: DisclosureManifest<CategoryId> = {
     },
     {
       id: 'usage-records',
+      surface: 'app',
       rows: [{ name: 'Usage ledger', description: 'One row per request: the phone’s ID, the request type, timestamps, the outcome, token counts and cost' }],
       excludes: { 'request-content': 'Request content' },
       keep: { kind: 'max-days', days: 90, after: 'collection' },
@@ -203,6 +212,7 @@ const MANIFEST_V1: DisclosureManifest<CategoryId> = {
     },
     {
       id: 'connection-logs',
+      surface: 'app',
       rows: [{ name: 'Server logs', description: 'What the server logs about each request' }],
       excludes: { 'request-content': 'Request content' },
       keep: { kind: 'max-days', days: 90, after: 'collection' },
@@ -214,6 +224,7 @@ const MANIFEST_V1: DisclosureManifest<CategoryId> = {
     },
     {
       id: 'reports',
+      surface: 'app',
       rows: [
         {
           name: 'Reports',
@@ -260,6 +271,7 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
   categories: [
     {
       id: 'request-material',
+      surface: 'app',
       rows: [
         { name: 'Request', description: 'What you type or dictate, your answers, and the plan you approve' },
         { name: 'App material', description: 'For a change: an app’s name, code, description and data layout' },
@@ -279,6 +291,7 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
     },
     {
       id: 'phone-id',
+      surface: 'app',
       rows: [{ name: 'Phone ID', description: 'A random ID made on the phone' }],
       excludes: { 'hardware-ids': 'Hardware IDs', name: 'Your name', 'phone-number': 'Your phone number' },
       keep: { kind: 'with', categories: ['usage-records', 'reports'] },
@@ -295,6 +308,7 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
     },
     {
       id: 'app-integrity',
+      surface: 'app',
       rows: [
         {
           name: 'App-integrity check',
@@ -315,6 +329,7 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
     },
     {
       id: 'usage-records',
+      surface: 'app',
       rows: [
         {
           name: 'Usage records',
@@ -342,6 +357,7 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
     },
     {
       id: 'error-details',
+      surface: 'app',
       rows: [
         {
           name: 'Error details',
@@ -376,6 +392,7 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
     },
     {
       id: 'connection-logs',
+      surface: 'app',
       rows: [
         {
           name: 'Connection and log data',
@@ -394,6 +411,7 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
     },
     {
       id: 'reports',
+      surface: 'app',
       rows: [{ name: 'Reports', description: 'Reason, note, app name, the app’s code if saved, and the prompt if the user includes it' }],
       excludes: { 'saved-data': 'Anything saved in the app, unless the user types it into the note' },
       keep: { kind: 'max-days', days: 365, after: 'collection' },
@@ -409,14 +427,17 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
       },
     },
     {
-      // Website-only (beta-waitlist D10): the app never sends it, so no store type maps to it, and
-      // signing up on the page is the act that consents to it. A new user-act category doesn't
-      // widen the manifest, so the app's consent version stays.
+      // Website-only (beta-waitlist D10; waitlist-hardening D6): the app never sends it, so no store
+      // type maps to it, and signing up on the page is the act that consents to it. Its `website`
+      // surface keeps it out of every consent version's server practices. A new user-act category
+      // doesn't widen the manifest, so the app's consent version stays.
       id: 'waitlist',
+      surface: 'website',
       rows: [
         {
           name: 'Beta waitlist',
-          description: 'The email address, phone type and updates opt-out given on Whim’s website to join the beta, and the sign-up wording seen',
+          description:
+            'The email address, phone type, news consent and its record given on Whim’s website to join the beta, the sign-up wording seen, and the fingerprint of an address removed from the list',
         },
       ],
       excludes: { 'phone-id': 'The phone ID' },
@@ -709,6 +730,18 @@ function versionFindings(versions: readonly number[], current: number, consentVe
   return findings;
 }
 
+/** A category of a released version that moved between the app and the website (waitlist-hardening
+ *  D6): either way changes what that version's grant covers on the server. */
+function surfaceFindings(version: number, snapshot: DisclosureManifest, manifest: DisclosureManifest): string[] {
+  return manifest.categories.flatMap((category) => {
+    const before = snapshot.categories.find((c) => c.id === category.id);
+    if (before === undefined || before.surface === category.surface) return [];
+    return [
+      `version ${version}'s category ${category.id} changed surface since release: ${RELEASED_SNAPSHOT_DIR}/v${version}.json has ${before.surface}, the manifest has ${category.surface}`,
+    ];
+  });
+}
+
 function releasedFindings(input: ResolvedReleaseInput, versions: readonly number[]): string[] {
   const findings: string[] = [];
   for (const released of Object.keys(input.released).map(Number)) {
@@ -721,6 +754,7 @@ function releasedFindings(input: ResolvedReleaseInput, versions: readonly number
     if (widened.length > 0) {
       findings.push(`version ${released} was released and has widened since ${RELEASED_SNAPSHOT_DIR}/v${released}.json: ${widened.join(', ')}; add a new version instead`);
     }
+    findings.push(...surfaceFindings(released, input.released[released], manifest));
   }
   for (const version of versions.filter((v) => input.released[v] === undefined)) {
     findings.push(`version ${version} has no snapshot at ${RELEASED_SNAPSHOT_DIR}/v${version}.json; check it in with the version`);
