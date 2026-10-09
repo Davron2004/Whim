@@ -2,7 +2,7 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { button, press, renderScreen, unmountScreen, textOf } from './react-screen';
-import { hardwareBack, backListenerCount } from './native-host';
+import { finishAnimations, hardwareBack, backListenerCount } from './native-host';
 import { COPY } from '../copy';
 import type { ScreenKind } from '../screen-exits';
 import type { InstalledApp } from '../app-index';
@@ -32,7 +32,7 @@ const access = { timeline: async () => [], activeId: async () => null } as unkno
 // Adding a screen kind requires a behavioral fixture (home and mini-app exits have separate
 // contracts). These are real screens with only their outside callbacks/storage supplied.
 const cases: Record<Exclude<ScreenKind, 'home' | 'app' | 'dev'>, { label: string; render: (leave: () => void) => React.ReactElement }> = {
-  settings: { label: COPY.backLabel, render: leave => <SettingsScreen onBack={leave} highlighting canProbe={false} consentStatus={{ kind: 'absent' }} onServerUrlChange={noop} onUseDefaultServer={noop} onHighlightingChange={noop} onOpenAIFeatures={noop} internalBuild errorDetails onErrorDetailsChange={noop} deviceId="test-device" onResetDeviceId={noop} legalLanguage="en" /> },
+  settings: { label: COPY.backLabel, render: leave => <SettingsScreen onBack={leave} highlighting canProbe={false} consentStatus={{ kind: 'absent' }} onServerUrlChange={noop} onUseDefaultServer={noop} onHighlightingChange={noop} onOpenAIFeatures={noop} ownServerAcknowledged onAcknowledgeOwnServer={() => undefined} errorDetails onErrorDetailsChange={noop} deviceId="test-device" onResetDeviceId={noop} legalLanguage="en" /> },
   history: { label: COPY.backLabel, render: leave => <HistoryScreen app={SCREEN_APP} access={access} onBack={leave} onReport={noop} /> },
   'link-missing': { label: COPY.appLinkMissingBack, render: leave => <AppLinkMissingScreen onBackToApps={leave} /> },
   'update-required': { label: COPY.updateNotNow, render: leave => <UpdateRequiredScreen onNotNow={leave} /> },
@@ -113,6 +113,7 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
     try {
       const orb = tree.root.findAll(node => node.type === 'Pressable' && typeof node.props.onPress === 'function')[0];
       await press(orb);
+      await TestRenderer.act(async () => { finishAnimations(); });
       await press(tree.root.find(node => node.type === 'Pressable' && textOf(node).endsWith(COPY.orbActionHome)));
       h.eq(leaves, 1, 'orb Home invokes the exit callback');
     } finally { await unmountScreen(tree); }
