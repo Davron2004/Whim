@@ -6,7 +6,8 @@ import path from 'node:path';
 import { check, caught, eq, section } from './harness';
 import { formatMarkdownReport, type EvalSet } from '../src/flowbench/report';
 import { parseArgs, runFlowBenchmark, writeJsonReport } from '../src/flowbench/drive';
-import { parseRequestEnvelope } from '../src/request-edge';
+import { PROTOCOL_LEVEL } from '@whim/contract';
+import { parseProtocolLevel, parseRequestEnvelope } from '../src/request-edge';
 
 interface SeenRequest {
   path: string;
@@ -118,12 +119,12 @@ async function testFlowAndReport(): Promise<void> {
   });
   try {
     const saveDir = path.join(root, 'sources');
-    const report = await runFlowBenchmark({ url: fake.url, evalSet, parallel: 1, retries: 0, saveSources: saveDir });
+    const report = await runFlowBenchmark({ url: fake.url, evalSet, parallel: 1, retries: 0, repeat: 1, saveSources: saveDir });
     const item = report.cases[0]!;
     eq('the case delivered a result', item.outcome, { type: 'result' });
     eq('clarify selected both first options', item.clarifications, [
-      { id: 'layout', question: 'How should it look?', answer: 'Cards' },
-      { id: 'color', question: 'What color?', answer: 'Blue' },
+      { id: 'layout', question: 'How should it look?', choices: ['Cards'] },
+      { id: 'color', question: 'What color?', choices: ['Blue'] },
     ]);
     eq('rewrite received the original prompt and answers', fake.requests[1]?.body, { prompt: 'make one', clarifications: item.clarifications });
     eq('generate received the rewritten prompt and same answers', fake.requests[2]?.body, { prompt: 'rewritten make one', clarifications: item.clarifications });
@@ -134,6 +135,11 @@ async function testFlowAndReport(): Promise<void> {
       return envelope.ok ? envelope.envelope.platform : envelope.body.hint;
     });
     eq('every request carries a complete client envelope the server reads as the app', platforms, ['android', 'android', 'android']);
+    eq(
+      "every request declares the protocol level, read by the server's own parser",
+      fake.requests.map((request) => parseProtocolLevel(request.headers)),
+      [PROTOCOL_LEVEL, PROTOCOL_LEVEL, PROTOCOL_LEVEL],
+    );
     check('stage durations are non-negative and ordered', item.phases.generate?.stages.every((stage) => stage.durationMs >= 0) === true && item.phases.generate?.stages.map((stage) => stage.stage).join(',') === 'plan,generate,check,run');
     check('the report records a non-negative tail', (item.phases.generate?.tailMs ?? -1) >= 0);
     eq('the saved source is byte-for-byte', fs.readFileSync(path.join(saveDir, 'one.ts'), 'utf8'), SOURCE);
@@ -172,7 +178,7 @@ async function testFailureRetryAndMissingSource(): Promise<void> {
   });
   try {
     const saveDir = path.join(root, 'sources');
-    const report = await runFlowBenchmark({ url: fake.url, evalSet, parallel: 1, retries: 1, saveSources: saveDir });
+    const report = await runFlowBenchmark({ url: fake.url, evalSet, parallel: 1, retries: 1, repeat: 1, saveSources: saveDir });
     const retryCase = report.cases.find((item) => item.caseId === 'retry')!;
     const failedCase = report.cases.find((item) => item.caseId === 'failed')!;
     eq('the transient clarify refusal used one retry', retryCase.phases.clarify.retries, 1);
@@ -181,12 +187,160 @@ async function testFailureRetryAndMissingSource(): Promise<void> {
     const noRetryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-flowbench-no-retry-'));
     const noRetrySet = manifestFile(noRetryRoot, [{ caseId: 'retry', appSlug: 'retry', prompt: 'no retry prompt', assertions: [] }]);
     try {
-      const noRetry = await runFlowBenchmark({ url: fake.url, evalSet: noRetrySet, parallel: 1, retries: 0 });
+      const noRetry = await runFlowBenchmark({ url: fake.url, evalSet: noRetrySet, parallel: 1, retries: 0, repeat: 1 });
       eq('without --retries the first policy refusal is reported', noRetry.cases[0]?.phases.clarify, { status: 503, durationMs: noRetry.cases[0]?.phases.clarify.durationMs, retries: 0, error: { error: 'policy_unavailable', hint: 'try again' } });
       eq('without --retries no second clarify request was sent', attempts.get('/v1/clarify:no retry prompt'), 1);
     } finally {
       fs.rmSync(noRetryRoot, { recursive: true, force: true });
     }
+  } finally {
+    await fake.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testLimitIsItsOwnOutcome(): Promise<void> {
+  section('flow benchmark records a clarify limit as its own outcome, stops the case, and counts it apart from failures');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-flowbench-limit-'));
+  const limit = { reason: 'A mini-app cannot get live weather.', alternative: 'A bike-or-train checklist' };
+  const evalSet = manifestFile(root, [
+    { caseId: 'weather', appSlug: 'weather', prompt: 'a weather app', assertions: [] },
+    { caseId: 'counter', appSlug: 'counter', prompt: 'a counter', assertions: [] },
+  ]);
+  const fake = await listenFake((request, res) => {
+    const prompt = String(request.body.prompt ?? '');
+    if (request.path === '/v1/clarify' && prompt === 'a weather app') response(res, 200, { questions: [], limit });
+    else if (request.path === '/v1/clarify') response(res, 200, { questions: [{ ...QUESTION, select: 'many', other: true }] });
+    else if (request.path === '/v1/rewrite') response(res, 200, { rewrittenPrompt: prompt, plan: [] });
+    else if (request.path === '/v1/generate') sse(res, [{ type: 'result', app: { name: 'counter', source: SOURCE, bundle: '', manifest: {}, schema: {} } }]);
+    else response(res, 404, { error: 'not_found', hint: 'unknown test route' });
+  });
+  try {
+    const jsonPath = path.join(root, 'report.json');
+    const report = await runFlowBenchmark({ url: fake.url, evalSet, parallel: 1, retries: 0, repeat: 1 });
+    writeJsonReport(report, jsonPath);
+    const weather = report.cases.find((item) => item.caseId === 'weather');
+    const counter = report.cases.find((item) => item.caseId === 'counter');
+    eq('the limited case ends in the limit, reason and alternative intact', weather?.outcome, { type: 'limit', ...limit });
+    eq('the limited case ran clarify only', weather === undefined ? [] : Object.keys(weather.phases), ['clarify']);
+    const weatherPaths = fake.requests.filter((request) => request.body.prompt === 'a weather app').map((request) => request.path);
+    eq('no rewrite or generate was sent for the limited case', weatherPaths, ['/v1/clarify']);
+    eq('auto-answering still picks the first option, never other or decide', counter?.clarifications, [{ id: QUESTION.id, question: QUESTION.question, choices: [QUESTION.options[0]] }]);
+    eq('the summary counts the limit apart from failures', [report.summary.results, report.summary.limits, report.summary.failures], [1, 1, 0]);
+    check('the markdown table shows the limit', formatMarkdownReport(report).includes(`limit: ${limit.reason} → ${limit.alternative}`));
+    const json = JSON.parse(fs.readFileSync(jsonPath, 'utf8')) as { cases: { caseId: string; outcome: unknown }[]; summary: { limits: number } };
+    eq('the JSON report carries the limit outcome and count', [json.cases.find((item) => item.caseId === 'weather')?.outcome, json.summary.limits], [{ type: 'limit', ...limit }, 1]);
+  } finally {
+    await fake.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/** Each HTTP call's own timeout, for the runs below: a stalled fake fails fast instead of in 15 min. */
+const RUN_TIMEOUT_MS = 10_000;
+
+/** A referenced deadline, so a run that stops making progress fails by name instead of letting the
+ *  process exit mid-suite. */
+async function bounded<T>(label: string, pending: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} exceeded the 20s test deadline`)), 20_000);
+  });
+  try {
+    return await Promise.race([pending, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function testRepeatStopAfterClarify(): Promise<void> {
+  section('flow benchmark --repeat N --stop-after clarify runs each case N times, clarify only, and tallies what clarify answered');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-flowbench-repeat-'));
+  const limit = { reason: 'A mini-app cannot get live weather.', alternative: 'a weather log you fill in yourself' };
+  const evalSet = manifestFile(root, [
+    { caseId: 'weather', appSlug: 'weather', prompt: 'a weather app', assertions: [] },
+    { caseId: 'counter', appSlug: 'counter', prompt: 'a counter', assertions: [] },
+  ]);
+  // Each prompt's clarify answers in arrival order. The tally is a count, so the order the two
+  // workers take the runs in cannot change it.
+  const answers: Record<string, { status: number; body: unknown }[]> = {
+    'a weather app': [
+      { status: 200, body: { questions: [], limit } },
+      { status: 200, body: { questions: [QUESTION] } },
+      { status: 200, body: { questions: [], limit } },
+    ],
+    'a counter': [
+      { status: 200, body: { questions: [] } },
+      { status: 502, body: { error: 'model_failure', hint: 'The clarify model call failed.' } },
+      { status: 200, body: { questions: [QUESTION] } },
+    ],
+  };
+  const served = new Map<string, number>();
+  const fake = await listenFake((request, res) => {
+    const prompt = String(request.body.prompt ?? '');
+    const index = served.get(prompt) ?? 0;
+    const answer = request.path === '/v1/clarify' ? answers[prompt]?.[index] : undefined;
+    if (answer === undefined) {
+      response(res, 404, { error: 'not_found', hint: 'only three clarify calls per prompt are served' });
+      return;
+    }
+    served.set(prompt, index + 1);
+    response(res, answer.status, answer.body);
+  });
+  try {
+    const jsonPath = path.join(root, 'report.json');
+    const report = await bounded('the repeated run', runFlowBenchmark({ url: fake.url, evalSet, parallel: 2, retries: 0, repeat: 3, stopAfter: 'clarify' }, RUN_TIMEOUT_MS));
+    writeJsonReport(report, jsonPath);
+    eq('only clarify was called, three times per case: nothing was rewritten or built', fake.requests.map((request) => `${request.path} ${String(request.body.prompt)}`).sort((a, b) => a.localeCompare(b)), [
+      '/v1/clarify a counter', '/v1/clarify a counter', '/v1/clarify a counter',
+      '/v1/clarify a weather app', '/v1/clarify a weather app', '/v1/clarify a weather app',
+    ]);
+    eq('every run used its own device', new Set(fake.requests.map((request) => request.device)).size, 6);
+    eq('the runs are grouped per case and numbered from 1', report.cases.map((item) => `${item.caseId} #${item.run}`), [
+      'weather #1', 'weather #2', 'weather #3', 'counter #1', 'counter #2', 'counter #3',
+    ]);
+    const tallies = [
+      { caseId: 'weather', runs: 3, limit: 2, questions: 1, empty: 0, failure: 0 },
+      { caseId: 'counter', runs: 3, limit: 0, questions: 1, empty: 1, failure: 1 },
+    ];
+    eq('each case is tallied by what clarify answered: limit, questions, empty or failure', report.summary.tallies, tallies);
+    const clarified = report.cases.filter((item) => item.outcome.type === 'clarified');
+    eq('a run clarify answered with questions or none ends as clarified, having run clarify only', clarified.map((item) => Object.keys(item.phases)), [['clarify'], ['clarify'], ['clarify']]);
+    eq('a clarified run is neither a result nor a failure; the 502 is a failure', [report.summary.results, report.summary.limits, report.summary.failures], [0, 2, 1]);
+    eq('the JSON report carries the tallies', (JSON.parse(fs.readFileSync(jsonPath, 'utf8')) as { summary: { tallies: unknown } }).summary.tallies, tallies);
+    const markdown = formatMarkdownReport(report);
+    check(
+      'the Markdown carries one tally row per case',
+      markdown.includes('| Case | Runs | Limit | Questions | Empty | Failure |') && markdown.includes('| weather | 3 | 2 | 1 | 0 | 0 |') && markdown.includes('| counter | 3 | 0 | 1 | 1 | 1 |'),
+      markdown,
+    );
+    check('the Markdown names each run of a repeated case', markdown.includes('| weather #2 |') && markdown.includes('| counter #3 |'), markdown);
+  } finally {
+    await fake.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testRepeatRunsTheWholeFlow(): Promise<void> {
+  section('flow benchmark --repeat without --stop-after runs the whole flow once per run');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-flowbench-repeat-flow-'));
+  const evalSet = manifestFile(root, [{ caseId: 'one', appSlug: 'one', prompt: 'make one', assertions: [] }]);
+  const fake = await listenFake((request, res) => {
+    if (request.path === '/v1/clarify') response(res, 200, { questions: [QUESTION] });
+    else if (request.path === '/v1/rewrite') response(res, 200, { rewrittenPrompt: 'make one', plan: [] });
+    else if (request.path === '/v1/generate') sse(res, [{ type: 'result', app: { name: 'one', source: SOURCE, bundle: '', manifest: {}, schema: {} } }]);
+    else response(res, 404, { error: 'not_found', hint: 'unknown test route' });
+  });
+  try {
+    const report = await bounded('the repeated flow', runFlowBenchmark({ url: fake.url, evalSet, parallel: 1, retries: 0, repeat: 2 }, RUN_TIMEOUT_MS));
+    const pathsByDevice = new Map<string, string[]>();
+    for (const request of fake.requests) pathsByDevice.set(request.device ?? '', [...(pathsByDevice.get(request.device ?? '') ?? []), request.path]);
+    eq('each run went clarify → rewrite → generate from its own device', [...pathsByDevice.values()], [
+      ['/v1/clarify', '/v1/rewrite', '/v1/generate'],
+      ['/v1/clarify', '/v1/rewrite', '/v1/generate'],
+    ]);
+    eq('both runs delivered', report.cases.map((item) => [item.run, item.outcome.type]), [[1, 'result'], [2, 'result']]);
+    eq('the tally still counts what clarify answered', report.summary.tallies, [{ caseId: 'one', runs: 2, limit: 0, questions: 2, empty: 0, failure: 0 }]);
   } finally {
     await fake.close();
     fs.rmSync(root, { recursive: true, force: true });
@@ -199,9 +353,25 @@ async function testArgumentsAndJson(): Promise<void> {
   check('missing URL is an argument error', missingUrl instanceof Error && missingUrl.message.includes('--url'));
   const missingEvalSet = await caught(() => { parseArgs(['--url', 'http://127.0.0.1:1']); });
   check('missing eval set is an argument error', missingEvalSet instanceof Error && missingEvalSet.message.includes('--eval-set'));
+  const base = ['--url', 'http://127.0.0.1:1', '--eval-set', 'set'];
+  const defaults = parseArgs(base);
+  eq('by default each case runs once, through the whole flow', [defaults.repeat, 'stopAfter' in defaults], [1, false]);
+  const rate = parseArgs([...base, '--repeat', '10', '--stop-after', 'clarify']);
+  eq('--repeat and --stop-after clarify are read', [rate.repeat, rate.stopAfter], [10, 'clarify']);
+  const refusals = [
+    { label: '--repeat 0', argv: ['--repeat', '0'], names: '--repeat' },
+    { label: 'a fractional --repeat', argv: ['--repeat', '2.5'], names: '--repeat' },
+    { label: '--stop-after a phase other than clarify', argv: ['--stop-after', 'rewrite'], names: '--stop-after' },
+    { label: '--save-sources with --repeat above 1, which would overwrite a source per run', argv: ['--save-sources', 'out', '--repeat', '2'], names: '--repeat' },
+    { label: '--save-sources with --stop-after clarify, which builds nothing', argv: ['--save-sources', 'out', '--stop-after', 'clarify'], names: '--stop-after' },
+  ];
+  for (const refusal of refusals) {
+    const error = await caught(() => { parseArgs([...base, ...refusal.argv]); });
+    check(`${refusal.label} is an argument error naming ${refusal.names}`, error instanceof Error && error.message.includes(refusal.names), error instanceof Error ? error.message : 'no error');
+  }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-flowbench-json-'));
   try {
-    const report = { setId: 'set', url: 'http://127.0.0.1', startedAt: '', finishedAt: '', cases: [], summary: { phases: { clarify: { medianMs: 0, maxMs: 0 }, rewrite: { medianMs: 0, maxMs: 0 }, generate: { medianMs: 0, maxMs: 0 } }, results: 0, failures: 0 } };
+    const report = { setId: 'set', url: 'http://127.0.0.1', startedAt: '', finishedAt: '', cases: [], summary: { phases: { clarify: { medianMs: 0, maxMs: 0 }, rewrite: { medianMs: 0, maxMs: 0 }, generate: { medianMs: 0, maxMs: 0 } }, results: 0, failures: 0, limits: 0, tallies: [] } };
     const jsonPath = path.join(root, 'report.json');
     writeJsonReport(report, jsonPath);
     check('JSON report is written as valid JSON', JSON.parse(fs.readFileSync(jsonPath, 'utf8')).setId === 'set');
@@ -250,6 +420,12 @@ async function testFlowbenchEntry(): Promise<void> {
     check('the CLI prints the case id in its Markdown table', result.stdout.includes(`| ${caseId} |`));
     eq('the CLI JSON report has no failures', JSON.parse(fs.readFileSync(jsonPath, 'utf8')).summary.failures, 0);
 
+    const requestsBeforeRate = fake.requests.length;
+    const rate = await runFlowbenchEntry(['--url', fake.url, '--eval-set', evalSet, '--repeat', '2', '--stop-after', 'clarify'], 30_000);
+    eq('the CLI exits zero for a clarify-only rate run', rate.exitCode, 0);
+    check('the CLI prints the case tally', rate.stdout.includes(`| ${caseId} | 2 | 0 | 0 | 2 | 0 |`), rate.stdout);
+    eq('the CLI rate run called clarify only, once per run', fake.requests.slice(requestsBeforeRate).map((request) => request.path), ['/v1/clarify', '/v1/clarify']);
+
     const failureSet = manifestFile(root, [{ caseId: 'entry-failed', appSlug: 'entry-failed', prompt: 'fail one', assertions: [] }]);
     const failureServer = await listenFake((request, res) => {
       if (request.path === '/v1/clarify') response(res, 200, { questions: [] });
@@ -281,6 +457,9 @@ async function testFlowbenchEntry(): Promise<void> {
 export async function runFlowbenchTests(): Promise<void> {
   await testFlowAndReport();
   await testFailureRetryAndMissingSource();
+  await testLimitIsItsOwnOutcome();
+  await testRepeatStopAfterClarify();
+  await testRepeatRunsTheWholeFlow();
   await testArgumentsAndJson();
   await testFlowbenchEntry();
 }
