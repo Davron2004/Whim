@@ -16,7 +16,7 @@
 // (keyed by launcher id, so each launch is a fresh realm).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Linking, StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
 import { APP_BUNDLES } from '../../runtime/generated/app-bundles';
@@ -440,6 +440,8 @@ export default function LauncherRoot({
  */
 function DevLogTools() {
   const [open, setOpen] = useState(false);
+  // Above the navigation bar the app draws under (edge to edge on every Android version).
+  const bottomInset = useSafeAreaInsets().bottom;
   if (!devLogOverlayEnabled(__DEV__)) {
     return null;
   }
@@ -448,7 +450,7 @@ function DevLogTools() {
       <TouchableOpacity
         onPress={() => setOpen(true)}
         accessibilityLabel={DEV_LOG_LABEL}
-        style={[styles.devLogBtn, { backgroundColor: SHELL_PALETTE.card, borderColor: SHELL_PALETTE.cardBorder }]}
+        style={[styles.devLogBtn, { bottom: bottomInset + SPACING.md, backgroundColor: SHELL_PALETTE.card, borderColor: SHELL_PALETTE.cardBorder }]}
       >
         <Text style={[TYPE_SCALE.eyebrow, { color: SHELL_PALETTE.textMuted }]}>{DEV_LOG_LABEL}</Text>
       </TouchableOpacity>
@@ -2792,7 +2794,6 @@ const styles = StyleSheet.create({
   devLogBtn: {
     position: 'absolute',
     right: SPACING.md,
-    bottom: SPACING.md,
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.sm,
     borderWidth: 1,
