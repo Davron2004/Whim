@@ -20,6 +20,7 @@
     "bridge:test": "node src/host/bridge/test/run.mjs",
     "launcher:test": "node src/host/launcher/test/run.mjs",
     "launcher:deliver-verify": "node src/host/launcher/test/deliver-by-source.desktop.mjs",
+    "sdk:motion-verify": "node src/sdk/test/motion.desktop.mjs",
     "sdk:test": "node src/sdk/test/run.mjs",
     "checks:test": "node checks/test/run.mjs",
     "synthrun:test": "node synthrun/test/run.mjs",

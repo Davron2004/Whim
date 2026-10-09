@@ -44,14 +44,16 @@
 
 ## 6. SDK motion
 
-- [ ] 6.0 (product-owner ruling 2026-10-09) The Switch "off" track and the empty Slider track must reach ≥ 3:1 non-text contrast against `surface` in light AND dark (WCAG 1.4.11 — the accessibility floor wins over iOS mimicry; chain-5 measured ~1.3:1). Pick the track colour from the token module (a stronger neutral role, or the tint's soft colour if it clears 3:1), update `docs/design/system.md` §7.2 and the token tables via the generator, and add the pair to the contrast checks so it can't regress.
+- [x] 6.0 (product-owner ruling 2026-10-09) The Switch "off" track and the empty Slider track must reach ≥ 3:1 non-text contrast against `surface` in light AND dark (WCAG 1.4.11 — the accessibility floor wins over iOS mimicry; chain-5 measured ~1.3:1). Pick the track colour from the token module (a stronger neutral role, or the tint's soft colour if it clears 3:1), update `docs/design/system.md` §7.2 and the token tables via the generator, and add the pair to the contrast checks so it can't regress.
 
-- [ ] 6.1 Motion helpers in `src/sdk/`: spring easings from `src/design/generated/springs.ts`, one-time `CSS.supports('animation-timing-function', 'linear(0, 1)')` gate with cubic-bezier fallback, WAAPI play helpers, a small rAF spring that keeps velocity on retarget
-- [ ] 6.2 Press feedback on every pressable (scale per kind, reduced: opacity 0.7), `Switch`/`SegmentedControl`/`Slider` thumbs on the rAF spring, `Checkbox` stroke, `Stepper` digit roll
-- [ ] 6.3 `Screen` push/pop per `platform` (iOS trailing push with −30% and 0.12 dim; Android shared X axis), `Modal` present/dismiss and drag on the rAF spring with projection commit, `toast` rise/sink, `ProgressBar` value motion
-- [ ] 6.4 Keyed `List` enter (rise 8 px + fade) and leave (fade, then FLIP gap close); children-style lists and flagged keys stay still
-- [ ] 6.5 Reduce Motion pairs: a desktop Chromium suite in `src/sdk/test/` proving each moment runs animations with `reduceMotion: false` and only the reduced form with `true` (via `getAnimations()`); draft the owner-authored invariant for `invariants/` as a proposal file in the change folder, not in `invariants/`
-- [ ] 6.6 Update `fixtures/style-gallery.app.tsx` to show every motion preset (keyed add/remove, modal, toast, push)
+- [x] 6.1 Motion helpers in `src/sdk/`: spring easings from `src/design/generated/springs.ts`, one-time `CSS.supports('animation-timing-function', 'linear(0, 1)')` gate with cubic-bezier fallback, WAAPI play helpers, a small rAF spring that keeps velocity on retarget
+- [x] 6.2 Press feedback on every pressable (scale per kind, reduced: opacity 0.7), `Switch`/`SegmentedControl`/`Slider` thumbs on the rAF spring, `Checkbox` stroke, `Stepper` digit roll
+- [x] 6.3 `Screen` push/pop per `platform` (iOS trailing push with −30% and 0.12 dim; Android shared X axis), `Modal` present/dismiss and drag on the rAF spring with projection commit, `toast` rise/sink, `ProgressBar` value motion
+- [x] 6.4 Keyed `List` enter (rise 8 px + fade) and leave (fade, then FLIP gap close); children-style lists and flagged keys stay still
+- [x] 6.5 Reduce Motion pairs: a desktop Chromium suite in `src/sdk/test/` proving each moment runs animations with `reduceMotion: false` and only the reduced form with `true` (via `getAnimations()`); draft the owner-authored invariant for `invariants/` as a proposal file in the change folder, not in `invariants/`
+- [x] 6.6 Update `fixtures/style-gallery.app.tsx` to show every motion preset (keyed add/remove, modal, toast, push)
+
+- [ ] 6.7 (product-owner ruling 2026-10-09, extends 6.0) The Switch off track and empty Slider track must clear ≥ 3:1 on EVERY surface they render on in both schemes — including `sheet-group` inside a Modal (dark: `border` on `sheet-group` measured 2.88:1). Pick a role that clears all surfaces (or a per-surface track role), update system.md §7.2, and extend the restyle suites' contrast assertion to the Modal case.
 
 ## 7. Native dependencies (HUMAN-BOOTSTRAP: `package.json`, lockfile, `babel.config.js`, Podfile)
 
