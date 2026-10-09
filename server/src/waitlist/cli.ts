@@ -34,7 +34,7 @@ function csvCell(value: string): string {
 }
 
 function csvLine(row: WaitlistRow): string {
-  return [row.email, row.platform, String(row.updatesOptOut), new Date(row.createdAt).toISOString(), new Date(row.updatedAt).toISOString()]
+  return [row.email, row.platform, String(!row.updatesOptIn), new Date(row.createdAt).toISOString(), new Date(row.updatedAt).toISOString()]
     .map(csvCell)
     .join(',');
 }
@@ -65,7 +65,7 @@ async function exportRows(args: readonly string[], store: WaitlistStore): Promis
 async function removeRow(args: readonly string[], store: WaitlistStore): Promise<WaitlistCliResult> {
   const [email, ...extra] = args;
   if (email === undefined || email.trim() === '' || extra.length > 0) return usageError('remove takes exactly one email');
-  return (await store.remove(email))
+  return (await store.remove(email, Date.now()))
     ? { stdout: `removed ${email.trim().toLowerCase()}\n`, stderr: '', exitCode: 0 }
     : { stdout: '', stderr: `waitlist: ${email.trim().toLowerCase()} is not on the list\n`, exitCode: 1 };
 }

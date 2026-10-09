@@ -30,7 +30,7 @@ import type { CollectionReference, DocumentData, DocumentReference, Firestore } 
 import type { ServerConfig } from '../config';
 import { openFirestoreClient, type FirestoreRoot } from '../firestore/client';
 import { REPORTS_COLLECTION } from '../firestore/report-store';
-import { WAITLIST_COLLECTION, waitlistDocId } from '../firestore/waitlist-store';
+import { WAITLIST_COLLECTION, waitlistDocId, waitlistDocOf } from '../firestore/waitlist-store';
 import {
   ADMISSION_COLLECTION,
   REQUESTS_COLLECTION,
@@ -104,7 +104,7 @@ function readSource(dataDir: string): SqliteSource {
   return {
     waitlist: (waitlistFile === undefined ? [] : readWaitlistFile(waitlistFile)).map((row) => ({
       id: waitlistDocId(row.email),
-      data: { email: row.email, platform: row.platform, updatesOptOut: row.updatesOptOut, noticeId: row.noticeId, createdAt: row.createdAt, updatedAt: row.updatedAt },
+      data: waitlistDocOf(row),
     })),
     reports: (reportsFile === undefined ? [] : readReportsFile(reportsFile)).map(({ reportId, ...doc }) => ({ id: reportId, data: doc })),
     usage: usage.usage.map(({ deviceId, ...doc }) => ({ id: firestoreKey(deviceId), data: doc })),

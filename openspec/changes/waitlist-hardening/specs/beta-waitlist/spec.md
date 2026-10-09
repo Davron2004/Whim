@@ -193,10 +193,15 @@ that address.
 - **THEN** its row has news consent recorded under `written-request`
 
 ### Requirement: Removed addresses stay removed
-Removing an address SHALL delete its row and keep its fingerprint (the SHA-256 of the normalized email), and a later signup whose fingerprint is kept SHALL store nothing and redirect to `/beta/thanks` with outcome `suppressed`.
+Removing an address SHALL delete its row and keep its fingerprint (the HMAC-SHA-256 of the normalized email under a server-held key), and a later signup whose fingerprint is kept SHALL store nothing and redirect to `/beta/thanks` with outcome `suppressed`.
 Removal SHALL keep the fingerprint whether or not a row existed. A fingerprint SHALL be deleted
 730 days after it was kept, by the same purge as the rows, and `restore <email>` SHALL delete it
-early. No fingerprint SHALL hold the address in clear.
+early. No fingerprint SHALL hold the address in clear. The key (`WHIM_WAITLIST_FINGERPRINT_KEY`,
+from Secret Manager in production) SHALL never be stored, logged or exported, and the server, the
+purge job and any command on the `firestore` backend SHALL refuse to start without it. The
+Firestore row's document id stays the unkeyed SHA-256 of the normalized email; only the
+fingerprint is keyed, so read access to the database alone cannot confirm a guessed address
+against a fingerprint.
 
 #### Scenario: A removed person cannot be re-added
 - **WHEN** the operator removes `a@example.com` and a post then signs up `A@Example.com`
@@ -209,6 +214,14 @@ early. No fingerprint SHALL hold the address in clear.
 #### Scenario: Restore lifts the fingerprint
 - **WHEN** the operator runs `restore` for a removed address and that address then signs up
 - **THEN** a row is stored
+
+#### Scenario: A fingerprint is bound to its key
+- **WHEN** an address is removed under one key and the same address signs up through a store holding another key
+- **THEN** the signup is stored, and under the first key it is refused as `suppressed`
+
+#### Scenario: Production refuses to start without the key
+- **WHEN** the server or the purge job starts with `NODE_ENV=production` and no `WHIM_WAITLIST_FINGERPRINT_KEY`
+- **THEN** it exits non-zero naming the variable, and its output never holds a key value
 
 #### Scenario: Fingerprints expire with the published maximum
 - **WHEN** the purge runs and a fingerprint was kept more than 730 days ago

@@ -16,6 +16,7 @@ import path from 'node:path';
 import nodeAssert from 'node:assert';
 import { check, lastReportAt, report, section } from './harness';
 import { runStoreConformance, type StoreBackendFactory } from './store-conformance.suite';
+import { legacyFirestoreUpsert } from './waitlist-legacy-fixtures';
 import { needsComposite, recordQueryShapes, uncoveredShapes, unusedIndexes, type IndexEntry } from './firestore-index-coverage';
 import { loadServerConfig } from '../src/config';
 import { startServer } from '../src/lifecycle';
@@ -24,6 +25,8 @@ import type { DocumentReference, Firestore } from '@google-cloud/firestore';
 import { deleteInBatches, openFirestoreClient } from '../src/firestore/client';
 import { runFirestoreImportTests } from './firestore-import';
 import { CREDIT_MARKS_COLLECTION, FirestoreUsageStore } from '../src/firestore/usage-store';
+import { FirestoreWaitlistStore, WAITLIST_COLLECTION, WAITLIST_SUPPRESSED_COLLECTION } from '../src/firestore/waitlist-store';
+import { WAITLIST_FINGERPRINT_RETENTION_DAYS, WAITLIST_RETENTION_DAYS, waitlistFingerprint, type WaitlistSignup } from '../src/waitlist/store';
 import { runPurge, type PurgeConfig } from '../src/admin/purge';
 import { withLostCommitReplies } from './firestore-lost-reply';
 import { OperationBudget, plannedOperations, runAdmissionBurst } from './firestore-admission-load';
@@ -55,8 +58,11 @@ async function verify(name: string, run: () => Promise<void>): Promise<void> {
   check(name, failure === undefined, failure);
 }
 
+/** The waitlist fingerprint key this run's stores use (the firestore backend requires one). */
+const FINGERPRINT_KEY = 'firestore-conformance-fingerprint-key-0123456789';
+
 function firestoreConfig(now: () => number = () => T0): StoreConfig {
-  return { ...loadServerConfig({ WHIM_DATA_DIR: os.tmpdir(), WHIM_STORE_BACKEND: 'firestore' }), now };
+  return { ...loadServerConfig({ WHIM_DATA_DIR: os.tmpdir(), WHIM_STORE_BACKEND: 'firestore', WHIM_WAITLIST_FINGERPRINT_KEY: FINGERPRINT_KEY }), now };
 }
 
 /** The real opener, with every collection under `conformance/<namespace>`. */
@@ -74,9 +80,37 @@ function openNamespace(namespace: string, now?: () => number): Promise<OpenedSto
   return openStores(firestoreConfig(now), { openFirestore: createFirestoreStoresOpener(namespacedOpener(namespace)) });
 }
 
+/** Every document of the waitlist and fingerprint collections under `root`, with its id, as text. */
+async function waitlistDump(root: DocumentReference): Promise<string> {
+  const collections = await Promise.all([WAITLIST_COLLECTION, WAITLIST_SUPPRESSED_COLLECTION].map(async (name) => (await root.collection(name).get()).docs.map((doc) => ({ id: doc.id, data: doc.data() }))));
+  return JSON.stringify(collections);
+}
+
 const firestoreBackend: StoreBackendFactory = {
   label: 'firestore',
-  open: (now) => openNamespace(`${RUN_ID}-${++opens}`, now),
+  async open(now) {
+    const namespace = `${RUN_ID}-${++opens}`;
+    const stores = await openNamespace(namespace, now);
+    const db = await openFirestoreClient('(default)', { probeTimeoutMs: PROBE_CEILING_MS });
+    const root = db.collection('conformance').doc(namespace);
+    return {
+      stores: {
+        ...stores,
+        close: async () => {
+          try {
+            await stores.close();
+          } finally {
+            await db.terminate();
+          }
+        },
+      },
+      waitlist: {
+        fingerprintKey: FINGERPRINT_KEY,
+        legacyUpsert: (legacy) => legacyFirestoreUpsert(db, root, legacy),
+        dump: () => waitlistDump(root),
+      },
+    };
+  },
 };
 
 async function closedPort(): Promise<number> {
@@ -126,7 +160,7 @@ async function persistenceTest(): Promise<void> {
   section('Firestore: records outlive the client that wrote them');
   const namespace = `${RUN_ID}-persistence`;
   const first = await openNamespace(namespace);
-  await first.waitlist.upsert({ email: ' Kept@Example.com', platform: 'android', updatesOptOut: false, noticeId: 'notice-1', now: T0 });
+  await first.waitlist.upsert({ email: ' Kept@Example.com', platform: 'android', updatesOptIn: false, noticeId: 'notice-1', now: T0 });
   const reportId = await first.reports.insert({ deviceId: 'dev-a', reason: 'broken', now: T0 });
   const lastUnit = await first.usage.admit({ requestId: 'last-unit', deviceId: 'dev-a', kind: 'generate', now: T0, deviceLimit: 1, globalLimit: 10 });
   await first.close();
@@ -154,7 +188,7 @@ async function documentModelTest(): Promise<void> {
   const stores = await openNamespace(namespace);
   const db = await openFirestoreClient('(default)', { probeTimeoutMs: PROBE_CEILING_MS });
   try {
-    await stores.waitlist.upsert({ email: '  Model@Example.COM ', platform: 'ios', updatesOptOut: true, noticeId: 'notice-1', now: T0 });
+    await stores.waitlist.upsert({ email: '  Model@Example.COM ', platform: 'ios', updatesOptIn: true, noticeId: 'notice-1', now: T0 });
     const reportId = await stores.reports.insert({ deviceId: 'dev-a', reason: 'harmful', now: T0 });
     const root = db.collection('conformance').doc(namespace);
 
@@ -162,6 +196,7 @@ async function documentModelTest(): Promise<void> {
     const signup = await root.collection('waitlist').doc(id).get();
     check('a signup is the waitlist document named by the SHA-256 of its normalized email', signup.exists, id);
     check('  ... holding the normalized email', signup.get('email') === 'model@example.com', String(signup.get('email')));
+    await verify('the waitlist document carries the consent fields and the rollback shadow, and a removal leaves only its fingerprint', () => waitlistDocumentModel(stores, root));
 
     const stored = (await root.collection('reports').doc(reportId).get()).data();
     nodeAssert.ok(stored, 'the report document exists');
@@ -176,6 +211,38 @@ async function documentModelTest(): Promise<void> {
     await stores.close();
     await db.terminate();
   }
+}
+
+/** waitlist-hardening D2, D3, D5 and ruling 5, on the documents themselves. */
+async function waitlistDocumentModel(stores: OpenedStores, root: DocumentReference): Promise<void> {
+  const rows = root.collection(WAITLIST_COLLECTION);
+  const id = createHash('sha256').update('model@example.com').digest('hex');
+  nodeAssert.deepStrictEqual(
+    (await rows.doc(id).get()).data(),
+    { email: 'model@example.com', platform: 'ios', noticeId: 'notice-1', createdAt: T0, updatedAt: T0, updatesOptIn: true, updatesConsentAt: T0, updatesConsentNoticeId: 'notice-1', updatesWithdrawnAt: null, updatesOptOut: false },
+    'a consenting signup\'s document, its shadow updatesOptOut false',
+  );
+  await stores.waitlist.upsert({ email: 'model@example.com', platform: 'ios', updatesOptIn: false, noticeId: 'notice-1', now: T0 + 1 });
+  nodeAssert.strictEqual((await rows.doc(id).get()).get('updatesOptOut'), true, 'a withdrawal sets the shadow updatesOptOut true');
+
+  await stores.waitlist.remove('Model@Example.com', T0 + 2);
+  nodeAssert.strictEqual((await rows.doc(id).get()).exists, false, 'a removal deletes the row document');
+  const fingerprints = (await root.collection(WAITLIST_SUPPRESSED_COLLECTION).get()).docs.map((doc) => ({ id: doc.id, data: doc.data() }));
+  nodeAssert.deepStrictEqual(
+    fingerprints,
+    [{ id: waitlistFingerprint(FINGERPRINT_KEY, 'model@example.com'), data: { suppressedAt: T0 + 2 } }],
+    'and keeps one waitlistSuppressed document, named by the keyed fingerprint, holding only suppressedAt',
+  );
+
+  // A document the opt-out-model code wrote is rewritten whole by its first write.
+  const legacyId = createHash('sha256').update('legacy@example.com').digest('hex');
+  await rows.doc(legacyId).create({ email: 'legacy@example.com', platform: 'android', updatesOptOut: true, noticeId: 'beta-1', updatedAt: T0 - 5, createdAt: T0 - 9 });
+  await stores.waitlist.upsert({ email: 'legacy@example.com', platform: 'ios', updatesOptIn: true, noticeId: 'notice-1', now: T0 });
+  nodeAssert.deepStrictEqual(
+    (await rows.doc(legacyId).get()).data(),
+    { email: 'legacy@example.com', platform: 'ios', noticeId: 'notice-1', createdAt: T0 - 9, updatedAt: T0, updatesOptIn: false, updatesConsentAt: null, updatesConsentNoticeId: null, updatesWithdrawnAt: T0 - 5, updatesOptOut: true },
+    'a legacy document is rewritten in the new shape by its first write, its ticked opt-out a withdrawal no signup undoes',
+  );
 }
 
 async function usageDocumentModel(stores: OpenedStores, root: DocumentReference): Promise<void> {
@@ -377,6 +444,69 @@ async function creditMarkerPurgeTest(): Promise<void> {
   }
 }
 
+/** specs/server-storage-backends "Sticky withdrawal on Firestore", "Concurrent signup and removal on
+ *  Firestore", "Expired fingerprint purged on Firestore", and ruling 5's keyed fingerprint. */
+async function waitlistFirestoreTests(): Promise<void> {
+  section('Firestore: the waitlist\'s consent, fingerprints and their purge');
+  const namespace = `${RUN_ID}-waitlist`;
+  let now = T0;
+  const stores = await openNamespace(namespace, () => now);
+  const db = await openFirestoreClient('(default)', { probeTimeoutMs: PROBE_CEILING_MS });
+  const root = db.collection('conformance').doc(namespace);
+  const signup = (email: string, at: number, updatesOptIn: boolean): WaitlistSignup => ({ email, platform: 'android', updatesOptIn, noticeId: 'notice-1', now: at });
+  try {
+    await verify('an email that consents, withdraws, then ticks the box again has no news consent', async () => {
+      await stores.waitlist.upsert(signup('sticky@example.com', T0, true));
+      await stores.waitlist.upsert(signup('Sticky@example.com', T0 + 1, false));
+      await stores.waitlist.upsert(signup('sticky@example.com ', T0 + 2, true));
+      const row = (await stores.waitlist.export()).find((candidate) => candidate.email === 'sticky@example.com');
+      nodeAssert.deepStrictEqual([row?.updatesOptIn, row?.updatesWithdrawnAt], [false, T0 + 1]);
+    });
+
+    await verify('20 signups racing 20 removals leave no row and 20 fingerprints', async () => {
+      const emails = Array.from({ length: 20 }, (_, i) => `racer-${i}@example.com`);
+      await Promise.all(emails.slice(0, 10).map((email) => stores.waitlist.upsert(signup(email, T0, true))));
+      const outcomes = await Promise.all(emails.flatMap((email) => [stores.waitlist.upsert(signup(email.toUpperCase(), T0 + 1, true)), stores.waitlist.remove(email, T0 + 1)]));
+      nodeAssert.ok(outcomes.every((outcome) => outcome !== undefined), JSON.stringify(outcomes));
+      const left = (await stores.waitlist.export()).filter((row) => row.email.startsWith('racer-'));
+      nodeAssert.deepStrictEqual(left, [], 'no raced row survives');
+      const kept = new Set((await root.collection(WAITLIST_SUPPRESSED_COLLECTION).get()).docs.map((doc) => doc.id));
+      nodeAssert.ok(emails.every((email) => kept.has(waitlistFingerprint(FINGERPRINT_KEY, email))), 'every raced address keeps its fingerprint');
+    });
+
+    await verify('a fingerprint kept under one key does not refuse a signup under another, and does under its own', async () => {
+      const otherKey = new FirestoreWaitlistStore(db, root, { fingerprintKey: 'another-firestore-fingerprint-key-0123456789' });
+      await stores.waitlist.remove('keyed@example.com', T0);
+      nodeAssert.strictEqual(await otherKey.upsert(signup('keyed@example.com', T0 + 1, false)), 'stored');
+      await otherKey.remove('keyed@example.com', T0 + 2);
+      await otherKey.restore('keyed@example.com');
+      nodeAssert.strictEqual(await stores.waitlist.upsert(signup('keyed@example.com', T0 + 3, false)), 'suppressed');
+    });
+
+    await verify(`whim-admin purge deletes rows and fingerprints past ${WAITLIST_RETENTION_DAYS} days, counting both kinds`, async () => {
+      now = T0 + 2000 * 86_400_000;
+      const daysAgo = (days: number): number => now - days * 86_400_000;
+      await stores.waitlist.upsert(signup('row-expired@example.com', daysAgo(WAITLIST_RETENTION_DAYS) - 1, false));
+      await stores.waitlist.upsert(signup('row-kept@example.com', daysAgo(WAITLIST_RETENTION_DAYS), false));
+      await stores.waitlist.remove('print-expired@example.com', daysAgo(WAITLIST_FINGERPRINT_RETENTION_DAYS) - 1);
+      await stores.waitlist.remove('print-kept@example.com', daysAgo(WAITLIST_FINGERPRINT_RETENTION_DAYS));
+      // What this section wrote before, around T0, is past both cutoffs too: the sticky row, the 20
+      // racers' fingerprints and keyed@example.com's (the other key's was restored, its row removed).
+      const purged = await runPurge([], stores, { ...loadServerConfig({ WHIM_DATA_DIR: os.tmpdir() }), now: () => now });
+      nodeAssert.strictEqual(purged.exitCode, 0, purged.output);
+      nodeAssert.ok(purged.output.includes('waitlist: 24 purged (rows 2, fingerprints 22)\n'), purged.output);
+      nodeAssert.deepStrictEqual((await stores.waitlist.export()).map((row) => row.email), ['row-kept@example.com']);
+      nodeAssert.deepStrictEqual(
+        [await stores.waitlist.upsert(signup('print-expired@example.com', now, false)), await stores.waitlist.upsert(signup('print-kept@example.com', now, false))],
+        ['stored', 'suppressed'],
+      );
+    });
+  } finally {
+    await stores.close();
+    await db.terminate();
+  }
+}
+
 async function closeWhileBusyTest(): Promise<void> {
   section('Firestore: closing the stores while their calls are in flight');
   const stores = await openNamespace(`${RUN_ID}-busy`);
@@ -407,7 +537,7 @@ async function firestoreBootTest(): Promise<void> {
   let booted: Awaited<ReturnType<typeof startServer>> | string;
   try {
     booted = await startServer({
-      env: { WHIM_DATA_DIR: dataDir, WHIM_PIPELINE: 'stub', WHIM_STORE_BACKEND: 'firestore' },
+      env: { WHIM_DATA_DIR: dataDir, WHIM_PIPELINE: 'stub', WHIM_STORE_BACKEND: 'firestore', WHIM_WAITLIST_FINGERPRINT_KEY: FINGERPRINT_KEY },
       listen: { host: '127.0.0.1', port: 0 },
     }).catch(messageOf);
   } finally {
@@ -462,6 +592,7 @@ await unsafeKeysTest();
 await lostCommitReplyTest();
 await failingCreditTest();
 await creditMarkerPurgeTest();
+await waitlistFirestoreTests();
 await admissionBurstTest();
 await batchedDeleteTest();
 await closeWhileBusyTest();

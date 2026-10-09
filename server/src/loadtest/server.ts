@@ -9,8 +9,8 @@
  *
  * Refuses to start when `OPENROUTER_API_KEY` is set in `env` — before installing the `fetch` trap or
  * calling `start` — and otherwise forces `NODE_ENV=production`, the inert key `loadtest-no-network`,
- * the fixed roster `loadtest/engineer` / `loadtest/rewrite` and an unroutable `WHIM_WEB_ORIGIN` onto
- * the environment `start` sees, so every other production refusal in `config.ts` still applies and
+ * the fixed roster `loadtest/engineer` / `loadtest/rewrite`, an unroutable `WHIM_WEB_ORIGIN` and an
+ * inert `WHIM_WAITLIST_FINGERPRINT_KEY` onto the environment `start` sees, so every other production refusal in `config.ts` still applies and
  * nothing here is env-selectable.
  *
  * The `fetch` trap is a safety net independent of the two transport swaps above: it replaces
@@ -57,6 +57,10 @@ export const LOADTEST_ROSTER: ModelRoster = defaultModelRoster('loadtest/rewrite
 /** The only key-shaped value that ever reaches `loadServerConfig` here — inert, and OpenRouter
  *  would reject it (design D26's third no-spend guarantee). */
 export const LOADTEST_INERT_API_KEY = 'loadtest-no-network';
+
+/** The waitlist fingerprint key the load-test server runs with: production config requires one, and
+ *  the load test never removes an address. */
+const LOADTEST_INERT_FINGERPRINT_KEY = 'loadtest-inert-waitlist-fingerprint-key';
 
 /** The identity `/health` and `/healthz` answer under the load-test server — never the production string. */
 export const LOADTEST_HEALTHZ_SERVICE = 'whim-server-loadtest';
@@ -151,6 +155,8 @@ export async function runLoadtestServer(options: RunLoadtestServerOptions): Prom
     WHIM_REWRITE_MODEL: LOADTEST_ROSTER.rewrite.model,
     // Production requires a pages origin; the load test posts no signup, so an unroutable one.
     WHIM_WEB_ORIGIN: 'https://loadtest.invalid',
+    // Production requires a waitlist fingerprint key; the load test removes no address, so an inert one.
+    WHIM_WAITLIST_FINGERPRINT_KEY: LOADTEST_INERT_FINGERPRINT_KEY,
   };
 
   const trap = installFetchTrap();

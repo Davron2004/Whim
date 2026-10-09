@@ -5,7 +5,8 @@
  * dev-only modes".
  */
 import { MANIFESTS, keepLimit, latestVersion, type CategoryId } from '../../contract/src/disclosure-manifest';
-import { loadServerConfig, ServerConfigError, type ServerConfig } from '../src/config';
+import { DEV_WAITLIST_FINGERPRINT_KEY, loadServerConfig, ServerConfigError, type ServerConfig } from '../src/config';
+import { InMemoryWaitlistStore, WAITLIST_FINGERPRINT_KEY_MIN_LENGTH } from '../src/waitlist/store';
 import { DEFAULT_MAX_QUEUED_GENERATIONS } from '../src/admission/slots';
 import {
   defaultModelRoster,
@@ -14,6 +15,9 @@ import {
   ModelRosterReasoningError,
 } from '../src/generation/model';
 import { check, eq, section } from './harness';
+
+/** A production-shaped fingerprint key (the real one lives in Secret Manager). */
+const PRODUCTION_FINGERPRINT_KEY = 'config-suite-production-fingerprint-key-0123';
 
 function baseEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return { ...overrides };
@@ -111,7 +115,7 @@ function runStoreBackendTests(defaults: ServerConfig): void {
   eq('unset: the sqlite backend, on the (default) Firestore database name', [defaults.storeBackend, defaults.firestoreDatabase], ['sqlite', '(default)']);
   eq('an empty WHIM_STORE_BACKEND is unset', loadServerConfig(baseEnv({ WHIM_STORE_BACKEND: '' })).storeBackend, 'sqlite');
   for (const backend of ['sqlite', 'firestore'] as const) {
-    eq(`"${backend}" reaches ServerConfig.storeBackend`, loadServerConfig(baseEnv({ WHIM_STORE_BACKEND: backend })).storeBackend, backend);
+    eq(`"${backend}" reaches ServerConfig.storeBackend`, loadServerConfig(baseEnv({ WHIM_STORE_BACKEND: backend, WHIM_WAITLIST_FINGERPRINT_KEY: PRODUCTION_FINGERPRINT_KEY })).storeBackend, backend);
   }
   eq('WHIM_FIRESTORE_DATABASE reaches ServerConfig.firestoreDatabase', loadServerConfig(baseEnv({ WHIM_FIRESTORE_DATABASE: 'whim-prod' })).firestoreDatabase, 'whim-prod');
   for (const raw of ['postgres', 'Firestore', 'sqlite ']) {
@@ -178,6 +182,30 @@ function runPolicyAttemptTimeoutTests(): void {
     shortened?.variable === 'WHIM_POLICY_ATTEMPT_TIMEOUT_MS' && shortened.message.includes('(its default)'),
     shortened?.message,
   );
+}
+
+/** WHIM_WAITLIST_FINGERPRINT_KEY (waitlist-hardening ruling 5). `prodEnv` is a fully configured
+ *  production environment with `overrides`. */
+function runFingerprintKeyTests(prodEnv: (overrides?: NodeJS.ProcessEnv) => NodeJS.ProcessEnv): void {
+  section('WHIM_WAITLIST_FINGERPRINT_KEY (waitlist-hardening ruling 5): fail closed where fingerprints are real');
+
+  eq('production reads the key as given', loadServerConfig(prodEnv()).waitlistFingerprintKey, PRODUCTION_FINGERPRINT_KEY);
+  check('production without the key refuses to load, naming it', throwsNaming(() => loadServerConfig(prodEnv({ WHIM_WAITLIST_FINGERPRINT_KEY: undefined })), 'WHIM_WAITLIST_FINGERPRINT_KEY'));
+  check('  ... and with it empty', throwsNaming(() => loadServerConfig(prodEnv({ WHIM_WAITLIST_FINGERPRINT_KEY: '' })), 'WHIM_WAITLIST_FINGERPRINT_KEY'));
+  check('production refuses the dev key', throwsNaming(() => loadServerConfig(prodEnv({ WHIM_WAITLIST_FINGERPRINT_KEY: DEV_WAITLIST_FINGERPRINT_KEY })), 'WHIM_WAITLIST_FINGERPRINT_KEY'));
+  check(
+    'the firestore backend outside production refuses to load without the key: an operator command on a laptop writes production fingerprints',
+    throwsNaming(() => loadServerConfig(baseEnv({ WHIM_STORE_BACKEND: 'firestore' })), 'WHIM_WAITLIST_FINGERPRINT_KEY'),
+  );
+  eq('  ... and loads with one', loadServerConfig(baseEnv({ WHIM_STORE_BACKEND: 'firestore', WHIM_WAITLIST_FINGERPRINT_KEY: PRODUCTION_FINGERPRINT_KEY })).storeBackend, 'firestore');
+  check('sqlite outside production loads without a key', loadServerConfig(baseEnv()).waitlistFingerprintKey.length >= WAITLIST_FINGERPRINT_KEY_MIN_LENGTH);
+  {
+    const short = 'k'.repeat(WAITLIST_FINGERPRINT_KEY_MIN_LENGTH - 1);
+    const refusal = configError(() => loadServerConfig(baseEnv({ WHIM_WAITLIST_FINGERPRINT_KEY: short })));
+    check('a key one character under the stores\' minimum refuses to load, naming the variable and never the key', refusal?.variable === 'WHIM_WAITLIST_FINGERPRINT_KEY' && !refusal.message.includes(short), refusal?.message ?? 'no refusal');
+    const exact = loadServerConfig(baseEnv({ WHIM_WAITLIST_FINGERPRINT_KEY: `${short}k` })).waitlistFingerprintKey;
+    check('  ... a key of exactly that minimum loads, and the stores accept it', new InMemoryWaitlistStore({ fingerprintKey: exact }) instanceof InMemoryWaitlistStore);
+  }
 }
 
 export function runConfigTests(): void {
@@ -329,6 +357,7 @@ export function runConfigTests(): void {
       WHIM_REWRITE_MODEL: 'model/rewrite',
       WHIM_ENGINEER_MODEL: 'model/engineer',
       WHIM_WEB_ORIGIN: 'https://pages.example.test',
+      WHIM_WAITLIST_FINGERPRINT_KEY: PRODUCTION_FINGERPRINT_KEY,
       ...overrides,
     });
 
@@ -393,6 +422,8 @@ export function runConfigTests(): void {
     'outside production a missing OpenRouter key does not fail startup',
     loadServerConfig(baseEnv()).openRouterApiKey === undefined,
   );
+
+  runFingerprintKeyTests(prodEnv);
 
   section('WHIM_WEB_ORIGIN (beta-waitlist D1): where the signup redirects');
 

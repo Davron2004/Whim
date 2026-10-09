@@ -31,11 +31,11 @@ export interface SqliteFixtureViews {
 
 /** Writes `waitlist.db` with two signups, one of them answered again a day later. */
 export async function writeWaitlistFixture(dataDir: string): Promise<WaitlistRow[]> {
-  const waitlist = new NodeSqliteWaitlistStore(path.join(dataDir, 'waitlist.db'));
+  const waitlist = new NodeSqliteWaitlistStore(path.join(dataDir, 'waitlist.db'), { fingerprintKey: 'import-fixture-fingerprint-key-0123456789' });
   try {
-    await waitlist.upsert({ email: ' Early@Example.com', platform: 'android', updatesOptOut: false, noticeId: 'notice-1', now: IMPORT_T0 - 3 * DAY_MS });
-    await waitlist.upsert({ email: 'late@example.com', platform: 'ios', updatesOptOut: true, noticeId: 'notice-1', now: IMPORT_T0 - 2 * DAY_MS });
-    await waitlist.upsert({ email: CHANGED_EMAIL, platform: 'other', updatesOptOut: true, noticeId: 'notice-2', now: IMPORT_T0 - DAY_MS });
+    await waitlist.upsert({ email: ' Early@Example.com', platform: 'android', updatesOptIn: true, noticeId: 'notice-1', now: IMPORT_T0 - 3 * DAY_MS });
+    await waitlist.upsert({ email: 'late@example.com', platform: 'ios', updatesOptIn: false, noticeId: 'notice-1', now: IMPORT_T0 - 2 * DAY_MS });
+    await waitlist.upsert({ email: CHANGED_EMAIL, platform: 'other', updatesOptIn: false, noticeId: 'notice-2', now: IMPORT_T0 - DAY_MS });
     return await waitlist.export();
   } finally {
     await waitlist.close();
