@@ -18,17 +18,18 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { FONT_FAMILY, RADIUS, SHELL_COLORS, STATUS_COLORS } from '../../sdk/theme';
 import { monogram, tileColor } from './tiles';
-import { ghostStateCaption } from './copy';
+import { COPY, ghostStateCaption } from './copy';
 import TilePill from './tile-pill-view';
 import type { TilePillKind } from './tile-pill';
 import type { AppManifest } from '../bridge/contract';
+import type { PendingFailureRemedy } from './pending-builds';
 
 /** The tile's geometry (design-extract §2b: 88x88, tile radius) — 88 is now the DEFAULT width a
  *  caller that passes no `width` gets, not a ceiling. Exported so a loading skeleton
  *  (group D, sdk-design-system "Loading skeletons derive their geometry from exported component
  *  constants") imports these rather than restating them, guaranteeing no layout jump on load. */
 export const APP_TILE_SIZE = 88;
-/** Wider than any two-letter monogram at the Done tile's 92px, so the watermark never truncates. */
+/** Far wider than any two-letter monogram, so the watermark never truncates. */
 const GHOST_MONOGRAM_BOX_WIDTH = 240;
 export const APP_TILE_RADIUS = RADIUS.tile;
 
@@ -54,9 +55,12 @@ export interface AppTileProps {
   /** The host-held record's manifest, read only for its declared colour — never anything the
    *  running bundle reports about itself. Omitted resolves `appColor(name)`. */
   manifest?: Pick<AppManifest, 'tileColor'>;
-  /** `'done'` renders the flow's celebration variant (design html:520-524): 120x120, radius 32, a
-   *  glow colour-matched to the app's own hue, a one-shot rise-in, and no name label — the done
-   *  step writes its own headline instead. Omitted is the grid tile, unchanged. */
+  /** `'done'` renders the flow's celebration variant: the grid tile's own art and layout at 120x120,
+   *  with a glow colour-matched to the app's own hue (design html:520), a one-shot rise-in, and no
+   *  name label — the done step writes its own headline instead. Not the mockup's radius 32 and
+   *  92px watermark: a wide monogram ("HA") at 92px is wider than the tile, so it ran in from the
+   *  left edge under the initials, where the grid's 62px bleeds off the top-right as on Home.
+   *  Omitted is the grid tile, unchanged. */
   size?: 'done';
   /** How wide the grid tile stands, so the home grid can be fluid 3-up (design html:388
    *  `repeat(3,1fr)`) instead of three fixed 88s. Omitted is `APP_TILE_SIZE` — every caller that
@@ -78,6 +82,9 @@ export interface AppTileProps {
    *  the ordinary launchable tile, unchanged. Never combined with `size='done'` — a ghost is
    *  always grid-sized. */
   ghost?: 'building' | 'failed' | 'interrupted';
+  /** A failed record's persisted remedy. An update remedy leaves the record failed but gives its
+   *  ghost a specific caption, matching the update screen it reopens. */
+  remedy?: PendingFailureRemedy;
   /** The tap registered and the app is being opened (`app-launcher` "Opening an app shows an
    *  immediate busy affordance"): a held-down/working look on THIS tile — a dim over the tile's
    *  own fill, not a spinner and not an overlay, since the message is "working", not "wait here".
@@ -85,14 +92,23 @@ export interface AppTileProps {
    *  would render as nothing at all on Android. Orthogonal to `ghost`, which is a different (and
    *  never simultaneous) state — a ghost tile is not launchable, so it can never be opening. */
   busy?: boolean;
-  /** The tile's one overlay pill (`tile-pill.ts`'s `tilePillFor`, design D8) — an "Example" label,
-   *  or an accent naming an in-flight rebuild of this already-installed app. Rendered inside the
-   *  square, top-right, never affecting the square's own launchable/ghost look. `onPress` is read
-   *  only for a tappable kind (`failed`/`interrupted` — see `TILE_PILL` in `tile-pill.ts`);
-   *  ignored for a passive one. Omitted or `null` renders no pill. Never combined with `ghost` — a
-   *  ghost tile has no pill (it isn't installed yet, so it can neither be the seeded example nor
-   *  be rebuilding). */
+  /** The tile's one overlay pill (`tile-pill.ts`'s `tilePillFor`, design D8) — an accent naming an
+   *  in-flight rebuild of this already-installed app. Rendered inside the square, top-right, never
+   *  affecting the square's own launchable/ghost look. `onPress` is read only for a tappable kind
+   *  (`failed`/`interrupted` — see `TILE_PILL` in `tile-pill.ts`); ignored for a passive one.
+   *  Omitted or `null` renders no pill. Never combined with `ghost` — a ghost tile has no pill (it
+   *  isn't installed yet, so it cannot be rebuilding). */
   pill?: { kind: TilePillKind; onPress?: () => void } | null;
+  /** A seeded example (beta-1 R16): says so in a muted caption under the name — the slot and face
+   *  a ghost's state caption uses — so the label never sits on the tile art at any width. Never
+   *  combined with `ghost` (a ghost isn't installed yet, so it cannot be a seeded example). */
+  example?: boolean;
+}
+
+/** The line under the tile's name, if any: a ghost's state, or the example label. */
+function captionFor(ghost: AppTileProps['ghost'], remedy: PendingFailureRemedy | undefined, example: boolean | undefined): string | null {
+  if (ghost) return ghostStateCaption(ghost, remedy);
+  return example ? COPY.exampleBadge : null;
 }
 
 /** `failed` and `interrupted` share one alert treatment, distinct from `building`'s neutral one
@@ -101,13 +117,14 @@ function isAlertGhost(ghost: AppTileProps['ghost']): boolean {
   return ghost === 'failed' || ghost === 'interrupted';
 }
 
-export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, ghost, busy, pill }: Readonly<AppTileProps>) {
+export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, ghost, remedy, busy, pill, example }: Readonly<AppTileProps>) {
   const mono = monogram(name);
   const bg = tileColor(name, manifest);
   const isDone = size === 'done';
   const alertGhost = ghost != null && isAlertGhost(ghost);
   const ghostTileStyle = ghost ? [styles.tileGhost, alertGhost ? styles.tileGhostAlert : null] : null;
-  const ghostCaptionStyle = alertGhost ? [styles.ghostCaption, styles.ghostCaptionAlert] : styles.ghostCaption;
+  const caption = captionFor(ghost, remedy, example);
+  const captionStyle = alertGhost ? [styles.caption, styles.captionAlert] : styles.caption;
 
   /** See `width` above: the done variant ignores it, so these are `null` there and `rootDone`/
    *  `tileDone` remain the only source of that variant's 120x120. */
@@ -146,7 +163,7 @@ export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, g
     <Animated.View style={[styles.root, isDone ? styles.rootDone : null, fluidRoot, riseStyle]}>
       <View style={[styles.tile, isDone ? styles.tileDone : null, fluidTile, { backgroundColor: bg }, glow, ghostTileStyle, busy ? styles.tileBusy : null]}>
         <Text
-          style={[styles.ghostMonogram, isDone ? styles.ghostMonogramDone : null]}
+          style={styles.ghostMonogram}
           numberOfLines={1}
           accessibilityElementsHidden
           importantForAccessibility="no"
@@ -154,7 +171,7 @@ export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, g
           {mono}
         </Text>
         <Text
-          style={[styles.foregroundMonogram, isDone ? styles.foregroundMonogramDone : null]}
+          style={styles.foregroundMonogram}
           numberOfLines={1}
           accessibilityElementsHidden
           importantForAccessibility="no"
@@ -164,16 +181,15 @@ export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, g
         {!isDone && pill != null && <TilePill kind={pill.kind} onPress={pill.onPress} />}
       </View>
       {!isDone && <Text style={styles.name} numberOfLines={1}>{name}</Text>}
-      {!isDone && ghost && (
-        <Text style={ghostCaptionStyle} numberOfLines={1}>{ghostStateCaption(ghost)}</Text>
+      {!isDone && caption != null && (
+        <Text style={captionStyle} numberOfLines={1}>{caption}</Text>
       )}
     </Animated.View>
   );
 }
 
-/** The done variant's geometry, from design html:520-524. These have no `SPACING`/`RADIUS`
- *  counterpart and get no one-off token (ruling R9) — they stay local, exactly as the grid tile's
- *  own 9/-13/62/19 do. */
+/** The done variant's size, from design html:520. No `SPACING` counterpart, and no one-off token
+ *  (ruling R9) — it stays local, exactly as the grid tile's own 9/-13/62/19 do. */
 const DONE_TILE_SIZE = 120;
 
 const styles = StyleSheet.create({
@@ -193,8 +209,6 @@ const styles = StyleSheet.create({
   tileDone: {
     width: DONE_TILE_SIZE,
     height: DONE_TILE_SIZE,
-    borderRadius: 32,
-    padding: 14,
     // The glow itself is set at the call site — it is the tile's own resolved colour.
   },
   ghostMonogram: {
@@ -212,14 +226,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: 'rgba(255,255,255,0.16)',
   },
-  ghostMonogramDone: { top: -20, right: -12, fontSize: 92 },
   foregroundMonogram: {
     fontFamily: FONT_FAMILY.sansSemiBold,
     fontSize: 19,
     fontWeight: '600',
     color: '#ffffff',
   },
-  foregroundMonogramDone: { fontSize: 26 },
   name: {
     fontFamily: FONT_FAMILY.sansMedium,
     fontSize: 11.5,
@@ -241,7 +253,8 @@ const styles = StyleSheet.create({
    *  replaced by the reserved status "broken" hue, at the same 1px inset the ordinary tile keeps
    *  (`building` keeps the ordinary white border — the neutral treatment). */
   tileGhostAlert: { borderColor: STATUS_COLORS.broken },
-  ghostCaption: {
+  /** The muted line under the name: a ghost's state, or a seeded example's label. */
+  caption: {
     fontFamily: FONT_FAMILY.sansMedium,
     fontSize: 10.5,
     lineHeight: 13,
@@ -249,5 +262,5 @@ const styles = StyleSheet.create({
     color: SHELL_COLORS.muted,
     marginTop: 1,
   },
-  ghostCaptionAlert: { color: STATUS_COLORS.broken },
+  captionAlert: { color: STATUS_COLORS.broken },
 });
