@@ -317,7 +317,7 @@ async function testInputCoverage(): Promise<void> {
 
   const rewriteRequest: RewriteRequest = {
     prompt: 'add a streak count',
-    clarifications: [{ id: 'q1', question: 'daily or weekly?', answer: 'daily, track drinking' }],
+    clarifications: [{ id: 'q1', question: 'daily or weekly?', choices: ['daily, track drinking'] }],
     app: { name: 'Habit Tracker', collections: [{ name: 'Completions', fields: ['Date', 'Note'] }] },
   };
   const rewriteInput = buildRewritePolicyInput(rewriteRequest);
@@ -329,13 +329,25 @@ async function testInputCoverage(): Promise<void> {
 
   const generateRequest: GenerateRequest = {
     prompt: 'a tip splitter',
-    clarifications: [{ id: 'q1', question: 'currency?', answer: 'USD, no gambling odds' }],
+    clarifications: [{ id: 'q1', question: 'currency?', choices: ['USD, no gambling odds'] }],
     app: { source: 'DO-NOT-SEND-THIS-SOURCE-TEXT', manifest: { capabilities: [] }, schema: {} },
   };
   const generateInput = buildGeneratePolicyInput(generateRequest);
   check('generate input carries the prompt', generateInput.includes('a tip splitter'));
   check('generate input carries the clarification answer', generateInput.includes('USD, no gambling odds'));
   check('generate input never carries app.source', !generateInput.includes('DO-NOT-SEND-THIS-SOURCE-TEXT'));
+
+  // beta-1 D18: a typed `other` answer is judged in the same input as the prompt, on both routes,
+  // and a delegated question adds no marker of its own.
+  const typedOther = 'TYPED-OTHER-ANSWER-4c1d';
+  const withOther = [{ id: 'q2', question: 'anything else?', choices: ['Metric'], other: typedOther }];
+  check('rewrite input carries a typed other answer', buildRewritePolicyInput({ prompt: 'a converter', clarifications: withOther }).includes(typedOther));
+  check('generate input carries a typed other answer', buildGeneratePolicyInput({ prompt: 'a converter', clarifications: withOther }).includes(typedOther));
+  eq(
+    'a delegated question adds nothing beyond the question itself',
+    buildRewritePolicyInput({ prompt: 'a converter', clarifications: [{ id: 'q3', question: 'which units?', choices: [], decide: true }] }),
+    buildRewritePolicyInput({ prompt: 'a converter', clarifications: [{ id: 'q3', question: 'which units?', choices: [] }] }),
+  );
 
   // "Source is not sent to the classifier": the OUTGOING classifier request for a GenerateRequest
   // with a source carries the prompt/clarification text and no part of the source.

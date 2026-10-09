@@ -1,7 +1,8 @@
 /**
  * POST /v1/clarify — the pre-stream clarify exchange (design D1, spec "Clarify endpoint").
  *
- * Unary by construction: prompt in, at most three questions out. It is NOT a generation stage, it
+ * Unary by construction: prompt in, at most three questions out, or a `limit` instead when the
+ * request's core needs something a mini-app cannot do (beta-1 D9). It is NOT a generation stage, it
  * opens no stream, and it holds no per-device state — the device carries the answers forward by
  * value inside the rewrite/generate request that follows. `GenerationEvent` is untouched.
  *
@@ -20,7 +21,7 @@
  */
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { ClarifyRequest, ClarifyResponse, type ApiError, type Usage } from '@whim/contract';
+import { ClarifyRequest, ClarifyResponse, type ApiError, type ClarifyLimit, type Usage } from '@whim/contract';
 import { isCreditExhaustedError, type ModelClient, type ModelRoster } from '../generation/model';
 import type { FailureReason, UsageStore, RequestKind, RequestOutcome } from '../usage-store';
 import type { ServerConfig } from '../config';
@@ -50,6 +51,7 @@ import { parseJsonBlock } from '../generation/json-block';
 import type { ServerLogger } from '../logger';
 import type { V1Env } from '../request-edge';
 import { consentPractice } from '../consent-practices';
+import { STUB_LIMIT, STUB_LIMIT_MARKER } from '../stub-markers';
 
 /** The kinds the ONE global unary daily ceiling (`ServerConfig.limitUnaryPerDay`) is counted
  *  across. Clarify and rewrite share it rather than getting a ceiling each, so the pair's total
@@ -71,24 +73,77 @@ const MODEL_FAILURE: ApiError = {
 const STUB_NO_QUESTIONS_MARKER = '[[noclarify]]';
 
 /** The stub's canned questions: fixed, prompt-independent, and deliberately generic — this exists
- *  so LAN UI work can drive the clarify screen without spending tokens, not to be a clarifier. */
+ *  so LAN UI work can drive the clarify screen without spending tokens, not to be a clarifier.
+ *  Between them they carry every answer mode (beta-1 D18): one pick, several picks, a typed answer. */
 const STUB_QUESTIONS: ClarifyResponse = {
   questions: [
-    { id: 'scope', question: 'How much should it hold?', options: ['Just today', 'A few weeks', 'Everything'] },
-    { id: 'entry', question: 'How do you add things?', options: ['Type it', 'Pick from a list'] },
-    { id: 'done', question: 'What happens when something is done?', options: ['It disappears', 'It stays, ticked'] },
+    { id: 'scope', question: 'How much should it hold?', options: ['Just today', 'A few weeks', 'Everything'], select: 'one', other: false },
+    { id: 'entry', question: 'How do you add things?', options: ['Type it', 'Pick from a list'], select: 'many', other: false },
+    { id: 'done', question: 'What happens when something is done?', options: ['It disappears', 'It stays, ticked'], select: 'one', other: true },
   ],
 };
+
+/** What the stub clarify answers for `prompt`: the `limit` for `[[limit]]` (`stub-markers.ts`),
+ *  nothing to ask for `[[noclarify]]`, else the canned questions. */
+function stubClarifyResponse(prompt: string): ClarifyResponse {
+  if (prompt.includes(STUB_LIMIT_MARKER)) return STUB_LIMIT;
+  return prompt.includes(STUB_NO_QUESTIONS_MARKER) ? { questions: [] } : STUB_QUESTIONS;
+}
+
+/** The longest `limit.reason` or `limit.alternative` clarify returns, in characters after trimming. */
+const LIMIT_FIELD_MAX_CHARS = 200;
+
+function limitField(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.length <= LIMIT_FIELD_MAX_CHARS ? trimmed : undefined;
+}
+
+/** A limit field's length after trimming, or `null` when it is not a string. */
+function limitFieldLength(value: unknown): number | null {
+  return typeof value === 'string' ? value.trim().length : null;
+}
+
+/** The model's `limit` (beta-1 D9), when both fields are usable. Anything else is no limit. A limit
+ *  the model did write (anything but absent or `null`) that is unusable is logged by its field
+ *  lengths, never its text, so a dropped "can't build" answer is visible. */
+function shapeLimit(raw: unknown, log: ServerLogger): ClarifyLimit | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const fields = typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const reason = limitField(fields.reason);
+  const alternative = limitField(fields.alternative);
+  if (reason !== undefined && alternative !== undefined) return { reason, alternative };
+  log.info(
+    { reasonLength: limitFieldLength(fields.reason), alternativeLength: limitFieldLength(fields.alternative) },
+    'clarify limit dropped, unusable',
+  );
+  return undefined;
+}
 
 /**
  * Model output → a conforming `ClarifyResponse`, or `undefined` when it is unusable. Defensive
  * normalization only, never fabrication: a question past the third is dropped, as is one with no
- * options — both are the model exceeding a bound the contract sets, not content to invent.
+ * options — both are the model exceeding a bound the contract sets, not content to invent. A
+ * question the model gives no answer mode is single-select with no typed answer (`select: 'one'`,
+ * `other: false`), the mode every question had before the model could choose one.
+ *
+ * A usable `limit` wins: it is returned with no questions, and questions the model sent beside it
+ * are dropped and logged, since the contract refuses the pair. `limit: null` is the model saying a
+ * mini-app can build the request, so it is no limit, and the body carries no `limit` key: the
+ * contract's `limit` is optional, never null (a device reads a `null` there as absent too). A
+ * malformed `limit` is logged and ignored, so the reply is read as questions exactly as it would be
+ * without one.
  */
-function shapeClarify(text: string): ClarifyResponse | undefined {
+function shapeClarify(text: string, log: ServerLogger): ClarifyResponse | undefined {
   const parsed = parseJsonBlock(text);
   if (typeof parsed !== 'object' || parsed === null) return undefined;
-  const raw = (parsed as Record<string, unknown>).questions;
+  const reply = parsed as Record<string, unknown>;
+  const raw = reply.questions;
+  const limit = shapeLimit(reply.limit, log);
+  if (limit !== undefined) {
+    if (Array.isArray(raw) && raw.length > 0) log.info({ droppedQuestions: raw.length }, 'clarify limit kept, questions dropped');
+    return { questions: [], limit };
+  }
   if (!Array.isArray(raw)) return undefined;
 
   const questions = raw
@@ -99,6 +154,8 @@ function shapeClarify(text: string): ClarifyResponse | undefined {
       options: Array.isArray(q.options)
         ? q.options.filter((o): o is string => typeof o === 'string' && o.trim().length > 0).map((o) => o.trim())
         : [],
+      select: q.select === 'many' ? ('many' as const) : ('one' as const),
+      other: q.other === true,
     }))
     .filter((q) => q.question.length > 0 && q.options.length > 0)
     .slice(0, 3);
@@ -482,7 +539,7 @@ async function runClarifyWork(
   requestLog: ServerLogger,
 ): Promise<Response> {
   if (stub) {
-    const stubbed = parsed.prompt.includes(STUB_NO_QUESTIONS_MARKER) ? { questions: [] } : STUB_QUESTIONS;
+    const stubbed = stubClarifyResponse(parsed.prompt);
     await finish('ok', undefined, [], true);
     return Response.json(stubbed satisfies ClarifyResponse, { status: 200 });
   }
@@ -501,6 +558,7 @@ async function runClarifyWork(
       model: roster.clarify.model,
       messages: buildClarifyMessages({ request: parsed }),
       reasoning: roster.clarify.reasoning,
+      temperature: roster.clarify.temperature,
       role: 'clarify',
       logger: requestLog,
     },
@@ -534,7 +592,7 @@ async function runClarifyWork(
   // Store failures must reach the app's 500 handler, not be retried as model failures.
   await usageStore.credit(deviceId, usage);
   const ids = completedGenerationId ? [completedGenerationId] : [];
-  const shaped = shapeClarify(raw);
+  const shaped = shapeClarify(raw, requestLog);
   if (!shaped) {
     await finish('error', usage, ids, true, 'model_failure');
     return Response.json(MODEL_FAILURE, { status: 502 });

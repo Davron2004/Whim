@@ -43,13 +43,17 @@ import {
   SOURCE_INCLUDED_CLAIM,
   STORAGE_LOCATIONS_HEADING,
   IDENTITY_CONTINUITY,
+  MINI_APP_LIMITS,
+  type MiniAppLimit,
   type PromptPlan,
 } from '../src/generation/prompts';
+import { CAPABILITY_EXPORTS, type CapabilityExportRow } from '../../checks/contract';
 import { GenerationMachine, type CheckContext, type CheckStage } from '../src/generation/machine';
 import { parseJsonBlock } from '../src/generation/json-block';
 import { runStaticChecks } from '../../checks/index';
 import { FIELD_TYPES } from '../../src/host/storage-engine/contract';
-import type { GenerateRequest, Diagnostic, GenerationEvent } from '@whim/contract';
+import { clarifyBuildInstead } from '../../src/host/launcher/copy';
+import { ClarifyLimit, ClarifyQuestion, type Clarification, type GenerateRequest, type Diagnostic, type GenerationEvent } from '@whim/contract';
 
 const repoRoot = path.resolve(process.cwd());
 
@@ -732,6 +736,138 @@ function testJsonBlockParsing(): void {
   check('parseJsonBlock: empty input yields undefined', parseJsonBlock('   ') === undefined);
 }
 
+// ── §What a mini-app cannot do (beta-1 D9) ───────────────────────────────────
+
+/** Every capability id a limit names as missing that the registry nevertheless has. */
+function limitsTheRegistryHas(limits: readonly MiniAppLimit[], registry: readonly CapabilityExportRow[]): string[] {
+  const present = new Set(registry.map((row) => row.capability));
+  return limits.flatMap((limit) => limit.missingCapabilities.filter((capability) => present.has(capability)));
+}
+
+function testMiniAppLimits(): void {
+  section('Tripwire: clarify and plan writing are built from one list of mini-app limits, and it agrees with the registry');
+
+  const systemOf = (messages: { role: string; content: string }[]): string =>
+    messages.find((m) => m.role === 'system')?.content ?? '';
+  const clarifySystem = systemOf(buildClarifyMessages({ request: { prompt: 'a weather app' } }));
+  const rewriteSystem = systemOf(buildRewriteMessages({ request: { prompt: 'a weather app' } }));
+
+  for (const limit of MINI_APP_LIMITS) {
+    check(`the clarify system prompt states "${limit.words}"`, clarifySystem.includes(limit.words));
+    check(`the rewrite system prompt states "${limit.words}"`, rewriteSystem.includes(limit.words));
+    check(`"${limit.words}" names at least one capability id that would make it possible`, limit.missingCapabilities.length > 0);
+  }
+
+  const offenders = limitsTheRegistryHas(MINI_APP_LIMITS, CAPABILITY_EXPORTS);
+  check(
+    'no capability the list calls missing is in the capability registry (checks/contract.ts#CAPABILITY_EXPORTS)',
+    offenders.length === 0,
+    offenders.length > 0 ? `update MINI_APP_LIMITS: the registry now has ${offenders.join(', ')}` : undefined,
+  );
+  const firstMissing = MINI_APP_LIMITS[0]?.missingCapabilities[0] ?? '';
+  eq(
+    'non-vacuity: a registry that gains a capability the list calls missing is caught',
+    limitsTheRegistryHas(MINI_APP_LIMITS, [...CAPABILITY_EXPORTS, { sdkExport: firstMissing, capability: firstMissing }]),
+    [firstMissing],
+  );
+}
+
+/** The device puts a limit's `alternative` into its button as is (`copy.ts#clarifyBuildInstead`), so
+ *  the clarify prompt must ask for words that fit there: a noun phrase, not a request. */
+function testLimitAlternativeFitsTheButton(): void {
+  section('Tripwire: clarify asks for a limit alternative that reads right on the app’s "Build … instead" button');
+
+  const clarifySystem = buildClarifyMessages({ request: { prompt: 'a weather app' } }).find((m) => m.role === 'system')?.content ?? '';
+  const button = clarifyBuildInstead('<alternative>');
+  check('the clarify prompt quotes the app’s own button, with the alternative’s place in it', clarifySystem.includes(`"${button}"`), button);
+  const example = /for example "([^"]+)"/.exec(clarifySystem)?.[1] ?? '';
+  check(
+    'the prompt’s example alternative is a noun phrase, so the button reads as one short sentence',
+    /^an? [a-z]/.test(example) && !/[.!?]$/.test(example),
+    clarifyBuildInstead(example),
+  );
+}
+
+/** The examples a limit names in parentheses ("weather", "news", ...), or none. */
+function examplesNamedBy(limit: MiniAppLimit): string[] {
+  const open = limit.words.indexOf('(');
+  const close = limit.words.indexOf(')', open);
+  return open >= 0 && close > open ? limit.words.slice(open + 1, close).split(', ') : [];
+}
+
+/** The clarify call is stochastic, and a `limit` offered after "an empty list is a good answer" lost
+ *  to it most of the time (beta-1 fix-6): the reply shape and the instructions both settle the limit
+ *  before any question. */
+function testLimitDecisionComesFirst(): void {
+  section('Tripwire: clarify settles the limit before any question, in the reply shape and in the instructions');
+
+  const clarifySystem = buildClarifyMessages({ request: { prompt: 'a weather app' } }).find((m) => m.role === 'system')?.content ?? '';
+  const shape = clarifySystem.slice(clarifySystem.indexOf('{ "'));
+  const limitShape = `{ ${Object.keys(ClarifyLimit.shape).map((key) => JSON.stringify(key) + ': string').join(', ')} }`;
+  check(
+    'the reply shape opens with "limit", null or the contract’s limit object, before "questions"',
+    shape.startsWith(`{ "limit": null | ${limitShape}, "questions": [`),
+    shape.slice(0, 90),
+  );
+
+  const decision = clarifySystem.indexOf('Only when "limit" is null');
+  const questionRules = [clarifySystem.indexOf('Set "select"'), clarifySystem.indexOf('a good answer')];
+  const limitsAt = MINI_APP_LIMITS.map((limit) => clarifySystem.indexOf(limit.words));
+  check('questions are allowed only when "limit" is null', decision >= 0);
+  check(
+    'every mini-app limit is stated before questions are allowed',
+    limitsAt.every((at) => at >= 0 && at < decision),
+    JSON.stringify({ limitsAt, decision }),
+  );
+  check(
+    'the decision precedes the answer-mode rules and the empty-list reassurance',
+    questionRules.every((at) => at > decision),
+    JSON.stringify({ questionRules, decision }),
+  );
+
+  const bannedOption = /never an option like "([^"]+)"/.exec(clarifySystem)?.[1] ?? '';
+  const namedByTheList = MINI_APP_LIMITS.flatMap(examplesNamedBy);
+  check(
+    'no option may offer what a mini-app cannot do, and the banned example is one the limits list names',
+    namedByTheList.some((item) => bannedOption.toLowerCase().includes(item)),
+    bannedOption,
+  );
+}
+
+// ── §Answer modes and delegated questions (beta-1 D18) ───────────────────────
+
+function testAnswerModeInstructions(): void {
+  section('Tripwire: clarify asks for each answer mode in the contract’s terms; every turn carries a delegated question and plan writing decides it');
+
+  const systemOf = (messages: { role: string; content: string }[]): string =>
+    messages.find((m) => m.role === 'system')?.content ?? '';
+  const clarifySystem = systemOf(buildClarifyMessages({ request: { prompt: 'a habit tracker' } }));
+  check('the clarify prompt asks for "select" on each question', clarifySystem.includes('"select"'));
+  for (const mode of ClarifyQuestion.shape.select.options) {
+    check(`the clarify prompt offers the contract’s select value "${mode}"`, clarifySystem.includes(`"${mode}"`));
+  }
+  check('the clarify prompt asks for "other" as a boolean', clarifySystem.includes('"other": boolean'));
+
+  const clarifications: Clarification[] = [
+    { id: 'units', question: 'Which units?', choices: [], decide: true },
+    { id: 'days', question: 'Which days?', choices: ['Monday', 'Wednesday'] },
+  ];
+  const request: GenerateRequest = { prompt: 'a running log', clarifications };
+  const rewrite = buildRewriteMessages({ request: { prompt: request.prompt, clarifications } });
+  const turns = [
+    { turn: 'rewrite', messages: rewrite },
+    { turn: 'plan', messages: buildPlanMessages({ request, schemaContext: '' }) },
+    { turn: 'generate', messages: buildGenerateMessages({ request, plan: PLAN, schemaContext: '' }, loadPromptInputs(repoRoot)) },
+  ];
+  for (const { turn, messages } of turns) {
+    const rows = userContent(messages).split('\n');
+    check(`${turn}: the delegated question is rendered, though it carries no choice`, rows.some((row) => row.includes('Which units?')));
+    check(`${turn}: several picks render together on their question’s row`, rows.some((row) => row.includes('Which days?') && row.includes('Monday') && row.includes('Wednesday')));
+  }
+  const delegation = userContent(rewrite).split('\n').find((row) => row.includes('Which units?'))?.split('→ ')[1]?.trim() ?? '';
+  check('plan writing is told to decide exactly the questions rendered as delegated', delegation.length > 0 && systemOf(rewrite).includes(delegation), delegation);
+}
+
 // ── Entry point ────────────────────────────────────────────────────────────
 
 export async function runPromptsTests(): Promise<void> {
@@ -748,4 +884,8 @@ export async function runPromptsTests(): Promise<void> {
   await testEveryAuthoringPromptCarriesTheRatingRule();
   await testContentPolicyNotDuplicatedInSource();
   testJsonBlockParsing();
+  testMiniAppLimits();
+  testLimitAlternativeFitsTheButton();
+  testLimitDecisionComesFirst();
+  testAnswerModeInstructions();
 }
