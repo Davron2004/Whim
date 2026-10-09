@@ -13,8 +13,11 @@
 #
 # Values come from deploy/defaults.env, then ~/.config/whim/deploy.env, then the environment, as for
 # the VM deploy. Two services: whim-server (the API host) and whim-site (Caddy serving the rendered
-# pages). Both run as the whim-run service account, which can read the OpenRouter secret and use
-# Firestore. The server keeps usage, reports and waitlist rows in the project's Firestore database
+# pages). Both run as the whim-run service account, which can read the OpenRouter secret and the
+# waitlist fingerprint key's secret (WHIM_WAITLIST_FINGERPRINT_SECRET, default
+# whim-waitlist-fingerprint-key) and use Firestore. The server and the purge job refuse to start
+# without the fingerprint key, so that secret must have a version before the first deploy. The
+# server keeps usage, reports and waitlist rows in the project's Firestore database
 # (WHIM_STORE_BACKEND=firestore), and the whim-purge job, run hourly by Cloud Scheduler, deletes the
 # ones past their keep period. A plain deploy also applies all of deploy/monitoring/ (the alert
 # channel to WHIM_ALERT_EMAIL, the uptime check, the log metric and every alert policy, each by
@@ -31,6 +34,9 @@ WHIM_USAGE='usage: deploy/cloudrun/deploy.sh [--tag <full git commit sha>] [--si
 readonly RUN_SERVER_SERVICE=whim-server
 readonly RUN_SITE_SERVICE=whim-site
 readonly RUN_SERVICE_ACCOUNT_NAME=whim-run
+# The Secret Manager secret holding the waitlist fingerprint key, unless WHIM_WAITLIST_FINGERPRINT_SECRET
+# names another.
+readonly RUN_FINGERPRINT_SECRET_DEFAULT=whim-waitlist-fingerprint-key
 # The retention purges as a Cloud Run Job, run hourly by a Cloud Scheduler job, so records go on
 # time while the scaled-to-zero server has no instance to run its own hourly purge.
 readonly RUN_PURGE_JOB=whim-purge
@@ -125,6 +131,12 @@ if [[ "$site_only" -eq 0 ]] && [[ -z "$tag" ]] && [[ "$store_backend" = firestor
   whim_require_values WHIM_ALERT_EMAIL
 fi
 service_account="$RUN_SERVICE_ACCOUNT_NAME@$WHIM_GCP_PROJECT.iam.gserviceaccount.com"
+fingerprint_secret_id="${WHIM_WAITLIST_FINGERPRINT_SECRET:-$RUN_FINGERPRINT_SECRET_DEFAULT}"
+[[ "$fingerprint_secret_id" =~ ^[A-Za-z0-9_-]+$ ]] \
+  || whim_fail "WHIM_WAITLIST_FINGERPRINT_SECRET must be a Secret Manager secret id, got $fingerprint_secret_id. Nothing was changed."
+# The server's and the purge job's secret environment: the OpenRouter key and the waitlist
+# fingerprint key, each the latest version of its secret.
+run_secret_env="OPENROUTER_API_KEY=$WHIM_OPENROUTER_SECRET_ID:latest,WHIM_WAITLIST_FINGERPRINT_KEY=$fingerprint_secret_id:latest"
 
 # A rollback (--tag) needs no checkout state; anything built from HEAD must be committed and pushed.
 head_sha=""
@@ -200,7 +212,7 @@ deploy_purge_job() {
     --command node --args=--enable-source-maps,server/whim-admin.mjs,purge \
     --cpu 1 --memory 512Mi --tasks 1 --max-retries 1 --task-timeout 10m \
     --service-account "$service_account" \
-    --env-vars-file "$env_file" --set-secrets "OPENROUTER_API_KEY=$WHIM_OPENROUTER_SECRET_ID:latest" --quiet \
+    --env-vars-file "$env_file" --set-secrets "$run_secret_env" --quiet \
     || whim_fail "deploying the purge job failed. The server is deployed; deploy again to retry the job."
   whim_gcloud run jobs add-iam-policy-binding "$RUN_PURGE_JOB" --region "$WHIM_RUN_REGION" \
     --member "serviceAccount:$service_account" --role roles/run.invoker --quiet >/dev/null \
@@ -235,7 +247,7 @@ update_purge_job_config() {
   fi
   echo "==> cloud run job $RUN_PURGE_JOB (environment and secret; image left as it is)"
   whim_gcloud run jobs update "$RUN_PURGE_JOB" --region "$WHIM_RUN_REGION" \
-    --env-vars-file "$env_file" --set-secrets "OPENROUTER_API_KEY=$WHIM_OPENROUTER_SECRET_ID:latest" --quiet \
+    --env-vars-file "$env_file" --set-secrets "$run_secret_env" --quiet \
     || whim_fail "updating the purge job's environment failed. The server is deployed; deploy again to retry the job."
 }
 
@@ -285,7 +297,7 @@ deploy_server() {
     --execution-environment gen2 --port 8787 --cpu 2 --memory 4Gi --cpu-boost --cpu-throttling \
     --min-instances "$WHIM_RUN_SERVER_MIN_INSTANCES" --max-instances "$WHIM_RUN_SERVER_MAX_INSTANCES" --concurrency 40 --timeout 900 \
     --service-account "$service_account" --allow-unauthenticated \
-    --env-vars-file "$env_file" --set-secrets "OPENROUTER_API_KEY=$WHIM_OPENROUTER_SECRET_ID:latest" --quiet
+    --env-vars-file "$env_file" --set-secrets "$run_secret_env" --quiet
   [[ "$store_backend" = firestore ]] || return 0
   # A rollback leaves the purge job on its image: an older one may predate `whim-admin purge`. Its
   # environment and secret follow the server's, so a configuration change deployed with --tag (a

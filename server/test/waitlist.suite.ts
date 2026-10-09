@@ -37,7 +37,7 @@ interface StoreUnderTest {
 async function eachStore(label: string, body: (subject: StoreUnderTest) => Promise<void>): Promise<void> {
   await body({ label: `${label} (in-memory)`, store: new InMemoryWaitlistStore() });
   const dir = tempDir(label);
-  const store = new NodeSqliteWaitlistStore(path.join(dir, 'waitlist.db'));
+  const store = new NodeSqliteWaitlistStore(path.join(dir, 'waitlist.db'), { fingerprintKey: FINGERPRINT_KEY });
   try {
     await body({ label: `${label} (sqlite)`, store });
   } finally {
@@ -46,8 +46,12 @@ async function eachStore(label: string, body: (subject: StoreUnderTest) => Promi
   }
 }
 
-function signup(email: string, platform: WaitlistPlatform, now: number, updatesOptOut = false): Parameters<WaitlistStore['upsert']>[0] {
-  return { email, platform, updatesOptOut, noticeId: 'beta-1', now };
+/** A test key for the SQLite stores' removal fingerprints. */
+const FINGERPRINT_KEY = 'waitlist-suite-fingerprint-key-0123456789';
+
+/** A signup with the news box ticked, or not (`withoutNews`). */
+function signup(email: string, platform: WaitlistPlatform, now: number, withoutNews = false): Parameters<WaitlistStore['upsert']>[0] {
+  return { email, platform, updatesOptIn: !withoutNews, noticeId: 'beta-1', now };
 }
 
 async function storeTests(): Promise<void> {
@@ -56,7 +60,7 @@ async function storeTests(): Promise<void> {
   await eachStore('round trip', async ({ label, store }) => {
     eq(`${label}: a first signup is stored`, await store.upsert(signup('  Person@Example.COM ', 'android', T0)), 'stored');
     eq(`${label}: it reads back normalized, with every column`, await store.export(), [
-      { email: 'person@example.com', platform: 'android', updatesOptOut: false, noticeId: 'beta-1', createdAt: T0, updatedAt: T0 },
+      { email: 'person@example.com', platform: 'android', updatesOptIn: true, updatesConsentAt: T0, updatesConsentNoticeId: 'beta-1', updatesWithdrawnAt: null, noticeId: 'beta-1', createdAt: T0, updatedAt: T0 },
     ]);
   });
 
@@ -65,7 +69,7 @@ async function storeTests(): Promise<void> {
     const later = T0 + 3 * DAY_MS;
     eq(`${label}: the same person in another casing updates`, await store.upsert({ ...signup('a@example.com', 'android', later, true), noticeId: 'beta-2' }), 'updated');
     eq(`${label}: one row, the new answers and notice, the first signup's created_at`, await store.export(), [
-      { email: 'a@example.com', platform: 'android', updatesOptOut: true, noticeId: 'beta-2', createdAt: T0, updatedAt: later },
+      { email: 'a@example.com', platform: 'android', updatesOptIn: false, updatesConsentAt: T0, updatesConsentNoticeId: 'beta-1', updatesWithdrawnAt: later, noticeId: 'beta-2', createdAt: T0, updatedAt: later },
     ]);
   });
 
@@ -93,9 +97,9 @@ async function storeTests(): Promise<void> {
   await eachStore('removal', async ({ label, store }) => {
     await store.upsert(signup('leave@example.com', 'ios', T0));
     await store.upsert(signup('stay@example.com', 'ios', T0));
-    check(`${label}: removing in another casing finds the row`, await store.remove('  LEAVE@Example.com'));
+    check(`${label}: removing in another casing finds the row`, await store.remove('  LEAVE@Example.com', T0));
     eq(`${label}: a later export omits it and keeps the rest`, (await store.export()).map((row) => row.email), ['stay@example.com']);
-    check(`${label}: removing again finds nothing`, !(await store.remove('leave@example.com')));
+    check(`${label}: removing again finds nothing`, !(await store.remove('leave@example.com', T0)));
   });
 
   section(`Waitlist store: rows go ${WAITLIST_RETENTION_DAYS} days after updated_at`);
@@ -108,7 +112,7 @@ async function storeTests(): Promise<void> {
     // Signed up long before the cutoff, answered again after it: updated_at, not created_at, counts.
     await store.upsert(signup('renewed@example.com', 'android', cutoff - 200 * DAY_MS));
     await store.upsert(signup('renewed@example.com', 'android', cutoff + DAY_MS));
-    eq(`${label}: the purge deletes exactly the row older than the cutoff`, await store.purge(now), 1);
+    eq(`${label}: the purge deletes exactly the row older than the cutoff`, await store.purge(now), { rows: 1, fingerprints: 0 });
     eq(`${label}: the row at the cutoff and the renewed row remain`, (await store.export()).map((row) => row.email).sort((a, b) => a.localeCompare(b)), [
       'at-cutoff@example.com',
       'renewed@example.com',
@@ -120,11 +124,11 @@ async function storeTests(): Promise<void> {
   const dir = tempDir('durable');
   try {
     const file = path.join(dir, 'waitlist.db');
-    const first = new NodeSqliteWaitlistStore(file);
+    const first = new NodeSqliteWaitlistStore(file, { fingerprintKey: FINGERPRINT_KEY });
     await first.upsert(signup('kept@example.com', 'other', T0, true));
     await first.close();
-    const reopened = new NodeSqliteWaitlistStore(file);
-    eq('a row survives closing and reopening the file', (await reopened.export()).map((row) => [row.email, row.updatesOptOut]), [['kept@example.com', true]]);
+    const reopened = new NodeSqliteWaitlistStore(file, { fingerprintKey: FINGERPRINT_KEY });
+    eq('a row survives closing and reopening the file', (await reopened.export()).map((row) => [row.email, row.updatesOptIn]), [['kept@example.com', false]]);
     await reopened.close();
     const raw = new DatabaseSync(file);
     eq('the file is in WAL mode', (raw.prepare('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode, 'wal');
@@ -137,7 +141,7 @@ async function storeTests(): Promise<void> {
 
   const failDir = tempDir('rejects');
   try {
-    const closed = new NodeSqliteWaitlistStore(path.join(failDir, 'waitlist.db'));
+    const closed = new NodeSqliteWaitlistStore(path.join(failDir, 'waitlist.db'), { fingerprintKey: FINGERPRINT_KEY });
     await closed.close();
     let pending: Promise<unknown> | undefined;
     const syncThrow = await caught(() => {
@@ -242,7 +246,7 @@ async function commandTests(): Promise<void> {
 
   const dir = tempDir('cli');
   try {
-    const seeded = new NodeSqliteWaitlistStore(path.join(dir, 'waitlist.db'));
+    const seeded = new NodeSqliteWaitlistStore(path.join(dir, 'waitlist.db'), { fingerprintKey: FINGERPRINT_KEY });
     await seeded.upsert(signup('droid@example.com', 'android', T0));
     await seeded.upsert(signup('apple@example.com', 'ios', T0 + 1));
     await seeded.close();

@@ -1453,6 +1453,19 @@ function createArgsFor(index: WantedIndex): string {
 }
 
 /** The values of a Cloud Run --env-vars-file, as cloudrun/deploy.sh writes it: `KEY: 'value'`. */
+/** The `NAME=secret:version` pairs a logged `gcloud run … --set-secrets` call mounts. */
+function mountedSecrets(call: string): Record<string, string> {
+  const value = /--set-secrets (\S+)/.exec(call)?.[1] ?? '';
+  return Object.fromEntries(value.split(',').filter((entry) => entry !== '').map((entry) => [entry.slice(0, entry.indexOf('=')), entry.slice(entry.indexOf('=') + 1)]));
+}
+
+/** What the server process sees on Cloud Run: the image's `NODE_ENV=production`, its env file, and a
+ *  stand-in value for each mounted secret. */
+function productionEnvOf(serverEnv: string, mounted: Readonly<Record<string, string>>): NodeJS.ProcessEnv {
+  const secrets = Object.fromEntries(Object.entries(mounted).map(([name, secret]) => [name, `stand-in-for-${secret}-0123456789abcdef`]));
+  return { NODE_ENV: 'production', ...envVarsFileValues(serverEnv), ...secrets };
+}
+
 function envVarsFileValues(text: string): Record<string, string> {
   return Object.fromEntries([...text.matchAll(/^([A-Z0-9_]+): '(.*)'$/gm)].map(([, key, value]) => [key, value.replaceAll("''", "'")]));
 }
@@ -1745,7 +1758,29 @@ function cloudRunStoreTests(): void {
     eq('  ... creating each index the file asks for, once', created.length, wanted.length);
     check('  ... with its collection group, scope and fields in order, in the (default) database', wanted.every((index) => created.some((line) => line.includes('--database=(default)') && line.includes(createArgsFor(index)))), created.join(' / '));
     check('  ... before the server deploy', serverDeploy(calls) !== -1 && calls.every((line, i) => !line.includes('firestore indexes composite create') || i < serverDeploy(calls)), calls.join(' / '));
-    eq('  ... and the server reads the firestore backend from its env file', loadServerConfig(envVarsFileValues(serverEnv)).storeBackend, 'firestore');
+    const mounted = mountedSecrets(calls[serverDeploy(calls)] ?? '');
+    eq(
+      '  ... mounting the OpenRouter key and the waitlist fingerprint key, each the latest version of its secret',
+      mounted,
+      { OPENROUTER_API_KEY: 'whim-openrouter-api-key:latest', WHIM_WAITLIST_FINGERPRINT_KEY: 'whim-waitlist-fingerprint-key:latest' },
+    );
+    eq('  ... and the server, in production as its image runs, loads from its env file and those secrets on the firestore backend', loadServerConfig(productionEnvOf(serverEnv, mounted)).storeBackend, 'firestore');
+    const without = (name: string): Record<string, string> => Object.fromEntries(Object.entries(mounted).filter(([key]) => key !== name));
+    check('  red: without the mounted fingerprint key that config refuses to load, naming it', configRefuses(productionEnvOf(serverEnv, without('WHIM_WAITLIST_FINGERPRINT_KEY')), 'WHIM_WAITLIST_FINGERPRINT_KEY'));
+    check('  red: without the mounted OpenRouter key it refuses too', configRefuses(productionEnvOf(serverEnv, without('OPENROUTER_API_KEY')), 'OPENROUTER_API_KEY'));
+  });
+
+  withSandbox((sandbox) => {
+    const { run, calls } = deployTagged(sandbox, [], { WHIM_WAITLIST_FINGERPRINT_SECRET: 'other-fingerprint-secret' });
+    eq('WHIM_WAITLIST_FINGERPRINT_SECRET names the secret the fingerprint key is mounted from', [run.status, mountedSecrets(calls[serverDeploy(calls)] ?? '').WHIM_WAITLIST_FINGERPRINT_KEY], [0, 'other-fingerprint-secret:latest']);
+    const job = calls.find((line) => line.includes('run jobs update whim-purge')) ?? '';
+    eq('  ... on the purge job too', mountedSecrets(job).WHIM_WAITLIST_FINGERPRINT_KEY, 'other-fingerprint-secret:latest');
+  });
+
+  withSandbox((sandbox) => {
+    const { run, calls } = deployTagged(sandbox, [], { WHIM_WAITLIST_FINGERPRINT_SECRET: 'two,secrets' });
+    check('a WHIM_WAITLIST_FINGERPRINT_SECRET that is not a secret id is refused, naming it', run.status === 1 && run.stderr.includes('WHIM_WAITLIST_FINGERPRINT_SECRET must be a Secret Manager secret id'), run.stderr);
+    eq('  ... before any gcloud call', calls, []);
   });
 
   withSandbox((sandbox) => {
@@ -2016,7 +2051,7 @@ function cloudRunDeploySmokeTests(): void {
     const serverDeploy = toolLog(sandbox, 'gcloud').find((line) => line.includes('run deploy whim-server')) ?? '';
     check('  ... the server deployed with request-based billing (CPU only during requests)', / --cpu-throttling(?: |$)/.test(serverDeploy) && !serverDeploy.includes('--no-cpu-throttling'), serverDeploy);
     check('  ... scaling to zero and to one instance at most, the bounds its smoke holds the revision to', serverDeploy.includes(' --min-instances 0 --max-instances 1 '), serverDeploy);
-    const served = loadServerConfig(envVarsFileValues(stubFile(sandbox, 'env-vars-file')));
+    const served = loadServerConfig(productionEnvOf(stubFile(sandbox, 'env-vars-file'), mountedSecrets(serverDeploy)));
     eq(
       "  ... and the operator's content-policy attempt timeout and policy-check limits forwarded, as the server reads them",
       [served.policyAttemptTimeoutMs, served.limitPolicyChecksPerDeviceDay, served.limitPolicyChecksPerDay],

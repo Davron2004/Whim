@@ -13,9 +13,11 @@ import net from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import { check, eq, section } from './harness';
 import { TIMED_OUT, within } from './route-doubles';
-import { loadServerConfig } from '../src/config';
+import { DatabaseSync } from 'node:sqlite';
+import { DEV_WAITLIST_FINGERPRINT_KEY, loadServerConfig } from '../src/config';
 import { openStores, type OpenedStores } from '../src/stores';
 import { runPurge, runPurgeThenClose } from '../src/admin/purge';
+import { waitlistFingerprint } from '../src/waitlist/store';
 
 const DAY_MS = 86_400_000;
 const NOW = Date.UTC(2026, 9, 8, 12, 0, 0);
@@ -30,7 +32,8 @@ async function openSqlite(dataDir: string, now: () => number): Promise<OpenedSto
 }
 
 /** One row per store at each age in `ages` (days before `now`), labelled by its age. Usage rows
- *  are one device per age, last credited that many days back. */
+ *  are one device per age, last credited that many days back; the waitlist also keeps one removal
+ *  fingerprint per age, kept that many days back. */
 async function seed(dataDir: string, now: number, ages: readonly number[]): Promise<void> {
   let clock = now;
   const stores = await openSqlite(dataDir, () => clock);
@@ -42,7 +45,8 @@ async function seed(dataDir: string, now: number, ages: readonly number[]): Prom
       if (!admitted.ok) throw new Error(`setup: ledger row ${age}d was not admitted`);
       clock = at;
       await stores.usage.credit(`usage-${age}d`, { promptTokens: 1, completionTokens: 1, totalTokens: 2 });
-      await stores.waitlist.upsert({ email: `waitlist-${age}d@example.com`, platform: 'android', updatesOptOut: false, noticeId: 'beta-1', now: at });
+      await stores.waitlist.upsert({ email: `waitlist-${age}d@example.com`, platform: 'android', updatesOptIn: false, noticeId: 'beta-1', now: at });
+      await stores.waitlist.remove(`removed-${age}d@example.com`, at);
     }
   } finally {
     await stores.close();
@@ -54,6 +58,19 @@ interface Remaining {
   ledger: string[];
   usage: string[];
   waitlist: string[];
+  fingerprints: string[];
+}
+
+/** The labels of the removal fingerprints `waitlist.db` under `dataDir` still keeps (the stores run
+ *  on the dev key outside production). */
+function remainingFingerprints(dataDir: string, ages: readonly number[]): string[] {
+  const db = new DatabaseSync(path.join(dataDir, 'waitlist.db'), { readOnly: true });
+  try {
+    const kept = new Set((db.prepare('SELECT fingerprint FROM waitlist_suppressed').all() as { fingerprint: string }[]).map((row) => row.fingerprint));
+    return ages.filter((age) => kept.has(waitlistFingerprint(DEV_WAITLIST_FINGERPRINT_KEY, `removed-${age}d@example.com`))).map((age) => `removed-${age}d`);
+  } finally {
+    db.close();
+  }
 }
 
 /** The labels of every row still in the data directory, per store. */
@@ -67,6 +84,7 @@ async function remaining(dataDir: string, ages: readonly number[]): Promise<Rema
       ledger: (await stores.usage.deviceRecords(DEVICE)).ledger.map((r) => r.id),
       usage,
       waitlist: (await stores.waitlist.export()).map((r) => r.email.replace('@example.com', '')),
+      fingerprints: remainingFingerprints(dataDir, ages),
     };
   } finally {
     await stores.close();
@@ -84,17 +102,18 @@ async function purgeDeletesExpiredRows(): Promise<void> {
     const stores = await openSqlite(dir, () => NOW);
     const first = await runPurge([], stores, config).finally(() => stores.close());
     eq('the purge exits 0', first.exitCode, 0);
-    eq('  ... printing how many rows each store deleted', first.output, 'reports: 5 purged\nledger: 5 purged\nusage: 3 purged\nwaitlist: 1 purged\n');
+    eq('  ... printing how many rows each store deleted, the waitlist\'s split into rows and fingerprints', first.output, 'reports: 5 purged\nledger: 5 purged\nusage: 3 purged\nwaitlist: 2 purged (rows 1, fingerprints 1)\n');
     eq('  ... leaving exactly the rows inside each keep period', await remaining(dir, ages), {
       reports: ['report-89d', 'report-1d'],
       ledger: ['ledger-89d', 'ledger-1d'],
       usage: ['usage-1d', 'usage-89d', 'usage-91d', 'usage-364d'],
       waitlist: ['waitlist-729d', 'waitlist-366d', 'waitlist-364d', 'waitlist-91d', 'waitlist-89d', 'waitlist-1d'],
+      fingerprints: ['removed-1d', 'removed-89d', 'removed-91d', 'removed-364d', 'removed-366d', 'removed-729d'],
     });
 
     const again = await openSqlite(dir, () => NOW);
     const second = await runPurge([], again, config).finally(() => again.close());
-    eq('a second run deletes nothing', second.output, 'reports: 0 purged\nledger: 0 purged\nusage: 0 purged\nwaitlist: 0 purged\n');
+    eq('a second run deletes nothing', second.output, 'reports: 0 purged\nledger: 0 purged\nusage: 0 purged\nwaitlist: 0 purged (rows 0, fingerprints 0)\n');
 
     const extra = await openSqlite(dir, () => NOW);
     const usage = await runPurge(['--all'], extra, config).finally(() => extra.close());
@@ -124,7 +143,7 @@ async function failedPurgeFailsTheCommand(): Promise<void> {
     eq(
       '  ... naming the failed store and why, and counting the others, then one structured ERROR line for the alert',
       result.output,
-      'reports: 1 purged\nledger: failed: database is locked\nusage: 0 purged\nwaitlist: 0 purged\n{"severity":"ERROR","message":"purge failed","detail":"ledger: database is locked"}\n',
+      'reports: 1 purged\nledger: failed: database is locked\nusage: 0 purged\nwaitlist: 0 purged (rows 0, fingerprints 0)\n{"severity":"ERROR","message":"purge failed","detail":"ledger: database is locked"}\n',
     );
     eq('  ... whose deletions landed', (await remaining(dir, [1, 91])).reports, ['report-1d']);
   } finally {
@@ -153,14 +172,14 @@ async function failedPurgeAndCloseNameBoth(): Promise<void> {
     eq(
       '  ... printing every store line, then one ERROR line naming the failed store and the failed close',
       result.output,
-      'reports: 1 purged\nledger: failed: database is locked\nusage: 0 purged\nwaitlist: 0 purged\n{"severity":"ERROR","message":"purge failed","detail":"ledger: database is locked; close: close timed out"}\n',
+      'reports: 1 purged\nledger: failed: database is locked\nusage: 0 purged\nwaitlist: 0 purged (rows 0, fingerprints 0)\n{"severity":"ERROR","message":"purge failed","detail":"ledger: database is locked; close: close timed out"}\n',
     );
     const again = await openSqlite(dir, () => NOW);
     const clean = await runPurgeThenClose([], { ...pickStores(again), close: () => Promise.reject(new Error('close timed out')) }, config).finally(() => again.close());
     eq(
       'a clean purge whose close fails exits 1, keeping its counts and naming the close',
       [clean.exitCode, clean.output],
-      [1, 'reports: 0 purged\nledger: 1 purged\nusage: 0 purged\nwaitlist: 0 purged\n{"severity":"ERROR","message":"purge failed","detail":"close: close timed out"}\n'],
+      [1, 'reports: 0 purged\nledger: 1 purged\nusage: 0 purged\nwaitlist: 0 purged (rows 0, fingerprints 0)\n{"severity":"ERROR","message":"purge failed","detail":"close: close timed out"}\n'],
     );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -238,7 +257,7 @@ async function sameCutoffsAsTheServer(): Promise<void> {
     eq('the server boots with shortened keep periods', await bootAndStop(dirs.serverShort, shortened), undefined);
     const shortRun = adminPurge(dirs.adminShort, shortened);
     eq('node server/admin.mjs purge exits 0 with the same settings', shortRun.status, 0);
-    eq('  ... printing its counts', shortRun.stdout, 'reports: 3 purged\nledger: 3 purged\nusage: 2 purged\nwaitlist: 1 purged\n');
+    eq('  ... printing its counts', shortRun.stdout, 'reports: 3 purged\nledger: 3 purged\nusage: 2 purged\nwaitlist: 2 purged (rows 1, fingerprints 1)\n');
     const serverShort = await remaining(dirs.serverShort, ages);
     const adminShort = await remaining(dirs.adminShort, ages);
     eq('  ... and leaves exactly what the server boot purge left', adminShort, serverShort);
@@ -247,6 +266,7 @@ async function sameCutoffsAsTheServer(): Promise<void> {
       ledger: ['ledger-1d'],
       usage: ['usage-1d', 'usage-45d'],
       waitlist: ['waitlist-200d', 'waitlist-45d', 'waitlist-1d'],
+      fingerprints: ['removed-1d', 'removed-45d', 'removed-200d'],
     });
 
     eq('the server boots with the default keep periods', await bootAndStop(dirs.serverDefault, {}), undefined);
@@ -290,6 +310,16 @@ async function crashedPurgeLogsAnError(): Promise<void> {
     eq('stores that cannot open exit 1', badOpen.status, 1);
     const openLines = errorLines(badOpen.stdout);
     check('  ... printing one {"severity":"ERROR","message":"purge failed"} line', openLines.length === 1 && openLines[0]?.message === 'purge failed', badOpen.stdout + badOpen.stderr);
+    // The Cloud Run job runs in production: without the fingerprint key it purges nothing.
+    const production = { NODE_ENV: 'production', OPENROUTER_API_KEY: 'unused-no-network', WHIM_ENGINEER_MODEL: 'test/engineer', WHIM_REWRITE_MODEL: 'test/rewrite', WHIM_WEB_ORIGIN: 'https://pages.example.test' };
+    const noKey = adminPurge(dir, production);
+    eq('a production purge without WHIM_WAITLIST_FINGERPRINT_KEY exits 1', noKey.status, 1);
+    const keyLines = errorLines(noKey.stdout);
+    check(
+      '  ... printing one {"severity":"ERROR","message":"purge failed"} line naming the key',
+      keyLines.length === 1 && String(keyLines[0]?.detail).includes('WHIM_WAITLIST_FINGERPRINT_KEY') && !noKey.stdout.includes(' purged'),
+      noKey.stdout + noKey.stderr,
+    );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

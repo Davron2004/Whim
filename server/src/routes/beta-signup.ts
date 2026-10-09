@@ -19,7 +19,7 @@ import { isWaitlistPlatform, type WaitlistPlatform, type WaitlistStore } from '.
 import type { SignupLimiter } from '../waitlist/limiter';
 
 /** The closed set of outcome codes a signup log line carries. */
-export type SignupOutcome = 'stored' | 'updated' | 'invalid' | 'limited' | 'trap' | 'error';
+export type SignupOutcome = 'stored' | 'updated' | 'suppressed' | 'invalid' | 'limited' | 'trap' | 'error';
 
 /** The bot trap: a field people never see or fill. Its name matches no browser autofill heuristic
  *  (a `company` field gets a person's organization autofilled, and their signup dropped). */
@@ -105,7 +105,8 @@ export function makeBetaSignupRoute(deps: BetaSignupDeps): Hono<EdgeEnv> {
       const now = clock();
       if (!limiter.admit(c.req.header('x-forwarded-for'), now)) return answer('limited', retry);
       try {
-        return answer(await store.upsert({ ...form, noticeId, now }), thanks);
+        // The page's opt-out box never obtained news consent, so a signup records none.
+        return answer(await store.upsert({ email: form.email, platform: form.platform, updatesOptIn: false, noticeId, now }), thanks);
       } catch (err) {
         signupLog.error({ outcome: 'error' satisfies SignupOutcome, errorClass: err instanceof Error ? err.constructor.name : typeof err }, 'beta signup');
         return c.redirect(retry, 303);

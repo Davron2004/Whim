@@ -33,6 +33,7 @@ import { loadFewShotExamples } from '../src/generation/prompts/inputs';
 import { openRouterUsageAndCostTransport } from '../src/usage/openrouter-stats';
 import { NodeSqliteWaitlistStore, WAITLIST_RETENTION_DAYS } from '../src/waitlist/store';
 import { CURRENT_NOTICE_ID } from '../src/waitlist/notices';
+import { DEV_WAITLIST_FINGERPRINT_KEY } from '../src/config';
 import { MANIFESTS, keepLimit, latestVersion } from '../../contract/src/disclosure-manifest';
 import { browserLaunchOptions } from '../../synthrun/session';
 
@@ -308,9 +309,9 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
   // Two signups written by the real store before boot, one last changed past the retention period
   // the privacy policy publishes and one inside it: boot's scheduled purge must take only the first.
   const dayMs = 86_400_000;
-  const seed = new NodeSqliteWaitlistStore(path.join(dataDir, 'waitlist.db'));
-  await seed.upsert({ email: 'expired@example.com', platform: 'ios', updatesOptOut: false, noticeId: CURRENT_NOTICE_ID, now: Date.now() - (WAITLIST_RETENTION_DAYS + 1) * dayMs });
-  await seed.upsert({ email: 'kept@example.com', platform: 'ios', updatesOptOut: false, noticeId: CURRENT_NOTICE_ID, now: Date.now() - (WAITLIST_RETENTION_DAYS - 1) * dayMs });
+  const seed = new NodeSqliteWaitlistStore(path.join(dataDir, 'waitlist.db'), { fingerprintKey: DEV_WAITLIST_FINGERPRINT_KEY });
+  await seed.upsert({ email: 'expired@example.com', platform: 'ios', updatesOptIn: false, noticeId: CURRENT_NOTICE_ID, now: Date.now() - (WAITLIST_RETENTION_DAYS + 1) * dayMs });
+  await seed.upsert({ email: 'kept@example.com', platform: 'ios', updatesOptIn: false, noticeId: CURRENT_NOTICE_ID, now: Date.now() - (WAITLIST_RETENTION_DAYS - 1) * dayMs });
   await seed.close();
   const waitlistWal = path.join(dataDir, 'waitlist.db-wal');
   const proc = new TreeProcess(fixture.tree, {
@@ -370,7 +371,7 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
     timeout: PROCESS_WAIT_MS,
     env: { PATH: process.env.PATH ?? '', WHIM_DATA_DIR: dataDir },
   });
-  eq('the tree\'s whim-waitlist.mjs exports the signup the server stored', [exported.status, exported.stdout.split('\n')[1]?.split(',').slice(0, 3)], [0, ['tree.person@example.com', 'android', 'false']]);
+  eq('the tree\'s whim-waitlist.mjs exports the signup the server stored, with no news consent', [exported.status, exported.stdout.split('\n')[1]?.split(',').slice(0, 3)], [0, ['tree.person@example.com', 'android', 'true']]);
 }
 
 /** A loopback stand-in for a Firestore the server's credentials cannot read: every call is answered
@@ -441,6 +442,30 @@ async function testBootRefusals(fixture: Fixture): Promise<void> {
     { NODE_ENV: 'production', WHIM_PIPELINE: 'stub', WHIM_DATA_DIR: fixture.dataDir('prod-stub') },
     'WHIM_PIPELINE',
   );
+  // waitlist-hardening ruling 5: production fails closed without the waitlist fingerprint key, and a
+  // refused key never reaches the output.
+  const production = {
+    NODE_ENV: 'production',
+    OPENROUTER_API_KEY: 'unused-no-network',
+    WHIM_ENGINEER_MODEL: 'test/engineer',
+    WHIM_REWRITE_MODEL: 'test/rewrite',
+    WHIM_WEB_ORIGIN: 'https://pages.example.test',
+  };
+  await expectBootRefusal(
+    'production without WHIM_WAITLIST_FINGERPRINT_KEY',
+    fixture.tree,
+    { ...production, WHIM_DATA_DIR: fixture.dataDir('prod-no-fingerprint-key') },
+    'WHIM_WAITLIST_FINGERPRINT_KEY',
+  );
+  const shortKey = 'short-fingerprint-secret';
+  const shortKeyProc = new TreeProcess(fixture.tree, { ...production, WHIM_WAITLIST_FINGERPRINT_KEY: shortKey, WHIM_DATA_DIR: fixture.dataDir('prod-short-fingerprint-key'), WHIM_SERVER_HOST: '127.0.0.1', WHIM_SERVER_PORT: String(await freePort()) });
+  try {
+    const exit = await exitOf(shortKeyProc);
+    check('production with a too-short fingerprint key exits non-zero, naming the variable', exit !== TIMED_OUT && exit.code !== 0 && shortKeyProc.text().includes('WHIM_WAITLIST_FINGERPRINT_KEY'), shortKeyProc.text().slice(-2000));
+    check('  ... and its output never holds the key', !shortKeyProc.text().includes(shortKey));
+  } finally {
+    await shortKeyProc.dispose();
+  }
   // specs/server-storage-backends: an unknown store backend fails boot naming the variable and both
   // allowed values.
   await expectBootRefusal(
@@ -460,6 +485,7 @@ async function testBootRefusals(fixture: Fixture): Promise<void> {
       {
         WHIM_PIPELINE: 'stub',
         WHIM_STORE_BACKEND: 'firestore',
+        WHIM_WAITLIST_FINGERPRINT_KEY: 'prod-build-fingerprint-key-0123456789',
         WHIM_DATA_DIR: fixture.dataDir('firestore-denied'),
         FIRESTORE_EMULATOR_HOST: firestore.host,
         GOOGLE_CLOUD_PROJECT: 'demo-whim-denied',

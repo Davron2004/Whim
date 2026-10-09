@@ -30,7 +30,7 @@ import {
 } from './firestore-admission-load';
 import { productionEntryInputs } from './build-fixtures';
 import type { ServerHandle, StartServerOptions, StartServerOverrides } from '../src/lifecycle';
-import type { ServerConfig } from '../src/config';
+import { loadServerConfig, type ServerConfig } from '../src/config';
 import { runLoadtestServer, LoadtestConfigError, LOADTEST_ROSTER, LOADTEST_INERT_API_KEY, LOADTEST_HEALTHZ_SERVICE } from '../src/loadtest/server';
 import { createReplayModel, loadRotationFixtures } from '../src/loadtest/replay-model';
 import { runStaticChecks } from '../../checks/index';
@@ -142,6 +142,7 @@ async function testOverridesEnvAndFetchTrap(): Promise<void> {
       [LOADTEST_ROSTER.engineer.model, LOADTEST_ROSTER.rewrite.model],
     );
     eq('the caller env passes through otherwise', sent.env.WHIM_DATA_DIR, fakeDataDir);
+    eq('the env it hands start loads under production config (every production requirement met, the fingerprint key among them)', loadServerConfig(sent.env).nodeEnv, 'production');
 
     const overrides = sent.overrides as StartServerOverrides;
     eq('the model override carries the fixed load-test roster', overrides.model?.roster, LOADTEST_ROSTER);

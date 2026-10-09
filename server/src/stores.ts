@@ -23,7 +23,7 @@ import { FirestoreWaitlistStore } from './firestore/waitlist-store';
 import { FirestoreUsageStore } from './firestore/usage-store';
 
 /** The configuration `openStores` reads. */
-export type StoreConfig = Pick<ServerConfig, 'storeBackend' | 'firestoreDatabase' | 'dataDir' | 'now' | 'usageIdleDays'>;
+export type StoreConfig = Pick<ServerConfig, 'storeBackend' | 'firestoreDatabase' | 'dataDir' | 'now' | 'usageIdleDays' | 'waitlistFingerprintKey'>;
 
 /** Every server store, open on one backend. */
 export interface OpenedStores {
@@ -87,7 +87,7 @@ export function createFirestoreStoresOpener(options: FirestoreStoresOptions = {}
       const root = options.root?.(db) ?? db;
       const inFlight = new Set<Promise<void>>();
       const reports = trackInFlight(new FirestoreReportStore(db, root), inFlight);
-      const waitlist = trackInFlight(new FirestoreWaitlistStore(db, root), inFlight);
+      const waitlist = trackInFlight(new FirestoreWaitlistStore(db, root, { fingerprintKey: config.waitlistFingerprintKey }), inFlight);
       const usage = trackInFlight(new FirestoreUsageStore(db, root, { now: config.now }), inFlight);
       return {
         usage,
@@ -133,7 +133,7 @@ async function openSqliteStores(config: StoreConfig): Promise<OpenedStores> {
     opened.push(usage);
     const reports = new NodeSqliteReportStore(path.join(config.dataDir, 'reports.db'));
     opened.push(reports);
-    const waitlist = new NodeSqliteWaitlistStore(path.join(config.dataDir, 'waitlist.db'));
+    const waitlist = new NodeSqliteWaitlistStore(path.join(config.dataDir, 'waitlist.db'), { fingerprintKey: config.waitlistFingerprintKey });
     return { usage, reports, waitlist, close: () => closeAll([reports, waitlist, usage]) };
   } catch (err) {
     // A store that failed to open leaves the ones before it open; release them before reporting.

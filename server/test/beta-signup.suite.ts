@@ -74,11 +74,11 @@ async function signupRouteTests(): Promise<void> {
     const { app, store } = harness();
     const res = await post(app, VALID);
     eq('a valid form post answers 303 to the pages host\'s /beta/thanks', redirectsTo(res), `303 ${THANKS}`);
-    eq('  ... storing one row for the normalized email, android, no opt-out, the current notice id', (await store.export()).map((row) => ({ email: row.email, platform: row.platform, updatesOptOut: row.updatesOptOut, noticeId: row.noticeId })), [
-      { email: 'person@example.com', platform: 'android', updatesOptOut: false, noticeId: CURRENT_NOTICE_ID },
+    eq('  ... storing one row for the normalized email, android, no news consent, the current notice id', (await store.export()).map((row) => ({ email: row.email, platform: row.platform, updatesOptIn: row.updatesOptIn, noticeId: row.noticeId })), [
+      { email: 'person@example.com', platform: 'android', updatesOptIn: false, noticeId: CURRENT_NOTICE_ID },
     ]);
     const optedOut = await post(app, { email: 'quiet@example.com', platform: 'ios', updates_opt_out: '1' });
-    eq('the opt-out box (value 1) is stored as an opt-out', [redirectsTo(optedOut), (await store.export()).find((row) => row.email === 'quiet@example.com')?.updatesOptOut], [`303 ${THANKS}`, true]);
+    eq('the opt-out box (value 1) is stored with no news consent', [redirectsTo(optedOut), (await store.export()).find((row) => row.email === 'quiet@example.com')?.updatesOptIn], [`303 ${THANKS}`, false]);
   }
 
   section('Beta signup: an invalid signup stores nothing and goes to retry');
@@ -133,7 +133,9 @@ async function signupRouteTests(): Promise<void> {
       upsert: () => Promise.reject(new Error('database is locked')),
       export: async () => [],
       remove: async () => false,
-      purge: async () => 0,
+      setUpdates: async () => false,
+      restore: async () => false,
+      purge: async () => ({ rows: 0, fingerprints: 0 }),
       close: async () => {},
     };
     const { app } = harness({}, { waitlistStore: failing });

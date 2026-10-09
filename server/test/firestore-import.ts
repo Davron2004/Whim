@@ -58,7 +58,7 @@ async function idempotentImport(open: (namespace: string) => Promise<OpenedStore
     const live = await open(namespace);
     try {
       nodeAssert.ok((await live.usage.admit({ requestId: 'req-live', deviceId: 'dev-live', kind: 'generate', now: IMPORT_T0 + 5000, deviceLimit: 5 })).ok);
-      await live.waitlist.upsert({ email: CHANGED_EMAIL, platform: 'ios', updatesOptOut: false, noticeId: 'notice-3', now: IMPORT_T0 + 6000 });
+      await live.waitlist.upsert({ email: CHANGED_EMAIL, platform: 'ios', updatesOptIn: true, noticeId: 'notice-3', now: IMPORT_T0 + 6000 });
     } finally {
       await live.close();
     }
@@ -86,7 +86,17 @@ async function idempotentImport(open: (namespace: string) => Promise<OpenedStore
     try {
       const earliest = views.waitlist.find((row) => row.email === CHANGED_EMAIL)?.createdAt;
       nodeAssert.ok(earliest !== undefined && earliest < IMPORT_T0 + 6000, 'setup: SQLite holds the earlier signup');
-      const liveSignup = { email: CHANGED_EMAIL, platform: 'ios', updatesOptOut: false, noticeId: 'notice-3', createdAt: earliest, updatedAt: IMPORT_T0 + 6000 };
+      const liveSignup = {
+        email: CHANGED_EMAIL,
+        platform: 'ios',
+        updatesOptIn: true,
+        updatesConsentAt: IMPORT_T0 + 6000,
+        updatesConsentNoticeId: 'notice-3',
+        updatesWithdrawnAt: null,
+        noticeId: 'notice-3',
+        createdAt: earliest,
+        updatedAt: IMPORT_T0 + 6000,
+      };
       nodeAssert.deepStrictEqual(
         await stores.waitlist.export(),
         [liveSignup, ...views.waitlist.filter((row) => row.email !== CHANGED_EMAIL)].sort((x, y) => x.createdAt - y.createdAt),
