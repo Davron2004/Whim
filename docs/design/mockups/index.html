@@ -1796,33 +1796,39 @@ function wireMotion(root) {
 
 
 // ── Prototype ───────────────────────────────────────────────────────────────
+const CLOSE = '.w-sheet-head .w-iconbtn.filled', BACK = '.w-sheet-head .w-iconbtn:not(.filled)';
 const PROTO = {
-  home: [['.w-composer', 'describe', 'sheet', 'Make an app'], ['.w-cell:first-child', 'app-timer', 'morph', 'Open Pour Timer']],
-  describe: [['.w-btn.ember', 'plan-thinking', 'push', 'Continue']],
-  'plan-thinking': [['@auto', 'plan', 'fade', 1500]],
-  plan: [['.w-btn.ember', 'making', 'fade', 'Make it']],
-  making: [['@auto', 'ready', 'fade', 3200], ['.w-btn.secondary', 'home-states', 'down', 'Back to your apps']],
-  ready: [['.w-btn.tint', 'app-timer', 'morph', 'Open Pour Timer'], ['.w-actions .w-btn.plain', 'home', 'down', 'Done']],
+  home: [['.w-composer', 'describe', 'sheet', 'Make an app'], ['.w-cell:first-child', 'app-timer', 'open', 'Open Pour Timer']],
+  describe: [['.w-btn.ember', 'plan-thinking', 'push', 'Continue'], [CLOSE, 'home', 'down', 'Close']],
+  'plan-thinking': [['@auto', 'plan', 'fade', 1500], [BACK, 'describe', 'back', 'Back'], [CLOSE, 'home', 'down', 'Close']],
+  plan: [['.w-btn.ember', 'making', 'fade', 'Make it'], [BACK, 'describe', 'back', 'Back'], [CLOSE, 'home', 'down', 'Close']],
+  making: [['@auto', 'ready|failure', 'fade', 3200], [CLOSE, 'home-states', 'down', 'Close; it keeps going'], ['.w-actions .w-btn.plain', 'home', 'down', 'Stop']],
+  ready: [['.w-btn.tint', 'app-timer', 'open', 'Open it'], ['.w-actions .w-btn.plain', 'home', 'down', 'Done'], [CLOSE, 'home', 'down', 'Close']],
+  failure: [['.w-actions .w-btn.ink', 'describe', 'push', 'Change the description'], ['.w-actions .w-btn.plain', 'making', 'fade', 'Try again as it is'], ['.w-btn.danger', 'deleted', 'down', 'Discard'], [CLOSE, 'home-states', 'down', 'Close']],
+  deleted: [['.w-composer', 'describe', 'sheet', 'Make an app'], ['.w-cell:first-child', 'app-timer', 'open', 'Open Pour Timer']],
   'home-states': [['.w-composer', 'describe', 'sheet', 'Make an app'], ['.w-cell:first-child', 'making', 'sheet', 'Show progress']],
   'app-timer': [['.w-orb', 'whim-sheet', 'sheet', 'Whim menu']],
-  'whim-sheet': [['.w-field', 'whim-plan', 'sheet', 'What should change?'], ['.w-row:last-child', 'home', 'down', 'Your apps']],
-  'whim-plan': [['.w-btn.ember', 'app-changing', 'down', 'Make the change']],
-  'app-changing': [['.w-toast .ta', 'app-timer', 'fade', 'Reload']],
+  'whim-sheet': [['.w-field', 'whim-plan', 'sheet', 'What should change?'], ['.w-sheet .w-row:last-child', 'home', 'down', 'Back to your apps'], ['.w-sheet-head .w-iconbtn.filled', 'app-timer', 'down', 'Close']],
+  'whim-plan': [['.w-btn.ember', 'app-changing', 'down', 'Make the change'], [BACK, 'whim-sheet', 'back', 'Back'], [CLOSE, 'app-timer', 'down', 'Close']],
+  'app-changing': [['.w-toast .ta', 'app-timer', 'fade', 'Reload'], ['.w-orb', 'whim-sheet', 'sheet', 'Whim menu']],
 };
 let protoTimer = 0;
 function viewPrototype() {
-  return `<div class="pg-focus-head"><div><div class="pg-flabel">Prototype</div><h2>Tap through it</h2><p>Make an app, open it, then change it while it runs. Highlighted areas are tappable; transitions use the system’s springs. The motion lab has the full gestures.</p></div><div class="pg-row"><button class="pg-btn dark" id="proto-restart">Start over</button></div></div>
-<div class="pg-proto"><div class="pg-proto-stage" id="proto-stage"></div><ol class="pg-proto-steps" id="proto-steps"><li>Tap <b>Make an app…</b></li><li><b>Continue</b>, then answer or skip the choices</li><li><b>Make it</b> and watch the wisp work</li><li><b>Open Pour Timer</b></li><li>Tap the ember in the corner, then <b>What should change?</b></li><li><b>Make the change</b>, then <b>Reload</b></li></ol></div>`;
+  return `<div class="pg-focus-head"><div><div class="pg-flabel">Prototype</div><h2>Tap through it</h2><p>Make an app, open it, then change it while it runs. Highlighted areas are tappable, including back and close on every sheet. Opening an app grows a container in its canvas colour from the tile; the motion lab has the full gestures.</p></div><div class="pg-row"><label class="pg-btn" style="cursor:pointer"><input type="checkbox" id="proto-fail" style="margin:0 4px 0 0">Make it fail</label><button class="pg-btn dark" id="proto-restart">Start over</button></div></div>
+<div class="pg-proto"><div class="pg-proto-stage" id="proto-stage"></div><ol class="pg-proto-steps" id="proto-steps"><li>Tap <b>Make an app…</b></li><li><b>Continue</b>, then answer or skip the choices</li><li><b>Make it</b> and watch the ember work (or tick <b>Make it fail</b> first, for the failure sheet)</li><li><b>Open it</b>: the app grows out of its tile</li><li>Tap the orb in the corner, then <b>What should change?</b></li><li><b>Make the change</b>, then <b>Reload</b></li><li><b>Back to your apps</b> in the Whim sheet closes the app</li></ol></div>`;
 }
 function wireProto(root) {
-  const stage = root.querySelector('#proto-stage');
+  const stage = root.querySelector('#proto-stage'), failBox = root.querySelector('#proto-fail');
   const { W, H } = dims(PG.platform);
   const sc = Math.min(1, (Math.min(contentWidth(), 520)) / W);
   stage.style.width = `${Math.round(W * sc)}px`; stage.style.height = `${Math.round(H * sc)}px`;
   const scheme = PG.scheme === 'dark' ? 'dark' : 'light';
-  const ease = linearEasing(SPRINGS.smooth), easeM = linearEasing(SPRINGS.morph);
-  const show = (id, how) => {
+  // linear() springs only where the engine supports them; the nearest cubic-bezier otherwise (iOS 15.1 floor).
+  const lin = (cfg, fallback) => { const e = linearEasing(cfg); return { ms: e.ms, css: CSS.supports('animation-timing-function', 'linear(0, 1)') ? e.css : fallback }; };
+  const ease = lin(SPRINGS.smooth, 'cubic-bezier(.25, .9, .3, 1)'), easeM = lin(SPRINGS.morph, 'cubic-bezier(.3, 1.1, .4, 1)');
+  const show = (id, how, src) => {
     clearTimeout(protoTimer);
+    if (id.includes('|')) id = failBox.checked ? id.split('|')[1] : id.split('|')[0];
     const s = SCREENS.find((x) => x.id === id);
     const layer = document.createElement('div');
     layer.className = 'pg-proto-layer';
@@ -1830,9 +1836,24 @@ function wireProto(root) {
     layer.innerHTML = s.render({ p: PG.platform, s: scheme });
     stage.appendChild(layer);
     const old = [...stage.children].filter((c) => c !== layer);
-    const frames = { sheet: [{ transform: `translateY(60px) scale(${sc})`, opacity: 0 }, { transform: `scale(${sc})`, opacity: 1 }], push: [{ transform: `translateX(48px) scale(${sc})`, opacity: 0 }, { transform: `scale(${sc})`, opacity: 1 }], down: [{ transform: `scale(${sc * 1.03})`, opacity: 0 }, { transform: `scale(${sc})`, opacity: 1 }], morph: [{ transform: `scale(${sc * .9})`, opacity: 0 }, { transform: `scale(${sc})`, opacity: 1 }], fade: [{ opacity: 0 }, { opacity: 1 }] }[how || 'fade'];
     const reduced = REDUCED;
-    const anim = layer.animate(reduced ? [{ opacity: 0 }, { opacity: 1 }] : frames, reduced ? { duration: 160, easing: 'ease-out' } : { duration: how === 'morph' ? easeM.ms : ease.ms, easing: how === 'morph' ? easeM.css : ease.css });
+    let anim;
+    const srcTile = src && (src.classList.contains('w-tile') ? src : src.closest('.w-cell') ? src.closest('.w-cell').querySelector('.w-tile') : src.closest('.phone') && src.closest('.phone').querySelector('.w-sheet .w-tile'));
+    if (how === 'open' && !reduced) {
+      // M2: a bg container grows from the tile; the tint stays a tile-sized plate and fades as the app paints.
+      const sr = stage.getBoundingClientRect(), from = (srcTile || src).getBoundingClientRect();
+      const x = (from.left - sr.left) / sc, y = (from.top - sr.top) / sc, w = from.width / sc, h = from.height / sc;
+      const g = G({ p: PG.platform }), tileHTML = tile(APPS.pour, { size: g.tile, label: false });
+      const cover = document.createElement('div');
+      cover.style.cssText = 'pointer-events:none;position:absolute;inset:0;z-index:60;background:var(--w-bg);display:flex;align-items:center;justify-content:center';
+      cover.innerHTML = tileHTML;
+      layer.querySelector('.phone').appendChild(cover);
+      anim = layer.animate([{ clipPath: `inset(${y}px ${W - x - w}px ${H - y - h}px ${x}px round ${w * .3}px)` }, { clipPath: `inset(0px 0px 0px 0px round ${PG.platform === 'ios' ? 54 : 40}px)` }], { duration: easeM.ms, easing: easeM.css });
+      cover.animate([{ opacity: 1 }, { opacity: 1, offset: .55 }, { opacity: 0 }], { duration: easeM.ms + 220, fill: 'forwards' }).onfinish = () => cover.remove();
+    } else {
+      const frames = { sheet: [{ transform: `translateY(60px) scale(${sc})`, opacity: 0 }, { transform: `scale(${sc})`, opacity: 1 }], push: [{ transform: `translateX(48px) scale(${sc})`, opacity: 0 }, { transform: `scale(${sc})`, opacity: 1 }], back: [{ transform: `translateX(-48px) scale(${sc})`, opacity: 0 }, { transform: `scale(${sc})`, opacity: 1 }], down: [{ transform: `scale(${sc * 1.03})`, opacity: 0 }, { transform: `scale(${sc})`, opacity: 1 }], fade: [{ opacity: 0 }, { opacity: 1 }] }[how] || [{ opacity: 0 }, { opacity: 1 }];
+      anim = layer.animate(reduced ? [{ opacity: 0 }, { opacity: 1 }] : frames, reduced ? { duration: 160, easing: 'ease-out' } : { duration: ease.ms, easing: ease.css });
+    }
     anim.onfinish = () => old.forEach((o) => o.remove());
     const hops = PROTO[id] || [];
     hops.forEach(([sel, next, kind, extra]) => {
@@ -1840,7 +1861,7 @@ function wireProto(root) {
       const el = layer.querySelector(sel);
       if (!el) return;
       el.classList.add('proto-hot'); el.setAttribute('role', 'button'); el.setAttribute('tabindex', '0'); el.setAttribute('aria-label', extra);
-      const go = (e) => { e.stopPropagation(); show(next, kind); };
+      const go = (e) => { e.stopPropagation(); show(next, kind, el); };
       el.addEventListener('click', go);
       el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(e); } });
     });
