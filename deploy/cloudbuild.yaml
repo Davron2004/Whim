@@ -5,7 +5,7 @@
 #     --substitutions COMMIT_SHA=<full sha>,_REGION=<region> .
 #
 # The build reads no secret. Its one build argument is WHIM_COMMIT, the same SHA that tags the image,
-# which /healthz reports (developer-observability D13).
+# which /health reports (developer-observability D13).
 substitutions:
   _REGION: northamerica-northeast1
 steps:

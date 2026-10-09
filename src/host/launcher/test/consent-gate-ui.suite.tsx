@@ -162,7 +162,7 @@ async function withLauncher(consent: ConsentSeed, body: (tree: Tree, requests: s
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     requests.push(new URL(String(url)).pathname);
     headers.push(new Headers(init?.headers));
-    if (String(url).endsWith('/healthz')) return new Response(JSON.stringify({ service: 'whim-server' }));
+    if (String(url).endsWith('/health')) return new Response(JSON.stringify({ service: 'whim-server' }));
     if (String(url).endsWith('/clarify')) return new Response(JSON.stringify({ questions: [] }));
     if (String(url).endsWith('/rewrite')) return new Response(JSON.stringify({ rewrittenPrompt: 'A tea timer', plan: [] }));
     return new Promise<Response>(() => {});
