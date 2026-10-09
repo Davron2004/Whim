@@ -14,7 +14,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import nodeAssert from 'node:assert';
-import { check, report, section } from './harness';
+import { check, lastReportAt, report, section } from './harness';
 import { runStoreConformance, type StoreBackendFactory } from './store-conformance.suite';
 import { needsComposite, recordQueryShapes, uncoveredShapes, unusedIndexes, type IndexEntry } from './firestore-index-coverage';
 import { loadServerConfig } from '../src/config';
@@ -24,6 +24,19 @@ import type { DocumentReference, Firestore } from '@google-cloud/firestore';
 import { deleteInBatches, openFirestoreClient } from '../src/firestore/client';
 import { runFirestoreImportTests } from './firestore-import';
 import { FirestoreUsageStore } from '../src/firestore/usage-store';
+
+/** How long the run may go without reporting a check before it fails as stalled. It replaces a
+ *  60 s whole-run deadline, which a slow but progressing run could pass: the run takes about 17 s
+ *  idle and 29 s at background QoS beside a busy CPU (#144). The longest quiet stretch is one
+ *  conformance case, which its own ceiling (`CASE_TIMEOUT_MS`, below this) names first; a client
+ *  retrying an emulator that went away goes quiet for about a minute per call. */
+const STALL_MS = 180_000;
+const stallWatch = setInterval(() => {
+  const quietMs = Date.now() - lastReportAt();
+  if (quietMs < STALL_MS) return;
+  console.error(`stores:firestore:test FAILED — no check reported for ${Math.round(quietMs / 1000)} s (is the emulator at ${process.env.FIRESTORE_EMULATOR_HOST} still up?).`);
+  process.exit(1);
+}, 1000);
 
 const RUN_ID = randomUUID();
 const T0 = Date.UTC(2026, 9, 7, 12, 0, 0);
@@ -44,8 +57,14 @@ function firestoreConfig(now: () => number = () => T0): StoreConfig {
 }
 
 /** The real opener, with every collection under `conformance/<namespace>`. */
+/** The probe bound for the clients this run opens. The default, 10 s, is the production boot's
+ *  budget; the emulator answers in milliseconds idle but took longer than 10 s at background QoS
+ *  beside a busy CPU, failing cases with "could not open the stores" (#144). Here it only bounds
+ *  a hang. The unreachable-database case sets its own bound. */
+const PROBE_CEILING_MS = 120_000;
+
 function namespacedOpener(namespace: string, options: FirestoreStoresOptions = {}): FirestoreStoresOptions {
-  return { root: (db) => db.collection('conformance').doc(namespace), ...options };
+  return { root: (db) => db.collection('conformance').doc(namespace), probeTimeoutMs: PROBE_CEILING_MS, ...options };
 }
 
 function openNamespace(namespace: string, now?: () => number): Promise<OpenedStores> {
@@ -64,6 +83,10 @@ async function closedPort(): Promise<number> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   return port;
 }
+
+/** The shortest a retrying Firestore client was measured to hold a caller (terminating one waited
+ *  42–74 s; one left alone retries for about a minute). */
+const RETRYING_CLIENT_MS = 42_000;
 
 async function unreachableDatabaseTest(): Promise<void> {
   section('Firestore: a database the probe cannot read fails the open, by name, within its bound');
@@ -90,7 +113,10 @@ async function unreachableDatabaseTest(): Promise<void> {
     outcome.startsWith('WHIM_STORE_BACKEND=firestore: cannot read Firestore database "(default)"') && outcome.includes(`within ${probeTimeoutMs} ms`),
     outcome,
   );
-  check('  ... once its probe bound has passed, not after the client gives up', Date.now() - started < probeTimeoutMs + 2000, `${Date.now() - started} ms`);
+  // The message above proves the bound fired. Waiting on the retrying client instead (to terminate
+  // it, or for it to give up) takes 42 s or more, so half that tells the two apart under any load;
+  // the old 3 s margin also counted the client's start-up, which stretches with load (#144).
+  check('  ... once its probe bound has passed, not after the client gives up', Date.now() - started < RETRYING_CLIENT_MS / 2, `${Date.now() - started} ms`);
 }
 
 async function persistenceTest(): Promise<void> {
@@ -123,7 +149,7 @@ async function documentModelTest(): Promise<void> {
   section('Firestore: the document model (design D3)');
   const namespace = `${RUN_ID}-model`;
   const stores = await openNamespace(namespace);
-  const db = await openFirestoreClient('(default)');
+  const db = await openFirestoreClient('(default)', { probeTimeoutMs: PROBE_CEILING_MS });
   try {
     await stores.waitlist.upsert({ email: '  Model@Example.COM ', platform: 'ios', updatesOptOut: true, noticeId: 'notice-1', now: T0 });
     const reportId = await stores.reports.insert({ deviceId: 'dev-a', reason: 'harmful', now: T0 });
@@ -211,7 +237,7 @@ function losingCommitReplies(db: Firestore): Firestore {
 
 async function lostCommitReplyTest(): Promise<void> {
   section('Firestore: an admission whose commit landed but whose reply was lost');
-  const db = await openFirestoreClient('(default)');
+  const db = await openFirestoreClient('(default)', { probeTimeoutMs: PROBE_CEILING_MS });
   const root = db.collection('conformance').doc(`${RUN_ID}-lost-reply`);
   const retrying = new FirestoreUsageStore(losingCommitReplies(db), root);
   const plain = new FirestoreUsageStore(db, root);
@@ -301,7 +327,7 @@ function indexCoverageTest(shapes: Parameters<typeof uncoveredShapes>[0]): void 
 
 async function batchedDeleteTest(): Promise<void> {
   section('Firestore: batched deletes');
-  const db = await openFirestoreClient('(default)');
+  const db = await openFirestoreClient('(default)', { probeTimeoutMs: PROBE_CEILING_MS });
   try {
     const items = db.collection('conformance').doc(`${RUN_ID}-batches`).collection('items');
     await Promise.all(Array.from({ length: 7 }, (_, n) => items.doc(`item-${n}`).set({ n })));
@@ -326,4 +352,5 @@ await firestoreBootTest();
 await runFirestoreImportTests((namespace) => openNamespace(namespace), RUN_ID, verify);
 indexCoverageTest(shapes);
 await unreachableDatabaseTest();
+clearInterval(stallWatch);
 report();

@@ -11,7 +11,7 @@
     "android:release": "react-native run-android --mode offline --active-arch-only",
     "start": "react-native start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && node scripts/typecheck-tests.mjs",
     "test": "jest",
     "build": "node build/build.mjs",
     "vstore:test": "node src/host/version-store/test/run.mjs",
@@ -30,7 +30,7 @@
     "server:test": "node server/test/run.mjs",
     "server:e2e": "node server/test/e2e.run.mjs",
     "guard:metro": "node server/guard-metro.mjs",
-    "stores:firestore:test": "npx --ignore-scripts --package=firebase-tools@15.32.1 firebase emulators:exec --config server/test/firebase.json --only firestore --project demo-whim-conformance \"node server/test/firestore.run.mjs\"",
+    "stores:firestore:test": "node scripts/firestore-emulator-test.mjs",
     "whim:logs": "node server/logs-tail.mjs"
   },
   "dependencies": {
@@ -92,6 +92,14 @@
     "ios": {
       "modulesProvider": {
         "WhimTone": "WhimToneModule"
+      }
+    }
+  },
+  "overrides": {
+    "basic-ftp": "^6.2.2",
+    "firebase-tools": {
+      "gaxios": {
+        "uuid": "^11.1.1"
       }
     }
   }

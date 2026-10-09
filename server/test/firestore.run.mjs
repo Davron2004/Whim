@@ -14,23 +14,18 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
 import { devBundleExternals } from '../build.mjs';
+import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
 
 if (!process.env.FIRESTORE_EMULATOR_HOST) {
   console.error('stores:firestore:test FAILED — FIRESTORE_EMULATOR_HOST is unset; run via the npm script.');
   process.exit(1);
 }
 
-// The whole run takes about 13 s locally; the bound leaves several times that for a loaded CI host.
-const WATCHDOG_MS = 60_000;
-// The client retries an unreachable emulator for about a minute per call; fail by name instead of
-// hanging the gate. Each conformance case also has its own 20 s timeout.
-const watchdog = setTimeout(() => {
-  console.error(`stores:firestore:test FAILED — the run did not finish within ${WATCHDOG_MS / 1000}s.`);
-  process.exit(1);
-}, WATCHDOG_MS);
-
+// No whole-run deadline: a run's length follows the machine's load (about 17 s idle, several times
+// that at background QoS on a busy Mac). `firestore-conformance.ts` fails by name once no check
+// has been reported for its stall bound, which is what a client retrying a vanished emulator does.
 const here = path.dirname(fileURLToPath(import.meta.url));
-const outfile = path.join(process.cwd(), `.firestore-conformance.${process.pid}.tmp.mjs`);
+const outfile = tmpBundlePath('firestore-conformance');
 
 await build({
   entryPoints: [path.join(here, 'firestore-conformance.ts')],
@@ -53,7 +48,6 @@ try {
   fs.rmSync(outfile, { force: true });
 }
 
-clearTimeout(watchdog);
 // The unreachable-database case leaves its client retrying in the background (terminating it would
 // wait for the retries), so the process exits here rather than when that client gives up.
 process.exit(0);

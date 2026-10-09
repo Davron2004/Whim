@@ -10,7 +10,7 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { SEED_VERSION } from '../seed';
 import { resetNativeStorage } from './native-storage';
 import { injectedScripts } from './native-host';
-import { renderScreen, unmountScreen } from './react-screen';
+import { renderScreen, unmountScreen, hostType } from './react-screen';
 
 const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
@@ -27,7 +27,7 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
     try {
       await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
       h.eq(injectedScripts.length, 0, 'nothing is injected before the page reports it has loaded');
-      await TestRenderer.act(async () => tree.root.find((node) => node.type === 'WebView').props.onLoadEnd());
+      await TestRenderer.act(async () => tree.root.find((node) => hostType(node) === 'WebView').props.onLoadEnd());
       h.eq(injectedScripts.length, 1, 'one script is injected on load');
       h.ok(injectedScripts[0]?.includes('timer-bundle-7f3a') ?? false, 'the injected script carries the stored bundle');
     } finally {

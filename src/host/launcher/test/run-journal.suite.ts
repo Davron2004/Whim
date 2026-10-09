@@ -43,7 +43,7 @@ function makeStore(map = new Map<string, string>()) {
 class CountingKv implements KVBackend {
   reads = 0;
   constructor(private readonly inner: KVBackend) {}
-  getString(key: string): string | undefined {
+  getString(key: string): string | undefined | null {
     this.reads++;
     return this.inner.getString(key);
   }

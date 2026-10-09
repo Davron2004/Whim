@@ -32,7 +32,7 @@ import { RELEASE } from '../release-config';
 import HomeScreen from '../HomeScreen';
 import { testAppInfo } from './client-fixtures';
 import { json, waitFor, withLauncher, type sseStream, type Tree } from './rendered-launcher';
-import { button, press } from './react-screen';
+import { button, press, hostType } from './react-screen';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
@@ -108,7 +108,7 @@ async function confirmOwnServer(tree: Tree): Promise<void> {
 }
 
 async function typeAddress(tree: Tree, address: string): Promise<void> {
-  const field = () => tree.root.find((node) => node.type === 'TextInput');
+  const field = () => tree.root.find((node) => hostType(node) === 'TextInput');
   await TestRenderer.act(async () => field().props.onChangeText(address));
   await TestRenderer.act(async () => field().props.onSubmitEditing());
 }

@@ -56,7 +56,7 @@ export const injectedScripts: string[] = [];
  *  rendered MiniAppView really delivers its bundle; the scripts land in `injectedScripts`. */
 export const WebView = React.forwardRef<{ injectJavaScript: (js: string) => void }, HostProps>((props, ref) => {
   React.useImperativeHandle(ref, () => ({ injectJavaScript: (js: string) => { injectedScripts.push(js); } }), []);
-  return React.createElement('WebView', props, props.children);
+  return React.createElement('WebView', props, props.children as React.ReactNode);
 });
 export const Modal = (props: HostProps) => props.visible ? React.createElement('Modal', props, props.children) : null;
 export function FlatList({ data, renderItem, ...props }: HostProps & { data: unknown[]; renderItem: (args: { item: unknown; index: number }) => React.ReactNode }) {
