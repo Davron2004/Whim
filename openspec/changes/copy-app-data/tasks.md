@@ -36,25 +36,25 @@
 
 ## 2. Launcher copy API and crash safety
 
-- [ ] 2.1 Create `src/host/launcher/data-copy-journal.ts`: a persisted list of `{ copyAppId, sourceAppId, startedAt }` with `put`, `clear` and `list`. It is MMKV-backed on device and uses the existing injected-KV pattern in Node. Add `sweepDataCopies({ journal, index, deleteStorage })`, which clears entries whose `copyAppId` is in the index and otherwise deletes the store and then clears the entry. It must never delete an id that has an index entry.
-- [ ] 2.2 Change `StoreAccess` (`store-access.ts`):
+- [x] 2.1 Create `src/host/launcher/data-copy-journal.ts`: a persisted list of `{ copyAppId, sourceAppId, startedAt }` with `put`, `clear` and `list`. It is MMKV-backed on device and uses the existing injected-KV pattern in Node. Add `sweepDataCopies({ journal, index, deleteStorage })`, which clears entries whose `copyAppId` is in the index and otherwise deletes the store and then clears the entry. It must never delete an id that has an index entry.
+- [x] 2.2 Change `StoreAccess` (`store-access.ts`):
   - `fork(entry, versionId?, { data?: 'fresh' | 'copy' })`, with `shareData` deleted;
   - a new `continueSharingData(entry)` that sets `storageGroupId = entry.storageGroupId ?? entry.id`;
   - an optional `copyStorage` in `StoreAccessOptions`;
   - `readonly canCopyData`.
 
   For `'copy'`, follow design D2's sequence inside `serial(repo)`: version fork, then journal put, then the stray-file guard (abort if any index entry resolves to the id, else `deleteStorage`), then `copyStorage({ from: engineAppId(entry), to: copyAppId })`, then `index.put` (the commit), then journal clear. On failure, delete the store, clear the journal and rethrow. A `'copy'` request without the seam rejects before any write.
-- [ ] 2.3 Wire it in:
+- [x] 2.3 Wire it in:
   - `build-lifecycle.ts:267` calls `continueSharingData`.
   - `LauncherRoot.tsx` injects the device `copyStorage` at the `new StoreAccess(...)` site.
   - `LauncherRoot.tsx` runs `sweepDataCopies` in the launch block before any realm can bind, next to `demoteBuildingToInterrupted`.
   - Every remaining `fork(..., { shareData })` caller is updated. Expect the Home share sheet, if design-system-v1 15.3 has not already removed it.
-- [ ] 2.4 Add a crash-mid-copy suite in `src/host/launcher/test/`, using the real file-backed Node engine and the node opener:
+- [x] 2.4 Add a crash-mid-copy suite in `src/host/launcher/test/`, using the real file-backed Node engine and the node opener:
   - Inject a fault after each step of D2: journal written, stray guard done, snapshot partially written, snapshot done, entry written. For each, run `sweepDataCopies` and assert either no entry, no file and an empty journal, or the entry, the complete data and an empty journal. The original's file stays byte-identical throughout.
   - A child-process test SIGKILLs a real `VACUUM INTO` of a large store mid-write. The parent then runs the sweep with the journal entry the flow would have written, and asserts the partial file is gone and a retry succeeds.
   - A stray file under the copy id is never served to a "Start fresh" copy.
   - The sweep leaves an indexed id alone.
-- [ ] 2.5 Add a schema-evolution and independence suite. Make A's union reach ordinal 7 with one retired field, then copy A to C with `'copy'`. Then:
+- [x] 2.5 Add a schema-evolution and independence suite. Make A's union reach ordinal 7 with one retired field, then copy A to C with `'copy'`. Then:
   - Both A and C add a field to the same collection through real `engine.open`. Assert both new ordinals are greater than 7, neither store has the other's new column, and both read their pre-copy records.
   - A copy from an older version opens with zero DDL, its union keeps every field, and the floor for its next generation (as read through `readApplied(engineAppId(copy))`) is A's floor at copy time.
   - Writes after the copy stay on their own side.
@@ -63,6 +63,8 @@
   - Census guard: every `fork` option combination yields `storageGroupId === undefined`. `canCopyData` is false without the seam.
 
 ## 3. Launcher question UI
+
+- [ ] 3.0 (product-owner ruling 2026-10-09, after chain-2's note) Ruling 3 mechanism: add an exact `hasSavedData(appId)` read to the storage engine beside `deleteStorage` (true iff the app's store holds any user data — kv or any collection row; must NOT create the file, unlike op-sqlite `open`), expose it through `StoreAccess`, and skip the copy-or-fresh question (start fresh silently) when it is false. Widen chain-3's file list to the storage-engine module for this. Red-check: kv-only data counts as saved; a never-opened app is not saved; probing never creates a file.
 
 - [ ] 3.1 Precondition: design-system-v1 chains 15 and 20 have merged onto the staging branch. Check this first, and stop with a report if not. Then, in the tile menu's "Make a copy" flow:
   - When `access.canCopyData` is true, show the "Copy the data, or start fresh?" sheet, with the rows "Copy the data" and "Start fresh". Their copy keys go in `copy.ts`.
