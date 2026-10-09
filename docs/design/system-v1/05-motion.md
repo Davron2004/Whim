@@ -33,7 +33,8 @@ is 30 ms for the first six items.
 ## Moments
 
 M-numbers are referenced from `02`, `03` and `06`. The research's 12 moments (`docs/research/
-animation-options-2026-09.md` §5) are noted as R-numbers.
+animation-options-2026-09.md` §5) are noted as R-numbers. What moves today is inventoried in `00-audit.md` §11 and, with
+recordings, in the capture index (`Whim-evidence/design-audit-2026-10-09/INDEX.md` §2–3); the two agree.
 
 ### Touch
 
@@ -82,6 +83,8 @@ animation-options-2026-09.md` §5) are noted as R-numbers.
 | M17 (R5) | Grid appears | First launch and returning from onboarding only | Tiles rise 8px and fade in, `stagger` across the first six, the rest together | `smooth` | Touching the grid finishes it | Appear at once |
 | M18 | Delete an app | Confirmed delete | The tile shrinks to 0.8 and fades (`fade-out`), then the tiles after it slide into place | `smooth` reflow | n/a | Remove at once, neighbours cross-fade |
 | M19 (R8) | Skeleton | A local load that passes 300 ms | Opacity 0.34 ↔ 0.72 on a 1.9 s cycle | `breathe` | Content replaces it with `fade-in` | Static at 0.6 |
+| M27 | Launch to home | Cold start | The native launch screen (the wisp on `bg`) holds until Home has drawn its first frame, then cross-fades over 160 ms | `fade-in` | n/a | Same |
+| M28 | Orb while scrolling | The app's content scrolls down | The orb's disc shrinks away and the ember fades to 0.6; it returns when scrolling stops (after 600 ms) or reverses | `snappy` | Any change of direction retargets | Opacity only, no shrink |
 | M23 | Keyboard | Keyboard shows or hides | Sheets and bottom actions follow the keyboard frame by frame (Reanimated keyboard tracking on both platforms; replaces the iOS-only `LayoutAnimation` in `KeyboardShell.tsx:89-94`) | The keyboard's own curve | n/a | Same; it is not decorative |
 
 ### Inside apps (SDK)

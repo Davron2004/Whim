@@ -26,6 +26,10 @@ Two rules hold for both halves:
 | Rules | One filled button per screen. A bottom action may have one `plain` action under it. Labels wrap to two lines rather than truncate; the button grows (`minHeight`, never `height`) |
 | A11y | Role button; the busy and disabled states are announced |
 
+Three prominent fills is not the "two primary colours" defect the capture lists (`INDEX.md` §4.6): today
+violet and black are assigned screen by screen with no rule; now the fill says who acts next, and one screen
+never shows two of them.
+
 Replaces `PrimaryAction`, the inline buttons in `DoneStep`, `FailureScreen`, `AgeScreen`, `TermsScreen`,
 `ConsentScreen`, `UpdateRequiredScreen`, `ReportSheet`, `MiniAppView` and the History action buttons: six
 treatments and five heights today.
@@ -129,6 +133,7 @@ Replaces four pill styles (compose suggestions, clarify answers, History filters
 | Focus | Border becomes 2pt `text` (ink: the field is yours) |
 | Error | 2pt `danger`, helper line in `danger-text`, an icon before it |
 | Extras | Single-line fields get a clear button when not empty; the send-style area (the Whim sheet) gets a 32pt `ember` send button inside its trailing edge |
+| Keyboard | A focused field always scrolls to sit 16pt above the keyboard, in screens and sheets alike (`ios/35` shows the server field under the keyboard today) |
 
 ### Grouped list
 
@@ -172,7 +177,11 @@ A 44pt `raised` disc with `shadow-floating`, the eyeless ember at 20pt in the mi
 from the trailing edge and the bottom safe area. The realm is told it covers 44 + 16 + the inset. States: at
 rest (still), making a change for this app (the ember follows the stream), change failed (an 8pt danger dot
 at the top-right), change ready (one flare, then the toast). Tap opens the Whim sheet (M21). Accessibility
-label "Whim menu", plus the state.
+label "Whim menu", plus the state. While the app's content scrolls down, the orb shrinks to
+its 24pt ember with no disc and fades to 0.6, and it returns when scrolling stops or reverses (M28). The
+realm reports only the scroll direction, as one more one-way frame next to the nav-depth frame; a hostile app
+can make the orb shrink, never vanish, and it stays tappable at every size. It is opaque at every size, so
+nothing shows through it (today's translucent disc lets the app's text bleed through, `android/217`).
 
 ### Status line
 

@@ -323,6 +323,7 @@ Inventory (from a full sweep of `src/`):
 | Skeleton breathe | `flow-skeletons.tsx:26-49` | 950 ms per leg, ease-in-out, loop, staggered 80-150 ms | Loops under Reduce Motion |
 | Done tile rise | `app-tile.tsx:41-43,134-145` | 400 ms bezier(.25,.1,.25,1), 6px | Fixed timing on the best moment |
 | Settings chevron | `SettingsScreen.tsx:83,129-138` | 200 ms ease-in-out rotate | Fine |
+| Settings scroll to Advanced | `SettingsScreen.tsx:221` | `scrollToEnd({ animated: true })` | Platform scroll curve; fine |
 | Keyboard | `KeyboardShell.tsx:89-94` | LayoutAnimation, system curve, iOS only | Fine |
 | SDK Button / Card press | `index.tsx:502`, `surfaces.tsx:48` | opacity 0.8, 80 ms | No scale |
 | SDK Switch knob | `controls.tsx:117` | 150 ms `ease` | CSS `ease` on a toggle |

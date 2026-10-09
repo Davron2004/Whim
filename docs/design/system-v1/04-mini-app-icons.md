@@ -144,8 +144,9 @@ marks, flags of countries, weapons, and anything whose meaning depends on cultur
 | Change failed | The app's tile with the danger badge | "Change didn't work" `danger-text` | Opens the app | See what happened, Try again, Discard the change |
 
 The grey ember for failed and stopped tiles is the wisp's silhouette in `text-3` with no glow: Whim's mark,
-with the light out. The name under a tile being made is the working title with any leading "A", "An" or "The"
-removed ("Pomodoro timer", not "A Pomodoro timer").
+with the light out. The name under a tile being made is a short working name: the name the plan response
+proposes when it has one, otherwise the first three words of the description without a leading "A", "An" or
+"The" ("Pomodoro timer", not "A Pomodoro timer", and not "A habit tracker: my…" as in `android/26b`).
 
 When making finishes while the grid is on screen, the ember tile turns into the app's tile in place: the
 glow flares (`spark`), the squircle fills with the tint from the centre out, and the glyph fades in at 0.9

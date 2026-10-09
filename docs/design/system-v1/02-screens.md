@@ -10,11 +10,42 @@ What the capture confirmed across all screens:
 
 - **iOS draws everything in SF.** The iOS shell has none of the custom faces: the "Whim" title, the
   "YOUR APPS" eyebrow, the mono timestamps and the Newsreader quote all render in SF Pro, the quote as SF
-  italic (`ios/01-home-first-launch-examples`, `ios/100-history-single-version`). Android draws Instrument
-  Sans, Plex Mono and Newsreader. The same screen is two different designs today.
+  italic (`ios/01-home-first-launch-examples`, `ios/100-history-single-version`). The capture index says
+  Plex Mono Regular still renders on iOS; a 2× crop of `ios/100` shows "1m ago" and "YOU SAID" in SF, so
+  every custom face falls back. Android draws Instrument Sans, Plex Mono and Newsreader. The same screen is
+  two different designs today.
 - **No dark mode.** Every capture is light, on both platforms.
 - **Violet everywhere in apps.** The style gallery (`ios/200`–`203-sdk-gallery`) and the example apps
   (`ios/223-example-water-counter-used`) all use the shell's accent as their own.
+
+## The capture's defects, and where each one is fixed
+
+The capture index (`Whim-evidence/design-audit-2026-10-09/INDEX.md` §4) lists 21 defects. Every one has a
+place in this redesign:
+
+| # | Defect | Fixed by |
+|---|---|---|
+| 1 | Plex Mono eyebrows fall back to sans on iOS | System fonts everywhere and no mono eyebrows (`01-direction.md` §4) |
+| 2 | "DIDN'T FI…" pill truncates on the tile art | Tile states as a corner badge plus a second line under the name (`04-mini-app-icons.md`) |
+| 3 | Three sheet entrances, no exits | One `Sheet` (`03-components.md`), M11 in both directions |
+| 4 | No screen transitions | M13 push and pop, M2/M3 for apps, M6/M7 in the making sheet |
+| 5 | Cold launch: blank paper for about 1 s, a skeleton of 8 tiles for 13 apps, no title or composer | The launch screen holds until Home's first frame; the Home skeleton draws the title, the composer and the exact cells (Home, below); M27 |
+| 6 | Two primary-button colours with no rule | Colour now follows who acts: ember for Whim, ink for the system, the tint for an app (`01-direction.md` §2.2) |
+| 7 | Translucent orb over content, low-contrast glyph | An opaque raised disc with the ember, 44pt, reserved space at the end of every `Screen`, and the shrink while scrolling (`03-components.md` Orb, M28) |
+| 8 | Warning badge nearly invisible; Disabled white on lavender | `warning` is yellow with dark text; disabled is `fill` with `text-3` |
+| 9 | Failure copy reads like system output; offline users told to rephrase | Failure kinds with their own copy, including a connection row (`06-ux.md` §1) |
+| 10 | A dropped stream shows a generic "Something went wrong…" | The connection row: "I lost the connection to the server partway through." |
+| 11 | The offline indicator appears only after a relaunch | The offline notice follows connectivity live (`06-ux.md` §5) |
+| 12 | iOS keyboard covers the focused server field | Focused fields scroll above the keyboard (`03-components.md` Text field) |
+| 13 | Tiles scroll under the composer with no edge | Top and bottom scroll-edge fades (Home, below) |
+| 14 | "Use Whim's server" resets the address with one unconfirmed tap | Server choice as two rows; your address stays saved, so switching back loses nothing (`06-ux.md` §7) |
+| 15 | System dark mode puts dark native chrome on a light shell | Real dark mode; Whim's own sheets instead of native alerts |
+| 16 | Unstyled Material delete dialog | Whim's confirm sheet (`#s-delete-confirm`) |
+| 17 | Build screen repeats "Reading your plan", technical liveness, a bar that never fills | No bar; one step list; time lines in plain words (Making, below) |
+| 18 | Typeface switch between shell and app | One family (`01-direction.md` §4) |
+| 19 | Tile names truncate the raw prompt | A short working name for tiles being made (`04-mini-app-icons.md`) |
+| 20 | Report sheet nearly full height with a squeezed notice | `large` detent with the notice above Send, inside the scroll (Report, below) |
+| 21 | Settings gear is a text glyph, emoji-like on iOS | The `settings` icon from the set |
 
 ## Your apps
 
@@ -38,8 +69,12 @@ in `android/22`); tiles are big enough that nine apps fill the screen; the gear 
 | Search | A field under the title once there are 13 apps |
 
 **States:** first run with three examples (no "Example" captions); offline notice under the title; empty
-(`#s-home-empty`). **Motion:** grid appears with `stagger` on first launch only (M17); the composer grows
-into the making sheet (M6); a tile opens its app (M2).
+(`#s-home-empty`); loading, where the skeleton draws the real title, the composer and one cell per known app
+in the real 4-column geometry, so nothing moves when the tiles land (today it draws 8 bare tiles for 13 apps,
+`android/00-home-skeleton-cold-launch`). Scrolled, the grid fades out under the header row and above the
+composer over 16pt each, instead of sliding under them (`android/26b`, `26c`). **Motion:** grid appears with
+`stagger` on first launch only (M17); the composer grows into the making sheet (M6); a tile opens its app
+(M2).
 
 ### Making, failed, changing (`#s-home-states`)
 
@@ -253,6 +288,9 @@ preview with the app's code in mono, and "One moment" while sending.
 **New:** "Report a problem"; "What went wrong?" chips (one style); a note field; "Include what I asked for"
 switch; "What gets sent" collapsed with a chevron; the ID line as a footer; **Send report** (`ink`),
 **Cancel**. Sending: the button says "Sending…"; sent: a check, "Thanks. We'll look into it.", **Done**.
+The sheet uses the `large` detent, so its top stays clear of the status bar, and a send failure shows as a
+`Notice` at the end of the scrolling content, above the buttons, instead of squeezed between them
+(`android/110`, `117`).
 
 ### Update needed (`#s-update`)
 
@@ -264,7 +302,9 @@ switch; "What gets sent" collapsed with a chevron; the ID line as a footer; **Se
 ### Launch (`#s-launch`)
 
 The wisp at 112pt on `bg` in both schemes, still. The app icon is the wisp on warm dark (`01-direction.md`
-§8.2).
+§8.2). The native launch screen stays up until Home has drawn its first frame (skeleton or grid), then
+cross-fades (M27), so the second of blank paper in `motion/android-cold-launch-to-home` goes away. Today's
+launch mark is a white "W" in a violet disc (`ios/00-launch-screen`).
 
 ## Inside apps (SDK)
 
