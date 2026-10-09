@@ -1,10 +1,10 @@
 # Harness feedback
 
-Evidence for changing the coding harness (`docs/harness.md`), collected run by run from the agents that live inside it. Each run adds a folder `<YYYY-MM-DD>-<change>/` with one file per agent, plus the orchestrator's own. This README keeps the running tally: which themes keep coming back, what actually caught mistakes, and the proposals ranked by evidence.
+Evidence for changing the coding harness (`docs/harness.md`), collected run by run from the agents that live inside it. This README is the whole record: the run log, which themes keep coming back, what actually caught mistakes, and the proposals ranked by evidence. The per-agent files of the first five runs were folded in here and removed on 2026-10-09 (in git history at `8c6cb385`).
 
 ## Protocol
 
-Every dispatch prompt (implementer, fix-worker, reviewer, verifier) ends by asking for a `HARNESS FEEDBACK` section in the agent's own final report, in the template below. The orchestrator saves it word for word to `<run>/<label>.md`. Never collect feedback by resuming a finished agent: a resume reloads the agent's whole transcript after its prompt cache has expired (subagent cache lives about 5 minutes). On 2026-09-24, eight debrief resumes re-read over a million tokens and hit the session limit. The orchestrator then writes `<run>/orchestrator.md`, updates the tables below, and commits the folder with the run's ledger.
+Every dispatch prompt (implementer, fix-worker, reviewer, verifier) ends by asking for a `HARNESS FEEDBACK` section in the agent's own final report, in the template below. The orchestrator keeps those sections in its scratchpad, never in the repo. Never collect feedback by resuming a finished agent: a resume reloads the agent's whole transcript after its prompt cache has expired (subagent cache lives about 5 minutes). On 2026-09-24, eight debrief resumes re-read over a million tokens and hit the session limit. At the end of the run the orchestrator appends at most 15 lines to this README and commits them with the run's ledger: one row in the run log (verdict counts across all agents), new or reinforced themes, new catches, and any change to the proposals. No per-run folder.
 
 Template, one entry per time the harness blocked, slowed, redirected or forced a workaround, including workarounds never reported:
 
@@ -24,14 +24,15 @@ Verdicts:
 - **ENV:** the machine or tooling, not the harness.
 - **NEUTRAL:** neither.
 
-## Runs
+## Run log
 
 | Run | Agents | Entries | Caught | Drawback | Env | Neutral |
 |---|---|---|---|---|---|---|
-| [2026-09-23 request-envelope](2026-09-23-request-envelope/) | 8 implementers, reviewer, 2 verifiers, orchestrator | 86 | 9 | 40 | 18 | 19 |
-| [2026-09-24 legal-surface-v2](2026-09-24-legal-surface-v2/) (session 2 only; session 1 lost all but chain-1) | 8 implementers/fix-workers, reviewer, git-cleaner, 2 Sonar workers, orchestrator | ~68 | 11 | 31 | 10 | 16 |
-| [2026-09-25 beta-1](2026-09-25-beta-1/) (resumed closure 2026-09-29) | 9 chains, fixes, reviews, device passes, orchestrator | collection in progress | — | — | — | — |
-| [2026-10-07 health-probe-path](2026-10-07-health-probe-path/) (on integration/beta-1) | 3 implementers, fix-1, reviewer, orchestrator | 11 tagged (chain-3, fix-1 untagged) | 2 | 4 | 0 | 5 |
+| 2026-09-23 request-envelope | 8 implementers, reviewer, 2 verifiers, orchestrator | 86 | 9 | 40 | 18 | 19 |
+| 2026-09-24 developer-observability (counted 2026-10-09 from verdict tags) | 19 files: implementers, fix-workers, reviewer, orchestrator | 86 | 14 | 37 | 13 | 22 |
+| 2026-09-24 legal-surface-v2 (session 2 only; session 1 lost all but chain-1) | 8 implementers/fix-workers, reviewer, git-cleaner, 2 Sonar workers, orchestrator | ~68 | 11 | 31 | 10 | 16 |
+| 2026-09-25 beta-1 (resumed closure 2026-09-29; counted 2026-10-09 from verdict tags) | 9 chains, 17 fixes, 3 reviews, 5 device passes, limit investigation, orchestrator | 118 | 28 | 50 | 13 | 27 |
+| 2026-10-07 health-probe-path (on integration/beta-1) | 3 implementers, fix-1, reviewer, orchestrator | 11 tagged (chain-3, fix-1 untagged) | 2 | 4 | 0 | 5 |
 
 ## Recurring themes
 

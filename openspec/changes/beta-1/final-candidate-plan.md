@@ -113,7 +113,7 @@ the iOS builds at two Xcode jobs; do not issue a global Gradle stop command.
 Run one Maestro process per device at a time; do not issue a concurrent
 `maestro hierarchy`, test, or screenshot-helper command.
 A prior stray command restarted Maestro's driver and aborted a run
-(`docs/harness-feedback/2026-09-25-beta-1/fix-8.md`). No documented
+(fix-8's harness feedback; the file was folded into `docs/harness-feedback/README.md` T17 and removed 2026-10-09). No documented
 per-project Maestro-log isolation exists, so serialize with Outsiide work too.
 
 Do not use or stop FilmKit/`emulator-5556`, its Outsiide Maestro process, or
