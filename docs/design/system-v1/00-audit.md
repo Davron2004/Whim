@@ -284,7 +284,7 @@ History: circle chevron, app name in its colour plus "history" in ink, a bordere
   reordering or swipe actions. Phase B decides which earn their tokens.
 
 `fixtures/style-gallery.app.tsx` exercises every export today. It has to keep doing that through every SDK
-change (owner requirement, see `01-direction.md` §10).
+change (owner requirement, see `01-direction.md` §13.4).
 
 ## 10. Screens
 
