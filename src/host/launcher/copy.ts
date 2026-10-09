@@ -46,6 +46,7 @@ export const COPY = {
   ghostCaptionBuilding: 'Building…',
   ghostCaptionFailed: 'Didn’t finish',
   ghostCaptionInterrupted: 'Interrupted',
+  ghostCaptionUpdate: 'Update needed',
   /** Long-press quick actions (spec "Long-press on a ghost tile offers Cancel or Dismiss, never
    *  both"). Named distinctly from the sheet's own closing `cancel` row so the two never collide
    *  in the same menu. */
@@ -83,6 +84,16 @@ export const COPY = {
   clarifyHeadlineTwo: 'Two quick things',
   clarifyHeadlineThree: 'Three quick things',
   clarifyHelper: 'Skip these and Whim will pick sensible answers.',
+  /** Under a question that takes several picks (beta-1 D18). */
+  clarifyPickMany: 'Pick any that fit.',
+  /** The pill every question carries, which hands that question to Whim (beta-1 D18). */
+  clarifyDecide: 'Decide for me',
+  /** The typed "Other" answer's placeholder, on a question that allows one. */
+  clarifyOtherPlaceholder: 'Or type your own answer',
+  /** The clarify step when the request can't be built as asked (beta-1 D9): the reason follows in
+   *  the server's own words, then the alternative to build instead (`clarifyBuildInstead`). */
+  clarifyLimitHeadline: 'Whim can’t build this as asked',
+  clarifyLimitChangeIdea: 'Change my idea',
   /** The one-line liveness phrase under the clarify skeleton (`WorkingLine`, `flow-working.tsx`). */
   workingClarify: 'Thinking about what to ask',
   planHeadline: 'Here’s the plan',
@@ -106,6 +117,9 @@ export const COPY = {
   buildStepChecking: 'Checking it runs safely',
   buildStepInstalling: 'Putting it on your home screen',
   buildLeaveRunning: 'Leave it running',
+  /** The build screen while every build slot is taken and this one is first in line (beta-1 D8);
+   *  further back, `buildQueuedLine` counts the builds ahead. */
+  buildQueuedNext: 'You’re next in line.',
   /** Opens the run timeline for the attempt on screen. */
   buildDetails: 'Details',
   // ── the run timeline (generation-observability, design D7) ──────────────────
@@ -114,8 +128,11 @@ export const COPY = {
   /** No journal survived for this attempt — the section says so rather than inventing a run. */
   timelineEmpty: 'Nothing was recorded for this attempt.',
   timelineClose: 'Close',
-  /** A stage the attempt was still in when the journal stops — no duration is invented for it. */
+  /** A stage the attempt is still in, on the live build's timeline — no duration is invented for it. */
   timelineStillGoing: 'still going',
+  /** A stage an attempt that has ended was still in when its journal stops (the app closed mid-build,
+   *  say): it didn't finish, and no duration is invented for it either. */
+  timelineDidNotFinish: 'didn’t finish',
   // One plain-words label per generation stage. `check`, `run` and `repair` share ONE named build
   // step on the progress screen, but the timeline is a list of what happened in order, so each
   // stage the device actually saw gets its own line.
@@ -199,6 +216,8 @@ export const COPY = {
   reportIncludePrompt: 'Include the prompt for this version',
   reportCodeDisclosure: 'Your report includes this app’s code so we can investigate what went wrong.',
   reportNoCodeDisclosure: 'This version has no saved code to include.',
+  /** The recipient line while reports go to Whim's own server; `reportRecipientLine` words it for
+   *  a server the user chose (beta-1 D20). */
   reportDeviceIdLine: 'This phone’s Whim ID goes with your report. The report goes to AnyCognition, the company that makes Whim.',
   reportSend: 'Send report',
   reportSendBusy: 'One moment',
@@ -206,6 +225,8 @@ export const COPY = {
   reportShowLess: 'Show less',
   reportThanksTitle: 'Thanks. We’ll look into it.',
   reportThanksDone: 'Done',
+  reportDraftLoadFailed: 'Couldn’t open the report. Close it and try again.',
+  reportDraftClose: 'Close',
   reportSendFailedGeneric: 'Couldn’t send the report. Check your connection and try again.',
   reportTooLarge: 'This report is too large to send. You can try leaving out the prompt.',
 
@@ -332,7 +353,8 @@ export const COPY = {
   // ── store age check (store-age-signals; legal-surface-v2 design D11) ─────────
   // Shown in place of the terms step when the store says the user is a minor without a parent's
   // approval (`ageBlocked*`) or under 13 (`ageUnder13*`). The AI features stay off; the apps on
-  // the phone keep working. `ageBack` also leaves the brief screen shown while the store is asked.
+  // the phone keep working. `ageBack` also leaves the brief screen shown while the store is asked,
+  // which says only `ageChecking` so it never reads as a blank, broken screen.
   ageBlockedTitle: 'A parent needs to approve Whim',
   ageBlockedBody:
     'Whim’s AI features need a parent’s approval on this account. A parent can approve Whim through the App Store or Google Play, then you can try again. The apps you already have keep working.',
@@ -340,6 +362,7 @@ export const COPY = {
   ageUnder13Body:
     'The App Store or Google Play says this account belongs to someone under 13, so Whim can’t make new apps for you. The apps you already have keep working.',
   ageBack: 'Back',
+  ageChecking: 'One moment…',
   // The one-tap switch the terms step and the consent screen show (legal-text-localization): it
   // names the OTHER language, in that language, so English's own entry is the French label.
   legalLanguageSwitch: 'Continuer en français',
@@ -364,6 +387,17 @@ export const COPY = {
   settingsProbeNeutral: 'Checked once AI features are on',
   serverAddressSectionTitle: 'Server address',
   serverAddressHint: 'Where Whim sends your prompts to build apps.',
+  // Your own server (beta-1 design D20): the Advanced action, its confirm step, and the caption
+  // under an active override. Legal keys, so each has a French twin; the refusal note is not.
+  ownServerAction: 'Use your own server',
+  ownServerConfirmBody:
+    'That server gets everything Whim sends: your prompts and answers, the apps you change, reports, error details and this phone’s ID. Whoever runs it decides what it keeps. Whim’s privacy policy doesn’t cover it.',
+  ownServerConfirm: 'Use my own server',
+  ownServerCaption:
+    'You chose this server, so what happens to what Whim sends there is up to you and whoever runs it. Whim’s privacy policy doesn’t cover it.',
+  // Shown under the field when the address settles on one the address rule refuses; it isn't saved.
+  serverAddressRefused:
+    'Use an https:// address. Plain http:// works only on your own network: a private IP like 192.168.1.20, localhost, a .local name or a one-word name like devbox.',
   // The debounced save-time probe's three-way inline result (server-connectivity, design.md
   // decision 3) — shown under the server-address field a moment after the user stops typing.
   serverProbeVerified: 'Verified — this is a Whim server.',
@@ -387,6 +421,11 @@ export const COPY = {
     'Apps made with Whim stay on the phone that made them, so this link only opens there.',
   appLinkMissingBack: 'Back to your apps',
   appLinkSheetClose: 'Done',
+
+  // ── the keyboard (beta-1 D3) ────────────────────────────────────────────────
+  /** The iOS keyboard bar's one action on a multiline field: puts the keyboard away and submits
+   *  nothing. */
+  keyboardDone: 'Done',
 } as const;
 
 /** One what's-new line (legal-surface-v2 design D4): shown under `consentOutdatedLine` when the
@@ -480,6 +519,7 @@ export const LEGAL_COPY_KEYS = [
   'ageUnder13Title',
   'ageUnder13Body',
   'ageBack',
+  'ageChecking',
   'consentTitle',
   'consentLead',
   'consentSentTitle',
@@ -508,6 +548,10 @@ export const LEGAL_COPY_KEYS = [
   'permissionRequiredLine',
   'privacyPolicyLabel',
   'legalLanguageSwitch',
+  'ownServerAction',
+  'ownServerConfirmBody',
+  'ownServerConfirm',
+  'ownServerCaption',
 ] as const;
 
 type LegalCopyKey = (typeof LEGAL_COPY_KEYS)[number];
@@ -535,6 +579,7 @@ const FRENCH: LegalCopyTable = {
   ageUnder13Body:
     'Selon l’App Store ou Google Play, ce compte appartient à une personne de moins de 13\u00a0ans, donc Whim ne peut pas créer de nouvelles apps pour vous. Les apps que vous avez déjà continuent de fonctionner.',
   ageBack: 'Retour',
+  ageChecking: 'Un instant…',
   consentTitle: 'Avant que Whim crée des apps pour vous',
   consentLead:
     'Pour créer ou modifier une app, Whim envoie ce que vous demandez à notre serveur. Des entreprises d’IA qui travaillent pour nous écrivent le code.',
@@ -572,6 +617,12 @@ const FRENCH: LegalCopyTable = {
   permissionRequiredLine: 'Whim a de nouveau besoin de votre permission pour envoyer ceci.',
   privacyPolicyLabel: 'Politique de confidentialité',
   legalLanguageSwitch: 'Continue in English',
+  ownServerAction: 'Utiliser votre propre serveur',
+  ownServerConfirmBody:
+    'Ce serveur reçoit tout ce que Whim envoie\u00a0: vos demandes et vos réponses, les apps que vous modifiez, les signalements, les détails d’erreur et l’identifiant de ce téléphone. La personne qui l’exploite décide de ce qu’il conserve. La politique de confidentialité de Whim ne s’applique pas à ce serveur.',
+  ownServerConfirm: 'Utiliser mon propre serveur',
+  ownServerCaption:
+    'Vous avez choisi ce serveur\u00a0: ce qu’il advient de ce que Whim y envoie dépend de vous et de la personne qui l’exploite. La politique de confidentialité de Whim ne s’applique pas à ce serveur.',
 };
 
 /** Every legal language's copy table. The terms step and the consent screen read
@@ -628,7 +679,11 @@ export function appLinkSheetLine(name: string): string {
 /** A ghost/rebuild tile's state caption, by `PendingBuildRecord.state` (kept as the bare literal
  *  union rather than importing `PendingBuildState` — `copy.ts` stays free of any non-`react` /
  *  non-`react-native` module dependency). */
-export function ghostStateCaption(state: 'building' | 'failed' | 'interrupted'): string {
+export function ghostStateCaption(
+  state: 'building' | 'failed' | 'interrupted',
+  remedy?: { kind: 'retry' } | { kind: 'update'; protocolLevel: number },
+): string {
+  if (state === 'failed' && remedy?.kind === 'update') return COPY.ghostCaptionUpdate;
   if (state === 'building') return COPY.ghostCaptionBuilding;
   if (state === 'failed') return COPY.ghostCaptionFailed;
   return COPY.ghostCaptionInterrupted;
@@ -655,6 +710,14 @@ export function addedFieldsLine(fields: readonly string[]): string {
   return `Added: ${fields.join(', ')}`;
 }
 
+/** The report sheet's recipient line: AnyCognition while the report goes to Whim's own server, else
+ *  the server the user chose (`ownServer`, as `server-address#serverLabel` shows it), which gets the
+ *  report instead (beta-1 D20). */
+export function reportRecipientLine(ownServer?: string): string {
+  if (ownServer === undefined) return COPY.reportDeviceIdLine;
+  return `This phone’s Whim ID goes with your report. The report goes to the server you chose, ${ownServer}, not to AnyCognition.`;
+}
+
 /** The done step's title: "<App name> is ready". */
 export function readyTitle(name: string): string {
   return `${name} is ready`;
@@ -679,7 +742,10 @@ function livenessElapsedLabel(startedAt: number, now: number): string {
  * `livenessOf`). `s`/`now` are typed structurally rather than importing `RunSignals` from
  * `prompt-flow.ts` — this module imports nothing else, the same discipline `timelineDurationLabel`
  * already keeps. `liveness` is the bare literal union for the same reason `ghostStateCaption`'s
- * `state` parameter is.
+ * `state` parameter is, and so is `phase` (`prompt-flow.ts#livenessPhaseOf`): in line, the line
+ * says so and counts the time in line; while the app is checked, nothing is being written, so it
+ * names the checks rather than a reply. Once the build's turn has come, its clock reads from then
+ * (`turnCameAt`), never from when it joined the line.
  *
  * No word here is "model" or "server" (`product-verbs.suite.ts` "the launcher surface speaks
  * product verbs only" — mechanism words, not merely git vocabulary, are the ones this line has to
@@ -687,20 +753,31 @@ function livenessElapsedLabel(startedAt: number, now: number): string {
  */
 export function buildLivenessLine(
   liveness: 'writing' | 'thinking' | 'connected' | 'stalled',
-  s: { readonly startedAt: number; readonly aggregates: { readonly chars: number }; readonly lastFrameAt: number },
+  s: {
+    readonly startedAt: number;
+    readonly turnCameAt?: number;
+    readonly aggregates: { readonly chars: number };
+    readonly lastFrameAt: number;
+  },
   now: number,
+  phase: 'line' | 'model' | 'checking' = 'model',
 ): string {
+  if (liveness === 'stalled') {
+    const quietSeconds = Math.max(0, Math.floor((now - s.lastFrameAt) / MS_PER_SECOND));
+    return `Nothing has arrived for ${quietSeconds}s`;
+  }
+  // In line, the clock is the time in line; once the build's turn comes, it starts over.
+  if (phase === 'line') return `Waiting in line · ${livenessElapsedLabel(s.startedAt, now)}`;
+  const clock = livenessElapsedLabel(s.turnCameAt ?? s.startedAt, now);
   if (liveness === 'writing') {
-    return `Writing · ${s.aggregates.chars.toLocaleString()} characters`;
+    // en-CA, not the phone's locale (#89): this is English copy, and a French-locale phone would
+    // otherwise render the count with a non-breaking space and no comma (e.g. "1 204").
+    return `Writing · ${s.aggregates.chars.toLocaleString('en-CA')} characters`;
   }
-  if (liveness === 'thinking') {
-    return `Thinking it through · ${livenessElapsedLabel(s.startedAt, now)}`;
-  }
-  if (liveness === 'connected') {
-    return `Connected, waiting for a reply · ${livenessElapsedLabel(s.startedAt, now)}`;
-  }
-  const quietSeconds = Math.max(0, Math.floor((now - s.lastFrameAt) / MS_PER_SECOND));
-  return `Nothing has arrived for ${quietSeconds}s`;
+  if (liveness === 'thinking') return `Thinking it through · ${clock}`;
+  // Checking writes nothing to wait for: the connection is up and the checks are running.
+  if (phase === 'checking') return `Running the checks · ${clock}`;
+  return `Connected, waiting for a reply · ${clock}`;
 }
 
 // ── the run timeline's lines (generation-observability, design D7) ───────────
@@ -730,9 +807,11 @@ export function timelineDurationLabel(ms: number): string {
   return `${minutes}m ${String(totalSeconds % SECONDS_PER_MINUTE).padStart(2, '0')}s`;
 }
 
-/** One stage transition's row: what happened, then how long it took. */
-export function timelineStageLine(label: string, durationMs: number | null): string {
-  return `${label} · ${durationMs == null ? COPY.timelineStillGoing : timelineDurationLabel(durationMs)}`;
+/** One stage transition's row: what happened, then how long it took. A stage with no end reads as
+ *  still going while the attempt runs, and as unfinished once the attempt has `ended`. */
+export function timelineStageLine(label: string, durationMs: number | null, ended = false): string {
+  if (durationMs != null) return `${label} · ${timelineDurationLabel(durationMs)}`;
+  return `${label} · ${ended ? COPY.timelineDidNotFinish : COPY.timelineStillGoing}`;
 }
 
 /** The output-growth row: cumulative character COUNTS — sizes, never any of the text itself.
@@ -745,6 +824,19 @@ export function timelineGrowthLine(chars: number, thinkingChars = 0): string {
   if (thinkingChars <= 0) return written;
   const thinking = thinkingChars === 1 ? '1 character' : `${thinkingChars} characters`;
   return `${written} after thinking through ${thinking}`;
+}
+
+/** The build screen's place in line (beta-1 D8), from the `queued` event's `position` — the builds
+ *  ahead plus one: "You’re next in line." at the front, otherwise how many builds are ahead. */
+export function buildQueuedLine(position: number): string {
+  const ahead = position - 1;
+  if (ahead < 1) return COPY.buildQueuedNext;
+  return ahead === 1 ? 'You’re in line, 1 build ahead.' : `You’re in line, ${ahead} builds ahead.`;
+}
+
+/** The limit step's primary action (beta-1 D9): the alternative clarify suggested, as plain words. */
+export function clarifyBuildInstead(alternative: string): string {
+  return `Build ${alternative} instead`;
 }
 
 /** The clarify step's headline, counted: one, two or three quick things. */
@@ -800,6 +892,12 @@ export function historySubtitle(versionCount: number, startedWhen: string): stri
   return `${versions} · started ${startedWhen}`;
 }
 
+/** A history row's headline under `You said` (design 4a, "the prompt is the headline"): the
+ *  user's own words, verbatim, in quotation marks. */
+export function historyQuotedPrompt(prompt: string): string {
+  return `“${prompt}”`;
+}
+
 /** The all-versions filter pill, whose count is live: "All 7". */
 export function historyFilterAll(versionCount: number): string {
   return `All ${versionCount}`;
@@ -850,16 +948,18 @@ export interface FailureRow {
 /**
  * The terminal failure state's rows (design `3b` RP[5]): the reassurance that the last working
  * version survived — OMITTED when the app has none, because there is nothing honest to reassure
- * about — then one row per diagnostic hint, then the advisory line.
+ * about — then one row per diagnostic hint, then the advisory line, OMITTED when rewording can't
+ * get past the failure (`rephraseHelps: false`: a refusal, a message this build can't use).
  */
 export function failureChecklistRows(input: {
   readonly diagnostics: readonly { hint: string }[];
   readonly hasWorkingVersion: boolean;
+  readonly rephraseHelps?: boolean;
 }): readonly FailureRow[] {
   const rows: FailureRow[] = [];
   if (input.hasWorkingVersion) rows.push({ kind: 'done', text: COPY.failureRowLastVersionWorks });
   for (const diagnostic of input.diagnostics) rows.push({ kind: 'bad', text: diagnostic.hint });
-  rows.push({ kind: 'wait', text: COPY.failureRowSayItDifferently });
+  if (input.rephraseHelps !== false) rows.push({ kind: 'wait', text: COPY.failureRowSayItDifferently });
   return rows;
 }
 

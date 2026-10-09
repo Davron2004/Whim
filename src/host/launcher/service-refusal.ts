@@ -8,6 +8,7 @@
  */
 import type { ServiceRefusalCode } from '@whim/contract';
 import { GenerationClientError, isNonEmptyString } from './transport-shared';
+import type { PendingFailureRemedy } from './pending-builds';
 import {
   COPY,
   retryLineElapsed,
@@ -61,7 +62,10 @@ export interface ServiceRefusal {
 /** Recognise `err` as a service refusal: an HTTP `GenerationClientError` whose body validated as
  *  `ApiError` (so `err.code` is set — see `transport-shared.ts#httpErrorFrom`), whose `code` is
  *  an OWN key of `REFUSAL_RULES`, and whose `hint` is non-empty. Every other error, including an
- *  identifier outside the vocabulary, returns `undefined` and keeps its existing handling. */
+ *  identifier outside the vocabulary, returns `undefined` and keeps its existing handling.
+ *
+ *  A message this build can't use (`GenerationClientError{kind:'fallback'}`, beta-1 D16) is never a
+ *  refusal, whatever its fallback: callers read it with `wire-fallback.ts#terminalFallbackOf`. */
 export function serviceRefusalOf(err: unknown): ServiceRefusal | undefined {
   if (!(err instanceof GenerationClientError) || err.kind !== 'http') {
     return undefined;
@@ -83,6 +87,13 @@ export function serviceRefusalOf(err: unknown): ServiceRefusal | undefined {
 /** What the phone shows for `refusal` as text: its rule's own `text`, or the server's hint. */
 export function refusalText(refusal: ServiceRefusal): string {
   return REFUSAL_RULES[refusal.code].text ?? refusal.hint;
+}
+
+/** The remedy a record settled by `refusal` keeps: none for a refusal about the words themselves
+ *  (its text lands on compose, and describing the app differently can get past it), `retry` for
+ *  every other. */
+export function refusalRemedy(refusal: ServiceRefusal): PendingFailureRemedy | undefined {
+  return REFUSAL_RULES[refusal.code].landing === 'text' ? undefined : { kind: 'retry' };
 }
 
 /** The moment (epoch ms) the landing screen's primary action re-enables, or `undefined` when the

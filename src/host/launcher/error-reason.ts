@@ -17,14 +17,23 @@
  * instead, never shown verbatim.
  */
 import type { DiagnosticReason } from '../logging/diagnostic';
+import type { PendingFailureRemedy } from './pending-builds';
 import { GenerationClientError } from './transport-shared';
 import { EmptyBundleError } from './build-lifecycle';
+import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 
 export const GENERIC_STREAM_ERROR = 'Something went wrong while building your app. Please try again.';
 
 /** The one decision both exports below read: which of the three failures a thrown error is, as
  *  the closed code the log records and the sentence the screen shows. */
 function classify(err: unknown): { code: DiagnosticReason; reason: string } {
+  // A message whose fallback ends the flow (beta-1 D16): its notice is plain text the server wrote
+  // for this screen, capped as the contract caps it; without one, the generic reason.
+  const fallback = terminalFallbackOf(err);
+  if (fallback) {
+    const notice = fallbackNotice(fallback);
+    return notice ? { code: 'server_refused', reason: notice } : { code: 'unexpected_error', reason: GENERIC_STREAM_ERROR };
+  }
   if (
     err instanceof GenerationClientError &&
     err.hint &&
@@ -53,4 +62,17 @@ export function errorReason(err: unknown): { reason: string; diagnostics: readon
  *  sentence, which may be the server's own text. */
 export function errorReasonCode(err: unknown): DiagnosticReason {
   return classify(err).code;
+}
+
+/** Whether describing the app differently could get past the failure `err` became. Not for a
+ *  message this build can't use, notice or none, and not for an error the server answered with its
+ *  own hint (a server that isn't set up, a device it won't serve): rewording changes neither, so the
+ *  failure screen doesn't advise it. */
+export function errorRephraseHelps(err: unknown): boolean {
+  return terminalFallbackOf(err) === undefined && classify(err).code !== 'server_refused';
+}
+
+/** The remedy a failed attempt's record keeps for `err`: `retry` where rewording can't help. */
+export function errorRemedy(err: unknown): PendingFailureRemedy | undefined {
+  return errorRephraseHelps(err) ? undefined : { kind: 'retry' };
 }

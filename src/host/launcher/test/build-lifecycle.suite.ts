@@ -30,8 +30,9 @@ import {
   startPendingBuild,
 } from '../build-lifecycle';
 import { RunJournalStore } from '../run-journal';
-import { EMPTY_RUN_AGGREGATES, ghostTileColorFor } from '../prompt-flow';
-import type { RunSignals } from '../prompt-flow';
+import { EMPTY_RUN_AGGREGATES, STALL_MS, ghostTileColorFor, livenessOf, livenessPhaseOf } from '../prompt-flow';
+import type { RunSignals, Stage } from '../prompt-flow';
+import { buildLivenessLine } from '../copy';
 import type { GenerationEvent } from '@whim/contract';
 import { tileColor } from '../tiles';
 import { appColor } from '../../../sdk/theme';
@@ -495,6 +496,23 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(rec.failure!.reason, 'Something is over its daily limit.', 'the reason is the refusal’s hint, not a generic one');
   });
 
+  await h.test('the build’s status line: in line it says so and counts the time in line; once the turn comes its clock starts over; checking names the checks', () => {
+    const journal = new RunJournalStore(new MapKVBackend());
+    journal.create('run-1');
+    let s: RunSignals = { startedAt: 0, aggregates: EMPTY_RUN_AGGREGATES, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: 0 };
+    const fold = (event: GenerationEvent, at: number) => { s = journalStreamEvent(journal, 'run-1', s, event, at); };
+    const line = (now: number, stage: Stage | null, queuedPosition?: number) =>
+      buildLivenessLine(livenessOf(s, now), s, now, livenessPhaseOf(stage, queuedPosition));
+    fold({ type: 'queued', position: 2 }, 1_000);
+    h.eq(line(16_000, null, 2), 'Waiting in line · 0:16', 'in line, the line says so, with the time in line');
+    fold({ type: 'queued', position: 1 }, 30_000);
+    fold({ type: 'stage', stage: 'plan', status: 'start' }, 150_000);
+    h.eq(line(157_000, 'plan'), 'Connected, waiting for a reply · 0:07', 'once its turn comes, the clock reads from then, not from joining the line');
+    fold({ type: 'stage', stage: 'check', status: 'start' }, 170_000);
+    fold({ type: 'stage', stage: 'run', status: 'start' }, 175_000);
+    h.eq(line(179_000, 'run'), 'Running the checks · 0:29', 'while the app is checked, the line names the checks rather than a reply');
+  });
+
   // ── retry ────────────────────────────────────────────────────────────────────────────────────
 
   await h.test('retry: a new attempt reuses the failed record’s launcher id', async () => {
@@ -663,6 +681,54 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(afterToken.lastTokenAt, f.at(), 'and now the writing clock is set');
     h.eq(afterToken.aggregates, { chars: 2, tokens: 1 }, 'which is also the only thing that moves the counts');
   });
+
+  // ── a restarted model turn (beta-1 D10) and the line (beta-1 D8) ──────────────
+  const RESTART: GenerationEvent = { type: 'restart' };
+
+  await h.test('journal: a restart after 1,200 characters in the turn counts the turn again from zero, writing no entry', async () => {
+    const f = attemptFixture();
+    let signals = journalStreamEvent(f.journal, RUN, f.signals, STAGE('generate'), f.at());
+    for (let i = 0; i < 12; i++) {
+      f.tick(100);
+      signals = journalStreamEvent(f.journal, RUN, signals, TOKEN('x'.repeat(100)), f.at());
+    }
+    h.eq(signals.aggregates, { chars: 1_200, tokens: 12 }, 'setup: 1,200 characters written in the turn');
+    const before = f.journal.get(RUN)!.length;
+    f.tick(100);
+    signals = journalStreamEvent(f.journal, RUN, signals, RESTART, f.at());
+    h.eq(signals.aggregates, { chars: 0, tokens: 0 }, 'the turn’s characters and tokens restart from zero');
+    h.eq(signals.lastTokenAt, null, 'the voided tokens no longer read as writing');
+    h.eq(livenessOf(signals, f.at()), 'connected', 'so the screen says it is waiting, not writing, and shows no stall');
+    h.eq(f.journal.get(RUN)!.length, before, 'and the history gains no entry — the build carries on as the same build');
+    f.tick(100);
+    signals = journalStreamEvent(f.journal, RUN, signals, TOKEN('abc'), f.at());
+    h.eq(signals.aggregates, { chars: 3, tokens: 1 }, 'the resent turn counts from there');
+  });
+
+  await h.test('journal: a restart in a repair turn returns to what was written before that turn, not to zero', async () => {
+    const f = attemptFixture();
+    let signals = journalStreamEvent(f.journal, RUN, f.signals, STAGE('generate'), f.at());
+    signals = journalStreamEvent(f.journal, RUN, signals, TOKEN('x'.repeat(500)), f.at());
+    signals = journalStreamEvent(f.journal, RUN, signals, STAGE('generate', 'done'), f.at());
+    signals = journalStreamEvent(f.journal, RUN, signals, { type: 'stage', stage: 'repair', status: 'start' }, f.at());
+    signals = journalStreamEvent(f.journal, RUN, signals, TOKEN('y'.repeat(300)), f.at());
+    signals = journalStreamEvent(f.journal, RUN, signals, THINKING(40), f.at());
+    signals = journalStreamEvent(f.journal, RUN, signals, RESTART, f.at());
+    h.eq(signals.aggregates, { chars: 500, tokens: 1, thinkingChars: 40 },
+      'only the repair turn’s 300 characters are void; the generate turn’s stand, and the reasoning tally is not token-counted');
+  });
+
+  for (const [name, frame] of [['queued', { type: 'queued', position: 2 }], ['restart', RESTART]] as const) {
+    await h.test(`journal: a ${name} frame is heartbeat activity — it holds off the stall indication`, async () => {
+      const f = attemptFixture();
+      f.tick(STALL_MS - 1_000);
+      const signals = journalStreamEvent(f.journal, RUN, f.signals, frame, f.at());
+      h.eq(signals.lastFrameAt, f.at(), `the ${name} frame moves the heartbeat’s clock`);
+      f.tick(STALL_MS - 1_000);
+      h.eq(livenessOf(signals, f.at()), 'connected', 'so a stream that keeps sending it is not reported stalled');
+      h.eq(livenessOf(f.signals, f.at()), 'stalled', 'control: the same quiet without it is a stall');
+    });
+  }
 
   // ── thinking distinguished from hanging (build-liveness B1/B4) ──────────────
   await h.test('journal: a thinking event bumps the thinking clock and the any-frame clock, and folds into aggregates', async () => {
