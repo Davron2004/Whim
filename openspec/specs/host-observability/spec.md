@@ -5,15 +5,18 @@ Device-side observability for the Whim host: one logging seam with channels, lev
 structural redaction; a bounded in-memory ring buffer; a dev-only in-app log overlay; a
 best-effort batching sink to the dev server's log-sink route; recoverable per-screen error
 boundaries; and the lint tripwire that makes silently swallowed errors a gate failure.
-
 ## Requirements
-
 ### Requirement: Every screen renders inside a recoverable error boundary
 Every launcher screen SHALL render inside a React error boundary. A render, lifecycle, or
 effect-mount throw in any screen SHALL be caught by that boundary and SHALL NOT unmount the
 launcher tree. The boundary SHALL render a recoverable error screen carrying a plain-English
 message and a retry affordance that remounts the failed subtree, and SHALL reset when the active
 screen changes, so a screen that failed once is reachable again by navigating away and back.
+
+When the screen that failed is anything other than the home grid, the error screen SHALL also
+carry a `Back to your apps` affordance that shows the home grid, and system back on the error
+screen SHALL do the same. On the home grid the error screen carries the retry affordance only,
+and system back keeps its platform default there.
 
 The boundary SHALL NOT be placed inside individual screen components. It SHALL wrap the launcher's
 screen-switch boundary, so screen coverage is a property of the router rather than of each
@@ -33,6 +36,11 @@ screen's own source.
 - **WHEN** a screen has failed and the user navigates to a different screen and back
 - **THEN** the boundary has reset and the screen is attempted again rather than staying in its
   error state
+
+#### Scenario: Leaving a screen that keeps failing
+- **WHEN** the Settings screen throws on every render and the user, on an iPhone, taps
+  `Back to your apps` on the error screen
+- **THEN** the home grid renders normally, and opening Settings again attempts it afresh
 
 #### Scenario: The boundary never swallows
 - **WHEN** the boundary catches any throw
@@ -82,14 +90,14 @@ a reader never observes a partially-written record.
 
 ### Requirement: Sensitive fields are structurally unloggable on the device
 The seam SHALL make the repo's privacy floor a property of the code path rather than a convention:
-prompt text, generated mini-app source, the `x-whim-device` value, and any model-provider API key
-SHALL NOT appear in any emitted record, in the ring buffer, or in anything a sink receives. A
-record whose structured fields carry a sensitive key SHALL have that value replaced with a fixed
-redaction marker before the record is buffered, so redaction cannot be lost by a sink that
-serializes differently from another.
+prompt text, generated mini-app source, report note text, the `x-whim-device` value, and any
+model-provider API key SHALL NOT appear in any emitted record, in the ring buffer, or in anything a
+sink receives. A record whose structured fields carry a sensitive key SHALL have that value replaced
+with a fixed redaction marker before the record is buffered, so redaction cannot be lost by a sink
+that serializes differently from another.
 
 #### Scenario: A sensitive field is redacted at the seam
-- **WHEN** a caller passes a field named for prompt text, device id, or an API key
+- **WHEN** a caller passes a field named for prompt text, report note text, device id, or an API key
 - **THEN** the buffered record carries the redaction marker in that field's place, and the
   original value appears in no sink
 
@@ -163,7 +171,7 @@ still cannot ship.
 - **THEN** no affordance opens the overlay and the overlay screen is not reachable by any route
 
 ### Requirement: Batched delivery to the dev sink is best-effort and never affects the app
-The seam SHALL offer a sink that batches records and POSTs them to the dev server's log-sink
+The seam SHALL offer a dev sink that batches records and POSTs them to the dev server's log-sink
 route. Batching SHALL be bounded by both a record count and a flush interval, SHALL drop the
 oldest pending records rather than growing without bound, and SHALL be off unless explicitly
 enabled.
@@ -176,6 +184,10 @@ recurse into another delivery attempt for that record.
 
 The sink's destination SHALL be the server address the device already persists, reached over
 `adb reverse` port forwarding; no second address is configured and no new setting is added.
+
+The dev sink and the diagnostics upload (capability `device-diagnostics`) SHALL be the only two
+paths by which a record leaves the device. Each SHALL be a transport of the seam, so each receives
+records only after redaction; no call site SHALL send a log record by any other route.
 
 #### Scenario: Records are batched, not sent one by one
 - **WHEN** several records are emitted inside one flush interval
@@ -191,5 +203,10 @@ The sink's destination SHALL be the server address the device already persists, 
 - **THEN** recording it does not itself trigger another delivery attempt for that record
 
 #### Scenario: Off by default
-- **WHEN** the sink has not been explicitly enabled
-- **THEN** no network request is made by the logging seam
+- **WHEN** the dev sink has not been explicitly enabled
+- **THEN** the dev sink makes no network request, whatever the diagnostics upload does
+
+#### Scenario: No third path out of the seam
+- **WHEN** the device source is scanned for network calls that carry log records
+- **THEN** only the dev sink transport and the diagnostics transport make them
+

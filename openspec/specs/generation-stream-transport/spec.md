@@ -7,9 +7,7 @@ over `XMLHttpRequest`'s incremental delivery instead. Covers transport selection
 from a capability probe, never by inspecting an issued response), the preserved
 `network`/`device_id`/`http`/`stream_parse` error taxonomy, abort semantics, transport-independent
 SSE framing, and the injectability that makes the streaming path exercisable under the Node suite.
-
 ## Requirements
-
 ### Requirement: The device consumes the generation stream incrementally
 The device SHALL consume the `POST /v1/generate` SSE response incrementally, surfacing each
 `GenerationEvent` to the caller as it arrives rather than after the response completes. The
@@ -45,6 +43,13 @@ body, `http` for any other non-2xx response, `network` for a transport-level fai
 `stream_parse` for a frame that fails JSON parsing or `GenerationEvent` validation. The error's
 `kind`, `status`, and `hint` fields SHALL carry the same meanings as on the fetch path.
 
+An `http` error SHALL also carry `code`, the body's `ApiError` `error` identifier when the body
+validates as `ApiError`, and `retryAfterSeconds`, the response's `Retry-After` header when it is a
+positive integer number of seconds. Both SHALL be read identically on the fetch path, on the
+`XMLHttpRequest` path (which reads the header from the request object, since it has no real
+`Response`), and on the non-streaming clarify, rewrite, and report calls. A missing or malformed
+body or header SHALL leave the field absent and SHALL NOT change the error's `kind`.
+
 #### Scenario: Device identity rejection is classified as device_id
 - **WHEN** the server responds 400 with a `DeviceIdError` body
 - **THEN** the client raises `GenerationClientError` with `kind: 'device_id'` and the server's
@@ -59,6 +64,18 @@ body, `http` for any other non-2xx response, `network` for a transport-level fai
 - **WHEN** the stream delivers a frame whose `data:` payload is not valid JSON, or is valid
   JSON that does not match `GenerationEvent`
 - **THEN** the client raises `GenerationClientError` with `kind: 'stream_parse'`
+
+#### Scenario: Refusal identifier and retry time survive both transports
+- **WHEN** the server answers `POST /v1/generate` with `429`, `Retry-After: 120`, and
+  `{ error: 'server_busy', hint: '…' }`, once over the fetch transport and once over the
+  `XMLHttpRequest` transport
+- **THEN** both raise `kind: 'http'` with `status: 429`, `code: 'server_busy'`, the hint, and
+  `retryAfterSeconds: 120`
+
+#### Scenario: A malformed Retry-After is dropped
+- **WHEN** a `429` refusal carries `Retry-After: soon`
+- **THEN** the error has no `retryAfterSeconds`, and its `kind`, `status`, `code`, and `hint` are
+  unaffected
 
 ### Requirement: Cancellation aborts the request and ends iteration silently
 An `AbortSignal` passed to the generation call SHALL abort the underlying request. An aborted
@@ -103,3 +120,4 @@ buffered-at-completion behavior is caught rather than passing silently.
 - **WHEN** `npm run launcher:test` runs
 - **THEN** the streaming transport's own delivery, abort, and error-classification behavior is
   exercised, not only the fetch path
+

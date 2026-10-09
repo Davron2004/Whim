@@ -1,0 +1,377 @@
+## Context
+
+The demo signups get their first invite with the build this change produces
+(`docs/beta-readiness-2026-09-24.md`). It's a batch of fixes plus one structural addition: a wire
+protocol that can grow. The owner decided on 2026-09-25 that the installed builds (381237, 382511, only
+on the owner's and his mom's phones) are **not** a constraint: this change breaks them on purpose and
+retires them with the minimum-build gate. Where `research.md` (R) lists "shipped clients fail closed on
+unknown frames" as a constraint, that's a fact about today's code, and this change replaces it.
+
+The same decision creates the one hard constraint that remains: beta-1 is the first build testers keep,
+so its decoder is the oldest reader every later server must serve (short of a forced update).
+Forward compatibility therefore has to ship in this build. It can't be added after.
+
+## Goals / Non-Goals
+
+**Goals:**
+- A protocol that can gain messages without breaking installed apps: old apps degrade to a declared
+  fallback instead of failing to parse.
+- No path in the first session ends on a blank or stuck screen: age check, keyboard, legal flow,
+  render errors.
+- Every generated app is fully visible and usable: the orb inset, and the keyboard inside mini-apps.
+- A burst of simultaneous generations becomes a visible line, not a refusal.
+- Fewer failed, misleading or wasted builds: "can't build this" before a build is spent, a
+  provider-drop retry, and an honest "No changes".
+- Every beta build proves it upgrades cleanly over the previous one.
+
+**Non-Goals:**
+- Compatibility with 381237/382511 (retired by the minimum builds, D17).
+- Server-sent executable behaviour of any kind (D16 explains why the fallback is declarative).
+- #67 (distinctive apps), #52's example-set rethink, #65 attestation, #66 outage messaging: tier 2.
+- OS backup policy (#72's second half). New native dependencies.
+
+## Decisions
+
+**D16. Forward compatibility is three layers plus the existing forced update.**
+- **Layer 1, tolerant reader:** known messages ignore unknown fields. All contract object schemas
+  strip rather than reject, and a test pins that.
+- **Layer 2, negotiation (the workhorse):** every `/v1` request sends `x-whim-protocol: <int>`
+  (the contract exports `PROTOCOL_LEVEL`, 1 in beta-1). The server reads it at the request edge
+  beside the request envelope. Any emitter of a message, field or code introduced above level 1 must
+  consult it and send a lower-level form or the fallback. A request with no level gets
+  `426 update_required` (the existing update-gate response and screen). That retires every pre-beta build.
+- **Layer 3, in-band fallback (the safety net):** every SSE event and unary body may carry
+  `compat: {min, fallback, notice?}`. The device decodes in two phases:
+  1. A permissive envelope (`type`/`error` string plus optional `compat`).
+  2. The full schema, only when the type/code is known and `min ≤ PROTOCOL_LEVEL`.
+
+  Otherwise it applies the fallback:
+  - `skip`: continue.
+  - `fail`: the failure screen with `notice` as plain text.
+  - `update`: the update screen with `notice`.
+
+  No `compat` on an unknown message, or an unknown fallback value, means `fail`. The set
+  {skip, fail, update} is frozen: it never gains a member or changes meaning, because it's the one
+  thing the oldest build must understand forever.
+- **Layer 4, forced update:** the existing minimum-build gate (`WHIM_MIN_BUILD_*`, 426) for when
+  nothing sensible can be sent.
+
+*Prior art:* the tolerant reader (protobuf unknown fields), server-side version adaptation (Stripe's
+pinned API versions), per-message fallbacks (Slack's fallback text, Matrix's `body`, PNG's critical bit,
+email `multipart/alternative`).
+
+*Rejected:*
+- Server-sent closures/code. Whoever controls a response would control the host (the trust root), and it
+  conflicts with App Store 2.5.2.
+- An app-version-based `min`. Versions differ by platform and lane; a single protocol level doesn't.
+- Fallback-only without negotiation. It would make every new feature degrade in old apps instead of
+  being adapted for them.
+
+*Limit:* the fallback can't rescue a change in the meaning of an existing message. That requires a
+level bump plus server-side adaptation (layer 2).
+
+**D1. The age deadline lives in JS, in `runAgeCheck`, at 3 s.** It races `read()` against a timer, and
+expiry maps to `unavailable` through the existing reduction (`allowed`). One bound covers iOS, Android
+and every native variant. The dangling native promise has no side effect the flow depends on.
+*Alternative:* a Swift `Task` deadline. It covers iOS only, and #100 shows native calls can be the
+thing that never returns. 3 s is #100's measured fix and sits inside the community's workaround range
+(R: Apple).
+
+**D2. Significant-change acknowledgment (#86) is asked in the age-check phase, for supervised minors only.**
+- A new `WhimAgeSignal` method calls `AgeRangeService.showSignificantUpdateAcknowledgment` (iOS 26.4+
+  per the Xcode 27 SDK's swiftinterface; research said 26.2) and resolves `acknowledged | declined |
+  unavailable`. Amended 2026-09-25 by the orchestrator (progress.md R7): it's asked only when
+  `requiredRegulatoryFeatures` includes `significantAppChangeRequiresAdultNotification`; a normal return is
+  `acknowledged`, a cancellation `declined`, any other error `unavailable`; and it gets its own 60 s deadline,
+  because it waits on a person.
+- JS calls it only when all three hold: iOS, this pass's signal is `minor-approved`, and the stored
+  terms acceptance is for an older terms version. It's bounded by D1's deadline.
+- `declined` keeps AI features off (like `minor-not-approved`). `unavailable` proceeds (the documented
+  age-signal fallback, #78).
+- Only the outcome is stored, keyed by terms version. The raw signal is never stored.
+
+*Why not everyone:* Apple frames the API as guardian consent (R: Apple), and for adults it has no
+documented meaning.
+
+**D3. Keyboard handling uses React Native built-ins, in one shared host wrapper.** No keyboard library:
+`react-native-keyboard-controller` requires Reanimated, which Whim doesn't have. The wrapper:
+- An inset-adjusting ScrollView (`automaticallyAdjustKeyboardInsets` on iOS), `keyboardDismissMode`
+  `interactive` (iOS) / `on-drag` (Android), and `keyboardShouldPersistTaps="handled"`.
+- A footer slot for the primary action in `KeyboardAvoidingView` (iOS `padding`; Android keeps
+  `adjustResize`).
+- Tap on empty space to dismiss, and an iOS `InputAccessoryView` "Done" on multiline fields.
+
+Compose drops `autoFocus`. Every screen with a TextInput uses the wrapper. Inside mini-apps, the runtime
+loader (host code) scrolls the focused element into view on focus and on viewport resize, so the SDK
+contract is intact (#11).
+
+**D4. A runtime-owned error boundary at the realm root reports post-paint render failures as fatal.**
+The loader mounts the app inside its own boundary. On catch it posts a trusted error frame with
+`where:'render'`, and the host adds `render` to `isFatalErrorWhere`. That reaches the existing
+FailureScreen and recovery (realm recreate, R). *Alternative:* inferring "root empty after a runtime
+error". Rejected as racy.
+
+**D5. The orb's footprint enters the realm through the theme channel.** `installTheme`'s payload gains a
+sanitized, clamped (0–200) `chromeInsetBottom`. The SDK's `Screen` adds it to its scrollable content's
+bottom padding. Generated code never sees the value (#11/#13). *Alternatives:* shrinking or fading the
+orb, or a host bar. Both leave content under chrome at some point, or cost height in every app.
+
+**D6. Settings → "Turn on AI features" goes through `nextLegalStep` from the start (#104).** One pass
+shows each legal step at most once. `legalScreen` stays the only builder (R).
+
+**D7. Stack frames are reduced to file name + line:column in `thrownFields`, on every platform (#101).**
+Android already sends base names and symbolication works from them. This makes iOS match.
+
+**D8. A generation that finds every slot busy waits in a line on its own stream (#118).**
+- **Before the stream:** admission still runs the credit check, the daily-limit checks and the
+  content policy before opening it, so refusals keep their HTTP codes. The daily-limit check confirms
+  a unit is available; the unit is spent only when a slot is taken.
+- **Joining the line:** the route opens the SSE stream, adds the generation to a FIFO line held by
+  `SlotController` (async `acquire` with abort), and emits `queued{position}` on entry, on every move
+  and at least every 5 s. The device's first-chunk timer (R: 15 s) and the stall heartbeat both see
+  activity.
+- **Leaving the line:** a slot → the normal pipeline starts. Line full (`WHIM_QUEUE_MAX`, default 50)
+  → pre-stream `429 server_busy`. Waited `WHIM_QUEUE_MAX_WAIT_MS` (default 180000) → terminal
+  `failure` whose reason is the `server_busy` hint (a waiter has no ledger row, so no failure code).
+  Client abort or drain → the waiter leaves, holds nothing, spends nothing.
+- `release()` stays idempotent and hands the slot to the head of the line.
+- **Caps:** a load test (`deploy/loadtest/run.sh drive`) on `e2-standard-2` picks them (the highest
+  pair with p95 CPU < 70 % and no failed runs), set in `deploy/profiles/standard.env`, with the
+  numbers recorded in `docs/deploy.md`.
+- **Level gating:** `queued` is level 1, so every beta build knows it. A future line feature (ETA,
+  priority) would be a new level, adapted per D16.
+
+*Rejected:* a pre-stream bounded wait (the earlier draft). It was only needed to keep the retired
+builds working, and it gives the user no feedback.
+
+**D9. One list of mini-app limits feeds clarify and plan writing, and clarify can say "can't build"
+(#62/#70).**
+- A single constant (network and live data, notifications while closed, other people's devices, and
+  whatever else the capability registry lacks) is interpolated into `CLARIFY_SYSTEM` and
+  `REWRITE_SYSTEM`.
+- When a request's core needs a listed capability, clarify returns `limit{reason, alternative}` with no
+  questions. The app shows the reason, "Build <alternative> instead" (the alternative becomes the
+  prompt and re-enters clarify), and "Change my idea".
+- A partly impossible request gets no option for the impossible extra, and the plan says it's left out.
+- A prompts-suite test pins both prompts to the list, and fails when the capability registry gains a
+  capability the list calls missing.
+- The effect is measured with `server/flowbench.mjs` (visible set plus weather and roommate-ping cases)
+  before and after.
+
+**D18. Clarify questions carry their answer mode, and the user can delegate any question.**
+- `ClarifyQuestion` gains `select: 'one' | 'many'` and `other: boolean`. The model sets both:
+  several picks only when options can hold together, and a typed answer only when the options can't
+  cover likely answers.
+- The device adds "Decide for me" to every question. It isn't model-controlled, so the option is always
+  there. It clears picks and typed text.
+- `Clarification` becomes `{id, question, choices, other?, decide?}`, with either `decide: true` alone
+  or at least one choice or `other`.
+- The plan writer decides delegated questions and names each decision in the plan, so the approval
+  gate shows what Whim picked. Skipped (unanswered) questions keep today's meaning.
+- The typed `other` text is user free text entering a model, so `server/src/policy/input.ts` classifies
+  it with the prompt (the content-policy delta).
+- The "Other" field uses the keyboard wrapper (D3).
+
+*Why now:* these are wire shapes. With D16 in place they could come later, but only as a level-2
+change with the server adapting questions for beta-1 apps forever after. In beta-1 they're part of
+the baseline for free.
+
+**D10. A model turn that loses its provider is retried once, at any point (#57).**
+- On an upstream failure (5xx, 429, network or stream error) in a generate/repair turn, the machine
+  resends the same messages once.
+- If the turn had already yielded `token` events, it first emits `restart`, and the device discards that
+  turn's activity signals.
+- A second failure is terminal, as today. The failed attempt's usage is metered.
+
+This differs from the retry machine.ts:217 declined: that one concerned partial output reaching the
+record. Here the partial output is explicitly voided.
+
+**D11. The run stage keeps a content-free verdict summary through to the machine (#58).**
+`stages/run.ts` passes `{kind, check}`, and the machine logs it at info with `requestId` on
+`containment_failed`/`run_unverified`. The ledger is unchanged.
+
+**D12. `WHIM_PROVIDER_QUANTIZATIONS` optionally sets `provider.quantizations` (#68).** It goes through
+the config/roster seam, and is unset by default. It's set only after a flowbench comparison.
+
+**D13. "No changes" is decided by source equality, not by the model (#106).** First reproduce the bug and
+locate the save path (R: not traced). A no-change claim is allowed only when the delivered source is
+byte-identical to the starting source; otherwise the summariser is told the source changed, and a
+no-change claim is replaced by a neutral line. If the save path is at fault, it's fixed under the same
+rule.
+
+**D14. Polish.**
+- #48: re-check first, and fix only if it still reproduces.
+- Examples declare distinct tile colours; `appColor` is untouched (R).
+- #105: the scrim becomes a status-bar-translucent full-window layer, and the Android `elevation`
+  disc goes.
+- #89: `toLocaleString('en-CA')`.
+
+**D15. The upgrade check is a script plus a recorded run.** `scripts/release/upgrade-check.sh`:
+1. Installs the previous release on a fresh emulator/simulator.
+2. Seeds it with Maestro: an example app with saved data, and a generated app with two versions.
+3. Installs the new build over it.
+4. Asserts tiles, versions, data, consent state and device id.
+
+`docs/release/mobile.md` makes it a required step. The previous build for beta-1 is 382511: the
+check proves that data survives even though the wire broke.
+
+**D17. The minimum builds retire the pre-beta installs.** Once beta-1's builds are on TestFlight
+`Public beta` and the Play closed track, set `WHIM_MIN_BUILD_IOS`/`_ANDROID` to their build numbers.
+381237/382511 then already get 426 from the missing protocol header (D16), and the minimum builds keep
+it that way for any future pre-D16 build too.
+
+**D19. Pending recovery distinguishes current state and durable report availability.**
+A known-ended attempt can retain a raw `building` record when every terminal recovery write
+fails. A different, recoverable fault can save a generic failed record while preserving an old
+journal. The first needs a process-only current view; the second needs durable report metadata.
+Evidence, parser compatibility and the rejected R2 r3 receipt are in `research.md`
+§Pending-write recovery (2026-09-30), including its durable-association subsection.
+
+`PendingBuildStore` remains the lifecycle authority. `get`/`list` read persisted bytes;
+`readCurrent`/`listCurrent` return `{record, durability: 'persisted' | 'volatile'}`. The current
+list substitutes by ID, preserves order, avoids duplicates, and includes a retained entry after
+partial Discard removes its raw key/order. Reads never write or promote durability. Edit attempts
+keep their no-separate-ghost rule. Direct completion, not a journal, missing ref or clock,
+authorizes a generic volatile failed view after safe durable recovery is exhausted.
+
+The only persisted schema addition is `journalUnavailable?: true` on PendingBuildRecord.
+True suppresses record-driven journal/report attachment across navigation, remount and restart;
+absence preserves legacy eligibility. It says nothing about lifecycle. The actual parser accepts
+extra keys; existing spread-based failure/demotion transitions preserve them. The new create
+path must write true explicitly, since the old create reconstructs the record. No new backend,
+journal schema, run ID or timestamp heuristic is needed. Obsolete readers can parse the field
+but cannot enforce a rule they do not know; no retroactive guess is made for unflagged records.
+
+Every setup writes building with true before touching the journal. It creates and verifies the
+new empty journal, then removes the flag and verifies that pending write. Only after those steps
+may the store activate an opaque attempt lease and the shell send HTTP. A later activation for
+the same ID supersedes the old lease. Check ownership before any stream frame changes the journal,
+signals, live handle or screen, and before terminal/recovery mutations. A stale iterator must stop
+without letting EOF, catch or finally cleanup change the newer attempt. Reject stale retention
+independently in the store. Failed setup preserves its prior current view/lease and
+sends no request. Release completed matching leases without clearing retained failure.
+
+Independent IDs keep their own current leases. Their frames and successful completion may update
+their own journals, records and reports while another build is selected. Shared signals, the
+selected live handle and the visible build screen must stay with their owning attempt. Reopening
+a building ghost must attach to its own live run. Check captured lease ownership at delivery's
+actual pending-state mutation after awaited work; a post-delivery UI check cannot protect an
+earlier deletion. Release and promote an independent completed attempt without taking over the
+other build's screen. This adds delivery ownership checks, with general delivery write-fault
+recovery still outside this change.
+
+Before recovery replaces or resets a journal under a current pending record, including a
+generic fallback journal reset, persist and read back true on that record. If that guard cannot be established, do not overwrite the current journal
+with unassociated old bytes; continue independent safe pending recovery and generic fallback.
+If the target journal already equals the exact saved bytes/absence, no association-changing
+write is needed. Restore an old pending snapshot with its original marker only when that old
+journal is verified; otherwise restore its fields with true. Preserve an original true marker
+even when its journal bytes restore. This explicit prerequisite replaces unsafe unconditional
+sibling restoration; one sibling failure still must not skip independent safe work on the other.
+
+A generic failed pending fallback with no verified current journal writes its failure and true
+atomically in one KV set. That write may establish the guard before any generic journal reset;
+if it cannot, the fallback cannot overwrite an unguarded journal. Verify both on readback; a saved generic reason alone is insufficient.
+A verified matching current terminal journal may accompany a failed pending write that removes
+the marker in the same operation. Clear the marker only for verified new-empty setup, a verified
+current terminal pair, or a verified exact old pair whose original marker was absent. No read,
+Retry click, ref reset, raw journal presence or successful pending write alone clears it.
+If all writes fail, retain failed plus true in the store's current view without claiming durability.
+
+Home, ghost opening, failure actions and pending app links use current views. Persisted readback
+stays raw. Record-driven report attachment checks the current record's marker and durability;
+a stale screen journalId or a fresh empty unavailableJournalRef cannot bypass that check.
+A volatile view has pendingId for actions, no saved recordId and no journal/report identity.
+A saved generic failure with true keeps those reports unavailable in a new launcher instance.
+Replace the candidate's unavailableJournalRef with these record/current-view checks rather
+than maintaining a second set of availability state.
+
+Retry keeps the prior current entry until complete verified setup activates the new attempt.
+Retained Discard attempts pending and journal removal independently, verifies pending-key
+absence, order exclusion and journal absence, then clears retention. Throws and native false
+returns that leave data are failures; retain the entry and generic failure/Back. No tombstones
+or autonomous flush/retry loop. Successful delete removes its metadata with the record.
+
+Cold launch demotes each surviving raw building record to interrupted, preserving true. If the
+write fails, retain volatile interrupted and continue before Home is ready. Lost process-only
+failed payloads cannot be reconstructed. Valid readable metadata and available memory are the
+scope assumptions; all rejected writes still impose a physical durability limit. Corruption and
+atomic recovery across process death during multi-key removal remain outside this change.
+
+R2 r3 is parked, not clean or merged. Chain-10 begins from the pinned staging BASE, then root
+privately carries its three candidate commits before implementation. Review the candidate and
+architecture correction together as one six-file diff. S3 stays open through composed-chain
+gates, review and CI; the exhausted mechanical cap is not reset. Existing generic copy, successful
+paths and ownership remain. General cancel/successful-delivery I/O recovery is excluded. One existing observability test fixture also needs verified setup before intentional journal corruption; its fallback assertions remain intact. Exact
+interfaces and scope are in `handoff/pending-write-degradation.md`.
+
+**D20. Anyone can point Whim at their own server, on their own responsibility (owner, 2026-10-03; reverses
+legal-surface-v2 D10).** Whim is open source, and a self-hosted backend is a feature, not a dev tool. Research:
+`research-self-hosted.md`.
+- **Every build shows and honours the override.** The `internalBuild` flag existed only for D10, so it is
+  deleted end to end: the native `internalBuild` constant on both platforms, `WHIM_INTERNAL_BUILD`, the spec
+  field, `internalBuildFrom`/`installedInternalBuild`, and every prop and argument that threads it.
+  Settings → Advanced is always present.
+- **An acknowledgement comes first, and the override is honoured only once it is recorded.** Advanced shows a
+  "Use your own server" action. It opens the existing confirm sheet: that server sees everything Whim sends
+  (prompts, answers, reports, diagnostics, the phone ID), its operator decides what it keeps, and Whim's
+  privacy policy doesn't cover it. Confirming persists a once-per-install acknowledgement (its own KV key),
+  then shows the field. `serverOverride` returns the saved address only when the acknowledgement is recorded,
+  so an address saved by an earlier build (382511 showed the field) stays unread until the user confirms.
+  While an override is active, a persistent caption under the field restates the responsibility.
+  "Use Whim's server" clears the address and keeps the acknowledgement.
+- **Plain http only for local addresses, enforced by the app on both platforms.** An `http://` address is
+  accepted only for loopback/private-range IP literals, `localhost`, `.local` and non-numeric single-label hosts; any other host must be
+  `https://`. Android's network config can't name an arbitrary LAN IP, so the release base config permits
+  cleartext and this app rule is the guard; the mini-app sandbox's CSP keeps bundles off the network
+  regardless. iOS ATS is unchanged (local networking already allowed).
+- **Policy text, not a manifest role.** Whim doesn't receive or share what goes to a user's own server, so the
+  disclosure manifest and `AI_CONSENT_VERSION` don't change and there's no re-consent. The privacy policy
+  (en + fr) gains "If you point Whim at your own server", and "Changes to this policy" a dated bullet.
+- **Store review.** The review notes disclose the feature and argue 4.7: the default is Whim's server, and
+  the same sandbox applies to any server's output. App Privacy and Data safety answers are unchanged.
+- **Acceptance.** 392403's native and upgrade evidence is superseded; a new candidate is rebuilt, upgrade-checked
+  and uploaded to TestFlight and the Play closed track, and the site is redeployed with the new policy.
+
+## Risks / Trade-offs
+
+- Pending recovery can confuse current memory with persisted state. Keep separate read APIs and test both against raw KV values. The volatile terminal fact is lost with its process; startup reports interruption from surviving building records.
+
+- [A wrong `compat`/level on a new message ships a bad fallback] → an emitter-side test: every
+  event or code above level 1 carries `compat`, and a client-side "future frames" fixture suite covers
+  each fallback.
+- [The frozen fallback set turns out too small] → by design. A richer degradation is a server-side
+  adaptation (layer 2), never a new fallback.
+- [The line hides a capacity problem] → the queue length and wait are logged. A line that's often
+  long means raising caps or moving to the event profile.
+- [3 s cuts off a slow real age answer] → it lands `unavailable` → allowed (#78); watched in the
+  demo-phone check.
+- [Keyboard behaviour differs by platform and screen] → one wrapper, checked on every input screen on
+  both platforms.
+- [A restart doubles provider spend on the failure path] → one retry per turn; metered.
+- [A quantization floor shrinks the provider pool] → off by default.
+- [The guardian dialog is barely documented] → bounded, `unavailable` proceeds, `minor-approved` only.
+
+## Migration Plan
+
+1. Merge. Build iOS and Android. Check on a new simulator and a fresh emulator against a local
+   server at the staging tip. Run the upgrade check 382511 → beta-1 (D15).
+2. Deploy the server (from `../Whim-deploy`), smoke, one real generation, and a line check: cap + 2
+   simultaneous generations; the extras show `queued` and then run. From here 381237/382511 get 426,
+   as intended.
+3. Upload beta-1 to TestFlight `Public beta` and the Play closed track. Update the owner's and his
+   mom's phones. Demo-phone check.
+4. Raise the minimum builds to beta-1 (D17). Invites follow once the owner has looked at the build.
+
+Rollback: the server rolls back by `--tag`, but never below the beta-1 server image once beta-1 builds
+are installed (`docs/deploy.md` "Rolling back and rotating the key"). A pre-beta-1 server rejects
+beta-1's `Clarification` shape (it requires `answer`), so every rewrite and generation carrying an
+answer fails, and no later build can change what beta-1 sends. A bad server release rolls back to an
+earlier beta-1-or-later image, or rolls forward. The rest survives an older server: it ignores the
+`x-whim-protocol` header it doesn't know, and beta-1 reads a clarify question with no `select`/`other`
+as one pick with no typed answer.
+
+## Open Questions
+
+- Does the rewrite request carry the base source (needed by D13), or does the device know it? This is
+  settled in D13's investigation.
