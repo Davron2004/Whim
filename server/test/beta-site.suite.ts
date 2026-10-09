@@ -100,6 +100,18 @@ function scriptProblems(file: string, html: string): string[] {
   return problems;
 }
 
+/** How `html` could replace the pages host's `Referrer-Policy` for the signup post: a `<meta
+ *  name="referrer">`, or a form with `rel="noreferrer"`. Either makes the browser send `Origin:
+ *  null`, which the signup route refuses. */
+function referrerPolicyProblems(file: string, html: string): string[] {
+  const problems: string[] = [];
+  for (const tag of startTags(html)) {
+    if (tag.name === 'meta' && tag.attrs.get('name')?.toLowerCase() === 'referrer') problems.push(`${file} has a <meta name="referrer">`);
+    if (tag.name === 'form' && /(^|\s)noreferrer(\s|$)/i.test(tag.attrs.get('rel') ?? '')) problems.push(`${file} has a form with rel="noreferrer"`);
+  }
+  return problems;
+}
+
 /** The named fields of the one form, and the page's tags. */
 interface FormFields {
   readonly tags: readonly StartTag[];
@@ -222,11 +234,19 @@ function fixtureRepo(edit?: { readonly file: string; readonly from: string; read
   return dir;
 }
 
+/** Builds the fixture repo, with `edit` applied and each of `assets` (path under
+ *  `deploy/site/assets/` → content) written into its copy of the assets directory. */
 async function build(
   env: Record<string, string>,
   edit?: Parameters<typeof fixtureRepo>[0],
+  assets: Readonly<Record<string, string>> = {},
 ): Promise<{ readonly result: BuildSiteResult; readonly outDir: string; readonly cleanup: () => void }> {
   const repoRoot = fixtureRepo(edit);
+  for (const [rel, content] of Object.entries(assets)) {
+    const file = path.join(repoRoot, 'deploy', 'site', 'assets', rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  }
   const outDir = path.join(repoRoot, 'out');
   const result = await buildSite({ repoRoot, env, outDir, runAssociationFiles: noAssociationFiles });
   return { result, outDir, cleanup: () => fs.rmSync(repoRoot, { recursive: true, force: true }) };
@@ -285,21 +305,56 @@ async function builtSiteTests(): Promise<void> {
       ['planted.html has an inline onclick handler on <button>', 'planted.html has a <script> element', 'planted.html has a javascript: URL in href'],
     );
 
-    const assets = filesUnder(path.join(SITE_DIR, 'assets'));
+    eq('no built page sets its own referrer policy, so the pages host\'s header governs the signup post', pages.flatMap((file) => referrerPolicyProblems(file, built(file))), []);
+    eq(
+      '  red: a <meta name="referrer"> and a form with rel="noreferrer" are each caught',
+      referrerPolicyProblems('beta.html', built('beta.html').replace('</head>', '<meta name="Referrer" content="no-referrer"></head>').replace('<form ', '<form rel="noreferrer" ')),
+      ['beta.html has a <meta name="referrer">', 'beta.html has a form with rel="noreferrer"'],
+    );
+
+    // A file the build must publish: none of its path segments is hidden. Every such file has an
+    // allowlisted extension, or the build above would have failed.
+    const assets = filesUnder(path.join(SITE_DIR, 'assets')).filter((file) => !file.split('/').some((part) => part.startsWith('.')));
     check('the checkout has assets to publish', assets.length > 0);
     eq(
-      'every file under deploy/site/assets/ is published byte for byte under assets/',
-      assets.filter((file) => {
-        const published = path.join(outDir, 'assets', file);
-        return !fs.existsSync(published) || !fs.readFileSync(path.join(SITE_DIR, 'assets', file)).equals(fs.readFileSync(published));
-      }),
-      [],
+      'every allowlisted file under deploy/site/assets/ is published byte for byte under assets/, and nothing else is',
+      [
+        filesUnder(path.join(outDir, 'assets')).sort((a, b) => a.localeCompare(b)),
+        assets.filter((file) => {
+          const published = path.join(outDir, 'assets', file);
+          return !fs.existsSync(published) || !fs.readFileSync(path.join(SITE_DIR, 'assets', file)).equals(fs.readFileSync(published));
+        }),
+      ],
+      [[...assets].sort((a, b) => a.localeCompare(b)), []],
     );
     const referenced = [...new Set(BETA_PAGES.flatMap((page) => [...built(page).matchAll(/url\("(\/assets\/[^"]+)"\)/g)].map((m) => m[1])))];
     check('the beta pages reference fonts under /assets/', referenced.length > 0);
     eq('every /assets/ file a beta page references is in the output', referenced.filter((url) => !fs.existsSync(path.join(outDir, url))), []);
   } finally {
     cleanup();
+  }
+
+  section('Beta site: only allowlisted assets are published');
+
+  const hidden = await build(ENV, undefined, { 'fonts/.DS_Store': 'Bud1', '.cache/Stale.woff2': 'wOF2' });
+  try {
+    check('a hidden file and a hidden directory in the assets build', hidden.result.ok, JSON.stringify(hidden.result));
+    const published = hidden.result.ok ? filesUnder(path.join(hidden.outDir, 'assets')) : [];
+    check('setup: the hidden-file build publishes the fonts', published.some((file) => file.startsWith('fonts/') && file.endsWith('.woff2')), published.join(', '));
+    eq('  ... and nothing hidden is published anywhere under assets/', published.filter((file) => file.split('/').some((part) => part.startsWith('.'))), []);
+  } finally {
+    hidden.cleanup();
+  }
+
+  const unexpected = await build(ENV, undefined, { 'notes.md': '# notes' });
+  try {
+    check(
+      'an unexpected notes.md in the assets fails the build, naming it, and publishes nothing',
+      !unexpected.result.ok && unexpected.result.reason.includes('notes.md') && !fs.existsSync(unexpected.outDir),
+      JSON.stringify(unexpected.result),
+    );
+  } finally {
+    unexpected.cleanup();
   }
 
   section('Beta site: WHIM_BETA_SIGNUP_URL is a required, checked deploy value');
