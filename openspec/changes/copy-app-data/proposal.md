@@ -35,3 +35,12 @@ The owner ruled on 2026-10-09 (decision #75, first reversal bullet; design-syste
 - **Dependencies:** none. It uses the op-sqlite-bundled SQLite 3.51.3 `VACUUM INTO` (verified to preserve row ids and refuse an existing target under Node's SQLite 3.51.3) and the existing MMKV.
 - **Coordination:** design-system-v1's deltas for `app-launcher` ("Forking creates an independent launcher entry": "created at once with no question") and `version-history` ("Any version can become its own app at once": "starts with empty data") predate the owner's resolution and contradict it. They need amending before design-system-v1 archives (design.md Open Questions).
 - **Docs:** a new decision entry in `docs/decisions.md`, and the `capabilities.md` line for `app-data-copy` and the amended `linked-apps` line.
+
+## Product-owner rulings (2026-10-09)
+
+1. design-system-v1's spec deltas are amended by the orchestrator to the owner's ruling ("Make a copy" asks "Copy the data, or start fresh?"; the copy always gets its own appId).
+2. History's "Make a copy from here" asks the same question.
+3. When the original has never saved any user data, the question is skipped and the copy starts fresh silently (nothing to copy).
+4. The speed bar "50 MB in 5 s on emulator/simulator" is accepted.
+5. A "Separate the data" action for legacy shared copies is out of scope — tracked as a backlog GitHub issue.
+6. Devices: chain-4 and chain-5 run on emulators/simulators (≤ 2 concurrent virtual devices, deleted after); the owner's real phone is used only in the final attended device session.
