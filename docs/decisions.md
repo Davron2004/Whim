@@ -1449,7 +1449,7 @@ ambient light while real work streams.
 - Handoff README "yours is brown" → the person's words italic in quotes, `text`, `title3` as the hero.
 - Animation research §8.1 "the build screen stays still" → the making page carries the ember, whose glow
   follows the stream.
-- #52 D2 "explicit Fork asks share-or-fresh" → "Make a copy" happens at once and the copy starts fresh: its
+- **[HELD — pending owner confirmation, 2026-10-09; until confirmed, keep #52 D2's share-or-fresh ask]** #52 D2 "explicit Fork asks share-or-fresh" → "Make a copy" happens at once and the copy starts fresh: its
   own storage-engine appId, the unshared fork #43b D8 described and #52 keeps as its default. Storage groups
   stay for rewind continuations (#53 D5, `shareData: true`, never asked). The share sheet's copy is removed.
 - #67 kept over running apps (no edge swipe over the WebView; the orb is the guaranteed exit), amended for
