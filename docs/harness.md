@@ -318,7 +318,7 @@ schema `apply.instruction` is the durable routing anchor if any generated skill 
   `/git-cleanup` lane. **Partial mitigation, stated honestly:** branches created by the agent
   runtime's own worktree isolation (`worktree-*`, `wf_*`) are deleted by machinery no runbook here
   controls, and will keep stranding sections regardless. Existing residue needs a one-off manual
-  prune by a human outside the session — see `openspec/critic/open-follow-ups.md` §7 for the recipe.
+  prune by a human outside the session — the recipe was §7 of the since-deleted `openspec/critic/open-follow-ups.md` (`git show c7ecde2a^:openspec/critic/open-follow-ups.md`).
 - **`gh` under the sandbox fails at the trust store, not the network** (2026-07-27, resolves the
   open question left by decision #50 D2). `tls: failed to verify certificate: x509: OSStatus -26276`
   is `errSecInternalComponent`, a macOS Keychain error: `gh` verifies TLS through the system trust

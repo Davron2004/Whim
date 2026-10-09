@@ -43,7 +43,7 @@ artifacts:
       the property hardened. "Find an exemplar to copy" is not a research move;
       an occurrence cited without its census row is a rejectable digest. Every
       UNSAFE row this change does not fix is filed to
-      openspec/critic/open-follow-ups.md before closure (apply.md step 13).
+      an ai-proposed GitHub issue before closure (apply.md step 13).
 
 
       This digest is cited by design.md and is the input the proposal is written

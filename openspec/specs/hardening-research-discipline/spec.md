@@ -17,17 +17,17 @@ A hardening change's `research.md` SHALL include a pattern census enumerating ev
 - **WHEN** a hardening change's `research.md` is complete
 - **THEN** every in-repo occurrence of the investigated pattern appears in the census with a SAFE, UNSAFE, or NOT-CHECKED classification and the test applied named
 
-### Requirement: An out-of-scope UNSAFE finding is recorded in the critic's ledger before closure
+### Requirement: An out-of-scope UNSAFE finding is filed as a GitHub issue before closure
 
-A pattern-census row classified UNSAFE that falls outside the current change's declared scope SHALL be recorded in `openspec/critic/open-follow-ups.md`, with the finding's file:line and vulnerability class, before the change closes. A mention of the finding in a run's report or progress notes SHALL NOT satisfy this requirement, because prose is not a durable sink and leaves the finding dependent on a human hand-carrying it into a future run rather than a future run discovering it on its own.
+A pattern-census row classified UNSAFE that falls outside the current change's declared scope SHALL be filed as a GitHub issue labelled `ai-proposed` (title = vulnerability class + `file:line`; body = what done looks like), with the finding's file:line and vulnerability class, before the change closes. A mention of the finding in a run's report or progress notes SHALL NOT satisfy this requirement, because prose is not a durable sink and leaves the finding dependent on a human hand-carrying it into a future run rather than a future run discovering it on its own.
 
 #### Scenario: An UNSAFE row is out of scope
 
 - **WHEN** a hardening change's census classifies a row UNSAFE and that row's fix is outside the change's declared scope
-- **THEN** an entry naming its file:line and vulnerability class is appended to `open-follow-ups.md` before the change closes
+- **THEN** an `ai-proposed` GitHub issue naming its file:line and vulnerability class exists before the change closes
 
 #### Scenario: Reported but not ledgered is insufficient
 
-- **WHEN** an UNSAFE out-of-scope finding is described only in a run's report or progress notes and not appended to `open-follow-ups.md`
+- **WHEN** an UNSAFE out-of-scope finding is described only in a run's report or progress notes and not filed as an `ai-proposed` GitHub issue
 - **THEN** the requirement is not satisfied
 
