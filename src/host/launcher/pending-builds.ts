@@ -26,9 +26,18 @@ import { CHANNELS } from '../logging/channels';
 
 export type PendingBuildState = 'building' | 'failed' | 'interrupted';
 
+/** What gets past a failure that describing the app differently can't fix. `retry`: a service
+ *  refusal that isn't about the words, or a message this build can't use whose fallback is `fail`.
+ *  `update`: a message whose fallback is `update`; `protocolLevel` is this build's wire protocol
+ *  level when the attempt ended, so a build above it knows the update has happened. */
+export type PendingFailureRemedy = { kind: 'retry' } | { kind: 'update'; protocolLevel: number };
+
 export interface PendingBuildFailure {
   reason: string;
   diagnostics?: string;
+  /** Absent when rewording may help (a failed generation), which is also what every record written
+   *  before this field means. */
+  remedy?: PendingFailureRemedy;
 }
 
 /** The persisted record (design D2, additive-only discipline). */
@@ -52,7 +61,18 @@ export interface PendingBuildRecord {
    *  spawns no ghost tile (spec "Rebuild and edit attempts carry editingAppId and spawn no
    *  ghost"). */
   editingAppId?: string;
+  /** True when no journal can be associated with this record's current attempt. */
+  journalUnavailable?: true;
 }
+
+export type PendingJournalAvailability = 'verified' | 'unavailable';
+
+export type PendingBuildView = {
+  record: PendingBuildRecord;
+  durability: 'persisted' | 'volatile';
+};
+
+export type PendingAttemptLease = { readonly id: string; readonly token: symbol };
 
 const PENDING_KEY = (id: string) => `pending:${id}`;
 const ORDER_KEY = 'pending:order';
@@ -65,6 +85,10 @@ export interface CreatePendingBuildInput {
 }
 
 export class PendingBuildStore {
+  private readonly current = new Map<string, PendingBuildView>();
+  private readonly attempts = new Map<string, PendingAttemptLease>();
+  private readonly started = new Map<symbol, PendingBuildRecord>();
+
   constructor(private readonly kv: KVBackend) {}
 
   private readOrder(): string[] {
@@ -105,10 +129,10 @@ export class PendingBuildStore {
   }
 
   /** Create a fresh `building` record and return it. Appends `id` to the order (newest-first: new
-   *  ids are unshifted, so `list()` needs no separate sort). Re-creating an id that already
-   *  exists overwrites the record in place without duplicating the order entry. */
+  *  ids are unshifted, so `list()` needs no separate sort). Re-creating an id that already
+  *  exists overwrites the record in place without duplicating the order entry. */
   create(input: CreatePendingBuildInput): PendingBuildRecord {
-    const existed = this.get(input.id) != null;
+    const order = this.readOrder();
     const now = Date.now();
     const record: PendingBuildRecord = {
       id: input.id,
@@ -118,11 +142,13 @@ export class PendingBuildStore {
       createdAt: now,
       updatedAt: now,
       ...(input.editingAppId ? { editingAppId: input.editingAppId } : {}),
+      journalUnavailable: true,
     };
     this.kv.set(PENDING_KEY(input.id), JSON.stringify(record));
-    if (!existed) {
-      this.writeOrder([input.id, ...this.readOrder()]);
+    if (!order.includes(input.id)) {
+      this.writeOrder([input.id, ...order]);
     }
+    this.current.set(input.id, { record, durability: 'persisted' });
     return record;
   }
 
@@ -137,21 +163,121 @@ export class PendingBuildStore {
     return out;
   }
 
+  isOrderExcluded(id: string): boolean {
+    return !this.readOrder().includes(id);
+  }
+
+  /** The store's process-current view. Raw `get`/`list` remain strictly persisted reads. */
+  readCurrent(id: string): PendingBuildView | null {
+    const retained = this.current.get(id);
+    if (retained?.durability === 'volatile') return retained;
+    const record = this.get(id);
+    return record ? { record, durability: 'persisted' } : null;
+  }
+
+  /** Current entries replace raw entries by id and retained volatile entries survive partial delete. */
+  listCurrent(): PendingBuildView[] {
+    const out: PendingBuildView[] = [];
+    const seen = new Set<string>();
+    for (const id of this.readOrder()) {
+      if (seen.has(id)) continue;
+      const view = this.readCurrent(id);
+      if (view) {
+        out.push(view);
+        seen.add(id);
+      }
+    }
+    for (const [id, view] of this.current) {
+      if (!seen.has(id) && view.durability === 'volatile') out.push(view);
+    }
+    return out;
+  }
+
+  activateAttempt(id: string): PendingAttemptLease {
+    const record = this.get(id);
+    if (!record) throw new Error('cannot activate a missing pending attempt');
+    const lease: PendingAttemptLease = { id, token: Symbol(id) };
+    this.attempts.set(id, lease);
+    this.started.set(lease.token, record);
+    this.current.set(id, { record, durability: 'persisted' });
+    return lease;
+  }
+
+  isCurrentAttempt(lease: PendingAttemptLease): boolean {
+    return this.attempts.get(lease.id)?.token === lease.token;
+  }
+
+  /** Retain only a completion that still owns this id; timestamps are deliberately irrelevant. */
+  retainFailed(lease: PendingAttemptLease, failure: PendingBuildFailure): boolean {
+    if (!this.isCurrentAttempt(lease)) return false;
+    const started = this.started.get(lease.token);
+    if (!started) return false;
+    this.current.set(lease.id, {
+      durability: 'volatile',
+      record: { ...started, state: 'failed', failure, updatedAt: Date.now(), journalUnavailable: true },
+    });
+    return true;
+  }
+
+  releaseAttempt(lease: PendingAttemptLease): void {
+    if (!this.isCurrentAttempt(lease)) return;
+    this.attempts.delete(lease.id);
+    this.started.delete(lease.token);
+  }
+
+  forgetRetained(id: string): void {
+    if (this.current.get(id)?.durability === 'volatile') this.current.delete(id);
+  }
+
+  /** A partial Discard has no durable record to read, but remains actionable for this process. */
+  retainDiscardFailure(record: PendingBuildRecord, failure: PendingBuildFailure): void {
+    this.current.set(record.id, {
+      durability: 'volatile',
+      record: { ...record, state: 'failed', failure, updatedAt: Date.now(), journalUnavailable: true },
+    });
+  }
+
+  setJournalAvailability(id: string, availability: PendingJournalAvailability): void {
+    const rec = this.get(id);
+    if (!rec) return;
+    const updated: PendingBuildRecord = {
+      ...rec,
+      ...(availability === 'unavailable' ? { journalUnavailable: true } : { journalUnavailable: undefined }),
+      updatedAt: Date.now(),
+    };
+    this.kv.set(PENDING_KEY(id), JSON.stringify(updated));
+    this.current.set(id, { record: updated, durability: 'persisted' });
+  }
+
   /** Set a record's state to `failed` and persist the failure payload. A no-op (no throw) if the
    *  id has no record — the single-writer discipline means this should never happen in practice,
    *  but a missing/corrupt record must not crash the caller. */
-  setFailed(id: string, failure: PendingBuildFailure): void {
+  setFailed(id: string, failure: PendingBuildFailure, availability?: PendingJournalAvailability): void {
     const rec = this.get(id);
     if (!rec) return;
-    const updated: PendingBuildRecord = { ...rec, state: 'failed', failure, updatedAt: Date.now() };
+    const updated: PendingBuildRecord = {
+      ...rec,
+      state: 'failed',
+      failure,
+      updatedAt: Date.now(),
+      ...(availability === 'unavailable' ? { journalUnavailable: true } : {}),
+      ...(availability === 'verified' ? { journalUnavailable: undefined } : {}),
+    };
     this.kv.set(PENDING_KEY(id), JSON.stringify(updated));
+    this.current.set(id, { record: updated, durability: 'persisted' });
   }
 
   /** Drop a record and its order entry; survivors keep their relative order. A no-op if the id
    *  was never present. */
   delete(id: string): void {
     this.kv.delete(PENDING_KEY(id));
+    if (this.get(id) != null) return;
     this.writeOrder(this.readOrder().filter((x) => x !== id));
+    if (this.readOrder().includes(id)) return;
+    this.current.delete(id);
+    const lease = this.attempts.get(id);
+    this.attempts.delete(id);
+    if (lease) this.started.delete(lease.token);
   }
 
   /**
@@ -166,7 +292,16 @@ export class PendingBuildStore {
       const rec = this.get(id);
       if (rec?.state === 'building') {
         const updated: PendingBuildRecord = { ...rec, state: 'interrupted', updatedAt: Date.now() };
-        this.kv.set(PENDING_KEY(id), JSON.stringify(updated));
+        try {
+          this.kv.set(PENDING_KEY(id), JSON.stringify(updated));
+          this.current.set(id, { record: updated, durability: 'persisted' });
+        } catch (error) {
+          log.warn(CHANNELS.app, 'pending-build interruption did not persist', {
+            pendingId: id,
+            detail: error instanceof Error ? error.message : String(error),
+          });
+          this.current.set(id, { record: updated, durability: 'volatile' });
+        }
       }
     }
   }

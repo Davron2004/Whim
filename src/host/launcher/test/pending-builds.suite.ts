@@ -49,6 +49,19 @@ export async function runPendingBuildsTests(h: Harness): Promise<void> {
     h.eq(store.get('a')!.prompt, 'first, retried', 're-create overwrites the record');
   });
 
+  await h.test('pending-builds: current views dedupe duplicated order metadata without rewriting it', async () => {
+    const map = new Map<string, string>();
+    const kv = new MapKVBackend(map);
+    const store = new PendingBuildStore(kv);
+    store.create({ id: 'a', prompt: 'first', workingTitle: 'first' });
+    store.create({ id: 'b', prompt: 'second', workingTitle: 'second' });
+    kv.set('pending:order', JSON.stringify(['b', 'a', 'b']));
+    const before = [...map.entries()];
+
+    h.eq(store.listCurrent().map((view) => view.record.id), ['b', 'a'], 'duplicate raw order entries yield one stable current view per id');
+    h.eq([...map.entries()], before, 'reading the duplicated order does not rewrite its persisted bytes');
+  });
+
   // ── setFailed ────────────────────────────────────────────────────────────────
   await h.test('pending-builds: setFailed transitions to failed and persists the payload, never deletes', async () => {
     const store = new PendingBuildStore(new MapKVBackend());
@@ -107,6 +120,45 @@ export async function runPendingBuildsTests(h: Harness): Promise<void> {
     const store = new PendingBuildStore(new MapKVBackend());
     store.demoteBuildingToInterrupted(); // must not throw
     h.eq(store.list(), [], 'still empty');
+  });
+
+  await h.test('pending-builds: current views retain a confirmed failed attempt without rewriting raw building bytes', async () => {
+    const kv = new MapKVBackend();
+    const store = new PendingBuildStore(kv);
+    store.create({ id: 'a', prompt: 'x', workingTitle: 'x' });
+    const lease = store.activateAttempt('a');
+    h.ok(store.retainFailed(lease, { reason: 'storage outage' }), 'the active completion is retained');
+    h.eq(store.get('a')!.state, 'building', 'raw persisted bytes remain the actual building record');
+    h.eq(store.readCurrent('a'), {
+      durability: 'volatile',
+      record: { ...store.get('a')!, state: 'failed', failure: { reason: 'storage outage' }, journalUnavailable: true, updatedAt: store.readCurrent('a')!.record.updatedAt },
+    }, 'the current view truthfully carries the known failure and its volatile durability');
+    h.eq(store.listCurrent().map((view) => [view.record.id, view.record.state, view.durability]), [['a', 'failed', 'volatile']], 'the current list substitutes one entry by id');
+  });
+
+  await h.test('pending-builds: opaque leases fence stale equal-time completions and leave other ids alone', async () => {
+    const store = new PendingBuildStore(new MapKVBackend());
+    store.create({ id: 'a', prompt: 'first', workingTitle: 'first' });
+    store.create({ id: 'b', prompt: 'second', workingTitle: 'second' });
+    const oldLease = store.activateAttempt('a');
+    const newLease = store.activateAttempt('a');
+    h.ok(!store.retainFailed(oldLease, { reason: 'old completion' }), 'a superseded lease cannot mutate its reused id');
+    h.ok(store.retainFailed(newLease, { reason: 'new completion' }), 'the current lease owns its completion even without a timestamp comparison');
+    h.eq(store.readCurrent('a')!.record.failure?.reason, 'new completion', 'the newer completion survives');
+    h.eq(store.readCurrent('b')!.record.state, 'building', 'an independent id remains live');
+  });
+
+  await h.test('pending-builds: legacy JSON accepts the marker and failure and interruption preserve it', async () => {
+    const map = new Map<string, string>();
+    map.set('pending:order', JSON.stringify(['a']));
+    map.set('pending:a', JSON.stringify({ id: 'a', prompt: 'x', workingTitle: 'x', state: 'building', createdAt: 1, updatedAt: 1, journalUnavailable: true }));
+    const store = new PendingBuildStore(new MapKVBackend(map));
+    h.eq(store.get('a')!.journalUnavailable, true, 'the actual JSON parser preserves the additive field');
+    store.setFailed('a', { reason: 'failed write' });
+    h.eq(store.get('a')!.journalUnavailable, true, 'failure keeps the marker when availability is omitted');
+    const restarted = new PendingBuildStore(new MapKVBackend(map));
+    restarted.demoteBuildingToInterrupted();
+    h.eq(restarted.get('a')!.journalUnavailable, true, 'interruption demotion preserves the marker too');
   });
 
   // ── corrupt-record tolerance (mirrors AppIndex.get) ──────────────────────────
