@@ -1,11 +1,11 @@
 ## 1. Storage-engine snapshot
 
-- [ ] 1.1 Create `src/host/storage-engine/copy-contract.ts`. It must have no op-sqlite import and must be importable by the Node suites. It holds:
+- [x] 1.1 Create `src/host/storage-engine/copy-contract.ts`. It must have no op-sqlite import and must be importable by the Node suites. It holds:
   - the `CopyStorage` type: `(args: { from: string; to: string }) => Promise<CopyReport>`;
   - `CopyReport`, as `{ bytes: number; ms: number }`;
   - `DataCopyError`, with `kind: 'no_space' | 'source_unreadable' | 'verify_failed' | 'io'`;
   - the `isSupersetSchema(copy, source)` helper, built on `schema.ts` types.
-- [ ] 1.2 Create `src/host/storage-engine/copy.ts`: `copyStore(opener, { from, to })`, pure over an injected opener (open by appId, delete by appId, resolve the storage directory). Steps:
+- [x] 1.2 Create `src/host/storage-engine/copy.ts`: `copyStore(opener, { from, to })`, pure over an injected opener (open by appId, delete by appId, resolve the storage directory). Steps:
   1. Open the source and read its applied schema with `readAppliedSchema`.
   2. Set `PRAGMA synchronous=FULL`.
   3. Run `VACUUM INTO ?` with the destination's absolute path as a bound parameter.
@@ -13,10 +13,10 @@
   5. Classify any failure into a `DataCopyError` kind (SQLITE_FULL becomes `no_space`) and delete the destination before rethrowing.
 
   This is the only file in `src/` allowed to contain the token `VACUUM` (design D1).
-- [ ] 1.3 Add two openers for `copyStore`:
+- [x] 1.3 Add two openers for `copyStore`:
   - `copy-node.ts`, over `node:sqlite` files, for tests.
   - `copy-device.ts`, over op-sqlite. It uses async `execute` for the snapshot (off the JS thread) and `getDbPath()` for the directory, and is exported beside `deleteStorage`. Node suites import submodules, never the `storage-engine/index.ts` barrel.
-- [ ] 1.4 Add copy tests to the storage suite (`src/host/storage-engine/test/`, registered from `acceptance.ts`). All run against real files:
+- [x] 1.4 Add copy tests to the storage suite (`src/host/storage-engine/test/`, registered from `acceptance.ts`). All run against real files:
   - Fidelity: record ids 3, 7 and 12, kv values, a retired column with data, and `_meta` deep-equal to the source.
   - Consistent snapshot while a second connection writes.
   - A destination that already exists is refused and left untouched.
@@ -25,7 +25,7 @@
   - `source_unreadable`.
   - Every failure leaves no destination file and the source byte-identical.
   - A source scan proving `VACUUM` occurs only in `copy.ts`.
-- [ ] 1.5 Add `src/host/storage-engine/copy-device-acceptance.ts` and a `RUN_DATA_COPY_PROBE = false` flag plus a probe screen in `App.tsx`, following the `RUN_STORAGE_PROBE` pattern. The probe:
+- [x] 1.5 Add `src/host/storage-engine/copy-device-acceptance.ts` and a `RUN_DATA_COPY_PROBE = false` flag plus a probe screen in `App.tsx`, following the `RUN_STORAGE_PROBE` pattern. The probe:
   - opens a second connection to a store that is already open, and snapshots it while the first one writes;
   - reports `getDbPath()`;
   - runs `VACUUM INTO` under `location:'storage'`;
