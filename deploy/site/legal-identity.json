@@ -9,9 +9,9 @@
     "fr": "responsable de la protection des renseignements personnels"
   },
   "effectiveDates": {
-    "privacy": "2026-09-27",
+    "privacy": "2026-10-09",
     "terms": "2026-09-27",
-    "providerList": "2026-09-27"
+    "providerList": "2026-10-09"
   },
   "representatives": {
     "eu": "",
@@ -27,9 +27,9 @@
         "ko": "Whim 서버와 로그 호스팅"
       },
       "receives": {
-        "en": "Everything the app sends",
-        "fr": "Tout ce que l’app envoie",
-        "ko": "앱이 보내는 모든 정보(요청 내용, 앱 자료, 휴대폰 ID, 오류 정보, 앱 무결성 확인, 접속 정보, 신고)"
+        "en": "Everything the app sends, and what you give on our website’s beta sign-up page",
+        "fr": "Tout ce que l’app envoie, et ce que vous donnez sur la page d’inscription à la bêta de notre site Web",
+        "ko": "앱이 보내는 모든 정보(요청 내용, 앱 자료, 휴대폰 ID, 오류 정보, 앱 무결성 확인, 접속 정보, 신고)와 Whim 웹사이트의 베타 신청 페이지에 입력한 정보(이메일 주소, 휴대폰 종류, 소식 수신 동의)"
       },
       "country": {
         "en": "Canada (Montreal) and the United States (Virginia)",
@@ -39,7 +39,7 @@
       "retention": {
         "en": "As long as we keep each kind of information, as “How long we keep it” says",
         "fr": "Aussi longtemps que nous conservons chaque type de renseignement, comme l’indique « Combien de temps nous les conservons »",
-        "ko": "Whim의 보관 기간과 같음: 요청 내용과 앱 자료는 처리하는 동안만, 신고·이용 기록·앱 무결성 확인은 최대 12개월, 오류 정보·접속 정보·로그는 최대 90일"
+        "ko": "Whim의 보관 기간과 같음: 요청 내용과 앱 자료는 처리하는 동안만, 신고·이용 기록·앱 무결성 확인은 최대 12개월, 오류 정보·접속 정보·로그는 최대 90일, 베타 대기자 명단은 마지막 신청 후 730일, 명단에서 삭제된 주소의 해시값(주소로 되돌릴 수 없는 값)은 삭제 후 730일"
       }
     },
     {
@@ -103,9 +103,9 @@
         "ko": "support@ 메일함 호스팅"
       },
       "receives": {
-        "en": "What you write to us by email, and anything you include, such as your phone ID",
-        "fr": "Ce que vous nous écrivez par courriel, et tout ce que vous y joignez, comme l’identifiant de votre téléphone",
-        "ko": "이메일로 보낸 내용과 함께 보낸 정보(예: 휴대폰 ID)"
+        "en": "What you write to us by email, and anything you include, such as your phone ID, and the beta invitations and news we email you",
+        "fr": "Ce que vous nous écrivez par courriel, et tout ce que vous y joignez, comme l’identifiant de votre téléphone, ainsi que les invitations à la bêta et les nouvelles que nous vous envoyons par courriel",
+        "ko": "이메일로 보낸 내용과 함께 보낸 정보(예: 휴대폰 ID), 그리고 Whim이 이메일로 보내는 베타 초대와 소식"
       },
       "country": {
         "en": "United States",

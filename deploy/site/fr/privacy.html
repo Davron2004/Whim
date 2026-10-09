@@ -21,6 +21,7 @@
   table { width: 100%; border-collapse: collapse; margin: 1em 0; font-size: 0.95rem; }
   th, td { text-align: left; vertical-align: top; padding: 8px 10px 8px 0; border-bottom: 1px solid #e3e3e3; }
   th { font-size: 0.85rem; font-weight: 600; color: #555; }
+  .provider-contact { overflow-wrap: anywhere; }
   @media (max-width: 600px) {
     thead { display: none; }
     tr, td { display: block; }
@@ -29,6 +30,7 @@
     td::before { content: attr(data-label); display: block; font-size: 0.85rem; font-weight: 600; color: #555; }
   }
   :lang(ko) { word-break: keep-all; }
+  :lang(ko) { word-break: keep-all; }
   footer { margin-top: 3em; font-size: 0.9rem; color: #666; }
 </style>
 </head>
@@ -36,8 +38,8 @@
 <h1>Politique de confidentialité</h1>
 <p class="languages"><a href="/privacy" hreflang="en" lang="en">English version</a></p>
 <p class="updated">En vigueur le {{LEGAL_PRIVACY_EFFECTIVE}}. Version 2. Les changements sont indiqués à la fin.</p>
-<p class="updated">Dernière mise à jour : 2026-10-03.</p>
-<p class="updated">La version précédente, en anglais seulement, s’applique jusqu’au {{LEGAL_PRIVACY_EFFECTIVE}} : <a href="/privacy/v1" hreflang="en">/privacy/v1</a></p>
+<p class="updated">Dernière mise à jour : 2026-10-09.</p>
+<p class="updated">La version 1, en anglais seulement, s’appliquait jusqu’au 2026-09-27 : <a href="/privacy/v1" hreflang="en">/privacy/v1</a></p>
 
 <p>Cette politique s’applique à l’application Whim et au site Web de Whim, whim.anycognition.ca, y compris les pages de lien qui s’ouvrent lorsqu’une personne touche un lien vers une app Whim.</p>
 
@@ -100,10 +102,11 @@
 <p>Si vous parlez au lieu de taper, votre clavier transforme votre voix en texte avant que Whim le voie. Apple, Google ou le fabricant de votre clavier s’en charge selon ses propres conditions. Whim ne reçoit que le texte.</p>
 
 <h2 id="beta-waitlist">La liste d’attente de la bêta sur notre site Web</h2>
-<p>Cette section s’applique à partir du 2026-09-24, jour de l’ouverture de la liste d’attente.</p>
-<p data-category="waitlist">Si vous vous inscrivez à la liste d’attente de la bêta à whim.anycognition.ca/beta, nous conservons l’<strong>adresse courriel</strong> que vous donnez, le <strong>type de téléphone</strong> que vous choisissez (iOS, Android ou Other), si vous avez coché <strong>« Don’t email me about Whim updates »</strong>, la version du texte d’inscription que vous avez vue, et la date de votre inscription et de votre dernière modification. Ces renseignements viennent seulement de cette page Web. L’app ne les envoie jamais, et ils ne sont pas liés à l’identifiant Whim de votre téléphone.</p>
-<p>Nous les utilisons pour vous inviter à tester Whim. Pour Android, nous donnons votre adresse à Google afin que Google Play vous envoie une invitation de testeur. Pour iOS, nous vous envoyons le lien TestFlight par courriel. Sauf si vous avez coché la case, nous pouvons aussi vous écrire de temps en temps au sujet de Whim. Nous ne les utilisons jamais pour de la publicité, et nous ne les vendons pas.</p>
-<p>Si vous vous inscrivez de nouveau avec la même adresse, vos nouvelles réponses remplacent les anciennes. Pour quitter la liste, écrivez à <a href="mailto:{{LEGAL_CONTACT_EMAIL}}">{{LEGAL_CONTACT_EMAIL}}</a> depuis l’adresse inscrite, et nous la supprimerons.</p>
+<p>Cette section s’applique à partir du 2026-09-24, jour de l’ouverture de la liste d’attente. Elle a changé le {{LEGAL_PRIVACY_EFFECTIVE}} : les courriels de nouvelles exigent maintenant que vous cochiez une case, l’arrêt de ces courriels est définitif, et nous conservons une empreinte de l’adresse retirée de la liste.</p>
+<p data-category="waitlist">Si vous vous inscrivez à la liste d’attente de la bêta à whim.anycognition.ca/beta, nous conservons l’<strong>adresse courriel</strong> que vous donnez, le <strong>type de téléphone</strong> que vous choisissez (iOS, Android ou Other), si vous avez accepté de recevoir des <strong>nouvelles de Whim</strong> et, le cas échéant, quand et selon quel texte, la version du texte d’inscription que vous avez vue, et la date de votre inscription et de votre dernière modification. Si vous quittez la liste, nous conservons une <strong>empreinte de votre adresse</strong>. Ces renseignements viennent seulement de cette page Web et de ce que vous nous écrivez. L’app ne les envoie jamais, et ils ne sont pas liés à l’identifiant Whim de votre téléphone.</p>
+<p>Nous les utilisons pour vous inviter à tester Whim. Pour Android, nous donnons votre adresse à Google afin que Google Play vous envoie une invitation de testeur. Pour iOS, nous vous envoyons nous-mêmes le lien TestFlight par courriel, et nous ne donnons jamais votre adresse à Apple. Chaque invitation nous nomme, et dit pourquoi vous l’avez reçue et comment quitter la liste. Nous n’utilisons jamais votre adresse pour de la publicité, et nous ne la vendons pas.</p>
+<p>Nous vous envoyons des nouvelles de Whim par courriel seulement si vous cochez <strong>« Email me news about Whim »</strong> (« Envoyez-moi des nouvelles de Whim par courriel »). Chaque courriel de nouvelles indique comment les arrêter. Si vous vous inscrivez de nouveau sans cocher la case, ou si vous nous demandez d’arrêter, nous arrêtons pour de bon : cocher de nouveau la case sur la page Web ne les rétablit pas. Pour recevoir de nouveau des nouvelles, écrivez-nous depuis cette adresse. Nous donnons suite à une demande d’arrêt, ou de retrait de la liste, dans les 10 jours ouvrables.</p>
+<p>Si vous vous inscrivez de nouveau avec la même adresse, nous mettons à jour votre type de téléphone et gardons la date de votre première inscription. Pour quitter la liste, écrivez à <a href="mailto:{{LEGAL_CONTACT_EMAIL}}">{{LEGAL_CONTACT_EMAIL}}</a> depuis l’adresse inscrite. Nous supprimons votre inscription et ne gardons qu’une empreinte à sens unique de votre adresse, créée avec une clé secrète, pour qu’une nouvelle inscription avec cette adresse n’ajoute rien. L’empreinte ne permet pas de retrouver votre adresse. Si vous voulez pouvoir vous inscrire de nouveau, écrivez-nous depuis cette adresse et nous supprimerons l’empreinte.</p>
 
 <h2>Comment fonctionne la partie IA</h2>
 <p>Notre serveur envoie votre demande, et le matériel de l’app lorsque vous modifiez une app, à des fournisseurs de modèles d’IA qui écrivent ou modifient le code. D’abord, une vérification de sécurité automatisée, elle aussi effectuée par un fournisseur d’IA, décide si la demande est permise. Si elle refuse quelque chose que vous jugez acceptable, écrivez-nous et une personne l’examinera.</p>
@@ -119,16 +122,16 @@
     <tr><td><strong>Appliquer les limites quotidiennes, prévenir les abus, garder Whim sûr et en marche, comprendre nos coûts</strong></td><td data-label="Avec quoi">L’identifiant du téléphone, la vérification d’intégrité de l’app, les registres d’utilisation, les données de connexion, les journaux, la vérification de sécurité des demandes</td><td data-label="Base juridique">Notre intérêt légitime à exploiter Whim de façon sûre et dans les limites de notre budget</td></tr>
     <tr><td><strong>Trouver et corriger les problèmes</strong></td><td data-label="Avec quoi">Les détails d’erreur, les registres d’utilisation, les journaux</td><td data-label="Base juridique">Notre intérêt légitime à garder Whim fonctionnel. Vous pouvez désactiver les détails d’erreur.</td></tr>
     <tr><td><strong>Examiner les signalements</strong></td><td data-label="Avec quoi">Les signalements</td><td data-label="Base juridique">Vous nous l’avez demandé, et notre intérêt légitime à garder Whim sûr</td></tr>
-    <tr><td><strong>Vous inviter à tester Whim, et vous écrire au sujet de Whim sauf si vous refusez</strong></td><td data-label="Avec quoi">La liste d’attente de la bêta</td><td data-label="Base juridique">Vous nous l’avez demandé en vous inscrivant. Pour les courriels occasionnels au sujet de Whim, notre intérêt légitime à donner des nouvelles de Whim aux personnes qui s’y sont intéressées. Cochez la case, ou écrivez-nous, pour les arrêter.</td></tr>
+    <tr><td><strong>Vous inviter à tester Whim, et vous envoyer des nouvelles de Whim par courriel si vous les demandez</strong></td><td data-label="Avec quoi">La liste d’attente de la bêta</td><td data-label="Base juridique">Vous nous l’avez demandé en vous inscrivant. Pour les nouvelles de Whim, votre consentement, que vous donnez en cochant la case et que vous pouvez retirer à tout moment en nous écrivant. Pour l’empreinte d’une adresse retirée de la liste, notre intérêt légitime à tenir notre promesse de ne pas l’ajouter de nouveau.</td></tr>
     <tr><td><strong>Respecter nos obligations légales</strong></td><td data-label="Avec quoi">Ce que la loi exige</td><td data-label="Base juridique">Obligation légale</td></tr>
   </tbody>
 </table>
-<p>Au Canada, et partout où la loi exige un consentement, nous nous appuyons sur le consentement que vous donnez à l’écran de consentement de Whim, sur votre choix d’envoyer un signalement, et sur votre choix de vous inscrire à la liste d’attente de la bêta. Dans l’Union européenne, cette même acceptation est aussi votre consentement à ce que Whim enregistre l’identifiant du téléphone sur votre téléphone et le lise. Les détails d’erreur reposent sur notre intérêt légitime, comme l’indique le tableau ci-dessus, et vous pouvez les désactiver dans les réglages de Whim (Settings). Vous pouvez retirer votre consentement à tout moment dans les réglages de Whim (Settings).</p>
+<p>Au Canada, et partout où la loi exige un consentement, nous nous appuyons sur le consentement que vous donnez à l’écran de consentement de Whim, sur votre choix d’envoyer un signalement, sur votre choix de vous inscrire à la liste d’attente de la bêta et, pour les nouvelles de Whim, sur la case que vous cochez pour les demander. Dans l’Union européenne, cette même acceptation est aussi votre consentement à ce que Whim enregistre l’identifiant du téléphone sur votre téléphone et le lise. Les détails d’erreur reposent sur notre intérêt légitime, comme l’indique le tableau ci-dessus, et vous pouvez les désactiver dans les réglages de Whim (Settings). Vous pouvez retirer votre consentement à tout moment dans les réglages de Whim (Settings) ou, pour la liste d’attente de la bêta, en nous écrivant.</p>
 
 <h2>Avec qui nous les partageons</h2>
 <ul>
   <li><strong>Les fournisseurs d’IA</strong>, qui reçoivent votre demande et le matériel de l’app pour écrire ou modifier le code et effectuer la vérification de sécurité, comme l’indique « Comment fonctionne la partie IA ».</li>
-  <li><strong>Les entreprises qui exploitent nos serveurs, nos journaux et nos courriels</strong> : l’hébergement infonuagique, la journalisation et la surveillance, et le courriel. Elles traitent ce qui parvient à nos serveurs, y compris vos demandes, l’identifiant du téléphone, les registres d’utilisation, les détails d’erreur, les données de connexion, les journaux, les signalements et la liste d’attente de la bêta, et tout ce que vous nous écrivez.</li>
+  <li><strong>Les entreprises qui exploitent nos serveurs, nos journaux et nos courriels</strong> : l’hébergement infonuagique, la journalisation et la surveillance, et le courriel. Elles traitent ce qui parvient à nos serveurs, y compris vos demandes, l’identifiant du téléphone, les registres d’utilisation, les détails d’erreur, les données de connexion, les journaux, les signalements et la liste d’attente de la bêta, tout ce que vous nous écrivez, et les courriels de la bêta que nous vous envoyons.</li>
   <li>Ces deux types d’entreprises ne traitent les renseignements que selon nos instructions, et chacune doit les protéger au moins aussi bien que le fait cette politique.</li>
   <li><strong>Apple ou Google</strong>, lorsqu’ils vérifient qu’une demande provient d’une véritable app Whim, et lorsque nous confirmons un achat que vous avez fait auprès d’eux. Google reçoit aussi l’adresse courriel de chaque testeur Android que nous invitons à partir de la liste d’attente de la bêta. Ils le font selon leurs propres conditions.</li>
   <li><strong>Lorsque la loi l’exige</strong> : une loi, une ordonnance d’un tribunal ou une demande gouvernementale valide. Nous pouvons aussi communiquer ce qui est nécessaire pour régler des problèmes de fraude, de sécurité ou de sûreté.</li>
@@ -152,7 +155,7 @@
 <!-- The Korean section below is a machine-quality first draft, generated from the same provider rows as the list above. A fluent Korean reader checks it before it is relied on. -->
 <div lang="ko" id="ko-transfer">
 <h3>개인정보 국외 이전 안내</h3>
-<p>{{LEGAL_NAME}}(Whim 운영사)는 Whim 서비스를 제공하기 위해 아래 업체에 개인정보를 국외로 이전합니다. 이전은 Whim 앱이 요청을 보낼 때마다 암호화된 네트워크를 통해 이루어집니다.</p>
+<p>{{LEGAL_NAME}}(Whim 운영사)는 Whim 서비스를 제공하기 위해 아래 업체에 개인정보를 국외로 이전합니다. 이전은 Whim 앱이 요청을 보낼 때마다, 그리고 Whim 웹사이트의 베타 신청 페이지에서 신청할 때 암호화된 네트워크를 통해 이루어집니다. 베타 초대와 소식 이메일은 Whim의 support@ 메일함에서 보냅니다.</p>
 <table>
   <thead><tr><th>이전받는 자</th><th>이전 항목</th><th>이전 국가</th><th>이용 목적</th><th>보유 및 이용 기간</th></tr></thead>
   <tbody>
@@ -161,7 +164,7 @@
 <!--ENDEACH-->
   </tbody>
 </table>
-<p>국외 이전을 원하지 않으시면 동의하지 않거나 설정(Settings)에서 AI 기능을 끌 수 있습니다. 이 경우 앱을 새로 만들거나 바꿀 수는 없지만, 휴대폰에 이미 있는 앱은 계속 사용할 수 있습니다. 문의: <a href="mailto:{{LEGAL_CONTACT_EMAIL}}">{{LEGAL_CONTACT_EMAIL}}</a></p>
+<p>국외 이전을 원하지 않으시면 동의하지 않거나 설정(Settings)에서 AI 기능을 끌 수 있습니다. 이 경우 앱을 새로 만들거나 바꿀 수는 없지만, 휴대폰에 이미 있는 앱은 계속 사용할 수 있습니다. 베타 대기자 명단 정보의 이전을 원하지 않으시면 신청하지 않거나, 신청한 주소로 아래 문의처에 메일을 보내 명단에서 빠질 수 있습니다. 문의: <a href="mailto:{{LEGAL_CONTACT_EMAIL}}">{{LEGAL_CONTACT_EMAIL}}</a></p>
 </div>
 </section>
 
@@ -178,10 +181,10 @@
     <tr data-keep="error-details connection-logs"><td><strong>Détails d’erreur, données de connexion et journaux</strong></td><td data-label="Durée">Supprimés dans les 90 jours.</td></tr>
     <tr data-keep="phone-id"><td><strong>L’identifiant du téléphone</strong></td><td data-label="Durée">Sur votre téléphone jusqu’à ce que vous supprimiez Whim ou créiez un nouvel identifiant dans les réglages de Whim (Settings). De notre côté, il n’existe que dans les registres d’utilisation, les détails d’erreur et les signalements, qui sont supprimés comme indiqué ci-dessus.</td></tr>
     <tr data-keep="app-integrity"><td><strong>La vérification d’intégrité de l’app</strong></td><td data-label="Durée">Supprimée dans les 12 mois suivant la dernière utilisation de l’identifiant du téléphone.</td></tr>
-    <tr data-keep="waitlist"><td><strong>La liste d’attente de la bêta</strong></td><td data-label="Durée">Supprimée 730 jours après votre dernière inscription, ou plus tôt si vous demandez à quitter la liste.</td></tr>
+    <tr data-keep="waitlist"><td><strong>La liste d’attente de la bêta</strong></td><td data-label="Durée">Supprimée 730 jours après votre dernière inscription, ou plus tôt si vous demandez à quitter la liste. L’empreinte d’une adresse retirée de la liste est supprimée 730 jours après le retrait, ou plus tôt si vous nous écrivez pour vous inscrire de nouveau.</td></tr>
   </tbody>
 </table>
-<p data-keep-v1="reports usage-records">Les signalements et les registres d’utilisation créés avant le {{LEGAL_PRIVACY_EFFECTIVE}} sont supprimés dans les 90 jours, comme le disait la version précédente de cette politique.</p>
+<p data-keep-v1="reports usage-records">Les signalements et les registres d’utilisation créés avant le 2026-09-27 sont supprimés dans les 90 jours, comme le disait la version précédente de cette politique.</p>
 <p>Nous ne conservons quelque chose plus longtemps que lorsque la loi l’exige, ou pendant que nous réglons un problème précis de sécurité ou d’ordre juridique.</p>
 <p>Les dossiers supprimés peuvent subsister dans des sauvegardes chiffrées du disque jusqu’à 14 jours, avant l’expiration de ces sauvegardes.</p>
 
@@ -224,8 +227,9 @@
 <p>Si nous voulons recueillir un nouveau type de renseignements, les utiliser à une nouvelle fin, les conserver plus longtemps que ne l’indique cette page ou les confier à un nouveau type de destinataire, l’app vous le demandera d’abord, et elle n’enverra rien de nouveau avant que vous acceptiez. Une nouvelle fonction que vous choisissez d’activer vous demande votre accord lorsque vous l’utilisez pour la première fois.</p>
 <p>Pour les autres changements, comme une formulation plus claire, une autre entreprise qui fait le même travail ou une conservation plus courte, nous mettons cette page à jour, changeons la date de dernière mise à jour en haut et ajoutons une ligne ci-dessous.</p>
 <ul>
+  <li>{{LEGAL_PRIVACY_EFFECTIVE}} : la liste d’attente de la bêta. Les courriels de nouvelles de Whim exigent maintenant que vous cochiez une case, et leur arrêt est définitif, sauf si vous nous écrivez. Nous conservons une empreinte de l’adresse retirée de la liste, pendant 730 jours. La liste des fournisseurs indique maintenant que Google Cloud reçoit ce que vous donnez sur la page d’inscription à la bêta et que Zoho achemine les courriels de la bêta que nous envoyons. Le consentement donné dans l’app ne change pas.</li>
   <li>2026-10-03 : ajoute « Si vous dirigez Whim vers votre propre serveur ». Ce que Whim recueille, pourquoi, combien de temps il le conserve et à qui il le communique ne changent pas.</li>
-  <li>{{LEGAL_PRIVACY_EFFECTIVE}}, version 2 : réécrite en termes plus simples. Ajoute les détails d’erreur, les vérifications d’intégrité de l’app par Apple ou Google, les données de connexion et les journaux, la liste des entreprises qui traitent des renseignements pour nous, la liste d’attente de la bêta sur notre site Web, le responsable de la protection des renseignements personnels, vos droits, les bases juridiques et les lieux où les renseignements sont traités. Les signalements peuvent maintenant être conservés jusqu’à 12 mois, et les registres d’utilisation jusqu’à 12 mois après la dernière utilisation, au lieu de 90 jours ; ceux créés avant cette version sont toujours supprimés dans les 90 jours. Première version en français.</li>
+  <li>2026-09-27, version 2 : réécrite en termes plus simples. Ajoute les détails d’erreur, les vérifications d’intégrité de l’app par Apple ou Google, les données de connexion et les journaux, la liste des entreprises qui traitent des renseignements pour nous, la liste d’attente de la bêta sur notre site Web, le responsable de la protection des renseignements personnels, vos droits, les bases juridiques et les lieux où les renseignements sont traités. Les signalements peuvent maintenant être conservés jusqu’à 12 mois, et les registres d’utilisation jusqu’à 12 mois après la dernière utilisation, au lieu de 90 jours ; ceux créés avant cette version sont toujours supprimés dans les 90 jours. Première version en français.</li>
   <li>2026-09-22, version 1 : première version, en anglais seulement.</li>
 </ul>
 

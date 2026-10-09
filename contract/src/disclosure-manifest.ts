@@ -480,7 +480,7 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
     },
     { id: 'safety', description: 'Handle reports and keep Whim safe', advertisingOrTracking: false },
     { id: 'legal', description: 'Meet legal obligations', advertisingOrTracking: false },
-    { id: 'beta', description: 'Invite people to test Whim and, unless they opt out, email them about Whim', advertisingOrTracking: false },
+    { id: 'beta', description: 'Invite people who sign up to test Whim, and email them news about Whim only with their express consent', advertisingOrTracking: false },
   ],
   uses: [
     { category: 'request-material', roles: ['anycognition', 'ai-providers', 'hosting-providers'], purposes: ['build', 'operate'] },
