@@ -1,4 +1,4 @@
-// Node acceptance suite for the v2 theme model (docs/design/README.md "Design tokens" / "Two
+// Node acceptance suite for the v2 theme model (the v2 handoff README (removed by decision #75; in git history) "Design tokens" / "Two
 // systems, not one"). Auto-discovered by `src/sdk/test/run.mjs` (every `*.acceptance.ts(x)`
 // under this directory) — no shared harness import, following the `chart-geometry.acceptance.ts`
 // idiom of local `fail`/`equal`/`ok` helpers.

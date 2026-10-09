@@ -1,5 +1,5 @@
 /**
- * whim-prose types — the Whim Syntax vocabulary (design D7; docs/design/README.md "Whim Syntax —
+ * whim-prose types — the Whim Syntax vocabulary (design D7; the v2 handoff README (removed by decision #75; in git history) "Whim Syntax —
  * prose highlighting").
  *
  * Shell-side ONLY. This vocabulary is never exported from `vc-sdk`: the marks describe what the
