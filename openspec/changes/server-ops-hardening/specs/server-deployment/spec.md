@@ -75,7 +75,7 @@ Unless the operator passes `--no-live`, the smoke SHALL send exactly one live `P
 
 #### Scenario: A smoke can make no write at all
 - **WHEN** the smoke runs with `--no-live`
-- **THEN** no request carries a device id
+- **THEN** no request carries the smoke device id and nothing is written; the pre-protocol `426` probe carries the all-zero device id `00000000-0000-4000-8000-000000000000` and is refused before admission
 
 ### Requirement: Firestore admission contention is load-tested without touching production
 The repository SHALL provide an on-demand Firestore admission load test. It SHALL drive bursts of concurrent `admit` calls (generate, and a clarify+rewrite mix under the shared unary ceiling) through the production `FirestoreUsageStore`. It SHALL report p50 and p99 `admit` latency, the transaction attempt count per admission, the number of transactions that exhausted their retries, and whether the number admitted equals exactly the configured limit.

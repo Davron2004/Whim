@@ -108,8 +108,8 @@ export function policyCheckRowId(requestId: string): string; // `${requestId}:po
   - generation cost = sum of both rows;
   - `unresolved` if either row is `unresolved`;
   - pending (excluded) while either row is pending.
-- `failureReasonCounts` counts rows. A refusal in line therefore counts `content_policy` twice:
-  once for the check row and once for the generate row.
+- `failureReasonCounts` counts rows, except that a `policy-check` row whose `generate` row (same
+  request) carries the same reason is not counted: a refusal in line counts `content_policy` once.
 
 ## Older image reading new rows
 

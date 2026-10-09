@@ -270,7 +270,8 @@ export interface UsageSummary {
   days: UsageSummaryDay[];
   topDevicesByCost: UsageSummaryDevice[];
   generationStats: UsageSummaryGenerationStats;
-  /** Rows in the window that ended with each failure reason, refunded or not. */
+  /** Rows in the window that ended with each failure reason, refunded or not; a refusal in line
+   *  counts once, on its generate row, not again on its policy-check row. */
   failureReasonCounts: Partial<Record<FailureReason, number>>;
 }
 
@@ -411,9 +412,14 @@ export function computeSummary(rows: readonly SummaryRow[], params: SummaryParam
     unresolvedCount,
   };
 
+  // A refusal in line settles its policy-check row and its generate row with the same reason; it
+  // counts once, on the generate row. A check row whose request wrote no such row still counts.
+  const generationsByCheckId = new Map(inWindow.filter((r) => r.kind === 'generate').map((r) => [policyCheckRowId(r.id), r]));
   const failureReasonCounts: Partial<Record<FailureReason, number>> = {};
   for (const r of inWindow) {
-    if (r.failureReason !== null) failureReasonCounts[r.failureReason] = (failureReasonCounts[r.failureReason] ?? 0) + 1;
+    if (r.failureReason === null) continue;
+    if (r.kind === 'policy-check' && generationsByCheckId.get(r.id)?.failureReason === r.failureReason) continue;
+    failureReasonCounts[r.failureReason] = (failureReasonCounts[r.failureReason] ?? 0) + 1;
   }
 
   return { days, topDevicesByCost, generationStats, failureReasonCounts };

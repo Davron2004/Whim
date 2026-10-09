@@ -353,6 +353,26 @@ const policyCheckRows: StoreConformanceCase = {
   },
 };
 
+const lineRefusalReasons: StoreConformanceCase = {
+  name: 'a refusal in line counts once among the failure reasons, and a check with no generate row still counts',
+  async run({ usage }) {
+    const inLine = { kind: 'policy-check' as const, deviceLimit: 10 };
+    const settle = (id: string, outcome: 'refused' | 'unavailable', failureReason: FailureReason) => usage.settle(id, { outcome, failureReason, now: T0 });
+    // Refused in line: both rows settle refused for content_policy (ruling 3).
+    await usage.admit(admitParams(policyCheckRowId('both'), 'dev-a', inLine));
+    await settle(policyCheckRowId('both'), 'refused', 'content_policy');
+    await usage.admit(admitParams('both', 'dev-a'));
+    await settle('both', 'refused', 'content_policy');
+    // Refused in line after the generate ceiling filled: only the check row exists.
+    await usage.admit(admitParams(policyCheckRowId('check-only'), 'dev-b', inLine));
+    await settle(policyCheckRowId('check-only'), 'refused', 'content_policy');
+    // No verdict in line: the check row alone.
+    await usage.admit(admitParams(policyCheckRowId('down'), 'dev-c', inLine));
+    await settle(policyCheckRowId('down'), 'unavailable', 'policy_unavailable');
+    nodeAssert.deepStrictEqual((await usage.summary({ days: 1, now: T0 })).failureReasonCounts, { content_policy: 2, policy_unavailable: 1 });
+  },
+};
+
 const creditIncrements: StoreConformanceCase = {
   name: 'credit increments the lifetime totals and stamps the day it ran',
   async run({ usage }, clock) {
@@ -603,6 +623,7 @@ export const STORE_CONFORMANCE_CASES: readonly StoreConformanceCase[] = [
   costSweepCandidates,
   summary,
   policyCheckRows,
+  lineRefusalReasons,
   creditIncrements,
   reportListing,
   waitlistRows,
