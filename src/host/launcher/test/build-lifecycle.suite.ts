@@ -513,6 +513,21 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(line(179_000, 'run'), 'Running the checks · 0:29', 'while the app is checked, the line names the checks rather than a reply');
   });
 
+  await h.test('the build’s status line: once the checks start, the last seconds of writing or thinking no longer show', () => {
+    const journal = new RunJournalStore(new MapKVBackend());
+    journal.create('run-1');
+    let s: RunSignals = { startedAt: 0, aggregates: EMPTY_RUN_AGGREGATES, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: 0 };
+    const fold = (event: GenerationEvent, at: number) => { s = journalStreamEvent(journal, 'run-1', s, event, at); };
+    const line = (now: number, stage: Stage | null) => buildLivenessLine(livenessOf(s, now), s, now, livenessPhaseOf(stage, undefined));
+    fold({ type: 'stage', stage: 'generate', status: 'start' }, 10_000);
+    fold({ type: 'token', text: 'const app = 1;' }, 20_000);
+    h.ok(line(21_000, 'generate').startsWith('Writing · '), 'while code arrives, the line says it is being written');
+    fold({ type: 'stage', stage: 'check', status: 'start' }, 21_500);
+    h.eq(livenessOf(s, 22_000), 'writing', 'precondition: the last token is still inside the writing window');
+    h.eq(line(22_000, 'check'), 'Running the checks · 0:22', 'the check stage names the checks at once, not the writing that just ended');
+    h.eq(line(22_000, 'run'), 'Running the checks · 0:22', 'and so does the run stage');
+  });
+
   // ── retry ────────────────────────────────────────────────────────────────────────────────────
 
   await h.test('retry: a new attempt reuses the failed record’s launcher id', async () => {
