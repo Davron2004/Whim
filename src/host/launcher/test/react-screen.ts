@@ -3,9 +3,9 @@ import TestRenderer from 'react-test-renderer';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-export async function renderScreen(element: React.ReactElement): Promise<TestRenderer.ReactTestRenderer> {
+export async function renderScreen(element: React.ReactElement, options?: TestRenderer.TestRendererOptions): Promise<TestRenderer.ReactTestRenderer> {
   let tree!: TestRenderer.ReactTestRenderer;
-  await TestRenderer.act(async () => { tree = TestRenderer.create(element); });
+  await TestRenderer.act(async () => { tree = TestRenderer.create(element, options); });
   return tree;
 }
 export async function unmountScreen(tree: TestRenderer.ReactTestRenderer): Promise<void> {

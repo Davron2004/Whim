@@ -47,6 +47,14 @@ export function keyboardOverlap(frameBottom: number, keyboardTop: number): numbe
   return Math.max(0, frameBottom - keyboardTop);
 }
 
+/** Whether a mini-app's page is padded for the keyboard like a frame. Android: yes, the WebView
+ *  draws under the keyboard like everything else, and only a page that ends above it has a
+ *  viewport the runtime can keep a focused field inside. iOS: no, WKWebView scrolls a focused
+ *  field clear of the keyboard itself, and a shorter page would count the keyboard twice. */
+export function padsWebViewForKeyboard(os: string): boolean {
+  return os === 'android';
+}
+
 /** A drag on iOS pulls the keyboard down with the finger; Android has no such gesture, so a drag
  *  dismisses. */
 export function keyboardDismissMode(os: string): 'interactive' | 'on-drag' {
