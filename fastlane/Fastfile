@@ -258,7 +258,9 @@ platform :android do
         release_status: options[:status] || "draft",
         skip_upload_metadata: true,
         skip_upload_images: true,
-        skip_upload_screenshots: true
+        skip_upload_screenshots: true,
+        # The gradle action collects every built APK (the upgrade check's offline one too); Play refuses APKs next to an AAB.
+        skip_upload_apk: true
       )
       # A tag follows a successful upload (specs/store-release-pipeline/spec.md); upload:false
       # never tags, so `git tag` never marks a build that wasn't actually shipped.
