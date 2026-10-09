@@ -2323,8 +2323,10 @@ function LauncherShell({
       diagnostics: hydratedDiagnostics(current.failure),
       observedRepairAttempts: 0,
       hasWorkingVersion: edited != null,
-      // A record that names a remedy is one rewording can't get past (`PendingFailureRemedy`).
-      rephraseHelps: current.failure?.remedy == null,
+      // A record that names a remedy is one rewording can't get past (`PendingFailureRemedy`), and
+      // neither is an interruption (no failure payload, as `reason` reads it): the app closed, the
+      // request was never the problem.
+      rephraseHelps: current.failure != null && current.failure.remedy == null,
       pendingId: current.id,
       ...(view?.durability !== 'volatile' && current.journalUnavailable !== true ? { journalId: current.id } : {}),
     };

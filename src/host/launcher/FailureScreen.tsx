@@ -214,7 +214,7 @@ export default function FailureScreen({
             the user never had. */}
         {showTimeline && (
           <View style={styles.timeline}>
-            <RunTimeline entries={journal} devMode={devMode} shownReason={shownReason} />
+            <RunTimeline entries={journal} devMode={devMode} shownReason={shownReason} ended />
           </View>
         )}
       </View>

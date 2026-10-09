@@ -28,11 +28,13 @@ export interface RunTimelineProps {
   devMode?: boolean;
   /** The failure reason the caller's screen already states, so the list doesn't repeat it. */
   shownReason?: string;
+  /** The attempt is over (the failure screen): a stage it never left reads as unfinished. */
+  ended?: boolean;
 }
 
-export default function RunTimeline({ entries, devMode = false, shownReason }: Readonly<RunTimelineProps>) {
+export default function RunTimeline({ entries, devMode = false, shownReason, ended = false }: Readonly<RunTimelineProps>) {
   const p = SHELL_PALETTE;
-  const rows = runTimelineRows(entries ?? [], devMode, shownReason);
+  const rows = runTimelineRows(entries ?? [], devMode, shownReason, ended);
 
   /** The stage spine reads in the text colour; everything hanging off it is secondary. */
   const rowColor = (row: TimelineRow) => (row.kind === 'stage' ? p.text : p.textMuted);

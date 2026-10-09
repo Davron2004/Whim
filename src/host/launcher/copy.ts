@@ -128,8 +128,11 @@ export const COPY = {
   /** No journal survived for this attempt — the section says so rather than inventing a run. */
   timelineEmpty: 'Nothing was recorded for this attempt.',
   timelineClose: 'Close',
-  /** A stage the attempt was still in when the journal stops — no duration is invented for it. */
+  /** A stage the attempt is still in, on the live build's timeline — no duration is invented for it. */
   timelineStillGoing: 'still going',
+  /** A stage an attempt that has ended was still in when its journal stops (the app closed mid-build,
+   *  say): it didn't finish, and no duration is invented for it either. */
+  timelineDidNotFinish: 'didn’t finish',
   // One plain-words label per generation stage. `check`, `run` and `repair` share ONE named build
   // step on the progress screen, but the timeline is a list of what happened in order, so each
   // stage the device actually saw gets its own line.
@@ -792,9 +795,11 @@ export function timelineDurationLabel(ms: number): string {
   return `${minutes}m ${String(totalSeconds % SECONDS_PER_MINUTE).padStart(2, '0')}s`;
 }
 
-/** One stage transition's row: what happened, then how long it took. */
-export function timelineStageLine(label: string, durationMs: number | null): string {
-  return `${label} · ${durationMs == null ? COPY.timelineStillGoing : timelineDurationLabel(durationMs)}`;
+/** One stage transition's row: what happened, then how long it took. A stage with no end reads as
+ *  still going while the attempt runs, and as unfinished once the attempt has `ended`. */
+export function timelineStageLine(label: string, durationMs: number | null, ended = false): string {
+  if (durationMs != null) return `${label} · ${timelineDurationLabel(durationMs)}`;
+  return `${label} · ${ended ? COPY.timelineDidNotFinish : COPY.timelineStillGoing}`;
 }
 
 /** The output-growth row: cumulative character COUNTS — sizes, never any of the text itself.
