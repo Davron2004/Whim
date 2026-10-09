@@ -103,3 +103,11 @@ Beta-1 reinforced T1, T4, T7 and T10, and added:
    - Refactor `renderScreenContent` to a kind→renderer map.
    - Make log-capture reject duplicate JSON keys.
    - Add a rollback-compat smoke case.
+- **2026-10-08/09 — overnight PO orchestration (beta-1 closure, server-ops-hardening, waitlist-hardening, design-system-v1 1–13/23, copy-app-data 1).** ~45 subagents, 6 in parallel at peak, worktree-per-chain.
+  - CAUGHT-REAL-MISTAKE: full gate after merges caught the synthrun false `unreachable_screen` (SDK push transition) that two fast-gated merges let through; a reviewer caught a smoke that only guarded billing mode, not instance counts; class-B stops (waitlist HMAC key path) prevented a silently-unkeyed fingerprint.
+  - DRAWBACK: fast gate skips knip/Chromium/openspec — orphaned exports and SDK runtime regressions surface late. Run gate-full after every merge touching src/sdk, src/runtime, synthrun or build.
+  - DRAWBACK: resuming a ~940k-token designer died ("prompt too long"); fresh agent per phase reading committed docs worked.
+  - DRAWBACK: editor diagnostics from deleted worktrees are pure noise; ignore them, the gate decides.
+  - ENV: fixed Firestore emulator ports collided across parallel gates — fixed (per-run ports).
+  - HELPED: path-partitioned history rewrite (499 → 32 commits, 0 evidence blobs) with a tree-identity gate; independent reviewer per change; live smoke on first real deploy caught a `gcloud` track bug fakes couldn't.
+  - Proposals: run knip at each serial merge; implementer briefs must say whether `.claude/**`/package.json are still "protected" (stale CLAUDE.md made agents over-defer); a removal ratchet for verification code (#159).
