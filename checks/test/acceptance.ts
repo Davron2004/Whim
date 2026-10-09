@@ -37,13 +37,16 @@ import { run as runAndroidEdgeToEdge } from './repo/android-edge-to-edge.suite';
 import { run as runTrackedWeight } from './repo/tracked-weight.suite';
 import { run as runDesignSystem } from './repo/design-system.suite';
 import { run as runBindingProvenance } from './repo/binding-provenance.suite';
+import { run as runWebviewFloor } from './repo/webview-floor.suite';
 import {
   CheckReport,
   DIAGNOSTIC_KINDS,
   DiagnosticKind,
   FORBIDDEN_DIRECT_NAMES,
   GLOBAL_ROOTS,
+  POST_FLOOR_BUILTINS,
   SDK_LINT_RULES,
+  WEBVIEW_FLOOR_CHROMIUM,
 } from '../contract';
 import { runStaticChecks as runStaticChecksRaw, scanStorageSurface, StorageSurface } from '../index';
 // Value import (the roster array only — `observe.ts`'s own imports are all type-only, so this
@@ -690,6 +693,47 @@ async function testSdkLint(): Promise<void> {
   });
 }
 
+// ── §D4b WebView floor — built-ins the oldest supported WebView lacks ──
+
+async function testWebviewFloor(): Promise<void> {
+  /** One use of `row` on line 2, shaped the way a model writes it. */
+  function useOf(row: (typeof POST_FLOOR_BUILTINS)[number]): string {
+    if (row.form === 'method') return `declare const xs: any;\nconst out = xs.${row.name}(0);\n`;
+    if (row.form === 'static') return `// static\nconst out = ${row.owner}.${row.name}(() => 0);\n`;
+    return `// global\nconst out = ${row.name}({});\n`;
+  }
+  for (const row of POST_FLOOR_BUILTINS) {
+    const symbol = row.owner ? row.owner + '.' + row.name : row.name;
+    await test(`webview-floor: ${symbol} is an error naming Chromium ${row.chromium}`, () => {
+      const d = assertHasKind(runStaticChecks(useOf(row)), 'post_floor_builtin');
+      assert(d.severity === 'error', 'a post-floor built-in throws on the floor WebView, so it must be an error');
+      assert(d.line === 2, `diagnostic should anchor to the use on line 2, got line ${d.line}`);
+      assert(d.message.includes(String(row.chromium)) && d.message.includes(String(WEBVIEW_FLOOR_CHROMIUM)), `message should name both versions: ${d.message}`);
+      assert(d.hint.includes(row.instead), `hint should carry the floor-safe form, got: ${d.hint}`);
+    });
+  }
+
+  await test('webview-floor: optional-chained and chained calls are found too', () => {
+    const r = runStaticChecks('declare const xs: any;\nconst a = xs?.at(-1);\nconst b = [3, 1].toSorted().findLast((x: number) => x > 1);\n');
+    const symbols = findByKind(r, 'post_floor_builtin').map((d) => d.symbol ?? '').sort((a, b) => a.localeCompare(b));
+    assert(JSON.stringify(symbols) === JSON.stringify(['at', 'findLast', 'toSorted']), `expected at/findLast/toSorted, got ${JSON.stringify(symbols)}`);
+  });
+
+  await test('webview-floor: floor-safe forms, feature tests and shadowing locals are not flagged', () => {
+    const r = runStaticChecks(`
+declare const xs: number[];
+const last = xs[xs.length - 1];
+const sorted = [...xs].sort((a, b) => a - b);
+const has = Object.keys({ a: 1 }).includes('a');
+const canAt = typeof xs.at === 'function';
+function structuredClone<T>(value: T): T { return JSON.parse(JSON.stringify(value)); }
+const copy = structuredClone({ a: 1 });
+function local(Object: { hasOwn(o: object, k: string): boolean }) { return Object.hasOwn({}, 'a'); }
+`);
+    assertNoKind(r, 'post_floor_builtin');
+  });
+}
+
 // ── §D5 schema check — reuses the storage engine's pure functions ──
 
 async function testSchemaCheck(): Promise<void> {
@@ -1219,6 +1263,7 @@ async function main(): Promise<void> {
   await testCapabilityDirections();
   await testScreenGraph();
   await testSdkLint();
+  await testWebviewFloor();
   await testSchemaCheck();
   await testSchemaIdentityContinuity();
   await testStorageContinuity();
@@ -1235,6 +1280,7 @@ async function main(): Promise<void> {
   await runTrackedWeight();
   await runDesignSystem();
   await runBindingProvenance();
+  await runWebviewFloor();
 }
 
 main()

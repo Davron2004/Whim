@@ -7,7 +7,7 @@
 import * as React from 'react';
 import { ICON_PATHS, ICON_VIEWBOX } from '../design/icons/paths';
 import { resolveIcon } from '../design/icons/names';
-import { textColor, type TextColorToken } from './tokens';
+import { own, textColor, type TextColorToken } from './tokens';
 
 export type IconSize = 'sm' | 'md' | 'lg';
 
@@ -70,6 +70,6 @@ export interface IconProps {
 }
 
 export function Icon({ name, size = 'md', color = 'text', label }: IconProps): React.ReactElement {
-  const sizePx = Object.prototype.hasOwnProperty.call(ICON_PX, size) ? ICON_PX[size] : ICON_PX.md;
+  const sizePx = own(ICON_PX, size) ? ICON_PX[size] : ICON_PX.md;
   return React.createElement(Glyph, { name, sizePx, colorValue: textColor(color), label });
 }
