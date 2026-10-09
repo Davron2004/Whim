@@ -9,6 +9,7 @@
 // the launcher id, so switching apps remounts it (a fresh realm every launch).
 import React, { useCallback, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
 import type { WhimTheme } from '../../sdk/theme';
@@ -18,11 +19,12 @@ import { CHANNELS } from '../logging/channels';
 import { loadEndAction } from './realm-delivery';
 import { logWebViewError } from './webview-error';
 import { useMiniAppHost } from './useMiniAppHost';
-import { SHELL_PALETTE } from './theme';
+import { primaryButtonColors, SHELL_PALETTE } from './theme';
 import { COPY } from './copy';
 import { miniAppSurface } from './boot-state';
 import { BreathingView } from './flow-skeletons';
 import Orb from './Orb';
+import { chromeInsetBottom } from './orb-geometry';
 import ReportSheet from './ReportSheet';
 import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
@@ -90,7 +92,9 @@ export default function MiniAppView({
   // (keyed by launcher id), and every Retry remount (a bumped webKey, i.e. a RECREATED realm,
   // spike2 §5) -- while a repeat for the same key is dropped. Theme is re-captured at each real
   // delivery, matching the "theme applies at delivery" model (design sdk-design-system Non-Goals):
-  // a running realm never re-themes live.
+  // a running realm never re-themes live. The theme carries how much of the app's bottom edge the
+  // orb covers (beta-1 D5), computed from this delivery's bottom safe-area inset.
+  const bottomInset = useSafeAreaInsets().bottom;
   const deliveredKey = useRef<number | null>(null);
   const handleLoadEnd = useCallback(() => {
     if (loadEndAction(deliveredKey.current, webKey) === 'duplicate') {
@@ -101,9 +105,9 @@ export default function MiniAppView({
       return;
     }
     deliveredKey.current = webKey;
-    host.deliverBySource(record, bundleSource, engineAppId, theme);
+    host.deliverBySource(record, bundleSource, engineAppId, { ...theme, chromeInsetBottom: chromeInsetBottom(bottomInset) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [webKey]);
+  }, [webKey, bottomInset]);
 
   // Which of the four container surfaces this render belongs to. The precedence (both failure
   // surfaces above the boot state) is decided by the pure `miniAppSurface` -- a launch that fails
@@ -118,7 +122,11 @@ export default function MiniAppView({
       <View style={[styles.root, styles.errorRoot, { backgroundColor: p.bg }]}>
         <Text style={[TYPE_SCALE.screenTitle, styles.errorTitle, { color: p.text }]}>{COPY.launchFailedTitle}</Text>
         <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.launchFailedBody}</Text>
-        <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={onExit}>
+        <Pressable
+          accessibilityRole="button"
+          style={[styles.errorAction, primaryButtonColors(true)]}
+          onPress={onExit}
+        >
           <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.launchFailedBack}</Text>
         </Pressable>
       </View>
@@ -140,11 +148,19 @@ export default function MiniAppView({
       <View style={[styles.root, styles.errorRoot, { backgroundColor: p.bg }]}>
         <Text style={[TYPE_SCALE.screenTitle, styles.errorTitle, { color: p.text }]}>{COPY.appErrorTitle}</Text>
         <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.appErrorBody}</Text>
-        <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={retry}>
+        <Pressable
+          accessibilityRole="button"
+          style={[styles.errorAction, primaryButtonColors(true)]}
+          onPress={retry}
+        >
           <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.appErrorRetry}</Text>
         </Pressable>
-        <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={onExit}>
-          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.launchFailedBack}</Text>
+        <Pressable
+          accessibilityRole="button"
+          style={[styles.errorAction, styles.errorSecondary, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
+          onPress={onExit}
+        >
+          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{COPY.launchFailedBack}</Text>
         </Pressable>
       </View>
     );
@@ -202,11 +218,20 @@ export default function MiniAppView({
 const styles = StyleSheet.create({
   root: { flex: 1 },
   web: { flex: 1 },
-  errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.xl },
+  errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.lg },
   errorTitle: { textAlign: 'center', marginBottom: SPACING.sm },
   errorBody: { textAlign: 'center', marginBottom: SPACING.lg },
-  // marginBottom, not a bare stack: two flush pills read as one overlapping shape on device.
-  errorButton: { paddingVertical: SPACING.sm, paddingHorizontal: SPACING.lg, borderRadius: RADIUS.field, marginBottom: SPACING.sm },
+  // The app's standard pair (DoneStep): a filled primary and an outlined secondary, each the full
+  // width and one height, with a gap so the two never read as one shape.
+  errorAction: {
+    alignSelf: 'stretch',
+    height: 52,
+    borderRadius: RADIUS.card,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  errorSecondary: { marginTop: SPACING.sm },
   boot: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.xl },
   bootTitle: { textAlign: 'center', marginBottom: SPACING.md },
   bootMark: { width: SPACING.xl, height: SPACING.xs, borderRadius: RADIUS.chip, marginBottom: SPACING.md },
