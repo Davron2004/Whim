@@ -138,6 +138,12 @@ export const Linking = {
 };
 export function linkListenerCount(): number { return urlListeners.size; }
 export function openLink(url: string): void { for (const listener of urlListeners) listener({ url }); }
+/** The system clipboard: what was last copied. */
+export const Clipboard = {
+  copied: [] as string[],
+  setString: (text: string) => { Clipboard.copied.push(text); },
+  getString: async () => Clipboard.copied.at(-1) ?? '',
+};
 export interface AlertButton { text?: string; style?: string; onPress?: () => void }
 /** Every `Alert.alert` call, in order, so a test can read the dialog and press one of its buttons. */
 export const Alert = {

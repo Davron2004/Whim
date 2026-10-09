@@ -67,8 +67,6 @@ export const COPY = {
   sheetClose: 'Close',
   toastDismiss: 'Dismiss',
   fieldClear: 'Clear text',
-  highlightingSectionTitle: 'Highlighting',
-  highlightingHint: 'Colours and marks in what Whim tells you.',
 
   // ── the five-step prompt flow (2a) ──────────────────────────────────────────
   flowContinue: 'Continue',
@@ -198,7 +196,10 @@ export const COPY = {
   orbMenuCloseLabel: 'Close the app menu',
   orbMenuDismissLabel: 'Dismiss the app menu',
 
-  // ── the report sheet (content-reporting; design D13/D14) ────────────────────
+  // ── the report screen (content-reporting; design D13/D14) ───────────────────
+  /** The Report screen's header title on the native stack, from History and Settings. */
+  reportScreenTitle: 'Report a problem',
+  /** The report sheet's title over a running app. */
   reportSheetTitle: 'Report this app',
   /** The done step's plain-text entry point, below its two fixed destinations. */
   doneReportThisApp: 'Report this app',
@@ -216,24 +217,22 @@ export const COPY = {
   reportFieldReason: 'Reason',
   reportFieldNote: 'Note',
   reportFieldAppName: 'App',
-  reportFieldPrompt: 'The prompt',
+  reportFieldPrompt: 'What you asked for',
   reportFieldSource: 'The code',
-  reportIncludePrompt: 'Include the prompt for this version',
-  reportCodeDisclosure: 'Your report includes this app’s code so we can investigate what went wrong.',
+  reportIncludePrompt: 'Include what I asked for',
   reportNoCodeDisclosure: 'This version has no saved code to include.',
   /** The recipient line while reports go to Whim's own server; `reportRecipientLine` words it for
    *  a server the user chose (beta-1 D20). */
   reportDeviceIdLine: 'This phone’s Whim ID goes with your report. The report goes to AnyCognition, the company that makes Whim.',
   reportSend: 'Send report',
-  reportSendBusy: 'One moment',
+  reportSendBusy: 'Sending…',
   reportShowMore: 'Show more',
   reportShowLess: 'Show less',
-  reportThanksTitle: 'Thanks. We’ll look into it.',
   reportThanksDone: 'Done',
   reportDraftLoadFailed: 'Couldn’t open the report. Close it and try again.',
   reportDraftClose: 'Close',
   reportSendFailedGeneric: 'Couldn’t send the report. Check your connection and try again.',
-  reportTooLarge: 'This report is too large to send. You can try leaving out the prompt.',
+  reportTooLarge: 'This report is too large to send. You can try leaving out what you asked for.',
 
   // ── mini-app boot state (`app-launcher` "The mini-app container shows a boot state before
   //    first paint") ──────────────────────────────────────────────────────────
@@ -374,24 +373,38 @@ export const COPY = {
 
   // ── settings ────────────────────────────────────────────────────────────────
   settingsAISectionTitle: 'AI features',
-  settingsAIOff: 'Off',
+  settingsAISubtitle: 'Review what’s sent',
+  settingsLanguageTitle: 'Language',
+  settingsLanguageSubtitle: 'For the privacy policy, terms and consent',
   settingsAboutSectionTitle: 'About',
+  settingsVersionTitle: 'Version',
+  /** About's entry into the Report screen, for a problem with no particular app. */
+  settingsReportProblem: 'Report a problem',
   settingsAdvancedSectionTitle: 'Advanced',
-  settingsUseDefaultServer: 'Use Whim’s server',
-  // AI features section (legal-surface-v2 design D10; spec privacy-settings).
+  // Advanced (legal-surface-v2 design D10; spec privacy-settings).
   settingsErrorDetailsTitle: 'Send error details',
   settingsErrorDetailsHint: 'When something goes wrong, Whim sends technical details so we can fix it. Not what you typed or saved.',
-  // About section: the ID sent as `x-whim-device`, and the confirm step before replacing it.
-  settingsDeviceIdTitle: 'This phone’s ID',
+  // This phone: the ID sent as `x-whim-device`, and the confirm sheet before replacing it.
+  settingsThisPhoneSection: 'This phone',
+  settingsDeviceIdTitle: 'Phone ID',
+  settingsDeviceIdCopy: 'Copy phone ID',
+  settingsDeviceIdCopied: 'Phone ID copied',
   settingsDeviceIdHint: 'The ID Whim made for this phone. Include it if you ask us about your data.',
   settingsDeviceIdReset: 'Make a new ID',
+  settingsDeviceIdResetTitle: 'Make a new ID?',
+  settingsDeviceIdKeep: 'Keep this ID',
   settingsDeviceIdResetConfirm:
     'Whim will use a new ID from now on. Records tied to the old one are kept for up to 12 months, then deleted. Write to us if you want them deleted sooner.',
   // Shown in place of the save-time probe result while AI features are off (server-connectivity
   // "Without a current consent grant the system SHALL NOT probe").
   settingsProbeNeutral: 'Checked once AI features are on',
+  settingsServerSection: 'Server',
+  settingsServerWhim: 'Whim’s server',
+  settingsServerOwn: 'Your own server',
+  /** The safe choice of the confirm sheet before "Your own server" is first used. */
+  ownServerKeep: 'Keep Whim’s server',
   serverAddressSectionTitle: 'Server address',
-  serverAddressHint: 'Where Whim sends your prompts to build apps.',
+  serverAddressHint: 'Where Whim sends what you describe to make apps.',
   // Your own server (beta-1 design D20): the Advanced action, its confirm step, and the caption
   // under an active override. Legal keys, so each has a French twin; the refusal note is not.
   ownServerAction: 'Use your own server',
@@ -664,12 +677,6 @@ export function consentWhatsNewText(language: LegalLanguage, grantVersion: numbe
   return CONSENT_WHATS_NEW[language]?.[grantVersion]?.text;
 }
 
-/** The AI features row's status line (design D7): the date it was granted when on, or `Off` —
- *  `outdated` reads the same as `absent` here, since neither currently authorizes a request. */
-export function aiFeaturesStatusLine(kind: 'granted' | 'absent' | 'outdated', sinceLabel?: string): string {
-  return kind === 'granted' && sinceLabel != null ? `On since ${sinceLabel}` : COPY.settingsAIOff;
-}
-
 /** "Forked from Water Counter" — fork provenance for a tile (product vocabulary). */
 export function forkedFromLabel(name: string): string {
   return `Forked from ${name}`;
@@ -721,6 +728,25 @@ export function addedFieldsLine(fields: readonly string[]): string {
 export function reportRecipientLine(ownServer?: string): string {
   if (ownServer === undefined) return COPY.reportDeviceIdLine;
   return `This phone’s Whim ID goes with your report. The report goes to the server you chose, ${ownServer}, not to AnyCognition.`;
+}
+
+/** Why the report carries the app's code, naming who looks at it: AnyCognition ("we") on Whim's
+ *  server, whoever runs the server the user chose otherwise (#153). */
+export function reportCodeLine(ownServer?: string): string {
+  if (ownServer === undefined) return 'Your report includes this app’s code so we can investigate what went wrong.';
+  return `Your report includes this app’s code, so whoever runs ${ownServer} can see what went wrong.`;
+}
+
+/** The thank-you once the report is sent. On the user's own server it names that server and no
+ *  company: AnyCognition never sees the report (#153). */
+export function reportThanksLine(ownServer?: string): string {
+  if (ownServer === undefined) return 'Thanks. We’ll look into it.';
+  return `Thanks. Your report went to ${ownServer}.`;
+}
+
+/** The Language row's value: the active legal language, named in itself. */
+export function legalLanguageName(language: LegalLanguage): string {
+  return language === 'fr' ? 'Français' : 'English';
 }
 
 /** The done step's title: "<App name> is ready". */

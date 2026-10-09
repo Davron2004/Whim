@@ -31,6 +31,8 @@ import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import type { KVBackend } from '../version-store/fs/kv-fs';
 import { copyStorage, deleteStorage, peekAppliedSchema } from '../storage-engine';
 import { HighlightingProvider } from '../ui/whim-prose/WhimProse';
+import { ToastHost } from '../ui/Toast';
+import { useTokens } from '../ui/tokens';
 import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
 import type { AppBusyMap } from './app-busy';
@@ -57,6 +59,8 @@ import HomeScreen, { HOME_GRID_COLUMNS, HOME_GRID_COLUMN_GAP } from './HomeScree
 import MiniAppView from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
 import SettingsScreen from './SettingsScreen';
+import AdvancedScreen from './AdvancedScreen';
+import NativeStack, { type StackEntry } from './NativeStack';
 import HistoryScreen from './HistoryScreen';
 import ComposeStep from './ComposeStep';
 import ClarifyStep from './ClarifyStep';
@@ -111,12 +115,23 @@ import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 import { PROTOCOL_LEVEL } from './wire-headers';
 import { FlowRequests, onlyOnStep } from './flow-request';
 import { SHELL_PALETTE } from './theme';
-import { acknowledgeOwnServer, clearServerUrl, effectiveServerUrl, ownServerAcknowledged, saveServerUrl, serverOverride } from './server-address';
+import {
+  acknowledgeOwnServer,
+  chooseServer,
+  effectiveServerUrl,
+  loadServerUrl,
+  ownServerAcknowledged,
+  saveServerUrl,
+  serverChoice,
+  serverOverride,
+  type ServerChoice,
+} from './server-address';
+import { versionLabel, type SessionProbe } from './settings-sections';
 import { probeServerHealth } from './server-probe';
 import { ConnectivityLoop } from './connectivity';
 import type { Connectivity } from './connectivity';
 import { showOfflineIndicator, showServerUnreachableNotice } from './connectivity-ux';
-import { loadHighlighting, saveHighlighting } from './highlighting';
+import { loadHighlighting } from './highlighting';
 import { getDeviceId, resetDeviceId } from './device-id';
 import { errorDetailsEnabled, setErrorDetails } from './error-details';
 import { GenerationClientError, clarifyPrompt, consentedClientOptions, generateApp, rewritePrompt } from './generation-client';
@@ -124,7 +139,7 @@ import type { ClientOptions, ConsentedClientOptions, GenerationStream } from './
 import { reportClientOptions } from './transport-shared';
 import type { AppInfo } from './app-info';
 import { installedAppInfo } from './installed-app-info';
-import ReportSheet from './ReportSheet';
+import ReportScreen, { ReportSheet } from './ReportScreen';
 import { consentStatus, grantConsent, outdatedGrantVersion, revokeConsent } from './ai-consent';
 import { acceptTerms, termsStatus } from './terms-acceptance';
 import { runAgeCheck, storedAgeGate, type AgeGate, type AgeHold, type SignificantUpdateSheet } from './age-check';
@@ -151,14 +166,21 @@ interface HeldPrompt {
   readonly text: string;
 }
 
+/** History, and `from`: where it was opened — Home's sheet, or the orb over the running app — and
+ *  so where leaving it returns. */
+type HistoryScreenState = { kind: 'history'; app: InstalledApp; from: 'home' | 'app' };
+
 type Screen =
   | { kind: 'home' }
   | { kind: 'app'; app: InstalledApp; record: AppRecord; source: string; engineAppId: string }
   | { kind: 'dev' }
   | { kind: 'settings' }
-  // `from`: where History was opened — Home's sheet, or the orb over the running app — and so
-  // where leaving it returns.
-  | { kind: 'history'; app: InstalledApp; from: 'home' | 'app' }
+  // Pushed over Settings on the native stack.
+  | { kind: 'advanced' }
+  | HistoryScreenState
+  // Pushed over the screen it was opened from (`from`), where leaving returns: History, for the
+  // version the user is on, or Settings, for a problem with no particular app (`app` null).
+  | { kind: 'report'; app: InstalledApp | null; from: { kind: 'settings' } | HistoryScreenState }
   // An app link's id matched neither an installed app nor a pending build (design D15; spec
   // app-links "A link to an app that isn't on this phone shows a friendly screen").
   | { kind: 'link-missing' }
@@ -220,6 +242,50 @@ type Screen =
        *  retry window is not persisted (design D11: "the server stays authoritative"). */
       notice?: FlowNotice;
     };
+
+/** The screens the native stack shows (design-system-v1 D6): Home at its root, then Settings and
+ *  what it pushes (Advanced, AI features — the consent screen in review mode — and Report), and
+ *  History with its Report. */
+type StackScreen =
+  | Extract<Screen, { kind: 'home' | 'settings' | 'advanced' | 'history' | 'report' }>
+  | Extract<Screen, { kind: 'consent'; mode: 'review' }>;
+
+/** The native stack under `screen`, root first: Home, then each screen pushed on the way to it.
+ *  `null` for a screen that isn't on the stack: a running app, the making flow, the legal flow's
+ *  ask screens and the full screens, which are drawn in its place. */
+function stackFor(screen: Screen): readonly StackScreen[] | null {
+  const home = { kind: 'home' } as const;
+  if (screen.kind === 'home') return [screen];
+  if (screen.kind === 'settings' || screen.kind === 'history') return [home, screen];
+  if (screen.kind === 'advanced' || (screen.kind === 'consent' && screen.mode === 'review')) {
+    return [home, { kind: 'settings' }, screen];
+  }
+  if (screen.kind === 'report') return [...(stackFor(screen.from) ?? []), screen];
+  return null;
+}
+
+/** The native header's title; none on Home and History, which draw their own header. */
+function stackTitle(on: StackScreen): string | undefined {
+  switch (on.kind) {
+    case 'settings':
+      return COPY.settingsTitle;
+    case 'advanced':
+      return COPY.settingsAdvancedSectionTitle;
+    case 'consent':
+      return COPY.settingsAISectionTitle;
+    case 'report':
+      return COPY.reportScreenTitle;
+    default:
+      return undefined;
+  }
+}
+
+/** Whether a stack screen draws from the token module, following the phone's appearance; Home,
+ *  History and the consent screen still draw the fixed light v2 palette (`theme.ts`). Their header
+ *  and the status bar follow whichever the screen on top draws. */
+function schemeFollowing(on: StackScreen): boolean {
+  return on.kind === 'settings' || on.kind === 'advanced' || on.kind === 'report';
+}
 
 /** The update screen in place of `from`, holding the prompt typed there when `from` is a flow step
  *  that has one, and showing `notice` when a fallback opened it. Pure, so it can run inside a
@@ -473,52 +539,31 @@ function DevLogTools() {
 }
 
 /**
- * The consent screen's two modes (design D5), in one small switch — kept out of `LauncherShell`'s
- * own screen-kind chain so branching between them never adds to that function's own complexity.
+ * The consent screen in ask mode (design D5), in place of the data-sending action that opened it.
+ * Review mode is pushed on the native stack from Settings (`stackEntry`).
  */
 function ConsentScreenForShell({
   screen,
-  onAskAgree,
-  onAskDecline,
-  onReviewTurnOn,
-  onReviewTurnOff,
-  onReviewClose,
-  consentOn,
+  onAgree,
+  onDecline,
   language,
   onLanguageChange,
 }: Readonly<{
-  screen: Extract<Screen, { kind: 'consent' }>;
-  onAskAgree: (continuation: ConsentContinuation) => void;
-  onAskDecline: (returnTo: Screen) => void;
-  onReviewTurnOn: () => void;
-  onReviewTurnOff: () => void;
-  onReviewClose: () => void;
-  consentOn: boolean;
+  screen: Extract<Screen, { kind: 'consent'; mode: 'ask' }>;
+  onAgree: (continuation: ConsentContinuation) => void;
+  onDecline: (returnTo: Screen) => void;
   language: LegalLanguage;
   onLanguageChange: (language: LegalLanguage) => void;
 }>) {
-  if (screen.mode === 'ask') {
-    return (
-      <ConsentScreen
-        mode="ask"
-        language={language}
-        onLanguageChange={onLanguageChange}
-        outdatedFrom={screen.outdatedFrom}
-        refused={screen.refused}
-        onAgree={() => onAskAgree(screen.continuation)}
-        onClose={() => onAskDecline(screen.returnTo)}
-      />
-    );
-  }
   return (
     <ConsentScreen
-      mode="review"
+      mode="ask"
       language={language}
       onLanguageChange={onLanguageChange}
-      consentOn={consentOn}
-      onAgree={onReviewTurnOn}
-      onTurnOff={onReviewTurnOff}
-      onClose={onReviewClose}
+      outdatedFrom={screen.outdatedFrom}
+      refused={screen.refused}
+      onAgree={() => onAgree(screen.continuation)}
+      onClose={() => onDecline(screen.returnTo)}
     />
   );
 }
@@ -593,6 +638,7 @@ function LauncherShell({
   hideLaunchScreen: () => void;
 }>) {
   const palette = SHELL_PALETTE;
+  const tokens = useTokens();
   // The language every legal screen and link uses (legal-surface-v2 D6): resolved once at launch
   // from the stored choice or the phone's language, and replaced when the user taps a switch.
   const [phoneLocale] = useState(deviceLocale);
@@ -627,12 +673,17 @@ function LauncherShell({
   // own server is their responsibility (design D20), whatever an earlier build saved.
   const [serverUrl, setServerUrl] = useState<string | undefined>(() => serverOverride(kv));
   const [ownServerAck, setOwnServerAck] = useState<boolean>(() => ownServerAcknowledged(kv));
-  const [highlighting, setHighlighting] = useState<boolean>(() => loadHighlighting(kv));
+  // Advanced's chosen server row; Whim's server keeps the saved address (`server-address.ts`).
+  const [chosenServer, setChosenServer] = useState<ServerChoice>(() => serverChoice(kv));
+  // The session probe's latest answer and the address it went to: Advanced shows it under the
+  // address field rather than sending a probe of its own (#130).
+  const [lastProbe, setLastProbe] = useState<SessionProbe | null>(null);
+  const [highlighting] = useState<boolean>(() => loadHighlighting(kv));
   const [errorDetailsShown, setErrorDetailsShown] = useState<boolean>(() => errorDetailsEnabled(kv));
-  // The report sheet's target for the done-step and history-header entry points (design D13) —
-  // `null` closes it. The orb's own entry point (inside a running mini-app) is a separate, local
-  // state owned by `MiniAppView` itself, since it also drives that realm's `overlayOpen` back-
-  // policy input.
+  // The report sheet's target for the done step's entry point (design D13) — `null` closes it.
+  // History and Settings push the Report screen instead. The orb's own entry point (inside a
+  // running mini-app) is a separate, local state owned by `MiniAppView` itself, since it also
+  // drives that realm's `overlayOpen` back-policy input.
   const [reportTarget, setReportTarget] = useState<InstalledApp | null>(null);
 
   // State, not a memo: Settings' "Make a new ID" replaces it, and every options memo below is keyed
@@ -716,6 +767,7 @@ function LauncherShell({
     const loop = new ConnectivityLoop({
       probe: async () => {
         const health = await probeServerHealth(decision.baseUrl);
+        if (live) setLastProbe({ address: decision.baseUrl, result: health.result });
         if (live && belowMinimumBuild(appInfo, health.minBuild)) {
           log.warn(CHANNELS.app, 'installed build is below the server minimum', { ...health.minBuild });
           setScreen((prev) => (updateMayInterrupt(prev) ? updateScreenFrom(prev) : prev));
@@ -944,12 +996,13 @@ function LauncherShell({
     setScreen({ kind: 'history', app, from });
   };
 
-  /** Leaving History: back into the app it was opened over, reopened at whatever version is now
-   *  current (a restore there may have moved it), or Home. Home too when that app fails to open, so
-   *  Back never strands the user on History repeating the failing open. */
+  /** Leaving History: Home, and from there back into the app it was opened over, reopened at
+   *  whatever version is now current (a restore there may have moved it). Home at once: History is
+   *  on the native stack, whose pops must find the machine already off it (`NativeStack.tsx`), and
+   *  Home is where a failing open leaves the user, never stranded on History. */
   const leaveHistory = (app: InstalledApp, from: 'home' | 'app') => {
-    if (from === 'app') onOpen(index.get(app.id) ?? app, goHome);
-    else goHome();
+    goHome();
+    if (from === 'app') onOpen(index.get(app.id) ?? app);
   };
 
   const onDelete = (app: InstalledApp) =>
@@ -996,12 +1049,13 @@ function LauncherShell({
   };
 
   /** A report refused `update_required`, or answered with an `update` fallback carrying `notice`,
-   *  from any of its three sheets: the update screen replaces the screen the sheet sits on — only
-   *  while that screen still shows, the same never-pull-back rule every other refusal follows. */
+   *  from the Report screen or either sheet: the update screen replaces the screen the report sits
+   *  on — only while that screen still shows, the same never-pull-back rule every other refusal
+   *  follows. */
   const onReportUpdateRequired = (notice?: string) => {
     setReportTarget(null);
     setScreen((prev) =>
-      prev.kind === 'done' || prev.kind === 'history' || prev.kind === 'app' ? updateScreenFrom(prev, notice) : prev,
+      prev.kind === 'done' || prev.kind === 'report' || prev.kind === 'app' ? updateScreenFrom(prev, notice) : prev,
     );
   };
 
@@ -1021,38 +1075,36 @@ function LauncherShell({
     setServerUrl(serverOverride(kv));
   };
 
-  const onHighlightingChange = (enabled: boolean) => {
-    saveHighlighting(kv, enabled);
-    setHighlighting(enabled);
-  };
-
   const onErrorDetailsChange = (on: boolean) => {
     setErrorDetails(kv, on);
     setErrorDetailsShown(on);
   };
 
-  /** Settings' confirmed "Make a new ID": the stored ID is replaced, and the options memos (keyed on
+  /** Advanced's confirmed "Make a new ID": the stored ID is replaced, and the options memos (keyed on
    *  `deviceId`) rebuild, so every later request carries the new one. */
   const onResetDeviceId = () => {
     setDeviceId(resetDeviceId(kv));
   };
 
-  /** Settings' confirmed "Use your own server": records the acknowledgement, so a saved address is
-   *  honoured from now on, and returns it for the field to show. */
-  const onAcknowledgeOwnServer = (): string | undefined => {
+  /** Advanced's server rows: Whim's server keeps the saved address, unread; your own server reads
+   *  it again, with nothing to confirm once acknowledged. */
+  const onChooseServer = (choice: ServerChoice) => {
     const previous = effectiveServerUrl(kv);
-    acknowledgeOwnServer(kv);
+    chooseServer(kv, choice);
     afterServerWrite(previous);
-    const honoured = serverOverride(kv);
-    setServerUrl(honoured);
-    setOwnServerAck(true);
-    return honoured;
+    setChosenServer(serverChoice(kv));
+    setServerUrl(serverOverride(kv));
   };
 
-  const onUseDefaultServer = () => {
+  /** Advanced's confirmed "Use your own server": records the acknowledgement and chooses it, so a
+   *  saved address is honoured from now on. */
+  const onAcknowledgeOwnServer = () => {
     const previous = effectiveServerUrl(kv);
-    clearServerUrl(kv);
+    acknowledgeOwnServer(kv);
+    chooseServer(kv, 'own');
     afterServerWrite(previous);
+    setOwnServerAck(true);
+    setChosenServer(serverChoice(kv));
     setServerUrl(serverOverride(kv));
   };
 
@@ -1124,12 +1176,23 @@ function LauncherShell({
     return undefined;
   };
 
+  /** Whether the flow began on the AI features review screen (the one flow that continues to
+   *  Settings), which showed the whole disclosure and whose "Turn on AI features" is the consent
+   *  itself (#104): its consent step grants rather than showing the disclosure a second time. */
+  const reviewedConsent = (flow: LegalFlow<Screen>): boolean => flow.continuation.kind === 'settings';
+
   /** Moves the flow on: opens its next legal screen, or runs its continuation when nothing is left
    *  to ask. `age` is passed only by the age check, with the result it just derived. */
   const advanceLegalFlow = (flow: LegalFlow<Screen>, age?: AgeGate) => {
     const next = legalScreen(flow, age);
-    if (next === undefined) runContinuation(flow.continuation);
-    else setScreen(next);
+    if (next === undefined) {
+      runContinuation(flow.continuation);
+    } else if (next.kind === 'consent' && reviewedConsent(flow)) {
+      onGrantConsent();
+      runContinuation(flow.continuation);
+    } else {
+      setScreen(next);
+    }
   };
 
   // The age check (legal-surface-v2 D11; spec store-age-signals): while the checking screen shows,
@@ -1210,19 +1273,19 @@ function LauncherShell({
     setScreen(declineTarget<Screen>(returnTo));
   };
 
-  /** Turning AI features on from Settings (spec terms-acceptance "One pass through the legal flow
-   *  shows each legal screen at most once"; beta-1 D6, #104): the legal flow from its first due
-   *  step, so the age check and the terms step when due, then the one consent screen. It ends back
-   *  on Settings, and declining any step returns there too. */
+  /** Turning AI features on from their review screen (spec terms-acceptance "One pass through the
+   *  legal flow shows each legal screen at most once"; beta-1 D6, #104): the legal flow from its
+   *  first due step, so the age check and the terms step when due; the review screen was the one
+   *  consent screen (`reviewedConsent`). It ends back on Settings, and declining any step returns
+   *  there too. */
   const onTurnOnAIFeatures = () => {
     advanceLegalFlow({ continuation: { kind: 'settings' }, returnTo: { kind: 'settings' }, refused: false });
   };
 
-  /** Settings' AI features row: with AI features on, the consent screen in review mode, to keep
-   *  them on or turn them off whatever the terms say; otherwise turning them on. */
+  /** Settings' AI features row: the consent screen in review mode, pushed on the stack, to keep
+   *  them on or turn them off whatever the terms say, or to turn them on. */
   const onOpenAIFeatures = () => {
-    if (consentStatus(kv).kind === 'granted') setScreen({ kind: 'consent', mode: 'review' });
-    else onTurnOnAIFeatures();
+    setScreen({ kind: 'consent', mode: 'review' });
   };
 
   /** Review mode with consent on: the plain-text action deletes the grant and returns to
@@ -2536,9 +2599,6 @@ function LauncherShell({
     };
   };
 
-  // v2: the shell is fixed and always light (paper), never dark — see theme.ts.
-  const statusBarStyle = 'dark-content';
-
   /** Home's developer-probe entry, offered only where the dev log tools are. Decided here rather than
    *  inside `renderScreenContent`, whose complexity budget goes to the screen kinds. */
   const onOpenDevProbe = devLogOverlayEnabled(__DEV__) ? () => setScreen({ kind: 'dev' }) : undefined;
@@ -2569,28 +2629,6 @@ function LauncherShell({
       );
     } else if (screen.kind === 'dev') {
       return <DevProbeScreen onExit={goHome} />;
-    } else if (screen.kind === 'settings') {
-      return (
-        <SettingsScreen
-          onBack={goHome}
-          ownServerAcknowledged={ownServerAck}
-          onAcknowledgeOwnServer={onAcknowledgeOwnServer}
-          serverUrl={serverUrl}
-          onServerUrlChange={onServerUrlChange}
-          onUseDefaultServer={onUseDefaultServer}
-          highlighting={highlighting}
-          onHighlightingChange={onHighlightingChange}
-          consentStatus={consentStatus(kv)}
-          canProbe={clientOptions != null}
-          onOpenAIFeatures={onOpenAIFeatures}
-          errorDetails={errorDetailsShown}
-          onErrorDetailsChange={onErrorDetailsChange}
-          deviceId={deviceId}
-          onResetDeviceId={onResetDeviceId}
-          legalLanguage={legalLanguage}
-          deviceLocale={phoneLocale}
-        />
-      );
     } else if (isPreConsentStep(screen)) {
       return (
         <PreConsentStepForShell
@@ -2601,39 +2639,15 @@ function LauncherShell({
           onDecline={onLegalDecline}
         />
       );
-    } else if (screen.kind === 'consent') {
+    } else if (screen.kind === 'consent' && screen.mode === 'ask') {
       return (
         <ConsentScreenForShell
           screen={screen}
-          onAskAgree={onConsentAskAgree}
-          onAskDecline={onLegalDecline}
-          onReviewTurnOn={onTurnOnAIFeatures}
-          onReviewTurnOff={onConsentReviewTurnOff}
-          onReviewClose={onConsentReviewClose}
-          consentOn={consentStatus(kv).kind === 'granted'}
+          onAgree={onConsentAskAgree}
+          onDecline={onLegalDecline}
           language={legalLanguage}
           onLanguageChange={onLegalLanguageChange}
         />
-      );
-    } else if (screen.kind === 'history') {
-      return (
-        <>
-          <HistoryScreen
-            app={screen.app}
-            access={access}
-            onBack={() => leaveHistory(screen.app, screen.from)}
-            onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
-            onReport={() => setReportTarget(screen.app)}
-          />
-          <ReportSheet
-            app={reportTarget}
-            access={access}
-            options={reportOptions}
-            legalLanguage={legalLanguage}
-            onClose={() => setReportTarget(null)}
-            onUpdateRequired={onReportUpdateRequired}
-          />
-        </>
       );
     } else if (screen.kind === 'link-missing') {
       return <AppLinkMissingScreen onBackToApps={goHome} />;
@@ -2747,29 +2761,128 @@ function LauncherShell({
           {...failureActions(screen)}
         />
       );
-    } else {
-      return (
-        <HomeScreen
-          apps={apps}
-          pending={pendingBuilds.map((view) => view.record)}
-          onOpen={onOpen}
-          onFork={onFork}
-          onDelete={onDelete}
-          appBusy={appBusy}
-          onHistory={(app) => onHistory(app, 'home')}
-          onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
-          onCreate={() => openWithConsent({ kind: 'compose' })}
-          onSettings={() => setScreen({ kind: 'settings' })}
-          onOpenDevProbe={onOpenDevProbe}
-          offline={showOfflineIndicator(connectivity)}
-          onOpenPending={onOpenPending}
-          onCancelPending={onCancelPending}
-          onDismissPending={onDismissPending}
-        />
-      );
+    }
+    return null;
+  };
+
+  const renderHome = (): React.ReactNode => (
+    <HomeScreen
+      apps={apps}
+      pending={pendingBuilds.map((view) => view.record)}
+      onOpen={onOpen}
+      onFork={onFork}
+      onDelete={onDelete}
+      appBusy={appBusy}
+      onHistory={(app) => onHistory(app, 'home')}
+      onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
+      onCreate={() => openWithConsent({ kind: 'compose' })}
+      onSettings={() => setScreen({ kind: 'settings' })}
+      onOpenDevProbe={onOpenDevProbe}
+      offline={showOfflineIndicator(connectivity)}
+      onOpenPending={onOpenPending}
+      onCancelPending={onCancelPending}
+      onDismissPending={onDismissPending}
+    />
+  );
+
+  /** Where leaving a stack screen lands: one handler, run by its header back, a swipe and system
+   *  back alike, and always off the screen at once (`NativeStack.tsx`). */
+  const leaveFor = (from: StackScreen): (() => void) => {
+    switch (from.kind) {
+      case 'home':
+      case 'settings':
+        return goHome;
+      case 'advanced':
+        return () => setScreen({ kind: 'settings' });
+      case 'consent':
+        return onConsentReviewClose;
+      case 'history':
+        return () => leaveHistory(from.app, from.from);
+      case 'report':
+        return () => setScreen(from.from);
     }
   };
 
+  /** A stack screen's content, given the handler that leaves it. */
+  const renderStackScreen = (on: StackScreen, leave: () => void): React.ReactNode => {
+    switch (on.kind) {
+      case 'home':
+        return renderHome();
+      case 'settings':
+        return (
+          <SettingsScreen
+            onBack={leave}
+            onOpenAIFeatures={onOpenAIFeatures}
+            legalLanguage={legalLanguage}
+            onLegalLanguageChange={onLegalLanguageChange}
+            version={versionLabel(appInfo)}
+            onReportProblem={() => setScreen({ kind: 'report', app: null, from: { kind: 'settings' } })}
+            onOpenAdvanced={() => setScreen({ kind: 'advanced' })}
+          />
+        );
+      case 'advanced':
+        return (
+          <AdvancedScreen
+            onBack={leave}
+            errorDetails={errorDetailsShown}
+            onErrorDetailsChange={onErrorDetailsChange}
+            deviceId={deviceId}
+            onResetDeviceId={onResetDeviceId}
+            serverChoice={chosenServer}
+            ownServerAcknowledged={ownServerAck}
+            onAcknowledgeOwnServer={onAcknowledgeOwnServer}
+            onChooseServer={onChooseServer}
+            savedAddress={loadServerUrl(kv)}
+            onServerUrlChange={onServerUrlChange}
+            canProbe={clientOptions != null}
+            probe={lastProbe}
+            legalLanguage={legalLanguage}
+          />
+        );
+      case 'consent':
+        return (
+          <ConsentScreen
+            mode="review"
+            language={legalLanguage}
+            onLanguageChange={onLegalLanguageChange}
+            consentOn={consentStatus(kv).kind === 'granted'}
+            onAgree={onTurnOnAIFeatures}
+            onTurnOff={onConsentReviewTurnOff}
+            onClose={leave}
+          />
+        );
+      case 'history':
+        return (
+          <HistoryScreen
+            app={on.app}
+            access={access}
+            onBack={leave}
+            onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
+            onReport={() => setScreen({ kind: 'report', app: on.app, from: on })}
+          />
+        );
+      case 'report':
+        return (
+          <ReportScreen
+            app={on.app}
+            access={access}
+            options={reportOptions}
+            legalLanguage={legalLanguage}
+            onLeave={leave}
+            onUpdateRequired={onReportUpdateRequired}
+          />
+        );
+    }
+  };
+
+  /** One stack entry: its header, its colours and its content, all keyed to the screen it shows. */
+  const stackEntry = (on: StackScreen): StackEntry => {
+    const leave = leaveFor(on);
+    const look = schemeFollowing(on) ? { background: tokens.colors.bg, foreground: tokens.colors.text } : { background: palette.bg, foreground: palette.text };
+    return { key: on.kind, title: stackTitle(on), largeTitle: on.kind === 'settings', onLeave: leave, ...look, children: renderStackScreen(on, leave) };
+  };
+
+  const stack = ready ? stackFor(screen) : null;
   let content: React.ReactNode;
   if (!ready) {
     content = (
@@ -2782,6 +2895,8 @@ function LauncherShell({
         />
       </View>
     );
+  } else if (stack !== null) {
+    content = <NativeStack entries={stack.map(stackEntry)} />;
   } else {
     content = renderScreenContent();
   }
@@ -2806,17 +2921,20 @@ function LauncherShell({
   // failing-screen identifier in the log record and the reset key, so navigating away and back
   // re-attempts a screen that failed once.
   const exit = SCREEN_EXITS[screen.kind];
+  const top = stack?.at(-1);
   return (
     <HighlightingProvider enabled={highlighting}>
-      <SafeAreaView edges={frameEdgesFor(screen.kind)} style={[styles.root, { backgroundColor: palette.bg }]}>
-        <StatusBar barStyle={statusBarStyle} />
-        <ScreenBoundary
-          screen={screen.kind}
-          FallbackComponent={ScreenErrorFallback}
-          onLeave={exit.back === 'root' ? undefined : goHome}
-        >
-          {content}
-        </ScreenBoundary>
+      <SafeAreaView edges={frameEdgesFor(screen.kind, stack !== null)} style={[styles.root, { backgroundColor: palette.bg }]}>
+        <StatusBar barStyle={top !== undefined && schemeFollowing(top) ? tokens.barStyle : 'dark-content'} />
+        <ToastHost>
+          <ScreenBoundary
+            screen={screen.kind}
+            FallbackComponent={ScreenErrorFallback}
+            onLeave={exit.back === 'root' ? undefined : goHome}
+          >
+            {content}
+          </ScreenBoundary>
+        </ToastHost>
         <DevLogTools />
       </SafeAreaView>
     </HighlightingProvider>

@@ -2,13 +2,13 @@
  * GroupedList — sections of rows (system.md §7.1 Grouped list, §2.8 List row; design-system-v1
  * task 11.4). A group is `surface` on the canvas or `sheet-group` in a sheet, `r-lg`, no border;
  * rows are min 52, padding 12 × 16, with an optional 20 pt `text-2` icon, a `body` title and a
- * `footnote` `text-2` subtitle, and a trailing value, chevron, switch, external link or copy
- * button. Separators inset 16 (52 with an icon). A pressed row fills with `fill`; a destructive
+ * `footnote` `text-2` subtitle, and a trailing value, chevron, switch, external link, copy
+ * button or the `check` of a chosen row. Separators inset 16 (52 with an icon). A pressed row fills with `fill`; a destructive
  * row's title is `danger-text`. A section header (`footnote` 600 `text-2`) sits 8 pt above the
  * group, its footer (`footnote` `text-2`) 8 pt under. Switches are the platform's own, on-track `ink`.
  *
  * Every row is its own accessibility element: a switch row is one switch (its title, its state),
- * a copy button is a button of its own beside its row.
+ * a choice row one radio, a copy button is a button of its own beside its row.
  */
 
 import React from 'react';
@@ -27,7 +27,9 @@ export type RowTrailing =
   | { kind: 'chevron' }
   | { kind: 'switch'; value: boolean; onValueChange: (on: boolean) => void }
   | { kind: 'external' }
-  | { kind: 'copy'; label: string; onCopy: () => void };
+  | { kind: 'copy'; label: string; onCopy: () => void }
+  /** One choice of several in its group (a radio): a `check` while chosen. */
+  | { kind: 'check'; checked: boolean };
 
 export interface GroupedRowProps {
   title: string;
@@ -148,14 +150,17 @@ function TrailingMark({ t, trailing }: Readonly<{ t: ShellTokens; trailing: RowT
       return <Icon name="chevron-right" size={ROW.trailingIcon} color={t.colors['text-2']} />;
     case 'external':
       return <Icon name="external-link" size={ROW.trailingIcon} color={t.colors['text-2']} />;
+    case 'check':
+      return trailing.checked ? <Icon name="check" size={ROW.trailingIcon} color={t.colors.text} /> : null;
     default:
       return null;
   }
 }
 
-/** The role a row announces: a switch, a link out, a button, or plain text. */
-function rowRole(props: Readonly<GroupedRowProps>): 'switch' | 'link' | 'button' | 'text' {
+/** The role a row announces: a switch, a choice, a link out, a button, or plain text. */
+function rowRole(props: Readonly<GroupedRowProps>): 'switch' | 'radio' | 'link' | 'button' | 'text' {
   if (props.trailing?.kind === 'switch') return 'switch';
+  if (props.trailing?.kind === 'check') return 'radio';
   if (!props.onPress) return 'text';
   return props.trailing?.kind === 'external' ? 'link' : 'button';
 }
@@ -185,6 +190,13 @@ function CopyButton({ t, label, onCopy }: Readonly<{ t: ShellTokens; label: stri
   );
 }
 
+/** A switch row's and a choice row's checked state, with every row's disabled one. */
+function rowState(trailing: RowTrailing | undefined, disabled: boolean): { checked?: boolean; disabled: boolean } {
+  if (trailing?.kind === 'switch') return { checked: trailing.value, disabled };
+  if (trailing?.kind === 'check') return { checked: trailing.checked, disabled };
+  return { disabled };
+}
+
 /** What a toggle row does when pressed: flips its switch, with the toggle haptic. */
 function flipper(trailing: RowTrailing | undefined): (() => void) | undefined {
   if (trailing?.kind !== 'switch') return undefined;
@@ -211,7 +223,7 @@ export function GroupedRow(props: Readonly<GroupedRowProps>) {
         accessibilityRole={rowRole(props)}
         accessibilityLabel={title + value}
         accessibilityHint={accessibilityHint ?? subtitle}
-        accessibilityState={trailing?.kind === 'switch' ? { checked: trailing.value, disabled } : { disabled }}
+        accessibilityState={rowState(trailing, disabled)}
       >
         {icon ? <Icon name={icon} size={ROW.icon} color={t.colors['text-2']} /> : null}
         <View style={s.texts}>

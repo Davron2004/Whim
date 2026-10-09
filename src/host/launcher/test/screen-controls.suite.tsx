@@ -3,11 +3,19 @@ import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { button, press, renderScreen, unmountScreen, textOf, hostType, isHost } from './react-screen';
 import { finishAnimations, hardwareBack, backListenerCount } from './native-host';
+import { androidHeaderBack, headerBackShown, iosPop } from './native-screens';
 import { COPY } from '../copy';
 import type { ScreenKind } from '../screen-exits';
 import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
 import SettingsScreen from '../SettingsScreen';
+import AdvancedScreen from '../AdvancedScreen';
+import ReportScreen from '../ReportScreen';
+import NativeStack from '../NativeStack';
+import { ToastHost } from '../../ui/Toast';
+import { COLORS } from '../../../design/tokens';
+import { reportClientOptions } from '../transport-shared';
+import { testAppInfo } from './client-fixtures';
 import HistoryScreen from '../HistoryScreen';
 import AppLinkMissingScreen from '../AppLinkMissingScreen';
 import UpdateRequiredScreen from '../UpdateRequiredScreen';
@@ -29,10 +37,28 @@ export const SCREEN_APP: InstalledApp = {
 };
 const noop = () => {};
 const access = { timeline: async () => [], activeId: async () => null } as unknown as StoreAccess;
+
+/** `screen` pushed over Home on the native stack, its header's back leaving through `leave` — the
+ *  same handler the shell gives the screen's own system back. */
+function pushed(title: string, leave: () => void, screen: React.ReactElement): React.ReactElement {
+  const look = { background: COLORS.light.bg, foreground: COLORS.light.text };
+  return (
+    <ToastHost>
+      <NativeStack entries={[{ key: 'home', onLeave: noop, ...look, children: null }, { key: 'pushed', title, onLeave: leave, ...look, children: screen }]} />
+    </ToastHost>
+  );
+}
+
+/** The visible control that leaves a screen: a labelled control of its own, or, on the native
+ *  stack, the stack's header back (an iOS pop, or Android's header back button). */
+type Exit = string | 'native header';
+
 // Adding a screen kind requires a behavioral fixture (home and mini-app exits have separate
 // contracts). These are real screens with only their outside callbacks/storage supplied.
-const cases: Record<Exclude<ScreenKind, 'home' | 'app' | 'dev'>, { label: string; render: (leave: () => void) => React.ReactElement }> = {
-  settings: { label: COPY.backLabel, render: leave => <SettingsScreen onBack={leave} highlighting canProbe={false} consentStatus={{ kind: 'absent' }} onServerUrlChange={noop} onUseDefaultServer={noop} onHighlightingChange={noop} onOpenAIFeatures={noop} ownServerAcknowledged onAcknowledgeOwnServer={() => undefined} errorDetails onErrorDetailsChange={noop} deviceId="test-device" onResetDeviceId={noop} legalLanguage="en" /> },
+const cases: Record<Exclude<ScreenKind, 'home' | 'app' | 'dev'>, { label: Exit; render: (leave: () => void) => React.ReactElement }> = {
+  settings: { label: 'native header', render: leave => pushed(COPY.settingsTitle, leave, <SettingsScreen onBack={leave} onOpenAIFeatures={noop} legalLanguage="en" onLegalLanguageChange={noop} onReportProblem={noop} onOpenAdvanced={noop} />) },
+  advanced: { label: 'native header', render: leave => pushed(COPY.settingsAdvancedSectionTitle, leave, <AdvancedScreen onBack={leave} errorDetails onErrorDetailsChange={noop} deviceId="test-device" onResetDeviceId={noop} serverChoice="whim" ownServerAcknowledged={false} onAcknowledgeOwnServer={noop} onChooseServer={noop} onServerUrlChange={noop} canProbe={false} probe={null} legalLanguage="en" />) },
+  report: { label: 'native header', render: leave => pushed(COPY.reportScreenTitle, leave, <ReportScreen app={null} access={access} options={reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo)} onLeave={leave} onUpdateRequired={noop} legalLanguage="en" />) },
   history: { label: COPY.backLabel, render: leave => <HistoryScreen app={SCREEN_APP} access={access} onBack={leave} onReport={noop} /> },
   'link-missing': { label: COPY.appLinkMissingBack, render: leave => <AppLinkMissingScreen onBackToApps={leave} /> },
   'update-required': { label: COPY.updateNotNow, render: leave => <UpdateRequiredScreen onNotNow={leave} /> },
@@ -55,10 +81,20 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
       const tree = await renderScreen(fixture.render(() => { leaves++; }));
       try {
         h.eq(backListenerCount(), 1, 'screen owns one system-back subscription');
-        await press(button(tree, fixture.label));
-        h.eq(leaves, 1, 'visible exit leaves once');
+        let visible = 1;
+        if (fixture.label === 'native header') {
+          h.ok(headerBackShown(tree), 'the stack’s header shows its back control');
+          await iosPop(tree);
+          h.eq(leaves, 1, 'an iOS pop (header back or swipe) leaves once');
+          await androidHeaderBack(tree);
+          visible = 2;
+          h.eq(leaves, 2, 'Android’s header back leaves once');
+        } else {
+          await press(button(tree, fixture.label));
+          h.eq(leaves, 1, 'visible exit leaves once');
+        }
         await TestRenderer.act(async () => { h.eq(hardwareBack(), true, 'system back is handled'); });
-        h.eq(leaves, 2, 'system back performs the same exit');
+        h.eq(leaves, visible + 1, 'system back performs the same exit');
       } finally { await unmountScreen(tree); }
       h.eq(backListenerCount(), 0, 'unmount removes the listener');
     });

@@ -27,7 +27,7 @@ import { miniAppSurface } from './boot-state';
 import { BreathingView } from './flow-skeletons';
 import Orb from './Orb';
 import { chromeInsetBottom } from './orb-geometry';
-import ReportSheet from './ReportSheet';
+import { ReportSheet } from './ReportScreen';
 import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
 import type { ClientOptions } from './generation-client';

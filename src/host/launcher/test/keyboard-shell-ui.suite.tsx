@@ -14,15 +14,16 @@ import { primaryActionLabel } from '../prompt-flow';
 import ComposeStep from '../ComposeStep';
 import ClarifyStep from '../ClarifyStep';
 import PlanStep from '../PlanStep';
-import ReportSheet from '../ReportSheet';
+import { ReportSheet } from '../ReportScreen';
 import { KeyboardTextInput } from '../KeyboardShell';
-import SettingsScreen from '../SettingsScreen';
+import AdvancedScreen from '../AdvancedScreen';
+import { TextArea, TextField } from '../../ui/TextField';
+import { ToastHost } from '../../ui/Toast';
 import { SHELL_PALETTE } from '../theme';
 import { SPACING } from '../../../sdk/theme';
 import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
 import { reportClientOptions } from '../transport-shared';
-import { AI_CONSENT_VERSION } from '../release-config';
 import { button, press, textOf, unmountScreen, hostType } from './react-screen';
 import { testAppInfo } from './client-fixtures';
 import { Keyboard, Platform, StyleSheet, useSafeAreaInsets } from './native-host';
@@ -228,25 +229,25 @@ const OTHER_QUESTION = { id: 'cup', question: 'What size is the cup?', options: 
 const compose = (onContinue = noop, onChangeText = noop) => <ComposeStep text="A tea timer" editing={false} onChangeText={onChangeText} onContinue={onContinue} onBack={noop} />;
 const clarify = () => <ClarifyStep prompt="A tea timer" questions={[OTHER_QUESTION]} answers={{}} loading={false} editing={false} onAnswer={noop} onContinue={noop} onBack={noop} />;
 const plan = (onChangeRow = noop, onBuild = noop) => <PlanStep rows={ROWS} loading={false} editing={false} onChangeRow={onChangeRow} onBuild={onBuild} onBack={noop} />;
-const settings = () => (
-  <SettingsScreen
-    onBack={noop}
-    legalLanguage="en"
-    ownServerAcknowledged
-    onAcknowledgeOwnServer={() => undefined}
-    serverUrl="https://saved.example"
-    onServerUrlChange={noop}
-    onUseDefaultServer={noop}
-    highlighting
-    onHighlightingChange={noop}
-    consentStatus={{ kind: 'granted', version: AI_CONSENT_VERSION, grantedAt: '2026-09-18' }}
-    canProbe={false}
-    onOpenAIFeatures={noop}
-    errorDetails
-    onErrorDetailsChange={noop}
-    deviceId="test-device"
-    onResetDeviceId={noop}
-  />
+const advanced = () => (
+  <ToastHost>
+    <AdvancedScreen
+      onBack={noop}
+      errorDetails
+      onErrorDetailsChange={noop}
+      deviceId="test-device"
+      onResetDeviceId={noop}
+      serverChoice="own"
+      ownServerAcknowledged
+      onAcknowledgeOwnServer={noop}
+      onChooseServer={noop}
+      savedAddress="https://saved.example"
+      onServerUrlChange={noop}
+      canProbe={false}
+      probe={null}
+      legalLanguage="en"
+    />
+  </ToastHost>
 );
 const report = (onClose = noop) => (
   <ReportSheet
@@ -274,7 +275,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
       { name: 'compose', element: compose(), action: primaryActionLabel('compose', false) },
       { name: 'clarify', element: clarify(), action: primaryActionLabel('clarify', false) },
       { name: 'plan', element: plan(), action: primaryActionLabel('plan', false) },
-      { name: 'settings', element: settings(), action: null },
+      { name: 'advanced', element: advanced(), action: null },
     ];
     const overlap = SCREEN_FRAME[0] + SCREEN_FRAME[1] - KEYBOARD_TOP;
     for (const device of DEVICES) {
@@ -290,6 +291,18 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         });
       }
     }
+  });
+
+  await h.test('a screen measured mid-push, still below the window, pads nothing when a sheet opening reports the keyboard down (Android native stack)', async () => {
+    // The native stack slides a pushed screen in; measured on its first layout, its frame still sat
+    // off the bottom of the window. A sheet opening then reports the keyboard at 0 with no show event,
+    // so nothing re-measured: the padding must not swallow the screen.
+    const midPush: Geometry = { frame: [keyboardWindow.height * 2, keyboardWindow.height - 100], field: [300, 60] };
+    await on(ANDROID_17, advanced(), async ({ tree }) => {
+      await TestRenderer.act(async () => { frames(tree)[0].props.onLayout(); });
+      await TestRenderer.act(async () => { stepKeyboard(0); flushRevealFrames(); });
+      h.eq(framePadding(tree), 0, 'with the keyboard down, no part of the screen is padded away');
+    }, midPush);
   });
 
   await h.test('a keyboard that grows or shrinks while up (the emoji panel, another keyboard, a suggestion bar) moves the footer with it, on iOS and every Android version', async () => {
@@ -484,11 +497,11 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('clarify "Other", and the Settings server field with the lines and the Use Whim’s server action under it, are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
-    // The Settings field names its block: the field, its helper line and the probe's line, 100 tall.
+  await h.test('clarify "Other", and Advanced’s server field with the lines under it, are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
+    // Advanced's field names its block: the field, its helper line and the check line, 100 tall.
     const cases: [string, React.ReactElement, Geometry, string][] = [
       ['clarify', clarify(), { frame: SCREEN_FRAME, field: [500, 60] }, 'the field'],
-      ['settings', settings(), { frame: SCREEN_FRAME, field: [500, 60], block: [500, 100] }, 'the field and its helper line'],
+      ['advanced', advanced(), { frame: SCREEN_FRAME, field: [500, 60], block: [500, 100] }, 'the field and its helper line'],
     ];
     for (const device of [IOS, ANDROID_14, ANDROID_17]) {
       for (const [name, element, geometry, shown] of cases) {
@@ -505,7 +518,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
           h.eq(scrolls.at(-1), top + height + SPACING.md - 400, `${device.name} ${name}: once the keyboard shrinks the scroll view, ${shown} scroll clear above its end`);
           h.eq([field(tree).props.multiline === true, doneBars(tree).length], [false, 0], `${device.name} ${name}: one line, with no Done bar`);
           h.eq(scrollView(tree).props.keyboardShouldPersistTaps, 'handled', `${device.name} ${name}: the controls around it take their taps while typing`);
-          if (name === 'settings') h.ok(revealedBlock(tree).findAll((n) => String(n.type) === 'TouchableOpacity' && textOf(n) === COPY.settingsUseDefaultServer).length === 1, `${device.name} settings: Use Whim’s server is in the block kept above the keyboard`);
+          if (name === 'advanced') h.ok(textOf(revealedBlock(tree)).includes(COPY.settingsProbeNeutral), `${device.name} advanced: the check line is in the block kept above the keyboard`);
         }, geometry);
       }
     }
@@ -541,7 +554,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         h.ok(nearest(button(tree, COPY.reportSend), 'ScrollView') == null && nearest(button(tree, COPY.cancel), 'ScrollView') == null, `${device.name}: Send and Cancel are pinned below the note`);
         const note = around(field(tree));
         h.eq([note.scrolls, note.doneBarLinked(tree)], [true, device.os === 'ios'], `${device.name}: the note scrolls in the sheet; iOS links a Done bar`);
-        h.eq(revealedBlock(tree).findAll(isType('Switch')).length, 1, `${device.name}: the note keeps the include-prompt row under it in view too, so Send never cuts its switch`);
+        h.eq(revealedBlock(tree).findAll(isType('Switch')).length, 1, `${device.name}: the note keeps the include row under it in view too, so Send never cuts its switch`);
       }, { frame: [0, 844], field: [300, 90] });
     }
     await on(IOS, report(s.fn('close')), async ({ tree }) => {
@@ -573,8 +586,6 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         ['compose', compose(), async () => {}],
         ['clarify', clarify(), async () => {}],
         ['plan row', plan(), editFourthRow],
-        ['settings', settings(), async () => {}],
-        ['report note', report(), draftLoaded],
       ];
       for (const [name, element, open] of fields) {
         await on(device, element, async ({ tree }) => {
@@ -636,10 +647,12 @@ function nearestFrame(node: Node): Node {
 
 /** Whether a field scrolls, and whether iOS linked its Done bar. */
 /** What a screen's one field keeps in view while focused: the block it names (`revealTarget`, the
- *  view wrapping it), or the field alone. */
+ *  view wrapping the field, or the `TextField`/`TextArea` it sits in), or the field alone. */
 function revealedBlock(tree: Tree): Node {
   const input = tree.root.findByType(KeyboardTextInput);
-  return input.props.revealTarget != null && input.parent != null ? input.parent : input;
+  if (input.props.revealTarget == null) return input;
+  const owner = [...tree.root.findAllByType(TextField), ...tree.root.findAllByType(TextArea)][0] ?? input;
+  return owner.parent ?? input;
 }
 
 function around(input: Node) {

@@ -13,11 +13,7 @@ import BuildStep from '../BuildStep';
 import DoneStep from '../DoneStep';
 import ServiceNotice from '../ServiceNotice';
 import TermsScreen from '../TermsScreen';
-import ReportSheet from '../ReportSheet';
 import type { InstalledApp } from '../app-index';
-import type { StoreAccess } from '../store-access';
-import { reportClientOptions } from '../transport-shared';
-import { testAppInfo } from './client-fixtures';
 import { SPACING, TYPE_SCALE } from '../../../sdk/theme';
 import { StyleSheet } from './native-host';
 import { button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
@@ -71,9 +67,6 @@ function fillAndEdge(node: Node): [unknown, unknown] {
   const style = StyleSheet.flatten(node.props.style) as { backgroundColor?: string; borderColor?: string; borderWidth?: number };
   return [style.backgroundColor, (style.borderWidth ?? 0) > 0 ? style.borderColor : style.backgroundColor];
 }
-
-/** Lets a sheet's asynchronous first load land. */
-const loaded = () => TestRenderer.act(async () => { await new Promise((resolve) => setImmediate(resolve)); });
 
 /** The face of the innermost text holding `words`. */
 function faceOf(tree: Tree, words: string): unknown {
@@ -161,28 +154,6 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
         h.eq(fillAndEdge(button(tree, label)), accept, `${name}: “${label}” is filled and edged like Accept`);
       });
     }
-  });
-
-  await h.test('a report reason is picked the way a clarify answer is: the accent, fill and edge, with its label on it', async () => {
-    const noop = () => {};
-    const labelColour = (node: Node) => (StyleSheet.flatten(node.find((n) => String(n.type) === 'Text').props.style) as { color?: string }).color;
-    let answer: unknown[] = [];
-    await rendered(
-      <ClarifyStep prompt="A tea timer" questions={[QUESTION]} answers={{ alert: { choices: ['Buzz'], other: '', decide: false } }} loading={false} editing={false} onAnswer={noop} onContinue={noop} onBack={noop} />,
-      async (tree) => {
-        const picked = button(tree, 'Buzz');
-        answer = [...fillAndEdge(picked), labelColour(picked)];
-      },
-    );
-    const access = { activeDescription: async () => 'A tea timer', activeSource: async () => undefined } as unknown as StoreAccess;
-    const options = reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo);
-    await rendered(<ReportSheet app={APP} access={access} options={options} onClose={noop} onUpdateRequired={noop} legalLanguage="en" />, async (tree) => {
-      await loaded();
-      await press(button(tree, COPY.reportReasonBroken));
-      const picked = button(tree, COPY.reportReasonBroken);
-      h.eq([...fillAndEdge(picked), labelColour(picked)], answer, 'the picked reason looks like a picked answer');
-      h.ok(fillAndEdge(button(tree, COPY.reportReasonOther))[0] !== answer[0], 'and an unpicked reason does not');
-    });
   });
 
   await h.test('plan: a row the user rewrote shows their words in the body face, a number they typed included, while the model’s rows keep Whim Syntax', async () => {

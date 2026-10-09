@@ -12,14 +12,12 @@ import BuildStep from '../BuildStep';
 import DoneStep from '../DoneStep';
 import FailureScreen from '../FailureScreen';
 import RunDetailsSheet from '../RunDetailsSheet';
-import SettingsScreen from '../SettingsScreen';
-import WhimProse from '../../ui/whim-prose/WhimProse';
 import { COPY } from '../copy';
 import { StoreAccess } from '../store-access';
 import { RunJournalStore } from '../run-journal';
 import type { InstalledApp } from '../app-index';
 import { hardwareBack } from './native-host';
-import { button, press, textOf, hostType } from './react-screen';
+import { button, press, textOf } from './react-screen';
 import { buildIt, composeAndContinue, hasInstalled, json, planLoaded, resultEvent, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 
 const QUESTION = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'], select: 'one', other: false };
@@ -27,8 +25,6 @@ const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId:
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
-const isHighlightingSwitch = (node: TestRenderer.ReactTestInstance) =>
-  hostType(node) === 'Switch' && node.props.accessibilityLabel === COPY.highlightingSectionTitle;
 
 /** Compose `text` and continue through a zero-question clarify to a loaded plan. */
 async function composeToPlan(tree: Tree, text: string): Promise<void> {
@@ -193,26 +189,6 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       for (const secret of ['SENTINEL_TOKEN_TEXT', 'SENTINEL_SYMBOL', 'SENTINEL_MESSAGE', 'SENTINEL_HINT']) {
         h.ok(!shown.includes(secret), `the build screen never shows "${secret}"`);
       }
-    });
-  });
-
-  await h.test('flow: turning highlighting off in Settings renders the plan’s prose flat', async () => {
-    const styledSpans = (tree: Tree) => tree.root.findByType(WhimProse).findAll((n) => hostType(n) === 'Text').length - 1;
-    await withLauncher({
-      server: (r) => r.path === '/v1/clarify'
-        ? json({ questions: [] })
-        : json({ rewrittenPrompt: 'A timer', plan: [{ label: 'Timer', text: 'Counts down 5 minutes' }] }),
-    }, async ({ tree }) => {
-      await composeToPlan(tree, 'A timer');
-      h.ok(styledSpans(tree) > 0, 'with highlighting on (the default), the duration in the plan row is styled');
-      await TestRenderer.act(async () => tree.root.findByType(PlanStep).props.onBack());
-      await TestRenderer.act(async () => tree.root.findByType(ComposeStep).props.onBack());
-      await TestRenderer.act(async () => home(tree).props.onSettings());
-      await TestRenderer.act(async () => tree.root.find(isHighlightingSwitch).props.onValueChange(false));
-      await TestRenderer.act(async () => tree.root.findByType(SettingsScreen).props.onBack());
-      await composeToPlan(tree, 'A timer');
-      h.eq(styledSpans(tree), 0, 'after switching it off, the same row renders as plain text');
-      h.eq(textOf(tree.root.findByType(WhimProse)), 'Counts down 5 minutes', 'with its words unchanged');
     });
   });
 

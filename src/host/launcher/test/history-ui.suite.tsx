@@ -296,8 +296,9 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
         await press(button(tree, COPY.orbActionVersions));
         await waitFor(() => showing(HistoryScreen), 'its history');
         await leave();
-        await waitFor(() => showing(MiniAppView) || showing(HomeScreen), `${name} to leave history`);
-        h.ok(showing(MiniAppView), `${name} from the history opened over the app returns to the app, not Home`);
+        h.ok(showing(HomeScreen) && !showing(HistoryScreen), `${name}: History pops off the stack at once, onto Home under it`);
+        await waitFor(() => showing(MiniAppView), `${name} to reopen the app`);
+        h.ok(!showing(HistoryScreen), `${name} from the history opened over the app returns to the app`);
         h.eq(tree.root.findByType(MiniAppView).props.installedApp.id, app.id, `${name}: the same app`);
         await TestRenderer.act(async () => tree.root.findByType(MiniAppView).props.onExit());
       }

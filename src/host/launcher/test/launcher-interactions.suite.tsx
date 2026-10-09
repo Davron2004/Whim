@@ -7,6 +7,8 @@ import ComposeStep from '../ComposeStep';
 import PlanStep from '../PlanStep';
 import BuildStep from '../BuildStep';
 import SettingsScreen from '../SettingsScreen';
+import AdvancedScreen from '../AdvancedScreen';
+import { COPY } from '../copy';
 import ConsentScreen from '../ConsentScreen';
 import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { AppIndex } from '../app-index';
@@ -15,7 +17,7 @@ import { grantConsent } from '../ai-consent';
 import { acceptTerms } from '../terms-acceptance';
 import { acknowledgeOwnServer, saveServerUrl } from '../server-address';
 import { resetNativeStorage } from './native-storage';
-import { renderScreen, unmountScreen, captureTimeouts } from './react-screen';
+import { renderScreen, unmountScreen, captureTimeouts, textOf } from './react-screen';
 import { testAppInfo } from './client-fixtures';
 
 export async function runLauncherInteractionTests(h: Harness): Promise<void> {
@@ -49,8 +51,13 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => { attempt = tree!.root.findByType(PlanStep).props.onBuild(); });
       await TestRenderer.act(async () => tree!.root.findByType(BuildStep).props.onBack());
       await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onSettings());
+      const advanced = async () => {
+        await TestRenderer.act(async () => tree!.root.findByType(SettingsScreen).props.onOpenAdvanced());
+        return tree!.root.findByType(AdvancedScreen);
+      };
       if (change === 'server') {
-        await TestRenderer.act(async () => tree!.root.findByType(SettingsScreen).props.onServerUrlChange('https://s2.example'));
+        const screen = await advanced();
+        await TestRenderer.act(async () => screen.props.onServerUrlChange('https://s2.example'));
       } else if (change === 'consent') {
         await TestRenderer.act(async () => tree!.root.findByType(SettingsScreen).props.onOpenAIFeatures());
         await TestRenderer.act(async () => tree!.root.findByType(ConsentScreen).props.onTurnOff());
@@ -58,8 +65,8 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
         await TestRenderer.act(async () => tree!.root.findByType(SettingsScreen).props.onOpenAIFeatures());
         await TestRenderer.act(async () => tree!.root.findByType(ConsentScreen).props.onAgree());
       } else {
-        await TestRenderer.act(async () => tree!.root.findByType(SettingsScreen).props.onServerUrlChange('https://s1.example/'));
-        await TestRenderer.act(async () => tree!.root.findByType(SettingsScreen).props.onHighlightingChange(false));
+        const screen = await advanced();
+        await TestRenderer.act(async () => screen.props.onServerUrlChange('https://s1.example/'));
       }
       await TestRenderer.act(async () => tree!.root.findByType(SettingsScreen).props.onBack());
       h.eq(tree.root.findByType(HomeScreen).props.offline, change !== 'same', 'new session starts offline; unchanged session stays online');
@@ -124,7 +131,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('launcher: typing a server address in Settings probes the finished address once typing pauses, never a half-typed one', async () => {
+  await h.test('launcher: typing a server address in Advanced probes the finished address once per typing pause, never a half-typed one, and shows that one result (#130)', async () => {
     resetNativeStorage();
     const kv = createMmkvBackend('whim.launcher');
     new AppIndex(kv).markSeeded(SEED_VERSION);
@@ -144,14 +151,19 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     try {
       tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
       await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onSettings());
+      await TestRenderer.act(async () => tree!.root.findByType(SettingsScreen).props.onOpenAdvanced());
       h.eq(probed, ['https://s1.example/health'], 'the saved address was probed once, at startup');
-      const addressField = () => tree!.root.findByType(SettingsScreen).find(node => String(node.type) === 'TextInput');
+      const shown = () => textOf(tree!.root.findByType(AdvancedScreen));
+      h.ok(shown().includes(COPY.serverProbeVerified), 'Advanced shows the session’s result for the saved address, with no probe of its own');
+      const addressField = () => tree!.root.findByType(AdvancedScreen).find(node => String(node.type) === 'TextInput');
       for (const keystroke of ['https://s', 'https://s2', 'https://s2.', 'https://s2.example']) {
         await TestRenderer.act(async () => addressField().props.onChangeText(keystroke));
       }
       h.eq(probed.length, 1, 'typing probes nothing');
+      h.ok(!shown().includes(COPY.serverProbeVerified), 'mid-edit, no result claims anything about the new address');
       await TestRenderer.act(async () => clock.fire(600));
-      h.eq(probed.slice(1), ['https://s2.example/health', 'https://s2.example/health'], 'the pause probes the finished address: the session’s connectivity and Settings’ own check');
+      h.eq(probed.slice(1), ['https://s2.example/health'], 'the pause probes the finished address exactly once');
+      h.ok(shown().includes(COPY.serverProbeVerified), 'and that one probe’s result shows under the field');
       await TestRenderer.act(async () => tree!.root.findByType(SettingsScreen).props.onBack());
       h.eq(tree.root.findByType(HomeScreen).props.offline, false, 'the new address is the one the session is online with');
     } finally {
