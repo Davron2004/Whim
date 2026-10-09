@@ -33,11 +33,14 @@
 # files, so no answer is a redirect (Apple and Android refuse an association file behind one).
 # /assets/* serves the pages' self-hosted fonts as published; font-src 'self' lets only those load.
 # The /beta form posts to the API site's /beta/signup, which answers with a redirect back here.
+# Referrer-Policy keeps that post's Origin the pages origin, which the signup route requires: under
+# no-referrer or same-origin a browser sends Origin: null.
 {$WHIM_WEB_HOST} {
 	root * /srv/site/current
 	header {
 		Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'"
 		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
 	}
 
 	handle /.well-known/apple-app-site-association {

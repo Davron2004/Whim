@@ -525,6 +525,7 @@ function byteSize(value: string): number | undefined {
 const API_FORBIDDEN = ['encode', 'log', 'file_server', 'root', 'try_files', 'templates', 'php_fastcgi'];
 const PAGES_FORBIDDEN = ['reverse_proxy', 'templates', 'encode', 'log', 'respond', 'redir', 'php_fastcgi', 'browse'];
 const PAGES_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'";
+const PAGES_REFERRER_POLICY = 'strict-origin-when-cross-origin';
 const ASSOCIATION_ROUTES = ['/.well-known/apple-app-site-association', '/.well-known/assetlinks.json'];
 /** Served straight from the published files, never rewritten (the pages' self-hosted fonts). */
 const ASSET_ROUTES = ['/assets/*'];
@@ -604,10 +605,31 @@ function pagesSiteProblems(site: readonly CaddyNode[], siteFiles: readonly strin
     if (!['root', 'header', 'handle'].includes(directiveOf(node))) problems.push(`the pages site has a top-level ${directiveOf(node)} (line ${node.line})`);
   }
   if (!site.some((node) => lineOf(node) === 'root * /srv/site/current')) problems.push('the pages site root is not /srv/site/current');
+  return [...problems, ...pagesHeaderProblems(site), ...pagesRouteProblems(site, siteFiles)];
+}
+
+/** The pages site's response headers. A no-referrer or same-origin policy would make a browser
+ *  post the signup form with `Origin: null`, which the signup route refuses (waitlist-hardening D4). */
+function pagesHeaderProblems(site: readonly CaddyNode[]): string[] {
+  const problems: string[] = [];
   const headers = childLines(site.find((node) => lineOf(node) === 'header'));
   if (!headers.includes(`Content-Security-Policy ${PAGES_CSP}`)) problems.push('the pages site lacks the D21 Content-Security-Policy');
   if (!headers.includes('X-Content-Type-Options nosniff')) problems.push('the pages site lacks X-Content-Type-Options nosniff');
-  return [...problems, ...pagesRouteProblems(site, siteFiles)];
+  if (!headers.includes(`Referrer-Policy ${PAGES_REFERRER_POLICY}`)) problems.push(`the pages site lacks Referrer-Policy ${PAGES_REFERRER_POLICY}`);
+  return problems;
+}
+
+/** deploy/cloudrun/Caddyfile: its one site is the pages host, sending the same headers. */
+function cloudRunCaddyfileProblems(text: string): string[] {
+  let nodes: CaddyNode[];
+  try {
+    nodes = parseCaddyfile(text);
+  } catch (error) {
+    return [(error as Error).message];
+  }
+  const sites = nodes.filter((node) => node !== globalOptionsOf(nodes));
+  if (sites.length !== 1) return [`the Cloud Run Caddyfile has ${sites.length} sites, not the pages site alone`];
+  return pagesHeaderProblems(sites[0]!.children);
 }
 
 /** The address-less first block: Caddy's global options. */
@@ -836,11 +858,12 @@ function keysReadByLoadServerConfig(): Set<string> {
 
 /** A minimum build is an operator value: in a profile it would reach config.env beside the
  *  operator's own line, and a resize would silently move it (app-update-gate). So is a keep-period,
- *  which deploy.sh's preflight checks against the disclosure manifest before any profile is read. */
+ *  which deploy.sh's preflight checks against the disclosure manifest before any profile is read.
+ *  So is every limit (`_LIMIT_` anywhere in the key, the beta signup limits included). */
 function isForbiddenProfileKey(key: string): boolean {
   return (
     PROFILE_FORBIDDEN_NAMES.has(key) ||
-    key.startsWith('WHIM_LIMIT_') ||
+    key.includes('_LIMIT_') ||
     key.startsWith('WHIM_MIN_BUILD_') ||
     key.includes('RETENTION') ||
     (KEEP_PERIOD_VARIABLES as readonly string[]).includes(key) ||
@@ -3439,6 +3462,14 @@ function caddyTests(files: ReadonlyMap<string, string>, maxBodyBytes: number, si
   red('allowing a remote font origin fails', plant(caddyfile, "; font-src 'self'\"", "; font-src 'self' https://fonts.gstatic.com\""), 'Content-Security-Policy');
   red('dropping the /beta/thanks route fails', plant(caddyfile, '\thandle /beta/thanks {\n\t\trewrite * /beta-thanks.html\n', '\thandle /beta/thanks-page {\n\t\trewrite * /beta-thanks.html\n'), 'not the D21 route table');
   red('rewriting /assets/* to a page fails', plant(caddyfile, '\thandle /assets/* {\n', '\thandle /assets/* {\n\t\trewrite * /beta.html\n'), '/assets/* is not served straight');
+  const referrer = `\t\tReferrer-Policy ${PAGES_REFERRER_POLICY}\n`;
+  red('dropping the pages Referrer-Policy fails', plant(caddyfile, referrer, ''), `Referrer-Policy ${PAGES_REFERRER_POLICY}`);
+  red('a no-referrer pages policy (signup posts would carry Origin: null) fails', plant(caddyfile, referrer, '\t\tReferrer-Policy no-referrer\n'), `Referrer-Policy ${PAGES_REFERRER_POLICY}`);
+
+  const cloudRunCaddyfile = files.get('deploy/cloudrun/Caddyfile') ?? '';
+  checkClean('the Cloud Run pages Caddyfile sends the pages CSP, nosniff and Referrer-Policy strict-origin-when-cross-origin', cloudRunCaddyfileProblems(cloudRunCaddyfile));
+  checkCaught('  red: dropping the Cloud Run Referrer-Policy fails', cloudRunCaddyfileProblems(plant(cloudRunCaddyfile, referrer, '')), `Referrer-Policy ${PAGES_REFERRER_POLICY}`);
+  checkCaught('  red: a same-origin Cloud Run policy (signup posts would carry Origin: null) fails', cloudRunCaddyfileProblems(plant(cloudRunCaddyfile, referrer, '\t\tReferrer-Policy same-origin\n')), `Referrer-Policy ${PAGES_REFERRER_POLICY}`);
 
   checkClean("Caddy's default logger deletes the request headers and the client's address from a real reverse-proxy line", caddyLogProblems(caddyfile, CADDY_PROXY_ABORT_LINE));
   const logRed = (name: string, text: string, needle: string): void => checkCaught(`  red: ${name}`, caddyLogProblems(text, CADDY_PROXY_ABORT_LINE), needle);
@@ -4090,6 +4121,7 @@ function profileTests(files: ReadonlyMap<string, string>): void {
   const eventText = profiles.get('event') ?? '';
   checkCaught('  red: a retention variable in a profile fails', profileProblems('event', `${eventText}WHIM_REPORT_RETENTION_DAYS=30\n`, readKeys), 'WHIM_REPORT_RETENTION_DAYS');
   checkCaught('  red: a minimum build in a profile fails', profileProblems('event', `${eventText}WHIM_MIN_BUILD_IOS=382000\n`, readKeys), 'sets WHIM_MIN_BUILD_IOS, which no profile may set');
+  checkCaught('  red: a beta signup limit in a profile fails', profileProblems('event', `${eventText}WHIM_BETA_LIMIT_PER_DAY=5000\n`, readKeys), 'sets WHIM_BETA_LIMIT_PER_DAY, which no profile may set');
   checkCaught('  red: a usage idle period in a profile fails', profileProblems('event', `${eventText}WHIM_USAGE_IDLE_DAYS=30\n`, readKeys), 'sets WHIM_USAGE_IDLE_DAYS, which no profile may set');
 }
 
