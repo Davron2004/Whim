@@ -54,11 +54,11 @@ Every prop below takes a **token**, never a raw color/pixel value.
 | `Row` | `align` | `'start' \| 'center' \| 'end'` | baseline (unset) | Cross-axis alignment. |
 | `Row` | `justify` | `'start' \| 'center' \| 'end' \| 'between'` | space-between (unset) | Main-axis distribution. |
 | `Text` | `size` | `TextSizeToken` | `'body'` | Font size/line-height/weight from the size scale. |
-| `Text` | `color` | `ColorToken` | `'text'` | Text color. |
+| `Text` | `color` | `TextColorToken` | `'text'` | Text color. |
 | `Text` | `weight` | `WeightToken` | size's own weight | Overrides the size's default weight. |
 | `Text` | `align` | `'start' \| 'center' \| 'end'` | unset | `textAlign`. |
 | `Heading` | `size` | `'subtitle' \| 'title' \| 'display'` | `'title'` | Bold heading at the given size. |
-| `Heading` | `color` | `ColorToken` | `'text'` | Heading color. |
+| `Heading` | `color` | `TextColorToken` | `'text'` | Heading color. |
 | `NumberInput` | `label` | `string?` | — | Optional caption label above the field. |
 | `NumberInput` | `value` | `number` (required) | — | Current numeric value. |
 | `NumberInput` | `min` / `max` / `step` | `number?` | — | Native `<input type="number">` constraints. |
@@ -161,6 +161,7 @@ timestamp becomes a heatmap label only by converting it: `new Date(ms).toISOStri
 | resolves to | the ACTIVE theme's shape scale (`sharp`/`soft`/`round` — see §6); never a fixed px table |
 
 | `ColorToken` | `text` \| `text-muted` \| `primary` \| `on-primary` \| `bg` \| `surface` \| `border` \| `danger` \| `positive` \| `warning` |
+| `TextColorToken` | `text` \| `text-muted` \| `primary` \| `positive` \| `danger` \| `warning` (text on a `primary` fill is handled by the component; never pass `on-primary` to `Text`) |
 |---|---|
 | resolves to | the ACTIVE theme's color role (see §6) |
 
