@@ -37,6 +37,14 @@ artifacts:
       - If the question is too broad to digest in 120 lines, the researcher says
       so and proposes a split rather than silently truncating.
 
+      - A security or hardening change's digest carries a PATTERN CENSUS: every
+      in-repo occurrence of the pattern under investigation, one row each
+      (`file:line | SAFE / UNSAFE / NOT-CHECKED | test applied`), the test being
+      the property hardened. "Find an exemplar to copy" is not a research move;
+      an occurrence cited without its census row is a rejectable digest. Every
+      UNSAFE row this change does not fix is filed to
+      openspec/critic/open-follow-ups.md before closure (apply.md step 13).
+
 
       This digest is cited by design.md and is the input the proposal is written
       from.

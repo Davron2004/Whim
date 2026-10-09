@@ -1,7 +1,8 @@
 # hardening-research-discipline Specification
 
-## ADDED Requirements
-
+## Purpose
+What a hardening or security change's research must contain so an existing occurrence of the vulnerable pattern is classified rather than copied: a census of every occurrence, and a filed backlog entry for each UNSAFE one the change does not fix.
+## Requirements
 ### Requirement: A hardening change's research artifact carries a full pattern census
 
 A hardening change's `research.md` SHALL include a pattern census enumerating every in-repo occurrence of the pattern under investigation, classifying each row SAFE, UNSAFE, or NOT-CHECKED, and naming the test applied to reach that classification. Citing an in-repo occurrence of the investigated pattern as a design exemplar, without a census row classifying it, SHALL NOT be treated as adequate research — every occurrence of the pattern under investigation is a suspect until classified, never evidence by precedent.
@@ -29,3 +30,4 @@ A pattern-census row classified UNSAFE that falls outside the current change's d
 
 - **WHEN** an UNSAFE out-of-scope finding is described only in a run's report or progress notes and not appended to `open-follow-ups.md`
 - **THEN** the requirement is not satisfied
+
