@@ -20,10 +20,12 @@ import { needsComposite, recordQueryShapes, uncoveredShapes, unusedIndexes, type
 import { loadServerConfig } from '../src/config';
 import { startServer } from '../src/lifecycle';
 import { createFirestoreStoresOpener, openStores, type FirestoreStoresOptions, type OpenedStores, type StoreConfig } from '../src/stores';
-import type { DocumentReference, Firestore } from '@google-cloud/firestore';
+import type { DocumentReference } from '@google-cloud/firestore';
 import { deleteInBatches, openFirestoreClient } from '../src/firestore/client';
 import { runFirestoreImportTests } from './firestore-import';
-import { FirestoreUsageStore } from '../src/firestore/usage-store';
+import { CREDIT_MARKS_COLLECTION, FirestoreUsageStore } from '../src/firestore/usage-store';
+import { runPurge, type PurgeConfig } from '../src/admin/purge';
+import { withLostCommitReplies } from './firestore-lost-reply';
 
 /** How long the run may go without reporting a check before it fails as stalled. It replaces a
  *  60 s whole-run deadline, which a slow but progressing run could pass: the run takes about 17 s
@@ -218,38 +220,24 @@ async function unsafeKeysTest(): Promise<void> {
   }).finally(() => stores.close());
 }
 
-/** `db` whose transactions each commit, then run again as the client's retry does when a commit's
- *  reply is lost (DEADLINE_EXCEEDED, UNAVAILABLE, ...) although the commit landed. */
-function losingCommitReplies(db: Firestore): Firestore {
-  return new Proxy(db, {
-    get(target, property) {
-      if (property === 'runTransaction') {
-        return async (...args: Parameters<Firestore['runTransaction']>): Promise<unknown> => {
-          await target.runTransaction(...args);
-          return target.runTransaction(...args);
-        };
-      }
-      const value: unknown = Reflect.get(target, property, target);
-      return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
-    },
-  });
-}
-
 async function lostCommitReplyTest(): Promise<void> {
   section('Firestore: an admission whose commit landed but whose reply was lost');
   const db = await openFirestoreClient('(default)', { probeTimeoutMs: PROBE_CEILING_MS });
   const root = db.collection('conformance').doc(`${RUN_ID}-lost-reply`);
-  const retrying = new FirestoreUsageStore(losingCommitReplies(db), root);
   const plain = new FirestoreUsageStore(db, root);
   const day = '2026-10-07';
   const count = async (counter: string): Promise<unknown> => (await root.collection('admission').doc(counter).get()).get('count');
   try {
-    await verify('the retry answers the admission it already made, counted once, even on the last unit', async () => {
-      const result = await retrying.admit({ requestId: 'retried', deviceId: 'dev-a', kind: 'generate', now: T0, deviceLimit: 1, globalLimit: 1 });
-      nodeAssert.deepStrictEqual(result, { ok: true, requestId: 'retried' });
-      nodeAssert.deepStrictEqual((await plain.deviceRecords('dev-a')).ledger.map((row) => row.id), ['retried']);
-      nodeAssert.deepStrictEqual([await count(`${day}:generate:dev-a`), await count(`${day}:global:generate`)], [1, 1]);
-    });
+    await verify('the retry answers the admission it already made, counted once, even on the last unit', () =>
+      withLostCommitReplies(db, async (client) => {
+        const retrying = new FirestoreUsageStore(client.db, root);
+        const result = await retrying.admit({ requestId: 'retried', deviceId: 'dev-a', kind: 'generate', now: T0, deviceLimit: 1, globalLimit: 1 });
+        nodeAssert.ok(client.replays() > 0, 'the harness replayed the admission\'s commit');
+        nodeAssert.deepStrictEqual(result, { ok: true, requestId: 'retried' });
+        nodeAssert.deepStrictEqual((await plain.deviceRecords('dev-a')).ledger.map((row) => row.id), ['retried']);
+        nodeAssert.deepStrictEqual([await count(`${day}:generate:dev-a`), await count(`${day}:global:generate`)], [1, 1]);
+      }),
+    );
     await verify('another admission reusing that request id is still rejected, consuming nothing', async () => {
       const reuse = await plain.admit({ requestId: 'retried', deviceId: 'dev-b', kind: 'generate', now: T0, deviceLimit: 1, globalLimit: 5 }).then(
         () => 'admitted',
@@ -258,7 +246,55 @@ async function lostCommitReplyTest(): Promise<void> {
       nodeAssert.strictEqual(reuse, 'request id retried is already in the ledger');
       nodeAssert.deepStrictEqual([await count(`${day}:generate:dev-b`), await count(`${day}:global:generate`)], [undefined, 1]);
     });
+    // specs/server-storage-backends "A lost commit reply never credits usage twice".
+    await verify('a credit whose commit reply is lost counts once', async () => {
+      await plain.credit('dev-credit', { promptTokens: 1, completionTokens: 2, totalTokens: 3 });
+      await withLostCommitReplies(db, async (client) => {
+        await new FirestoreUsageStore(client.db, root).credit('dev-credit', { promptTokens: 40, completionTokens: 60, totalTokens: 100 });
+        nodeAssert.ok(client.replays() > 0, 'the harness replayed the credit\'s commit');
+      });
+      nodeAssert.deepStrictEqual(await plain.read('dev-credit'), { promptTokens: 41, completionTokens: 62, totalTokens: 103 }, 'the totals grew by exactly the credited usage');
+    });
   } finally {
+    await db.terminate();
+  }
+}
+
+/** specs/server-storage-backends "Markers are purged after a day", through `whim-admin purge`, the
+ *  command the hourly Cloud Run job runs (the in-process purge calls the same `purgeLedger`). */
+async function creditMarkerPurgeTest(): Promise<void> {
+  section('Firestore: credit markers hold only their day and are purged after a day');
+  const namespace = `${RUN_ID}-credit-marks`;
+  let now = T0;
+  const stores = await openNamespace(namespace, () => now);
+  const db = await openFirestoreClient('(default)', { probeTimeoutMs: PROBE_CEILING_MS });
+  const marks = db.collection('conformance').doc(namespace).collection(CREDIT_MARKS_COLLECTION);
+  // The keep-periods the operator configures (ledger 90 days, usage 365), on this case's clock.
+  const purgeConfig: PurgeConfig = { ...loadServerConfig({ WHIM_DATA_DIR: os.tmpdir() }), now: () => now };
+  const markDays = async (): Promise<string[]> => (await marks.get()).docs.map((doc) => String(doc.get('utcDay'))).sort((a, b) => a.localeCompare(b));
+  try {
+    await verify('a marker holds the UTC day of its credit and nothing else', async () => {
+      await stores.usage.credit('dev-a', { promptTokens: 1, completionTokens: 1, totalTokens: 2 });
+      nodeAssert.deepStrictEqual((await marks.get()).docs.map((doc) => doc.data()), [{ utcDay: '2026-10-07' }]);
+    });
+    await verify('the purge keeps the markers of the previous UTC day and later, and only those', async () => {
+      // 2026-10-07 12:00 is credited above; one more at the last millisecond of 2026-10-08 and the
+      // first of 2026-10-09.
+      for (const at of [Date.UTC(2026, 9, 9) - 1, Date.UTC(2026, 9, 9)]) {
+        now = at;
+        await stores.usage.credit('dev-a', { promptTokens: 1, completionTokens: 1, totalTokens: 2 });
+      }
+      now = Date.UTC(2026, 9, 9, 12, 0, 0);
+      const purged = await runPurge([], stores, purgeConfig);
+      nodeAssert.strictEqual(purged.exitCode, 0, purged.output);
+      nodeAssert.deepStrictEqual(await markDays(), ['2026-10-08', '2026-10-09'], 'on 2026-10-09 only the 2026-10-07 marker goes');
+      now = Date.UTC(2026, 9, 10, 0, 0, 0);
+      nodeAssert.strictEqual((await runPurge([], stores, purgeConfig)).exitCode, 0);
+      nodeAssert.deepStrictEqual(await markDays(), ['2026-10-09'], 'on 2026-10-10 only the 2026-10-08 marker goes');
+      nodeAssert.strictEqual((await stores.usage.read('dev-a')).totalTokens, 6, 'the purge leaves the totals the markers guarded');
+    });
+  } finally {
+    await stores.close();
     await db.terminate();
   }
 }
@@ -346,6 +382,7 @@ await persistenceTest();
 await documentModelTest();
 await unsafeKeysTest();
 await lostCommitReplyTest();
+await creditMarkerPurgeTest();
 await batchedDeleteTest();
 await closeWhileBusyTest();
 await firestoreBootTest();
