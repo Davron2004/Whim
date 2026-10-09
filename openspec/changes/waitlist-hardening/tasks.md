@@ -25,7 +25,7 @@ Constraints for every task:
 
 ## 2. Waitlist store: news consent, sticky withdrawal, removal fingerprints (#109)
 
-- [ ] 2.1 `server/src/waitlist/store.ts`: change the `WaitlistStore` interface per design D2/D3:
+- [x] 2.1 `server/src/waitlist/store.ts`: change the `WaitlistStore` interface per design D2/D3:
   - the signup carries `updatesOptIn`;
   - the row carries `updatesOptIn`, `updatesConsentAt`, `updatesConsentNoticeId` and `updatesWithdrawnAt`;
   - `upsert` returns `stored | updated | suppressed`;
@@ -35,7 +35,7 @@ Constraints for every task:
   - export the legacy-row mapping as one pure function that every backend and the migration share.
 
   Implement it in `InMemoryWaitlistStore`.
-- [ ] 2.2 `server/test/store-conformance.suite.ts`: add one case per spec scenario:
+- [x] 2.2 `server/test/store-conformance.suite.ts`: add one case per spec scenario:
   - each of the five consent rules;
   - a web post that cannot undo a withdrawal;
   - a written request that restores consent;
@@ -47,13 +47,13 @@ Constraints for every task:
   - a concurrent signup and removal.
 
   Update `waitlistRows`. Red-check the sticky case against the weaker variant "consent = latest web answer", and the suppression case against today's hard delete.
-- [ ] 2.3 `NodeSqliteWaitlistStore`: make the schema migration on open idempotent and run it in one transaction:
+- [x] 2.3 `NodeSqliteWaitlistStore`: make the schema migration on open idempotent and run it in one transaction:
   - add the consent columns and `waitlist_suppressed(fingerprint PRIMARY KEY, suppressed_at)`;
   - convert legacy rows with the shared mapping;
   - keep `updates_opt_out` as the D2 rollback shadow, written as `!updatesOptIn` on every write.
 
   `remove` deletes the row and keeps the fingerprint atomically, and `upsert` reads the fingerprint in the same transaction. `secure_delete` and WAL stay.
-- [ ] 2.4 `server/src/firestore/waitlist-store.ts`:
+- [x] 2.4 `server/src/firestore/waitlist-store.ts`:
   - add the `waitlistSuppressed/{waitlistDocId}` collection;
   - the upsert transaction reads the row and the fingerprint together, and `remove` deletes the row and creates the fingerprint in one transaction;
   - legacy docs (no `updatesOptIn`) are read through the shared mapping and rewritten in the new shape on their first write;
@@ -61,8 +61,8 @@ Constraints for every task:
   - the purge deletes fingerprints with `suppressedAt` before the cutoff through `deleteInBatches`.
 
   Confirm that `firestore-index-coverage.ts` reports no missing index. Add the Firestore-specific scenarios (sticky withdrawal, a signup racing a removal) to `server/test/firestore-conformance.ts`.
-- [ ] 2.5 The purge wiring (the in-process hourly purge and `server/src/admin/purge.ts`): the `waitlist:` line counts rows and fingerprints. Extend `server/test/admin-purge.suite.ts`.
-- [ ] 2.6 Write `handoff/waitlist-store.md`: the interface verbatim, the outcome values, the legacy mapping function's name and module, the Firestore collection and field names, and the SQLite table and column names.
+- [x] 2.5 The purge wiring (the in-process hourly purge and `server/src/admin/purge.ts`): the `waitlist:` line counts rows and fingerprints. Extend `server/test/admin-purge.suite.ts`.
+- [x] 2.6 Write `handoff/waitlist-store.md`: the interface verbatim, the outcome values, the legacy mapping function's name and module, the Firestore collection and field names, and the SQLite table and column names.
 
 ## 3. Legacy-row migration and SQLite import (#109 data)
 
