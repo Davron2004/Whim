@@ -24,11 +24,11 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
   - Nobody is told when a report arrives, the API goes down, or GCP spend spikes. There's no uptime check and no budget alert (only the OpenRouter credit cap).
   - `docs/capabilities.md` points at `openspec/specs/{content-reports,server-deployment,server-admission-control,content-policy}/spec.md`, and none of those files exist. `openspec/changes/public-generation-server` was never archived.
 - **Why it matters:** once real users arrive, crashes and failed generations can't be seen unless someone reports them by hand.
-- **Suggested approach:** proposed as `openspec/changes/developer-observability/`; its disclosure chain waits for GitHub #63 (rewrite of the consent, policy and store text). The owner chose to route device errors through Whim's own server instead of a third-party SDK. Archive `public-generation-server` separately.
+- **Suggested approach:** proposed as `openspec/changes/archive/2026-10-09-developer-observability/`; its disclosure chain waits for GitHub #63 (rewrite of the consent, policy and store text). The owner chose to route device errors through Whim's own server instead of a third-party SDK. Archive `public-generation-server` separately.
 - **Source:** observability audit, 2026-09-23.
 
 ### [info] Generation speed and model choice, measured 2026-09-22
-- **Where:** `docs/research/generation-speed-2026-09.md`; raw verdicts, inputs and the step ledger in `openspec/changes/faster-generation/` (`bench/`, `progress.md`, `review-*.md`).
+- **Where:** `docs/research/generation-speed-2026-09.md`; judge prompt in `docs/research/generation-speed-judge-prompt.md`; raw verdicts and inputs in `faster-generation/bench.tar.zst` (`docs/EVIDENCE.md`); the step ledger is in git history.
 - **What:** why clarify and plan writing took ~30 s (hidden default reasoning, also the cause of #51), the before/after timings, the blind quality judge that kept thinking on for first drafts, the 13-model screen for the short calls, and the Qwen 3.8 27B verdict.
 - **Why it matters:** the next model change should rerun `server/flowbench.mjs` and the judge instead of going by feel (decision #69).
 - **Suggested approach:** the follow-ups found along the way are filed as GitHub issues and listed at the end of the report.
@@ -44,7 +44,7 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 
 ### [idea — owner experiment] Digest the repo's Markdown into a knowledge graph
 - [ ] open
-- **Where:** 694 tracked `.md` files. Most sit in `openspec/changes/` (544, mostly archived proposals, designs, research and handoffs). The rest are `docs/` (handoffs, PR review notes, `spec.md`, which is stale per decision #42), `DEVLOG.md`, `HANDOFF-v1-sprint.md`, `openspec/critic/` and the agent skill/command mirrors. `graphify-out/` already holds dated Graphify runs.
+- **Where:** 368 tracked `.md` files after the 2026-10-09 cleanup (1,037 before it). `openspec/changes/` holds 195: the open beta-1 and harden-binding-provenance changes, and each archived change cut to its proposal and design (lessons from the deleted ledgers went to `DEVLOG.md`). The rest are `docs/` (`spec.md` is stale per decision #42), `DEVLOG.md`, `openspec/critic/` and the agent skill/command mirrors. `graphify-out/` already holds dated Graphify runs.
 - **What:** many of these files were written during development and no longer document anything current. They're historical, but they still hold real knowledge: decisions, measured gotchas, spike evidence. The goal is to distill that into one navigable form, possibly a graph, so the current knowledge is findable and the history stops competing with it.
 - **Why it matters:** agents and people who orient from the docs can't tell a live file from a dead one, so stale guidance gets followed and real lessons get missed.
 - **Suggested approach:** owner-led. The owner has specific ideas to try here, including Graphify. Don't start this without them.
@@ -60,7 +60,7 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 
 ### [idea — later] A cheaper way to verify generated candidates than a Chromium context per run
 - [ ] open
-- **Where:** `synthrun/session.ts` and `synthrun/report.ts` (a fresh browser context and page per candidate), `server/src/generation/stages/run.ts` (the run stage), and the VM sizing in `openspec/changes/public-generation-server/design.md` D6/D25 (synthetic-run concurrency is what drives vCPU and memory).
+- **Where:** `synthrun/session.ts` and `synthrun/report.ts` (a fresh browser context and page per candidate), `server/src/generation/stages/run.ts` (the run stage), and the VM sizing in `openspec/changes/archive/2026-10-09-public-generation-server/design.md` D6/D25 (synthetic-run concurrency is what drives vCPU and memory).
 - **What:** every candidate boots its own Chromium context on the server to run and observe it. The owner suspects there's a much cheaper design: one warm shared browser with per-candidate isolation, or verifying most candidates without a full browser render and saving the real render for the ones that need it.
 - **Why it matters:** the synthetic run is what limits how many generations a VM can run at once and so what the VM costs (D25 sizes the demo-night profile around it). Not now: there are zero users. Revisit when generation volume or VM cost makes it matter. This is an optimization to explore later, not a decision, and any cheaper path still has to keep the containment guarantees (sandbox on, no egress, trusted-vantage observation).
 - **Suggested approach:** measure first. Use the event-profile load test (public-generation-server task 15.4) for per-context CPU and memory and the run stage's share of a generation's wall time. Then compare candidate designs against that baseline and against the synthetic-run spec's isolation requirements before writing a proposal.
@@ -116,7 +116,7 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 
 ### [med] static-check-pipeline chain-A is blocked on human-only bootstrap edits
 - [x] closed 2026-07-12 — chain-A bootstrap edits were human-ratified and committed (`4d63bc9`); the change is complete, merged (PR #4), and archived.
-- **Where:** `openspec/changes/archive/2026-07-12-static-check-pipeline/chains.md` chain-A; root `package.json`; root `tsconfig.json`.
+- **Where:** `openspec/changes/archive/2026-07-12-static-check-pipeline/chains.md` chain-A (file since pruned; see git history at `8c6cb385`); root `package.json`; root `tsconfig.json`.
 - **What:** chain-A's two bootstrap edits — adding `"checks:test": "node checks/test/run.mjs"` to root `package.json` and `"checks/test"` to root `tsconfig.json`'s `exclude` — are blocked by `.claude/hooks/protect-harness.sh` (it protects `*/package.json` and `tsconfig*.json`) and must be made by a human in an editor before any chain can be dispatched.
 - **Why it matters:** the whole static-check-pipeline change is stalled until this lands.
 - **Suggested approach:** human makes both edits, then dispatch chain-B.
@@ -193,7 +193,7 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 <!-- Move items here with a one-line resolution + date when closed. -->
 
 ### [info] Stage demo prep folder
-- [ ] open until 2026-09-24
-- **Where:** `docs/demo/stage/` (`README.md` is the entry point).
+- [x] closed 2026-10-09 — the demo ran on 2026-09-24; `docs/demo/stage/` was removed (in git history).
+- **Where:** `docs/demo/stage/` (`README.md` was the entry point).
 - **What:** source of truth for the 2026-09-24 A TON of Demos presentation: constraints, decisions, run of show, checklist, agent prompt.
 - **Source:** 2026-09-22 planning session.

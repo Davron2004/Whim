@@ -433,7 +433,7 @@ operator guide `docs/evals.md`.
 - **Chain G (HUMAN-BOOTSTRAP): APPLIED 2026-07-31.** All four Class-2 files landed as recorded
   (`package.json`'s `evals`/`evals:test` scripts, `tsconfig.json`'s `evals/test` exclude,
   `scripts/gate.sh`'s `corpus-eval` check line, `knip.json`'s `evals/**` entries); the record is
-  kept verbatim at `openspec/changes/archive/2026-07-31-eval-harness/pending-class2.md`. Chain
+  kept verbatim at `openspec/changes/archive/2026-07-31-eval-harness/pending-class2.md` (pruned 2026-10-09; in git history at `8c6cb385`). Chain
   F's gate-configuration check was built tri-state so it would stay green across exactly this
   transition, and it did. Wiring knip to `evals/` for the first time surfaced three findings —
   two genuinely dead exports (deleted) and one structural false positive: anything consumed only
