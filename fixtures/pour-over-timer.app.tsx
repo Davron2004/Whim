@@ -1,33 +1,7 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// pour-over-timer — the effects-and-cues v0.3 acceptance mini-app (§15.3: "the pour-over timer
-// comes alive"). Hand-written; the agent/server is later.
-// ─────────────────────────────────────────────────────────────────────────────
-// Imports ONLY from `vc-sdk`. Declares `capabilities: ['cues']` and NO storage (the brew is
-// ephemeral). It exercises BOTH timed effects and BOTH cue syscalls:
-//   • `interval` — the 1 s staged countdown (bloom → pour → drawdown). Auto-cleanup on unmount
-//     and pause-without-teardown via the hook's `running` opt; no syscall frame from the timer.
-//   • `delay`    — the 3-2-1 "get ready" beat before brewing (one-shot sequencing).
-//   • `cues.haptic('double')` + `cues.sound('chime')` at each stage transition;
-//     `cues.haptic('heavy')` + `cues.sound('alarm')` when the brew finishes; a light
-//     `cues.haptic('tap')` + `cues.sound('tick')` on each get-ready count.
-// Every cue crosses the bridge as a gated, fire-and-forget syscall; the timers never do.
-import {
-  defineApp,
-  Screen,
-  Stack,
-  Row,
-  Heading,
-  Text,
-  Button,
-  useState,
-  useRef,
-  interval,
-  delay,
-  cues,
-} from 'vc-sdk';
+// Pour-Over Timer: a 3-2-1 count, then a timed bloom, pour and drawdown, with a tap and tick on
+// each count, a buzz and chime between stages and a heavier alarm at the end.
+import { defineApp, Screen, Stack, Row, Text, Button, ProgressBar, useState, useRef, interval, delay, cues } from 'vc-sdk';
 
-// The canonical pour-over recipe (design D8). Durations are seconds; tune freely — the fixture
-// reads them, nothing is hard-coded downstream.
 const STAGES: { name: string; secs: number }[] = [
   { name: 'Bloom', secs: 30 },
   { name: 'Pour', secs: 90 },
@@ -42,39 +16,47 @@ function mmss(total: number): string {
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
-function Brew() { // NOSONAR - fixture UI state machine is intentionally compact for the generated app corpus.
+function Controls({ phase, onStart, onPause, onResume, onReset }: {
+  phase: Phase;
+  onStart: () => void;
+  onPause: () => void;
+  onResume: () => void;
+  onReset: () => void;
+}) {
+  if (phase === 'idle') return <Button label="Brew" icon="coffee" onPress={onStart} />;
+  if (phase === 'done') return <Button label="Brew again" icon="coffee" onPress={onStart} />;
+  return (
+    <Row>
+      {phase === 'paused' ? <Button label="Resume" onPress={onResume} /> : <Button label="Pause" onPress={onPause} />}
+      <Button label="Reset" variant="secondary" onPress={onReset} />
+    </Row>
+  );
+}
+
+function Brew() {
   const [phase, setPhase] = useState<Phase>('idle');
   const [stageIdx, setStageIdx] = useState(0);
   const [remaining, setRemaining] = useState(0);
-  const [count, setCount] = useState(0); // the 3-2-1 get-ready number
+  const [count, setCount] = useState(0);
 
-  // Monotonic run token for the async `start()` coroutine. `start()` claims a fresh id; any
-  // transition that should abort a pending get-ready count (Reset, Pause, or a new Brew) bumps
-  // it, so the in-flight coroutine — which reads `runId.current` LIVE after each await, not a
-  // frozen `useState` snapshot — sees the mismatch and bails instead of ghost-advancing to
-  // 'brewing'. A ref (not state) is required: the running closure captured its state at call
-  // time, so only a stable mutable cell reflects a cancellation that happens mid-count.
+  // Each start takes a new run number, and pause or reset bumps it, so a 3-2-1 count still
+  // waiting on `delay` sees the change and stops. A ref, because the waiting code reads it live.
   const runId = useRef(0);
 
-  // The staged 1 s countdown. Called unconditionally (hook rules); it only ticks while brewing,
-  // so pausing (phase → 'paused') stops it WITHOUT tearing the component down, and unmounting
-  // cancels it with no cleanup written here (design D1). The callback closes over current state —
-  // the hook keeps the latest closure, so each tick sees fresh `remaining`/`stageIdx`.
   interval(
     () => {
       if (remaining > 1) {
         setRemaining(remaining - 1);
         return;
       }
-      // This stage just elapsed.
       if (stageIdx < STAGES.length - 1) {
-        cues.haptic('double'); // stage-transition cue
+        cues.haptic('double');
         cues.sound('chime');
         const next = stageIdx + 1;
         setStageIdx(next);
         setRemaining(STAGES[next].secs);
       } else {
-        cues.haptic('heavy'); // the brew is done
+        cues.haptic('heavy');
         cues.sound('alarm');
         setRemaining(0);
         setPhase('done');
@@ -84,29 +66,24 @@ function Brew() { // NOSONAR - fixture UI state machine is intentionally compact
     { running: phase === 'brewing' },
   );
 
-  // Start → a 3-2-1 get-ready beat (delay + a light cue per count), then brewing begins. Async in
-  // an event handler is fine; the interval is dormant (phase !== 'brewing') during the count.
   const start = async () => {
-    const myRun = ++runId.current; // claim this run; supersedes any coroutine still counting
+    const myRun = ++runId.current;
     setPhase('ready');
     for (const n of [3, 2, 1]) {
       setCount(n);
       cues.sound('tick');
       cues.haptic('tap');
       await delay(1000);
-      if (runId.current !== myRun) return; // Reset/Pause/new-Brew fired mid-count — abort, don't brew
+      if (runId.current !== myRun) return;
     }
     setStageIdx(0);
     setRemaining(STAGES[0].secs);
     setPhase('brewing');
   };
-
-  // pause/reset both invalidate a pending get-ready count so it can't auto-advance to 'brewing'.
   const pause = () => {
     runId.current++;
     setPhase('paused');
   };
-  const resume = () => setPhase('brewing');
   const reset = () => {
     runId.current++;
     setPhase('idle');
@@ -116,45 +93,26 @@ function Brew() { // NOSONAR - fixture UI state machine is intentionally compact
   };
 
   const stage = STAGES[stageIdx];
-  let big = mmss(remaining);
-  if (phase === 'ready') big = String(count);
-  else if (phase === 'done') big = 'Done';
-  else if (phase === 'idle') big = `${STAGES.length} stages`;
-
-  let caption = `${stage.name}  ·  stage ${stageIdx + 1}/${STAGES.length}${phase === 'paused' ? '  ·  paused' : ''}`;
-  if (phase === 'idle') caption = 'Tap brew to start';
-  else if (phase === 'ready') caption = 'Get ready…';
-  else if (phase === 'done') caption = 'Enjoy your coffee';
-
-  let controls = (
-    <Stack gap="sm">
-      <Button label="Pause" onPress={pause} />
-      <Button label="Reset" onPress={reset} />
-    </Stack>
-  );
-  if (phase === 'idle' || phase === 'done') {
-    controls = <Button label={phase === 'done' ? 'Brew again' : 'Brew'} onPress={phase === 'done' ? () => { reset(); start(); } : start} />;
-  } else if (phase === 'paused') {
-    controls = (
-      <Stack gap="sm">
-        <Button label="Resume" onPress={resume} />
-        <Button label="Reset" onPress={reset} />
-      </Stack>
-    );
+  const running = phase === 'brewing' || phase === 'paused';
+  let reading = mmss(remaining);
+  let caption = `${stage.name} · stage ${stageIdx + 1} of ${STAGES.length}${phase === 'paused' ? ' · paused' : ''}`;
+  if (phase === 'idle') {
+    reading = `${STAGES.length} stages`;
+    caption = 'Tap Brew to start';
+  } else if (phase === 'ready') {
+    reading = String(count);
+    caption = 'Get ready…';
+  } else if (phase === 'done') {
+    reading = 'Done';
+    caption = 'Enjoy your coffee';
   }
 
   return (
-    <Screen padding="lg">
+    <Screen title="Pour-Over Timer">
       <Stack gap="lg">
-        <Heading size="title">Pour-Over Timer</Heading>
-        <Text size="caption" color="text-muted">{caption}</Text>
-
-        <Row gap="sm">
-          <Text color="text-muted">{phase === 'done' ? 'Total' : 'Remaining'}</Text>
-          <Text size="display" color="primary">{big}</Text>
-        </Row>
-
-        {controls}
+        <ProgressBar variant="ring" value={running ? 1 - remaining / stage.secs : Number(phase === 'done')} label={reading} />
+        <Text color="text-muted" align="center">{caption}</Text>
+        <Controls phase={phase} onStart={start} onPause={pause} onResume={() => setPhase('brewing')} onReset={reset} />
       </Stack>
     </Screen>
   );
@@ -165,4 +123,6 @@ export default defineApp({
   initial: 'Brew',
   screens: { Brew },
   capabilities: ['cues'],
+  tint: ['stone', 'berry'],
+  icon: 'coffee',
 });

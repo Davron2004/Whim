@@ -1,56 +1,44 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// tip-splitter — the v0.1 acceptance mini-app (hand-written; the agent/server is later).
-// ─────────────────────────────────────────────────────────────────────────────
-// The whole contract in one file: imports ONLY from `vc-sdk`, a single
-// `export default defineApp({...})`, and `capabilities: []` — Tier-0, pure compute +
-// rendering, ZERO syscalls (v0.1 has no bridge by design). esbuild bundles this to a single
-// IIFE; the trusted loader delivers + mounts it inside the contained iframe (channel b).
-import { defineApp, Screen, Stack, Row, Heading, Text, NumberInput, Button, useState } from 'vc-sdk';
+// Tip Splitter: the bill, a tip from the usual choices and the number of people give each
+// person's share. Pure arithmetic, so it declares no capabilities.
+import { defineApp, Screen, Stack, Row, Card, Divider, Text, NumberInput, SegmentedControl, Stepper, useState } from 'vc-sdk';
+
+const TIPS = ['10%', '15%', '20%', '25%'];
 
 function Home() {
   const [bill, setBill] = useState(100);
-  const [tipPct, setTipPct] = useState(20);
-  const [people, setPeople] = useState(4);
+  const [tip, setTip] = useState('20%');
+  const [people, setPeople] = useState(2);
 
-  const safePeople = people < 1 ? 1 : people;
-  const tip = bill * (tipPct / 100);
-  const total = bill + tip;
-  const perPerson = total / safePeople;
-  const money = (n: number) => '$' + (Math.round(n * 100) / 100).toFixed(2);
+  const tipAmount = (bill * Number.parseInt(tip, 10)) / 100;
+  const total = bill + tipAmount;
+  const money = (n: number) => '$' + n.toFixed(2);
 
   return (
-    <Screen padding="lg">
+    <Screen title="Tip Splitter">
       <Stack gap="lg">
-        <Heading size="title">Tip Splitter</Heading>
-
         <NumberInput label="Bill" value={bill} min={0} onChange={setBill} />
-        <NumberInput label="Tip %" value={tipPct} min={0} onChange={setTipPct} />
-        <NumberInput label="People" value={people} min={1} onChange={setPeople} />
-
         <Stack gap="sm">
-          <Row gap="sm">
-            <Text color="text-muted">Tip</Text>
-            <Text>{money(tip)}</Text>
-          </Row>
-          <Row gap="sm">
-            <Text color="text-muted">Total</Text>
-            <Text>{money(total)}</Text>
-          </Row>
-          <Row gap="sm">
-            <Text color="text-muted">Per person</Text>
-            <Text size="subtitle" color="primary">{money(perPerson)}</Text>
-          </Row>
+          <Text color="text-muted">Tip</Text>
+          <SegmentedControl options={TIPS} value={tip} onChange={setTip} />
         </Stack>
-
-        <Button
-          label="Reset"
-          radius="md"
-          onPress={() => {
-            setBill(100);
-            setTipPct(20);
-            setPeople(4);
-          }}
-        />
+        <Stepper label="People" value={people} min={1} onChange={setPeople} />
+        <Card>
+          <Stack>
+            <Row justify="between">
+              <Text color="text-muted">Tip</Text>
+              <Text>{money(tipAmount)}</Text>
+            </Row>
+            <Row justify="between">
+              <Text color="text-muted">Total</Text>
+              <Text>{money(total)}</Text>
+            </Row>
+            <Divider />
+            <Row justify="between">
+              <Text weight="semibold">Per person</Text>
+              <Text size="title" color="primary">{money(total / people)}</Text>
+            </Row>
+          </Stack>
+        </Card>
       </Stack>
     </Screen>
   );
@@ -60,11 +48,9 @@ export default defineApp({
   name: 'Tip Splitter',
   initial: 'Home',
   screens: { Home },
-  capabilities: [], // Tier-0: pure compute + rendering, zero syscalls
-  // Declared, with water-counter.app.tsx and style-gallery.app.tsx, so the built-in examples
-  // never collide on the deterministic appColor(name) fallback (#48/#52): "Water Counter" and
-  // "Style Gallery" hash to the same palette slot. Green, a hue family away from Water Counter's
-  // sky, and a shade the appColor palette doesn't hold, so a generated app's fallback colour is
-  // never an example's (tile-colour.suite.ts holds both).
+  capabilities: [],
+  tint: ['slate', 'stone'],
+  icon: 'receipt',
+  // A legacy colour, kept only until the home screen draws `tint`. New apps never declare it.
   tileColor: '#15803d',
 });

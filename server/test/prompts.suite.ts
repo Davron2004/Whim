@@ -57,6 +57,8 @@ import { FIELD_TYPES } from '../../src/host/storage-engine/contract';
 import { clarifyBuildInstead } from '../../src/host/launcher/copy';
 import { TINT_NAMES } from '../../src/design/tokens';
 import { CHROME_NAMES, GLYPH_GROUPS, GLYPH_NAMES } from '../../src/design/icons/names';
+import { HAPTIC_KINDS, SOUND_NAMES } from '../../src/host/bridge/contract';
+import { createBuildStage } from '../src/generation/stages/build';
 import { ClarifyLimit, ClarifyQuestion, type Clarification, type GenerateRequest, type Diagnostic, type GenerationEvent } from '@whim/contract';
 
 const repoRoot = path.resolve(process.cwd());
@@ -507,41 +509,154 @@ function vcSdkValueExportNames(): string[] {
   return sourceFile.statements.flatMap(exportedValueNames);
 }
 
+/** `word` appears in `text` as a whole word. */
+function mentions(text: string, word: string): boolean {
+  return new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(text);
+}
+
+/** What the reference must reflect: the barrel's runtime exports, and which of them and which
+ *  component props the SDK marks `@deprecated` (read from the SDK source, never listed here). */
+interface SdkSurface {
+  exports: string[];
+  deprecatedExports: string[];
+  deprecatedProps: { component: string; prop: string }[];
+}
+
+function isDeprecated(node: ts.Node): boolean {
+  const tagged = (n: ts.Node) => ts.getJSDocTags(n).some((tag) => tag.tagName.text === 'deprecated');
+  if (ts.isVariableStatement(node)) return node.declarationList.declarations.some(tagged);
+  return tagged(node);
+}
+
+/** The `@deprecated` members of a `<Component>Props` interface, or none for any other statement. */
+function deprecatedPropsOf(stmt: ts.Statement): { component: string; prop: string }[] {
+  if (!ts.isInterfaceDeclaration(stmt) || !stmt.name.text.endsWith('Props')) return [];
+  const component = stmt.name.text.slice(0, -'Props'.length);
+  return stmt.members
+    .filter((member) => member.name !== undefined && ts.isIdentifier(member.name) && isDeprecated(member))
+    .map((member) => ({ component, prop: (member.name as ts.Identifier).text }));
+}
+
+function sdkSurface(): SdkSurface {
+  const sdkDir = path.join(repoRoot, 'src', 'sdk');
+  const statements = fs
+    .readdirSync(sdkDir)
+    .filter((name) => /\.tsx?$/.test(name))
+    .flatMap((file) => {
+      const full = path.join(sdkDir, file);
+      return [...ts.createSourceFile(full, fs.readFileSync(full, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX).statements];
+    });
+  const deprecatedDeclarations = new Set(statements.filter(isDeprecated).flatMap(exportedValueNames));
+  const exports = vcSdkValueExportNames();
+  return {
+    exports,
+    deprecatedExports: exports.filter((name) => deprecatedDeclarations.has(name)),
+    deprecatedProps: statements.flatMap(deprecatedPropsOf),
+  };
+}
+
+/** Everything wrong with `reference` as a description of `surface`: an undocumented export, a
+ *  deprecated export or prop taught outside the `Deprecated` section or missing from it, and the
+ *  theming the design system removed (spec "The reference has no stale theming"). */
+function referenceSurfaceProblems(reference: string, surface: SdkSurface): string[] {
+  const deprecatedSection = markdownSection(reference, /^#{2,4} Deprecated\b/) ?? '';
+  const body = reference.replace(deprecatedSection, '');
+  const current = surface.exports.filter((name) => !surface.deprecatedExports.includes(name));
+  const deprecated = [
+    ...surface.deprecatedExports.map((name) => ({ what: `deprecated export "${name}"`, words: [name], taught: name })),
+    ...surface.deprecatedProps.map(({ component, prop }) => ({ what: `deprecated prop "${component} ${prop}"`, words: [component, prop], taught: prop })),
+  ];
+  return [
+    ...current.filter((name) => !mentions(body, name)).map((name) => `export "${name}" is not documented`),
+    ...deprecated.filter((d) => mentions(body, d.taught)).map((d) => `${d.what} is taught outside the Deprecated section`),
+    ...deprecated.filter((d) => !d.words.every((word) => mentions(deprecatedSection, word))).map((d) => `${d.what} is missing from the Deprecated section`),
+    ...['tileColor', 'preset', 'presets'].filter((stale) => mentions(reference, stale)).map((stale) => `removed theming "${stale}" is documented`),
+  ];
+}
+
 async function testExportsDocumented(): Promise<void> {
-  section('Tripwire: every vc-sdk runtime value export is documented in docs/sdk-reference.md');
+  section('Tripwire: docs/sdk-reference.md documents every vc-sdk export, and deprecated ones only as deprecated');
 
   const reference = loadSdkReference(repoRoot);
-  const exportNames = vcSdkValueExportNames();
-  check('vc-sdk barrel: at least one value export found (sanity)', exportNames.length > 5);
+  const surface = sdkSurface();
+  check('vc-sdk barrel: at least one value export found (sanity)', surface.exports.length > 5);
+  check(
+    'sanity: the scan finds the SDK’s deprecated export and deprecated props',
+    surface.deprecatedExports.length > 0 && surface.deprecatedProps.length > 0,
+    JSON.stringify({ exports: surface.deprecatedExports, props: surface.deprecatedProps }),
+  );
+  eq('docs/sdk-reference.md matches the SDK surface', referenceSurfaceProblems(reference, surface), []);
 
-  for (const name of exportNames) {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const documented = new RegExp(`\\b${escaped}\\b`).test(reference);
-    check(`vc-sdk export "${name}" is documented in docs/sdk-reference.md`, documented, `missing export "${name}"`);
-  }
+  // Each a reference (or surface) that claims something false; each must be caught.
+  const [oldExport] = surface.deprecatedExports;
+  const [oldProp] = surface.deprecatedProps;
+  const caughtWith = (doc: string, claim: string, s: SdkSurface = surface) => referenceSurfaceProblems(doc, s).some((p) => p.includes(claim));
+  check('non-vacuity: a deprecated export taught in the body is caught', caughtWith(reference.replace('## 2. Layout', `## 2. Layout\n\nTitles: \`${oldExport}\`.`), 'taught outside'));
+  check('non-vacuity: a reference with no Deprecated section is caught', caughtWith(reference.replace(/^## Deprecated\b/m, '## Old names'), 'missing from the Deprecated section'));
+  check('non-vacuity: a deprecated prop taught in the body is caught', caughtWith(reference.replace('## 2. Layout', `## 2. Layout\n\n\`${oldProp.prop}\` rounds a ${oldProp.component}.`), `"${oldProp.component} ${oldProp.prop}" is taught`));
+  check('non-vacuity: an export the reference never names is caught', caughtWith(reference, '"Carousel" is not documented', { ...surface, exports: [...surface.exports, 'Carousel'] }));
+  check('non-vacuity: a documented tileColor is caught', caughtWith(`${reference}\n\`tileColor: '#0369a1'\`\n`, 'tileColor'));
+}
+
+// ── §Tripwire 1c: the name lists the reference must spell out match their modules ──────────
+
+/** The backticked names after `label` up to the end of that sentence. */
+function namesAfter(reference: string, label: string): string[] {
+  const start = reference.indexOf(label);
+  if (start === -1) return [];
+  const sentence = reference.slice(start + label.length, reference.indexOf('. ', start));
+  return [...sentence.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+}
+
+/** The quoted members of a `(<param>: 'a' | 'b')` union in the reference's call signature. */
+function unionIn(reference: string, call: string): string[] {
+  const escaped = call.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const union = new RegExp(`${escaped}\\(\\w+: ([^)]*)\\)`).exec(reference)?.[1] ?? '';
+  return [...union.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+}
+
+async function testReferenceListsMatchTheirModules(): Promise<void> {
+  section('Tripwire: the icon and cue names docs/sdk-reference.md lists are exactly their modules’');
+
+  const reference = loadSdkReference(repoRoot);
+  eq('the interface icons are src/design/icons/names.ts CHROME_NAMES, in order', namesAfter(reference, 'interface icons:'), [...CHROME_NAMES]);
+  eq('cues.haptic takes exactly HAPTIC_KINDS', unionIn(reference, 'cues.haptic'), [...HAPTIC_KINDS]);
+  eq('cues.sound takes exactly SOUND_NAMES', unionIn(reference, 'cues.sound'), [...SOUND_NAMES]);
+  eq(
+    'non-vacuity: a reference that drops an interface icon is caught',
+    namesAfter(reference.replace('`plus`, ', ''), 'interface icons:').includes('plus'),
+    false,
+  );
+  eq('non-vacuity: a haptic kind the module lacks is read', unionIn("cues.haptic(kind: 'tap' | 'buzz')", 'cues.haptic'), ['tap', 'buzz']);
 }
 
 // ── §Tripwire 1b: the storage schema artifact is documented ──────────────────
 
-/** The reference's storage-schema-artifact section — its heading through to the next heading of the
- *  same or higher level, or `null` when the document has no such section (the failure this tripwire
- *  exists for). Scoped rather than whole-document on purpose: `text` and `bool` also appear as token
- *  names elsewhere in the reference, so only a hit INSIDE this section counts as documentation. */
-function schemaArtifactSection(reference: string): string | null {
-  const lines = reference.split('\n');
-  const start = lines.findIndex((line) => /^#{2,4} .*schema artifact/i.test(line));
+/** The section of `doc` whose heading line matches `heading`, through to the next heading of the
+ *  same or higher level, or `null` when no heading matches. */
+function markdownSection(doc: string, heading: RegExp): string | null {
+  const lines = doc.split('\n');
+  const start = lines.findIndex((line) => heading.test(line));
   if (start === -1) return null;
   const opener = /^#+/.exec(lines[start]);
   const level = opener ? opener[0].length : 2;
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
-    const heading = /^(#+) /.exec(lines[i]);
-    if (heading && heading[1].length <= level) {
+    const found = /^(#+) /.exec(lines[i]);
+    if (found && found[1].length <= level) {
       end = i;
       break;
     }
   }
   return lines.slice(start, end).join('\n');
+}
+
+/** The reference's storage-schema-artifact section, or `null` when the document has no such
+ *  section (the failure this tripwire exists for). Scoped rather than whole-document on purpose:
+ *  `text` and `bool` also appear as token names elsewhere in the reference, so only a hit INSIDE
+ *  this section counts as documentation. */
+function schemaArtifactSection(reference: string): string | null {
+  return markdownSection(reference, /^#{2,4} .*schema artifact/i);
 }
 async function testSchemaArtifactDocumented(): Promise<void> {
   section('Tripwire: docs/sdk-reference.md documents the storage schema artifact');
@@ -581,6 +696,66 @@ async function testFewShotFixturesAreHonest(): Promise<void> {
       report.diagnostics.length > 0 ? JSON.stringify(report.diagnostics) : undefined,
     );
   }
+}
+
+/** The names a `vc-sdk` import declaration imports, or none for any other node. */
+function vcSdkImportsOf(node: ts.Node): string[] {
+  if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier) || node.moduleSpecifier.text !== 'vc-sdk') return [];
+  const bindings = node.importClause?.namedBindings;
+  return bindings && ts.isNamedImports(bindings) ? bindings.elements.map((element) => (element.propertyName ?? element.name).text) : [];
+}
+
+/** The props a JSX element passes, each with its tag, or none for any other node. */
+function jsxPropsOf(node: ts.Node): { tag: string; prop: string }[] {
+  if (!ts.isJsxOpeningElement(node) && !ts.isJsxSelfClosingElement(node)) return [];
+  const tag = node.tagName.getText();
+  return node.attributes.properties.filter(ts.isJsxAttribute).map((attribute) => ({ tag, prop: attribute.name.getText() }));
+}
+
+/** What a few-shot example would teach that the SDK has moved past: no tile declared, or a
+ *  deprecated export or prop in use (the SDK's own `@deprecated` marks, via `surface`). */
+function fewShotProblems(name: string, source: string, surface: SdkSurface): string[] {
+  const problems: string[] = [];
+  const manifest = runStaticChecks(source, { filename: name }).manifest;
+  if (!manifest?.tint?.length) problems.push(`${name}: declares no tint`);
+  if (manifest?.icon === undefined) problems.push(`${name}: declares no icon`);
+  const visit = (node: ts.Node): void => {
+    for (const imported of vcSdkImportsOf(node).filter((n) => surface.deprecatedExports.includes(n))) {
+      problems.push(`${name}: imports deprecated ${imported}`);
+    }
+    for (const { tag, prop } of jsxPropsOf(node).filter((p) => surface.deprecatedProps.some((d) => d.component === p.tag && d.prop === p.prop))) {
+      problems.push(`${name}: passes deprecated ${tag} ${prop}`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX));
+  return problems;
+}
+
+async function testFewShotTeachesTheCurrentSurface(): Promise<void> {
+  section('Tripwire: every few-shot example names its tile, uses nothing deprecated, and builds as a candidate');
+
+  const surface = sdkSurface();
+  const build = createBuildStage();
+  for (const example of loadFewShotExamples(repoRoot)) {
+    eq(`few-shot example ${example.name} teaches only the current surface`, fewShotProblems(example.name, example.source, surface), []);
+    const built = await build.build(example.source);
+    check(`few-shot example ${example.name} builds with the production candidate builder`, built.ok, built.ok ? undefined : JSON.stringify(built.diagnostic));
+  }
+
+  const [oldExport] = surface.deprecatedExports;
+  const [oldProp] = surface.deprecatedProps;
+  const stale = [
+    `import { defineApp, Screen, ${oldProp.component}, ${oldExport} } from 'vc-sdk';`,
+    `function Home() { return <Screen><${oldExport}>Old</${oldExport}><${oldProp.component} label="Go" ${oldProp.prop}="md" /></Screen>; }`,
+    "export default defineApp({ name: 'Old', initial: 'Home', screens: { Home }, capabilities: [] });",
+  ].join('\n');
+  eq('non-vacuity: an old-style example is caught on every count', fewShotProblems('old.app.tsx', stale, surface), [
+    'old.app.tsx: declares no tint',
+    'old.app.tsx: declares no icon',
+    `old.app.tsx: imports deprecated ${oldExport}`,
+    `old.app.tsx: passes deprecated ${oldProp.component} ${oldProp.prop}`,
+  ]);
 }
 
 // ── §Tripwire 3 (covered above) + §Tripwire 4: no model id literal ───────────
@@ -950,8 +1125,10 @@ export async function runPromptsTests(): Promise<void> {
   await testEditTurnPrompt();
   await testEditTurnThreading();
   await testExportsDocumented();
+  await testReferenceListsMatchTheirModules();
   await testSchemaArtifactDocumented();
   await testFewShotFixturesAreHonest();
+  await testFewShotTeachesTheCurrentSurface();
   await testNoModelIdLiteral();
   await testContentPolicyMissingSectionFailsTheBuild();
   await testEveryAuthoringPromptCarriesTheRatingRule();

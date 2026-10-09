@@ -1,355 +1,276 @@
 # vc-sdk reference
 
-<!-- Prompt-ready reference for an LLM generating Whim mini-apps. Mirrors src/sdk/{index,
-     controls,surfaces,tokens,theme}.ts verbatim — never invents a prop/default. Hand-maintained,
-     not build-generated. -->
+<!-- The generator's whole view of vc-sdk, sent with every generation. Mirrors src/sdk/*.tsx
+     exactly: never document a prop or value the SDK rejects. Hand-maintained; the server's
+     prompts suite checks every export, the deprecated section and the name lists below. -->
 
-## 1. The mini-app contract
+## 1. An app
 
-A mini-app is **one TypeScript file** that imports **only** from `'vc-sdk'` (no `react`, no DOM,
-no other module), default-exports the result of `defineApp({...})`, and uses classic JSX
-(esbuild, external SDK/react resolved at runtime).
+One TypeScript file. It imports only from `'vc-sdk'` (never `react` or the DOM) and default-exports
+`defineApp({...})`:
 
 ```ts
-export interface AppSpec {
-  name: string;                              // display name
-  initial: string;                           // key into `screens` shown first
-  screens: Record<string, ScreenComponent>;  // one or more screen components
-  capabilities: string[];                    // declared capability set — [] for pure-compute apps
-  schema?: SchemaArtifact;                   // REQUIRED iff capabilities includes 'storage'
-}
+defineApp({
+  name: string;                    // 24 characters or fewer
+  initial: string;                 // the key of `screens` shown first
+  screens: Record<string, () => JSX.Element>;
+  capabilities: string[];          // [], or any of 'storage' (§7) and 'cues' (§8)
+  schema?: SchemaArtifact;         // required when capabilities includes 'storage'
+  tint: string | [string] | [string, string] | [string, string, string];  // tile tints, best first
+  icon: string;                    // tile glyph
+});
 ```
 
-The canonical, human-readable example exercising every component below is
-`fixtures/style-gallery.app.tsx` — read it end to end before generating a new app. A minimal
-Tier-0 (zero-syscall) skeleton:
+The tint names, the glyph list and the tile rules are in the tile section of these instructions.
 
 ```tsx
 import { defineApp, Screen, Stack, Text } from 'vc-sdk';
 
 function Home() {
   return (
-    <Screen padding="lg">
-      <Stack gap="lg">
-        <Text size="title">Hello</Text>
+    <Screen title="Hello">
+      <Stack>
+        <Text>Ready when you are.</Text>
       </Stack>
     </Screen>
   );
 }
 
-export default defineApp({ name: 'Hello', initial: 'Home', screens: { Home }, capabilities: [] });
+export default defineApp({ name: 'Hello', initial: 'Home', screens: { Home }, capabilities: [], tint: 'ocean', icon: 'smile' });
 ```
 
-Every prop below takes a **token**, never a raw color/pixel value.
+Components take tokens (§6), never a colour, pixel size or style, and look right with no optional
+props: their spacing, colours, sizes, light and dark, text size and motion are built in. The
+app's tint is `primary`.
 
-## 2. Components
-
-### Core
-
-| Component | Prop | Type | Default | Semantics |
-|---|---|---|---|---|
-| `Screen` | `padding` | `SpaceToken` | `'lg'` | Outer page padding; sets bg/text color from the theme. |
-| `Screen` | `title` | `string?` | — | Adds a header: a back control on every screen above the first (calls `nav.back()`), then the title. |
-| `Screen` | `action` | `{ icon: string; label: string; onPress: () => void }?` | — | A trailing icon button in the header (shown only with `title`); `label` is read to screen readers. |
-| `Stack` | `gap` | `SpaceToken` | `'md'` | Vertical flex column with `gap`. |
-| `Row` | `gap` | `SpaceToken` | `'md'` | Horizontal flex row with `gap`; wraps to a new line when content overflows. |
-| `Row` | `align` | `'start' \| 'center' \| 'end'` | `'center'` | Cross-axis alignment. |
-| `Row` | `justify` | `'start' \| 'center' \| 'end' \| 'between'` | `'start'` | Main-axis distribution. |
-| `Text` | `size` | `TextSizeToken` | `'body'` | Font size/line-height/weight from the size scale. |
-| `Text` | `color` | `TextColorToken` | `'text'` | Text color. |
-| `Text` | `weight` | `WeightToken` | size's own weight | Overrides the size's default weight. |
-| `Text` | `align` | `'start' \| 'center' \| 'end'` | unset | `textAlign`. |
-| `Heading` | — | — | — | Deprecated: write `<Text size="title">`. |
-| `NumberInput` | `label` | `string?` | — | Optional label above the field. |
-| `NumberInput` | `value` | `number` (required) | — | Current numeric value. |
-| `NumberInput` | `min` / `max` / `step` | `number?` | — | Native `<input type="number">` constraints. |
-| `NumberInput` | `onChange` | `(n: number) => void` | — | Fires on every keystroke; NaN coerces to `0`. |
-| `Button` | `label` | `string` (required) | — | Button text. |
-| `Button` | `variant` | `'primary' \| 'secondary' \| 'ghost' \| 'danger'` | `'primary'` | `primary` fills with the app's tint: at most one per screen. `secondary` neutral fill, `ghost` tint text only, `danger` a soft red capsule for destructive actions. |
-| `Button` | `icon` | `string?` | — | An icon name, drawn before the label. |
-| `Button` | `disabled` | `boolean` | `false` | Suppresses press; drawn in a neutral fill with muted text. |
-| `Button` | `onPress` | `() => void` | — | Tap handler. |
-| `Icon` | `name` | `string` (required) | — | An icon name (`timer`, `coffee`, `heart`, …); an unknown name draws a plain circle. |
-| `Icon` | `size` | `'sm' \| 'md' \| 'lg'` | `'md'` | 16 / 20 / 24 px. |
-| `Icon` | `color` | `TextColorToken` | `'text'` | Icon color. |
-| `Icon` | `label` | `string?` | — | What the icon means, for screen readers; omit when text beside it says it. |
-
-### Controls (`controls.tsx`)
-
-| Component | Prop | Type | Default | Semantics |
-|---|---|---|---|---|
-| `TextInput` | `label` | `string?` | — | Optional caption label. |
-| `TextInput` | `value` | `string` (required) | — | Current text. |
-| `TextInput` | `placeholder` | `string?` | — | Native placeholder. |
-| `TextInput` | `onChange` | `(s: string) => void` | — | Fires on every keystroke. |
-| `Switch` | `label` | `string?` | — | Optional label before the switch (the whole row is the target). |
-| `Switch` | `value` | `boolean` (required) | — | On/off state. |
-| `Switch` | `onChange` | `(b: boolean) => void` | — | Fires on toggle. |
-| `Checkbox` | `label` | `string` (required) | — | Clickable label text. |
-| `Checkbox` | `checked` | `boolean` (required) | — | Checked state. |
-| `Checkbox` | `onChange` | `(b: boolean) => void` | — | Fires on toggle. |
-| `Slider` | `label` | `string?` | — | Optional label + live numeric readout above the track. |
-| `Slider` | `value` | `number` (required) | — | Current value. |
-| `Slider` | `min` / `max` / `step` | `number` | `0` / `100` / `1` | Bounds for the custom pointer-driven track. |
-| `Slider` | `onChange` | `(n: number) => void` | — | Fires while dragging. |
-| `SegmentedControl` | `options` | `string[]` (required) | — | The segment labels (also the values). |
-| `SegmentedControl` | `value` | `string` (required) | — | Currently selected option. |
-| `SegmentedControl` | `onChange` | `(s: string) => void` | — | Fires on segment tap. |
-| `Stepper` | `label` | `string?` | — | Label at the row's start. |
-| `Stepper` | `value` | `number` (required) | — | Current value. |
-| `Stepper` | `onChange` | `(n: number) => void` (required) | — | Fires on each step; holding a button repeats. |
-| `Stepper` | `min` / `max` / `step` | `number` | `0` / none / `1` | Bounds and step; a button at its bound is disabled. |
-| `DateInput` | `label` | `string?` | — | Optional caption label. |
-| `DateInput` | `value` | `number \| null` (required) | — | Epoch milliseconds, or `null` when unset. |
-| `DateInput` | `onChange` | `(ms: number \| null) => void` (required) | — | Fires with the picked value; `null` when cleared. |
-| `DateInput` | `mode` | `'date' \| 'time' \| 'datetime'` | `'date'` | Opens the phone's own picker; `date` stores local midnight of the day. |
-| `Picker` | `label` | `string?` | — | Optional caption label. |
-| `Picker` | `options` | `string[]` (required) | — | The choices (also the values), shown in the phone's own list. For 2–4 short options use `SegmentedControl`. |
-| `Picker` | `value` | `string` (required) | — | Current choice; a value not in `options` shows the placeholder. |
-| `Picker` | `onChange` | `(s: string) => void` (required) | — | Fires with the chosen option. |
-| `Picker` | `placeholder` | `string?` | `'Choose one'` | Shown until something is chosen. |
-
-### Surfaces (`surfaces.tsx`)
-
-| Component | Prop | Type | Default | Semantics |
-|---|---|---|---|---|
-| `Card` | `padding` | `SpaceToken` | `'lg'` | Inner padding. A card is a borderless rounded group (its colour changes inside a `Modal` by itself). |
-| `Card` | `onPress` | `() => void?` | — | When present, makes the whole card clickable. |
-| `Divider` | — | — | — | A 1px separator hairline, full width. No props. |
-| `Spacer` | — | — | — | A growing flex spring inside `Stack`/`Row`. No props. |
-| `Grid` | `columns` | `number` | `2` | CSS grid column count. |
-| `Grid` | `gap` | `SpaceToken` | `'md'` | Grid gap. |
-| `Badge` | `label` | `string` (required) | — | Pill text. |
-| `Badge` | `tone` | `BadgeTone` | `'neutral'` | `'neutral' \| 'primary' \| 'positive' \| 'warning' \| 'danger'`; the last three carry their status icon. |
-| `ProgressBar` | `value` | `number` (required) | — | Fraction filled, clamped to `[0, 1]`. |
-| `ProgressBar` | `tone` | `'primary' \| 'positive' \| 'warning' \| 'danger'` | `'primary'` | Fill color. |
-| `ProgressBar` | `variant` | `'bar' \| 'ring'` | `'bar'` | A thin bar, or a 120 px ring for one headline number (a timer, a count). |
-| `ProgressBar` | `label` | `string?` | — | A short reading of the value (`'7'`, `'2:30'`, `'3 of 5'`): above the bar, inside the ring. |
-| `List` | — | children | — | A rounded group with hairlines between its children (`ListItem`s). Static: never animates. |
-| `List` | `items` | `T[]` | — | Keyed form, for rows that come and go: the data to show, with `keyBy` and `renderItem`. |
-| `List` | `keyBy` | property name of `T` \| `(item: T) => string \| number` | — | Each row's unique, stable id (e.g. `keyBy="id"`). Never the array index: a list with duplicate or position keys logs a warning and does not animate. |
-| `List` | `renderItem` | `(item: T, index: number) => ReactNode` | — | Renders one row, usually a `ListItem`. |
-| `ListItem` | `title` | `string` (required) | — | Primary row text. |
-| `ListItem` | `subtitle` | `string?` | — | Muted caption line under the title. |
-| `ListItem` | `trailing` | `string?` | — | Muted text at the row's end. |
-| `ListItem` | `icon` | `string?` | — | An icon name, drawn before the title. |
-| `ListItem` | `onPress` | `() => void?` | — | When present, makes the row clickable and shows a trailing chevron. |
-| `EmptyState` | `title` | `string` (required) | — | The "nothing here" headline. |
-| `EmptyState` | `hint` | `string?` | — | Muted caption under the title. |
-| `EmptyState` | `icon` | `string?` | — | An icon name, drawn large above the title. |
-| `Modal` | `visible` | `boolean` (required) | — | Renders `null` when `false` — no imperative API. |
-| `Modal` | `title` | `string?` | — | Optional sheet title. |
-| `Modal` | `onClose` | `() => void` (required) | — | Fires on the sheet's close button, a backdrop tap or Escape; the sheet always has a close button. |
-
-### Charts (`charts.tsx`)
-
-Pure display, no bridge traffic, no interactive marks — usable with `capabilities: []`. One
-component (`Chart`), not `BarChart`/`LineChart`/`Heatmap`; the `kind` discriminant picks the
-render path. Every color derives from the active theme via `color(tone)` — a theme switch
-recolors with no app-side handling, and no new color token is introduced.
-
-| Component | Prop | Type | Default | Semantics |
-|---|---|---|---|---|
-| `Chart` | `kind` | `'bar' \| 'line' \| 'heatmap'` (required) | — | Which chart renders. |
-| `Chart` | `data` | `SeriesPoint[]` (bar/line) or `DayPoint[]` (heatmap) (required) | — | The series to plot. |
-| `Chart` | `tone` | `ChartTone` | `'primary'` | `'primary' \| 'positive' \| 'warning' \| 'danger'`; resolves via `color(tone)`. |
-| `Chart` | `showValues` | `boolean` (bar/line only) | `false` | Renders `String(point.value)` above each bar/point; bar's axis label always renders regardless. |
-| `Chart` | `maxValue` | `number?` (bar/line only) | derived from data | Pins the scale ceiling; bar never lowers below the data max, line only raises `domainMax`. |
-| `Chart` | `weeks` | `number?` (heatmap only) | `12` | Clamped to `[1, 53]` by the geometry layer; the grid anchors to the latest date in `data`, never "today". |
-
-Empty `data` (`length === 0`) renders a fixed `160px`-tall reserved frame (never a collapse)
-with a centered `text-muted` span reading exactly `"No data yet"`, for all three `kind`s.
+## 2. Layout
 
 ```ts
-type ChartProps =
-  | { kind: 'bar' | 'line'; data: SeriesPoint[]; tone?: ChartTone; showValues?: boolean; maxValue?: number }
-  | { kind: 'heatmap'; data: DayPoint[]; tone?: ChartTone; weeks?: number };
-
-type SeriesPoint = { label: string; value: number };
-type DayPoint = { date: string /* YYYY-MM-DD */; value: number };
-type ChartTone = 'primary' | 'positive' | 'warning' | 'danger';
+Screen   { title?: string; action?: { icon: string; label: string; onPress: () => void }; padding?: Space /* 'lg' */ }
+Stack    { gap?: Space /* 'md' */ }                 // vertical
+Row      { gap?: Space /* 'md' */; align?: 'start' | 'center' | 'end' /* 'center' */; justify?: 'start' | 'center' | 'end' | 'between' /* 'start' */ }
+Grid     { columns?: number /* 2 */; gap?: Space /* 'md' */ }
+Card     { padding?: Space /* 'lg' */; onPress?: () => void }
+Spacer   {}                                         // takes the free space in a Stack or Row
+Divider  {}                                         // a full-width hairline
 ```
 
-`DayPoint.date` is a `YYYY-MM-DD` **label string** belonging to the heatmap component, and is
-unrelated to the storage `date` field type (§5), which is an epoch-millisecond integer. A stored
-timestamp becomes a heatmap label only by converting it: `new Date(ms).toISOString().slice(0, 10)`.
+- Every screen is one `Screen`. With `title` it gets a header: a back control on every screen
+  above the first (it calls `nav.back()`, so write no Back button), the `action` icon button at
+  the end (`label` is read aloud), and the title.
+- `Row` wraps onto a new line when its content is too wide.
+- `Card` is a rounded group; inside a `Modal` it changes colour by itself. With `onPress` the whole
+  card is the target.
 
-## 3. Tokens (the five scales)
+## 3. Text and icons
 
-| `SpaceToken` | `none` \| `xs` \| `sm` \| `md` \| `lg` \| `xl` |
+```ts
+Text  { size?: 'caption' | 'body' | 'subtitle' | 'title' | 'display' /* 'body' */; color?: TextColor /* 'text' */;
+        weight?: 'regular' | 'medium' | 'semibold' | 'bold' /* the size's own */; align?: 'start' | 'center' | 'end' }
+Icon  { name: string; size?: 'sm' | 'md' | 'lg' /* 'md' */; color?: TextColor /* 'text' */; label?: string }
+```
+
+- `TextColor` is `'text' | 'text-muted' | 'primary' | 'positive' | 'danger' | 'warning'`.
+- `display` is for one big number and uses tabular figures.
+- `Icon` is 16, 20 or 24 px. Give it a `label` unless text beside it says the same thing.
+- An icon name (`Icon name`, and `icon` on `Button`, `ListItem`, `EmptyState` and `Screen action`)
+  is any glyph from the tile list, or one of these interface icons: `chevron-left`,
+  `chevron-right`, `chevron-down`, `arrow-left`, `arrow-up`, `x`, `check`, `plus`, `minus`,
+  `ellipsis`, `settings`, `search`, `copy`, `share`, `external-link`, `info`, `circle-alert`,
+  `triangle-alert`, `circle-check`. An unknown name draws a plain circle.
+
+## 4. Buttons and inputs
+
+```ts
+Button            { label: string; onPress?: () => void; variant?: 'primary' | 'secondary' | 'ghost' | 'danger' /* 'primary' */; icon?: string; disabled?: boolean }
+TextInput         { value: string; onChange?: (s: string) => void; label?: string; placeholder?: string }
+NumberInput       { value: number; onChange?: (n: number) => void; label?: string; min?: number; max?: number; step?: number }
+Stepper           { value: number; onChange: (n: number) => void; label?: string; min?: number /* 0 */; max?: number; step?: number /* 1 */ }
+Slider            { value: number; onChange?: (n: number) => void; label?: string; min?: number /* 0 */; max?: number /* 100 */; step?: number /* 1 */ }
+Switch            { value: boolean; onChange?: (b: boolean) => void; label?: string }
+Checkbox          { label: string; checked: boolean; onChange?: (b: boolean) => void }
+SegmentedControl  { options: string[]; value: string; onChange?: (s: string) => void }
+Picker            { options: string[]; value: string; onChange: (s: string) => void; label?: string; placeholder?: string /* 'Choose one' */ }
+DateInput         { value: number | null; onChange: (ms: number | null) => void; label?: string; mode?: 'date' | 'time' | 'datetime' /* 'date' */ }
+```
+
+- `Button`: `primary` fills with the tint, so use at most one per screen; `secondary` is a neutral
+  fill, `ghost` tint text only, `danger` a soft red button for deleting. Two buttons in a `Row`
+  stack by themselves at large text sizes.
+- `NumberInput` turns an empty or unreadable entry into `0`. `Stepper` changes a value by `step`
+  with minus and plus (holding one repeats); `Slider` shows its value beside the label.
+- `SegmentedControl` (2 to 4 short options) and `Picker` (longer lists) use each option string as
+  its value.
+- `DateInput` opens the phone's own picker. Its value is epoch milliseconds or `null`; `date` mode
+  gives local midnight of the chosen day.
+
+## 5. Lists, status and overlays
+
+```ts
+List        { children }                                                    // static rows
+List<T>     { items: T[]; keyBy: IdKey<T> | ((item: T) => string | number); renderItem: (item: T, index: number) => ReactNode }
+ListItem    { title: string; subtitle?: string; trailing?: string; icon?: string; onPress?: () => void }
+EmptyState  { title: string; hint?: string; icon?: string }
+Badge       { label: string; tone?: 'neutral' | 'primary' | 'positive' | 'warning' | 'danger' /* 'neutral' */ }
+ProgressBar { value: number /* 0 to 1 */; tone?: 'primary' | 'positive' | 'warning' | 'danger' /* 'primary' */; variant?: 'bar' | 'ring' /* 'bar' */; label?: string }
+Modal       { visible: boolean; onClose: () => void; title?: string }
+Chart       { kind: 'bar' | 'line'; data: { label: string; value: number }[]; tone?: ChartTone; showValues?: boolean; maxValue?: number }
+          | { kind: 'heatmap'; data: { date: string /* 'YYYY-MM-DD' */; value: number }[]; tone?: ChartTone; weeks?: number /* 12 */ }
+toast(text: string): void
+```
+
+- `List` is a rounded group with hairlines between `ListItem`s. For rows that come and go, use
+  `items` + `keyBy` + `renderItem`, keyed by a unique, stable id: `IdKey<T>` is the name of a
+  string or number property of `T` (`keyBy="id"`). Added and removed rows then move. Never key by
+  the array index.
+- `ListItem` with `onPress` gets a chevron and is the whole row's target; `trailing` is short
+  muted text at the end.
+- `EmptyState` is what a list shows before it has anything.
+- `Badge` status tones carry their own icon. `ProgressBar` `ring` is a 120 px ring for one
+  headline number (a timer, a count); `label` is a short reading of the value (`'7'`, `'2:30'`,
+  `'3 of 5'`), inside the ring or above the bar.
+- `Modal` is a bottom sheet; it renders nothing while `visible` is false. Its close button, a tap
+  outside, a drag down and Escape all call `onClose`.
+- `Chart` only displays (`ChartTone` is the `ProgressBar` tone set). Empty `data` shows
+  "No data yet". A heatmap date is a label: turn a stored timestamp into one with
+  `new Date(ms).toISOString().slice(0, 10)`.
+- `toast` shows a short message at the bottom for 4 s; a second call replaces it. Call it from a
+  handler: calls during the first render are ignored.
+
+## 6. Tokens
+
+| Token | Values |
 |---|---|
-| resolves to | `0`, `4px`, `8px`, `12px`, `20px`, `32px` |
+| `Space` | `none` 0, `xs` 4, `sm` 8, `md` 12, `lg` 20, `xl` 32 (px) |
+| `TextColor` | `text`, `text-muted`, `primary`, `positive`, `danger`, `warning` |
+| text `size` | `caption`, `body`, `subtitle` (semibold), `title` (bold), `display` (bold) |
+| `weight` | `regular`, `medium`, `semibold`, `bold` |
 
-| `RadiusToken` | `none` \| `sm` \| `md` \| `lg` \| `full` |
-|---|---|
-| resolves to | `0`, `10px`, `14px`, `20px`, a full capsule |
+## 7. State, timers and storage
 
-| `ColorToken` | `text` \| `text-muted` \| `primary` \| `on-primary` \| `bg` \| `surface` \| `border` \| `danger` \| `positive` \| `warning` |
-| `TextColorToken` | `text` \| `text-muted` \| `primary` \| `positive` \| `danger` \| `warning` (text on a `primary` fill is handled by the component; never pass `on-primary` to `Text`) |
-|---|---|
-| resolves to | the ACTIVE theme's color role (see §6) |
+```ts
+useState, useEffect, useRef                       // React's own
+delay(ms: number): Promise<void>                  // resolves after at least ms
+interval(callback: () => void, ms: number, opts?: { running?: boolean }): void
+```
 
-| `TextSizeToken` | `caption` | `body` | `subtitle` | `title` | `display` |
-|---|---|---|---|---|---|
-| size / line | 13px / 18px | 17px / 24px | 20px / 25px | 28px / 34px | 40px / 44px |
-| default weight | regular | regular | semibold | bold | bold |
+`interval` is a hook: call it unconditionally in a component; unmounting stops it and
+`running: false` pauses it. Never use `setTimeout`, `setInterval` or `requestAnimationFrame`.
 
-| `WeightToken` | `regular` | `medium` | `semibold` | `bold` |
-|---|---|---|---|---|
-| resolves to | 400 | 500 | 600 | 700 |
-
-## 4. Hooks & effects
-
-| Export | Signature | One-liner |
-|---|---|---|
-| `useState` | `React.useState` | Standard React state hook, re-exported so apps never import `react` directly. |
-| `useEffect` | `React.useEffect` | Standard React effect hook. |
-| `useRef` | `React.useRef` | Stable mutable `{current}` box; no re-render on write; live-readable from an async closure. |
-| `delay` | `(ms: number) => Promise<void>` | Resolves after at least `ms`; negative/non-finite `ms` never resolves (cancelled only by realm teardown). |
-| `interval` | `(callback: () => void, ms: number, opts?: { running?: boolean }) => void` | Repeating timer as a hook — unmount cancels it structurally; `running: false` pauses without unmounting. |
-| `toast` | `(text: string) => void` | Shows a short message at the bottom for 4 s; a second call replaces the first. Call it from a handler (calls during the first render are ignored). |
-
-## 5. Capability facades
-
-Both facades ride the same one-way syscall transport and require the matching entry in
-`capabilities: [...]`; an undeclared call rejects with a structured `undeclared_capability` error.
-
-**`storage`** (requires `capabilities: ['storage']` + a `schema`):
+`storage` needs `capabilities: ['storage']` and a `schema`; every call returns a Promise:
 
 ```ts
 storage.kv.get(key: string): Promise<JsonValue | undefined>
 storage.kv.set(key: string, value: JsonValue): Promise<void>
 storage.kv.remove(key: string): Promise<void>
 storage.records.append(collection: string, record: { [field: string]: JsonValue }): Promise<{ id: number }>
-storage.records.list(collection: string, query?: ListQuery): Promise<StorageRecord[]>
+storage.records.list(collection: string, query?: {
+  where?: { [field: string]: JsonValue | { gt?: JsonValue; gte?: JsonValue; lt?: JsonValue; lte?: JsonValue } };  // all must match
+  orderBy?: { field: string; direction: 'asc' | 'desc' };
+  limit?: number; offset?: number;
+}): Promise<({ id: number } & { [field: string]: JsonValue })[]>
 storage.records.update(collection: string, id: number, patch: { [field: string]: JsonValue }): Promise<void>
 storage.records.remove(collection: string, id: number): Promise<void>
 ```
 
-**`cues`** (requires `capabilities: ['cues']`, fire-and-forget, nothing observable back):
-
-```ts
-cues.haptic(kind: HapticKind): Promise<void>
-cues.sound(name: SoundName): Promise<void>
-```
+`storage.kv` holds settings and single values; `storage.records` holds rows declared in the
+schema. Collections and fields are named by their display names.
 
 ### The storage schema artifact
-
-An app declaring `capabilities: ['storage']` must also pass `defineApp` a `schema` — the declaration
-of everything `storage.records` will hold (`storage.kv` needs none). Collections and fields
-are keyed by **display name**, and each carries a burned **`id`** that is the real identity — the
-`id` is the physical table or column, the display name is only a label over it. Renaming is
-therefore free: change the key, keep the `id`, and the user's existing rows keep arriving in the
-same place. Change the `id` and you have declared a *different, empty* table or column; the old one
-stays on disk untouched, but nothing reads it any more.
 
 ```ts
 type SchemaArtifact = {
   schemaVersion: 1;
   collections: {
     [displayName: string]: {
-      id: string;                // burned collection id — one letter + digits, e.g. 'c1'; IS the table
-      fields: {
-        [displayName: string]: {
-          id: string;            // burned field id, e.g. 'f1'; IS the column
-          type: FieldType;
-          default?: JsonValue;   // REQUIRED for a field added to a collection that already exists
-        };
-      };
-      tombstones: string[];      // retired field ids — their data is kept, the ids never reused
+      id: string;              // burned collection id: a letter and digits, e.g. 'c1'
+      fields: { [displayName: string]: { id: string /* e.g. 'f1' */; type: FieldType; default?: JsonValue } };
+      tombstones: string[];    // ids of retired fields
     };
   };
 };
-
 type FieldType = 'text' | 'int' | 'float' | 'bool' | 'date' | 'json';
 ```
 
-The six field types are the whole set. There is no undifferentiated `number` — a count and a price
-are different declarations:
+The `id` is where the data lives; the display name is only a label over it. Renaming is free:
+change the name, keep the `id`. A new `id` is a new, empty column or table.
 
 | Type | Holds | Written as |
 |---|---|---|
 | `text` | a string | `'flat white'` |
-| `int` | a whole number (JS safe-integer range) | `3` |
+| `int` | a whole number | `3` |
 | `float` | a fractional number | `4.25` |
 | `bool` | a flag | `true` |
-| `date` | a point in time, as an **epoch-millisecond integer** | `Date.now()` |
-| `json` | any other JSON value; opaque, so never usable in `where`/`orderBy` | `{ tags: ['x'] }` |
+| `date` | a time as an **epoch-millisecond integer** | `Date.now()` |
+| `json` | any other JSON value; never usable in `where` or `orderBy` | `{ tags: ['x'] }` |
 
-**A `date` field is an epoch-millisecond INTEGER, never a formatted date string.** Writing
-`'2026-08-23'` or an ISO string into one is refused at write time (`type_mismatch`). Store
-`Date.now()` (or `d.getTime()`), and format only at render time:
+A `date` field refuses a date string: store `Date.now()` or `d.getTime()` and format only when
+showing it (`new Date(row.at as number).toLocaleDateString()`).
 
-```ts
-await storage.records.append('Drinks', { at: Date.now() }); // 1755950400000 — an integer
-const rows = await storage.records.list('Drinks');
-const label = new Date(rows[0].at as number).toLocaleDateString();
-```
+When changing an app's schema:
 
-Evolving the schema from one generation to the next:
+- Keep every existing `id`; the person's rows live under it. Mint a new id only for a new concept.
+- A field added to an existing collection needs a `default`, which fills the existing rows.
+- Retire a field by removing it from `fields` and adding its id to `tombstones`; its data stays.
+- Never change the `type` of an existing `id`: a different type is a new field with a new id.
 
-- **Keep every `id` an existing concept already has** — the user's rows live under it. Mint a new id
-  only for a genuinely new concept.
-- A field added to a collection that already exists needs a `default`; it backfills existing rows.
-- Retiring a field means dropping it from `fields` and adding its id to `tombstones`. The column and
-  its data are retained: the engine never deletes, renames, or migrates stored data.
-- Changing the `type` of an existing `id` is rejected. A different type means a new field, new id.
-
-## 6. Navigation
-
-`nav` is a stable module-scope object, not a hook — call it directly from any event handler.
+## 8. Navigation and cues
 
 ```ts
-nav.navigate(screenName: string): void  // pushes `screenName` (must be a key of `screens`) onto the stack
-nav.back(): void                        // pops the stack; a no-op at depth 0 (the initial screen)
+nav.navigate(screen: string): void   // pushes a key of `screens`
+nav.back(): void                     // pops; nothing happens on the first screen
 ```
 
-The host renders the top of the stack; there is no manual "which screen is active" state to track.
-Navigating to an undeclared screen name is a no-op (logged, never thrown). Depth resets to the
-`initial` screen on every realm reset (fresh generation, regeneration) — nothing about navigation
-state survives across those. See `fixtures/navigation-demo.app.tsx` for the canonical list → detail
-example.
+`nav` is a plain object: call it from any handler. There are no route parameters, so keep what
+the next screen needs in module-level state or storage before navigating. The navigation stack
+starts again at `initial` whenever the app reloads.
 
 ```tsx
-import { Button, defineApp, nav, Screen, Stack, Text } from 'vc-sdk';
+import { defineApp, List, ListItem, nav, Screen, Stack, Text } from 'vc-sdk';
 
-function List() {
+const TRAILS = [{ id: 'cedar', name: 'Cedar Loop' }, { id: 'ridge', name: 'Ridge Walk' }];
+let chosen = TRAILS[0];
+
+function Trails() {
   return (
-    <Screen padding="lg">
-      <Stack gap="lg">
-        <Text>Pick one.</Text>
-        <Button label="Open detail" onPress={() => nav.navigate('Detail')} />
+    <Screen title="Trails">
+      <List items={TRAILS} keyBy="id" renderItem={(trail) => (
+        <ListItem title={trail.name} onPress={() => { chosen = trail; nav.navigate('Trail'); }} />
+      )} />
+    </Screen>
+  );
+}
+
+function Trail() {
+  return (
+    <Screen title={chosen.name}>
+      <Stack>
+        <Text>Shaded path with a creek overlook.</Text>
       </Stack>
     </Screen>
   );
 }
 
-function Detail() {
-  return (
-    <Screen padding="lg">
-      <Stack gap="lg">
-        <Text>Detail screen.</Text>
-        <Button label="Back" variant="secondary" onPress={() => nav.back()} />
-      </Stack>
-    </Screen>
-  );
-}
-
-export default defineApp({ name: 'Nav Demo', initial: 'List', screens: { List, Detail }, capabilities: [] });
+export default defineApp({ name: 'Trails', initial: 'Trails', screens: { Trails, Trail }, capabilities: [], tint: 'stone', icon: 'map' });
 ```
 
-## 7. Theming
+`cues` needs `capabilities: ['cues']`; each call fires and forgets:
 
-A mini-app never sees the active theme — there is no `useTheme()` and no theme object in the
-SDK's public surface. Every token resolver (`color()`, `radius()`, and the size/weight tables
-above) reads the host-installed active theme internally and returns the right value for the
-device's current preset/accent/shape automatically. **Never hardcode a hex color, a raw pixel
-size, or a `font-weight` number** — always express intent through a token prop (`color="primary"`,
-`gap="lg"`, `radius="md"`, …). This is what lets the same bundle render correctly across every
-theme preset without a code change.
+```ts
+cues.haptic(kind: 'tap' | 'double' | 'heavy'): Promise<void>
+cues.sound(name: 'tick' | 'chime' | 'alarm'): Promise<void>
+```
 
-**Motion is built in, the same way.** Presses, `nav.navigate`/`nav.back`, `Modal` (it also drags
-down to close), `toast()`, `ProgressBar` value changes, the controls' selection and the rows of a
-keyed `List` (`items` + `keyBy`) move on their own, and follow the phone's Reduce Motion setting.
-There is no animation API: never animate with timers or state, and key list rows by a stable id so
-the right row moves.
+A call to a capability the app did not declare is refused.
+
+## 9. Motion and theme
+
+Presses, navigation, `Modal`, `toast`, `ProgressBar` changes, the controls and the rows of a keyed
+`List` move by themselves and follow the phone's Reduce Motion setting. There is no animation API:
+never animate with timers or state. Light and dark, text size and contrast come from the phone;
+an app never reads or sets them.
+
+## Deprecated
+
+Still working in old apps, never written in new ones: `Heading` (write `<Text size="title">`) and
+the `radius` prop of `Button` and `Card` (ignored; leave it out).
