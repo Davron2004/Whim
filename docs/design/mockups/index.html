@@ -481,6 +481,19 @@ a { color: inherit; }
 .n-dialog .rd.on { border: 6px solid var(--t-fill); }
 .n-dialog .acts { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px 0; }
 .n-dialog .acts span { padding: 10px 12px; font-size: 15px; font-weight: 600; color: var(--t-text); }
+.w-search { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 10px; border-radius: 12px; background: var(--w-fill); color: var(--w-text2); font-size: 17px; }
+.w-search .caret { display: inline-block; width: 2px; height: 20px; background: var(--w-text); vertical-align: -4px; margin-left: 1px; border-radius: 1px; }
+.w-search .clr { width: 18px; height: 18px; border-radius: 9px; background: var(--w-text2); color: var(--w-bg); display: flex; align-items: center; justify-content: center; flex: none; }
+.w-swatches { display: flex; justify-content: space-between; gap: 6px; }
+.w-swatch { width: 28px; height: 28px; border-radius: 14px; background: var(--t-plate); box-shadow: inset 0 0 0 1.5px var(--t-rim); flex: none; }
+.w-swatch.sel { box-shadow: inset 0 0 0 1.5px var(--t-rim), 0 0 0 2px var(--w-sheet), 0 0 0 4px var(--w-ink); }
+.w-glyphs { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 12px; }
+.w-glyph { height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: var(--w-text); }
+.w-glyph.sel { box-shadow: inset 0 0 0 2px var(--w-ink); background: var(--w-sheet-group); }
+/* Increase Contrast: tiles and grouped surfaces gain a border outline. */
+.phone.hc[data-platform] [class*="tint-"] { --t-rim: var(--w-border); }
+.phone.hc .w-list, .phone.hc .w-composer { box-shadow: inset 0 0 0 1px var(--w-border), var(--w-shadow-float); }
+.phone.hc .w-list { box-shadow: inset 0 0 0 1px var(--w-border); }
 
 </style>
 <header class="pg-bar" id="pg-bar"></header>
@@ -1054,17 +1067,18 @@ const G = (c) => {
 function homeGrid(c, cells, cols = 4) { return `<div class="w-grid" style="--tile:${G(c).tile}px;grid-template-columns:repeat(${cols},minmax(0,1fr))">${cells.join('')}</div>`; }
 
 function composerBar(c, { making = false, text = 'Make an app…' } = {}) {
+  text = text || 'Make an app…';
   const g = G(c);
   const glow = making ? ambient({ w: g.W + 60, h: 190, activity: .85, style: `left:-30px;bottom:${g.safe - 60}px;z-index:9` }) : '';
   return `${glow}<div class="w-edgefade bottom" style="bottom:${g.safe}px;height:80px"></div><div class="w-composer" style="bottom:${g.safe + 12}px">${emberMark({ size: 24, activity: making ? .9 : .3 })}<span>${esc(text)}</span></div>`;
 }
 
-function homeBody(c, cells, { notice = '', composer = true, making = false, cols = 4, ts = 0, title = 'Your apps' } = {}) {
+function homeBody(c, cells, { notice = '', composer = true, making = false, cols = 4, ts = 0, title = 'Your apps', composerText, search = '' } = {}) {
   return `<div class="w-screen${ts ? ' ts' : ''}"${ts ? ` style="--ts:${ts}"` : ''}>${topSpace(c)}${header(c, { back: false, right: iconBtn('settings', 'Settings', { size: 24 }) })}
 <div class="w-titleblock"><div class="t-large">${title}</div></div>
-${notice ? `<div class="w-pad" style="margin-top:14px">${notice}</div>` : ''}
+${search ? `<div class="w-pad" style="margin-top:12px">${search}</div>` : ''}${notice ? `<div class="w-pad" style="margin-top:14px">${notice}</div>` : ''}
 <div style="height:22px"></div>${homeGrid(c, cells, cols)}
-${composer ? composerBar(c, { making }) : ''}</div>`;
+${composer ? composerBar(c, { making, text: composerText }) : ''}</div>`;
 }
 
 const cell = (c, k, o = {}) => tile(APPS[k], { size: G(c).tile, second: APPS[k].example ? 'Example' : undefined, ...o });
@@ -1202,9 +1216,11 @@ const SCREENS = [
       const lifted = `<div style="position:absolute;z-index:22;left:${r.left}px;top:${r.top}px;transform:scale(1.06);transform-origin:center;filter:drop-shadow(0 10px 18px rgba(0,0,0,.22))">${tile(APPS.water, { size: g.tile, label: false })}</div>`;
       const mLeft = Math.min(Math.max(r.cx - 124, 16), g.W - 16 - 248), mTop = r.top + g.tile + 6 + 32 + 12;
       const m = (ic, label, cls = '') => `<div class="m-row ${cls}">${icon(ic, 20, 2)}${label}</div>`;
-      const menu = `<div class="w-menu" style="left:${mLeft}px;top:${mTop}px"><div class="m-head">${tile(APPS.water, { size: 24, label: false })}<div><div class="t-headline">Water Counter</div><div class="t-footnote t-sec">Version 2 · yesterday</div></div></div>${m('play', 'Open')}${m('square-pen', 'Change it')}${m('history', 'History')}${m('copy', 'Make a copy')}${m('share', 'Share link')}<div class="m-sep"></div>${m('trash-2', 'Delete', 'danger')}</div>`;
+      const menu = `<div class="w-menu" style="left:${mLeft}px;top:${mTop}px"><div class="m-head">${tile(APPS.water, { size: 24, label: false })}<div><div class="t-headline">Water Counter</div><div class="t-footnote t-sec">Version 2 · yesterday</div></div></div>${m('play', 'Open')}${m('square-pen', 'Change it')}${m('palette', 'Customize tile')}${m('history', 'History')}${m('copy', 'Make a copy')}${m('share', 'Share link')}<div class="m-sep"></div>${m('trash-2', 'Delete', 'danger')}</div>`;
       return frame(c, homeUnder(c), { overlay: `<div class="w-scrim"></div>${lifted}${menu}` });
     } },
+  { id: 'customize-tile', group: 'Your apps', title: 'Customize tile', note: 'From the tile menu: the only remedy for a bad pick, so it ships in v1. A live preview at 96, the ten tints (the chosen one ringed in ink), and the closed glyph set with search. Changes apply on Done.',
+    render: (c) => customizeSheet(c) },
   { id: 'deleted', group: 'Your apps', title: 'Deleted, with Undo', note: 'Delete is a soft delete: the tile goes at once and a toast offers Undo for 10 s before the app is purged. No confirm sheet. The toast waits while a screen reader is running.',
     render: (c) => frame(c, homeBody(c, readyCells(c, HOME_SET.filter((k) => k !== 'water'))), { overlay: `<div class="w-toast" style="bottom:${G(c).safe + 76}px"><span>Water Counter deleted</span><button class="ta">Undo</button></div>` }) },
   { id: 'home-empty', group: 'Your apps', title: 'No apps yet', note: 'The only time the ember sits on the home screen: when there is nothing else to look at. It is still, because nothing is being made.',
@@ -1351,6 +1367,12 @@ ${sCard(`<div class="s-empty" style="padding:12px 8px"><span class="e-icon">${ic
   // More states (finding 32)
   { id: 'home-offline', group: 'More states', title: 'Offline', note: 'A neutral notice under the title that follows connectivity live. Apps still open; the composer still takes a description and sends it when the phone is back.',
     render: (c) => frame(c, homeBody(c, readyCells(c, HOME_SET), { notice: `<div class="w-notice">${icon('wifi-off', 20, 2)}<span>Offline. Your apps still work; making new ones needs a connection.</span></div>` })) },
+  { id: 'home-draft', group: 'More states', title: 'A kept draft', note: 'The making sheet was closed before “Continue”: nothing typed is lost to a drag, a scrim tap or back. The composer offers the draft, and plan edits survive with it.',
+    render: (c) => frame(c, homeBody(c, readyCells(c, HOME_SET), { composerText: 'Continue “A timer for my…”' })) },
+  { id: 'home-search', group: 'More states', title: 'Search', note: 'From 13 apps a search field sits under the title. It filters the grid as you type, matching any word of the name; tiles keep their places in the order.',
+    render: (c) => { const g = G(c); const hits = [{ name: 'Pour Timer', tint: 'stone', icon: 'timer' }, { name: 'Plank Timer', tint: 'rose', icon: 'dumbbell' }, { name: 'Tea Timer', tint: 'ocean', icon: 'coffee' }, { name: 'Time Zones', tint: 'indigo', icon: 'globe' }]; return frame(c, homeBody(c, hits.map((a) => tile(a, { size: g.tile })), { search: `<div class="w-search">${icon('search', 18, 2.2)}<span style="flex:1;color:var(--w-text)">tim<span class="caret"></span></span><span class="t-footnote t-sec">4 of 16</span><span class="clr">${icon('x', 12, 3)}</span></div>` }), { overlay: keyboard(c, { sugg: ['time', 'timer', 'times'] }) }); } },
+  { id: 'home-contrast', group: 'More states', title: 'Increase Contrast', note: 'With Increase Contrast on, tiles and grouped surfaces gain a `border` outline (3.07:1 on the dark canvas) instead of the hairline separator. Shown in dark, where it matters most.',
+    render: (c) => frame(c, homeBody(c, readyCells(c, HOME_SET), { notice: `<div class="w-list">${row({ icon: 'wifi-off', title: 'Offline', sub: 'Your apps still work; making new ones needs a connection.' })}</div>` }), { tintClass: 'hc' }) },
   { id: 'home-skeleton', group: 'More states', title: 'Home, loading', note: 'The first frame after launch while the store is read: tile-shaped placeholders in `fill-strong`, no spinner, no text that might be wrong.',
     render: (c) => { const g = G(c); const cells = Array.from({ length: 8 }, (_, i) => `<div class="w-cell"><div class="w-skel-tile" style="width:${g.tile}px;height:${g.tile}px"></div><div class="w-skel" style="height:10px;width:${[60, 70, 52, 64][i % 4]}%;margin-top:9px"></div></div>`); return frame(c, homeBody(c, cells)); } },
   { id: 'home-tiles', group: 'More states', title: 'Tile states', note: 'Waiting in line (dim ember), stopped (light out), needs an update (warning badge with its icon), and a change that didn’t work (danger badge on the app’s own tile; the app still opens).',
@@ -1426,6 +1448,18 @@ function historyBody(c, { expanded = -1, currentIndex = 0 } = {}) {
   }).join('');
   return `<div class="w-screen">${topSpace(c)}${header(c, { right: '<button class="w-textbtn">Report</button>' })}<div class="w-titleblock"><div class="t-title1">History</div><div class="w-sub" style="display:flex;align-items:center;gap:8px;margin-top:6px">${tile(APPS.pour, { size: 24, label: false })}<span class="t-callout tint-stone t-tint t-semibold">Pour Timer</span><span class="t-callout t-sec">· 4 versions</span></div></div><div style="height:22px"></div><div class="w-tl">${rows}</div></div>`;
 }
+
+function customizeSheet(c) {
+  const g = G(c), app = { ...APPS.water, tint: 'ocean' };
+  const sw = TOKENS.tints.map(([n]) => `<span class="w-swatch tint-${n}${n === app.tint ? ' sel' : ''}" aria-label="${n}"></span>`).join('');
+  const glyphs = GLYPHS_FOR_SHEET.map((n) => `<span class="w-glyph${n === app.icon ? ' sel' : ''}">${icon(n, 24, 2)}</span>`).join('');
+  return frame(c, homeUnder(c), { overlay: flowSheet(c, `<div class="w-pad"><div class="t-title2">Customize tile</div></div>
+<div style="display:flex;flex-direction:column;align-items:center;margin-top:18px">${tile(app, { size: 96, label: false })}<div class="t-headline" style="margin-top:10px">Water Counter</div></div>
+<div class="w-sec-h">Tint</div><div class="w-pad"><div class="w-swatches">${sw}</div></div>
+<div class="w-sec-h">Glyph</div><div class="w-pad"><div class="w-search" style="background:var(--w-sheet-group)">${icon('search', 18, 2.2)}<span class="ph" style="color:var(--w-text2)">Search 147 glyphs</span></div><div class="w-glyphs">${glyphs}</div></div>`,
+  { head: sheetHead(c), actions: btn('Done', 'ink') }) });
+}
+const GLYPHS_FOR_SHEET = ['glass-water', 'droplet', 'coffee', 'cup-soda', 'waves', 'umbrella', 'cloud-rain', 'snowflake', 'thermometer', 'heart-pulse', 'activity', 'pill', 'timer', 'alarm-clock', 'hourglass', 'calendar', 'calendar-check', 'bell', 'target', 'trophy', 'star', 'flag', 'leaf', 'sprout'];
 
 // Whim mockups: the review page. Views are routed by a bare #anchor: (none) overview, s-<id> one screen,
 // components, tokens, motion.
