@@ -266,15 +266,23 @@ The launcher SHALL deliver a generated app (install a new entry, snapshot an exi
 - **THEN** every store interaction goes through a `StoreAccess` method that ensures the entry's lineage first
 
 ### Requirement: The Settings screen persists a server address for the prompt flow
-The launcher SHALL let the user enter and persist a server address, used by the prompt flow's rewrite and generation requests. An absent or invalid address SHALL be treated as "not configured" rather than causing a crash, and the prompt flow SHALL show an honest message directing the user to Settings rather than attempting a request.
+In internal builds, the launcher SHALL let the user enter and persist a server address as an optional override of the compiled-in production server (see `release-config`), used by every request the launcher sends. Internal builds are dev builds and the local offline release build. Store builds SHALL NOT render or read the field, and SHALL ignore any override saved by an earlier build, so every request from a store build goes to the compiled-in production server that the privacy policy covers. In internal builds, the field SHALL live in the Settings screen's Advanced section. A blank address SHALL mean "no override" and SHALL never cause a crash. When an override is saved, a plain-text action SHALL offer to go back to the default server, and taking it SHALL clear the override. The field's placeholder SHALL name the default server's host so the user can see what "no override" means.
 
 #### Scenario: Configured address is used
-- **WHEN** a server address has been entered in Settings and the user submits a prompt
-- **THEN** the rewrite and generation requests target that address
+- **WHEN** in an internal build a server address has been entered in Settings and the user submits a prompt
+- **THEN** the clarify, rewrite, and generation requests target that address
 
-#### Scenario: Unconfigured address is handled honestly
-- **WHEN** no server address has been entered and the user opens the prompt screen
-- **THEN** the screen tells the user to set an address in Settings instead of attempting a request
+#### Scenario: No override uses the default server
+- **WHEN** no server address has been entered and the user submits a prompt with consent granted
+- **THEN** the requests target the compiled-in production server, and no "set an address in Settings" message is shown
+
+#### Scenario: Going back to the default
+- **WHEN** in an internal build an override is saved and the user takes the use-the-default action
+- **THEN** the field is empty, and the next request targets the compiled-in production server
+
+#### Scenario: A store build ignores a saved override
+- **WHEN** a store build starts on a phone where an earlier internal build saved an override
+- **THEN** Settings shows no server address field, and every request targets the compiled-in production server
 
 ### Requirement: History entry point in the app action sheet
 The app long-press action sheet SHALL include a History action alongside Open/Fork/Delete, opening the app's full-screen history surface. The history screen SHALL follow the launcher's full-screen sibling pattern: its own hardware-back binding returning to Home, theme colors via the shell palette, and all strings via the centralized copy table (product-verbs guard applies).
@@ -610,3 +618,36 @@ The mini-app container SHALL render a branded, minimal boot state, rather than a
 #### Scenario: A launch failure replaces the boot state, not the other way around
 - **WHEN** the realm's launch fails before any paint is observed
 - **THEN** the existing launch-failure state is shown, not the boot state
+
+### Requirement: The home screen shows a quiet connectivity indicator
+The home screen SHALL show a quiet status indicator reflecting the session's connectivity state (unknown, checking, online, offline) sourced from `server-connectivity`. The indicator SHALL NOT block or obscure the app grid, and MUST NOT appear while the state is unknown, which includes every moment before AI-data consent is granted.
+
+#### Scenario: Offline indicator appears without blocking the grid
+- **WHEN** the connectivity state is offline
+- **THEN** the home screen shows a quiet offline indicator, and the app grid remains fully visible and usable
+
+#### Scenario: No indicator before consent
+- **WHEN** AI-data consent has not been granted
+- **THEN** the home screen shows no connectivity indicator
+
+### Requirement: Settings groups its controls into titled sections, with the server address under Advanced
+The Settings screen SHALL present, in order:
+- an AI features section, holding the consent row (see `ai-data-consent`) and the "Send error details" switch (see `privacy-settings`);
+- the existing Highlighting section;
+- an About section, with the privacy policy, terms of use and support links and the "This phone's ID" row (see `privacy-settings`);
+- in internal builds only, an Advanced section holding the server address.
+
+The Advanced section SHALL be collapsed by default behind one row, SHALL open with a tap, and SHALL render already open while an override is saved. Whether it is open SHALL NOT be persisted. Every string SHALL come from the copy table, and every style from the shell palette and SDK tokens.
+
+#### Scenario: A store user never meets the server field
+- **WHEN** a user of a store build opens Settings
+- **THEN** AI features, Highlighting, and About are visible, and no Advanced section or server address field exists
+
+#### Scenario: An override keeps Advanced open
+- **WHEN** a user of an internal build with a saved override opens Settings
+- **THEN** the Advanced section is already open and shows the saved address
+
+#### Scenario: About carries the legal links and the ID
+- **WHEN** the user opens Settings
+- **THEN** the About section shows the privacy policy, terms of use and support links and this phone's ID
+

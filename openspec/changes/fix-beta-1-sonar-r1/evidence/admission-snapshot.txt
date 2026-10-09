@@ -1,3 +1,0 @@
-## server/src/admission/slots.ts
-    for (const waiter of [...line]) {
-      for (const listener of [...waiter.listeners]) listener(position);

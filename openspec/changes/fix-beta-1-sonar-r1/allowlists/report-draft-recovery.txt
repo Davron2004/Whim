@@ -1,3 +1,0 @@
-src/host/launcher/ReportSheet.tsx
-src/host/launcher/copy.ts
-src/host/launcher/test/settings-screen.suite.tsx

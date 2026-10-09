@@ -11,9 +11,7 @@ target app's rewind state (new entry / new snapshot on tip / silent shared conti
 tip), the structured prompt envelope tracked against every delivered snapshot, the persisted
 anonymous device identity attached to every request, and clean cancellation of an in-flight
 generation.
-
 ## Requirements
-
 ### Requirement: Generation progress is shown without exposing internals
 While a generation request streams, the UI SHALL render progress as four named steps in order — `Reading your plan`, `Writing the app`, `Checking it runs safely`, `Putting it on your home screen` — derived from `stage` events, under the title `Making it` and the subhead `This takes about a minute. You can leave and come back.` A step SHALL read as not-started, in-progress, or passed; passed steps SHALL stay passed.
 
@@ -39,6 +37,8 @@ The screen SHALL offer `Leave it running`, which returns the user to the shell w
 
 ### Requirement: Failure is shown honestly, never as a crash
 A `failure` terminal event, or a client-side stream error, SHALL produce a failure screen stating the reason and offering to rephrase (returning to the prompt screen with the user's text preserved). Diagnostic detail shown on this screen SHALL be limited to each diagnostic's `hint` string.
+
+A service refusal (an `ApiError` whose `error` is a member of `ServiceRefusalCode`) of a clarify, rewrite, or plan-started generate request is not a failure: it SHALL NOT produce this screen, and SHALL be presented as `service-refusals` specifies. A refused Retry from this screen SHALL keep this screen with the refusal's hint as its reason. No failure reason on this screen SHALL ever be a transport message; a failure without a `hint` SHALL read as the copy table's generic sentence.
 
 The screen SHALL be rendered to design `3b` and SHALL resolve every colour, radius, type face, and size from the shell's v2 design tokens — no numeric style literal and no hex value in its own stylesheet:
 
@@ -80,6 +80,14 @@ Every failure that reaches this screen SHALL also be recorded through the loggin
 #### Scenario: Styling comes from tokens
 - **WHEN** the failure screen's stylesheet is inspected
 - **THEN** it contains no hex colour and no numeric font-size or radius literal
+
+#### Scenario: A refusal is not a failure
+- **WHEN** a clarify request is refused with `content_policy`
+- **THEN** no failure screen is shown, and compose shows the refusal notice instead
+
+#### Scenario: No transport text reaches the reason
+- **WHEN** a request fails at the network level with an error message and no hint
+- **THEN** the failure screen's reason is the copy table's generic sentence, and the error message appears only in the log record
 
 ### Requirement: Successful generation is delivered per the app's rewind state
 On a `result` terminal event, the generated app SHALL be delivered as follows: a new launcher entry when no existing app is being edited; a new snapshot on the same lineage when editing an app that is at the tip of its own history; a silently created new launcher entry sharing the original's storage group, with no share/fresh question asked, when editing an app that has been restored to a version behind its own tip.
@@ -453,3 +461,19 @@ It SHALL send no app context when the flow is composing a new app. The context S
 
 - **WHEN** a re-prompt's rewrite request body is inspected
 - **THEN** it contains display names only — no source, no bundle, no burned ids, no stored records
+
+### Requirement: The compose entry point shows a server-unreachable notice without blocking generation
+The prompt flow's entry point SHALL show a "server unreachable" notice when the session connectivity state is offline. The notice SHALL be advisory only: it SHALL NOT prevent the user from submitting a prompt, and a submission that succeeds SHALL proceed exactly as it would if the notice were absent (per `server-connectivity`'s "a real generation succeeding counts as the session's first success"). Because the compose step opens only with AI-data consent granted and a server address always exists (an override or the compiled-in default), no "set an address in Settings" message SHALL be shown.
+
+#### Scenario: Notice shown while offline
+- **WHEN** the user opens the prompt entry point while the connectivity state is offline
+- **THEN** the screen shows a "server unreachable" notice
+
+#### Scenario: Submitting while offline is still permitted
+- **WHEN** the connectivity state is offline and the user submits a prompt
+- **THEN** the request is sent exactly as it would be online, and the notice does not gate submission
+
+#### Scenario: No address message ever
+- **WHEN** the user opens the prompt entry point with no server override saved
+- **THEN** no "set an address in Settings" message is shown, and the connectivity notice follows the session state alone
+

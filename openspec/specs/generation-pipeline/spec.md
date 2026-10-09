@@ -9,9 +9,7 @@ contract, the model-client and API-key seams, prompt assembly's single sources o
 validation, the check/run gates (including the burned-ID allocation floor), the repair loop's
 diagnostics-in-context contract, harness-only app-record assembly, honest no-source regeneration,
 and cancellation semantics at every boundary.
-
 ## Requirements
-
 ### Requirement: The pipeline is a bounded state machine
 
 The generation pipeline SHALL be a state machine over the stages `plan → generate → check → run`, with a
@@ -21,6 +19,10 @@ repair attempts** (so at most 4 candidate sources are produced in one run). Both
 constructor-injectable parameters with those defaults, so tests can drive exhaustion cheaply. A run SHALL
 leave the machine in exactly one of three outcomes — delivered, failed, or aborted — and SHALL NOT be able
 to loop indefinitely for any model output, including a model that returns identical text every attempt.
+Both the initial generate turn's candidate source and each repair round's candidate source SHALL have an
+optional leading markdown fence unwrapped before entering the check stage, since some engineer models wrap
+a reply in a fence despite being told to reply with source only, and a fence left in place would otherwise
+fail the check and spend a repair round on the fence itself.
 
 #### Scenario: Repair cap is honoured
 
@@ -40,6 +42,12 @@ to loop indefinitely for any model output, including a model that returns identi
 - **WHEN** the model returns a plan that fails validation twice in a row
 - **THEN** exactly two `plan` stage pairs are emitted, no `generate` stage begins, and the run ends with a
   single `failure` terminal event
+
+#### Scenario: A fenced engineer reply costs no repair round
+
+- **WHEN** the generate turn's reply is wrapped in a ```typescript fence
+- **THEN** the source is unwrapped before the check stage runs, and the run delivers its result with no
+  `repair` stage ever beginning
 
 ### Requirement: Stage events narrate the machine over the existing contract
 
@@ -118,7 +126,8 @@ one adapter behind that interface, and the deterministic test suites SHALL run a
 replays recorded turns. No test in any gate SHALL make a live API call: the suites SHALL install a
 transport that fails loudly if any request to the provider host is attempted, and SHALL pass with
 `OPENROUTER_API_KEY` absent from the environment. Model ids SHALL be caller parameters read from the
-environment per role (rewrite model, engineer model) and SHALL NOT be hard-coded into any call site.
+environment per role (the rewrite and engineer models, plus the optional clarify, summary, plan and repair
+overrides that fall back to them) and SHALL NOT be hard-coded into any call site.
 
 #### Scenario: The gate never reaches the network
 
@@ -526,13 +535,11 @@ on the aborted run's behalf, and SHALL be idempotent.
 
 ### Requirement: Aborted runs reconcile their authoritative usage
 
-Because a cancelled generation may still have been billed upstream, the server SHALL record the provider's
-generation id for every model call a run makes and, on abort, SHALL reconcile authoritative post-abort
-token counts from the provider's generation-stats endpoint and credit them to the calling device. The
-reconciliation SHALL use an injectable transport, SHALL retry with a bounded number of attempts and a
-bounded total time budget because the record resolves asynchronously upstream, SHALL give up quietly on
-exhaustion rather than failing anything user-visible, and SHALL introduce no server-side persistence beyond
-the existing per-device counter.
+Because a cancelled generation may still have been billed upstream, the server SHALL record the provider's generation id for every model call a run makes and, on abort, SHALL reconcile authoritative post-abort token counts from the provider's generation-stats endpoint and credit them to the calling device.
+
+The reconciliation SHALL use an injectable transport. Because the record resolves asynchronously upstream, it SHALL retry with a bounded number of attempts, a per-attempt timeout, and a bounded total time budget. It SHALL give up quietly on exhaustion rather than failing anything user-visible, and SHALL introduce no server-side persistence beyond the usage store.
+
+Separately from token reconciliation, **every** run SHALL resolve its cost after it ends, whether delivered, failed, budget-expired, or aborted. Resolution reads the same generation-stats data for every recorded generation id through the same bounded transport and records the summed USD cost, or an explicit unresolved state, on the request's ledger row. Cost resolution SHALL NOT credit tokens for a run whose `usage` event was already credited, so no run's tokens are ever counted twice.
 
 #### Scenario: Cancelled run credits the reconciled usage
 
@@ -543,9 +550,108 @@ the existing per-device counter.
 #### Scenario: Reconciliation gives up quietly
 
 - **WHEN** the transport never resolves a record within the retry budget
-- **THEN** nothing is credited, no error surfaces to any client, and no new state is persisted
+- **THEN** nothing is credited, no error surfaces to any client, and no state beyond an unresolved ledger mark is persisted
 
 #### Scenario: No double counting
 
 - **WHEN** a run completes normally and emits its `usage` event
-- **THEN** the completed run's usage is credited exactly once and no reconciliation is attempted for it
+- **THEN** the completed run's usage is credited exactly once, and the post-run stats lookup records cost without crediting tokens again
+
+#### Scenario: A completed run's cost is recorded
+
+- **WHEN** a delivered run made two model calls and the stats transport returns `total_cost` for both ids
+- **THEN** the request's ledger row carries their sum as its cost
+
+### Requirement: A run is bounded in wall-clock time
+The pipeline SHALL enforce a total wall-clock budget per run (`WHIM_GENERATION_MAX_MS`, default 600000, constructor-injectable, measured on the injectable clock from the start of the run).
+
+When the budget elapses before the run ends, the pipeline SHALL abort its in-flight model stream and synthetic run with the same teardown as a client abort. Unlike a client abort, it SHALL then end the stream as a completed run: exactly one `usage` event followed by exactly one `failure` terminal event. The failure's `reason` SHALL say in plain words that building took too long and invite a retry, and SHALL contain no stage name, duration, or internal term. A client abort that arrives first SHALL still end the stream without a terminal event, and a budget elapsing after a client abort SHALL emit nothing.
+
+#### Scenario: A stalled model ends in one failure
+- **WHEN** the scripted model client stops producing deltas mid-generate and the run's budget elapses on the test clock
+- **THEN** the transport observes an abort, and the stream ends with one `usage` event and one `failure` terminal event whose reason is user-facing prose
+
+#### Scenario: A client abort still ends silently
+- **WHEN** the client aborts a run before its budget elapses
+- **THEN** no terminal event is emitted, and none is emitted later when the budget would have elapsed
+
+### Requirement: A run ends cleanly when the operator's provider credit is exhausted
+The pipeline SHALL treat an HTTP `402` from the model provider during a run's model call as the operator's credit running out, not as an ordinary model failure. It SHALL make no repair attempt after a `402` and SHALL end the stream with the same single-terminal-event shape as every other ending: exactly one `failure` event whose `reason` says in plain words that Whim has run out of generation budget for now and invites a later retry, with no stage name, provider name, or dollar amount in the text.
+
+The server SHALL treat a `402` as authoritative and invalidate its operator-credit cache (specs/server-admission-control "The server refuses admission when the operator's provider credit is exhausted") so that subsequent admissions refuse up front as `budget_exhausted` rather than starting another run that will also fail.
+
+#### Scenario: A mid-run 402 ends in one failure with no repair
+- **WHEN** the scripted model client raises a `402` mid-generate
+- **THEN** no repair attempt is made, and the stream ends with a single `failure` terminal event whose reason mentions the generation budget running out, not a model error
+
+#### Scenario: A 402 invalidates the cached credit check
+- **WHEN** a run ends because of a `402` and the calling device immediately posts another generation
+- **THEN** the new request is refused as `budget_exhausted` rather than being admitted and failing again mid-run
+
+### Requirement: Every model call states its reasoning mode
+
+Every model call SHALL carry an explicit reasoning setting — `off`, `on`, `low`, `medium`, `high`, or
+`default` — taken from its role's roster entry and never left to the provider's default by omission. The
+role defaults SHALL be: clarify `off`, rewrite `off`, summary `off`, plan `on`, engineer (generate) `on`, and
+repair the engineer's effective setting, each overridable through `WHIM_CLARIFY_REASONING`,
+`WHIM_REWRITE_REASONING`, `WHIM_SUMMARY_REASONING`, `WHIM_PLAN_REASONING`, `WHIM_ENGINEER_REASONING` and
+`WHIM_REPAIR_REASONING`. The content-policy classifier SHALL always use `off`, whatever the rewrite role's
+setting. A value outside the allowed set SHALL fail configuration loading with an error naming the variable
+and the allowed values. Every model call SHALL also carry its role label (`policy`, `clarify`, `rewrite`, `summary`, `plan`, `generate` or
+`repair`).
+
+#### Scenario: Latency-critical calls default to reasoning off
+
+- **WHEN** the roster is loaded with only `WHIM_REWRITE_MODEL` and `WHIM_ENGINEER_MODEL` set, and a
+  classifier check, a clarify, a rewrite and a post-run summary each make their model call
+- **THEN** each of those four requests carries the `off` setting
+
+#### Scenario: Engineer turns keep reasoning and the thinking signal
+
+- **WHEN** a generation runs under the default roster
+- **THEN** the plan, generate and repair requests carry the `on` setting, and reasoning deltas still
+  surface as `thinking` events
+
+#### Scenario: Repair can think less than the first draft
+
+- **WHEN** `WHIM_ENGINEER_REASONING` is `on` and `WHIM_REPAIR_REASONING` is `off`
+- **THEN** generate requests carry `on`, repair requests carry `off`, and with `WHIM_REPAIR_REASONING`
+  unset repair requests carry whatever the engineer's setting is
+
+#### Scenario: A role override is honored and stays local
+
+- **WHEN** `WHIM_CLARIFY_REASONING` is `low` and every other reasoning variable is unset
+- **THEN** the clarify request carries `low` and every other role keeps its default
+
+#### Scenario: The classifier cannot be switched to reasoning
+
+- **WHEN** `WHIM_REWRITE_REASONING` is `on`
+- **THEN** the rewrite request carries `on` and the classifier request still carries `off`
+
+#### Scenario: A misspelled setting fails at boot
+
+- **WHEN** `WHIM_PLAN_REASONING` is `fast`
+- **THEN** configuration loading fails with an error naming `WHIM_PLAN_REASONING` and listing the
+  allowed values, and no server starts
+
+### Requirement: Per-role model overrides fall back to the two roster models
+
+Clarify, summary, plan and repair SHALL each read an optional model id from `WHIM_CLARIFY_MODEL`,
+`WHIM_SUMMARY_MODEL`, `WHIM_PLAN_MODEL` and `WHIM_REPAIR_MODEL`. When unset or empty, clarify and summary
+SHALL use `WHIM_REWRITE_MODEL`, and plan and repair SHALL use `WHIM_ENGINEER_MODEL`. `WHIM_REWRITE_MODEL` and
+`WHIM_ENGINEER_MODEL` SHALL remain required, and the content-policy classifier SHALL keep using the rewrite
+model.
+
+#### Scenario: The two-variable configuration behaves as before
+
+- **WHEN** only `WHIM_REWRITE_MODEL` and `WHIM_ENGINEER_MODEL` are set
+- **THEN** clarify, rewrite, summary and classifier requests carry the rewrite model id, and plan,
+  generate and repair requests carry the engineer model id
+
+#### Scenario: Overrides route only their own role
+
+- **WHEN** `WHIM_CLARIFY_MODEL` and `WHIM_PLAN_MODEL` are set to two other model ids
+- **THEN** clarify requests carry the clarify override, plan requests carry the plan override, rewrite
+  and classifier requests still carry the rewrite model id, and generate and repair requests still carry
+  the engineer model id
+

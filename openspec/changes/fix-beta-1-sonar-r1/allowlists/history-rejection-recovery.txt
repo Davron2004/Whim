@@ -1,2 +1,0 @@
-src/host/launcher/HistoryScreen.tsx
-src/host/launcher/test/history-ui.suite.tsx

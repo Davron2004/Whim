@@ -1,3 +1,0 @@
-src/host/launcher/xhr-transport.ts
-server/src/usage-store.ts
-server/src/app.ts

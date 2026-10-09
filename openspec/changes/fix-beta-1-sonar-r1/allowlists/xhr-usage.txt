@@ -1,4 +1,0 @@
-src/host/launcher/xhr-transport.ts
-src/host/launcher/test/xhr-transport.suite.ts
-server/src/usage-store.ts
-server/test/device-records.suite.ts
