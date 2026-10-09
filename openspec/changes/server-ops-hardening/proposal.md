@@ -90,3 +90,10 @@ The base text of these four capabilities still lives in unarchived changes (`pub
   - Credit markers add about one read and one write per credit, also a fraction of a cent per thousand generations.
   - The throwaway-database load test costs cents and runs only with explicit approval.
 - **Docs:** `docs/deploy.md`, `docs/decisions.md` (new entry), `docs/capabilities.md` (server-deployment row).
+
+## Product-owner rulings (2026-10-09)
+
+1. **#143 real-Firestore run — approved, unattended**, on a throwaway `whim-loadtest-*` database only: hard cap 50,000 operations per run (≈ $0.10), deletion in a `finally`, and a post-run check that lists databases and fails if any `whim-loadtest-*` remains. The production `(default)` database is refused by construction.
+2. **Smoke's live `/v1/clarify` runs on every deploy, including `--tag` rollbacks** — a rollback is when proof of a working generation path matters most.
+3. **`policy-check` limits 30/device/day and 800/day global are accepted.** A content-policy refusal while waiting in line spends a generation unit, same as a refusal on a free slot.
+4. **Uptime check stays as designed;** add a task to chain 4 that verifies `whim-server` uses request-based billing (CPU allocated only during requests) so a kept-warm idle instance costs nothing, and records the setting in `docs/deploy.md`.
