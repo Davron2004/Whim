@@ -7,8 +7,8 @@ numbered in `05-motion.md`.
 
 Two rules hold for both halves:
 
-- **One look, two renderers.** A launcher button and an SDK button share size, shape, type and motion.
-  The launcher draws with React Native, the SDK with DOM inside the sandbox.
+- **One look, two renderers.** A launcher button and an SDK button share size (52), shape, type, motion and
+  toast timing. The launcher draws with React Native, the SDK with DOM inside the sandbox.
 - **Colour follows "hue says who"** (`01-direction.md` §2.2). The launcher's prominent fills are ember
   (Whim works) or ink (the system); an app's prominent fill is its tint.
 
@@ -19,11 +19,11 @@ Two rules hold for both halves:
 | | |
 |---|---|
 | Anatomy | Capsule; optional 20pt leading icon; label |
-| Variants | `ember` (fill `ember`, label `on-ember`): hands work to Whim. `ink` (fill `ink`, label `on-ink`): the system's main action. `tint` (the app's fill and on-fill): enters an app. `secondary` (fill `fill`, label `text`). `plain` (no fill, label `text`, weight 600). `plain-danger` (no fill, label `danger-text`) |
-| Sizes | Large 52 (bottom actions, full width), medium 44, small 34 |
+| Variants | `ember` (fill `ember`, label `on-ember`): hands work to Whim. `ink` (fill `ink`, label `on-ink`): the system's main action. `tint` (the app's value and on-tint label): enters an app. `secondary` (fill `fill`, label `text`). `plain` (no fill, label `text`, weight 600). `plain-ember` (no fill, label `ember-text`): a secondary action that asks Whim for something. `danger` (`danger-soft` wash, label `danger-text`, an icon when one fits): never a solid fill |
+| Sizes | Large 52 (bottom actions, full width), medium 44, small 34 visual with a 44 target; two small buttons side by side keep 12pt between their targets |
 | Type | Large and medium `headline` 17/22 600; small `callout` 15/20 600 |
 | States | Pressed: scale 0.97 on touch-down (`instant`), back with `snappy`; filled variants also darken 8%. Disabled: `fill` background and `text-3` label, never an opacity over colour. Busy: label changes to the busy words ("Sending…") and the button takes no taps; no bare spinner. Focus: 2pt ring in `text`, 2pt outside the capsule |
-| Rules | One filled button per screen. A bottom action may have one `plain` action under it. Labels wrap to two lines rather than truncate; the button grows (`minHeight`, never `height`) |
+| Rules | One filled button per screen; a fill means the main action, and status never fills a button. A bottom action may have one `plain` or `danger` action under it. Labels wrap to two lines rather than truncate; the button grows (`minHeight`, never `height`); paired buttons stack from 135% text |
 | A11y | Role button; the busy and disabled states are announced |
 
 Three prominent fills is not the "two primary colours" defect the capture lists (`INDEX.md` §4.6): today
@@ -43,8 +43,9 @@ close, more, settings and send.
 ### Back control
 
 Leading edge of every non-root header, 44 × 44. iOS shows `chevron-left`, Android `arrow-left`; same place,
-same size. iOS adds the interactive edge swipe and Android predictive back (`05-motion.md` M13). Replaces the
-"Back" text link and History's 42pt circle.
+same size. Shell pushed screens sit on `react-native-screens`' native stack, so the OS supplies the edge and
+content-area swipe on iOS and predictive back on Android (`05-motion.md` M13). Replaces the "Back" text link
+and History's 42pt circle.
 
 ### Header
 
@@ -61,14 +62,14 @@ tile menu's longer questions are all sheets.
 
 | | |
 |---|---|
-| Surface | `raised`, top corners `r-xl` 28, `shadow-raised`; dark adds the 1px top highlight |
+| Surface | `sheet`, top corners `r-xl` 28, `shadow-raised`; dark adds the 1px top highlight. Groups, rows and cards inside sit on `sheet-group` |
 | Grabber | 36 × 5, `fill-strong`, 6pt from the top edge, always shown |
 | Header | Optional `title2` title at the gutter, 12pt under the grabber; a close icon button (`x`) at the trailing edge on both platforms, so there is always a visible way out |
 | Detents | `fit` (content height, up to 92% of the screen) and `large` (92%). The making flow uses `large` |
 | Scrim | `scrim`, with opacity following the sheet's position |
-| Gestures | Drag down from the grabber, header or a scroll view at its top. Release projects with the momentum function and dismisses past half the height or above 800 pt/s down; otherwise it springs back (`fling`). Dragging up past the top detent rubber-bands (constant 0.55). Crossing the dismiss point gives a haptic (`01-direction.md` §10) |
+| Gestures | Drag down from the grabber, header or a scroll view at its top. Release projects with the momentum function; it dismisses when the projected end passes half the height and the release velocity doesn't point back up; otherwise it springs back (`fling`). Dragging up past the top detent rubber-bands (constant 0.55). Crossing the dismiss point gives a haptic (`01-direction.md` §10) |
 | Keyboard | The sheet lifts with the keyboard using the keyboard's own curve, and its scroll area pads by the keyboard height |
-| Close | Scrim tap, the close button, Android back, Escape on a hardware keyboard, or the drag |
+| Close | Scrim tap, the close button, Android back, Escape on a hardware keyboard, or the drag. Closing never loses typed work: the making sheet leaves its draft in the composer (`06-ux.md` §1) |
 | Motion | Present and dismiss `smooth`, along the same path (M11) |
 | A11y | Modal: focus moves to the title, the rest of the screen is hidden from screen readers, the close button reads "Close" |
 
@@ -77,12 +78,12 @@ five implementations, three animations, five scrims.
 
 ### Confirm sheet
 
-A `fit` sheet for the few things that can't come back. Title `title2` ("Delete Pour Timer?"); body `body`
-`text-2` saying exactly what will be lost; then the safe choice as a large `ink` button ("Keep it") and the
-consequential choice as `plain-danger` under it ("Delete"). Confirming a destructive action plays the
-warning haptic. Used for: delete an app, make a new phone ID, use your own server. Not used for going back to
-a version or making a copy any more; those happen at once and offer Undo (`06-ux.md`). Replaces the native
-`Alert` that deletes apps today (`HomeScreen.tsx:133-139`).
+A `fit` sheet for the few things that can't come back. Title `title2` ("Make a new ID?"); body `body`
+`text-2` saying exactly what will change; then the safe choice as a large `ink` button ("Keep this ID") and
+the consequential choice as `danger` under it ("Make a new ID"). Confirming plays the warning haptic. Used for
+two things only: make a new phone ID and use your own server. Deleting an app, going back to a version and
+making a copy happen at once and offer Undo (`06-ux.md`), so the native `Alert` that deletes apps today
+(`HomeScreen.tsx:133-139`) goes without a replacement sheet.
 
 ### Context menu
 
@@ -91,9 +92,9 @@ Long-press on a tile, after 350 ms: the tile lifts (scale 1.06, `shadow-floating
 
 | | |
 |---|---|
-| Card | `raised`, `r-lg` 20, `shadow-raised`, width 248, placed under the tile (above it when there's no room), 8pt away |
-| Rows | 48pt; 20pt icon in `text-2` then label `body` in `text`; a separator then the destructive row in `danger-text` |
-| Steps | A row can turn the card into a second step in place, with a back row at the top (Make a copy asks "Keep using the same data?" this way) |
+| Card | `raised`, `r-lg` 20, `shadow-raised`, width 248, placed under the tile (above it when there's no room), 8pt away, never over the names of the row it opens from. The app's full name heads the card in `footnote` 600 `text-2`, wrapping as needed |
+| Rows | 48pt; 20pt icon and `body` label, both in `text`; a separator then the destructive row, icon and label in `danger-text` |
+| Steps | A row can turn the card into a second step in place, with a back row at the top (a failed tile's "What happened") |
 | Motion | Grows from the tile edge, scale 0.92 → 1 with opacity (`smooth`); closes with `fade-out` and scale 0.96 (M12) |
 | A11y | Each row a button; the menu is announced as a menu with the app's name |
 
@@ -105,9 +106,10 @@ Rows per tile state are in `04-mini-app-icons.md`. Replaces the eight-row centre
 A capsule (`raised`, `shadow-floating`, max width 360, min height 48, padding 12 × 16) at the bottom, 12pt
 above whatever floats there (composer, orb, safe area). Text `callout`; an optional action as a `headline`
 600 text button in `text` (or `ember-text` when the action asks Whim for something). Stays 4 s, or 6 s with an
-action, and pauses while touched. Swipe down to dismiss. Rises and sinks with `smooth`. Announced politely to
-screen readers. Used for Undo after going back to a version, "Copy made · Open", "Pour Timer changed ·
-Reload", "Link copied".
+action, in the shell and the SDK alike; it pauses while touched and while a screen reader runs, and every Undo
+it offers stays reachable from History. Swipe down to dismiss. Rises and sinks with `smooth`. Announced
+politely to screen readers. Used for "Back on version 3 · Undo", "Water Counter deleted · Undo" (10 s),
+"Pour Timer is ready · Open", "Copy made · Open", "Pour Timer changed · Reload", "Link copied".
 
 ### Chip
 
@@ -116,7 +118,8 @@ Reload", "Link copied".
 | Shape | Capsule 36 high (44 target), 14pt side padding, `callout` 15/20 500 |
 | Unselected | `fill` background, `text` label |
 | Selected | `ink` background, `on-ink` label, a 16pt `check` icon before the label, for single and multiple choice alike, so selection never depends on colour alone |
-| "I'll decide" | Unselected: `fill` with an `ember-text` label and a 12pt eyeless ember before it. Selected: `ember-soft` background, `ember-text` label, `check`. It is selected by default on every question |
+| "Decide for me" | Unselected: `fill` with an `ember-text` label. Selected: `ember-soft` background, `ember-text` label, `check`. Selected by default on every question; in multi-select it is exclusive (picking it clears the others, picking another clears it) |
+| Long options | An option longer than 20 characters makes the whole question render as rows instead of chips (Question row, below) |
 | Suggestion | `fill`, `text` label, no selected state; tapping fills the field |
 | Motion | Press scale 0.96; the fill changes over 150 ms; selection plays the selection haptic |
 
@@ -129,8 +132,8 @@ Replaces four pill styles (compose suggestions, clarify answers, History filters
 | Field | `surface` background, 1px `border` (3.37:1 on light surface), `r-md` 14, padding 12 × 14, text `body` 17 so the person types at reading size |
 | Area | Same, padding 14 × 16, minimum three lines, grows to eight, then scrolls |
 | Label | `footnote` 600 `text-2`, 6pt above |
-| Placeholder | `text-3` |
-| Focus | Border becomes 2pt `text` (ink: the field is yours) |
+| Placeholder | `text-2` (4.66:1); `text-3` is for disabled fields only |
+| Focus | Border becomes 2pt `text` and the caret is ink: the field is yours |
 | Error | 2pt `danger`, helper line in `danger-text`, an icon before it |
 | Extras | Single-line fields get a clear button when not empty; the send-style area (the Whim sheet) gets a 32pt `ember` send button inside its trailing edge |
 | Keyboard | A focused field always scrolls to sit 16pt above the keyboard, in screens and sheets alike (`ios/35` shows the server field under the keyboard today) |
@@ -141,9 +144,9 @@ The settings-style list used by Settings, Advanced, the Whim sheet and the tile 
 
 | | |
 |---|---|
-| Group | `surface`, `r-lg` 20, no border; separators `separator` inset 16 from the leading edge (52 when rows have icons) |
+| Group | `surface` on the canvas, `sheet-group` inside a sheet; `r-lg` 20, no border; separators `separator` inset 16 from the leading edge (52 when rows have icons) |
 | Row | Min height 52, padding 12 × 16. Optional leading 20pt icon in `text-2`. Title `body`, optional subtitle `footnote` `text-2` |
-| Trailing | One of: value (`callout` `text-2`), `chevron-right` in `text-3`, a switch, `external-link` in `text-3`, a copy button |
+| Trailing | One of: value (`callout` `text-2`), `chevron-right` in `text-2`, a switch, `external-link` in `text-2`, a copy button |
 | Pressed | Row background `fill`, instant in, 150 ms out |
 | Destructive row | Title in `danger-text`, no icon colour change |
 | Section header | `footnote` 600 `text-2`, sentence case, 8pt above the group, at the gutter |
@@ -154,54 +157,59 @@ Switches in the shell are the platform's own (`UISwitch`, Material switch) with 
 ### App tile
 
 Anatomy, geometry and the nine states are in `04-mini-app-icons.md`. Component props: `app`, `state`,
-`size` (`grid` 64/68, `menu` 40, `inline` 24, `hero` 96 for the ready moment), `activity` (0–1, drives the
-ember while making or changing). Exports its geometry so the home skeleton draws the same cells.
+`size` (`grid` 64, `menu` 40, `inline` 24, `hero` 96 for Ready and History; no other sizes), `activity` (0–1,
+drives the ember while making or changing). Exports its geometry so the home skeleton draws the same cells.
 
 ### Composer bar
 
 The home screen's way in. A capsule 52 high, `raised` with `shadow-floating`, full width inside the gutters,
-12pt above the bottom safe area. Leading: the eyeless ember at 20pt. Then "Make an app…" in `body` `text-2`.
-The whole bar is one button; it morphs into the Describe sheet (M6). Not a real text field, so the keyboard
-never opens on the home screen by accident.
+12pt above the bottom safe area. Leading: the ember at 24. Then "Make an app…" in `body` `text-2`, or
+"Continue "A timer for my…"" when a closed making sheet left a draft. The whole bar is one button; it morphs
+into the Describe sheet (M6). Not a real text field, so the keyboard never opens on the home screen by
+accident. While an app is being made, the ambient light glows under it (`01-direction.md` §8.2).
 
-### Wisp
+### Ember
 
-Props: `size`, `pose` (`listening`, `thinking`, `making`, `stuck`, `failed`, `done`, `asleep`), `activity`
-(0–1). Draws the silhouette, the gradient, the glow and, at 48pt and up, the eyes (`01-direction.md` §8.2).
-Eyes are hidden from screen readers; the component takes an accessibility label from its parent's status
-line instead. With Reduce Motion it shows three still states (working, quiet, stuck).
+Props: `size` (24, 48, 96 or 128), `state` (`working`, `stuck`, `out`), `activity` (0–1). Draws the flame
+silhouette, the three-stop gradient and the glow (`01-direction.md` §8.2); `out` draws the `fill-strong`
+silhouette with no glow. Done is a `spark` flare the parent triggers. Hidden from screen readers; the parent's
+status line carries the label. With Reduce Motion each state is a still intensity. `AmbientLight` is the same
+glow as a soft radial wash with no silhouette, for the making header and under the composer.
 
 ### Orb
 
-A 44pt `raised` disc with `shadow-floating`, the eyeless ember at 20pt in the middle, 52pt target, 16pt
-from the trailing edge and the bottom safe area. The realm is told it covers 44 + 16 + the inset. States: at
-rest (still), making a change for this app (the ember follows the stream), change failed (an 8pt danger dot
-at the top-right), change ready (one flare, then the toast). Tap opens the Whim sheet (M21). Accessibility
-label "Whim menu", plus the state. While the app's content scrolls down, the orb shrinks to
-its 24pt ember with no disc and fades to 0.6, and it returns when scrolling stops or reverses (M28). The
-realm reports only the scroll direction, as one more one-way frame next to the nav-depth frame; a hostile app
-can make the orb shrink, never vanish, and it stays tappable at every size. It is opaque at every size, so
-nothing shows through it (today's translucent disc lets the app's text bleed through, `android/217`).
+A 44pt opaque `raised` disc with `shadow-floating`, the ember at 20pt in the middle, 52pt target. It rests
+in one of two corners, bottom-trailing (default) or bottom-leading, 16pt from the edge and the bottom safe
+area; both corners sit inside the existing `chromeInsetBottom` reservation, so SDK `Screen` and SDK `Modal`'s
+action row never put content under it. Drag moves it 1:1; release picks the corner by momentum projection
+(`fling`) and remembers it per app. It hides while the keyboard is up, on the host's own keyboard signal, and
+never hides or moves because an app said so. States: at rest (still), making a change for this app (the
+ember follows the stream), change failed (an 8pt `danger` dot), new version ready or your app finished (an
+8pt `ember` dot, after one flare). Tap opens the Whim sheet (M21). Accessibility label "Whim menu", plus the
+state; actions "Move to the other corner". Opaque, so nothing shows through it (today's translucent disc lets
+the app's text bleed through, `android/217`).
 
 ### Status line
 
-What `WorkingLine` becomes: an 8pt ember dot (or a 24pt wisp where there's room) driven by the stream, then
-the phrase in `callout` `text-2`, then the elapsed time in tabular figures. With `stuck`, the dot turns
-`text-3` and stops.
+What `WorkingLine` becomes: an 8pt `ember` dot (or the 24 ember where there's room) driven by the stream,
+then the phrase in `callout` `text-2`, then the elapsed time in tabular figures. With `stuck`, the dot dims to
+35% and stops.
 
 ### Step list
 
 The making view's four steps. 20pt icon then `body` label, 12pt between rows. Done: `circle-check` in
-`text`, label `text-2`. Current: an 8pt ember dot inside a 20pt ring, label `text` 600, elapsed time trailing.
-Waiting: an empty 20pt ring in `text-3`, label `text-3`. Steps never animate in; the current marker moves with
-`snappy`.
+`text`, label `text-2`. Current: an 8pt `ember` dot inside a 20pt `ember` ring, label `text` 600, elapsed time
+trailing. Waiting: an empty 20pt ring in `text-2`, label `text-2`. Repair: when the stream reports `repair`, a
+"Fixing a problem · try 2 of 3" row appears under the current step and the marker moves down to it; it never
+jumps back up. Steps never animate in; the current marker moves with `snappy`.
 
 ### Plan row and question row
 
 | | |
 |---|---|
-| Plan row | A grouped-list row with a `footnote` 600 `text-2` label ("What it is", "Main screen") over `body` 17/24 text, and a 16pt `pencil` in `text-3` at the trailing edge. Tap edits in place: the text becomes a text area, Save (`ink`, small) and Cancel (`plain`, small) appear under it |
-| Question row | The question as `headline`, an optional `footnote` hint ("Pick any that fit"), then chips that wrap, ending with the "I'll decide" chip and, when the question allows it, an "Other" field |
+| Plan row | A `sheet-group` row with a `footnote` 600 `text-2` label ("What it is", "Main screen") over `body` 17/24 text, and a 16pt `pencil` in `text-2` at the trailing edge. Tap edits in place: the text becomes a text area, Save (`ink`, small) and Cancel (`plain`, small) appear under it with full targets |
+| Question row | The question as `headline`, an optional `footnote` hint ("Pick any that fit"), then the options, ending with "Decide for me" and, when the question allows it, an "Other" field. Options of 20 characters or fewer are chips that wrap; if any is longer, every option is a full-width row on `sheet-group`: a radio row (single) or a checkbox row (multi), wrapping to as many lines as it needs. The clarify prompt caps options at 40 characters |
+| Answered | Once answered and scrolled past, a question collapses to a one-line summary ("Brewer · V60") with a chevron; tap to reopen. The plan rows stay in view |
 | Edited row | The person's words show as typed, and a small "Edited" label replaces the pencil |
 
 ### Notice
@@ -215,10 +223,10 @@ An inline callout for server notices: `r-md`, `fill` background (neutral) or `da
 | | |
 |---|---|
 | Rail | A 2pt `separator` line at x = 27 with a 10pt dot per version; the current version's dot is `ink` with a 3pt `bg` ring |
-| Content | Your words as `body` italic in quotes (`text`); Whim's summary as `callout` `text-2` through the prose renderer; then a meta line in `footnote` `text-2` with tabular figures ("v7 · 2 days ago") and a kind chip |
+| Content | Your words as the hero: `title3` italic in quotes (`text`); Whim's summary as `callout` `text-2` through the prose renderer; then a meta line in `footnote` `text-2` with tabular figures ("v4 · 2 days ago") and a kind chip. The rail stops at v1 |
 | Kind chip | `caption` 500 in `text-2` on `fill`, with a 12pt icon: `plus` Added, `pencil` Changed, `minus` Removed, `palette` Look, `wrench` Fixed, `flag` Start. No colours (`01-direction.md` §2.2) |
 | Current | A `Current` badge (`ink`, `on-ink`) on the row instead of "↑ YOU'RE ON THIS ONE" |
-| Expanded | Tap expands in place (`smooth`). Past versions: "Go back to this version" (`secondary`, medium) and "Make a copy from here" (`plain`). Current version: "Change it" (`ember`, medium) |
+| Expanded | Tap expands in place (`smooth`). Past versions: "Use this version" (`secondary`, medium) and "Make a copy from here" (`plain`). Current version: "Change it" (`ember`, medium) |
 
 ### Skeleton
 
@@ -228,28 +236,34 @@ label bars, fixing today's 88pt jump (`flow-skeletons.tsx:62-75`).
 
 ## Part 2: SDK components
 
-Everything below renders inside the sandbox from tokens the host sends as inert theme data
-(`01-direction.md` §3.5): the scheme and the app's tint. No component takes a style, a class, a hex or a
-pixel value. Defaults are chosen so the most common use needs no optional props.
+Everything below renders inside the sandbox from the inert theme init frame (`01-direction.md` §3.5): the
+scheme, the app's tint, `fontScale`, `reduceMotion`, `increaseContrast` and `platform`, read once at mount. No
+component takes a style, a class, a hex or a pixel value. Defaults are chosen so the most common use needs no
+optional props. Every type token is multiplied by `fontScale`, and layouts grow with it. Every control
+reaches 44 (iOS) or 48 (Android) with real padding, because the DOM has no hit-slop. Controls set
+`user-select: none` and `-webkit-tap-highlight-color: transparent`; text stays selectable, so a person can
+copy a total out of their own app.
 
 ### What the SDK gains and loses
 
 | Change | What | Why |
 |---|---|---|
-| Add | `Icon` | Apps look unfinished without icons; the 147 names are the tile set, already familiar to models |
+| Add | `Icon` | Apps look unfinished without icons; the 147 names are the tile set, already familiar to models. `name` accepts any string: aliases and a deterministic fallback resolve it (`04-mini-app-icons.md`) |
 | Add | `Stepper` | Counts (glasses, reps, players) are the most common input in the corpus and today need a NumberInput plus two Buttons |
-| Add | `DateInput` | Trackers need dates and times; today they hack `TextInput`. The value is epoch milliseconds, the storage `date` type, so nothing converts |
+| Add | `DateInput` | Trackers need dates and times; today they hack `TextInput`. The value is epoch milliseconds, the storage `date` type, so nothing converts; `date` mode stores local midnight |
 | Add | `Picker` | Choosing one of many (more than four options) without a wall of buttons; renders the platform's native picker |
 | Add | `toast(text)` | A module-level function like `nav`, for "Saved" and "Logged" feedback after an action |
 | Add | `Screen` `title` and `action` | A standard header: title, automatic back control when the app's stack is deeper than one, and one optional action. Gives iOS a visible back inside apps |
 | Add | `Button` `icon`, `ListItem` `icon`, `EmptyState` `icon` | One optional icon where people expect one |
 | Add | `ProgressBar` `variant: 'ring'` and `label` | Timers and goals want a ring with a number in it |
-| Add | `defineApp` `tint` and `icon` | The tile (`04-mini-app-icons.md`); `tint` also becomes the app's `primary` |
+| Add | `defineApp` `tint` and `icon` | The tile (`04-mini-app-icons.md`); `tint` also becomes the app's `primary`. Both forgiving: aliases, then a deterministic fallback with a build diagnostic |
+| Add | `List` `items`, `keyBy`, `renderItem` | Keyed identity for list motion; generated `key={i}` animates the wrong row |
+| Change | `Text` and `Icon` `color` | Narrowed to `text`, `text-muted`, `primary`, `positive`, `danger`, `warning` |
 | Change | `Row` defaults to `align="center"`, `justify="start"` | Today's `baseline` + `space-between` flings two children to opposite edges unless the model remembers `justify` |
 | Change | Sizes, colours, radii and motion of every component | One system with the shell |
 | Deprecate | `Heading` | `Text` with `size="title"` is the same thing. Kept as an alias so installed apps still render; gone from the reference |
 | Deprecate | `Button` `radius`, `Card` `radius` | Buttons are capsules and cards `r-lg`; the prop is accepted and ignored |
-| Deprecate | `defineApp` `tileColor` | Replaced by `tint`; old values map to the nearest tint |
+| Deprecate | `defineApp` `tileColor` | Replaced by `tint`; old values map to the nearest light value by ΔE2000 |
 | Reject | `Reveal`, `useMotion`, `Morph`, `useReducedMotion` | The motion that matters is built into components. A public motion API invites the generator to animate everything, every name costs prompt tokens, and Reduce Motion is safer enforced inside components. Revisit when a real app needs more |
 | Reject | `TabBar` | Fights the orb for the bottom edge; `SegmentedControl` switches views |
 | Reject | `Image`, confetti, `Canvas` | No image source exists without a new capability; confetti is decoration; `Canvas` is #13's escape hatch for a later decision |
@@ -260,16 +274,17 @@ and `interval`. No export is removed, so every installed bundle keeps working.
 **The style gallery mirrors all of it.** `fixtures/style-gallery.app.tsx` shows every component, every
 variant, every state worth seeing (disabled, empty, error) and every new prop. A change that adds, changes or
 removes an SDK component is not done until the gallery shows it, and the OpenSpec change carries that as a
-task in every chain that touches the SDK.
+task in every chain that touches the SDK. The gallery is also a few-shot example, so each of its screens
+follows the rules it demonstrates (`02-screens.md`, Style gallery).
 
 ### Screen
 
 | | |
 |---|---|
 | Props | `title?: string`, `action?: { icon: IconName; label: string; onPress: () => void }`, `padding?: SpaceToken = 'lg'` |
-| Renders | `bg` background, 17px system font. With `title`: a header row (back control when the app's stack is deeper than one, then `action` as an icon button at the trailing edge) and the title as `title1` 28 under it |
-| Back | The back control calls `nav.back()`. On iOS an edge swipe from the leading 20px tracks the finger and pops; at the root it asks the host to close the app with the closing morph (M3) |
-| Insets | Bottom padding adds the orb's footprint as today, so the last element can scroll clear of it |
+| Renders | `bg` background, 17px system font. With `title`: a header row (back control when the app's stack is deeper than one, then `action` as an icon button at the trailing edge) and the title as `title1` 28 under it. The root sets `overscroll-behavior: none` |
+| Back | The back control calls `nav.back()`. No edge swipe inside apps in v1 (#67). Android system back pops through the existing nav-depth/nav-back seam and closes the app at depth 0; the orb is always the way out |
+| Insets | Bottom padding adds `chromeInsetBottom` as today, which covers both orb corners, so the last element can scroll clear of it |
 | Motion | `nav.navigate` pushes the new screen from the trailing edge (`smooth`, previous screen −30% with a 0.12 dim); `nav.back` reverses it. Reduce Motion: cross-fade |
 
 ### Stack, Row, Grid, Spacer, Divider
@@ -282,35 +297,35 @@ wrapping. `Grid` unchanged. `Divider` is a `separator` hairline. `Spacer` unchan
 | Prop | Values |
 |---|---|
 | `size` | `caption` 13/18, `body` 17/24 (default), `subtitle` 20/25 600, `title` 28/34 700, `display` 40/44 700 |
-| `color` | Any colour role; `primary` uses the tint's text form, so it stays readable |
+| `color` | `text`, `text-muted`, `primary`, `positive`, `danger`, `warning`; each resolves to its readable text form |
 | `weight` | `regular`, `medium`, `semibold`, `bold` |
 | `align` | `start`, `center`, `end` |
 
 `display` uses tabular figures by default, since it is almost always a number. Tracking per size from
-`01-direction.md` §4.2.
+`01-direction.md` §4.2. SDK `caption` is the shell's `footnote` (13), the in-app floor.
 
 ### Button
 
 | | |
 |---|---|
 | Props | `label`, `onPress`, `variant: 'primary' \| 'secondary' \| 'ghost' \| 'danger' = 'primary'`, `icon?: IconName`, `disabled?` |
-| Look | Capsule 50 high, label 17 600. `primary`: tint fill and on-tint label. `secondary`: `fill` and `text`. `ghost`: no fill, tint text. `danger`: `danger` fill and its on-colour |
-| States | Press scale 0.97 on pointer-down, back with `snappy`. Disabled: `fill` and `text-3` |
+| Look | Capsule 52 high, label 17 600. `primary`: tint fill and on-tint label. `secondary`: `fill` and `text`. `ghost`: no fill, tint text. `danger`: `danger-text` on `danger-soft`, with the icon if one is given; never a fill, so it can't be mistaken for `primary` in any tint |
+| States | Press scale 0.97 on pointer-down, back with `snappy`. Disabled: `fill` and `text-3`. Two buttons in a row stack from 135% text |
 | A11y | Native `<button>`; `disabled` attribute |
 
 ### TextInput and NumberInput
 
-Field anatomy from Part 1, inside the app: 17px text, `footnote` label, 1px `border`, focus ring in the app's
-tint. `NumberInput` sets `inputmode="decimal"` and tabular figures. Both keep `user-select: text` inside an
-otherwise unselectable screen.
+Field anatomy from Part 1, inside the app: 17px text, so iOS doesn't zoom on focus; `footnote` label; 1px
+`border`; placeholder `text-2`; focus ring in the app's tint; ink caret. `NumberInput` sets
+`inputmode="decimal"` and tabular figures.
 
 ### Stepper (new)
 
 | | |
 |---|---|
 | Props | `label?`, `value`, `onChange`, `min = 0`, `max?`, `step = 1` |
-| Look | A row: label in `body` on the left; on the right a capsule group with `minus`, the value in tabular `subtitle`, and `plus`. Buttons 44 × 36, `fill` background |
-| Behaviour | A tap changes by `step`; holding repeats after 400 ms at 8 steps per second; buttons disable at the bounds. Each step plays the selection haptic through the host |
+| Look | A row: label in `body` on the left; on the right a capsule group with `minus`, the value in tabular `subtitle`, and `plus`. Buttons 44 × 36 visual in a 44 × 44 (48 × 48 on Android) box, `fill` background |
+| Behaviour | A tap changes by `step`; holding repeats after 400 ms at 8 steps per second; buttons disable at the bounds. No haptic |
 | Motion | The number rolls 6px up (increase) or down (decrease) with a cross-fade, `snappy` |
 | A11y | Role `spinbutton` with min, max and value; the buttons are labelled "Decrease" and "Increase" |
 
@@ -318,7 +333,9 @@ otherwise unselectable screen.
 
 `label?`, `value: number | null` (epoch ms), `onChange`, `mode: 'date' | 'time' | 'datetime' = 'date'`. A field
 showing the value formatted for the phone's locale, with a `calendar` or `clock` icon; tapping opens the
-platform's own picker through the native input. Writes straight into a storage `date` field.
+platform's own picker through the native input, which follows the scheme because the runtime page sets
+`color-scheme: light dark`. Writes straight into a storage `date` field; `date` mode stores local midnight
+as epoch ms.
 
 ### Picker (new)
 
@@ -327,51 +344,57 @@ platform's own list. For two to four options the reference points to `SegmentedC
 
 ### Switch
 
-Track 48 × 28, `fill-strong` off and the tint on; a 24pt white knob with a small shadow. The whole row is the
-target, with the label as `body` `text` on the left (today the label is muted caption). Knob and track move
-with `snappy`; the change plays the selection haptic. Role `switch`.
+Follows `platform`: the iOS shape on iOS, the Material shape on Android, matching the shell's native switches.
+Off: `fill-strong` track and a `thumb` knob. On: the tint track and an on-tint knob. The whole row is the
+target, with the label as `body` `text` on the left (today the label is muted caption). The knob runs on the
+rAF spring (`snappy`), so a second tap mid-flight retargets with its velocity. No haptic. Role `switch`.
 
 ### Checkbox
 
-24pt box, `r-sm` corners, 2px `border`; checked fills with the tint and draws a white `check` (stroke drawn on
-over 160 ms). Label `body` `text`, whole row the target. Role `checkbox`.
+24pt box, `r-sm` corners, 2px `border`; checked fills with the tint and draws an on-tint `check` (stroke drawn
+on over 160 ms). Label `body` `text`, whole row the target, at least 44/48 high. Role `checkbox`.
 
 ### Slider
 
-Track 6pt, `fill-strong`, filled part in the tint; thumb 28pt white with `shadow-raised`; optional label and
-value (tabular) above. The thumb follows the pointer 1:1 with pointer capture; a tap on the track springs the
-thumb there (`snappy`). With 20 steps or fewer, each step plays the selection haptic.
+Track 6pt, `fill-strong`, filled part in the tint's value for the scheme; thumb 28pt in `thumb`; optional label
+and value (tabular) above. `touch-action: none` on the track. The thumb follows the pointer 1:1 with pointer
+capture; a tap on the track springs the thumb there on the rAF spring (`snappy`), retargetable. No haptic.
 
 ### SegmentedControl
 
-A capsule track (`fill`, 36 high) with a `surface` thumb (`shadow-raised`) under the selected option; labels
-`callout` 600 in `text`. The thumb slides with `snappy` and can be retargeted mid-flight. Selection haptic.
-Role `radiogroup`.
+A capsule track (`fill`, 36 high visual, 44/48 target) with a `thumb` thumb under the selected option; labels
+`callout` 600 in `text`. The thumb slides on the rAF spring (`snappy`) and can be retargeted mid-flight. No
+haptic. Role `radiogroup`.
 
 ### Card
 
-`surface`, `r-lg`, padding `lg` 20, no border. With `onPress`: press scale 0.98 and pointer cursor. Nesting a
-`List` inside a `Card` no longer draws two outlines, because neither has one.
+`surface`, or `sheet-group` inside a `Modal`; `r-lg`, padding `lg` 20, no border. With `onPress`: press scale
+0.98 and pointer cursor. Nesting a `List` inside a `Card` no longer draws two outlines, because neither has one.
 
 ### List and ListItem
 
-`List` is an inset group: `surface`, `r-lg`, `separator` hairlines inset 16. `ListItem`: `title`,
-`subtitle?`, `trailing?`, `icon?`, `onPress?`; min height 52; pressed background `fill`; a `chevron-right`
-appears when `onPress` is set. Rows that mount after the first render rise 8px and fade in (`smooth`); rows
-that leave fade out (`fade-out`) before their space closes (`smooth`). Keys come from the app's own `key`
-props; without keys, rows appear without motion rather than animating the wrong one.
+`List` is an inset group: `surface` (`sheet-group` inside a `Modal`), `r-lg`, `separator` hairlines inset 16.
+`ListItem`: `title`, `subtitle?`, `trailing?`, `icon?`, `onPress?`; min height 52; pressed background `fill`;
+a `chevron-right` appears when `onPress` is set.
+
+Two forms. `<List items keyBy renderItem>` animates: rows that mount after the first render rise 8px and fade
+in (`smooth`); rows that leave fade out (`fade-out`) before their space closes (`smooth`). `keyBy` is required
+for motion, as a property name or a function. Children-style `<List>` is static: no enter or leave motion.
+Duplicate or index-shaped keys give a dev diagnostic and switch motion off, so a wrong key never animates the
+wrong row.
 
 ### Badge
 
-Capsule, `caption` 12/16 600, padding 3 × 9, soft fill with the tone's text colour: `neutral` (`fill` /
-`text-2`), `primary` (tint soft / tint text), `positive`, `warning`, `danger` (their soft and text pairs).
-`warning` is now yellow, not grey.
+Capsule, `caption` 13/18 600, padding 3 × 9, soft fill with the tone's text colour: `neutral` (`fill` /
+`text-2`), `primary` (tint soft / tint value, ≥ 4.52:1), `positive`, `warning`, `danger` (their soft and text
+pairs). Status tones always carry their icon: `check`, `triangle-alert`, `circle-alert`. `warning` is now
+amber, not grey.
 
 ### ProgressBar
 
 `value` 0–1, `tone`, and new `variant: 'bar' | 'ring' = 'bar'` and `label?`. Bar: 6pt, `fill-strong` track,
-no border. Ring: 120pt, 10pt stroke with round caps, `label` centred in tabular `title`. Value changes move
-with `smooth`.
+no border, the mark in the tint's value for the scheme. Ring: 120pt, 10pt stroke with round caps, `label`
+centred in tabular `title`; from 135% text the label moves under the ring. Value changes move with `smooth`.
 
 ### EmptyState
 
@@ -380,9 +403,11 @@ with `smooth`.
 
 ### Modal
 
-A sheet with the Part 1 anatomy: grabber, `title2` title, a close button that always calls `onClose`, drag to
-dismiss, scrim. Present and dismiss `smooth`; Reduce Motion cross-fades. Today's modal pops in, has no close
-button and closes only from the backdrop.
+A sheet with the Part 1 anatomy, painted `sheet`: grabber, `title2` title, a close button that always calls
+`onClose`, drag to dismiss (`touch-action: none` on the handle), scrim. Its content scrolls with
+`overscroll-behavior: contain`, and its action row pads by `chromeInsetBottom`, so the orb never sits on Save.
+Present and dismiss `smooth`; the drag runs on the rAF spring; Reduce Motion cross-fades. Today's modal pops
+in, has no close button and closes only from the backdrop.
 
 ### Chart
 
@@ -391,24 +416,27 @@ Unchanged in kind (bar, line, heatmap). Colours come from the tint; gridlines `s
 
 ### Icon (new)
 
-`name: IconName`, `size: 'sm' | 'md' | 'lg' = 'md'` (16, 20, 24), `color?: ColorToken = 'text'`, `label?`
-(without a label the icon is decorative to screen readers). Inline SVG from the vendored set.
+`name: string`, `size: 'sm' | 'md' | 'lg' = 'md'` (16, 20, 24), `color?` (the `Text` set) `= 'text'`, `label?`
+(without a label the icon is decorative to screen readers). Inline SVG from the vendored set. A legacy or
+synonym name resolves through the alias map with a build diagnostic; an unknown name falls back
+deterministically; never blank, never a crash (`04-mini-app-icons.md`).
 
 ### toast (new)
 
-`toast(text: string): void`. Shows a capsule at the bottom, above the orb's footprint, for 3 s; a second call
-replaces the first. Announced to screen readers. Calls during the first render are ignored.
+`toast(text: string): void`. Shows a capsule at the bottom, above the orb's footprint, for 4 s, paused while a
+screen reader runs; a second call replaces the first. Announced to screen readers. Calls during the first
+render are ignored.
 
 ### Built-in feel
 
 What a generated app gets without asking:
 
-- Press feedback on every pressable; the right haptics on toggles, segments, steps and slider detents.
-- Screen push and pop, Modal, List row and toast motion, all interruptible.
-- Light and dark from the phone, and the app's tint on every `primary`.
+- Press feedback on every pressable.
+- Screen push and pop, Modal, keyed List row and toast motion, all interruptible.
+- Light and dark, text size and Increase Contrast from the phone (at the next open), and the app's tint on
+  every `primary`.
 - Reduce Motion handled inside each component.
 
-Haptics from controls go through the host as UI feedback without the `cues` capability, rate-limited to one
-per 50 ms. They are only selection-strength. A bundle can forge the UI event that triggers one, so the worst
-a hostile app can do is tick the phone a few times a second, which it could annoy you with in many other
-ways already. Heavier haptics and all sounds stay behind `cues`.
+SDK controls emit no haptics: haptics from apps are capability-gated. An app that wants one calls
+`cues.haptic(...)`, which stays behind the manifest as today (#43), plays through `WhimHaptics`, and is capped
+by the host at 10 per second with a burst of 3 (`01-direction.md` §10, §15.2).
