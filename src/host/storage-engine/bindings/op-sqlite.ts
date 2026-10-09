@@ -23,6 +23,15 @@ export interface OpSqlExecutorOptions {
   mode: 'persistent' | 'ephemeral';
 }
 
+/** The slice of an op-sqlite database handle the executor uses. */
+export interface OpSqlDb {
+  executeSync(
+    sql: string,
+    params?: SqlBindValue[],
+  ): { rows?: SqlRow[] | { _array?: SqlRow[] }; insertId?: number; rowsAffected?: number } | undefined;
+  close(): void;
+}
+
 export function createOpSqlExecutor(opts: OpSqlExecutorOptions): SqlExecutor {
   // Lazy require: keep the native module off any path that isn't the device.
   const { open } = require('@op-engineering/op-sqlite');
@@ -32,6 +41,12 @@ export function createOpSqlExecutor(opts: OpSqlExecutorOptions): SqlExecutor {
       ? open({ name: ':memory:' })
       : open({ name: `${opts.appId}.db`, location: 'storage' });
 
+  return createOpSqlExecutorOver(db);
+}
+
+/** The SqlExecutor over an already-open op-sqlite database (the data copy opens its own
+ *  connections and needs the handle itself for `getDbPath` and async `execute`). */
+export function createOpSqlExecutorOver(db: OpSqlDb): SqlExecutor {
   // Guard that the op-sqlite v16+ JSI build's executeSync is present. Extracted to
   // assertExecuteSyncAvailable so its throw is unit-testable under Node — this file
   // can't load outside React Native (it imports the native module).

@@ -18,6 +18,7 @@ import { enableScreens } from 'react-native-screens';
 import LauncherRoot from './src/host/launcher/LauncherRoot';
 import VersionStoreProbeScreen from './src/host/VersionStoreProbeScreen';
 import StorageProbeScreen from './src/host/StorageProbeScreen';
+import DataCopyProbeScreen from './src/host/DataCopyProbeScreen';
 import BridgeProbeScreen from './src/host/BridgeProbeScreen';
 import NetworkDenyProbeScreen from './src/host/NetworkDenyProbeScreen';
 import RootErrorBoundary from './src/host/RootErrorBoundary';
@@ -34,6 +35,9 @@ const RUN_VSTORE_PROBE = false;
 // Flip to true to run the storage-engine on-device acceptance (Decision #40). Default false.
 const RUN_STORAGE_PROBE = false;
 
+// Flip to true to run the data-copy on-device probe (copy-app-data, task 1.5). Default false.
+const RUN_DATA_COPY_PROBE = false;
+
 // Flip to true to run the capability-bridge on-device acceptance (Decision #41). Default false.
 // The WebView round-trip is also exercised by the launcher's __DEV__ probe (DevProbeScreen).
 const RUN_BRIDGE_PROBE = false;
@@ -47,6 +51,7 @@ export default function App() {
   if (RUN_NETDENY_PROBE) content = <NetworkDenyProbeScreen />;
   else if (RUN_BRIDGE_PROBE) content = <BridgeProbeScreen />;
   else if (RUN_STORAGE_PROBE) content = <StorageProbeScreen />;
+  else if (RUN_DATA_COPY_PROBE) content = <DataCopyProbeScreen />;
   else if (RUN_VSTORE_PROBE) content = <VersionStoreProbeScreen />;
 
   // Around everything: a render error no inner boundary handles is recorded, then rethrown into
