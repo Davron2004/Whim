@@ -216,27 +216,6 @@ export const TYPE_SCALE: Record<
   quote: { fontFamily: FONT_FAMILY.serifItalic, fontSize: 17, lineHeight: 27.2, letterSpacing: 0, fontWeight: '400', fontStyle: 'italic', color: SHELL_COLORS.yours },
 };
 
-/** The mini-app SDK's generic radius scale (`tokens.ts#radius()`, `RadiusToken`). Independent
- *  of the shell's own named radius steps above (`RADIUS`) — a generated app is free-form ("no
- *  contract, no slot count, no approved palette", design doc "Two systems, not one"). Values
- *  carried over unchanged from the pre-v2 per-shape model (its `soft` shape, the old default) —
- *  the shape dimension itself is gone along with the presets it came from. */
-export interface MiniAppRadiusScale {
-  none: string;
-  sm: string;
-  md: string;
-  lg: string;
-  full: string;
-}
-
-export const RADIUS_SCALE: MiniAppRadiusScale = {
-  none: '0',
-  sm: '6px',
-  md: '12px',
-  lg: '20px',
-  full: '999px',
-};
-
 // ── appColor ──────────────────────────────────────────────────────────────────
 // A fixed palette of saturated hues, deliberately excluding every reserved shell meaning: the
 // three status hues (in both their paper- and ink-background forms), the accent, and `yours`.
