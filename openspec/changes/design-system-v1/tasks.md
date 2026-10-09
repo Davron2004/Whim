@@ -175,6 +175,8 @@
 - [ ] 21.4 Delete the retired components and constants (`SheetModal`, `ActionSheet`, `RunDetailsSheet`, `ServiceNotice`, `PrimaryAction`, `SHELL_PALETTE`, `src/sdk/design-tokens.ts` shell exports no longer read, `KIND_BADGE_COLORS`, `FONT_FAMILY` and the `TYPE_SCALE` face fields, `ghostTileColorFor`, `monogram`, `manifest-tile-color.ts`, `appColor`); point every remaining consumer at `useTokens()` and the tints
 - [ ] 21.5 Update `whim-prose`, `consent-coverage` and copy-asserting suites
 
+- [ ] 21.9 (orchestrator, after chain-23's class-B note) `build/build.mjs` extracts `tint`/`icon` from fixture manifests (manifests are extracted at build time — no second source of truth, #41); then remove the legacy `tileColor` from tip-splitter, water-counter and style-gallery and update `checks/test/acceptance.ts` + `tile-colour.suite.ts` to assert tint/icon instead. HUMAN-BOOTSTRAP (`build/` is gate CONFIG_SET: commit the build.mjs edit first). Do after chains 15/20 move the shell to `tileOf()`.
+
 ## 22. Shell motion
 
 - [ ] 22.1 Container transforms on Reanimated: M2 open (bg container width/height/radius on the UI thread, tint plate, fade on the opening signal) and M3 close, M6 composer to Describe, M5 making sheet into its tile, M9 Make it ember travel, M10 Ready flare, M4 ghost to tile
@@ -185,10 +187,10 @@
 
 ## 23. Generator: reference and few-shot
 
-- [ ] 23.1 Rewrite `docs/sdk-reference.md` to match the SDK exactly: tokens, every component and prop, `tint`/`icon` with the ten tints, the glyph groups and four rules, `List keyBy`, `toast`, `Screen title`, no presets, shapes, `Heading` or `tileColor`
-- [ ] 23.2 Update `fixtures/tip-splitter.app.tsx` and `fixtures/water-counter.app.tsx` to `tint`/`icon` and idiomatic layouts; add two curated exemplar apps to the few-shot set; rewrite the navigation example around `Screen title`
-- [ ] 23.3 In `server/test/prompts.suite.ts`: `docs/sdk-reference.md` documents every `vc-sdk` export and no deprecated one; update `prod-build.suite.ts`
-- [ ] 23.4 Update `docs/capabilities.md`'s `app-launcher` line (glyph tiles in a named tint, light and dark) and any other line this change made stale
+- [x] 23.1 Rewrite `docs/sdk-reference.md` to match the SDK exactly: tokens, every component and prop, `tint`/`icon` with the ten tints, the glyph groups and four rules, `List keyBy`, `toast`, `Screen title`, no presets, shapes, `Heading` or `tileColor`
+- [x] 23.2 Update `fixtures/tip-splitter.app.tsx` and `fixtures/water-counter.app.tsx` to `tint`/`icon` and idiomatic layouts; add two curated exemplar apps to the few-shot set; rewrite the navigation example around `Screen title`
+- [x] 23.3 In `server/test/prompts.suite.ts`: `docs/sdk-reference.md` documents every `vc-sdk` export and no deprecated one; update `prod-build.suite.ts`
+- [x] 23.4 Update `docs/capabilities.md`'s `app-launcher` line (glyph tiles in a named tint, light and dark) and any other line this change made stale
 
 ## 24. Verification on device (attended)
 
