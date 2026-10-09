@@ -10,9 +10,10 @@
 #
 # Alerts (developer-observability D10): the email channel, the uptime check, the log-based metric
 # and the alert policies are the committed definitions in deploy/monitoring/, applied by display
-# name (by name for the metric). Each carries a fingerprint of its rendered definition, so a rerun
-# creates what is missing, updates what changed and leaves the rest alone. The same holds for the
-# billing budget, the disk's daily snapshot schedule and the private source-map bucket.
+# name (by name for the metric) through deploy/lib.sh's whim_apply_monitoring, which every plain
+# deploy/cloudrun/deploy.sh runs too. Each carries a fingerprint of its rendered definition, so a
+# rerun creates what is missing, updates what changed and leaves the rest alone. The same holds for
+# the billing budget, the disk's daily snapshot schedule and the private source-map bucket.
 set -euo pipefail
 
 WHIM_SCRIPT=provision.sh
@@ -61,95 +62,13 @@ readonly SOURCEMAP_BUCKET="gs://$project-sourcemaps"
 # Logs are stored in the region, not Cloud Logging's global default: the legal pages say Google keeps
 # them in Montreal (docs/legal/quebec-s17-assessment.md section 7).
 readonly LOG_BUCKET=whim-logs LOG_KEEP_DAYS=30
-readonly MONITORING_DIR="$WHIM_DEPLOY_DIR/monitoring"
 readonly BUDGET_DISPLAY_NAME="Whim monthly spend"
-readonly TAB=$'\t'
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 exists() {
   "$@" >/dev/null 2>&1
-}
-
-# Renders a deploy/monitoring template into $work: each {{KEY}} named by a KEY VALUE pair is filled,
-# then {{SPEC}} gets a fingerprint of everything else. Sets RENDERED_FILE and RENDERED_SPEC. The
-# fingerprint covers the definition and every value in it, so it changes exactly when they do.
-render_monitoring() {
-  local template="$1" text key value
-  shift
-  text="$(<"$template")"
-  while [[ "$#" -gt 0 ]]; do
-    key="$1" value="$2"
-    shift 2
-    text="${text//\{\{$key\}\}/$value}"
-  done
-  RENDERED_SPEC="$(printf '%s' "$text" | git hash-object --stdin)"
-  text="${text//\{\{SPEC\}\}/$RENDERED_SPEC}"
-  case "$text" in
-    *'{{'*) whim_fail "$template: a {{placeholder}} is left unfilled" ;;
-    *) ;;
-  esac
-  RENDERED_FILE="$work/$(basename "$template")"
-  printf '%s\n' "$text" >"$RENDERED_FILE"
-}
-
-# The top-level displayName of a deploy/monitoring JSON file (two-space indent, one key per line).
-display_name_of() {
-  local name file="$1"
-  name="$(sed -n 's/^  "displayName": "\([^"]*\)",$/\1/p' "$file")"
-  [[ -n "$name" ]] || whim_fail "$file has no top-level displayName"
-  printf '%s' "$name"
-}
-
-# Finds the one line of $2 (tab-separated: display name, name, fingerprint, extra) whose display
-# name is $1, and sets ROW_NAME, ROW_SPEC and ROW_EXTRA from it (all empty when there is none). Two
-# resources under one display name can't be told apart, so that refuses.
-find_row() {
-  local wanted="$1" rows="$2" line match="" rest
-  while IFS= read -r line; do
-    [[ "${line%%"$TAB"*}" = "$wanted" ]] || continue
-    [[ -z "$match" ]] || whim_fail "two resources are named '$wanted'; delete one, then rerun"
-    match="$line"
-  done <<<"$rows"
-  ROW_NAME="" ROW_SPEC="" ROW_EXTRA=""
-  [[ -n "$match" ]] || return 0
-  rest="${match#*"$TAB"}"
-  ROW_NAME="${rest%%"$TAB"*}"
-  [[ "$rest" != "$ROW_NAME" ]] || return 0
-  rest="${rest#*"$TAB"}"
-  ROW_SPEC="${rest%%"$TAB"*}"
-  [[ "$rest" != "$ROW_SPEC" ]] || return 0
-  ROW_EXTRA="${rest#*"$TAB"}"
-}
-
-# Creates the rendered resource when no row in $2 carries its display name, updates it when the
-# row's fingerprint differs, and otherwise leaves it. $1 names it, $3 is the gcloud flag that takes
-# the file, the rest is the gcloud command group. Sets APPLIED_NAME to its resource name.
-apply_rendered() {
-  local what="$1" rows="$2" file_flag="$3" display
-  shift 3
-  display="$(display_name_of "$RENDERED_FILE")"
-  find_row "$display" "$rows"
-  if [[ -z "$ROW_NAME" ]]; then
-    APPLIED_NAME="$(whim_gcloud "$@" create "$file_flag=$RENDERED_FILE" --format='value(name)')"
-    [[ -n "$APPLIED_NAME" ]] || whim_fail "creating $what '$display' returned no resource name"
-    echo "created $what '$display'"
-  elif [[ "$ROW_SPEC" != "$RENDERED_SPEC" ]]; then
-    whim_gcloud "$@" update "$ROW_NAME" "$file_flag=$RENDERED_FILE" >/dev/null
-    APPLIED_NAME="$ROW_NAME"
-    echo "updated $what '$display'"
-  else
-    APPLIED_NAME="$ROW_NAME"
-    echo "unchanged $what '$display'"
-  fi
-}
-
-capture_uptime_value() {
-  local key="$1" value="$2" context="$3"
-  whim_word_in "$key" "DISPLAY_NAME CHECK_PATH PERIOD_MINUTES TIMEOUT_SECONDS REGIONS MATCHER_CONTENT" \
-    || whim_fail "$context: unknown uptime check setting $key"
-  printf -v "uptime_$key" '%s' "$value"
 }
 
 echo "==> static address $WHIM_STATIC_IP"
@@ -274,71 +193,9 @@ exists whim_gcloud storage buckets describe "$SOURCEMAP_BUCKET" \
   || whim_gcloud storage buckets create "$SOURCEMAP_BUCKET" --location "$region" --uniform-bucket-level-access \
     --public-access-prevention
 
-echo "==> alert email channel"
-render_monitoring "$MONITORING_DIR/channel-email.json" ALERT_EMAIL "$WHIM_ALERT_EMAIL"
-apply_rendered "notification channel" \
-  "$(whim_gcloud beta monitoring channels list --format='value(displayName,name,userLabels.whim_spec)')" \
-  --channel-content-from-file beta monitoring channels
-readonly channel="$APPLIED_NAME"
-
-echo "==> uptime check on https://$WHIM_API_HOST"
-uptime_file="$MONITORING_DIR/uptime-healthz.env"
-uptime_DISPLAY_NAME="" uptime_CHECK_PATH="" uptime_PERIOD_MINUTES="" uptime_TIMEOUT_SECONDS="" uptime_REGIONS="" uptime_MATCHER_CONTENT=""
-whim_read_env_lines "$uptime_file" capture_uptime_value
-for key in DISPLAY_NAME CHECK_PATH PERIOD_MINUTES TIMEOUT_SECONDS REGIONS MATCHER_CONTENT; do
-  value_name="uptime_$key"
-  [[ -n "${!value_name}" ]] || whim_fail "$uptime_file sets no $key"
-done
-uptime_spec="$(git hash-object "$uptime_file")"
-uptime_settings=(--path "$uptime_CHECK_PATH" --period "$uptime_PERIOD_MINUTES" --timeout "$uptime_TIMEOUT_SECONDS"
-  --validate-ssl=true --matcher-content "$uptime_MATCHER_CONTENT" --matcher-type contains-string)
-find_row "$uptime_DISPLAY_NAME" \
-  "$(whim_gcloud monitoring uptime list-configs --format='value(displayName,name,userLabels.whim_spec,monitoredResource.labels.host)')"
-if [[ -z "$ROW_NAME" ]]; then
-  uptime_name="$(whim_gcloud monitoring uptime create "$uptime_DISPLAY_NAME" --resource-type uptime-url \
-    --resource-labels "host=$WHIM_API_HOST,project_id=$project" --protocol https --port 443 "${uptime_settings[@]}" \
-    --regions "$uptime_REGIONS" --user-labels "whim_spec=$uptime_spec" --format='value(name)')"
-  [[ -n "$uptime_name" ]] || whim_fail "creating uptime check '$uptime_DISPLAY_NAME' returned no resource name"
-  echo "created uptime check '$uptime_DISPLAY_NAME'"
-elif [[ "$ROW_EXTRA" != "$WHIM_API_HOST" ]]; then
-  # An uptime check's host can't be updated in place.
-  whim_fail "uptime check '$uptime_DISPLAY_NAME' watches ${ROW_EXTRA:-another host}, not $WHIM_API_HOST; delete it (gcloud monitoring uptime delete ${ROW_NAME##*/}), then rerun"
-elif [[ "$ROW_SPEC" != "$uptime_spec" ]]; then
-  uptime_name="$ROW_NAME"
-  whim_gcloud monitoring uptime update "${uptime_name##*/}" "${uptime_settings[@]}" --set-regions "$uptime_REGIONS" \
-    --update-user-labels "whim_spec=$uptime_spec" >/dev/null
-  echo "updated uptime check '$uptime_DISPLAY_NAME'"
-else
-  uptime_name="$ROW_NAME"
-  echo "unchanged uptime check '$uptime_DISPLAY_NAME'"
-fi
-readonly uptime_check_id="${uptime_name##*/}"
-
-echo "==> log-based metrics"
-for template in "$MONITORING_DIR"/metric-*.json; do
-  metric="$(basename "$template" .json)"
-  metric="${metric#metric-}"
-  render_monitoring "$template"
-  if description="$(whim_gcloud logging metrics describe "$metric" --format='value(description)' 2>/dev/null)"; then
-    case "$description" in
-      *"whim_spec $RENDERED_SPEC") echo "unchanged log metric $metric" ;;
-      *)
-        whim_gcloud logging metrics update "$metric" --config-from-file="$RENDERED_FILE" >/dev/null
-        echo "updated log metric $metric"
-        ;;
-    esac
-  else
-    whim_gcloud logging metrics create "$metric" --config-from-file="$RENDERED_FILE" >/dev/null
-    echo "created log metric $metric"
-  fi
-done
-
-echo "==> alert policies"
-policy_rows="$(whim_gcloud monitoring policies list --format='value(displayName,name,userLabels.whim_spec)')"
-for template in "$MONITORING_DIR"/policy-*.json; do
-  render_monitoring "$template" CHANNEL "$channel" UPTIME_CHECK_ID "$uptime_check_id"
-  apply_rendered "alert policy" "$policy_rows" --policy-from-file monitoring policies
-done
+WHIM_MONITORING_WORK="$work"
+whim_apply_monitoring "$WHIM_ALERT_EMAIL" "$WHIM_API_HOST"
+readonly channel="$WHIM_MONITORING_CHANNEL"
 
 echo "==> billing budget '$BUDGET_DISPLAY_NAME' on $WHIM_BILLING_ACCOUNT"
 # Cloud Billing refuses a budget in any currency but the account's own, so the amount takes it.
@@ -349,7 +206,7 @@ currency="$(whim_gcloud beta billing accounts describe "$WHIM_BILLING_ACCOUNT" -
 # Emails the channel (and the billing account's admins) at 50, 90 and 100 % of the month's amount.
 budget_settings=(--budget-amount "${WHIM_MONTHLY_BUDGET}${currency}" --filter-projects "projects/$project"
   --notifications-rule-monitoring-notification-channels "$channel")
-find_row "$BUDGET_DISPLAY_NAME" "$(whim_gcloud billing budgets list --billing-account "$WHIM_BILLING_ACCOUNT" \
+whim_find_row "$BUDGET_DISPLAY_NAME" "$(whim_gcloud billing budgets list --billing-account "$WHIM_BILLING_ACCOUNT" \
   --format='value(displayName,name,amount.specifiedAmount.units,notificationsRule.monitoringNotificationChannels)')"
 if [[ -z "$ROW_NAME" ]]; then
   whim_gcloud billing budgets create --billing-account "$WHIM_BILLING_ACCOUNT" --display-name "$BUDGET_DISPLAY_NAME" \

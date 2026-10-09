@@ -7,13 +7,18 @@
 #                                             the purge job keeps its image but takes the new config
 #   deploy/cloudrun/deploy.sh --site-only     the pages site only; the server is untouched
 #
+# Every mode ends with deploy/cloudrun/smoke.sh: the full smoke, with its one live /v1/clarify, after
+# a plain or --tag deploy, and the pages-only smoke after --site-only. A failed smoke exits 1 and
+# prints the command that restores what was serving before.
+#
 # Values come from deploy/defaults.env, then ~/.config/whim/deploy.env, then the environment, as for
 # the VM deploy. Two services: whim-server (the API host) and whim-site (Caddy serving the rendered
 # pages). Both run as the whim-run service account, which can read the OpenRouter secret and use
 # Firestore. The server keeps usage, reports and waitlist rows in the project's Firestore database
 # (WHIM_STORE_BACKEND=firestore), and the whim-purge job, run hourly by Cloud Scheduler, deletes the
-# ones past their keep period; the alert deploy/monitoring/policy-purge-failed.json emails when it
-# logs an error. WHIM_STORE_BACKEND=sqlite in the environment deploys the server on SQLite stores
+# ones past their keep period. A plain deploy also applies all of deploy/monitoring/ (the alert
+# channel to WHIM_ALERT_EMAIL, the uptime check, the log metric and every alert policy, each by
+# fingerprint). WHIM_STORE_BACKEND=sqlite in the environment deploys the server on SQLite stores
 # under /tmp instead, which last only as long as the instance (the rollback); it makes no Firestore,
 # Scheduler or Monitoring call and leaves an existing purge job as it was.
 set -euo pipefail
@@ -30,10 +35,6 @@ readonly RUN_SERVICE_ACCOUNT_NAME=whim-run
 # time while the scaled-to-zero server has no instance to run its own hourly purge.
 readonly RUN_PURGE_JOB=whim-purge
 readonly RUN_PURGE_SCHEDULE=whim-purge-hourly
-# The alert that emails when the purge job logs an error, and the channel it emails (both applied by
-# deploy/provision.sh too).
-readonly RUN_PURGE_ALERT="$WHIM_DEPLOY_DIR/monitoring/policy-purge-failed.json"
-readonly RUN_ALERT_CHANNEL="$WHIM_DEPLOY_DIR/monitoring/channel-email.json"
 # The server's drain must finish inside Cloud Run's 10 s SIGTERM grace. Cloud Run only stops an idle
 # instance, so there is normally nothing to drain.
 readonly RUN_SERVER_DRAIN_MS=8000
@@ -112,13 +113,17 @@ esac
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
-server_optional_keys="WHIM_CLARIFY_MODEL WHIM_SUMMARY_MODEL WHIM_PLAN_MODEL WHIM_REPAIR_MODEL WHIM_CLARIFY_REASONING WHIM_REWRITE_REASONING WHIM_SUMMARY_REASONING WHIM_PLAN_REASONING WHIM_ENGINEER_REASONING WHIM_REPAIR_REASONING WHIM_PROVIDER_SORT WHIM_PROVIDER_QUANTIZATIONS WHIM_QUEUE_MAX WHIM_QUEUE_MAX_WAIT_MS WHIM_MIN_BUILD_IOS WHIM_MIN_BUILD_ANDROID WHIM_USAGE_IDLE_DAYS WHIM_BETA_LIMIT_PER_CLIENT_HOUR WHIM_BETA_LIMIT_PER_DAY"
+server_optional_keys="WHIM_CLARIFY_MODEL WHIM_SUMMARY_MODEL WHIM_PLAN_MODEL WHIM_REPAIR_MODEL WHIM_CLARIFY_REASONING WHIM_REWRITE_REASONING WHIM_SUMMARY_REASONING WHIM_PLAN_REASONING WHIM_ENGINEER_REASONING WHIM_REPAIR_REASONING WHIM_PROVIDER_SORT WHIM_PROVIDER_QUANTIZATIONS WHIM_QUEUE_MAX WHIM_QUEUE_MAX_WAIT_MS WHIM_MIN_BUILD_IOS WHIM_MIN_BUILD_ANDROID WHIM_USAGE_IDLE_DAYS WHIM_BETA_LIMIT_PER_CLIENT_HOUR WHIM_BETA_LIMIT_PER_DAY WHIM_POLICY_ATTEMPT_TIMEOUT_MS WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY WHIM_LIMIT_POLICY_CHECKS_PER_DAY"
 
 whim_load_values
 whim_require_values WHIM_GCP_PROJECT WHIM_GCP_REGION WHIM_RUN_REGION WHIM_API_HOST WHIM_WEB_HOST \
   WHIM_SUPPORT_EMAIL WHIM_ENGINEER_MODEL WHIM_REWRITE_MODEL
 [[ "$WHIM_API_HOST" = "api.$WHIM_WEB_HOST" ]] \
   || whim_fail "WHIM_API_HOST must be api.$WHIM_WEB_HOST, got $WHIM_API_HOST"
+# A plain firestore deploy applies the alert channel, which emails WHIM_ALERT_EMAIL.
+if [[ "$site_only" -eq 0 ]] && [[ -z "$tag" ]] && [[ "$store_backend" = firestore ]]; then
+  whim_require_values WHIM_ALERT_EMAIL
+fi
 service_account="$RUN_SERVICE_ACCOUNT_NAME@$WHIM_GCP_PROJECT.iam.gserviceaccount.com"
 
 # A rollback (--tag) needs no checkout state; anything built from HEAD must be committed and pushed.
@@ -234,66 +239,16 @@ update_purge_job_config() {
     || whim_fail "updating the purge job's environment failed. The server is deployed; deploy again to retry the job."
 }
 
-# The top-level displayName of a deploy/monitoring JSON file (two-space indent, one key per line).
-display_name_of() {
-  local file="$1" name
-  name="$(sed -n 's/^  "displayName": "\([^"]*\)",$/\1/p' "$file")"
-  [[ -n "$name" ]] || whim_fail "$file has no top-level displayName"
-  printf '%s' "$name"
-}
-
-# Prints the fields after the display name (tab-separated) of the one row of $2 whose display name
-# is $1, and nothing when there is none. Rows are gcloud `value(displayName,name,...)` lines. $3
-# names the rows, for the refusal when two share the display name.
-named_row() {
-  local wanted="$1" rows="$2" what="$3" found
-  found="$(awk -F '\t' -v wanted="$wanted" '$1 == wanted { sub(/^[^\t]*\t/, ""); print }' <<<"$rows")"
-  [[ "$found" != *$'\n'* ]] || whim_fail "two $what are named '$wanted'; delete one, then deploy again. The server and the purge job are deployed."
-  printf '%s' "$found"
-}
-
-# Applies the purge job's failure alert as deploy/provision.sh's apply_rendered applies a policy:
-# rendered with the alert channel and fingerprinted as provision.sh renders it, it is created when
-# no alert policy carries its display name, updated in place when that policy's fingerprint
-# (userLabels.whim_spec) differs, and otherwise left alone.
-apply_purge_alert() {
-  local display channel_display row channel policy policy_spec text spec rendered="$stage/policy-purge-failed.json"
-  display="$(display_name_of "$RUN_PURGE_ALERT")"
-  channel_display="$(display_name_of "$RUN_ALERT_CHANNEL")"
-  row="$(whim_gcloud beta monitoring channels list --format='value(displayName,name)')" \
-    || whim_fail "listing the notification channels failed. The server and the purge job are deployed; deploy again to retry the alert."
-  row="$(named_row "$channel_display" "$row" "notification channels")"
-  channel="${row%%$'\t'*}"
-  if [[ -z "$channel" ]]; then
-    whim_fail "no notification channel is named '$channel_display', so the purge job's failure alert has nowhere to email. The server and the purge job are deployed. Create the channel, then deploy again:
-  sed -e 's/{{ALERT_EMAIL}}/${WHIM_ALERT_EMAIL:-<alert email>}/' -e 's/{{SPEC}}/manual/' deploy/monitoring/channel-email.json >\"\$TMPDIR/whim-channel.json\"
-  gcloud --project $WHIM_GCP_PROJECT beta monitoring channels create --channel-content-from-file=\"\$TMPDIR/whim-channel.json\""
-  fi
-  text="$(<"$RUN_PURGE_ALERT")"
-  text="${text//\{\{CHANNEL\}\}/$channel}"
-  spec="$(printf '%s' "$text" | git hash-object --stdin)"
-  text="${text//\{\{SPEC\}\}/$spec}"
-  case "$text" in
-    *'{{'*) whim_fail "$RUN_PURGE_ALERT: a {{placeholder}} is left unfilled. The server and the purge job are deployed." ;;
-    *) ;;
-  esac
-  printf '%s\n' "$text" >"$rendered"
-  row="$(whim_gcloud monitoring policies list --format='value(displayName,name,userLabels.whim_spec)')" \
-    || whim_fail "listing the alert policies failed. The server and the purge job are deployed; deploy again to retry the alert."
-  row="$(named_row "$display" "$row" "alert policies")"
-  policy="${row%%$'\t'*}"
-  policy_spec=""
-  [[ "$row" != *$'\t'* ]] || policy_spec="${row#*$'\t'}"
-  if [[ -z "$policy" ]]; then
-    whim_gcloud monitoring policies create --policy-from-file="$rendered" --format='value(name)' >/dev/null \
-      || whim_fail "creating the alert policy '$display' failed. The server and the purge job are deployed; deploy again to retry the alert."
-    echo "created alert policy '$display'"
-  elif [[ "$policy_spec" != "$spec" ]]; then
-    whim_gcloud monitoring policies update "$policy" --policy-from-file="$rendered" >/dev/null \
-      || whim_fail "updating the alert policy '$display' failed. The server and the purge job are deployed; deploy again to retry the alert."
-    echo "updated alert policy '$display'"
-  else
-    echo "unchanged alert policy '$display'"
+# The commit of the image serving $1 (a service) now, read before this deploy replaces it, so a
+# failed smoke can name the way back. Prints nothing when there is no ready revision or its image is
+# not tagged with a commit.
+serving_commit() {
+  local revision image
+  revision="$(whim_gcloud run services describe "$1" --region "$WHIM_RUN_REGION" --format='value(status.latestReadyRevisionName)' 2>/dev/null)" || return 0
+  [[ -n "$revision" ]] || return 0
+  image="$(whim_gcloud run revisions describe "$revision" --region "$WHIM_RUN_REGION" --format='value(spec.containers[0].image)' 2>/dev/null)" || return 0
+  if [[ "$image" =~ :([0-9a-f]{40})$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
   fi
 }
 
@@ -323,9 +278,11 @@ deploy_server() {
   [[ "$store_backend" != firestore ]] || apply_firestore_indexes
   echo "==> cloud run $RUN_SERVER_SERVICE"
   # gen2: Chromium's namespace sandbox needs it, and boot refuses to listen without the sandbox.
-  # One instance at most, so the in-memory daily ceilings stay one set of counters.
+  # One instance at most, so the in-memory daily ceilings stay one set of counters. Request-based
+  # billing (--cpu-throttling): CPU is allocated, and billed, only while a request is in flight, so an
+  # idle instance the uptime check keeps warm costs nothing.
   whim_gcloud run deploy "$RUN_SERVER_SERVICE" --region "$WHIM_RUN_REGION" --image "$image" \
-    --execution-environment gen2 --port 8787 --cpu 2 --memory 4Gi --cpu-boost \
+    --execution-environment gen2 --port 8787 --cpu 2 --memory 4Gi --cpu-boost --cpu-throttling \
     --min-instances 0 --max-instances 1 --concurrency 40 --timeout 900 \
     --service-account "$service_account" --allow-unauthenticated \
     --env-vars-file "$env_file" --set-secrets "OPENROUTER_API_KEY=$WHIM_OPENROUTER_SECRET_ID:latest" --quiet
@@ -338,19 +295,16 @@ deploy_server() {
     return 0
   fi
   deploy_purge_job "$image" "$env_file"
-  apply_purge_alert
+  WHIM_MONITORING_WORK="$stage"
+  WHIM_FAIL_CONTEXT="The server and the purge job are deployed; deploy again to retry the monitoring."
+  whim_apply_monitoring "$WHIM_ALERT_EMAIL" "$WHIM_API_HOST"
+  WHIM_FAIL_CONTEXT=""
 }
 
 deploy_site() {
   local image="$WHIM_GCP_REGION-docker.pkg.dev/$WHIM_GCP_PROJECT/$WHIM_REGISTRY_REPO/site:$head_sha"
-  local -a site_env=(env -u WHIM_APP_STORE_URL -u WHIM_PLAY_STORE_URL
-    "WHIM_SUPPORT_EMAIL=$WHIM_SUPPORT_EMAIL" "WHIM_BETA_SIGNUP_URL=https://$WHIM_API_HOST/beta/signup"
-    "WHIM_ENGINEER_MODEL=$WHIM_ENGINEER_MODEL" "WHIM_REWRITE_MODEL=$WHIM_REWRITE_MODEL")
-  [[ -z "$WHIM_APP_STORE_URL" ]] || site_env+=("WHIM_APP_STORE_URL=$WHIM_APP_STORE_URL")
-  [[ -z "$WHIM_PLAY_STORE_URL" ]] || site_env+=("WHIM_PLAY_STORE_URL=$WHIM_PLAY_STORE_URL")
   echo "==> site build"
-  (cd "$WHIM_REPO_ROOT" && "${site_env[@]}" node server/site.mjs build --out "$stage/site-image/site") \
-    || whim_fail "the site build failed. Nothing was changed."
+  whim_cloudrun_site_build "$stage/site-image/site" || whim_fail "the site build failed. Nothing was changed."
   cp "$WHIM_DEPLOY_DIR/cloudrun/Caddyfile" "$stage/site-image/Caddyfile"
   cp "$WHIM_DEPLOY_DIR/cloudrun/site.Dockerfile" "$stage/site-image/Dockerfile"
   echo "==> cloud build $image"
@@ -361,6 +315,41 @@ deploy_site() {
     --service-account "$service_account" --allow-unauthenticated --quiet
 }
 
+# Prints how to restore what served before this deploy, after a failed smoke.
+print_rollback() {
+  printf '%s: the smoke failed. What this deploy changed is live. To roll back:\n' "$WHIM_SCRIPT"
+  if [[ "$site_only" -eq 0 ]]; then
+    if [[ -n "$previous_server_commit" ]]; then
+      printf '  deploy/cloudrun/deploy.sh --tag %s\n' "$previous_server_commit"
+    else
+      printf '  (no earlier %s revision with a commit-tagged image to roll back to)\n' "$RUN_SERVER_SERVICE"
+    fi
+  fi
+  if [[ -z "$tag" ]] && [[ -n "$previous_site_image" ]]; then
+    printf '  gcloud --project %s run deploy %s --region %s --image %s\n' \
+      "$WHIM_GCP_PROJECT" "$RUN_SITE_SERVICE" "$WHIM_RUN_REGION" "$previous_site_image"
+  fi
+}
+
+previous_server_commit=""
+previous_site_image=""
+[[ "$site_only" -eq 1 ]] || previous_server_commit="$(serving_commit "$RUN_SERVER_SERVICE")"
+[[ -n "$tag" ]] || previous_site_image="$(whim_gcloud run services describe "$RUN_SITE_SERVICE" --region "$WHIM_RUN_REGION" \
+  --format='value(spec.template.spec.containers[0].image)' 2>/dev/null)" || previous_site_image=""
+
 [[ "$site_only" -eq 1 ]] || deploy_server
 [[ -n "$tag" ]] || deploy_site
-echo "deployed. Check: https://$WHIM_API_HOST/health and https://$WHIM_WEB_HOST/privacy"
+
+echo "==> smoke"
+smoke_args=()
+if [[ "$site_only" -eq 1 ]]; then
+  smoke_args=(--pages-only --site-dir "$stage/site-image/site")
+else
+  smoke_args=(--commit "${tag:-$head_sha}")
+  [[ -n "$tag" ]] || smoke_args+=(--site-dir "$stage/site-image/site")
+fi
+if ! bash "$WHIM_DEPLOY_DIR/cloudrun/smoke.sh" "${smoke_args[@]}"; then
+  print_rollback >&2
+  exit 1
+fi
+echo "cloudrun/deploy.sh: done"
