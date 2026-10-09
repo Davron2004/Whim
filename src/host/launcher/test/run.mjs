@@ -32,6 +32,7 @@ await build({
     'react-native': path.join(here, 'native-host.tsx'),
     'react-native-safe-area-context': path.join(here, 'native-host.tsx'),
     'react-native-webview': path.join(here, 'native-host.tsx'),
+    'react-native-svg': path.join(here, 'native-svg.tsx'),
     'react-native-mmkv': path.join(here, 'native-storage.ts'),
     '@op-engineering/op-sqlite': path.join(here, 'native-storage.ts'),
   },
