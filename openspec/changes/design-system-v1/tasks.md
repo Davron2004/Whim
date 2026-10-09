@@ -60,11 +60,11 @@
 
 ## 8. Haptics (HUMAN-BOOTSTRAP: `package.json` `codegenConfig`)
 
-- [ ] 8.1 `src/native/NativeWhimHaptics.ts` spec (`impact(style)`, `selection()`, `notification(kind)`, `prepare(kind)`, `cue(kind)`); register it in `codegenConfig` beside `WhimTone`
-- [ ] 8.2 Android `com.whim.haptics.WhimHapticsModule`/`Package` (`performHapticFeedback` on the root view with API-34 constants and the fallbacks of `system.md` §5; `VibrationEffect.createPredefined` for cue kinds) registered in `MainApplication.kt` without disturbing `WhimTonePackage` or the network-deny manager
-- [ ] 8.3 iOS `WhimHapticsModule.mm` (impact, selection and notification generators, prepared on touch-down) in the Xcode project
-- [ ] 8.4 `src/host/haptics.ts`: the shell moment map of `system.md` §5 (pure, Node-testable) over the native module, no-op when absent
-- [ ] 8.5 `src/host/cue-backend.ts`: `cues.haptic` through `WhimHaptics` with a per-realm token bucket (10/s, burst 3, drop) after the bridge dedupe; remove `Vibration`; update `src/host/bridge/test/acceptance.ts` and the native-host test double; add the rate-cap test
+- [x] 8.1 `src/native/NativeWhimHaptics.ts` spec (`impact(style)`, `selection()`, `notification(kind)`, `prepare(kind)`, `cue(kind)`); register it in `codegenConfig` beside `WhimTone`
+- [x] 8.2 Android `com.whim.haptics.WhimHapticsModule`/`Package` (`performHapticFeedback` on the root view with API-34 constants and the fallbacks of `system.md` §5; `VibrationEffect.createPredefined` for cue kinds) registered in `MainApplication.kt` without disturbing `WhimTonePackage` or the network-deny manager
+- [x] 8.3 iOS `WhimHapticsModule.mm` (impact, selection and notification generators, prepared on touch-down) in the Xcode project
+- [x] 8.4 `src/host/haptics.ts`: the shell moment map of `system.md` §5 (pure, Node-testable) over the native module, no-op when absent
+- [x] 8.5 `src/host/cue-backend.ts`: `cues.haptic` through `WhimHaptics` with a per-realm token bucket (10/s, burst 3, drop) after the bridge dedupe; remove `Vibration`; update `src/host/bridge/test/acceptance.ts` and the native-host test double; add the rate-cap test
 
 ## 9. Platform theming, launch and icon
 
