@@ -324,11 +324,12 @@ export function finalizeContainmentVerdict(state: ObservationState): ObservedDia
   return pushContainmentUnobserved(state, 'the run ended with no nonce-authenticated probes frame — containment was never verified');
 }
 
-/** The `where` values of `loader.js`'s realm-window `error`/`unhandledrejection` listeners. Those
- *  frames carry the error's name only, never its message (device-diagnostics privacy); the same
- *  failures reach this collector with their message through CDP `Runtime.exceptionThrown`, so
- *  recording the frame too would double-count and hand the repair loop a message-free throw. */
-const REALM_LISTENER_WHERES: ReadonlySet<string> = new Set(['runtime', 'rejection']);
+/** The `where` values of `loader.js`'s realm-window `error`/`unhandledrejection` listeners, and of
+ *  its root's report of a render error no boundary caught (which it passes on to `reportError`).
+ *  Those frames carry the error's name only, never its message (device-diagnostics privacy); the
+ *  same failures reach this collector with their message through CDP `Runtime.exceptionThrown`,
+ *  so recording the frame too would double-count and hand the repair loop a message-free throw. */
+const REALM_LISTENER_WHERES: ReadonlySet<string> = new Set(['runtime', 'rejection', 'render']);
 
 function recordMountError(state: ObservationState, payload: RelayPayload): void {
   const where = payload && typeof payload.where === 'string' ? payload.where : 'unknown';

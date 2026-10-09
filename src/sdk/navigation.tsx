@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { AppSpec } from './index';
+import { chromeInsetContext } from './chrome-inset';
 
 // ── Navigation (sdk-navigation D1–D4) ────────────────────────────────────────
 // `nav` is deliberately a stable module-scope object rather than a hook: mini-app event
@@ -34,6 +35,8 @@ export const nav = {
 
 export interface NavRootProps {
   spec: AppSpec;
+  /** How much of the bottom edge the host's chrome covers, already sanitized by the loader. */
+  chromeInsetBottom?: number;
 }
 
 interface NavMessageEvent {
@@ -59,7 +62,7 @@ function popNavStack(stack: string[]): string[] {
 }
 
 /** Repository-internal runtime mount point. Mini-apps use `nav`; the trusted loader mounts this root. */
-export function NavRoot({ spec }: NavRootProps): React.ReactElement {
+export function NavRoot({ spec, chromeInsetBottom = 0 }: NavRootProps): React.ReactElement {
   const [stack, setStack] = React.useState<string[]>([spec.initial]);
 
   React.useEffect(() => {
@@ -125,5 +128,9 @@ export function NavRoot({ spec }: NavRootProps): React.ReactElement {
   }, [stack.length]);
 
   const CurrentScreen = spec.screens[stack[stack.length - 1]];
-  return React.createElement(CurrentScreen, { key: stack.length - 1 });
+  return React.createElement(
+    chromeInsetContext().Provider,
+    { value: chromeInsetBottom },
+    React.createElement(CurrentScreen, { key: stack.length - 1 }),
+  );
 }
