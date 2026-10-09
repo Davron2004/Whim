@@ -1,0 +1,1 @@
+- 2026-10-09 chain-4 merged (ba019af0). Runbook note for chain-7: send news only to `--updates-ok`; a withdrawn row keeps its old updates_consent_at while updates_opt_in is false — never select recipients from that column.

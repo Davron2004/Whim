@@ -85,7 +85,7 @@ Constraints for every task:
 
 ## 4. Signup route and operator command (#109, #111)
 
-- [ ] 4.1 `server/src/routes/beta-signup.ts`, per design D4:
+- [x] 4.1 `server/src/routes/beta-signup.ts`, per design D4:
   - the Origin check runs after the body cap and before the content-type check, compares against `config.webOrigin` exactly, refuses `null`, and logs outcome `origin`;
   - read `updates_opt_in` (absent or `1`) and ignore `updates_opt_out`;
   - outcome `suppressed` redirects to thanks;
@@ -93,7 +93,7 @@ Constraints for every task:
   - the `error` line keeps `errorClass`.
 
   Leave the email validator unchanged.
-- [ ] 4.2 `server/test/beta-signup.suite.ts`:
+- [x] 4.2 `server/test/beta-signup.suite.ts`:
   - Origin cases: cross-site, `null`, same-site, absent, and a trap post with a cross-site Origin (retry);
   - a stale `updates_opt_out` field;
   - a suppressed signup;
@@ -102,15 +102,15 @@ Constraints for every task:
   - log cleanliness across every outcome.
 
   Red-check the cross-site case against today's route, and the `null` case against a variant that only refuses non-null foreign origins.
-- [ ] 4.3 `server/src/waitlist/cli.ts`:
+- [x] 4.3 `server/src/waitlist/cli.ts`:
   - export columns `email, platform, updates_opt_in, updates_consent_at, notice_id, created_at, updated_at`;
   - `--updates-ok` filters to rows with consent;
   - `csvCell` prefixes `'` to cells starting with `= + - @ | %`, a tab or a CR;
   - `remove` always keeps the fingerprint and exits 0, saying whether a row existed;
   - new `updates <email> on|off` and `restore <email>`;
   - usage text.
-- [ ] 4.4 `server/test/waitlist.suite.ts`: cover the CLI scenarios (news export, removal with the fingerprint kept, removal before signup, restore, `updates on|off`, a formula cell from a row written straight to the store). Red-check the formula case against today's `csvCell`.
-- [ ] 4.5 Write `handoff/signup-route.md`: the outcome codes and their redirects, the order of checks, the form field names, the CLI commands with their output and exit codes, and the CSV columns.
+- [x] 4.4 `server/test/waitlist.suite.ts`: cover the CLI scenarios (news export, removal with the fingerprint kept, removal before signup, restore, `updates on|off`, a formula cell from a row written straight to the store). Red-check the formula case against today's `csvCell`.
+- [x] 4.5 Write `handoff/signup-route.md`: the outcome codes and their redirects, the order of checks, the form field names, the CLI commands with their output and exit codes, and the CSV columns.
 
 ## 5. Signup page, privacy policy and provider rows (#109, #114)
 
