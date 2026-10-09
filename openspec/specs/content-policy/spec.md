@@ -119,3 +119,10 @@ When the server runs with the stub selector (`WHIM_PIPELINE=stub`), the policy c
 - **WHEN** the stub server receives a generate request whose prompt contains `[[refuse]]`
 - **THEN** the response is `422 content_policy`, and no model call is made
 
+### Requirement: Typed clarify answers are checked like the prompt
+The content check on `/v1/rewrite` and `/v1/generate` SHALL classify every clarification's picked choices and typed `other` text together with the prompt, so a typed answer cannot carry text past the check that the prompt could not.
+
+#### Scenario: Harmful text in an "Other" answer
+- **WHEN** a rewrite request's prompt is benign but a clarification's `other` text violates the content policy
+- **THEN** the request is refused exactly as if the prompt carried that text
+

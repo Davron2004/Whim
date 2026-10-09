@@ -152,7 +152,7 @@ Production `https://api.whim.anycognition.ca`, parallel 2, no retries. Before = 
 (pre-beta-1 server); after = staging tip `78e59059`; rate runs after fix-6. Sets: `evals/sets/visible`
 (22 cases) and a 4-case impossible-prompt set (2 live-weather, 2 ping-a-roommate). Phase times are
 medians (max in brackets), in ms. The raw JSON reports are in `beta-1/flowbench.tar.zst`
-(`openspec/changes/beta-1/EVIDENCE.md`).
+(`docs/EVIDENCE.md`).
 
 | Run | Results / failures / limits | Clarify | Rewrite | Generate |
 |---|---|---|---|---|
