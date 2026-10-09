@@ -10,8 +10,9 @@
  * That costs this suite nothing it cares about: the scanner is pure and synchronous — no I/O, no
  * clock, no network — so determinism is untouched, and `typescript` is `external` in `run.mjs`
  * (Node resolves it from node_modules rather than esbuild bundling its CJS `require`s into an
- * unsupported dynamic require). The real check PIPELINE still never runs here: `CheckStage` is a
- * fake, exactly as before.
+ * unsupported dynamic require). The real check PIPELINE runs in exactly one test — the tile-name
+ * case, whose claim (a near-miss name never reaches the repair policy) a fake stage could not
+ * falsify; everywhere else `CheckStage` is a fake.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -44,6 +45,7 @@ import { createModelSummariser, type SummariseResult, type Summariser } from '..
 import { checkCredit, invalidateCreditCache, type CreditCheckOptions } from '../src/admission/credit';
 import { budgetExhaustedRefusal } from '../src/admission/refusals';
 import { createRunStage } from '../src/generation/stages/run';
+import { createCheckStage } from '../src/generation/stages/check';
 import { fakeReport, stubRunCandidate } from './run-stage-fixtures';
 import type { RunReport } from '../../synthrun/contract';
 import type { Diagnostic, GenerateRequest, GenerationEvent, Usage } from '@whim/contract';
@@ -597,6 +599,38 @@ async function testPlanFailureLogsTheCodeNotTheSentence(): Promise<void> {
     'plan_failed log: no line carries the model-written screen name',
     capture.raw.every((line) => !line.includes('Alice') && !line.includes('Lisbon')),
   );
+}
+
+/** A tint or icon name is never an error and never costs a repair turn (generation-pipeline "The
+ *  delivered app record is harness-validated"): the REAL check stage resolves the near-miss names,
+ *  the REAL run stage assembles the record, and the first candidate is delivered as is. */
+async function testTileNamesNeverCostARepair(): Promise<void> {
+  section('machine — a near-miss tint or icon name is resolved into the record and costs no repair');
+
+  const source = [
+    "import { defineApp } from 'vc-sdk';",
+    'function Home() { return null; }',
+    "export default defineApp({ name: 'demo', initial: 'Home', screens: { Home }, capabilities: [], tint: ['teal', 'chartreuse'], icon: 'home' });",
+  ].join('\n');
+  const model = new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn([source])]);
+  const deps = baseDeps({
+    model,
+    check: createCheckStage(),
+    build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+    run: createRunStage(stubRunCandidate(fakeReport({}))),
+  });
+  const events = await collect(new GenerationMachine(deps).run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('tile names', events);
+
+  eq('tile names: no repair stage ran', stageEvents(events, 'repair'), []);
+  eq('tile names: no diagnostic was streamed', events.filter((e) => e.type === 'diagnostic'), []);
+  eq('tile names: only the plan and generate turns called the model', model.requests.map((r) => r.role), ['plan', 'engineer']);
+  const result = terminals(events)[0];
+  check('tile names: the first candidate is delivered', result?.type === 'result');
+  if (result?.type === 'result') {
+    eq('tile names: the record carries the resolved names inside manifest', [result.app.manifest.tint, result.app.manifest.icon], [['ocean'], 'house']);
+    eq('tile names: and nowhere else on the record', Object.keys(result.app).filter((key) => key === 'tint' || key === 'icon'), []);
+  }
 }
 
 async function testWarningsOnlyOneRepairThenDeliver(): Promise<void> {
@@ -2292,6 +2326,7 @@ export async function runMachineTests(): Promise<void> {
   await testPlanReaskThenFailure();
   await testPlanFailureLogsTheCodeNotTheSentence();
   await testWarningsOnlyOneRepairThenDeliver();
+  await testTileNamesNeverCostARepair();
   await testRepairPromptGetsWholeCurrentRoundErrorsFirst();
   await testVerbTimeRunDiagnosticRoutesToRepairAndDeliversNoRecord();
   await testContainmentFailureShortCircuit();

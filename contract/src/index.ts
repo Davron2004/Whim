@@ -135,10 +135,13 @@ const SchemaShape = z.record(z.string(), z.unknown());
  *  concern (#5); the *wire* record is this contract's. P3: the stored record adds install state on
  *  top of this set — the only naming seam is wire `schema` ↔ stored `schemaArtifact`.
  *
- *  An app's declared tile colour rides INSIDE `manifest` (`manifest.tileColor`, a `#rrggbb`
- *  literal) — the same statically extracted structure that already carries capabilities — and is
- *  deliberately NOT a second top-level field: manifest data has exactly one source. `manifest`
- *  stays an untyped record on the wire; the host validates the colour where it consumes it. */
+ *  An app's tile identity rides INSIDE `manifest` — the same statically extracted structure that
+ *  already carries capabilities — and is deliberately NOT a set of top-level fields: manifest data
+ *  has exactly one source. `manifest.tint` is the app's ranked tint names (1–3, already resolved to
+ *  the ten, aliases applied, unknown names dropped; absent when none resolved) and `manifest.icon`
+ *  its resolved glyph name (absent when none was declared). A legacy `manifest.tileColor` (a hex
+ *  string from an older build) may still appear, unvalidated. `manifest` stays an untyped record on
+ *  the wire; the host validates and assigns the tint where it consumes it. */
 export const WireAppRecord = z.object({
   name: z.string(),
   source: z.string(),

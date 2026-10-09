@@ -1,10 +1,68 @@
-import type { ApiError, Clarification } from '@whim/contract';
+import type { ApiError, Clarification, WireAppRecord } from '@whim/contract';
+import { runStaticChecks } from '../../../checks/index';
+import type { DiagnosticKind } from '../../../checks/contract';
 
 export interface EvalCase {
   caseId: string;
   appSlug: string;
   prompt: string;
   assertions: readonly unknown[];
+  /** A change to ask for once the case's app is delivered: the delivered app goes back to
+   *  `/v1/generate` with this prompt, and the report says whether its tile survived. */
+  change?: string;
+}
+
+/** The longest a clarify option may be (generation-pipeline "Clarify options are short enough to
+ *  read as answers"); the prompts suite checks the clarify prompt asks for this same cap. */
+export const OPTION_MAX_CHARS = 40;
+
+/** What clarify offered as options in one run: how many, and every one over `OPTION_MAX_CHARS`. */
+export interface OptionReport {
+  count: number;
+  long: string[];
+}
+
+/** A delivered app's tile: the tint and icon its manifest carries, and whether each was declared
+ *  as exactly a set name — no alias, keyword or fallback applied, per the checker's own
+ *  tile-identity diagnostics over the delivered source. */
+export interface TileReport {
+  tint?: string[];
+  icon?: string;
+  tintValid: boolean;
+  iconValid: boolean;
+}
+
+/** The change asked for after the case's app was delivered (`EvalCase.change`). `kept` is present
+ *  when the change delivered too: whether the changed app names the same tint and icon. */
+export interface ChangeReport {
+  prompt: string;
+  generate: GenerateReport;
+  tile?: TileReport;
+  kept?: boolean;
+}
+
+const TINT_KINDS: readonly DiagnosticKind[] = ['tint_alias', 'tint_fallback'];
+const ICON_KINDS: readonly DiagnosticKind[] = ['icon_alias', 'icon_keyword', 'icon_fallback'];
+
+export function optionReport(options: readonly string[]): OptionReport {
+  return { count: options.length, long: options.filter((option) => option.length > OPTION_MAX_CHARS) };
+}
+
+export function assessTile(app: WireAppRecord): TileReport {
+  const kinds = runStaticChecks(app.source).diagnostics.map((d) => d.kind);
+  const tint = Array.isArray(app.manifest.tint) ? app.manifest.tint.filter((name): name is string => typeof name === 'string') : undefined;
+  const icon = typeof app.manifest.icon === 'string' ? app.manifest.icon : undefined;
+  return {
+    ...(tint === undefined ? {} : { tint }),
+    ...(icon === undefined ? {} : { icon }),
+    tintValid: tint !== undefined && tint.length > 0 && !kinds.some((kind) => TINT_KINDS.includes(kind)),
+    iconValid: icon !== undefined && !kinds.some((kind) => ICON_KINDS.includes(kind)),
+  };
+}
+
+/** Whether a change kept the tile: the same ranked tints and the same icon. */
+export function tileKept(before: TileReport, after: TileReport): boolean {
+  return JSON.stringify(before.tint) === JSON.stringify(after.tint) && before.icon === after.icon;
 }
 
 export interface EvalSet {
@@ -43,7 +101,7 @@ export type CaseOutcome =
   | { type: 'result' }
   | { type: 'limit'; reason: string; alternative: string }
   | { type: 'clarified' }
-  | { type: 'failure'; phase: 'clarify' | 'rewrite' | 'generate'; reason: string; attempts: number };
+  | { type: 'failure'; phase: 'clarify' | 'rewrite' | 'generate' | 'change'; reason: string; attempts: number };
 
 export interface CaseReport {
   caseId: string;
@@ -53,6 +111,11 @@ export interface CaseReport {
   prompt: string;
   deviceId: string;
   clarifications: Clarification[];
+  /** Clarify's options for this run (none when clarify failed or set a limit). */
+  options: OptionReport;
+  /** The delivered app's tile, when generate delivered one. */
+  tile?: TileReport;
+  change?: ChangeReport;
   phases: {
     clarify: PhaseReport;
     rewrite?: PhaseReport;
@@ -94,6 +157,11 @@ export interface FlowBenchmarkReport {
     limits: number;
     /** One per case, in eval-set order. */
     tallies: CaseTally[];
+    /** Every clarify option across the run, and how many broke `OPTION_MAX_CHARS`. */
+    options: { total: number; long: number };
+    /** Every delivered app (first builds and changes): how many named a valid tint and icon, the
+     *  share whose icon was not exactly a set glyph, and how many changes kept the tile. */
+    tiles: { delivered: number; validTint: number; validIcon: number; invalidIconRate: number; changes: number; kept: number };
   };
 }
 
@@ -130,6 +198,20 @@ function tallies(cases: readonly CaseReport[]): CaseTally[] {
   return [...byCase.values()];
 }
 
+function tileSummary(cases: readonly CaseReport[]): FlowBenchmarkReport['summary']['tiles'] {
+  const tiles = cases.flatMap((item) => [item.tile, item.change?.tile]).filter((tile): tile is TileReport => tile !== undefined);
+  const validIcon = tiles.filter((tile) => tile.iconValid).length;
+  const changes = cases.filter((item) => item.change?.kept !== undefined);
+  return {
+    delivered: tiles.length,
+    validTint: tiles.filter((tile) => tile.tintValid).length,
+    validIcon,
+    invalidIconRate: tiles.length === 0 ? 0 : (tiles.length - validIcon) / tiles.length,
+    changes: changes.length,
+    kept: changes.filter((item) => item.change?.kept === true).length,
+  };
+}
+
 export function buildReport(setId: string, url: string, startedAt: string, cases: readonly CaseReport[], finishedAt = new Date().toISOString()): FlowBenchmarkReport {
   return {
     setId,
@@ -147,6 +229,11 @@ export function buildReport(setId: string, url: string, startedAt: string, cases
       failures: cases.filter((item) => item.outcome.type === 'failure').length,
       limits: cases.filter((item) => item.outcome.type === 'limit').length,
       tallies: tallies(cases),
+      options: {
+        total: cases.reduce((sum, item) => sum + item.options.count, 0),
+        long: cases.reduce((sum, item) => sum + item.options.long.length, 0),
+      },
+      tiles: tileSummary(cases),
     },
   };
 }
@@ -192,5 +279,14 @@ export function formatMarkdownReport(report: FlowBenchmarkReport): string {
   for (const tally of report.summary.tallies) {
     lines.push(`| ${tally.caseId} | ${tally.runs} | ${tally.limit} | ${tally.questions} | ${tally.empty} | ${tally.failure} |`);
   }
+  const { options, tiles } = report.summary;
+  lines.push(
+    '',
+    `| Options over ${OPTION_MAX_CHARS} chars | Apps delivered | Valid tint | Valid icon | Invalid-icon rate | Tile kept on change |`,
+    '| ---: | ---: | ---: | ---: | ---: | ---: |',
+    `| ${options.long} / ${options.total} | ${tiles.delivered} | ${tiles.validTint} | ${tiles.validIcon} | ${Math.round(tiles.invalidIconRate * 100)}% | ${tiles.kept} / ${tiles.changes} |`,
+  );
+  const longOptions = report.cases.flatMap((item) => item.options.long.map((option) => `- ${item.caseId}: "${option}" (${option.length} chars)`));
+  if (longOptions.length > 0) lines.push('', `Options over ${OPTION_MAX_CHARS} characters:`, ...longOptions);
   return `${lines.join('\n')}\n`;
 }
