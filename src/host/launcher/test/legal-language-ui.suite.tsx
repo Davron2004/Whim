@@ -100,7 +100,7 @@ export async function runLegalLanguageUiTests(h: Harness): Promise<void> {
       h.ok(consentIn(textOf(tree.root), COPY, FR), 'the consent screen that follows is English too');
       await press(button(tree, COPY.consentAgree));
       await unmountScreen(tree);
-      const restarted = await renderScreen(<LauncherRoot appInfo={testAppInfo} internalBuild deviceLocale={() => 'fr-CA'} />);
+      const restarted = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'fr-CA'} />);
       try {
         await reviewConsentFromSettings(restarted);
         h.ok(on(restarted, ConsentScreen) && consentIn(textOf(restarted.root), COPY, FR), 'the fr-CA phone still gets the consent screen in English');

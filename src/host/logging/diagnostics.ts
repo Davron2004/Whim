@@ -18,6 +18,8 @@
  *   - A `429` stops uploads: until its `Retry-After` has passed, or for the rest of the app session
  *     when it names no delta-seconds window. What is refused, waiting, or logged meanwhile is
  *     discarded, never queued for later.
+ *   - `discard()` drops what is waiting. The launcher calls it whenever the server requests go to
+ *     changes (beta-1 D20), so a record about one server is never uploaded to another.
  *
  * No React Native import: the seam and the Node suite load this directly.
  */
@@ -212,6 +214,14 @@ export class DiagnosticsTransport {
         records: records.length,
       });
     }
+  }
+
+  /** Drop every record waiting to be sent, unsent, and lift any rate-limit pause (it belonged to the
+   *  server being left). Records that arrive afterwards upload as usual. */
+  discard(): void {
+    this.cancelTimer();
+    this.pausedUntil = undefined;
+    this.discardWaiting();
   }
 
   /** Stop the timer (tests; a process that is going away). */

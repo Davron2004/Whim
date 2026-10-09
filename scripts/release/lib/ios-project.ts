@@ -517,6 +517,21 @@ function checkInfoPlist(repoRoot: string): IosProjectFinding[] {
     }
   }
 
+  // beta-1 D20 (native-release-config "Store builds carry no cleartext exception"): the user's own
+  // server may be on the local network, so iOS needs a reason to show for that permission, and ATS
+  // keeps arbitrary loads off with local networking its only exception.
+  const localNetworkUsage = plist.NSLocalNetworkUsageDescription;
+  if (typeof localNetworkUsage !== 'string' || localNetworkUsage.trim() === '') {
+    findings.push({ file: INFO_PLIST_PATH, message: '"NSLocalNetworkUsageDescription" must be a non-empty string' });
+  }
+  const ats = plist.NSAppTransportSecurity;
+  if (!isPlistDict(ats) || ats.NSAllowsArbitraryLoads !== false) {
+    findings.push({
+      file: INFO_PLIST_PATH,
+      message: `"NSAppTransportSecurity" must set "NSAllowsArbitraryLoads" to false, got ${JSON.stringify(isPlistDict(ats) ? ats.NSAllowsArbitraryLoads : ats)}`,
+    });
+  }
+
   if (plist.ITSAppUsesNonExemptEncryption !== false) {
     findings.push({
       file: INFO_PLIST_PATH,

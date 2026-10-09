@@ -23,7 +23,7 @@ import { MapKVBackend } from '../../version-store/fs/kv-fs';
 import { acceptTerms } from '../../launcher/terms-acceptance';
 import { grantConsent, revokeConsent } from '../../launcher/ai-consent';
 import { setErrorDetails } from '../../launcher/error-details';
-import { saveServerUrl } from '../../launcher/server-address';
+import { acknowledgeOwnServer, saveServerUrl } from '../../launcher/server-address';
 import { getDeviceId } from '../../launcher/device-id';
 import { appInfoFrom } from '../../launcher/app-info';
 import { diagnosticsTarget } from '../../launcher/diagnostics-target';
@@ -103,16 +103,17 @@ function consentedStore(): MapKVBackend {
   const kv = new MapKVBackend();
   acceptTerms(kv, '2026-09-24T00:00:00.000Z');
   grantConsent(kv, '2026-09-24T00:00:00.000Z');
+  acknowledgeOwnServer(kv);
   saveServerUrl(kv, SERVER);
   return kv;
 }
 
-/** A seam uploading through the real gate over `kv` (an internal build, so the saved address is
- *  honoured and the upload lands at `SERVER`). */
+/** A seam uploading through the real gate over `kv` (the user's own server is acknowledged, so the
+ *  saved address is honoured and the upload lands at `SERVER`). */
 function gatedSeam(kv: MapKVBackend, uploads: Upload[]): Seam {
   return createSeam({
     console: false,
-    diagnostics: { target: diagnosticsTarget(kv, () => APP_INFO, true), osVersion: '15', post: recordingPost(uploads) },
+    diagnostics: { target: diagnosticsTarget(kv, () => APP_INFO), osVersion: '15', post: recordingPost(uploads) },
   });
 }
 
@@ -352,6 +353,22 @@ export async function runDiagnosticsTests(h: Harness): Promise<void> {
     seam.diagnostics.stop();
   });
 
+  await h.test('upload: discarding clears a rate-limit pause, so the next server is not silenced by the last one', async () => {
+    const uploads: Upload[] = [];
+    const refuseFirst: PostDiagnostics = async (url, headers, body) => {
+      uploads.push({ url, headers, batch: JSON.parse(body) as DiagnosticsBatch, body });
+      return uploads.length === 1 ? { ok: false, status: 429, retryAfter: null } : { ok: true, status: 204 };
+    };
+    const seam = uploadingSeam(uploads, { post: refuseFirst });
+    seam.error(CHANNELS.gen, 'transport failed', { where: 'refused' });
+    await seam.diagnostics.flush();
+    seam.diagnostics.discard();
+    seam.error(CHANNELS.gen, 'transport failed', { where: 'new-server' });
+    await seam.diagnostics.flush();
+    h.eq(uploaded(uploads.slice(1)).map(r => r.where), ['new-server'], 'a record logged after the discard uploads');
+    seam.diagnostics.stop();
+  });
+
   await h.test('upload: a gate that logs an error itself neither recurses nor uploads', async () => {
     const uploads: Upload[] = [];
     let asked = 0;
@@ -402,6 +419,19 @@ export async function runDiagnosticsTests(h: Harness): Promise<void> {
     seam.error(CHANNELS.gen, 'transport failed', { kind: 'after-grant' });
     await seam.diagnostics.flush();
     h.eq(uploaded(uploads).map(r => r.kind), ['after-grant'], 'only a record emitted under the grant goes');
+  });
+
+  await h.test('discard: records waiting when discard() runs are never sent; later ones are', async () => {
+    const kv = consentedStore();
+    const uploads: Upload[] = [];
+    const seam = gatedSeam(kv, uploads);
+    seam.error(CHANNELS.gen, 'transport failed', { kind: 'before-switch' });
+    seam.diagnostics.discard();
+    await seam.diagnostics.flush();
+    h.eq(uploads.length, 0, 'nothing waiting at the discard is uploaded');
+    seam.error(CHANNELS.gen, 'render failed', { kind: 'after-switch' });
+    await seam.diagnostics.flush();
+    h.eq(uploaded(uploads).map(r => r.message), ['render failed'], 'only the record made after the discard goes');
   });
 
   await h.test('consent: turning AI features off stops uploads, including what was waiting', async () => {
@@ -457,6 +487,33 @@ export async function runDiagnosticsTests(h: Harness): Promise<void> {
     h.eq(previousCalls, [[err, false]], 'the previous handler got the same error and flag');
     h.eq([lastRecord(seam).level, lastRecord(seam).fields.where, lastRecord(seam).fields.errorClass], ['error', 'uncaught', 'RangeError'], 'an error-level record was emitted first');
     h.eq(kept.length, 0, 'a non-fatal error is not kept for the next launch');
+  });
+
+  await h.test('crash capture: an iOS-shaped stack loses its install path, an Android-shaped one is untouched', () => {
+    const seam = createSeam({ console: false });
+    const errorUtils = fakeErrorUtils(() => undefined);
+    installCrashCapture({ errorUtils, hermes: undefined, seam, keepFatal: () => undefined });
+
+    const ios = new TypeError('Alice owes 40');
+    ios.stack = [
+      'TypeError: Alice owes 40',
+      '    at redactObject (/private/var/containers/Bundle/Application/1234ABCD-1234-ABCD-1234-ABCD12345678/Whim.app/main.jsbundle:1:650735)',
+      '    at anonymous (/private/var/containers/Bundle/Application/1234ABCD-1234-ABCD-1234-ABCD12345678/Whim.app/main.jsbundle:1:668904)',
+    ].join('\n');
+    errorUtils.raise(ios, false);
+    h.eq(
+      lastRecord(seam).fields.stack,
+      'TypeError: Alice owes 40\n    at redactObject (main.jsbundle:1:650735)\n    at anonymous (main.jsbundle:1:668904)',
+      'every frame keeps only main.jsbundle:line:column, no install path',
+    );
+
+    const android = new TypeError('Alice owes 40');
+    android.stack = [
+      'TypeError: Alice owes 40',
+      '    at redactObject (address at index.android.bundle:1:650735)',
+    ].join('\n');
+    errorUtils.raise(android, false);
+    h.eq(lastRecord(seam).fields.stack, android.stack, 'an Android frame, already a bare file name, is unchanged');
   });
 
   await h.test('crash capture: a fatal error keeps its projection, without the message, before the process ends', () => {

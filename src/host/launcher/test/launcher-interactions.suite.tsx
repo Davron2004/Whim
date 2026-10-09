@@ -13,7 +13,7 @@ import { AppIndex } from '../app-index';
 import { SEED_VERSION } from '../seed';
 import { grantConsent } from '../ai-consent';
 import { acceptTerms } from '../terms-acceptance';
-import { saveServerUrl } from '../server-address';
+import { acknowledgeOwnServer, saveServerUrl } from '../server-address';
 import { resetNativeStorage } from './native-storage';
 import { renderScreen, unmountScreen, captureTimeouts } from './react-screen';
 import { testAppInfo } from './client-fixtures';
@@ -27,20 +27,21 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     new AppIndex(kv).markSeeded(SEED_VERSION);
     acceptTerms(kv, '2026-09-18T12:00:00.000Z');
     grantConsent(kv, '2026-09-18T12:00:00.000Z');
+    acknowledgeOwnServer(kv);
     saveServerUrl(kv, 'https://s1.example');
     const clock = captureTimeouts();
     const originalFetch = globalThis.fetch;
     let finish!: (response: Response) => void;
     const generation = new Promise<Response>(resolve => { finish = resolve; });
     globalThis.fetch = (async (url: string) => {
-      if (String(url).endsWith('/healthz')) return new Response('', { status: 503 });
+      if (String(url).endsWith('/health')) return new Response('', { status: 503 });
       if (String(url).endsWith('/clarify')) return new Response(JSON.stringify({ questions: [] }));
       if (String(url).endsWith('/rewrite')) return new Response(JSON.stringify({ rewrittenPrompt: 'A timer', plan: [] }));
       return generation;
     }) as typeof fetch;
     let tree: TestRenderer.ReactTestRenderer | undefined;
     try {
-      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} internalBuild deviceLocale={() => 'en-US'} />);
+      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
       await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onCreate());
       await TestRenderer.act(async () => tree!.root.findByType(ComposeStep).props.onChangeText('A timer'));
       await TestRenderer.act(async () => tree!.root.findByType(ComposeStep).props.onContinue());
@@ -88,6 +89,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     new AppIndex(kv).markSeeded(SEED_VERSION);
     acceptTerms(kv, '2026-09-18T12:00:00.000Z');
     grantConsent(kv, '2026-09-18T12:00:00.000Z');
+    acknowledgeOwnServer(kv);
     saveServerUrl(kv, 'https://current.example');
     const clock = captureTimeouts();
     const originalFetch = globalThis.fetch;
@@ -95,14 +97,14 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     const probe = new Promise<Response>(resolve => { finishProbe = resolve; });
     let probes = 0;
     globalThis.fetch = (async (url: string) => {
-      if (String(url).endsWith('/healthz')) return ++probes === 1 ? new Response('', { status: 503 }) : probe;
+      if (String(url).endsWith('/health')) return ++probes === 1 ? new Response('', { status: 503 }) : probe;
       if (String(url).endsWith('/clarify')) return new Response('{}', { status: 502 });
       if (String(url).endsWith('/rewrite')) return new Response(JSON.stringify({ rewrittenPrompt: 'A timer' }));
       throw new Error(`Unexpected request ${url}`);
     }) as typeof fetch;
     let tree: TestRenderer.ReactTestRenderer | undefined;
     try {
-      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} internalBuild deviceLocale={() => 'en-US'} />);
+      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
       h.eq(tree.root.findByType(HomeScreen).props.offline, true, 'startup probe reports offline');
       await TestRenderer.act(async () => clock.fire(2000));
       h.eq(probes, 2, 'retry probe is now in flight');
@@ -122,4 +124,40 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('launcher: typing a server address in Settings probes the finished address once typing pauses, never a half-typed one', async () => {
+    resetNativeStorage();
+    const kv = createMmkvBackend('whim.launcher');
+    new AppIndex(kv).markSeeded(SEED_VERSION);
+    acceptTerms(kv, '2026-09-18T12:00:00.000Z');
+    grantConsent(kv, '2026-09-18T12:00:00.000Z');
+    acknowledgeOwnServer(kv);
+    saveServerUrl(kv, 'https://s1.example');
+    const clock = captureTimeouts();
+    const originalFetch = globalThis.fetch;
+    const probed: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      if (!String(url).endsWith('/health')) throw new Error(`Unexpected request ${url}`);
+      probed.push(String(url));
+      return new Response(JSON.stringify({ service: 'whim-server' }));
+    }) as typeof fetch;
+    let tree: TestRenderer.ReactTestRenderer | undefined;
+    try {
+      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
+      await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onSettings());
+      h.eq(probed, ['https://s1.example/health'], 'the saved address was probed once, at startup');
+      const addressField = () => tree!.root.findByType(SettingsScreen).find(node => String(node.type) === 'TextInput');
+      for (const keystroke of ['https://s', 'https://s2', 'https://s2.', 'https://s2.example']) {
+        await TestRenderer.act(async () => addressField().props.onChangeText(keystroke));
+      }
+      h.eq(probed.length, 1, 'typing probes nothing');
+      await TestRenderer.act(async () => clock.fire(600));
+      h.eq(probed.slice(1), ['https://s2.example/health', 'https://s2.example/health'], 'the pause probes the finished address: the session’s connectivity and Settings’ own check');
+      await TestRenderer.act(async () => tree!.root.findByType(SettingsScreen).props.onBack());
+      h.eq(tree.root.findByType(HomeScreen).props.offline, false, 'the new address is the one the session is online with');
+    } finally {
+      if (tree) await unmountScreen(tree);
+      globalThis.fetch = originalFetch;
+      clock.restore();
+    }
+  });
 }

@@ -144,6 +144,10 @@ interface InfoPlistFixtureOpts {
   sceneClassName?: string;
   sceneDelegateClassName?: string;
   sceneConfigurationCount?: number;
+  /** The local-network usage description; `null` leaves the key out. */
+  localNetworkUsage?: string | null;
+  /** `NSAppTransportSecurity`'s `NSAllowsArbitraryLoads`. */
+  allowsArbitraryLoads?: boolean;
 }
 
 function infoPlistFixture(opts: InfoPlistFixtureOpts = {}): string {
@@ -153,6 +157,19 @@ function infoPlistFixture(opts: InfoPlistFixtureOpts = {}): string {
   const sceneClassName = opts.sceneClassName ?? 'UIWindowScene';
   const sceneDelegateClassName = opts.sceneDelegateClassName ?? '$(PRODUCT_MODULE_NAME).SceneDelegate';
   const sceneConfigurationCount = opts.sceneConfigurationCount ?? 1;
+  const localNetworkUsage = opts.localNetworkUsage === undefined ? 'Whim connects to a server on your local network.' : opts.localNetworkUsage;
+  const allowsArbitraryLoads = opts.allowsArbitraryLoads ?? false;
+  const atsXml = `
+\t<key>NSAppTransportSecurity</key>
+\t<dict>
+\t\t<key>NSAllowsArbitraryLoads</key>
+\t\t<${allowsArbitraryLoads}/>
+\t\t<key>NSAllowsLocalNetworking</key>
+\t\t<true/>
+\t</dict>`;
+  const localNetworkXml = localNetworkUsage === null
+    ? ''
+    : `\n\t<key>NSLocalNetworkUsageDescription</key>\n\t<string>${localNetworkUsage}</string>`;
   const usageKeyXml = opts.emptyUsageDescriptionKey
     ? `\n\t<key>${opts.emptyUsageDescriptionKey}</key>\n\t<string></string>`
     : '';
@@ -182,7 +199,7 @@ function infoPlistFixture(opts: InfoPlistFixtureOpts = {}): string {
 <plist version="1.0">
 <dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
-	<${its}/>${usageKeyXml}${sceneManifest}
+	<${its}/>${atsXml}${localNetworkXml}${usageKeyXml}${sceneManifest}
 </dict>
 </plist>
 `;
@@ -308,6 +325,21 @@ const MUTATION_CASES: readonly MutationCase[] = [
     name: 'an empty usage-description string fails, naming the key',
     overrides: { infoPlist: infoPlistFixture({ emptyUsageDescriptionKey: 'NSLocationWhenInUseUsageDescription' }) },
     expect: ['ios/Whim/Info.plist', 'NSLocationWhenInUseUsageDescription'],
+  },
+  {
+    name: 'a missing NSLocalNetworkUsageDescription fails',
+    overrides: { infoPlist: infoPlistFixture({ localNetworkUsage: null }) },
+    expect: ['ios/Whim/Info.plist', 'NSLocalNetworkUsageDescription'],
+  },
+  {
+    name: 'a whitespace-only NSLocalNetworkUsageDescription fails (discriminating: an empty-string check would pass this)',
+    overrides: { infoPlist: infoPlistFixture({ localNetworkUsage: '   ' }) },
+    expect: ['ios/Whim/Info.plist', 'NSLocalNetworkUsageDescription'],
+  },
+  {
+    name: 'NSAllowsArbitraryLoads = true under NSAppTransportSecurity fails',
+    overrides: { infoPlist: infoPlistFixture({ allowsArbitraryLoads: true }) },
+    expect: ['ios/Whim/Info.plist', 'NSAllowsArbitraryLoads'],
   },
   {
     name: 'TARGETED_DEVICE_FAMILY = "1,2" fails (iPad included)',
