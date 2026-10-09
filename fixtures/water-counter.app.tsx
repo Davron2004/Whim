@@ -1,28 +1,7 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// water-counter — the capability-bridge v0.2 acceptance mini-app (§15.3: "a tracker
-// becomes a genuine app"). Hand-written; the agent/server is later.
-// ─────────────────────────────────────────────────────────────────────────────
-// Imports ONLY from `vc-sdk`, declares `capabilities: ['storage']` + a `schema`, and persists
-// real user data across a process kill through syscalls (kv for the running count, records for
-// a per-glass history). This is the §15.2 acceptance: increment, kill the app, relaunch, count
-// intact. The bundle never sees SQL, the engine, or the host — only the typed `storage` facade,
-// which rides the one-way syscall transport.
-import {
-  defineApp,
-  Screen,
-  Stack,
-  Row,
-  Heading,
-  Text,
-  Button,
-  useState,
-  useEffect,
-  storage,
-  type SchemaArtifact,
-} from 'vc-sdk';
+// Water Counter: counts glasses of water and keeps every glass as a dated row, so the count and
+// its history are still there the next time the app opens.
+import { defineApp, Screen, Stack, Row, Card, Text, Button, useState, useEffect, storage, type SchemaArtifact } from 'vc-sdk';
 
-// The declared storage shape (burned ids per #38/D3). The build extracts this into the host-
-// held app record; the engine opens it before this bundle runs (D7).
 const SCHEMA: SchemaArtifact = {
   schemaVersion: 1,
   collections: {
@@ -30,15 +9,20 @@ const SCHEMA: SchemaArtifact = {
   },
 };
 
+// The running total, and one dated row per glass.
+async function saveGlasses(total: number, count: number): Promise<void> {
+  await storage.kv.set('total', total);
+  for (let i = 0; i < count; i++) {
+    await storage.records.append('Drinks', { at: Date.now() });
+  }
+}
+
 function Home() {
   const [total, setTotal] = useState(0);
   const [history, setHistory] = useState(0);
-  // The line under the title speaks to the person using the app. It changes only once the reads
-  // or the writes have landed, which is what the release upgrade check waits on.
   const [status, setStatus] = useState('Loading…');
 
-  // Load the persisted count + history on mount (the cross-restart proof: this is what shows
-  // the count survived a kill).
+  // Read the saved count and history once, when the screen opens.
   useEffect(() => {
     let live = true;
     (async () => {
@@ -49,7 +33,6 @@ function Home() {
       setHistory(drinks.length);
       setStatus('Tap a button after each glass.');
     })().catch(() => {
-      // A read that fails is told to the person on the status line.
       if (live) setStatus('Couldn’t load your saved glasses.');
     });
     return () => {
@@ -57,53 +40,38 @@ function Home() {
     };
   }, []);
 
-  const add = async (count: number) => {
-    const previous = total;
-    const next = previous + count;
-    setTotal(next); // optimistic; the syscall persists it
-    let kvSaved = false;
-    let landed = 0;
-    const save = async () => {
-      await storage.kv.set('total', next);
-      kvSaved = true;
-      for (let i = 0; i < count; i++) {
-        await storage.records.append('Drinks', { at: Date.now() });
-        landed++;
-      }
-    };
-    await save()
+  // Show the new count at once, then save it.
+  const add = (count: number) => {
+    const next = total + count;
+    setTotal(next);
+    saveGlasses(next, count)
       .then(() => {
-        setHistory((h) => h + landed);
+        setHistory((h) => h + count);
         setStatus('Saved.');
       })
-      .catch(() => {
-        // A write that fails is told to the person on the status line. If kv.set already
-        // landed, `next` is the durable truth, so keep it displayed (reverting here would diverge
-        // from what a reload shows). Only undo the optimistic bump if the kv write itself never
-        // made it to storage.
-        if (!kvSaved) setTotal(previous);
-        if (landed > 0) setHistory((h) => h + landed);
-        setStatus('Couldn’t save that. Try again.');
-      });
+      .catch(() => setStatus('Couldn’t save that. Try again.'));
   };
 
   return (
-    <Screen padding="lg">
+    <Screen title="Water Counter">
       <Stack gap="lg">
-        <Heading size="title">Water Counter</Heading>
-        <Text size="caption" color="text-muted">{status}</Text>
-
-        <Row gap="sm">
-          <Text color="text-muted">Glasses</Text>
-          <Text size="display" color="primary">{String(total)}</Text>
+        <Text color="text-muted">{status}</Text>
+        <Card>
+          <Stack>
+            <Row justify="between">
+              <Text>Glasses</Text>
+              <Text size="display" color="primary">{String(total)}</Text>
+            </Row>
+            <Row justify="between">
+              <Text color="text-muted">History entries</Text>
+              <Text color="text-muted">{String(history)}</Text>
+            </Row>
+          </Stack>
+        </Card>
+        <Row>
+          <Button label="+1 glass" icon="glass-water" onPress={() => add(1)} />
+          <Button label="+2 glasses" variant="secondary" onPress={() => add(2)} />
         </Row>
-        <Row gap="sm">
-          <Text color="text-muted">History entries</Text>
-          <Text>{String(history)}</Text>
-        </Row>
-
-        <Button label="+1 glass" onPress={() => add(1)} />
-        <Button label="+2 glasses" onPress={() => add(2)} />
       </Stack>
     </Screen>
   );
@@ -115,8 +83,8 @@ export default defineApp({
   screens: { Home },
   capabilities: ['storage'],
   schema: SCHEMA,
-  // Declared, with tip-splitter.app.tsx and style-gallery.app.tsx (#48/#52): "Water Counter" and
-  // "Style Gallery" hash to the same appColor(name) palette slot without this. A sky the palette
-  // doesn't hold, so no generated app falls back to it.
+  tint: ['blue', 'ocean'],
+  icon: 'glass-water',
+  // A legacy colour, kept only until the home screen draws `tint`. New apps never declare it.
   tileColor: '#0369a1',
 });
