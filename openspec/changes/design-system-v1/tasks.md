@@ -11,10 +11,10 @@
 
 ## 2. Icons
 
-- [ ] 2.1 Write `scripts/vendor-icons.mjs` reading `lucide-static@0.460.0` via `npx --ignore-scripts --package=lucide-static@0.460.0`, emitting `src/design/icons/paths.ts` (the 147 glyphs, the chrome set of `system.md` §3.1, `circle`) and `src/design/icons/LICENSE` (ISC notice)
-- [ ] 2.2 Create `src/design/icons/names.ts`: `GLYPH_NAMES` (147, grouped), `CHROME_NAMES`, the glyph alias map (including `trash`→`trash-2`), the keyword table, `resolveIcon(name, appName?)` returning `{ name, diagnostic? }` (aliases, then keywords on the name's parts, then on the app name, else `circle`) and `resolveGlyph` for tiles (glyph set only)
-- [ ] 2.3 Add the ember silhouette (48 grid path taken from the mockup) and the squircle path generator (corner 22.5%) to `src/design/icons/`
-- [ ] 2.4 `src/sdk/test/icons.acceptance.ts` (auto-discovered by `sdk:test`): every name resolves, aliases and keywords are deterministic, unknown names fall back to `circle`, no glyph in the set is missing a path
+- [x] 2.1 Write `scripts/vendor-icons.mjs` reading `lucide-static@0.460.0` via `npx --ignore-scripts --package=lucide-static@0.460.0`, emitting `src/design/icons/paths.ts` (the 147 glyphs, the chrome set of `system.md` §3.1, `circle`) and `src/design/icons/LICENSE` (ISC notice)
+- [x] 2.2 Create `src/design/icons/names.ts`: `GLYPH_NAMES` (147, grouped), `CHROME_NAMES`, the glyph alias map (including `trash`→`trash-2`), the keyword table, `resolveIcon(name, appName?)` returning `{ name, diagnostic? }` (aliases, then keywords on the name's parts, then on the app name, else `circle`) and `resolveGlyph` for tiles (glyph set only)
+- [x] 2.3 Add the ember silhouette (48 grid path taken from the mockup) and the squircle path generator (corner 22.5%) to `src/design/icons/`
+- [x] 2.4 `src/sdk/test/icons.acceptance.ts` (auto-discovered by `sdk:test`): every name resolves, aliases and keywords are deterministic, unknown names fall back to `circle`, no glyph in the set is missing a path
 
 ## 3. SDK theme
 
