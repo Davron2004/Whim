@@ -74,6 +74,11 @@ export interface ServerConfig {
    *  together may send per UTC day (developer-observability D4). */
   readonly limitDiagnosticsPerDeviceDay: number;
   readonly limitDiagnosticsPerDay: number;
+  /** Content-policy checks for generations waiting in line (`policy-check` ledger rows): per device
+   *  per UTC day, and across every device per UTC day. Fresh device ids defeat the first alone; the
+   *  second is what bounds the classifier spend. */
+  readonly limitPolicyChecksPerDeviceDay: number;
+  readonly limitPolicyChecksPerDay: number;
   readonly maxBodyBytesUnary: number;
   readonly maxBodyBytesGenerate: number;
   readonly maxBodyBytesReport: number;
@@ -94,6 +99,9 @@ export interface ServerConfig {
   readonly creditCacheTtlMs: number;
 
   readonly policyTimeoutMs: number;
+  /** `WHIM_POLICY_ATTEMPT_TIMEOUT_MS`: the bound on each of the policy check's (at most two)
+   *  classifier calls, from 500 to `policyTimeoutMs`. */
+  readonly policyAttemptTimeoutMs: number;
   readonly reportRetentionDays: number;
   readonly ledgerRetentionDays: number;
   /** `WHIM_USAGE_IDLE_DAYS`: a lifetime usage row not credited for more than this many days is
@@ -138,6 +146,24 @@ function readPositiveInt(env: NodeJS.ProcessEnv, name: string, fallback: number)
     throw new ServerConfigError(name, `${name} must be a positive integer, got ${JSON.stringify(raw)}.`);
   }
   return n;
+}
+
+/** The shortest classifier attempt bound `WHIM_POLICY_ATTEMPT_TIMEOUT_MS` may set. */
+const MIN_POLICY_ATTEMPT_TIMEOUT_MS = 500;
+
+/** An integer from `MIN_POLICY_ATTEMPT_TIMEOUT_MS` to the overall policy deadline. A default above a
+ *  shortened deadline refuses too, saying so, rather than being silently cut. */
+function readPolicyAttemptTimeout(env: NodeJS.ProcessEnv, policyTimeoutMs: number): number {
+  const name = 'WHIM_POLICY_ATTEMPT_TIMEOUT_MS';
+  const ms = readPositiveInt(env, name, 4500);
+  if (ms < MIN_POLICY_ATTEMPT_TIMEOUT_MS || ms > policyTimeoutMs) {
+    const source = env[name] === undefined ? ' (its default)' : '';
+    throw new ServerConfigError(
+      name,
+      `${name} is ${ms}${source}; it must be an integer from ${MIN_POLICY_ATTEMPT_TIMEOUT_MS} to WHIM_POLICY_TIMEOUT_MS (${policyTimeoutMs}).`,
+    );
+  }
+  return ms;
 }
 
 function readNonNegativeInt(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
@@ -300,6 +326,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
   const rewriteModel = env.WHIM_REWRITE_MODEL;
   const engineerModel = env.WHIM_ENGINEER_MODEL;
   const generationMaxMs = readPositiveInt(env, 'WHIM_GENERATION_MAX_MS', 600_000);
+  const policyTimeoutMs = readPositiveInt(env, 'WHIM_POLICY_TIMEOUT_MS', 10_000);
 
   const config: ServerConfig = {
     nodeEnv,
@@ -334,6 +361,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     limitReportsPerDay: readPositiveInt(env, 'WHIM_LIMIT_REPORTS_PER_DAY', 300),
     limitDiagnosticsPerDeviceDay: readPositiveInt(env, 'WHIM_LIMIT_DIAGNOSTICS_PER_DEVICE_DAY', 200),
     limitDiagnosticsPerDay: readPositiveInt(env, 'WHIM_LIMIT_DIAGNOSTICS_PER_DAY', 20_000),
+    limitPolicyChecksPerDeviceDay: readPositiveInt(env, 'WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY', 30),
+    limitPolicyChecksPerDay: readPositiveInt(env, 'WHIM_LIMIT_POLICY_CHECKS_PER_DAY', 800),
     maxBodyBytesUnary: readPositiveInt(env, 'WHIM_MAX_BODY_BYTES_UNARY', 65_536),
     maxBodyBytesGenerate: readPositiveInt(env, 'WHIM_MAX_BODY_BYTES_GENERATE', 1_048_576),
     maxBodyBytesReport: readPositiveInt(env, 'WHIM_MAX_BODY_BYTES_REPORT', 524_288),
@@ -348,7 +377,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     minCreditUsd: readNonNegativeDecimal(env, 'WHIM_MIN_CREDIT_USD', 0.5),
     creditCacheTtlMs: readPositiveInt(env, 'WHIM_CREDIT_CACHE_TTL_MS', 60_000),
 
-    policyTimeoutMs: readPositiveInt(env, 'WHIM_POLICY_TIMEOUT_MS', 10_000),
+    policyTimeoutMs,
+    policyAttemptTimeoutMs: readPolicyAttemptTimeout(env, policyTimeoutMs),
     reportRetentionDays: readKeepPeriod(env, 'WHIM_REPORT_RETENTION_DAYS', 90),
     ledgerRetentionDays: readKeepPeriod(env, 'WHIM_LEDGER_RETENTION_DAYS', 90),
     usageIdleDays: readKeepPeriod(env, 'WHIM_USAGE_IDLE_DAYS', 365),

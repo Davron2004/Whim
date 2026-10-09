@@ -6,7 +6,7 @@
  * sole place that emits the "content policy check" log record (spec "The policy check is metered
  * and observable without content"). A base policy used unwrapped emits no log record.
  */
-import type { ModelClient, ModelRequest } from '../generation/model';
+import { isUpstreamModelFailure, type ModelClient, type ModelRequest } from '../generation/model';
 import { parseJsonBlock } from '../generation/json-block';
 import type { Usage } from '@whim/contract';
 import type { ServerLogger } from '../logger';
@@ -22,16 +22,23 @@ export type PolicyRoute = 'clarify' | 'rewrite' | 'generate';
  *  (spec "the server SHALL treat a refuse verdict with an unknown category as a refusal"). */
 export type PolicyVerdict = 'allow' | { refuse: string };
 
+/** One classifier call a check made: the usage it delivered, and its provider generation id. Either
+ *  can be absent — a call that timed out or failed mid-stream delivers no usage, and the id may
+ *  never arrive (`ModelStream.id` is optional). */
+export interface PolicyCall {
+  usage?: Usage;
+  generationId?: string;
+}
+
 /** Thrown by every `ContentPolicy.check` failure mode — timeout, transport/auth/rate-limit error,
  *  and unparseable or structurally invalid classifier output all collapse to this ONE type. Fail
  *  closed: a caller catches this and refuses; it is never thrown alongside an `'allow'` result. */
 export class PolicyUnavailableError extends Error {
   constructor(
     message: string,
-    /** Metering from a classifier call that completed but produced no usable verdict. */
-    readonly usage?: Usage,
-    /** Provider id from that same completed classifier call, for deferred cost resolution. */
-    readonly generationId?: string,
+    /** Every classifier call the check made before it gave up, in order (spec "Every attempt that
+     *  reached the provider SHALL be credited"). Empty when no call was made. */
+    readonly calls: readonly PolicyCall[] = [],
   ) {
     super(message);
     this.name = 'PolicyUnavailableError';
@@ -39,25 +46,57 @@ export class PolicyUnavailableError extends Error {
 }
 
 /** `check`'s result (spec "The policy check is metered and observable without content"): the
- *  verdict, plus the classifier call's own usage/generation id WHEN a call actually happened.
- *  `usage`/`generationId` are both absent for a cache hit (`cache.ts`) and for `StubContentPolicy`
- *  — neither makes a model call, so neither has anything to meter. `generationId` may be absent
- *  even after a real call, mirroring `ModelStream.id`'s own optionality. */
+ *  verdict, plus every classifier call the check made to reach it. `calls` is empty for a cache hit
+ *  (`cache.ts`) and for `StubContentPolicy` — neither makes a model call, so neither has anything to
+ *  meter. */
 export interface PolicyCheckResult {
   verdict: PolicyVerdict;
-  usage?: Usage;
-  generationId?: string;
+  calls: readonly PolicyCall[];
+}
+
+/** A check's calls in the terms the routes meter them by. */
+export interface PolicyMetering {
+  /** The summed usage of every call that delivered one; `undefined` when none did. The routes
+   *  credit it to the device the moment the check returns. */
+  usage: Usage | undefined;
+  /** Every call's provider generation id, in call order: all of them land on the gated ledger
+   *  row's cost. */
+  generationIds: string[];
+  /** The ids whose tokens `usage` already carries, so cost resolution never credits them twice;
+   *  the others (a call that timed out or failed before its usage arrived) are reconciled. */
+  creditedGenerationIds: ReadonlySet<string>;
+}
+
+/** Folds a check's calls into what the routes credit, settle and resolve. */
+export function policyMetering(calls: readonly PolicyCall[]): PolicyMetering {
+  let usage: Usage | undefined;
+  const generationIds: string[] = [];
+  const creditedGenerationIds = new Set<string>();
+  for (const call of calls) {
+    if (call.usage) {
+      usage = {
+        promptTokens: (usage?.promptTokens ?? 0) + call.usage.promptTokens,
+        completionTokens: (usage?.completionTokens ?? 0) + call.usage.completionTokens,
+        totalTokens: (usage?.totalTokens ?? 0) + call.usage.totalTokens,
+      };
+    }
+    if (call.generationId === undefined) continue;
+    generationIds.push(call.generationId);
+    if (call.usage) creditedGenerationIds.add(call.generationId);
+  }
+  return { usage, generationIds, creditedGenerationIds };
 }
 
 export interface ContentPolicy {
   /** Resolves to a result carrying the verdict, or throws `PolicyUnavailableError` when no verdict
    *  could be produced — NEVER resolves an `'allow'` verdict on failure. `signal` aborts the
    *  underlying call (e.g. a client disconnect); `ModelContentPolicy` also enforces its own
-   *  configured timeout independent of `signal`. `logger`, when present, is the request-bound
-   *  logger (spec request-envelope "One request id follows a /v1 request everywhere") the "content
-   *  policy check" record and the classifier's own "model call" line are both emitted through;
-   *  absent for a check made outside any request (e.g. a background refresh), which logs through
-   *  the module logger exactly as before this parameter existed. */
+   *  configured deadline independent of `signal`, and never retries once `signal` aborted.
+   *  `logger`, when present, is the request-bound logger (spec request-envelope "One request id
+   *  follows a /v1 request everywhere") the "content policy check" record and the classifier's own
+   *  "model call" line are both emitted through; absent for a check made outside any request (e.g.
+   *  a background refresh), which logs through the module logger exactly as before this parameter
+   *  existed. */
   check(input: string, route: PolicyRoute, signal?: AbortSignal, logger?: ServerLogger): Promise<PolicyCheckResult>;
 }
 
@@ -124,19 +163,60 @@ export interface ModelContentPolicyOptions {
    *  `../generation/prompts/inputs.ts`) — read once by the composition root and passed in, so the
    *  document stays the one source (spec "The 13+ content policy has one written source"). */
   categories: string;
-  /** `WHIM_POLICY_TIMEOUT_MS` — enforced here independent of whether the injected `ModelClient`
-   *  itself honors an abort signal. */
+  /** `WHIM_POLICY_TIMEOUT_MS`: the one overall deadline every attempt of a check shares. Enforced
+   *  here independent of whether the injected `ModelClient` itself honors an abort signal. */
   timeoutMs: number;
+  /** `WHIM_POLICY_ATTEMPT_TIMEOUT_MS`: each attempt is bounded by the smaller of this and the
+   *  deadline's remaining time. Omitted, an attempt is bounded by the deadline alone. */
+  attemptTimeoutMs?: number;
 }
 
+/** At most this many classifier calls per check (spec "A transient classifier failure is retried
+ *  once inside the policy deadline"). */
+const MAX_ATTEMPTS = 2;
+/** A second attempt starts only with at least this much of the deadline left. */
+const RETRY_FLOOR_MS = 1000;
+
+/** How one attempt ended: a verdict, or no verdict and whether a second attempt could help. */
+type AttemptOutcome =
+  | { kind: 'verdict'; verdict: PolicyVerdict; call: PolicyCall }
+  | { kind: 'unavailable'; message: string; retryable: boolean; call: PolicyCall };
+
 /** The classifier: a bounded call on the configured rewrite model (spec "The classifier is a
- *  bounded call on the configured rewrite model"). */
+ *  bounded call on the configured rewrite model"), made at most twice inside one deadline. A second
+ *  attempt runs only after an unable-to-verdict result — the attempt's own timeout, an upstream
+ *  provider failure (`isUpstreamModelFailure`: a rate limit, a 5xx, a network drop) or output with
+ *  no well-formed verdict — with the request still live and at least `RETRY_FLOOR_MS` of the
+ *  deadline left. A verdict, an auth or credit error, and any other request-side failure are final. */
 export class ModelContentPolicy implements ContentPolicy {
   constructor(private readonly opts: ModelContentPolicyOptions) {}
 
   async check(input: string, route: PolicyRoute, signal?: AbortSignal, logger?: ServerLogger): Promise<PolicyCheckResult> {
-    const timeoutSignal = AbortSignal.timeout(this.opts.timeoutMs);
-    const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+    const startedAt = performance.now();
+    const deadline = AbortSignal.timeout(this.opts.timeoutMs);
+    const remainingMs = (): number => this.opts.timeoutMs - (performance.now() - startedAt);
+    const calls: PolicyCall[] = [];
+    for (let attempt = 1; ; attempt++) {
+      const boundMs = Math.min(this.opts.attemptTimeoutMs ?? this.opts.timeoutMs, remainingMs());
+      const outcome = await this.attempt(input, route, boundMs, deadline, signal, logger);
+      calls.push(outcome.call);
+      if (outcome.kind === 'verdict') return { verdict: outcome.verdict, calls };
+      const retry =
+        outcome.retryable && attempt < MAX_ATTEMPTS && !signal?.aborted && !deadline.aborted && remainingMs() >= RETRY_FLOOR_MS;
+      if (!retry) throw new PolicyUnavailableError(outcome.message, calls);
+    }
+  }
+
+  private async attempt(
+    input: string,
+    route: PolicyRoute,
+    boundMs: number,
+    deadline: AbortSignal,
+    signal: AbortSignal | undefined,
+    logger: ServerLogger | undefined,
+  ): Promise<AttemptOutcome> {
+    const attemptTimer = AbortSignal.timeout(Math.max(1, Math.floor(boundMs)));
+    const combined = AbortSignal.any(signal ? [signal, deadline, attemptTimer] : [deadline, attemptTimer]);
     const request: ModelRequest = {
       model: this.opts.rewriteModelId,
       messages: [
@@ -165,30 +245,23 @@ export class ModelContentPolicy implements ContentPolicy {
     } catch (err) {
       // OpenRouter exposes this from the first stream chunk, before the final usage record. A
       // later stream failure must not discard an id the routes can still reconcile for cost.
-      const failedGenerationId = await stream.id.catch(() => undefined);
-      if (timeoutSignal.aborted) {
-        throw new PolicyUnavailableError(
-          `content policy check for "${route}" exceeded WHIM_POLICY_TIMEOUT_MS (${this.opts.timeoutMs}ms)`,
-          undefined,
-          failedGenerationId,
-        );
+      const call: PolicyCall = { generationId: await stream.id.catch(() => undefined) };
+      if (deadline.aborted) {
+        return { kind: 'unavailable', message: `content policy check for "${route}" exceeded WHIM_POLICY_TIMEOUT_MS (${this.opts.timeoutMs}ms)`, retryable: false, call };
       }
-      throw new PolicyUnavailableError(
-        `content policy classifier call failed for "${route}": ${err instanceof Error ? err.message : String(err)}`,
-        undefined,
-        failedGenerationId,
-      );
+      if (attemptTimer.aborted && !signal?.aborted) {
+        return { kind: 'unavailable', message: `content policy classifier call for "${route}" exceeded its attempt bound (${Math.floor(boundMs)}ms)`, retryable: true, call };
+      }
+      const message = `content policy classifier call failed for "${route}": ${err instanceof Error ? err.message : String(err)}`;
+      return { kind: 'unavailable', message, retryable: isUpstreamModelFailure(err), call };
     }
 
+    const call: PolicyCall = { usage, generationId };
     const verdict = parseVerdict(text);
     if (verdict === undefined) {
-      throw new PolicyUnavailableError(
-        `content policy classifier for "${route}" returned no well-formed verdict`,
-        usage,
-        generationId,
-      );
+      return { kind: 'unavailable', message: `content policy classifier for "${route}" returned no well-formed verdict`, retryable: true, call };
     }
-    return { verdict, usage, generationId };
+    return { kind: 'verdict', verdict, call };
   }
 }
 
@@ -208,8 +281,8 @@ export class StubContentPolicy implements ContentPolicy {
       throw new PolicyUnavailableError('stub content policy: input carries the policy-down marker');
     }
     if (input.includes(REFUSE_MARKER)) {
-      return { verdict: { refuse: 'stub' } };
+      return { verdict: { refuse: 'stub' }, calls: [] };
     }
-    return { verdict: 'allow' };
+    return { verdict: 'allow', calls: [] };
   }
 }

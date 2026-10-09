@@ -78,6 +78,9 @@ const PARSE_CASES: ParseCase[] = [
   { key: 'WHIM_GENERATION_MAX_MS', field: 'generationMaxMs', validValue: '700000', parsed: 700_000 },
   { key: 'WHIM_CREDIT_CACHE_TTL_MS', field: 'creditCacheTtlMs', validValue: '70000', parsed: 70_000 },
   { key: 'WHIM_POLICY_TIMEOUT_MS', field: 'policyTimeoutMs', validValue: '11000', parsed: 11_000 },
+  { key: 'WHIM_POLICY_ATTEMPT_TIMEOUT_MS', field: 'policyAttemptTimeoutMs', validValue: '6000', parsed: 6000 },
+  { key: 'WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY', field: 'limitPolicyChecksPerDeviceDay', validValue: '31', parsed: 31 },
+  { key: 'WHIM_LIMIT_POLICY_CHECKS_PER_DAY', field: 'limitPolicyChecksPerDay', validValue: '801', parsed: 801 },
   { key: 'WHIM_REPORT_RETENTION_DAYS', field: 'reportRetentionDays', validValue: '91', parsed: 91 },
   { key: 'WHIM_LEDGER_RETENTION_DAYS', field: 'ledgerRetentionDays', validValue: '92', parsed: 92 },
   { key: 'WHIM_USAGE_IDLE_DAYS', field: 'usageIdleDays', validValue: '93', parsed: 93 },
@@ -154,6 +157,29 @@ function runStubDelayTests(): void {
   );
 }
 
+function runPolicyAttemptTimeoutTests(): void {
+  section('WHIM_POLICY_ATTEMPT_TIMEOUT_MS: an integer from 500 to WHIM_POLICY_TIMEOUT_MS');
+
+  for (const [what, env] of [
+    ['below 500', { WHIM_POLICY_ATTEMPT_TIMEOUT_MS: '499' }],
+    ['above the overall deadline', { WHIM_POLICY_TIMEOUT_MS: '8000', WHIM_POLICY_ATTEMPT_TIMEOUT_MS: '8001' }],
+    ['not an integer', { WHIM_POLICY_ATTEMPT_TIMEOUT_MS: '1500.5' }],
+  ] as const) {
+    check(`${what}: fails startup naming the variable`, throwsNaming(() => loadServerConfig(baseEnv(env)), 'WHIM_POLICY_ATTEMPT_TIMEOUT_MS'));
+  }
+  eq(
+    'both ends of the range are accepted',
+    [500, 8000].map((ms) => loadServerConfig(baseEnv({ WHIM_POLICY_TIMEOUT_MS: '8000', WHIM_POLICY_ATTEMPT_TIMEOUT_MS: String(ms) })).policyAttemptTimeoutMs),
+    [500, 8000],
+  );
+  const shortened = configError(() => loadServerConfig(baseEnv({ WHIM_POLICY_TIMEOUT_MS: '3000' })));
+  check(
+    'a deadline shortened below the unset attempt bound refuses, naming the attempt variable and saying it is the default',
+    shortened?.variable === 'WHIM_POLICY_ATTEMPT_TIMEOUT_MS' && shortened.message.includes('(its default)'),
+    shortened?.message,
+  );
+}
+
 export function runConfigTests(): void {
   section('Admission limits are environment-configurable with public-beta defaults');
 
@@ -222,6 +248,8 @@ export function runConfigTests(): void {
     'WHIM_MIN_CREDIT_USD rejects a negative amount',
     throwsNaming(() => loadServerConfig(baseEnv({ WHIM_MIN_CREDIT_USD: '-1' })), 'WHIM_MIN_CREDIT_USD'),
   );
+
+  runPolicyAttemptTimeoutTests();
 
   section('Minimum supported builds (app-update-gate): default 0, anything but a build number fails by name');
 

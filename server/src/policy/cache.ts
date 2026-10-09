@@ -2,7 +2,8 @@
  * server/src/policy/cache.ts — `cachedPolicy` (design D9, spec "Verdicts are cached in memory
  * only" and "The policy check is metered and observable without content"): an in-memory LRU+TTL
  * decorator around any `ContentPolicy`, keyed by SHA-256 of the canonical policy input (never the
- * route), and the ONE place that emits the "content policy check" log record. A base
+ * route), and the ONE place that emits the "content policy check" log record. Its `attempts` is
+ * the number of classifier calls the check made: 0 for a cache hit, 2 after a retry. A base
  * `ModelContentPolicy`/`StubContentPolicy` used unwrapped emits no log record — composition MUST
  * always wrap the base policy in this so every check is observed.
  *
@@ -14,7 +15,7 @@
  */
 import { createHash } from 'node:crypto';
 import { log, type ServerLogger } from '../logger';
-import type { ContentPolicy, PolicyCheckResult, PolicyRoute, PolicyVerdict } from './policy';
+import { PolicyUnavailableError, type ContentPolicy, type PolicyCheckResult, type PolicyRoute, type PolicyVerdict } from './policy';
 
 const DEFAULT_MAX_ENTRIES = 1000;
 const DEFAULT_TTL_MS = 15 * 60 * 1000;
@@ -65,12 +66,13 @@ function logCheck(
   route: PolicyRoute,
   verdict: string,
   category: string | undefined,
+  attempts: number,
   durationMs: number,
   logger: ServerLogger | undefined,
 ): void {
-  const fields: Record<string, unknown> = { route, verdict, durationMs };
+  const fields: Record<string, unknown> = { route, verdict, attempts, durationMs };
   if (category !== undefined) fields.category = category;
-  // Only route/verdict/category/duration ever reach this call — no checked text and no digest
+  // Only route/verdict/category/attempts/duration ever reach this call — no checked text and no digest
   // (spec "The record SHALL NOT carry checked text"; "Only the digest and the verdict SHALL be
   // held" for the cache, and even that pair is never logged together). `category`, by the time it
   // reaches this call, has already been through `closedCategory` — every caller of `logCheck`
@@ -107,9 +109,9 @@ export function cachedPolicy(inner: ContentPolicy, opts: CachedPolicyOptions = {
           entries.delete(digest);
           entries.set(digest, existing);
           const { kind, category } = describe(existing.verdict);
-          logCheck(route, kind === 'allow' ? 'cached-allow' : 'cached-refuse', closedCategory(category, knownCategories), now() - startedAt, logger);
-          // A cache hit made no classifier call — no usage/generationId to carry.
-          return { verdict: existing.verdict };
+          logCheck(route, kind === 'allow' ? 'cached-allow' : 'cached-refuse', closedCategory(category, knownCategories), 0, now() - startedAt, logger);
+          // A cache hit made no classifier call — nothing to meter.
+          return { verdict: existing.verdict, calls: [] };
         }
         entries.delete(digest);
       }
@@ -118,7 +120,7 @@ export function cachedPolicy(inner: ContentPolicy, opts: CachedPolicyOptions = {
       try {
         result = await inner.check(input, route, signal, logger);
       } catch (err) {
-        logCheck(route, 'unavailable', undefined, now() - startedAt, logger);
+        logCheck(route, 'unavailable', undefined, err instanceof PolicyUnavailableError ? err.calls.length : 0, now() - startedAt, logger);
         throw err;
       }
 
@@ -130,7 +132,7 @@ export function cachedPolicy(inner: ContentPolicy, opts: CachedPolicyOptions = {
       }
 
       const { kind, category } = describe(result.verdict);
-      logCheck(route, kind, closedCategory(category, knownCategories), now() - startedAt, logger);
+      logCheck(route, kind, closedCategory(category, knownCategories), result.calls.length, now() - startedAt, logger);
       return result;
     },
   };

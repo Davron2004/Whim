@@ -406,6 +406,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
         rewriteModelId: model.roster.rewrite.model,
         categories: policyDocument.categories,
         timeoutMs: config.policyTimeoutMs,
+        attemptTimeoutMs: config.policyAttemptTimeoutMs,
       });
     }
 

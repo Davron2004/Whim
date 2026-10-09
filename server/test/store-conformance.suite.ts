@@ -17,7 +17,7 @@ import path from 'node:path';
 import { check, section } from './harness';
 import { loadServerConfig } from '../src/config';
 import { openStores, type OpenedStores, type StoreConfig } from '../src/stores';
-import { InMemoryUsageStore, NodeSqliteUsageStore, type AdmitParams, type AdmitResult, type FailureReason, type LedgerRow, type UsageRecordKeeping, type UsageStore } from '../src/usage-store';
+import { InMemoryUsageStore, NodeSqliteUsageStore, policyCheckRowId, type AdmitParams, type AdmitResult, type FailureReason, type LedgerRow, type UsageRecordKeeping, type UsageStore } from '../src/usage-store';
 import { firestoreKey } from '../src/firestore/usage-store';
 import { InMemoryReportStore, type InsertReportParams } from '../src/reports/store';
 import { InMemoryWaitlistStore, WAITLIST_RETENTION_DAYS, type WaitlistPlatform, type WaitlistSignup } from '../src/waitlist/store';
@@ -304,6 +304,55 @@ const summary: StoreConformanceCase = {
   },
 };
 
+const policyCheckRows: StoreConformanceCase = {
+  name: 'a policy-check row admits, limits and purges as its own kind, and its cost joins its generation\'s',
+  async run(stores) {
+    const { usage } = stores;
+    const twelveHours = 12 * 3600;
+    const checkLimits = { kind: 'policy-check' as const, deviceLimit: 2, globalLimit: 3 };
+    const checkId = (id: string): string => policyCheckRowId(id);
+    nodeAssert.deepStrictEqual(await usage.admit(admitParams(checkId('p1'), 'dev-a', checkLimits)), { ok: true, requestId: checkId('p1') });
+    nodeAssert.strictEqual((await usage.admit(admitParams(checkId('p2'), 'dev-a', checkLimits))).ok, true);
+    nodeAssert.deepStrictEqual(await usage.admit(admitParams(checkId('p3'), 'dev-a', checkLimits)), { ok: false, reason: 'device', retryAfterSec: twelveHours });
+    nodeAssert.strictEqual((await usage.admit(admitParams(checkId('p4'), 'dev-b', checkLimits))).ok, true);
+    nodeAssert.deepStrictEqual(await usage.admit(admitParams(checkId('p5'), 'dev-c', checkLimits)), { ok: false, reason: 'global', retryAfterSec: twelveHours });
+    nodeAssert.deepStrictEqual(
+      await usage.unitAvailable({ deviceId: 'dev-a', kind: 'generate', now: T0, deviceLimit: 1, globalLimit: 1 }),
+      { ok: true },
+      'policy-check rows spend no generate unit',
+    );
+
+    // The request's own generate row sits beside its check row under the same prefix.
+    nodeAssert.strictEqual((await usage.admit(admitParams('p1', 'dev-a', { deviceLimit: 1 }))).ok, true, 'the request id itself stays free for its generate row');
+    await usage.settle(checkId('p1'), { outcome: 'ok', usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4 }, now: T0 });
+    await usage.settle(checkId('p2'), { outcome: 'unavailable', failureReason: 'policy_unavailable', now: T0 });
+    await usage.recordCost('p1', { state: 'resolved', costUsd: 0.5 });
+    await usage.recordCost(checkId('p1'), { state: 'resolved', costUsd: 0.25 });
+    await usage.recordCost(checkId('p2'), { state: 'resolved', costUsd: 0.125 });
+    await usage.admit(admitParams('p4', 'dev-b', { deviceLimit: 1 }));
+    await usage.recordCost('p4', { state: 'resolved', costUsd: 0.5 });
+    await usage.recordCost(checkId('p4'), { state: 'unresolved', generationIds: ['x'] });
+    const checkRow = await ledgerRow(stores, 'dev-a', checkId('p1'));
+    nodeAssert.deepStrictEqual([checkRow.kind, checkRow.outcome, checkRow.promptTokens], ['policy-check', 'ok', 3], 'the check row keeps its kind, outcome and tokens');
+
+    const day = (await usage.summary({ days: 1, now: T0 })).days[0];
+    nodeAssert.deepStrictEqual([day?.countByKind, day?.costUsdByKind], [{ 'policy-check': 3, generate: 2 }, { 'policy-check': 0.375, generate: 1 }]);
+    nodeAssert.deepStrictEqual(
+      (await usage.summary({ days: 1, now: T0 })).generationStats,
+      { count: 2, meanCostUsd: 0.75, medianCostUsd: 0.75, p95CostUsd: 0.75, maxCostUsd: 0.75, unresolvedCount: 1 },
+      'a generation costs its own row plus its check row, and an unresolved check row leaves it unresolved',
+    );
+
+    const dayBefore = T0 - DAY_MS;
+    const oneCheck = { kind: 'policy-check' as const, deviceLimit: 1, globalLimit: 1, now: dayBefore };
+    await usage.admit(admitParams(checkId('old'), 'dev-d', oneCheck));
+    nodeAssert.strictEqual((await usage.admit(admitParams(checkId('old-2'), 'dev-e', oneCheck))).ok, false, 'the earlier day is full');
+    nodeAssert.strictEqual(await usage.purgeLedger(utcDay(T0)), 1);
+    nodeAssert.deepStrictEqual(await ledgerIds(stores, 'dev-d'), []);
+    nodeAssert.strictEqual((await usage.admit(admitParams(checkId('old-3'), 'dev-e', oneCheck))).ok, true, 'the purged day no longer counts toward either limit');
+  },
+};
+
 const creditIncrements: StoreConformanceCase = {
   name: 'credit increments the lifetime totals and stamps the day it ran',
   async run({ usage }, clock) {
@@ -553,6 +602,7 @@ export const STORE_CONFORMANCE_CASES: readonly StoreConformanceCase[] = [
   costStates,
   costSweepCandidates,
   summary,
+  policyCheckRows,
   creditIncrements,
   reportListing,
   waitlistRows,
