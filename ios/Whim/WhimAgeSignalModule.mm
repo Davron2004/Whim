@@ -7,6 +7,10 @@
 // `unavailable`, which lets the flow continue. The Swift side needs the main queue (Apple's
 // sheet is presented over the current screen), so the call hops there first.
 //
+// `requiresSignificantUpdateAcknowledgment` and `acknowledgeSignificantUpdate` are the guardian's
+// significant-change acknowledgment (beta-1 D2): `false` / `unavailable` before iOS 26.4. They
+// never reject either. The Swift side moves to the main actor itself.
+//
 // Registered with `RCT_EXPORT_MODULE`, like `WhimAppInfoModule`: the TurboModule manager falls
 // back to registered module classes by name, and `package.json` stays untouched.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37,6 +41,23 @@ RCT_EXPORT_MODULE(WhimAgeSignal)
                                 resolve(signal);
                               }];
   });
+}
+
+- (void)requiresSignificantUpdateAcknowledgment:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+  [WhimAgeSignalReader requiresSignificantUpdateAcknowledgment:^(BOOL required) {
+    resolve(@(required));
+  }];
+}
+
+- (void)acknowledgeSignificantUpdate:(NSString *)updateDescription
+                             resolve:(RCTPromiseResolveBlock)resolve
+                              reject:(RCTPromiseRejectBlock)reject
+{
+  [WhimAgeSignalReader acknowledgeSignificantUpdate:updateDescription
+                                         completion:^(NSString *answer) {
+                                           resolve(answer);
+                                         }];
 }
 
 - (std::shared_ptr<TurboModule>)getTurboModule:(const ObjCTurboModule::InitParams &)params

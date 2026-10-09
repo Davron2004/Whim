@@ -40,6 +40,16 @@ class WhimAgeSignalModule(reactContext: ReactApplicationContext) : NativeWhimAge
     }
   }
 
+  // The significant-change acknowledgment is Apple's (beta-1 D2). Play has no such API, so it is
+  // never required here and always unavailable.
+  override fun requiresSignificantUpdateAcknowledgment(promise: Promise) {
+    promise.resolve(false)
+  }
+
+  override fun acknowledgeSignificantUpdate(description: String, promise: Promise) {
+    promise.resolve(UNAVAILABLE)
+  }
+
   // AgeSignalsResult.userStatus() is declared to return the AgeSignalsVerificationStatus
   // @IntDef annotation type itself rather than the int it annotates (a beta0.0.1-beta01 API
   // quirk), while the VERIFIED/SUPERVISED/... constants are plain Ints — so the raw status has

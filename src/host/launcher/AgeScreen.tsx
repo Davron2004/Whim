@@ -2,8 +2,9 @@
  * AgeScreen — the store age check ahead of the terms step (legal-surface-v2 design D11; spec
  * store-age-signals "The launcher checks the store's age signal before the terms step").
  *
- * While the store is asked (no `held`) it shows only the shell and a `Back` action: the check is
- * silent, and on iPhone the system may show its own age-range sheet over it. When the store held
+ * While the store is asked (no `held`) it shows only the flow's working line and a `Back` action:
+ * the check asks nothing of the user, and on iPhone the system may show its own age-range sheet
+ * over it. When the store held
  * the user, the message says why, and that the apps on the phone keep working: for a minor without
  * a parent's approval (`minor-not-approved`), that a parent can approve Whim through the store;
  * for a user under 13 (`under-13`), that Whim's AI features are for people 13 and over. The AI
@@ -17,6 +18,7 @@ import React from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { LEGAL_COPY } from './copy';
+import { WorkingLine } from './flow-working';
 import LegalLanguageSwitch from './LegalLanguageSwitch';
 import type { LegalLanguage } from './legal-language';
 import type { AgeHold } from './age-check';
@@ -44,6 +46,8 @@ export default function AgeScreen({ language, onLanguageChange, held, onClose }:
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
       <ScrollView contentContainerStyle={styles.content}>
+        {/* No clock: the store answers, or is given up on, within the 3-second deadline. */}
+        {!blocked && <WorkingLine phrase={copy.ageChecking} startedAt={0} clock={false} />}
         {blocked && (
           <>
             <LegalLanguageSwitch language={language} onChange={onLanguageChange} />
