@@ -9,7 +9,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { RELEASED_SNAPSHOT_DIR, disclosureReleaseFindings, type DisclosureManifest } from '../../../contract/src/disclosure-manifest';
+import {
+  RELEASED_SNAPSHOT_DIR,
+  disclosureReleaseFindings,
+  type CategorySurface,
+  type DisclosureCategory,
+  type DisclosureManifest,
+} from '../../../contract/src/disclosure-manifest';
 import { AI_CONSENT_VERSION } from '../../../src/host/launcher/release-config';
 import { CONSENT_WHATS_NEW } from '../../../src/host/launcher/copy';
 
@@ -27,16 +33,26 @@ export interface ReleasedSnapshots {
   readonly findings: readonly string[];
 }
 
-function isManifestShaped(value: unknown): value is DisclosureManifest {
+/** A snapshot as frozen: one frozen before categories declared a surface has none. */
+type SnapshotCategory = Omit<DisclosureCategory, 'surface'> & { readonly surface?: CategorySurface };
+type ManifestSnapshot = Omit<DisclosureManifest, 'categories'> & { readonly categories: readonly SnapshotCategory[] };
+
+function isManifestShaped(value: unknown): value is ManifestSnapshot {
   if (typeof value !== 'object' || value === null) return false;
   const record = value as Record<string, unknown>;
   return MANIFEST_LISTS.every((key) => Array.isArray(record[key]));
 }
 
+/** Snapshots predate the surface field and list only app categories (waitlist-hardening D6), so a
+ *  category without one reads as `app`. */
+function withSurfaces(snapshot: ManifestSnapshot): DisclosureManifest {
+  return { ...snapshot, categories: snapshot.categories.map((c) => ({ ...c, surface: c.surface ?? 'app' })) };
+}
+
 function parseSnapshot(text: string): DisclosureManifest | undefined {
   try {
     const parsed: unknown = JSON.parse(text);
-    return isManifestShaped(parsed) ? parsed : undefined;
+    return isManifestShaped(parsed) ? withSurfaces(parsed) : undefined;
     // eslint-disable-next-line no-restricted-syntax -- intentional: an unparseable snapshot is reported by the caller as a finding naming the file
   } catch {
     return undefined;
