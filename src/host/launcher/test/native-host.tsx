@@ -2,6 +2,11 @@
  * layout, animation and OS APIs are represented in memory, not asserted as device behavior. */
 import React from 'react';
 
+// React Native's runtime provides the frame callbacks Node lacks; a suite that steps frames itself
+// swaps these out for the test's duration.
+globalThis.requestAnimationFrame ??= (callback) => setImmediate(() => callback(performance.now())) as unknown as number;
+globalThis.cancelAnimationFrame ??= (id) => clearImmediate(id as unknown as NodeJS.Immediate);
+
 type HostProps = { children?: React.ReactNode; visible?: boolean; [key: string]: unknown };
 const host = (name: string) => (props: HostProps) => React.createElement(name, props, props.children);
 export const View = host('View');
