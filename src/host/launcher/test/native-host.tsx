@@ -12,7 +12,43 @@ export const Pressable = host('Pressable');
 export const ScrollView = host('ScrollView');
 export const Switch = host('Switch');
 export const KeyboardAvoidingView = host('KeyboardAvoidingView');
+export const InputAccessoryView = host('InputAccessoryView');
+type KeyboardEventName = 'keyboardWillShow' | 'keyboardWillChangeFrame' | 'keyboardWillHide' | 'keyboardDidShow' | 'keyboardDidHide';
+interface KeyboardEvent { endCoordinates: { screenX: number; screenY: number; width: number; height: number }; duration: number; easing: string }
+export type KeyboardListener = (event: KeyboardEvent) => void;
+const keyboardListeners = new Map<KeyboardEventName, Set<KeyboardListener>>();
+/** Counts `Keyboard.dismiss` calls, so a test can tell putting the keyboard away from submitting.
+ *  `emit` plays a keyboard event to every listener, as the native module would, with the keyboard's
+ *  top edge at `screenY` in window coordinates (a hidden keyboard reports the window's bottom).
+ *  `listening` is every listener still subscribed, to any event. */
+export const Keyboard = {
+  dismissed: 0,
+  visible: false,
+  last: null as KeyboardEvent['endCoordinates'] | null,
+  dismiss: () => { Keyboard.dismissed += 1; },
+  isVisible: () => Keyboard.visible,
+  metrics: () => (Keyboard.visible ? Keyboard.last : undefined),
+  addListener: (event: KeyboardEventName, listener: KeyboardListener) => {
+    const listeners = keyboardListeners.get(event) ?? new Set<KeyboardListener>();
+    keyboardListeners.set(event, listeners);
+    listeners.add(listener);
+    return { remove: () => listeners.delete(listener) };
+  },
+  listening: (): ReadonlySet<KeyboardListener> => new Set([...keyboardListeners.values()].flatMap((listeners) => [...listeners])),
+  emit: (event: KeyboardEventName, screenY: number) => {
+    Keyboard.visible = !event.endsWith('Hide') && screenY < 844;
+    Keyboard.last = { screenX: 0, screenY, width: 390, height: Math.max(0, 844 - screenY) };
+    for (const listener of keyboardListeners.get(event) ?? []) listener({ endCoordinates: Keyboard.last, duration: 250, easing: 'keyboard' });
+  },
+};
+/** Records every layout animation configured, so a test can see a change was set to move. */
+export const LayoutAnimation = {
+  configured: 0,
+  configureNext: () => { LayoutAnimation.configured += 1; },
+  Types: { spring: 'spring', linear: 'linear', easeInEaseOut: 'easeInEaseOut', easeIn: 'easeIn', easeOut: 'easeOut', keyboard: 'keyboard' },
+};
 export const SafeAreaView = host('SafeAreaView');
+export const SafeAreaProvider = host('SafeAreaProvider');
 export const StatusBar = host('StatusBar');
 /** Every script the host injected into a rendered WebView, oldest first. */
 export const injectedScripts: string[] = [];
@@ -26,7 +62,7 @@ export const Modal = (props: HostProps) => props.visible ? React.createElement('
 export function FlatList({ data, renderItem, ...props }: HostProps & { data: unknown[]; renderItem: (args: { item: unknown; index: number }) => React.ReactNode }) {
   return React.createElement('FlatList', props, data.map((item, index) => React.createElement(React.Fragment, { key: index }, renderItem({ item, index }))));
 }
-export const Platform = { OS: 'ios', select: (options: Record<string, unknown>) => options.ios ?? options.default };
+export const Platform = { OS: 'ios', Version: '26.0' as string | number, select: (options: Record<string, unknown>) => options.ios ?? options.default };
 export const StyleSheet = { create: <T,>(styles: T): T => styles, hairlineWidth: 1, absoluteFillObject: {}, flatten: (styles: unknown) => Object.assign({}, ...([styles].flat(Infinity))) };
 export const useSafeAreaInsets = () => ({ top: 20, bottom: 30, left: 0, right: 0 });
 export const useWindowDimensions = () => ({ width: 390, height: 844, scale: 1, fontScale: 1 });
@@ -37,7 +73,29 @@ class Value {
   interpolate() { return this.value; }
 }
 const animation = () => ({ start: () => {}, stop: () => {} });
-export const Animated = { Value, View, Text, timing: animation, sequence: animation, loop: animation, parallel: animation };
+type AnimationEnd = (result: { finished: boolean }) => void;
+/** Timing animations run until the test says their time has passed: `finishAnimations` ends every
+ *  one running, as the native driver reports it (the value at its target, `finished: true`); a
+ *  stopped one ends `finished: false`. */
+const runningAnimations = new Set<AnimationEnd>();
+const timing = (value: Value, config: { toValue: number }) => {
+  let end: AnimationEnd | undefined;
+  return {
+    start: (callback?: AnimationEnd) => {
+      end = (result) => {
+        runningAnimations.delete(end!);
+        if (result.finished) value.setValue(config.toValue);
+        callback?.(result);
+      };
+      runningAnimations.add(end);
+    },
+    stop: () => { if (end && runningAnimations.has(end)) end({ finished: false }); },
+  };
+};
+export function finishAnimations(): void {
+  for (const end of [...runningAnimations]) end({ finished: true });
+}
+export const Animated = { Value, View, Text, timing, sequence: animation, loop: animation, parallel: animation };
 export const Easing = { bezier: () => {}, inOut: () => {}, ease: () => {} };
 const backListeners = new Set<() => boolean>();
 export const BackHandler = {

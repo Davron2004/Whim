@@ -1,6 +1,7 @@
 /**
- * flow-chrome — the three pieces every gated step of the `2a` flow shares (shell-redesign-v2,
- * group D): the back link, the three-bar step indicator, and the bottom primary action.
+ * flow-chrome — the pieces every gated step of the `2a` flow shares (shell-redesign-v2, group D):
+ * the back link, the three-bar step indicator, the bottom primary action, and the refusal notice
+ * that sits above it.
  *
  * Kept in one module so compose, clarify and plan cannot drift on the rule that matters:
  * "Forward movement SHALL be gated by an explicit primary action... A busy primary action SHALL
@@ -12,11 +13,19 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, editingEyebrow } from './copy';
-import { primaryActionLabel, type FlowStep } from './prompt-flow';
-import { SHELL_PALETTE } from './theme';
+import { primaryActionLabel, type FlowNotice, type FlowStep } from './prompt-flow';
+import ServiceNotice from './ServiceNotice';
+import { primaryButtonColors, SHELL_PALETTE } from './theme';
 
 /** The gated steps, in order — the step indicator's three bars. */
 const INDICATOR_STEPS: readonly FlowStep[] = ['compose', 'clarify', 'plan'];
+
+/**
+ * The header's own space below its back link, so content scrolled beneath it never touches the
+ * link. A screen's content starts that much less far down, keeping the design's gap above its
+ * headline (the `content.paddingTop` each step cites) the same.
+ */
+export const FLOW_HEADER_GAP = SPACING.sm;
 
 export interface FlowHeaderProps {
   step: FlowStep;
@@ -27,10 +36,7 @@ export interface FlowHeaderProps {
 export function FlowHeader({ step, onBack }: Readonly<FlowHeaderProps>) {
   const reached = INDICATOR_STEPS.indexOf(step);
   return (
-    <View style={styles.header}>
-      <TouchableOpacity onPress={onBack} hitSlop={16}>
-        <Text style={[TYPE_SCALE.controlLabel, { color: SHELL_PALETTE.textMuted }]}>{COPY.backLabel}</Text>
-      </TouchableOpacity>
+    <BackHeader onBack={onBack}>
       <View style={styles.bars}>
         {INDICATOR_STEPS.map((s, i) => (
           <View
@@ -39,6 +45,19 @@ export function FlowHeader({ step, onBack }: Readonly<FlowHeaderProps>) {
           />
         ))}
       </View>
+    </BackHeader>
+  );
+}
+
+/** The flow's header row: the back link, and whatever sits at its right (the step bars). Settings
+ *  shares it, so every screen with a back link has the same one in the same place. */
+export function BackHeader({ onBack, children }: Readonly<{ onBack: () => void; children?: React.ReactNode }>) {
+  return (
+    <View style={styles.header}>
+      <TouchableOpacity onPress={onBack} hitSlop={16}>
+        <Text style={[TYPE_SCALE.controlLabel, { color: SHELL_PALETTE.textMuted }]}>{COPY.backLabel}</Text>
+      </TouchableOpacity>
+      {children}
     </View>
   );
 }
@@ -61,15 +80,23 @@ export function PrimaryAction({ step, enabled, editing = false, onPress }: Reado
       disabled={!enabled}
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={[
-        styles.primary,
-        { backgroundColor: enabled ? SHELL_PALETTE.accent : SHELL_PALETTE.card, borderColor: SHELL_PALETTE.cardBorder },
-      ]}
+      style={[styles.primary, primaryButtonColors(enabled)]}
     >
       <Text style={[TYPE_SCALE.bodyEmphatic, { color: enabled ? SHELL_PALETTE.onAccent : SHELL_PALETTE.textMuted }]}>
         {label}
       </Text>
     </TouchableOpacity>
+  );
+}
+
+/** A step's refusal notice, when it has one, above the step's primary action and a sibling gap
+ *  clear of it. */
+export function StepNotice({ notice }: Readonly<{ notice?: FlowNotice }>) {
+  if (notice == null) return null;
+  return (
+    <View style={styles.stepNotice}>
+      <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />
+    </View>
   );
 }
 
@@ -96,15 +123,18 @@ export function EditingEyebrow({ name }: Readonly<EditingEyebrowProps>) {
 
 const styles = StyleSheet.create({
   editingEyebrow: { marginBottom: SPACING.xs },
+  // design README "Spacing": `sm 12` between siblings — the notice and the action it sits above.
+  stepNotice: { marginBottom: SPACING.sm },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: SPACING.lg,
-    // design `Whim Mobile.dc.html:412,438,470` is `padding:16px 22px 0` — the bottom is ZERO, so the
-    // whole gap above each headline is the step's own `content.paddingTop` (34/28/26), not a stack.
+    // design `Whim Mobile.dc.html:412,438,470` is `padding:16px 22px 0`, with the whole gap above
+    // each headline the step's own `content.paddingTop` (34/28/26). `FLOW_HEADER_GAP` of that gap
+    // moves into the header, so scrolled content stops short of the back link.
     paddingTop: SPACING.md,
-    paddingBottom: 0,
+    paddingBottom: FLOW_HEADER_GAP,
   },
   bars: { flexDirection: 'row', gap: 5 },
   bar: { width: 18, height: 3, borderRadius: 2 },
