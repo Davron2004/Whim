@@ -26,12 +26,12 @@
 
 ## 4. SDK components: additions
 
-- [ ] 4.1 `Icon` (inline SVG from `src/design/icons`, `name: string` resolved per §3.1, sizes 16/20/24, `color` from the narrowed set, `label` or decorative) and `icon` props on `Button`, `ListItem`, `EmptyState`
-- [ ] 4.2 `Screen` `title` and `action`: header row with back control when the nav stack is deeper than one (calls `nav.back()`), trailing icon action, `title1` title; bottom padding keeps `chromeInsetBottom`
-- [ ] 4.3 `Stepper`, `DateInput` (epoch ms, `date` stores local midnight, native picker) and `Picker` (native list) per `system.md` §7.2
-- [ ] 4.4 `toast(text)` module function (bottom capsule above the orb footprint, 4 s, replaces the previous, ignored during first render, announced politely)
-- [ ] 4.5 `defineApp` `tint` (name or up to three) and `icon` types; `tileColor` kept and marked deprecated in the type
-- [ ] 4.6 Acceptance tests for each addition; update `fixtures/style-gallery.app.tsx` to show every new component, variant and prop
+- [x] 4.1 `Icon` (inline SVG from `src/design/icons`, `name: string` resolved per §3.1, sizes 16/20/24, `color` from the narrowed set, `label` or decorative) and `icon` props on `Button`, `ListItem`, `EmptyState`
+- [x] 4.2 `Screen` `title` and `action`: header row with back control when the nav stack is deeper than one (calls `nav.back()`), trailing icon action, `title1` title; bottom padding keeps `chromeInsetBottom`
+- [x] 4.3 `Stepper`, `DateInput` (epoch ms, `date` stores local midnight, native picker) and `Picker` (native list) per `system.md` §7.2
+- [x] 4.4 `toast(text)` module function (bottom capsule above the orb footprint, 4 s, replaces the previous, ignored during first render, announced politely)
+- [x] 4.5 `defineApp` `tint` (name or up to three) and `icon` types; `tileColor` kept and marked deprecated in the type
+- [x] 4.6 Acceptance tests for each addition; update `fixtures/style-gallery.app.tsx` to show every new component, variant and prop
 
 ## 5. SDK components: restyle and keyed lists
 
@@ -53,10 +53,10 @@
 
 ## 7. Native dependencies (HUMAN-BOOTSTRAP: `package.json`, lockfile, `babel.config.js`, Podfile)
 
-- [ ] 7.1 Add exact pins: `react-native-reanimated@4.6.0`, `react-native-worklets@0.12.2`, `react-native-gesture-handler`, `react-native-svg`, `react-native-screens`, `react-native-keyboard-controller` (versions verified against RN 0.85.3 bridgeless); add the worklets babel plugin; `pod install` and restore any unrelated `Podfile.lock` churn
-- [ ] 7.2 Root wiring in `App.tsx`: `GestureHandlerRootView`, `KeyboardProvider`, Reanimated `ReducedMotionConfig` following the OS; `src/host/ui/Icon.tsx` (react-native-svg, from `src/design/icons`) as the first SVG use, so knip sees every new dependency imported
-- [ ] 7.3 Build the Android release APK (offline) and the iOS simulator build; run `guard:metro`, knip and the release checks; record versions and any build flags in the chain contract
-- [ ] 7.4 Confirm `native-network-deny.suite.ts` and #74's WebView manager replacement still pass with the new autolinked packages
+- [x] 7.1 Add exact pins: `react-native-reanimated@4.6.0`, `react-native-worklets@0.12.2`, `react-native-gesture-handler`, `react-native-svg`, `react-native-screens`, `react-native-keyboard-controller` (versions verified against RN 0.85.3 bridgeless); add the worklets babel plugin; `pod install` and restore any unrelated `Podfile.lock` churn
+- [x] 7.2 Root wiring in `App.tsx`: `GestureHandlerRootView`, `KeyboardProvider`, Reanimated `ReducedMotionConfig` following the OS; `src/host/ui/Icon.tsx` (react-native-svg, from `src/design/icons`) as the first SVG use, so knip sees every new dependency imported
+- [x] 7.3 Build the Android release APK (offline) and the iOS simulator build; run `guard:metro`, knip and the release checks; record versions and any build flags in the chain contract
+- [x] 7.4 Confirm `native-network-deny.suite.ts` and #74's WebView manager replacement still pass with the new autolinked packages
 
 ## 8. Haptics (HUMAN-BOOTSTRAP: `package.json` `codegenConfig`)
 
@@ -100,11 +100,11 @@
 
 ## 13. Generator: server
 
-- [ ] 13.1 `checks/passes/manifest-extraction.ts` and the server check stage extract `tint`/`icon`, resolve them through `src/design/tints.ts` and `src/design/icons/names.ts` with warning diagnostics; delete `validTileColor` and the server `RESERVED_HUES`; confirm the server bundle reaches `src/design/` (else re-export through `checks/`)
-- [ ] 13.2 Prompts: replace `PLAN_ROW_LABELS` with the plan-row rules (labels for the app, ≤ 3 words, ≤ 2 sentences, never restate a question on the page); rewrite treats delegated questions as open; generation decides delegated questions
-- [ ] 13.3 Prompts: clarify options ≤ 40 characters; limit reasons use the glossary; remove the layout-dictating sentence and point at SDK defaults; add the tint/icon section (lists come from the shared modules, four rules)
-- [ ] 13.4 Contract docs: `contract/src/index.ts` comment for `manifest.tint`/`icon`; update `server/test/{prompts,machine,contract,wire-v2,flowbench}.suite.ts`
-- [ ] 13.5 Eval: corpus cases for option length, tint/icon present and valid, tint/icon stable across a change, and an invalid-icon rate metric
+- [x] 13.1 `checks/passes/manifest-extraction.ts` and the server check stage extract `tint`/`icon`, resolve them through `src/design/tints.ts` and `src/design/icons/names.ts` with warning diagnostics; delete `validTileColor` and the server `RESERVED_HUES`; confirm the server bundle reaches `src/design/` (else re-export through `checks/`)
+- [x] 13.2 Prompts: replace `PLAN_ROW_LABELS` with the plan-row rules (labels for the app, ≤ 3 words, ≤ 2 sentences, never restate a question on the page); rewrite treats delegated questions as open; generation decides delegated questions
+- [x] 13.3 Prompts: clarify options ≤ 40 characters; limit reasons use the glossary; remove the layout-dictating sentence and point at SDK defaults; add the tint/icon section (lists come from the shared modules, four rules)
+- [x] 13.4 Contract docs: `contract/src/index.ts` comment for `manifest.tint`/`icon`; update `server/test/{prompts,machine,contract,wire-v2,flowbench}.suite.ts`
+- [x] 13.5 Eval: corpus cases for option length, tint/icon present and valid, tint/icon stable across a change, and an invalid-icon rate metric
 
 ## 14. Shell navigation and settings
 
