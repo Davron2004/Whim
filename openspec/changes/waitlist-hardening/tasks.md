@@ -66,22 +66,22 @@ Constraints for every task:
 
 ## 3. Legacy-row migration and SQLite import (#109 data)
 
-- [ ] 3.1 `server/src/admin/import-sqlite.ts`: carry the consent fields and the fingerprints. An opt-out-model `waitlist.db` (legacy column only) imports into the opt-in model through the shared mapping, and re-running changes nothing. Extend `server/test/import-sqlite.suite.ts` and the Firestore import cases (`server/test/firestore-import.ts`). Build the legacy fixture with BASE's SQLite schema.
-- [ ] 3.2 New `server/src/admin/migrate-waitlist.ts`, wired as `whim-admin migrate-waitlist [--apply]` in `server/src/admin/{cli,main}.ts`, per design D5:
+- [x] 3.1 `server/src/admin/import-sqlite.ts`: carry the consent fields and the fingerprints. An opt-out-model `waitlist.db` (legacy column only) imports into the opt-in model through the shared mapping, and re-running changes nothing. Extend `server/test/import-sqlite.suite.ts` and the Firestore import cases (`server/test/firestore-import.ts`). Build the legacy fixture with BASE's SQLite schema.
+- [x] 3.2 New `server/src/admin/migrate-waitlist.ts`, wired as `whim-admin migrate-waitlist [--apply]` in `server/src/admin/{cli,main}.ts`, per design D5:
   - it is a dry run by default;
   - each legacy row is rewritten in its own transaction that re-checks the row is still legacy;
   - per row it prints the 12-hex fingerprint prefix, `platform`, `noticeId`, `createdAt`, `updatedAt` and the planned consent fields;
   - it then prints the totals (migrated or planned, already migrated, total);
   - it never prints an address, and runs against whichever backend the factory selects.
-- [ ] 3.3 New `server/test/migrate-waitlist.suite.ts`, registered in `server/test/acceptance.ts`, covering the four spec scenarios on SQLite with a 5-row legacy fixture that mixes ticked and unticked:
+- [x] 3.3 New `server/test/migrate-waitlist.suite.ts`, registered in `server/test/acceptance.ts`, covering the four spec scenarios on SQLite with a 5-row legacy fixture that mixes ticked and unticked:
   - the dry run leaves the database file byte-identical;
   - apply then re-run gives 5 migrated, then 0 migrated with 5 already migrated, with the preserved fields equal;
   - a migrated legacy opt-out stays respected;
   - an unmigrated row is read correctly.
 
   Also assert that stdout contains none of the 5 addresses. Red-check the idempotence case against a variant that rewrites already-migrated rows.
-- [ ] 3.4 Add the same dry-run, apply and re-run scenario on the Firestore emulator (`server/test/firestore-import.ts`, registered where the emulator runner already picks it up). Assert that the docs are deep-equal before and after the dry run.
-- [ ] 3.5 Write `handoff/waitlist-migration.md`: the command line, the exact output format and totals line, the exit codes, and what "already migrated" means.
+- [x] 3.4 Add the same dry-run, apply and re-run scenario on the Firestore emulator (`server/test/firestore-import.ts`, registered where the emulator runner already picks it up). Assert that the docs are deep-equal before and after the dry run.
+- [x] 3.5 Write `handoff/waitlist-migration.md`: the command line, the exact output format and totals line, the exit codes, and what "already migrated" means.
 
 ## 4. Signup route and operator command (#109, #111)
 
