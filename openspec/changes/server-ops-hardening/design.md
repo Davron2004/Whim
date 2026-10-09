@@ -83,8 +83,9 @@ In the line path (`admitIntoLine`), the steps are:
 3. It runs `checkPolicy`.
 4. It settles the row: allow → `ok`, refuse → `refused`/`content_policy`, unavailable → `unavailable`/`policy_unavailable`.
 5. It attributes tokens and generation ids, then resolves cost through the existing `resolveRequestUsage` with that row id.
+6. On a refusal only, it also admits the request's own `generate` row and settles it `refused`/`content_policy` with cost 0, not refunded (product-owner ruling 3).
 
-The unit is never refunded, because it meters classifier spend rather than the user's allowance. `recordLineRefusal`'s admit-then-refund of a `generate` row is replaced by the settled `policy-check` row. With that, both paths ledger a `policy_unavailable`, the cost lands on a row, and no generation unit is spent before a slot. That honours beta-1's line requirement and #120's symmetry comment.
+The `policy-check` unit is never refunded, because it meters classifier spend rather than the user's allowance. `recordLineRefusal`'s admit-then-refund of a `generate` row is gone: an allow or a missing verdict in line writes only the settled `policy-check` row, and a refusal also spends a generation unit, as a refusal on a free slot does. With that, both paths ledger a `policy_unavailable`, the cost lands on a row, and no generation unit is spent before a slot except by a refusal. That honours beta-1's line requirement, #120's symmetry comment and ruling 3.
 
 **Why this works:**
 - Fresh device ids defeat a per-device bound alone, and the global ceiling (800 a day) is what caps spend. That is at most about $0.40 a day at roughly $0.0005 per classifier call.
@@ -178,5 +179,5 @@ Files shared between chains are ordered with `after:`:
 
 1. Approve the throwaway-database Firestore run (task 7.3, cents, attended), or accept emulator-only evidence for #143?
 2. Should the smoke's live clarify be on by default for every deploy (current design), or only for plain deploys?
-3. Defaults for `WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY`/`_PER_DAY` (30/800), and whether a refusal in line should also spend a `generate` unit as a free-slot refusal does. The current design spends only the check unit.
+3. Defaults for `WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY`/`_PER_DAY` (30/800), and whether a refusal in line should also spend a `generate` unit as a free-slot refusal does. Resolved by ruling 3: 30/800 accepted, and a refusal in line spends a generation unit (D3 step 6).
 4. Does the 5-minute, three-region uptime check keep `whim-server` warm, and is that acceptable? This is a separate issue if so.
