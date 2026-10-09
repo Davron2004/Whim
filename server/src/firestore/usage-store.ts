@@ -2,9 +2,13 @@
  * FirestoreUsageStore (durable-server-stores D2, D3; specs/server-storage-backends "Admission is
  * atomic on every backend", "Retention purges run identically on every backend").
  *
- * Three collections under the store's root:
+ * Four collections under the store's root:
  * - `usage/{deviceId}`: a device's lifetime token totals and the UTC day it was last credited.
- *   `credit` is a merge write of `FieldValue.increment`s, atomic without a transaction.
+ * - `creditMarks/{markerId}`: one `{ utcDay }` document per `credit` call, named by an id the call
+ *   mints (specs/server-storage-backends "A lost commit reply never credits usage twice"). `credit`
+ *   increments the totals and creates its marker in one transaction, and only while the marker is
+ *   absent, so the client's retry of a commit whose reply was lost credits nothing twice. A marker
+ *   holds no device id; the ledger purge deletes it after a day.
  * - `requests/{requestId}`: one content-free ledger row per admitted request, every `LedgerRow`
  *   field but the id (the document id), `generationIds` as a native array, plus the
  *   `admissionId` of the `admit` call that created it (absent on an imported row).
@@ -63,6 +67,10 @@ import {
 export const USAGE_COLLECTION = 'usage';
 export const REQUESTS_COLLECTION = 'requests';
 export const ADMISSION_COLLECTION = 'admission';
+export const CREDIT_MARKS_COLLECTION = 'creditMarks';
+
+/** A credit marker outlives its credit by this long: past any retry of the credit's commit. */
+const CREDIT_MARK_KEEP_MS = 86_400_000;
 
 /** Ledger rows one device-delete transaction removes. Each also writes at most two counters per
  *  (day, kind) it touches, which keeps a transaction far below Firestore's write limit. */
@@ -90,6 +98,11 @@ export interface RequestDoc {
   refunded: boolean;
   /** Set by the `admit` call that created the row, one value per call; absent on an imported row. */
   admissionId?: string;
+}
+
+/** A `credit` call's marker document: the UTC day it was written, and nothing else. */
+interface CreditMarkDoc {
+  utcDay: string;
 }
 
 /** A device's lifetime totals document. */
@@ -189,6 +202,10 @@ export class FirestoreUsageStore implements UsageStore, UsageRecordKeeping {
     return this.root.collection(ADMISSION_COLLECTION);
   }
 
+  private creditMarks(): CollectionReference {
+    return this.root.collection(CREDIT_MARKS_COLLECTION);
+  }
+
   private request(requestId: string): DocumentReference {
     return this.requests().doc(firestoreKey(requestId));
   }
@@ -210,17 +227,29 @@ export class FirestoreUsageStore implements UsageStore, UsageRecordKeeping {
   }
 
   async credit(deviceId: string, usage: Usage): Promise<void> {
-    await this.usage()
-      .doc(firestoreKey(deviceId))
-      .set(
-        {
-          promptTokens: FieldValue.increment(usage.promptTokens),
-          completionTokens: FieldValue.increment(usage.completionTokens),
-          totalTokens: FieldValue.increment(usage.totalTokens),
-          lastCreditedDay: utcDayString(this.now()),
-        },
-        { merge: true },
-      );
+    const ref = this.usage().doc(firestoreKey(deviceId));
+    const utcDay = utcDayString(this.now());
+    // Names this call's increment across the client's retries of its transaction, as `admissionId`
+    // names `admit`'s row: a retry after a commit that landed finds the marker and writes nothing.
+    const marker = this.creditMarks().doc(randomUUID());
+    await this.db.runTransaction(
+      async (tx) => {
+        if ((await tx.get(marker)).exists) return;
+        tx.set(
+          ref,
+          {
+            promptTokens: FieldValue.increment(usage.promptTokens),
+            completionTokens: FieldValue.increment(usage.completionTokens),
+            totalTokens: FieldValue.increment(usage.totalTokens),
+            lastCreditedDay: utcDay,
+          },
+          { merge: true },
+        );
+        const mark: CreditMarkDoc = { utcDay };
+        tx.create(marker, mark);
+      },
+      { maxAttempts: ADMISSION_MAX_ATTEMPTS },
+    );
   }
 
   async read(deviceId: string): Promise<Usage> {
@@ -371,6 +400,8 @@ export class FirestoreUsageStore implements UsageStore, UsageRecordKeeping {
     // The counters go after their rows: an interruption leaves a purged day counted, never a day
     // whose rows remain uncounted.
     await deleteInBatches(this.db, this.admission().where('utcDay', '<', beforeUtcDay));
+    // Credit markers keep to their own cut, whatever the ledger keeps: before the previous UTC day.
+    await deleteInBatches(this.db, this.creditMarks().where('utcDay', '<', utcDayString(this.now() - CREDIT_MARK_KEEP_MS)));
     return deleted;
   }
 
