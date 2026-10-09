@@ -12,7 +12,7 @@ These are the only open items. Don't leave them for the day of a breach.
 - TODO(owner): add the Commission d'accès à l'information (CAI) link for reporting a confidentiality incident to Contacts.
 - TODO(owner): add the ICO's breach report link to Contacts. Known risk, accepted by the owner (2026-09-24, no EU/UK representative will be appointed — solo, non-revenue project): Whim can't tell where a user is, so it can't tell which EU country is affected or route the question through a representative; notify the ICO for UK risk, and pick the most relevant EU authority on a best-effort basis for EU risk.
 - TODO(owner): add OpenRouter's security contact to Contacts, and check whether OpenRouter's terms or DPA promise to tell Whim about an incident (this belongs in the B3 written agreement).
-- TODO(owner): pick a private place for incident notes and evidence copies, encrypted and outside this repository. The repository is public (`openspec/changes/developer-observability/design.md`, the note on publishing the commit SHA).
+- TODO(owner): pick a private place for incident notes and evidence copies, encrypted and outside this repository. The repository is public (`openspec/changes/archive/2026-10-09-developer-observability/design.md`, the note on publishing the commit SHA).
 - TODO(owner): confirm the daily snapshot schedule for the `whim-data` disk exists (`docs/deploy.md` §"Persistent-disk snapshots" says no script creates it).
 - TODO(owner): optionally name a backup person who can stop the server if you can't be reached, and give them IAP SSH access.
 

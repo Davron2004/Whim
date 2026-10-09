@@ -1,6 +1,6 @@
 # Where generation time went, and what to run instead
 
-Measured on 2026-09-22 for #55 (on a phone, clarify took ~35 s and plan writing ~25 s before a build even started) and #51 (answer and plan submits failing with `policy_unavailable`, then passing on retry). The code change is `openspec/changes/faster-generation/`. Raw judge verdicts, inputs and the ledger of every step are in that folder (`bench/`, `progress.md`, `review-*.md`).
+Measured on 2026-09-22 for #55 (on a phone, clarify took ~35 s and plan writing ~25 s before a build even started) and #51 (answer and plan submits failing with `policy_unavailable`, then passing on retry). The code change is `openspec/changes/archive/2026-10-09-faster-generation/`. Raw judge verdicts, inputs and the ledger of every step are in that folder (`bench/`, `progress.md`, `review-*.md`).
 
 ## The short version
 

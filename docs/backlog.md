@@ -24,7 +24,7 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
   - Nobody is told when a report arrives, the API goes down, or GCP spend spikes. There's no uptime check and no budget alert (only the OpenRouter credit cap).
   - `docs/capabilities.md` points at `openspec/specs/{content-reports,server-deployment,server-admission-control,content-policy}/spec.md`, and none of those files exist. `openspec/changes/public-generation-server` was never archived.
 - **Why it matters:** once real users arrive, crashes and failed generations can't be seen unless someone reports them by hand.
-- **Suggested approach:** proposed as `openspec/changes/developer-observability/`; its disclosure chain waits for GitHub #63 (rewrite of the consent, policy and store text). The owner chose to route device errors through Whim's own server instead of a third-party SDK. Archive `public-generation-server` separately.
+- **Suggested approach:** proposed as `openspec/changes/archive/2026-10-09-developer-observability/`; its disclosure chain waits for GitHub #63 (rewrite of the consent, policy and store text). The owner chose to route device errors through Whim's own server instead of a third-party SDK. Archive `public-generation-server` separately.
 - **Source:** observability audit, 2026-09-23.
 
 ### [info] Generation speed and model choice, measured 2026-09-22
@@ -60,7 +60,7 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 
 ### [idea — later] A cheaper way to verify generated candidates than a Chromium context per run
 - [ ] open
-- **Where:** `synthrun/session.ts` and `synthrun/report.ts` (a fresh browser context and page per candidate), `server/src/generation/stages/run.ts` (the run stage), and the VM sizing in `openspec/changes/public-generation-server/design.md` D6/D25 (synthetic-run concurrency is what drives vCPU and memory).
+- **Where:** `synthrun/session.ts` and `synthrun/report.ts` (a fresh browser context and page per candidate), `server/src/generation/stages/run.ts` (the run stage), and the VM sizing in `openspec/changes/archive/2026-10-09-public-generation-server/design.md` D6/D25 (synthetic-run concurrency is what drives vCPU and memory).
 - **What:** every candidate boots its own Chromium context on the server to run and observe it. The owner suspects there's a much cheaper design: one warm shared browser with per-candidate isolation, or verifying most candidates without a full browser render and saving the real render for the ones that need it.
 - **Why it matters:** the synthetic run is what limits how many generations a VM can run at once and so what the VM costs (D25 sizes the demo-night profile around it). Not now: there are zero users. Revisit when generation volume or VM cost makes it matter. This is an optimization to explore later, not a decision, and any cheaper path still has to keep the containment guarantees (sandbox on, no egress, trusted-vantage observation).
 - **Suggested approach:** measure first. Use the event-profile load test (public-generation-server task 15.4) for per-context CPU and memory and the run stage's share of a generation's wall time. Then compare candidate designs against that baseline and against the synthetic-run spec's isolation requirements before writing a proposal.

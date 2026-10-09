@@ -160,5 +160,5 @@ document, it doesn't restate the values.
 
 ## Decision log
 
-Design decisions D1, D2, D3, D6, D7, D10 and D16 (`openspec/changes/store-launch-compliance/
+Design decisions D1, D2, D3, D6, D7, D10 and D16 (`openspec/changes/archive/2026-10-09-store-launch-compliance/
 design.md`) are recorded in `docs/decisions.md`.

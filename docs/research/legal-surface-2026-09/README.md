@@ -552,10 +552,10 @@ The detail behind the seven decisions at the top. The numbers stay fixed because
 
 ## What else changes if you adopt this
 
-- `openspec/changes/store-launch-compliance/specs/ai-data-consent/spec.md`: the disclosure requirement names OpenRouter; change it to roles. Add the re-consent requirement above.
+- `openspec/specs/ai-data-consent/spec.md`: the disclosure requirement names OpenRouter; change it to roles. Add the re-consent requirement above.
 - `scripts/release/lib/store-listing.ts`: `PRIVACY_TYPE_MAPPING` allows only two types, and `checkNoLinkageOrTracking` refuses `DATA_LINKED_TO_YOU`. Both encode the old, wrong answer.
-- `openspec/changes/developer-observability/design.md` D11 and its `device-diagnostics` spec ("not linked to identity"): change to linked, and point the coverage check at the manifest.
-- `openspec/changes/developer-observability/specs/device-diagnostics`: a closed set of mini-app error names, with `Other` for anything else, and a red-check (B9).
+- `openspec/changes/archive/2026-10-09-developer-observability/design.md` D11 and its `device-diagnostics` spec ("not linked to identity"): change to linked, and point the coverage check at the manifest.
+- `openspec/specs/device-diagnostics`: a closed set of mini-app error names, with `Other` for anything else, and a red-check (B9).
 - `src/host/launcher/release-config.ts`: `AI_CONSENT_VERSION` goes to 2. Its comment ("Bump it whenever what Whim sends, or to whom, changes") becomes the manifest rule.
 - `src/host/launcher/transport-shared.ts` (`requestHeaders`) and the server's `/v1/*` admission: send and check the granted consent version (B10). The manifest check runs in the server deploy path as well as the app build.
 - `src/host/launcher/copy.ts`, `deploy/site/privacy.html`, a new `deploy/site/terms.html`, `release/store/*`, `ios/Whim/PrivacyInfo.xcprivacy`, `release/store/app-store/review_information/notes.txt` and `docs/store/review-notes.md`: replace with `draft-copy.md`. French versions follow (decision 16).

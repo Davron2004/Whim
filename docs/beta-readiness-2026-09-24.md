@@ -115,8 +115,8 @@ Verified in code on 2026-09-24:
   ends. The browser is relaunched only if it dies.
 - Containment was designed around the **context**, not the process: OS-sandboxed Chromium, the opaque-origin
   iframe + CSP, egress blocked per context, nonce-authenticated verdicts
-  (`openspec/changes/public-generation-server/design.md` D4/D5). So 100 users don't mean 100 Chromiums.
-- Measured load test (`openspec/changes/public-generation-server/progress.md`, event profile, 2026-09-15): 15
+  (`openspec/changes/archive/2026-10-09-public-generation-server/design.md` D4/D5). So 100 users don't mean 100 Chromiums.
+- Measured load test (`public-generation-server` progress ledger, in git history at `8c6cb385`; event profile, 2026-09-15): 15
   concurrent generations peaked at about 34 % of 8 vCPU and about 0.5 GB of a 16 GB limit. CPU is the constraint,
   not memory.
 - **What actually happens at N users:** production runs the standard profile (`e2-standard-2`), whose defaults
