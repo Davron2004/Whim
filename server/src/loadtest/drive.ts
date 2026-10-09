@@ -9,10 +9,12 @@
  * One synthetic device is one fresh UUID posting `POST /v1/generate`, with a complete client
  * envelope (`../bench-envelope.ts`) and a prompt unique to it
  * (so the content-policy cache can never hide the classifier's work) and reading its SSE stream to
- * the terminal event, recording time to the first REAL event (never a `:` comment/keepalive frame)
- * and total time. The leak probe starts `cap` fresh devices, aborts each right after its first
- * event, and repeats once after a delay — a leaked slot shows up as a `server_busy` refusal in
- * either round.
+ * the terminal event, recording time to the first REAL event (never a `:` comment/keepalive frame),
+ * total time, and how long it waited in the generation line (beta-1 D8) when its stream opened with
+ * `queued`. The leak probe starts `cap` fresh devices, aborts each right after its first event, and
+ * repeats once after a delay: every one of them must get a slot at once, so a leaked slot or a
+ * place in line that never emptied shows up as a device that waited, or was refused `server_busy`,
+ * in either round.
  *
  * `realFetch` is captured at module load, before anything can have installed the load-test
  * server's `fetch` trap (`server/src/loadtest/server.ts`): in production this driver runs as its
@@ -83,6 +85,9 @@ export interface DeviceOutcome {
   /** Absent when the request was refused, or a stream never produced a real event before ending. */
   timeToFirstEventMs?: number;
   totalMs: number;
+  /** Present only for a device that waited in the generation line: from its first `queued` event to
+   *  its first event of any other type, or to the end of the stream when none came. */
+  waitMs?: number;
   /** Absent on a refusal, an abort, or a stream that ended with no terminal event. */
   terminal?: 'result' | 'failure';
   refusal?: { status: number; error: string };
@@ -94,9 +99,14 @@ export interface RunDeviceOptions {
   deviceId?: string;
   /** Cancel the request the moment its first real event arrives — the leak probe's shape. */
   abortAfterFirstEvent?: boolean;
-  /** Overall wall-clock bound for this one device, default 120000ms. */
+  /** Overall wall-clock bound for this one device, default `DEVICE_TIMEOUT_MS`. */
   timeoutMs?: number;
 }
+
+/** One device's default wall-clock bound: a run's own 120 s plus the server's default longest wait
+ *  in line (`WHIM_QUEUE_MAX_WAIT_MS`, 180 s). A device still waiting at the bound reports no
+ *  terminal, which fails the verdict. */
+const DEVICE_TIMEOUT_MS = 300_000;
 
 /** Shapes a non-200 `/v1/generate` response into a refusal — a non-JSON body still reports, under
  *  a generic `http_<status>` code. */
@@ -113,14 +123,20 @@ async function refusalOf(response: Response): Promise<DeviceOutcome['refusal']> 
 
 interface SseOutcome {
   firstEventAt?: number;
+  /** When the first `queued` event arrived, and when the first event of another type did. */
+  queuedAt?: number;
+  leftLineAt?: number;
   terminal?: 'result' | 'failure';
 }
 
 /** Folds one parsed frame into `outcome` in place — a bare comment/keepalive is a no-op. */
 function applyFrame(outcome: SseOutcome, frame: ParsedSseFrame): void {
   if (!isRealFrame(frame)) return;
-  outcome.firstEventAt ??= Date.now();
+  const now = Date.now();
+  outcome.firstEventAt ??= now;
   const parsed = parseGenerationEvent(frame);
+  if (parsed?.type === 'queued') outcome.queuedAt ??= now;
+  else if (outcome.queuedAt !== undefined) outcome.leftLineAt ??= now;
   if (parsed?.type === 'result' || parsed?.type === 'failure') outcome.terminal = parsed.type;
 }
 
@@ -160,7 +176,7 @@ async function readSseToOutcome(reader: ReadableStreamDefaultReader<Uint8Array>,
 export async function runDevice(options: RunDeviceOptions): Promise<DeviceOutcome> {
   const deviceId = options.deviceId ?? randomUUID();
   const started = Date.now();
-  const signal = AbortSignal.timeout(options.timeoutMs ?? 120_000);
+  const signal = AbortSignal.timeout(options.timeoutMs ?? DEVICE_TIMEOUT_MS);
 
   let response: Response;
   try {
@@ -187,11 +203,13 @@ export async function runDevice(options: RunDeviceOptions): Promise<DeviceOutcom
     return { deviceId, totalMs: Date.now() - started, refusal: { status: response.status, error: 'no_stream_body' } };
   }
 
-  const { firstEventAt, terminal } = await readSseToOutcome(reader, options.abortAfterFirstEvent ?? false);
+  const { firstEventAt, queuedAt, leftLineAt, terminal } = await readSseToOutcome(reader, options.abortAfterFirstEvent ?? false);
+  const endedAt = Date.now();
   return {
     deviceId,
-    totalMs: Date.now() - started,
+    totalMs: endedAt - started,
     timeToFirstEventMs: firstEventAt !== undefined ? firstEventAt - started : undefined,
+    waitMs: queuedAt !== undefined ? (leftLineAt ?? endedAt) - queuedAt : undefined,
     terminal,
   };
 }
@@ -212,8 +230,7 @@ export interface LeakProbeOutcome {
 }
 
 /** Two rounds of `cap` fresh devices, `roundDelayMs` apart (default 5000, spec "twice"), each
- *  aborted right after its first event. A `server_busy` refusal in either round means a slot never
- *  came back — the probe fails. */
+ *  aborted right after its first event, judged by `leakVerdict`. */
 export async function leakProbe(baseUrl: string, cap: number, roundDelayMs = 5000): Promise<LeakProbeOutcome> {
   const rounds: DeviceOutcome[][] = [];
   for (let round = 0; round < 2; round++) {
@@ -225,12 +242,18 @@ export async function leakProbe(baseUrl: string, cap: number, roundDelayMs = 500
     );
     rounds.push(outcomes);
   }
-  const leaked = rounds.flat().find((o) => o.refusal?.error === 'server_busy');
-  return {
-    ok: leaked === undefined,
-    rounds,
-    detail: leaked ? `device ${leaked.deviceId} was refused server_busy during the leak probe` : undefined,
-  };
+  return leakVerdict(rounds);
+}
+
+/** The leak probe's verdict: with nothing else running, `cap` devices must each get a slot at once.
+ *  One that waits in line, or is refused `server_busy`, in either round means a slot never came back
+ *  or the line never emptied. */
+export function leakVerdict(rounds: DeviceOutcome[][]): LeakProbeOutcome {
+  const leaked = rounds.flat().find((o) => o.refusal?.error === 'server_busy' || o.waitMs !== undefined);
+  let detail: string | undefined;
+  if (leaked?.refusal) detail = `device ${leaked.deviceId} was refused server_busy during the leak probe`;
+  else if (leaked) detail = `device ${leaked.deviceId} waited in line during the leak probe`;
+  return { ok: leaked === undefined, rounds, detail };
 }
 
 // ─── Percentile, stats sampling, report, verdict ─────────────────────────────
@@ -249,8 +272,9 @@ export interface StatsSample {
 }
 
 /** Parses `run.sh`'s sampler CSV: one `cpuPercent,memoryPercent` pair per line (both docker
- *  `stats --format` percentages, e.g. `12.34,56.78` — no byte-unit conversion in bash), blank
- *  lines and unparseable rows skipped. */
+ *  `stats --format` percentages, e.g. `12.34,56.78` — no byte-unit conversion in bash; `200` means
+ *  both vCPUs of an e2-standard-2, since these are per-core percentages), blank lines and
+ *  unparseable rows (including the leading `cores,<N>` line `parseCoresLine` reads) skipped. */
 export function parseStatsCsv(text: string): StatsSample[] {
   const samples: StatsSample[] = [];
   for (const line of text.split('\n')) {
@@ -262,6 +286,21 @@ export function parseStatsCsv(text: string): StatsSample[] {
     if (Number.isFinite(cpuPercent) && Number.isFinite(memoryPercent)) samples.push({ cpuPercent, memoryPercent });
   }
   return samples;
+}
+
+const CORES_LINE_PREFIX = 'cores,';
+
+/** Parses the one `cores,<N>` line `run.sh`'s sampler writes before its CSV samples (`nproc`, read
+ *  once over the same ssh session as the sampler loop — never hardcoded) — `undefined` when no such
+ *  line is present or its value isn't a positive integer. */
+export function parseCoresLine(text: string): number | undefined {
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(CORES_LINE_PREFIX)) continue;
+    const cores = Number(trimmed.slice(CORES_LINE_PREFIX.length));
+    if (Number.isInteger(cores) && cores > 0) return cores;
+  }
+  return undefined;
 }
 
 export interface PeakStats {
@@ -280,26 +319,62 @@ export function peakStats(samples: readonly StatsSample[]): PeakStats | undefine
   );
 }
 
+/** CPU usage normalized to the whole machine (per-core `docker stats` % ÷ `cores`), so `100` means
+ *  every vCPU saturated — the shape the beta-1 cap rule (`specs/server-admission-control`, "p95 CPU
+ *  under 70 %") is stated in, unlike `PeakStats.peakCpuPercent`, which stays raw/per-core. */
+export interface CpuReport {
+  cores: number;
+  samples: number;
+  p50Percent: number;
+  p95Percent: number;
+  peakPercent: number;
+}
+
+/** `undefined` when there are no samples or `cores` isn't a positive integer — a missing/unreadable
+ *  `nproc` result means no normalized figure can be reported, not a divide-by-a-guessed-constant. */
+export function cpuReport(samples: readonly StatsSample[], cores: number): CpuReport | undefined {
+  if (samples.length === 0 || !Number.isInteger(cores) || cores <= 0) return undefined;
+  const normalized = samples.map((s) => s.cpuPercent / cores);
+  return {
+    cores,
+    samples: samples.length,
+    p50Percent: percentile(normalized, 50),
+    p95Percent: percentile(normalized, 95),
+    peakPercent: percentile(normalized, 100),
+  };
+}
+
 export interface LoadTestReport {
   devices: number;
   cap: number;
+  /** The server's `WHIM_QUEUE_MAX`, as the operator passed it. */
+  queueMax: number;
   timeToFirstEventMs: { p50: number; p95: number };
   totalMs: { p50: number; p95: number };
+  /** Devices that waited in line, and how long they waited. */
+  queued: number;
+  waitMs: { p50: number; p95: number; max: number };
   terminals: { result: number; failure: number; none: number };
   refusals: Record<string, number>;
   leakProbe: { ok: boolean; detail?: string };
+  /** Raw/per-core (continuity with earlier reports) — `cpu` below is the normalized figure the cap
+   *  rule is stated in. */
   peak?: PeakStats;
+  cpu?: CpuReport;
 }
 
 export function buildReport(
   devices: number,
   cap: number,
+  queueMax: number,
   outcomes: readonly DeviceOutcome[],
   leak: LeakProbeOutcome,
   peak?: PeakStats,
+  cpu?: CpuReport,
 ): LoadTestReport {
   const firstEvents = outcomes.map((o) => o.timeToFirstEventMs).filter((v): v is number => v !== undefined);
   const totals = outcomes.map((o) => o.totalMs);
+  const waits = outcomes.map((o) => o.waitMs).filter((v): v is number => v !== undefined);
   const refusals: Record<string, number> = {};
   let result = 0;
   let failure = 0;
@@ -313,12 +388,16 @@ export function buildReport(
   return {
     devices,
     cap,
+    queueMax,
     timeToFirstEventMs: { p50: percentile(firstEvents, 50), p95: percentile(firstEvents, 95) },
     totalMs: { p50: percentile(totals, 50), p95: percentile(totals, 95) },
+    queued: waits.length,
+    waitMs: { p50: percentile(waits, 50), p95: percentile(waits, 95), max: percentile(waits, 100) },
     terminals: { result, failure, none },
     refusals,
     leakProbe: { ok: leak.ok, detail: leak.detail },
     peak,
+    cpu,
   };
 }
 
@@ -327,14 +406,16 @@ export interface Verdict {
   reason?: string;
 }
 
-/** Every admitted device must finish successfully; only excess devices may be refused busy. */
+/** Every admitted device must finish successfully, including every one that waited in line; the
+ *  devices past the cap wait, and only those past the cap and a full line may be refused busy. */
 export function verdict(report: LoadTestReport): Verdict {
   if (report.terminals.failure > 0) {
     return { ok: false, reason: `${report.terminals.failure} run(s) ended in a failure terminal` };
   }
   const refused = Object.values(report.refusals).reduce((a, b) => a + b, 0);
-  if (refused > 0 && report.devices <= report.cap) {
-    return { ok: false, reason: `${refused} refusal(s) at ${report.devices} device(s) <= cap ${report.cap}: ${JSON.stringify(report.refusals)}` };
+  const room = report.cap + report.queueMax;
+  if (refused > 0 && report.devices <= room) {
+    return { ok: false, reason: `${refused} refusal(s) at ${report.devices} device(s) <= cap ${report.cap} + line ${report.queueMax}: ${JSON.stringify(report.refusals)}` };
   }
   if (report.terminals.none > 0) {
     return { ok: false, reason: `${report.terminals.none} run(s) ended without a terminal event` };
@@ -342,9 +423,13 @@ export function verdict(report: LoadTestReport): Verdict {
   if (report.terminals.result + report.terminals.failure + report.terminals.none + refused !== report.devices) {
     return { ok: false, reason: 'the report does not account for exactly the requested number of devices' };
   }
-  const expectedRefusals = Math.max(0, report.devices - report.cap);
+  const expectedRefusals = Math.max(0, report.devices - room);
   if (refused !== expectedRefusals || (report.refusals.server_busy ?? 0) !== expectedRefusals) {
     return { ok: false, reason: `expected ${expectedRefusals} server_busy refusal(s), got ${JSON.stringify(report.refusals)}` };
+  }
+  const expectedQueued = Math.min(Math.max(0, report.devices - report.cap), report.queueMax);
+  if (report.queued !== expectedQueued) {
+    return { ok: false, reason: `expected ${expectedQueued} device(s) to wait in line, ${report.queued} did` };
   }
   if (!report.leakProbe.ok) {
     return { ok: false, reason: report.leakProbe.detail ?? 'the leak probe failed' };
@@ -358,6 +443,8 @@ export interface CliArgs {
   target: string;
   devices: number;
   cap: number;
+  /** The server's `WHIM_QUEUE_MAX`; `0` when it runs with no line. */
+  queueMax: number;
   jsonPath?: string;
   statsPath?: string;
 }
@@ -369,7 +456,14 @@ function positiveInt(name: string, raw: string | undefined): number {
   return n;
 }
 
-/** Parses `node server/loadtest.mjs --target <url> --devices <N> --cap <C> [--json <file>] [--stats <file>]`.
+function nonNegativeInt(name: string, raw: string | undefined): number {
+  if (raw === undefined) throw new Error(`--${name} is required`);
+  const n = Number(raw);
+  if (raw.trim() === '' || !Number.isInteger(n) || n < 0) throw new Error(`--${name} must be a non-negative integer, got ${JSON.stringify(raw)}`);
+  return n;
+}
+
+/** Parses `node server/loadtest.mjs --target <url> --devices <N> --cap <C> --queue-max <Q> [--json <file>] [--stats <file>]`.
  *  Throws with an actionable message on any missing/malformed flag. */
 export function parseArgs(argv: readonly string[]): CliArgs {
   const values = new Map<string, string>();
@@ -388,6 +482,7 @@ export function parseArgs(argv: readonly string[]): CliArgs {
     target,
     devices: positiveInt('devices', values.get('devices')),
     cap: positiveInt('cap', values.get('cap')),
+    queueMax: nonNegativeInt('queue-max', values.get('queue-max')),
     jsonPath: values.get('json'),
     statsPath: values.get('stats'),
   };
@@ -399,4 +494,15 @@ export function parseArgs(argv: readonly string[]): CliArgs {
 export function readPeakStats(statsPath: string | undefined): PeakStats | undefined {
   if (!statsPath) return undefined;
   return peakStats(parseStatsCsv(fs.readFileSync(statsPath, 'utf8')));
+}
+
+/** Reads `--stats`, when given, into the normalized CPU report — `undefined` when there's no file,
+ *  no samples, or the sampler's `cores,<N>` line is missing/unparseable (never a hardcoded core
+ *  count). Kept a pure-argument function alongside `readPeakStats` for the same reason. */
+export function readCpuReport(statsPath: string | undefined): CpuReport | undefined {
+  if (!statsPath) return undefined;
+  const text = fs.readFileSync(statsPath, 'utf8');
+  const cores = parseCoresLine(text);
+  if (cores === undefined) return undefined;
+  return cpuReport(parseStatsCsv(text), cores);
 }
