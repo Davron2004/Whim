@@ -1,8 +1,9 @@
 /**
  * ReportSheet — the report sheet three entry points share (design D13/D14; spec
  * `content-reporting`). Reason pills, an optional note, the include-prompt switch,
- * a preview rendered from the SAME `ReportRequest` value Send posts, the phone-ID-and-AnyCognition
- * line plus a privacy-policy link, Send (`One moment` while in flight) and Cancel, the thanks
+ * a preview rendered from the SAME `ReportRequest` value Send posts, the line naming the phone ID
+ * and who receives the report (AnyCognition, or the user's own server, beta-1 D20) plus a
+ * privacy-policy link, Send (`One moment` while in flight) and Cancel, the thanks
  * state, and inline failures through the shared `ServiceNotice`/`useRetryGate`. Send, Cancel and
  * the notice are pinned below the scrolling draft, so the note's keyboard never hides Send.
  *
@@ -31,7 +32,9 @@ import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } f
 import ServiceNotice, { useNoticeWindowClear, useRetryGate } from './ServiceNotice';
 import SheetModal from './SheetModal';
 import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
-import { COPY, reportCodeSizeLabel } from './copy';
+import { COPY, reportCodeSizeLabel, reportRecipientLine } from './copy';
+import { RELEASE } from './release-config';
+import { serverLabel } from './server-address';
 import { privacyPolicyUrl, type LegalLanguage } from './legal-language';
 import { SHELL_PALETTE } from './theme';
 
@@ -129,6 +132,8 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
     };
   }, [app, access]);
 
+  // Send posts to `options.baseUrl`, so that is the recipient the sheet names.
+  const ownServer = options.baseUrl === RELEASE.serverUrl ? undefined : serverLabel(options.baseUrl);
   const request = draft ? buildReportRequest(draft) : null;
   const rows = request ? reportPreview(request) : [];
 
@@ -302,7 +307,7 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
             </>
           )}
 
-          <Text style={[TYPE_SCALE.caption, styles.deviceIdLine, { color: p.textMuted }]}>{COPY.reportDeviceIdLine}</Text>
+          <Text style={[TYPE_SCALE.caption, styles.deviceIdLine, { color: p.textMuted }]}>{reportRecipientLine(ownServer)}</Text>
           <TouchableOpacity onPress={() => Linking.openURL(privacyPolicyUrl(legalLanguage))} hitSlop={10} style={styles.privacyLink}>
             <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.accent }]}>{COPY.privacyPolicyLabel}</Text>
           </TouchableOpacity>

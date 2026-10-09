@@ -99,7 +99,7 @@ export async function runReportSendTests(h: Harness): Promise<void> {
       const showMore = tree.root.findAll((node) => node.type === 'TouchableOpacity' && textOf(node) === COPY.reportShowMore);
       for (const toggle of showMore) await press(toggle);
       const preview = textOf(tree.root);
-      h.ok(preview.includes(COPY.reportDeviceIdLine), 'the sheet says this phone’s Whim ID goes with the report, to AnyCognition');
+      h.ok(preview.includes('This phone’s Whim ID goes with your report.'), 'the sheet says this phone’s Whim ID goes with the report');
       const opened = Linking.opened.length;
       await press(button(tree, COPY.privacyPolicyLabel));
       h.eq(Linking.opened.slice(opened), [RELEASE.privacyPolicyUrl], 'and carries a privacy policy link');
@@ -118,6 +118,32 @@ export async function runReportSendTests(h: Harness): Promise<void> {
       h.ok(!/every report/i.test(thanks), 'with no promise that every report is read');
     } finally {
       await unmountScreen(tree);
+    }
+  });
+
+  await h.test('report sheet: the recipient line names who gets the report, AnyCognition or the user’s own server (beta-1 D20)', async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(url);
+      return json({ reportId: 'r-1' }, 202);
+    }) as typeof fetch;
+    for (const [baseUrl, recipient] of [[RELEASE.serverUrl, 'AnyCognition'], ['https://whim.example.org:8443', 'whim.example.org:8443']] as const) {
+      const tree = await renderScreen(React.createElement(ReportSheet, {
+        app: APP, access: ACCESS, options: { ...reportClientOptions({ kind: 'absent' }, baseUrl, 'device', testAppInfo), fetchImpl }, onClose: () => {}, onUpdateRequired: () => {}, legalLanguage: 'en',
+      }));
+      try {
+        await TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });
+        await press(button(tree, COPY.reportReasonBroken));
+        const line = tree.root.findAll((n) => String(n.type) === 'Text' && textOf(n).includes('goes with your report')).map((n) => textOf(n));
+        h.eq(line.length, 1, `${baseUrl}: one line says where the report goes`);
+        h.ok(line[0].includes(recipient), `${baseUrl}: it names ${recipient}`);
+        if (recipient === 'AnyCognition') h.ok(!line[0].includes('server you chose'), `${baseUrl}: and no server of the user’s own`);
+        else h.ok(line[0].includes('not to AnyCognition'), `${baseUrl}: and says AnyCognition doesn’t get it`);
+        await press(button(tree, COPY.reportSend));
+        h.ok(urls.at(-1)?.startsWith(baseUrl), `${baseUrl}: Send posts to the recipient the line names`);
+      } finally {
+        await unmountScreen(tree);
+      }
     }
   });
 

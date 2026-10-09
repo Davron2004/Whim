@@ -213,6 +213,8 @@ export const COPY = {
   reportIncludePrompt: 'Include the prompt for this version',
   reportCodeDisclosure: 'Your report includes this app’s code so we can investigate what went wrong.',
   reportNoCodeDisclosure: 'This version has no saved code to include.',
+  /** The recipient line while reports go to Whim's own server; `reportRecipientLine` words it for
+   *  a server the user chose (beta-1 D20). */
   reportDeviceIdLine: 'This phone’s Whim ID goes with your report. The report goes to AnyCognition, the company that makes Whim.',
   reportSend: 'Send report',
   reportSendBusy: 'One moment',
@@ -703,6 +705,14 @@ export function deleteBody(name: string): string {
  *  are already formatted as "<display name> (<type>)" by `history-logic.ts`. */
 export function addedFieldsLine(fields: readonly string[]): string {
   return `Added: ${fields.join(', ')}`;
+}
+
+/** The report sheet's recipient line: AnyCognition while the report goes to Whim's own server, else
+ *  the server the user chose (`ownServer`, as `server-address#serverLabel` shows it), which gets the
+ *  report instead (beta-1 D20). */
+export function reportRecipientLine(ownServer?: string): string {
+  if (ownServer === undefined) return COPY.reportDeviceIdLine;
+  return `This phone’s Whim ID goes with your report. The report goes to the server you chose, ${ownServer}, not to AnyCognition.`;
 }
 
 /** The done step's title: "<App name> is ready". */
