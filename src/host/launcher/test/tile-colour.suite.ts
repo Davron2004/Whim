@@ -18,7 +18,23 @@ import {
 import { appColor, STATUS_COLORS, STATUS_COLORS_ON_INK, SHELL_COLORS } from '../../../sdk/theme';
 import { lexProse } from '../../ui/whim-prose/lex';
 import type { AppManifest } from '../../bridge/contract';
+import { APP_RECORDS } from '../../../runtime/generated/app-records';
 
+/** How far apart (degrees of hue) any two seeded example tiles must be: an eighth of the wheel. */
+const MIN_SEEDED_HUE_DISTANCE = 45;
+
+/** A `#rrggbb` colour's HSL hue in degrees, [0, 360). */
+function hueOf(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b);
+  const delta = max - Math.min(r, g, b);
+  if (delta === 0) return 0;
+  let sector: number;
+  if (max === r) sector = ((g - b) / delta + 6) % 6;
+  else if (max === g) sector = (b - r) / delta + 2;
+  else sector = (r - g) / delta + 4;
+  return sector * 60;
+}
 
 export async function runTileColourTests(h: Harness): Promise<void> {
   const VALID = '#2f6feb'; // a legible hex outside the reserved set, arbitrary for these checks
@@ -99,6 +115,62 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     const lifted = liftManifestTileColor({ tileColor: STATUS_COLORS.broken });
     h.eq(lifted, { tileColor: STATUS_COLORS.broken }, 'lift is a straight passthrough');
     h.eq(tileColor('Budget', lifted), appColor('Budget'), 'the resolution helper still falls back');
+  });
+
+  // ── seeded examples — the shipped build output, not a re-parse of source ──
+  await h.test('tileColor: the three seeded examples\' shipped records resolve to distinct declared colours', async () => {
+    // `defaultSeeds()` in LauncherRoot.tsx installs these three ids on first run. Reads the real
+    // producer, the generated APP_RECORDS build.mjs#extractAppRecord emits (never a hand-typed
+    // hex), so a regression that drops `tileColor` on the wire from source to shipped record
+    // (as build.mjs did before commit 9a79c9c9) fails this test, not just the source-level one in
+    // checks/test/acceptance.ts.
+    const seededIds = ['tip-splitter', 'water-counter', 'style-gallery'];
+    const resolved = seededIds.map((id) => {
+      const record = APP_RECORDS[id];
+      h.ok(!!record, `${id}: expected a shipped app record`);
+      const declared = record?.manifest.tileColor;
+      h.ok(typeof declared === 'string', `${id}: expected a declared tileColor on the shipped manifest`);
+      // Goes through the same resolution path every render surface uses, so a declared value that
+      // the shipped manifest carries but that tileColor() would reject (malformed, or a reserved
+      // shell hue) is caught here too, not just a bad/missing literal.
+      return tileColor(record?.name ?? id, { tileColor: declared });
+    });
+    for (const [i, id] of seededIds.entries()) {
+      h.eq(resolved[i], APP_RECORDS[id]?.manifest.tileColor, `${id}: the shipped declared colour is not rejected by tileColor()`);
+    }
+    h.eq(new Set(resolved).size, resolved.length, `expected ${resolved.length} pairwise-distinct seeded tile colours, got ${JSON.stringify(resolved)}`);
+  });
+
+  await h.test('tileColor: the seeded examples\' shipped colours sit in clearly different hue families', async () => {
+    // Distinct hex is not distinct to the eye: #2563eb and #0284c7 are both "blue" side by side on
+    // Home. Each pair of seeded tiles must be at least an eighth of the colour wheel apart.
+    const seeded = ['tip-splitter', 'water-counter', 'style-gallery'].map((id) => {
+      const record = APP_RECORDS[id];
+      return { id, hue: hueOf(tileColor(record?.name ?? id, record?.manifest)) };
+    });
+    for (const [i, a] of seeded.entries()) {
+      for (const b of seeded.slice(i + 1)) {
+        const apart = Math.min(Math.abs(a.hue - b.hue), 360 - Math.abs(a.hue - b.hue));
+        h.ok(apart >= MIN_SEEDED_HUE_DISTANCE, `${a.id} and ${b.id} are ${apart.toFixed(0)}° apart in hue, under ${MIN_SEEDED_HUE_DISTANCE}°`);
+      }
+    }
+    h.eq(['#ff0000', '#ffff00', '#00ff00', '#0000ff', '#ff00ff'].map(hueOf), [0, 60, 120, 240, 300], 'the hue reading itself is the standard HSL hue');
+  });
+
+  await h.test('tileColor: no generated app\'s fallback colour can be a seeded example\'s', async () => {
+    // A generated app that declares no colour gets `appColor` of its launcher id (the ghost's hue,
+    // kept at delivery) or of its name. Sample both across thousands of inputs shaped like the real
+    // ones and collect every colour the fallback ever lands on.
+    const reachable = new Set<string>();
+    for (let i = 0; i < 5000; i++) {
+      reachable.add(appColor(`app-${(1_790_000_000_000 + i * 7919).toString(36)}-${((i * 2654435761) % 4294967296).toString(36)}`));
+      reachable.add(appColor(`My App ${i}`));
+    }
+    h.ok(reachable.size >= 5, `the sample reaches the palette (${reachable.size} colours)`);
+    for (const id of ['tip-splitter', 'water-counter', 'style-gallery']) {
+      const shipped = APP_RECORDS[id]?.manifest.tileColor ?? '';
+      h.ok(shipped !== '' && !reachable.has(shipped.toLowerCase()), `${id}'s ${shipped} is never a generated app's fallback colour`);
+    }
   });
 
   // ── homeGridCellWidth — the fluid 3-up grid (finding V3, design html:388) ──────

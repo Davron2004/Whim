@@ -1,6 +1,6 @@
 /**
  * TilePill — the home grid tile's one overlay pill (design D8): a small chip, top-right, that
- * either names a seeded example, or accents an in-flight rebuild of an already-installed app.
+ * accents an in-flight rebuild of an already-installed app.
  * The tile itself stays fully launchable underneath — this is an overlay, never the greyed
  * `ghost` treatment `AppTile`'s own `ghost` prop renders for a brand-new (not-yet-installed)
  * pending build. `building` is a passive caption (no tap target of its own: the tile's normal
