@@ -7,7 +7,7 @@ never part of `scripts/gate.sh` or CI. This is the operator's guide to running i
 harness's own contract; this document is about USING the CLI, not its internals.
 
 **Run it with `npm run evals`.** The Class-2 wiring was applied attended on 2026-07-31
-(`openspec/changes/archive/2026-07-31-eval-harness/pending-class2.md` records the exact diff):
+(`openspec/changes/archive/2026-07-31-eval-harness/pending-class2.md`, pruned 2026-10-09 and kept in git history at `8c6cb385`, records the exact diff):
 `npm run evals -- <run|diff|compare> ...` drives the CLI, and `npm run evals:test` runs the
 harness's own acceptance suite — which `scripts/gate.sh` now invokes as `corpus-eval` on every
 fast-gate run. Invoking `node evals/cli.mjs <run|diff|compare> ...` directly still works and is

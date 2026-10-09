@@ -116,7 +116,7 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 
 ### [med] static-check-pipeline chain-A is blocked on human-only bootstrap edits
 - [x] closed 2026-07-12 — chain-A bootstrap edits were human-ratified and committed (`4d63bc9`); the change is complete, merged (PR #4), and archived.
-- **Where:** `openspec/changes/archive/2026-07-12-static-check-pipeline/chains.md` chain-A; root `package.json`; root `tsconfig.json`.
+- **Where:** `openspec/changes/archive/2026-07-12-static-check-pipeline/chains.md` chain-A (file since pruned; see git history at `8c6cb385`); root `package.json`; root `tsconfig.json`.
 - **What:** chain-A's two bootstrap edits — adding `"checks:test": "node checks/test/run.mjs"` to root `package.json` and `"checks/test"` to root `tsconfig.json`'s `exclude` — are blocked by `.claude/hooks/protect-harness.sh` (it protects `*/package.json` and `tsconfig*.json`) and must be made by a human in an editor before any chain can be dispatched.
 - **Why it matters:** the whole static-check-pipeline change is stalled until this lands.
 - **Suggested approach:** human makes both edits, then dispatch chain-B.

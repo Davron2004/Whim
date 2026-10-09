@@ -941,7 +941,7 @@ runtime.
 
 **(a) `adb reverse` works from a release APK; the dead-NAT note is about Metro's dev-server protocol
 only.** `adb reverse tcp:<port> tcp:<port>` is proven working transport for plain HTTP from a release
-build — precedent: `openspec/changes/archive/2026-08-01-fix-generate-stream-transport/progress.md:128`,
+build — precedent: `openspec/changes/archive/2026-08-01-fix-generate-stream-transport/progress.md:128` (file since pruned; see git history at `8c6cb385`),
 chain-7's attended on-device verification, a release APK (`./gradlew assembleRelease`) on
 `emulator-5554`, a real generation over `adb reverse tcp:8787` logging `POST /v1/generate 200
 155815ms` (`obs-v1/research.md` §7). "The emulator's NAT route to Metro is dead" (CLAUDE.md "Android
