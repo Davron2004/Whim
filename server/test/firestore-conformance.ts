@@ -26,6 +26,7 @@ import { runFirestoreImportTests } from './firestore-import';
 import { CREDIT_MARKS_COLLECTION, FirestoreUsageStore } from '../src/firestore/usage-store';
 import { runPurge, type PurgeConfig } from '../src/admin/purge';
 import { withLostCommitReplies } from './firestore-lost-reply';
+import { OperationBudget, plannedOperations, runAdmissionBurst } from './firestore-admission-load';
 
 /** How long the run may go without reporting a check before it fails as stalled. It replaces a
  *  60 s whole-run deadline, which a slow but progressing run could pass: the run takes about 17 s
@@ -260,6 +261,41 @@ async function lostCommitReplyTest(): Promise<void> {
   }
 }
 
+/** specs/server-deployment "A burst never over-admits": the load test's harness (#143), one small
+ *  burst through the production store. */
+async function admissionBurstTest(): Promise<void> {
+  section('Firestore: a burst of concurrent admissions never over-admits');
+  const db = await openFirestoreClient('(default)', { probeTimeoutMs: PROBE_CEILING_MS });
+  try {
+    await verify('50 concurrent admits for a global limit of 20 admit exactly 20, none exhausting its retries', async () => {
+      const result = await runAdmissionBurst(db, { profile: 'generate', burst: 50, limit: 20, namespace: `${RUN_ID}-burst`, now: T0 });
+      nodeAssert.deepStrictEqual([result.admitted, result.refused, result.exhausted, result.errors], [20, 30, 0, 0], JSON.stringify(result));
+      const ledger = await db.collection('loadtest').doc(`${RUN_ID}-burst`).collection('requests').get();
+      nodeAssert.strictEqual(ledger.size, 20, 'the ledger holds exactly the admitted rows');
+      const transactions = Object.values(result.attempts.histogram).reduce((sum, n) => sum + n, 0);
+      nodeAssert.strictEqual(transactions, 50, 'the report counts the attempts of every admission\'s transaction');
+      nodeAssert.ok(result.attempts.max >= 1 && result.operations >= 50 * 3 + 20 * 3, `the report counts attempts and operations: ${JSON.stringify(result.attempts)}, ${result.operations}`);
+      nodeAssert.ok(result.latencyMs.p50 > 0 && result.latencyMs.p50 <= result.latencyMs.p99, `the report records p50/p99 latency: ${JSON.stringify(result.latencyMs)}`);
+    });
+    await verify('a lone admission sends exactly the operations the load test plans for it, per profile', async () => {
+      for (const profile of ['generate', 'unary'] as const) {
+        const planned = { profile, burst: 1, limit: 1 };
+        const result = await runAdmissionBurst(db, { ...planned, namespace: `${RUN_ID}-lone-${profile}`, now: T0 });
+        nodeAssert.deepStrictEqual([result.admitted, result.attempts.max], [1, 1], JSON.stringify(result));
+        nodeAssert.strictEqual(result.operations, plannedOperations([planned]) - plannedOperations([]), `${profile} operations`);
+      }
+    });
+    await verify('a burst under an operation cap stops at the cap, never past it', async () => {
+      const budget = new OperationBudget(20);
+      const result = await runAdmissionBurst(db, { profile: 'generate', burst: 10, limit: 4, namespace: `${RUN_ID}-capped`, now: T0, budget });
+      nodeAssert.ok(result.capped > 0 && result.admitted <= 4, JSON.stringify(result));
+      nodeAssert.ok(budget.used() <= 20 && result.operations === budget.used(), `${budget.used()} operations`);
+    });
+  } finally {
+    await db.terminate();
+  }
+}
+
 /** specs/server-storage-backends "Markers are purged after a day", through `whim-admin purge`, the
  *  command the hourly Cloud Run job runs (the in-process purge calls the same `purgeLedger`). */
 async function creditMarkerPurgeTest(): Promise<void> {
@@ -383,6 +419,7 @@ await documentModelTest();
 await unsafeKeysTest();
 await lostCommitReplyTest();
 await creditMarkerPurgeTest();
+await admissionBurstTest();
 await batchedDeleteTest();
 await closeWhileBusyTest();
 await firestoreBootTest();
