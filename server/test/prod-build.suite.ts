@@ -371,7 +371,7 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
     timeout: PROCESS_WAIT_MS,
     env: { PATH: process.env.PATH ?? '', WHIM_DATA_DIR: dataDir },
   });
-  eq('the tree\'s whim-waitlist.mjs exports the signup the server stored, with no news consent', [exported.status, exported.stdout.split('\n')[1]?.split(',').slice(0, 3)], [0, ['tree.person@example.com', 'android', 'true']]);
+  eq('the tree\'s whim-waitlist.mjs exports the signup the server stored, with no news consent', [exported.status, exported.stdout.split('\n')[1]?.split(',').slice(0, 3)], [0, ['tree.person@example.com', 'android', 'false']]);
 }
 
 /** A loopback stand-in for a Firestore the server's credentials cannot read: every call is answered
