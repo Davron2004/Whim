@@ -128,9 +128,16 @@ export interface ScreenInfo {
   /** `Object.keys(window.__WHIM_APP_MODULE__.default.screens)` — the live app module's own
    *  declared-screens map, read directly (never the bundle's self-report). */
   declared: string[];
-  /** The declared-screen name whose component reference (`===`) matches the fiber currently
-   *  mounted under `#whim-root`, resolved by walking the DOM node's `__reactFiber$…` return
-   *  chain — `null` when nothing mounted yet or no match was found. */
+  /** The declared-screen names of every screen page currently mounted under `#whim-root`, in
+   *  DOM order — one entry per distinct mounted screen INSTANCE (resolved by walking each child
+   *  node's `__reactFiber$…` return chain and matching component references `===`). Two entries
+   *  mean a push/pop transition is in flight: the SDK keeps the leaving screen mounted beside the
+   *  arriving one until the motion ends (`NavRoot`, system.md §4.4 M24). */
+  mounted: string[];
+  /** The screen on top of the navigation stack — the sole mounted screen, or `null` while
+   *  nothing is mounted OR a transition is in flight (DOM order cannot tell the top: a push lays
+   *  the covered screen out first, a pop lays the leaving one out last). Read through
+   *  `awaitSettledScreen` to wait a transition out. */
   current: string | null;
 }
 
@@ -141,9 +148,10 @@ export async function getScreenInfo(frame: Frame): Promise<ScreenInfo> {
     interface Fiber {
       type: unknown;
       return: Fiber | null;
+      alternate: Fiber | null;
     }
     interface DomNode {
-      firstChild?: DomNode | null;
+      childNodes: ArrayLike<DomNode>;
     }
     interface DomDocument {
       getElementById(id: string): DomNode | null;
@@ -161,24 +169,46 @@ export async function getScreenInfo(frame: Frame): Promise<ScreenInfo> {
       }
       return null;
     }
-    const root = w.document.getElementById('whim-root');
-    let current: string | null = null;
-    const child = root && root.firstChild;
-    if (child) {
-      const record = child as unknown as Record<string, unknown>;
+    /** The nearest declared-screen fiber above `node`, or `null` (e.g. the toast host). */
+    function screenOf(node: DomNode): { fiber: Fiber; name: string } | null {
+      const record = node as unknown as Record<string, unknown>;
       const fiberKey = Object.keys(record).find((k) => k.indexOf('__reactFiber$') === 0);
-      let f: Fiber | null = fiberKey ? (record[fiberKey] as Fiber) : null;
-      while (f) {
-        const match = screenNameForType(f.type);
-        if (match) {
-          current = match;
-          break;
-        }
-        f = f.return;
+      for (let f: Fiber | null = fiberKey ? (record[fiberKey] as Fiber) : null; f; f = f.return) {
+        const name = screenNameForType(f.type);
+        if (name) return { fiber: f, name };
       }
+      return null;
     }
-    return { declared, current };
+    const root = w.document.getElementById('whim-root');
+    // One entry per mounted screen instance. A screen rendering a fragment owns several root
+    // children; React's double-buffered fibers mean two of them may reach the same instance
+    // through its `alternate`, so identity is checked both ways.
+    const instances: { fiber: Fiber; name: string }[] = [];
+    const children = root ? root.childNodes : [];
+    for (let i = 0; i < children.length; i += 1) {
+      const screen = screenOf(children[i]);
+      if (screen && !instances.some((s) => s.fiber === screen.fiber || s.fiber === screen.fiber.alternate)) instances.push(screen);
+    }
+    const mounted = instances.map((s) => s.name);
+    return { declared, mounted, current: mounted.length === 1 ? mounted[0] : null };
   });
+}
+
+/** Upper bound on one push/pop transition — the SDK's longest is its `smooth` spring (~0.6 s);
+ *  the margin covers a loaded CI host. Past it the screen is reported unsettled (`current:
+ *  null`), which the sweep reads as "no navigation", never as a different screen. */
+const SETTLE_TIMEOUT_MS = 3000;
+
+/** `getScreenInfo` once no navigation transition is in flight (at most one screen mounted), so
+ *  the caller sees the stack's top and enumerates only its elements — never the leaving screen's
+ *  inert, `position:fixed` layer, whose `nth-child` paths go stale the moment it unmounts. */
+export async function awaitSettledScreen(frame: Frame, timeoutMs = SETTLE_TIMEOUT_MS): Promise<ScreenInfo> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const info = await getScreenInfo(frame);
+    if (info.mounted.length <= 1 || Date.now() >= deadline) return info;
+    await sleep(30);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -383,7 +413,7 @@ async function sweepOneScreen(
     actionsLog.push(next);
 
     await awaitQuiet(obs, budgets);
-    const info = await getScreenInfo(frame).catch((): ScreenInfo => ({ declared: [], current: screenName }));
+    const info = await awaitSettledScreen(frame).catch((): ScreenInfo => ({ declared: [], mounted: [screenName], current: screenName }));
     if (info.current && info.current !== screenName) {
       return { actionsLog, truncated: false, navigatedTo: info.current };
     }
@@ -465,7 +495,7 @@ export async function sweepApp(ctx: RunContext, obs: AttachedObservers, source: 
   let truncated = false;
 
   const frame = await findAppFrame(ctx.page);
-  const seedInfo = await getScreenInfo(frame);
+  const seedInfo = await awaitSettledScreen(frame);
   const declared = seedInfo.declared;
   let liveFrame = frame;
   let currentName = seedInfo.current;

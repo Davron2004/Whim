@@ -23,7 +23,7 @@ import { SynthRunSession, type RunContext } from '../session';
 import { wireCapabilityBridge } from '../capability';
 import type { AppRecord } from '../../src/host/bridge';
 import { storageError, type StorageEngine } from '../../src/host/storage-engine/contract';
-import { sweepApp, getScreenInfo, findAppFrame, type SweptElement } from '../sweep';
+import { sweepApp, getScreenInfo, awaitSettledScreen, findAppFrame, type SweptElement } from '../sweep';
 import { createRunCandidate, denialDiagnostic } from '../report';
 import nodeAssert from 'node:assert';
 import { recordAssertion, results, test } from './harness';
@@ -1134,6 +1134,54 @@ async function testSweep(): Promise<void> {
         const frame = await findAppFrame(ctx.page);
         const info = await getScreenInfo(frame);
         ok(info.current === 'Orphan', `the page is left showing the cold-mounted Orphan screen (got ${info.current})`);
+      } finally {
+        obs.detach();
+        await dispose();
+      }
+    });
+
+    await test('push/pop transition: the screen on top is named, never the covered or leaving one still mounted beside it', async () => {
+      const source = await readFile(NAVIGATION_DEMO_FIXTURE, 'utf8');
+      const { ctx, obs, dispose } = await openObservedRun(session, source);
+      try {
+        await awaitMount(obs, mergeBudgets({ mountBudgetMs: 3000 }));
+        const frame = await findAppFrame(ctx.page);
+        ok((await awaitSettledScreen(frame)).current === 'List', 'the initial screen is List');
+
+        await frame.getByText('Ridge Walk', { exact: true }).click({ timeout: 3000 });
+        const midPush = await getScreenInfo(frame);
+        // Non-vacuity: the SDK really holds both screens mounted through the push motion — the
+        // window in which a first-child reading named the covered List.
+        ok(midPush.mounted.join(',') === 'List,Detail', `mid-push both screens are mounted, covered first (got ${midPush.mounted.join(',')})`);
+        ok(midPush.current !== 'List', `mid-push the covered List is never reported current (got ${midPush.current})`);
+        const pushed = await awaitSettledScreen(frame);
+        ok(pushed.current === 'Detail' && pushed.mounted.length === 1, `after the push settles Detail is current (got ${pushed.current}, mounted ${pushed.mounted.join(',')})`);
+
+        await frame.getByRole('button', { name: 'Back' }).click({ timeout: 3000 });
+        const midPop = await getScreenInfo(frame);
+        ok(midPop.mounted.join(',') === 'List,Detail', `mid-pop both screens are mounted, the leaving Detail last (got ${midPop.mounted.join(',')})`);
+        ok(midPop.current !== 'Detail', `mid-pop the leaving Detail is never reported current (got ${midPop.current})`);
+        ok((await awaitSettledScreen(frame)).current === 'List', 'after the pop settles List is current again');
+      } finally {
+        obs.detach();
+        await dispose();
+      }
+    });
+
+    await test('live navigation: a screen reached only by a push is visited live, so no unreachable_screen (navigation-demo)', async () => {
+      const source = await readFile(NAVIGATION_DEMO_FIXTURE, 'utf8');
+      const { ctx, obs, dispose } = await openObservedRun(session, source);
+      try {
+        await awaitMount(obs, mergeBudgets({ mountBudgetMs: 3000 }));
+        // The quiet window (40 ms) is far shorter than the push motion, as in production (300 ms):
+        // the sweep must wait the transition out itself rather than lean on awaitQuiet.
+        const result = await sweepApp(ctx, obs, source, sweepBudgets);
+        ok(result.diagnostics.length === 0, `no unreachable_screen diagnostics (got ${JSON.stringify(result.diagnostics)})`);
+        ok(result.visitedScreens.join(',') === 'List,Detail', `List then Detail were visited live, in order (got ${result.visitedScreens.join(',')})`);
+        ok(
+          result.actionsLog.every((el) => el.kind !== 'modal-backdrop'),
+          `no leaving screen's fixed layer was swept as a modal backdrop (got ${result.actionsLog.map(actionSignature).join(' ; ')})`,
+        );
       } finally {
         obs.detach();
         await dispose();
