@@ -66,7 +66,7 @@ Text sources: `docs/research/legal-surface-2026-09/draft-copy.md` (§1 consent, 
 - [x] 9.3 Write a non-RN age-check module: reduce the native result to the four values, store only `{ outcome, checkedAt }`, and re-check when there's no outcome, when the outcome is more than 30 days old, or when it's blocked. Tests with an injected native result for both requirements of spec store-age-signals, including "no age field in any request".
 - [x] 9.4 Run the check before the terms step in the flow. Add the parental-approval message in English and French. Tests for the three flow scenarios.
 - [x] 9.5 Add draft-copy §5's age-signal sentence to the 4.7.5 review answer in both review-notes files, and recheck the 4,000-character limit.
-- [ ] 9.6 On the Android emulator, confirm the flow reaches the terms step when the signal is unavailable. Record the result in `progress.md`.
+- [x] 9.6 On the Android emulator, confirm the flow reaches the terms step when the signal is unavailable. Record the result in `progress.md`. *Done in beta-1 10.4 on the Android emulator: the legal flow reached Terms in ~200 ms with no hang (beta-1 progress.md).*
 
 ## 10. Compliance documents
 
@@ -78,15 +78,15 @@ Text sources: `docs/research/legal-surface-2026-09/draft-copy.md` (§1 consent, 
 
 ## 11. Attended: owner and console steps
 
-- [ ] 11.1 Fill `deploy/site/legal-identity.json`: the business street address and phone, `privacy@anycognition.ca`, the Privacy Officer title, and the effective dates.
+- [x] 11.1 Fill `deploy/site/legal-identity.json`: the business street address and phone, `privacy@anycognition.ca`, the Privacy Officer title, and the effective dates. *Done: `deploy/site/legal-identity.json` holds the address, phone, Privacy Officer title and 2026-09-27 effective dates; the contact is `support@whim.anycognition.ca` by owner decision (11.2).*
 - [x] 11.2 Set up the `privacy@anycognition.ca` mailbox (B2). *Resolved 2026-09-24 by owner decision: `support@anycognition.ca` (existing Zoho mailbox) is the privacy contact; a privacy@ alias is optional later.*
-- [ ] 11.3 In the OpenRouter account, exclude providers that train on or keep inputs, and confirm prompt logging is off (B1).
-- [ ] 11.4 Read and sign the Quebec s.17 assessment. Check whether OpenRouter's DPA serves as the written agreement and gives EU/UK transfer cover (SCCs or DPF) (B3).
+- [ ] 11.3 In the OpenRouter account, exclude providers that train on or keep inputs, and confirm prompt logging is off (B1). → #150
+- [ ] 11.4 Read and sign the Quebec s.17 assessment. Check whether OpenRouter's DPA serves as the written agreement and gives EU/UK transfer cover (SCCs or DPF) (B3). → #150
 - [x] 11.5 Appoint the EU and UK Article 27 representatives and record them in the identity file. Check whether the ICO fee applies, and read the UK DPIA. — declined by the owner 2026-09-24 (solo non-revenue project; AI text is final)
-- [ ] 11.6 Confirm Apple's EU DSA trader status with the business address and phone. The Play trader declaration waits on the account question (decision 3).
+- [ ] 11.6 Confirm Apple's EU DSA trader status with the business address and phone. The Play trader declaration waits on the account question (decision 3). → #150 (Play half #77)
 - [x] 11.7 Have a fluent reader check the French pages and the French legal copy, and a Korean reader check the transfer section. — declined by the owner 2026-09-24 (solo non-revenue project; AI text is final)
-- [ ] 11.8 Run `platform-release-readiness` 13.6 (Android) and 13.7 (iPhone) and confirm both pass before any v2 copy ships (B7). Then remove the network-deny TODO from both review-notes files.
-- [ ] 11.9 Test the age signals on a real iPhone (iOS 26+) and a real Android phone with Play.
-- [ ] 11.10 Give each store the Texas §121.053 notice before the v2 terms and policy go live.
-- [ ] 11.11 Deploy in the design's migration order: server first, then site, then the app release. Submit App Privacy and Data safety in both consoles with the release, and upload the listings and review notes.
+- [ ] 11.8 Run `platform-release-readiness` 13.6 (Android) and 13.7 (iPhone) and confirm both pass before any v2 copy ships (B7). Then remove the network-deny TODO from both review-notes files. → #37, #38
+- [ ] 11.9 Test the age signals on a real iPhone (iOS 26+) and a real Android phone with Play. → #150
+- [ ] 11.10 Give each store the Texas §121.053 notice before the v2 terms and policy go live. → #150
+- [ ] 11.11 Deploy in the design's migration order: server first, then site, then the app release. Submit App Privacy and Data safety in both consoles with the release, and upload the listings and review notes. *Server and site deployed 2026-09-24 (progress "DEPLOYED"); the app release is beta-1.* App Privacy / Data safety → #44, #36
 - [x] 11.12 After launch, engage a lawyer with `docs/legal/lawyer-brief.md` (decision 7). — declined by the owner 2026-09-24 (solo non-revenue project; AI text is final)

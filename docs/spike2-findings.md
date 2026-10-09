@@ -50,6 +50,10 @@ the real v0.1 bundle-execution mechanism must honor. Canonical detail: `docs/dec
    `sessionStorage`, `indexedDB`, `caches`, `Worker`, `navigator.sendBeacon`), via
    `Object.defineProperty(window, name, {value: throwingStub, configurable:false})`.
 
+> 2026-10-09 note: a fourth, native leg was added later. A sandboxed frame can navigate itself to
+> any URL and none of the three web legs stops that GET, so the mini-app WebView now refuses network
+> loads natively on Android and iOS (decision #74). The findings above stand as written.
+
 ## Carry-forward constraints (the real runtime MUST honor these)
 
 1. **The global strip MUST be a window-level non-configurable value-strip, never a

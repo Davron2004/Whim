@@ -1,9 +1,9 @@
 # WebRTC alias egress in the mini-app sandbox (2026-09-14)
 
-Status: fixed in `src/runtime/web/neutralize.js` + `src/runtime/web/probes.js` (uncommitted; the
-human commits). One audit item — frame self-navigation — is **not** closed and needs an
-architectural decision (see the last section). On-device confirmation is deferred to an attended
-run (Android System WebView + iOS WKWebView).
+Status: fixed in `src/runtime/web/neutralize.js` + `src/runtime/web/probes.js`. Frame
+self-navigation, the open item below, is closed by a fourth, native leg (decision #74,
+`platform-release-readiness` design D17, 2026-10-09 update). On-device confirmation on physical
+phones is still owed (#37, #38).
 
 ## The finding
 
@@ -135,7 +135,16 @@ blocked.
 fetch / XMLHttpRequest / localStorage / sessionStorage / indexedDB / caches / Worker / SharedWorker
 are covered by the existing probes and neutralize entries (unchanged here).
 
-## Open item — frame self-navigation is a live egress channel (needs an architectural decision)
+## Open item — frame self-navigation is a live egress channel (closed by decision #74)
+
+**Closed 2026-09-15/19 by the native leg (decision #74, `platform-release-readiness` design D17).**
+Android sets `blockNetworkLoads` on every mini-app WebView; iOS attaches a `WKContentRuleList`
+blocking `http(s)`/`ws(s)` loads from every frame, failing closed when it isn't compiled. The probe is
+`src/host/NetworkDenyProbeScreen.tsx` with `scripts/netdeny/run.mjs canary`; the wiring is locked by
+`checks/test/release/native-network-deny.suite.ts`. WebRTC, WebSocket and WebTransport keep their
+existing legs (neutralization and CSP); the native leg doesn't cover them on Android. The proposed
+`onShouldStartLoadWithRequest` guard below was rejected (see #74). The original analysis follows.
+
 
 A sandboxed `allow-scripts` iframe may navigate **its own** browsing context. None of the three legs
 stops it: the CSP has no directive for document navigation of the frame itself (`connect-src` /
@@ -174,8 +183,12 @@ WebView. The attended run should check, inside a delivered mini-app:
 3. The on-screen containment verdict is CONTAINED at the new probe total (49 desktop) and includes
    the `webkitRTCPeerConnection` and `nested-realm WebRTC ctor` probes as PASS.
 4. **Frame self-navigation**: `location.href = 'http://<host-canary>/x'` from a mini-app — does the
-   Android/iOS WebView issue the request? This is the open item above; capture the answer to size the
-   navigation-guard work.
+   Android/iOS WebView issue the request? Answered (`platform-release-readiness` progress, "Network
+   deny reproduction" and the 2026-09-15/19 acceptance runs): before the native leg every navigation
+   variant reached the canary on the API 36 emulator and the iOS 26.5 simulator; with it the canary
+   counted zero HTTP hits and zero TLS connections on Android API 36 / WebView 151 and on the iOS 27
+   simulator, and removing only the deny brought the leak back. Physical phones and a DNS capture are
+   still open (#37, #38).
 
 ## Probe count and where it is asserted
 
@@ -275,3 +288,10 @@ Proposed diff against `invariants/sandbox-isolation/run-against-build.mjs`:
 Note the negative-control property: this check goes red when the `neutralize.js` alias strip is
 removed (datagrams reach the canary), independent of the in-realm probe, so it also guards against a
 future refactor that keeps the probe but drops the strip.
+
+## Proposed `invariants/` addition (native leg; owner to apply)
+
+One line for `invariants/sandbox-isolation/README.md`, which agents don't edit: "Leg four (native
+network deny, decision #74) is verified on device by `src/host/NetworkDenyProbeScreen.tsx` and the
+`scripts/netdeny` canary; desktop Chromium and WebKit can't exercise it, so this suite doesn't." The
+same README's "42/42 probes" is stale (the current total is 49, see "Probe count" above).

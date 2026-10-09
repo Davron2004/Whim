@@ -67,24 +67,21 @@ The user's submitted prompt SHALL be echoed on this step as the user's own words
 
 ### Requirement: A stall heartbeat visibly reports when the stream goes quiet
 
-The build screen SHALL track the time since the last `token`, `stage`, `queued` or `restart` event arrived. When that
-quiet period exceeds a threshold of approximately 8 seconds, the screen SHALL visibly report that
-the stream has gone quiet, stating how long it has been quiet (e.g. "quiet for Ns"). The heartbeat
-SHALL clear its quiet indication as soon as a new `token`, `stage`, `queued` or `restart` event arrives.
+The build screen SHALL track the time since the last frame of any kind arrived on the generation stream: every stream event (including `token`, `stage`, `queued`, `restart`, `thinking`, `diagnostic` and `usage`) and the server's keepalive comment frame. When that quiet period exceeds 40 seconds (`STALL_MS` in `src/host/launcher/prompt-flow.ts`: the server sends a keepalive every 15 seconds, so this is two missed keepalives plus margin), the screen SHALL visibly report that nothing has arrived, stating for how long (e.g. "Nothing has arrived for Ns"). The indication SHALL clear as soon as any new frame arrives.
 
 #### Scenario: A stalled stream shows a quiet indication
 
-- **WHEN** more than approximately 8 seconds pass with no `token`, `stage`, `queued` or `restart` event arriving
+- **WHEN** more than 40 seconds pass with no stream event and no keepalive frame arriving
 - **THEN** the build screen shows a quiet indication stating the elapsed quiet duration
 
 #### Scenario: A resumed stream clears the quiet indication
 
-- **WHEN** a quiet indication is showing and a new `token`, `stage`, `queued` or `restart` event arrives
+- **WHEN** a quiet indication is showing and a new stream event or keepalive frame arrives
 - **THEN** the quiet indication clears immediately
 
 #### Scenario: A healthy stream shows no quiet indication
 
-- **WHEN** `token`, `stage`, `queued` or `restart` events keep arriving within the ~8 second threshold
+- **WHEN** events or keepalive frames keep arriving within the 40-second threshold
 - **THEN** no quiet indication is shown
 
 
