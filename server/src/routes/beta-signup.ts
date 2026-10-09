@@ -6,9 +6,18 @@
  * Mounted on the root app, outside `/v1`: a browser has no device id, and `/v1` stays device-gated
  * by construction. It passes through none of the device, envelope or minimum-build middlewares.
  *
- * Order: body cap → trap field → validation → limits → store. A filled trap field answers thanks
- * and stores nothing, so a bot learns nothing. Each request logs one line carrying its outcome code
- * and its request id: never the email, the platform or the client address.
+ * Order: body cap → Origin → content type → trap field → validation → limits → store
+ * (waitlist-hardening D4). A post whose `Origin` is present and is not exactly the pages origin
+ * (`null` included) is a page on another site posting a visitor's browser: refused to retry,
+ * before the trap, so a trap post can prove the check while storing nothing. A post with no
+ * `Origin` goes on. A filled trap field answers thanks and stores nothing, so a bot learns
+ * nothing. A removed address answers thanks too (`suppressed`), so the page never reveals who
+ * asked to leave. Each request logs one line carrying its outcome code and its request id: never
+ * the email, the platform or the client address.
+ *
+ * News consent comes only from a ticked `updates_opt_in` box (CASL express consent). The box is
+ * unticked by default, so an absent field is no consent; a stale page's `updates_opt_out` field is
+ * ignored. The store applies the sticky-withdrawal rules (`consentAfterSignup`).
  */
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -19,7 +28,7 @@ import { isWaitlistPlatform, type WaitlistPlatform, type WaitlistStore } from '.
 import type { SignupLimiter } from '../waitlist/limiter';
 
 /** The closed set of outcome codes a signup log line carries. */
-export type SignupOutcome = 'stored' | 'updated' | 'suppressed' | 'invalid' | 'limited' | 'trap' | 'error';
+export type SignupOutcome = 'stored' | 'updated' | 'suppressed' | 'invalid' | 'origin' | 'limited' | 'trap' | 'error';
 
 /** The bot trap: a field people never see or fill. Its name matches no browser autofill heuristic
  *  (a `company` field gets a person's organization autofilled, and their signup dropped). */
@@ -50,17 +59,17 @@ export function isValidSignupEmail(value: string): boolean {
 interface SignupForm {
   readonly email: string;
   readonly platform: WaitlistPlatform;
-  readonly updatesOptOut: boolean;
+  readonly updatesOptIn: boolean;
 }
 
 /** The form's fields, or `undefined` when any breaks the contract. */
 function readForm(fields: URLSearchParams): SignupForm | undefined {
   const email = (fields.get('email') ?? '').trim();
   const platform = fields.get('platform') ?? '';
-  const optOut = fields.get('updates_opt_out');
+  const optIn = fields.get('updates_opt_in');
   if (!isValidSignupEmail(email) || !isWaitlistPlatform(platform)) return undefined;
-  if (optOut !== null && optOut !== '1') return undefined;
-  return { email, platform, updatesOptOut: optOut === '1' };
+  if (optIn !== null && optIn !== '1') return undefined;
+  return { email, platform, updatesOptIn: optIn === '1' };
 }
 
 export interface BetaSignupDeps {
@@ -97,6 +106,8 @@ export function makeBetaSignupRoute(deps: BetaSignupDeps): Hono<EdgeEnv> {
 
       const contentType = c.req.header('content-type') ?? '';
       const text = await c.req.text();
+      const origin = c.req.header('origin');
+      if (origin !== undefined && origin !== config.webOrigin) return answer('origin', retry);
       if (!contentType.toLowerCase().startsWith('application/x-www-form-urlencoded')) return answer('invalid', retry);
       const fields = new URLSearchParams(text);
       if ((fields.get(TRAP_FIELD) ?? '') !== '') return answer('trap', thanks);
@@ -105,8 +116,7 @@ export function makeBetaSignupRoute(deps: BetaSignupDeps): Hono<EdgeEnv> {
       const now = clock();
       if (!limiter.admit(c.req.header('x-forwarded-for'), now)) return answer('limited', retry);
       try {
-        // The page's opt-out box never obtained news consent, so a signup records none.
-        return answer(await store.upsert({ email: form.email, platform: form.platform, updatesOptIn: false, noticeId, now }), thanks);
+        return answer(await store.upsert({ email: form.email, platform: form.platform, updatesOptIn: form.updatesOptIn, noticeId, now }), thanks);
       } catch (err) {
         signupLog.error({ outcome: 'error' satisfies SignupOutcome, errorClass: err instanceof Error ? err.constructor.name : typeof err }, 'beta signup');
         return c.redirect(retry, 303);
