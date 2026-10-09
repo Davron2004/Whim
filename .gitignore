@@ -36,6 +36,7 @@ local.properties
 node_modules/
 npm-debug.log
 yarn-error.log
+firestore-debug.log
 
 # fastlane
 # It is recommended to not store the screenshots in the git repo. Instead, use fastlane to re-generate the
@@ -122,3 +123,27 @@ graphify-out/
 
 # Local critic reports
 /openspec/critic/
+
+# Run evidence never enters git (2026-10-09 hygiene; the tracked-weight check in
+# checks/test/repo/ enforces it). Upload it to gs://anycognition-whim-evidence per
+# docs/EVIDENCE.md and record the result in the change's progress.md. Plans and checklists
+# (*.md) under acceptance/ stay committable.
+openspec/changes/**/acceptance/**
+!openspec/changes/**/acceptance/**/
+!openspec/changes/**/acceptance/**/*.md
+openspec/changes/**/evidence/
+openspec/changes/**/flowbench/
+openspec/changes/**/upgrade-check/
+openspec/changes/**/*-hierarchy.json
+openspec/changes/**/*.hierarchy.json
+openspec/changes/**/*.png
+openspec/changes/**/*.jpg
+openspec/changes/**/*.jpeg
+openspec/changes/**/*.mp4
+openspec/changes/**/*.mov
+openspec/changes/**/*.xml
+openspec/changes/**/*.sse
+openspec/changes/**/*.ndjson
+openspec/changes/**/*.jsonl
+openspec/changes/**/*.log
+openspec/changes/**/*.txt
