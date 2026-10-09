@@ -94,5 +94,13 @@
         "WhimTone": "WhimToneModule"
       }
     }
+  },
+  "overrides": {
+    "basic-ftp": "^6.2.2",
+    "firebase-tools": {
+      "gaxios": {
+        "uuid": "^11.1.1"
+      }
+    }
   }
 }
