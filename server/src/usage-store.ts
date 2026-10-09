@@ -21,6 +21,9 @@
  * request ended with, validated against those closed sets on write so the ledger still holds no text.
  */
 import { DatabaseSync } from 'node:sqlite';
+import { log } from './logger';
+import { settle } from './settle';
+import { byUtf8Bytes } from './text-order';
 import { ServiceRefusalCode, type Usage } from '@whim/contract';
 import { MANIFESTS, keepLimit } from '../../contract/src/disclosure-manifest';
 import {
@@ -37,17 +40,21 @@ export interface UsageStore {
   read(deviceId: string): Promise<Usage>;
 
   /**
-   * Atomically counts today's non-refunded rows for `deviceId` (and, when `globalLimit` is given,
-   * for every device across `globalKinds`) and inserts a new `pending` ledger row, keyed by
-   * `params.requestId`, when under both limits. The device limit is checked first, so a request
-   * over BOTH limits refuses as `'device'` (spec: "the device limit's daily_limit refusal SHALL
-   * win"). `now` drives the UTC-day bucket and the
-   * `retryAfterSec` computation — never `Date.now()` read internally — so callers control day
-   * rollover in tests. Implementations MUST perform the count-then-insert with no `await` between
-   * them, so two overlapping calls (`Promise.all`) can never both observe room for the last unit.
-   * A `requestId` already in the ledger rejects rather than replacing its row.
+   * Admits a request in ONE atomic step: checks today's non-refunded count for `deviceId` against
+   * `deviceLimit`, then (when `globalLimit` is given) the count for every device across
+   * `globalKinds`, and records a new `pending` ledger row keyed by `params.requestId` when under
+   * both. The device limit is checked first, so a request over BOTH limits refuses as `'device'`
+   * (spec: "the device limit's daily_limit refusal SHALL win"). `now` drives the UTC-day bucket
+   * and the `retryAfterSec` computation — never `Date.now()` read internally — so callers control
+   * day rollover in tests. Two concurrent admissions never both take the last device or global
+   * unit (specs/server-storage-backends "Admission is atomic on every backend"). A `requestId`
+   * already in the ledger rejects rather than replacing its row, and consumes no unit.
    */
   admit(params: AdmitParams): Promise<AdmitResult>;
+  /** `admit`'s two limit checks without the insert: whether a unit is free right now, and if not,
+   *  which limit refused, device first. Spends nothing and writes nothing (beta-1 D8: a generation
+   *  that waits in line confirms its unit before its stream opens and spends it on a slot). */
+  unitAvailable(params: UnitQuery): Promise<UnitAvailability>;
   /** Marks a previously admitted request as not counting toward its daily unit. Idempotent: a
    *  repeated refund of the same request id is a no-op. */
   refund(requestId: string): Promise<void>;
@@ -81,6 +88,8 @@ export interface UsageStore {
   /** Deletes ledger rows whose `utc_day` is strictly before `beforeUtcDay` (an `'YYYY-MM-DD'`
    *  string, lexicographically comparable). Returns the number of rows deleted. */
   purgeLedger(beforeUtcDay: string): Promise<number>;
+  /** Releases the store's handle or client. Nothing is called on the store after it. */
+  close(): Promise<void>;
 }
 
 /** A device's lifetime totals row, as the operator's device export prints it. `lastCreditedDay` is
@@ -214,6 +223,11 @@ export type AdmitResult =
   | { ok: true; requestId: string }
   | { ok: false; reason: 'device' | 'global'; retryAfterSec: number };
 
+/** `AdmitParams` without the row a real admission inserts. */
+export type UnitQuery = Omit<AdmitParams, 'requestId'>;
+
+export type UnitAvailability = { ok: true } | Extract<AdmitResult, { ok: false }>;
+
 export interface SummaryParams {
   /** Number of trailing UTC days to include, counting the day `now` falls in. */
   days: number;
@@ -252,7 +266,7 @@ export interface UsageSummary {
 
 /** Rejects a settle whose failure reason is not a known code, or that names one for a successful
  *  outcome — the one check both stores run before writing, so the ledger never holds free text. */
-function assertFailureReason(params: SettleParams): void {
+export function assertFailureReason(params: SettleParams): void {
   const reason: unknown = params.failureReason;
   if (reason === undefined) return;
   if (typeof reason !== 'string' || !FAILURE_REASONS.has(reason)) {
@@ -286,13 +300,13 @@ const DAY_MS = 86_400_000;
 const PRE_LAST_CREDITED_KEEP_DAYS = keepLimit(MANIFESTS[1], 'usage-records')?.days ?? 0;
 
 /** Returns the request's UTC calendar day as `'YYYY-MM-DD'`. */
-function utcDayString(ms: number): string {
+export function utcDayString(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
 /** Whole seconds from `nowMs` to the next UTC midnight, never less than 1 (spec: "Retry-After
  *  SHALL be the whole number of seconds until the next 00:00 UTC, and at least 1"). */
-function secondsUntilNextUtcMidnight(nowMs: number): number {
+export function secondsUntilNextUtcMidnight(nowMs: number): number {
   const d = new Date(nowMs);
   const nextMidnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0, 0);
   return Math.max(1, Math.round((nextMidnight - nowMs) / 1000));
@@ -315,7 +329,7 @@ function percentile(sorted: readonly number[], p: number): number {
 
 /** Shared summary computation over a flat list of rows — used by both implementations so their
  *  `summary()` semantics can never drift apart. */
-function computeSummary(
+export function computeSummary(
   rows: readonly {
     deviceId: string;
     kind: RequestKind;
@@ -384,14 +398,14 @@ function computeSummary(
  *  implementation mirrors it in a single `WHERE` clause). `'pending'` accepts anything (including
  *  another `'pending'` write, which is how the resolver registers its generation ids before it has
  *  a verdict); `'unresolved'` accepts only the upgrade to `'resolved'`; `'resolved'` is final. */
-function costWriteLands(current: CostState, next: CostState): boolean {
+export function costWriteLands(current: CostState, next: CostState): boolean {
   if (current === 'pending') return true;
   return current === 'unresolved' && next === 'resolved';
 }
 
 /** `globalKinds` defaults to the admitted kind — and an EMPTY array means the same thing, never
  *  "count across nothing" (which SQLite would render as `kind IN ()`, a syntax error). */
-function effectiveGlobalKinds(kind: RequestKind, globalKinds: readonly RequestKind[] | undefined): readonly RequestKind[] {
+export function effectiveGlobalKinds(kind: RequestKind, globalKinds: readonly RequestKind[] | undefined): readonly RequestKind[] {
   return globalKinds && globalKinds.length > 0 ? globalKinds : [kind];
 }
 
@@ -424,32 +438,65 @@ export class InMemoryUsageStore implements UsageStore, UsageRecordKeeping {
     this.now = options.now ?? Date.now;
   }
 
-  async credit(deviceId: string, usage: Usage): Promise<void> {
-    const prev = this.store.get(deviceId) ?? {
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0,
-    };
-    this.store.set(deviceId, {
-      promptTokens: prev.promptTokens + usage.promptTokens,
-      completionTokens: prev.completionTokens + usage.completionTokens,
-      totalTokens: prev.totalTokens + usage.totalTokens,
+  credit(deviceId: string, usage: Usage): Promise<void> {
+    return settle(() => {
+      const prev = this.store.get(deviceId) ?? {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      };
+      this.store.set(deviceId, {
+        promptTokens: prev.promptTokens + usage.promptTokens,
+        completionTokens: prev.completionTokens + usage.completionTokens,
+        totalTokens: prev.totalTokens + usage.totalTokens,
+      });
+      this.lastCreditedDay.set(deviceId, utcDayString(this.now()));
     });
-    this.lastCreditedDay.set(deviceId, utcDayString(this.now()));
   }
 
-  async read(deviceId: string): Promise<Usage> {
-    return (
+  read(deviceId: string): Promise<Usage> {
+    return Promise.resolve(
       this.store.get(deviceId) ?? {
         promptTokens: 0,
         completionTokens: 0,
         totalTokens: 0,
-      }
+      },
     );
   }
 
-  async admit(params: AdmitParams): Promise<AdmitResult> {
-    const { requestId, deviceId, kind, now, deviceLimit, globalLimit } = params;
+  admit(params: AdmitParams): Promise<AdmitResult> {
+    return settle(() => {
+      const { requestId, deviceId, kind, now } = params;
+      const refused = this.unitRefusal(params);
+      if (refused) return refused;
+      // The SQLite store's primary key refuses a reused id at this same point, after the limits.
+      if (this.ledger.has(requestId)) throw new Error('UNIQUE constraint failed: requests.id');
+      this.ledger.set(requestId, {
+        id: requestId,
+        deviceId,
+        kind,
+        utcDay: utcDayString(now),
+        startedAt: now,
+        endedAt: null,
+        outcome: null,
+        failureReason: null,
+        promptTokens: 0,
+        completionTokens: 0,
+        costUsd: null,
+        costState: 'pending',
+        generationIds: null,
+        refunded: false,
+      });
+      return { ok: true, requestId };
+    });
+  }
+
+  unitAvailable(params: UnitQuery): Promise<UnitAvailability> {
+    return settle(() => this.unitRefusal(params) ?? { ok: true });
+  }
+
+  private unitRefusal(params: UnitQuery): Extract<AdmitResult, { ok: false }> | undefined {
+    const { deviceId, kind, now, deviceLimit, globalLimit } = params;
     const globalKinds = effectiveGlobalKinds(kind, params.globalKinds);
     const utcDay = utcDayString(now);
     let deviceCount = 0;
@@ -465,114 +512,117 @@ export class InMemoryUsageStore implements UsageStore, UsageRecordKeeping {
     if (globalLimit !== undefined && globalCount >= globalLimit) {
       return { ok: false, reason: 'global', retryAfterSec: secondsUntilNextUtcMidnight(now) };
     }
-    // The SQLite store's primary key refuses a reused id at this same point, after the limits.
-    if (this.ledger.has(requestId)) throw new Error('UNIQUE constraint failed: requests.id');
-    this.ledger.set(requestId, {
-      id: requestId,
-      deviceId,
-      kind,
-      utcDay,
-      startedAt: now,
-      endedAt: null,
-      outcome: null,
-      failureReason: null,
-      promptTokens: 0,
-      completionTokens: 0,
-      costUsd: null,
-      costState: 'pending',
-      generationIds: null,
-      refunded: false,
+    return undefined;
+  }
+
+  refund(requestId: string): Promise<void> {
+    return settle(() => {
+      const row = this.ledger.get(requestId);
+      if (row && !row.refunded) row.refunded = true;
     });
-    return { ok: true, requestId };
   }
 
-  async refund(requestId: string): Promise<void> {
-    const row = this.ledger.get(requestId);
-    if (row && !row.refunded) row.refunded = true;
+  settle(requestId: string, params: SettleParams): Promise<void> {
+    return settle(() => {
+      assertFailureReason(params);
+      const row = this.ledger.get(requestId);
+      if (!row || row.endedAt !== null) return;
+      row.endedAt = params.now ?? Date.now();
+      row.outcome = params.outcome;
+      row.failureReason = params.failureReason ?? null;
+      row.promptTokens = params.usage?.promptTokens ?? 0;
+      row.completionTokens = params.usage?.completionTokens ?? 0;
+    });
   }
 
-  async settle(requestId: string, params: SettleParams): Promise<void> {
-    assertFailureReason(params);
-    const row = this.ledger.get(requestId);
-    if (!row || row.endedAt !== null) return;
-    row.endedAt = params.now ?? Date.now();
-    row.outcome = params.outcome;
-    row.failureReason = params.failureReason ?? null;
-    row.promptTokens = params.usage?.promptTokens ?? 0;
-    row.completionTokens = params.usage?.completionTokens ?? 0;
+  recordCost(requestId: string, params: RecordCostParams): Promise<void> {
+    return settle(() => {
+      const row = this.ledger.get(requestId);
+      if (!row || !costWriteLands(row.costState, params.state)) return;
+      row.costState = params.state;
+      row.costUsd = params.costUsd ?? null;
+      row.generationIds = params.state === 'resolved' ? null : (params.generationIds ?? row.generationIds);
+    });
   }
 
-  async recordCost(requestId: string, params: RecordCostParams): Promise<void> {
-    const row = this.ledger.get(requestId);
-    if (!row || !costWriteLands(row.costState, params.state)) return;
-    row.costState = params.state;
-    row.costUsd = params.costUsd ?? null;
-    row.generationIds = params.state === 'resolved' ? null : (params.generationIds ?? row.generationIds);
+  listUnresolvedCostRows(query: CostSweepQuery): Promise<CostSweepCandidate[]> {
+    return settle(() => {
+      const staleBefore = query.now - query.stalePendingAfterMs;
+      const maxAgeBefore = query.now - query.maxAgeMs;
+      return [...this.ledger.values()]
+        .filter((row) => {
+          if (!row.generationIds || row.generationIds.length === 0) return false;
+          if (row.endedAt === null || row.endedAt <= maxAgeBefore) return false;
+          if (row.costState === 'unresolved') return true;
+          return row.costState === 'pending' && row.endedAt <= staleBefore;
+        })
+        .sort((a, b) => a.startedAt - b.startedAt)
+        .slice(0, query.limit)
+        .map((row) => ({ requestId: row.id, generationIds: row.generationIds ?? [] }));
+    });
   }
 
-  async listUnresolvedCostRows(query: CostSweepQuery): Promise<CostSweepCandidate[]> {
-    const staleBefore = query.now - query.stalePendingAfterMs;
-    const maxAgeBefore = query.now - query.maxAgeMs;
-    return [...this.ledger.values()]
-      .filter((row) => {
-        if (!row.generationIds || row.generationIds.length === 0) return false;
-        if (row.endedAt === null || row.endedAt <= maxAgeBefore) return false;
-        if (row.costState === 'unresolved') return true;
-        return row.costState === 'pending' && row.endedAt <= staleBefore;
-      })
-      .sort((a, b) => a.startedAt - b.startedAt)
-      .slice(0, query.limit)
-      .map((row) => ({ requestId: row.id, generationIds: row.generationIds ?? [] }));
+  summary(params: SummaryParams): Promise<UsageSummary> {
+    return settle(() => computeSummary([...this.ledger.values()], params));
   }
 
-  async summary(params: SummaryParams): Promise<UsageSummary> {
-    return computeSummary([...this.ledger.values()], params);
-  }
-
-  async purgeLedger(beforeUtcDay: string): Promise<number> {
-    let deleted = 0;
-    for (const [id, row] of this.ledger) {
-      if (row.utcDay < beforeUtcDay) {
-        this.ledger.delete(id);
-        deleted++;
+  purgeLedger(beforeUtcDay: string): Promise<number> {
+    return settle(() => {
+      let deleted = 0;
+      for (const [id, row] of this.ledger) {
+        if (row.utcDay < beforeUtcDay) {
+          this.ledger.delete(id);
+          deleted++;
+        }
       }
-    }
-    return deleted;
+      return deleted;
+    });
   }
 
-  async purgeIdleUsage(beforeUtcDay: string): Promise<number> {
-    let deleted = 0;
-    for (const [deviceId, day] of this.lastCreditedDay) {
-      if (day < beforeUtcDay) {
-        this.lastCreditedDay.delete(deviceId);
-        this.store.delete(deviceId);
-        deleted++;
+  purgeIdleUsage(beforeUtcDay: string): Promise<number> {
+    return settle(() => {
+      let deleted = 0;
+      for (const [deviceId, day] of this.lastCreditedDay) {
+        if (day < beforeUtcDay) {
+          this.lastCreditedDay.delete(deviceId);
+          this.store.delete(deviceId);
+          deleted++;
+        }
       }
-    }
-    return deleted;
+      return deleted;
+    });
   }
 
-  async deviceRecords(deviceId: string): Promise<DeviceUsageRecords> {
-    const ledger = [...this.ledger.values()]
-      .filter((row) => row.deviceId === deviceId)
-      .sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id))
-      .map((row) => ({ ...row }));
-    const totals = this.store.get(deviceId);
-    const usage = totals ? { deviceId, ...totals, lastCreditedDay: this.lastCreditedDay.get(deviceId) ?? null } : null;
-    return { ledger, usage };
+  deviceRecords(deviceId: string): Promise<DeviceUsageRecords> {
+    return settle(() => {
+      const ledger = [...this.ledger.values()]
+        .filter((row) => row.deviceId === deviceId)
+        .sort((a, b) => a.startedAt - b.startedAt || byUtf8Bytes(a.id, b.id))
+        .map((row) => ({ ...row }));
+      const totals = this.store.get(deviceId);
+      const usage = totals ? { deviceId, ...totals, lastCreditedDay: this.lastCreditedDay.get(deviceId) ?? null } : null;
+      return { ledger, usage };
+    });
   }
 
-  async deleteDeviceRecords(deviceId: string): Promise<DeviceUsageDeleted> {
-    let ledger = 0;
-    for (const [id, row] of this.ledger) {
-      if (row.deviceId === deviceId) {
-        this.ledger.delete(id);
-        ledger++;
+  deleteDeviceRecords(deviceId: string): Promise<DeviceUsageDeleted> {
+    return settle(() => {
+      let ledger = 0;
+      for (const [id, row] of this.ledger) {
+        if (row.deviceId === deviceId) {
+          this.ledger.delete(id);
+          ledger++;
+        }
       }
-    }
-    const usage = this.store.delete(deviceId) ? 1 : 0;
-    this.lastCreditedDay.delete(deviceId);
-    return { ledger, usage };
+      const usage = this.store.delete(deviceId) ? 1 : 0;
+      this.lastCreditedDay.delete(deviceId);
+      return { ledger, usage };
+    });
+  }
+
+  /** Nothing to release. */
+  close(): Promise<void> {
+    return Promise.resolve();
   }
 }
 
@@ -699,200 +749,295 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
     return (this.db.prepare('PRAGMA table_info(usage)').all() as { name: string }[]).some((c) => c.name === 'last_credited_day');
   }
 
-  async credit(deviceId: string, usage: Usage): Promise<void> {
-    this.db.prepare(`
-      INSERT INTO usage (device_id, prompt_tokens, completion_tokens, total_tokens, last_credited_day)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(device_id) DO UPDATE SET
-        prompt_tokens = prompt_tokens + excluded.prompt_tokens,
-        completion_tokens = completion_tokens + excluded.completion_tokens,
-        total_tokens = total_tokens + excluded.total_tokens,
-        last_credited_day = excluded.last_credited_day
-    `).run(deviceId, usage.promptTokens, usage.completionTokens, usage.totalTokens, utcDayString(this.now()));
+  credit(deviceId: string, usage: Usage): Promise<void> {
+    return settle(() => {
+      this.db.prepare(`
+        INSERT INTO usage (device_id, prompt_tokens, completion_tokens, total_tokens, last_credited_day)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(device_id) DO UPDATE SET
+          prompt_tokens = prompt_tokens + excluded.prompt_tokens,
+          completion_tokens = completion_tokens + excluded.completion_tokens,
+          total_tokens = total_tokens + excluded.total_tokens,
+          last_credited_day = excluded.last_credited_day
+      `).run(deviceId, usage.promptTokens, usage.completionTokens, usage.totalTokens, utcDayString(this.now()));
+    });
   }
 
-  async read(deviceId: string): Promise<Usage> {
-    const row = this.db.prepare(
-      'SELECT prompt_tokens, completion_tokens, total_tokens FROM usage WHERE device_id = ?'
-    ).get(deviceId) as { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined;
+  read(deviceId: string): Promise<Usage> {
+    return settle(() => {
+      const row = this.db.prepare(
+        'SELECT prompt_tokens, completion_tokens, total_tokens FROM usage WHERE device_id = ?'
+      ).get(deviceId) as { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined;
 
-    if (!row) {
-      return { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-    }
-    return {
-      promptTokens: row.prompt_tokens,
-      completionTokens: row.completion_tokens,
-      totalTokens: row.total_tokens,
-    };
+      if (!row) {
+        return { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      }
+      return {
+        promptTokens: row.prompt_tokens,
+        completionTokens: row.completion_tokens,
+        totalTokens: row.total_tokens,
+      };
+    });
   }
 
-  async admit(params: AdmitParams): Promise<AdmitResult> {
-    const { requestId, deviceId, kind, now, deviceLimit, globalLimit } = params;
+  admit(params: AdmitParams): Promise<AdmitResult> {
+    return settle(() => {
+      const { requestId, deviceId, kind, now } = params;
+      const utcDay = utcDayString(now);
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        const refused = this.unitRefusal(params);
+        if (refused) {
+          this.db.exec('COMMIT');
+          return refused;
+        }
+        this.db.prepare(`
+          INSERT INTO requests
+            (id, device_id, kind, utc_day, started_at, ended_at, outcome, prompt_tokens, completion_tokens, cost_usd, cost_state, generation_ids, refunded)
+          VALUES (?, ?, ?, ?, ?, NULL, NULL, 0, 0, NULL, 'pending', NULL, 0)
+        `).run(requestId, deviceId, kind, utcDay, now);
+        this.db.exec('COMMIT');
+        return { ok: true, requestId };
+      } catch (err) {
+        this.db.exec('ROLLBACK');
+        throw err;
+      }
+    });
+  }
+
+  unitAvailable(params: UnitQuery): Promise<UnitAvailability> {
+    return settle(() => this.unitRefusal(params) ?? { ok: true });
+  }
+
+  /** The two counts `admit` runs inside its transaction; synchronous, so `admit` keeps no `await`
+   *  between them and its insert. */
+  private unitRefusal(params: UnitQuery): Extract<AdmitResult, { ok: false }> | undefined {
+    const { deviceId, kind, now, deviceLimit, globalLimit } = params;
     const globalKinds = effectiveGlobalKinds(kind, params.globalKinds);
     const utcDay = utcDayString(now);
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const deviceRow = this.db.prepare(
-        'SELECT COUNT(*) as c FROM requests WHERE kind = ? AND utc_day = ? AND device_id = ? AND refunded = 0'
-      ).get(kind, utcDay, deviceId) as { c: number };
-      if (deviceRow.c >= deviceLimit) {
-        this.db.exec('COMMIT');
-        return { ok: false, reason: 'device', retryAfterSec: secondsUntilNextUtcMidnight(now) };
+    const deviceRow = this.db.prepare(
+      'SELECT COUNT(*) as c FROM requests WHERE kind = ? AND utc_day = ? AND device_id = ? AND refunded = 0'
+    ).get(kind, utcDay, deviceId) as { c: number };
+    if (deviceRow.c >= deviceLimit) {
+      return { ok: false, reason: 'device', retryAfterSec: secondsUntilNextUtcMidnight(now) };
+    }
+    if (globalLimit !== undefined) {
+      const placeholders = globalKinds.map(() => '?').join(', ');
+      const globalRow = this.db.prepare(
+        `SELECT COUNT(*) as c FROM requests WHERE kind IN (${placeholders}) AND utc_day = ? AND refunded = 0`
+      ).get(...globalKinds, utcDay) as { c: number };
+      if (globalRow.c >= globalLimit) {
+        return { ok: false, reason: 'global', retryAfterSec: secondsUntilNextUtcMidnight(now) };
       }
-      if (globalLimit !== undefined) {
-        const placeholders = globalKinds.map(() => '?').join(', ');
-        const globalRow = this.db.prepare(
-          `SELECT COUNT(*) as c FROM requests WHERE kind IN (${placeholders}) AND utc_day = ? AND refunded = 0`
-        ).get(...globalKinds, utcDay) as { c: number };
-        if (globalRow.c >= globalLimit) {
-          this.db.exec('COMMIT');
-          return { ok: false, reason: 'global', retryAfterSec: secondsUntilNextUtcMidnight(now) };
-        }
-      }
+    }
+    return undefined;
+  }
+
+  refund(requestId: string): Promise<void> {
+    return settle(() => {
+      this.db.prepare('UPDATE requests SET refunded = 1 WHERE id = ? AND refunded = 0').run(requestId);
+    });
+  }
+
+  settle(requestId: string, params: SettleParams): Promise<void> {
+    return settle(() => {
+      assertFailureReason(params);
       this.db.prepare(`
-        INSERT INTO requests
-          (id, device_id, kind, utc_day, started_at, ended_at, outcome, prompt_tokens, completion_tokens, cost_usd, cost_state, generation_ids, refunded)
-        VALUES (?, ?, ?, ?, ?, NULL, NULL, 0, 0, NULL, 'pending', NULL, 0)
-      `).run(requestId, deviceId, kind, utcDay, now);
-      this.db.exec('COMMIT');
-      return { ok: true, requestId };
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+        UPDATE requests
+        SET ended_at = ?, outcome = ?, failure_reason = ?, prompt_tokens = ?, completion_tokens = ?
+        WHERE id = ? AND ended_at IS NULL
+      `).run(
+        params.now ?? Date.now(),
+        params.outcome,
+        params.failureReason ?? null,
+        params.usage?.promptTokens ?? 0,
+        params.usage?.completionTokens ?? 0,
+        requestId,
+      );
+    });
   }
 
-  async refund(requestId: string): Promise<void> {
-    this.db.prepare('UPDATE requests SET refunded = 1 WHERE id = ? AND refunded = 0').run(requestId);
+  recordCost(requestId: string, params: RecordCostParams): Promise<void> {
+    return settle(() => {
+      // The `WHERE` is `costWriteLands` in SQL: writable while pending, and one upgrade out of
+      // 'unresolved' into 'resolved'. Narrow it back to `cost_state = 'pending'` and every row the
+      // in-request attempts gave up on becomes terminal, which is the bug this widening fixes.
+      const ids = params.generationIds && params.generationIds.length > 0 ? JSON.stringify(params.generationIds) : null;
+      this.db.prepare(`
+        UPDATE requests
+        SET cost_state = ?,
+            cost_usd = ?,
+            generation_ids = CASE WHEN ? = 'resolved' THEN NULL ELSE COALESCE(?, generation_ids) END
+        WHERE id = ? AND (cost_state = 'pending' OR (cost_state = 'unresolved' AND ? = 'resolved'))
+      `).run(params.state, params.costUsd ?? null, params.state, ids, requestId, params.state);
+    });
   }
 
-  async settle(requestId: string, params: SettleParams): Promise<void> {
-    assertFailureReason(params);
-    this.db.prepare(`
-      UPDATE requests
-      SET ended_at = ?, outcome = ?, failure_reason = ?, prompt_tokens = ?, completion_tokens = ?
-      WHERE id = ? AND ended_at IS NULL
-    `).run(
-      params.now ?? Date.now(),
-      params.outcome,
-      params.failureReason ?? null,
-      params.usage?.promptTokens ?? 0,
-      params.usage?.completionTokens ?? 0,
-      requestId,
-    );
+  listUnresolvedCostRows(query: CostSweepQuery): Promise<CostSweepCandidate[]> {
+    return settle(() => {
+      // `generation_ids != '[]'` keeps a planted-empty-array row from consuming a `LIMIT` slot ahead
+      // of the JS-side length filter below, which otherwise runs too late to help (defense in depth:
+      // normal writes never persist '[]', see recordCost's `ids` computation).
+      const rows = this.db.prepare(`
+        SELECT id, generation_ids FROM requests
+        WHERE generation_ids IS NOT NULL
+          AND generation_ids != '[]'
+          AND ended_at IS NOT NULL
+          AND ended_at > ?
+          AND (cost_state = 'unresolved' OR (cost_state = 'pending' AND ended_at <= ?))
+        ORDER BY started_at ASC
+        LIMIT ?
+      `).all(query.now - query.maxAgeMs, query.now - query.stalePendingAfterMs, query.limit) as {
+        id: string;
+        generation_ids: string;
+      }[];
+      return rows
+        .map((row) => ({ requestId: row.id, generationIds: parseGenerationIds(row.generation_ids) }))
+        .filter((candidate) => candidate.generationIds.length > 0);
+    });
   }
 
-  async recordCost(requestId: string, params: RecordCostParams): Promise<void> {
-    // The `WHERE` is `costWriteLands` in SQL: writable while pending, and one upgrade out of
-    // 'unresolved' into 'resolved'. Narrow it back to `cost_state = 'pending'` and every row the
-    // in-request attempts gave up on becomes terminal, which is the bug this widening fixes.
-    const ids = params.generationIds && params.generationIds.length > 0 ? JSON.stringify(params.generationIds) : null;
-    this.db.prepare(`
-      UPDATE requests
-      SET cost_state = ?,
-          cost_usd = ?,
-          generation_ids = CASE WHEN ? = 'resolved' THEN NULL ELSE COALESCE(?, generation_ids) END
-      WHERE id = ? AND (cost_state = 'pending' OR (cost_state = 'unresolved' AND ? = 'resolved'))
-    `).run(params.state, params.costUsd ?? null, params.state, ids, requestId, params.state);
+  summary(params: SummaryParams): Promise<UsageSummary> {
+    return settle(() => {
+      const rows = this.db.prepare(
+        'SELECT device_id, kind, utc_day, cost_usd, cost_state, refunded, failure_reason FROM requests'
+      ).all() as {
+        device_id: string;
+        kind: RequestKind;
+        utc_day: string;
+        cost_usd: number | null;
+        cost_state: CostState;
+        refunded: number;
+        failure_reason: FailureReason | null;
+      }[];
+      return computeSummary(
+        rows.map((r) => ({
+          deviceId: r.device_id,
+          kind: r.kind,
+          utcDay: r.utc_day,
+          costUsd: r.cost_usd,
+          costState: r.cost_state,
+          refunded: r.refunded !== 0,
+          failureReason: r.failure_reason,
+        })),
+        params,
+      );
+    });
   }
 
-  async listUnresolvedCostRows(query: CostSweepQuery): Promise<CostSweepCandidate[]> {
-    // `generation_ids != '[]'` keeps a planted-empty-array row from consuming a `LIMIT` slot ahead
-    // of the JS-side length filter below, which otherwise runs too late to help (defense in depth:
-    // normal writes never persist '[]', see recordCost's `ids` computation).
-    const rows = this.db.prepare(`
-      SELECT id, generation_ids FROM requests
-      WHERE generation_ids IS NOT NULL
-        AND generation_ids != '[]'
-        AND ended_at IS NOT NULL
-        AND ended_at > ?
-        AND (cost_state = 'unresolved' OR (cost_state = 'pending' AND ended_at <= ?))
-      ORDER BY started_at ASC
-      LIMIT ?
-    `).all(query.now - query.maxAgeMs, query.now - query.stalePendingAfterMs, query.limit) as {
-      id: string;
-      generation_ids: string;
-    }[];
-    return rows
-      .map((row) => ({ requestId: row.id, generationIds: parseGenerationIds(row.generation_ids) }))
-      .filter((candidate) => candidate.generationIds.length > 0);
+  purgeLedger(beforeUtcDay: string): Promise<number> {
+    return settle(() => {
+      const result = this.db.prepare('DELETE FROM requests WHERE utc_day < ?').run(beforeUtcDay);
+      return Number(result.changes);
+    });
   }
 
-  async summary(params: SummaryParams): Promise<UsageSummary> {
-    const rows = this.db.prepare(
-      'SELECT device_id, kind, utc_day, cost_usd, cost_state, refunded, failure_reason FROM requests'
-    ).all() as {
-      device_id: string;
-      kind: RequestKind;
-      utc_day: string;
-      cost_usd: number | null;
-      cost_state: CostState;
-      refunded: number;
-      failure_reason: FailureReason | null;
-    }[];
-    return computeSummary(
-      rows.map((r) => ({
-        deviceId: r.device_id,
-        kind: r.kind,
-        utcDay: r.utc_day,
-        costUsd: r.cost_usd,
-        costState: r.cost_state,
-        refunded: r.refunded !== 0,
-        failureReason: r.failure_reason,
-      })),
-      params,
-    );
+  purgeIdleUsage(beforeUtcDay: string): Promise<number> {
+    return settle(() => {
+      const result = this.db.prepare('DELETE FROM usage WHERE last_credited_day < ?').run(beforeUtcDay);
+      return Number(result.changes);
+    });
   }
 
-  async purgeLedger(beforeUtcDay: string): Promise<number> {
-    const result = this.db.prepare('DELETE FROM requests WHERE utc_day < ?').run(beforeUtcDay);
-    return Number(result.changes);
+  deviceRecords(deviceId: string): Promise<DeviceUsageRecords> {
+    return settle(() => {
+      const ledger = this.db.prepare(`
+        SELECT id, device_id, kind, utc_day, started_at, ended_at, outcome, failure_reason, prompt_tokens, completion_tokens,
+               cost_usd, cost_state, generation_ids, refunded
+        FROM requests WHERE device_id = ? ORDER BY started_at, id
+      `).all(deviceId) as unknown as RawLedgerRow[];
+      const usage = this.db.prepare(
+        'SELECT prompt_tokens, completion_tokens, total_tokens, last_credited_day FROM usage WHERE device_id = ?'
+      ).get(deviceId) as { prompt_tokens: number; completion_tokens: number; total_tokens: number; last_credited_day: string | null } | undefined;
+      return {
+        ledger: ledger.map(fromRawLedgerRow),
+        usage: usage
+          ? {
+              deviceId,
+              promptTokens: usage.prompt_tokens,
+              completionTokens: usage.completion_tokens,
+              totalTokens: usage.total_tokens,
+              lastCreditedDay: usage.last_credited_day,
+            }
+          : null,
+      };
+    });
   }
 
-  async purgeIdleUsage(beforeUtcDay: string): Promise<number> {
-    const result = this.db.prepare('DELETE FROM usage WHERE last_credited_day < ?').run(beforeUtcDay);
-    return Number(result.changes);
-  }
-
-  async deviceRecords(deviceId: string): Promise<DeviceUsageRecords> {
-    const ledger = this.db.prepare(`
-      SELECT id, device_id, kind, utc_day, started_at, ended_at, outcome, failure_reason, prompt_tokens, completion_tokens,
-             cost_usd, cost_state, generation_ids, refunded
-      FROM requests WHERE device_id = ? ORDER BY started_at, id
-    `).all(deviceId) as unknown as RawLedgerRow[];
-    const usage = this.db.prepare(
-      'SELECT prompt_tokens, completion_tokens, total_tokens, last_credited_day FROM usage WHERE device_id = ?'
-    ).get(deviceId) as { prompt_tokens: number; completion_tokens: number; total_tokens: number; last_credited_day: string | null } | undefined;
-    return {
-      ledger: ledger.map(fromRawLedgerRow),
-      usage: usage
-        ? {
-            deviceId,
-            promptTokens: usage.prompt_tokens,
-            completionTokens: usage.completion_tokens,
-            totalTokens: usage.total_tokens,
-            lastCreditedDay: usage.last_credited_day,
-          }
-        : null,
-    };
-  }
-
-  async deleteDeviceRecords(deviceId: string): Promise<DeviceUsageDeleted> {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const ledger = Number(this.db.prepare('DELETE FROM requests WHERE device_id = ?').run(deviceId).changes);
-      const usage = Number(this.db.prepare('DELETE FROM usage WHERE device_id = ?').run(deviceId).changes);
-      this.db.exec('COMMIT');
-      return { ledger, usage };
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
-    }
+  deleteDeviceRecords(deviceId: string): Promise<DeviceUsageDeleted> {
+    return settle(() => {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        const ledger = Number(this.db.prepare('DELETE FROM requests WHERE device_id = ?').run(deviceId).changes);
+        const usage = Number(this.db.prepare('DELETE FROM usage WHERE device_id = ?').run(deviceId).changes);
+        this.db.exec('COMMIT');
+        return { ledger, usage };
+      } catch (err) {
+        this.db.exec('ROLLBACK');
+        throw err;
+      }
+    });
   }
 
   /** Release the database handle. Required before re-opening the same file path. */
-  close(): void {
-    this.db.close();
+  close(): Promise<void> {
+    return settle(() => {
+      this.db.close();
+    });
+  }
+}
+
+/** Every record in a `usage.db`. */
+export interface UsageFileContents {
+  usage: (UsageRecord & { lastCreditedDay: string })[];
+  ledger: LedgerRow[];
+}
+
+/** Columns a `usage.db` gains through the store's additive migrations, which `readUsageFile` will
+ *  not run. */
+const MIGRATED_COLUMNS = [
+  ['requests', 'generation_ids'],
+  ['requests', 'failure_reason'],
+  ['usage', 'last_credited_day'],
+] as const;
+
+/**
+ * Every lifetime row and ledger row in the `usage.db` at `dbPath`, read through a read-only
+ * connection, so the file is never written (the SQLite-to-Firestore import). Throws for a file the
+ * store's migrations have not finished on (a missing column or a lifetime row with no
+ * `last_credited_day`), since only a writable open may date those rows.
+ */
+export function readUsageFile(dbPath: string): UsageFileContents {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const missing = MIGRATED_COLUMNS.filter(
+      ([table, column]) => !(db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === column),
+    ).map(([table, column]) => `${table}.${column}`);
+    const undated = missing.length === 0 && db.prepare('SELECT 1 FROM usage WHERE last_credited_day IS NULL LIMIT 1').get() !== undefined;
+    if (missing.length > 0 || undated) {
+      const gap = missing.length > 0 ? `it has no ${missing.join(', ')} column` : 'it holds lifetime rows with no last_credited_day';
+      throw new Error(`${dbPath} predates the current usage schema (${gap}); start the server once on it with WHIM_STORE_BACKEND=sqlite to migrate it, then import`);
+    }
+    const usage = db
+      .prepare('SELECT device_id, prompt_tokens, completion_tokens, total_tokens, last_credited_day FROM usage ORDER BY device_id')
+      .all() as unknown as { device_id: string; prompt_tokens: number; completion_tokens: number; total_tokens: number; last_credited_day: string }[];
+    const ledger = db.prepare(`
+      SELECT id, device_id, kind, utc_day, started_at, ended_at, outcome, failure_reason, prompt_tokens, completion_tokens,
+             cost_usd, cost_state, generation_ids, refunded
+      FROM requests ORDER BY started_at, id
+    `).all() as unknown as RawLedgerRow[];
+    return {
+      usage: usage.map((row) => ({
+        deviceId: row.device_id,
+        promptTokens: row.prompt_tokens,
+        completionTokens: row.completion_tokens,
+        totalTokens: row.total_tokens,
+        lastCreditedDay: row.last_credited_day,
+      })),
+      ledger: ledger.map(fromRawLedgerRow),
+    };
+  } finally {
+    db.close();
   }
 }
 
@@ -947,6 +1092,18 @@ export interface UsagePurgeOptions {
   onTick?: () => void;
 }
 
+/** The UTC days the usage purges keep from: ledger rows from an earlier day and lifetime rows last
+ *  credited on an earlier day go. The scheduled purge and `whim-admin purge` both cut here. */
+export function usagePurgeCutoffs(
+  now: number,
+  periods: Pick<UsagePurgeOptions, 'ledgerRetentionDays' | 'usageIdleDays'>,
+): { ledgerBeforeUtcDay: string; idleBeforeUtcDay: string } {
+  return {
+    ledgerBeforeUtcDay: utcDayString(now - periods.ledgerRetentionDays * DAY_MS),
+    idleBeforeUtcDay: utcDayString(now - periods.usageIdleDays * DAY_MS),
+  };
+}
+
 /** The usage database's keep-periods (design D7; legal-surface-v2 D9): at once, then every
  *  `intervalMs` on an unref'd timer, delete the ledger rows past their retention and the lifetime
  *  rows idle past the idle period. A failed purge goes to `onError`, never into the timer. */
@@ -954,15 +1111,27 @@ export function scheduleUsagePurge(
   store: Pick<UsageStore, 'purgeLedger'> & Pick<UsageRecordKeeping, 'purgeIdleUsage'>,
   options: UsagePurgeOptions,
 ): { stop(): void } {
+  const reportPurgeFailure = (message: string, err: unknown): void => {
+    try {
+      options.onError?.(message, err);
+    } catch {
+      // Observer failures must not reject a purge or disclose its database/content details.
+      log.error({ operation: 'usage_purge', hook: 'onError' }, 'usage purge observer failed');
+    }
+  };
   const runOnce = (): void => {
-    const now = options.now();
+    const { ledgerBeforeUtcDay, idleBeforeUtcDay } = usagePurgeCutoffs(options.now(), options);
     const ledger = store
-      .purgeLedger(utcDayString(now - options.ledgerRetentionDays * DAY_MS))
-      .catch((err: unknown) => options.onError?.('ledger purge failed', err));
+      .purgeLedger(ledgerBeforeUtcDay)
+      .catch((err: unknown) => reportPurgeFailure('ledger purge failed', err));
     const idle = store
-      .purgeIdleUsage(utcDayString(now - options.usageIdleDays * DAY_MS))
-      .catch((err: unknown) => options.onError?.('idle usage purge failed', err));
-    Promise.all([ledger, idle]).finally(() => options.onTick?.());
+      .purgeIdleUsage(idleBeforeUtcDay)
+      .catch((err: unknown) => reportPurgeFailure('idle usage purge failed', err));
+    Promise.all([ledger, idle])
+      .then(() => options.onTick?.())
+      .catch(() => {
+        log.error({ operation: 'usage_purge', hook: 'onTick' }, 'usage purge observer failed');
+      });
   };
   runOnce();
   const timer = setInterval(runOnce, options.intervalMs ?? 3_600_000);

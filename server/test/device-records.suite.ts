@@ -12,6 +12,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { check, eq, section } from './harness';
 import { TIMED_OUT, within } from './route-doubles';
+import { captureLogs } from './log-capture';
 import { loadServerConfig } from '../src/config';
 import { runAdminCli, type AdminCliDeps, type DeviceDeletion, type DeviceExport } from '../src/admin/cli';
 import { InMemoryReportStore, NodeSqliteReportStore, type ReportRecordKeeping, type ReportStore } from '../src/reports/store';
@@ -292,6 +293,68 @@ async function testPurgeFailureIsReported(): Promise<void> {
   eq('the ledger purge ran with its own cut-off', ledgerCutoff, dayOf(RUN_AT - 90 * DAY_MS));
 }
 
+async function testThrowingPurgeObservers(): Promise<void> {
+  for (const throwingHook of ['ledger', 'idle', 'onTick'] as const) {
+    section(`Purge continues after the ${throwingHook} observer throws`);
+    const secret = 'private-device-prompt-database-detail';
+    const purgeError = new Error(secret);
+    const errors: Array<{ message: string; error: unknown }> = [];
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown): void => { unhandled.push(error); };
+    const capture = captureLogs();
+    let ledgerCalls = 0;
+    let idleCalls = 0;
+    let ticks = 0;
+    let rejectIdle!: (error: unknown) => void;
+    const firstIdle = new Promise<number>((_resolve, reject) => { rejectIdle = reject; });
+    let secondTick!: () => void;
+    const laterRun = new Promise<void>((resolve) => { secondTick = resolve; });
+    process.on('unhandledRejection', onUnhandled);
+    const schedule = scheduleUsagePurge({
+      purgeLedger: () => { ledgerCalls++; return Promise.reject(purgeError); },
+      purgeIdleUsage: () => { idleCalls++; return idleCalls === 1 ? firstIdle : Promise.reject(purgeError); },
+    }, {
+      ledgerRetentionDays: 90, usageIdleDays: 365, now: () => RUN_AT, intervalMs: 100,
+      onError: (message, error) => {
+        errors.push({ message, error });
+        if (message.startsWith(throwingHook)) throw new Error(secret);
+      },
+      onTick: () => {
+        ticks++;
+        if (ticks === 2) secondTick();
+        if (throwingHook === 'onTick') throw new Error(secret);
+      },
+    });
+    try {
+      eq('both purge jobs start before either settles', [ledgerCalls, idleCalls], [1, 1]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      eq('onTick waits for the pending idle purge even if the ledger observer throws', ticks, 0);
+      rejectIdle(purgeError);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      eq('onTick is attempted after the first pair settles', ticks, 1);
+      check('a later scheduled run completes', await within(laterRun, 2000) !== TIMED_OUT);
+      schedule.stop();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      eq('both purge jobs run again', [ledgerCalls, idleCalls], [2, 2]);
+      eq('each failed purge reaches onError once per run, without recursion', errors.map(({ message }) => message), [
+        'ledger purge failed', 'idle usage purge failed', 'ledger purge failed', 'idle usage purge failed',
+      ]);
+      check('onError receives the original purge failure', errors.every(({ error }) => error === purgeError));
+      eq('consumer failures do not escape the timer promise', unhandled, []);
+      const records = capture.records.filter((record) => record.msg === 'usage purge observer failed');
+      eq('each throwing observer is logged once with fixed labels', records.map(({ operation, hook }) => ({ operation, hook })), [
+        { operation: 'usage_purge', hook: throwingHook === 'onTick' ? 'onTick' : 'onError' },
+        { operation: 'usage_purge', hook: throwingHook === 'onTick' ? 'onTick' : 'onError' },
+      ]);
+      check('observer logs contain no thrown value or device content', !capture.raw.join('\n').includes(secret));
+    } finally {
+      schedule.stop();
+      process.off('unhandledRejection', onUnhandled);
+      capture.stop();
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------------------------
 // whim-admin device export / delete
 
@@ -403,5 +466,6 @@ export async function runDeviceRecordsTests(): Promise<void> {
   await testCreditStampsTheDay();
   await testIdlePurge();
   await testPurgeFailureIsReported();
+  await testThrowingPurgeObservers();
   await testDeviceExportAndDelete();
 }

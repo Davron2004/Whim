@@ -15,6 +15,7 @@ import { build } from 'esbuild';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { devBundleExternals } from '../build.mjs';
 import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -28,8 +29,8 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node22',
-  // `pino` joins the list for the same reason (`server/src/logger.ts`; see `server/test/run.mjs`).
-  external: ['esbuild', 'playwright', 'typescript', 'pino'],
+  // The server's declared runtime packages stay external too (`server/build.mjs`).
+  external: devBundleExternals(path.join(here, '..')),
   logLevel: 'warning',
 });
 

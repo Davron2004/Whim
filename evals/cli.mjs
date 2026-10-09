@@ -36,6 +36,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { devBundleExternals } from '../server/build.mjs';
 import { tmpBundlePath } from '../scripts/lib/tmp-bundle.mjs';
 
 const evalsDir = dirname(fileURLToPath(import.meta.url));
@@ -181,10 +182,10 @@ async function loadFacade() {
     target: 'node22',
     tsconfigRaw: '{}',
     logLevel: 'warning',
-    // Playwright (native bindings), esbuild, and typescript must never be inlined into this
-    // bundle — the same "esbuild-in-esbuild"/native-module hazard `evals/test/run.mjs` avoids
-    // for `typescript` alone. Left external, Node resolves the real `node_modules/*` at runtime.
-    external: ['playwright', 'esbuild', 'typescript'],
+    // The one externals list for a dev bundle of server code (`server/build.mjs`): the server's
+    // declared runtime packages plus Playwright (native bindings), esbuild and typescript, which
+    // must never be inlined. Left external, Node resolves the real `node_modules/*` at runtime.
+    external: devBundleExternals(join(repoRoot, 'server')),
   });
   try {
     return await import(pathToFileURL(outfile).href);
