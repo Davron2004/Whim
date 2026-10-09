@@ -5,8 +5,9 @@
 import assert from 'node:assert';
 import * as React from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { Button, Card, Checkbox, List, ListItem, Modal, ProgressBar, Stepper, Switch, TextInput } from '../index';
+import { Button, Card, Checkbox, List, ListItem, Modal, ProgressBar, Slider, Stepper, Switch, TextInput } from '../index';
 import { COLORS, TINTS } from '../../design/tokens';
+import { contrastRatio } from '../../design/tints';
 
 const THEME = { scheme: 'dark', tint: 'purple', platform: 'ios', fontScale: 1.35, increaseContrast: true, reduceMotion: false };
 (globalThis as { __WHIM_THEME__?: unknown }).__WHIM_THEME__ = THEME;
@@ -39,7 +40,14 @@ try {
     assert.deepStrictEqual(styleOf(box).minHeight, '44px', 'on iOS the checkbox row is the 44 target');
     const sw = mount(<Switch label="Remind me" value={false} onChange={() => {}} />).root;
     const track = sw.find((n) => n.type === 'span' && styleOf(n).width === '48px');
-    assert.deepStrictEqual([styleOf(track).border, styleOf(track).background], ['none', dark['fill-strong']], 'the iOS switch is an unoutlined 48 track, fill-strong when off');
+    assert.deepStrictEqual(styleOf(track).border, 'none', 'the iOS switch is an unoutlined 48 track');
+    // WCAG 1.4.11 (product-owner ruling, design-system-v1 task 6.0): with no outline, the off
+    // track's own fill is its edge, and it must hold 3:1 against the surface it sits on.
+    const offTrack = contrastRatio(String(styleOf(track).background), dark.surface);
+    assert.ok(offTrack >= 3, `the dark iOS off track holds 3:1 on surface (${offTrack.toFixed(2)}:1)`);
+    const sliderTrack = mount(<Slider value={0} onChange={() => {}} />).root.find((n) => n.type === 'div' && styleOf(n).height === '6px');
+    const empty = contrastRatio(String(styleOf(sliderTrack).background), dark.surface);
+    assert.ok(empty >= 3, `the dark slider's empty track holds 3:1 on surface (${empty.toFixed(2)}:1)`);
     const on = mount(<Switch value onChange={() => {}} />).root.find((n) => n.type === 'span' && styleOf(n).width === '48px');
     assert.deepStrictEqual(styleOf(on).background, TINTS.purple.dark, 'and the tint when on');
   }

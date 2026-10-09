@@ -347,3 +347,9 @@ device's current preset/accent/shape automatically. **Never hardcode a hex color
 size, or a `font-weight` number** — always express intent through a token prop (`color="primary"`,
 `gap="lg"`, `radius="md"`, …). This is what lets the same bundle render correctly across every
 theme preset without a code change.
+
+**Motion is built in, the same way.** Presses, `nav.navigate`/`nav.back`, `Modal` (it also drags
+down to close), `toast()`, `ProgressBar` value changes, the controls' selection and the rows of a
+keyed `List` (`items` + `keyBy`) move on their own, and follow the phone's Reduce Motion setting.
+There is no animation API: never animate with timers or state, and key list rows by a stable id so
+the right row moves.
