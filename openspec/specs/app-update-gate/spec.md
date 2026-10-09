@@ -8,8 +8,8 @@ The server SHALL read a minimum supported build for iOS and for Android from ope
 configuration, each defaulting to `0`. For every `/v1` request, after the device gate and the
 envelope check and before any route admission, the server SHALL refuse a request whose build is
 below its platform's minimum with the refusal code `update_required`, status `426`. A legacy
-request with no envelope SHALL count as build `0` on both platforms. `GET /healthz` SHALL report
-both minimums.
+request with no envelope SHALL count as build `0` on both platforms. `GET /health` and
+`GET /healthz` SHALL both report both minimums.
 
 #### Scenario: An old build is turned away
 - **WHEN** the Android minimum is 382000 and an Android build 381500 sends a clarify request
@@ -21,11 +21,13 @@ both minimums.
 
 #### Scenario: Minimums off by default
 - **WHEN** neither minimum is configured
-- **THEN** every build, including a legacy client, is served, and `/healthz` reports both as `0`
+- **THEN** every build, including a legacy client, is served, and `/health` and `/healthz` report both as `0`
 
 ### Requirement: The app shows an update screen that blocks AI features, not the app
 The app SHALL show a full-screen update prompt when a `/v1` call is refused `update_required`, or
-when the launch-time check finds the installed build below its platform's minimum on `/healthz`. The
+when the launch-time check finds the installed build below its platform's minimum. The launch-time
+check SHALL read the minimums from `GET /health`. It SHALL ask `GET /healthz` only when `/health`
+answers `404`, and both requests SHALL share one timeout. The
 screen SHALL offer "Update Whim", which opens the app's own store listing, and "Not now", which
 returns home with installed apps still usable. The store link SHALL open the store app
 (`itms-apps://` or `market://`) and SHALL fall back to the `https://` listing when that fails. The
@@ -42,6 +44,14 @@ kind with a declared exit.
   send a request
 - **AND** a request sent before the check lands is refused `update_required` and shows the same screen
 
+#### Scenario: A server without /health still verifies
+- **WHEN** the configured server answers `404` on `/health` and the full health body on `/healthz`
+- **THEN** the check classifies it `verified` and reads its minimums from `/healthz`
+
+#### Scenario: An unreachable server costs one request
+- **WHEN** `/health` fails with a network error or the timeout
+- **THEN** the check reports `unreachable` without requesting `/healthz`
+
 #### Scenario: Not now keeps the phone's apps
 - **WHEN** the user taps "Not now"
 - **THEN** home shows, installed apps open and run, and the next AI action shows the screen again
@@ -51,10 +61,10 @@ kind with a declared exit.
 - **THEN** the `https://` Play listing opens instead
 
 ### Requirement: Raising a minimum is a documented operator step
-`docs/deploy.md` SHALL describe how to raise and lower each minimum: check which build the stores currently serve, set the value, deploy, and confirm on `/healthz`. It SHALL also give the rollback, which is setting the value back and redeploying.
+`docs/deploy.md` SHALL describe how to raise and lower each minimum: check which build the stores currently serve, set the value, deploy, and confirm on `/health`. It SHALL also give the rollback, which is setting the value back and redeploying.
 
 #### Scenario: The runbook names the check
 - **WHEN** the operator follows the runbook to raise the iOS minimum
 - **THEN** it has them confirm the store's current iOS build before setting the value, and confirm
-  the live value on `/healthz` after the deploy
+  the live value on `/health` after the deploy
 

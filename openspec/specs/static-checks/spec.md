@@ -39,9 +39,9 @@ line positions in the original source.
 
 ### Requirement: Imports resolve only to vc-sdk
 
-Every static import specifier SHALL be exactly `vc-sdk` (the #37 emit contract). Any other
-specifier, any `require(...)` call, and any dynamic `import(...)` SHALL each produce an
-error diagnostic whose hint names the allowed import.
+Every module specifier in a candidate SHALL be exactly `vc-sdk` (the #37 emit contract), wherever the specifier appears: an import declaration, a re-export (`export … from '<specifier>'`, `export * from '<specifier>'`), or an import-equals declaration (`import x = require('<specifier>')`).
+
+Any other specifier in any of those positions, any `require(...)` call, and any dynamic `import(...)` SHALL each produce an error diagnostic whose hint names the allowed import.
 
 #### Scenario: Off-allowlist import
 
@@ -55,6 +55,16 @@ error diagnostic whose hint names the allowed import.
 - **WHEN** the source contains `await import('vc-sdk')`
 - **THEN** the report contains an error diagnostic (dynamic import is rejected regardless of
   specifier)
+
+#### Scenario: A re-export of a file path is rejected
+
+- **WHEN** the source contains `export * from '/etc/hosts'` or `export { x } from '../../server/src/main'`
+- **THEN** the report contains an error diagnostic identifying the specifier, and the candidate never reaches the build stage
+
+#### Scenario: An import-equals require is rejected
+
+- **WHEN** the source contains `import cfg = require('./config.json')`
+- **THEN** the report contains an error diagnostic identifying the specifier
 
 ### Requirement: Forbidden-global walk closes T8
 
@@ -358,3 +368,4 @@ hostile set is the proof the walk isn't vacuously green.
 
 - **WHEN** `checks:test` runs the hostile fixture population
 - **THEN** every hostile fixture's report contains its expected diagnostic kind
+

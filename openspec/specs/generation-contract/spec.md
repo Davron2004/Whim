@@ -6,9 +6,7 @@ The shared wire contract between the Whim device and the harness server: zod sch
 diagnostics envelope, the wire app record, and usage shapes. It is the single source of truth
 for every shape crossing the device↔server wire — consumed by the server now, and by the device
 prompt flow (#7), the static checks (#9), and evals (#12) later.
-
 ## Requirements
-
 ### Requirement: Shared wire-contract package
 The repo SHALL provide an npm workspace `contract/` (package `@whim/contract`) that is the
 single source of truth for every shape crossing the device↔server wire. Schemas SHALL be zod
@@ -38,7 +36,7 @@ exception SHALL be argued in its own change, not absorbed into this one.
 - **THEN** only the dev-log module is found
 
 ### Requirement: Clarify request and response shapes
-The contract SHALL define `ClarifyRequest` (`prompt`) and `ClarifyResponse` carrying `questions`: an ordered list of **at most three** entries, each `{ id, question, options }` where `options` is a non-empty list of answer strings the device renders as single-select pills. An empty `questions` list SHALL be valid and SHALL mean "nothing needs clarifying".
+The contract SHALL define `ClarifyRequest` (`prompt`) and `ClarifyResponse` carrying `questions`: an ordered list of **at most three** entries, each `{ id, question, options, select, other }` where `options` is a non-empty list of answer strings the device renders as pills, `select` ∈ `one | many` says whether one or several options may be picked, and `other` (boolean) says whether the user may type their own answer, and an optional `limit`: `{ reason, alternative }`, plain-words text saying why the request can't be built as asked and the nearest thing that can. An empty `questions` list SHALL be valid and SHALL mean "nothing needs clarifying". A response carrying `limit` SHALL carry an empty `questions` list.
 
 The exchange SHALL be unary request/response. No clarify event, clarify stage member, or second stream SHALL be added to `GenerationEvent`.
 
@@ -50,16 +48,24 @@ The exchange SHALL be unary request/response. No clarify event, clarify stage me
 - **WHEN** a `ClarifyResponse` carrying four questions is parsed
 - **THEN** parsing fails
 
-#### Scenario: The event union is untouched
+#### Scenario: Multi-select question with a typed option
+- **WHEN** a question with `select: 'many'` and `other: true` is parsed
+- **THEN** it validates
+
+#### Scenario: A limit carries no questions
+- **WHEN** a `ClarifyResponse` carries both `limit` and a non-empty `questions` list
+- **THEN** parsing fails
+
+#### Scenario: The event union carries no clarification
 - **WHEN** `GenerationEvent`'s members and its `stage` enum are inspected
-- **THEN** neither mentions clarification, and both are unchanged by this change
+- **THEN** neither mentions clarification
 
 ### Requirement: Generation request and rewrite shapes
 The contract SHALL define `GenerateRequest` (`prompt`, optional `clarifications`, optional `app` carrying the current `source`, the
 `manifest`, the `schema`, and the `appliedSchema` for the edit flow — full re-send per Model 1, never wire
 diffs) and `RewriteRequest`/`RewriteResponse` (`prompt` plus optional `clarifications` and optional `app` in, `rewrittenPrompt` plus optional `plan` out).
 
-`clarifications` SHALL be an optional list of `{ id, question, answer }` entries — the answers the user gave to the clarify exchange's questions, carried by value so the server holds no per-device state between calls. Its absence and an empty list SHALL both mean "the user answered nothing", which is a legitimate, common state.
+`clarifications` SHALL be an optional list of `{ id, question, choices, other?, decide? }` entries — the answers the user gave to the clarify exchange's questions, carried by value so the server holds no per-device state between calls. `choices` is the list of picked options (at most one for a `select: 'one'` question), `other` is the user's typed answer (1–200 characters), and `decide: true` means the user asked Whim to decide that question. An entry SHALL carry either `decide: true` with no choices and no `other`, or at least one choice or an `other`. Its absence and an empty list SHALL both mean "the user answered nothing", which is a legitimate, common state.
 
 `RewriteRequest.app` SHALL be an optional context object `{ name, collections? }`, where `name` is the app's current display name and `collections` is an optional list of `{ name, fields }` carrying collection and field **display names only**. Its presence means "this rewrite describes a change to an existing app"; its absence means a new app. It SHALL NOT carry source, bundle text, burned ids, applied schemas, record contents, or any device-side identity — the rewrite turn answers in the user's own words and needs no more than names, and the payload stays small enough to ride the unary request.
 
@@ -91,7 +97,11 @@ burned-ID allocation floor; when it is absent the baseline is the empty applied 
 
 #### Scenario: A generation carries the answers the user gave
 - **WHEN** a client builds a `GenerateRequest` after a clarify exchange the user answered
-- **THEN** the request validates with each answered question's `id`, `question` and `answer` inside `clarifications`
+- **THEN** the request validates with each answered question's `id`, `question` and its `choices`, `other` or `decide` inside `clarifications`
+
+#### Scenario: A delegated question carries nothing else
+- **WHEN** a clarification carries `decide: true` together with a choice or an `other`
+- **THEN** parsing fails
 
 #### Scenario: A rewrite for an existing app validates with its context
 - **WHEN** a client builds a `RewriteRequest` for a re-prompt of an installed app
@@ -113,8 +123,11 @@ burned-ID allocation floor; when it is absent the baseline is the empty applied 
 The contract SHALL define `GenerationEvent` as a discriminated union on `type` covering:
 `stage` (stage ∈ plan|generate|check|run|repair; status ∈ start|done; optional attempt),
 `token` (streamed generation text delta), `diagnostic` (carrying a `Diagnostic`), `usage`
-(carrying a `Usage`), and the two terminal events `result` (carrying a `WireAppRecord` and an optional
-`summary`) and `failure` (user-facing `reason` prose, `attempts`, accumulated `diagnostics`). Every event a
+(carrying a `Usage`), `queued` (carrying `position`, an integer ≥ 1, the number of generations
+ahead plus one), `restart` (the current model turn is being sent again; tokens streamed for that
+turn since its start are void), and the two terminal events `result` (carrying a `WireAppRecord`
+and an optional `summary`) and `failure` (user-facing `reason` prose, `attempts`, accumulated
+`diagnostics`). Every event SHALL also accept the optional `compat` envelope field. Every event a
 conforming server emits SHALL validate against this union, and every stream that runs to
 completion SHALL contain exactly one terminal event as its last event. A stream aborted by
 the client (disconnect or cancellation) ends without a terminal event — the terminal-event
@@ -132,9 +145,14 @@ presence. The `stage` enum SHALL NOT be widened by this change.
   `GenerationEvent.parse`
 - **THEN** every event validates, and exactly one terminal event appears, last
 
-#### Scenario: Unknown event type rejected
-- **WHEN** a payload with an unrecognized `type` is parsed
-- **THEN** parsing fails (clients can trust the union is closed at any given contract version)
+#### Scenario: Unknown event type goes through the envelope
+- **WHEN** a payload with an unrecognized `type` is decoded by a client
+- **THEN** full parsing is not attempted and the client applies the payload's `compat.fallback`
+  (or `fail` when absent), per the forward-compatibility envelope requirement
+
+#### Scenario: Queued and restart validate
+- **WHEN** a `queued` event with `position: 3` and a `restart` event are parsed
+- **THEN** both validate and neither is terminal
 
 #### Scenario: A client-aborted stream is not a conformance violation
 - **WHEN** a client disconnects mid-stream and the server aborts the generation
@@ -215,11 +233,12 @@ resolves after workspace-ification. The guard SHALL run in CI as a blocking gate
 
 ### Requirement: Structured API error body
 
-The contract SHALL define `ApiError` = `{ error, hint }` where `error` is a machine-readable identifier and
-`hint` is mandatory non-empty guidance, mirroring the diagnostics discipline. Every non-SSE error body a
-conforming server returns from a `/v1/*` route SHALL validate against `ApiError`, so no route invents an
-ad-hoc error shape. `DeviceIdError` remains the narrower, closed-enum specialization for the identity
-middleware and SHALL stay assignable to `ApiError`.
+The contract SHALL define `ApiError` = `{ error, hint, compat? }` where `error` is a machine-readable identifier,
+`hint` is mandatory non-empty guidance, mirroring the diagnostics discipline, and `compat` is the optional
+forward-compatibility envelope field. Every non-SSE error body a conforming server returns from a `/v1/*` route
+SHALL validate against `ApiError`, so no route invents an ad-hoc error shape. Every error identifier introduced
+above protocol level 1 SHALL carry `compat`. `DeviceIdError` remains the narrower, closed-enum specialization for
+the identity middleware and SHALL stay assignable to `ApiError`.
 
 #### Scenario: Every route error validates
 - **WHEN** each `4xx`/`5xx` JSON body a conforming server can return from a `/v1/*` route is parsed with
@@ -257,3 +276,86 @@ permission to trust the body.
 - **WHEN** the server receives a batch whose records do not match the declared shape
 - **THEN** the batch is rejected, and the absence of a zod schema has not caused an unvalidated
   write
+
+### Requirement: Report request and response shapes
+The contract SHALL define `ReportReason` as the closed set `offensive | harmful | broken | other`, `ReportRequest` as `{ reason: ReportReason, note?: string (at most 1000 characters), appName?: string (at most 200 characters), prompt?: string, source?: string }`, and `ReportResponse` as `{ reportId: string (non-empty) }`.
+
+`prompt` and `source` carry no character bound in the schema. Their byte caps are a server admission concern answered with `413`, not a shape rule, because the cap is measured in UTF-8 bytes and is configurable. The shapes SHALL be zod values like every other product wire shape, and SHALL carry no device identity, since identity rides the `x-whim-device` header.
+
+#### Scenario: A full report validates
+- **WHEN** a `ReportRequest` with every field set within bounds is parsed
+- **THEN** it validates
+
+#### Scenario: Only the reason is required
+- **WHEN** `{ reason: 'other' }` is parsed as `ReportRequest`
+- **THEN** it validates
+
+#### Scenario: Bounds and the closed reason set are enforced
+- **WHEN** a `ReportRequest` with a 1001-character `note`, one with a 201-character `appName`, and one with `reason: 'spam'` are parsed
+- **THEN** all three fail
+
+#### Scenario: The response carries an id
+- **WHEN** `{ reportId: '' }` and `{}` are parsed as `ReportResponse`
+- **THEN** both fail, and a non-empty `reportId` validates
+
+### Requirement: Service refusal codes are a closed vocabulary
+The contract SHALL define `ServiceRefusalCode` as the closed set `payload_too_large | daily_limit | device_busy | server_busy | content_policy | policy_unavailable | budget_exhausted`: the `error` identifiers a conforming server uses for size, admission, content-policy, and operator-budget refusals.
+
+`ApiError` itself SHALL remain unchanged, with an open `error` string and a mandatory non-empty `hint`. Every refusal body SHALL validate as `ApiError` with its `error` a member of `ServiceRefusalCode`. The vocabulary SHALL grow only additively, and no refusal SHALL introduce a second error shape.
+
+`budget_exhausted` SHALL mean the operator's own provider credit is exhausted, as distinct from `daily_limit` (a device or global admission ceiling) and `policy_unavailable` (the content classifier down). A `budget_exhausted` refusal's `hint` SHALL say generation is unavailable for now without naming the provider or a dollar amount.
+
+#### Scenario: The vocabulary is closed
+- **WHEN** `rate_limited` is parsed with `ServiceRefusalCode`
+- **THEN** parsing fails, and each of the seven listed identifiers validates
+
+#### Scenario: ApiError is untouched
+- **WHEN** an `ApiError` whose `error` is `invalid_request` is parsed
+- **THEN** it still validates, because `ApiError.error` stays an open string
+
+### Requirement: The client declares the protocol level it understands
+Every `/v1` request from the app SHALL carry `x-whim-protocol: <integer>`, the highest wire protocol level the build understands, and the contract SHALL export the current level as a constant; the level SHALL increase by one whenever the wire gains a message, field meaning or refusal code that a client at the previous level would not understand. The server SHALL NOT send a client any message, field or code introduced above that client's declared level; where it has nothing the client can understand, it SHALL send that client's fallback instead.
+
+#### Scenario: Server adapts to an older client
+- **WHEN** a client declaring level N makes a request and the server's newest applicable message is level N+1
+- **THEN** the server sends a level-N form of the response or its declared fallback, never the level-N+1 message
+
+#### Scenario: Header missing
+- **WHEN** a `/v1` request carries no `x-whim-protocol` header
+- **THEN** the server treats the client as below every supported level and answers with `426 update_required`
+
+### Requirement: Every wire message carries a forward-compatibility envelope with a closed fallback vocabulary
+Every SSE event and every unary JSON body (success or `ApiError`) SHALL be decodable in two phases: first as an envelope `{ type or error: string, compat?: { min: integer, fallback: 'skip' | 'fail' | 'update', notice?: string ≤ 200 chars } }` that tolerates unknown extra fields, then, only when the client knows the type or code and `compat.min` (default 1) is at most its level, as the full schema. A client that cannot use a message SHALL apply its fallback: `skip` ignores it and continues, `fail` ends the current flow with the failure screen showing `notice` as plain text (or generic copy), `update` ends the flow with the update screen showing `notice`. An unknown message without `compat` SHALL be treated as `fail`, and an unknown fallback value SHALL be treated as `fail`. The set {skip, fail, update} SHALL never gain a member or change meaning. Known messages SHALL ignore unknown fields rather than reject them. A client SHALL read `null` on an optional field as the field left out, `compat` and `compat.notice` included (the contract reads those two the same way); `null` on a required field still fails: in `compat` (`min`, `fallback`) the client treats the message as `fail`, elsewhere the message fails its schema. A client SHALL drop an optional `result.summary` or rewrite `plan` that fails its shape and still use the message.
+
+#### Scenario: Unknown non-essential event
+- **WHEN** a client receives an SSE event of a type it does not know with `compat.fallback: 'skip'`
+- **THEN** it ignores the event and the stream continues to its terminal event
+
+#### Scenario: Unknown essential event
+- **WHEN** a client receives an unknown event with `compat.fallback: 'update'` and a notice
+- **THEN** it stops the flow and shows the update screen with the notice, and nothing is installed
+
+#### Scenario: Unknown refusal code
+- **WHEN** a unary request returns an `ApiError` whose `error` the client does not know and `compat.fallback: 'fail'`
+- **THEN** the client shows the failure screen with the notice as plain text
+
+#### Scenario: New field on a known message
+- **WHEN** a known event arrives with an extra field the client's schema lacks
+- **THEN** the event is used and the field is ignored
+
+#### Scenario: Unknown message without compat
+- **WHEN** an unknown event arrives with no `compat`
+- **THEN** the client treats it as `fail`
+
+#### Scenario: Null on an optional field reads as absent
+- **WHEN** a message carries `null` on an optional field, such as `compat: null` or `compat.notice: null`
+- **THEN** the client reads it as the field left out: a known message with `compat: null` is decoded as one with no `compat`, an unknown one is treated as `fail`, and a `compat` with a null `notice` applies its fallback with no notice
+
+#### Scenario: A null compat min or fallback is unreadable
+- **WHEN** a message's `compat` carries `fallback: null` or `min: null`
+- **THEN** the client cannot read the `compat` and treats the message as `fail`, even when it knows the type
+
+#### Scenario: A malformed optional summary or plan is dropped
+- **WHEN** a `result` event's optional `summary` or a rewrite response's optional `plan` fails its shape
+- **THEN** the client drops that field and still uses the message: the app installs with no summary, and the plan step shows the rewritten prompt as its one row
+
