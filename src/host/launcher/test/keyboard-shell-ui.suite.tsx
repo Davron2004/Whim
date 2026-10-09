@@ -13,6 +13,7 @@ import ComposeStep from '../ComposeStep';
 import ClarifyStep from '../ClarifyStep';
 import PlanStep from '../PlanStep';
 import ReportSheet from '../ReportSheet';
+import { KeyboardTextInput } from '../KeyboardShell';
 import SettingsScreen from '../SettingsScreen';
 import { SHELL_PALETTE } from '../theme';
 import { SPACING } from '../../../sdk/theme';
@@ -449,6 +450,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         h.ok(nearest(button(tree, COPY.reportSend), 'ScrollView') == null && nearest(button(tree, COPY.cancel), 'ScrollView') == null, `${device.name}: Send and Cancel are pinned below the note`);
         const note = around(field(tree));
         h.eq([note.scrolls, note.doneBarLinked(tree)], [true, device.os === 'ios'], `${device.name}: the note scrolls in the sheet; iOS links a Done bar`);
+        h.eq(revealedBlock(tree).findAll(isType('Switch')).length, 1, `${device.name}: the note keeps the include-prompt row under it in view too, so Send never cuts its switch`);
       }, { frame: [0, 844], field: [300, 90] });
     }
     await on(IOS, report(s.fn('close')), async ({ tree }) => {
@@ -542,6 +544,13 @@ function nearestFrame(node: Node): Node {
 }
 
 /** Whether a field scrolls, and whether iOS linked its Done bar. */
+/** What a screen's one field keeps in view while focused: the block it names (`revealTarget`, the
+ *  view wrapping it), or the field alone. */
+function revealedBlock(tree: Tree): Node {
+  const input = tree.root.findByType(KeyboardTextInput);
+  return input.props.revealTarget != null && input.parent != null ? input.parent : input;
+}
+
 function around(input: Node) {
   return {
     scrolls: nearest(input, 'ScrollView') != null,

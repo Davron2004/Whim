@@ -13,7 +13,7 @@
  * nothing"). Reopening for any app (the same one or a different one) loads a fresh draft through
  * `reportDraftFor`.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Linking, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { FONT_FAMILY, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { log } from '../logging';
@@ -101,6 +101,9 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
   const [notice, setNotice] = useState<ReportNotice | null>(null);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [sourceExpanded, setSourceExpanded] = useState(false);
+  // The note and the include-prompt row under it: the block the sheet keeps in view while the note
+  // is focused, so the pinned Send never cuts the row's switch in half.
+  const noteBlock = useRef<View>(null);
   const gated = useRetryGate(notice?.retryAt);
   // A sender-landing (`neutral`-tone) notice clears the instant its retry window ends (design
   // D12), the same rule `LauncherRoot.tsx`'s flow screens follow — closing the sheet already
@@ -259,25 +262,28 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
             })}
           </View>
 
-          <KeyboardTextInput
-            value={draft.note}
-            onChangeText={(text) => setDraft({ ...draft, note: text })}
-            placeholder={COPY.reportNotePlaceholder}
-            placeholderTextColor={p.textMuted}
-            maxLength={1000}
-            multiline
-            // Its own background, as every launcher field has: without one Android draws its default
-            // field underline inside the border.
-            style={[TYPE_SCALE.body, styles.noteInput, { color: p.text, borderColor: p.cardBorder, backgroundColor: p.card }]}
-          />
-
-          {draft.prompt !== undefined && (
-            <SwitchRow
-              label={COPY.reportIncludePrompt}
-              value={draft.promptIncluded}
-              onChange={(v) => setDraft({ ...draft, promptIncluded: v })}
+          <View ref={noteBlock}>
+            <KeyboardTextInput
+              revealTarget={noteBlock}
+              value={draft.note}
+              onChangeText={(text) => setDraft({ ...draft, note: text })}
+              placeholder={COPY.reportNotePlaceholder}
+              placeholderTextColor={p.textMuted}
+              maxLength={1000}
+              multiline
+              // Its own background, as every launcher field has: without one Android draws its default
+              // field underline inside the border.
+              style={[TYPE_SCALE.body, styles.noteInput, { color: p.text, borderColor: p.cardBorder, backgroundColor: p.card }]}
             />
-          )}
+
+            {draft.prompt !== undefined && (
+              <SwitchRow
+                label={COPY.reportIncludePrompt}
+                value={draft.promptIncluded}
+                onChange={(v) => setDraft({ ...draft, promptIncluded: v })}
+              />
+            )}
+          </View>
           <Text style={[TYPE_SCALE.caption, styles.disclosure, { color: p.textMuted }]}>
             {draft.source === undefined ? COPY.reportNoCodeDisclosure : COPY.reportCodeDisclosure}
           </Text>
