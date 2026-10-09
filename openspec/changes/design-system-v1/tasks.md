@@ -18,11 +18,11 @@
 
 ## 3. SDK theme
 
-- [ ] 3.1 `src/sdk/theme.ts`: `WhimTheme` gains `scheme`, `tint`, `fontScale`, `reduceMotion`, `increaseContrast`, `platform` and the roles `sheet`, `sheet-group`, `thumb`; `DEFAULT_THEME` = light roles + `slate`; `sanitizeTheme` validates and defaults every field (clamp 0.85–2.0) and still drops `chromeInsetBottom`
-- [ ] 3.2 `src/sdk/tokens.ts`: resolvers read `src/design/tokens.ts`; `primary`/`on-primary` resolve the tint per scheme; status roles resolve fill vs text form per use; SDK text sizes 13/17/20/28/40 with tracking × `fontScale`; space names on the 4-pt grid; radii 10/14/20; `increaseContrast` maps `text-muted`→`text`
-- [ ] 3.3 Keep the shell unchanged for now: pin `src/host/launcher/theme.ts`'s `SHELL_PALETTE` to its current v2 values locally instead of deriving from the new `DEFAULT_THEME`
-- [ ] 3.4 SDK runtime basics: `user-select: none` and `-webkit-tap-highlight-color: transparent` on controls only, `overscroll-behavior` on `Screen`/`Modal`, `font-variant-numeric: tabular-nums` helper, `Text color` narrowed with old values mapped
-- [ ] 3.5 Rewrite `src/sdk/test/theme.acceptance.ts` and `screen-inset.acceptance.tsx` for the new fields; update `fixtures/style-gallery.app.tsx` so it still shows every component and variant under the new theme (dark and light)
+- [x] 3.1 `src/sdk/theme.ts`: `WhimTheme` gains `scheme`, `tint`, `fontScale`, `reduceMotion`, `increaseContrast`, `platform` and the roles `sheet`, `sheet-group`, `thumb`; `DEFAULT_THEME` = light roles + `slate`; `sanitizeTheme` validates and defaults every field (clamp 0.85–2.0) and still drops `chromeInsetBottom`
+- [x] 3.2 `src/sdk/tokens.ts`: resolvers read `src/design/tokens.ts`; `primary`/`on-primary` resolve the tint per scheme; status roles resolve fill vs text form per use; SDK text sizes 13/17/20/28/40 with tracking × `fontScale`; space names on the 4-pt grid; radii 10/14/20; `increaseContrast` maps `text-muted`→`text`
+- [x] 3.3 Keep the shell unchanged for now: pin `src/host/launcher/theme.ts`'s `SHELL_PALETTE` to its current v2 values locally instead of deriving from the new `DEFAULT_THEME`
+- [x] 3.4 SDK runtime basics: `user-select: none` and `-webkit-tap-highlight-color: transparent` on controls only, `overscroll-behavior` on `Screen`/`Modal`, `font-variant-numeric: tabular-nums` helper, `Text color` narrowed with old values mapped
+- [x] 3.5 Rewrite `src/sdk/test/theme.acceptance.ts` and `screen-inset.acceptance.tsx` for the new fields; update `fixtures/style-gallery.app.tsx` so it still shows every component and variant under the new theme (dark and light)
 
 ## 4. SDK components: additions
 
@@ -92,11 +92,11 @@
 
 ## 12. Tile identity (host logic)
 
-- [ ] 12.1 Host record fields: `tint`, `icon` (resolved), `tileOverride?`; `mapWireRecord` reads `manifest.tint`/`manifest.icon`, assigns with `assignTint` over installed apps, and `StoreAccess.update` carries the host fields forward on rebuild
-- [ ] 12.2 Copies take `farthestTint`; hex `tileColor` records resolve with `nearestTint` on read; seeded examples get fixed distinct tints and glyphs; no generated app can claim an example's tile by declaration (#127)
-- [ ] 12.3 Reimplement `tileColor()` over the tints, keeping its signature for `checks/test/acceptance.ts:51` and the current screens; drop `RESERVED_TILE_HUES` (no tint can be a reserved hue); leave `ghostTileColorFor`, `monogram` and `manifest-tile-color.ts` in place for chain 21 to delete once Home no longer calls them
-- [ ] 12.4 Customize-tile override storage API (set/clear, survives changes) and the pending-purge marker for soft delete and discard (D16)
-- [ ] 12.5 Rewrite `tile-colour.suite.ts`, `build-lifecycle.suite.ts` and `store-access.suite.ts` cases: install-then-rebuild keeps tint and glyph, copy takes the farthest tint, interrupted purge completes at launch
+- [x] 12.1 Host record fields: `tint`, `icon` (resolved), `tileOverride?`; `mapWireRecord` reads `manifest.tint`/`manifest.icon`, assigns with `assignTint` over installed apps, and `StoreAccess.update` carries the host fields forward on rebuild
+- [x] 12.2 Copies take `farthestTint`; hex `tileColor` records resolve with `nearestTint` on read; seeded examples get fixed distinct tints and glyphs; no generated app can claim an example's tile by declaration (#127)
+- [x] 12.3 Reimplement `tileColor()` over the tints, keeping its signature for `checks/test/acceptance.ts:51` and the current screens; drop `RESERVED_TILE_HUES` (no tint can be a reserved hue); leave `ghostTileColorFor`, `monogram` and `manifest-tile-color.ts` in place for chain 21 to delete once Home no longer calls them
+- [x] 12.4 Customize-tile override storage API (set/clear, survives changes) and the pending-purge marker for soft delete and discard (D16)
+- [x] 12.5 Rewrite `tile-colour.suite.ts`, `build-lifecycle.suite.ts` and `store-access.suite.ts` cases: install-then-rebuild keeps tint and glyph, copy takes the farthest tint, interrupted purge completes at launch
 
 ## 13. Generator: server
 
