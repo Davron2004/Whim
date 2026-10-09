@@ -112,12 +112,12 @@
 
 ## 14. Shell navigation and settings
 
-- [ ] 14.1 Native stack with `react-native-screens` primitives driven by `LauncherRoot`'s machine: Home root; Settings, Advanced, AI features, History, Report pushed; gesture pops write back to the machine; status and navigation bar content per scheme
-- [ ] 14.2 `android:enableOnBackInvokedCallback="true"`; keep the running app's `BackHandler` path; extend the exit table and its scanner for the new screens (#67)
-- [ ] 14.3 Settings and Advanced per `system.md` §9 (AI features with "Review what's sent", Language, About, Advanced; Send error details, Phone ID truncated with copy, Make a new ID confirm sheet, Whim's server / Your own server rows keeping the address); one health probe per typing pause (#130); remove the Highlighting section
-- [ ] 14.4 AI features review screen on the stack shows consent once (#104)
-- [ ] 14.5 Report as a pushed screen (chips, note, include switch, collapsed preview, ID footer, `Sending…`, neutral thank-you on your own server (#153), failure notice above the buttons)
-- [ ] 14.6 Update `settings-screen`, `privacy-settings-ui`, `request-envelope-ui` and launcher-interaction suites
+- [x] 14.1 Native stack with `react-native-screens` primitives driven by `LauncherRoot`'s machine: Home root; Settings, Advanced, AI features, History, Report pushed; gesture pops write back to the machine; status and navigation bar content per scheme
+- [x] 14.2 `android:enableOnBackInvokedCallback="true"`; keep the running app's `BackHandler` path; extend the exit table and its scanner for the new screens (#67)
+- [x] 14.3 Settings and Advanced per `system.md` §9 (AI features with "Review what's sent", Language, About, Advanced; Send error details, Phone ID truncated with copy, Make a new ID confirm sheet, Whim's server / Your own server rows keeping the address); one health probe per typing pause (#130); remove the Highlighting section
+- [x] 14.4 AI features review screen on the stack shows consent once (#104)
+- [x] 14.5 Report as a pushed screen (chips, note, include switch, collapsed preview, ID footer, `Sending…`, neutral thank-you on your own server (#153), failure notice above the buttons)
+- [x] 14.6 Update `settings-screen`, `privacy-settings-ui`, `request-envelope-ui` and launcher-interaction suites
 
 ## 15. Home and tiles
 
