@@ -24,15 +24,17 @@ import {
   color,
   weight,
   textSize,
+  textColor,
   FONT,
+  TABULAR_NUMS,
   type SpaceToken,
   type RadiusToken,
-  type ColorToken,
+  type TextColorToken,
   type TextSizeToken,
   type WeightToken,
 } from './tokens';
 import { emitUiEvent } from './events';
-import { TAP_RESET, usePressed } from './press';
+import { CONTROL_RESET, TAP_RESET, usePressed } from './press';
 import { chromeInsetContext } from './chrome-inset';
 
 // The theme model (design sdk-design-system D1/D4) — type-only, so nothing executable
@@ -266,6 +268,7 @@ function screenPadding(pad: string, chromeInset: number): string {
 export function Screen({ padding = 'lg', children }: ScreenProps) {
   const insetContext = chromeInsetContext();
   const chromeInset = React.useContext(insetContext);
+  const body = textSize('body');
   return React.createElement(
     'div',
     {
@@ -275,12 +278,10 @@ export function Screen({ padding = 'lg', children }: ScreenProps) {
         padding: screenPadding(space(padding), chromeInset),
         background: color('bg'),
         color: color('text'),
-        font: `16px ${FONT}`,
-        // Mini-apps are apps, not documents: long-press must not start text selection
-        // (Android WebView otherwise selects e.g. a Button's label). Editable inputs
-        // re-enable selection on their own elements.
-        userSelect: 'none',
-        WebkitUserSelect: 'none',
+        font: `${body.size}/${body.line} ${FONT}`,
+        // An app, not a document: no rubber-band or pull-to-refresh past the content. Text stays
+        // selectable; controls opt out of selection themselves (CONTROL_RESET).
+        overscrollBehavior: 'none',
       },
     },
     // Only the outermost Screen is the scrollable content: one nested inside it pads as before.
@@ -337,7 +338,7 @@ export function Row({ gap = 'md', align, justify, children }: RowProps) {
 
 export interface TextProps {
   size?: TextSizeToken;
-  color?: ColorToken;
+  color?: TextColorToken;
   weight?: WeightToken;
   /** Text alignment (`textAlign`). Absent = today's behavior (no `textAlign` set). */
   align?: 'start' | 'center' | 'end';
@@ -357,8 +358,10 @@ export function Text({
       style: {
         fontSize: t.size,
         lineHeight: t.line,
+        letterSpacing: t.tracking,
         fontWeight: weight(weightToken ?? t.weight),
-        color: color(colorToken),
+        color: textColor(colorToken),
+        ...(size === 'display' ? TABULAR_NUMS : {}),
         ...(align ? { textAlign: align } : {}),
       },
     },
@@ -368,7 +371,7 @@ export function Text({
 
 export interface HeadingProps {
   size?: Extract<TextSizeToken, 'subtitle' | 'title' | 'display'>;
-  color?: ColorToken;
+  color?: TextColorToken;
   children?: React.ReactNode;
 }
 export function Heading({ size = 'title', color: colorToken = 'text', children }: HeadingProps) {
@@ -379,8 +382,9 @@ export function Heading({ size = 'title', color: colorToken = 'text', children }
       style: {
         fontSize: t.size,
         lineHeight: t.line,
+        letterSpacing: t.tracking,
         fontWeight: weight('bold'),
-        color: color(colorToken),
+        color: textColor(colorToken),
         margin: 0,
       },
     },
@@ -423,6 +427,7 @@ export function NumberInput({ label, value, min, max, step, onChange }: NumberIn
       MozAppearance: 'textfield',
       userSelect: 'text',
       WebkitUserSelect: 'text',
+      ...TABULAR_NUMS,
       ...TAP_RESET,
     },
   });
@@ -476,7 +481,7 @@ export function Button({
 }: ButtonProps) {
   // Button has no intrinsic visual response to a press (unlike Switch/Checkbox's own state
   // change), so it gets a deliberate opacity dip instead of relying on Android's system tap
-  // highlight (which TAP_RESET below suppresses). Disabled buttons keep their existing 0.5
+  // highlight (which CONTROL_RESET below suppresses). Disabled buttons keep their existing 0.5
   // opacity and never attach the pointer handlers — nothing to dip.
   const { pressed, pressHandlers } = usePressed();
   return React.createElement(
@@ -500,7 +505,7 @@ export function Button({
         cursor: disabled ? 'default' : 'pointer',
         opacity: buttonOpacity(disabled, pressed),
         transition: 'opacity 80ms',
-        ...TAP_RESET,
+        ...CONTROL_RESET,
         ...buttonVariantStyle(variant),
       },
     },

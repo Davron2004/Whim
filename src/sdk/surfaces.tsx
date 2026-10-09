@@ -10,7 +10,7 @@
 import * as React from 'react';
 import { space, radius, color, weight, textSize, type SpaceToken, type RadiusToken } from './tokens';
 import { emitUiEvent } from './events';
-import { TAP_RESET, usePressed } from './press';
+import { CONTROL_RESET, TAP_RESET, usePressed } from './press';
 
 // ── Card ──────────────────────────────────────────────────────────────────────
 // Surface bg + 1px border, no native button semantics (a generic container, not nested invalid
@@ -46,7 +46,7 @@ export function Card({ padding = 'lg', radius: radiusToken = 'lg', onPress, chil
         cursor: onPress ? 'pointer' : undefined,
         opacity: onPress && pressed ? 0.8 : 1,
         transition: 'opacity 80ms',
-        ...(onPress ? TAP_RESET : {}),
+        ...(onPress ? CONTROL_RESET : {}),
       },
     },
     children,
@@ -228,7 +228,7 @@ export function ListItem({ title, subtitle, trailing, onPress }: ListItemProps) 
         padding: `${space('md')} ${space('lg')}`,
         cursor: onPress ? 'pointer' : undefined,
         background: onPress && pressed ? color('bg') : undefined,
-        ...(onPress ? TAP_RESET : {}),
+        ...(onPress ? CONTROL_RESET : {}),
       },
     },
     React.createElement(
@@ -389,6 +389,8 @@ export function Modal({ visible, title, onClose, children }: ModalProps) {
           display: 'flex',
           flexDirection: 'column',
           gap: space('md'),
+          // A scroll inside the sheet never chains to the screen under it.
+          overscrollBehavior: 'contain',
         },
       },
       ...(title

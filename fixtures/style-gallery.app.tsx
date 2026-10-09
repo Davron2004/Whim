@@ -4,7 +4,9 @@
 // One screen, one file, imports ONLY from `vc-sdk`, `capabilities: []` (Tier-0, zero
 // syscalls — this fixture is manual QA + a knip anchor, not a data app). It exercises every
 // component controls.tsx/surfaces.tsx add, plus the new `Button` variants and `Row`
-// align/justify props, laid out the way a designer would use them: one `Card` per section.
+// align/justify props, laid out the way a designer would use them: one `Card` per section. It
+// holds no colour of its own, so it renders in whichever scheme (light or dark) and tint the host
+// delivers; the Type card shows every `Text` size, weight, alignment and colour.
 import {
   defineApp,
   Screen,
@@ -81,22 +83,40 @@ function Home() {
   return (
     <Screen padding="lg">
       <Stack gap="lg">
-        <Heading size="display">Style Gallery</Heading>
+        <Text size="title">Style Gallery</Text>
 
         <Card>
           <Stack gap="md">
-            <Heading size="subtitle">Type</Heading>
-            <Heading size="subtitle">Subtitle heading</Heading>
-            <Heading size="title">Title heading</Heading>
+            <Text size="subtitle">Type</Text>
+            <Text size="display">1,284</Text>
+            <Text size="title">Title text</Text>
+            <Text size="subtitle">Subtitle text</Text>
             <Text size="body">Body text, the default paragraph size.</Text>
             <Text size="caption" color="text-muted">Caption text, muted.</Text>
-            <Text align="center">Centered text sample.</Text>
+            <Row gap="md">
+              <Text weight="regular">Regular</Text>
+              <Text weight="medium">Medium</Text>
+              <Text weight="semibold">Semibold</Text>
+              <Text weight="bold">Bold</Text>
+            </Row>
+            <Row gap="md">
+              <Text color="text">Text</Text>
+              <Text color="text-muted">Muted</Text>
+              <Text color="primary">Primary</Text>
+              <Text color="positive">Saved</Text>
+              <Text color="warning">Running low</Text>
+              <Text color="danger">Overdue</Text>
+            </Row>
+            <Text align="start">Start-aligned text.</Text>
+            <Text align="center">Centered text.</Text>
+            <Text align="end">End-aligned text.</Text>
+            <Heading size="subtitle">Heading, kept for older apps</Heading>
           </Stack>
         </Card>
 
         <Card>
           <Stack gap="md">
-            <Heading size="subtitle">Buttons</Heading>
+            <Text size="subtitle">Buttons</Text>
             <Row gap="sm" justify="start">
               <Button label="Primary" variant="primary" />
               <Button label="Secondary" variant="secondary" />
@@ -109,7 +129,7 @@ function Home() {
 
         <Card>
           <Stack gap="md">
-            <Heading size="subtitle">Inputs</Heading>
+            <Text size="subtitle">Inputs</Text>
             <TextInput label="Name" value={name} placeholder="Type here" onChange={setName} />
             <Text size="caption" color="text-muted">Echo: {name || '(empty)'}</Text>
             <NumberInput label="Amount" value={amount} min={0} onChange={setAmount} />
@@ -126,7 +146,7 @@ function Home() {
 
         <Card>
           <Stack gap="md">
-            <Heading size="subtitle">Badges</Heading>
+            <Text size="subtitle">Badges</Text>
             <Row gap="sm" justify="start">
               <Badge label="Neutral" tone="neutral" />
               <Badge label="Primary" tone="primary" />
@@ -140,7 +160,7 @@ function Home() {
         <Card>
           <Stack gap="md">
             <Row justify="between" align="center">
-              <Heading size="subtitle">List</Heading>
+              <Text size="subtitle">List</Text>
               <Switch label="Show" value={showList} onChange={setShowList} />
             </Row>
             {showList ? (
@@ -160,7 +180,7 @@ function Home() {
 
         <Card>
           <Stack gap="md">
-            <Heading size="subtitle">Layout</Heading>
+            <Text size="subtitle">Layout</Text>
             <Grid columns={2}>
               <Card padding="sm">
                 <Text align="center">A</Text>
@@ -186,7 +206,7 @@ function Home() {
 
         <Card>
           <Stack gap="md">
-            <Heading size="subtitle">Charts</Heading>
+            <Text size="subtitle">Charts</Text>
             <Text size="caption" color="text-muted">Weekly spending by category</Text>
             <Chart kind="bar" data={weeklySpending} tone="primary" showValues />
             <Text size="caption" color="text-muted">30-day trend</Text>
@@ -200,7 +220,7 @@ function Home() {
 
         <Card>
           <Stack gap="md">
-            <Heading size="subtitle">Modal</Heading>
+            <Text size="subtitle">Modal</Text>
             <Button label="Open modal" variant="secondary" onPress={() => setModalOpen(true)} />
           </Stack>
         </Card>
