@@ -25,7 +25,10 @@ export type KeyboardShellHost = 'screen' | 'sheet';
 /** The keyboard events a frame places itself by (`moved`, carrying the keyboard's frame) and resets
  *  on (`hidden`). iOS reports every change of the keyboard's frame before it happens: showing,
  *  hiding, and a keyboard that grows or shrinks while up (another keyboard, the Done bar arriving).
- *  Android reports only showing and hiding, after the keyboard has moved. */
+ *  Android reports them after the keyboard has moved, a keyboard that grows or shrinks while up
+ *  (the emoji or voice panel) as another show: React Native itself on Android 10 and older, and
+ *  `MainActivity`'s `KeyboardFrameReporter` on 11 and later, where React Native reports only
+ *  showing and hiding. */
 export function keyboardEvents(os: string): { readonly moved: KeyboardEventName; readonly hidden: KeyboardEventName } {
   return os === 'ios'
     ? { moved: 'keyboardWillChangeFrame', hidden: 'keyboardWillHide' }
@@ -42,6 +45,14 @@ export function pinsFooter(footer: unknown): boolean {
  *  `frameBottom` (both measured from the window's top): the padding that ends the frame's content above it. */
 export function keyboardOverlap(frameBottom: number, keyboardTop: number): number {
   return Math.max(0, frameBottom - keyboardTop);
+}
+
+/** Whether a mini-app's page is padded for the keyboard like a frame. Android: yes, the WebView
+ *  draws under the keyboard like everything else, and only a page that ends above it has a
+ *  viewport the runtime can keep a focused field inside. iOS: no, WKWebView scrolls a focused
+ *  field clear of the keyboard itself, and a shorter page would count the keyboard twice. */
+export function padsWebViewForKeyboard(os: string): boolean {
+  return os === 'android';
 }
 
 /** A drag on iOS pulls the keyboard down with the finger; Android has no such gesture, so a drag

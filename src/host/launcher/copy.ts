@@ -769,14 +769,15 @@ export function buildLivenessLine(
   // In line, the clock is the time in line; once the build's turn comes, it starts over.
   if (phase === 'line') return `Waiting in line · ${livenessElapsedLabel(s.startedAt, now)}`;
   const clock = livenessElapsedLabel(s.turnCameAt ?? s.startedAt, now);
+  // Checking writes nothing to wait for: the connection is up and the checks are running. Asked
+  // first, because the writing and thinking windows outlast the stage that filled them by seconds.
+  if (phase === 'checking') return `Running the checks · ${clock}`;
   if (liveness === 'writing') {
     // en-CA, not the phone's locale (#89): this is English copy, and a French-locale phone would
     // otherwise render the count with a non-breaking space and no comma (e.g. "1 204").
     return `Writing · ${s.aggregates.chars.toLocaleString('en-CA')} characters`;
   }
   if (liveness === 'thinking') return `Thinking it through · ${clock}`;
-  // Checking writes nothing to wait for: the connection is up and the checks are running.
-  if (phase === 'checking') return `Running the checks · ${clock}`;
   return `Connected, waiting for a reply · ${clock}`;
 }
 
