@@ -2,6 +2,9 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+// React Native's frame callbacks, which Node lacks: one frame is the next timer turn.
+globalThis.requestAnimationFrame ??= (callback) => setTimeout(() => callback(Date.now()), 0) as unknown as number;
+globalThis.cancelAnimationFrame ??= (handle) => clearTimeout(handle);
 
 export async function renderScreen(element: React.ReactElement, options?: TestRenderer.TestRendererOptions): Promise<TestRenderer.ReactTestRenderer> {
   let tree!: TestRenderer.ReactTestRenderer;

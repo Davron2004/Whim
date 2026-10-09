@@ -1,50 +1,56 @@
 /**
- * keyboard-shell — the decisions behind `KeyboardShell.tsx` and `SheetModal.tsx` (beta-1 D3), free
- * of React Native so the launcher's Node suite can import them.
+ * keyboard-shell — the decisions behind `KeyboardShell.tsx`, `SheetModal.tsx` and the shell's
+ * `Sheet` (beta-1 D3, design-system-v1 task 11.3), free of React Native so the launcher's Node
+ * suite can import them.
  *
  * One keyboard model on every platform:
- * - A frame (a screen, or a sheet's card) pads its own bottom by the keyboard's overlap with it,
- *   measured from the top of the window. No window resizes for the keyboard: iOS never does, and on
- *   Android Whim draws edge to edge on every version (`edgeToEdgeEnabled` in
- *   `android/gradle.properties`; 15+ would force it anyway), which leaves the keyboard to the app.
- *   Were a window resized after all, the frame would end above the keyboard, so its overlap and
- *   padding would be 0: nothing is ever lifted twice.
+ * - The keyboard is tracked by `react-native-keyboard-controller`, frame by frame on the UI thread:
+ *   its height above the window's bottom edge, from the window's own insets (Android) or the
+ *   keyboard's frame notifications (iOS), including a keyboard that changes height while up (the
+ *   emoji or voice panel, another keyboard, a suggestion bar).
+ * - A frame (a screen, or a sheet's card) pads its own bottom by the keyboard's overlap with it:
+ *   the keyboard's top edge and the frame's bottom edge both measured in the frame's window. No
+ *   window resizes for the keyboard: iOS never does, and on Android Whim draws edge to edge on
+ *   every version (`edgeToEdgeEnabled`; the keyboard provider keeps it so), which leaves the
+ *   keyboard to the app. A frame that ends above the keyboard (split screen with Whim on top, a
+ *   frame above a bottom bar) overlaps it less, or not at all, so nothing is ever lifted twice.
  * - No scroll view insets itself by the keyboard: the padding already ends it above the keyboard and
  *   the pinned footer, and an inset as well would count the keyboard twice.
  * - When the visible part of the scroll view or its content changes while a field in it is focused,
  *   the shell scrolls that field (or the block it names, like a plan row with its Save and Cancel)
- *   fully into view, clear of the footer.
+ *   fully into view, `REVEAL_MARGIN` clear of the keyboard and the footer.
  */
 
+import { SPACE } from '../../design/tokens';
 import { SELECTION_HIGHLIGHT, SHELL_PALETTE } from './theme';
 
 /** Who pads for the keyboard: a whole screen, or the sheet (`SheetModal`) a shell sits in, which
  *  pads for the shell inside it. */
 export type KeyboardShellHost = 'screen' | 'sheet';
 
-/** The keyboard events a frame places itself by (`moved`, carrying the keyboard's frame) and resets
- *  on (`hidden`). iOS reports every change of the keyboard's frame before it happens: showing,
- *  hiding, and a keyboard that grows or shrinks while up (another keyboard, the Done bar arriving).
- *  Android reports them after the keyboard has moved, a keyboard that grows or shrinks while up
- *  (the emoji or voice panel) as another show: React Native itself on Android 10 and older, and
- *  `MainActivity`'s `KeyboardFrameReporter` on 11 and later, where React Native reports only
- *  showing and hiding. */
-export function keyboardEvents(os: string): { readonly moved: KeyboardEventName; readonly hidden: KeyboardEventName } {
-  return os === 'ios'
-    ? { moved: 'keyboardWillChangeFrame', hidden: 'keyboardWillHide' }
-    : { moved: 'keyboardDidShow', hidden: 'keyboardDidHide' };
-}
-export type KeyboardEventName = 'keyboardWillChangeFrame' | 'keyboardWillHide' | 'keyboardDidShow' | 'keyboardDidHide';
-
 /** Whether a footer slot holds anything to pin: React renders nothing for these values. */
 export function pinsFooter(footer: unknown): boolean {
   return footer !== undefined && footer !== null && typeof footer !== 'boolean' && footer !== '';
 }
 
-/** How far the keyboard, whose top edge is at `keyboardTop`, covers a frame whose bottom edge is at
- *  `frameBottom` (both measured from the window's top): the padding that ends the frame's content above it. */
-export function keyboardOverlap(frameBottom: number, keyboardTop: number): number {
-  return Math.max(0, frameBottom - keyboardTop);
+/** How far a keyboard `keyboardHeight` tall covers a frame whose bottom edge is at `frameBottom`, in a
+ *  window `windowHeight` tall (both measured from the window's top): the padding that ends the
+ *  frame's content above the keyboard. A worklet: frames run it on the UI thread every keyboard frame. */
+export function keyboardOverlap(keyboardHeight: number, frameBottom: number, windowHeight: number): number {
+  'worklet';
+  return Math.max(0, frameBottom - (windowHeight - keyboardHeight));
+}
+
+/** How far a focused field sits above the keyboard (and a pinned footer) once revealed: 16 pt
+ *  (system.md §6 "Keyboard"). */
+export const REVEAL_MARGIN = SPACE[4];
+
+/** A sheet card's bottom padding: the keyboard covers the home indicator's inset, so the larger of
+ *  the two, never both. The card continues behind the keyboard rather than stopping at its top
+ *  edge, so nothing shows between them while both move. A worklet. */
+export function sheetBottomPadding(overlap: number, safeBottom: number): number {
+  'worklet';
+  return Math.max(overlap, safeBottom);
 }
 
 /** Whether a mini-app's page is padded for the keyboard like a frame. Android: yes, the WebView

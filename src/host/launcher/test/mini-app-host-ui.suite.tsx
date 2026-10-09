@@ -17,7 +17,8 @@ import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { DiagnosticsBatch } from '@whim/contract';
 import { log } from '../../logging';
-import { finishAnimations, injectedScripts, Keyboard, Platform, StyleSheet } from './native-host';
+import { finishAnimations, injectedScripts, Platform, StyleSheet } from './native-host';
+import { keyboardWindow, moveKeyboard, resetKeyboard } from './native-keyboard-controller';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { closedDatabases, resetNativeStorage } from './native-storage';
 import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
@@ -139,23 +140,23 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
         Platform.OS = os;
         Platform.Version = version;
         await withMiniApp(TIP, async ({ tree }) => {
-          await TestRenderer.act(async () => { Keyboard.emit('keyboardDidShow', keyboardTop); });
+          await TestRenderer.act(async () => { moveKeyboard(keyboardWindow.height - keyboardTop); });
           h.eq(pageInset(tree), MINI_APP_FRAME.pageY + MINI_APP_FRAME.height - keyboardTop, `Android ${version}: the page ends at the keyboard’s top edge`);
-          await TestRenderer.act(async () => { Keyboard.emit('keyboardDidShow', keyboardTop - 60); });
+          await TestRenderer.act(async () => { moveKeyboard(keyboardWindow.height - keyboardTop + 60); });
           h.eq(pageInset(tree), MINI_APP_FRAME.pageY + MINI_APP_FRAME.height - keyboardTop + 60, `Android ${version}: and follows a keyboard that grows while up`);
-          await TestRenderer.act(async () => { Keyboard.emit('keyboardDidHide', 844); });
+          await TestRenderer.act(async () => { moveKeyboard(0); });
           h.eq(pageInset(tree), 0, `Android ${version}: and reaches the bottom again once the keyboard goes`);
         });
       }
       Platform.OS = 'ios';
       Platform.Version = '26.0';
       await withMiniApp(TIP, async ({ tree }) => {
-        await TestRenderer.act(async () => { Keyboard.emit('keyboardWillChangeFrame', keyboardTop); });
+        await TestRenderer.act(async () => { moveKeyboard(keyboardWindow.height - keyboardTop); });
         h.eq(pageInset(tree), 0, 'iOS: the page keeps its size; WKWebView scrolls the field into view itself');
       });
     } finally {
       Object.assign(Platform, before);
-      Keyboard.visible = false;
+      resetKeyboard();
     }
   });
 

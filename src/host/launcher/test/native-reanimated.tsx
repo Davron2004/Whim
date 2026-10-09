@@ -1,18 +1,19 @@
-/** react-native-reanimated for React interaction tests. Nothing runs on a UI thread: assigning an
+/** react-native-reanimated (and react-native-worklets' `scheduleOnRN`) for React interaction tests. Nothing runs on a UI thread: assigning an
  *  animation to a shared value records it in `animations` (oldest first) and jumps the value to
  *  where the animation ends, so a test reads what motion a control asked for — the target, the
  *  spring or timing config, delays, sequences and repeats — and the style it settles in.
  *  `useAnimatedStyle` evaluates its updater at render and re-renders when a shared value it read
- *  changes, as the UI thread would repaint. */
+ *  changes, as the UI thread would repaint. An animation's end callback runs as it is assigned. */
 import React from 'react';
 
 type HostProps = { children?: React.ReactNode; [key: string]: unknown };
 
-/** A single spring or timing toward a value. */
+/** A single spring or timing toward a value, and what it calls once it ends. */
 export interface Step {
   kind: 'spring' | 'timing';
   to: unknown;
   config: Record<string, unknown> | undefined;
+  callback?: (finished: boolean) => void;
 }
 export type Animation =
   | Step
@@ -64,6 +65,7 @@ class SharedValue<T> {
     if (isAnimation(next)) {
       animations.push(next);
       this.current = settle(next) as T;
+      if (isStep(next)) next.callback?.(true);
     } else {
       this.current = next;
     }
@@ -96,14 +98,16 @@ export function useAnimatedStyle<T>(updater: () => T): T {
   });
   return style;
 }
-export const withSpring = (to: unknown, config?: Record<string, unknown>) => tag({ kind: 'spring', to, config });
-export const withTiming = (to: unknown, config?: Record<string, unknown>) => tag({ kind: 'timing', to, config });
+export const withSpring = (to: unknown, config?: Record<string, unknown>, callback?: (finished: boolean) => void) => tag({ kind: 'spring', to, config, callback });
+export const withTiming = (to: unknown, config?: Record<string, unknown>, callback?: (finished: boolean) => void) => tag({ kind: 'timing', to, config, callback });
 export const withDelay = (delay: number, animation: Animation) => tag({ kind: 'delay', delay, animation });
 export const withSequence = (...list: Animation[]) => tag({ kind: 'sequence', animations: list });
 export const withRepeat = (animation: Animation, count = 2) => tag({ kind: 'repeat', animation, count });
 export function cancelAnimation(): void { cancelled.count += 1; }
 export const Easing = { bezier: (...points: number[]) => ({ bezier: points }) };
 export const ReduceMotion = { System: 'system', Always: 'always', Never: 'never' } as const;
+/** react-native-worklets' hop back to the React Native thread: there is only one thread here. */
+export function scheduleOnRN<A extends unknown[]>(fn: (...args: A) => void, ...args: A): void { fn(...args); }
 
 const AnimatedView = (props: HostProps) => React.createElement('Animated.View', props, props.children);
 const Animated = { View: AnimatedView };

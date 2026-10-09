@@ -88,11 +88,11 @@
 
 ## 11. Shell primitives: surfaces and keyboard
 
-- [ ] 11.1 `Sheet` on Gesture Handler + Reanimated: `fit`/`large` detents, grabber, header with close, scrim following position, projection commit with `fling`, rubber-band, Android back, Escape, modal accessibility, commit-point haptic
-- [ ] 11.2 `ConfirmSheet` (safe `ink` above `danger`), `ContextMenu` (anchored card, rows as separate accessibility elements, second step) (#135), `Toast` host with queue-of-one, pause under screen reader and on touch, swipe dismiss
-- [ ] 11.3 `TextField`/`TextArea` and keyboard handling on `react-native-keyboard-controller`: focused field 16 pt above the keyboard in screens and sheets, sheets lift on the keyboard curve, IME height changes tracked (#50, #128); retire `KeyboardShell`'s `LayoutAnimation`
-- [ ] 11.4 `GroupedList` (sections, rows, trailing kinds, destructive row) and `AppTile` geometry constants (no states yet)
-- [ ] 11.5 UI suites for each surface, including back closing a sheet and every menu row being reachable by accessibility
+- [x] 11.1 `Sheet` on Gesture Handler + Reanimated: `fit`/`large` detents, grabber, header with close, scrim following position, projection commit with `fling`, rubber-band, Android back, Escape, modal accessibility, commit-point haptic
+- [x] 11.2 `ConfirmSheet` (safe `ink` above `danger`), `ContextMenu` (anchored card, rows as separate accessibility elements, second step) (#135), `Toast` host with queue-of-one, pause under screen reader and on touch, swipe dismiss
+- [x] 11.3 `TextField`/`TextArea` and keyboard handling on `react-native-keyboard-controller`: focused field 16 pt above the keyboard in screens and sheets, sheets lift on the keyboard curve, IME height changes tracked (#50, #128); retire `KeyboardShell`'s `LayoutAnimation`
+- [x] 11.4 `GroupedList` (sections, rows, trailing kinds, destructive row) and `AppTile` geometry constants (no states yet)
+- [x] 11.5 UI suites for each surface, including back closing a sheet and every menu row being reachable by accessibility
 
 ## 12. Tile identity (host logic)
 
