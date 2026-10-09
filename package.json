@@ -11,7 +11,7 @@
     "android:release": "react-native run-android --mode offline --active-arch-only",
     "start": "react-native start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && node scripts/typecheck-tests.mjs",
     "test": "jest",
     "build": "node build/build.mjs",
     "vstore:test": "node src/host/version-store/test/run.mjs",
