@@ -38,7 +38,7 @@ are partial: the problem is accepted and fixed, but not with the critique's exac
 | 27 | MINOR | Consent's second act is vague | ACCEPT | "Agree to send descriptions", unticked box, language row in the body, Terms link outside the hit area | §9 First run |
 | 28 | MINOR | Home order, Settings labels, missed toast | ACCEPT | Old attempts collapse into one tile; "Review what's sent"; Language row; orb dot and Whim-sheet row until reload | §9 Your apps, Settings, Whim sheet |
 | 29 | MINOR | Dark-mode tiles keep their light fills | ACCEPT | Deep light-value plate with a rim (≥ 3.53:1); Increase Contrast outlines in `border` | §2.4, §3.2 |
-| 30 | MINOR | The native work is bigger than listed | ACCEPT | Native work listed and phased | decision #75; `openspec/changes/design-system-v1` chain `native-shell` |
+| 30 | MINOR | The native work is bigger than listed | ACCEPT | Native work listed and phased | decision #75; `openspec/changes/design-system-v1` chains `native-deps`, `haptics`, `platform-theming` |
 | 31 | NIT | Mockup craft | ACCEPT | Menu shows the full name and clears the first row; concentric ring; badge 18, dot 8; glow tokens; rail stops at v1; versions agree; "Use this version"; ink caret; one-line helper; plan fade; M16 filled; middle truncation | mockups; §7.1 Context menu and Text field |
 | 32 | NIT | States the mockups don't show | PARTIAL | States added to the mockups; the prototype gains back, close, failure and the opening morph, not every moment | mockups |
 | 33 | NIT | Runtime-page basics | ACCEPT | `user-select` on controls only, tap highlight, overscroll, `touch-action`, `color-scheme`, local-midnight dates | §7.2, §6 |
