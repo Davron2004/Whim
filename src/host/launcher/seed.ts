@@ -14,6 +14,7 @@ import type { AppRecord } from '../bridge/contract';
 import { AppIndex } from './app-index';
 import { StoreAccess } from './store-access';
 import { bundleDefinesApp } from './bundle-validity';
+import { EXAMPLE_TILES } from './tile-identity';
 
 /** Bump when the seed SET changes meaningfully. A higher marker means "already seeded this set";
  *  deleting an example does NOT lower it, so deleted examples stay deleted (D7). Version 2 adds
@@ -31,7 +32,9 @@ export interface SeedSpec {
 
 /**
  * Seed the examples once. No-op when the marker already records this seed version (idempotent;
- * deleted examples stay deleted). Each example is store-first, index-second via `StoreAccess`.
+ * deleted examples stay deleted). Each example is store-first, index-second via `StoreAccess`, and
+ * gets its fixed tile from `EXAMPLE_TILES` rather than an assignment (a seed id it lacks is
+ * assigned like any install).
  */
 export async function seedFirstRun(
   index: AppIndex,
@@ -55,6 +58,7 @@ export async function seedFirstRun(
       bundleSource: s.bundleSource,
       prompt: s.prompt,
       example: true,
+      ...(Object.hasOwn(EXAMPLE_TILES, s.id) ? { tile: { kind: 'fixed', tile: EXAMPLE_TILES[s.id] } as const } : {}),
     });
   }
   index.markSeeded(seedVersion);
