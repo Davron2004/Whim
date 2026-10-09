@@ -12,11 +12,13 @@ import { InMemoryUsageStore } from '../src/usage-store';
 import { buildSseStream } from '../src/sse';
 import { createSlotController } from '../src/admission/slots';
 import { ScriptedModelClient } from './scripted-model';
-import { TIMED_OUT, waitFor, within } from './route-doubles';
+import { PROTOCOL_HEADERS, TIMED_OUT, machinePipeline, waitFor, within } from './route-doubles';
 import { defaultModelRoster, type ModelRoster } from '../src/generation/model';
 import type { RunTrace } from '../src/generation/machine';
 import { ResolveTracker, type UsageAndCostTransport } from '../src/usage/resolve';
-import type { GenerateRequest, GenerationEvent, Usage, WireAppRecord } from '@whim/contract';
+import { createCheckStage } from '../src/generation/stages/check';
+import { COMPAT_NOTICE_MAX_CHARS, ClarifyResponse, GenerationEvent, PROTOCOL_LEVEL, RewriteResponse, WireEnvelope } from '@whim/contract';
+import type { Clarification, GenerateRequest, Usage, WireAppRecord } from '@whim/contract';
 
 // Rewrite is now real-model-backed (task 7.2) — a scripted client stands in for OpenRouter so
 // §5.5's "same input → same output" assertion stays meaningful: two freshly-scripted apps, each
@@ -40,7 +42,7 @@ function scriptedRewriteApp() {
 }
 
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
-const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID };
+const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID, ...PROTOCOL_HEADERS };
 
 /** Build a test app with 0 delay and no keepalive (fast + deterministic). */
 function testApp() {
@@ -67,14 +69,14 @@ async function post(
 async function testDeviceIdentity(): Promise<void> {
   section('Device-identity middleware (SPEC §3)');
 
-  // §3.3 — /healthz is exempt (no device header needed) and identifies the service
-  {
+  // §3.3 — /health and /healthz are exempt (no device header needed) and identify the service
+  for (const path of ['/health', '/healthz']) {
     const app = testApp();
-    const res = await app.request('/healthz');
-    eq('/healthz anonymous (no x-whim-device) 200', res.status, 200);
+    const res = await app.request(path);
+    eq(`${path} anonymous (no x-whim-device) 200`, res.status, 200);
     const body = (await res.json()) as { ok?: unknown; service?: unknown };
-    eq('/healthz body ok field', body.ok, true);
-    eq('/healthz body service field', body.service, 'whim-server');
+    eq(`${path} body ok field`, body.ok, true);
+    eq(`${path} body service field`, body.service, 'whim-server');
   }
 
 
@@ -424,6 +426,16 @@ async function testRequestLogging(): Promise<void> {
       check('healthz record carries a duration field', typeof matches[0]!.durationMs === 'number');
     }
 
+    // The second health path is logged by the same middleware, under its own path.
+    {
+      capture.records.length = 0;
+      await testApp().request('/health');
+      const matches = withMessage(capture, 'request');
+      eq('health logs exactly one record', matches.length, 1);
+      eq('health record path field', matches[0]!.path, '/health');
+      eq('health record status field', matches[0]!.status, 200);
+    }
+
     // Non-streaming error path: a validation 400 still logs exactly once with the real status.
     {
       capture.records.length = 0;
@@ -510,6 +522,30 @@ async function testStubBundleDefinesAppModule(): Promise<void> {
 }
 
 /**
+ * beta-1 fix-3 — the app the stub delivers is one the real check stage passes, and its record
+ * says what its source declares: the stub writes `name`/`manifest`/`schema` by hand where the real
+ * pipeline takes them from the check stage (`record.ts`). RED on the old `defineApp({ render })`
+ * source, which declares no name and no screens. That it also mounts and runs is `e2e.ts`'s
+ * `testStubAppRuns` (a real synthetic run, which needs Chromium).
+ */
+async function testStubAppPassesTheCheckStage(): Promise<void> {
+  section('The stub app passes the real check stage, and its record matches its source (fix-3)');
+
+  const res = await within(post(testApp(), '/v1/generate', { prompt: 'a day checklist' }, DEVICE_HEADER));
+  const terminal = res === TIMED_OUT ? undefined : (await readSseResponse(res)).events.at(-1)?.data;
+  if (terminal?.type !== 'result' || terminal.app.source === undefined) {
+    check('setup: the stub delivered an app with its source', false, JSON.stringify(terminal));
+    return;
+  }
+  const { app } = terminal;
+  const report = await createCheckStage().check(terminal.app.source, {});
+  eq('the check stage reports nothing', report.diagnostics.map((d) => `${d.kind}: ${d.message}`), []);
+  eq('the record carries the declared name', app.name, report.manifest?.name);
+  eq('the record carries the declared capabilities', app.manifest.capabilities, report.manifest?.manifest.capabilities);
+  eq('the record carries the declared schema', app.schema, report.manifest?.schema);
+}
+
+/**
  * F5 — `/v1/rewrite` under WHIM_PIPELINE=stub must pass a `[[fail]]`-marked prompt through raw,
  * with no model call, so the marker survives into the `/v1/generate` request that follows (the
  * plan→rewrite→generate flow otherwise loses it: the pipeline only ever sees the REWRITTEN
@@ -561,6 +597,149 @@ async function testStubRewritePreservesFailMarker(): Promise<void> {
   eq('F5: terminal event for the rewritten prompt is failure', lastType, 'failure');
 }
 
+/**
+ * beta-1 fix-3 — under the stub, `/v1/rewrite` answers a prompt with no pipeline marker with a
+ * canned plan and no model call, so the device's plan step (editing its fourth and later rows
+ * included) runs without a key. Each clarify answer is named in a row, and reaches the rewritten
+ * prompt a build is asked for. The answers are made from the stub clarify's own questions. RED
+ * before fix-3: a plain prompt went to the model, or to a 502 `rewrite_not_configured` without one.
+ */
+async function testStubRewriteCannedPlan(): Promise<void> {
+  section('Stub rewrite answers a plain prompt with a canned plan (fix-3)');
+
+  // A model that would answer, so a call to it is recorded (an exhausted script throws unrecorded).
+  const modelPlan = { rewrittenPrompt: 'A packing list.', plan: [{ label: 'List', text: 'Things to pack.' }] };
+  const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [{ role: 'rewrite', deltas: [JSON.stringify(modelPlan)] }]);
+  const withModel = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), model, roster: REWRITE_TEST_ROSTER, stub: true });
+  const withoutModel = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), stub: true });
+
+  const rewrite = async (app: ReturnType<typeof createApp>, body: unknown): Promise<RewriteResponse | undefined> => {
+    const res = await within(post(app, '/v1/rewrite', body, DEVICE_HEADER));
+    if (res === TIMED_OUT || res.status !== 200) return undefined;
+    const parsed = RewriteResponse.safeParse(await res.json());
+    return parsed.success ? parsed.data : undefined;
+  };
+
+  for (const [what, app] of [['with a model configured', withModel], ['with no model', withoutModel]] as const) {
+    const plan = await rewrite(app, { prompt: 'a packing list' });
+    check(`${what}: a plain prompt gets a 200 contract RewriteResponse`, plan !== undefined);
+    check(`${what}: with at least five plan rows`, (plan?.plan?.length ?? 0) >= 5, JSON.stringify(plan));
+    check(`${what}: every row has a label and a text`, (plan?.plan ?? []).every((row) => row.label.trim() !== '' && row.text.trim() !== ''));
+    check(`${what}: and a rewritten prompt to build`, (plan?.rewrittenPrompt.trim() ?? '') !== '');
+  }
+  eq('the stub rewrite makes no model call', model.requests.length, 0);
+
+  const asked = await within(post(withoutModel, '/v1/clarify', { prompt: 'a packing list' }, DEVICE_HEADER));
+  const questions = asked === TIMED_OUT ? [] : ((await asked.json()) as ClarifyResponse).questions;
+  const [delegated, several, typed] = questions;
+  if (delegated === undefined || several === undefined || typed === undefined) {
+    check('setup: the stub clarify asks three questions to answer', false, JSON.stringify(questions));
+    return;
+  }
+  check('setup: the second question takes several picks and the third a typed answer', several.select === 'many' && several.options.length >= 2 && typed.other);
+  const ownWords = 'Keeps a crossed-out copy';
+  const typedPick = typed.options[0];
+  const clarifications: Clarification[] = [
+    { id: delegated.id, question: delegated.question, choices: [], decide: true },
+    { id: several.id, question: several.question, choices: several.options.slice(0, 2) },
+    { id: typed.id, question: typed.question, choices: [typedPick], other: ownWords },
+  ];
+  const answered = await rewrite(withoutModel, { prompt: 'a packing list', clarifications });
+  const rows = answered?.plan ?? [];
+  const rowNaming = (question: string) => rows.find((row) => `${row.label} ${row.text}`.includes(question));
+  check('a delegated question is named in a row', rowNaming(delegated.question) !== undefined, JSON.stringify(rows));
+  const severalRow = rowNaming(several.question);
+  check('a question with several picks is named in a row carrying every pick', several.options.slice(0, 2).every((pick) => severalRow?.text.includes(pick)), JSON.stringify(severalRow));
+  const typedRow = rowNaming(typed.question);
+  check('a typed answer is named in a row with its pick and the user’s own words', typedRow !== undefined && typedRow.text.includes(typedPick) && typedRow.text.includes(ownWords), JSON.stringify(typedRow));
+  check('the answers reach the rewritten prompt a build is asked for', [...several.options.slice(0, 2), ownWords].every((part) => answered?.rewrittenPrompt.includes(part)), answered?.rewrittenPrompt);
+  check('the canned rows are all still there', rows.length >= 5 + clarifications.length, JSON.stringify(rows));
+}
+
+/** Every `data:` payload of an SSE response, read to its end and parsed as plain JSON — unlike
+ *  `readSseResponse`, it keeps frames outside `GenerationEvent`, which is the point below. */
+async function sseData(response: Response): Promise<Record<string, unknown>[]> {
+  const text = await response.text();
+  return text
+    .split(/\n\n+/)
+    .flatMap((block) => block.split('\n').filter((line) => line.startsWith('data: ')))
+    .map((line) => JSON.parse(line.slice('data: '.length)) as Record<string, unknown>);
+}
+
+/**
+ * beta-1 decision 9 — the stub's markers for the new flow screens (`src/stub-markers.ts`): under
+ * the stub, `[[limit]]` makes clarify answer with a `limit`, and `[[future:skip|fail|update]]`
+ * puts one event of a type no app knows into the generate stream (surviving the stub rewrite on
+ * the way). On the model-backed path the same prompts are ordinary words.
+ */
+async function testStubFlowMarkers(): Promise<void> {
+  section('Stub markers for the beta-1 flow screens: [[limit]] and [[future:*]]');
+
+  const stubApp = () => createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), stub: true });
+
+  {
+    const res = await post(stubApp(), '/v1/clarify', { prompt: 'what should I wear today [[limit]]' }, DEVICE_HEADER);
+    eq('[[limit]]: stub clarify answers 200', res.status, 200);
+    const body = ClarifyResponse.safeParse(await res.json());
+    check('[[limit]]: the answer is a contract ClarifyResponse', body.success);
+    check('[[limit]]: it carries a limit with a reason and an alternative', body.success && body.data.limit !== undefined);
+    eq('[[limit]]: and no questions', body.success ? body.data.questions.length : -1, 0);
+    const plain = ClarifyResponse.safeParse(await (await post(stubApp(), '/v1/clarify', { prompt: 'a packing list' }, DEVICE_HEADER)).json());
+    check('[[limit]]: a prompt without it gets the canned questions and no limit', plain.success && plain.data.limit === undefined && plain.data.questions.length > 0);
+  }
+
+  {
+    const reply = { questions: [{ id: 'q', question: 'Where are you going?', options: ['Beach', 'City'] }] };
+    const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [{ role: 'clarify', deltas: [JSON.stringify(reply)] }]);
+    const app = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), model, roster: REWRITE_TEST_ROSTER });
+    const body = (await (await post(app, '/v1/clarify', { prompt: 'what should I wear today [[limit]]' }, DEVICE_HEADER)).json()) as ClarifyResponse;
+    eq('[[limit]] model-backed: the model is asked', model.requests.length, 1);
+    eq('[[limit]] model-backed: its questions are the answer', body.questions.map((q) => q.id), ['q']);
+    eq('[[limit]] model-backed: and the marker adds no limit', body.limit, undefined);
+  }
+
+  for (const fallback of ['skip', 'fail', 'update'] as const) {
+    const marked = `a tip splitter [[future:${fallback}]]`;
+    const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, []);
+    const app = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), model, roster: REWRITE_TEST_ROSTER, stub: true });
+    const rewritten = (await (await post(app, '/v1/rewrite', { prompt: marked }, DEVICE_HEADER)).json()) as { rewrittenPrompt: string };
+    eq(`[[future:${fallback}]]: the stub rewrite passes the prompt through raw`, rewritten.rewrittenPrompt, marked);
+    eq(`[[future:${fallback}]]: with no model call`, model.requests.length, 0);
+
+    const frames = await sseData(await post(app, '/v1/generate', { prompt: rewritten.rewrittenPrompt }, DEVICE_HEADER));
+    const unknown = frames.filter((frame) => !GenerationEvent.safeParse(frame).success);
+    eq(`[[future:${fallback}]]: the stream carries exactly one event outside the vocabulary`, unknown.length, 1);
+    const envelope = WireEnvelope.safeParse(unknown[0]);
+    check(`[[future:${fallback}]]: it is a readable envelope`, envelope.success);
+    const compat = envelope.success ? envelope.data.compat : undefined;
+    eq(`[[future:${fallback}]]: from a level above this one, with the named fallback`, [compat?.min, compat?.fallback], [PROTOCOL_LEVEL + 1, fallback]);
+    const notice = compat?.notice ?? '';
+    check(`[[future:${fallback}]]: a notice exactly when the fallback ends the flow`, fallback === 'skip' ? notice === '' : notice.length > 0 && notice.length <= COMPAT_NOTICE_MAX_CHARS);
+    const types = frames.map((frame) => frame.type);
+    check(`[[future:${fallback}]]: it comes after the plan stage`, types.indexOf(unknown[0].type) > types.indexOf('stage'));
+    eq(`[[future:${fallback}]]: the stream then ends as the stub's does`, types.at(-1), 'result');
+  }
+
+  {
+    const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [
+      { role: 'rewrite', deltas: ['Split a bill with tip.'] },
+      { role: 'rewrite', deltas: ['Split a bill with tip.'] },
+    ]);
+    const app = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), model, roster: REWRITE_TEST_ROSTER });
+    const rewritten = (await (await post(app, '/v1/rewrite', { prompt: 'a tip splitter [[future:update]]' }, DEVICE_HEADER)).json()) as { rewrittenPrompt: string };
+    check('[[future:*]] model-backed rewrite: the model is asked', model.requests.length > 0);
+    check('[[future:*]] model-backed rewrite: the marker does not survive as is', !rewritten.rewrittenPrompt.includes('[[future:update]]'));
+  }
+
+  {
+    const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [{ role: 'plan', deltas: [], error: new Error('provider down') }]);
+    const app = createApp({ pipeline: machinePipeline(model, { now: () => Date.now() }, REWRITE_TEST_ROSTER), usageStore: new InMemoryUsageStore() });
+    const frames = await sseData(await post(app, '/v1/generate', { prompt: 'a tip splitter [[future:update]]' }, DEVICE_HEADER));
+    check('[[future:*]] model-backed generate: the stream ran', frames.length > 0);
+    eq('[[future:*]] model-backed generate: every event is in the vocabulary', frames.filter((frame) => !GenerationEvent.safeParse(frame).success).length, 0);
+  }
+}
+
 export async function runServerCoreTests(): Promise<void> {
   await testDeviceIdentity();
   await testSseFraming();
@@ -569,5 +748,8 @@ export async function runServerCoreTests(): Promise<void> {
   await testAbortDoubleCreditRace();
   await testRequestLogging();
   await testStubBundleDefinesAppModule();
+  await testStubAppPassesTheCheckStage();
   await testStubRewritePreservesFailMarker();
+  await testStubRewriteCannedPlan();
+  await testStubFlowMarkers();
 }
