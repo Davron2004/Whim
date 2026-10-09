@@ -11,10 +11,11 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Firestore } from '@google-cloud/firestore';
 import { caught, check, eq, section } from './harness';
 import { DEVICE_A, DEVICE_UNSAFE, IMPORT_T0, writeSqliteFixture, writeUsageFixture } from './sqlite-import-fixtures';
-import { runImportSqlite, type ImportConfig, type ImportDeps } from '../src/admin/import-sqlite';
+import { LEGACY_ROWS, LEGACY_SIGNUPS, LEGACY_T0, createLegacySqliteSchema, legacySqliteUpsert } from './waitlist-legacy-fixtures';
+import { readWaitlistFingerprints, runImportSqlite, type ImportConfig, type ImportDeps } from '../src/admin/import-sqlite';
 import { readReportsFile } from '../src/reports/store';
 import { readUsageFile } from '../src/usage-store';
-import { readWaitlistFile } from '../src/waitlist/store';
+import { NodeSqliteWaitlistStore, readWaitlistFile, waitlistFingerprint } from '../src/waitlist/store';
 
 function tempDir(label: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `whim-import-${label}-`));
@@ -127,8 +128,53 @@ async function testUnmigratedUsageFile(): Promise<void> {
   }
 }
 
+async function testWaitlistModels(): Promise<void> {
+  section('import-sqlite — an opt-out-model waitlist.db reads in the opt-in model, and removal fingerprints read back');
+  const legacyDir = tempDir('waitlist-legacy');
+  try {
+    // BASE's schema and upsert: the file a pre-waitlist-hardening server left.
+    const legacy = new DatabaseSync(path.join(legacyDir, 'waitlist.db'));
+    legacy.exec('PRAGMA journal_mode = WAL');
+    createLegacySqliteSchema(legacy);
+    for (const signup of LEGACY_SIGNUPS) legacySqliteUpsert(legacy, signup);
+    legacy.close();
+    const before = dbHashes(legacyDir);
+    eq(
+      'every legacy row reads with no news consent, a ticked opt-out as a withdrawal at its updated_at',
+      readWaitlistFile(path.join(legacyDir, 'waitlist.db')),
+      LEGACY_ROWS.map(({ optedOut, ...kept }) => ({ ...kept, updatesOptIn: false, updatesConsentAt: null, updatesConsentNoticeId: null, updatesWithdrawnAt: optedOut ? kept.updatedAt : null })),
+    );
+    eq('  ... a file from before fingerprints holds none', readWaitlistFingerprints(path.join(legacyDir, 'waitlist.db')), []);
+    eq('  ... and neither read changes a byte of it', dbHashes(legacyDir), before);
+  } finally {
+    fs.rmSync(legacyDir, { recursive: true, force: true });
+  }
+
+  const dataDir = tempDir('waitlist-removed');
+  const key = 'import-suite-fingerprint-key-0123456789';
+  try {
+    const store = new NodeSqliteWaitlistStore(path.join(dataDir, 'waitlist.db'), { fingerprintKey: key });
+    try {
+      await store.upsert({ email: 'Gone@Example.com', platform: 'ios', updatesOptIn: true, noticeId: 'beta-2', now: LEGACY_T0 });
+      await store.remove('gone@example.com', LEGACY_T0 + 1000);
+    } finally {
+      await store.close();
+    }
+    const before = dbHashes(dataDir);
+    eq(
+      'a removal reads back as the fingerprint the store keeps, at the time it was removed',
+      readWaitlistFingerprints(path.join(dataDir, 'waitlist.db')),
+      [{ fingerprint: waitlistFingerprint(key, ' GONE@example.com'), suppressedAt: LEGACY_T0 + 1000 }],
+    );
+    eq('  ... without changing a byte of the file', dbHashes(dataDir), before);
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
 export async function runImportSqliteTests(): Promise<void> {
   await testRefusals();
   await testReadersAreReadOnly();
   await testUnmigratedUsageFile();
+  await testWaitlistModels();
 }

@@ -7,7 +7,8 @@
  * environment/filesystem side effects.
  *
  * `import-sqlite` opens no store: it writes into the configured Firestore database directly
- * (`runImportSqlite`, durable-server-stores D7). `purge` runs the server's retention purges once
+ * (`runImportSqlite`, durable-server-stores D7). Nor does `migrate-waitlist` (`runMigrateWaitlist`,
+ * waitlist-hardening D5): opening the SQLite store would convert the file before its dry run reads it. `purge` runs the server's retention purges once
  * (`runPurgeThenClose`, which also reports a failed close) on the opened stores, like every other
  * subcommand. When `purge` fails outright (the configuration, opening the stores), it prints the
  * same structured ERROR line a failed purge does (`purgeFailedLine`) and exits 1, so the
@@ -17,6 +18,7 @@ import { loadServerConfig, type ServerConfig } from '../config';
 import { openStores } from '../stores';
 import { runAdminCli, type AdminCliResult } from './cli';
 import { runImportSqlite } from './import-sqlite';
+import { runMigrateWaitlist } from './migrate-waitlist';
 import { messageOf, purgeFailedLine, runPurgeThenClose } from './purge';
 
 const argv = process.argv.slice(2);
@@ -34,7 +36,9 @@ async function runStoreCommand(config: ServerConfig): Promise<AdminCliResult> {
 
 async function run(): Promise<AdminCliResult> {
   const config = loadServerConfig(process.env);
-  return argv[0] === 'import-sqlite' ? runImportSqlite(argv.slice(1), config) : runStoreCommand(config);
+  if (argv[0] === 'import-sqlite') return runImportSqlite(argv.slice(1), config);
+  if (argv[0] === 'migrate-waitlist') return runMigrateWaitlist(argv.slice(1), config);
+  return runStoreCommand(config);
 }
 
 async function runOrReportPurgeFailure(): Promise<AdminCliResult> {
