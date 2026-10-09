@@ -37,7 +37,7 @@ import {
   slotRefusal,
   type ServiceRefusal,
 } from '../admission/refusals';
-import { PolicyUnavailableError, type ContentPolicy, type PolicyRoute } from '../policy';
+import { PolicyUnavailableError, policyMetering, type ContentPolicy, type PolicyMetering, type PolicyRoute } from '../policy';
 import { buildClarifyPolicyInput } from '../policy/input';
 import {
   resolveRequestUsage,
@@ -194,7 +194,7 @@ export interface UnaryAdmissionDeps {
 }
 
 export type UnaryAdmissionOutcome =
-  | { ok: true; requestId: string; release: () => void; policyGenerationId?: string }
+  | { ok: true; requestId: string; release: () => void; policy: PolicyMetering }
   | { ok: false; refusal: ServiceRefusal };
 
 /**
@@ -202,25 +202,26 @@ export type UnaryAdmissionOutcome =
  * `finish()`), mirroring `routes/generate.ts`'s `resolveGenerationUsage`: cost for every recorded id
  * — the classifier call plus the route's own model call(s) — lands on the ledger row via ONE
  * `creditOwned: true` call, so the classifier's tokens (already credited the moment `policy.check`
- * returned) are never folded into a token-crediting call. Tokens are reconciled, in a SEPARATE call
- * with no classifier id, only for the route's own ids whose usage was never credited in-stream
- * (`!creditOwned`). With no classifier id at all, the caller's own ids/creditOwned pass straight
- * through unsplit.
+ * returned) are never folded into a token-crediting call; only a classifier call whose usage never
+ * arrived is reconciled there. Tokens are reconciled, in a SEPARATE call with no classifier id, only
+ * for the route's own ids whose usage was never credited in-stream (`!creditOwned`). With no
+ * classifier id at all, the caller's own ids/creditOwned pass straight through unsplit.
  */
 export function resolveUnaryUsage(
   requestId: string,
   deviceId: string,
-  policyGenerationId: string | undefined,
+  policy: PolicyMetering,
   generationIds: readonly string[],
   creditOwned: boolean,
   resolveTracker: ResolveTracker,
   deps: ResolveDeps,
 ): void {
-  if (policyGenerationId === undefined) {
+  if (policy.generationIds.length === 0) {
     resolveTracker.track(resolveRequestUsage(requestId, deviceId, generationIds, creditOwned, deps));
     return;
   }
-  resolveTracker.track(resolveRequestUsage(requestId, deviceId, [policyGenerationId, ...generationIds], true, deps));
+  const notReconciledHere = new Set([...policy.creditedGenerationIds, ...generationIds]);
+  resolveTracker.track(resolveRequestUsage(requestId, deviceId, [...policy.generationIds, ...generationIds], notReconciledHere, deps));
   if (!creditOwned && generationIds.length > 0) {
     // requestId '' is the resolver's no-ledger sentinel: tokens only, the cost is recorded above.
     resolveTracker.track(resolveRequestUsage('', deviceId, generationIds, false, deps));
@@ -237,8 +238,8 @@ export function resolveUnaryUsage(
  *
  * The classifier call's own usage is credited to the device the moment it comes back — allowed or
  * refused, since the call still happened either way (spec "The policy check is metered and
- * observable without content"). On `allow`, its generation id is returned as `policyGenerationId`
- * so the caller folds it into the request's own generation ids before resolving cost. On a refusal
+ * observable without content"). On `allow`, its calls are returned as `policy` so the caller folds
+ * their generation ids into the request's own before resolving cost. On a refusal
  * (the request ends here, with no further model call), the row is settled with the classifier's
  * usage and its cost is resolved immediately, the same way the route's own `finish()` would.
  */
@@ -352,15 +353,15 @@ async function admitUnaryWithSlot(
 
   try {
     const result = await policy.check(policyInput, policyRoute, signal, deps.log);
-    if (result.usage) {
-      await usageStore.credit(deviceId, result.usage);
+    const metering = policyMetering(result.calls);
+    if (metering.usage) {
+      await usageStore.credit(deviceId, metering.usage);
     }
     if (result.verdict !== 'allow') {
-      await usageStore.settle(requestId, { outcome: 'refused', failureReason: 'content_policy', usage: result.usage, now: clock() });
+      await usageStore.settle(requestId, { outcome: 'refused', failureReason: 'content_policy', usage: metering.usage, now: clock() });
       handle.release();
-      const ids = result.generationId ? [result.generationId] : [];
       resolveTracker.track(
-        resolveRequestUsage(requestId, deviceId, ids, true, {
+        resolveRequestUsage(requestId, deviceId, metering.generationIds, metering.creditedGenerationIds, {
           transport: resolveTransport,
           usageStore,
           bounds: resolveBounds,
@@ -368,7 +369,7 @@ async function admitUnaryWithSlot(
       );
       return { ok: false, refusal: contentPolicyRefusal() };
     }
-    return { ok: true, requestId, release: () => handle.release(), policyGenerationId: result.generationId };
+    return { ok: true, requestId, release: () => handle.release(), policy: metering };
   } catch (err) {
     if (err instanceof PolicyUnavailableError) {
       return settleUnavailablePolicyAdmission(deps, handle, requestId, err);
@@ -386,13 +387,13 @@ async function settleUnavailablePolicyAdmission(
   error: PolicyUnavailableError,
 ): Promise<UnaryAdmissionOutcome> {
   const { deviceId, usageStore, clock, resolveTransport, resolveBounds, resolveTracker } = deps;
-  if (error.usage) await usageStore.credit(deviceId, error.usage);
-  await usageStore.settle(requestId, { outcome: 'unavailable', failureReason: 'policy_unavailable', usage: error.usage, now: clock() });
+  const metering = policyMetering(error.calls);
+  if (metering.usage) await usageStore.credit(deviceId, metering.usage);
+  await usageStore.settle(requestId, { outcome: 'unavailable', failureReason: 'policy_unavailable', usage: metering.usage, now: clock() });
   await usageStore.refund(requestId);
   handle.release();
-  const ids = error.generationId ? [error.generationId] : [];
   resolveTracker.track(
-    resolveRequestUsage(requestId, deviceId, ids, error.usage !== undefined, {
+    resolveRequestUsage(requestId, deviceId, metering.generationIds, metering.creditedGenerationIds, {
       transport: resolveTransport,
       usageStore,
       bounds: resolveBounds,
@@ -480,7 +481,7 @@ export function makeClarifyRoute(
         const r = admission.refusal;
         return c.json(r.body, r.status, r.headers);
       }
-      const { requestId, release, policyGenerationId } = admission;
+      const { requestId, release, policy: policyCalls } = admission;
 
       let settlementUsage: Usage | undefined;
       const finish = async (
@@ -492,7 +493,7 @@ export function makeClarifyRoute(
       ): Promise<void> => {
         settlementUsage = usage;
         await usageStore.settle(requestId, { outcome, failureReason, usage, now: clock() });
-        resolveUnaryUsage(requestId, deviceId, policyGenerationId, generationIds, creditOwned, resolveTracker, {
+        resolveUnaryUsage(requestId, deviceId, policyCalls, generationIds, creditOwned, resolveTracker, {
           transport: resolveTransport,
           usageStore,
           bounds: resolveBounds,

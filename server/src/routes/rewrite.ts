@@ -320,7 +320,7 @@ export function makeRewriteRoute(
         const r = admission.refusal;
         return c.json(r.body, r.status, r.headers);
       }
-      const { requestId, release, policyGenerationId } = admission;
+      const { requestId, release, policy: policyCalls } = admission;
 
       let settlementUsage: Usage | undefined;
       const finish = async (
@@ -332,10 +332,8 @@ export function makeRewriteRoute(
       ): Promise<void> => {
         settlementUsage = usage;
         await usageStore.settle(requestId, { outcome, failureReason, usage, now: clock() });
-        if (policyGenerationId !== undefined) {
-          generationIds = [policyGenerationId, ...generationIds];
-          creditedGenerationIds.add(policyGenerationId);
-        }
+        generationIds = [...policyCalls.generationIds, ...generationIds];
+        for (const id of policyCalls.creditedGenerationIds) creditedGenerationIds.add(id);
         resolveTracker.track(resolveRequestUsage(requestId, deviceId, generationIds, creditedGenerationIds, {
           transport: resolveTransport,
           usageStore,

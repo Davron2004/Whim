@@ -24,6 +24,7 @@ import {
   buildClarifyPolicyInput,
   buildRewritePolicyInput,
   buildGeneratePolicyInput,
+  policyMetering,
   type ContentPolicy,
   type PolicyCheckResult,
   type PolicyVerdict,
@@ -133,8 +134,7 @@ async function testFailClosed(): Promise<void> {
     const err = await caught(async () => { await policy.check('some text', 'generate'); });
     check('prose reply: throws PolicyUnavailableError', err instanceof PolicyUnavailableError);
     if (err instanceof PolicyUnavailableError) {
-      eq('prose reply keeps the completed classifier usage', err.usage, ZERO_USAGE);
-      eq('prose reply keeps the completed classifier generation id', err.generationId, 'gen-policy-fake');
+      eq('prose reply keeps each completed classifier call: usage and generation id', err.calls[0], { usage: ZERO_USAGE, generationId: 'gen-policy-fake' });
     }
   }
 
@@ -182,8 +182,7 @@ async function testFailClosed(): Promise<void> {
     const failure = await caught(async () => { await policyOn(client).check('some text', 'generate'); });
     check('known-id transport error: throws PolicyUnavailableError', failure instanceof PolicyUnavailableError);
     if (failure instanceof PolicyUnavailableError) {
-      eq('known-id transport error keeps the provider id', failure.generationId, 'gen-policy-failed');
-      eq('known-id transport error has no completed usage', failure.usage, undefined);
+      eq('known-id transport error keeps the provider id and no completed usage', failure.calls, [{ generationId: 'gen-policy-failed' }]);
     }
   }
 
@@ -222,8 +221,7 @@ async function testCheckResultUsage(): Promise<void> {
       id: Promise.resolve('gen-classifier-1'),
     }));
     const result = await policyOn(client).check('some text', 'generate');
-    eq('a model verdict carries the call\'s usage', result.usage, CLASSIFIER_USAGE);
-    eq('a model verdict carries the call\'s generation id', result.generationId, 'gen-classifier-1');
+    eq('a model verdict carries the call\'s usage and generation id', result.calls, [{ usage: CLASSIFIER_USAGE, generationId: 'gen-classifier-1' }]);
   }
 
   // A cache hit makes no classifier call: no usage, no generation id.
@@ -238,12 +236,159 @@ async function testCheckResultUsage(): Promise<void> {
     const cached = cachedPolicy(policyOn(client));
     const input = JSON.stringify({ prompt: 'cache-usage-check' });
     const first = await cached.check(input, 'generate');
-    check('setup: the fresh call carried usage', first.usage !== undefined);
+    check('setup: the fresh call carried usage', first.calls[0]?.usage !== undefined);
     const second = await cached.check(input, 'generate');
-    eq('a cached verdict carries no usage', second.usage, undefined);
-    eq('a cached verdict carries no generation id', second.generationId, undefined);
+    eq('a cached verdict carries no classifier call', second.calls, []);
   }
 
+}
+
+// ── §A transient classifier failure is retried once inside the policy deadline ──
+
+const NO_ANSWER = Symbol('no answer');
+
+/** Settles with `promise`'s outcome, or `NO_ANSWER` once `ms` pass. The policy's own timers are
+ *  unref'd, so a ref'd one here keeps a check that never settles from ending the suite silently. */
+async function settledWithin<T>(promise: Promise<T>, ms: number): Promise<{ value: T } | { error: unknown } | typeof NO_ANSWER> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<typeof NO_ANSWER>((resolve) => {
+    timer = setTimeout(() => resolve(NO_ANSWER), ms);
+  });
+  try {
+    return await Promise.race([promise.then((value) => ({ value }), (error: unknown) => ({ error })), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Answers each call with the next of `plan`, recording each call's signal. */
+function plannedClient(plan: ReadonlyArray<(signal: AbortSignal) => ModelStream>): ModelClient & { signals: AbortSignal[] } {
+  const signals: AbortSignal[] = [];
+  return {
+    signals,
+    stream(_req: ModelRequest, signal?: AbortSignal): ModelStream {
+      const step = plan[signals.length];
+      if (!signal || !step) throw new Error(`plannedClient: call ${signals.length + 1} was not planned`);
+      signals.push(signal);
+      return step(signal);
+    },
+  };
+}
+
+function hangingWithId(id: string): (signal: AbortSignal) => ModelStream {
+  return (signal) => ({ ...hangingStream(signal), id: Promise.resolve(id) });
+}
+
+function answering(text: string, usage: Usage, id: string): () => ModelStream {
+  return () => ({ ...textStream(text), usage: Promise.resolve(usage), id: Promise.resolve(id) });
+}
+
+function failingWith(err: unknown): () => ModelStream {
+  return () => erroringStream(err);
+}
+
+function retryPolicy(client: ModelClient, timeoutMs: number, attemptTimeoutMs: number): ModelContentPolicy {
+  return new ModelContentPolicy({ modelClient: client, rewriteModelId: REWRITE_MODEL_ID, categories: CATEGORIES, timeoutMs, attemptTimeoutMs });
+}
+
+async function testBoundedRetry(): Promise<void> {
+  section('ModelContentPolicy — a transient failure is retried once inside WHIM_POLICY_TIMEOUT_MS (#119)');
+
+  const SECOND_USAGE: Usage = { promptTokens: 9, completionTokens: 1, totalTokens: 10 };
+
+  // A hung first attempt no longer fails the check: its attempt bound cuts it, and the second
+  // attempt's verdict stands, well inside the deadline.
+  {
+    const client = plannedClient([hangingWithId('gen-hung'), answering('{"verdict":"allow"}', SECOND_USAGE, 'gen-second')]);
+    const capture = captureLogs();
+    const startedAt = performance.now();
+    let outcome;
+    try {
+      outcome = await settledWithin(cachedPolicy(retryPolicy(client, 2000, 500)).check('hung then allow', 'generate'), 4000);
+    } finally {
+      capture.stop();
+    }
+    const elapsedMs = performance.now() - startedAt;
+    const result = outcome !== NO_ANSWER && 'value' in outcome ? outcome.value : undefined;
+    eq('hung first attempt: the second attempt\'s allow is the verdict', result?.verdict, 'allow');
+    eq('hung first attempt: exactly two classifier calls', client.signals.length, 2);
+    check('hung first attempt: the hung call was cancelled', client.signals[0]?.aborted === true);
+    check('hung first attempt: answered within the deadline', elapsedMs < 2000, `${Math.round(elapsedMs)} ms`);
+    eq('hung first attempt: both calls are carried, usage only where it arrived', result?.calls, [{ generationId: 'gen-hung' }, { usage: SECOND_USAGE, generationId: 'gen-second' }]);
+    const metering = policyMetering(result?.calls ?? []);
+    eq('hung first attempt: the delivered usage is credited', metering.usage, SECOND_USAGE);
+    eq('hung first attempt: both ids land on the row, the hung one left to reconcile', [metering.generationIds, [...metering.creditedGenerationIds]], [['gen-hung', 'gen-second'], ['gen-second']]);
+    eq('hung first attempt: the log record says attempts: 2', withMessage(capture, 'content policy check').map((r) => [r.verdict, r.attempts]), [['allow', 2]]);
+  }
+
+  // Two hung attempts fail closed, and the second is cut to what is left of the deadline: 1500 ms,
+  // then the remaining ~1100 ms rather than another 1500.
+  {
+    const client = plannedClient([hangingWithId('gen-hung-1'), hangingWithId('gen-hung-2')]);
+    const capture = captureLogs();
+    const startedAt = performance.now();
+    let outcome;
+    try {
+      outcome = await settledWithin(cachedPolicy(retryPolicy(client, 2600, 1500)).check('hung twice', 'generate'), 5000);
+    } finally {
+      capture.stop();
+    }
+    const elapsedMs = performance.now() - startedAt;
+    const error = outcome !== NO_ANSWER && 'error' in outcome ? outcome.error : undefined;
+    check('two timeouts: fails closed with PolicyUnavailableError', error instanceof PolicyUnavailableError, String(error));
+    eq('two timeouts: exactly two classifier calls', client.signals.length, 2);
+    check('two timeouts: answered by the deadline, not a full attempt bound past it', elapsedMs < 2600 + 250, `${Math.round(elapsedMs)} ms`);
+    eq('two timeouts: both calls\' ids are carried for reconciliation', error instanceof PolicyUnavailableError ? error.calls : undefined, [{ generationId: 'gen-hung-1' }, { generationId: 'gen-hung-2' }]);
+    eq('two timeouts: the log record says unavailable after 2 attempts', withMessage(capture, 'content policy check').map((r) => [r.verdict, r.attempts]), [['unavailable', 2]]);
+  }
+
+  // Less than 1000 ms of the deadline left after the first attempt: no second one.
+  {
+    const client = plannedClient([hangingWithId('gen-late'), answering('{"verdict":"allow"}', SECOND_USAGE, 'gen-unused')]);
+    const outcome = await settledWithin(retryPolicy(client, 1400, 600).check('too little time left', 'generate'), 4000);
+    check('too little time left: fails closed', outcome !== NO_ANSWER && 'error' in outcome && outcome.error instanceof PolicyUnavailableError);
+    eq('too little time left: one classifier call', client.signals.length, 1);
+  }
+
+  // A verdict is final: a refusal is never retried.
+  {
+    const client = plannedClient([
+      answering(JSON.stringify({ verdict: 'refuse', category: 'graphic violence or gore' }), SECOND_USAGE, 'gen-refuse'),
+      answering('{"verdict":"allow"}', SECOND_USAGE, 'gen-unused'),
+    ]);
+    const outcome = await settledWithin(retryPolicy(client, 5000, 500).check('refused text', 'generate'), 4000);
+    eq('refusal: the refusal stands', outcome !== NO_ANSWER && 'value' in outcome ? outcome.value.verdict : outcome, { refuse: 'graphic violence or gore' });
+    eq('refusal: exactly one classifier call', client.signals.length, 1);
+  }
+
+  // A client that left is not retried for.
+  {
+    const request = new AbortController();
+    const client = plannedClient([
+      (signal) => {
+        queueMicrotask(() => request.abort());
+        return hangingWithId('gen-left')(signal);
+      },
+      answering('{"verdict":"allow"}', SECOND_USAGE, 'gen-unused'),
+    ]);
+    const outcome = await settledWithin(retryPolicy(client, 5000, 4500).check('client left', 'generate', request.signal), 4000);
+    check('aborted request: fails closed', outcome !== NO_ANSWER && 'error' in outcome && outcome.error instanceof PolicyUnavailableError);
+    eq('aborted request: no second attempt', client.signals.length, 1);
+  }
+
+  // An upstream failure (a provider 5xx) is retried; an auth failure, which a retry cannot fix, is not.
+  {
+    const upstream = Object.assign(new Error('OpenRouter: HTTP 503'), { kind: 'network', status: 503 });
+    const client = plannedClient([failingWith(upstream), answering('{"verdict":"allow"}', SECOND_USAGE, 'gen-after-5xx')]);
+    const outcome = await settledWithin(retryPolicy(client, 5000, 500).check('provider blip', 'generate'), 4000);
+    eq('provider 5xx: retried, and the retry\'s allow stands', outcome !== NO_ANSWER && 'value' in outcome ? outcome.value.verdict : outcome, 'allow');
+
+    const auth = Object.assign(new Error('OpenRouter: unauthorized (401)'), { kind: 'auth' });
+    const authClient = plannedClient([failingWith(auth), answering('{"verdict":"allow"}', SECOND_USAGE, 'gen-unused')]);
+    const authOutcome = await settledWithin(retryPolicy(authClient, 5000, 500).check('bad key', 'generate'), 4000);
+    check('auth error: fails closed', authOutcome !== NO_ANSWER && 'error' in authOutcome && authOutcome.error instanceof PolicyUnavailableError);
+    eq('auth error: exactly one classifier call', authClient.signals.length, 1);
+  }
 }
 
 // ── §The classifier is a bounded call on the configured rewrite model ────────
@@ -368,7 +513,7 @@ function countingPolicy(next: () => PolicyVerdict | Promise<PolicyVerdict>): { p
     policy: {
       async check(): Promise<PolicyCheckResult> {
         calls += 1;
-        return { verdict: await next() };
+        return { verdict: await next(), calls: [{}] };
       },
     },
     calls: () => calls,
@@ -558,6 +703,7 @@ export async function runPolicyTests(): Promise<void> {
   section('Content policy');
   await testFailClosed();
   await testCheckResultUsage();
+  await testBoundedRetry();
   await testClassifierBounds();
   await testClassifierWireReasoningIsExplicitlyOff();
   await testInputCoverage();

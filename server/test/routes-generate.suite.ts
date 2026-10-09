@@ -411,8 +411,10 @@ async function expectRefusal(
   retryAfter: string | null,
 ): Promise<void> {
   eq(`${label}: status`, res.status, status);
-  check(`${label}: no SSE stream opened`, !(res.headers.get('content-type') ?? '').includes('text/event-stream'));
-  const body = ApiError.safeParse(await res.json());
+  const streamOpened = (res.headers.get('content-type') ?? '').includes('text/event-stream');
+  check(`${label}: no SSE stream opened`, !streamOpened);
+  // An admitted stream's body never ends on its own: give it back rather than wait on it forever.
+  const body = ApiError.safeParse(streamOpened ? await res.body?.cancel() : await res.json());
   check(`${label}: body validates as ApiError`, body.success);
   const error = body.success ? body.data.error : undefined;
   check(`${label}: code is in ServiceRefusalCode`, ServiceRefusalCode.safeParse(error).success);
@@ -627,9 +629,10 @@ async function testLineSlotFreesWhileWaiting(): Promise<void> {
     const waiting = await postGenerate(h.app, { prompt: 'a habit tracker MARKER-LINE-7f3a' }, DEVICE_B);
     eq('with every slot busy the stream still opens', [waiting.status, waiting.headers.get('content-type')], [200, 'text/event-stream']);
     const events = new StreamEvents(waiting);
+    const requestId = waiting.headers.get(REQUEST_ID_HEADER);
     eq('its first event says it is first in line', await events.next(), QUEUED_FIRST);
     eq('waiting spends no daily unit', await h.usageStore.generationUnits(AT_2200_UTC), 1);
-    eq('and inserts no ledger row', h.usageStore.admitted.length, 1);
+    eq('and inserts no generate row: only its check\'s policy-check row', h.usageStore.admitted.slice(1), [`${requestId}:policy-check`]);
 
     const heartbeats: unknown[] = [];
     for (let second = 5; second <= 40; second += 5) {
@@ -641,8 +644,7 @@ async function testLineSlotFreesWhileWaiting(): Promise<void> {
     pipeline.releaseOne();
     eq('when the slot frees, the normal stage events follow', await events.next(), PLAN_START);
     eq('the daily unit is spent once the slot is taken', await h.usageStore.generationUnits(AT_2200_UTC), 2);
-    const requestId = waiting.headers.get(REQUEST_ID_HEADER);
-    eq('the ledger row it inserts then takes the request id', h.usageStore.admitted[1], requestId);
+    eq('the ledger row it inserts then takes the request id', h.usageStore.admitted[2], requestId);
     pipeline.releaseOne();
     eq('... through to its one result', typesOf(await events.rest()), ['usage', 'result']);
     await readEvents('the first generation', first);
@@ -713,7 +715,7 @@ async function testLineTimeout(): Promise<void> {
     eq('after the default 180 s the stream ends with one failure and nothing else', typesOf(rest), ['failure']);
     eq('its reason is the capacity refusal\'s hint', failureReasons(rest), [serverBusyRefusal().body.hint]);
     eq('no daily unit was spent', await h.usageStore.generationUnits(AT_2200_UTC), 1);
-    eq('no ledger row was inserted for it', h.usageStore.admitted.length, 1);
+    eq('no generate row was inserted for it', h.usageStore.admitted.includes(res.headers.get(REQUEST_ID_HEADER) ?? ''), false);
     eq('it left the line and holds no slot', [h.slots.queued, h.slots.generations], [0, 1]);
     const leave = withMessage(logs, 'queue leave').filter((r) => r.requestId === res.headers.get(REQUEST_ID_HEADER));
     eq('its leave line says timeout, after 180 s', leave.map((r) => [r.outcome, r.waitedMs]), [['timeout', 180_000]]);
@@ -792,7 +794,7 @@ async function testLinePolicyRefusal(): Promise<void> {
   section('The line: a generation the content policy refuses, or cannot check, while every slot is busy takes no place in line');
 
   const pipeline = new HeldPipeline();
-  // One generation a day per device, so a refusal that spent C's unit would refuse C's retry.
+  // One generation a day per device, so whether a refusal spent C's unit shows on C's retry.
   const h = harness({ pipeline, lineClock: new ManualLineClock(), config: { maxConcurrentGenerations: 1, limitGenerationsPerDeviceDay: 1 } });
   const first = await postGenerate(h.app, PROMPT, DEVICE_A);
   const waiting = new StreamEvents(await postGenerate(h.app, PROMPT, DEVICE_B));
@@ -802,19 +804,163 @@ async function testLinePolicyRefusal(): Promise<void> {
   const unchecked = await postGenerate(h.app, { prompt: '[[policy-down]] please' }, randomUUID());
   await expectRefusal('an unchecked prompt while the server is busy', unchecked, 503, 'policy_unavailable', null);
   eq('neither took a place: only B waits, and only A holds a slot', [h.slots.queued, h.slots.generations], [1, 1]);
-  eq(
-    'the refused prompt has a ledger row settled as refused for content_policy, as it would with a free slot',
-    h.usageStore.settlesFor(refused.headers.get(REQUEST_ID_HEADER) ?? '').map((s) => [s.outcome, s.failureReason]),
-    [['refused', 'content_policy']],
-  );
-  eq('the unchecked prompt inserted no ledger row', h.usageStore.admitted.includes(unchecked.headers.get(REQUEST_ID_HEADER) ?? ''), false);
-  eq('neither spent a daily unit: only A’s counts', await h.usageStore.generationUnits(AT_2200_UTC), 1);
-  const again = new StreamEvents(await postGenerate(h.app, PROMPT, DEVICE_C));
-  eq('the refused device is free to join the line, behind B, its one unit of the day unspent', await again.next(), { type: 'queued', position: 2 });
+  const refusedId = refused.headers.get(REQUEST_ID_HEADER) ?? '';
+  const outcomes = (rowId: string): unknown[] => h.usageStore.settlesFor(rowId).map((s) => [s.outcome, s.failureReason]);
+  eq('the refused prompt\'s policy-check row settled as refused for content_policy', outcomes(`${refusedId}:policy-check`), [['refused', 'content_policy']]);
+  eq('and, as with a free slot, its generate row too', outcomes(refusedId), [['refused', 'content_policy']]);
+  eq('the unchecked prompt inserted no generate row', h.usageStore.admitted.includes(unchecked.headers.get(REQUEST_ID_HEADER) ?? ''), false);
+  eq('the refusal spent C’s generation unit and the unchecked prompt none: A’s and C’s count', await h.usageStore.generationUnits(AT_2200_UTC), 2);
+  await expectRefusal('the refused device has spent its one generation of the day', await postGenerate(h.app, PROMPT, DEVICE_C), 429, 'daily_limit', '7200');
   pipeline.releaseOne();
   eq('the freed slot still goes to B', await waiting.next(), PLAN_START);
   await readEvents('the first generation', first);
   await endLine('policy refusal', h);
+}
+
+/** A classifier double answering allow to every call, counting the calls. Unwrapped on purpose: a
+ *  verdict cache would serve a repeated prompt without a call, and these cases count calls. */
+function countingAllowPolicy(): { policy: ContentPolicy; calls: () => number } {
+  let calls = 0;
+  return {
+    policy: {
+      async check() {
+        calls++;
+        return { verdict: 'allow', calls: [{}] };
+      },
+    },
+    calls: () => calls,
+  };
+}
+
+function terminalsIn(events: GenerationEvent[] | typeof TIMED_OUT): number {
+  return events === TIMED_OUT ? 0 : events.filter((e) => e.type === 'result' || e.type === 'failure').length;
+}
+
+async function testLinePolicyCheckRows(): Promise<void> {
+  section('The line: a policy check for a generation waiting in line is ledgered and daily-limited (#120)');
+
+  // A device that joins the line and leaves, again and again, runs out of policy checks for the day.
+  {
+    const pipeline = new HeldPipeline();
+    const classifier = countingAllowPolicy();
+    const h = harness({ pipeline, policy: classifier.policy, lineClock: new ManualLineClock(), config: { maxConcurrentGenerations: 1, limitPolicyChecksPerDeviceDay: 3 } });
+    const first = await postGenerate(h.app, PROMPT, DEVICE_A);
+    for (let round = 1; round <= 3; round++) {
+      const client = new AbortController();
+      const leaving = new StreamEvents(await postGenerate(h.app, PROMPT, DEVICE_B, client.signal));
+      eq(`join-and-abort ${round}: B waits first in line`, await leaving.next(), QUEUED_FIRST);
+      client.abort();
+      eq(`join-and-abort ${round}: the stream B left closes with no terminal event`, await leaving.rest(), []);
+      check(`join-and-abort ${round}: B is out of the line`, await waitFor(() => h.slots.queued === 0));
+    }
+    eq('join-and-abort: A\'s check and B\'s three made four classifier calls', classifier.calls(), 4);
+    await expectRefusal('join-and-abort: the next join that day', await postGenerate(h.app, PROMPT, DEVICE_B), 429, 'daily_limit', '7200');
+    eq('join-and-abort: refused before any classifier call', classifier.calls(), 4);
+    eq('join-and-abort: the generate count is unchanged, only A’s unit is spent', await h.usageStore.generationUnits(AT_2200_UTC), 1);
+    pipeline.releaseOne();
+    eq('join-and-abort: the running generation ends in exactly one terminal event', terminalsIn(await readEvents('A', first)), 1);
+    await endLine('join-and-abort', h);
+  }
+
+  // Fresh device ids do not get around the global ceiling.
+  {
+    const pipeline = new HeldPipeline();
+    const classifier = countingAllowPolicy();
+    const h = harness({ pipeline, policy: classifier.policy, lineClock: new ManualLineClock(), config: { maxConcurrentGenerations: 1, limitPolicyChecksPerDay: 2 } });
+    const first = await postGenerate(h.app, { prompt: 'first' }, randomUUID());
+    const second = new StreamEvents(await postGenerate(h.app, { prompt: 'second' }, randomUUID()));
+    const third = new StreamEvents(await postGenerate(h.app, { prompt: 'third' }, randomUUID()));
+    eq('fresh ids: two of them wait in line', [await second.next(), await third.next()], [QUEUED_FIRST, { type: 'queued', position: 2 }]);
+    await expectRefusal('fresh ids: a third id finding every slot busy', await postGenerate(h.app, { prompt: 'fourth' }, randomUUID()), 429, 'daily_limit', '7200');
+    eq('fresh ids: refused before any classifier call', classifier.calls(), 3);
+    pipeline.releaseOne();
+    eq('fresh ids: the first in line runs', await second.next(), PLAN_START);
+    eq('fresh ids: the other moves up', await third.next(), QUEUED_FIRST);
+    pipeline.releaseOne();
+    eq('fresh ids: then the last one runs', await third.next(), PLAN_START);
+    pipeline.releaseOne();
+    const ends = await Promise.all([readEvents('first', first), second.rest(), third.rest()]);
+    eq('fresh ids: every opened stream ends in exactly one terminal event', ends.map(terminalsIn), [1, 1, 1]);
+    await endLine('fresh ids', h);
+  }
+
+  // No verdict in line: a 503, with the classifier's tokens and cost on the policy-check row.
+  {
+    const usageOfCall: Usage = { promptTokens: 3, completionTokens: 2, totalTokens: 5 };
+    const pipeline = new HeldPipeline();
+    const classifier = new ScriptedModelClient(ROSTER, [
+      { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: usageOfCall, id: 'gen-a-check' },
+      { role: 'rewrite', deltas: ['{"verdict":"maybe"}'], usage: usageOfCall, id: 'gen-b-check-1' },
+      { role: 'rewrite', deltas: ['{"verdict":"maybe"}'], usage: usageOfCall, id: 'gen-b-check-2' },
+    ]);
+    const stats = { usage: usageOfCall, totalCostUsd: 0.125 };
+    const h = harness({
+      pipeline,
+      policy: modelPolicy(classifier),
+      lineClock: new ManualLineClock(),
+      resolveTransport: statsTransport({ 'gen-a-check': stats, 'gen-b-check-1': stats, 'gen-b-check-2': stats }).transport,
+      config: { maxConcurrentGenerations: 1 },
+    });
+    const first = await postGenerate(h.app, { prompt: 'first' }, DEVICE_A);
+    const res = await postGenerate(h.app, { prompt: 'second' }, DEVICE_B);
+    await expectRefusal('unavailable in line', res, 503, 'policy_unavailable', null);
+    const id = res.headers.get(REQUEST_ID_HEADER) ?? '';
+    const bothCalls = sumUsage(usageOfCall, usageOfCall);
+    eq(
+      'unavailable in line: the policy-check row settled unavailable for policy_unavailable, with the classifier\'s tokens',
+      h.usageStore.settlesFor(`${id}:policy-check`).map((r) => [r.outcome, r.failureReason, r.usage]),
+      [['unavailable', 'policy_unavailable', bothCalls]],
+    );
+    await drained('unavailable in line', h.tracker);
+    eq('unavailable in line: both calls\' cost resolved onto that row', h.usageStore.costFor(`${id}:policy-check`), { requestId: `${id}:policy-check`, state: 'resolved', costUsd: 0.25 });
+    eq('unavailable in line: the tokens are the device\'s', await h.usageStore.read(DEVICE_B), bothCalls);
+    eq('unavailable in line: no generate row exists for the request', h.usageStore.admitted.includes(id), false);
+    pipeline.releaseOne();
+    eq('unavailable in line: the running generation ends in exactly one terminal event', terminalsIn(await readEvents('A', first)), 1);
+    await endLine('unavailable in line', h);
+  }
+
+  // An allow in line and an allow on a free slot: each check's cost lands on exactly one row.
+  {
+    const checkUsage: Usage = { promptTokens: 4, completionTokens: 1, totalTokens: 5 };
+    const pipeline = new HeldPipeline('gen-pipeline');
+    const classifier = new ScriptedModelClient(ROSTER, [
+      { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: checkUsage, id: 'gen-a-check' },
+      { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: checkUsage, id: 'gen-b-check' },
+    ]);
+    const h = harness({
+      pipeline,
+      policy: modelPolicy(classifier),
+      lineClock: new ManualLineClock(),
+      resolveTransport: statsTransport({
+        'gen-a-check': { usage: checkUsage, totalCostUsd: 0.125 },
+        'gen-b-check': { usage: checkUsage, totalCostUsd: 0.125 },
+        'gen-pipeline': { usage: RUN_USAGE, totalCostUsd: 0.5 },
+      }).transport,
+      config: { maxConcurrentGenerations: 1 },
+    });
+    const first = await postGenerate(h.app, { prompt: 'first' }, DEVICE_A);
+    const firstId = first.headers.get(REQUEST_ID_HEADER) ?? '';
+    const waiting = await postGenerate(h.app, { prompt: 'second' }, DEVICE_B);
+    const waitingId = waiting.headers.get(REQUEST_ID_HEADER) ?? '';
+    const events = new StreamEvents(waiting);
+    eq('allow in line: B waits', await events.next(), QUEUED_FIRST);
+    eq('allow in line: its policy-check row settled ok with the check\'s tokens', h.usageStore.settlesFor(`${waitingId}:policy-check`).map((r) => [r.outcome, r.usage]), [['ok', checkUsage]]);
+    pipeline.releaseOne();
+    eq('allow in line: B runs once the slot frees', await events.next(), PLAN_START);
+    pipeline.releaseOne();
+    eq('allow in line: B ends in exactly one terminal event', terminalsIn(await events.rest()), 1);
+    eq('free slot: A ends in exactly one terminal event', terminalsIn(await readEvents('A', first)), 1);
+    await drained('allow in line', h.tracker);
+    eq('allow in line: the check\'s cost is on the policy-check row', h.usageStore.costFor(`${waitingId}:policy-check`)?.costUsd, 0.125);
+    eq('allow in line: the generate row carries the run\'s cost only', h.usageStore.costFor(waitingId)?.costUsd, 0.5);
+    eq('allow in line: the check\'s tokens are credited once', await h.usageStore.read(DEVICE_B), sumUsage(checkUsage, RUN_USAGE));
+    eq('free slot: no policy-check row', h.usageStore.admitted.includes(`${firstId}:policy-check`), false);
+    eq('free slot: the check\'s cost is attributed to the generate row', h.usageStore.costFor(firstId)?.costUsd, 0.625);
+    const day = (await h.usageStore.summary({ days: 1, now: AT_2200_UTC })).days[0];
+    eq('one policy-check row and two generate rows that day', day?.countByKind, { generate: 2, 'policy-check': 1 });
+    await endLine('allow in line', h);
+  }
 }
 
 async function testLineCeilingAtSlot(): Promise<void> {
@@ -938,17 +1084,21 @@ async function testPolicyOutcomes(): Promise<void> {
   }
 
   // The provider can complete and meter the classifier call before returning malformed verdict
-  // text. That still fails closed, but the usage and cost are real and must be retained.
+  // text. That is retried once and still fails closed, but both calls' usage and cost are real and
+  // must be retained.
   {
     const classifierUsage: Usage = { promptTokens: 3, completionTokens: 2, totalTokens: 5 };
     const classifierId = 'gen-policy-malformed';
+    const retryId = 'gen-policy-malformed-retry';
     const classifier = new ScriptedModelClient(ROSTER, [
       { role: 'rewrite', deltas: ['{"verdict":"maybe"}'], usage: classifierUsage, id: classifierId },
+      { role: 'rewrite', deltas: ['{"verdict":"maybe"}'], usage: classifierUsage, id: retryId },
     ]);
+    const stats = { usage: classifierUsage, totalCostUsd: 0.002 };
     const h = harness({
       pipeline: new HeldPipeline(),
       policy: modelPolicy(classifier),
-      resolveTransport: statsTransport({ [classifierId]: { usage: classifierUsage, totalCostUsd: 0.004 } }).transport,
+      resolveTransport: statsTransport({ [classifierId]: stats, [retryId]: stats }).transport,
     });
     await expectRefusal(
       'a malformed but metered classifier verdict',
@@ -958,9 +1108,10 @@ async function testPolicyOutcomes(): Promise<void> {
       null,
     );
     await h.tracker.drain(2000);
-    eq('the failed-closed classifier usage is credited', await h.usageStore.read(DEVICE_A), classifierUsage);
+    const bothCalls = sumUsage(classifierUsage, classifierUsage);
+    eq('both failed-closed classifier calls are credited', await h.usageStore.read(DEVICE_A), bothCalls);
     eq('the daily unit is still refunded', await h.usageStore.generationUnits(AT_2200_UTC), 0);
-    eq('the unavailable ledger row retains classifier usage', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.usage), [classifierUsage]);
+    eq('the unavailable ledger row retains both calls\' usage', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.usage), [bothCalls]);
     const cost = h.usageStore.costFor(h.usageStore.admitted[0]);
     eq('the classifier cost resolves on the unavailable ledger row', cost, { requestId: h.usageStore.admitted[0], state: 'resolved', costUsd: 0.004 });
   }
@@ -1460,7 +1611,7 @@ async function testThrowingStoreSettlesTheLedgerRow(): Promise<void> {
   invalidateCreditCache();
   const meteredPolicy: ContentPolicy = {
     async check() {
-      return { verdict: 'allow', usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 } };
+      return { verdict: 'allow', calls: [{ usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 } }] };
     },
   };
   const h = harness({ policy: meteredPolicy });
@@ -1499,6 +1650,7 @@ export async function runRoutesGenerateTests(): Promise<void> {
   await testLineTimeout();
   await testLineLeave();
   await testLinePolicyRefusal();
+  await testLinePolicyCheckRows();
   await testLineCeilingAtSlot();
   await testDailyLimitAndCeiling();
   await testPolicyOutcomes();

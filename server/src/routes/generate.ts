@@ -11,11 +11,16 @@
  * The line (beta-1 D8, specs/server-admission-control "A generation that finds every slot busy
  * waits in line on its stream"): when every slot is busy the acquire joins the controller's line
  * instead, refusing `server_busy` only once the line is full. A generation in line has its daily
- * unit CONFIRMED, not spent, and no ledger row: the unit is spent, and the row inserted, only when
- * it gets a slot. It waits on its open stream, which carries `queued{position}` on entry, on every
- * move and at least every `QUEUED_HEARTBEAT_MS`. Waiting `queueMaxWaitMs`, a drain, or a global
- * ceiling reached by the time the slot arrives ends the stream with one terminal `failure`; a client
- * abort ends it with none. None of these leaves a slot held, a unit spent or a ledger row.
+ * unit CONFIRMED, not spent, and no `generate` row: the unit is spent, and the row inserted, only
+ * when it gets a slot. Its content-policy check is metered on a `policy-check` row of its own
+ * (`policyCheckRowId`), admitted against the policy-check daily limits before the classifier runs
+ * and never refunded (specs/server-admission-control "A policy check for a generation waiting in
+ * line is ledgered and daily-limited"); a refusal there also spends the generation's unit, as a
+ * free slot's refusal does. It waits on its open stream, which carries `queued{position}` on entry,
+ * on every move and at least every `QUEUED_HEARTBEAT_MS`. Waiting `queueMaxWaitMs`, a drain, or a
+ * global ceiling reached by the time the slot arrives ends the stream with one terminal `failure`; a
+ * client abort ends it with none. None of these leaves a slot held, a unit spent or a `generate`
+ * row.
  *
  * Once admitted, the stream has ONE teardown path: the end of the event source's iteration. A
  * terminal event, a client cancel of the SSE body, the request's own `Request.signal`, a pipeline
@@ -30,7 +35,7 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { GenerateRequest, GenerationEvent, type ApiError, type Usage } from '@whim/contract';
 import type { Pipeline } from '../pipeline';
-import type { AdmitResult, FailureReason, RequestOutcome, UsageStore } from '../usage-store';
+import { policyCheckRowId, type AdmitResult, type FailureReason, type RequestOutcome, type SettleParams, type UsageStore } from '../usage-store';
 import type { RunTrace } from '../generation/machine';
 import type { ServerConfig } from '../config';
 import type { LineOutcome, LineTicket, SlotController, SlotHandle } from '../admission/slots';
@@ -46,7 +51,7 @@ import {
   slotRefusal,
   type ServiceRefusal,
 } from '../admission/refusals';
-import { PolicyUnavailableError, type ContentPolicy, type PolicyCheckResult } from '../policy/policy';
+import { PolicyUnavailableError, policyMetering, type ContentPolicy, type PolicyCheckResult, type PolicyMetering } from '../policy/policy';
 import { buildGeneratePolicyInput } from '../policy/input';
 import {
   resolveRequestUsage,
@@ -146,16 +151,19 @@ interface AdmissionDeps extends GenerateRouteOptions {
 interface RunningGeneration {
   requestId: string;
   handle: SlotHandle;
-  /** The classifier call's provider generation id, when the check actually called the model. */
-  policyGenerationId: string | undefined;
+  /** The classifier calls whose cost lands on this row: the check's, when it ran on this row's
+   *  admission; none when the generation waited in line, whose check has its own row. */
+  policy: PolicyMetering;
 }
 
 /** A generation admitted to wait in line: its daily unit is confirmed but not spent, and it has no
- *  ledger row until it gets a slot. */
+ *  `generate` row until it gets a slot. */
 interface WaitingGeneration {
   ticket: LineTicket;
-  policyGenerationId: string | undefined;
 }
+
+/** No classifier call to meter. */
+const NO_POLICY_CALLS: PolicyMetering = policyMetering([]);
 
 type AdmittedGeneration = { kind: 'running'; running: RunningGeneration } | { kind: 'waiting'; waiting: WaitingGeneration };
 
@@ -276,12 +284,15 @@ async function admitGeneration(deps: AdmissionDeps): Promise<Admission> {
   const entry = slots.acquireInLine(deviceId);
   if (entry.kind === 'refused') return { ok: false, refusal: slotRefusal(entry.reason) };
   if (entry.kind === 'line') {
+    const admittedRows: string[] = [];
     try {
-      return await admitIntoLine(entry.ticket, deps);
+      return await admitIntoLine(entry.ticket, deps, (rowId) => admittedRows.push(rowId));
     } catch (err) {
-      // No ledger row counts yet (a refusal's row is refunded before any throw gets here), so
-      // leaving the line (which also gives back a slot handed over meanwhile) is all there is to undo.
+      // Leaving the line also gives back a slot handed over meanwhile. A row admitted before the
+      // throw is closed, never refunded, as `admitWithSlot`'s is below; one already settled keeps
+      // its first settlement.
       entry.ticket.leave();
+      for (const rowId of admittedRows) await settleFailedAdmission(deps.usageStore, rowId, clock, err, deps.log);
       throw err;
     }
   }
@@ -354,40 +365,38 @@ async function admitWithSlot(
   const { requestId } = unit;
   onAdmitted(requestId);
 
-  const { checked, unavailable } = await checkPolicy(deps);
+  const { checked, metering } = await checkPolicy(deps);
+  // The classifier calls happened either way, so their usage is the device's the moment they return.
+  if (metering.usage) await usageStore.credit(deviceId, metering.usage);
   if (!checked) {
-    if (unavailable?.usage) await usageStore.credit(deviceId, unavailable.usage);
-    await usageStore.settle(requestId, { outcome: 'unavailable', failureReason: 'policy_unavailable', usage: unavailable?.usage, now: clock() });
+    await usageStore.settle(requestId, { outcome: 'unavailable', failureReason: 'policy_unavailable', usage: metering.usage, now: clock() });
     await usageStore.refund(requestId);
     handle.release();
-    const ids = unavailable?.generationId ? [unavailable.generationId] : [];
-    deps.resolveTracker.track(resolveRequestUsage(requestId, deviceId, ids, unavailable?.usage !== undefined, resolveDeps(deps)));
+    resolvePolicyCost(deps, requestId, metering);
     return { ok: false, refusal: policyUnavailableRefusal() };
   }
 
-  // The classifier call happened either way, so its usage is the device's the moment it returns.
-  if (checked.usage) await usageStore.credit(deviceId, checked.usage);
-
   if (checked.verdict !== 'allow') {
-    await usageStore.settle(requestId, { outcome: 'refused', failureReason: 'content_policy', usage: checked.usage, now: clock() });
+    await usageStore.settle(requestId, { outcome: 'refused', failureReason: 'content_policy', usage: metering.usage, now: clock() });
     handle.release();
-    const ids = checked.generationId ? [checked.generationId] : [];
-    deps.resolveTracker.track(resolveRequestUsage(requestId, deviceId, ids, true, resolveDeps(deps)));
+    resolvePolicyCost(deps, requestId, metering);
     return { ok: false, refusal: contentPolicyRefusal() };
   }
 
-  return { ok: true, admitted: { kind: 'running', running: { requestId, handle, policyGenerationId: checked.generationId } } };
+  return { ok: true, admitted: { kind: 'running', running: { requestId, handle, policy: metering } } };
 }
 
 /**
  * `admitWithSlot` for a generation in line: the daily unit is confirmed without being spent, then
- * the content policy runs, all with no ledger row — the row, and the unit with it, come only once
- * the generation gets a slot. Every refusal leaves the line, which also gives back a slot handed
- * over meanwhile. The classifier's tokens are the device's either way. A content-policy refusal
- * still gets its `refused` row (`recordLineRefusal`), which spends no unit; an unavailable check
- * gets none, so its cost has nowhere to land.
+ * the check's own `policy-check` row is admitted against the policy-check daily limits (a limit
+ * refuses `daily_limit` before any classifier call), then the content policy runs and its outcome,
+ * tokens and cost go on that row, which is never refunded. The `generate` row, and its unit, come
+ * only once the generation gets a slot — except for a content-policy refusal, which spends the unit
+ * on a `refused` row as a free slot's refusal does (`spendRefusedLineUnit`). Every refusal leaves
+ * the line, which also gives back a slot handed over meanwhile. `onAdmitted` reports each row the
+ * moment it exists, so a throw past it can still be settled.
  */
-async function admitIntoLine(ticket: LineTicket, deps: AdmissionDeps): Promise<Admission> {
+async function admitIntoLine(ticket: LineTicket, deps: AdmissionDeps, onAdmitted: (rowId: string) => void): Promise<Admission> {
   const { usageStore, config, clock, deviceId } = deps;
 
   const unit = await usageStore.unitAvailable({
@@ -402,33 +411,51 @@ async function admitIntoLine(ticket: LineTicket, deps: AdmissionDeps): Promise<A
     return { ok: false, refusal: unitRefusal(unit.reason, clock) };
   }
 
-  const { checked, unavailable } = await checkPolicy(deps);
-  if (!checked) {
-    if (unavailable?.usage) await usageStore.credit(deviceId, unavailable.usage);
+  const checkUnit = await usageStore.admit({
+    requestId: policyCheckRowId(deps.requestId),
+    deviceId,
+    kind: 'policy-check',
+    now: clock(),
+    deviceLimit: config.limitPolicyChecksPerDeviceDay,
+    globalLimit: config.limitPolicyChecksPerDay,
+  });
+  if (!checkUnit.ok) {
     ticket.leave();
-    // requestId '' is the resolver's no-ledger sentinel: tokens only, for a call whose usage never arrived.
-    if (unavailable?.generationId && unavailable.usage === undefined) {
-      deps.resolveTracker.track(resolveRequestUsage('', deviceId, [unavailable.generationId], false, resolveDeps(deps)));
-    }
+    return { ok: false, refusal: dailyLimitRefusal(clock) };
+  }
+  const checkRowId = checkUnit.requestId;
+  onAdmitted(checkRowId);
+
+  const { checked, metering } = await checkPolicy(deps);
+  if (metering.usage) await usageStore.credit(deviceId, metering.usage);
+  await usageStore.settle(checkRowId, { ...checkSettlement(checked), usage: metering.usage, now: clock() });
+  resolvePolicyCost(deps, checkRowId, metering);
+  if (!checked) {
+    ticket.leave();
     return { ok: false, refusal: policyUnavailableRefusal() };
   }
-  if (checked.usage) await usageStore.credit(deviceId, checked.usage);
   if (checked.verdict !== 'allow') {
     ticket.leave();
-    await recordLineRefusal(deps, checked);
+    await spendRefusedLineUnit(deps, onAdmitted);
     return { ok: false, refusal: contentPolicyRefusal() };
   }
-  return { ok: true, admitted: { kind: 'waiting', waiting: { ticket, policyGenerationId: checked.generationId } } };
+  return { ok: true, admitted: { kind: 'waiting', waiting: { ticket } } };
+}
+
+/** How a `policy-check` row settles: `ok` on an allow, `refused` for `content_policy` on a refusal,
+ *  `unavailable` for `policy_unavailable` with no verdict. */
+function checkSettlement(checked: PolicyCheckResult | undefined): Pick<SettleParams, 'outcome' | 'failureReason'> {
+  if (!checked) return { outcome: 'unavailable', failureReason: 'policy_unavailable' };
+  return checked.verdict === 'allow' ? { outcome: 'ok' } : { outcome: 'refused', failureReason: 'content_policy' };
 }
 
 /**
- * The ledger row of a generation the content policy refused while every slot was busy: `refused`
- * for `content_policy`, as a free slot's refusal writes it, with the classifier's cost resolved onto
- * it. The row goes in through `admit` (whose unit the check before the policy confirmed) and is then
- * refunded, even when the settle throws, because a generation spends no daily unit until it gets a
- * slot (beta-1 D8). A ceiling reached since the check leaves no row.
+ * The `generate` row of a generation the content policy refused while every slot was busy: `refused`
+ * for `content_policy`, its unit spent and never refunded, as a free slot's refusal writes it. The
+ * check's tokens and cost are on the `policy-check` row, so this row's cost resolves to nothing of
+ * its own. A ceiling reached since the check leaves no row.
  */
-async function recordLineRefusal(deps: AdmissionDeps, checked: PolicyCheckResult): Promise<void> {
+async function spendRefusedLineUnit(deps: AdmissionDeps, onAdmitted: (rowId: string) => void): Promise<void> {
   const { usageStore, config, clock, deviceId } = deps;
   const unit = await usageStore.admit({
     requestId: deps.requestId,
@@ -439,19 +466,22 @@ async function recordLineRefusal(deps: AdmissionDeps, checked: PolicyCheckResult
     globalLimit: config.limitGenerationsPerDay,
   });
   if (!unit.ok) return;
-  try {
-    await usageStore.settle(unit.requestId, { outcome: 'refused', failureReason: 'content_policy', usage: checked.usage, now: clock() });
-  } finally {
-    await usageStore.refund(unit.requestId);
-  }
-  const ids = checked.generationId ? [checked.generationId] : [];
-  deps.resolveTracker.track(resolveRequestUsage(unit.requestId, deviceId, ids, true, resolveDeps(deps)));
+  onAdmitted(unit.requestId);
+  await usageStore.settle(unit.requestId, { outcome: 'refused', failureReason: 'content_policy', now: clock() });
+  resolvePolicyCost(deps, unit.requestId, NO_POLICY_CALLS);
 }
 
-/** The content policy's verdict, or `checked: undefined` when there is none. Any failure to produce
- *  a verdict is `policy_unavailable` (specs/content-policy "The policy check fails closed");
- *  `cachedPolicy` has already logged it as `unavailable`. */
-async function checkPolicy(deps: AdmissionDeps): Promise<{ checked: PolicyCheckResult | undefined; unavailable: PolicyUnavailableError | undefined }> {
+/** The cost of a check's classifier calls onto ledger row `rowId`, with tokens reconciled only for
+ *  a call whose usage never arrived (the others were credited when the check returned). */
+function resolvePolicyCost(deps: AdmissionDeps, rowId: string, metering: PolicyMetering): void {
+  deps.resolveTracker.track(resolveRequestUsage(rowId, deps.deviceId, metering.generationIds, metering.creditedGenerationIds, resolveDeps(deps)));
+}
+
+/** The content policy's verdict, or `checked: undefined` when there is none, with every classifier
+ *  call the check made either way. Any failure to produce a verdict is `policy_unavailable`
+ *  (specs/content-policy "The policy check fails closed"); `cachedPolicy` has already logged it as
+ *  `unavailable`. */
+async function checkPolicy(deps: AdmissionDeps): Promise<{ checked: PolicyCheckResult | undefined; metering: PolicyMetering }> {
   let unavailable: PolicyUnavailableError | undefined;
   const checked = await deps.policy.check(buildGeneratePolicyInput(deps.request), 'generate', deps.signal, deps.log).then(
     (result): PolicyCheckResult | undefined => result,
@@ -460,7 +490,7 @@ async function checkPolicy(deps: AdmissionDeps): Promise<{ checked: PolicyCheckR
       return undefined;
     },
   );
-  return { checked, unavailable };
+  return { checked, metering: policyMetering(checked?.calls ?? unavailable?.calls ?? []) };
 }
 
 /** The refusal for a daily unit that is not there: the device's own limit, or the global ceiling. */
@@ -638,7 +668,7 @@ async function* takeSlot(deps: StreamDeps, waiting: WaitingGeneration, signal: A
       return undefined;
     }
     left = 'slot';
-    return { requestId: unit.requestId, handle: end.handle, policyGenerationId: waiting.policyGenerationId };
+    return { requestId: unit.requestId, handle: end.handle, policy: NO_POLICY_CALLS };
   } finally {
     if (position > 0) {
       deps.log.info({ scope: 'queue', outcome: left, waitedMs: waitedMs ?? Math.round(lineClock.now() - joinedAt) }, 'queue leave');
@@ -775,23 +805,25 @@ function ledgerOutcome(trace: RunTrace, ending: StreamEnding, aborted: boolean):
 }
 
 /**
- * Cost for every recorded id — the classifier call and every pipeline call — lands on the ledger
- * row. Tokens are reconciled only for pipeline calls whose `usage` was never credited in-stream:
- * the classifier's tokens were credited when the check returned, so they never go through
- * reconciliation a second time.
+ * Cost for every recorded id — the classifier calls and every pipeline call — lands on the ledger
+ * row. Tokens are reconciled only for pipeline calls whose `usage` was never credited in-stream,
+ * and for a classifier call whose usage never arrived: the other classifier calls' tokens were
+ * credited when the check returned, so they never go through reconciliation a second time.
  */
 function resolveGenerationUsage(deps: StreamDeps, running: RunningGeneration, trace: RunTrace, creditOwned: boolean): void {
   const { deviceId, resolveTracker } = deps;
-  const { requestId, policyGenerationId } = running;
+  const { requestId, policy } = running;
   const rDeps = resolveDeps(deps);
   const pipelineIds = trace.generationIds;
   const pipelineCredited = creditedPipelineCalls(pipelineIds, trace.uncreditedGenerationIds, creditOwned);
 
-  if (policyGenerationId === undefined) {
+  if (policy.generationIds.length === 0) {
     resolveTracker.track(resolveRequestUsage(requestId, deviceId, pipelineIds, pipelineCredited, rDeps));
     return;
   }
-  resolveTracker.track(resolveRequestUsage(requestId, deviceId, [policyGenerationId, ...pipelineIds], true, rDeps));
+  // Pipeline tokens are reconciled by the call below, so this one reconciles only classifier calls.
+  const notReconciledHere = new Set([...policy.creditedGenerationIds, ...pipelineIds]);
+  resolveTracker.track(resolveRequestUsage(requestId, deviceId, [...policy.generationIds, ...pipelineIds], notReconciledHere, rDeps));
   if (pipelineCredited !== true && pipelineIds.length > 0) {
     // requestId '' is the resolver's no-ledger sentinel: tokens only, the cost is recorded above.
     resolveTracker.track(resolveRequestUsage('', deviceId, pipelineIds, pipelineCredited, rDeps));
