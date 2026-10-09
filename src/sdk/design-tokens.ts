@@ -32,8 +32,7 @@
 // R4 and R5 bind all four to an explicit verdict in the on-device screenshot pass (R8). Until that
 // pass rules, they stay exactly as written: do not silently round them up.
 //
-// A generated mini-app never sees these values directly — the sandboxed WebView's CSP forbids
-// loading Instrument Sans/IBM Plex Mono/Newsreader remotely, and "two systems, not one" (design
+// A generated mini-app never sees these values directly — "two systems, not one" (design
 // doc) keeps the shell's fixed look and each app's own look deliberately un-unified. `appColor`
 // below is the one exception: a pure name->hue function shared by the shell's grid, tile
 // fallback, and the Whim Syntax prose renderer (`app` spans), so an app's tile and every prose
@@ -124,10 +123,9 @@ export const MOTION = {
   sheetRise: { durationMs: 260, easing: 'cubic-bezier(.2,.8,.2,1)' },
 } as const;
 
-/** Android asset filenames (android/app/src/main/assets/fonts/, canonical copies in
- *  assets/fonts/) — RN/Android resolves `fontFamily` by exact file base name, never the family
- *  display name. Newsreader ships only as its italic style (design doc: "Newsreader Italic —
- *  Only the user's own quoted words. Never upright."). */
+/** The retired v2 faces' names (decision #75: system faces only). No font file ships any more, so
+ *  each name draws the platform's system font; the screens still naming one drop it when they move
+ *  to the `src/host/ui/` primitives, and this constant goes with the last of them. */
 export const FONT_FAMILY = {
   sansRegular: 'InstrumentSans-Regular',
   sansMedium: 'InstrumentSans-Medium',
@@ -138,12 +136,13 @@ export const FONT_FAMILY = {
   serifItalic: 'Newsreader-Italic',
 } as const;
 
-/** Field names match RN `TextStyle` exactly (fontFamily/fontSize/lineHeight/letterSpacing/
+/** Field names match RN `TextStyle` exactly (fontSize/lineHeight/letterSpacing/
  *  fontWeight/fontStyle/textTransform/color) so a consumer can spread a `TYPE_SCALE` entry
  *  straight into a `Text` style array. This module does not import `react-native` (kept
  *  platform-neutral, D4) — the shape is structural, not a real `TextStyle` import. */
 export interface TypeFace {
-  fontFamily: string;
+  /** Never set: every face is the platform's system font (decision #75). */
+  fontFamily?: string;
   fontSize: number;
   lineHeight: number;
   letterSpacing: number;
@@ -181,39 +180,35 @@ export const TYPE_SCALE: Record<
   | 'quote',
   TypeFace
 > = {
-  display: { fontFamily: FONT_FAMILY.sansBold, fontSize: 34, lineHeight: 34, letterSpacing: -1.02, fontWeight: '700' },
+  display: { fontSize: 34, lineHeight: 34, letterSpacing: -1.02, fontWeight: '700' },
   // The compose headline (mockup :417). No README table row.
-  headline: { fontFamily: FONT_FAMILY.sansBold, fontSize: 30, lineHeight: 33.6, letterSpacing: -0.75, fontWeight: '700' },
+  headline: { fontSize: 30, lineHeight: 33.6, letterSpacing: -0.75, fontWeight: '700' },
   // R1/R11: 22, not the table's 26. Scoped to the history title and the confirm-sheet title
   // (mockup :24, :63) — the flow steps' larger title face is `stepTitle` below, not this.
-  screenTitle: { fontFamily: FONT_FAMILY.sansBold, fontSize: 22, lineHeight: 25.3, letterSpacing: -0.44, fontWeight: '700' },
+  screenTitle: { fontSize: 22, lineHeight: 25.3, letterSpacing: -0.44, fontWeight: '700' },
   // R11: the flow-step title face (mockup :443, :475, :498), and the README table's "Screen title"
   // row (26 / 1.15 / -0.025em) verbatim. Byte-identical to what `screenTitle` held before the
   // retarget, so every site repointed here renders unchanged.
-  stepTitle: { fontFamily: FONT_FAMILY.sansBold, fontSize: 26, lineHeight: 29.9, letterSpacing: -0.65, fontWeight: '700' },
-  metric: { fontFamily: FONT_FAMILY.monoMedium, fontSize: 48, lineHeight: 48, letterSpacing: -1.92, fontWeight: '500' },
+  stepTitle: { fontSize: 26, lineHeight: 29.9, letterSpacing: -0.65, fontWeight: '700' },
+  metric: { fontSize: 48, lineHeight: 48, letterSpacing: -1.92, fontWeight: '500' },
   // R1/R5: 13.5 / 1.55 per the mockups, not the table's 15 / 1.7. `20.925` is the exact product —
   // do not round it. NOT SETTLED: deferred to the on-device pass (R8); `body` also sizes two
   // `TextInput`s, so it shrinks what the user types, not just what they read (R13).
-  body: { fontFamily: FONT_FAMILY.sansRegular, fontSize: 13.5, lineHeight: 20.925, letterSpacing: 0, fontWeight: '400' },
+  body: { fontSize: 13.5, lineHeight: 20.925, letterSpacing: 0, fontWeight: '400' },
   // Deliberately NOT retargeted with `body`: the design really does run a 500/15 face beside the
   // 400/13.5 one (mockup :39).
-  bodyEmphatic: { fontFamily: FONT_FAMILY.sansMedium, fontSize: 15, lineHeight: 25.5, letterSpacing: 0, fontWeight: '500' },
-  caption: { fontFamily: FONT_FAMILY.sansRegular, fontSize: 12, lineHeight: 18.6, letterSpacing: 0, fontWeight: '400' },
+  bodyEmphatic: { fontSize: 15, lineHeight: 25.5, letterSpacing: 0, fontWeight: '500' },
+  caption: { fontSize: 12, lineHeight: 18.6, letterSpacing: 0, fontWeight: '400' },
   // Back labels and answer pills (mockup :413, :439, :451, :471). No README table row.
-  controlLabel: { fontFamily: FONT_FAMILY.sansMedium, fontSize: 13, lineHeight: 13, letterSpacing: 0, fontWeight: '500' },
-  eyebrow: { fontFamily: FONT_FAMILY.monoMedium, fontSize: 10.5, lineHeight: 12.6, letterSpacing: 1.47, fontWeight: '500', textTransform: 'uppercase' },
-  // ── mono microcopy (R2/R17): three distinct faces the history screen was previously collapsing
+  controlLabel: { fontSize: 13, lineHeight: 13, letterSpacing: 0, fontWeight: '500' },
+  eyebrow: { fontSize: 10.5, lineHeight: 12.6, letterSpacing: 1.47, fontWeight: '500', textTransform: 'uppercase' },
+  // ── microcopy (R2/R17): three distinct faces the history screen was previously collapsing
   // onto `eyebrow`. All three are NOT SETTLED — R4 defers their sizes to the on-device pass.
-  // ASSET GAP, flagged not fixed: `kindBadge` wants mono 600 and only IBM Plex Mono Regular and
-  // Medium ship (assets/fonts/), so Android synthesizes the weight off `monoMedium`. Naming a
-  // nonexistent `IBMPlexMono-SemiBold` would fall back to the system font silently — RN resolves
-  // `fontFamily` by exact file base name. Judged in the R8 pass.
-  kindBadge: { fontFamily: FONT_FAMILY.monoMedium, fontSize: 9.5, lineHeight: 9.5, letterSpacing: 0.95, fontWeight: '600', textTransform: 'uppercase' },
+  kindBadge: { fontSize: 9.5, lineHeight: 9.5, letterSpacing: 0.95, fontWeight: '600', textTransform: 'uppercase' },
   // The undecorated one (mockup :35, :36 — "when"/"version"): no uppercase, no tracking, on purpose.
-  metaPlain: { fontFamily: FONT_FAMILY.monoRegular, fontSize: 10.5, lineHeight: 12.6, letterSpacing: 0, fontWeight: '400' },
-  metaWide: { fontFamily: FONT_FAMILY.monoRegular, fontSize: 10, lineHeight: 10, letterSpacing: 1.2, fontWeight: '400', textTransform: 'uppercase' },
-  quote: { fontFamily: FONT_FAMILY.serifItalic, fontSize: 17, lineHeight: 27.2, letterSpacing: 0, fontWeight: '400', fontStyle: 'italic', color: SHELL_COLORS.yours },
+  metaPlain: { fontSize: 10.5, lineHeight: 12.6, letterSpacing: 0, fontWeight: '400' },
+  metaWide: { fontSize: 10, lineHeight: 10, letterSpacing: 1.2, fontWeight: '400', textTransform: 'uppercase' },
+  quote: { fontSize: 17, lineHeight: 27.2, letterSpacing: 0, fontWeight: '400', fontStyle: 'italic', color: SHELL_COLORS.yours },
 };
 
 // ── appColor ──────────────────────────────────────────────────────────────────

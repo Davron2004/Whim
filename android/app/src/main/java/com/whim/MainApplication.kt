@@ -1,7 +1,6 @@
 package com.whim
 
 import android.app.Application
-import androidx.appcompat.app.AppCompatDelegate
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
@@ -31,22 +30,17 @@ class MainApplication : Application(), ReactApplication {
           }
           // In-app TurboModules (not autolinked — they live in this app, not node_modules):
           // WhimTone audio cues (effects-and-cues D6), WhimAppInfo (request-envelope D2) and
-          // WhimAgeSignal (legal-surface-v2 D11); WhimHaptics (design-system-v1 D11).
+          // WhimAgeSignal (legal-surface-v2 D11); WhimHaptics (design-system-v1 D11);
+          // WhimLaunchScreen (design-system-v1 D12).
           add(com.whim.tone.WhimTonePackage())
           add(com.whim.haptics.WhimHapticsPackage())
+          add(com.whim.launch.WhimLaunchScreenPackage())
         },
     )
   }
 
   override fun onCreate() {
     super.onCreate()
-    // The shell is light only (one fixed theme on every device). Pinning the app to day mode keeps
-    // the navigation bar's icons (the gesture handle, the three buttons) dark over it: edge to edge
-    // (`edgeToEdgeEnabled`), React Native sets the navigation-bar icon colour of the app's window and
-    // of every Modal's from the configuration's night mode, so a phone in dark mode would otherwise
-    // draw light navigation icons on the cream background. The status bar's icons are the JS
-    // `StatusBar`'s (`LauncherRoot`).
-    AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
     loadReactNative(this)
   }
 }

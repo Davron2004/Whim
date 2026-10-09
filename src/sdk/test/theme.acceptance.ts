@@ -15,7 +15,6 @@ import {
   STATUS_COLORS,
   STATUS_COLORS_ON_INK,
   TYPE_SCALE,
-  FONT_FAMILY,
   type WhimTheme,
 } from '../theme';
 import {
@@ -343,35 +342,6 @@ for (const [key, value] of Object.entries(STATUS_COLORS_ON_INK)) {
     microcopy.length,
     `the mono microcopy roles must stay distinguishable faces (${microcopy.join(', ')} collapsed to ${describe([...signatures])})`,
   );
-}
-
-// Every font name must correspond to a .ttf that ACTUALLY EXISTS ON DISK. RN/Android resolves
-// `fontFamily` by exact file base name, so naming a weight variant that was never bundled falls
-// back to the system font SILENTLY — no crash, no warning, wrong render on device. Checking
-// `TYPE_SCALE` against `FONT_FAMILY` alone would not catch it: both live in one module, so adding
-// a bogus `monoSemiBold: 'IBMPlexMono-SemiBold'` entry and pointing a face at it would still pass.
-// Hence this reads `assets/fonts/` and checks BOTH tables against the directory listing.
-// (Reading repo files from a suite is an established idiom here — see
-// `src/host/launcher/test/history-logic.suite.ts`, which reads a `.tsx` as source.)
-{
-  const fontsDir = path.join(findRepoRoot(process.cwd(), path.join('assets', 'fonts')), 'assets', 'fonts');
-  const onDisk = new Set(
-    fs
-      .readdirSync(fontsDir)
-      .filter((name) => name.toLowerCase().endsWith('.ttf'))
-      .map((name) => name.slice(0, -'.ttf'.length)),
-  );
-  ok(onDisk.size > 0, `assets/fonts/ holds no .ttf files — the shipped-font check would be vacuous (${fontsDir})`);
-
-  for (const [key, family] of Object.entries(FONT_FAMILY)) {
-    ok(onDisk.has(family), `FONT_FAMILY.${key} = "${family}" has no ${family}.ttf in assets/fonts/ (on disk: ${describe([...onDisk])})`);
-  }
-  for (const [role, face] of Object.entries(TYPE_SCALE)) {
-    ok(
-      onDisk.has(face.fontFamily),
-      `TYPE_SCALE.${role}.fontFamily "${face.fontFamily}" has no ${face.fontFamily}.ttf in assets/fonts/ (on disk: ${describe([...onDisk])})`,
-    );
-  }
 }
 
 console.log('SDK theme acceptance: PASS');
