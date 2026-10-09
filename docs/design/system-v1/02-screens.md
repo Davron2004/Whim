@@ -44,7 +44,7 @@ place in this redesign:
 | 17 | Build screen repeats "Reading your plan", technical liveness, a bar that never fills | No bar; one step list; time lines in plain words (Making, below) |
 | 18 | Typeface switch between shell and app | One family (`01-direction.md` §4) |
 | 19 | Tile names truncate the raw prompt | A short working name for tiles being made (`04-mini-app-icons.md`) |
-| 20 | Report sheet nearly full height with a squeezed notice | `large` detent with the notice above Send, inside the scroll (Report, below) |
+| 20 | Report sheet nearly full height with a squeezed notice | A pushed screen on the native stack with the notice above Send, inside the scroll (Report, below) |
 | 21 | Settings gear is a text glyph, emoji-like on iOS | The `settings` icon from the set |
 
 ## Your apps
@@ -301,8 +301,9 @@ own section, "This phone's ID" and "Make a new ID" at the top level, Advanced as
 ### Advanced (`#s-settings-advanced`)
 
 **New:** "Send error details" with its explanation as the group footer; **This phone**: Phone ID, truncated in
-the middle (IDs differ at the ends), with a copy button, and "Make a new ID" (confirm sheet); **Server**: Whim's server (checked) and Your own server › (confirm
-sheet, then the address field and its check line, as today).
+the middle (IDs differ at the ends), with a copy button, and "Make a new ID" (confirm sheet); **Server**:
+Whim's server (checked) and Your own server › (confirm sheet, then the address field and its check line, as
+today).
 
 ### Report a problem (`#s-report`)
 
@@ -312,9 +313,10 @@ preview with the app's code in mono, and "One moment" while sending.
 **New:** "Report a problem"; "What went wrong?" chips (one style); a note field; "Include what I asked for"
 switch; "What gets sent" collapsed with a chevron; the ID line as a footer; **Send report** (`ink`),
 **Cancel**. Sending: the button says "Sending…"; sent: a check, "Thanks. We'll look into it.", **Done**.
-The sheet uses the `large` detent, so its top stays clear of the status bar, and a send failure shows as a
-`Notice` at the end of the scrolling content, above the buttons, instead of squeezed between them
-(`android/110`, `117`).
+It is a pushed screen on the native stack (from History, Settings or the Whim sheet), so back and the OS
+gesture leave it and its top never meets the status bar; a send failure shows as a `Notice` at the end of the
+scrolling content, above the buttons, instead of squeezed between them (`android/110`, `117`). The note's
+keyboard keeps the "Include what I asked for" row in view.
 
 ### Update needed (`#s-update`)
 

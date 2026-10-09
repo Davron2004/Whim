@@ -57,8 +57,8 @@ and History's 42pt circle.
 
 ### Sheet
 
-The one presentation container. Report, App link, the Whim sheet, the making flow, confirmations and the
-tile menu's longer questions are all sheets.
+The one presentation container. The Whim sheet, the making flow, first-run consent and confirmations are all
+sheets; Report is a pushed screen on the native stack, and Share link uses the platform share sheet.
 
 | | |
 |---|---|
