@@ -14,6 +14,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import type { ReportReason } from '@whim/contract';
+import { byUtf8Bytes } from '../text-order';
+import { settle } from '../settle';
 
 export interface InsertReportParams {
   deviceId: string;
@@ -67,6 +69,8 @@ export interface ReportStore {
   /** Deletes rows with `receivedAt` strictly before `cutoffMs` and reclaims their storage.
    *  Returns the number of rows deleted. */
   purgeOlderThan(cutoffMs: number): Promise<number>;
+  /** Releases the store's handle or client. Nothing is called on the store after it. */
+  close(): Promise<void>;
 }
 
 /** The reports keyed by one device id (specs/device-records), for the operator command only. */
@@ -94,6 +98,12 @@ export interface PurgeSchedule {
   stop(): void;
 }
 
+/** The `receivedAt` the reports purge keeps from: `retentionDays` before `now`. The scheduled purge,
+ *  `reports purge` and `whim-admin purge` all cut here. */
+export function reportPurgeCutoff(now: number, retentionDays: number): number {
+  return now - retentionDays * 86_400_000;
+}
+
 /** Runs a purge immediately, then every `intervalMs` on an unref'd timer, for the process's
  *  lifetime — the timer never keeps the process alive on its own (composition calls `stop()` on
  *  shutdown, but exit does not depend on it). Errors from a scheduled purge are never thrown into
@@ -103,8 +113,7 @@ export function schedulePurge(store: ReportStore, options: PurgeScheduleOptions)
   const intervalMs = options.intervalMs ?? 3_600_000;
 
   const runOnce = (): void => {
-    const cutoffMs = now() - options.retentionDays * 86_400_000;
-    store.purgeOlderThan(cutoffMs)
+    store.purgeOlderThan(reportPurgeCutoff(now(), options.retentionDays))
       .catch(() => {
         // Swallowed deliberately: a failed scheduled purge must not crash the process or stop
         // future ticks. The operator's `reports purge` subcommand surfaces a failure explicitly.
@@ -122,65 +131,87 @@ export function schedulePurge(store: ReportStore, options: PurgeScheduleOptions)
 export class InMemoryReportStore implements ReportStore, ReportRecordKeeping {
   private readonly rows = new Map<string, ReportRow>();
 
-  async insert(params: InsertReportParams): Promise<string> {
-    const reportId = randomUUID();
-    this.rows.set(reportId, {
-      reportId,
-      receivedAt: params.now,
-      deviceId: params.deviceId,
-      reason: params.reason,
-      note: params.note ?? '',
-      appName: params.appName ?? '',
-      prompt: params.prompt ?? '',
-      source: params.source ?? '',
+  insert(params: InsertReportParams): Promise<string> {
+    return settle(() => {
+      const reportId = randomUUID();
+      this.rows.set(reportId, {
+        reportId,
+        receivedAt: params.now,
+        deviceId: params.deviceId,
+        reason: params.reason,
+        note: params.note ?? '',
+        appName: params.appName ?? '',
+        prompt: params.prompt ?? '',
+        source: params.source ?? '',
+      });
+      return reportId;
     });
-    return reportId;
   }
 
-  async list(params: ListReportsParams): Promise<ReportListItem[]> {
-    const cutoff = params.sinceDays !== undefined ? params.now - params.sinceDays * 86_400_000 : undefined;
-    const rows = [...this.rows.values()]
-      .filter((r) => cutoff === undefined || r.receivedAt >= cutoff)
-      .sort((a, b) => b.receivedAt - a.receivedAt)
-      .slice(0, params.limit ?? 50);
-    return rows.map(toListItem);
+  list(params: ListReportsParams): Promise<ReportListItem[]> {
+    return settle(() => {
+      const cutoff = params.sinceDays !== undefined ? params.now - params.sinceDays * 86_400_000 : undefined;
+      const rows = [...this.rows.values()]
+        .filter((r) => cutoff === undefined || r.receivedAt >= cutoff)
+        .sort((a, b) => b.receivedAt - a.receivedAt || -byReportId(a, b))
+        .slice(0, params.limit ?? 50);
+      return rows.map(toListItem);
+    });
   }
 
-  async get(reportId: string): Promise<ReportRow | undefined> {
-    return this.rows.get(reportId);
+  get(reportId: string): Promise<ReportRow | undefined> {
+    return settle(() => this.rows.get(reportId));
   }
 
-  async purgeOlderThan(cutoffMs: number): Promise<number> {
-    let deleted = 0;
-    for (const [id, row] of this.rows) {
-      if (row.receivedAt < cutoffMs) {
-        this.rows.delete(id);
-        deleted++;
+  purgeOlderThan(cutoffMs: number): Promise<number> {
+    return settle(() => {
+      let deleted = 0;
+      for (const [id, row] of this.rows) {
+        if (row.receivedAt < cutoffMs) {
+          this.rows.delete(id);
+          deleted++;
+        }
       }
-    }
-    return deleted;
+      return deleted;
+    });
   }
 
-  async listByDevice(deviceId: string): Promise<ReportRow[]> {
-    return [...this.rows.values()]
-      .filter((row) => row.deviceId === deviceId)
-      .sort((a, b) => a.receivedAt - b.receivedAt || a.reportId.localeCompare(b.reportId))
-      .map((row) => ({ ...row }));
+  listByDevice(deviceId: string): Promise<ReportRow[]> {
+    return settle(() =>
+      [...this.rows.values()]
+        .filter((row) => row.deviceId === deviceId)
+        .sort((a, b) => a.receivedAt - b.receivedAt || byReportId(a, b))
+        .map((row) => ({ ...row })),
+    );
   }
 
-  async deleteByDevice(deviceId: string): Promise<number> {
-    let deleted = 0;
-    for (const [id, row] of this.rows) {
-      if (row.deviceId === deviceId) {
-        this.rows.delete(id);
-        deleted++;
+  deleteByDevice(deviceId: string): Promise<number> {
+    return settle(() => {
+      let deleted = 0;
+      for (const [id, row] of this.rows) {
+        if (row.deviceId === deviceId) {
+          this.rows.delete(id);
+          deleted++;
+        }
       }
-    }
-    return deleted;
+      return deleted;
+    });
+  }
+
+  /** Nothing to release. */
+  close(): Promise<void> {
+    return Promise.resolve();
   }
 }
 
-function toListItem(row: ReportRow): ReportListItem {
+/** Report-id order as SQLite sorts its `id` column (BINARY collation): by UTF-8 bytes, never by
+ *  locale, and not by JS `<`, whose UTF-16 code units put an astral character before U+E000–U+FFFF. */
+export function byReportId(a: Pick<ReportRow, 'reportId'>, b: Pick<ReportRow, 'reportId'>): number {
+  return byUtf8Bytes(a.reportId, b.reportId);
+}
+
+/** The list shape of `row`: byte sizes in place of prompt and source. */
+export function toListItem(row: ReportRow): ReportListItem {
   return {
     reportId: row.reportId,
     receivedAt: row.receivedAt,
@@ -222,69 +253,98 @@ export class NodeSqliteReportStore implements ReportStore, ReportRecordKeeping {
     `);
   }
 
-  async insert(params: InsertReportParams): Promise<string> {
-    const reportId = randomUUID();
-    this.db.prepare(`
-      INSERT INTO reports (id, device_id, reason, received_at, note, app_name, prompt, source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      reportId,
-      params.deviceId,
-      params.reason,
-      params.now,
-      params.note ?? '',
-      params.appName ?? '',
-      params.prompt ?? '',
-      params.source ?? '',
-    );
-    return reportId;
+  insert(params: InsertReportParams): Promise<string> {
+    return settle(() => {
+      const reportId = randomUUID();
+      this.db.prepare(`
+        INSERT INTO reports (id, device_id, reason, received_at, note, app_name, prompt, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        reportId,
+        params.deviceId,
+        params.reason,
+        params.now,
+        params.note ?? '',
+        params.appName ?? '',
+        params.prompt ?? '',
+        params.source ?? '',
+      );
+      return reportId;
+    });
   }
 
-  async list(params: ListReportsParams): Promise<ReportListItem[]> {
-    const limit = params.limit ?? 50;
-    const rows = (
-      params.sinceDays !== undefined
-        ? this.db.prepare(`
-            SELECT id, device_id, reason, received_at, note, app_name, prompt, source
-            FROM reports WHERE received_at >= ? ORDER BY received_at DESC LIMIT ?
-          `).all(params.now - params.sinceDays * 86_400_000, limit)
-        : this.db.prepare(`
-            SELECT id, device_id, reason, received_at, note, app_name, prompt, source
-            FROM reports ORDER BY received_at DESC LIMIT ?
-          `).all(limit)
-    ) as unknown as RawRow[];
-    return rows.map((r) => toListItem(fromRawRow(r)));
+  list(params: ListReportsParams): Promise<ReportListItem[]> {
+    return settle(() => {
+      const limit = params.limit ?? 50;
+      const rows = (
+        params.sinceDays !== undefined
+          ? this.db.prepare(`
+              SELECT id, device_id, reason, received_at, note, app_name, prompt, source
+              FROM reports WHERE received_at >= ? ORDER BY received_at DESC, id DESC LIMIT ?
+            `).all(params.now - params.sinceDays * 86_400_000, limit)
+          : this.db.prepare(`
+              SELECT id, device_id, reason, received_at, note, app_name, prompt, source
+              FROM reports ORDER BY received_at DESC, id DESC LIMIT ?
+            `).all(limit)
+      ) as unknown as RawRow[];
+      return rows.map((r) => toListItem(fromRawRow(r)));
+    });
   }
 
-  async get(reportId: string): Promise<ReportRow | undefined> {
-    const row = this.db.prepare(`
-      SELECT id, device_id, reason, received_at, note, app_name, prompt, source
-      FROM reports WHERE id = ?
-    `).get(reportId) as RawRow | undefined;
-    return row ? fromRawRow(row) : undefined;
+  get(reportId: string): Promise<ReportRow | undefined> {
+    return settle(() => {
+      const row = this.db.prepare(`
+        SELECT id, device_id, reason, received_at, note, app_name, prompt, source
+        FROM reports WHERE id = ?
+      `).get(reportId) as RawRow | undefined;
+      return row ? fromRawRow(row) : undefined;
+    });
   }
 
-  async purgeOlderThan(cutoffMs: number): Promise<number> {
-    const result = this.db.prepare('DELETE FROM reports WHERE received_at < ?').run(cutoffMs);
-    return Number(result.changes);
+  purgeOlderThan(cutoffMs: number): Promise<number> {
+    return settle(() => {
+      const result = this.db.prepare('DELETE FROM reports WHERE received_at < ?').run(cutoffMs);
+      return Number(result.changes);
+    });
   }
 
-  async listByDevice(deviceId: string): Promise<ReportRow[]> {
-    const rows = this.db.prepare(`
-      SELECT id, device_id, reason, received_at, note, app_name, prompt, source
-      FROM reports WHERE device_id = ? ORDER BY received_at, id
-    `).all(deviceId) as unknown as RawRow[];
-    return rows.map(fromRawRow);
+  listByDevice(deviceId: string): Promise<ReportRow[]> {
+    return settle(() => {
+      const rows = this.db.prepare(`
+        SELECT id, device_id, reason, received_at, note, app_name, prompt, source
+        FROM reports WHERE device_id = ? ORDER BY received_at, id
+      `).all(deviceId) as unknown as RawRow[];
+      return rows.map(fromRawRow);
+    });
   }
 
-  async deleteByDevice(deviceId: string): Promise<number> {
-    const result = this.db.prepare('DELETE FROM reports WHERE device_id = ?').run(deviceId);
-    return Number(result.changes);
+  deleteByDevice(deviceId: string): Promise<number> {
+    return settle(() => {
+      const result = this.db.prepare('DELETE FROM reports WHERE device_id = ?').run(deviceId);
+      return Number(result.changes);
+    });
   }
 
   /** Release the database handle. Required before re-opening the same file path. */
-  close(): void {
-    this.db.close();
+  close(): Promise<void> {
+    return settle(() => {
+      this.db.close();
+    });
+  }
+}
+
+/** Every report in the `reports.db` at `dbPath`, oldest first, read through a read-only connection
+ *  so the file is never written (the SQLite-to-Firestore import). */
+export function readReportsFile(dbPath: string): ReportRow[] {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const rows = db.prepare(`
+      SELECT id, device_id, reason, received_at, note, app_name, prompt, source
+      FROM reports ORDER BY received_at, id
+    `).all() as unknown as RawRow[];
+    return rows.map(fromRawRow);
+  } finally {
+    db.close();
   }
 }
 

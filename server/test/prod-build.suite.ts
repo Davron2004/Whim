@@ -13,6 +13,7 @@
  * Also covers the OpenRouter usage-and-cost transport composition wires (`usage/openrouter-stats.ts`).
  */
 import fs from 'node:fs';
+import http2 from 'node:http2';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,10 +22,11 @@ import type { Readable } from 'node:stream';
 import { createRequire, isBuiltin } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
+import { build } from 'esbuild';
 import { check, eq, section } from './harness';
-import { TIMED_OUT, waitFor, within } from './route-doubles';
+import { PROTOCOL_HEADER_LINE, TIMED_OUT, waitFor, within } from './route-doubles';
 import { productionEntryInputs } from './build-fixtures';
-import { buildRuntimeTree } from '../build.mjs';
+import { buildRuntimeTree, declaredRuntimePackages, devBundleExternals } from '../build.mjs';
 import { RUNTIME_ASSETS } from '../src/runtime-assets';
 import { loadFewShotExamples } from '../src/generation/prompts/inputs';
 import { openRouterUsageAndCostTransport } from '../src/usage/openrouter-stats';
@@ -43,13 +45,12 @@ const BUNDLES = [
 ];
 const BOOT_MS = 20_000;
 const EXIT_MS = 15_000;
+/** The ceiling on a boot refusal: the case waits for the process to exit, which takes about half a
+ *  second idle, and this only bounds a hang. A starved machine stretches a boot (loading the
+ *  Firestore client most of all) far past EXIT_MS, so a refusal never times out first. */
+const BOOT_REFUSAL_MS = 120_000;
 const DEVICE_A = 'a11a11a1-a11a-41a1-81a1-a11a11a11a11';
 const DEVICE_B = 'b22b22b2-b22b-42b2-82b2-b22b22b22b22';
-
-function declaredRuntimePackages(): string[] {
-  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'server', 'package.json'), 'utf8')) as { dependencies: Record<string, string> };
-  return Object.keys(manifest.dependencies).filter((name) => !name.startsWith('@whim/'));
-}
 
 function listFiles(dir: string, prefix = ''): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -163,8 +164,8 @@ class TreeProcess {
   }
 }
 
-async function exitOf(proc: TreeProcess): Promise<Exit | typeof TIMED_OUT> {
-  return within(proc.exited, EXIT_MS);
+async function exitOf(proc: TreeProcess, ms: number = EXIT_MS): Promise<Exit | typeof TIMED_OUT> {
+  return within(proc.exited, ms);
 }
 
 /** An HTTP/1.1 request written straight onto a TCP socket, accumulating the raw response. */
@@ -189,6 +190,7 @@ function generateHead(deviceId: string, payload: string, extra: string[] = []): 
     'Content-Type: application/json',
     `Content-Length: ${Buffer.byteLength(payload)}`,
     `x-whim-device: ${deviceId}`,
+    PROTOCOL_HEADER_LINE,
     ...extra,
   ];
 }
@@ -303,9 +305,9 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
   // the privacy policy publishes and one inside it: boot's scheduled purge must take only the first.
   const dayMs = 86_400_000;
   const seed = new NodeSqliteWaitlistStore(path.join(dataDir, 'waitlist.db'));
-  seed.upsert({ email: 'expired@example.com', platform: 'ios', updatesOptOut: false, noticeId: CURRENT_NOTICE_ID, now: Date.now() - (WAITLIST_RETENTION_DAYS + 1) * dayMs });
-  seed.upsert({ email: 'kept@example.com', platform: 'ios', updatesOptOut: false, noticeId: CURRENT_NOTICE_ID, now: Date.now() - (WAITLIST_RETENTION_DAYS - 1) * dayMs });
-  seed.close();
+  await seed.upsert({ email: 'expired@example.com', platform: 'ios', updatesOptOut: false, noticeId: CURRENT_NOTICE_ID, now: Date.now() - (WAITLIST_RETENTION_DAYS + 1) * dayMs });
+  await seed.upsert({ email: 'kept@example.com', platform: 'ios', updatesOptOut: false, noticeId: CURRENT_NOTICE_ID, now: Date.now() - (WAITLIST_RETENTION_DAYS - 1) * dayMs });
+  await seed.close();
   const waitlistWal = path.join(dataDir, 'waitlist.db-wal');
   const proc = new TreeProcess(fixture.tree, {
     WHIM_PIPELINE: 'stub',
@@ -319,6 +321,8 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
     check('the tree started and listened', await proc.waitForLog('whim-server listening', BOOT_MS), proc.text().slice(-2000));
     eq('it logs the bound URL', proc.logs('whim-server listening')[0]?.url, `http://127.0.0.1:${port}`);
     eq('the boot line carries the commit the image was built from', proc.logs('whim-server listening')[0]?.commit, commit);
+    const stores = proc.logs('stores opened')[0];
+    eq('boot logs the store backend it opened, with its data directory', [stores?.storeBackend, stores?.dataDir], ['sqlite', dataDir]);
     const res = await fetch(`http://127.0.0.1:${port}/healthz`);
     eq('GET /healthz answers 200', res.status, 200);
     eq('with the service identity, the same commit and both minimum builds off', await res.json(), { ok: true, service: 'whim-server', commit, minBuild: { ios: 0, android: 0 } });
@@ -362,10 +366,28 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
   eq('the tree\'s whim-waitlist.mjs exports the signup the server stored', [exported.status, exported.stdout.split('\n')[1]?.split(',').slice(0, 3)], [0, ['tree.person@example.com', 'android', 'false']]);
 }
 
+/** A loopback stand-in for a Firestore the server's credentials cannot read: every call is answered
+ *  `PERMISSION_DENIED` with `message`. Point `FIRESTORE_EMULATOR_HOST` at `host`. */
+async function denyingFirestore(message: string): Promise<{ host: string; calls: () => number; close: () => Promise<void> }> {
+  let calls = 0;
+  const server = http2.createServer();
+  server.on('stream', (stream: http2.ServerHttp2Stream) => {
+    calls++;
+    stream.respond({ ':status': 200, 'content-type': 'application/grpc', 'grpc-status': '7', 'grpc-message': message }, { endStream: true });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as net.AddressInfo;
+  return {
+    host: `127.0.0.1:${port}`,
+    calls: () => calls,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
 async function expectBootRefusal(what: string, root: string, env: Record<string, string>, named: string): Promise<void> {
   const proc = new TreeProcess(root, { WHIM_SERVER_HOST: '127.0.0.1', WHIM_SERVER_PORT: String(await freePort()), ...env });
   try {
-    const exit = await exitOf(proc);
+    const exit = await exitOf(proc, BOOT_REFUSAL_MS);
     check(`${what}: the process exits non-zero`, exit !== TIMED_OUT && exit.code !== 0 && exit.code !== null, JSON.stringify(exit));
     check(`${what}: its output names ${named}`, proc.text().includes(named), proc.text().slice(-2000));
     eq(`${what}: it never listened`, proc.logs('whim-server listening').length, 0);
@@ -412,6 +434,42 @@ async function testBootRefusals(fixture: Fixture): Promise<void> {
     { NODE_ENV: 'production', WHIM_PIPELINE: 'stub', WHIM_DATA_DIR: fixture.dataDir('prod-stub') },
     'WHIM_PIPELINE',
   );
+  // specs/server-storage-backends: an unknown store backend fails boot naming the variable and both
+  // allowed values.
+  await expectBootRefusal(
+    'WHIM_STORE_BACKEND=postgres',
+    fixture.tree,
+    { WHIM_PIPELINE: 'stub', WHIM_STORE_BACKEND: 'postgres', WHIM_DATA_DIR: fixture.dataDir('postgres-backend') },
+    'WHIM_STORE_BACKEND must be one of sqlite, firestore',
+  );
+  // specs/server-storage-backends "An unreachable Firestore refuses to boot": the probe read fails
+  // boot at its `stores` step, naming the backend and the database, before the server listens.
+  const denied = 'whim-test credentials cannot read this database';
+  const firestore = await denyingFirestore(denied);
+  try {
+    await expectBootRefusal(
+      'WHIM_STORE_BACKEND=firestore with credentials that cannot read the database',
+      fixture.tree,
+      {
+        WHIM_PIPELINE: 'stub',
+        WHIM_STORE_BACKEND: 'firestore',
+        WHIM_DATA_DIR: fixture.dataDir('firestore-denied'),
+        FIRESTORE_EMULATOR_HOST: firestore.host,
+        GOOGLE_CLOUD_PROJECT: 'demo-whim-denied',
+      },
+      // As the JSON `boot failed` line carries it, quotes escaped.
+      JSON.stringify(`WHIM_STORE_BACKEND=firestore: cannot read Firestore database "(default)": 7 PERMISSION_DENIED: ${denied}`).slice(1, -1),
+    );
+    check('  ... after its probe reached the database', firestore.calls() > 0, String(firestore.calls()));
+  } finally {
+    await firestore.close();
+  }
+  await expectBootRefusal(
+    'the stub delay without the stub selector',
+    fixture.tree,
+    { WHIM_STUB_DELAY_MS: '1500', WHIM_DATA_DIR: fixture.dataDir('stub-delay-real') },
+    'WHIM_STUB_DELAY_MS',
+  );
 
   // specs/device-records "Too long a report retention refuses to start": the process exits naming
   // the variable and the maximum the current disclosure manifest publishes for reports.
@@ -425,7 +483,7 @@ async function testBootRefusals(fixture: Fixture): Promise<void> {
       WHIM_SERVER_PORT: String(await freePort()),
     });
     try {
-      const exit = await exitOf(proc);
+      const exit = await exitOf(proc, BOOT_REFUSAL_MS);
       const failure = proc.logs('boot failed')[0];
       const detail = typeof failure?.detail === 'string' ? failure.detail : '';
       check('WHIM_REPORT_RETENTION_DAYS=400: the process exits non-zero', exit !== TIMED_OUT && exit.code !== 0 && exit.code !== null, JSON.stringify(exit));
@@ -455,6 +513,38 @@ async function testBootRefusals(fixture: Fixture): Promise<void> {
     },
     'browser_launch',
   );
+}
+
+/** `WHIM_STUB_DELAY_MS` reaches the stub pipeline the composed server runs (beta-1 fix-3): with a
+ *  1.5 s wait before each event, a build's first event takes at least that long. RED while the
+ *  server kept its fixed 200 ms. */
+async function testStubDelayReachesThePipeline(fixture: Fixture): Promise<void> {
+  section('spec: WHIM_STUB_DELAY_MS sets the stub pipeline\'s wait before each event');
+
+  const delayMs = 1500;
+  const port = await freePort();
+  const proc = new TreeProcess(fixture.tree, {
+    WHIM_PIPELINE: 'stub',
+    WHIM_STUB_DELAY_MS: String(delayMs),
+    WHIM_DATA_DIR: fixture.dataDir('stub-delay'),
+    WHIM_SERVER_HOST: '127.0.0.1',
+    WHIM_SERVER_PORT: String(port),
+  });
+  let stream: ReturnType<typeof rawRequest> | undefined;
+  try {
+    check('setup: the tree listened', await proc.waitForLog('whim-server listening', BOOT_MS), proc.text().slice(-2000));
+    const payload = JSON.stringify({ prompt: 'a tip splitter' });
+    const sentAt = Date.now();
+    const opened = rawRequest(port, generateHead(DEVICE_A, payload), payload);
+    stream = opened;
+    const arrived = await waitFor(() => opened.text().includes('event: '), delayMs + 5000);
+    const elapsed = Date.now() - sentAt;
+    check('the generation stream delivered its first event', arrived, opened.text().slice(-500));
+    check(`no sooner than the ${delayMs} ms wait`, elapsed >= delayMs, `${elapsed} ms`);
+  } finally {
+    stream?.socket.destroy();
+    await proc.dispose();
+  }
 }
 
 /** Starts the stub tree and opens one generation stream that has delivered its first event. */
@@ -578,14 +668,114 @@ async function testUsageAndCostTransport(): Promise<void> {
   check('a transport failure rejects, for the resolver to retry', rejected);
 }
 
+/** Calls that stand for a list `server/build.mjs` derives from `server/package.json`. */
+const DERIVED_EXTERNALS: Readonly<Record<string, () => string[]>> = { declaredRuntimePackages, devBundleExternals };
+
+/** The packages a `derived` call above stands for, or `undefined` for any other expression. */
+function derivedExternals(node: ts.Expression): string[] | undefined {
+  if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return undefined;
+  return DERIVED_EXTERNALS[node.expression.text]?.();
+}
+
+/** The packages an `external` option's value names. A list entry that is neither a string nor a
+ *  derived call is reported as `?<its text>`, so it can never pass for a package. */
+function externalsOf(value: ts.Expression | undefined, sourceFile: ts.SourceFile): string[] {
+  if (value === undefined) return [];
+  const unknown = (node: ts.Node): string[] => [`?${node.getText(sourceFile)}`];
+  if (!ts.isArrayLiteralExpression(value)) return derivedExternals(value) ?? unknown(value);
+  return value.elements.flatMap((element) => {
+    if (ts.isStringLiteralLike(element)) return [element.text];
+    return (ts.isSpreadElement(element) && derivedExternals(element.expression)) || unknown(element);
+  });
+}
+
+/** The value of the property `name` an object literal assigns, if any. */
+function propertyValue(options: ts.ObjectLiteralExpression, name: string): ts.Expression | undefined {
+  for (const property of options.properties) {
+    if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) && property.name.text === name) return property.initializer;
+  }
+  return undefined;
+}
+
+/** Every esbuild `build({ bundle: true, ... })` call in `source`, with the packages its `external`
+ *  option keeps out of the bundle. */
+function bundleExternals(file: string, source: string): { at: string; externals: string[] }[] {
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, file.endsWith('.ts') ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+  const found: { at: string; externals: string[] }[] = [];
+  const visit = (node: ts.Node): void => {
+    const options = ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'build' ? node.arguments[0] : undefined;
+    if (options && ts.isObjectLiteralExpression(options) && propertyValue(options, 'bundle')?.kind === ts.SyntaxKind.TrueKeyword) {
+      const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+      found.push({ at: `${file}:${line}`, externals: externalsOf(propertyValue(options, 'external'), sourceFile) });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found;
+}
+
+/** Server sources that may hold a bundle config: every `.ts`/`.mjs` outside dependencies and build
+ *  output. */
+function serverSources(dir: string, rel: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const child = `${rel}/${entry.name}`;
+    if (entry.isDirectory()) return entry.name === 'node_modules' || entry.name === 'dist' ? [] : serverSources(path.join(dir, entry.name), child);
+    return /\.(ts|mjs)$/.test(entry.name) && !entry.name.endsWith('.d.mts') && !entry.name.includes('.tmp.') ? [child] : [];
+  });
+}
+
+/** Every esbuild bundle of server code — production, dev runner or test runner — keeps each
+ *  declared runtime package external: bundled, they throw "Dynamic require of …" at import time,
+ *  in whichever runner missed one. */
+function testBundlesKeepRuntimePackagesExternal(): void {
+  const declared = declaredRuntimePackages();
+  // evals/cli.mjs bundles server/src/pipeline.ts for `--generate`.
+  const files = [...serverSources(path.join(ROOT, 'server'), 'server'), 'evals/cli.mjs'];
+  const configs = files.flatMap((file) => bundleExternals(file, fs.readFileSync(path.join(ROOT, file), 'utf8')));
+  for (const runner of ['server/test/run.mjs', 'server/test/e2e.run.mjs', 'server/test/e2e.ts', 'server/test/firestore.run.mjs', 'server/dev.mjs', 'server/build.mjs', 'evals/cli.mjs']) {
+    check(`the scan finds the bundle config in ${runner}`, configs.some((config) => config.at.startsWith(`${runner}:`)));
+  }
+  for (const config of configs) {
+    eq(`${config.at} keeps every declared runtime package external`, declared.filter((name) => !config.externals.includes(name)), []);
+  }
+  eq(
+    'red-check: the scan reads a hand-kept list as written and never credits an unrecognised spread',
+    bundleExternals('fixture.mjs', "build({ bundle: true, external: ['pino', ...declaredRuntimePackages().slice(1)] });\nbuild({ bundle: false });").map((config) => config.externals),
+    [['pino', '?...declaredRuntimePackages().slice(1)']],
+  );
+}
+
+/** `node server/build.mjs` writes the runtime tree; a bundle that inlines build.mjs (for its
+ *  externals) shares that module code, and started directly it must build nothing. */
+async function testInlinedBuildModuleBuildsNothing(): Promise<void> {
+  section('server/build.mjs: a bundle that inlines it, started directly, builds nothing');
+  fs.mkdirSync(path.join(ROOT, 'server', 'dist'), { recursive: true });
+  // Inside the checkout, so the bundle resolves esbuild as build.mjs does.
+  const dir = fs.mkdtempSync(path.join(ROOT, 'server', 'dist', 'inlined-build-'));
+  try {
+    const entry = path.join(dir, 'entry.tmp.mjs');
+    const outfile = path.join(dir, 'bundle.tmp.mjs');
+    fs.writeFileSync(entry, `import { devBundleExternals } from ${JSON.stringify(path.join(ROOT, 'server', 'build.mjs'))};\nconsole.log(devBundleExternals().length > 0);\n`);
+    await build({ entryPoints: [entry], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: devBundleExternals() });
+    check('setup: the bundle inlines build.mjs', fs.readFileSync(outfile, 'utf8').includes('buildRuntimeTree'));
+    const run = spawnSync(process.execPath, [outfile], { cwd: ROOT, encoding: 'utf8', timeout: BOOT_REFUSAL_MS });
+    eq('it runs its own code and exits 0, building no tree', [run.status, run.stdout, run.stderr], [0, 'true\n', '']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 export async function runProdBuildTests(): Promise<void> {
   section('Production build');
+  testBundlesKeepRuntimePackagesExternal();
+  await testInlinedBuildModuleBuildsNothing();
   await testUsageAndCostTransport();
 
   const fixture = await prepareTree();
   try {
     await testStubTreeServes(fixture);
     await testBootRefusals(fixture);
+    await testStubDelayReachesThePipeline(fixture);
     await testDrainCompletesStream(fixture);
     await testDrainDeadlineAborts(fixture);
     await testSecondSignalSkipsWait(fixture);

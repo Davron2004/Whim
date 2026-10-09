@@ -156,9 +156,43 @@ async function testListAndGet(): Promise<void> {
   eq('promptBytes counts UTF-8 bytes, not characters', withMultibyte?.promptBytes, 6);
 }
 
+async function testFailuresAreRejections(): Promise<void> {
+  section('Report store — a failing operation rejects, never throws synchronously');
+
+  const store = new NodeSqliteReportStore(':memory:');
+  await store.close();
+  // The handle is closed, so SQLite throws inside every operation; callers such as
+  // `store.purgeOlderThan(...).catch(...)` only see a rejection, never a synchronous throw.
+  const calls: Array<[string, () => Promise<unknown>]> = [
+    ['insert', () => store.insert({ deviceId: DEVICE_A, reason: 'other', now: 1 })],
+    ['list', () => store.list({ now: 1 })],
+    ['get', () => store.get('id')],
+    ['purgeOlderThan', () => store.purgeOlderThan(1)],
+    ['listByDevice', () => store.listByDevice(DEVICE_A)],
+    ['deleteByDevice', () => store.deleteByDevice(DEVICE_A)],
+    ['close (already closed)', () => store.close()],
+  ];
+  for (const [name, call] of calls) {
+    let promise: Promise<unknown> | undefined;
+    let threw = false;
+    try {
+      promise = call();
+    } catch (e) {
+      threw = e instanceof Error;
+    }
+    check(`${name} does not throw synchronously`, !threw);
+    let rejected = false;
+    await promise?.catch(() => {
+      rejected = true;
+    });
+    check(`${name} returns a rejected promise`, rejected);
+  }
+}
+
 export async function runReportsTests(): Promise<void> {
   await testStoredFields();
   await testRetentionPurge();
   await testSchedulePurge();
   await testListAndGet();
+  await testFailuresAreRejections();
 }

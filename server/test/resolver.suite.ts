@@ -59,12 +59,14 @@ function countingCreditStore(inner: UsageStore): { store: UsageStore; creditCall
     },
     read: (deviceId) => inner.read(deviceId),
     admit: (params) => inner.admit(params),
+    unitAvailable: (params) => inner.unitAvailable(params),
     refund: (requestId) => inner.refund(requestId),
     settle: (requestId, params) => inner.settle(requestId, params),
     recordCost: (requestId, params) => inner.recordCost(requestId, params),
     listUnresolvedCostRows: (query) => inner.listUnresolvedCostRows(query),
     summary: (params) => inner.summary(params),
     purgeLedger: (beforeUtcDay) => inner.purgeLedger(beforeUtcDay),
+    close: () => inner.close(),
   };
   return { store, creditCalls };
 }
@@ -399,6 +401,7 @@ async function testSweepStandsDownWhileDraining(): Promise<void> {
     credit: (deviceId, u) => store.credit(deviceId, u),
     read: (deviceId) => store.read(deviceId),
     admit: (params) => store.admit(params),
+    unitAvailable: (params) => store.unitAvailable(params),
     refund: (requestId) => store.refund(requestId),
     settle: (requestId, params) => store.settle(requestId, params),
     recordCost: (requestId, params) => store.recordCost(requestId, params),
@@ -408,6 +411,7 @@ async function testSweepStandsDownWhileDraining(): Promise<void> {
     },
     summary: (params) => store.summary(params),
     purgeLedger: (beforeUtcDay) => store.purgeLedger(beforeUtcDay),
+    close: () => store.close(),
   };
 
   const draining = await runCostResolutionSweep({

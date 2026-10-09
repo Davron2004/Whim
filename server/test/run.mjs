@@ -14,6 +14,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import { devBundleExternals } from '../build.mjs';
 import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -50,13 +51,9 @@ await build({
   format: 'esm',
   target: 'node22', // node:sqlite (DatabaseSync) needs Node 22+ — match dev.mjs, not a misleading node20
   logLevel: 'warning',
-  // stages.suite.ts pulls in esbuild transitively (src/generation/stages/build.ts ->
-  // synthrun/builder.ts), prompts.suite.ts imports the `typescript` package directly, and
-  // `src/logger.ts` imports `pino`; all three ship CJS `require()` calls that bundle into an
-  // unsupported dynamic require under esbuild's ESM output (`pino` throws `Dynamic require of
-  // "node:os" is not supported` at import time). Externalize rather than bundle them — Node
-  // resolves them from node_modules at runtime instead.
-  external: ['typescript', 'esbuild', 'pino'],
+  // The server's declared runtime packages and the tool packages stay external (`server/build.mjs`);
+  // Node resolves them from node_modules at run time.
+  external: devBundleExternals(path.join(here, '..')),
 });
 
 // The logger's pretty transport (dev default) writes from a worker thread, which no in-process
