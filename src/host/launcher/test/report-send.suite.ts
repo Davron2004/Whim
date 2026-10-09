@@ -141,7 +141,7 @@ export async function runReportSendTests(h: Harness): Promise<void> {
         if (recipient === 'AnyCognition') h.ok(!line[0].includes('server you chose'), `${baseUrl}: and no server of the user’s own`);
         else h.ok(line[0].includes('not to AnyCognition'), `${baseUrl}: and says AnyCognition doesn’t get it`);
         await press(button(tree, COPY.reportSend));
-        h.ok(urls.at(-1)?.startsWith(baseUrl), `${baseUrl}: Send posts to the recipient the line names`);
+        h.ok(urls.at(-1)?.startsWith(baseUrl) === true, `${baseUrl}: Send posts to the recipient the line names`);
       } finally {
         await unmountScreen(tree);
       }
