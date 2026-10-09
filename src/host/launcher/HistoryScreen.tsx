@@ -1,13 +1,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // HistoryScreen — the `4a` timeline (shell-redesign-v2 chain-E; version-history spec).
 // ─────────────────────────────────────────────────────────────────────────────
-// A full-screen sibling of SettingsScreen: its own hardware-back binding returning to Home,
-// `SHELL_PALETTE` colors, `TYPE_SCALE` faces, and every label from `copy.ts`. History is
-// only reachable from the home action sheet, so the app itself is never running while this
-// screen is open — no live-realm interaction to design for. All store access goes through
-// `StoreAccess` (never a raw `VersionStore`); the row model (summary-or-prompt headline, kind
-// grouping, at-most-two actions) lives in `history-logic.ts` so it is Node-testable without
-// rendering this component.
+// A full-screen sibling of SettingsScreen: its own hardware-back binding returning to where it
+// was opened from, `SHELL_PALETTE` colors, `TYPE_SCALE` faces, and every label from `copy.ts`.
+// History opens from Home's action sheet or the running app's orb, and replaces either screen,
+// so the app itself is never running while this screen is open — no live-realm interaction to
+// design for. All store access goes through
+// `StoreAccess` (never a raw `VersionStore`); the row model (the user's quoted prompt as the
+// headline, Whim's summary for the opened row, kind grouping, at-most-two actions) lives in
+// `history-logic.ts` so it is Node-testable without rendering this component.
 //
 // Tapping a row EXPANDS it (never restores) — restoring and forking are explicit actions inside
 // an expanded row, each behind a confirm sheet whose safe option is the large button (D11).
@@ -15,7 +16,7 @@
 // summary) and render through the one shared `WhimProse` renderer; everything else on this
 // screen is product copy and is never marked (Whim Syntax rule 7).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { KIND_BADGE_COLORS, RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { SummaryKind } from '@whim/contract';
 import { InstalledApp } from './app-index';
@@ -52,16 +53,19 @@ import {
   type HistoryLoadState,
   type RestoreDiffState,
 } from './history-wait';
+import ConfirmSheet, { type ConfirmSheetContent } from './ConfirmSheet';
 import { BreathingView } from './flow-skeletons';
 import { SHELL_PALETTE } from './theme';
 import { tileColor } from './tiles';
 import { useSystemBack } from './use-system-back';
 import WhimProse from '../ui/whim-prose/WhimProse';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 
 export interface HistoryScreenProps {
   app: InstalledApp;
   access: StoreAccess;
-  /** Returns to the home screen — supplied by `LauncherRoot` (same callback Home refreshes on). */
+  /** Leaves History, for where it was opened from: the app it was opened over, or Home. */
   onBack: () => void;
   /**
    * Opens the compose step scoped to `app` — the current version's one action, "Change it from
@@ -93,6 +97,10 @@ const TOAST_TIMEOUT_MS = 2200;
  *  tokens module (`KIND_BADGE_COLORS`, `src/sdk/design-tokens.ts`) so no inline hex lives on this
  *  screen. */
 const KIND_BADGE = KIND_BADGE_COLORS;
+
+function historyOperationFailed(operation: 'list' | 'restore-diff' | 'annotation'): void {
+  log.warn(CHANNELS.app, 'history operation failed', { operation });
+}
 
 /** The ring around the current version's timeline dot — design `4a` writes it as
  *  `rgba(13,148,136,.3)` (`Whim Mobile.dc.html:848`), which is exactly the reserved done/working
@@ -152,7 +160,9 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
     }, setLoad);
 
   useEffect(() => {
-    load();
+    load().catch(() => {
+      historyOperationFailed('list');
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [access, app]);
 
@@ -171,9 +181,16 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
     }
     setRestoreDiff({ status: 'pending' });
     let cancelled = false;
-    fieldsLeavingViewOnRestore(access, app, confirm.row.id, activeId).then(fields => {
-      if (!cancelled) setRestoreDiff({ status: 'ready', fields });
-    });
+    fieldsLeavingViewOnRestore(access, app, confirm.row.id, activeId)
+      .then(fields => {
+        if (!cancelled) setRestoreDiff({ status: 'ready', fields });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRestoreDiff(RESTORE_DIFF_NONE);
+          historyOperationFailed('restore-diff');
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -196,7 +213,9 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
     const ran = await runConfirmOp(confirmFlight, setConfirmBusy, () => access.rollback(app, row.id));
     if (!ran) return;
     setConfirm(null);
-    await load();
+    await load().catch(() => {
+      historyOperationFailed('list');
+    });
     showToast(restoredToast(row.version));
   };
 
@@ -303,23 +322,16 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
         </View>
       )}
 
-      <Modal visible={confirm != null} transparent animationType="slide" onRequestClose={() => setConfirm(null)}>
-        <Pressable style={styles.scrim} onPress={() => setConfirm(null)}>
-          <Pressable style={[styles.sheet, { backgroundColor: p.card }]}>
-            {confirm && (
-              <ConfirmBody
-                confirm={confirm}
-                appName={app.name}
-                diff={restoreDiff}
-                busy={confirmBusy}
-                onCancel={() => setConfirm(null)}
-                onConfirmRestore={confirmRestore}
-                onConfirmCopy={confirmCopy}
-              />
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
+      {/* The confirm sheet (E7/D11): the SAFE option (`Cancel`) is the large, full-width button; the
+          consequential action is demoted to plain text beneath it — never the other way around. */}
+      <ConfirmSheet
+        confirm={confirm && confirmContent(confirm, app.name)}
+        busy={confirmBusy}
+        onCancel={() => setConfirm(null)}
+        onConfirm={confirm?.kind === 'restore' ? confirmRestore : confirmCopy}
+      >
+        {confirm?.kind === 'restore' && <RestoreReassurance diff={restoreDiff} />}
+      </ConfirmSheet>
     </View>
   );
 }
@@ -374,9 +386,17 @@ function HistoryRowView({
       return;
     }
     let cancelled = false;
-    annotationBetween(access, app, predecessorId, row.id).then(fields => {
-      if (!cancelled) setAnnotationFields(fields);
-    });
+    setAnnotationFields([]);
+    annotationBetween(access, app, predecessorId, row.id)
+      .then(fields => {
+        if (!cancelled) setAnnotationFields(fields);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAnnotationFields([]);
+          historyOperationFailed('annotation');
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -425,6 +445,15 @@ function HistoryRowView({
 
         {expanded && (
           <View style={[styles.expandedBody, { borderTopColor: p.cardBorder }]}>
+            {row.result && (
+              <WhimProse
+                text={row.result.text}
+                apps={proseApps}
+                storedPrompt={row.promptText}
+                marks={row.result.marks}
+                style={[TYPE_SCALE.body, { color: p.textMuted }]}
+              />
+            )}
             {row.touched.length > 0 && (
               <>
                 <Text style={[TYPE_SCALE.metaWide, { color: p.textMuted, marginTop: SPACING.sm }]}>
@@ -490,67 +519,35 @@ function ActionButton({
   );
 }
 
-/**
- * The confirm sheet (E7/D11): the SAFE option (`Cancel`) is the large, full-width button; the
- * consequential action is demoted to plain text beneath it — never the other way around.
- */
-function ConfirmBody({
-  confirm,
-  appName,
-  diff,
-  busy,
-  onCancel,
-  onConfirmRestore,
-  onConfirmCopy,
-}: Readonly<{
-  confirm: ConfirmState;
-  appName: string;
-  diff: RestoreDiffState;
-  /** A restore/fork is running for this confirmation: the consequential control says so and stops
-   *  accepting taps until it settles. */
-  busy: boolean;
-  onCancel: () => void;
-  onConfirmRestore: () => void;
-  onConfirmCopy: () => void;
-}>) {
-  const p = SHELL_PALETTE;
-  const isRestore = confirm.kind === 'restore';
-  const title = isRestore ? restoreSheetTitle(confirm.row.version) : copySheetTitle(confirm.row.version);
-  const body = isRestore ? restoreSheetBody(confirm.row.version) : copySheetBody(appName);
-  const idleLabel = isRestore ? COPY.historyRestoreConfirm : COPY.historyCopyConfirm;
-  const busyLabel = isRestore ? COPY.historyRestoreConfirmBusy : COPY.historyCopyConfirmBusy;
-  // The reassurance line resolves IN PLACE: while the diff is being computed a muted placeholder
-  // holds its space, so the sheet does not reflow when the sentence arrives (D6 — a placeholder,
-  // deliberately not a skeleton: one sentence has no row shape to mimic).
-  const line = isRestore ? restoreDiffLine(diff) : 'none';
+/** What the restore or copy confirm says about `confirm`'s row. */
+function confirmContent(confirm: ConfirmState, appName: string): ConfirmSheetContent {
+  const version = confirm.row.version;
+  return confirm.kind === 'restore'
+    ? { title: restoreSheetTitle(version), body: restoreSheetBody(version), confirmLabel: COPY.historyRestoreConfirm, busyLabel: COPY.historyRestoreConfirmBusy }
+    : { title: copySheetTitle(version), body: copySheetBody(appName), confirmLabel: COPY.historyCopyConfirm, busyLabel: COPY.historyCopyConfirmBusy };
+}
 
-  return (
-    <>
-      <Text style={[TYPE_SCALE.screenTitle, { color: p.text }]}>{title}</Text>
-      <Text style={[TYPE_SCALE.body, { color: p.textMuted, marginTop: SPACING.xs }]}>{body}</Text>
-      {line === 'pending' && (
-        <View
-          accessibilityRole="progressbar"
-          accessibilityLabel={COPY.historyReassurancePending}
-          style={[styles.reassurancePending, { backgroundColor: p.cardBorder }]}
-        />
-      )}
-      {line === 'reassurance' && (
-        <Text style={[TYPE_SCALE.caption, { color: p.textMuted, marginTop: SPACING.xs }]}>{COPY.historyReassurance}</Text>
-      )}
-      <TouchableOpacity onPress={onCancel} style={[styles.sheetSafeBtn, { backgroundColor: p.text }]}>
-        <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.cancel}</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        onPress={isRestore ? onConfirmRestore : onConfirmCopy}
-        disabled={busy}
-        accessibilityState={{ disabled: busy, busy }}
-        style={[styles.sheetConsequentialBtn, busy ? styles.sheetConsequentialBtnBusy : null]}
-      >
-        <Text style={[TYPE_SCALE.body, { color: p.textMuted }]}>{busy ? busyLabel : idleLabel}</Text>
-      </TouchableOpacity>
-    </>
-  );
+/**
+ * The restore confirm's reassurance line, which resolves IN PLACE: while the diff is being computed
+ * a muted placeholder holds its space, so the sheet does not reflow when the sentence arrives (D6 —
+ * a placeholder, deliberately not a skeleton: one sentence has no row shape to mimic).
+ */
+function RestoreReassurance({ diff }: Readonly<{ diff: RestoreDiffState }>) {
+  const p = SHELL_PALETTE;
+  const line = restoreDiffLine(diff);
+  if (line === 'pending') {
+    return (
+      <View
+        accessibilityRole="progressbar"
+        accessibilityLabel={COPY.historyReassurancePending}
+        style={[styles.reassurancePending, { backgroundColor: p.cardBorder }]}
+      />
+    );
+  }
+  if (line === 'reassurance') {
+    return <Text style={[TYPE_SCALE.caption, { color: p.textMuted, marginTop: SPACING.xs }]}>{COPY.historyReassurance}</Text>;
+  }
+  return null;
 }
 
 /**
@@ -660,7 +657,8 @@ const styles = StyleSheet.create({
   versionLabel: { marginLeft: 'auto' },
   originLine: { marginTop: 4 },
   headline: { marginTop: 4 },
-  installLabel: { marginTop: 4, fontStyle: 'italic' },
+  // Upright: Instrument Sans ships no italic face, and a synthesized one is the system font's.
+  installLabel: { marginTop: 4 },
   currentMarker: { marginTop: 8, marginLeft: 26 },
   kindBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
   expandedBody: { marginTop: SPACING.sm, paddingTop: SPACING.sm, borderTopWidth: StyleSheet.hairlineWidth },
@@ -673,12 +671,6 @@ const styles = StyleSheet.create({
   // Design :73 — dark ink face, white text, no border. `16` is deliberate and has no RADIUS step
   // between `field` (14) and `card` (18); do not "correct" it to a token.
   toast: { position: 'absolute', left: 24, right: 24, bottom: 34, borderRadius: 16, paddingVertical: 13, paddingHorizontal: 16 },
-  scrim: { flex: 1, backgroundColor: 'rgba(24,22,20,0.5)', justifyContent: 'flex-end' },
-  sheet: { borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, padding: 24 },
-  sheetSafeBtn: { borderRadius: RADIUS.card, height: 56, alignItems: 'center', justifyContent: 'center', marginTop: SPACING.lg },
-  sheetConsequentialBtn: { height: 46, alignItems: 'center', justifyContent: 'center' },
-  // Opacity, not a shadow or an elevation: `shadow*` renders as nothing on Android.
-  sheetConsequentialBtnBusy: { opacity: 0.5 },
   // The reassurance line's placeholder holds exactly the height that one caption line will take.
   reassurancePending: { height: TYPE_SCALE.caption.lineHeight, width: '76%', borderRadius: RADIUS.chip, marginTop: SPACING.xs, opacity: 0.6 },
   skeletonMeta: { height: TYPE_SCALE.metaPlain.lineHeight, width: '46%', borderRadius: RADIUS.chip },
