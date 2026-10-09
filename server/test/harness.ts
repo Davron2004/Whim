@@ -11,6 +11,12 @@ import { inspect, isDeepStrictEqual } from 'node:util';
 let passed = 0;
 let failed = 0;
 const failures: string[] = [];
+let lastReport = Date.now();
+
+/** When the suite last reported a check or opened a section: how a stall watchdog sees progress. */
+export function lastReportAt(): number {
+  return lastReport;
+}
 
 /** Deep, strict structural equality; key order doesn't matter (a zod round-trip returns keys in
  *  schema order). */
@@ -19,6 +25,7 @@ export function deepEqual(a: unknown, b: unknown): boolean {
 }
 
 function record(name: string, assertion: () => void, detail?: () => string): void {
+  lastReport = Date.now();
   try {
     assertion();
     passed++;
@@ -52,6 +59,7 @@ export async function caught(fn: () => void | Promise<void>): Promise<unknown> {
 }
 
 export function section(title: string): void {
+  lastReport = Date.now();
   console.log(`\n${title}`);
 }
 
