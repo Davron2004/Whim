@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// vc-sdk — theme model v2 (docs/design/README.md "Design tokens" / "Two systems, not one").
+// vc-sdk — theme model v2 (the v2 handoff README (removed by decision #75; in git history) "Design tokens" / "Two systems, not one").
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure data + pure functions. NO React import, NO DOM access, NO side effects — this file is
 // imported directly by BOTH sides of the sandbox boundary: the mini-app SDK (tokens.ts resolves

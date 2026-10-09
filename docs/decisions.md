@@ -1417,3 +1417,89 @@ networking in native code), so the WebView itself refuses every network load.
   module (races the first load); `limitsNavigationsToAppBoundDomains` (an allowlist that also
   restricts the bridge's script injection, iOS only); a dead proxy via
   `WKWebsiteDataStore.proxyConfigurations` (iOS 17+, still opens a connection).
+
+### 75. One design system for the shell and every app: ember, ten cool tints, system type, real motion `[DECIDED — owner-ruled design record 2026-10-09 (Phases A–C1, critique 27 ACCEPT / 6 PARTIAL / 0 REJECT); openspec: design-system-v1]`
+
+**Decided.** `docs/design/system.md` is the design system for the launcher and for every generated app,
+built from one token module (`src/design/tokens.ts`) that the RN shell, the SDK theme and the runtime page
+read and that the mockup token block and `system.md`'s tables are checked against. The record that argued it
+(`docs/design/system-v1/00`–`06`) was folded into `system.md`; `system-v1/07-critique-response.md` keeps the
+critique verdicts and `system-v1/palette-check.py` the palette proof. Pre-users, so the change is allowed to
+be bold.
+
+**Philosophy.** A warm light in a quiet workshop. Eight principles, earlier wins: apps first; hue says who
+(ember = Whim at work, an app's cool tint = that app, ink = you and the system, red/amber/green = status, and
+a fill only ever means `primary`); everything comes from somewhere; honest light (the ember moves only with
+the stream); the finger never waits; native by default; one name per thing; forgiving (undo over "are you
+sure"). Two signatures: the person's quoted words as the hero of every making screen, and the ember as an
+ambient light while real work streams.
+
+**Reversals and amendments (old → new).**
+- #59 "two systems, not one" → one system, two renderers (RN shell, DOM SDK).
+- #59 Instrument Sans / IBM Plex Mono / Newsreader → system fonts (SF Pro, Roboto, `system-ui`); the bundled
+  TTFs go. Apps could never load them (`font-src 'none'`) and the iOS shell never bundled them.
+- #59 ink-violet accent → ember for Whim, the app's tint for apps, ink for the system.
+- #59 mono uppercase eyebrows and six-class Whim Syntax on mono/serif/brown → sentence-case `footnote`
+  headers and simplified marks (`yours` italic in quotes, `measure` tabular figures, `state` only
+  ready/failed, `hedge` `text-2`); the Highlighting switch is removed.
+- #59 D4 free hex `tileColor` with exact-match reserved hues → ten named cool tints (slate, stone, ocean,
+  blue, indigo, violet, purple, orchid, berry, rose), an alias map, a deterministic fallback, host assignment.
+- #62 one fixed light palette as a module constant → light and dark from the phone's setting, read through
+  one scheme hook over two constants; still no picker, no theme prop, no context.
+- Handoff README "yours is brown" → the person's words italic in quotes, `text`, `title3` as the hero.
+- Animation research §8.1 "the build screen stays still" → the making page carries the ember, whose glow
+  follows the stream.
+- #52 D2 "explicit Fork asks share-or-fresh" → "Make a copy" happens at once and the copy starts fresh: its
+  own storage-engine appId, the unshared fork #43b D8 described and #52 keeps as its default. Storage groups
+  stay for rewind continuations (#53 D5, `shareData: true`, never asked). The share sheet's copy is removed.
+- #67 kept over running apps (no edge swipe over the WebView; the orb is the guaranteed exit), amended for
+  shell screens: Settings, Advanced, AI features, History and Report move to `react-native-screens`' native
+  stack, so the OS gives them edge, content-area and predictive back. D3's reasons (WebView pan,
+  PanResponder fighting scroll views) don't apply to a UINavigationController or Fragment stack. The exit
+  table (#67 D8) stays the gate.
+- Kept: #13 tokens not values; #41 append-only registry (no syscall added or changed); #43 `cues.haptic`
+  manifest-gated; #45 theme is inert data on the init frame; #42 the orb is draggable and examples stay
+  labelled; "no name, no face" for Whim's mark.
+
+**Icons and tints.** One vendored Lucide subset (`lucide-static@0.460.0`, ISC) as path data: 147 glyphs the
+generator may name for a tile or `Icon`, a small chrome set the components draw, and `circle` for fallback,
+drawn with `react-native-svg` in the shell and inline `<svg>` in apps (no CSP change). Both tint and glyph are
+closed and forgiving: aliases resolve common and legacy names with a build diagnostic, unknown names fall
+back deterministically (tint by hash of the app id; glyph by a keyword table, then `circle`), never a build
+failure or a repair turn. The model ranks up to three tints; the host assigns the first one no installed app
+uses, a copy takes the farthest least-used tint, installed hex colours map to the nearest tint by ΔE2000, and
+"Customize tile" stores a host-side override. Every tint is ≥ 20 ΔE2000 from every status form and ember
+(≥ 10 under deutan/protan/tritan simulation), so no tile reads as a status or as Whim. Options weighed and
+rejected: monograms (no meaning, collisions), LLM-drawn SVG, generated raster icons, emoji or photos.
+
+**Motion stack.** Shell: `react-native-reanimated@4.6.0` + `react-native-worklets@0.12.2` pinned exact,
+Gesture Handler, SVG, `react-native-screens`' native stack, `react-native-keyboard-controller`; RN
+`Animated`/`LayoutAnimation` retired from `src/host/` behind a static check. Six named springs in physics mode
+(`instant`, `snappy`, `smooth`, `fling`, `morph`, `spark`). Apps: the same springs sampled into CSS `linear()`
+(gated by `CSS.supports`, cubic-bezier fallback for the iOS 15.1 floor), WAAPI for fire-and-forget motion and
+a small rAF spring for anything retargetable. Reduce Motion follows the OS only. No Lottie, Rive, Skia or blur.
+
+**SDK surface (nothing removed).** Added: `Icon`, `Stepper`, `DateInput`, `Picker`, `toast()`, `Screen`
+`title`/`action`, `icon` on `Button`/`ListItem`/`EmptyState`, `ProgressBar` `variant: 'ring'` and `label`,
+`defineApp` `tint`/`icon`, `List` `items`/`keyBy`/`renderItem` (keyed list motion; children-style lists stay
+static). Changed: `Text`/`Icon` `color` narrowed to readable roles, `Row` defaults to centre/start, every size,
+colour, radius and motion. Deprecated but working: `Heading`, `Button`/`Card` `radius`, `defineApp`
+`tileColor`. SDK controls emit no haptics. `fixtures/style-gallery.app.tsx` must show every component and
+variant, always.
+
+**Bridge, theme-frame and haptics surfaces.** (1) The theme init frame gains `scheme`, `tint`, `fontScale`
+(0.85–2.0), `reduceMotion`, `increaseContrast`, `platform` and the roles `sheet`, `sheet-group`, `thumb`:
+inert, sanitised field by field, read once at mount, applied at the next open; no new message kind, no CSP
+change. (2) The runtime page drops `maximum-scale=1` and sets `color-scheme: light dark`. (3) The opening
+morph waits for the loader's existing `paint` frame, which is already posted after first paint (double rAF);
+no `firstPaint` field is added. The outer page stamps the host generation onto the forwarded `paint` as it
+does for nav-depth, and the host takes it as the opening signal only for the current bind (cap 600 ms); a
+forged or stale paint can only release the morph early. (4) `cues.haptic` keeps its syscall, gate and closed
+set, plays through a new `WhimHaptics` TurboModule instead of RN `Vibration`, and is capped host-side at 10/s
+with a burst of 3 (extra calls dropped). Withdrawn, no frame added: live theme updates, scroll direction,
+ungated UI haptics, a root-close request for edge swipe, modal-open and input-focus reports.
+
+**Deferred.** A host-owned edge-swipe close over a running app (post-v1 spike with device acceptance, #67
+untouched until it passes); a live preview on Ready (it would run the app's code before the person opens it);
+live tiles (need background execution and a new app-to-host channel); blur/glass (level 3 only, later);
+server-sent live time percentiles.

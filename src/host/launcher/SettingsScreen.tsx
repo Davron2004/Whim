@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// SettingsScreen — the launcher's one settings surface (v2; docs/design/README.md "Two systems,
+// SettingsScreen — the launcher's one settings surface (v2; the v2 handoff README (removed by decision #75; in git history) "Two systems,
 // not one" — the theme preset/accent/corners picker is CUT, the shell is fixed and
 // non-themeable).
 // ─────────────────────────────────────────────────────────────────────────────

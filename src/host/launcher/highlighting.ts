@@ -1,6 +1,6 @@
 /**
  * highlighting — the Whim Syntax prose-highlighting on/off toggle (orchestrator decision
- * "Highlighting off-switch is a launcher setting"; docs/design/README.md discipline rule 5,
+ * "Highlighting off-switch is a launcher setting"; the v2 handoff README (removed by decision #75; in git history) discipline rule 5,
  * "it must survive being switched off").
  *
  * Persisted the same way every other launcher setting persists: a tolerant load/save pair over

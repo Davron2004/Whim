@@ -8,7 +8,7 @@
  * PRODUCT verbs (the spec names them); they are allowed.
  *
  * v2 (shell-redesign-v2 / group B): the whole redesigned shell's copy is seeded here in one pass,
- * verbatim from `docs/design/README.md` and the prototypes, so the screen chains READ strings
+ * verbatim from `the v2 handoff README (removed by decision #75; in git history)` and the prototypes, so the screen chains READ strings
  * rather than writing them. Every string is voice-checked: sentence case, no exclamation marks,
  * outcome not mechanism, and unambiguous when rendered flat (Whim Syntax discipline rule 5 —
  * `whim-prose.suite.ts` asserts it).

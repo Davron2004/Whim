@@ -1,5 +1,5 @@
 /**
- * theme — the launcher shell's named RN colors (v2; docs/design/README.md "Two systems, not
+ * theme — the launcher shell's named RN colors (v2; the v2 handoff README (removed by decision #75; in git history) "Two systems, not
  * one").
  *
  * The shell has one fixed theme, `DEFAULT_THEME` from the SDK, and one derived palette,

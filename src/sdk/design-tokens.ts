@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// vc-sdk — shell design tokens v2 (docs/design/README.md "Design tokens" / "Two systems, not
+// vc-sdk — shell design tokens v2 (the v2 handoff README (removed by decision #75; in git history) "Design tokens" / "Two systems, not
 // one"). A sibling of theme.ts, re-exported from it so every downstream file keeps importing
 // from a single surface (`../../sdk/theme`), same as before this redesign.
 // ─────────────────────────────────────────────────────────────────────────────
