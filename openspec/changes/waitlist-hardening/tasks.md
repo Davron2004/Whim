@@ -143,13 +143,13 @@ Constraints for every task:
 
 ## 7. Runbook, decision and capability map
 
-- [ ] 7.1 `docs/deploy.md`, Operating → Beta waitlist:
+- [x] 7.1 `docs/deploy.md`, Operating → Beta waitlist:
   - the new commands and CSV columns, `--updates-ok` meaning consent, fingerprints and `restore`;
   - the `origin` and `suppressed` outcomes, with a saved Cloud Logging query for `origin`;
   - the migration procedure (design §Migration Plan).
 
   Add a "Sending beta emails" procedure (design D10: one recipient or BCC, an identification footer from `legal-identity.json`, a stop line, 10 business days, iOS by TestFlight link with no App Store Connect upload, news only to `--updates-ok`). Make the "Tuning limits" wording agree with the #112 tripwire.
-- [ ] 7.2 `docs/decisions.md`: one entry for this change (express opt-in, sticky withdrawal, unkeyed fingerprints at 730 days, the Origin rule, category surface). `docs/capabilities.md`: update the beta-waitlist, server-storage-backends and ai-data-consent lines.
+- [x] 7.2 `docs/decisions.md`: one entry for this change (express opt-in, sticky withdrawal, unkeyed fingerprints at 730 days, the Origin rule, category surface). `docs/capabilities.md`: update the beta-waitlist, server-storage-backends and ai-data-consent lines.
 
 ## 8. Attended production rollout (not dispatched)
 
