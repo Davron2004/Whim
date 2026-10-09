@@ -12,7 +12,7 @@ import { buildSite, DEPLOY_VALUE_PAGES, type AssociationFilesRunner, type BuildS
 import { LEGAL_IDENTITY_PATH, LEGAL_PAGES, pageText, renderLegalSite, statedKeepPeriods } from '../src/site/legal-pages';
 import { signupNoticeFindings, SIGNUP_PAGE } from '../src/site/notice-check';
 import { CURRENT_NOTICE_ID, NOTICES, noticeFingerprint } from '../src/waitlist/notices';
-import { WAITLIST_RETENTION_DAYS } from '../src/waitlist/store';
+import { WAITLIST_FINGERPRINT_RETENTION_DAYS, WAITLIST_RETENTION_DAYS } from '../src/waitlist/store';
 import { TRAP_FIELD } from '../src/routes/beta-signup';
 import { MANIFESTS, RELEASED_SNAPSHOT_DIR, diffManifests, keepLimit, latestVersion, type DisclosureManifest } from '../../contract/src/disclosure-manifest';
 import { AI_CONSENT_VERSION } from '../../src/host/launcher/release-config';
@@ -136,12 +136,17 @@ function platformProblems(fields: FormFields): string[] {
   return problems;
 }
 
-function optOutProblems(fields: FormFields): string[] {
-  const optOut = single(fields, 'updates_opt_out');
-  if (typeof optOut === 'string') return [optOut];
+/** The news box: an unticked checkbox whose label is part of the recorded consent wording, so the
+ *  wording a signup records is the wording next to the box it ticked. */
+function optInProblems(fields: FormFields): string[] {
+  const optIn = single(fields, 'updates_opt_in');
+  if (typeof optIn === 'string') return [optIn];
   const problems: string[] = [];
-  if (optOut.attrs.get('type') !== 'checkbox' || optOut.attrs.get('value') !== '1') problems.push('updates_opt_out is not a checkbox with value 1');
-  if (optOut.attrs.has('checked')) problems.push('updates_opt_out is checked by default');
+  if (optIn.attrs.get('type') !== 'checkbox' || optIn.attrs.get('value') !== '1') problems.push('updates_opt_in is not a checkbox with value 1');
+  if (optIn.attrs.has('checked')) problems.push('updates_opt_in is checked by default');
+  const id = optIn.attrs.get('id');
+  const label = fields.tags.find((tag) => tag.name === 'label' && id !== undefined && tag.attrs.get('for') === id);
+  if (label === undefined || !label.attrs.has('data-notice')) problems.push('updates_opt_in has no label carrying data-notice');
   return problems;
 }
 
@@ -157,7 +162,7 @@ function trapProblems(fields: FormFields): string[] {
 }
 
 /** The fields a person fills; every other named field in the form is a bot trap. */
-const PERSON_FIELDS: readonly string[] = ['email', 'platform', 'updates_opt_out'];
+const PERSON_FIELDS: readonly string[] = ['email', 'platform', 'updates_opt_in'];
 /** Words browser autofill reads as a person's details (Safari's contact card, Chrome's address
  *  profiles): a trap named or labelled with one gets filled for a person, whose signup is dropped. */
 const AUTOFILL_WORDS = ['company', 'organization', 'organisation', 'business', 'website', 'url', 'name'] as const;
@@ -168,7 +173,7 @@ function trapAutofillProblems(html: string): string[] {
   const form = tags.find((tag) => tag.name === 'form');
   if (form === undefined) return ['the page has no form'];
   const formEnd = html.indexOf('</form>', form.end);
-  const traps = tags.filter((tag) => tag.end > form.end && tag.end < formEnd && tag.attrs.has('name') && !PERSON_FIELDS.includes(tag.attrs.get('name') ?? ''));
+  const traps = tags.filter((tag) => tag.end > form.end && tag.end <= formEnd && tag.attrs.has('name') && !PERSON_FIELDS.includes(tag.attrs.get('name') ?? ''));
   if (traps.length === 0) return ['the form has no trap field'];
   return traps.flatMap((trap) => {
     const id = trap.attrs.get('id');
@@ -194,12 +199,12 @@ function formContractProblems(html: string, action: string): string[] {
   if (enctype !== 'application/x-www-form-urlencoded') problems.push(`the form's enctype is ${enctype}`);
 
   const formEnd = html.indexOf('</form>', form.end);
-  const inForm = tags.filter((tag) => tag.end > form.end && tag.end < formEnd && tag.attrs.has('name'));
+  const inForm = tags.filter((tag) => tag.end > form.end && tag.end <= formEnd && tag.attrs.has('name'));
   const fields: FormFields = { tags, html, named: (name) => inForm.filter((tag) => tag.attrs.get('name') === name) };
   const names = [...new Set(inForm.map((tag) => tag.attrs.get('name') ?? ''))].sort((a, b) => a.localeCompare(b));
   const expected = [...PERSON_FIELDS, TRAP_FIELD].sort((a, b) => a.localeCompare(b));
   if (names.join(',') !== expected.join(',')) problems.push(`the form's fields are ${names.join(', ')}`);
-  return [...problems, ...emailProblems(fields), ...platformProblems(fields), ...optOutProblems(fields), ...trapProblems(fields)];
+  return [...problems, ...emailProblems(fields), ...platformProblems(fields), ...optInProblems(fields), ...trapProblems(fields)];
 }
 
 // ── Building ────────────────────────────────────────────────────────────────────────────────
@@ -243,13 +248,18 @@ async function builtSiteTests(): Promise<void> {
     const built = (file: string): string => fs.readFileSync(path.join(outDir, file), 'utf8');
 
     eq('the built /beta keeps the form contract, posting to the configured signup URL', formContractProblems(built('beta.html'), SIGNUP_URL), []);
-    check(
-      '  red: the contract check sees a pre-ticked opt-out, a type="hidden" trap and a second form',
+    eq(
+      '  red: the contract check sees a pre-ticked news box, an unlabelled one, a stale opt-out field, a type="hidden" trap and a second form',
       [
-        ['updates_opt_out is checked by default', built('beta.html').replace('name="updates_opt_out" value="1"', 'name="updates_opt_out" value="1" checked')],
+        ['updates_opt_in is checked by default', built('beta.html').replace('name="updates_opt_in" value="1"', 'name="updates_opt_in" value="1" checked')],
+        ['updates_opt_in has no label carrying data-notice', built('beta.html').replace('for="updates-opt-in" data-notice', 'for="updates-opt-in"')],
+        ['updates_opt_out', built('beta.html').replace('</form>', '<input type="checkbox" name="updates_opt_out" value="1"></form>')],
         ['type="hidden"', built('beta.html').replace(`<input type="text" id="${TRAP_FIELD}"`, `<input type="hidden" id="${TRAP_FIELD}"`)],
         ['2 forms', built('beta.html').replace('</form>', '</form><form method="post" action="/x"></form>')],
-      ].every(([needle, html]) => formContractProblems(html, SIGNUP_URL).some((problem) => problem.includes(needle))),
+      ]
+        .filter(([needle, html]) => !formContractProblems(html, SIGNUP_URL).some((problem) => problem.includes(needle)))
+        .map(([needle]) => needle),
+      [],
     );
 
     eq('the /beta trap field is named, id\'d and labelled with no word browser autofill fills', trapAutofillProblems(built('beta.html')), []);
@@ -315,8 +325,8 @@ async function noticeTests(): Promise<void> {
   eq('the checked-in /beta carries the current notice', signupNoticeFindings(source), []);
 
   for (const [what, edit] of [
-    ['a reworded consent line', { file: SIGNUP_PAGE, from: 'we may occasionally email you about Whim', to: 'we may email you about Whim' }],
-    ['a reworded opt-out label', { file: SIGNUP_PAGE, from: '<span>Don\'t email me about Whim updates</span>', to: '<span>No Whim updates, please</span>' }],
+    ['a reworded consent line', { file: SIGNUP_PAGE, from: 'only if you tick the box above', to: 'unless you untick the box above' }],
+    ['a reworded news-box label', { file: SIGNUP_PAGE, from: '<span>Email me news about Whim</span>', to: '<span>Send me Whim news</span>' }],
   ] as const) {
     const failed = await build(ENV, edit);
     try {
@@ -330,7 +340,7 @@ async function noticeTests(): Promise<void> {
     }
   }
 
-  const reflowed = await build(ENV, { file: SIGNUP_PAGE, from: 'Unless you tick the box above,', to: 'Unless you tick\n        the box above,' });
+  const reflowed = await build(ENV, { file: SIGNUP_PAGE, from: 'only if you tick the box above,', to: 'only if you tick\n        the box above,' });
   try {
     check('reflowing the same words across lines still builds', reflowed.result.ok, JSON.stringify(reflowed.result));
   } finally {
@@ -341,6 +351,28 @@ async function noticeTests(): Promise<void> {
     check('a different support address (a deploy value inside the notice) still builds: the notice is read unrendered', otherSupport.result.ok, JSON.stringify(otherSupport.result));
   } finally {
     otherSupport.cleanup();
+  }
+
+  // beta-1, the opt-out wording the page carried until beta-2 became current (waitlist-hardening).
+  const consentFrom = source.indexOf('<label class="opt-in"');
+  const consentTo = source.indexOf('</p>', source.indexOf('Read our', consentFrom));
+  const currentWording = source.slice(consentFrom, consentTo);
+  const betaOneWording = currentWording
+    .replace('<span>Email me news about Whim</span>', '<span>Don\'t email me about Whim updates</span>')
+    .replace('We email you news about Whim only if you tick the box above, and every email says how to stop.', 'Unless you tick the box above, we may occasionally email you about Whim.');
+  check('setup: the beta-1 page differs from the checked-in one', consentFrom !== -1 && consentTo !== -1 && betaOneWording !== currentWording);
+  const superseded = await build(ENV, { file: SIGNUP_PAGE, from: currentWording, to: betaOneWording });
+  try {
+    check(
+      `a page carrying beta-1's wording after ${CURRENT_NOTICE_ID} became current fails the build, naming both, and publishes nothing`,
+      !superseded.result.ok &&
+      superseded.result.reason.includes('notice beta-1') &&
+      superseded.result.reason.includes(`signups record ${CURRENT_NOTICE_ID}`) &&
+      !fs.existsSync(superseded.outDir),
+      JSON.stringify(superseded.result),
+    );
+  } finally {
+    superseded.cleanup();
   }
 
   const current = NOTICES[CURRENT_NOTICE_ID];
@@ -360,7 +392,11 @@ function privacyTests(): void {
   eq('the legal-pages check passes with the waitlist in the manifest', findings, []);
   eq('the current manifest publishes the store\'s waitlist retention', keepLimit(MANIFESTS[latestVersion()], 'waitlist')?.days, WAITLIST_RETENTION_DAYS);
   for (const page of ['privacy.html', 'fr/privacy.html'] as const) {
-    eq(`${page} states the store's ${WAITLIST_RETENTION_DAYS}-day waitlist retention`, statedKeepPeriods(pages[page]).get('waitlist'), [WAITLIST_RETENTION_DAYS]);
+    eq(
+      `${page} states the store's waitlist retention: ${WAITLIST_RETENTION_DAYS} days for rows, then ${WAITLIST_FINGERPRINT_RETENTION_DAYS} for removal fingerprints`,
+      statedKeepPeriods(pages[page]).get('waitlist'),
+      [WAITLIST_RETENTION_DAYS, WAITLIST_FINGERPRINT_RETENTION_DAYS],
+    );
   }
   const shorter = renderLegalSite({ sources: { ...sources, 'privacy.html': sources['privacy.html'].replace('Deleted 730 days after', 'Deleted 365 days after') }, identity });
   check('  red: a policy stating another waitlist period fails the legal-pages check', shorter.findings.some((finding) => finding.includes('waitlist')), shorter.findings.join(' / '));

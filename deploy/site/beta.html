@@ -66,7 +66,7 @@ body { margin: 0; color: var(--text); font: 400 var(--body)/1.7 var(--font); }
 h1, h2, p { margin: 0; }
 button, input { font: inherit; }
 a { color: var(--accent); text-underline-offset: .2em; text-decoration-thickness: 1px; }
-button, a, label[for], .choice, .opt-out { cursor: pointer; }
+button, a, label[for], .choice, .opt-in { cursor: pointer; }
 :focus-visible { outline: var(--focus-width) solid var(--accent); outline-offset: var(--focus-offset); }
 .page { display: grid; min-height: 100vh; min-height: 100svh; }
 .brand {
@@ -151,9 +151,9 @@ legend { padding: 0; margin-bottom: var(--xs); font-weight: 600; }
 .field-error { display: none; font-size: var(--caption); color: var(--text); }
 .email:user-invalid { border-color: var(--accent); border-style: dashed; }
 .email:user-invalid ~ .field-error { display: block; }
-.opt-out { display: flex; align-items: flex-start; gap: var(--sm); min-height: var(--tap-size); padding-block: var(--xs); line-height: 1.55; }
-.opt-out input { display: block; flex: none; margin: 3px 0 0; width: 18px; height: 18px; accent-color: var(--accent); }
-.opt-out span { display: block; }
+.opt-in { display: flex; align-items: flex-start; gap: var(--sm); min-height: var(--tap-size); padding-block: var(--xs); line-height: 1.55; }
+.opt-in input { display: block; flex: none; margin: 3px 0 0; width: 18px; height: 18px; accent-color: var(--accent); }
+.opt-in span { display: block; }
 .submit {
   display: flex; align-items: center; justify-content: center; gap: var(--sm);
   width: 100%; min-height: var(--control-height); padding: var(--md) var(--lg);
@@ -248,14 +248,14 @@ legend { padding: 0; margin-bottom: var(--xs); font-weight: 600; }
       <div class="field od-field">
         <label for="email">Email <span class="required-note">(required)</span></label>
         <p id="android-hint" class="android-hint">On Android, use the email of the Google account on your phone. Google Play sends tester invites to that address.</p>
-        <p id="other-hint" class="other-hint">Wow, what phone have you got? I’m not sure I can support other platforms, but you can still sign up for Whim updates.</p>
+        <p id="other-hint" class="other-hint">Wow, what phone have you got? I’m not sure I can support other platforms, but you can still sign up, and tick the box below to get news about Whim.</p>
         <input class="email" type="email" id="email" name="email" required maxlength="254" autocomplete="email" inputmode="email" autocapitalize="none" spellcheck="false" placeholder="you@example.com" aria-describedby="android-hint email-error">
         <p id="email-error" class="field-error">Enter a complete email address, such as you@example.com.</p>
       </div>
-      <label class="opt-out" for="updates-opt-out" data-notice><input type="checkbox" id="updates-opt-out" name="updates_opt_out" value="1"><span>Don't email me about Whim updates</span></label>
+      <label class="opt-in" for="updates-opt-in" data-notice><input type="checkbox" id="updates-opt-in" name="updates_opt_in" value="1"><span>Email me news about Whim</span></label>
       <div class="bot-field" hidden aria-hidden="true"><label for="hp_ref">Leave this empty</label><input type="text" id="hp_ref" name="hp_ref" tabindex="-1" autocomplete="off" aria-hidden="true"></div>
       <button class="submit" type="submit"><span>Join the waitlist</span></button>
-      <p class="notice" data-notice>We keep your email and phone type to invite you to the beta. Unless you tick the box above, we may occasionally email you about Whim. Leave the list by writing to <a href="mailto:{{WHIM_SUPPORT_EMAIL}}">{{WHIM_SUPPORT_EMAIL}}</a>. Read our <a href="/privacy">privacy policy</a>.</p>
+      <p class="notice" data-notice>We keep your email and phone type to invite you to the beta. We email you news about Whim only if you tick the box above, and every email says how to stop. Leave the list by writing to <a href="mailto:{{WHIM_SUPPORT_EMAIL}}">{{WHIM_SUPPORT_EMAIL}}</a>. Read our <a href="/privacy">privacy policy</a>.</p>
     </form>
     </div>
   </main>

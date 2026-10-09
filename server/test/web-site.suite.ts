@@ -301,6 +301,56 @@ function providerNameTests(): void {
   );
 }
 
+/** Each rendering of the provider rows: the page, which list, its "receives" column label, and how
+ *  that language names the beta sign-up page and the beta emails (beta-waitlist "Provider rows
+ *  cover the website and the emails"). */
+const BETA_RECEIVES = POLICIES.flatMap((page) => [
+  page.startsWith('fr/')
+    ? ({ page, list: 'list', label: 'Ce qu’elle reçoit', signup: 'inscription à la bêta', emails: 'invitations à la bêta' } as const)
+    : ({ page, list: 'list', label: 'What it receives', signup: 'beta sign-up', emails: 'beta invitations' } as const),
+  { page, list: 'korean', label: '이전 항목', signup: '베타 신청', emails: '베타 초대' } as const,
+]);
+
+/** The text of the "receives" cell in the row naming `provider`, or undefined with no such row. */
+function receivesCell(list: string, provider: string, label: string): string | undefined {
+  const row = list.split('<tr>').find((candidate) => candidate.includes(`<strong>${provider}`));
+  const open = `data-label="${label}">`;
+  const start = row?.indexOf(open) ?? -1;
+  if (row === undefined || start === -1) return undefined;
+  return pageText(row.slice(start + open.length, row.indexOf('</td>', start)));
+}
+
+/** Where the Google Cloud row doesn't name the beta sign-up, or the Zoho row the beta emails. */
+function betaReceivesProblems(pages: Readonly<Record<LegalPage, string>>): string[] {
+  return BETA_RECEIVES.flatMap(({ page, list, label, signup, emails }) => {
+    const rendered = providerLists(pages[page])[list];
+    return [
+      ['Google Cloud', signup],
+      ['Zoho', emails],
+    ].flatMap(([provider, names]) => {
+      const cell = receivesCell(rendered, provider, label);
+      return cell?.includes(names) === true ? [] : [`${page} ${list}: ${provider} receives ${JSON.stringify(cell)}, not naming "${names}"`];
+    });
+  });
+}
+
+function providerReceivesTests(): void {
+  section('Web site: the provider rows cover the beta sign-up page and the beta emails');
+
+  eq('Google Cloud names the beta sign-up, and Zoho the beta emails, in English, French and Korean', betaReceivesProblems(renderLegal(REAL_IDENTITY).pages), []);
+  const providers = (REAL_IDENTITY as { providers: Array<{ name: unknown }> }).providers;
+  const indexOf = (name: string): number => providers.findIndex((row) => typeof row.name === 'string' && row.name.startsWith(name));
+  const appOnly = [
+    [`providers[${indexOf('Google Cloud')}].receives`, { en: 'Everything the app sends', fr: 'Tout ce que l’app envoie', ko: '앱이 보내는 모든 정보' }],
+    [`providers[${indexOf('Zoho')}].receives`, { en: 'What you write to us by email', fr: 'Ce que vous nous écrivez par courriel', ko: '이메일로 보낸 내용' }],
+  ].reduce((identity, [field, value]) => withField(identity, field as string, value), REAL_IDENTITY);
+  eq(
+    '  red: rows that cover only the app and the mail you send us are caught in every rendering',
+    betaReceivesProblems(renderLegal(appOnly).pages).length,
+    BETA_RECEIVES.length * 2,
+  );
+}
+
 /** A key-value store in memory, for the age-check module the policy describes. */
 function memoryKv(): KVBackend {
   const values = new Map<string, string>();
@@ -544,6 +594,7 @@ function parityAndRetentionTests(): void {
 export async function runWebSiteTests(): Promise<void> {
   legalPageTests();
   providerNameTests();
+  providerReceivesTests();
   deployCheckRedChecks();
   parityAndRetentionTests();
   await ageAndPreviousVersionTests();
