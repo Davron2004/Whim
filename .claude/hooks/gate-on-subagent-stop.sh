@@ -38,9 +38,11 @@ COUNT_FILE="/tmp/gate-attempts-${SESSION}"
 COUNT=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
 if [[ "$COUNT" -ge 2 ]]; then rm -f "$COUNT_FILE"; exit 0; fi
 
-# Resolve gate.sh by project root (CLAUDE_PROJECT_DIR), falling back to this hook's own location
-# (.claude/hooks → repo root is two levels up) so it works regardless of the hook's cwd.
-ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+# Gate the tree the dirty check above just inspected: the subagent's cwd, which is its own worktree
+# for a chain implementer. CLAUDE_PROJECT_DIR and this hook's location both name the primary tree,
+# which would gate unmerged worktree work against the wrong checkout (false blocks).
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+ROOT="${ROOT:-${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}}"
 OUT=$("$ROOT/scripts/gate.sh" 2>&1)
 if [[ $? -eq 0 ]]; then
   rm -f "$COUNT_FILE"
