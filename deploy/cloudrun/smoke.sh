@@ -34,7 +34,7 @@ readonly BUILD_NUMBER_EPOCH_S=1767225600
 readonly SMOKE_APP_VERSION=1.0.0
 readonly SMOKE_CONSENT=2
 readonly SMOKE_PROTOCOL=1
-# Reads `gcloud run domain-mappings describe --format=json` from the file argv[1]; passes when the
+# Reads `gcloud beta run domain-mappings describe --format=json` from the file argv[1]; passes when the
 # mapping routes to the service argv[2] and its Ready condition is True.
 readonly MAPPING_JS='const mapping = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
 const route = process.argv[2];
@@ -125,7 +125,7 @@ check_domains() {
   for host in "$WHIM_API_HOST" "$WHIM_WEB_HOST"; do
     route="$RUN_SITE_SERVICE"
     [[ "$host" != "$WHIM_API_HOST" ]] || route="$RUN_SERVER_SERVICE"
-    if ! whim_gcloud run domain-mappings describe --domain "$host" --region "$WHIM_RUN_REGION" --format=json >"$work/mapping.json" 2>"$work/mapping.err"; then
+    if ! whim_gcloud beta run domain-mappings describe --domain "$host" --region "$WHIM_RUN_REGION" --format=json >"$work/mapping.json" 2>"$work/mapping.err"; then
       whim_smoke_flunk "domain mapping $host: $(head -c 300 "$work/mapping.err")"
       ready=0
     elif verdict="$(node -e "$MAPPING_JS" "$work/mapping.json" "$route")"; then

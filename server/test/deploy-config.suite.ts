@@ -1480,7 +1480,7 @@ const PREVIOUS_COMMIT = 'b'.repeat(40);
 const PREVIOUS_SITE_IMAGE = `northamerica-northeast1-docker.pkg.dev/anycognition-whim/whim/site:${'c'.repeat(40)}`;
 const CLOUD_RUN_ADDRESS = '198.51.100.20';
 
-/** `gcloud run domain-mappings describe --format=json` for a mapping to `route`. */
+/** `gcloud beta run domain-mappings describe --format=json` (GA has no --region) for a mapping to `route`. */
 function domainMapping(route: string, ready = 'True'): string {
   return JSON.stringify({
     apiVersion: 'domains.cloudrun.com/v1',
@@ -1521,8 +1521,8 @@ function servedService({ commit, latestCreated = SERVING_REVISION, traffic = [{ 
 function cloudRunServing(service: ServiceShape): StubRule[] {
   return [
     purgeScheduleRule('ENABLED'),
-    [`*run domain-mappings describe --domain ${API_HOST} *`, 0, domainMapping('whim-server')],
-    [`*run domain-mappings describe --domain ${WEB_HOST} *`, 0, domainMapping('whim-site')],
+    [`*beta run domain-mappings describe --domain ${API_HOST} *`, 0, domainMapping('whim-server')],
+    [`*beta run domain-mappings describe --domain ${WEB_HOST} *`, 0, domainMapping('whim-site')],
     ['*run services describe whim-server *--format=json*', 0, servedService(service)],
     ['*run services describe whim-server *latestReadyRevisionName*', 0, `${PREVIOUS_REVISION}\\n`],
     [`*run revisions describe ${PREVIOUS_REVISION} *`, 0, `northamerica-northeast1-docker.pkg.dev/anycognition-whim/whim/server:${PREVIOUS_COMMIT}\\n`],
@@ -1695,10 +1695,10 @@ async function cloudRunSmokeTests(): Promise<void> {
   const explicitBounds = cloudRunSmoke([], { service: { minScale: '0', serviceMinScale: '0' } });
   check('the smoke passes when the revision states a minimum of 0 instances explicitly, naming the bounds', explicitBounds.run.status === 0 && explicitBounds.run.stdout.includes('CPU only during requests, 0-1 instances'), explicitBounds.run.stdout);
 
-  const unmapped = cloudRunSmoke([], { gcloud: [[`*run domain-mappings describe --domain ${WEB_HOST} *`, 0, domainMapping('whim-site', 'Unknown')]] });
+  const unmapped = cloudRunSmoke([], { gcloud: [[`*beta run domain-mappings describe --domain ${WEB_HOST} *`, 0, domainMapping('whim-site', 'Unknown')]] });
   check('a domain mapping that is not ready stops the smoke, naming it', unmapped.run.status === 1 && unmapped.run.stderr.includes(`domain mapping ${WEB_HOST} is not ready: Unknown`), unmapped.run.stderr);
   eq('  ... before any HTTPS request', unmapped.curls, []);
-  const misrouted = cloudRunSmoke([], { gcloud: [[`*run domain-mappings describe --domain ${API_HOST} *`, 0, domainMapping('whim-site')]] });
+  const misrouted = cloudRunSmoke([], { gcloud: [[`*beta run domain-mappings describe --domain ${API_HOST} *`, 0, domainMapping('whim-site')]] });
   check('a domain mapping routed to the wrong service stops the smoke, naming both', misrouted.run.status === 1 && misrouted.run.stderr.includes(`domain mapping ${API_HOST} routes to whim-site, not whim-server`), misrouted.run.stderr);
 
   const noJob = cloudRunSmoke([], { gcloud: [['*run jobs describe whim-purge *', 1, 'ERROR: (gcloud.run.jobs.describe) Cannot find job [whim-purge].\\n']] });
