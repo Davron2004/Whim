@@ -1,9 +1,10 @@
 /**
  * history-logic — the RN-free decision logic behind HistoryScreen (version-history spec,
- * shell-redesign-v2 chain-E). Rebuilt for the `4a` timeline: row derivation (summary-or-prompt
- * headline, kind grouping for the filter pills, at-most-two next actions per row) plus the
- * pre-existing schema-diff annotation and relative-timestamp helpers this module already carried
- * (kept unchanged — D5's restore-reassurance path still reads through them).
+ * shell-redesign-v2 chain-E). Rebuilt for the `4a` timeline: row derivation (the user's quoted
+ * prompt as the headline and Whim's summary for the opened row, kind grouping for the filter
+ * pills, at-most-two next actions per row) plus the pre-existing schema-diff annotation and
+ * relative-timestamp helpers this module already carried (kept unchanged — D5's
+ * restore-reassurance path still reads through them).
  *
  * `RunSummary`/`SummaryKind`/`SummaryMark` are `@whim/contract` TYPE-ONLY imports (erased at
  * compile — zod itself never enters the RN bundle). `storedSummary` below mirrors
@@ -22,6 +23,7 @@ import type { SchemaArtifact } from '../storage-engine/contract';
 import { diffSchemas, emptyApplied, type AppliedSchema } from '../storage-engine/schema';
 import type { Snapshot } from '../version-store';
 import type { InstalledApp } from './app-index';
+import { historyQuotedPrompt } from './copy';
 import { parsePromptEnvelope } from './prompt-envelope';
 import type { StoreAccess } from './store-access';
 import type { RunSummary, SummaryKind, SummaryMark } from '@whim/contract';
@@ -216,18 +218,34 @@ export interface HistoryRow {
   kind: SummaryKind | null;
   /** `null` = unclassified — stays reachable under the all-versions pill only (E6). */
   group: FilterGroup | null;
-  /** The stored summary's text, falling back to the resolved prompt text (E2). */
+  /** What the collapsed row says (design 4a, "the prompt is the headline"): under `You said`, the
+   *  user's own words — the resolved prompt text, quoted; under `Whim, on its own`, which has no
+   *  words of the user's to quote, the stored summary's text. */
   headline: string;
   /** The raw resolved prompt-envelope text, for the renderer's `yours`-class matching. */
   promptText: string;
-  /** Producer `chg`/`hedge` marks for `headline` — `[]` when the version has no summary. */
+  /** Producer `chg`/`hedge` marks for `headline` — only a summary headline carries any. */
   marks: SummaryMark[];
+  /** Whim's summary of what the version did, which the expanded row says first — `null` when the
+   *  version has none, or when the summary is already the headline. */
+  result: { text: string; marks: SummaryMark[] } | null;
   touched: string[];
   origin: HistoryOrigin;
   isCurrent: boolean;
   isInstall: boolean;
   /** At most two, never three (E5/E9). */
   actions: HistoryActionKind[];
+}
+
+/** What a row says collapsed and opened. The user's words, when there are any, are the headline and
+ *  Whim's summary is the opened row's result; with no prompt the summary is the headline, once. */
+function rowWords(promptText: string, summary: RunSummary | undefined): Pick<HistoryRow, 'headline' | 'marks' | 'result'> {
+  if (promptText.length === 0) return { headline: summary?.text ?? '', marks: summary?.marks ?? [], result: null };
+  return {
+    headline: historyQuotedPrompt(promptText),
+    marks: [],
+    result: summary ? { text: summary.text, marks: summary.marks } : null,
+  };
 }
 
 /**
@@ -252,9 +270,8 @@ export function buildHistoryRows(rows: readonly Snapshot[], activeId: string | n
       when: formatRelativeTimestamp(snapshot.createdAt),
       kind: summary?.kind ?? null,
       group: summary ? KIND_GROUP[summary.kind] : null,
-      headline: summary?.text ?? promptText,
+      ...rowWords(promptText, summary),
       promptText,
-      marks: summary?.marks ?? [],
       touched: summary?.touched ?? [],
       // No write path in this codebase yet produces a version the user did not prompt (`prompt`
       // is a required field on every install/update spec) — an empty stored prompt is the only

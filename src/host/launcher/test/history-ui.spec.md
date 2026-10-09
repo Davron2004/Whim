@@ -10,12 +10,14 @@ expand-not-restore, confirm-gated restore and copy, reaching History from Home).
 
 ## History reads as the user's own prompts
 
-1. Each row's headline is `buildHistoryRows`'s resolved text: the stored summary's `text` when
-   the version's prompt envelope carries one (`storedSummary`), falling back to
-   `parsePromptEnvelope(snapshot.prompt).text` otherwise — a v1 envelope renders its `text`, a raw
-   legacy string (not envelope JSON) renders unchanged, neither ever throws. Each row also carries
-   `formatRelativeTimestamp(snapshot.createdAt)`, a kind badge (or none, when unclassified), a
-   version identifier (`v<n>`, a display ordinal, never a git ref), and an origin line.
+1. Under `You said`, each row's headline quotes the user's own words (design `4a`, "the prompt is
+   the headline"): `historyQuotedPrompt(parsePromptEnvelope(snapshot.prompt).text)` — a v1 envelope
+   renders its `text`, a raw legacy string (not envelope JSON) renders unchanged inside the quotes,
+   neither ever throws — and the stored summary (`storedSummary`) is never the headline. A version
+   with no prompt reads `Whim, on its own` and headlines with its summary's `text`. Each row also
+   carries `formatRelativeTimestamp(snapshot.createdAt)`, a kind badge (or none, when
+   unclassified), a version identifier (`v<n>`, a display ordinal, never a git ref), and an origin
+   line.
 2. The header names the app in its own hue (resolved through `tiles.ts#tileColor` — the one path
    every surface resolves an app's colour through) followed by "history", over a subtitle counting
    versions and naming when the app started.
@@ -38,10 +40,11 @@ expand-not-restore, confirm-gated restore and copy, reaching History from Home).
 
 ## An expanded row answers what happened, what it touched, and what to do next
 
-8. The expanded body shows the same resolved text as the collapsed headline (the run summary has
-   one `text` field, reused in both places), the `What it touched` chips (`summary.touched`, area
-   names — never a diff), and the data-shape annotation (`addedFieldsLine`, when the row's
-   `schema.json` changed since its predecessor) rendered with an explicit `hedge` mark spanning it.
+8. The expanded body shows, first, Whim's summary of the version (`row.result`, with its producer
+   marks; absent when the version has none or the summary is already the headline), then the
+   `What it touched` chips (`summary.touched`, area names — never a diff), and the data-shape
+   annotation (`addedFieldsLine`, when the row's `schema.json` changed since its predecessor)
+   rendered with an explicit `hedge` mark spanning it.
 9. The current version's row offers exactly one action, `Change it from here`. Any past version's
    row (including the install row, per #4) offers at most two: `Go back to this` and
    `Start a copy here`. No row ever exposes a third action (`history-logic.suite.ts` asserts
@@ -80,7 +83,7 @@ expand-not-restore, confirm-gated restore and copy, reaching History from Home).
 ## Removed: named pins, instant restore + undo
 
 15. There is no pin action or pin label on any row (`version-history` REMOVED "Named pins") — the
-    row's headline (the stored summary) is what labelling a version was standing in for. The
+    row's headline (the user's own words) is what labelling a version was standing in for. The
     store's pin verbs and `StoreAccess.pin`/`listPins` are untouched and remain covered by
     `store-access.suite.ts`; nothing here re-tests them.
 16. There is no toast Undo and no instant restore-on-tap (`version-history` REMOVED "Tap restores
