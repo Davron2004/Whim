@@ -227,7 +227,7 @@ pixel value. Defaults are chosen so the most common use needs no optional props.
 
 | Change | What | Why |
 |---|---|---|
-| Add | `Icon` | Apps look unfinished without icons; the 145 names are the tile set, already familiar to models |
+| Add | `Icon` | Apps look unfinished without icons; the 147 names are the tile set, already familiar to models |
 | Add | `Stepper` | Counts (glasses, reps, players) are the most common input in the corpus and today need a NumberInput plus two Buttons |
 | Add | `DateInput` | Trackers need dates and times; today they hack `TextInput`. The value is epoch milliseconds, the storage `date` type, so nothing converts |
 | Add | `Picker` | Choosing one of many (more than four options) without a wall of buttons; renders the platform's native picker |

@@ -40,7 +40,7 @@ the tint's on-fill colour. The generator picks both by name in `defineApp`:
 export default defineApp({
   name: 'Pour Timer',
   tint: 'cocoa',      // one of 13 TintName values (01-direction §3.4)
-  icon: 'timer',      // one of ~145 IconName values (list below)
+  icon: 'timer',      // one of 147 IconName values (list below)
   initial: 'Home',
   screens: { Home },
   capabilities: ['cues'],
@@ -95,7 +95,7 @@ Keyword table (first match on whole words of the lower-cased name; the full tabl
 
 ## Glyph set
 
-145 glyphs from `lucide-static@0.460.0` (ISC licence, vendored as path data, attribution kept). Grouped here
+147 glyphs from `lucide-static@0.460.0` (ISC licence, vendored as path data, attribution kept). Grouped here
 for the generator's reference; the SDK exports the same list as the `IconName` union and `Icon` uses it too.
 
 | Group | Glyphs |
