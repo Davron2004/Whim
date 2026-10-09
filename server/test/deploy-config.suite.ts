@@ -24,6 +24,7 @@ import { PROTOCOL_HEADERS, TIMED_OUT, machinePipeline, within } from './route-do
 import { ScriptedModelClient } from './scripted-model';
 import { readSseResponse } from './sse-reader';
 import { createApp } from '../src/app';
+import { benchEnvelopeHeaders } from '../src/bench-envelope';
 import { createServerLogger } from '../src/logger';
 import { KEEP_PERIOD_VARIABLES, loadServerConfig, ServerConfigError } from '../src/config';
 import { createStubPipeline } from '../src/pipeline';
@@ -963,6 +964,8 @@ const STUB_SCRIPT = [
   '  "node -e const { spawnSync }"*) exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node -e let healthText"*) exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node -e const indexFile"*) exec "$STUB_REAL_NODE" "$@" ;;',
+  '  "node -e const mapping"*) exec "$STUB_REAL_NODE" "$@" ;;',
+  '  "node -e const service"*) exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node server/config-check.mjs"*) cd "$STUB_REAL_ROOT" && exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node server/site.mjs "*)',
   '    printf \'%s\\n\' "${WHIM_BETA_SIGNUP_URL:-}" >"$STUB_DIR/site-signup-url"',
@@ -1044,13 +1047,14 @@ function writeRules(sandbox: Sandbox, tool: string, rules: readonly StubRule[]):
   fs.writeFileSync(path.join(sandbox.stubs, `${tool}.rules`), `${lines.join('\n')}\n`);
 }
 
-function runScript(sandbox: Sandbox, script: string, args: readonly string[], env: Readonly<Record<string, string>> = {}): ScriptRun {
+/** Runs a deploy script in the sandbox. An `env` entry set to undefined leaves that variable unset. */
+function runScript(sandbox: Sandbox, script: string, args: readonly string[], env: Readonly<Record<string, string | undefined>> = {}): ScriptRun {
   const result = runFromPath('bash', [path.join(sandbox.repo, 'deploy', script), ...args], {
     cwd: sandbox.repo,
     encoding: 'utf8',
     input: '',
     timeout: SPAWN_HANG_MS,
-    env: {
+    env: definedOnly({
       PATH: `${sandbox.bin}${path.delimiter}${process.env.PATH ?? ''}`,
       HOME: sandbox.home,
       TMPDIR: os.tmpdir(),
@@ -1062,9 +1066,13 @@ function runScript(sandbox: Sandbox, script: string, args: readonly string[], en
       WHIM_API_HOST: API_HOST,
       WHIM_STATIC_IP: STATIC_IP,
       ...env,
-    },
+    }),
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function definedOnly(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined));
 }
 
 function toolLog(sandbox: Sandbox, tool: string): string[] {
@@ -1459,17 +1467,256 @@ const SLEEP_STUB_SCRIPT = [
   '',
 ].join('\n');
 
+// ---------------------------------------------------------------------------------------------
+// The Cloud Run smoke (server-ops-hardening D6): fixtures and helpers
+
+/** The smoke's fixed device id and prompt (docs/deploy.md): the one production write a smoke makes. */
+const SMOKE_DEVICE_ID = '5e0ce000-0000-4000-8000-00000000c1a1';
+const SMOKE_PROMPT = 'smoke: a checklist with one item';
+const SERVING_REVISION = 'whim-server-00042-new';
+/** The revision serving before a deploy, and the commit its image is tagged with. */
+const PREVIOUS_REVISION = 'whim-server-00041-old';
+const PREVIOUS_COMMIT = 'b'.repeat(40);
+const PREVIOUS_SITE_IMAGE = `northamerica-northeast1-docker.pkg.dev/anycognition-whim/whim/site:${'c'.repeat(40)}`;
+const CLOUD_RUN_ADDRESS = '198.51.100.20';
+
+/** `gcloud run domain-mappings describe --format=json` for a mapping to `route`. */
+function domainMapping(route: string, ready = 'True'): string {
+  return JSON.stringify({
+    apiVersion: 'domains.cloudrun.com/v1',
+    kind: 'DomainMapping',
+    spec: { routeName: route, certificateMode: 'AUTOMATIC' },
+    status: { conditions: [{ type: 'Ready', status: ready }, { type: 'CertificateProvisioned', status: ready }] },
+  });
+}
+
+interface ServiceShape {
+  readonly commit: string;
+  readonly latestCreated?: string;
+  readonly traffic?: ReadonlyArray<{ readonly revisionName: string; readonly percent: number }>;
+  readonly cpuThrottling?: string;
+}
+
+/** `gcloud run services describe whim-server --format=json` for a service serving `commit`. */
+function servedService({ commit, latestCreated = SERVING_REVISION, traffic = [{ revisionName: SERVING_REVISION, percent: 100 }], cpuThrottling }: ServiceShape): string {
+  const annotations: Record<string, string> = { 'run.googleapis.com/execution-environment': 'gen2', 'run.googleapis.com/startup-cpu-boost': 'true' };
+  if (cpuThrottling !== undefined) annotations['run.googleapis.com/cpu-throttling'] = cpuThrottling;
+  return JSON.stringify({
+    spec: { template: { metadata: { annotations }, spec: { containers: [{ image: `northamerica-northeast1-docker.pkg.dev/anycognition-whim/whim/server:${commit}` }] } } },
+    status: { latestCreatedRevisionName: latestCreated, latestReadyRevisionName: SERVING_REVISION, traffic: traffic.map((target) => ({ ...target, latestRevision: true })) },
+  });
+}
+
+/** What Cloud Run answers once `commit` is deployed and serving, the purge job and its trigger in
+ *  place, and what served before: the read-only calls the smoke and deploy.sh's rollback lookup make. */
+function cloudRunServing(service: ServiceShape): StubRule[] {
+  return [
+    purgeScheduleRule('ENABLED'),
+    [`*run domain-mappings describe --domain ${API_HOST} *`, 0, domainMapping('whim-server')],
+    [`*run domain-mappings describe --domain ${WEB_HOST} *`, 0, domainMapping('whim-site')],
+    ['*run services describe whim-server *--format=json*', 0, servedService(service)],
+    ['*run services describe whim-server *latestReadyRevisionName*', 0, `${PREVIOUS_REVISION}\\n`],
+    [`*run revisions describe ${PREVIOUS_REVISION} *`, 0, `northamerica-northeast1-docker.pkg.dev/anycognition-whim/whim/server:${PREVIOUS_COMMIT}\\n`],
+    ['*run services describe whim-site *', 0, `${PREVIOUS_SITE_IMAGE}\\n`],
+  ];
+}
+/** The smoke's read of the purge trigger, whose state is `state`. Deploy.sh's own lookup reads no
+ *  fields, so it falls through to the rules after this one. */
+function purgeScheduleRule(state: string): StubRule {
+  return ['*scheduler jobs describe whim-purge-hourly *schedule,state*', 0, `0 * * * *\\t${state}\\n`];
+}
+/** The stub rules that answer a monitoring or log-metric call. */
+function isMonitoringRule(rule: StubRule): boolean {
+  return /monitoring|logging metrics/.test(rule[0]);
+}
+
+const PURGE_JOB_PRESENT: StubRule = ['*run jobs describe whim-purge *', 0, 'projects/anycognition-whim/locations/us-east4/jobs/whim-purge\\n'];
+const CLOUD_RUN_DNS: readonly StubRule[] = [
+  [`+short A ${API_HOST}`, 0, `${CLOUD_RUN_ADDRESS}\\n`],
+  [`+short A ${WEB_HOST}`, 0, `${CLOUD_RUN_ADDRESS}\\n`],
+];
+const CLARIFY_OK: StubRule = [`*https://${API_HOST}/v1/clarify`, 0, '200|application/json|', '{"questions":[]}'];
+
+/** The hosts as a healthy Cloud Run deploy of `commit` answers them. */
+function cloudRunHosts(commit: string): StubRule[] {
+  return [healthRule(withCommit(DEFAULT_HEALTH, commit)), CLARIFY_OK, ...API_UP, ...PAGES_UP];
+}
+
+interface CloudRunRules {
+  /** gcloud rules ahead of the healthy service's (the first glob wins), and after it. */
+  readonly gcloud?: readonly StubRule[];
+  readonly gcloudAfter?: readonly StubRule[];
+  readonly curl?: readonly StubRule[];
+  readonly service?: Partial<ServiceShape>;
+  /** The purge trigger's state as the smoke reads it (ENABLED unless given). */
+  readonly schedule?: string;
+}
+
+/** Writes the stubs for a healthy Cloud Run serving `commit`: `gcloud`, `curl` and `dig` rules, with
+ *  the given rules ahead of the healthy ones (the first glob wins). */
+function writeCloudRunRules(sandbox: Sandbox, commit: string, first: CloudRunRules = {}): void {
+  const [schedule, ...serving] = cloudRunServing({ commit, ...first.service });
+  writeRules(sandbox, 'gcloud', [first.schedule ? purgeScheduleRule(first.schedule) : schedule!, ...(first.gcloud ?? []), ...serving, ...(first.gcloudAfter ?? []), PURGE_JOB_PRESENT]);
+  writeRules(sandbox, 'dig', CLOUD_RUN_DNS);
+  writeRules(sandbox, 'curl', [...(first.curl ?? []), ...cloudRunHosts(commit)]);
+}
+
+interface CloudRunSmokeRun {
+  readonly run: ScriptRun;
+  readonly curls: string[];
+  readonly gclouds: string[];
+}
+
+/** Runs deploy/cloudrun/smoke.sh standalone against a healthy Cloud Run serving HEALTH_COMMIT. */
+function cloudRunSmoke(args: readonly string[] = [], first: CloudRunRules = {}, prepare?: (sandbox: Sandbox) => Readonly<Record<string, string | undefined>>): CloudRunSmokeRun {
+  let result: CloudRunSmokeRun = { run: { status: null, stdout: '', stderr: '' }, curls: [], gclouds: [] };
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    writeCloudRunRules(sandbox, HEALTH_COMMIT, first);
+    const env = prepare?.(sandbox) ?? {};
+    result = { run: runScript(sandbox, 'cloudrun/smoke.sh', args, env), curls: toolLog(sandbox, 'curl'), gclouds: toolLog(sandbox, 'gcloud') };
+  });
+  return result;
+}
+
+/** One logged curl call, read back into the request it made. */
+interface LoggedRequest {
+  readonly method: string;
+  readonly path: string;
+  readonly headers: Record<string, string>;
+  readonly body: string | undefined;
+}
+
+function loggedRequest(line: string): LoggedRequest {
+  const url = /(https:\/\/\S+)$/.exec(line)?.[1] ?? '';
+  const headers = Object.fromEntries([...line.matchAll(/ -H ([A-Za-z-]+): (\S+)/g)].map(([, name, value]) => [name!.toLowerCase(), value!]));
+  return { method: /-X (\S+)/.exec(line)?.[1] ?? 'GET', path: new URL(url).pathname, headers, body: / --data (.*) https:\/\/\S+$/.exec(line)?.[1] };
+}
+
+/** Replays a logged request against the real server (stub models) and returns its status and the
+ *  ledger rows then held for the device it carried. */
+async function replayAgainstRealServer(request: LoggedRequest): Promise<readonly [number, number] | 'timed out'> {
+  const usageStore = new InMemoryUsageStore();
+  const app = createApp({ pipeline: createStubPipeline(0), usageStore, stub: true, config: loadServerConfig({}) });
+  const capture = captureLogs();
+  let res: Response | typeof TIMED_OUT;
+  try {
+    res = await within(Promise.resolve(app.request(request.path, { method: request.method, headers: request.headers, body: request.body })));
+  } finally {
+    capture.stop();
+  }
+  if (res === TIMED_OUT) return 'timed out';
+  const device = request.headers['x-whim-device'];
+  return [res.status, device === undefined ? 0 : (await usageStore.deviceRecords(device)).ledger.length];
+}
+
+async function cloudRunSmokeTests(): Promise<void> {
+  section('Deploy scripts: cloudrun/smoke.sh');
+  const full = cloudRunSmoke();
+  eq('the Cloud Run smoke passes against a healthy service, run standalone', full.run.status, 0);
+  check(
+    '  ... checking both domain mappings, the serving revision, /health, the device gate, the 426, the stream, the trap, the purge job and its trigger, the live clarify, the pages and the association files',
+    [
+      `domain mapping ${API_HOST} -> ready, routing to whim-server`,
+      `domain mapping ${WEB_HOST} -> ready, routing to whim-site`,
+      `cloud run whim-server -> ${SERVING_REVISION} takes all traffic, CPU only during requests`,
+      `api https://${API_HOST}/health -> `,
+      'without a device header -> 400',
+      'pre-protocol build (no x-whim-protocol) -> 426 update_required',
+      `api https://${API_HOST}/healthz/sse -> 3 frames`,
+      'with the trap field filled -> 303',
+      'cloud run job whim-purge exists',
+      'cloud scheduler whim-purge-hourly -> hourly, enabled',
+      `api https://${API_HOST}/v1/clarify from the smoke device -> 200`,
+      'pages /privacy -> 200 HTML',
+      'association assetlinks.json -> 404',
+      'cloudrun/smoke.sh: all checks passed',
+    ].every((line) => full.run.stdout.includes(line)),
+    `${full.run.stdout}\n${full.run.stderr}`,
+  );
+  const smokeDeviceRequests = full.curls.filter((line) => line.includes(SMOKE_DEVICE_ID));
+  eq('  ... exactly one request carries the smoke device id, and it is POST /v1/clarify', smokeDeviceRequests.map((line) => [loggedRequest(line).method, loggedRequest(line).path]), [['POST', '/v1/clarify']]);
+  const clarify = loggedRequest(smokeDeviceRequests[0] ?? `-X GET https://${API_HOST}/`);
+  eq('  ... with the documented prompt', clarify.body, JSON.stringify({ prompt: SMOKE_PROMPT }));
+  const bench = benchEnvelopeHeaders();
+  const envelope = Object.fromEntries(Object.keys(bench).map((name) => [name, clarify.headers[name]]));
+  check(
+    "  ... and the envelope the server's own drivers send (bench-envelope.ts), its build number within a minute of theirs",
+    Object.entries(bench).every(([name, value]) => (name === BUILD_HEADER ? Math.abs(Number(envelope[name]) - Number(value)) <= 1 : envelope[name] === value)),
+    `${JSON.stringify(envelope)} vs ${JSON.stringify(bench)}`,
+  );
+  eq('  ... which the real server answers 200, writing one ledger row under the smoke device', await replayAgainstRealServer(clarify), [200, 1]);
+  const trap = full.curls.find((line) => line.endsWith(`https://${API_HOST}/beta/signup`)) ?? '';
+  eq('  ... and whose signup trap post the real route answers 303 to /beta/thanks, storing nothing', await realSignupAnswer(/--data (\S+)/.exec(trap)?.[1] ?? ''), [303, `https://${WEB_HOST}/beta/thanks`, 0]);
+
+  const noLive = cloudRunSmoke(['--no-live']);
+  eq('--no-live passes', noLive.run.status, 0);
+  eq('  ... sending no request that carries the smoke device id', noLive.curls.filter((line) => line.includes(SMOKE_DEVICE_ID)), []);
+  const deviceRequests = noLive.curls.filter((line) => / -H x-whim-device: /.test(line)).map(loggedRequest);
+  eq('  ... the only request carrying any device id being the pre-protocol probe', deviceRequests.map((request) => [request.path, request.headers['x-whim-build']]), [['/v1/generate', '382511']]);
+  eq('  ... which the real server refuses 426 before admitting, crediting or storing anything', await replayAgainstRealServer(deviceRequests[0]!), [426, 0]);
+
+  const vmFree = cloudRunSmoke([], {}, (sandbox) => {
+    const defaultsFile = path.join(sandbox.repo, 'deploy', 'defaults.env');
+    fs.writeFileSync(defaultsFile, fs.readFileSync(defaultsFile, 'utf8').split('\n').filter((line) => !/^WHIM_(?:STATIC_IP|GCP_ZONE)=/.test(line)).join('\n'));
+    return { WHIM_STATIC_IP: undefined, WHIM_GCP_ZONE: undefined };
+  });
+  eq('the smoke passes with WHIM_STATIC_IP and WHIM_GCP_ZONE unset, in the environment and the defaults', vmFree.run.status, 0);
+  eq('  ... making no SSH or VM call', vmFree.gclouds.filter((line) => / compute /.test(line)), []);
+
+  const stale = cloudRunSmoke(['--commit', TAG]);
+  check(
+    'smoke --commit fails when /health and the serving revision report another commit, naming both',
+    stale.run.status === 1 && stale.run.stderr.includes(`commit is ${HEALTH_COMMIT}, but this deploy rolled out ${TAG}`) && stale.run.stderr.includes(`runs northamerica-northeast1-docker.pkg.dev/anycognition-whim/whim/server:${HEALTH_COMMIT}, not the image for ${TAG}`),
+    stale.run.stderr,
+  );
+  for (const [what, service, needle] of [
+    ['a newest revision that is not ready', { latestCreated: 'whim-server-00043-bad' }, `newest revision whim-server-00043-bad is not ready; ${SERVING_REVISION} still serves`],
+    ['traffic split with an older revision', { traffic: [{ revisionName: SERVING_REVISION, percent: 50 }, { revisionName: PREVIOUS_REVISION, percent: 50 }] }, `not 100% to ${SERVING_REVISION}`],
+    ['CPU always allocated (instance-based billing)', { cpuThrottling: 'false' }, 'instance-based billing'],
+  ] as const) {
+    const run = cloudRunSmoke([], { service });
+    check(`the smoke fails on ${what}, naming it`, run.run.status === 1 && run.run.stderr.includes(needle) && run.run.stderr.includes('1 smoke check(s) failed'), run.run.stderr);
+  }
+  eq('the smoke passes when the revision states request-based billing explicitly', cloudRunSmoke([], { service: { cpuThrottling: 'true' } }).run.status, 0);
+
+  const unmapped = cloudRunSmoke([], { gcloud: [[`*run domain-mappings describe --domain ${WEB_HOST} *`, 0, domainMapping('whim-site', 'Unknown')]] });
+  check('a domain mapping that is not ready stops the smoke, naming it', unmapped.run.status === 1 && unmapped.run.stderr.includes(`domain mapping ${WEB_HOST} is not ready: Unknown`), unmapped.run.stderr);
+  eq('  ... before any HTTPS request', unmapped.curls, []);
+  const misrouted = cloudRunSmoke([], { gcloud: [[`*run domain-mappings describe --domain ${API_HOST} *`, 0, domainMapping('whim-site')]] });
+  check('a domain mapping routed to the wrong service stops the smoke, naming both', misrouted.run.status === 1 && misrouted.run.stderr.includes(`domain mapping ${API_HOST} routes to whim-site, not whim-server`), misrouted.run.stderr);
+
+  const noJob = cloudRunSmoke([], { gcloud: [['*run jobs describe whim-purge *', 1, 'ERROR: (gcloud.run.jobs.describe) Cannot find job [whim-purge].\\n']] });
+  check('the smoke fails without the purge job, saying retention is not enforced', noJob.run.status === 1 && noJob.run.stderr.includes('cloud run job whim-purge') && noJob.run.stderr.includes('retention is not enforced'), noJob.run.stderr);
+  const paused = cloudRunSmoke([], { schedule: 'PAUSED' });
+  check('the smoke fails when the purge trigger is paused', paused.run.status === 1 && paused.run.stderr.includes('cloud scheduler whim-purge-hourly is'), paused.run.stderr);
+  const clarifyDown = cloudRunSmoke([], { curl: [[`*https://${API_HOST}/v1/clarify`, 0, '503|application/json|', '{"error":"policy_unavailable"}']] });
+  check('the smoke fails when the live clarify answers anything but 200, showing the answer', clarifyDown.run.status === 1 && clarifyDown.run.stderr.includes(`/v1/clarify from the smoke device answered 503 '{"error":"policy_unavailable"}', expected 200`), clarifyDown.run.stderr);
+
+  const pagesOnly = cloudRunSmoke(['--pages-only']);
+  eq('--pages-only passes', pagesOnly.run.status, 0);
+  check('  ... requesting only the pages host, and calling no gcloud', pagesOnly.curls.length > 0 && pagesOnly.curls.every((line) => line.includes(`https://${WEB_HOST}/`)) && pagesOnly.gclouds.length === 0, `${pagesOnly.curls.join(' / ')} | ${pagesOnly.gclouds.join(' / ')}`);
+
+  const assetlinks = '[{"relation":["x"]}]';
+  const published = (bytes: string): CloudRunSmokeRun => cloudRunSmoke(['--pages-only', '--site-dir', 'site-build'], { curl: [[`*https://${WEB_HOST}/.well-known/assetlinks.json`, 0, '200|application/json|', bytes]] }, (sandbox) => {
+    fs.mkdirSync(path.join(sandbox.repo, 'site-build', '.well-known'), { recursive: true });
+    fs.writeFileSync(path.join(sandbox.repo, 'site-build', '.well-known', 'assetlinks.json'), assetlinks);
+    return {};
+  });
+  const same = published(assetlinks);
+  check('an association file the site build publishes passes when the pages host serves the same bytes', same.run.status === 0 && same.run.stdout.includes('association assetlinks.json -> 200 application/json, bytes equal the published file'), `${same.run.stdout}\n${same.run.stderr}`);
+  const drifted = published('[]');
+  check('  ... and fails when the bytes differ', drifted.run.status === 1 && drifted.run.stderr.includes('assetlinks.json answered 200 (application/json); expected 200 application/json with the published bytes'), drifted.run.stderr);
+}
+
 function cloudRunStoreTests(): void {
   section('Deploy scripts: cloudrun/deploy.sh store backend and Firestore indexes');
   const wanted = wantedIndexes();
   check('deploy/firestore/indexes.json asks for at least one composite index', wanted.length > 0);
+  /** A rollback (--tag) to TAG, whose smoke finds TAG serving. */
   const deployTagged = (sandbox: Sandbox, listed: readonly unknown[], env: Readonly<Record<string, string>> = {}, extra: readonly StubRule[] = []): { run: ScriptRun; calls: string[]; serverEnv: string } => {
     writeOperatorFile(sandbox);
-    writeRules(sandbox, 'gcloud', [
-      ...extra,
-      ['*artifacts docker images describe*', 0, ''],
-      ['*firestore indexes composite list*', 0, JSON.stringify(listed)],
-    ]);
+    writeCloudRunRules(sandbox, TAG, { gcloud: extra, gcloudAfter: [['*artifacts docker images describe*', 0, ''], ['*firestore indexes composite list*', 0, JSON.stringify(listed)]] });
     const run = runScript(sandbox, 'cloudrun/deploy.sh', ['--tag', TAG], env);
     return { run, calls: toolLog(sandbox, 'gcloud'), serverEnv: stubFile(sandbox, 'env-vars-file') };
   };
@@ -1527,7 +1774,7 @@ function cloudRunStoreTests(): void {
   };
 
   withSandbox((sandbox) => {
-    withSleepStub(sandbox, [['*artifacts docker images describe*', 0, ''], ['*firestore indexes composite list*', 0, readyListing]]);
+    withSleepStub(sandbox, [...cloudRunServing({ commit: TAG }), ['*artifacts docker images describe*', 0, ''], ['*firestore indexes composite list*', 0, readyListing], PURGE_JOB_PRESENT]);
     const { run, calls } = deployTagged(sandbox, listedIn('CREATING'));
     eq('a deploy that finds its indexes still building succeeds once they are READY', run.status, 0);
     check('  ... saying it waits for them, by name', wanted.every((index) => run.stdout.includes(`waiting for ${index.collectionGroup} (`)), run.stdout);
@@ -1553,21 +1800,19 @@ function cloudRunStoreTests(): void {
 
   const purgeJobDeploy = (calls: readonly string[]): number => indexOfCall(calls, 'run jobs deploy whim-purge');
   const serviceAccount = 'whim-run@anycognition-whim.iam.gserviceaccount.com';
-  const channelDisplay = String((JSON.parse(readRepoFile('deploy/monitoring/channel-email.json')) as { displayName: string }).displayName);
   const alertDisplay = String((JSON.parse(readRepoFile('deploy/monitoring/policy-purge-failed.json')) as { displayName: string }).displayName);
-  /** A plain (untagged) deploy: the server image for the sandbox's HEAD, which exists, then the site.
-   *  The alert channel provision.sh created is in place unless `extra` says otherwise. */
-  const deployFull = (sandbox: Sandbox, extra: readonly StubRule[] = []): { run: ScriptRun; calls: string[] } => {
-    writeOperatorFile(sandbox);
-    writeRules(sandbox, 'gcloud', [
-      ...extra,
-      ['*monitoring channels list*', 0, `${channelDisplay}\\t${CHANNEL_NAME}\\n`],
-      ['*artifacts docker images describe*', 0, ''],
-      ['*firestore indexes composite list*', 0, '[]'],
-    ]);
+  const provisioned = provisionAgainst(NOTHING_PROVISIONED);
+  /** Monitoring with nothing in place yet, and as provision.sh left it. */
+  const monitoringNone = NOTHING_PROVISIONED.filter(isMonitoringRule);
+  const monitoringProvisioned = stateAfter(provisioned).filter(isMonitoringRule);
+  /** A plain (untagged) deploy: the server image for the sandbox's HEAD, which exists, then the site,
+   *  its smoke finding HEAD serving. Monitoring is as `monitoring` says (nothing in place by default). */
+  const deployFull = (sandbox: Sandbox, extra: readonly StubRule[] = [], monitoring: readonly StubRule[] = monitoringNone, operator: Readonly<Record<string, string>> = { WHIM_ALERT_EMAIL: PROVISION_VALUES.WHIM_ALERT_EMAIL }): { run: ScriptRun; calls: string[] } => {
+    writeOperatorFile(sandbox, operator);
+    writeCloudRunRules(sandbox, headOf(sandbox), { gcloud: extra, gcloudAfter: [...monitoring, ['*artifacts docker images describe*', 0, ''], ['*firestore indexes composite list*', 0, '[]']] });
     return { run: runScript(sandbox, 'cloudrun/deploy.sh', []), calls: toolLog(sandbox, 'gcloud') };
   };
-  const provisionedAlert = provisionAgainst(NOTHING_PROVISIONED).files.get('policy-purge-failed.json');
+  const provisionedAlert = provisioned.files.get('policy-purge-failed.json');
   const renderedPurgeAlert = (sandbox: Sandbox): Record<string, unknown> | undefined => {
     const captured = path.join(sandbox.stubs, 'from-file');
     const name = fs.existsSync(captured) ? fs.readdirSync(captured).find((file) => file.endsWith('-policy-purge-failed.json')) : undefined;
@@ -1599,20 +1844,37 @@ function cloudRunStoreTests(): void {
     eq('  ... rendered exactly as provision.sh renders it, so provision.sh finds it unchanged', alert, provisionedAlert);
   });
 
-  const alertPolicy = 'projects/anycognition-whim/alertPolicies/5';
-  const policyChanges = (calls: readonly string[]): string[] => calls.filter((line) => / monitoring policies (?:create|update|delete) /.test(line));
+  const monitoringChanges = (calls: readonly string[]): string[] => calls.filter((line) => / (?:monitoring (?:channels|uptime|policies)|logging metrics) (?:create|update|delete) /.test(line));
+  const policyFiles = fs.readdirSync(path.join(ROOT, 'deploy', 'monitoring')).filter((name) => /^policy-.*\.json$/.test(name));
   withSandbox((sandbox) => {
-    const { run, calls } = deployFull(sandbox, [['*monitoring policies list*', 0, `${alertDisplay}\\t${alertPolicy}\\t${specOf(provisionedAlert)}\\n`]]);
-    eq('a firestore deploy with the purge-failure alert in place, as rendered, succeeds', run.status, 0);
-    eq('  ... creating or updating no alert policy', policyChanges(calls), []);
-    check('  ... and saying it is unchanged', run.stdout.includes(`unchanged alert policy '${alertDisplay}'`), run.stdout);
+    const { run, calls } = deployFull(sandbox);
+    eq('a plain deploy to a project with no monitoring yet succeeds', run.status, 0);
+    const created = (pattern: RegExp): number => calls.filter((line) => pattern.test(line)).length;
+    eq(
+      '  ... creating the alert channel, the uptime check, the log metric and every committed policy-*.json',
+      [created(/ beta monitoring channels create /), created(/ monitoring uptime create /), created(/ logging metrics create /), created(/ monitoring policies create /)],
+      [1, 1, 1, policyFiles.length],
+    );
+    const capturedDir = path.join(sandbox.stubs, 'from-file');
+    const captured = fs.existsSync(capturedDir) ? fs.readdirSync(capturedDir) : [];
+    check('  ... applying each policy file, none left out', policyFiles.every((name) => captured.some((file) => file.endsWith(`-${name}`))), captured.join(', '));
+    const channel = captured.find((name) => name.endsWith('-channel-email.json')) ?? '';
+    eq('  ... the channel emailing WHIM_ALERT_EMAIL', channel ? (JSON.parse(stubFile(sandbox, `from-file/${channel}`)) as { labels: Record<string, string> }).labels.email_address : '', PROVISION_VALUES.WHIM_ALERT_EMAIL);
   });
 
   withSandbox((sandbox) => {
-    const { run, calls } = deployFull(sandbox, [['*monitoring policies list*', 0, `${alertDisplay}\\t${alertPolicy}\\t${'0'.repeat(40)}\\n`]]);
-    eq('a firestore deploy with an outdated purge-failure alert succeeds', run.status, 0);
-    const changes = policyChanges(calls);
-    check('  ... updating that policy in place from the rendered file, creating none', changes.length === 1 && changes[0]!.includes(`monitoring policies update ${alertPolicy} --policy-from-file=`), changes.join(' / '));
+    const { run, calls } = deployFull(sandbox, [], monitoringProvisioned);
+    eq('a plain deploy against the monitoring provision.sh left succeeds', run.status, 0);
+    eq('  ... creating or updating none of it', monitoringChanges(calls), []);
+    check('  ... and saying every policy is unchanged', (run.stdout.match(/^unchanged alert policy /gm) ?? []).length === policyFiles.length, run.stdout);
+  });
+
+  withSandbox((sandbox) => {
+    const outdated = monitoringProvisioned.map((rule): StubRule => (rule[0] === '*monitoring policies list*' ? [rule[0], rule[1], (rule[2] ?? '').split('\\n').map((row) => (row.startsWith(`${alertDisplay}\\t`) ? row.replace(/[0-9a-f]{40}$/, '0'.repeat(40)) : row)).join('\\n')] : rule));
+    const { run, calls } = deployFull(sandbox, [], outdated);
+    eq('a plain deploy with an outdated purge-failure alert succeeds', run.status, 0);
+    const changes = monitoringChanges(calls);
+    check('  ... updating that one policy in place from the rendered file, and nothing else', changes.length === 1 && / monitoring policies update projects\/anycognition-whim\/alertPolicies\/\d+ --policy-from-file=/.test(changes[0]!), changes.join(' / '));
     eq('  ... to the definition provision.sh renders', renderedPurgeAlert(sandbox), provisionedAlert);
   });
 
@@ -1622,18 +1884,13 @@ function cloudRunStoreTests(): void {
     commitAndPush(sandbox, 'unfilled placeholder');
     const { run, calls } = deployFull(sandbox);
     check('a purge-failure alert with a placeholder no value fills fails the deploy, naming the file', run.status === 1 && run.stderr.includes('policy-purge-failed.json: a {{placeholder}} is left unfilled'), run.stderr);
-    eq('  ... applying no alert policy', policyChanges(calls), []);
+    eq('  ... changing no monitoring at all', monitoringChanges(calls), []);
   });
 
   withSandbox((sandbox) => {
-    const { run, calls } = deployFull(sandbox, [['*monitoring channels list*', 0, '']]);
-    check('a firestore deploy with no alert channel fails, naming the channel and that the server and purge job are deployed', run.status === 1 && run.stderr.includes(`no notification channel is named '${channelDisplay}'`) && run.stderr.includes('The server and the purge job are deployed'), run.stderr);
-    check(
-      '  ... giving the commands that create the channel from deploy/monitoring/channel-email.json',
-      run.stderr.includes('deploy/monitoring/channel-email.json') && run.stderr.includes('beta monitoring channels create --channel-content-from-file=') && !run.stderr.includes('provision.sh'),
-      run.stderr,
-    );
-    check('  ... after deploying the purge job, creating no alert policy', purgeJobDeploy(calls) !== -1 && policyChanges(calls).length === 0, calls.join(' / '));
+    const { run, calls } = deployFull(sandbox, [], monitoringNone, {});
+    check('a plain firestore deploy without WHIM_ALERT_EMAIL is refused, naming it', run.status === 1 && run.stderr.includes('missing required value WHIM_ALERT_EMAIL'), run.stderr);
+    eq('  ... before any gcloud call', calls, []);
   });
 
   withSandbox((sandbox) => {
@@ -1652,20 +1909,21 @@ function cloudRunStoreTests(): void {
       envFileOf(update) === envFileOf(calls[serverDeploy(calls)] ?? '') && envVarsFileValues(serverEnv).WHIM_STORE_BACKEND === 'firestore',
       `${update} / ${calls[serverDeploy(calls)] ?? ''}`,
     );
-    eq('  ... touching no schedule or alert', calls.filter((line) => /scheduler|monitoring/.test(line)), []);
+    eq('  ... changing no schedule and applying no monitoring', calls.filter((line) => / scheduler jobs (?!describe)|monitoring|logging metrics/.test(line)), []);
   });
 
   withSandbox((sandbox) => {
     const { run, calls } = deployTagged(sandbox, [], {}, [['*run jobs describe*', 1, 'ERROR: (gcloud.run.jobs.describe) Cannot find job [whim-purge].\n']]);
-    eq('a firestore rollback (--tag) with no purge job still deploys the server', [run.status, serverDeploy(calls) !== -1], [0, true]);
+    eq('a firestore rollback (--tag) with no purge job still deploys the server', serverDeploy(calls) !== -1, true);
     eq('  ... creating no job (the tagged image may lack `whim-admin purge`)', calls.filter((line) => / run jobs (?!describe)/.test(line)), []);
     check('  ... warning loudly that retention is not enforced and a plain deploy creates the job', run.stderr.includes('WARNING: no Cloud Run job whim-purge exists') && run.stderr.includes('retention is NOT enforced') && run.stderr.includes('plain deploy'), run.stderr);
+    check('  ... and exits 1, its smoke failing on the missing job', run.status === 1 && run.stderr.includes('FAIL  cloud run job whim-purge') && run.stderr.includes('1 smoke check(s) failed'), run.stderr);
   });
 
   withSandbox((sandbox) => {
     const notFound = "ERROR: (gcloud.run.jobs.describe) NOT_FOUND: Resource 'whim-purge' of kind 'JOB' in region 'us-east4' in project 'anycognition-whim' does not exist.\n";
     const { run, calls } = deployTagged(sandbox, [], {}, [['*run jobs describe*', 1, notFound]]);
-    eq('a firestore rollback (--tag) whose job lookup answers NOT_FOUND counts as no purge job', [run.status, calls.filter((line) => / run jobs (?!describe)/.test(line))], [0, []]);
+    eq('a firestore rollback (--tag) whose job lookup answers NOT_FOUND counts as no purge job, its smoke failing on it', [run.status, calls.filter((line) => / run jobs (?!describe)/.test(line)), run.stderr.includes('FAIL  cloud run job whim-purge')], [1, [], true]);
     check('  ... and warns that retention is not enforced', run.stderr.includes('WARNING: no Cloud Run job whim-purge exists'), run.stderr);
   });
 
@@ -1718,6 +1976,91 @@ function cloudRunStoreTests(): void {
     const { run, calls } = deployTagged(sandbox, [], { WHIM_STORE_BACKEND: 'postgres' });
     check('an unknown WHIM_STORE_BACKEND is refused, naming it', run.status === 1 && run.stderr.includes('WHIM_STORE_BACKEND must be firestore or sqlite, got postgres'), run.stderr);
     eq('  ... before any gcloud call', calls, []);
+  });
+}
+
+function cloudRunDeploySmokeTests(): void {
+  section('Deploy scripts: cloudrun/deploy.sh ends every mode with the Cloud Run smoke');
+  const monitoringNone = NOTHING_PROVISIONED.filter(isMonitoringRule);
+  const serverImage: readonly StubRule[] = [['*artifacts docker images describe*', 0, ''], ['*firestore indexes composite list*', 0, '[]']];
+  const siteBuilds = (sandbox: Sandbox): number => toolLog(sandbox, 'node').filter((line) => line.startsWith('server/site.mjs build')).length;
+  const apiRequests = (sandbox: Sandbox): string[] => toolLog(sandbox, 'curl').filter((line) => line.includes(`https://${API_HOST}/`));
+  const liveClarifies = (sandbox: Sandbox): string[] => toolLog(sandbox, 'curl').filter((line) => line.includes(SMOKE_DEVICE_ID));
+  const rollbackTo = (commit: string): string => `deploy/cloudrun/deploy.sh --tag ${commit}`;
+  const siteRollback = `gcloud --project anycognition-whim run deploy whim-site --region us-east4 --image ${PREVIOUS_SITE_IMAGE}`;
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox, { WHIM_ALERT_EMAIL: PROVISION_VALUES.WHIM_ALERT_EMAIL, WHIM_POLICY_ATTEMPT_TIMEOUT_MS: '6000', WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY: '12', WHIM_LIMIT_POLICY_CHECKS_PER_DAY: '300' });
+    const head = headOf(sandbox);
+    writeCloudRunRules(sandbox, head, { gcloudAfter: [...monitoringNone, ...serverImage] });
+    const run = runScript(sandbox, 'cloudrun/deploy.sh', []);
+    eq('a plain deploy runs the full smoke and succeeds', [run.status, run.stdout.includes('cloudrun/smoke.sh: all checks passed'), run.stdout.trimEnd().endsWith('cloudrun/deploy.sh: done')], [0, true, true]);
+    check('  ... the smoke holding /health and the serving revision to HEAD', run.stdout.includes(`${SERVING_REVISION} takes all traffic at ${head}`) && run.stdout.includes(`"commit":"${head}"`), run.stdout);
+    eq('  ... sending its one live clarify', liveClarifies(sandbox).map((line) => loggedRequest(line).path), ['/v1/clarify']);
+    eq('  ... comparing the association files with the site this deploy built, building no second one', siteBuilds(sandbox), 1);
+    const serverDeploy = toolLog(sandbox, 'gcloud').find((line) => line.includes('run deploy whim-server')) ?? '';
+    check('  ... the server deployed with request-based billing (CPU only during requests)', / --cpu-throttling(?: |$)/.test(serverDeploy) && !serverDeploy.includes('--no-cpu-throttling'), serverDeploy);
+    const served = loadServerConfig(envVarsFileValues(stubFile(sandbox, 'env-vars-file')));
+    eq(
+      "  ... and the operator's content-policy attempt timeout and policy-check limits forwarded, as the server reads them",
+      [served.policyAttemptTimeoutMs, served.limitPolicyChecksPerDeviceDay, served.limitPolicyChecksPerDay],
+      [6000, 12, 300],
+    );
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    writeCloudRunRules(sandbox, TAG, { gcloudAfter: serverImage });
+    const run = runScript(sandbox, 'cloudrun/deploy.sh', ['--tag', TAG]);
+    eq('a rollback (--tag) runs the full smoke and succeeds', [run.status, run.stdout.includes(`${SERVING_REVISION} takes all traffic at ${TAG}`), run.stdout.trimEnd().endsWith('cloudrun/deploy.sh: done')], [0, true, true]);
+    eq('  ... its live clarify included (a rollback is when a working generation path matters most)', liveClarifies(sandbox).map((line) => loggedRequest(line).path), ['/v1/clarify']);
+    eq('  ... building the site from the checkout to compare the association files with', siteBuilds(sandbox), 1);
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    writeCloudRunRules(sandbox, headOf(sandbox));
+    const run = runScript(sandbox, 'cloudrun/deploy.sh', ['--site-only']);
+    eq('a site-only deploy runs the pages smoke and succeeds', [run.status, run.stdout.includes('cloudrun/smoke.sh: all checks passed'), run.stdout.trimEnd().endsWith('cloudrun/deploy.sh: done')], [0, true, true]);
+    eq('  ... requesting nothing from the API host', apiRequests(sandbox), []);
+    check('  ... and checking the pages', toolLog(sandbox, 'curl').some((line) => line.endsWith(`https://${WEB_HOST}/privacy`)), toolLog(sandbox, 'curl').join(' / '));
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox, { WHIM_ALERT_EMAIL: PROVISION_VALUES.WHIM_ALERT_EMAIL });
+    const head = headOf(sandbox);
+    writeCloudRunRules(sandbox, head, { gcloudAfter: [...monitoringNone, ...serverImage], curl: [healthRule(withCommit(DEFAULT_HEALTH, PREVIOUS_COMMIT))] });
+    const run = runScript(sandbox, 'cloudrun/deploy.sh', []);
+    check('a plain deploy whose /health still reports the previous commit fails, naming both commits', run.status === 1 && run.stderr.includes(`commit is ${PREVIOUS_COMMIT}, but this deploy rolled out ${head}`), run.stderr);
+    check('  ... printing the rollback to the commit the replaced revision ran, and the site\'s', run.stderr.includes(rollbackTo(PREVIOUS_COMMIT)) && run.stderr.includes(siteRollback), run.stderr);
+    check('  ... and never printing done', !run.stdout.includes('cloudrun/deploy.sh: done'), run.stdout);
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    writeCloudRunRules(sandbox, TAG, { gcloudAfter: serverImage, curl: [[`*https://${API_HOST}/v1/clarify`, 0, '503|application/json|', '{"error":"policy_unavailable"}']] });
+    const run = runScript(sandbox, 'cloudrun/deploy.sh', ['--tag', TAG]);
+    check('a rollback (--tag) whose live clarify fails exits 1, printing the rollback to the revision it replaced', run.status === 1 && run.stderr.includes(rollbackTo(PREVIOUS_COMMIT)), run.stderr);
+    check('  ... and no site rollback (it deployed no site)', !run.stderr.includes('run deploy whim-site'), run.stderr);
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    writeCloudRunRules(sandbox, headOf(sandbox), { curl: [[`*https://${WEB_HOST}/privacy`, 0, `404|${HTML}|`, '<html>']] });
+    const run = runScript(sandbox, 'cloudrun/deploy.sh', ['--site-only']);
+    check('a site-only deploy whose pages smoke fails exits 1, printing the site rollback only', run.status === 1 && run.stderr.includes(siteRollback) && !run.stderr.includes('deploy/cloudrun/deploy.sh --tag'), run.stderr);
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox, { WHIM_ALERT_EMAIL: PROVISION_VALUES.WHIM_ALERT_EMAIL });
+    const head = headOf(sandbox);
+    writeCloudRunRules(sandbox, head, {
+      gcloud: [['*run services describe whim-server *latestReadyRevisionName*', 1, 'ERROR: (gcloud.run.services.describe) Cannot find service [whim-server]\\n']],
+      gcloudAfter: [...monitoringNone, ...serverImage],
+      curl: [healthRule(withCommit(DEFAULT_HEALTH, PREVIOUS_COMMIT))],
+    });
+    const run = runScript(sandbox, 'cloudrun/deploy.sh', []);
+    check('a first deploy whose smoke fails says there is no earlier server revision to roll back to', run.status === 1 && run.stderr.includes('no earlier whim-server revision') && !run.stderr.includes('deploy/cloudrun/deploy.sh --tag'), run.stderr);
   });
 }
 
@@ -2449,12 +2792,12 @@ interface ProvisionRun extends ScriptRun {
   readonly files: Map<string, Record<string, unknown>>;
 }
 
-/** `script`, when given, replaces the sandbox's deploy/provision.sh (a planted weakening). */
-function provisionAgainst(state: readonly StubRule[], values: Readonly<Record<string, string>> = PROVISION_VALUES, script?: string): ProvisionRun {
+/** `script`, when given, replaces the sandbox's deploy/<scriptRel> (a planted weakening). */
+function provisionAgainst(state: readonly StubRule[], values: Readonly<Record<string, string>> = PROVISION_VALUES, script?: string, scriptRel = 'provision.sh'): ProvisionRun {
   let result: ProvisionRun | undefined;
   withSandbox((sandbox) => {
     writeRules(sandbox, 'gcloud', [...PROVISION_BASE, ...state]);
-    if (script !== undefined) fs.writeFileSync(path.join(sandbox.repo, 'deploy', 'provision.sh'), script);
+    if (script !== undefined) fs.writeFileSync(path.join(sandbox.repo, 'deploy', scriptRel), script);
     const run = runScript(sandbox, 'provision.sh', [], values);
     const captured = path.join(sandbox.stubs, 'from-file');
     const names = fs.existsSync(captured) ? fs.readdirSync(captured).sort((a, b) => Number.parseInt(a, 10) - Number.parseInt(b, 10)) : [];
@@ -2580,8 +2923,21 @@ interface FilterEvalState {
   pos: number;
 }
 
+/** The selector every server log filter in deploy/monitoring/ starts with (server-ops-hardening D5):
+ *  the whim-server Cloud Run revision's stdout, where pino writes. */
+const CLOUD_RUN_SERVER_SELECTOR = 'resource.type="cloud_run_revision" AND resource.labels.service_name="whim-server" AND logName:"run.googleapis.com%2Fstdout"';
+/** The monitored resource and log name Cloud Run gives a line whim-server writes to stdout. */
+const CLOUD_RUN_SERVER_ENTRY = { resourceType: 'cloud_run_revision', serviceName: 'whim-server', logName: 'projects/anycognition-whim/logs/run.googleapis.com%2Fstdout' } as const;
+
 function evalFilterLeaf(term: string, line: Readonly<Record<string, unknown>>): boolean {
-  if (term === 'log_id("docker")') return true;
+  // A Cloud Run entry carries no Docker log id, so the VM-era selector matches nothing there (#138).
+  if (term === 'log_id("docker")') return false;
+  const resourceType = /^resource\.type="([^"]*)"$/.exec(term);
+  if (resourceType) return resourceType[1] === CLOUD_RUN_SERVER_ENTRY.resourceType;
+  const serviceName = /^resource\.labels\.service_name="([^"]*)"$/.exec(term);
+  if (serviceName) return serviceName[1] === CLOUD_RUN_SERVER_ENTRY.serviceName;
+  const logName = /^logName:"([^"]*)"$/.exec(term);
+  if (logName) return CLOUD_RUN_SERVER_ENTRY.logName.includes(logName[1]!);
   const field = /^jsonPayload\.(\w+)="([^"]*)"$/.exec(term);
   if (field) return line[field[1]!] === field[2];
   const numeric = /^jsonPayload\.(\w+)=(-?\d+)$/.exec(term);
@@ -2627,8 +2983,8 @@ function evalFilterOr(state: FilterEvalState): boolean {
   return result;
 }
 
-/** Whether a Logs Explorer filter matches one server line as the Ops Agent ships it
- *  (handoff/log-shipping.md: pino fields under jsonPayload, the docker log, pino's severity).
+/** Whether a Logs Explorer filter matches one server line as Cloud Run ships it (pino fields under
+ *  jsonPayload, the whim-server revision's stdout log, pino's severity).
  *  Understands `AND`/`OR`-joined leaf terms with explicit parenthesised grouping (`AND` binds
  *  tighter than `OR`, matching Cloud Logging query syntax) — the subset the policies in
  *  deploy/monitoring/ use. Only the leaf term forms the alerts use are understood; any other
@@ -2761,13 +3117,18 @@ async function planFailureLines(): Promise<Record<string, unknown>[]> {
   return capture.records;
 }
 
+/** A filter term that picks the log rather than the line: the resource, the log name or the log id. */
+const LOG_SELECTOR_TERM = /^(?:log_id\(|resource\.|logName[:=])/;
+
 /** The runbook's "Terminal failures, by reason" saved query (docs/deploy.md), narrowed to `code`,
- *  as one AND filter. */
+ *  as one AND filter on the server's Cloud Run log: its line predicates under the selector the
+ *  monitoring files use, whichever log selector the runbook row names. */
 function runbookTerminalFailureFilter(code: string): string {
   const row = readRepoFile('docs/deploy.md').split('\n').find((line) => line.trim().startsWith('| Terminal failures, by reason |')) ?? '';
   const [base, narrow] = [...row.matchAll(/`([^`]+)`/g)].map((match) => match[1]!);
-  if (!base?.startsWith('log_id("docker") ') || !narrow?.includes('<code>')) throw new Error(`setup: the runbook row is not base + narrowing filter: ${row}`);
-  return `log_id("docker") AND ${base.slice('log_id("docker") '.length)} AND ${narrow.replace('<code>', code)}`;
+  const predicates = tokenizeFilter(base ?? '').filter((token) => token !== 'AND' && !LOG_SELECTOR_TERM.test(token));
+  if (predicates.length === 0 || !narrow?.includes('<code>')) throw new Error(`setup: the runbook row is not base + narrowing filter: ${row}`);
+  return [CLOUD_RUN_SERVER_SELECTOR, ...predicates, narrow.replace('<code>', code)].join(' AND ');
 }
 
 function policyFile(name: string): { conditions: Array<{ conditionMatchedLog?: { filter: string; labelExtractors?: Record<string, string> } }>; documentation: { content: string } } {
@@ -2799,6 +3160,61 @@ function monitoringPolicyShapeTests(): void {
   );
 }
 
+interface MonitoringFilter {
+  readonly where: string;
+  readonly filter: string;
+  readonly kind: 'log' | 'threshold';
+}
+
+/** Every filter a deploy/monitoring JSON definition carries: a log metric's, and each condition's. */
+function monitoringFilters(rel: string, text: string): MonitoringFilter[] {
+  if (!rel.endsWith('.json')) return [];
+  const definition = JSON.parse(text) as { filter?: string; conditions?: Array<{ conditionMatchedLog?: { filter: string }; conditionThreshold?: { filter: string } }> };
+  const filters: MonitoringFilter[] = definition.filter === undefined ? [] : [{ where: `${rel} (log metric)`, filter: definition.filter, kind: 'log' }];
+  for (const [index, condition] of (definition.conditions ?? []).entries()) {
+    if (condition.conditionMatchedLog) filters.push({ where: `${rel} condition ${index}`, filter: condition.conditionMatchedLog.filter, kind: 'log' });
+    if (condition.conditionThreshold) filters.push({ where: `${rel} condition ${index}`, filter: condition.conditionThreshold.filter, kind: 'threshold' });
+  }
+  return filters;
+}
+
+/** The purge job's own log, the one log filter that watches no server output. */
+const PURGE_JOB_SELECTOR = 'resource.type="cloud_run_job" AND resource.labels.job_name="whim-purge" AND ';
+
+/** specs/server-deployment "Log-based alerts match the Cloud Run service's logs": no monitoring
+ *  definition names the VM's Docker log or GCE resource; every log filter watches the whim-server
+ *  revision's stdout (or the purge job), and a threshold on a log metric names its Cloud Run resource. */
+function monitoringTargetProblems(files: ReadonlyMap<string, string>): string[] {
+  return [...files].filter(([rel]) => rel.startsWith('deploy/monitoring/')).flatMap(([rel, text]) => [
+    ...(/log_id\(\\?"docker\\?"\)/.test(text) ? [`${rel} mentions log_id("docker")`] : []),
+    ...(text.includes('gce_instance') ? [`${rel} mentions gce_instance`] : []),
+    ...monitoringFilters(rel, text).flatMap(filterTargetProblems),
+  ]);
+}
+
+function filterTargetProblems({ where, filter, kind }: MonitoringFilter): string[] {
+  if (kind === 'log' && !filter.startsWith(`${CLOUD_RUN_SERVER_SELECTOR} AND `) && !filter.startsWith(PURGE_JOB_SELECTOR)) {
+    return [`${where} watches neither the whim-server revision's stdout nor the purge job: ${filter}`];
+  }
+  if (kind === 'threshold' && filter.includes('metric.type="logging.googleapis.com/user/') && !filter.includes('resource.type="cloud_run_revision"')) {
+    return [`${where} watches a log metric off the Cloud Run revision: ${filter}`];
+  }
+  return [];
+}
+
+function monitoringTargetTests(files: ReadonlyMap<string, string>): void {
+  section("Deploy artifacts: the alerts watch the Cloud Run service's logs (#138)");
+  const monitoring = [...files.keys()].filter((rel) => rel.startsWith('deploy/monitoring/'));
+  check('deploy/monitoring holds the log metric and the log-matching policies', ['metric-whim-terminal-failures.json', 'policy-report.json', 'policy-device-error.json', 'policy-credit-exhausted.json', 'policy-terminal-failures.json'].every((name) => monitoring.includes(`deploy/monitoring/${name}`)), monitoring.join(', '));
+  checkClean('no monitoring file mentions log_id("docker") or gce_instance, and every log filter watches the Cloud Run service', monitoringTargetProblems(files));
+  const deviceError = files.get('deploy/monitoring/policy-device-error.json') ?? '';
+  const escapedSelector = CLOUD_RUN_SERVER_SELECTOR.replaceAll('"', '\\"');
+  checkCaught('  red: the VM-era Docker selector back in a policy fails', monitoringTargetProblems(withFile(files, 'deploy/monitoring/policy-device-error.json', plant(deviceError, escapedSelector, 'log_id(\\"docker\\")'))), 'mentions log_id("docker")');
+  checkCaught('  red: a log filter on every Cloud Run service\'s stdout fails', monitoringTargetProblems(withFile(files, 'deploy/monitoring/policy-device-error.json', plant(deviceError, ' AND resource.labels.service_name=\\"whim-server\\"', ''))), 'watches neither the whim-server revision');
+  const threshold = files.get('deploy/monitoring/policy-terminal-failures.json') ?? '';
+  checkCaught('  red: the terminal-failure threshold back on gce_instance fails', monitoringTargetProblems(withFile(files, 'deploy/monitoring/policy-terminal-failures.json', plant(threshold, 'cloud_run_revision', 'gce_instance'))), 'mentions gce_instance');
+}
+
 async function alertFilterTests(): Promise<void> {
   section('Deploy artifacts: the log-based alerts match the lines the real server writes');
   const lines = await realAlertSourceLines();
@@ -2824,6 +3240,8 @@ async function alertFilterTests(): Promise<void> {
   const failureMatching = (filter: string): Array<Record<string, unknown>> => failureLines.filter((line) => filterMatches(filter, line));
   const metricFilter = (JSON.parse(readRepoFile('deploy/monitoring/metric-whim-terminal-failures.json')) as { filter: string }).filter;
   eq('the terminal-failure metric counts exactly the one terminal failure line a failed generation writes', failureMatching(metricFilter).map((line) => line.msg), ['terminal failure']);
+  eq('  red: under the VM-era log_id("docker") selector it counts nothing on Cloud Run (#138)', failureMatching(plant(metricFilter, CLOUD_RUN_SERVER_SELECTOR, 'log_id("docker")')).length, 0);
+  eq('  red: on another Cloud Run service it counts nothing', failureMatching(plant(metricFilter, 'service_name="whim-server"', 'service_name="whim-site"')).length, 0);
   eq("  ... and the runbook's query narrowed to plan_failed finds that line", failureMatching(runbookTerminalFailureFilter('plan_failed')).map((line) => line.msg), ['terminal failure']);
   eq('  red: narrowed to another code it finds nothing', failureMatching(runbookTerminalFailureFilter('repair_exhausted')).length, 0);
   check("  ... and no line of that generation names the model's screen", failureLines.length > 0 && failureLines.every((line) => !JSON.stringify(line).includes('Lisbon')));
@@ -2838,7 +3256,7 @@ async function alertFilterTests(): Promise<void> {
     creditMatching(creditFilter).map((line) => (line.msg === 'provider credit exhausted' ? line.msg : line.error)).sort((a, b) => String(a).localeCompare(String(b))),
     ['budget_exhausted', 'provider credit exhausted'].sort((a, b) => a.localeCompare(b)),
   );
-  const weakerFilter = 'log_id("docker") AND jsonPayload.status=503';
+  const weakerFilter = `${CLOUD_RUN_SERVER_SELECTOR} AND jsonPayload.status=503`;
   check(
     '  red: a status=503-only filter is not discriminating — it also catches the policy_unavailable refusal, which shares 503 with budget_exhausted',
     creditMatching(weakerFilter).some((line) => line.error === 'policy_unavailable'),
@@ -2870,16 +3288,16 @@ function provisionMonitoringTests(): void {
   const uptimeCall = callMatching(first.calls, / monitoring uptime create /);
   const regions = /--regions (\S+)/.exec(uptimeCall)?.[1]?.split(',') ?? [];
   check(`  ... the uptime check probes https://${API_HOST}/health every 5 minutes from at least three regions`, uptimeCall.includes(`host=${API_HOST},`) && uptimeCall.includes('--protocol https') && /--path \/health(?!\S)/.test(uptimeCall) && uptimeCall.includes('--period 5') && regions.length >= 3, uptimeCall);
-  const uptimeUpdateProblems = (script?: string): string[] => {
+  const uptimeUpdateProblems = (library?: string): string[] => {
     const oldCheck = `${/ monitoring uptime create (.+?) --resource-type/.exec(callMatching(first.calls, / monitoring uptime create /))?.[1] ?? ''}\\t${UPTIME_NAME}\\t${'0'.repeat(40)}\\t${API_HOST}\\n`;
-    const updated = provisionAgainst([['*monitoring uptime list-configs*', 0, oldCheck], ...stateAfter(first)], PROVISION_VALUES, script);
+    const updated = provisionAgainst([['*monitoring uptime list-configs*', 0, oldCheck], ...stateAfter(first)], PROVISION_VALUES, library, 'lib.sh');
     const updateCall = callMatching(updated.calls, / monitoring uptime update /);
     if (updated.status !== 0) return [`provision failed: ${updated.stderr}`];
     return /--path \/health(?!\S)/.test(updateCall) ? [] : [`the uptime update call does not carry --path /health: ${updateCall || 'no update call'}`];
   };
   checkClean('  ... an existing uptime check with a stale spec is updated in place, carrying --path /health', uptimeUpdateProblems());
-  const provisionSource = readRepoFile('deploy/provision.sh');
-  checkCaught('  red: an uptime update that omits --path fails', uptimeUpdateProblems(plant(provisionSource, 'monitoring uptime update "${uptime_name##*/}" "${uptime_settings[@]}"', 'monitoring uptime update "${uptime_name##*/}" --period "$uptime_PERIOD_MINUTES"')), 'does not carry --path /health');
+  const librarySource = readRepoFile('deploy/lib.sh');
+  checkCaught('  red: an uptime update that omits --path fails', uptimeUpdateProblems(plant(librarySource, 'monitoring uptime update "${uptime_name##*/}" "${uptime_settings[@]}"', 'monitoring uptime update "${uptime_name##*/}" --period "$uptime_PERIOD_MINUTES"')), 'does not carry --path /health');
   const budgetCall = callMatching(first.calls, / billing budgets create /);
   check(
     '  ... the budget covers WHIM_MONTHLY_BUDGET on WHIM_BILLING_ACCOUNT at 50, 90 and 100 %, emailing the channel',
@@ -3627,7 +4045,11 @@ function profileTests(files: ReadonlyMap<string, string>): void {
 function scriptSyntaxTests(files: ReadonlyMap<string, string>): void {
   section('Deploy scripts: syntax');
   const scripts = [...files.keys()].filter((rel) => rel.endsWith('.sh'));
-  check('deploy/ holds the provision, deploy, smoke, resize and VM scripts', ['deploy/provision.sh', 'deploy/deploy.sh', 'deploy/smoke.sh', 'deploy/resize.sh', 'deploy/vm/bootstrap.sh', 'deploy/vm/whim-egress.sh'].every((rel) => scripts.includes(rel)), scripts.join(', '));
+  check(
+    'deploy/ holds the provision, deploy, smoke, resize, VM and Cloud Run scripts',
+    ['deploy/provision.sh', 'deploy/deploy.sh', 'deploy/smoke.sh', 'deploy/resize.sh', 'deploy/vm/bootstrap.sh', 'deploy/vm/whim-egress.sh', 'deploy/cloudrun/deploy.sh', 'deploy/cloudrun/smoke.sh'].every((rel) => scripts.includes(rel)),
+    scripts.join(', '),
+  );
   for (const rel of scripts) {
     const result = runFromPath('bash', ['-n', path.join(ROOT, rel)], { encoding: 'utf8' });
     check(`bash -n ${rel}`, result.status === 0, result.stderr);
@@ -3708,14 +4130,17 @@ export async function runDeployConfigTests(): Promise<void> {
   deploySiteOnlyTests();
   deployFullTests(health);
   cloudRunStoreTests();
+  cloudRunDeploySmokeTests();
   smokeTests(health);
   await smokeBetaTests();
+  await cloudRunSmokeTests();
   resizeTests();
   loadtestStartTests();
   loadtestDriveTests();
   provisionTests();
   provisionMonitoringTests();
   monitoringPolicyShapeTests();
+  monitoringTargetTests(files);
   await alertFilterTests();
   await runLoadTestTests();
   runbookTests();

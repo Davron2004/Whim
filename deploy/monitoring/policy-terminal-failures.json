@@ -5,7 +5,7 @@
     {
       "displayName": "More than 5 terminal generation failures in an hour",
       "conditionThreshold": {
-        "filter": "metric.type=\"logging.googleapis.com/user/whim-terminal-failures\" AND resource.type=\"gce_instance\"",
+        "filter": "metric.type=\"logging.googleapis.com/user/whim-terminal-failures\" AND resource.type=\"cloud_run_revision\"",
         "aggregations": [
           {
             "alignmentPeriod": "3600s",
@@ -28,7 +28,7 @@
   "notificationChannels": ["{{CHANNEL}}"],
   "documentation": {
     "mimeType": "text/markdown",
-    "content": "More than 5 generations ended in a terminal failure in the last hour. Count them by reason on the VM with `whim-admin usage --days 1`, then read the lines in Logs Explorer: `log_id(\"docker\") jsonPayload.msg=\"terminal failure\"` (docs/deploy.md, Operating: Alerts)."
+    "content": "More than 5 generations ended in a terminal failure in the last hour. Count them by reason from a laptop with `node server/admin.mjs usage --days 1`, then read the lines in Logs Explorer: `resource.type=\"cloud_run_revision\" resource.labels.service_name=\"whim-server\" jsonPayload.msg=\"terminal failure\"` (docs/deploy.md, Operating: Alerts)."
   },
   "userLabels": {
     "whim_spec": "{{SPEC}}"
