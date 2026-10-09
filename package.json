@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit && node scripts/typecheck-tests.mjs",
     "test": "jest",
     "build": "node build/build.mjs",
+    "tokens": "node scripts/design-tokens.mjs",
     "vstore:test": "node src/host/version-store/test/run.mjs",
     "storage:test": "node src/host/storage-engine/test/run.mjs",
     "bridge:test": "node src/host/bridge/test/run.mjs",

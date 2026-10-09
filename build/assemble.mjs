@@ -11,6 +11,8 @@
 //                      RN→page control surface (realm-reset re-injection + named delivery).
 // Reused for the RN app's RUNTIME_HTML and for the desktop invariant pages.
 
+import { PAGE_BG } from '../src/design/generated/page.mjs';
+
 // The locked #35 CSP. `script-src 'unsafe-inline'` WITHOUT `'unsafe-eval'` is load-bearing:
 // it is the only leg that closes the `({}).constructor.constructor('…')` codegen hole. Never
 // add `'unsafe-eval'`, `blob:`, or `data:` to script-src.
@@ -31,6 +33,15 @@ export const LOCKED_CSP =
 function inlineScript(js) {
   return '<script>\n' + String(js).replace(/<\/script/gi, '<\\/script').replace(/<!--/g, '<\\!--') + '\n</script>';
 }
+
+// The canvas rule of both documents (design system §2.6: the runtime page, the iframe and `Screen`
+// all paint the theme's `bg`, so opening an app never flashes another background). `color-scheme`
+// lets native pickers and date inputs follow the phone's scheme; both documents declare the same
+// one, so the iframe never gets an opaque backdrop for a scheme mismatch. The srcdoc carries the
+// default `bg` (the light `bg` from src/design/tokens.ts); the outer page swaps in the delivered
+// theme's `bg` when it creates the iframe.
+const CANVAS_RULE = ['html,body{margin:0;height:100%;background:', ';color-scheme:light dark}'];
+const canvasRule = (bg) => CANVAS_RULE[0] + bg + CANVAS_RULE[1];
 
 // Embed an arbitrary value as a JS literal inside an outer <script>, parser-safe.
 function jsLiteral(value) {
@@ -79,7 +90,7 @@ export function buildSrcdoc({ parts, channel, bakedBundle }) {
     '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">\n' +
     '<meta http-equiv="Content-Security-Policy" content="' + LOCKED_CSP + '">\n' +
     '<title>whim-mini-app</title>\n' +
-    '<style>html,body{margin:0;height:100%;background:#fff}#whim-root{height:100%}</style>\n' +
+    '<style>' + canvasRule(PAGE_BG) + '#whim-root{height:100%}</style>\n' +
     '</head><body>\n' + body + '</body></html>'
   );
 }
@@ -112,6 +123,16 @@ function orchestrationScript(cfg) {
     // the __whimHostInit frame so the iframe SDK can restyle tokens; the SDK sanitizes it there
     // (that side is the trust boundary). Absent theme = SDK defaults; no new message kinds.
     '  var pendingTheme = null;\n' +
+    // The canvas colour: the delivered theme's `bg` when it is a #rrggbb colour, else the default.
+    // It paints the outer page (no diagnostics), the iframe element and the srcdoc's own canvas
+    // rule, swapped in before the iframe exists so its first frame is already the right colour.
+    '  var DEFAULT_BG = ' + jsLiteral(PAGE_BG) + ', CANVAS_RULE = ' + jsLiteral(CANVAS_RULE) + ', bg = DEFAULT_BG;\n' +
+    "  function themeBg(t){ var c = t && t.colors && t.colors.bg; return (typeof c==='string' && /^#[0-9a-fA-F]{6}$/.test(c)) ? c : DEFAULT_BG; }\n" +
+    '  function paintCanvas(){ if(SHOW_DIAG) return; document.documentElement.style.background=bg; if(document.body) document.body.style.background=bg; }\n' +
+    '  function canvasSrcdoc(){ return SRCDOC.split(CANVAS_RULE[0]+DEFAULT_BG+CANVAS_RULE[1]).join(CANVAS_RULE[0]+bg+CANVAS_RULE[1]); }\n' +
+    // A frame forwarded to RN stamped with the generation the host bound this realm at (GEN), never
+    // the realm's own counter: the loader's payload fields, with `generation` replaced.
+    '  function stampGen(p){ var o={}; if(p&&typeof p==="object"){ for(var k in p){ if(Object.prototype.hasOwnProperty.call(p,k)) o[k]=p[k]; } } o.generation=GEN; return o; }\n' +
     "  function rnd(){ try{ var a=new Uint8Array(16); (window.crypto||window.msCrypto).getRandomValues(a); var s=''; for(var i=0;i<a.length;i++) s+=(a[i]+256).toString(16).slice(-2); return s; }catch(e){ var t=''; for(var j=0;j<32;j++) t+=((j*7+13)%16).toString(16); return t+String((window.performance&&performance.now?performance.now():0)); } }\n" +
     '  function toRN(obj){ try{ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(obj)); }catch(e){} }\n' +
     // Relay a sysret string from the host back INTO the iframe (host→iframe; ev.source there is
@@ -128,7 +149,7 @@ function orchestrationScript(cfg) {
     // {__whimDeliver:true, bundle:<src>} over channel b. A by-source delivery carries a display
     // name only for diagnostics; the bytes come from opts.source.
     '  function deliver(name, opts){ opts=opts||{}; var bySource=(typeof opts.source==="string"); var src=bySource?opts.source:BUNDLES[name]; if(src==null){ rnLog("deliver: unknown bundle "+name); return; } deliveredName=name||deliveredName; var f={__whimDeliver:true, bundle:src}; if(opts.viaBlob) f.viaBlob=true; try{ iframe.contentWindow.postMessage(JSON.stringify(f),"*"); }catch(e){ rnLog("deliver failed: "+(e&&e.name)); } setDiag("delivery", "delivering \\""+(name||"(by source)")+"\\""+(opts.viaBlob?" via blob (must be refused)":(bySource?" by source (host record)":" over channel-b transport"))+"…"); }\n' +
-    '  function makeIframe(){ if(iframe&&iframe.parentNode) iframe.parentNode.removeChild(iframe); nonce=rnd(); iframe=document.createElement("iframe"); iframe.id="whim-iframe"; iframe.title="mini-app"; iframe.setAttribute("sandbox","allow-scripts"); iframe.style.cssText="border:0;width:100%;height:"+(SHOW_DIAG?"60vh":"100%")+";background:#fff;display:block"; document.getElementById("app").appendChild(iframe); iframe.srcdoc=SRCDOC; }\n' +
+    '  function makeIframe(){ if(iframe&&iframe.parentNode) iframe.parentNode.removeChild(iframe); nonce=rnd(); iframe=document.createElement("iframe"); iframe.id="whim-iframe"; iframe.title="mini-app"; iframe.setAttribute("sandbox","allow-scripts"); iframe.style.cssText="border:0;width:100%;height:"+(SHOW_DIAG?"60vh":"100%")+";background:"+bg+";display:block"; document.getElementById("app").appendChild(iframe); iframe.srcdoc=canvasSrcdoc(); }\n' +
     "  window.addEventListener('message', function(ev){\n" +
     '    var m; try{ m=JSON.parse(ev.data); }catch(e){ return; } if(!m) return;\n' +
     "    if(m.__whimHarness===true && m.kind==='hello' && nonce){ try{ var initF={__whimHostInit:true,nonce:nonce,gen:GEN}; if(pendingTheme) initF.theme=pendingTheme; iframe.contentWindow.postMessage(JSON.stringify(initF),'*'); }catch(e){} return; }\n" +
@@ -146,7 +167,9 @@ function orchestrationScript(cfg) {
     "    if(!authentic){ setDiag('delivery','REJECTED unauthenticated frame (kind='+m.kind+') — forged control message ignored (constraint #4)'); toRN({kind:'rejected-forgery',trusted:false,forgedKind:m.kind,payload:m.payload||null}); rnLog('REJECTED-FORGERY kind='+m.kind); return; }\n" +
     "    if(m.kind==='ready'){ if(CHANNEL!=='a'){ if(pendingSource!=null) deliver(pendingDeliver, {source:pendingSource}); else if(pendingDeliver) deliver(pendingDeliver,{viaBlob:CHANNEL==='c'}); } return; }\n" +
     "    if(m.kind==='delivery'){ setDiag('delivery', JSON.stringify(m.payload,null,1)); toRN({kind:'delivery',trusted:true,payload:m.payload}); return; }\n" +
-    "    if(m.kind==='paint'){ setDiag('paint', JSON.stringify(m.payload,null,1)); toRN({kind:'paint',trusted:true,payload:m.payload}); rnLog('PAINT '+JSON.stringify(m.payload)); return; }\n" +
+    // design-system-v1 D4: `paint` is the opening signal, so like nav-depth it reaches the host
+    // stamped with GEN — the host can tell which launch a paint belongs to.
+    "    if(m.kind==='paint'){ var painted=stampGen(m.payload); setDiag('paint', JSON.stringify(painted,null,1)); toRN({kind:'paint',trusted:true,payload:painted}); rnLog('PAINT '+JSON.stringify(painted)); return; }\n" +
     "    if(m.kind==='error'){ setStatus('ERROR: '+(m.payload&&(m.payload.message||m.payload.name)),'bad'); toRN({kind:'error',trusted:true,payload:m.payload}); rnLog('ERROR '+JSON.stringify(m.payload)); return; }\n" +
     "    if(m.kind==='probes'){ var r=m.payload; window.__whimControl.verdictSeq++; document.title='WHIM:'+(r.contained?'CONTAINED':'LEAK'); setStatus((r.contained?'CONTAINED \\u2713 ':'LEAK \\u2717 ')+r.passed+'/'+r.total+' probes \\u00b7 gen '+(r.generation!=null?r.generation:'?'), r.contained?'ok':'bad'); var t7=r.t7?('\\nT7 re-injection: generation='+r.t7.generation+' anyPoison='+r.t7.anyPoison):''; setDiag('probes','contained='+r.contained+'  negCtl='+r.negativeControlCaughtBreach+'  deliveryLeakCaught='+r.deliveryLeakCaught+t7+((r.failures&&r.failures.length)?'\\nFAILURES: '+JSON.stringify(r.failures):'')+'\\n\\n'+JSON.stringify(r.probes,null,1)); toRN({kind:'probes',trusted:true,payload:r}); rnLog('CONTAINED='+r.contained+' '+r.passed+'/'+r.total+' gen='+(r.generation!=null?r.generation:'?')+(r.t7?' T7anyPoison='+r.t7.anyPoison:'')); return; }\n" +
     '    toRN({kind:m.kind, trusted:true, payload:m.payload||null});\n' +
@@ -158,7 +181,7 @@ function orchestrationScript(cfg) {
     // pre-reset from a post-reset verdict apart. The invariant suite reads it to wait for a NEW
     // post-reset verdict deterministically (G6), replacing a fixed sleep. Diagnostic-only; no authority.
     '    verdictSeq: 0,\n' +
-    '    reinject: function(opts){ opts=opts||{}; if(typeof opts.generation==="number") GEN=opts.generation; pendingTheme = (opts.theme && typeof opts.theme==="object") ? opts.theme : null; pendingSource = (typeof opts.bundleSource==="string") ? opts.bundleSource : null; if(opts.reset!==false){ pendingDeliver = opts.bundle||deliveredName||INITIAL; makeIframe(); } else { if(pendingSource!=null) deliver(opts.bundle||deliveredName, {source:pendingSource}); else deliver(opts.bundle||deliveredName||INITIAL, opts); } },\n' +
+    '    reinject: function(opts){ opts=opts||{}; if(typeof opts.generation==="number") GEN=opts.generation; pendingTheme = (opts.theme && typeof opts.theme==="object") ? opts.theme : null; bg = themeBg(pendingTheme); paintCanvas(); pendingSource = (typeof opts.bundleSource==="string") ? opts.bundleSource : null; if(opts.reset!==false){ pendingDeliver = opts.bundle||deliveredName||INITIAL; makeIframe(); } else { if(pendingSource!=null) deliver(opts.bundle||deliveredName, {source:pendingSource}); else deliver(opts.bundle||deliveredName||INITIAL, opts); } },\n' +
     '    deliver: function(name, opts){ deliver(name, opts||{}); },\n' +
     '    setGeneration: function(g){ if(typeof g==="number") GEN=g; },\n' +
     // nav seam (launcher-shell / #5 D4): post a host→realm nav-back request into the iframe.
@@ -192,16 +215,17 @@ export function buildOuterHtml({ srcdoc, bundles, initial, channel, showDiagnost
       '<pre id="probes">—</pre>\n'
     : '<div id="app" style="position:absolute;inset:0"></div>\n';
   const style = showDiagnostics
-    ? 'body{font:13px ui-monospace,Menlo,monospace;margin:0;padding:8px;background:#0b1020;color:#e5e7eb}' +
+    ? 'html{color-scheme:light dark}body{font:13px ui-monospace,Menlo,monospace;margin:0;padding:8px;background:#0b1020;color:#e5e7eb}' +
       '#status{font:700 15px system-ui;padding:8px 10px;border-radius:8px;margin-bottom:8px}' +
       '.ok{background:#064e3b;color:#bbf7d0}.bad{background:#7f1d1d;color:#fecaca}.wait{background:#1e293b}' +
       '#app{background:#fff;color:#111;border-radius:10px;min-height:120px;margin-bottom:8px;overflow:hidden}' +
       'pre{white-space:pre-wrap;word-break:break-all;font-size:11px;line-height:1.35;margin:0}' +
       'h3{font:700 12px system-ui;color:#93c5fd;margin:10px 0 4px}'
-    : 'html,body{margin:0;height:100%;background:#0b1020}';
+    : canvasRule(PAGE_BG);
   return (
     '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">\n' +
-    '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">\n' +
+    // No maximum-scale: pinch zoom stays available (sandbox-rendering, design system §6).
+    '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
     '<title>WHIM:pending</title>\n<style>' + style + '</style>\n</head><body>\n' +
     diagMarkup +
     inlineScript(orchestrationScript({ srcdoc, bundles, initial, channel, showDiagnostics, autostart, syscallSink })) +

@@ -51,8 +51,8 @@ export function miniAppSurface(s: Readonly<MiniAppSurfaceInput>): MiniAppSurface
 export interface PaintFrame {
   /** Stamped `true` by the outer page only for a nonce-authenticated frame (constraint #4). */
   trusted?: unknown;
-  /** The realm's own paint payload, forwarded verbatim (`mountToFirstPaintMs`, the iframe-local
-   *  `generation`, `appName`) — unvalidated, so it stays an open bag of unknowns. */
+  /** The realm's own paint payload (`mountToFirstPaintMs`, `appName`) with `generation` stamped by
+   *  the outer page to the host-bound `GEN` — unvalidated, so it stays an open bag of unknowns. */
   payload?: Record<string, unknown> | null;
 }
 
@@ -64,15 +64,11 @@ export interface PaintFrame {
  * signal, so accepting a frame that cannot populate it would cancel the deadline while leaving
  * the UI on `Opening…` forever.
  *
- * Deliberately NOT generation-fenced, unlike `nav-depth`. Two independent reasons:
- *
- *  - A stale-realm paint cannot arrive: a realm reset RECREATES the iframe (spike2 §5), which
- *    tears down the old realm's window before the new one exists.
- *  - `payload.generation` is not comparable to the host's counter. The outer page re-stamps only
- *    `nav-depth` with the generation the host authoritatively bound (`GEN`); `paint` it forwards
- *    VERBATIM, so `payload.generation` is the iframe-local `window.__whimGeneration` — it starts
- *    at 0 and reaches 1 on the first delivery, while the host's `genCounter` starts at 1 and is
- *    pre-incremented per bind, so the first launch is 2. Comparing them rejects every real paint.
+ * Deliberately NOT generation-fenced, unlike `nav-depth`: a stale-realm paint cannot reach the boot
+ * state, because a realm reset RECREATES the iframe (spike2 §5), which tears down the old realm's
+ * window before the new one exists. The outer page does stamp `payload.generation` with the
+ * host-bound `GEN`, as it does `nav-depth`; the iframe-local `window.__whimGeneration` (0, then 1 on
+ * the first delivery) never reaches the host, and must never be compared with the host's counter.
  */
 export function paintAccepted(frame: PaintFrame | null | undefined): boolean {
   const paintMs = frame?.payload?.mountToFirstPaintMs;

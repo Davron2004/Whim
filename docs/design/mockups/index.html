@@ -500,32 +500,34 @@ a { color: inherit; }
 <main class="pg-wrap" id="pg-main"></main>
 <script>
 // ── Tokens: the one block every value comes from ───────────────────────────
-// docs/design/system.md §2. The CSS custom properties on
-// .phone, the tint classes, the ember gradient and the tokens page are all generated from this object;
-// no other file in the page writes a colour value for a role or a tint.
+// The marked part is generated from src/design/tokens.ts by `npm run tokens` (never edit it by hand;
+// the gate checks it). The CSS custom properties on .phone, the tint classes, the ember gradient and
+// the tokens page are all generated from this object; no other file in the page writes a colour value
+// for a role or a tint.
 
 const TOKENS = {
+  // tokens:begin mockup
   // [token, css var, light, dark, use]
   roles: [
-    ['bg', '--w-bg', '#F6F4F1', '#100E0D', 'Canvas'],
-    ['surface', '--w-surface', '#FFFFFF', '#1B1917', 'Cards and grouped lists on the canvas'],
-    ['sheet', '--w-sheet', '#F6F4F1', '#1B1917', 'Content sheets: making, Whim sheet, consent, report, failure, SDK Modal'],
-    ['sheet-group', '--w-sheet-group', '#FFFFFF', '#252220', 'Grouped lists, questions and cards inside a sheet'],
-    ['raised', '--w-raised', '#FFFFFF', '#252220', 'Menus, toasts, popovers and the orb only'],
-    ['fill', '--w-fill', '#EBE9E6', '#2E2B28', 'Secondary buttons, chips, tracks'],
+    ['bg', '--w-bg', '#F6F4F1', '#100E0D', 'Screen canvas; runtime page, iframe, SDK Screen, opening container'],
+    ['surface', '--w-surface', '#FFFFFF', '#1B1917', 'Cards, list groups, inputs on the canvas'],
+    ['sheet', '--w-sheet', '#F6F4F1', '#1B1917', 'Content sheets (making, Whim sheet, consent, failure, SDK Modal)'],
+    ['sheet-group', '--w-sheet-group', '#FFFFFF', '#252220', 'Groups, question groups, plan rows, cards inside a sheet'],
+    ['raised', '--w-raised', '#FFFFFF', '#252220', 'Menus, toasts, popovers, the orb, the composer'],
+    ['fill', '--w-fill', '#EBE9E6', '#2E2B28', 'Secondary buttons, segmented track, chips'],
     ['fill-strong', '--w-fill-strong', '#E0DDDA', '#3C3936', 'Pressed fills, skeletons, tracks'],
-    ['thumb', '--w-thumb', '#FFFFFF', '#3C3936', 'Segmented, slider and switch thumbs'],
-    ['separator', '--w-sep', '#E2DFDB', '#34312F', 'Hairlines'],
-    ['border', '--w-border', '#908B86', '#6E6862', 'Input edges, 3:1'],
-    ['text', '--w-text', '#1A1614', '#F2F0EC', 'Primary text, the caret'],
+    ['thumb', '--w-thumb', '#FFFFFF', '#3C3936', 'Segmented thumb, slider thumb, switch knob when off'],
+    ['separator', '--w-sep', '#E2DFDB', '#34312F', 'Hairlines between rows (holds no edge: 1.21:1)'],
+    ['border', '--w-border', '#908B86', '#6E6862', 'Input and outlined-control edges'],
+    ['text', '--w-text', '#1A1614', '#F2F0EC', 'Primary text'],
     ['text-2', '--w-text2', '#6D6660', '#ADA8A3', 'Secondary text, placeholders, waiting steps'],
     ['text-3', '--w-text3', '#908B86', '#78746E', 'Disabled only'],
-    ['ink', '--w-ink', '#1A1614', '#F2F0EC', 'The system’s prominent fill'],
+    ['ink', '--w-ink', '#1A1614', '#F2F0EC', 'The system\'s prominent fill'],
     ['on-ink', '--w-on-ink', '#FFFFFF', '#1A1614', 'Label on ink'],
-    ['ember', '--w-ember', '#C14900', '#F99549', 'Whim at work; the current step and the 8 pt dot'],
+    ['ember', '--w-ember', '#C14900', '#F99549', 'Fill of Whim\'s buttons; the current-step marker and 8 pt dots'],
     ['on-ember', '--w-on-ember', '#FFFFFF', '#1A1614', 'Label on ember'],
-    ['ember-text', '--w-ember-text', '#B14200', '#F99549', 'Whim’s text and icons'],
-    ['ember-soft', '--w-ember-soft', '#FDEBDA', '#3F2313', 'Whim’s washes'],
+    ['ember-text', '--w-ember-text', '#B14200', '#F99549', 'Text and icons'],
+    ['ember-soft', '--w-ember-soft', '#FDEBDA', '#3F2313', 'Washes: a tile being made, picked "Decide for me"'],
     ['positive', '--w-pos', '#1E8347', '#5BCC80', 'It worked'],
     ['positive-text', '--w-pos-text', '#1A763F', '#5BCC80', 'Positive text and icons'],
     ['positive-soft', '--w-pos-soft', '#DEF6E3', '#193521', 'Positive badge'],
@@ -537,21 +539,28 @@ const TOKENS = {
     ['warning-soft', '--w-warn-soft', '#FDF2D0', '#382C0C', 'Warning badge'],
   ],
   // Same in both schemes. The glow stops decorate the ember mark and never mark state.
-  glow: { core: '#FFC96A', mid: '#FF9127', edge: '#F25914', ember: 'rgba(255, 145, 39, .45)' },
-  scrim: ['rgba(26, 22, 20, .32)', 'rgba(0, 0, 0, .60)'],
-  shadowRaised: ['0 1px 2px rgba(26, 22, 20, .08), 0 8px 24px rgba(26, 22, 20, .12)', '0 1px 2px rgba(0, 0, 0, .40), 0 8px 24px rgba(0, 0, 0, .50)'],
-  shadowFloat: ['0 2px 6px rgba(26, 22, 20, .12), 0 12px 32px rgba(26, 22, 20, .16)', '0 2px 6px rgba(0, 0, 0, .50), 0 12px 32px rgba(0, 0, 0, .60)'],
-  highlight: ['inset 0 0 0 0 transparent', 'inset 0 1px 0 rgba(255, 255, 255, .06)'],
-  // App tints: the cool half of the wheel plus two neutrals. Light value: fill, text, marks and tile plate in
-  // light mode, white label. Dark value: fill, text and marks in dark mode, ink label. Proof: palette-check.py.
+  glow: { core: '#FFC96A', mid: '#FF9127', edge: '#F25914', ember: 'rgba(255,145,39,0.45)' },
+  scrim: ['rgba(26,22,20,0.32)', 'rgba(0,0,0,0.60)'],
+  shadowRaised: ['0 1px 2px rgba(26,22,20,0.08), 0 8px 24px rgba(26,22,20,0.12)', '0 1px 2px rgba(0,0,0,0.40), 0 8px 24px rgba(0,0,0,0.50)'],
+  shadowFloat: ['0 2px 6px rgba(26,22,20,0.12), 0 12px 32px rgba(26,22,20,0.16)', '0 2px 6px rgba(0,0,0,0.50), 0 12px 32px rgba(0,0,0,0.60)'],
+  highlight: ['inset 0 1px 0 transparent', 'inset 0 1px 0 rgba(255,255,255,0.06)'],
+  // App tints. Light value: fill, text, marks and tile plate in light mode, white label. Dark value:
+  // fill, text and marks in dark mode, ink label. Proof: palette-check.py.
   tints: [
-    ['slate', '#535E6F', '#B0B8C5'], ['stone', '#52443F', '#B0A19A'], ['ocean', '#00445A', '#A1CCDC'],
-    ['blue', '#0852CB', '#9DC7FE'], ['indigo', '#1E20A3', '#909DEF'], ['violet', '#6758B4', '#C1BBFC'],
-    ['purple', '#662A8D', '#C290F5'], ['orchid', '#9D469E', '#FD91EC'], ['berry', '#661258', '#E4B1DB'],
+    ['slate', '#535E6F', '#B0B8C5'],
+    ['stone', '#52443F', '#B0A19A'],
+    ['ocean', '#00445A', '#A1CCDC'],
+    ['blue', '#0852CB', '#9DC7FE'],
+    ['indigo', '#1E20A3', '#909DEF'],
+    ['violet', '#6758B4', '#C1BBFC'],
+    ['purple', '#662A8D', '#C290F5'],
+    ['orchid', '#9D469E', '#FD91EC'],
+    ['berry', '#661258', '#E4B1DB'],
     ['rose', '#7C3856', '#BD98AA'],
   ],
   onTint: ['#FFFFFF', '#1A1614'],
   onPlate: '#FFFFFF', // the tile glyph, white on the light value in both schemes
+  // tokens:end mockup
   // Mock-only chrome (keyboard, status bar); not part of the system.
   device: [['--w-kbd', '#D1D3D9', '#2B2B2D'], ['--w-key', '#FFFFFF', '#5A5A5E'], ['--w-key-text', '#1A1614', '#F2F0EC'], ['--w-key-alt', '#ABB0BA', '#3F3F42'], ['--w-bar-text', '#1A1614', '#F2F0EC']],
 };
