@@ -8,7 +8,8 @@ D19–D26). Every command below is run from a clean, pushed checkout unless it s
 Production runs on Cloud Run in `WHIM_RUN_REGION` (`us-east4`), scaled to zero when idle (decisions #71, #72).
 Images, Cloud Build and Firestore stay in `WHIM_GCP_REGION` (Montreal). Cloud Run refuses domain mappings
 there, so the services run in Virginia. Every
-section after this one describes the retired VM; its scripts stay in the repo for a return to a VM.
+section after this one but Operating describes the retired VM; its scripts stay in the repo for a
+return to a VM.
 
 ```sh
 deploy/cloudrun/deploy.sh                 # server image for HEAD (built unless it exists) + pages site
@@ -40,21 +41,68 @@ What changed from the VM, and what it costs:
   launch plus the boot self-test, about 7–10 s. The app's 4 s `/health` probe can miss it once and
   report offline until its next probe.
 - **Chromium sometimes crashes at launch.** One boot in ten died with a SIGSEGV in
-  `chrome-headless-shell` before the self-test (measured 2026-10-07, 10 deploys). Boot refuses to listen
-  without the sandbox, so Cloud Run discards that instance and starts another; the request waits
-  longer. Chromium launches once per instance, so a running generation never hits it.
+  `chrome-headless-shell` before the self-test (measured 2026-10-07, 10 deploys; root cause open,
+  #139). Boot and every relaunch try a failed launch up to 3 times, 500 ms apart, with identical
+  options (sandbox on; a retry never weakens them), so a crash costs about a second, not an
+  instance. Each failed attempt logs `browser launch failed` (`scope: browser`, `attempt`, and the
+  exit `signal` or the error's first line). After the third, boot exits 1 as before (`boot failed`,
+  `reason: "browser_launch"`). Before the first attempt boot logs `boot host` (`cpuModel`, `pku`,
+  `ospke`, `kernel`), the evidence #139 collects.
+- **Request-based billing.** The server deploys with `--cpu-throttling`: CPU is allocated, and
+  billed, only while a request is in flight, so an instance the 5-minute uptime check keeps warm
+  costs nothing idle. The smoke fails when the serving template sets
+  `run.googleapis.com/cpu-throttling: "false"`.
+- **Caps are the VM's.** The generation and synthetic-run caps (3 / 2, "Capacity profiles" below)
+  were measured on the VM and are carried over unmeasured. Measuring them needs a real gen2 instance
+  under replay load, which needs the owner's cost approval (#134).
 - **No host egress firewall.** `deploy/vm/whim-egress.sh` has no Cloud Run equivalent. The
   synthetic run's egress lock is in-process (proxy and resolver rules, verified by the boot
   self-test) and still holds. The server process itself can reach the metadata server, which
   hands it a `whim-run` token. That token can read only the OpenRouter key the process already has.
 - **Drain.** Cloud Run gives a stopping instance 10 s and only stops idle ones, so
   `WHIM_DRAIN_TIMEOUT_MS` is 8000.
-- **Logs** land in Cloud Logging under `run.googleapis.com/stdout`, not `log_id("docker")`. The
-  saved queries and log-based alerts under Operating below filter on the Docker log id and need
-  `resource.type="cloud_run_revision"` instead. `smoke.sh` checks VM specifics (static IP, the
-  container, the metadata block) and doesn't apply.
+- **Logs** land in Cloud Logging under `run.googleapis.com/stdout` of the `whim-server` revision.
+  The saved queries and alerts under Operating filter on it. `deploy/smoke.sh` checks VM specifics
+  (static IP, the container, the metadata block) and stays VM-only; Cloud Run has its own smoke
+  (below).
 - **Admin commands** (`whim-admin`, `whim-waitlist`) have no shell to run in. They run from your
   laptop against Firestore instead (below).
+
+### Smoke and alerts
+
+Every mode of `deploy/cloudrun/deploy.sh` ends with `deploy/cloudrun/smoke.sh`: the full smoke with
+`--commit` after a plain or `--tag` deploy, `--pages-only` after `--site-only`. When the smoke fails,
+the deploy exits 1 and prints the rollback command (`deploy/cloudrun/deploy.sh --tag <sha>`, the
+commit of the revision it replaced, and the previous `whim-site` image after a site deploy).
+Standalone:
+
+```sh
+deploy/cloudrun/smoke.sh                  # every check, then one live POST /v1/clarify
+deploy/cloudrun/smoke.sh --commit <sha>   # the same; /health and the serving revision must be that commit
+deploy/cloudrun/smoke.sh --no-live        # every check but the live clarify: writes nothing
+deploy/cloudrun/smoke.sh --pages-only     # pages and association files only
+```
+
+It needs no VM value. In order, it checks both domain mappings (route, `Ready`, an `A` record); the
+serving revision (latest ready, 100 % of traffic, the commit's image, request-based billing);
+`/health`, the device gate `400`, the update gate `426`, `/healthz/sse` frame spacing and the beta
+signup trap (`303`, stores nothing); the `whim-purge` job and its hourly schedule; the live clarify;
+then the pages and association files. Failures print `FAIL  …` lines; domain problems stop it
+before any HTTPS request.
+
+**The one production write.** The live clarify sends the prompt `smoke: a checklist with one item`
+from device id `5e0ce000-0000-4000-8000-00000000c1a1` and requires a `200`. It writes one `clarify`
+ledger row and one usage document under that id, so leave that id out when reading
+`whim-admin usage`. A `--tag` rollback runs it too: a rollback is when a working path matters most.
+The `426` probe carries the all-zero device id, which the update gate refuses before admission, so
+`--no-live` writes nothing.
+
+**Alerts.** A plain Firestore deploy needs `WHIM_ALERT_EMAIL` (it refuses before any gcloud call
+without it) and, after the purge job, applies all of `deploy/monitoring/`: the alert email channel,
+the uptime check, the log metric and every `policy-*.json`, each created when missing, updated when
+its fingerprint differs, and otherwise left alone. `--tag`, `--site-only` and
+`WHIM_STORE_BACKEND=sqlite` apply none. The filters and what each alert means are under Operating →
+Alerts.
 
 ### Firestore stores
 
@@ -131,6 +179,12 @@ can outlive its keep period by up to an hour (up to a UTC day plus an hour for t
 usage, which are cut on whole UTC days), as with the in-process hourly purge. Both fit inside
 the free tiers (3 Scheduler jobs per billing account; seconds of CPU per run).
 
+**Credit markers.** Each credit to a device's lifetime totals runs in a transaction that also
+creates `creditMarks/{random id}` holding only `{ utcDay }`, so a commit the SDK retries after a lost
+reply counts once (#145). Markers hold no device id. The ledger purge (in-process and `whim-purge`)
+deletes markers older than the previous UTC day, whatever the ledger's keep period; its `ledger: N
+purged` line does not count them.
+
 A `--tag` deploy (a rollback or a config change) keeps the job on the image it has, since an older
 image may predate `whim-admin purge` and every hourly run would fail, but runs `gcloud run jobs
 update whim-purge --env-vars-file … --set-secrets …` with the server's environment, so a keep
@@ -150,17 +204,9 @@ when `purge` is given arguments, and alone when the command fails before the pur
 configuration, stores that cannot open; the stack goes to stderr). Either way it exits 1.
 The alert policy "Whim: purge job failed" (`deploy/monitoring/policy-purge-failed.json`) emails the
 "Whim alerts" channel, at most once an hour, on that line (`resource.type="cloud_run_job"
-resource.labels.job_name="whim-purge" severity>=ERROR`). Every plain Firestore deploy applies the
-file after the job, rendered and fingerprinted exactly as `provision.sh` renders it: it creates the
-policy when none carries that display name, updates it in place when the fingerprint
-(`userLabels.whim_spec`) differs, and otherwise leaves it. So an edit to the file lands with the
-next plain deploy. When the "Whim alerts" channel is missing, the deploy stops (the server and the
-job already deployed) and prints the commands that create it:
-
-```sh
-sed -e 's/{{ALERT_EMAIL}}/<WHIM_ALERT_EMAIL>/' -e 's/{{SPEC}}/manual/' deploy/monitoring/channel-email.json >"$TMPDIR/whim-channel.json"
-gcloud --project anycognition-whim beta monitoring channels create --channel-content-from-file="$TMPDIR/whim-channel.json"
-```
+resource.labels.job_name="whim-purge" severity>=ERROR`). Every plain Firestore deploy applies it
+with the rest of `deploy/monitoring/` ("Smoke and alerts" above), so an edit to the file lands with
+the next plain deploy.
 
 ```sh
 gcloud run jobs executions list --job whim-purge --region us-east4 --limit 5   # recent runs
@@ -179,6 +225,31 @@ hourly; the next plain deploy goes back to it.
 **Deletion.** SQLite's `secure_delete` overwrote purged pages. Firestore has no equivalent: a
 deleted document leaves Google's storage on Google's standard deletion timeline, and with PITR off
 old versions are kept for 1 hour.
+
+**Admission load test.** `deploy/loadtest/firestore-admission.sh` bursts concurrent `admit` calls,
+each from its own device, at one day's global counter, and prints a JSON report per burst: admitted
+against expected, `exhausted` (ran out of the 25 transaction attempts), p50/p99 latency and a
+histogram of attempts. It never contacts a deployed server and never runs in a gate.
+
+```sh
+deploy/loadtest/firestore-admission.sh [--bursts 10,25,50,100] [--profile generate|unary|both] [--limit N] [--json FILE]
+deploy/loadtest/firestore-admission.sh --database whim-loadtest-<suffix> --confirm-spend [--max-ops N] [same options]
+```
+
+The default runs on the Firestore emulator, at no cost. The emulator has no per-document write-rate
+limit, so it proves correctness and attempt counts only. `--database` runs on real Firestore with
+your Application Default Credentials: it refuses `(default)`, the deployed database and any name
+without the `whim-loadtest-` prefix before any gcloud call, caps the operations it sends (`--max-ops`,
+default 5,000, at most 50,000 ≈ $0.09) and prints that cap's cost, then needs `--confirm-spend`. It
+creates the database in `WHIM_GCP_REGION`, deletes it on exit (failure and interrupt included), then
+lists databases and fails if any `whim-loadtest-*` remains. Healthy: `admitted` equals
+`expectedAdmitted`, `exhausted` is 0 and the histogram sits at low attempt counts. A histogram that
+shifts right with the burst, `attempts.max` near 25 or any `exhausted` is contention users would see
+as errors.
+
+Measured on real Firestore 2026-10-09 (`whim-loadtest-20261009a`, 9,774 operations, about $0.02):
+admission was exact in every burst, but the clarify/rewrite shared ceiling contends, at p50 28 s
+and p99 40 s for a 100-admission burst. Sharding that counter is #154.
 
 ### Domains
 
@@ -313,8 +384,10 @@ naming the secret and this section, and builds, uploads or restarts nothing.
 | `WHIM_MIN_BUILD_IOS`, `WHIM_MIN_BUILD_ANDROID` | no | the oldest build each platform may use the AI features with; unset is `0` (off). See "Minimum supported build" |
 | `WHIM_USAGE_IDLE_DAYS` | no | days a phone ID's lifetime usage totals are kept after its last request; unset is `365`, and the server refuses a value above the usage-records maximum the disclosure manifest publishes |
 | `WHIM_BETA_LIMIT_PER_CLIENT_HOUR`, `WHIM_BETA_LIMIT_PER_DAY` | no | the `/beta` signup limits: signups one client address may make per hour (unset is `10`) and signups the whole list takes per day (unset is `2000`). See Operating → Beta waitlist |
+| `WHIM_POLICY_ATTEMPT_TIMEOUT_MS` | no | the bound on one content-policy classifier call; unset is `4500`, allowed `500` up to `WHIM_POLICY_TIMEOUT_MS` (`10000`, the whole check's unchanged deadline). A call that ends without a verdict (its own timeout, a provider error, unreadable output) gets one more attempt when at least 1 s of the deadline is left; a verdict or an auth error is never retried, and no verdict still fails closed (`503 policy_unavailable`). The `content policy check` log line carries `attempts` |
+| `WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY`, `WHIM_LIMIT_POLICY_CHECKS_PER_DAY` | no | classifier checks for generations that wait in line, per device (unset is `30`) and for everyone (unset is `800`) per UTC day; past either, `429 daily_limit` before any classifier call. See Operating → Tuning limits |
 | `WHIM_APP_STORE_URL`, `WHIM_PLAY_STORE_URL` | no | the app-link fallback page's store-links block, dropped when both are unset |
-| `WHIM_ALERT_EMAIL` | for `provision.sh` | where every alert and the budget email go (Operating → Alerts) |
+| `WHIM_ALERT_EMAIL` | for `provision.sh` and a plain `deploy/cloudrun/deploy.sh` | where every alert and the budget email go (Operating → Alerts) |
 | `WHIM_BILLING_ACCOUNT` | for `provision.sh` | the billing account id (`XXXXXX-XXXXXX-XXXXXX`) the spend budget is created on |
 | `WHIM_MONTHLY_BUDGET` | for `provision.sh` | the budget's monthly amount in whole units of the billing account's currency (Cloud Billing refuses any other; `provision.sh` reads it from the account, and stops if it can't); it emails at 50, 90 and 100 % |
 
@@ -434,7 +507,9 @@ below matter, the app side must already point at this domain: `WHIM_DOMAIN` in
 
 ## Operating
 
-Every command below runs on the VM, from a laptop as
+On Cloud Run the admin commands run from a laptop as `node server/admin.mjs …` and
+`node server/waitlist.mjs …` (section "Firestore stores"). The `$C exec -T whim-server node
+server/whim-admin.mjs …` forms below are the VM's: there every command runs from a laptop as
 `gcloud compute ssh whim-vm --tunnel-through-iap --command '<command>'`. Compose needs `sudo` and
 the project directory: `/opt/whim/.env` is root-only (`0600`), and without it compose can't
 interpolate `compose.yaml`. `$C` below stands for
@@ -442,48 +517,46 @@ interpolate `compose.yaml`. `$C` below stands for
 string the deploy scripts use, from `deploy/lib.sh`).
 
 - **Logs** — in Logs Explorer (project `WHIM_GCP_PROJECT`; scope it to the `whim-logs` bucket), 30 days
-  in the `whim-logs` bucket in `WHIM_GCP_REGION`, which the `_Default` sink feeds (`provision.sh`). The
-  Ops Agent on the VM host (`deploy/vm/ops-agent.yaml`, installed by `bootstrap.sh`) ships both
-  containers' json-file logs, 1–4 s behind. Structured JSON via `pino`, redacted at the serializer:
-  no request content, ever. Each pino field is a typed `jsonPayload` field, and severity comes from
-  the pino level. Save these queries:
+  in the `whim-logs` bucket in `WHIM_GCP_REGION`, which the `_Default` sink feeds (`provision.sh`).
+  Structured JSON via `pino`, redacted at the serializer: no request content, ever. Each pino field
+  is a typed `jsonPayload` field, and severity comes from the pino level. Save these queries:
 
   | Query | Filter |
   | --- | --- |
-  | One request (the `x-whim-request-id` a client reports) | `log_id("docker") jsonPayload.requestId="<id>"` |
-  | Terminal failures, by reason | `log_id("docker") jsonPayload.msg="terminal failure"`, plus `jsonPayload.reason="<code>"` to narrow (`reason` holds the closed failure code, e.g. `plan_failed`, never the sentence the user saw) |
-  | Device errors | `log_id("docker") jsonPayload.scope="device"` |
-  | Accepted reports | `log_id("docker") jsonPayload.msg="report accepted"` (its `reportId` feeds `reports show` below) |
-  | Warnings and worse | `log_id("docker") severity>=WARNING` |
+  | One request (the `x-whim-request-id` a client reports) | `resource.type="cloud_run_revision" resource.labels.service_name="whim-server" jsonPayload.requestId="<id>"` |
+  | Terminal failures, by reason | `resource.type="cloud_run_revision" resource.labels.service_name="whim-server" jsonPayload.msg="terminal failure"`, plus `jsonPayload.reason="<code>"` to narrow (`reason` holds the closed failure code, e.g. `plan_failed`, never the sentence the user saw) |
+  | Device errors | `resource.type="cloud_run_revision" resource.labels.service_name="whim-server" jsonPayload.scope="device"` |
+  | Accepted reports | `resource.type="cloud_run_revision" resource.labels.service_name="whim-server" jsonPayload.msg="report accepted"` (its `reportId` feeds `reports show` below) |
+  | Browser launch | `resource.type="cloud_run_revision" resource.labels.service_name="whim-server" (jsonPayload.msg="boot host" OR jsonPayload.msg="browser launch failed")` (#139's evidence) |
+  | Warnings and worse | `resource.type="cloud_run_revision" resource.labels.service_name="whim-server" severity>=WARNING` |
 
-  `labels.compose_service="whim-server"` or `="caddy"` picks a container. Entries written before the
-  `labels` option in `compose.yaml` was deployed don't have it: use `jsonPayload.pid:*` for pino and
-  `jsonPayload.ts:*` for Caddy. A line that isn't JSON (a crash trace) arrives as the string
-  `jsonPayload.log` with no severity, and a line over 16 KiB arrives split into unparsed pieces.
-  From a terminal, pass the same filter to `gcloud logging read '<filter>' --project
-  "$WHIM_GCP_PROJECT" --freshness 1d`. Fallback on the VM: `$C logs --since 24h whim-server` (or
-  `logs -f`). json-file stays the logging driver so this keeps working.
-  If entries stop arriving, check `systemctl is-active google-cloud-ops-agent-fluent-bit` and
-  `journalctl -u google-cloud-ops-agent` on the VM.
-- **Alerts** — `provision.sh` applies `deploy/monitoring/` (policy JSON, the uptime check's
-  settings, the log metric) and emails everything to `WHIM_ALERT_EMAIL`. Tune a threshold by editing
-  the file and rerunning `provision.sh`. "Whim: purge job failed" is the Cloud Run purge job's alert:
-  every plain `deploy/cloudrun/deploy.sh` (no `--tag`) applies it (section "Firestore stores"), so an
-  edit to it lands with the next plain deploy and needs no `provision.sh` run. What each email means
-  and the first thing to run:
+  The alerts add `logName:"run.googleapis.com%2Fstdout"` and join the terms with `AND`. From a
+  terminal, pass the same filter to `gcloud logging read '<filter>' --project "$WHIM_GCP_PROJECT"
+  --freshness 1d`. On the VM, `log_id("docker")` takes the place of the two resource terms, and the
+  Ops Agent (`deploy/vm/ops-agent.yaml`, installed by `bootstrap.sh`) ships both containers'
+  json-file logs, 1–4 s behind; `labels.compose_service="whim-server"` or `="caddy"` picks a
+  container. A line that isn't JSON (a crash trace) arrives as the string `jsonPayload.log` with no
+  severity, and a line over 16 KiB arrives split into unparsed pieces. Fallback on the VM:
+  `$C logs --since 24h whim-server` (or `logs -f`). If entries stop arriving there, check
+  `systemctl is-active google-cloud-ops-agent-fluent-bit` and `journalctl -u google-cloud-ops-agent`.
+- **Alerts** — every plain `deploy/cloudrun/deploy.sh` applies `deploy/monitoring/` (policy JSON,
+  the uptime check's settings, the log metric) and emails everything to `WHIM_ALERT_EMAIL` ("Smoke
+  and alerts" above). Tune a threshold by editing the file and running a plain deploy. Every log
+  filter selects the Cloud Run server, so a return to a VM retargets them before `provision.sh`
+  applies them. What each email means and the first thing to run:
 
   | Alert | Fires when | Rate | First command |
   | --- | --- | --- | --- |
-  | Whim: API down | `https://<WHIM_API_HOST>/health` (checked every 5 min from 3 regions) failed its last two checks in at least two regions | while it lasts | `deploy/smoke.sh` from a laptop: it names the failing layer |
-  | Whim: new report | a user sent a report; the email names its id and reason only | at most 1 per 5 min | `$C exec -T whim-server node server/whim-admin.mjs reports show <id>` (then `reports list` for any the rate limit folded in) |
-  | Whim: generation failures | more than 5 `terminal failure` lines in an hour (log metric `whim-terminal-failures`) | while it lasts | `$C exec -T whim-server node server/whim-admin.mjs usage --days 1` for counts by reason, then the "Terminal failures" query above |
-  | Whim: credit exhausted | a `budget_exhausted` refusal (`jsonPayload.msg="request" jsonPayload.error="budget_exhausted"`), or a mid-generation provider `402` (`jsonPayload.msg="provider credit exhausted"`) | at most 1 per hour | check the OpenRouter credit balance at https://openrouter.ai/credits and top it up |
+  | Whim: API down | `https://<WHIM_API_HOST>/health` (checked every 5 min from 3 regions) failed its last two checks in at least two regions | while it lasts | `deploy/cloudrun/smoke.sh --no-live` from a laptop: it names the failing layer |
+  | Whim: new report | a user sent a report; the email names its id and reason only | at most 1 per 5 min | `node server/admin.mjs reports show <id>` (then `reports list` for any the rate limit folded in) |
+  | Whim: generation failures | more than 5 `terminal failure` lines in an hour (log metric `whim-terminal-failures`) | while it lasts | `node server/admin.mjs usage --days 1` for counts by reason, then the "Terminal failures" query above |
+  | Whim: credit exhausted | a `budget_exhausted` refusal (`jsonPayload.msg="request" jsonPayload.error="budget_exhausted"`), or a mid-generation provider `402` (`jsonPayload.scope="run" jsonPayload.msg="provider credit exhausted"`) | at most 1 per hour | check the OpenRouter credit balance at https://openrouter.ai/credits and top it up |
   | Whim: device error | a phone sent a diagnostic at `ERROR` or above | at most 1 per hour | the "Device errors" query above, plus `severity>=ERROR` |
-  | Whim: purge job failed | the Cloud Run Job `whim-purge` logged at `ERROR` or above (Cloud Run only) | at most 1 per hour | `gcloud run jobs executions list --job whim-purge --region us-east4 --limit 5` (section "Firestore stores") |
+  | Whim: purge job failed | the Cloud Run Job `whim-purge` logged at `ERROR` or above | at most 1 per hour | `gcloud run jobs executions list --job whim-purge --region us-east4 --limit 5` (section "Firestore stores") |
   | Whim monthly spend (budget) | GCP spend on `WHIM_BILLING_ACCOUNT` for this project passes 50, 90 or 100 % of `WHIM_MONTHLY_BUDGET` | once per threshold per month | the Billing reports page for the project, by service |
 
   "While it lasts" means one email when the condition starts and one when it clears. The budget
-  also emails the billing account's admins.
+  (created by `provision.sh`) also emails the billing account's admins.
 - **Reports** — `$C exec -T whim-server node server/whim-admin.mjs reports list [--since N] [--limit N] [--json]`,
   `reports show <id> [--json]`, `reports purge`.
 - **Usage and cost** — `$C exec -T whim-server node server/whim-admin.mjs usage [--days N] [--top N] [--json]`
@@ -516,8 +589,8 @@ string the deploy scripts use, from `deploy/lib.sh`).
   `WHIM_BETA_LIMIT_PER_CLIENT_HOUR`, e.g. to 200. A refused or malformed signup lands on
   `/beta/retry`; its log line (`jsonPayload.msg="beta signup"`) carries only `outcome` (`stored`,
   `updated`, `invalid`, `limited`, `trap`, `error`) and `requestId`, never the address.
-- **Tuning limits** — apart from the two beta signup limits above, a capacity profile (below) is the
-  only deploy-time lever, and it never carries a daily limit, a retention period or `NODE_ENV` by
+- **Tuning limits** — apart from the two beta signup limits above and the two policy-check limits
+  below, a capacity profile (below) is the only deploy-time lever, and it never carries a daily limit, a retention period or `NODE_ENV` by
   construction. Changing a daily/global limit (design.md D6's table) means editing its default in
   `server/src/config.ts` and deploying that commit — a code change, not a runtime flag, so it goes through the same review as anything else.
   Two global daily ceilings, not the per-device limits, are what actually bound a day's spend — a
@@ -527,6 +600,14 @@ string the deploy scripts use, from `deploy/lib.sh`).
   `429 server_busy` with `Retry-After` set to the next UTC midnight. The anonymous stream probe has
   its own tiny pool, `WHIM_LIMIT_PROBE_CONCURRENCY` (2), so probe traffic can never crowd the paid
   routes; like the other limits it is a default in `server/src/config.ts`, not a profile setting.
+  A generation that finds every slot busy is checked by the content policy before it takes a place
+  in line. That check first admits a `policy-check` ledger row (id `<request id>:policy-check`)
+  against `WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY` (30) and `WHIM_LIMIT_POLICY_CHECKS_PER_DAY` (800),
+  so leaving and rejoining the line can't call the classifier without bound (#120). The row carries
+  the check's tokens and cost and is never refunded. A refusal in line also settles a `generate`
+  row `refused` / `content_policy` with cost 0 and spends its unit, as on a free slot; `usage`
+  counts that refusal once. `usage` lists `policy-check` as its own kind and adds the row's cost to
+  its generation's.
 
 ## Log retention on the VM
 

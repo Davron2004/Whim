@@ -811,6 +811,11 @@ async function testLinePolicyRefusal(): Promise<void> {
   eq('the unchecked prompt inserted no generate row', h.usageStore.admitted.includes(unchecked.headers.get(REQUEST_ID_HEADER) ?? ''), false);
   eq('the refusal spent C’s generation unit and the unchecked prompt none: A’s and C’s count', await h.usageStore.generationUnits(AT_2200_UTC), 2);
   await expectRefusal('the refused device has spent its one generation of the day', await postGenerate(h.app, PROMPT, DEVICE_C), 429, 'daily_limit', '7200');
+  eq(
+    'the summary counts the refusal in line once, and the unchecked prompt once',
+    (await h.usageStore.summary({ days: 1, now: AT_2200_UTC })).failureReasonCounts,
+    { content_policy: 1, policy_unavailable: 1 },
+  );
   pipeline.releaseOne();
   eq('the freed slot still goes to B', await waiting.next(), PLAN_START);
   await readEvents('the first generation', first);
