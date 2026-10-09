@@ -80,6 +80,15 @@ native leg lands.
   features blocked, and Whim keeps only the outcome (allowed or blocked), on the device, never the
   range itself.
 
+- **Your own server (optional).** Whim is open source, so anyone can run its server. Settings →
+  Advanced → `Use your own server` lets a user point the app at one they choose, after a confirm
+  step saying that server gets everything Whim sends and that Whim's privacy policy doesn't cover
+  it. It is off by default: a fresh install, and every step in §1, uses Whim's own server, so
+  review needs nothing set up. Whatever server answers, its output runs under the same containment
+  as above (opaque-origin iframe, CSP, neutralized globals, the same capability bridge, the same
+  on-device age gate), so 4.7's guarantees don't depend on which server built the app. Each user
+  builds only for themselves there, and Whim offers no catalogue of what such a server makes.
+
 ## 3. Guideline 2.5.2 context
 
 Apple's guideline 2.5.2 bars an app from downloading or executing code that changes its own
@@ -133,7 +142,7 @@ document, it doesn't restate the values.
       to check by hand.
 - [ ] `/privacy` and `/support` are live at the real domain and the privacy page says what the
       consent screen says (§1, §4) plus report retention.
-- [ ] Production `/healthz` answers on the real domain.
+- [ ] Production `/health` answers on the real domain.
 - [ ] The Google Play closed test track has at least 12 opted-in testers who have held the build
       for at least 14 days — required before this account can promote a release to production.
 - [ ] After the first Play upload (App Signing assigns the Play signing key at that point, and
@@ -151,5 +160,5 @@ document, it doesn't restate the values.
 
 ## Decision log
 
-Design decisions D1, D2, D3, D6, D7, D10 and D16 (`openspec/changes/store-launch-compliance/
+Design decisions D1, D2, D3, D6, D7, D10 and D16 (`openspec/changes/archive/2026-10-09-store-launch-compliance/
 design.md`) are recorded in `docs/decisions.md`.

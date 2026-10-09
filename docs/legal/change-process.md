@@ -122,7 +122,7 @@ Send it before the changed page goes live, and log it:
 
 | Date sent | Store | Change | Channel | Reference |
 |---|---|---|---|---|
-| 2026-09-24 | Google Play | Privacy policy and terms v2 (consent version 2), effective 2026-09-27 | Play Console → Age signals → Significant changes | en-US and fr-CA descriptions (`openspec/changes/legal-surface-v2/progress.md`, 11.10) |
+| 2026-09-24 | Google Play | Privacy policy and terms v2 (consent version 2), effective 2026-09-27 | Play Console → Age signals → Significant changes | en-US and fr-CA descriptions (`legal-surface-v2` progress ledger, in git history at `8c6cb385`; task 11.10, now #150) |
 | | Apple | Same change | PermissionKit Significant Change API | Not sent: the app doesn't call it yet (issue #86) |
 
 ## 9. Other triggers

