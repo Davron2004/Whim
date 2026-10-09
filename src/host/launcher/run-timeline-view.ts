@@ -109,10 +109,15 @@ function repairAttempts(journal: readonly RunJournalEntry[]): number {
  * output-growth summary, then the failure detail the failure surfaces already permit (`reason` and
  * each diagnostic `hint` — the journal stores nothing else, so no `kind`, `symbol` or raw
  * `message` can reach a row). `devMode` appends the two observed counts and nothing else.
+ * `shownReason` is the reason the surrounding screen already states; a failure reason equal to it
+ * is not repeated. `ended` says the attempt is over (the failure screen), so a stage it never left
+ * didn't finish rather than is still going.
  */
 export function runTimelineRows(
   journal: readonly RunJournalEntry[],
   devMode = false,
+  shownReason?: string,
+  ended = false,
 ): readonly TimelineRow[] {
   const rows: TimelineRow[] = [];
 
@@ -120,7 +125,7 @@ export function runTimelineRows(
     rows.push({
       key: `stage:${i}`,
       kind: 'stage',
-      text: timelineStageLine(timelineStageLabel(transition.stage), transition.durationMs),
+      text: timelineStageLine(timelineStageLabel(transition.stage), transition.durationMs, ended),
     });
   }
 
@@ -136,7 +141,7 @@ export function runTimelineRows(
 
   const failure = lastFailure(journal);
   if (failure != null) {
-    rows.push({ key: 'reason', kind: 'reason', text: failure.reason });
+    if (failure.reason !== shownReason) rows.push({ key: 'reason', kind: 'reason', text: failure.reason });
     for (const [i, diagnostic] of (failure.diagnostics ?? []).entries()) {
       rows.push({ key: `hint:${i}`, kind: 'hint', text: diagnostic.hint });
     }

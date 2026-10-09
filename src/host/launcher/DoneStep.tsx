@@ -11,7 +11,7 @@ import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import type { InstalledApp } from './app-index';
 import AppTile from './app-tile';
 import { COPY, readyTitle } from './copy';
-import { SHELL_PALETTE } from './theme';
+import { primaryButtonColors, SHELL_PALETTE } from './theme';
 import { useSystemBack } from './use-system-back';
 
 export interface DoneStepProps {
@@ -41,7 +41,7 @@ export default function DoneStep({ app, onOpen, onBackToApps, onReport }: Readon
       <TouchableOpacity
         onPress={onOpen}
         accessibilityRole="button"
-        style={[styles.primary, { backgroundColor: p.accent, borderColor: p.cardBorder }]}
+        style={[styles.primary, primaryButtonColors(true)]}
       >
         <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.doneOpen}</Text>
       </TouchableOpacity>

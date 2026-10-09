@@ -32,6 +32,7 @@ import { runPromptFlowWiringTests } from './prompt-flow-wiring.suite';
 import { runGenerationRequestTests } from './generation-request.suite';
 import { runXhrTransportTests } from './xhr-transport.suite';
 import { runWhimProseTests } from './whim-prose.suite';
+import { runAndroidFontsTests } from './android-fonts.suite';
 import { runTileColourTests } from './tile-colour.suite';
 import { runOrbMenuTests } from './orb-menu.suite';
 import { runLoggingTests } from '../../logging/test/logging.suite';
@@ -79,6 +80,9 @@ import { runLegalLanguageUiTests } from './legal-language-ui.suite';
 import { runAgeCheckTests } from './age-check.suite';
 import { runAgeSignalUiTests } from './age-signal-ui.suite';
 import { runDiagnosticsUiTests } from './diagnostics-ui.suite';
+import { runWireFutureFramesTests } from './wire-future-frames.suite';
+import { runFlowMessagesUiTests } from './flow-messages-ui.suite';
+import { runKeyboardShellUiTests } from './keyboard-shell-ui.suite';
 
 const h = new Harness();
 
@@ -106,6 +110,7 @@ await runPromptFlowWiringTests(h);
 await runGenerationRequestTests(h);
 await runXhrTransportTests(h);
 await runWhimProseTests(h);
+await runAndroidFontsTests(h);
 await runTileColourTests(h);
 await runOrbMenuTests(h);
 await runLoggingTests(h);
@@ -155,6 +160,9 @@ await runLegalLanguageUiTests(h);
 await runAgeCheckTests(h);
 await runAgeSignalUiTests(h);
 await runDiagnosticsUiTests(h);
+await runWireFutureFramesTests(h);
+await runFlowMessagesUiTests(h);
+await runKeyboardShellUiTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

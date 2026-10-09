@@ -170,6 +170,43 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     );
   });
 
+  await h.test('checklist: a failure rewording can’t get past gets no advisory row', () => {
+    const rows = failureChecklistRows({ diagnostics: [{ hint: 'it broke' }], hasWorkingVersion: true, rephraseHelps: false });
+    h.eq(rows.map(r => r.kind), ['done', 'bad'], 'the reassurance and the hint stay; the advice goes');
+    h.eq(failureChecklistRows({ diagnostics: [], hasWorkingVersion: false, rephraseHelps: false }), [], 'with nothing else to say there are no rows at all');
+  });
+
+  // ── the advice: rephrasing is offered only where it can help ────────────────
+
+  await h.test('advice: a failure rewording can’t get past offers no rephrasing, and its primary still leads back to the prompt', async () => {
+    await withFailureScreen({ rephraseHelps: false, diagnostics: [] }, async (shown, calls, tree) => {
+      h.ok(!shown().includes(COPY.failureRowSayItDifferently), 'no advisory row suggests describing it differently');
+      h.ok(!shown().includes(COPY.failureRephrase), 'and the primary is not labelled as rephrasing');
+      await press(button(tree, COPY.screenErrorRetry));
+      h.eq(calls.rephrase, 1, 'the primary performs the same recovery action');
+    });
+    await withFailureScreen({ diagnostics: [] }, async (shown) => {
+      h.ok(shown().includes(COPY.failureRowSayItDifferently) && shown().includes(COPY.failureRephrase), 'a failed generation still advises rephrasing');
+    });
+  });
+
+  await h.test('what happened: the reason the screen already shows is not repeated in its timeline', async () => {
+    const count = (text: string, part: string) => text.split(part).length - 1;
+    await withFailureScreen({ journal: JOURNAL, attemptStarted: true }, async (shown) => {
+      h.eq(count(shown(), 'It did not build.'), 1, 'the reason reads once');
+      const stages = runTimelineRows(JOURNAL).filter((r) => r.kind === 'stage').map((r) => r.text);
+      h.ok(stages.length > 0 && stages.every((row) => shown().includes(row)), 'while the timeline still shows what the attempt did');
+    });
+    const refused = 'Whim is busy right now. Please try again in a few minutes.';
+    const journal: RunJournalEntry[] = [
+      { t: 1_000, kind: 'stage', stage: 'generate' },
+      { t: 2_000, kind: 'terminal', failure: { reason: refused, diagnostics: [] } },
+    ];
+    await withFailureScreen({ reason: refused, journal, attemptStarted: true, notice: { hint: refused, tone: 'neutral' } }, async (shown) => {
+      h.eq(count(shown(), refused), 1, 'a refused Retry’s notice reads once too');
+    });
+  });
+
   await h.test('checklist: no row can carry a diagnostic’s kind, symbol or message', () => {
     const diagnostic = { hint: 'Describing the sound differently helps', kind: 'sdk-misuse', symbol: 'useAudio', message: 'TS2554: expected 1 argument' };
     const rows = failureChecklistRows({ diagnostics: [diagnostic], hasWorkingVersion: true });
