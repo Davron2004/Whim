@@ -37,7 +37,7 @@ There is also a [one-minute video of a full session](https://www.linkedin.com/fe
 
 ## Why it is hard
 
-**Untrusted code on a phone.** Every mini-app is code no human reviewed, so the sandbox assumes it is hostile, including assuming it will lie about being contained. Containment has three legs and pen-testing showed none is enough alone:
+**Untrusted code on a phone.** Every mini-app is code no human reviewed, so the sandbox assumes it is hostile, including assuming it will lie about being contained. Containment has three web legs, and pen-testing showed none is enough alone; a fourth, native leg makes the WebView refuse every network load, because a frame navigating itself gets past all three (decision #74):
 
 ```mermaid
 flowchart TB

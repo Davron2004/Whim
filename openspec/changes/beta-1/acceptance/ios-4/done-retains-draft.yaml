@@ -1,5 +1,0 @@
-appId: com.anycognition.whim
----
-- tapOn: "Done"
-- waitForAnimationToEnd
-- assertVisible: "Keep entries for 14 days."

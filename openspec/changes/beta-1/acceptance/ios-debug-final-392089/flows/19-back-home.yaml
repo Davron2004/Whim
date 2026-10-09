@@ -1,7 +1,0 @@
-appId: com.anycognition.whim
----
-# Prerequisite: failure/done screen. Retains the saved attempt; does not discard it.
-- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-before-back-home"
-- tapOn: "Back to your apps"
-- assertVisible: "Describe an app…"
-- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-home-after-back"

@@ -1,9 +1,0 @@
-appId: com.anycognition.whim
----
-- swipe:
-    start: "50%, 72%"
-    end: "50%, 35%"
-    duration: 500
-- tapOn:
-    point: "50%, 70%"
-- waitForAnimationToEnd

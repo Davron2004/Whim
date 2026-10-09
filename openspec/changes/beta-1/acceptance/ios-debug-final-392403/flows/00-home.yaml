@@ -1,5 +1,0 @@
-appId: com.anycognition.whim
----
-# Prerequisite: legal screens finished; owned Debug device is at Home on local stub.
-- assertVisible: "Describe an app…"
-- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-home"

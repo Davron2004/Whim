@@ -1,7 +1,0 @@
-# 10.4 iOS final pass agent (simulator 469C2821, build 386656, production), Opus
-
-- **What:** a subagent ran the final iOS device pass with Maestro, `simctl io` screenshots and video, and Python pixel probes. It stopped partway when the orchestrator hit its context limit (items 1–3 done, 4–7 not run). **Mechanism:** `recordVideo` plus per-frame pts timed the age check and the orb menu rise. Pixel column scans measured hairlines and gaps. `maestro hierarchy` gave bounds for the plan editor, keyboard and footer. `sample` on the Whim process found a UIKit layout spin. **Verdict:** CAUGHT-REAL-MISTAKE. The plan last-row editor is still fully hidden under the keyboard (R10 open), and a drag-to-dismiss wedges the keyboard with the main thread at 100 % CPU (2/2 with XCTest input; a finger check is still needed). **Cost:** about 45 minutes. About 15 of them went to Maestro stalls: a cold XCUITest driver timed out for 5 minutes on the first run after a reinstall, and the wedged app made every hierarchy query wait for idle until it timed out (about 6 minutes). **Evidence:** `openspec/changes/beta-1/acceptance/ios-3/` (02g–02i, 04c–04h, `d01-drag-dismiss-spin-sample.txt`).
-
-Proposals:
-1. Device briefs for keyboard work should name the dismiss mode per platform (`interactive` on iOS). A drag that stops above the keyboard is a no-op by design, and the agent lost a few minutes finding that out.
-2. After any gesture, check the app's CPU (`ps -o %cpu -p <pid>`). A wedged app looks exactly like a slow Maestro, and the CPU check tells them apart right away.

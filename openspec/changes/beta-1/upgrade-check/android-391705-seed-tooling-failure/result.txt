@@ -1,4 +1,0 @@
-upgrade check: android, 20260929-210247
-server: http://127.0.0.1:8790 {"ok":true,"service":"whim-server"}
-device: emulator-5580 (AVD Whim_Upgrade, wiped)
-from: /Users/davrondjabborov/.cache/whim-upgrade/from.apk, build 382511, sha256 9acf325c3771931fd5a8495438c38d833938f96a7a7dbe1880f98b14469c3622

@@ -1,3 +1,0 @@
-server/src/routes/generate.ts
-server/src/routes/clarify.ts
-server/src/routes/rewrite.ts

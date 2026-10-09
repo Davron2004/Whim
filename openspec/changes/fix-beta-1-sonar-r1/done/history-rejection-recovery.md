@@ -1,4 +1,0 @@
-# DONE: sonar-r1-history-rejection-recovery
-Findings: S81, S82, S88, typescript:S9383, MAJOR.
-
-Consume rejected history reads at the component boundary while preserving `runHistoryLoad`'s contract: it publishes `loading: false`, preserves previously loaded rows on a failed reload, and rethrows to its caller. A rejected restore-diff or row-annotation read must clear its pending/stale display only when the effect is still current; it must not leave a permanent placeholder, retain an annotation from another row, or invent a reassurance. Log the operation without user content. Add rendered regressions for an initial/reload list rejection, a rejected restore-diff read, and a rejected expanded-row annotation; preserve cancellation fencing, confirmed restore/copy behavior, and all successful annotation/reassurance paths.

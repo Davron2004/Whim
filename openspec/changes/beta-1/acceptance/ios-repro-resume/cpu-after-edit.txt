@@ -1,2 +1,0 @@
-  PID  %CPU ELAPSED
- 8194   0.0   09:50

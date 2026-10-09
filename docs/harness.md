@@ -293,7 +293,8 @@ mirror is never hand-edited.** Two mechanisms, by file kind:
   links/adapters), so a stale mirror fails the gate instead of rotting silently — same philosophy as
   `src/runtime/generated/*`.
 
-`.agents/` (openspec CLI multi-tool skill output) is vendor-generated and non-canonical; the
+`.agents/` holds only the graphify skill. Its openspec/opsx copies (CLI multi-tool output, stale and
+non-canonical) were removed 2026-10-09; if `openspec update` recreates them, delete them again. The
 schema `apply.instruction` is the durable routing anchor if any generated skill body is stale.
 
 ## 11. Operational gotchas — do NOT re-derive these

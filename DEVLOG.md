@@ -391,7 +391,7 @@ a blocking step — it's a security invariant (§16.4), not a feature test.
 
 ### The dead-ends (wired ≠ works, again)
 
-1. **A NUL byte masquerading as a space.** One adversarial fixture string had a leading ` `
+1. **A NUL byte masquerading as a space.** One adversarial fixture string had a leading `\0`
    (not the space I'd typed); SQLite truncates TEXT at an embedded NUL, so it round-tripped to
    `""` and `grep` started treating the whole test file as *binary*. `tr -d '\000'` fixed it.
    The injection test is about SQL metacharacters, not NUL handling — don't let a stray control
@@ -785,3 +785,26 @@ feature — it leaves a wired socket for the next agent to plug a second value i
 agent will read the socket, not the changelog. The fix isn't a comment or a policy: delete the
 shape (context → module constant, parameter → nothing) and add a tripwire that names the file if
 the shape reappears. A cut that isn't load-bearing in the code is a cut that will re-seed itself.
+
+---
+
+## Lessons lifted from pruned change folders — 2026-10-09
+
+The archive keeps only `proposal.md` and `design.md` per change; these came out of the deleted
+`progress.md`/`research.md` files (full text at commit `8c6cb385`).
+
+- 2026-10-09 (`2026-08-21-generation-loop`): three suites were merged but never registered in `server/test/acceptance.ts`, so green gates ran none of them for three chains. Prove a new suite runs by the runner's assertion count going up, not by gate colour.
+- 2026-10-09 (`2026-08-21-prompt-flow-ux`): two chains each appended a suite registration to the same `acceptance.ts` and conflicted at merge. `chains.md` gives registration edits to one chain (or the dispatcher).
+- 2026-10-09 (`2026-08-21-generation-loop`): a route with no direct test shipped a double-credit race because its `reachedTerminal` guard was set after the crediting it guarded. Set a guard flag synchronously before the `await` it protects, and back any "can never double-count" comment with a test that tries.
+- 2026-10-09 (`2026-08-11-launcher-ghost-tiles`): tile colour took three fix rounds because each round's tests were written from its own diff and covered only the cells it touched. For state-dependent behaviour, enumerate the whole state matrix and test every cell.
+- 2026-10-09 (`2026-08-11-launcher-ghost-tiles`): `openspec validate --strict` checks a delta against its own schema, never against other changes or the live spec. A MODIFIED heading that doesn't byte-match its target fails only at archive time (again on 2026-10-09: `durable-server-stores` modified a requirement `public-generation-server` removed). Dry-run an archive batch in a scratch copy of `openspec/`.
+- 2026-10-09 (`2026-08-11-harden-containment-observation`): a browser-side observer race reproduced 0/40 serially and 15/40 at parallelism 4, and CPU spinners didn't move it. Reproduce Chromium flakes at the gate's concurrency. Also: `page.evaluate`/`exposeFunction` never resolve on a page wedged in a synchronous hang, so install observers before navigation.
+- 2026-10-09 (`2026-08-21-flow-wait-hygiene`): the host's generation counter (2 on first launch) and the iframe's `__whimGeneration` (1 in a fresh realm) are different namespaces; `assemble.mjs` restamps only `nav-depth`. A paint fence comparing them rejected every paint. Fence other frames on `trusted`, and test with fixtures shaped like real generated output.
+- 2026-10-09 (`2026-10-09-public-generation-server`): Playwright's `serviceWorkers: 'block'` injects an init script into every frame, the sandboxed candidate iframe included (SecurityError, and harness code inside the untrusted realm). The opaque-origin sandbox plus the abort-all route block service workers instead.
+- 2026-10-09 (`2026-07-31-eval-harness`): a chain broke the sole-importer rule because its `reads:` in `chains.md` omitted the one contract stating it. A rule missing from a chain's reads doesn't exist for its implementer. Same change: keeping eval-set data inert (never executed) is a different property from keeping holdout content undisclosed (never printed).
+- 2026-10-09 (`2026-10-09-durable-server-stores`): an esbuild Node bundle that reaches the stores without `@google-cloud/firestore` external fails with "Dynamic require of process" from grpc-js. No chain's fast gate caught it; `generation-e2e` in gate-full did.
+- 2026-10-09 (`2026-10-09-faster-generation`): `server/flowbench.mjs` called a function `drive.ts` didn't export; the suite tested `drive.ts`, never the `.mjs` entry, and only a live run found it. Smoke the CLI entry point, not just the module behind it.
+- 2026-10-09 (`2026-10-09-faster-generation`): a Sonar "fix" for S6606 rewrote the lines next to the flagged ones and still reported green. Check each Sonar fix against the exact line the finding cites.
+- 2026-10-09 (`2026-10-09-legal-surface-v2`): an Objective-C++ file importing `Whim-Swift.h` fails the iOS build (`cannot find interface declaration for 'RCTDefaultReactNativeFactoryDelegate'`) unless the React Native header is imported before it.
+- 2026-10-09 (`2026-10-09-platform-release-readiness`, `2026-08-01-fix-generate-stream-transport`): a stale `com.whim` dev install got launched instead of `com.anycognition.whim` and "passed" without running the probe. Before trusting a device verdict, confirm the package and that the build is yours, e.g. grep the Hermes bytecode string table for a literal only your change adds.
+- 2026-10-09 (`2026-07-07-sdk-design-system`): Android WebView's `-webkit-tap-highlight-color` paints a holo-blue flash over the whole border box of anything clickable. Tap-then-screenshot never shows it; a held touch does. The SDK's `TAP_RESET` fragment suppresses it.

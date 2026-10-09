@@ -1,2 +1,0 @@
-src/host/launcher/LauncherRoot.tsx
-src/host/launcher/test/attempt-lifecycle-ui.suite.tsx
