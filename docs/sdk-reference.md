@@ -25,13 +25,13 @@ The canonical, human-readable example exercising every component below is
 Tier-0 (zero-syscall) skeleton:
 
 ```tsx
-import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
+import { defineApp, Screen, Stack, Text } from 'vc-sdk';
 
 function Home() {
   return (
     <Screen padding="lg">
       <Stack gap="lg">
-        <Heading size="title">Hello</Heading>
+        <Text size="title">Hello</Text>
       </Stack>
     </Screen>
   );
@@ -53,23 +53,21 @@ Every prop below takes a **token**, never a raw color/pixel value.
 | `Screen` | `action` | `{ icon: string; label: string; onPress: () => void }?` | — | A trailing icon button in the header (shown only with `title`); `label` is read to screen readers. |
 | `Stack` | `gap` | `SpaceToken` | `'md'` | Vertical flex column with `gap`. |
 | `Row` | `gap` | `SpaceToken` | `'md'` | Horizontal flex row with `gap`; wraps to a new line when content overflows. |
-| `Row` | `align` | `'start' \| 'center' \| 'end'` | baseline (unset) | Cross-axis alignment. |
-| `Row` | `justify` | `'start' \| 'center' \| 'end' \| 'between'` | space-between (unset) | Main-axis distribution. |
+| `Row` | `align` | `'start' \| 'center' \| 'end'` | `'center'` | Cross-axis alignment. |
+| `Row` | `justify` | `'start' \| 'center' \| 'end' \| 'between'` | `'start'` | Main-axis distribution. |
 | `Text` | `size` | `TextSizeToken` | `'body'` | Font size/line-height/weight from the size scale. |
 | `Text` | `color` | `TextColorToken` | `'text'` | Text color. |
 | `Text` | `weight` | `WeightToken` | size's own weight | Overrides the size's default weight. |
 | `Text` | `align` | `'start' \| 'center' \| 'end'` | unset | `textAlign`. |
-| `Heading` | `size` | `'subtitle' \| 'title' \| 'display'` | `'title'` | Bold heading at the given size. |
-| `Heading` | `color` | `TextColorToken` | `'text'` | Heading color. |
-| `NumberInput` | `label` | `string?` | — | Optional caption label above the field. |
+| `Heading` | — | — | — | Deprecated: write `<Text size="title">`. |
+| `NumberInput` | `label` | `string?` | — | Optional label above the field. |
 | `NumberInput` | `value` | `number` (required) | — | Current numeric value. |
 | `NumberInput` | `min` / `max` / `step` | `number?` | — | Native `<input type="number">` constraints. |
 | `NumberInput` | `onChange` | `(n: number) => void` | — | Fires on every keystroke; NaN coerces to `0`. |
 | `Button` | `label` | `string` (required) | — | Button text. |
-| `Button` | `variant` | `'primary' \| 'secondary' \| 'ghost' \| 'danger'` | `'primary'` | Visual weight/tone. |
+| `Button` | `variant` | `'primary' \| 'secondary' \| 'ghost' \| 'danger'` | `'primary'` | `primary` fills with the app's tint: at most one per screen. `secondary` neutral fill, `ghost` tint text only, `danger` a soft red capsule for destructive actions. |
 | `Button` | `icon` | `string?` | — | An icon name, drawn before the label. |
-| `Button` | `radius` | `RadiusToken` | `'md'` | Corner radius. |
-| `Button` | `disabled` | `boolean` | `false` | Suppresses press + dims to 50% opacity. |
+| `Button` | `disabled` | `boolean` | `false` | Suppresses press; drawn in a neutral fill with muted text. |
 | `Button` | `onPress` | `() => void` | — | Tap handler. |
 | `Icon` | `name` | `string` (required) | — | An icon name (`timer`, `coffee`, `heart`, …); an unknown name draws a plain circle. |
 | `Icon` | `size` | `'sm' \| 'md' \| 'lg'` | `'md'` | 16 / 20 / 24 px. |
@@ -84,13 +82,13 @@ Every prop below takes a **token**, never a raw color/pixel value.
 | `TextInput` | `value` | `string` (required) | — | Current text. |
 | `TextInput` | `placeholder` | `string?` | — | Native placeholder. |
 | `TextInput` | `onChange` | `(s: string) => void` | — | Fires on every keystroke. |
-| `Switch` | `label` | `string?` | — | Optional trailing/leading label (row is the click target). |
+| `Switch` | `label` | `string?` | — | Optional label before the switch (the whole row is the target). |
 | `Switch` | `value` | `boolean` (required) | — | On/off state. |
 | `Switch` | `onChange` | `(b: boolean) => void` | — | Fires on toggle. |
 | `Checkbox` | `label` | `string` (required) | — | Clickable label text. |
 | `Checkbox` | `checked` | `boolean` (required) | — | Checked state. |
 | `Checkbox` | `onChange` | `(b: boolean) => void` | — | Fires on toggle. |
-| `Slider` | `label` | `string?` | — | Optional caption + live numeric readout. |
+| `Slider` | `label` | `string?` | — | Optional label + live numeric readout above the track. |
 | `Slider` | `value` | `number` (required) | — | Current value. |
 | `Slider` | `min` / `max` / `step` | `number` | `0` / `100` / `1` | Bounds for the custom pointer-driven track. |
 | `Slider` | `onChange` | `(n: number) => void` | — | Fires while dragging. |
@@ -115,29 +113,33 @@ Every prop below takes a **token**, never a raw color/pixel value.
 
 | Component | Prop | Type | Default | Semantics |
 |---|---|---|---|---|
-| `Card` | `padding` | `SpaceToken` | `'lg'` | Inner padding. |
-| `Card` | `radius` | `RadiusToken` | `'lg'` | Corner radius. |
+| `Card` | `padding` | `SpaceToken` | `'lg'` | Inner padding. A card is a borderless rounded group (its colour changes inside a `Modal` by itself). |
 | `Card` | `onPress` | `() => void?` | — | When present, makes the whole card clickable. |
-| `Divider` | — | — | — | A 1px hairline, full width. No props. |
+| `Divider` | — | — | — | A 1px separator hairline, full width. No props. |
 | `Spacer` | — | — | — | A growing flex spring inside `Stack`/`Row`. No props. |
 | `Grid` | `columns` | `number` | `2` | CSS grid column count. |
 | `Grid` | `gap` | `SpaceToken` | `'md'` | Grid gap. |
 | `Badge` | `label` | `string` (required) | — | Pill text. |
-| `Badge` | `tone` | `BadgeTone` | `'neutral'` | `'neutral' \| 'primary' \| 'positive' \| 'warning' \| 'danger'`. |
+| `Badge` | `tone` | `BadgeTone` | `'neutral'` | `'neutral' \| 'primary' \| 'positive' \| 'warning' \| 'danger'`; the last three carry their status icon. |
 | `ProgressBar` | `value` | `number` (required) | — | Fraction filled, clamped to `[0, 1]`. |
 | `ProgressBar` | `tone` | `'primary' \| 'positive' \| 'warning' \| 'danger'` | `'primary'` | Fill color. |
-| `List` | — | children only | — | Card-like container; auto-inserts hairlines between children. |
+| `ProgressBar` | `variant` | `'bar' \| 'ring'` | `'bar'` | A thin bar, or a 120 px ring for one headline number (a timer, a count). |
+| `ProgressBar` | `label` | `string?` | — | A short reading of the value (`'7'`, `'2:30'`, `'3 of 5'`): above the bar, inside the ring. |
+| `List` | — | children | — | A rounded group with hairlines between its children (`ListItem`s). Static: never animates. |
+| `List` | `items` | `T[]` | — | Keyed form, for rows that come and go: the data to show, with `keyBy` and `renderItem`. |
+| `List` | `keyBy` | property name of `T` \| `(item: T) => string \| number` | — | Each row's unique, stable id (e.g. `keyBy="id"`). Never the array index: a list with duplicate or position keys logs a warning and does not animate. |
+| `List` | `renderItem` | `(item: T, index: number) => ReactNode` | — | Renders one row, usually a `ListItem`. |
 | `ListItem` | `title` | `string` (required) | — | Primary row text. |
 | `ListItem` | `subtitle` | `string?` | — | Muted caption line under the title. |
 | `ListItem` | `trailing` | `string?` | — | Muted text at the row's end. |
 | `ListItem` | `icon` | `string?` | — | An icon name, drawn before the title. |
-| `ListItem` | `onPress` | `() => void?` | — | When present, makes the row clickable. |
+| `ListItem` | `onPress` | `() => void?` | — | When present, makes the row clickable and shows a trailing chevron. |
 | `EmptyState` | `title` | `string` (required) | — | The "nothing here" headline. |
 | `EmptyState` | `hint` | `string?` | — | Muted caption under the title. |
 | `EmptyState` | `icon` | `string?` | — | An icon name, drawn large above the title. |
 | `Modal` | `visible` | `boolean` (required) | — | Renders `null` when `false` — no imperative API. |
-| `Modal` | `title` | `string?` | — | Optional sheet header. |
-| `Modal` | `onClose` | `() => void` (required) | — | Fires on backdrop tap. |
+| `Modal` | `title` | `string?` | — | Optional sheet title. |
+| `Modal` | `onClose` | `() => void` (required) | — | Fires on the sheet's close button, a backdrop tap or Escape; the sheet always has a close button. |
 
 ### Charts (`charts.tsx`)
 
@@ -180,7 +182,7 @@ timestamp becomes a heatmap label only by converting it: `new Date(ms).toISOStri
 
 | `RadiusToken` | `none` \| `sm` \| `md` \| `lg` \| `full` |
 |---|---|
-| resolves to | the ACTIVE theme's shape scale (`sharp`/`soft`/`round` — see §6); never a fixed px table |
+| resolves to | `0`, `10px`, `14px`, `20px`, a full capsule |
 
 | `ColorToken` | `text` \| `text-muted` \| `primary` \| `on-primary` \| `bg` \| `surface` \| `border` \| `danger` \| `positive` \| `warning` |
 | `TextColorToken` | `text` \| `text-muted` \| `primary` \| `positive` \| `danger` \| `warning` (text on a `primary` fill is handled by the component; never pass `on-primary` to `Text`) |
@@ -189,7 +191,7 @@ timestamp becomes a heatmap label only by converting it: `new Date(ms).toISOStri
 
 | `TextSizeToken` | `caption` | `body` | `subtitle` | `title` | `display` |
 |---|---|---|---|---|---|
-| size / line | 13px / 1.35 | 16px / 1.45 | 20px / 1.3 | 28px / 1.2 | 40px / 1.1 |
+| size / line | 13px / 18px | 17px / 24px | 20px / 25px | 28px / 34px | 40px / 44px |
 | default weight | regular | regular | semibold | bold | bold |
 
 | `WeightToken` | `regular` | `medium` | `semibold` | `bold` |

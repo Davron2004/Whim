@@ -7,7 +7,8 @@
  *  - every contrast floor §2 specifies holds in both schemes, and every tint keeps its §2.4 floors
  *    and its distance from the reserved hues;
  *  - no colour hex literal or spring config lives in `src/host/**` or `src/sdk/**` outside the
- *    module, apart from the exemptions listed below.
+ *    module, apart from the exemptions listed below;
+ *  - every component `vc-sdk` exports appears in the style gallery (system.md §7.2).
  *
  * Later design checks are added here, never as new registrations in `checks/test/acceptance.ts`.
  */
@@ -19,6 +20,7 @@ import { test, assert } from '../harness';
 import * as tokens from '../../../src/design/tokens';
 import { SAMPLED_SPRINGS } from '../../../src/design/generated/springs';
 import { contrastRatio, deltaE } from '../../../src/design/tints';
+import * as vcSdk from '../../../src/sdk/index';
 import { checkOutputs, formatDrift, reservedColors, tileRim, tintSoft, SYSTEM_MD, MOCKUP_HTML, PALETTE_JSON } from '../../../scripts/lib/design-tokens';
 
 const ROOT = process.cwd();
@@ -164,6 +166,35 @@ function tsFiles(dir: string): string[] {
   });
 }
 
+// ── Gallery coverage ─────────────────────────────────────────────────────────
+
+const GALLERY = 'fixtures/style-gallery.app.tsx';
+
+/** Exported components the gallery must NOT show, each with the reason. The gallery is the
+ *  generator's worked example, so it never teaches a deprecated component. */
+const GALLERY_EXEMPT: Readonly<Record<string, string>> = {
+  Heading: 'deprecated alias of `Text size="title"`, kept for installed apps and gone from the reference',
+};
+
+/** The components a module exports: its PascalCase function values. */
+function componentExports(module: Readonly<Record<string, unknown>>): string[] {
+  return Object.entries(module)
+    .filter(([name, value]) => /^[A-Z]/.test(name) && typeof value === 'function')
+    .map(([name]) => name)
+    .sort((a, b) => a.localeCompare(b, 'en'));
+}
+
+/** The components `source` renders as JSX, outside comments. */
+function renderedComponents(source: string): Set<string> {
+  return new Set([...withoutComments(source).matchAll(/<([A-Z][A-Za-z0-9]*)[\s/>]/g)].map((m) => m[1]));
+}
+
+/** Each non-exempt component the gallery never renders. */
+function galleryGaps(components: readonly string[], source: string): string[] {
+  const rendered = renderedComponents(source);
+  return components.filter((name) => !(name in GALLERY_EXEMPT) && !rendered.has(name));
+}
+
 const parseNumbers = (css: string, fn: string) => (new RegExp(`^${fn}\\((.*)\\)$`).exec(css)?.[1] ?? '').split(',').map(Number);
 
 export async function run(): Promise<void> {
@@ -272,5 +303,29 @@ export async function run(): Promise<void> {
     }
     assert(hits.length === 0, `move these values into src/design/tokens.ts: ${hits.join(', ')}`);
     assert(stale.length === 0, `these exemptions no longer hold a value; remove them from EXEMPT: ${stale.join(', ')}`);
+  });
+
+  await test('gallery: every component vc-sdk exports appears in the style gallery, and no deprecated one', () => {
+    const components = componentExports(vcSdk);
+    assert(components.includes('Screen') && components.includes('Chart') && components.length > 20, `the export scan sees the SDK's components: ${components.join(', ')}`);
+    const source = readRepo(GALLERY) ?? '';
+    const gaps = galleryGaps(components, source);
+    assert(gaps.length === 0, `${GALLERY} must show every vc-sdk component; missing: ${gaps.join(', ')}`);
+    const rendered = renderedComponents(source);
+    const exempt = Object.keys(GALLERY_EXEMPT);
+    const stale = exempt.filter((name) => !components.includes(name));
+    assert(stale.length === 0, `these gallery exemptions are no longer exported; remove them from GALLERY_EXEMPT: ${stale.join(', ')}`);
+    const taught = exempt.filter((name) => rendered.has(name));
+    assert(taught.length === 0, `the gallery shows deprecated components: ${taught.join(', ')}`);
+  });
+
+  await test('gallery: a component the gallery never renders fails, naming it', () => {
+    const source = readRepo(GALLERY) ?? '';
+    const components = componentExports(vcSdk);
+    assert(galleryGaps([...components, 'Carousel'], source).join() === 'Carousel', 'a newly exported component with no gallery entry is named');
+    const withoutStepper = source.replace(/<Stepper[\s/>]/g, '<Text ');
+    assert(galleryGaps(components, withoutStepper).join() === 'Stepper', 'removing a component from the gallery names it');
+    assert(galleryGaps(['Stepper'], '// <Stepper />\nconst x = 1;').join() === 'Stepper', 'a component mentioned only in a comment is not shown');
+    assert(componentExports({ toast: () => {}, Card: () => null, ListProps: undefined }).join() === 'Card', 'only PascalCase function values are components');
   });
 }
