@@ -8,7 +8,7 @@
 ### Requirement: Any version can become its own app
 
 **Reason**: "Make a copy from here" is immediate and always starts fresh.
-**Migration**: See "Any version can become its own app at once".
+**Migration**: See "Any version can become its own app".
 
 ### Requirement: Filter pills group the list by what changed
 
@@ -48,9 +48,10 @@ An expanded older version SHALL offer "Use this version"; tapping it SHALL make 
 - **WHEN** the user uses version 3 of 4 and taps Undo
 - **THEN** version 4 is active again and both remain listed
 
-### Requirement: Any version can become its own app at once
-Every expanded version SHALL offer "Make a copy from here", which SHALL create a new launcher entry from that exact version at once, with its own fresh data (#43b), and show the toast "Copy made" with Open. The original SHALL be unchanged.
+### Requirement: Any version can become its own app
+Every expanded version SHALL offer "Make a copy from here", which SHALL ask the same "Copy the data, or start fresh?" question as "Make a copy" (skipped when there is no saved data) and SHALL create a new launcher entry from that exact version with its own storage (#43b), and show the toast "Copy made" with Open. The original SHALL be unchanged.
 
 #### Scenario: Copy from an old version
 - **WHEN** the user taps "Make a copy from here" on version 2
+- **AND** answers "Start fresh"
 - **THEN** a new app whose code is version 2 appears on Home, starts with empty data, and the original is unchanged

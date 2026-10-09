@@ -26,17 +26,22 @@ The launcher SHALL offer Delete on every installed app with no confirmation dial
 
 ### Requirement: Forking creates an independent launcher entry
 
-The launcher SHALL offer "Make a copy" on every installed app (tile menu, and History for any version). The copy MUST be created at once with no question, MUST appear as a new launcher entry carrying its provenance, MUST start from the chosen version's bundle, MUST evolve independently, and MUST have its own empty user data store under its own storage-engine appId (#43b, #52's unshared fork). A toast "Copy made" SHALL offer Open. Joining an original's storage group SHALL remain reserved to rewind continuations, which are never asked (see `linked-apps`).
+The launcher SHALL offer "Make a copy" on every installed app (tile menu, and History for any version). Before creating the copy the launcher MUST ask "Copy the data, or start fresh?" (owner ruling 2026-10-09; skipped, starting fresh, when the original has never saved any user data). The copy MUST appear as a new launcher entry carrying its provenance, MUST start from the chosen version's bundle, MUST evolve independently, and MUST have its own user data store under its own storage-engine appId (#43b) — either a one-time copy of the original's data (change `copy-app-data`) or empty. A copy never shares data with its original. A toast "Copy made" SHALL offer Open. Joining an original's storage group SHALL remain reserved to rewind continuations, which are never asked (see `linked-apps`).
 
 #### Scenario: A copy runs independently of its original
 
 - **WHEN** the user makes a copy of an installed app and opens it
 - **THEN** the copy runs the same bundle as the original at that version but writes to its own storage; data entered in either never appears in the other
 
-#### Scenario: No share question is asked
+#### Scenario: The copy-or-fresh question is asked
 
-- **WHEN** the user taps "Make a copy"
-- **THEN** no sheet asks about saved data, and the copy exists when the toast appears
+- **WHEN** the user taps "Make a copy" on an app that has saved data
+- **THEN** a sheet asks "Copy the data, or start fresh?"; either answer creates a copy with its own storage, and no option shares data with the original
+
+#### Scenario: Nothing to copy
+
+- **WHEN** the user taps "Make a copy" on an app that has never saved any data
+- **THEN** no question is asked and the copy starts fresh
 
 ## REMOVED Requirements
 
