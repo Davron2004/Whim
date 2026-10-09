@@ -19,6 +19,7 @@
  */
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { getRequestListener, type Http2Bindings, type HttpBindings } from '@hono/node-server';
@@ -117,9 +118,43 @@ const COST_SWEEP_BOOT_DELAY_MS = 30_000;
 
 const bootLog = log.child({ scope: 'boot' });
 const drainLog = log.child({ scope: 'drain' });
+const browserLog = log.child({ scope: 'browser' });
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+type Known<T> = T | 'unknown';
+
+/** The value of the first `<key> : <value>` line of `/proc/cpuinfo` text, trimmed. */
+function cpuinfoField(cpuinfo: string, key: string): string | undefined {
+  const line = cpuinfo.split('\n').find((l) => l.includes(':') && l.slice(0, l.indexOf(':')).trim() === key);
+  return line?.slice(line.indexOf(':') + 1).trim();
+}
+
+/**
+ * What boot records about its host before the first browser launch (#139: Chromium crashes at
+ * launch on some Cloud Run hosts, cause open): the CPU model, whether the CPU flags that gate
+ * memory-protection keys (`pku`, `ospke`) are present, and the kernel release. A host without
+ * `/proc/cpuinfo`, or one that omits a line, reports `unknown` for what it does not expose.
+ */
+function bootHost(): { cpuModel: Known<string>; pku: Known<boolean>; ospke: Known<boolean>; kernel: Known<string> } {
+  let cpuinfo: string;
+  try {
+    cpuinfo = fs.readFileSync('/proc/cpuinfo', 'utf8');
+  // eslint-disable-next-line no-restricted-syntax -- intentional: a host without a readable /proc/cpuinfo reports its CPU fields as `unknown`
+  } catch {
+    cpuinfo = '';
+  }
+  const cpuModel = cpuinfoField(cpuinfo, 'model name');
+  const flagsLine = cpuinfoField(cpuinfo, 'flags');
+  const flags = flagsLine === undefined ? undefined : new Set(flagsLine.split(' '));
+  return {
+    cpuModel: cpuModel || 'unknown',
+    pku: flags ? flags.has('pku') : 'unknown',
+    ospke: flags ? flags.has('ospke') : 'unknown',
+    kernel: os.release() || 'unknown',
+  };
 }
 
 function atStep<T>(reason: BootFailureReason, work: () => T): T {
@@ -390,7 +425,11 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
       pipeline = createStubPipeline(config.stubDelayMs);
       basePolicy = new StubContentPolicy();
     } else {
-      opened.session = await SynthRunSession.launch({ concurrency: config.synthrunConcurrency }).catch((err: unknown) => {
+      bootLog.info(bootHost(), 'boot host');
+      opened.session = await SynthRunSession.launch({
+        concurrency: config.synthrunConcurrency,
+        onLaunchFailure: (failure) => browserLog.warn(failure, 'browser launch failed'),
+      }).catch((err: unknown) => {
         throw new BootError('browser_launch', messageOf(err));
       });
       await runBootSelfTest(opened.session);

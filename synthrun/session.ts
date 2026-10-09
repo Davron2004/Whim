@@ -144,12 +144,34 @@ export async function newIsolatedContext(browser: Browser, delivery?: { url: str
   return { context, egress };
 }
 
+/** A failed browser launch is retried up to this many attempts in total (server-ops-hardening D4,
+ *  #139), at boot and on a relaunch alike. */
+const LAUNCH_ATTEMPTS = 3;
+/** The pause between two launch attempts. */
+const LAUNCH_RETRY_DELAY_MS = 500;
+
+/** One failed launch attempt, as reported to `SessionOptions.onLaunchFailure`: its 1-based number
+ *  and either the signal the browser process died with or, when the failure names none, the first
+ *  line of the launch error. Nothing else, so a report cannot carry the browser's call log. */
+export type LaunchFailure = { attempt: number } & ({ signal: string } | { error: string });
+
+/** Playwright's launch error carries the browser's exit in its call log as
+ *  `<process did exit: exitCode=…, signal=SIGSEGV>`. */
+const EXIT_SIGNAL = /process did exit: exitCode=[^,]*, signal=(SIG[A-Z0-9]+)/;
+
+function launchFailure(attempt: number, message: string): LaunchFailure {
+  const signal = EXIT_SIGNAL.exec(message)?.[1];
+  return signal ? { attempt, signal } : { attempt, error: message.split('\n', 1)[0] };
+}
+
 export interface SessionOptions {
   /** Bounds concurrent runs within this session (design D4, default 4). Ignored when
    *  `semaphore` is supplied. */
   concurrency?: number;
   /** A caller-owned semaphore (e.g. shared across sessions/pools) — overrides `concurrency`. */
   semaphore?: Semaphore;
+  /** Called once per failed launch attempt, the last one included, before any retry. */
+  onLaunchFailure?: (failure: LaunchFailure) => void;
 }
 
 /** The names of the session's own failures. A run that ends in one was not the candidate's fault:
@@ -216,12 +238,16 @@ export class SynthRunSession {
   private launching: Promise<LiveBrowser> | undefined;
   private closed = false;
 
-  private constructor(private readonly semaphore: Semaphore) {}
+  private constructor(
+    private readonly semaphore: Semaphore,
+    private readonly onLaunchFailure: ((failure: LaunchFailure) => void) | undefined,
+  ) {}
 
   /** Starts a session and its first browser. Rejects with `browser_launch_failed` when the browser
-   *  cannot start (for example, no usable OS sandbox); there is no retry with weaker options. */
+   *  cannot start in `LAUNCH_ATTEMPTS` attempts (for example, no usable OS sandbox); every attempt
+   *  uses the same options, and there is no retry with weaker ones. */
   static async launch(opts: SessionOptions = {}): Promise<SynthRunSession> {
-    const session = new SynthRunSession(opts.semaphore ?? createSemaphore(opts.concurrency ?? DEFAULT_CONCURRENCY));
+    const session = new SynthRunSession(opts.semaphore ?? createSemaphore(opts.concurrency ?? DEFAULT_CONCURRENCY), opts.onLaunchFailure);
     await session.liveBrowser();
     return session;
   }
@@ -240,14 +266,31 @@ export class SynthRunSession {
     return this.launching;
   }
 
-  private async startBrowser(): Promise<LiveBrowser> {
-    let browser: Browser;
-    try {
-      // The only browser launch in the harness and the server (`test/isolation.ts` scans for it).
-      browser = await chromium.launch(browserLaunchOptions());
-    } catch (err) {
-      throw new SessionError('browser_launch_failed', `synthrun session: the browser failed to launch: ${err instanceof Error ? err.message : String(err)}`);
+  /**
+   * Launches the browser, retrying a failed launch up to `LAUNCH_ATTEMPTS` attempts in total,
+   * `LAUNCH_RETRY_DELAY_MS` apart. Every attempt goes through the one launch call below, so a
+   * retry carries exactly the options of the first. Each failure is reported to `onLaunchFailure`;
+   * the last one rejects with `browser_launch_failed`. A session closed between attempts stops.
+   */
+  private async launchBrowser(): Promise<Browser> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        // The only browser launch in the harness and the server (`test/isolation.ts` scans for it).
+        return await chromium.launch(browserLaunchOptions());
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.onLaunchFailure?.(launchFailure(attempt, message));
+        if (attempt >= LAUNCH_ATTEMPTS) {
+          throw new SessionError('browser_launch_failed', `synthrun session: the browser failed to launch in ${attempt} attempts: ${message}`);
+        }
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, LAUNCH_RETRY_DELAY_MS));
+      if (this.closed) throw new Error('synthrun session: the session closed while its browser was launching');
     }
+  }
+
+  private async startBrowser(): Promise<LiveBrowser> {
+    const browser = await this.launchBrowser();
     const lost = new AbortController();
     const live: LiveBrowser = { browser, lost: lost.signal, error: null };
     const onDisconnected = (): void => {
