@@ -2,12 +2,13 @@
  * theme — the launcher shell's named RN colors (v2; the v2 handoff README (removed by decision #75; in git history) "Two systems, not
  * one").
  *
- * The shell has one fixed theme, `DEFAULT_THEME` from the SDK, and one derived palette,
- * `SHELL_PALETTE` below — there is no theme parameter anywhere in the launcher, and no second
- * palette of hex literals: every shell color reads from this one constant.
+ * The shell keeps its v2 palette, `SHELL_PALETTE` below, until it moves to `src/design/tokens.ts`
+ * (design-system-v1): the values are pinned here, not derived from the SDK's `DEFAULT_THEME`,
+ * which now resolves from the token module. There is no theme parameter anywhere in the
+ * launcher: every shell color reads from this one constant.
  */
 
-import { DEFAULT_THEME, SHELL_COLORS } from '../../sdk/theme';
+import { SHELL_COLORS, STATUS_COLORS } from '../../sdk/theme';
 
 /** The launcher shell's named RN colors, the type of `SHELL_PALETTE` below. */
 export interface ShellPalette {
@@ -21,17 +22,16 @@ export interface ShellPalette {
   danger: string;
 }
 
-/** The shell's one fixed palette, derived once from `DEFAULT_THEME` — never recomputed, never
- *  parameterised by a theme. */
+/** The shell's one fixed v2 palette — never recomputed, never parameterised by a theme. */
 export const SHELL_PALETTE: ShellPalette = Object.freeze({
-  bg: DEFAULT_THEME.colors.bg,
-  card: DEFAULT_THEME.colors.surface,
-  cardBorder: DEFAULT_THEME.colors.border,
-  text: DEFAULT_THEME.colors.text,
-  textMuted: DEFAULT_THEME.colors['text-muted'],
-  accent: DEFAULT_THEME.colors.primary,
-  onAccent: DEFAULT_THEME.colors['on-primary'],
-  danger: DEFAULT_THEME.colors.danger,
+  bg: SHELL_COLORS.paper,
+  card: SHELL_COLORS.surface,
+  cardBorder: SHELL_COLORS.border,
+  text: SHELL_COLORS.text,
+  textMuted: SHELL_COLORS.muted,
+  accent: SHELL_COLORS.accent,
+  onAccent: '#ffffff',
+  danger: STATUS_COLORS.broken,
 });
 
 /** A `#rrggbb` colour at `alpha`, as `rgba()`. */

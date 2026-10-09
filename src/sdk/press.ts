@@ -15,6 +15,11 @@ import * as React from 'react';
  *  so Android's system tap highlight never paints. */
 export const TAP_RESET = { WebkitTapHighlightColor: 'transparent' } as const;
 
+/** Spread into the `style` of every control (a button, a toggle row, a slider, a pressable row):
+ *  `TAP_RESET`, and no long-press text selection of its label. Only controls: text stays
+ *  selectable (system.md §7.2). */
+export const CONTROL_RESET = { ...TAP_RESET, userSelect: 'none', WebkitUserSelect: 'none' } as const;
+
 export interface PressHandlers {
   onPointerDown: () => void;
   onPointerUp: () => void;
