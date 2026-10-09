@@ -3,7 +3,8 @@
 Phase A of `design-system-v1`, written 2026-10-09 against `integration/beta-1` at `b4b45f1b`. Sources: every
 file under `src/sdk/` and `src/host/launcher/` that draws pixels, `src/host/ui/whim-prose/`,
 `build/assemble.mjs`, `fixtures/`, `docs/sdk-reference.md`, the generator prompt, the design handoff in
-`docs/design/`, `docs/research/animation-options-2026-09.md`, `docs/mascot/`, and the September screenshots in
+`docs/design/`, `docs/research/animation-options-2026-09.md`, `docs/mascot/` (its two large sheets now live in the
+evidence archive), and the September screenshots in
 `docs/readme/`. The device capture (every screen in light and dark, Android emulator and iOS simulator)
 arrives in Phase B. Anything that only a device can settle is marked **verify on device**.
 

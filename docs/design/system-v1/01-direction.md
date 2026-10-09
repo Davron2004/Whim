@@ -387,8 +387,9 @@ Rules:
 
 ### 8.2 The wisp
 
-The mascot study (`docs/mascot/`) gets adopted, cut down to what can be drawn from simple geometry and
-animated by moving, not redrawing. This overrides the animation research's "don't build a character"
+The mascot study (`docs/mascot/`, with the large reference sheets `big_ref.png` and `no_brows.png` in the
+evidence archive `gs://anycognition-whim-evidence/docs/mascot.tar.zst`) gets adopted, cut down to what can
+be drawn from simple geometry and animated by moving, not redrawing. This overrides the animation research's "don't build a character"
 (`docs/research/animation-options-2026-09.md` §4) for three reasons: the make wait lasts minutes and needs a
 presence that isn't a progress bar; the eyeless version doubles as the orb and the app icon, so it is one
 asset family rather than a separate character pipeline; and its glow is the liveness indicator, so it has a

@@ -1,4 +1,5 @@
 <title>Whim System v1</title>
+<!-- Whim system v1 review page. One self-contained file: all CSS and JS below are readable source, edit in place. Lucide icons (ISC licence) are inlined as path data. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap">
@@ -1354,6 +1355,7 @@ function viewMotion() {
 <div class="pg-demo"><h3>Ghost becomes tile</h3><p>The ember tile flares (<b>spark</b>), the tint fills from the centre and the glyph settles (<b>morph</b>).</p>${stage(`<div class="w-screen" data-transmute style="align-items:center;justify-content:center;gap:26px"><div class="tm-tile" style="position:relative;width:96px;height:96px"></div><div class="pg-row" style="justify-content:center">${btn('Deliver', 'ember', { size: 'md', block: false })}${btn('Reset', 'secondary', { size: 'md', block: false })}</div></div>`, 320, 360)}</div>
 <div class="pg-demo"><h3>Honest light</h3><p>The glow follows tokens per second. Nothing arrives, nothing moves; after a stall the wisp dims and holds still.</p>${stage(`<div class="w-screen" data-honest style="align-items:center;padding-top:60px;gap:18px"><div class="hl-wisp"></div><div class="t-headline hl-label">Making Pour Timer</div><div class="t-callout t-sec hl-line">Usually about a minute.</div></div>`, 320, 380)}<label class="pg-row" style="font-size:14px">Tokens per second <input type="range" id="hl-rate" class="pg-range" min="0" max="60" value="28" style="flex:1"></label><div class="pg-row"><button class="pg-btn" id="hl-stall">Stall the stream</button></div></div>
 <div class="pg-demo"><h3>Controls</h3><p>Toggles, segments, chips and steppers use <b>snappy</b>, retargeting if you tap quickly.</p>${stage(`<div class="w-screen s-app tint-sky" data-controls style="padding:40px 20px;gap:18px"><div class="s-list"><div class="s-item" data-switch><div class="i-main">Remind me</div><span class="s-switch" style="transition:background-color 150ms"><span class="knob"></span></span></div></div><div class="s-seg" data-seg style="position:relative"><i class="thumb" style="position:absolute;top:2px;bottom:2px;left:2px;border-radius:16px;background:var(--w-surface);box-shadow:var(--w-shadow-raised)"></i><span style="position:relative">Easy</span><span style="position:relative">Steady</span><span style="position:relative">Fast</span></div><div class="w-chips" data-chips>${chip('Just today')}${chip('A few weeks')}${chip('Everything')}</div><div class="s-card" style="padding:14px 16px 14px 20px"><div class="s-stepper"><span>Glasses</span><span class="grp"><button data-step="-1">${icon('minus', 20, 2.2)}</button><span class="val" data-val style="overflow:hidden;height:28px;display:inline-block;position:relative">5</span><button data-step="1">${icon('plus', 20, 2.2)}</button></span></div></div></div>`, 320, 440)}</div>
+<div class="pg-demo"><h3>Orb while scrolling</h3><p>Scroll the app down: the orb shrinks to its ember (<b>snappy</b>) and returns when you stop or scroll back. It never disappears and stays tappable.</p>${stage(`<div class="w-screen s-app tint-cocoa" data-orbscroll><div class="os-scroll" style="position:absolute;inset:0;overflow-y:auto;padding:60px 20px 120px"><div class="s-title">Pour Timer</div><div class="s-list" style="margin-top:16px">${Array.from({ length: 18 }, (_, i) => sItem(['Bloom', 'First pour', 'Second pour', 'Third pour', 'Drawdown', 'Swirl'][i % 6], `Step ${i + 1}`, `${Math.floor(i / 2)}:${i % 2 ? '30' : '00'}`)).join('')}</div></div><div class="w-orb os-orb" style="bottom:28px">${wisp({ size: 22, eyes: false, activity: .35 })}</div></div>`)}</div>
 <div class="pg-demo"><h3>Back by swipe (iOS)</h3><p>Drag from the left edge. The screen tracks your finger, the one underneath slides in from −30%; release commits past half or on a fast flick.</p>${stage(`<div class="w-screen" data-swipe><div class="sw-under" style="position:absolute;inset:0;background:var(--w-bg);padding:64px 20px 0"><div class="t-large">Settings</div><div style="margin-top:18px">${list([row({ title: 'AI features', trail: 'On', chev: true }), row({ title: 'Advanced', chev: true })])}</div><div class="sw-dim" style="position:absolute;inset:0;background:#000;opacity:.12;pointer-events:none"></div></div><div class="sw-top" style="position:absolute;inset:0;background:var(--w-bg);padding:64px 20px 0;box-shadow:-8px 0 24px rgba(0,0,0,.12);touch-action:none"><div class="t-title1">Advanced</div><div style="margin-top:18px">${list([row({ title: 'Send error details', sw: true }), row({ title: 'Phone ID', sub: 'ec815211-2b6c…' })])}</div><div class="t-footnote t-sec" style="margin-top:14px">Drag from the left edge →</div><div class="sw-again" style="position:absolute;left:20px;right:20px;bottom:40px;display:none">${btn('Push it again', 'ink', { size: 'md' })}</div></div></div>`)}</div>
 </div>`;
 }
@@ -1529,6 +1531,20 @@ function wireMotion(root) {
       const p = new SpringValue(0, (x) => { out.style.transform = `translateY(${-d * 14 * x}px)`; out.style.opacity = String(1 - x); val.firstChild.parentElement.style.setProperty('--y', String(d * 14 * (1 - x))); });
       p.onRest = () => out.remove(); p.to(1, SPRINGS.snappy);
     }));
+  }
+
+  // Orb while scrolling
+  const osd = root.querySelector('[data-orbscroll]');
+  if (osd) {
+    const sc = osd.querySelector('.os-scroll'), orb = osd.querySelector('.os-orb');
+    let lastTop = 0, idle = 0;
+    const sv = new SpringValue(1, (p) => { if (REDUCED) { orb.style.opacity = String(.6 + .4 * p); orb.style.transform = ''; orb.style.background = ''; orb.style.boxShadow = ''; return; } orb.style.transform = `scale(${.55 + .45 * p})`; orb.style.background = `color-mix(in srgb, var(--w-raised) ${Math.round(p * 100)}%, transparent)`; orb.style.boxShadow = p < .05 ? 'none' : ''; orb.style.opacity = String(.6 + .4 * p); });
+    sc.addEventListener('scroll', () => {
+      const t = sc.scrollTop, down = t > lastTop + 1; lastTop = t;
+      clearTimeout(idle);
+      sv.to(down ? 0 : 1, SPRINGS.snappy);
+      idle = setTimeout(() => sv.to(1, SPRINGS.snappy), 600);
+    }, { passive: true });
   }
 
   // Back swipe
