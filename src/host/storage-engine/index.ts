@@ -47,6 +47,13 @@ export function deleteStorage(opts: { appId: string }): void {
 }
 
 /**
+ * Device entrypoint (copy-app-data): copy an app's whole store into a new store under another
+ * appId — the `CopyStorage` seam `StoreAccess` takes beside `deleteStorage`. Types and the error
+ * class live in `./copy-contract` (import them from there, not through this barrel).
+ */
+export { copyStorage } from './copy-device';
+
+/**
  * Device entrypoint (#52-D5, task 3.2/3.5): a side-effect-free peek at an app's live database's
  * accumulated `_meta` union — no artifact applied, no DDL run. This is what
  * `LauncherRoot.buildGenerateRequest` sources `app.appliedSchema` from, keyed by
