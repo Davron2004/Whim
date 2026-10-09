@@ -98,7 +98,8 @@
     },
     "ios": {
       "modulesProvider": {
-        "WhimTone": "WhimToneModule"
+        "WhimTone": "WhimToneModule",
+        "WhimHaptics": "WhimHapticsModule"
       }
     }
   },
