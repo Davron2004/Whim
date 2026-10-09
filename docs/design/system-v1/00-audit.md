@@ -28,7 +28,9 @@ The twelve problems a user actually feels, worst first:
    Newsreader. Every mini-app draws the system font, because the CSP leaves `font-src` at `'none'`
    (`build/assemble.mjs:17-27`). The iOS project bundles none of the TTFs (no `.ttf` in
    `ios/Whim.xcodeproj/project.pbxproj`, no `UIAppFonts` in `Info.plist`), so the iOS shell falls back to the
-   system font while keeping metrics tuned for Instrument Sans. **Verify on device.**
+   system font while keeping metrics tuned for Instrument Sans. Confirmed by the capture: on the iOS simulator
+   the title, the mono eyebrows and timestamps, and the Newsreader quote all render in SF Pro
+   (`ios/01-home-first-launch-examples`, `ios/100-history-single-version`).
 3. **Every app looks alike, and its one colour does little.** A mini-app's `primary` is the shell's ink violet
    for every app (`src/sdk/theme.ts:73`). The generator is told to put "the main content inside a Card, the
    headline number as display-size Text, a ProgressBar ..., a Badge ..., and a SegmentedControl"
@@ -292,7 +294,7 @@ change (owner requirement, see `01-direction.md` §10).
 | Compose | `ComposeStep.tsx` | Headline 30px Bold; field types at 13.5px; three suggestion rows styled like inputs; helper copy speaks of "Whim" in third person |
 | Clarify | `ClarifyStep.tsx` | Echoed prompt in brown upright, not the quote style the doc reserves for "your words"; 31dp pills; "Decide for me" as a dashed pill that looks disabled until picked |
 | Plan | `PlanStep.tsx` | Mono uppercase labels on every row ("WHEN A STEP ENDS" in the README shot); inline edit swaps the card border to 2px violet with 13px text actions |
-| Build | `BuildStep.tsx` | The longest wait in the product is the least designed screen: title, a 4px bar, a checklist with `✓` glyphs, a caption that says "about a minute" (`copy.ts:114`) while the engineer call alone has an 87 s median (`docs/research/generation-speed-2026-09.md`); a large empty lower half; "Leave it running" as an outlined button |
+| Build | `BuildStep.tsx` | The longest wait in the product is the least designed screen: title, a 4px bar, a checklist with `✓` glyphs, a caption that says "about a minute" (`copy.ts:114`), true at the median but wrong for the slowest tenth of runs (section 13); a large empty lower half; "Leave it running" as an outlined button |
 | Done | `DoneStep.tsx` | The best moment gets a 400 ms 6px rise and nothing else; "Open it" is violet, not the app's colour |
 | Failure | `FailureScreen.tsx` | Title in red; three stacked full-width buttons (black, outlined, red-outlined); a timeline under a checklist under an attempt bar; dense for a moment that should be calm |
 | Mini-app | `MiniAppView.tsx` | Boot overlay is the app name, a breathing violet bar and "Opening…" on paper, then a cut to the app; no spatial link to the tile that was tapped; the orb's hamburger floats over content |
@@ -356,8 +358,11 @@ tone.
 | A failed attempt | Didn't finish, Interrupted, Couldn't build this app, Discard this attempt, Dismiss | `copy.ts:47,48,245,257,54` |
 
 - Third person where the handoff settled first person: `copy.ts:75,86,95,151`.
-- "This takes about a minute" (`copy.ts:114`) contradicts measured generation time. The one
-  dishonest sentence in a product whose design rule is honesty.
+- "This takes about a minute" (`copy.ts:114`) is true at the median and wrong for the slow runs. The
+  production flowbench (`openspec/changes/beta-1/flowbench/after-visible.json`, 22 runs) measured generation
+  at 53 s median, 144 s at the 90th percentile and 225 s at worst, and the line never changes as the wait
+  grows. (An earlier draft of this audit cited an 87 s median; that figure is the engineer call with
+  thinking on in a local run, `docs/research/generation-speed-2026-09.md`, not production.)
 - Mono uppercase labels give microcopy a shouting register ("↑ YOU'RE ON THIS ONE").
 
 ## 14. Platform conventions

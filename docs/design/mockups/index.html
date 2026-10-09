@@ -1,0 +1,1576 @@
+<title>Whim System v1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap">
+<style>
+/* Page chrome for the Whim system v1 review. Layout: a sticky bar, then one view at a time
+   (overview, screen, components, tokens, motion), frames laid out in wrapping rows. */
+:root {
+  --pg-bg: #E9E6E1; --pg-surface: #F6F4F1; --pg-raised: #FFFFFF; --pg-text: #1A1614; --pg-text2: #625B55;
+  --pg-line: #D6D1CA; --pg-accent: #B14200; --pg-chip: #DEDAD4; --pg-chip-on: #1A1614; --pg-chip-on-text: #FFFFFF;
+  --pg-font: -apple-system, "SF Pro Text", system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --pg-bg: #0C0B0A; --pg-surface: #171513; --pg-raised: #1F1C1A; --pg-text: #F2F0EC; --pg-text2: #AAA49D;
+    --pg-line: #2C2926; --pg-accent: #F99549; --pg-chip: #2A2724; --pg-chip-on: #F2F0EC; --pg-chip-on-text: #1A1614;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --pg-bg: #0C0B0A; --pg-surface: #171513; --pg-raised: #1F1C1A; --pg-text: #F2F0EC; --pg-text2: #AAA49D;
+  --pg-line: #2C2926; --pg-accent: #F99549; --pg-chip: #2A2724; --pg-chip-on: #F2F0EC; --pg-chip-on-text: #1A1614;
+  color-scheme: dark;
+}
+html, body { background: var(--pg-bg); }
+body { margin: 0; color: var(--pg-text); font-family: var(--pg-font); font-size: 16px; line-height: 24px; -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+.pg-wrap { max-width: 1320px; margin: 0 auto; padding-inline: 20px; padding-block: 0 80px; }
+
+.pg-bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 100; background: color-mix(in srgb, var(--pg-bg) 92%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--pg-line); }
+.pg-bar-in { max-width: 1320px; margin: 0 auto; padding: 10px 20px; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.pg-brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; text-decoration: none; }
+.pg-nav { display: flex; gap: 4px; flex-wrap: wrap; }
+.pg-nav a { text-decoration: none; padding: 6px 12px; border-radius: 999px; font-size: 14px; font-weight: 500; color: var(--pg-text2); }
+.pg-nav a.on { background: var(--pg-chip-on); color: var(--pg-chip-on-text); }
+.pg-nav a:focus-visible, .pg-seg button:focus-visible, .pg-btn:focus-visible { outline: 2px solid var(--pg-accent); outline-offset: 2px; }
+.pg-tools { margin-left: auto; display: flex; gap: 10px; flex-wrap: wrap; }
+.pg-seg { display: inline-flex; background: var(--pg-chip); border-radius: 999px; padding: 2px; }
+.pg-seg button { border: 0; background: none; font: inherit; font-size: 13px; font-weight: 600; padding: 5px 12px; border-radius: 999px; color: var(--pg-text2); cursor: pointer; }
+.pg-seg button.on { background: var(--pg-raised); color: var(--pg-text); box-shadow: 0 1px 3px rgba(0, 0, 0, .12); }
+
+.pg-hero { padding: 56px 0 20px; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 48px; align-items: center; }
+.pg-hero h1 { font-size: 52px; line-height: 56px; letter-spacing: -0.025em; margin: 0; text-wrap: balance; }
+.pg-hero .lead { font-size: 19px; line-height: 29px; color: var(--pg-text2); margin: 18px 0 0; max-width: 60ch; }
+.pg-moves { margin: 28px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 28px; }
+.pg-moves li { font-size: 15px; line-height: 22px; color: var(--pg-text2); padding-left: 0; }
+.pg-moves b { color: var(--pg-text); font-weight: 600; display: block; }
+.pg-hero-art { display: flex; gap: 16px; justify-content: center; }
+
+.pg-section { margin-top: 56px; }
+.pg-section > h2 { font-size: 30px; line-height: 36px; letter-spacing: -0.015em; margin: 0 0 6px; }
+.pg-section > p.sub { margin: 0 0 22px; color: var(--pg-text2); max-width: 70ch; }
+.pg-cards { display: flex; flex-wrap: wrap; gap: 28px 24px; }
+.pg-card { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.pg-card h3 { margin: 0; font-size: 16px; line-height: 22px; }
+.pg-card h3 a { text-decoration: none; }
+.pg-card h3 a:hover { text-decoration: underline; }
+.pg-card p { margin: 0; font-size: 14px; line-height: 20px; color: var(--pg-text2); max-width: var(--note-w, 420px); }
+.pg-frames { display: flex; gap: 12px; }
+.fw { position: relative; flex: none; border-radius: 34px; }
+.fw > .phone { transform-origin: top left; position: absolute; left: 0; top: 0; box-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 10px 30px rgba(0, 0, 0, .14); }
+:root[data-theme="dark"] .fw > .phone { box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 10px 30px rgba(0, 0, 0, .5); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .fw > .phone { box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 10px 30px rgba(0, 0, 0, .5); } }
+
+.pg-focus-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin: 36px 0 20px; }
+.pg-focus-head h2 { margin: 0; font-size: 34px; line-height: 40px; letter-spacing: -0.02em; }
+.pg-focus-head p { margin: 6px 0 0; color: var(--pg-text2); max-width: 70ch; }
+.pg-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px; background: var(--pg-chip); color: var(--pg-text); text-decoration: none; font-size: 14px; font-weight: 600; border: 0; cursor: pointer; font-family: inherit; }
+.pg-btn.dark { background: var(--pg-chip-on); color: var(--pg-chip-on-text); }
+.pg-scroll { overflow-x: auto; padding-bottom: 12px; }
+.pg-scroll .pg-frames { gap: 24px; }
+.pg-flabel { font-size: 13px; color: var(--pg-text2); margin-bottom: 8px; font-weight: 600; }
+
+.pg-story { background: var(--pg-surface); border: 1px solid var(--pg-line); border-radius: 24px; padding: 22px 22px 18px; margin-top: 18px; }
+.pg-story h3 { margin: 0; font-size: 18px; }
+.pg-story > p { margin: 4px 0 16px; color: var(--pg-text2); font-size: 14px; }
+.pg-storyrow { display: flex; align-items: center; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
+.pg-storyframe { flex: none; text-decoration: none; }
+.pg-arrow { flex: none; width: 80px; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; color: var(--pg-text2); }
+.pg-arrow span { font-size: 22px; color: var(--pg-accent); }
+.pg-arrow small { font-size: 11.5px; line-height: 15px; }
+
+/* Tokens */
+.pg-board { background: var(--pg-surface); border: 1px solid var(--pg-line); border-radius: 24px; padding: 24px; }
+.pg-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.pg-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.pg-sw { border-radius: 14px; overflow: hidden; border: 1px solid var(--pg-line); background: var(--pg-raised); }
+.pg-sw .chipc { height: 52px; display: flex; }
+.pg-sw .chipc span { flex: 1; }
+.pg-sw .meta { padding: 8px 10px; font-size: 12px; line-height: 16px; }
+.pg-sw .meta b { display: block; font-size: 13px; }
+.pg-sw code, .pg-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; color: var(--pg-text2); }
+.pg-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.pg-table td, .pg-table th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--pg-line); vertical-align: middle; }
+.pg-table th { font-size: 12px; color: var(--pg-text2); font-weight: 600; }
+.pg-tablewrap { overflow-x: auto; }
+.pg-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
+.pg-icon { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 4px 8px; border-radius: 12px; font-size: 10.5px; color: var(--pg-text2); text-align: center; word-break: break-word; }
+.pg-icon.glyph { background: var(--pg-raised); }
+.pg-icon svg { color: var(--pg-text); }
+
+/* Motion */
+.pg-demo { background: var(--pg-surface); border: 1px solid var(--pg-line); border-radius: 24px; padding: 22px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.pg-demo h3 { margin: 0; font-size: 18px; }
+.pg-demo p { margin: 0; color: var(--pg-text2); font-size: 14px; line-height: 20px; }
+.pg-demos { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 20px; }
+.pg-spring { display: grid; grid-template-columns: 92px minmax(0, 1fr) 96px; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--pg-line); }
+.pg-spring:last-child { border-bottom: 0; }
+.pg-spring canvas { width: 100%; height: 64px; display: block; }
+.pg-track { position: relative; height: 28px; border-radius: 14px; background: var(--pg-chip); cursor: pointer; }
+.pg-track .ball { position: absolute; top: 4px; left: 4px; width: 20px; height: 20px; border-radius: 10px; background: var(--pg-accent); }
+.pg-stage { position: relative; display: flex; justify-content: center; }
+.pg-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.pg-range { width: 100%; }
+
+@media (max-width: 860px) {
+  .pg-hero { grid-template-columns: minmax(0, 1fr); padding-top: 32px; }
+  .pg-hero h1 { font-size: 38px; line-height: 42px; }
+  .pg-moves { grid-template-columns: minmax(0, 1fr); }
+  .pg-grid2 { grid-template-columns: minmax(0, 1fr); }
+  .pg-tools { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+
+/* Whim system v1: tokens and components, scoped to .phone so every frame carries its own scheme.
+   Values are the ones in docs/design/system-v1/01-direction.md. */
+
+.phone {
+  --w-bg: #F6F4F1; --w-surface: #FFFFFF; --w-raised: #FFFFFF; --w-fill: #EBE9E6; --w-fill-strong: #E0DDDA;
+  --w-sep: #E2DFDB; --w-border: #908B86; --w-text: #1A1614; --w-text2: #6D6660; --w-text3: #908B86;
+  --w-ink: #1A1614; --w-on-ink: #FFFFFF; --w-scrim: rgba(26, 22, 20, .32);
+  --w-ember: #C14900; --w-on-ember: #FFFFFF; --w-ember-text: #B14200; --w-ember-soft: #FDEBDA;
+  --w-glow-core: #FFC96A; --w-glow-mid: #FF9127; --w-glow-edge: #F25914;
+  --w-pos: #1E8347; --w-on-pos: #FFFFFF; --w-pos-text: #1A763F; --w-pos-soft: #DEF6E3;
+  --w-danger: #C9292F; --w-on-danger: #FFFFFF; --w-danger-text: #C22630; --w-danger-soft: #FFE7E5;
+  --w-warn: #F3BA25; --w-on-warn: #1A1614; --w-warn-text: #8A6000; --w-warn-soft: #FDF2D0;
+  --w-shadow-raised: 0 1px 2px rgba(26, 22, 20, .08), 0 8px 24px rgba(26, 22, 20, .12);
+  --w-shadow-float: 0 2px 6px rgba(26, 22, 20, .12), 0 12px 32px rgba(26, 22, 20, .16);
+  --w-highlight: inset 0 0 0 0 transparent;
+  --w-kbd: #D1D3D9; --w-key: #FFFFFF; --w-key-text: #1A1614; --w-key-alt: #ABB0BA;
+  --w-island: #000000; --w-bar-text: #1A1614;
+  --w-gutter: 20px;
+  color-scheme: light;
+}
+.phone[data-scheme="dark"] {
+  --w-bg: #100E0D; --w-surface: #1B1917; --w-raised: #252220; --w-fill: #2E2B28; --w-fill-strong: #3C3936;
+  --w-sep: #34312F; --w-border: #6E6862; --w-text: #F2F0EC; --w-text2: #ADA8A3; --w-text3: #78746E;
+  --w-ink: #F2F0EC; --w-on-ink: #1A1614; --w-scrim: rgba(0, 0, 0, .60);
+  --w-ember: #F99549; --w-on-ember: #1A1614; --w-ember-text: #F99549; --w-ember-soft: #3F2313;
+  --w-pos: #5BCC80; --w-on-pos: #1A1614; --w-pos-text: #5BCC80; --w-pos-soft: #193521;
+  --w-danger: #F66C6D; --w-on-danger: #1A1614; --w-danger-text: #F66C6D; --w-danger-soft: #472020;
+  --w-warn: #ECBD3A; --w-on-warn: #1A1614; --w-warn-text: #ECBD3A; --w-warn-soft: #382C0C;
+  --w-shadow-raised: 0 1px 2px rgba(0, 0, 0, .40), 0 8px 24px rgba(0, 0, 0, .50);
+  --w-shadow-float: 0 2px 6px rgba(0, 0, 0, .50), 0 12px 32px rgba(0, 0, 0, .60);
+  --w-highlight: inset 0 1px 0 rgba(255, 255, 255, .06);
+  --w-kbd: #2B2B2D; --w-key: #5A5A5E; --w-key-text: #F2F0EC; --w-key-alt: #3F3F42;
+  --w-bar-text: #F2F0EC;
+  color-scheme: dark;
+}
+
+/* App tints. Fill is the same in both schemes; text and soft change. */
+.tint-red { --t-fill: #CA322E; --t-on: #FFFFFF; --t-text: #C52C2A; }
+.tint-pink { --t-fill: #C63170; --t-on: #FFFFFF; --t-text: #C02B6C; }
+.tint-grape { --t-fill: #A03FA7; --t-on: #FFFFFF; --t-text: #A03FA7; }
+.tint-violet { --t-fill: #764EC7; --t-on: #FFFFFF; --t-text: #764EC7; }
+.tint-indigo { --t-fill: #4B53C2; --t-on: #FFFFFF; --t-text: #4B53C2; }
+.tint-blue { --t-fill: #136ED0; --t-on: #FFFFFF; --t-text: #096ACB; }
+.tint-sky { --t-fill: #007EB0; --t-on: #FFFFFF; --t-text: #01729F; }
+.tint-teal { --t-fill: #00807B; --t-on: #FFFFFF; --t-text: #007671; }
+.tint-green { --t-fill: #278445; --t-on: #FFFFFF; --t-text: #217B3E; }
+.tint-lime { --t-fill: #A8E051; --t-on: #1A1614; --t-text: #507308; }
+.tint-yellow { --t-fill: #F8CC2F; --t-on: #1A1614; --t-text: #866300; }
+.tint-cocoa { --t-fill: #846047; --t-on: #FFFFFF; --t-text: #846047; }
+.tint-graphite { --t-fill: #51565B; --t-on: #FFFFFF; --t-text: #51565B; }
+.phone[data-scheme="dark"] .tint-red, .phone[data-scheme="dark"].tint-red { --t-text: #F97770; }
+.phone[data-scheme="dark"] .tint-pink, .phone[data-scheme="dark"].tint-pink { --t-text: #F57FA7; }
+.phone[data-scheme="dark"] .tint-grape, .phone[data-scheme="dark"].tint-grape { --t-text: #D78ADB; }
+.phone[data-scheme="dark"] .tint-violet, .phone[data-scheme="dark"].tint-violet { --t-text: #B199F4; }
+.phone[data-scheme="dark"] .tint-indigo, .phone[data-scheme="dark"].tint-indigo { --t-text: #95A4F6; }
+.phone[data-scheme="dark"] .tint-blue, .phone[data-scheme="dark"].tint-blue { --t-text: #67B0F9; }
+.phone[data-scheme="dark"] .tint-sky, .phone[data-scheme="dark"].tint-sky { --t-text: #61C1ED; }
+.phone[data-scheme="dark"] .tint-teal, .phone[data-scheme="dark"].tint-teal { --t-text: #55CEC0; }
+.phone[data-scheme="dark"] .tint-green, .phone[data-scheme="dark"].tint-green { --t-text: #6CCD83; }
+.phone[data-scheme="dark"] .tint-lime, .phone[data-scheme="dark"].tint-lime { --t-text: #AADF5B; }
+.phone[data-scheme="dark"] .tint-yellow, .phone[data-scheme="dark"].tint-yellow { --t-text: #F4CD4B; }
+.phone[data-scheme="dark"] .tint-cocoa, .phone[data-scheme="dark"].tint-cocoa { --t-text: #CEA98B; }
+.phone[data-scheme="dark"] .tint-graphite, .phone[data-scheme="dark"].tint-graphite { --t-text: #ACB2B7; }
+[class*="tint-"] { --t-soft: color-mix(in oklab, var(--t-fill) 15%, var(--w-surface)); }
+
+/* ── Frame ─────────────────────────────────────────────────────────────── */
+.phone {
+  position: relative; width: var(--pw, 390px); height: var(--ph, 844px); overflow: hidden;
+  background: var(--w-bg); color: var(--w-text);
+  border-radius: 54px; box-sizing: border-box;
+  -webkit-font-smoothing: antialiased; font-synthesis: none;
+  font-size: 17px; line-height: 24px; text-rendering: optimizeLegibility;
+}
+.phone[data-platform="android"] { border-radius: 40px; }
+:where(.phone) *, :where(.phone) *::before, :where(.phone) *::after { box-sizing: border-box; }
+.phone[data-platform="ios"] { font-family: -apple-system, "SF Pro Text", "SF Pro", system-ui, "Helvetica Neue", Arial, sans-serif; }
+.phone[data-platform="android"] { font-family: Roboto, "Roboto Flex", system-ui, Arial, sans-serif; }
+:where(.phone) svg { display: block; }
+:where(.phone) button { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+
+.w-statusbar { position: absolute; left: 0; right: 0; top: 0; z-index: 30; display: flex; align-items: center; justify-content: space-between; color: var(--w-bar-text); pointer-events: none; }
+.phone[data-platform="ios"] .w-statusbar { height: 54px; padding: 0 34px 0 48px; font-weight: 600; font-size: 17px; letter-spacing: -0.02em; }
+.phone[data-platform="android"] .w-statusbar { height: 40px; padding: 0 24px; font-size: 14px; font-weight: 500; letter-spacing: 0.01em; }
+.w-statusbar .sb-icons { display: flex; gap: 6px; align-items: center; }
+.w-statusbar.on-dark { color: #FFFFFF; }
+.phone.on-dark .w-homebar { background: #FFFFFF; }
+.w-island { position: absolute; top: 11px; left: 50%; width: 124px; height: 36px; margin-left: -62px; background: var(--w-island); border-radius: 20px; z-index: 31; }
+.w-punch { position: absolute; top: 12px; left: 50%; width: 16px; height: 16px; margin-left: -8px; background: #000; border-radius: 50%; z-index: 31; }
+.w-homebar { position: absolute; left: 50%; bottom: 8px; width: 134px; height: 5px; margin-left: -67px; border-radius: 3px; background: var(--w-text); opacity: .9; z-index: 40; }
+.phone[data-platform="android"] .w-homebar { width: 108px; height: 4px; margin-left: -54px; bottom: 10px; opacity: .75; }
+
+.w-screen { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--w-bg); }
+.w-scroll { flex: 1; overflow: hidden; position: relative; }
+.w-pad { padding-left: var(--w-gutter); padding-right: var(--w-gutter); }
+.w-top-ios { height: 54px; flex: none; }
+.w-top-android { height: 40px; flex: none; }
+
+/* ── Type ──────────────────────────────────────────────────────────────── */
+.t-display { font-size: 40px; line-height: 44px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.t-large { font-size: 34px; line-height: 40px; font-weight: 700; letter-spacing: -0.016em; text-wrap: balance; }
+.t-title1 { font-size: 28px; line-height: 34px; font-weight: 700; letter-spacing: -0.012em; text-wrap: balance; }
+.t-title2 { font-size: 22px; line-height: 28px; font-weight: 700; letter-spacing: -0.008em; text-wrap: balance; }
+.t-title3 { font-size: 20px; line-height: 25px; font-weight: 600; letter-spacing: -0.004em; }
+.t-headline { font-size: 17px; line-height: 22px; font-weight: 600; }
+.t-body { font-size: 17px; line-height: 24px; font-weight: 400; }
+.t-callout { font-size: 15px; line-height: 20px; font-weight: 400; letter-spacing: 0.004em; }
+.t-footnote { font-size: 13px; line-height: 18px; font-weight: 400; letter-spacing: 0.008em; }
+.t-caption { font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.012em; }
+.t-sec { color: var(--w-text2); }
+.t-ter { color: var(--w-text3); }
+.t-ember { color: var(--w-ember-text); }
+.t-danger { color: var(--w-danger-text); }
+.t-pos { color: var(--w-pos-text); }
+.t-warn { color: var(--w-warn-text); }
+.t-tint { color: var(--t-text); }
+.t-semibold { font-weight: 600; }
+.t-num { font-variant-numeric: tabular-nums; }
+.t-quote { font-style: italic; }
+.t-center { text-align: center; }
+
+/* ── Header ────────────────────────────────────────────────────────────── */
+.w-header { height: 44px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 8px; position: relative; z-index: 5; }
+.w-header .w-inline-title { position: absolute; left: 60px; right: 60px; text-align: center; font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.phone[data-platform="android"] .w-header .w-inline-title { text-align: left; left: 56px; font-size: 20px; font-weight: 500; }
+.w-header .h-right { display: flex; align-items: center; gap: 0; }
+.w-titleblock { padding: 4px var(--w-gutter) 0; }
+.w-titleblock .w-sub { margin-top: 4px; }
+.w-edgefade { position: absolute; left: 0; right: 0; height: 16px; pointer-events: none; z-index: 4; }
+.w-edgefade.top { top: 0; background: linear-gradient(var(--w-bg), color-mix(in srgb, var(--w-bg) 0%, transparent)); }
+.w-edgefade.bottom { bottom: 0; background: linear-gradient(color-mix(in srgb, var(--w-bg) 0%, transparent), var(--w-bg)); }
+
+/* ── Buttons ───────────────────────────────────────────────────────────── */
+.w-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 52px; padding: 0 22px; border-radius: 999px; font-size: 17px; line-height: 22px; font-weight: 600; text-align: center; transition: transform 160ms cubic-bezier(.23, 1, .32, 1); user-select: none; }
+.w-btn.md { min-height: 44px; padding: 0 18px; }
+.w-btn.sm { min-height: 34px; padding: 0 14px; font-size: 15px; line-height: 20px; }
+.w-btn.block { display: flex; width: 100%; }
+.w-btn.ember { background: var(--w-ember); color: var(--w-on-ember); }
+.w-btn.ink { background: var(--w-ink); color: var(--w-on-ink); }
+.w-btn.tint { background: var(--t-fill); color: var(--t-on); }
+.w-btn.secondary { background: var(--w-fill); color: var(--w-text); }
+.w-btn.plain { background: transparent; color: var(--w-text); }
+.w-btn.plain-danger { background: transparent; color: var(--w-danger-text); }
+.w-btn.plain-ember { background: transparent; color: var(--w-ember-text); }
+.w-btn.disabled { background: var(--w-fill); color: var(--w-text3); }
+.w-btn svg { flex: none; }
+.w-iconbtn { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border-radius: 22px; color: var(--w-text); }
+.w-iconbtn.filled > span { width: 36px; height: 36px; border-radius: 18px; background: var(--w-fill); display: inline-flex; align-items: center; justify-content: center; }
+.w-textbtn { height: 44px; padding: 0 12px; display: inline-flex; align-items: center; font-size: 17px; font-weight: 600; color: var(--w-text); }
+.w-textbtn.danger { color: var(--w-danger-text); }
+.w-actions { flex: none; padding: 16px var(--w-gutter) 0; display: flex; flex-direction: column; gap: 4px; }
+.w-actions .w-btn.plain, .w-actions .w-btn.plain-danger, .w-actions .w-btn.plain-ember { min-height: 44px; }
+
+/* ── Grouped list ──────────────────────────────────────────────────────── */
+.w-list { background: var(--w-surface); border-radius: 20px; overflow: hidden; }
+.w-row { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 12px 16px; position: relative; }
+.w-row + .w-row::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: 0.5px; background: var(--w-sep); }
+.w-list.icons .w-row + .w-row::before { left: 52px; }
+.w-row .r-icon { color: var(--w-text2); flex: none; width: 20px; }
+.w-row .r-main { flex: 1; min-width: 0; }
+.w-row .r-title { font-size: 17px; line-height: 22px; }
+.w-row .r-sub { font-size: 13px; line-height: 18px; color: var(--w-text2); margin-top: 2px; }
+.w-row .r-trail { flex: none; display: flex; align-items: center; gap: 6px; color: var(--w-text2); font-size: 15px; line-height: 20px; }
+.w-row .r-chev { color: var(--w-text3); }
+.w-row.danger .r-title { color: var(--w-danger-text); }
+.w-row.pressed { background: var(--w-fill); }
+.w-sec-h { padding: 0 var(--w-gutter); margin: 24px 0 8px; font-size: 13px; line-height: 18px; font-weight: 600; color: var(--w-text2); letter-spacing: 0.008em; }
+.w-sec-f { padding: 8px var(--w-gutter) 0; font-size: 13px; line-height: 18px; color: var(--w-text2); }
+.w-group { margin: 0 var(--w-gutter); }
+
+/* Platform switch */
+.w-switch { width: 51px; height: 31px; border-radius: 16px; background: var(--w-fill-strong); position: relative; flex: none; }
+.w-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #FFFFFF; box-shadow: 0 2px 4px rgba(0, 0, 0, .18); }
+.w-switch.on { background: var(--w-ink); }
+.w-switch.on::after { left: 22px; }
+.phone[data-scheme="dark"] .w-switch.on::after { background: #1A1614; }
+.phone[data-platform="android"] .w-switch { width: 52px; height: 32px; border: 2px solid var(--w-border); background: var(--w-fill); }
+.phone[data-platform="android"] .w-switch::after { width: 16px; height: 16px; top: 6px; left: 6px; background: var(--w-border); box-shadow: none; }
+.phone[data-platform="android"] .w-switch.on { border-color: var(--w-ink); background: var(--w-ink); }
+.phone[data-platform="android"] .w-switch.on::after { width: 24px; height: 24px; top: 2px; left: 22px; background: var(--w-on-ink); }
+
+/* ── Chips ─────────────────────────────────────────────────────────────── */
+.w-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.w-chip { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 999px; background: var(--w-fill); color: var(--w-text); font-size: 15px; line-height: 20px; font-weight: 500; letter-spacing: 0.004em; white-space: nowrap; }
+.w-chip.sel { background: var(--w-ink); color: var(--w-on-ink); padding-left: 10px; }
+.w-chip.decide { color: var(--w-ember-text); padding-left: 10px; }
+.w-chip.decide.sel { background: var(--w-ember-soft); color: var(--w-ember-text); }
+.w-chip.idea { height: auto; min-height: 36px; padding: 8px 14px; white-space: normal; text-align: left; }
+
+/* ── Fields ────────────────────────────────────────────────────────────── */
+.w-label { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--w-text2); margin-bottom: 6px; }
+.w-field { min-height: 48px; padding: 12px 14px; border-radius: 14px; background: var(--w-surface); border: 1px solid var(--w-border); font-size: 17px; line-height: 22px; color: var(--w-text); display: flex; align-items: center; gap: 8px; }
+.w-field.area { align-items: flex-start; min-height: 112px; padding: 14px 16px; line-height: 24px; }
+.w-field.focus { border: 2px solid var(--w-ink); padding: 11px 13px; }
+.w-field.area.focus { padding: 13px 15px; }
+.w-field .ph { color: var(--w-text3); }
+.w-field .caret { display: inline-block; width: 2px; height: 22px; background: var(--w-ember); margin-left: 1px; vertical-align: -4px; border-radius: 1px; }
+.w-field.send { padding-right: 6px; border-radius: 24px; min-height: 48px; }
+.w-sendbtn { width: 36px; height: 36px; flex: none; border-radius: 18px; background: var(--w-ember); color: var(--w-on-ember); display: inline-flex; align-items: center; justify-content: center; margin-left: auto; }
+.w-sendbtn.off { background: var(--w-fill); color: var(--w-text3); }
+.w-helper { font-size: 13px; line-height: 18px; color: var(--w-text2); margin-top: 8px; }
+
+/* ── Sheet, scrim, menu, toast ─────────────────────────────────────────── */
+.w-scrim { position: absolute; inset: 0; background: var(--w-scrim); z-index: 20; }
+.w-sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 21; background: var(--w-raised); border-radius: 28px 28px 0 0; box-shadow: var(--w-shadow-raised), var(--w-highlight); display: flex; flex-direction: column; }
+.w-sheet.large { top: 66px; }
+.phone[data-platform="android"] .w-sheet.large { top: 52px; }
+.w-grabber { width: 36px; height: 5px; border-radius: 3px; background: var(--w-fill-strong); margin: 6px auto 0; flex: none; }
+.w-sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 0 var(--w-gutter); min-height: 44px; flex: none; }
+.w-sheet-head .w-iconbtn.filled > span { width: 30px; height: 30px; }
+.w-sheet-body { flex: 1; overflow: hidden; position: relative; }
+.w-bottom-safe-ios { height: 34px; flex: none; }
+.w-bottom-safe-android { height: 24px; flex: none; }
+.w-menu { position: absolute; z-index: 22; width: 248px; background: var(--w-raised); border-radius: 20px; box-shadow: var(--w-shadow-raised), var(--w-highlight); overflow: hidden; }
+.w-menu .m-row { display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 16px; font-size: 17px; }
+.w-menu .m-row svg { color: var(--w-text2); }
+.w-menu .m-row.danger { color: var(--w-danger-text); }
+.w-menu .m-row.danger svg { color: var(--w-danger-text); }
+.w-menu .m-sep { height: 8px; background: var(--w-fill); opacity: .6; }
+.w-menu .m-row + .m-row { border-top: 0.5px solid var(--w-sep); }
+.w-toast { position: absolute; left: 50%; transform: translateX(-50%); z-index: 25; min-height: 48px; max-width: 350px; width: max-content; display: flex; align-items: center; gap: 16px; padding: 12px 8px 12px 18px; border-radius: 999px; background: var(--w-raised); box-shadow: var(--w-shadow-float), var(--w-highlight); font-size: 15px; line-height: 20px; }
+.w-toast .ta { font-weight: 600; font-size: 17px; padding: 0 10px; }
+.w-toast .ta.ember { color: var(--w-ember-text); }
+
+/* ── Tiles and the home grid ───────────────────────────────────────────── */
+.w-grid { display: grid; grid-template-columns: repeat(4, 1fr); row-gap: 20px; padding: 0 var(--w-gutter); }
+.w-cell { display: flex; flex-direction: column; align-items: center; min-width: 0; }
+.w-tile { position: relative; width: var(--tile, 64px); height: var(--tile, 64px); flex: none; }
+.w-tile > svg.sq { position: absolute; inset: 0; width: 100%; height: 100%; }
+.w-tile .glyph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.w-tile .badge { position: absolute; top: -5px; right: -5px; width: 20px; height: 20px; border-radius: 10px; background: var(--w-danger); color: var(--w-on-danger); display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px var(--w-bg); }
+.w-tile .ring { position: absolute; inset: -5px; border-radius: 30%; box-shadow: 0 0 0 2px var(--w-glow-mid), 0 0 14px 2px color-mix(in srgb, var(--w-glow-mid) 55%, transparent); }
+.w-cell .nm { margin-top: 6px; max-width: 100%; font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.012em; color: var(--w-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+.w-cell .st { font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.012em; text-align: center; white-space: nowrap; }
+.w-composer { position: absolute; left: var(--w-gutter); right: var(--w-gutter); z-index: 10; height: 52px; border-radius: 26px; background: var(--w-raised); box-shadow: var(--w-shadow-float), var(--w-highlight); display: flex; align-items: center; gap: 10px; padding: 0 18px 0 14px; color: var(--w-text2); font-size: 17px; }
+.w-orb { position: absolute; right: 16px; z-index: 10; width: 44px; height: 44px; border-radius: 22px; background: var(--w-raised); box-shadow: var(--w-shadow-float), var(--w-highlight); display: flex; align-items: center; justify-content: center; }
+.w-orb .dot { position: absolute; top: 1px; right: 1px; width: 10px; height: 10px; border-radius: 5px; background: var(--w-danger); box-shadow: 0 0 0 2px var(--w-raised); }
+
+/* ── Status line, steps, notices, badges ───────────────────────────────── */
+.w-status { display: flex; align-items: center; gap: 8px; color: var(--w-text2); font-size: 15px; line-height: 20px; }
+.w-ember-dot { width: 8px; height: 8px; border-radius: 4px; background: var(--w-glow-mid); box-shadow: 0 0 8px 1px color-mix(in srgb, var(--w-glow-mid) 70%, transparent); flex: none; }
+.w-steps { display: flex; flex-direction: column; gap: 14px; }
+.w-step { display: flex; align-items: center; gap: 12px; font-size: 17px; line-height: 22px; }
+.w-step .s-ring { width: 22px; height: 22px; flex: none; border-radius: 11px; border: 1.5px solid var(--w-text3); display: flex; align-items: center; justify-content: center; }
+.w-step.done { color: var(--w-text2); }
+.w-step.done .s-ring { border: 0; color: var(--w-text); }
+.w-step.now { font-weight: 600; }
+.w-step.now .s-ring { border-color: var(--w-glow-mid); }
+.w-step.todo { color: var(--w-text3); }
+.w-step .s-time { margin-left: auto; font-weight: 400; color: var(--w-text2); font-variant-numeric: tabular-nums; font-size: 15px; }
+.w-notice { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 14px; background: var(--w-fill); font-size: 15px; line-height: 20px; }
+.w-notice svg { flex: none; margin-top: 0; color: var(--w-text2); }
+.w-notice.danger { background: var(--w-danger-soft); }
+.w-notice.danger svg { color: var(--w-danger-text); }
+.w-badge { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 11px; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.012em; background: var(--w-fill); color: var(--w-text2); white-space: nowrap; }
+.w-badge.ink { background: var(--w-ink); color: var(--w-on-ink); }
+.w-badge.ember { background: var(--w-ember-soft); color: var(--w-ember-text); }
+
+/* ── Plan and questions ────────────────────────────────────────────────── */
+.w-q { padding: 16px; }
+.w-q + .w-q { border-top: 0.5px solid var(--w-sep); }
+.w-q .q-text { font-size: 17px; line-height: 22px; font-weight: 600; margin-bottom: 12px; }
+.w-q .q-hint { font-size: 13px; line-height: 18px; color: var(--w-text2); margin: -8px 0 12px; }
+.w-planrow { padding: 14px 16px; position: relative; }
+.w-planrow + .w-planrow::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: 0.5px; background: var(--w-sep); }
+.w-planrow .p-label { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--w-text2); display: flex; justify-content: space-between; align-items: center; }
+.w-planrow .p-text { font-size: 17px; line-height: 24px; margin-top: 2px; padding-right: 8px; }
+.w-skel { background: var(--w-fill-strong); border-radius: 8px; opacity: .6; }
+
+/* ── History timeline ──────────────────────────────────────────────────── */
+.w-tl { position: relative; padding-left: 44px; }
+.w-tl::before { content: ""; position: absolute; left: 27px; top: 8px; bottom: 0; width: 2px; background: var(--w-sep); border-radius: 1px; }
+.w-tl-row { position: relative; padding: 0 var(--w-gutter) 22px 0; }
+.w-tl-row .dot { position: absolute; left: -22px; top: 6px; width: 10px; height: 10px; border-radius: 5px; background: var(--w-text3); box-shadow: 0 0 0 3px var(--w-bg); }
+.w-tl-row.current .dot { background: var(--w-ink); width: 12px; height: 12px; left: -23px; top: 5px; }
+.w-tl-row .meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; line-height: 18px; color: var(--w-text2); font-variant-numeric: tabular-nums; }
+.w-tl-card { background: var(--w-surface); border-radius: 20px; padding: 14px 16px; margin-top: 2px; }
+
+/* ── Keyboard mock ─────────────────────────────────────────────────────── */
+.w-kbd { position: absolute; left: 0; right: 0; bottom: 0; z-index: 26; background: var(--w-kbd); padding: 8px 3px 0; }
+.w-kbd .k-row { display: flex; justify-content: center; gap: 6px; margin-bottom: 11px; }
+.w-kbd .k { height: 42px; flex: 0 0 calc((100% - 9 * 6px - 6px) / 10); border-radius: 5px; background: var(--w-key); color: var(--w-key-text); display: flex; align-items: center; justify-content: center; font-size: 22px; box-shadow: 0 1px 0 rgba(0, 0, 0, .3); }
+.w-kbd .k.alt { background: var(--w-key-alt); font-size: 15px; }
+.w-kbd .k.wide { flex: 0 0 calc((100% - 9 * 6px - 6px) / 10 * 1.3); }
+.w-kbd .k.space { flex: 1 1 auto; }
+.phone[data-platform="android"] .w-kbd .k { border-radius: 8px; height: 44px; box-shadow: none; }
+.w-kbd .k-sugg { height: 36px; display: flex; align-items: center; justify-content: space-around; color: var(--w-key-text); font-size: 16px; margin: -4px 0 6px; }
+
+/* ── Wisp ──────────────────────────────────────────────────────────────── */
+.w-wisp { position: relative; flex: none; }
+.w-wisp svg { overflow: visible; }
+
+/* ── In-app (SDK) components ───────────────────────────────────────────── */
+.s-app { --a-fill: var(--t-fill); --a-on: var(--t-on); --a-text: var(--t-text); }
+.s-header { padding: 0 var(--w-gutter); }
+.s-title { font-size: 28px; line-height: 34px; font-weight: 700; letter-spacing: -0.012em; }
+.s-card { background: var(--w-surface); border-radius: 20px; padding: 20px; }
+.s-stack { display: flex; flex-direction: column; gap: 12px; }
+.s-row { display: flex; align-items: center; gap: 12px; }
+.s-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; height: 50px; border-radius: 25px; font-weight: 600; font-size: 17px; background: var(--a-fill); color: var(--a-on); }
+.s-btn.secondary { background: var(--w-fill); color: var(--w-text); }
+.s-btn.ghost { background: transparent; color: var(--a-text); }
+.s-btn.danger { background: var(--w-danger); color: var(--w-on-danger); }
+.s-btn.disabled { background: var(--w-fill); color: var(--w-text3); }
+.s-stepper { display: flex; align-items: center; justify-content: space-between; }
+.s-stepper .grp { display: flex; align-items: center; background: var(--w-fill); border-radius: 22px; height: 40px; }
+.s-stepper .grp button { width: 46px; height: 40px; display: flex; align-items: center; justify-content: center; color: var(--w-text); }
+.s-stepper .val { min-width: 36px; text-align: center; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.s-seg { display: flex; background: var(--w-fill); border-radius: 18px; padding: 2px; height: 36px; }
+.s-seg span { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 600; border-radius: 16px; color: var(--w-text); }
+.s-seg span.on { background: var(--w-surface); box-shadow: var(--w-shadow-raised); }
+.phone[data-scheme="dark"] .s-seg span.on { background: var(--w-fill-strong); }
+.s-switch { width: 48px; height: 28px; border-radius: 14px; background: var(--w-fill-strong); position: relative; flex: none; }
+.s-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 24px; height: 24px; border-radius: 12px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
+.s-switch.on { background: var(--a-fill); }
+.s-switch.on::after { left: 22px; }
+.s-check { width: 24px; height: 24px; border-radius: 7px; border: 2px solid var(--w-border); flex: none; display: flex; align-items: center; justify-content: center; }
+.s-check.on { background: var(--a-fill); border-color: var(--a-fill); color: var(--a-on); }
+.s-slider { position: relative; height: 28px; }
+.s-slider .tr { position: absolute; left: 0; right: 0; top: 11px; height: 6px; border-radius: 3px; background: var(--w-fill-strong); }
+.s-slider .fi { position: absolute; left: 0; top: 11px; height: 6px; border-radius: 3px; background: var(--a-fill); }
+.s-slider .th { position: absolute; top: 0; width: 28px; height: 28px; margin-left: -14px; border-radius: 14px; background: #FFFFFF; box-shadow: var(--w-shadow-raised); }
+.s-bar { height: 6px; border-radius: 3px; background: var(--w-fill-strong); overflow: hidden; }
+.s-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--a-fill); }
+.s-badge { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 11px; font-size: 12px; font-weight: 600; letter-spacing: 0.012em; background: var(--t-soft); color: var(--a-text); }
+.s-badge.neutral { background: var(--w-fill); color: var(--w-text2); }
+.s-badge.positive { background: var(--w-pos-soft); color: var(--w-pos-text); }
+.s-badge.warning { background: var(--w-warn-soft); color: var(--w-warn-text); }
+.s-badge.danger { background: var(--w-danger-soft); color: var(--w-danger-text); }
+.s-list { background: var(--w-surface); border-radius: 20px; overflow: hidden; }
+.s-item { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 12px 16px; position: relative; }
+.s-item + .s-item::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: 0.5px; background: var(--w-sep); }
+.s-item .i-main { flex: 1; min-width: 0; }
+.s-item .i-sub { font-size: 15px; line-height: 20px; color: var(--w-text2); }
+.s-item .i-trail { color: var(--w-text2); font-size: 15px; font-variant-numeric: tabular-nums; }
+.s-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 32px 16px; }
+.s-empty .e-icon { width: 64px; height: 64px; border-radius: 32px; background: var(--w-fill); display: flex; align-items: center; justify-content: center; color: var(--w-text2); margin-bottom: 4px; }
+.s-toast { position: absolute; left: 50%; transform: translateX(-50%); z-index: 12; padding: 12px 18px; border-radius: 999px; background: var(--w-raised); box-shadow: var(--w-shadow-float), var(--w-highlight); font-size: 15px; white-space: nowrap; }
+
+</style>
+<header class="pg-bar" id="pg-bar"></header>
+<main class="pg-wrap" id="pg-main"></main>
+<script>
+// Generated from lucide-static@0.460.0 (ISC licence, (c) Lucide Contributors 2022,
+// portions (c) Cole Bemis 2013-2022 as part of Feather, MIT). Inner SVG markup on a 24 grid.
+// Regenerate with the same name list; do not hand-edit.
+const ICONS = {
+  'timer': '<line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/>',
+  'alarm-clock': '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/><path d="M6.38 18.7 4 21"/><path d="M17.64 18.67 20 21"/>',
+  'hourglass': '<path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/>',
+  'clock': '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  'watch': '<circle cx="12" cy="12" r="6"/><polyline points="12 10 12 12 13 13"/><path d="m16.13 7.66-.81-4.05a2 2 0 0 0-2-1.61h-2.68a2 2 0 0 0-2 1.61l-.78 4.05"/><path d="m7.88 16.36.8 4a2 2 0 0 0 2 1.61h2.72a2 2 0 0 0 2-1.61l.81-4.05"/>',
+  'calendar': '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
+  'calendar-check': '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="m9 16 2 2 4-4"/>',
+  'calendar-days': '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/><path d="M16 18h.01"/>',
+  'coffee': '<path d="M10 2v2"/><path d="M14 2v2"/><path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/><path d="M6 2v2"/>',
+  'cup-soda': '<path d="m6 8 1.75 12.28a2 2 0 0 0 2 1.72h4.54a2 2 0 0 0 2-1.72L18 8"/><path d="M5 8h14"/><path d="M7 15a6.47 6.47 0 0 1 5 0 6.47 6.47 0 0 0 5 0"/><path d="m12 8 1-6h2"/>',
+  'glass-water': '<path d="M5.116 4.104A1 1 0 0 1 6.11 3h11.78a1 1 0 0 1 .994 1.105L17.19 20.21A2 2 0 0 1 15.2 22H8.8a2 2 0 0 1-2-1.79z"/><path d="M6 12a5 5 0 0 1 6 0 5 5 0 0 0 6 0"/>',
+  'droplet': '<path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/>',
+  'utensils': '<path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/>',
+  'chef-hat': '<path d="M17 21a1 1 0 0 0 1-1v-5.35c0-.457.316-.844.727-1.041a4 4 0 0 0-2.134-7.589 5 5 0 0 0-9.186 0 4 4 0 0 0-2.134 7.588c.411.198.727.585.727 1.041V20a1 1 0 0 0 1 1Z"/><path d="M6 17h12"/>',
+  'cookie': '<path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5"/><path d="M8.5 8.5v.01"/><path d="M16 15.5v.01"/><path d="M12 12v.01"/><path d="M11 17v.01"/><path d="M7 14v.01"/>',
+  'apple': '<path d="M12 20.94c1.5 0 2.75 1.06 4 1.06 3 0 6-8 6-12.22A4.91 4.91 0 0 0 17 5c-2.22 0-4 1.44-5 2-1-.56-2.78-2-5-2a4.9 4.9 0 0 0-5 4.78C2 14 5 22 8 22c1.25 0 2.5-1.06 4-1.06Z"/><path d="M10 2c1 .5 2 2 2 5"/>',
+  'carrot': '<path d="M2.27 21.7s9.87-3.5 12.73-6.36a4.5 4.5 0 0 0-6.36-6.37C5.77 11.84 2.27 21.7 2.27 21.7zM8.64 14l-2.05-2.04M15.34 15l-2.46-2.46"/><path d="M22 9s-1.33-2-3.5-2C16.86 7 15 9 15 9s1.33 2 3.5 2S22 9 22 9z"/><path d="M15 2s-2 1.33-2 3.5S15 9 15 9s2-1.84 2-3.5C17 3.33 15 2 15 2z"/>',
+  'pizza': '<path d="m12 14-1 1"/><path d="m13.75 18.25-1.25 1.42"/><path d="M17.775 5.654a15.68 15.68 0 0 0-12.121 12.12"/><path d="M18.8 9.3a1 1 0 0 0 2.1 7.7"/><path d="M21.964 20.732a1 1 0 0 1-1.232 1.232l-18-5a1 1 0 0 1-.695-1.232A19.68 19.68 0 0 1 15.732 2.037a1 1 0 0 1 1.232.695z"/>',
+  'wheat': '<path d="M2 22 16 8"/><path d="M3.47 12.53 5 11l1.53 1.53a3.5 3.5 0 0 1 0 4.94L5 19l-1.53-1.53a3.5 3.5 0 0 1 0-4.94Z"/><path d="M7.47 8.53 9 7l1.53 1.53a3.5 3.5 0 0 1 0 4.94L9 15l-1.53-1.53a3.5 3.5 0 0 1 0-4.94Z"/><path d="M11.47 4.53 13 3l1.53 1.53a3.5 3.5 0 0 1 0 4.94L13 11l-1.53-1.53a3.5 3.5 0 0 1 0-4.94Z"/><path d="M20 2h2v2a4 4 0 0 1-4 4h-2V6a4 4 0 0 1 4-4Z"/><path d="M11.47 17.47 13 19l-1.53 1.53a3.5 3.5 0 0 1-4.94 0L5 19l1.53-1.53a3.5 3.5 0 0 1 4.94 0Z"/><path d="M15.47 13.47 17 15l-1.53 1.53a3.5 3.5 0 0 1-4.94 0L9 15l1.53-1.53a3.5 3.5 0 0 1 4.94 0Z"/><path d="M19.47 9.47 21 11l-1.53 1.53a3.5 3.5 0 0 1-4.94 0L13 11l1.53-1.53a3.5 3.5 0 0 1 4.94 0Z"/>',
+  'egg': '<path d="M12 22c6.23-.05 7.87-5.57 7.5-10-.36-4.34-3.95-9.96-7.5-10-3.55.04-7.14 5.66-7.5 10-.37 4.43 1.27 9.95 7.5 10z"/>',
+  'salad': '<path d="M7 21h10"/><path d="M12 21a9 9 0 0 0 9-9H3a9 9 0 0 0 9 9Z"/><path d="M11.38 12a2.4 2.4 0 0 1-.4-4.77 2.4 2.4 0 0 1 3.2-2.77 2.4 2.4 0 0 1 3.47-.63 2.4 2.4 0 0 1 3.37 3.37 2.4 2.4 0 0 1-1.1 3.7 2.51 2.51 0 0 1 .03 1.1"/><path d="m13 12 4-4"/><path d="M10.9 7.25A3.99 3.99 0 0 0 4 10c0 .73.2 1.41.54 2"/>',
+  'croissant': '<path d="m4.6 13.11 5.79-3.21c1.89-1.05 4.79 1.78 3.71 3.71l-3.22 5.81C8.8 23.16.79 15.23 4.6 13.11Z"/><path d="m10.5 9.5-1-2.29C9.2 6.48 8.8 6 8 6H4.5C2.79 6 2 6.5 2 8.5a7.71 7.71 0 0 0 2 4.83"/><path d="M8 6c0-1.55.24-4-2-4-2 0-2.5 2.17-2.5 4"/><path d="m14.5 13.5 2.29 1c.73.3 1.21.7 1.21 1.5v3.5c0 1.71-.5 2.5-2.5 2.5a7.71 7.71 0 0 1-4.83-2"/><path d="M18 16c1.55 0 4-.24 4 2 0 2-2.17 2.5-4 2.5"/>',
+  'leaf': '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>',
+  'sprout': '<path d="M7 20h10"/><path d="M10 20c5.5-2.5.8-6.4 3-10"/><path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z"/><path d="M14.1 6a7 7 0 0 0-1.1 4c1.9-.1 3.3-.6 4.3-1.4 1-1 1.6-2.3 1.7-4.6-2.7.1-4 1-4.9 2z"/>',
+  'flower': '<circle cx="12" cy="12" r="3"/><path d="M12 16.5A4.5 4.5 0 1 1 7.5 12 4.5 4.5 0 1 1 12 7.5a4.5 4.5 0 1 1 4.5 4.5 4.5 4.5 0 1 1-4.5 4.5"/><path d="M12 7.5V9"/><path d="M7.5 12H9"/><path d="M16.5 12H15"/><path d="M12 16.5V15"/><path d="m8 8 1.88 1.88"/><path d="M14.12 9.88 16 8"/><path d="m8 16 1.88-1.88"/><path d="M14.12 14.12 16 16"/>',
+  'flower-2': '<path d="M12 5a3 3 0 1 1 3 3m-3-3a3 3 0 1 0-3 3m3-3v1M9 8a3 3 0 1 0 3 3M9 8h1m5 0a3 3 0 1 1-3 3m3-3h-1m-2 3v-1"/><circle cx="12" cy="8" r="2"/><path d="M12 10v12"/><path d="M12 22c4.2 0 7-1.667 7-5-4.2 0-7 1.667-7 5Z"/><path d="M12 22c-4.2 0-7-1.667-7-5 4.2 0 7 1.667 7 5Z"/>',
+  'trees': '<path d="M10 10v.2A3 3 0 0 1 8.9 16H5a3 3 0 0 1-1-5.8V10a3 3 0 0 1 6 0Z"/><path d="M7 16v6"/><path d="M13 19v3"/><path d="M12 19h8.3a1 1 0 0 0 .7-1.7L18 14h.3a1 1 0 0 0 .7-1.7L16 9h.2a1 1 0 0 0 .8-1.7L13 3l-1.4 1.5"/>',
+  'tree-pine': '<path d="m17 14 3 3.3a1 1 0 0 1-.7 1.7H4.7a1 1 0 0 1-.7-1.7L7 14h-.3a1 1 0 0 1-.7-1.7L9 9h-.2A1 1 0 0 1 8 7.3L12 3l4 4.3a1 1 0 0 1-.8 1.7H15l3 3.3a1 1 0 0 1-.7 1.7H17Z"/><path d="M12 22v-3"/>',
+  'sun': '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  'moon': '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  'cloud': '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
+  'cloud-rain': '<path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M16 14v6"/><path d="M8 14v6"/><path d="M12 16v6"/>',
+  'snowflake': '<line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/><path d="m20 16-4-4 4-4"/><path d="m4 8 4 4-4 4"/><path d="m16 4-4 4-4-4"/><path d="m8 20 4-4 4 4"/>',
+  'thermometer': '<path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/>',
+  'wind': '<path d="M12.8 19.6A2 2 0 1 0 14 16H2"/><path d="M17.5 8a2.5 2.5 0 1 1 2 4H2"/><path d="M9.8 4.4A2 2 0 1 1 11 8H2"/>',
+  'umbrella': '<path d="M22 12a10.06 10.06 1 0 0-20 0Z"/><path d="M12 12v8a2 2 0 0 0 4 0"/><path d="M12 2v1"/>',
+  'flame': '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>',
+  'zap': '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+  'waves': '<path d="M2 6c.6.5 1.2 1 2.5 1C7 7 7 5 9.5 5c2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 12c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 18c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/>',
+  'mountain': '<path d="m8 3 4 8 5-5 5 15H2L8 3z"/>',
+  'heart': '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>',
+  'heart-pulse': '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/><path d="M3.22 12H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27"/>',
+  'activity': '<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>',
+  'dumbbell': '<path d="M14.4 14.4 9.6 9.6"/><path d="M18.657 21.485a2 2 0 1 1-2.829-2.828l-1.767 1.768a2 2 0 1 1-2.829-2.829l6.364-6.364a2 2 0 1 1 2.829 2.829l-1.768 1.767a2 2 0 1 1 2.828 2.829z"/><path d="m21.5 21.5-1.4-1.4"/><path d="M3.9 3.9 2.5 2.5"/><path d="M6.404 12.768a2 2 0 1 1-2.829-2.829l1.768-1.767a2 2 0 1 1-2.828-2.829l2.828-2.828a2 2 0 1 1 2.829 2.828l1.767-1.768a2 2 0 1 1 2.829 2.829z"/>',
+  'bike': '<circle cx="18.5" cy="17.5" r="3.5"/><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="15" cy="5" r="1"/><path d="M12 17.5V14l-3-3 4-3 2 3h2"/>',
+  'footprints': '<path d="M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3.11-2 5.66-2 8.68V16a2 2 0 1 1-4 0Z"/><path d="M20 20v-2.38c0-2.12 1.03-3.12 1-5.62-.03-2.72-1.49-6-4.5-6C14.63 6 14 7.8 14 9.5c0 3.11 2 5.66 2 8.68V20a2 2 0 1 0 4 0Z"/><path d="M16 17h4"/><path d="M4 13h4"/>',
+  'pill': '<path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z"/><path d="m8.5 8.5 7 7"/>',
+  'stethoscope': '<path d="M11 2v2"/><path d="M5 2v2"/><path d="M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1"/><path d="M8 15a6 6 0 0 0 12 0v-3"/><circle cx="20" cy="10" r="2"/>',
+  'bed': '<path d="M2 4v16"/><path d="M2 8h18a2 2 0 0 1 2 2v10"/><path d="M2 17h20"/><path d="M6 8v9"/>',
+  'brain': '<path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/>',
+  'smile': '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" x2="9.01" y1="9" y2="9"/><line x1="15" x2="15.01" y1="9" y2="9"/>',
+  'baby': '<path d="M9 12h.01"/><path d="M15 12h.01"/><path d="M10 16c.5.3 1.2.5 2 .5s1.5-.2 2-.5"/><path d="M19 6.3a9 9 0 0 1 1.8 3.9 2 2 0 0 1 0 3.6 9 9 0 0 1-17.6 0 2 2 0 0 1 0-3.6A9 9 0 0 1 12 3c2 0 3.5 1.1 3.5 2.5s-.9 2.5-2 2.5c-.8 0-1.5-.4-1.5-1"/>',
+  'dog': '<path d="M11.25 16.25h1.5L12 17z"/><path d="M16 14v.5"/><path d="M4.42 11.247A13.152 13.152 0 0 0 4 14.556C4 18.728 7.582 21 12 21s8-2.272 8-6.444a11.702 11.702 0 0 0-.493-3.309"/><path d="M8 14v.5"/><path d="M8.5 8.5c-.384 1.05-1.083 2.028-2.344 2.5-1.931.722-3.576-.297-3.656-1-.113-.994 1.177-6.53 4-7 1.923-.321 3.651.845 3.651 2.235A7.497 7.497 0 0 1 14 5.277c0-1.39 1.844-2.598 3.767-2.277 2.823.47 4.113 6.006 4 7-.08.703-1.725 1.722-3.656 1-1.261-.472-1.855-1.45-2.239-2.5"/>',
+  'cat': '<path d="M12 5c.67 0 1.35.09 2 .26 1.78-2 5.03-2.84 6.42-2.26 1.4.58-.42 7-.42 7 .57 1.07 1 2.24 1 3.44C21 17.9 16.97 21 12 21s-9-3-9-7.56c0-1.25.5-2.4 1-3.44 0 0-1.89-6.42-.5-7 1.39-.58 4.72.23 6.5 2.23A9.04 9.04 0 0 1 12 5Z"/><path d="M8 14v.5"/><path d="M16 14v.5"/><path d="M11.25 16.25h1.5L12 17l-.75-.75Z"/>',
+  'paw-print': '<circle cx="11" cy="4" r="2"/><circle cx="18" cy="8" r="2"/><circle cx="20" cy="16" r="2"/><path d="M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"/>',
+  'fish': '<path d="M6.5 12c.94-3.46 4.94-6 8.5-6 3.56 0 6.06 2.54 7 6-.94 3.47-3.44 6-7 6s-7.56-2.53-8.5-6Z"/><path d="M18 12v.5"/><path d="M16 17.93a9.77 9.77 0 0 1 0-11.86"/><path d="M7 10.67C7 8 5.58 5.97 2.73 5.5c-1 1.5-1 5 .23 6.5-1.24 1.5-1.24 5-.23 6.5C5.58 18.03 7 16 7 13.33"/><path d="M10.46 7.26C10.2 5.88 9.17 4.24 8 3h5.8a2 2 0 0 1 1.98 1.67l.23 1.4"/><path d="m16.01 17.93-.23 1.4A2 2 0 0 1 13.8 21H9.5a5.96 5.96 0 0 0 1.49-3.98"/>',
+  'bird': '<path d="M16 7h.01"/><path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/><path d="m20 7 2 .5-2 .5"/><path d="M10 18v3"/><path d="M14 17.75V21"/><path d="M7 18a6 6 0 0 0 3.84-10.61"/>',
+  'bug': '<path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/>',
+  'house': '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  'sofa': '<path d="M20 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v3"/><path d="M2 16a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5a2 2 0 0 0-4 0v1.5a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5V11a2 2 0 0 0-4 0z"/><path d="M4 18v2"/><path d="M20 18v2"/><path d="M12 4v9"/>',
+  'lamp': '<path d="M8 2h8l4 10H4L8 2Z"/><path d="M12 12v6"/><path d="M8 22v-2c0-1.1.9-2 2-2h4a2 2 0 0 1 2 2v2H8Z"/>',
+  'key': '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
+  'lock': '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  'plug': '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
+  'battery': '<rect width="16" height="10" x="2" y="7" rx="2" ry="2"/><line x1="22" x2="22" y1="11" y2="13"/>',
+  'bell': '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  'recycle': '<path d="M7 19H4.815a1.83 1.83 0 0 1-1.57-.881 1.785 1.785 0 0 1-.004-1.784L7.196 9.5"/><path d="M11 19h8.203a1.83 1.83 0 0 0 1.556-.89 1.784 1.784 0 0 0 0-1.775l-1.226-2.12"/><path d="m14 16-3 3 3 3"/><path d="M8.293 13.596 7.196 9.5 3.1 10.598"/><path d="m9.344 5.811 1.093-1.892A1.83 1.83 0 0 1 11.985 3a1.784 1.784 0 0 1 1.546.888l3.943 6.843"/><path d="m13.378 9.633 4.096 1.098 1.097-4.096"/>',
+  'trash-2': '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+  'shirt': '<path d="M20.38 3.46 16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/>',
+  'glasses': '<circle cx="6" cy="15" r="4"/><circle cx="18" cy="15" r="4"/><path d="M14 15a2 2 0 0 0-2-2 2 2 0 0 0-2 2"/><path d="M2.5 13 5 7c.7-1.3 1.4-2 3-2"/><path d="M21.5 13 19 7c-.7-1.3-1.5-2-3-2"/>',
+  'scissors': '<circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/>',
+  'shopping-cart': '<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/>',
+  'shopping-bag': '<path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/>',
+  'gift': '<rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13"/><path d="M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7"/><path d="M7.5 8a2.5 2.5 0 0 1 0-5A4.8 8 0 0 1 12 8a4.8 8 0 0 1 4.5-5 2.5 2.5 0 0 1 0 5"/>',
+  'tag': '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
+  'receipt': '<path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 17.5v-11"/>',
+  'wallet': '<path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>',
+  'piggy-bank': '<path d="M19 5c-1.5 0-2.8 1.4-3 2-3.5-1.5-11-.3-11 5 0 1.8 0 3 2 4.5V20h4v-2h3v2h4v-4c1-.5 1.7-1 2-2h2v-4h-2c0-1-.5-1.5-1-2V5z"/><path d="M2 9v1c0 1.1.9 2 2 2h1"/><path d="M16 11h.01"/>',
+  'coins': '<circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/><path d="m16.71 13.88.7.71-2.82 2.82"/>',
+  'banknote': '<rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/>',
+  'credit-card': '<rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/>',
+  'calculator': '<rect width="16" height="20" x="4" y="2" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/>',
+  'percent': '<line x1="19" x2="5" y1="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
+  'chart-column': '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+  'chart-line': '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m19 9-5 5-4-4-3 3"/>',
+  'chart-pie': '<path d="M21 12c.552 0 1.005-.449.95-.998a10 10 0 0 0-8.953-8.951c-.55-.055-.998.398-.998.95v8a1 1 0 0 0 1 1z"/><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/>',
+  'trending-up': '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>',
+  'target': '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+  'trophy': '<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>',
+  'medal': '<path d="M7.21 15 2.66 7.14a2 2 0 0 1 .13-2.2L4.4 2.8A2 2 0 0 1 6 2h12a2 2 0 0 1 1.6.8l1.6 2.14a2 2 0 0 1 .14 2.2L16.79 15"/><path d="M11 12 5.12 2.2"/><path d="m13 12 5.88-9.8"/><path d="M8 7h8"/><circle cx="12" cy="17" r="5"/><path d="M12 18v-2h-.5"/>',
+  'flag': '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/>',
+  'star': '<path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/>',
+  'list-checks': '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
+  'list-todo': '<rect x="3" y="5" width="6" height="6" rx="1"/><path d="m3 17 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
+  'square-check': '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/>',
+  'clipboard-list': '<rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>',
+  'dice-5': '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M16 8h.01"/><path d="M8 8h.01"/><path d="M8 16h.01"/><path d="M16 16h.01"/><path d="M12 12h.01"/>',
+  'dices': '<rect width="12" height="12" x="2" y="10" rx="2" ry="2"/><path d="m17.92 14 3.5-3.5a2.24 2.24 0 0 0 0-3l-5-4.92a2.24 2.24 0 0 0-3 0L10 6"/><path d="M6 18h.01"/><path d="M10 14h.01"/><path d="M15 6h.01"/><path d="M18 9h.01"/>',
+  'puzzle': '<path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/>',
+  'gamepad-2': '<line x1="6" x2="10" y1="11" y2="11"/><line x1="8" x2="8" y1="9" y2="13"/><line x1="15" x2="15.01" y1="12" y2="12"/><line x1="18" x2="18.01" y1="10" y2="10"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/>',
+  'music': '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  'headphones': '<path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/>',
+  'mic': '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>',
+  'guitar': '<path d="m11.9 12.1 4.514-4.514"/><path d="M20.1 2.3a1 1 0 0 0-1.4 0l-1.114 1.114A2 2 0 0 0 17 4.828v1.344a2 2 0 0 1-.586 1.414A2 2 0 0 1 17.828 7h1.344a2 2 0 0 0 1.414-.586L21.7 5.3a1 1 0 0 0 0-1.4z"/><path d="m6 16 2 2"/><path d="M8.2 9.9C8.7 8.8 9.8 8 11 8c2.8 0 5 2.2 5 5 0 1.2-.8 2.3-1.9 2.8l-.9.4A2 2 0 0 0 12 18a4 4 0 0 1-4 4c-3.3 0-6-2.7-6-6a4 4 0 0 1 4-4 2 2 0 0 0 1.8-1.2z"/><circle cx="11.5" cy="12.5" r=".5" fill="currentColor"/>',
+  'piano': '<path d="M18.5 8c-1.4 0-2.6-.8-3.2-2A6.87 6.87 0 0 0 2 9v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-8.5C22 9.6 20.4 8 18.5 8"/><path d="M2 14h20"/><path d="M6 14v4"/><path d="M10 14v4"/><path d="M14 14v4"/><path d="M18 14v4"/>',
+  'film': '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/>',
+  'camera': '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
+  'image': '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
+  'palette': '<circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>',
+  'brush': '<path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/>',
+  'pencil': '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+  'pen-tool': '<path d="M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z"/><path d="m18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18"/><path d="m2.3 2.3 7.286 7.286"/><circle cx="11" cy="11" r="2"/>',
+  'book': '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/>',
+  'book-open': '<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>',
+  'notebook-pen': '<path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>',
+  'graduation-cap': '<path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z"/><path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5"/>',
+  'languages': '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
+  'lightbulb': '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/>',
+  'sticky-note': '<path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8Z"/><path d="M15 3v4a2 2 0 0 0 2 2h4"/>',
+  'file-text': '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+  'folder': '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  'inbox': '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+  'users': '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  'user': '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  'hand-heart': '<path d="M11 14h2a2 2 0 1 0 0-4h-3c-.6 0-1.1.2-1.4.6L3 16"/><path d="m7 20 1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a2 2 0 0 0-2.75-2.91l-4.2 3.9"/><path d="m2 15 6 6"/><path d="M19.5 8.5c.7-.7 1.5-1.6 1.5-2.7A2.73 2.73 0 0 0 16 4a2.78 2.78 0 0 0-5 1.8c0 1.2.8 2 1.5 2.8L16 12Z"/>',
+  'handshake': '<path d="m11 17 2 2a1 1 0 1 0 3-3"/><path d="m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4"/><path d="m21 3 1 11h-2"/><path d="M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3"/><path d="M3 4h8"/>',
+  'mail': '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
+  'message-circle': '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+  'phone': '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>',
+  'megaphone': '<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
+  'map': '<path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z"/><path d="M15 5.764v15"/><path d="M9 3.236v15"/>',
+  'map-pin': '<path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/>',
+  'compass': '<path d="m16.24 7.76-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265z"/><circle cx="12" cy="12" r="10"/>',
+  'plane': '<path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>',
+  'car': '<path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/>',
+  'bus': '<path d="M8 6v6"/><path d="M15 6v6"/><path d="M2 12h19.6"/><path d="M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3"/><circle cx="7" cy="18" r="2"/><path d="M9 18h5"/><circle cx="16" cy="18" r="2"/>',
+  'train-front': '<path d="M8 3.1V7a4 4 0 0 0 8 0V3.1"/><path d="m9 15-1-1"/><path d="m15 15 1-1"/><path d="M9 19c-2.8 0-5-2.2-5-5v-4a8 8 0 0 1 16 0v4c0 2.8-2.2 5-5 5Z"/><path d="m8 19-2 3"/><path d="m16 19 2 3"/>',
+  'tent': '<path d="M3.5 21 14 3"/><path d="M20.5 21 10 3"/><path d="M15.5 21 12 15l-3.5 6"/><path d="M2 21h20"/>',
+  'anchor': '<path d="M12 22V8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/><circle cx="12" cy="5" r="3"/>',
+  'globe': '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+  'ruler': '<path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/>',
+  'scale': '<path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/>',
+  'wrench': '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+  'hammer': '<path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5"/>',
+  'repeat': '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+  'shuffle': '<path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.7-1.1 2-1.7 3.3-1.7H22"/><path d="m18 2 4 4-4 4"/><path d="M2 6h1.9c1.5 0 2.9.9 3.6 2.2"/><path d="M22 18h-5.9c-1.3 0-2.6-.7-3.3-1.8l-.5-.8"/><path d="m18 14 4 4-4 4"/>',
+  'hash': '<line x1="4" x2="20" y1="9" y2="9"/><line x1="4" x2="20" y1="15" y2="15"/><line x1="10" x2="8" y1="3" y2="21"/><line x1="16" x2="14" y1="3" y2="21"/>',
+  'chevron-left': '<path d="m15 18-6-6 6-6"/>',
+  'arrow-left': '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+  'chevron-right': '<path d="m9 18 6-6-6-6"/>',
+  'chevron-down': '<path d="m6 9 6 6 6-6"/>',
+  'x': '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  'plus': '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  'minus': '<path d="M5 12h14"/>',
+  'check': '<path d="M20 6 9 17l-5-5"/>',
+  'settings': '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  'ellipsis': '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  'share': '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" x2="12" y1="2" y2="15"/>',
+  'link': '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  'copy': '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  'history': '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+  'rotate-ccw': '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+  'search': '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  'circle-alert': '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
+  'triangle-alert': '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  'info': '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+  'pencil-line': '<path d="M12 20h9"/><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z"/><path d="m15 5 3 3"/>',
+  'arrow-up': '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+  'circle-help': '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+  'layout-grid': '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
+  'undo-2': '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/>',
+  'external-link': '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  'eye': '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>',
+  'square-pen': '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/>',
+  'circle-check': '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  'circle': '<circle cx="12" cy="12" r="10"/>',
+  'message-square': '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  'send-horizontal': '<path d="M3.714 3.048a.498.498 0 0 0-.683.627l2.843 7.627a2 2 0 0 1 0 1.396l-2.842 7.627a.498.498 0 0 0 .682.627l18-8.5a.5.5 0 0 0 0-.904z"/><path d="M6 12h16"/>',
+  'play': '<polygon points="6 3 20 12 6 21 6 3"/>',
+  'pause': '<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>',
+  'wifi': '<path d="M12 20h.01"/><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.859a10 10 0 0 1 14 0"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/>',
+  'signal': '<path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/><path d="M22 4v16"/>',
+  'battery-full': '<rect width="16" height="10" x="2" y="7" rx="2" ry="2"/><line x1="22" x2="22" y1="11" y2="13"/><line x1="6" x2="6" y1="11" y2="13"/><line x1="10" x2="10" y1="11" y2="13"/><line x1="14" x2="14" y1="11" y2="13"/>',
+  'upload': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>',
+  'shield-check': '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+};
+
+// Whim mockups: HTML helpers for the phone frames. Every helper returns a string.
+// c = { p: 'ios' | 'android', s: 'light' | 'dark' } describes the frame being drawn.
+
+const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function icon(name, size = 20, stroke = 2, extra = '') {
+  const body = ICONS[name];
+  if (!body) return '';
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${body}</svg>`;
+}
+
+// Superellipse (n = 5) on a 100 box: the tile shape on both platforms.
+const SQUIRCLE = (() => {
+  const n = 5, pts = [];
+  for (let i = 0; i < 96; i++) {
+    const t = (i / 96) * Math.PI * 2, c = Math.cos(t), s = Math.sin(t);
+    const x = 50 + 50 * Math.sign(c) * Math.pow(Math.abs(c), 2 / n);
+    const y = 50 + 50 * Math.sign(s) * Math.pow(Math.abs(s), 2 / n);
+    pts.push(`${x.toFixed(2)},${y.toFixed(2)}`);
+  }
+  return 'M' + pts.join('L') + 'Z';
+})();
+
+// ── The wisp ────────────────────────────────────────────────────────────────
+const WISP_PATH = 'M28 4C35.7 4 42 10.3 42 18C42 25.5 36.5 31 30 32.6C24.5 34 21 36.6 18.2 40.2C15.8 43.3 12.5 45.6 8.6 45.2C6.2 45 4.6 43.4 5.6 42.1C9.6 41.8 12.6 39.2 13.9 35.5C15.1 32 14.3 28.7 14.1 25.5C14 23 14 20.5 14 18C14 10.3 20.3 4 28 4Z';
+
+const WISP_DEFS = `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<radialGradient id="wg-body" cx="38%" cy="30%" r="78%"><stop offset="0" stop-color="#FFD98A"/><stop offset=".38" stop-color="#FFB54F"/><stop offset=".72" stop-color="#FF8A2B"/><stop offset="1" stop-color="#F0561A"/></radialGradient>
+<radialGradient id="wg-dim" cx="38%" cy="30%" r="78%"><stop offset="0" stop-color="#E9B98C"/><stop offset=".6" stop-color="#C9895A"/><stop offset="1" stop-color="#9C5E3C"/></radialGradient>
+<radialGradient id="wg-halo" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#FF9127" stop-opacity=".75"/><stop offset=".55" stop-color="#FF9127" stop-opacity=".22"/><stop offset="1" stop-color="#FF9127" stop-opacity="0"/></radialGradient>
+</defs></svg>`;
+
+const POSES = {
+  listening: { ex: 0, ey: 0, ry: 3.5, rot: 0, ty: 0, glow: .85, eyes: 'open' },
+  thinking: { ex: 1.6, ey: -1.7, ry: 3.4, rot: -6, ty: 0, glow: .8, eyes: 'open' },
+  making: { ex: -.4, ey: 1.7, ry: 3.0, rot: 4, ty: 0, glow: 1, eyes: 'open' },
+  stuck: { ex: 0, ey: .8, ry: 1.3, rot: 0, ty: 1, glow: .35, eyes: 'open', dim: true },
+  failed: { ex: 0, ey: 1.8, ry: 1.7, rot: 7, ty: 1.6, glow: .3, eyes: 'open', dim: true },
+  done: { ex: 0, ey: -.4, ry: 3.4, rot: 0, ty: -1, glow: 1, eyes: 'arc' },
+  asleep: { ex: 0, ey: .6, ry: 3.4, rot: 0, ty: .6, glow: .45, eyes: 'closed' },
+};
+
+function wispEyes(pose) {
+  const p = POSES[pose] || POSES.listening;
+  const L = 23.6 + p.ex, R = 32.4 + p.ex, Y = 17.6 + p.ey;
+  if (p.eyes === 'arc') {
+    return `<path d="M${L - 2.5} ${Y + .8}Q${L} ${Y - 2.6} ${L + 2.5} ${Y + .8}M${R - 2.5} ${Y + .8}Q${R} ${Y - 2.6} ${R + 2.5} ${Y + .8}" fill="none" stroke="#1A1614" stroke-width="1.7" stroke-linecap="round"/>`;
+  }
+  if (p.eyes === 'closed') {
+    return `<path d="M${L - 2.3} ${Y}Q${L} ${Y + 1.6} ${L + 2.3} ${Y}M${R - 2.3} ${Y}Q${R} ${Y + 1.6} ${R + 2.3} ${Y}" fill="none" stroke="#1A1614" stroke-width="1.5" stroke-linecap="round"/>`;
+  }
+  const hl = p.ry > 2 ? `<circle cx="${L + .8}" cy="${Y - 1.3}" r=".85" fill="#fff"/><circle cx="${R + .8}" cy="${Y - 1.3}" r=".85" fill="#fff"/>` : '';
+  return `<ellipse cx="${L}" cy="${Y}" rx="2.4" ry="${p.ry}" fill="#1A1614"/><ellipse cx="${R}" cy="${Y}" rx="2.4" ry="${p.ry}" fill="#1A1614"/>${hl}`;
+}
+
+// size in px. eyes are drawn at 48px and above unless forced off. mode: 'glow' | 'grey'.
+function wisp({ size = 96, pose = 'listening', activity = .7, eyes, mode = 'glow', cls = '' } = {}) {
+  const p = POSES[pose] || POSES.listening;
+  const showEyes = eyes !== undefined ? eyes : size >= 48;
+  const grey = mode === 'grey';
+  const glow = grey ? 0 : Math.min(1, p.glow * (.55 + .45 * activity));
+  const fill = grey ? 'style="fill:var(--w-text3)"' : `fill="url(#${p.dim ? 'wg-dim' : 'wg-body'})"`;
+  const halo = glow > 0 ? `<circle cx="27" cy="21" r="26" fill="url(#wg-halo)" opacity="${glow.toFixed(2)}"/>` : '';
+  return `<span class="w-wisp ${cls}" style="width:${size}px;height:${size}px" data-pose="${pose}"><svg width="${size}" height="${size}" viewBox="0 0 48 48" aria-hidden="true">${halo}<g transform="translate(0 ${p.ty}) rotate(${p.rot} 28 22)"><path d="${WISP_PATH}" ${fill}/>${showEyes && !grey ? wispEyes(pose) : ''}</g></svg></span>`;
+}
+
+// ── Tiles ───────────────────────────────────────────────────────────────────
+// app = { name, tint, icon, letter? }. state: ready | making | queued | failed | stopped | update | changing | change-failed
+function tile(app, { size = 64, state = 'ready', activity = .8, label = true, second } = {}) {
+  let inner = '';
+  const glyph = Math.round(size * .5);
+  const stroke = size >= 56 ? 2 : size >= 32 ? 2.1 : 2.3;
+  if (state === 'making' || state === 'queued') {
+    inner = `<svg class="sq" viewBox="0 0 100 100"><path d="${SQUIRCLE}" style="fill:var(--w-ember-soft)"/></svg><span class="glyph">${wisp({ size: Math.round(size * .56), pose: state === 'queued' ? 'asleep' : 'making', activity: state === 'queued' ? .25 : activity, eyes: false })}</span>`;
+  } else if (state === 'failed' || state === 'stopped' || state === 'update') {
+    inner = `<svg class="sq" viewBox="0 0 100 100"><path d="${SQUIRCLE}" style="fill:var(--w-fill)"/></svg><span class="glyph">${wisp({ size: Math.round(size * .5), mode: 'grey', eyes: false })}</span>${state === 'failed' ? `<span class="badge">${icon('circle-alert', 14, 2.4)}</span>` : ''}`;
+  } else {
+    const content = app.icon ? `<span class="glyph" style="color:var(--t-on)">${icon(app.icon, glyph, stroke)}</span>` : `<span class="glyph t-title2" style="color:var(--t-on)">${esc(app.name[0])}</span>`;
+    inner = `${state === 'changing' ? '<span class="ring"></span>' : ''}<svg class="sq" viewBox="0 0 100 100"><path d="${SQUIRCLE}" style="fill:var(--t-fill)"/></svg>${content}${state === 'change-failed' ? `<span class="badge">${icon('circle-alert', 14, 2.4)}</span>` : ''}`;
+  }
+  const secondLine = {
+    making: '<div class="st t-ember">Making…</div>', queued: '<div class="st t-sec">Waiting…</div>',
+    failed: '<div class="st t-danger">Didn’t work</div>', stopped: '<div class="st t-sec">Stopped</div>',
+    update: '<div class="st t-warn">Needs update</div>', changing: '<div class="st t-ember">Changing…</div>',
+    'change-failed': '<div class="st t-danger">Change didn’t work</div>',
+  }[state] || (second ? `<div class="st t-sec">${esc(second)}</div>` : '');
+  const t = `<div class="w-tile tint-${app.tint || 'graphite'}" style="--tile:${size}px">${inner}</div>`;
+  if (!label) return t;
+  return `<div class="w-cell tint-${app.tint || 'graphite'}">${t}<div class="nm">${esc(app.name)}</div>${secondLine}</div>`;
+}
+
+// ── Frame pieces ────────────────────────────────────────────────────────────
+function statusBar(c, { onDark = false } = {}) {
+  if (c.p === 'ios') {
+    return `<div class="w-island"></div><div class="w-statusbar${onDark ? ' on-dark' : ''}"><span class="t-num">9:41</span><span class="sb-icons">
+<svg width="18" height="12" viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx="1" fill="currentColor"/><rect x="5" y="5.5" width="3" height="6.5" rx="1" fill="currentColor"/><rect x="10" y="3" width="3" height="9" rx="1" fill="currentColor"/><rect x="15" y="0" width="3" height="12" rx="1" fill="currentColor"/></svg>
+<svg width="16" height="12" viewBox="0 0 16 12"><path d="M8 2.3c2.3 0 4.4.9 6 2.4l1.1-1.1A10 10 0 0 0 8 .7 10 10 0 0 0 .9 3.6L2 4.7a8.4 8.4 0 0 1 6-2.4Zm0 3.2c1.4 0 2.7.5 3.7 1.5l1.1-1.1A6.8 6.8 0 0 0 8 3.9a6.8 6.8 0 0 0-4.8 2l1.1 1.1c1-1 2.3-1.5 3.7-1.5Zm0 3.2c.6 0 1.2.2 1.6.7L8 11 6.4 9.4c.4-.5 1-.7 1.6-.7Z" fill="currentColor"/></svg>
+<svg width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" fill="none" stroke="currentColor" opacity=".4"/><rect x="2" y="2" width="20" height="9" rx="2" fill="currentColor"/><path d="M25 4.5v4c.8-.3 1.3-1.1 1.3-2s-.5-1.7-1.3-2Z" fill="currentColor" opacity=".45"/></svg></span></div>`;
+  }
+  return `<div class="w-punch"></div><div class="w-statusbar${onDark ? ' on-dark' : ''}"><span class="t-num">9:41</span><span class="sb-icons">
+<svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 20.5 1.5 8.4C4.3 5.9 8 4.5 12 4.5s7.7 1.4 10.5 3.9L12 20.5Z" fill="currentColor"/></svg>
+<svg width="16" height="16" viewBox="0 0 24 24"><path d="M21 21H3L21 3v18Z" fill="currentColor"/></svg>
+<svg width="16" height="16" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="19" rx="2" fill="currentColor"/><rect x="10" y="1.5" width="4" height="2" rx=".5" fill="currentColor"/></svg></span></div>`;
+}
+
+function topSpace(c) { return `<div class="w-top-${c.p}"></div>`; }
+function bottomSafe(c) { return `<div class="w-bottom-safe-${c.p}"></div>`; }
+const SAFE_BOTTOM = { ios: 34, android: 24 };
+
+function header(c, { back = true, right = '', title = '' } = {}) {
+  const b = back ? `<button class="w-iconbtn" aria-label="Back">${icon(c.p === 'ios' ? 'chevron-left' : 'arrow-left', c.p === 'ios' ? 28 : 24, 2.2)}</button>` : '<span></span>';
+  return `<div class="w-header">${b}${title ? `<div class="w-inline-title">${esc(title)}</div>` : ''}<div class="h-right">${right}</div></div>`;
+}
+
+function iconBtn(name, label, { filled = false, size = 22 } = {}) {
+  return `<button class="w-iconbtn${filled ? ' filled' : ''}" aria-label="${esc(label)}"><span>${icon(name, size, 2)}</span></button>`;
+}
+
+function btn(label, variant = 'ink', { size = '', block = true, iconName = '' } = {}) {
+  return `<button class="w-btn ${variant} ${size}${block ? ' block' : ''}">${iconName ? icon(iconName, 20, 2.2) : ''}${esc(label)}</button>`;
+}
+
+function row({ icon: ic, title, sub, trail = '', chev = false, sw, danger = false, ext = false, pressed = false } = {}) {
+  const t = [trail ? `<span>${trail}</span>` : '', sw !== undefined ? `<span class="w-switch${sw ? ' on' : ''}"></span>` : '', chev ? `<span class="r-chev">${icon('chevron-right', 18, 2)}</span>` : '', ext ? `<span class="r-chev">${icon('external-link', 17, 2)}</span>` : ''].join('');
+  return `<div class="w-row${danger ? ' danger' : ''}${pressed ? ' pressed' : ''}">${ic ? `<span class="r-icon">${icon(ic, 20, 2)}</span>` : ''}<div class="r-main"><div class="r-title">${title}</div>${sub ? `<div class="r-sub">${sub}</div>` : ''}</div>${t ? `<div class="r-trail">${t}</div>` : ''}</div>`;
+}
+
+function list(rows, { icons = false } = {}) { return `<div class="w-list${icons ? ' icons' : ''}">${rows.join('')}</div>`; }
+
+function chip(label, { sel = false, decide = false, idea = false } = {}) {
+  const lead = sel ? icon('check', 16, 2.6) : decide ? wisp({ size: 16, eyes: false, activity: .5 }) : '';
+  return `<span class="w-chip${sel ? ' sel' : ''}${decide ? ' decide' : ''}${idea ? ' idea' : ''}">${lead}${esc(label)}</span>`;
+}
+
+function field(content, { ph = '', focus = false, area = false, caret = false, send = false, sendOn = true } = {}) {
+  const body = content ? `<span>${content}${caret ? '<span class="caret"></span>' : ''}</span>` : `<span class="ph">${caret ? '<span class="caret" style="margin:0 2px 0 0"></span>' : ''}${esc(ph)}</span>`;
+  return `<div class="w-field${area ? ' area' : ''}${focus ? ' focus' : ''}${send ? ' send' : ''}">${body}${send ? `<span class="w-sendbtn${sendOn ? '' : ' off'}">${icon('arrow-up', 20, 2.4)}</span>` : ''}</div>`;
+}
+
+function keyboard(c, { sugg } = {}) {
+  const rows = [['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'], ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'], ['z', 'x', 'c', 'v', 'b', 'n', 'm']];
+  const k = (l, cls = '') => `<span class="k ${cls}">${l}</span>`;
+  const r1 = `<div class="k-row">${rows[0].map((l) => k(l)).join('')}</div>`;
+  const r2 = `<div class="k-row" style="padding:0 5%">${rows[1].map((l) => k(l)).join('')}</div>`;
+  const r3 = `<div class="k-row">${k(icon('arrow-up', 20, 2), 'alt wide')}${rows[2].map((l) => k(l)).join('')}${k(icon('x', 18, 2), 'alt wide')}</div>`;
+  const r4 = c.p === 'ios'
+    ? `<div class="k-row">${k('123', 'alt wide')}${k('', 'space')}${k('return', 'alt wide')}</div>`
+    : `<div class="k-row">${k('?123', 'alt wide')}${k(',', 'alt')}${k('', 'space')}${k('.', 'alt')}${k(icon('arrow-left', 18, 2), 'alt wide')}</div>`;
+  const s = sugg ? `<div class="k-sugg">${sugg.map((x) => `<span>${esc(x)}</span>`).join('')}</div>` : '';
+  const pad = c.p === 'ios' ? 46 : 30;
+  return `<div class="w-kbd">${s}${r1}${r2}${r3}${r4}<div style="height:${pad}px"></div></div>`;
+}
+const KBD_HEIGHT = { ios: 291, android: 268 };
+const KBD_HEIGHT_SUGG = { ios: 327, android: 304 };
+
+function statusLine(text, time, { stuck = false, wispSize = 0, pose = 'thinking' } = {}) {
+  const lead = wispSize ? wisp({ size: wispSize, pose, activity: .6 }) : `<span class="w-ember-dot"${stuck ? ' style="background:var(--w-text3);box-shadow:none"' : ''}></span>`;
+  return `<div class="w-status">${lead}<span>${text}</span>${time ? `<span class="t-num" style="margin-left:auto">${time}</span>` : ''}</div>`;
+}
+
+function steps(items) {
+  return `<div class="w-steps">${items.map(([label, state, time]) => {
+    const mark = state === 'done' ? icon('circle-check', 22, 2) : state === 'now' ? '<span class="w-ember-dot"></span>' : '';
+    return `<div class="w-step ${state}"><span class="s-ring">${mark}</span><span>${esc(label)}</span>${time ? `<span class="s-time">${time}</span>` : ''}</div>`;
+  }).join('')}</div>`;
+}
+
+function homebar() { return '<div class="w-homebar"></div>'; }
+
+// Wraps a screen body into a frame. opts.overlay is drawn above the screen (sheets, scrims, keyboards).
+function frame(c, body, { overlay = '', statusOnDark = false, tintClass = '' } = {}) {
+  const w = c.p === 'ios' ? 390 : 412, h = c.p === 'ios' ? 844 : 915;
+  return `<div class="phone ${tintClass}${statusOnDark ? ' on-dark' : ''}" data-platform="${c.p}" data-scheme="${c.s}" style="--pw:${w}px;--ph:${h}px">${body}${overlay}${statusBar(c, { onDark: statusOnDark })}${homebar()}</div>`;
+}
+
+// Whim mockups: the six springs from 01-direction.md §9.2, a small interruptible spring driver,
+// and the helpers the motion page uses (momentum projection, rubber band, CSS linear() sampling).
+
+const SPRINGS = {
+  instant: { response: 0.12, damping: 1.0, use: 'Press-in' },
+  snappy: { response: 0.28, damping: 1.0, use: 'Press-out, toggles, selection' },
+  smooth: { response: 0.40, damping: 1.0, use: 'Push, pop, sheets, steps' },
+  fling: { response: 0.35, damping: 0.80, use: 'Released drags, with velocity' },
+  morph: { response: 0.50, damping: 0.90, use: 'Tile to app, ghost to tile' },
+  spark: { response: 0.55, damping: 0.55, use: 'Rare celebrations' },
+};
+
+function springConsts(cfg) {
+  const w = (2 * Math.PI) / cfg.response;
+  return { k: w * w, c: 2 * cfg.damping * w };
+}
+
+let REDUCED = false;
+try { REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { /* no matchMedia */ }
+
+// A value that springs toward a target. Retargeting keeps position and velocity, so motion never jumps.
+class SpringValue {
+  constructor(value, onUpdate, { precision = 0.001 } = {}) {
+    this.x = value; this.v = 0; this.target = value; this.onUpdate = onUpdate; this.raf = 0;
+    this.cfg = SPRINGS.smooth; this.precision = precision; this.onRest = null;
+  }
+  to(target, cfg = SPRINGS.smooth, velocity) {
+    this.target = target; this.cfg = cfg;
+    if (velocity !== undefined) this.v = velocity;
+    if (!this.raf) { this.last = performance.now(); this.raf = requestAnimationFrame((t) => this.step(t)); }
+  }
+  set(x) { this.stop(); this.x = x; this.v = 0; this.target = x; this.onUpdate(x); }
+  stop() { if (this.raf) cancelAnimationFrame(this.raf); this.raf = 0; }
+  step(t) {
+    const dt = Math.min((t - this.last) / 1000, 1 / 20); this.last = t;
+    const { k, c } = springConsts(this.cfg);
+    const n = Math.max(1, Math.ceil(dt * 480)), h = dt / n;
+    for (let i = 0; i < n; i++) {
+      const a = -k * (this.x - this.target) - c * this.v;
+      this.v += a * h; this.x += this.v * h;
+    }
+    this.onUpdate(this.x);
+    if (Math.abs(this.x - this.target) < this.precision && Math.abs(this.v) < this.precision * 10) {
+      this.x = this.target; this.v = 0; this.onUpdate(this.x); this.raf = 0;
+      if (this.onRest) this.onRest();
+      return;
+    }
+    this.raf = requestAnimationFrame((tt) => this.step(tt));
+  }
+}
+
+// Apple's projection: where a flick of velocity v (px/s) comes to rest.
+function project(v, d = 0.998) { return ((v / 1000) * d) / (1 - d); }
+// Progressive resistance past a bound.
+function rubberband(over, dim, c = 0.55) { return (over * dim * c) / (dim + c * Math.abs(over)); }
+
+// Velocity tracker over the last ~80 ms of pointer samples.
+class VelocityTracker {
+  constructor() { this.s = []; }
+  add(x, t = performance.now()) { this.s.push([x, t]); while (this.s.length > 2 && t - this.s[0][1] > 80) this.s.shift(); }
+  velocity() { if (this.s.length < 2) return 0; const [x0, t0] = this.s[0], [x1, t1] = this.s[this.s.length - 1]; return t1 > t0 ? ((x1 - x0) / (t1 - t0)) * 1000 : 0; }
+  reset() { this.s = []; }
+}
+
+// Step response sampled at 60 Hz until it settles: the curve a WAAPI `linear()` easing would carry.
+function sampleSpring(cfg, { max = 2.5 } = {}) {
+  const { k, c } = springConsts(cfg);
+  let x = 0, v = 0, t = 0; const pts = [0]; const h = 1 / 960; let settle = 0;
+  while (t < max) {
+    for (let i = 0; i < 16; i++) { const a = -k * (x - 1) - c * v; v += a * h; x += v * h; }
+    t += 1 / 60; pts.push(x);
+    if (Math.abs(x - 1) < 0.001 && Math.abs(v) < 0.01) { settle = t; break; }
+  }
+  return { pts, duration: settle || max };
+}
+function linearEasing(cfg) {
+  const { pts, duration } = sampleSpring(cfg);
+  const step = Math.max(1, Math.floor(pts.length / 40));
+  const kept = pts.filter((_, i) => i % step === 0 || i === pts.length - 1);
+  return { css: `linear(${kept.map((p) => +p.toFixed(3)).join(', ')})`, ms: Math.round(duration * 1000) };
+}
+
+// Whim mockups: every screen and state. Each entry renders one frame for c = { p, s }.
+
+const APPS = {
+  pour: { name: 'Pour Timer', tint: 'cocoa', icon: 'timer' },
+  water: { name: 'Water Counter', tint: 'sky', icon: 'glass-water' },
+  tip: { name: 'Tip Splitter', tint: 'green', icon: 'receipt' },
+  plant: { name: 'Plant Care', tint: 'lime', icon: 'sprout' },
+  dice: { name: 'Dice Night', tint: 'red', icon: 'dice-5' },
+  dough: { name: 'Sourdough', tint: 'yellow', icon: 'wheat' },
+  read: { name: 'Reading List', tint: 'indigo', icon: 'book-open' },
+  focus: { name: 'Focus', tint: 'violet', icon: 'hourglass' },
+  budget: { name: 'Budget Check', tint: 'teal', icon: 'wallet' },
+  coin: { name: 'Coin Flip', tint: 'graphite', icon: 'coins' },
+  habit: { name: 'Habit Streaks', tint: 'pink', icon: 'calendar-check' },
+  gallery: { name: 'Style Gallery', tint: 'grape', icon: 'palette' },
+};
+const HOME_SET = ['pour', 'water', 'tip', 'plant', 'dice', 'dough', 'read', 'focus', 'budget', 'coin', 'habit', 'gallery'];
+
+const G = (c) => ({
+  W: c.p === 'ios' ? 390 : 412,
+  H: c.p === 'ios' ? 844 : 915,
+  status: c.p === 'ios' ? 54 : 40,
+  safe: c.p === 'ios' ? 34 : 24,
+  tile: c.p === 'ios' ? 64 : 68,
+});
+
+// ── Home pieces ─────────────────────────────────────────────────────────────
+function homeGrid(c, cells) { return `<div class="w-grid" style="--tile:${G(c).tile}px">${cells.join('')}</div>`; }
+
+function homeBody(c, cells, { notice = '', composer = true } = {}) {
+  const g = G(c);
+  return `<div class="w-screen">${topSpace(c)}${header(c, { back: false, right: iconBtn('settings', 'Settings', { size: 24 }) })}
+<div class="w-titleblock"><div class="t-large">Your apps</div></div>
+${notice ? `<div class="w-pad" style="margin-top:14px">${notice}</div>` : ''}
+<div style="height:22px"></div>${homeGrid(c, cells)}
+${composer ? `<div class="w-edgefade bottom" style="bottom:${g.safe}px;height:80px"></div><div class="w-composer" style="bottom:${g.safe + 12}px">${wisp({ size: 22, eyes: false, activity: .5 })}<span>Make an app…</span></div>` : ''}</div>`;
+}
+
+const readyCells = (c, keys) => keys.map((k) => tile(APPS[k], { size: G(c).tile }));
+
+// Position of a home grid cell, for overlays (context menu).
+function cellRect(c, index) {
+  const g = G(c), colW = (g.W - 40) / 4, row = Math.floor(index / 4), col = index % 4;
+  const top = g.status + 44 + 44 + 22 + row * (g.tile + 22 + 20);
+  const cx = 20 + col * colW + colW / 2;
+  return { cx, top, left: cx - g.tile / 2 };
+}
+
+// ── In-app pieces (what the SDK draws) ──────────────────────────────────────
+function appFrame(c, app, inner, { orb = true, orbState = '', overlay = '', back = false, title = '', action = '' } = {}) {
+  const g = G(c);
+  const orbHtml = orb ? `<div class="w-orb" style="bottom:${g.safe + 16}px">${orbState === 'glow' ? '<span class="ring" style="position:absolute;inset:-4px;border-radius:50%;box-shadow:0 0 0 2px var(--w-glow-mid),0 0 16px 3px color-mix(in srgb,var(--w-glow-mid) 60%,transparent)"></span>' : ''}${wisp({ size: 22, eyes: false, activity: orbState === 'glow' ? 1 : .35 })}${orbState === 'dot' ? '<span class="dot"></span>' : ''}</div>` : '';
+  const head = title ? `${header(c, { back, right: action })}<div class="s-header"><div class="s-title">${esc(title)}</div></div>` : '';
+  const body = `<div class="w-screen s-app tint-${app.tint}">${topSpace(c)}${head}<div class="w-scroll" style="padding:16px 20px 0">${inner}</div>${orbHtml}</div>`;
+  return frame(c, body, { overlay });
+}
+
+const sCard = (inner, style = '') => `<div class="s-card" style="${style}">${inner}</div>`;
+const sBtn = (label, v = '', ic = '') => `<button class="s-btn ${v}">${ic ? icon(ic, 20, 2.2) : ''}${esc(label)}</button>`;
+const sItem = (title, sub, trail, ic) => `<div class="s-item">${ic ? `<span style="color:var(--w-text2)">${icon(ic, 20, 2)}</span>` : ''}<div class="i-main"><div>${title}</div>${sub ? `<div class="i-sub">${sub}</div>` : ''}</div>${trail ? `<span class="i-trail">${trail}</span>` : ''}</div>`;
+
+function ring(value, size, label, sub, stroke = 10) {
+  const r = (size - stroke) / 2, C = 2 * Math.PI * r;
+  return `<div style="position:relative;width:${size}px;height:${size}px;margin:0 auto"><svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="transform:rotate(-90deg)"><circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" style="stroke:var(--w-fill-strong)" stroke-width="${stroke}"/><circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" style="stroke:var(--a-fill)" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C * (1 - value)).toFixed(1)}"/></svg><div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center"><div class="t-display">${label}</div>${sub ? `<div class="t-callout t-sec">${sub}</div>` : ''}</div></div>`;
+}
+
+function timerApp(c) {
+  return `<div class="s-stack" style="gap:20px">
+<div class="s-seg"><span class="on">V60</span><span>Chemex</span><span>AeroPress</span></div>
+${sCard(`${ring(.38, 208, '2:30', 'Bloom')}<div style="display:flex;justify-content:center;margin-top:14px"><span class="s-badge">Step 2 of 4</span></div>`)}
+<div class="s-row">${sBtn('Pause', '', 'pause').replace('s-btn', 's-btn" style="flex:1')}${sBtn('Reset', 'secondary').replace('s-btn secondary', 's-btn secondary" style="flex:1')}</div>
+<div class="s-list">${sItem('Bloom', '50 g of water', '0:30')}${sItem('First pour', 'Up to 150 g', '1:00')}${sItem('Second pour', 'Up to 250 g', '1:30')}</div></div>`;
+}
+
+function waterApp(c) {
+  return `<div class="s-stack" style="gap:16px">
+${sCard(`${ring(5 / 8, 168, '5', 'of 8 glasses', 12)}`)}
+${sCard(`<div class="s-stepper"><span>Glasses today</span><span class="grp"><button>${icon('minus', 20, 2.2)}</button><span class="val">5</span><button>${icon('plus', 20, 2.2)}</button></span></div>`, 'padding:14px 16px 14px 20px')}
+<div class="t-footnote t-sec t-semibold" style="margin:6px 0 -6px 4px">Today</div>
+<div class="s-list">${sItem('Glass of water', '', '8:10', 'glass-water')}${sItem('Glass of water', '', '10:45', 'glass-water')}${sItem('Glass of water', '', '13:20', 'glass-water')}</div></div>`;
+}
+
+// ── Making-flow pieces ──────────────────────────────────────────────────────
+function flowSheet(c, inner, { actions = '', head = '' } = {}) {
+  const g = G(c);
+  return `<div class="w-scrim"></div><div class="w-sheet large"><div class="w-grabber"></div>${head}<div class="w-sheet-body">${inner}</div>${actions ? `<div class="w-actions">${actions}</div>` : ''}<div style="height:${g.safe + 12}px;flex:none"></div></div>`;
+}
+const closeBtn = () => `<button class="w-iconbtn filled" aria-label="Close"><span>${icon('x', 18, 2.4)}</span></button>`;
+const sheetHead = (c, { back = false, right = '' } = {}) => `<div class="w-sheet-head" style="padding-left:${back ? 8 : 20}px">${back ? `<button class="w-iconbtn" aria-label="Back">${icon(c.p === 'ios' ? 'chevron-left' : 'arrow-left', c.p === 'ios' ? 28 : 24, 2.2)}</button>` : '<span></span>'}<span style="display:flex;align-items:center">${right}${closeBtn()}</span></div>`;
+
+function homeUnder(c, keys = HOME_SET) { return homeBody(c, readyCells(c, keys)); }
+
+function question(q, opts, hint = '') {
+  return `<div class="w-q"><div class="q-text">${esc(q)}</div>${hint ? `<div class="q-hint">${esc(hint)}</div>` : ''}<div class="w-chips">${opts.join('')}</div></div>`;
+}
+function planRow(label, text, { edited = false } = {}) {
+  return `<div class="w-planrow"><div class="p-label"><span>${esc(label)}</span>${edited ? '<span class="w-badge">Edited</span>' : `<span class="t-ter">${icon('pencil', 15, 2)}</span>`}</div><div class="p-text">${text}</div></div>`;
+}
+const youSaid = (t) => `<div class="t-body t-quote" style="margin-top:6px">“${esc(t)}”</div>`;
+
+const POUR_QUESTIONS = (answered) => [
+  question('Which brewer do you use?', [chip('V60', { sel: answered }), chip('Chemex'), chip('AeroPress'), chip('I’ll decide', { decide: true, sel: !answered })]),
+  question('Anything when a step ends?', [chip('A chime'), chip('Vibrate only'), chip('I’ll decide', { decide: true, sel: true })]),
+];
+const POUR_PLAN = [
+  planRow('What it is', 'A step-by-step timer for a pour-over, with the water amount for each pour.'),
+  planRow('Main screen', 'A big countdown for the current step, the next pour underneath, and Start and Reset.'),
+  planRow('Steps', 'Bloom 30 s with 50 g, then three pours up to 250 g, about 3 minutes in all.'),
+  planRow('What it remembers', 'Your brewer and your last recipe.'),
+];
+
+// ── Screens ─────────────────────────────────────────────────────────────────
+const SCREENS = [
+  // Home
+  { id: 'home', group: 'Your apps', title: 'Your apps', note: 'Four-column glyph tiles, a direct title, the composer as the way in. Brand lives in the ember, not a wordmark.',
+    render: (c) => frame(c, homeUnder(c)) },
+  { id: 'home-states', group: 'Your apps', title: 'Making, failed, changing', note: 'An app being made is Whim’s ember in its tile. A failed attempt keeps Whim’s mark with the light out. A change in flight rings the app’s own tile.',
+    render: (c) => {
+      const cells = [tile({ name: 'Pomodoro', tint: 'sky' }, { size: G(c).tile, state: 'making' }), tile({ name: 'Recipe scaler', tint: 'teal' }, { size: G(c).tile, state: 'failed' }), tile(APPS.pour, { size: G(c).tile, state: 'changing' }), tile({ ...APPS.water, tint: 'blue' }, { size: G(c).tile, second: 'Copy' }), ...readyCells(c, ['water', 'tip', 'plant', 'dice', 'dough', 'read', 'focus', 'budget'])];
+      return frame(c, homeBody(c, cells));
+    } },
+  { id: 'home-menu', group: 'Your apps', title: 'Tile menu', note: 'Long-press lifts the tile and grows a menu from it. Six rows instead of eight; Delete stands apart.',
+    render: (c) => {
+      const g = G(c), r = cellRect(c, 1);
+      const lifted = `<div style="position:absolute;z-index:22;left:${r.left}px;top:${r.top}px;transform:scale(1.06);transform-origin:center;filter:drop-shadow(0 10px 18px rgba(0,0,0,.22))">${tile(APPS.water, { size: g.tile, label: false })}</div>`;
+      const mLeft = Math.min(Math.max(r.cx - 124, 16), g.W - 16 - 248), mTop = r.top + g.tile + 14;
+      const menu = `<div class="w-menu" style="left:${mLeft}px;top:${mTop}px"><div class="m-row">${icon('play', 20, 2)}Open</div><div class="m-row">${icon('square-pen', 20, 2)}<span class="t-ember">Change it</span></div><div class="m-row">${icon('history', 20, 2)}History</div><div class="m-row">${icon('copy', 20, 2)}Make a copy</div><div class="m-row">${icon('share', 20, 2)}Share link</div><div class="m-sep"></div><div class="m-row danger">${icon('trash-2', 20, 2)}Delete</div></div>`;
+      return frame(c, homeUnder(c), { overlay: `<div class="w-scrim"></div>${lifted}${menu}` });
+    } },
+  { id: 'delete-confirm', group: 'Your apps', title: 'Delete', note: 'The app’s own confirm sheet replaces the system alert. The safe choice is the big button.',
+    render: (c) => frame(c, homeUnder(c), { overlay: `<div class="w-scrim"></div><div class="w-sheet"><div class="w-grabber"></div><div style="padding:20px 20px 0"><div class="t-title2">Delete Water Counter?</div><div class="t-body t-sec" style="margin-top:8px">It and everything saved in it will be removed from this phone. This can’t be undone.</div></div><div class="w-actions" style="padding-top:24px">${btn('Keep it', 'ink')}${btn('Delete', 'plain-danger')}</div><div style="height:${G(c).safe + 8}px"></div></div>` }) },
+  { id: 'home-empty', group: 'Your apps', title: 'No apps yet', note: 'The only time the wisp sits on the home screen: when there is nothing else to look at.',
+    render: (c) => frame(c, `<div class="w-screen">${topSpace(c)}${header(c, { back: false, right: iconBtn('settings', 'Settings', { size: 24 }) })}<div class="w-titleblock"><div class="t-large">Your apps</div></div>
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 32px 120px;text-align:center">${wisp({ size: 104, pose: 'listening' })}<div class="t-title2" style="margin-top:18px">Make your first app</div><div class="t-body t-sec" style="margin-top:8px">Say what you need in plain words. A timer, a tracker, a game for tonight.</div>
+<div class="w-chips" style="justify-content:center;margin-top:22px">${chip('A timer for my pour-over', { idea: true })}${chip('How often I water the plants', { idea: true })}${chip('Dice for game night', { idea: true })}</div></div>
+<div class="w-composer" style="bottom:${G(c).safe + 12}px">${wisp({ size: 22, eyes: false, activity: .5 })}<span>Make an app…</span></div></div>`) },
+
+  // Making
+  { id: 'consent', group: 'Making an app', title: 'First run', note: 'One sheet instead of Terms and Consent screens. Two separate acts kept on purpose: tick the terms, then agree to the data use.',
+    render: (c) => frame(c, homeUnder(c), { overlay: flowSheet(c, `<div class="w-pad"><div class="t-title1">Before Whim makes apps for you</div><div class="t-body t-sec" style="margin-top:10px">To make an app, Whim sends what you ask for to our server, and AI companies that work for us write the code.</div></div>
+<div class="w-group" style="margin-top:18px">${list([row({ icon: 'upload', title: 'What’s sent', sub: 'Your description, answers and plan. When you change an app, its code and data layout, never your data.' }), row({ icon: 'shield-check', title: 'What stays on your phone', sub: 'Everything you save in your apps.' }), row({ icon: 'eye', title: 'What we never do', sub: 'Ads, selling your data, tracking you.' })], { icons: true })}</div>
+<div class="w-group" style="margin-top:12px">${list([row({ title: 'Privacy policy', ext: true }), row({ title: 'Full details', chev: true })])}</div><div style="height:12px"></div>
+`,
+      { head: sheetHead(c, { right: '<button class="w-textbtn" style="font-weight:500">Français</button>' }), actions: `<div class="w-row" style="padding:4px 2px 12px;min-height:0"><span class="s-check on" style="--a-fill:var(--w-ink);--a-on:var(--w-on-ink)">${icon('check', 16, 3)}</span><div class="r-main"><div class="r-title">I accept the <u>Terms of use</u></div></div></div>` + btn('Agree and continue', 'ink') + btn('Not now', 'plain') }) }) },
+  { id: 'describe', group: 'Making an app', title: 'Describe', note: 'The composer grows into this sheet. The person types at 17pt; “I’ll ask” replaces “Whim will ask”.',
+    render: (c) => {
+      const g = G(c), kb = KBD_HEIGHT_SUGG[c.p];
+      return frame(c, homeUnder(c), { overlay: `<div class="w-scrim"></div><div class="w-sheet large" style="bottom:${kb}px;border-radius:28px 28px 0 0"><div class="w-grabber"></div>${sheetHead(c)}<div class="w-sheet-body"><div class="w-pad"><div class="t-title1">What should it do?</div><div style="margin-top:16px">${field('A timer for my pour-over recipe', { area: true, focus: true, caret: true })}</div><div class="w-helper">Plain words are enough. I’ll ask if anything’s unclear.</div></div></div><div class="w-actions" style="padding-bottom:12px">${btn('Continue', 'ember')}</div></div>${keyboard(c, { sugg: ['recipe', 'recipes', 'routine'] })}` });
+    } },
+  { id: 'describe-change', group: 'Making an app', title: 'Describe a change', note: 'Change mode names the app with its own tile, so editing never reads like making something new.',
+    render: (c) => frame(c, homeUnder(c), { overlay: flowSheet(c, `<div class="w-pad"><div style="display:flex;align-items:center;gap:8px">${tile(APPS.water, { size: 22, label: false })}<span class="t-footnote t-semibold t-sec">Changing Water Counter</span></div><div class="t-title1" style="margin-top:8px">What should change?</div><div style="margin-top:16px">${field('Add a weekly chart of how much I drank', { area: true })}</div><div class="w-helper">Plain words are enough. I’ll ask if anything’s unclear.</div></div>`,
+      { head: sheetHead(c), actions: btn('Continue', 'ember') }) }) },
+  { id: 'plan-thinking', group: 'Making an app', title: 'Plan, arriving', note: 'Questions land first (about 1.8 s) so answering starts while the plan is still being written.',
+    render: (c) => frame(c, homeUnder(c), { overlay: flowSheet(c, `<div class="w-pad"><div class="t-title1">Here’s the plan</div>${youSaid('A timer for my pour-over recipe')}<div style="margin-top:14px">${statusLine('Writing the plan…', '0:02', { wispSize: 28 })}</div></div>
+<div class="w-sec-h">A few choices</div><div class="w-group">${list(POUR_QUESTIONS(false))}</div>
+<div class="w-sec-h">What I’ll make</div><div class="w-group"><div class="w-list" style="padding:16px">${['86%', '64%', '92%'].map((w, i) => `<div class="w-skel" style="height:12px;width:28%;margin-top:${i ? 22 : 0}px"></div><div class="w-skel" style="height:16px;width:${w};margin-top:8px"></div>`).join('')}</div></div>`,
+      { head: sheetHead(c, { back: true }) }) }) },
+  { id: 'plan', group: 'Making an app', title: 'Plan', note: 'Questions and plan on one page. “I’ll decide” is chosen by default, so making without touching a chip is the normal path.',
+    render: (c) => frame(c, homeUnder(c), { overlay: flowSheet(c, `<div class="w-pad"><div class="t-title1">Here’s the plan</div>${youSaid('A timer for my pour-over recipe')}</div>
+<div class="w-sec-h">A few choices</div><div class="w-group">${list(POUR_QUESTIONS(true))}</div>
+<div class="w-sec-h">What I’ll make <span class="t-ter" style="font-weight:400">· tap a line to change it</span></div><div class="w-group">${list(POUR_PLAN)}</div>`,
+      { head: sheetHead(c, { back: true }), actions: btn('Make it', 'ember') }) }) },
+  { id: 'plan-edit', group: 'Making an app', title: 'Editing a line', note: 'A line edits in place. The person’s words show as typed and the line says “Edited”.',
+    render: (c) => {
+      const kb = KBD_HEIGHT[c.p];
+      const editing = `<div class="w-planrow"><div class="p-label"><span>Steps</span></div><div style="margin-top:8px">${field('Bloom 45 s with 60 g, then three pours up to 300 g', { area: true, focus: true, caret: true })}</div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">${btn('Cancel', 'plain', { size: 'sm', block: false })}${btn('Save', 'ink', { size: 'sm', block: false })}</div></div>`;
+      return frame(c, homeUnder(c), { overlay: `<div class="w-scrim"></div><div class="w-sheet large" style="bottom:${kb}px"><div class="w-grabber"></div>${sheetHead(c, { back: true })}<div class="w-sheet-body"><div class="w-sec-h" style="margin-top:4px">What I’ll make</div><div class="w-group">${list([POUR_PLAN[0], editing])}</div></div></div>${keyboard(c)}` });
+    } },
+  { id: 'plan-limit', group: 'Making an app', title: 'Can’t make as asked', note: 'Say why, offer what can be made, and let the person choose. Plain words: apps, not mini-apps.',
+    render: (c) => frame(c, homeUnder(c), { overlay: flowSheet(c, `<div class="w-pad"><div class="t-title1">I can’t make this as asked</div>${youSaid('Show me today’s weather')}<div class="t-body t-sec" style="margin-top:14px">Apps here can’t reach the internet, so this one couldn’t fetch a forecast.</div>
+<div class="w-list" style="padding:16px;margin-top:20px"><div class="t-footnote t-semibold t-sec">I could make this instead</div><div class="t-body" style="margin-top:4px">A weather diary where you note what each day was like, with a monthly view.</div></div></div>`,
+      { head: sheetHead(c, { back: true }), actions: btn('Make that instead', 'ember') + btn('Change my idea', 'plain') }) }) },
+  { id: 'making', group: 'Making an app', title: 'Making', note: 'The wisp’s glow follows the stream. Steps say where the work is; time is honest and measured.',
+    render: (c) => frame(c, homeUnder(c), { overlay: flowSheet(c, `<div style="display:flex;flex-direction:column;align-items:center;padding:12px 20px 0;text-align:center">${wisp({ size: 128, pose: 'making', activity: .95 })}<div class="t-title1" style="margin-top:14px">Making Pour Timer</div><div class="t-callout t-sec" style="margin-top:6px">Usually about a minute. You can leave; it keeps going.</div></div>
+<div class="w-pad" style="margin-top:28px">${steps([['Reading your plan', 'done', '0:03'], ['Writing the app', 'now', '0:41'], ['Checking it runs safely', 'todo'], ['Putting it on your home screen', 'todo']])}</div>`,
+      { head: sheetHead(c), actions: btn('Back to your apps', 'secondary') + btn('Details', 'plain') }) }) },
+  { id: 'making-stuck', group: 'Making an app', title: 'Stuck', note: 'When nothing arrives for 40 s the light dims and the line says so. Movement would be the lie.',
+    render: (c) => frame(c, homeUnder(c), { overlay: flowSheet(c, `<div style="display:flex;flex-direction:column;align-items:center;padding:12px 20px 0;text-align:center">${wisp({ size: 128, pose: 'stuck', activity: .2 })}<div class="t-title1" style="margin-top:14px">Making Pour Timer</div><div class="t-callout t-sec" style="margin-top:6px">No word from the server for 40 s. Still waiting.</div></div>
+<div class="w-pad" style="margin-top:28px">${steps([['Reading your plan', 'done', '0:03'], ['Writing the app', 'now', '2:12'], ['Checking it runs safely', 'todo'], ['Putting it on your home screen', 'todo']])}</div>`,
+      { head: sheetHead(c), actions: btn('Back to your apps', 'secondary') + btn('Details', 'plain') }) }) },
+  { id: 'making-queued', group: 'Making an app', title: 'Waiting in line', note: 'Asleep, not stuck: the wisp waits with its eyes closed. Stopping is offered while nothing has started.',
+    render: (c) => frame(c, homeUnder(c), { overlay: flowSheet(c, `<div style="display:flex;flex-direction:column;align-items:center;padding:12px 20px 0;text-align:center">${wisp({ size: 128, pose: 'asleep', activity: .3 })}<div class="t-title1" style="margin-top:14px">Waiting for a free spot</div><div class="t-callout t-sec" style="margin-top:6px">You’re next. It starts on its own.</div></div>
+<div class="w-pad" style="margin-top:28px">${steps([['Reading your plan', 'todo'], ['Writing the app', 'todo'], ['Checking it runs safely', 'todo'], ['Putting it on your home screen', 'todo']])}</div>`,
+      { head: sheetHead(c), actions: btn('Back to your apps', 'secondary') + btn('Stop making', 'plain-danger') }) }) },
+  { id: 'ready', group: 'Making an app', title: 'Ready', note: 'The wisp flares and hands over the tile. “Open” wears the app’s own tint: you are about to enter its world.',
+    render: (c) => frame(c, homeUnder(c), { overlay: flowSheet(c, `<div style="display:flex;flex-direction:column;align-items:center;padding:44px 20px 0;text-align:center"><div style="position:relative">${tile(APPS.pour, { size: 112, label: false })}<span style="position:absolute;right:-50px;top:-46px">${wisp({ size: 76, pose: 'done', activity: 1 })}</span></div><div class="t-title1" style="margin-top:28px">Pour Timer is ready</div><div class="t-callout t-sec" style="margin-top:6px">It’s on your home screen.</div></div>`,
+      { head: sheetHead(c), actions: `<div class="tint-cocoa">${btn('Open Pour Timer', 'tint')}</div>` + btn('Done', 'plain') }) }) },
+  { id: 'failure', group: 'Making an app', title: 'Didn’t work', note: 'What happened, what’s safe, one next step. No red title, no three stacked buttons; Discard sits in the header with Undo after.',
+    render: (c) => frame(c, homeUnder(c), { overlay: flowSheet(c, `<div style="display:flex;flex-direction:column;align-items:center;padding:12px 24px 0;text-align:center">${wisp({ size: 96, pose: 'failed', activity: .2 })}<div class="t-title1" style="margin-top:14px">Couldn’t make this</div><div class="t-body t-sec" style="margin-top:8px">I tried 3 times and couldn’t get it to run. Describing it differently often helps.</div></div>
+<div class="w-group" style="margin-top:24px">${list([row({ icon: 'circle-check', title: 'Your other apps are untouched' }), row({ icon: 'history', title: 'What happened', chev: true })], { icons: true })}</div>`,
+      { head: sheetHead(c, { right: '<button class="w-textbtn danger">Discard</button>' }), actions: btn('Change the description', 'ink') + btn('Try again as it is', 'plain') }) }) },
+
+  // Using apps
+  { id: 'app-opening', group: 'Using an app', title: 'Opening', note: 'The app grows out of its tile in its own tint and shows its glyph until it paints. “Opening…” only appears after 1.5 s.',
+    render: (c) => frame(c, `<div class="w-screen tint-cocoa" style="background:var(--t-fill);align-items:center;justify-content:center;color:var(--t-on)">${icon('timer', 72, 1.6)}</div>`, { statusOnDark: true }) },
+  { id: 'app-timer', group: 'Using an app', title: 'An app: Pour Timer', note: 'Inside an app everything is the app’s: its tint on the primary button, segments and ring. Whim is the small ember in the corner.',
+    render: (c) => appFrame(c, APPS.pour, timerApp(c), { title: 'Pour Timer', action: iconBtn('settings', 'Recipe settings', { size: 22 }) }) },
+  { id: 'app-water', group: 'Using an app', title: 'An app: Water Counter', note: 'New SDK pieces at work: a ring with a number, a Stepper, a List with icons. The generator asked for none of the motion.',
+    render: (c) => appFrame(c, APPS.water, waterApp(c), { title: 'Today', action: iconBtn('chart-column', 'This week', { size: 22 }) }) },
+  { id: 'whim-sheet', group: 'Using an app', title: 'Whim sheet', note: 'Tapping the ember opens this. Changing the app starts right here, and the app stays open.',
+    render: (c) => {
+      const g = G(c);
+      const sheet = `<div class="w-scrim"></div><div class="w-sheet"><div class="w-grabber"></div><div class="w-sheet-head"><span style="display:flex;align-items:center;gap:12px">${tile(APPS.pour, { size: 40, label: false })}<span><span class="t-headline" style="display:block">Pour Timer</span><span class="t-footnote t-sec t-num">Version 3 · changed 2 days ago</span></span></span>${closeBtn()}</div>
+<div class="w-pad" style="margin-top:14px">${field('', { ph: 'What should change?', send: true, sendOn: false })}</div>
+<div class="w-group" style="margin-top:14px">${list([row({ icon: 'history', title: 'History', chev: true }), row({ icon: 'flag', title: 'Report a problem', chev: true }), row({ icon: 'layout-grid', title: 'Your apps' })], { icons: true })}</div><div style="height:${g.safe + 12}px"></div></div>`;
+      return appFrame(c, APPS.pour, timerApp(c), { title: 'Pour Timer', action: iconBtn('settings', 'Recipe settings', { size: 22 }), overlay: sheet });
+    } },
+  { id: 'whim-plan', group: 'Using an app', title: 'Plan for a change', note: 'Typed into the Whim sheet, the change gets its plan in the same sheet, with its own questions. Make the change, and the sheet folds back into the orb.',
+    render: (c) => appFrame(c, APPS.pour, timerApp(c), { title: 'Pour Timer', action: iconBtn('settings', 'Recipe settings', { size: 22 }), overlay: flowSheet(c, `<div class="w-pad"><div style="display:flex;align-items:center;gap:8px">${tile(APPS.pour, { size: 22, label: false })}<span class="t-footnote t-semibold t-sec">Changing Pour Timer</span></div><div class="t-title1" style="margin-top:8px">Here’s the change</div>${youSaid('Add a chime when each step ends')}</div>
+<div class="w-sec-h">A few choices</div><div class="w-group">${list([question('Which sound?', [chip('A chime'), chip('A soft bell'), chip('I’ll decide', { decide: true, sel: true })])])}</div>
+<div class="w-sec-h">What I’ll change</div><div class="w-group">${list([planRow('Sound', 'A short chime when a step ends, and a longer one when the brew is done.'), planRow('Settings', 'A switch to turn the sound off.')])}</div>`,
+      { head: sheetHead(c, { back: true }), actions: btn('Make the change', 'ember') }) }) },
+  { id: 'app-changing', group: 'Using an app', title: 'Changing while you use it', note: 'The ember glows while the change is made; the app keeps working. When it lands, a toast offers Reload. Nothing reloads by itself.',
+    render: (c) => {
+      const g = G(c);
+      const toast = `<div class="w-toast" style="bottom:${g.safe + 72}px"><span>Pour Timer changed</span><button class="ta ember">Reload</button></div>`;
+      return appFrame(c, APPS.pour, timerApp(c), { title: 'Pour Timer', action: iconBtn('settings', 'Recipe settings', { size: 22 }), orbState: 'glow', overlay: toast });
+    } },
+  { id: 'app-error', group: 'Using an app', title: 'An app crashed', note: 'A crash becomes a change request: “Ask Whim to fix it” opens the change field, prefilled.',
+    render: (c) => frame(c, `<div class="w-screen">${topSpace(c)}<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 32px;text-align:center"><div style="width:72px;height:72px;border-radius:36px;background:var(--w-fill);display:flex;align-items:center;justify-content:center;color:var(--w-text2)">${icon('circle-alert', 32, 2)}</div><div class="t-title2" style="margin-top:18px">Pour Timer ran into a problem</div><div class="t-body t-sec" style="margin-top:8px">It stopped and can’t carry on right now. Your saved data is safe.</div></div><div class="w-actions">${btn('Reload', 'ink')}${btn('Ask Whim to fix it', 'plain-ember')}</div>${bottomSafe(c)}<div style="height:12px"></div></div>`) },
+
+  // History and settings
+  { id: 'history', group: 'History and settings', title: 'History', note: 'Your words lead each version, Whim’s summary follows. Kinds are neutral; only “Current” is marked.',
+    render: (c) => frame(c, historyBody(c, { expanded: 1 })) },
+  { id: 'history-undo', group: 'History and settings', title: 'Gone back, with Undo', note: 'Going back happens at once; Undo is the safety net instead of a confirm sheet.',
+    render: (c) => frame(c, historyBody(c, { currentIndex: 1 }), { overlay: `<div class="w-toast" style="bottom:${G(c).safe + 16}px"><span>Back on version 3</span><button class="ta">Undo</button></div>` }) },
+  { id: 'settings', group: 'History and settings', title: 'Settings', note: 'Common things first, in one grouped list. Highlighting is gone; the phone ID moved under Advanced.',
+    render: (c) => frame(c, `<div class="w-screen">${topSpace(c)}${header(c)}<div class="w-titleblock"><div class="t-large">Settings</div></div>
+<div class="w-group" style="margin-top:20px">${list([row({ icon: 'message-square', title: 'AI features', trail: 'On', chev: true })], { icons: true })}</div>
+<div class="w-sec-h">About</div><div class="w-group">${list([row({ title: 'Privacy policy', ext: true }), row({ title: 'Terms of use', ext: true }), row({ title: 'Support', ext: true }), row({ title: 'Version', trail: '<span class="t-num">1.0 (42)</span>' })])}</div>
+<div class="w-group" style="margin-top:24px">${list([row({ icon: 'wrench', title: 'Advanced', chev: true })], { icons: true })}</div></div>`) },
+  { id: 'settings-advanced', group: 'History and settings', title: 'Advanced', note: 'Diagnostics one level down, as the owner asked: error details, this phone’s ID, and the server.',
+    render: (c) => frame(c, `<div class="w-screen">${topSpace(c)}${header(c, { title: '' })}<div class="w-titleblock"><div class="t-title1">Advanced</div></div>
+<div class="w-group" style="margin-top:20px">${list([row({ title: 'Send error details', sw: true })])}</div><div class="w-sec-f">When something goes wrong, Whim sends technical details so we can fix it. Never what you typed or saved.</div>
+<div class="w-sec-h">This phone</div><div class="w-group">${list([row({ title: 'Phone ID', sub: '<span class="t-num">ec815211-2b6c-4ffb-94a1…</span>', trail: icon('copy', 18, 2) }), row({ title: '<span style="font-weight:600">Make a new ID</span>' })])}</div><div class="w-sec-f">Include the ID if you ask us about your data.</div>
+<div class="w-sec-h">Server</div><div class="w-group">${list([row({ title: 'Whim’s server', trail: `<span style="color:var(--w-text)">${icon('check', 20, 2.4)}</span>` }), row({ title: 'Your own server', chev: true })])}</div></div>`) },
+  { id: 'report', group: 'History and settings', title: 'Report a problem', note: 'One chip style, the code preview tucked behind “What gets sent”.',
+    render: (c) => appFrame(c, APPS.pour, timerApp(c), { title: 'Pour Timer', action: iconBtn('settings', 'Recipe settings', { size: 22 }), overlay: flowSheet(c, `<div class="w-pad"><div class="t-title2">Report a problem</div><div class="w-label" style="margin-top:18px">What went wrong?</div><div class="w-chips">${chip('Doesn’t work', { sel: true })}${chip('Wrong result')}${chip('Hard to use')}${chip('Unsafe')}${chip('Offensive')}${chip('Something else')}</div><div style="margin-top:16px">${field('', { ph: 'Add a note (optional)', area: true })}</div></div>
+<div class="w-group" style="margin-top:16px">${list([row({ title: 'Include what I asked for', sw: true }), row({ title: 'What gets sent', trail: icon('chevron-down', 18, 2) })])}</div><div class="w-sec-f">This phone’s Whim ID goes with your report, to AnyCognition, the company that makes Whim.</div>`,
+      { head: sheetHead(c), actions: btn('Send report', 'ink') + btn('Cancel', 'plain') }) }) },
+  { id: 'update', group: 'History and settings', title: 'Update needed', note: 'A system screen: no wisp, ink button, the way out underneath.',
+    render: (c) => frame(c, `<div class="w-screen">${topSpace(c)}<div style="height:44px"></div><div class="w-titleblock"><div class="t-title1">Whim needs an update</div><div class="t-body t-sec" style="margin-top:8px">Making and changing apps needs the latest Whim. The apps you have keep working.</div></div><div style="flex:1"></div><div class="w-actions">${btn('Update Whim', 'ink')}${btn('Not now', 'plain')}</div>${bottomSafe(c)}<div style="height:12px"></div></div>`) },
+  { id: 'launch', group: 'History and settings', title: 'Launch', note: 'The wisp on the canvas colour, still. The app icon is the same wisp on warm dark.',
+    render: (c) => frame(c, `<div class="w-screen" style="align-items:center;justify-content:center">${wisp({ size: 112, pose: 'listening', activity: .6 })}</div>`) },
+
+  // SDK
+  { id: 'gallery-type', group: 'Inside apps (SDK)', title: 'Gallery: text and buttons', note: 'The style gallery mirrors the SDK: every component, every variant. Type is the system face, sized like the shell.',
+    render: (c) => appFrame(c, APPS.gallery, `<div class="s-stack" style="gap:14px"><div class="t-display">42</div><div class="t-title1">Title</div><div class="t-title3">Subtitle</div><div class="t-body">Body text reads at 17 on both platforms.</div><div class="t-footnote t-sec">Caption, for small print and labels.</div>
+<div style="height:6px"></div>${sBtn('Primary', '', 'plus')}${sBtn('Secondary', 'secondary')}${sBtn('Ghost', 'ghost')}${sBtn('Danger', 'danger')}${sBtn('Disabled', 'disabled')}</div>`, { title: 'Style gallery' }) },
+  { id: 'gallery-controls', group: 'Inside apps (SDK)', title: 'Gallery: controls', note: 'New: Stepper, DateInput, Picker. Labels are body text, not muted captions.',
+    render: (c) => appFrame(c, APPS.gallery, `<div class="s-stack" style="gap:14px">
+<div><div class="w-label">Name</div>${field('Morning walk')}</div>
+<div style="display:flex;gap:12px"><div style="flex:1"><div class="w-label">Date</div>${field(`<span style="display:flex;gap:8px;align-items:center">${icon('calendar', 18, 2)}Oct 9</span>`)}</div><div style="flex:1"><div class="w-label">Kind</div>${field(`<span style="display:flex;justify-content:space-between;width:100%;align-items:center">Walk ${icon('chevron-down', 18, 2)}</span>`)}</div></div>
+${sCard(`<div class="s-stepper"><span>Laps</span><span class="grp"><button>${icon('minus', 20, 2.2)}</button><span class="val">3</span><button>${icon('plus', 20, 2.2)}</button></span></div>`, 'padding:14px 16px 14px 20px')}
+<div class="s-list"><div class="s-item"><div class="i-main">Remind me</div><span class="s-switch on"></span></div><div class="s-item"><span class="s-check on">${icon('check', 16, 3)}</span><div class="i-main">Stretch first</div></div><div class="s-item"><span class="s-check"></span><div class="i-main">Bring water</div></div></div>
+${sCard(`<div style="display:flex;justify-content:space-between"><span>Pace</span><span class="t-num t-sec">6:30 /km</span></div><div class="s-slider" style="margin-top:10px"><div class="tr"></div><div class="fi" style="width:58%"></div><div class="th" style="left:58%"></div></div>`, 'padding:16px 20px')}
+<div class="s-seg"><span>Easy</span><span class="on">Steady</span><span>Fast</span></div></div>`, { title: 'Controls', back: true }) },
+  { id: 'gallery-surfaces', group: 'Inside apps (SDK)', title: 'Gallery: surfaces', note: 'Cards and lists without borders, badges in soft fills (warning is yellow now), the ring variant of ProgressBar.',
+    render: (c) => appFrame(c, APPS.gallery, `<div class="s-stack" style="gap:14px">
+${sCard(`<div style="display:flex;gap:6px;flex-wrap:wrap"><span class="s-badge neutral">Neutral</span><span class="s-badge">Primary</span><span class="s-badge positive">Positive</span><span class="s-badge warning">Warning</span><span class="s-badge danger">Danger</span></div><div class="s-bar" style="margin-top:16px"><span style="width:62%"></span></div>`, 'padding:16px 20px')}
+<div style="display:flex;gap:14px">${sCard(ring(.7, 112, '7', '', 9), 'flex:1;padding:16px')}${sCard(`<div style="display:flex;align-items:flex-end;gap:7px;height:112px">${[40, 64, 52, 88, 70, 98, 60].map((h) => `<span style="flex:1;height:${h}%;border-radius:4px 4px 0 0;background:var(--a-fill)"></span>`).join('')}</div>`, 'flex:1;padding:16px')}</div>
+<div class="s-list">${sItem('Morning walk', 'Oct 9 · 3 laps', '', 'footprints').replace('</div></div>', '</div></div>')}${sItem('Evening run', 'Oct 8 · 5 km', icon('chevron-right', 18, 2), 'activity')}</div>
+${sCard(`<div class="s-empty" style="padding:12px 8px"><span class="e-icon">${icon('inbox', 28, 2)}</span><div class="t-title3">Nothing yet</div><div class="t-callout t-sec">Your walks show up here.</div></div>`)}</div>`, { title: 'Surfaces', back: true }) },
+  { id: 'gallery-modal', group: 'Inside apps (SDK)', title: 'Gallery: modal and toast', note: 'Modal is a real sheet now: grabber, title, a close button, drag to dismiss. toast() for quick feedback.',
+    render: (c) => {
+      const g = G(c);
+      const sheet = `<div class="w-scrim"></div><div class="w-sheet tint-grape s-app"><div class="w-grabber"></div><div class="w-sheet-head"><span class="t-title2">Add a walk</span>${closeBtn()}</div><div class="w-pad" style="margin-top:10px"><div class="w-label">Name</div>${field('Lunch walk', { focus: true })}<div style="margin-top:14px">${sCard(`<div class="s-stepper"><span>Laps</span><span class="grp"><button>${icon('minus', 20, 2.2)}</button><span class="val">2</span><button>${icon('plus', 20, 2.2)}</button></span></div>`, 'padding:14px 16px 14px 20px;background:var(--w-fill)')}</div><div style="margin-top:18px">${sBtn('Save')}</div></div><div style="height:${g.safe + 12}px"></div></div>`;
+      return appFrame(c, APPS.gallery, `<div class="s-list">${sItem('Morning walk', 'Oct 9 · 3 laps', '', 'footprints')}${sItem('Evening run', 'Oct 8 · 5 km', '', 'activity')}</div>`, { title: 'Walks', overlay: sheet });
+    } },
+];
+
+function historyBody(c, { expanded = -1, currentIndex = 0 } = {}) {
+  const versions = [
+    { v: 4, when: '2 days ago', kind: ['plus', 'Added'], said: 'Add a chime when each step ends', sum: 'Plays a short chime at the end of every step.' },
+    { v: 3, when: '5 days ago', kind: ['pencil', 'Changed'], said: 'Let me pick V60 or Chemex', sum: 'Adds a brewer choice; each has its own pours.' },
+    { v: 2, when: 'Sep 30', kind: ['palette', 'Look'], said: 'Make the countdown bigger', sum: 'The countdown fills the top half of the screen.' },
+    { v: 1, when: 'Sep 28', kind: ['flag', 'Start'], said: 'A timer for my pour-over recipe', sum: 'Where this app began.' },
+  ];
+  const rows = versions.map((x, i) => {
+    const cur = i === currentIndex;
+    const actions = i === expanded ? `<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">${cur ? btn('Change it', 'ember', { size: 'md', block: false }) : btn('Go back to this version', 'secondary', { size: 'md', block: false }) + btn('Make a copy', 'plain', { size: 'md', block: false })}</div>` : '';
+    return `<div class="w-tl-row${cur ? ' current' : ''}"><span class="dot"></span><div class="${i === expanded ? 'w-tl-card' : ''}" style="${i === expanded ? '' : 'padding:2px 0'}"><div class="t-body t-quote">“${esc(x.said)}”</div><div class="t-callout t-sec" style="margin-top:4px">${esc(x.sum)}</div><div class="meta"><span>v${x.v} · ${x.when}</span><span class="w-badge">${icon(x.kind[0], 12, 2.4)}${x.kind[1]}</span>${cur ? '<span class="w-badge ink">Current</span>' : ''}</div>${actions}</div></div>`;
+  }).join('');
+  return `<div class="w-screen">${topSpace(c)}${header(c, { right: iconBtn('ellipsis', 'More', { size: 24 }) })}<div class="w-titleblock"><div class="t-title1">History</div><div class="w-sub" style="display:flex;align-items:center;gap:8px;margin-top:6px">${tile(APPS.pour, { size: 22, label: false })}<span class="t-callout tint-cocoa t-tint t-semibold">Pour Timer</span><span class="t-callout t-sec">· 4 versions</span></div></div><div style="height:22px"></div><div class="w-tl">${rows}</div></div>`;
+}
+
+// Whim mockups: the review page. Views are routed by a bare #anchor: (none) overview, s-<id> one screen,
+// components, tokens, motion.
+
+const PG = { platform: 'ios', scheme: 'both' };
+try { const saved = JSON.parse(localStorage.getItem('whim-mockups') || '{}'); Object.assign(PG, saved); } catch (e) { /* storage blocked */ }
+const save = () => { try { localStorage.setItem('whim-mockups', JSON.stringify(PG)); } catch (e) { /* storage blocked */ } };
+
+const GROUPS = ['Your apps', 'Making an app', 'Using an app', 'History and settings', 'Inside apps (SDK)'];
+const GROUP_NOTES = {
+  'Your apps': 'Glyph tiles in four columns, Whim’s ember for anything being made, and one composer to start.',
+  'Making an app': 'One sheet, four pages: describe, plan with the questions inline, making, ready. Honest about time.',
+  'Using an app': 'Apps open from their tile and own the screen. Whim is a small ember; changing an app never closes it.',
+  'History and settings': 'Undo instead of “are you sure”, neutral kinds, settings with diagnostics one level down.',
+  'Inside apps (SDK)': 'The style gallery as a generated app sees it: same system as the shell, the app’s tint as its accent.',
+};
+
+const dims = (p) => (p === 'ios' ? { W: 390, H: 844 } : { W: 412, H: 915 });
+function frameHTML(screen, c, scale) {
+  const { W, H } = dims(c.p);
+  return `<div class="fw" style="width:${Math.round(W * scale)}px;height:${Math.round(H * scale)}px"><div style="transform:scale(${scale});transform-origin:top left;width:${W}px;height:${H}px;border-radius:${c.p === 'ios' ? 54 : 40}px">${screen.render(c)}</div></div>`;
+}
+const schemes = () => (PG.scheme === 'both' ? ['light', 'dark'] : [PG.scheme]);
+const contentWidth = () => Math.min(1320, document.documentElement.clientWidth) - 40;
+
+// ── Overview ────────────────────────────────────────────────────────────────
+function viewOverview() {
+  const cw = contentWidth(), { W } = dims(PG.platform), n = schemes().length;
+  const narrow = cw < 720;
+  const scale = narrow ? Math.min(.62, (cw - (n - 1) * 12) / (n * W)) : (cw >= 1200 ? .5 : .46);
+  const hero = `<section class="pg-hero"><div><div class="pg-flabel" style="color:var(--pg-accent)">Design system v1 · for review</div><h1>Whim, made calm, honest and yours</h1>
+<p class="lead">One system for the shell and every app Whim makes. System type, light and dark, an ember that only glows while Whim is working, and apps that wear their own colour. Tap any screen to see it on both platforms, in both themes.</p>
+<ul class="pg-moves">
+<li><b>One system, two renderers</b>The launcher and the apps share type, space, shape and motion.</li>
+<li><b>Hue says who</b>Ember is Whim at work, a tint is an app, ink is you and the system.</li>
+<li><b>System fonts, light and dark</b>SF on iPhone, Roboto on Android, following the phone.</li>
+<li><b>Glyph tiles</b>Each app picks a tint and an icon by name. No monograms, no generated art.</li>
+<li><b>Honest light</b>The wisp’s glow follows the real stream. Stuck looks stuck.</li>
+<li><b>Springs and gestures</b>Six springs, everything interruptible, back by swipe on both platforms.</li>
+<li><b>Fewer steps</b>Questions live on the plan; changing an app never closes it.</li>
+<li><b>Plain words</b>One name per thing. The maker says “I”.</li>
+</ul></div>
+<div class="pg-hero-art">${frameHTML(SCREENS.find((s) => s.id === 'home'), { p: PG.platform, s: 'light' }, narrow ? .5 : .5)}${narrow ? '' : frameHTML(SCREENS.find((s) => s.id === 'making'), { p: PG.platform, s: 'dark' }, .5)}</div></section>`;
+  const story = (title, sub, steps) => {
+    const nf = steps.length, sc = narrow ? Math.min(.42, (cw - 20) / (2 * W)) : Math.min(.36, (cw - 44 - (nf - 1) * 96) / (nf * W));
+    const items = steps.map(([id, label], i) => `${i ? `<div class="pg-arrow"><span>→</span><small>${esc(label)}</small></div>` : ''}<a href="#s-${id}" class="pg-storyframe">${frameHTML(SCREENS.find((s) => s.id === id), { p: PG.platform, s: PG.scheme === 'dark' ? 'dark' : 'light' }, sc)}</a>`).join('');
+    return `<div class="pg-story"><h3>${esc(title)}</h3><p>${esc(sub)}</p><div class="pg-storyrow">${items}</div></div>`;
+  };
+  const flows = `<section class="pg-section"><h2>The two flows</h2><p class="sub">Making an app and changing one, frame by frame. The labels name the motion between frames (05-motion.md).</p>
+${story('Make an app', 'From the composer to the running app: four taps, one sheet, the wisp at work in the middle.', [['home', ''], ['describe', 'M6 the composer grows into the sheet'], ['plan', 'M7 push; questions land first'], ['making', 'M9 the wisp moves to the centre'], ['ready', 'M10 flare, the tile rises out of it'], ['app-timer', 'M2 the app grows out of its tile']])}
+${story('Change an app while using it', 'The app never closes. The change is made in the background and offered with Reload.', [['app-timer', ''], ['whim-sheet', 'M21 the Whim sheet rises from the orb'], ['whim-plan', 'M11 the sheet grows; the plan for the change'], ['app-changing', 'M5 back into the orb, which glows while it works']])}</section>`;
+  const groups = GROUPS.map((g) => {
+    const cards = SCREENS.filter((s) => s.group === g).map((s) => `<article class="pg-card" style="--note-w:${Math.round(W * scale * n + (n - 1) * 12)}px"><h3><a href="#s-${s.id}">${esc(s.title)}</a></h3><a href="#s-${s.id}" aria-label="Open ${esc(s.title)}" class="pg-frames" style="text-decoration:none">${schemes().map((sc) => frameHTML(s, { p: PG.platform, s: sc }, scale)).join('')}</a><p>${esc(s.note)}</p></article>`).join('');
+    return `<section class="pg-section" id="g-${g.replace(/\W+/g, '-').toLowerCase()}"><h2>${esc(g)}</h2><p class="sub">${esc(GROUP_NOTES[g])}</p><div class="pg-cards">${cards}</div></section>`;
+  }).join('');
+  return hero + flows + groups;
+}
+
+// ── One screen, every variant ───────────────────────────────────────────────
+function viewScreen(id) {
+  const i = SCREENS.findIndex((s) => s.id === id);
+  if (i < 0) return viewOverview();
+  const s = SCREENS[i], prev = SCREENS[(i - 1 + SCREENS.length) % SCREENS.length], next = SCREENS[(i + 1) % SCREENS.length];
+  const variants = [['ios', 'light', 'iPhone · light'], ['ios', 'dark', 'iPhone · dark'], ['android', 'light', 'Android · light'], ['android', 'dark', 'Android · dark']];
+  const cw = contentWidth(), scale = cw < 720 ? Math.min(.8, cw / 412) : .8;
+  return `<div class="pg-focus-head"><div><div class="pg-flabel">${esc(s.group)}</div><h2>${esc(s.title)}</h2><p>${esc(s.note)}</p></div><div class="pg-row"><a class="pg-btn" href="#s-${prev.id}">← ${esc(prev.title)}</a><a class="pg-btn dark" href="#s-${next.id}">${esc(next.title)} →</a></div></div>
+<div class="pg-scroll"><div class="pg-frames">${variants.map(([p, sc, label]) => `<div><div class="pg-flabel">${label} · ${p === 'ios' ? '390 × 844' : '412 × 915'}</div>${frameHTML(s, { p, s: sc }, scale)}</div>`).join('')}</div></div>`;
+}
+
+// ── Components ──────────────────────────────────────────────────────────────
+function board(sc, inner) {
+  return `<div class="phone" data-platform="${PG.platform}" data-scheme="${sc}" style="--pw:100%;--ph:auto;height:auto;border-radius:24px;padding:24px;overflow:visible">${inner}</div>`;
+}
+function viewComponents() {
+  const c = { p: PG.platform, s: 'light' };
+  const spec = (sc) => board(sc, `
+<div class="t-footnote t-sec t-semibold">Buttons, by who acts</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-top:10px">${btn('Make it', 'ember')}${btn('Agree and continue', 'ink')}<div class="tint-cocoa">${btn('Open Pour Timer', 'tint')}</div>${btn('Back to your apps', 'secondary')}${btn('Not now', 'plain')}${btn('Delete', 'plain-danger')}${btn('Sending…', 'disabled')}</div>
+<div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">${btn('Change it', 'ember', { size: 'md', block: false })}${btn('Save', 'ink', { size: 'sm', block: false })}${btn('Cancel', 'plain', { size: 'sm', block: false })}${iconBtn('settings', 'Settings', { size: 22 })}${iconBtn('x', 'Close', { filled: true, size: 18 })}</div>
+<div class="t-footnote t-sec t-semibold" style="margin-top:24px">Chips</div>
+<div class="w-chips" style="margin-top:10px">${chip('Just today')}${chip('A few weeks', { sel: true })}${chip('I’ll decide', { decide: true })}${chip('I’ll decide', { decide: true, sel: true })}${chip('A dice roller for game night', { idea: true })}</div>
+<div class="t-footnote t-sec t-semibold" style="margin-top:24px">Fields</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-top:10px"><div><div class="w-label">Server address</div>${field('https://api.whim.app')}</div><div><div class="w-label">Focused</div>${field('Lunch walk', { focus: true, caret: true })}</div><div>${field('', { ph: 'What should change?', send: true, sendOn: false })}</div><div>${field('Add a weekly chart', { send: true })}</div></div>
+<div class="t-footnote t-sec t-semibold" style="margin-top:24px">Grouped list</div>
+<div style="margin-top:10px;max-width:420px">${list([row({ icon: 'message-square', title: 'AI features', trail: 'On', chev: true }), row({ icon: 'history', title: 'History', chev: true }), row({ title: 'Send error details', sw: true }), row({ title: 'Privacy policy', ext: true }), row({ title: 'Delete', danger: true })], { icons: true })}</div>
+<div class="t-footnote t-sec t-semibold" style="margin-top:24px">Status, steps, notices, badges</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:18px;margin-top:10px;align-items:start"><div style="display:flex;flex-direction:column;gap:12px">${statusLine('Writing the plan…', '0:02', { wispSize: 28 })}${statusLine('Making it', '1:04')}${statusLine('No word from the server for 40 s', '', { stuck: true })}</div>${steps([['Reading your plan', 'done', '0:03'], ['Writing the app', 'now', '0:41'], ['Checking it runs safely', 'todo']])}<div style="display:flex;flex-direction:column;gap:10px"><div class="w-notice">${icon('info', 20, 2)}<span>Offline. Your apps still work; making new ones needs a connection.</span></div><div class="w-notice danger">${icon('circle-alert', 20, 2)}<span>Whim is busy. Try again in <span class="t-num">0:42</span>.</span></div><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="w-badge">${icon('plus', 12, 2.4)}Added</span><span class="w-badge ink">Current</span><span class="w-badge ember">Making</span></div></div></div>
+<div class="t-footnote t-sec t-semibold" style="margin-top:24px">Tiles</div>
+<div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;--tile:64px">${['ready', 'making', 'queued', 'failed', 'stopped', 'update', 'changing', 'change-failed'].map((st) => tile(st === 'ready' ? APPS.water : { name: st === 'changing' || st === 'change-failed' ? 'Pour Timer' : 'Pomodoro timer', tint: 'cocoa', icon: 'timer' }, { state: st })).join('')}</div>
+<div class="t-footnote t-sec t-semibold" style="margin-top:24px">Orb, composer, toast</div>
+<div style="position:relative;height:150px;margin-top:10px"><div class="w-orb" style="bottom:auto;top:8px;right:auto;left:0">${wisp({ size: 22, eyes: false, activity: .35 })}</div><div class="w-orb" style="bottom:auto;top:8px;right:auto;left:64px">${wisp({ size: 22, eyes: false, activity: .35 })}<span class="dot"></span></div><div class="w-composer" style="left:0;right:auto;width:300px;top:72px">${wisp({ size: 22, eyes: false, activity: .5 })}<span>Make an app…</span></div><div class="w-toast" style="left:auto;right:0;transform:none;top:8px"><span>Back on version 3</span><button class="ta">Undo</button></div></div>`);
+  const sdk = SCREENS.filter((s) => s.group === 'Inside apps (SDK)');
+  const ncw = contentWidth(), nn = schemes().length, sdkScale = Math.min(.5, (ncw - (nn - 1) * 12) / (nn * dims(PG.platform).W));
+  return `<div class="pg-focus-head"><div><div class="pg-flabel">Components</div><h2>The parts, in both themes</h2><p>Launcher components first. The SDK’s components follow as the style gallery shows them; the gallery must show every component and variant, always.</p></div></div>
+<div class="pg-grid2">${schemes().map((sc) => spec(sc)).join('')}</div>
+<section class="pg-section"><h2>SDK components</h2><p class="sub">What a generated app is built from. Its tint becomes its primary colour; everything else is the shared system.</p><div class="pg-cards">${sdk.map((s) => `<article class="pg-card"><h3><a href="#s-${s.id}">${esc(s.title)}</a></h3><div class="pg-frames">${schemes().map((sc) => frameHTML(s, { p: PG.platform, s: sc }, sdkScale)).join('')}</div></article>`).join('')}</div></section>`;
+}
+
+// ── Tokens ──────────────────────────────────────────────────────────────────
+const ROLES = [
+  ['bg', '#F6F4F1', '#100E0D', 'Canvas'], ['surface', '#FFFFFF', '#1B1917', 'Cards, lists, inputs'], ['raised', '#FFFFFF', '#252220', 'Sheets, menus, toasts'],
+  ['fill', '#EBE9E6', '#2E2B28', 'Secondary buttons, chips'], ['fill-strong', '#E0DDDA', '#3C3936', 'Pressed, skeletons'], ['separator', '#E2DFDB', '#34312F', 'Hairlines'],
+  ['border', '#908B86', '#6E6862', 'Input edges, 3:1'], ['text', '#1A1614', '#F2F0EC', 'Primary text'], ['text-2', '#6D6660', '#ADA8A3', 'Secondary text'], ['text-3', '#908B86', '#78746E', 'Placeholder, disabled'],
+  ['ink', '#1A1614', '#F2F0EC', 'The system’s prominent fill'], ['ember', '#C14900', '#F99549', 'Whim at work'], ['ember-text', '#B14200', '#F99549', 'Whim’s text and icons'], ['ember-soft', '#FDEBDA', '#3F2313', 'Whim’s washes'],
+  ['positive', '#1E8347', '#5BCC80', 'It worked'], ['danger', '#C9292F', '#F66C6D', 'Danger'], ['warning', '#F3BA25', '#ECBD3A', 'Caution'],
+];
+const TINTS = [['red', '#CA322E'], ['pink', '#C63170'], ['grape', '#A03FA7'], ['violet', '#764EC7'], ['indigo', '#4B53C2'], ['blue', '#136ED0'], ['sky', '#007EB0'], ['teal', '#00807B'], ['green', '#278445'], ['lime', '#A8E051'], ['yellow', '#F8CC2F'], ['cocoa', '#846047'], ['graphite', '#51565B']];
+const TYPE = [['display', 'Display', '40/44 · 700 · −0.020em'], ['large', 'Large title', '34/40 · 700 · −0.016em'], ['title1', 'Title 1', '28/34 · 700 · −0.012em'], ['title2', 'Title 2', '22/28 · 700 · −0.008em'], ['title3', 'Title 3', '20/25 · 600 · −0.004em'], ['headline', 'Headline', '17/22 · 600'], ['body', 'Body', '17/24 · 400'], ['callout', 'Callout', '15/20 · 400 · +0.004em'], ['footnote', 'Footnote', '13/18 · 400 · +0.008em'], ['caption', 'Caption', '12/16 · 500 · +0.012em']];
+const GLYPHS = Object.keys(ICONS).slice(0, 145);
+
+function viewTokens() {
+  const swatches = ROLES.map(([n, l, d, u]) => `<div class="pg-sw"><div class="chipc"><span style="background:${l}"></span><span style="background:${d}"></span></div><div class="meta"><b>${n}</b>${u}<br><code>${l} · ${d}</code></div></div>`).join('');
+  const tints = TINTS.map(([n, hex]) => `<div class="pg-sw"><div class="chipc tint-${n}" style="align-items:center;justify-content:center;background:${hex}"><span style="flex:none;color:var(--t-on)">${icon('star', 22, 2)}</span></div><div class="meta"><b>${n}</b><code>${hex}</code></div></div>`).join('');
+  const typeRows = (p) => `<div class="phone" data-platform="${p}" data-scheme="light" style="--pw:100%;--ph:auto;height:auto;border-radius:20px;padding:20px 22px;background:var(--w-surface)">${TYPE.map(([k, n, spec]) => `<div style="display:flex;align-items:baseline;gap:16px;padding:6px 0;border-bottom:.5px solid var(--w-sep)"><span class="t-${k}" style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${k === 'display' ? '42' : n}</span><span class="t-caption t-sec" style="white-space:nowrap">${spec}</span></div>`).join('')}</div>`;
+  const spaces = [4, 8, 12, 16, 20, 24, 32, 40, 48, 64].map((v) => `<div style="display:flex;align-items:center;gap:12px;font-size:13px"><span class="pg-mono" style="width:32px">${v}</span><span style="height:12px;width:${v * 3}px;border-radius:3px;background:var(--pg-accent);opacity:.8"></span></div>`).join('');
+  const radii = [['r-xs', 6], ['r-sm', 10], ['r-md', 14], ['r-lg', 20], ['r-xl', 28], ['r-full', 999]].map(([n, r]) => `<div style="display:flex;flex-direction:column;align-items:center;gap:6px;font-size:12px"><span style="width:64px;height:48px;border-radius:${r === 999 ? '24px' : r + 'px'};background:var(--pg-raised);border:1px solid var(--pg-line)"></span><span>${n}</span><span class="pg-mono">${r === 999 ? 'full' : r}</span></div>`).join('');
+  const glyphs = GLYPHS.map((n) => `<div class="pg-icon glyph">${icon(n, 26, 2)}<span>${n}</span></div>`).join('');
+  const shell = Object.keys(ICONS).slice(145).map((n) => `<div class="pg-icon">${icon(n, 24, 2)}<span>${n}</span></div>`).join('');
+  const poses = ['listening', 'thinking', 'making', 'stuck', 'failed', 'done', 'asleep'];
+  const wisps = (sc) => `<div class="phone" data-platform="ios" data-scheme="${sc}" style="--pw:100%;--ph:auto;height:auto;border-radius:20px;padding:22px"><div style="display:flex;flex-wrap:wrap;gap:22px;align-items:flex-end">${poses.map((p) => `<div style="display:flex;flex-direction:column;align-items:center;gap:8px">${wisp({ size: 88, pose: p })}<span class="t-caption t-sec">${p}</span></div>`).join('')}</div><div style="display:flex;gap:18px;align-items:flex-end;margin-top:18px">${[16, 20, 24, 32, 48, 64].map((z) => `<div style="display:flex;flex-direction:column;align-items:center;gap:6px">${wisp({ size: z })}<span class="t-caption t-sec">${z}</span></div>`).join('')}<div style="display:flex;flex-direction:column;align-items:center;gap:6px">${wisp({ size: 40, mode: 'grey', eyes: false })}<span class="t-caption t-sec">light out</span></div></div></div>`;
+  const springs = Object.entries(SPRINGS).map(([n, s]) => { const { k, c } = springConsts(s); const lin = linearEasing(s); return `<tr><td><b>${n}</b></td><td class="pg-mono">${s.response} · ${s.damping.toFixed(2)}</td><td class="pg-mono">${k.toFixed(1)} · ${c.toFixed(2)}</td><td class="pg-mono">${lin.ms} ms</td><td>${s.use}</td></tr>`; }).join('');
+  const shadows = [['shadow-raised', 'var(--w-shadow-raised)'], ['shadow-floating', 'var(--w-shadow-float)']].map(([n, v]) => `<div style="display:flex;flex-direction:column;align-items:center;gap:10px"><span style="width:120px;height:72px;border-radius:20px;background:var(--w-raised);box-shadow:${v}"></span><span class="t-caption t-sec">${n}</span></div>`).join('');
+  return `<div class="pg-focus-head"><div><div class="pg-flabel">Tokens</div><h2>The values</h2><p>Every colour pair was checked against WCAG 2.2. Light on the left of each swatch, dark on the right.</p></div></div>
+<section class="pg-section" style="margin-top:12px"><h2>Colour roles</h2><p class="sub">Warm, low-chroma neutrals; ember for Whim; status kept apart from both.</p><div class="pg-swatches">${swatches}</div></section>
+<section class="pg-section"><h2>App tints</h2><p class="sub">Thirteen names an app can pick. The fill is the tile and the app’s primary; orange is reserved for Whim.</p><div class="pg-swatches">${tints}</div></section>
+<section class="pg-section"><h2>Type</h2><p class="sub">The system face on each platform, one scale. SF on iPhone (left), Roboto on Android (right).</p><div class="pg-grid2">${typeRows('ios')}${typeRows('android')}</div></section>
+<section class="pg-section"><h2>Space, shape, depth</h2><div class="pg-grid2"><div class="pg-board"><div class="pg-flabel">4-point grid</div><div style="display:flex;flex-direction:column;gap:8px">${spaces}</div></div><div class="pg-board"><div class="pg-flabel">Radii</div><div style="display:flex;gap:16px;flex-wrap:wrap">${radii}</div><div class="pg-flabel" style="margin-top:22px">Shadows</div><div class="phone" data-platform="ios" data-scheme="light" style="--pw:100%;--ph:auto;height:auto;border-radius:16px;padding:24px;display:flex;gap:24px;justify-content:center">${shadows}</div></div></div></section>
+<section class="pg-section"><h2>The wisp</h2><p class="sub">Seven poses made by moving the same parts. Eyes appear from 48 px; below that it is the ember. With the light out, it marks an attempt that didn’t work.</p><div class="pg-grid2">${schemes().map(wisps).join('')}</div></section>
+<section class="pg-section"><h2>Springs</h2><p class="sub">Response and damping ratio, the mass-1 stiffness and damping Reanimated takes, and the settled duration of the CSS <code>linear()</code> curve the SDK plays.</p><div class="pg-board pg-tablewrap"><table class="pg-table"><thead><tr><th>Spring</th><th>Response · ζ</th><th>Stiffness · damping</th><th>Settles</th><th>Use</th></tr></thead><tbody>${springs}</tbody></table></div></section>
+<section class="pg-section"><h2>App glyphs</h2><p class="sub">The 145 glyphs an app can pick for its tile and use with <code>Icon</code>. From Lucide (ISC).</p><div class="pg-board"><div class="pg-icons">${glyphs}</div></div></section>
+<section class="pg-section"><h2>Shell icons</h2><div class="pg-board"><div class="pg-icons">${shell}</div></div></section>`;
+}
+
+// ── Motion lab ──────────────────────────────────────────────────────────────
+function viewMotion() {
+  const sc = document.documentElement.getAttribute('data-theme') || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const stage = (inner, w = 320, h = 560, extra = '') => `<div class="pg-stage"><div class="phone" data-platform="${PG.platform}" data-scheme="${sc}" style="--pw:${w}px;--ph:${h}px;border-radius:32px;${extra}">${inner}</div></div>`;
+  const springRows = Object.entries(SPRINGS).map(([n, s]) => `<div class="pg-spring"><div><b>${n}</b><div class="pg-mono">${s.response} · ${s.damping}</div></div><canvas data-spring="${n}" width="560" height="128" aria-label="${n} step response"></canvas><div class="pg-track" data-track="${n}" role="button" tabindex="0" aria-label="Play ${n}"><span class="ball"></span></div></div>`).join('');
+  return `<div class="pg-focus-head"><div><div class="pg-flabel">Motion</div><h2>Play with it</h2><p>Real springs, interruptible. Tap mid-flight to reverse; drag the sheets and screens. Reduce Motion switches every demo to its calmer version.</p></div><div class="pg-row"><button class="pg-btn" id="rm-toggle" aria-pressed="false">Reduce Motion: off</button></div></div>
+<div class="pg-demos">
+<div class="pg-demo" style="grid-column:1/-1"><h3>The six springs</h3><p>Step response over 1.2 s. Tap a track to send the ball across; tap again before it lands to reverse it from where it is.</p><div>${springRows}</div></div>
+<div class="pg-demo"><h3>Press</h3><p>Touch-down: <b>instant</b> to 0.97. Release: <b>snappy</b> back. Drag off to cancel.</p>${stage(`<div class="w-screen" style="padding:56px 24px;gap:28px;align-items:center;justify-content:flex-start">${btn('Make it', 'ember')}<div style="display:flex;gap:18px" data-press-tiles>${tile(APPS.pour, { size: 72 })}${tile(APPS.water, { size: 72 })}${tile(APPS.dice, { size: 72 })}</div>${btn('Back to your apps', 'secondary')}</div>`, 320, 420)}</div>
+<div class="pg-demo"><h3>Sheet</h3><p>Drag it. Release projects your momentum (d = 0.998) and hands the velocity to <b>fling</b>; above the top it rubber-bands.</p>${stage(`<div class="w-screen" data-sheet-demo><div style="padding:60px 20px 0">${list([row({ title: 'History', chev: true, icon: 'history' }), row({ title: 'Report a problem', chev: true, icon: 'flag' })], { icons: true })}<div style="margin-top:16px">${btn('Open sheet', 'ink', { size: 'md' })}</div></div><div class="w-scrim" style="opacity:0;pointer-events:none"></div><div class="w-sheet" style="height:330px;touch-action:none;cursor:grab"><div class="w-grabber"></div><div class="w-sheet-head"><span class="t-title2">Drag me</span></div><div class="w-pad t-callout t-sec">Flick down to dismiss. A slow drag past halfway also dismisses; less springs back.</div></div></div>`)}</div>
+<div class="pg-demo"><h3>Open and close an app</h3><p>Tap a tile: the app grows out of it with <b>morph</b>. Tap the open app to close it with <b>smooth</b>. Tap during either to reverse.</p>${stage(`<div class="w-screen" data-morph-demo style="padding-top:64px"><div class="w-grid" style="--tile:60px">${[APPS.pour, APPS.water, APPS.dice, APPS.plant].map((a) => tile(a, { size: 60 })).join('')}</div><div class="w-grid" style="--tile:60px;margin-top:18px">${[APPS.read, APPS.focus, APPS.budget, APPS.habit].map((a) => tile(a, { size: 60 })).join('')}</div><div class="morph-layer" style="position:absolute;left:0;top:0;width:100%;height:100%;display:none;z-index:9;cursor:pointer"><div class="ml-bg" style="position:absolute;inset:0"></div><div class="ml-glyph" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center"></div><div class="ml-app" style="position:absolute;inset:0;opacity:0;padding:70px 20px;color:var(--t-on)"><div class="t-title1">App</div><div class="t-callout" style="opacity:.85;margin-top:6px">Tap to close into the tile</div></div></div></div>`)}</div>
+<div class="pg-demo"><h3>Ghost becomes tile</h3><p>The ember tile flares (<b>spark</b>), the tint fills from the centre and the glyph settles (<b>morph</b>).</p>${stage(`<div class="w-screen" data-transmute style="align-items:center;justify-content:center;gap:26px"><div class="tm-tile" style="position:relative;width:96px;height:96px"></div><div class="pg-row" style="justify-content:center">${btn('Deliver', 'ember', { size: 'md', block: false })}${btn('Reset', 'secondary', { size: 'md', block: false })}</div></div>`, 320, 360)}</div>
+<div class="pg-demo"><h3>Honest light</h3><p>The glow follows tokens per second. Nothing arrives, nothing moves; after a stall the wisp dims and holds still.</p>${stage(`<div class="w-screen" data-honest style="align-items:center;padding-top:60px;gap:18px"><div class="hl-wisp"></div><div class="t-headline hl-label">Making Pour Timer</div><div class="t-callout t-sec hl-line">Usually about a minute.</div></div>`, 320, 380)}<label class="pg-row" style="font-size:14px">Tokens per second <input type="range" id="hl-rate" class="pg-range" min="0" max="60" value="28" style="flex:1"></label><div class="pg-row"><button class="pg-btn" id="hl-stall">Stall the stream</button></div></div>
+<div class="pg-demo"><h3>Controls</h3><p>Toggles, segments, chips and steppers use <b>snappy</b>, retargeting if you tap quickly.</p>${stage(`<div class="w-screen s-app tint-sky" data-controls style="padding:40px 20px;gap:18px"><div class="s-list"><div class="s-item" data-switch><div class="i-main">Remind me</div><span class="s-switch" style="transition:background-color 150ms"><span class="knob"></span></span></div></div><div class="s-seg" data-seg style="position:relative"><i class="thumb" style="position:absolute;top:2px;bottom:2px;left:2px;border-radius:16px;background:var(--w-surface);box-shadow:var(--w-shadow-raised)"></i><span style="position:relative">Easy</span><span style="position:relative">Steady</span><span style="position:relative">Fast</span></div><div class="w-chips" data-chips>${chip('Just today')}${chip('A few weeks')}${chip('Everything')}</div><div class="s-card" style="padding:14px 16px 14px 20px"><div class="s-stepper"><span>Glasses</span><span class="grp"><button data-step="-1">${icon('minus', 20, 2.2)}</button><span class="val" data-val style="overflow:hidden;height:28px;display:inline-block;position:relative">5</span><button data-step="1">${icon('plus', 20, 2.2)}</button></span></div></div></div>`, 320, 440)}</div>
+<div class="pg-demo"><h3>Back by swipe (iOS)</h3><p>Drag from the left edge. The screen tracks your finger, the one underneath slides in from −30%; release commits past half or on a fast flick.</p>${stage(`<div class="w-screen" data-swipe><div class="sw-under" style="position:absolute;inset:0;background:var(--w-bg);padding:64px 20px 0"><div class="t-large">Settings</div><div style="margin-top:18px">${list([row({ title: 'AI features', trail: 'On', chev: true }), row({ title: 'Advanced', chev: true })])}</div><div class="sw-dim" style="position:absolute;inset:0;background:#000;opacity:.12;pointer-events:none"></div></div><div class="sw-top" style="position:absolute;inset:0;background:var(--w-bg);padding:64px 20px 0;box-shadow:-8px 0 24px rgba(0,0,0,.12);touch-action:none"><div class="t-title1">Advanced</div><div style="margin-top:18px">${list([row({ title: 'Send error details', sw: true }), row({ title: 'Phone ID', sub: 'ec815211-2b6c…' })])}</div><div class="t-footnote t-sec" style="margin-top:14px">Drag from the left edge →</div><div class="sw-again" style="position:absolute;left:20px;right:20px;bottom:40px;display:none">${btn('Push it again', 'ink', { size: 'md' })}</div></div></div>`)}</div>
+</div>`;
+}
+
+// ── Motion wiring ───────────────────────────────────────────────────────────
+function cssColor(name, el) { return getComputedStyle(el || document.documentElement).getPropertyValue(name).trim(); }
+
+function wireMotion(root) {
+  const rmBtn = root.querySelector('#rm-toggle');
+  const setRM = (on) => { REDUCED = on; rmBtn.textContent = `Reduce Motion: ${on ? 'on' : 'off'}`; rmBtn.setAttribute('aria-pressed', String(on)); };
+  setRM(REDUCED);
+  rmBtn.addEventListener('click', () => setRM(!REDUCED));
+
+  // Spring curves and tracks
+  const accent = cssColor('--pg-accent'), line = cssColor('--pg-line'), text2 = cssColor('--pg-text2');
+  root.querySelectorAll('canvas[data-spring]').forEach((cv) => {
+    const s = SPRINGS[cv.dataset.spring], ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
+    const { k, c } = springConsts(s); let x = 0, v = 0; const pts = [];
+    for (let i = 0; i <= 240; i++) { for (let j = 0; j < 8; j++) { const a = -k * (x - 1) - c * v; v += a * (1.2 / 240 / 8); x += v * (1.2 / 240 / 8); } pts.push(x); }
+    const y = (val) => H - 14 - val * (H - 40);
+    ctx.clearRect(0, 0, W, H); ctx.strokeStyle = line; ctx.lineWidth = 2; ctx.setLineDash([6, 6]); ctx.beginPath(); ctx.moveTo(0, y(1)); ctx.lineTo(W, y(1)); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = accent; ctx.lineWidth = 4; ctx.beginPath(); pts.forEach((p, i) => { const px = (i / 240) * W; if (i) ctx.lineTo(px, y(p)); else ctx.moveTo(px, y(p)); }); ctx.stroke();
+    ctx.fillStyle = text2; ctx.font = '20px system-ui'; ctx.fillText('1.2 s', W - 52, H - 2);
+  });
+  root.querySelectorAll('[data-track]').forEach((tr) => {
+    const ball = tr.querySelector('.ball'), cfg = SPRINGS[tr.dataset.track];
+    const span = () => tr.clientWidth - 28;
+    const sv = new SpringValue(0, (p) => { ball.style.transform = `translateX(${p * span()}px)`; });
+    const go = () => { if (REDUCED) { sv.set(sv.target > .5 ? 0 : 1); return; } sv.to(sv.target > .5 ? 0 : 1, cfg); };
+    tr.addEventListener('click', go);
+    tr.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+  });
+
+  // Press
+  root.querySelectorAll('.pg-demo .w-btn, [data-press-tiles] .w-tile').forEach((el) => {
+    const sv = new SpringValue(1, (s) => { if (REDUCED) { el.style.transform = ''; el.style.opacity = String(1 - (1 - s) * 10 * .3); } else { el.style.transform = `scale(${s})`; el.style.opacity = ''; } });
+    const target = el.classList.contains('w-tile') ? .96 : .97;
+    let down = false;
+    el.addEventListener('pointerdown', () => { down = true; sv.to(target, SPRINGS.instant); });
+    const up = () => { if (!down) return; down = false; sv.to(1, SPRINGS.snappy); };
+    el.addEventListener('pointerup', up); el.addEventListener('pointerleave', up); el.addEventListener('pointercancel', up);
+  });
+
+  // Sheet
+  const sd = root.querySelector('[data-sheet-demo]');
+  if (sd) {
+    const sheet = sd.querySelector('.w-sheet'), scrim = sd.querySelector('.w-scrim'), H = 330;
+    const apply = (y) => { if (REDUCED && !dragging) { sheet.style.transform = `translateY(${y > H / 2 ? H + 20 : 0}px)`; sheet.style.opacity = String(Math.max(0, 1 - y / H)); } else { sheet.style.transform = `translateY(${y}px)`; sheet.style.opacity = ''; } scrim.style.opacity = String(Math.max(0, Math.min(1, 1 - y / H))); };
+    let dragging = false, startY = 0, startPos = 0; const vt = new VelocityTracker();
+    const sv = new SpringValue(0, apply, { precision: .3 });
+    sheet.addEventListener('pointerdown', (e) => { dragging = true; sv.stop(); startY = e.clientY; startPos = sv.x; vt.reset(); vt.add(e.clientY); sheet.setPointerCapture(e.pointerId); sheet.style.cursor = 'grabbing'; });
+    sheet.addEventListener('pointermove', (e) => { if (!dragging) return; let y = startPos + (e.clientY - startY); if (y < 0) y = rubberband(y, H); sv.x = y; apply(y); vt.add(e.clientY); });
+    const release = () => {
+      if (!dragging) return; dragging = false; sheet.style.cursor = 'grab';
+      const v = vt.velocity(), end = sv.x + project(v), close = end > H / 2;
+      if (REDUCED) { sv.set(close ? H + 20 : 0); return; }
+      sv.to(close ? H + 20 : 0, SPRINGS.fling, v);
+    };
+    sheet.addEventListener('pointerup', release); sheet.addEventListener('pointercancel', release);
+    sd.querySelector('.w-btn').addEventListener('click', () => { if (REDUCED) sv.set(0); else sv.to(0, SPRINGS.smooth); });
+  }
+
+  // Morph: tile to app and back
+  const md = root.querySelector('[data-morph-demo]');
+  if (md) {
+    const layer = md.querySelector('.morph-layer'), bg = layer.querySelector('.ml-bg'), gl = layer.querySelector('.ml-glyph'), appC = layer.querySelector('.ml-app');
+    let from = null, opening = false; const SW = 320, SH = 560;
+    const draw = (p) => {
+      if (!from) return;
+      if (REDUCED) { layer.style.transform = ''; layer.style.borderRadius = '32px'; layer.style.opacity = String(Math.min(1, p)); gl.style.opacity = '0'; appC.style.opacity = String(p); return; }
+      layer.style.opacity = '1';
+      const x = from.x * (1 - p), yy = from.y * (1 - p), w = from.w + (SW - from.w) * p, h = from.h + (SH - from.h) * p;
+      const sx = w / SW, sy = h / SH, r = from.w * .225 * (1 - p) + 32 * p;
+      layer.style.transform = `translate(${x}px,${yy}px) scale(${sx},${sy})`;
+      layer.style.borderRadius = `${r / sx}px / ${r / sy}px`;
+      gl.style.transform = `scale(${(from.w / SW) / sx * (1 + p * .4)},${(from.w / SW) / sx * (1 + p * .4) * (sx / sy)})`;
+      gl.style.opacity = String(Math.max(0, 1 - p * 1.4));
+      appC.style.opacity = String(Math.max(0, (p - .75) / .25));
+      appC.style.transform = `scale(${1 / sx},${1 / sy})`; appC.style.transformOrigin = 'top left';
+    };
+    const sv = new SpringValue(0, draw, { precision: .002 });
+    sv.onRest = () => { if (sv.x === 0) { layer.style.display = 'none'; md.querySelectorAll('.w-tile').forEach((t) => { t.style.visibility = ''; }); } };
+    md.querySelectorAll('.w-cell').forEach((cell) => cell.addEventListener('click', () => {
+      const t = cell.querySelector('.w-tile'), r = t.getBoundingClientRect(), base = md.getBoundingClientRect();
+      const k = base.width / SW;
+      from = { x: (r.left - base.left) / k, y: (r.top - base.top) / k, w: r.width / k, h: r.height / k };
+      const tint = [...cell.classList].find((cl) => cl.startsWith('tint-'));
+      layer.className = `morph-layer ${tint}`; bg.style.background = 'var(--t-fill)';
+      gl.innerHTML = t.querySelector('.glyph').innerHTML; gl.style.color = 'var(--t-on)';
+      appC.querySelector('.t-title1').textContent = cell.querySelector('.nm').textContent;
+      md.querySelectorAll('.w-tile').forEach((tt) => { tt.style.visibility = ''; }); t.style.visibility = 'hidden';
+      layer.style.display = 'block'; layer.style.transformOrigin = 'top left'; opening = true;
+      if (REDUCED) { sv.set(0); sv.to(1, { response: .16, damping: 1 }); return; }
+      sv.set(0); sv.to(1, SPRINGS.morph);
+    }));
+    layer.addEventListener('click', () => { opening = !opening; const target = opening ? 1 : 0; if (REDUCED) { sv.to(target, { response: .16, damping: 1 }); return; } sv.to(target, opening ? SPRINGS.morph : SPRINGS.smooth); });
+  }
+
+  // Ghost to tile
+  const tm = root.querySelector('[data-transmute]');
+  if (tm) {
+    const holder = tm.querySelector('.tm-tile');
+    const build = () => {
+      holder.innerHTML = `<svg viewBox="0 0 100 100" style="position:absolute;inset:0;width:100%;height:100%"><path d="${SQUIRCLE}" style="fill:var(--w-ember-soft)"/></svg><div class="tm-fill tint-cocoa" style="position:absolute;inset:0;clip-path:circle(0% at 50% 50%)"><svg viewBox="0 0 100 100" style="position:absolute;inset:0;width:100%;height:100%"><path d="${SQUIRCLE}" style="fill:var(--t-fill)"/></svg><div class="tm-glyph" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--t-on);opacity:0">${icon('timer', 48, 2)}</div></div><div class="tm-ember" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">${wisp({ size: 54, pose: 'making', eyes: false, activity: 1 })}</div>`;
+    };
+    build();
+    const fill = () => holder.querySelector('.tm-fill'), glyph = () => holder.querySelector('.tm-glyph'), ember = () => holder.querySelector('.tm-ember');
+    const m = new SpringValue(0, (p) => { fill().style.clipPath = `circle(${(p * 72).toFixed(1)}% at 50% 50%)`; glyph().style.opacity = String(p); glyph().style.transform = `scale(${.9 + .1 * p})`; ember().style.opacity = String(1 - p); });
+    const g = new SpringValue(1, (s) => { ember().style.transform = `scale(${s})`; });
+    const [deliver, reset] = tm.querySelectorAll('.w-btn');
+    deliver.addEventListener('click', () => {
+      if (REDUCED) { m.set(1); return; }
+      g.set(1); g.to(1.35, SPRINGS.spark); setTimeout(() => { g.to(1, SPRINGS.spark); m.to(1, SPRINGS.morph); }, 140);
+    });
+    reset.addEventListener('click', () => { m.stop(); g.stop(); build(); m.set(0); g.set(1); });
+  }
+
+  // Honest light
+  const hl = root.querySelector('[data-honest]');
+  if (hl) {
+    const holder = hl.querySelector('.hl-wisp'), line = hl.querySelector('.hl-line'), rate = root.querySelector('#hl-rate'), stallBtn = root.querySelector('#hl-stall');
+    let pose = 'making', stalled = false, last = performance.now(), lastArrival = performance.now(), flick = 0, alive = true;
+    const render = () => { holder.innerHTML = wisp({ size: 140, pose, activity: 1 }); };
+    render();
+    const act = new SpringValue(.6, () => {}, { precision: .0005 }); act.cfg = { response: .6, damping: 1 };
+    stallBtn.addEventListener('click', () => { stalled = !stalled; stallBtn.textContent = stalled ? 'Resume the stream' : 'Stall the stream'; });
+    const tick = (t) => {
+      if (!alive || !holder.isConnected) return;
+      const dt = (t - last) / 1000; last = t;
+      const r = stalled ? 0 : +rate.value;
+      if (Math.random() < r * dt) { lastArrival = t; flick += .07 * act.x; }
+      flick *= Math.exp(-dt / .12);
+      const since = (t - lastArrival) / 1000;
+      const targetA = stalled && since > 2 ? .15 : Math.min(1, r / 40);
+      act.to(targetA, { response: .6, damping: 1 });
+      const newPose = stalled && since > 2 ? 'stuck' : r === 0 ? 'listening' : 'making';
+      if (newPose !== pose) { pose = newPose; render(); line.textContent = pose === 'stuck' ? 'No word from the server for 40 s. Still waiting.' : 'Usually about a minute.'; }
+      const I = Math.min(1.15, .55 + .45 * act.x + (REDUCED ? 0 : flick));
+      const halo = holder.querySelector('circle'); const body = holder.querySelector('g');
+      if (halo) { halo.setAttribute('opacity', String((pose === 'stuck' ? .25 : .9) * I)); halo.setAttribute('r', String(22 + 6 * I)); }
+      if (body) body.style.filter = `brightness(${(.82 + .22 * I).toFixed(3)})`;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  // Controls
+  const ctl = root.querySelector('[data-controls]');
+  if (ctl) {
+    const sw = ctl.querySelector('.s-switch'); let on = false;
+    sw.style.setProperty('position', 'relative');
+    const knobSv = new SpringValue(0, (p) => { sw.style.setProperty('--k', p); sw.classList.toggle('on', p > .5); });
+    sw.style.cssText += ';';
+    const styleKnob = document.createElement('style');
+    styleKnob.textContent = '[data-controls] .s-switch::after{left:calc(2px + var(--k,0) * 20px)!important}';
+    ctl.appendChild(styleKnob);
+    ctl.querySelector('[data-switch]').addEventListener('click', () => { on = !on; if (REDUCED) knobSv.set(on ? 1 : 0); else knobSv.to(on ? 1 : 0, SPRINGS.snappy); sw.classList.toggle('on', on); });
+    const seg = ctl.querySelector('[data-seg]'), thumb = seg.querySelector('.thumb'), opts = [...seg.querySelectorAll('span')];
+    const segW = () => (seg.clientWidth - 4) / 3;
+    const segSv = new SpringValue(1, (i) => { thumb.style.width = `${segW()}px`; thumb.style.transform = `translateX(${i * segW()}px)`; });
+    segSv.set(1);
+    opts.forEach((o, i) => o.addEventListener('click', () => { if (REDUCED) segSv.set(i); else segSv.to(i, SPRINGS.snappy); }));
+    ctl.querySelectorAll('[data-chips] .w-chip').forEach((ch) => ch.addEventListener('click', () => {
+      ctl.querySelectorAll('[data-chips] .w-chip').forEach((x) => { x.classList.remove('sel'); x.innerHTML = x.textContent; });
+      ch.classList.add('sel'); ch.innerHTML = icon('check', 16, 2.6) + ch.textContent;
+    }));
+    const val = ctl.querySelector('[data-val]'); let n = 5;
+    ctl.querySelectorAll('[data-step]').forEach((b) => b.addEventListener('click', () => {
+      const d = +b.dataset.step; if (n + d < 0) return; n += d;
+      if (REDUCED) { val.textContent = String(n); return; }
+      const out = document.createElement('span'); out.textContent = val.textContent; out.style.cssText = 'position:absolute;left:0;right:0;top:0';
+      val.textContent = String(n); val.appendChild(out);
+      const p = new SpringValue(0, (x) => { out.style.transform = `translateY(${-d * 14 * x}px)`; out.style.opacity = String(1 - x); val.firstChild.parentElement.style.setProperty('--y', String(d * 14 * (1 - x))); });
+      p.onRest = () => out.remove(); p.to(1, SPRINGS.snappy);
+    }));
+  }
+
+  // Back swipe
+  const swd = root.querySelector('[data-swipe]');
+  if (swd) {
+    const topEl = swd.querySelector('.sw-top'), under = swd.querySelector('.sw-under'), dim = swd.querySelector('.sw-dim'), again = swd.querySelector('.sw-again');
+    const W = 320; let dragging = false, sx = 0, start = 0; const vt = new VelocityTracker();
+    const apply = (x) => { const p = Math.min(1, Math.max(0, x / W)); topEl.style.transform = `translateX(${x}px)`; under.style.transform = `translateX(${-.3 * W * (1 - p)}px)`; dim.style.opacity = String(.12 * (1 - p)); };
+    const sv = new SpringValue(0, apply, { precision: .3 });
+    apply(0);
+    topEl.addEventListener('pointerdown', (e) => { const r = topEl.getBoundingClientRect(); if (e.clientX - r.left > 28 && sv.x === 0) return; dragging = true; sv.stop(); sx = e.clientX; start = sv.x; vt.reset(); vt.add(e.clientX); topEl.setPointerCapture(e.pointerId); });
+    topEl.addEventListener('pointermove', (e) => { if (!dragging) return; const x = Math.max(0, start + e.clientX - sx); sv.x = x; apply(x); vt.add(e.clientX); });
+    const rel = () => {
+      if (!dragging) return; dragging = false;
+      const v = vt.velocity(), end = sv.x + project(v), commit = end > W / 2 || v > 500;
+      if (REDUCED) { sv.set(commit ? W : 0); }
+      else sv.to(commit ? W : 0, SPRINGS.fling, v);
+      again.style.display = commit ? 'block' : 'none';
+    };
+    topEl.addEventListener('pointerup', rel); topEl.addEventListener('pointercancel', rel);
+    swd.addEventListener('click', (e) => { if (e.target.closest('.sw-again') || (sv.target === W && e.target.closest('.sw-under'))) { if (REDUCED) sv.set(0); else sv.to(0, SPRINGS.smooth); again.style.display = 'none'; } });
+  }
+}
+
+// ── Shell ───────────────────────────────────────────────────────────────────
+function navHTML(route) {
+  const link = (h, label) => `<a href="#${h}" class="${(route === h || (h === '' && (route === '' || route.startsWith('s-')))) ? 'on' : ''}">${label}</a>`;
+  const seg = (key, opts) => `<div class="pg-seg" role="group" aria-label="${key}">${opts.map(([v, l]) => `<button data-${key}="${v}" class="${PG[key] === v ? 'on' : ''}" aria-pressed="${PG[key] === v}">${l}</button>`).join('')}</div>`;
+  return `<div class="pg-bar-in"><a class="pg-brand" href="#">${wispMini()}Whim · system v1</a><nav class="pg-nav">${link('', 'Screens')}${link('components', 'Components')}${link('tokens', 'Tokens')}${link('motion', 'Motion')}</nav><div class="pg-tools">${seg('platform', [['ios', 'iPhone'], ['android', 'Android']])}${seg('scheme', [['both', 'Both'], ['light', 'Light'], ['dark', 'Dark']])}</div></div>`;
+}
+function wispMini() { return `<span class="phone" data-scheme="light" data-platform="ios" style="--pw:26px;--ph:26px;border-radius:0;background:none;display:inline-flex;overflow:visible">${wisp({ size: 26, eyes: false, activity: .8 })}</span>`; }
+
+function render() {
+  const route = (location.hash || '').replace(/^#/, '');
+  document.getElementById('pg-bar').innerHTML = navHTML(route);
+  let html;
+  if (route.startsWith('s-')) html = viewScreen(route.slice(2));
+  else if (route === 'components') html = viewComponents();
+  else if (route === 'tokens') html = viewTokens();
+  else if (route === 'motion') html = viewMotion();
+  else html = viewOverview();
+  const main = document.getElementById('pg-main');
+  main.innerHTML = html;
+  if (route === 'motion') wireMotion(main);
+  document.querySelectorAll('[data-platform]').forEach((b) => { if (b.tagName === 'BUTTON') b.addEventListener('click', () => { PG.platform = b.dataset.platform; save(); render(); }); });
+  document.querySelectorAll('[data-scheme]').forEach((b) => { if (b.tagName === 'BUTTON') b.addEventListener('click', () => { PG.scheme = b.dataset.scheme; save(); render(); }); });
+}
+
+document.body.insertAdjacentHTML('afterbegin', WISP_DEFS);
+window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); });
+let rT = 0; window.addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(() => { if (!location.hash.includes('motion')) render(); }, 200); });
+render();
+
+</script>

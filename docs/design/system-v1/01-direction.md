@@ -2,8 +2,8 @@
 
 Phase A of `design-system-v1`. `00-audit.md` says what exists; this file says what Whim should become and
 fixes the values the redesign builds on. Screen-by-screen work, the tile strategy, motion moments and flow
-changes come in Phase B (`02`–`06`), checked against the device capture. Everything here is a decision unless
-it is listed under "Open for Phase B" at the end.
+changes are in `02`–`06`, checked against the device capture. Everything here is a decision; the questions
+Phase A left open are answered in §16.
 
 ## The moves, in one list
 
@@ -603,7 +603,7 @@ cue sounds (`tick`, `chime`, `alarm`) stay as they are.
 
 | Now | Next |
 |---|---|
-| Making it · "This takes about a minute. You can leave and come back." | Making Pour Timer · "Usually 2–4 min. You can leave; it keeps going." |
+| Making it · "This takes about a minute. You can leave and come back." | Making Pour Timer · "Usually about a minute. You can leave; it keeps going.", then a longer line as the wait passes the median and the 90th percentile |
 | "Plain words are enough. Whim will ask if something is unclear." | "Plain words are enough. I'll ask if anything's unclear." |
 | "Skip these and Whim will pick sensible answers." | "Skip any, and I'll choose." |
 | Prompt again | Change it |
@@ -611,8 +611,8 @@ cue sounds (`tick`, `chime`, `alarm`) stay as they are.
 | Couldn't build this app | Couldn't make this |
 | ↑ YOU'RE ON THIS ONE | Current |
 
-The "usually 2–4 min" range is a placeholder until the server reports real percentiles; Phase B finds where
-that number comes from.
+The time lines come from the production flowbench (53 s median, 144 s at the 90th percentile); `06-ux.md` §1
+has the table.
 
 ## 13. The SDK
 
@@ -661,20 +661,15 @@ For the decision entry in Phase C:
 | "Don't build a mascot; the build screen stays still" | The wisp, driven by honest light | animation research §4, §8.1 |
 | Mono uppercase eyebrows, Whim Syntax on mono and serif | Sentence-case headers, simplified marks | #59 |
 
-## 16. Open for Phase B
+## 16. Settled in Phase B
 
-1. Tile identity (`04-mini-app-icons.md`). I lean towards tint plus one glyph from the shared icon set,
-   chosen by the generator from a closed list, and I'll test that against monograms and live tiles with the
-   capture in hand.
-2. Whether SDK controls may trigger selection haptics through the host without the `cues` capability. A
-   bundle can forge UI events today, so an implicit haptic is forgeable too; harmless, but it bends the
-   capability model.
-3. The orb: keep it bottom-trailing as the eyeless ember, or move to a top capsule like other mini-app hosts.
-   Real apps in the capture will show which one covers less.
-4. The flow's shape: whether clarify and plan merge into one screen, and how "Change it" can start from inside
-   the running app without leaving it.
-5. The home header: "Your apps" as the title with the ember mark, or the Whim wordmark.
-6. Whether the Highlighting switch stays in Settings once marks pass contrast on their own.
-7. iOS tracking for SF titles: the table's values or 0, after seeing both on device.
-8. Where honest time ranges come from: server percentiles shipped with the clarify response, or a device-side
-   history of past runs.
+| Question | Answer | Where |
+|---|---|---|
+| Tile identity | Tint plus one glyph, both picked by name; monogram letter as the fallback; live tiles later | `04-mini-app-icons.md` |
+| Haptics from SDK controls | Selection-strength only, through the host, rate-limited, without `cues`; heavier haptics stay gated | `03-components.md`, end |
+| The orb | Stays bottom-trailing as a 44pt ember disc; the top capsule would cover every app's header | `06-ux.md` §3 |
+| Clarify and plan | Merge into one page; changing starts inside the running app | `06-ux.md` §1, §2 |
+| Home header | "Your apps" as the title; the brand lives in the composer's ember and the icon | `06-ux.md` §5 |
+| Highlighting switch | Removed | `06-ux.md` §7 |
+| iOS tracking | Keep the table; the iOS capture renders SF, and the mockups show the table at 390pt. Re-check on a device in the implementation pass | `02-screens.md` |
+| Time ranges | Measured percentiles in one constant, from the flowbench; live server percentiles later | `06-ux.md` §1 |
