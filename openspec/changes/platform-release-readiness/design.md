@@ -273,7 +273,7 @@ The initializer is the right place because react-native-webview has exactly one 
 
 ## Open Questions
 
-- **Icon artwork.** There's no usable source in the repo: the Android mipmaps are the stock robot, the iOS icon set is empty, there's no SVG anywhere, and `docs/mascot/` holds the undecided Amber Wisp concept (`no_brows.png` 1155×959 on a dark background; `big_ref.png` a 2816×1536 sheet), with no square transparent master. Default: the placeholder `w` mark on `#3f3d8f`, replaced by a 1024×1024 transparent PNG the user provides.
+- **Icon artwork.** There's no usable source in the repo: the Android mipmaps are the stock robot, the iOS icon set is empty, there's no SVG anywhere, and `docs/mascot/` holds the undecided Amber Wisp concept (`no_brows.png` 1155×959 on a dark background; `big_ref.png` a 2816×1536 sheet; both since moved to `docs/mascot.tar.zst`, `docs/EVIDENCE.md`), with no square transparent master. Default: the placeholder `w` mark on `#3f3d8f`, replaced by a 1024×1024 transparent PNG the user provides.
 - **App Store name.** Default: `Whim`, falling back to `Whim: Small Apps You Describe` if taken.
 - **The real domain.** Default: `example.com`, blocked at upload by D14.
 - **External TestFlight group name.** Default: `Public beta`, created in App Store Connect during the attended chain.

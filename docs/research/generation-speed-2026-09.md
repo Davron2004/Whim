@@ -161,4 +161,4 @@ node evals/cli.mjs run --eval-set evals/sets/visible --source-dir /tmp/flowbench
 grep '"model call"' /tmp/whim-server.log
 ```
 
-The blind judge prompt is `openspec/changes/faster-generation/bench/judge-prompt.md`: give a subagent one folder per case holding `request.md` and each configuration's source under shuffled letters, and keep the key somewhere it can't read.
+The blind judge prompt is `docs/research/generation-speed-judge-prompt.md` (the round-2/3 verdicts and inputs are in `faster-generation/bench.tar.zst`, `docs/EVIDENCE.md`): give a subagent one folder per case holding `request.md` and each configuration's source under shuffled letters, and keep the key somewhere it can't read.

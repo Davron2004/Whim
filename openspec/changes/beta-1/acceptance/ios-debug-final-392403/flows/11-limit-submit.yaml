@@ -1,8 +1,0 @@
-appId: com.anycognition.whim
----
-# Prerequisite: Compose filled with [[limit]] prompt; no generate request is sent.
-- tapOn: "Continue"
-- extendedWaitUntil:
-    visible: "Whim can’t build this as asked"
-    timeout: 30000
-- takeScreenshot: "${EVIDENCE_DIR}/${CASE}-limit-before-action"

@@ -1,7 +1,0 @@
-appId: com.anycognition.whim
----
-- longPressOn: "Water Tracker"
-- waitForAnimationToEnd
-- tapOn: "Report this app"
-- waitForAnimationToEnd
-- assertVisible: "Add a note (optional)"

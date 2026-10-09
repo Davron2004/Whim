@@ -1263,6 +1263,8 @@ are in `docs/research/generation-speed-2026-09.md`.
 - **Model choice is re-made by measurement, not by feel.** `server/flowbench.mjs` drives the phone's
   flow against any roster and saves the apps for `evals/cli.mjs`; the judge method is in the change's
   `bench/` folder. Rerun both before changing a model.
+  (2026-10-09: the judge prompt moved to `docs/research/generation-speed-judge-prompt.md`; the raw
+  verdicts are in `faster-generation/bench.tar.zst`, `docs/EVIDENCE.md`.)
 
 ### 70. Anyone can point Whim at their own server, on their own responsibility `[DECIDED — openspec: beta-1 D20; reverses legal-surface-v2 D10]`
 

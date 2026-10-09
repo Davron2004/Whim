@@ -145,3 +145,26 @@ node server/flowbench.mjs --url <server> --eval-set <set> --repeat 10 --stop-aft
 Each run uses a fresh device id. The Markdown and `summary.tallies` in the JSON give, per case,
 how many runs clarify answered with a `limit`, with questions, with no question, or with a failure.
 `--save-sources` is refused with `--repeat` above 1 and with `--stop-after clarify`.
+
+## Recorded result: beta-1 flow benchmark (2026-09-25/26)
+
+Production `https://api.whim.anycognition.ca`, parallel 2, no retries. Before = image `0fb65d51`
+(pre-beta-1 server); after = staging tip `78e59059`; rate runs after fix-6. Sets: `evals/sets/visible`
+(22 cases) and a 4-case impossible-prompt set (2 live-weather, 2 ping-a-roommate). Phase times are
+medians (max in brackets), in ms. The raw JSON reports are in `beta-1/flowbench.tar.zst`
+(`openspec/changes/beta-1/EVIDENCE.md`).
+
+| Run | Results / failures / limits | Clarify | Rewrite | Generate |
+|---|---|---|---|---|
+| Visible, before | 20 / 2 / – | 1320 (10385) | 2335 (13241) | 51373 (142830) |
+| Visible, after | 21 / 1 / 0 | 1840 (10292) | 2277 (4964) | 52981 (225318) |
+| Impossible, before | 3 / 1 / – | 2397 (2976) | 3194 (34619) | 94474 (148765) |
+| Impossible, after | 0 / 0 / 4 | 2114 (2409) | – | – |
+| Impossible, rate (×10 each, stop after clarify) | 40 of 40 runs answered `limit` | 585 (11845) | – | – |
+| Visible, rate (×3 each, stop after clarify) | 66 runs: 0 `limit`, 56 with questions, 8 empty, 2 failures | 1057 (14886) | – | – |
+
+Before failures: `habit-tracker-p1` repair exhausted; `tip-splitter-p2` clarify 503 `policy_unavailable`
+(#119). Before, no clarify could answer "can't build", so the impossible prompts built fake apps
+(a city-name "forecast", a reminder log pretending to send). After failure: `recipe-box-p1` repair
+exhausted. One clarify sample per prompt overstated the limit rate (the app saw `limit` on ~27% of
+weather prompts), hence the repeated-sample rate runs above; see "Measuring a clarify rate".

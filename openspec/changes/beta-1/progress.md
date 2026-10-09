@@ -1,5 +1,8 @@
 # beta-1: progress ledger
 
+> 2026-10-09: the evidence this ledger cites under `acceptance/`, `flowbench/` and `upgrade-check/` left git;
+> the archives and how to fetch them are in `EVIDENCE.md` (paths resolve unchanged once extracted).
+
 - 2026-09-25 run-start: staging `integration/beta-1` cut from MAIN_TIP `06ab2007a3ac4f3f04febf8f6ca35b3ff192848f` (origin/main); the approved proposal branch `proposal/beta-1` (`ae84263d`: artifacts, readiness doc, handoff) merged onto it as `f847b1cd`. Nine chains, one at a time, in chains.md order. Section 10 attended by the orchestrator.
 
 ## Decisions (orchestrator)

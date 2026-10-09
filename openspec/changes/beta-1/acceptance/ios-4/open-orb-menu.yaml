@@ -1,4 +1,0 @@
-appId: com.anycognition.whim
----
-- tapOn: "Open the app menu"
-- waitForAnimationToEnd

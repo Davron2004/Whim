@@ -1,5 +1,0 @@
-appId: com.anycognition.whim
----
-- tapOn: "Back"
-- waitForAnimationToEnd
-- assertVisible: "Whim"
