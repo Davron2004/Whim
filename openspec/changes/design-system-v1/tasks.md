@@ -72,11 +72,11 @@
 
 ## 9. Platform theming, launch and icon
 
-- [ ] 9.1 Android: remove `MODE_NIGHT_NO` from `MainApplication.kt`, add `values-night` colours, launch/window backgrounds from the tokens' light and dark `bg`, caret and selection colours (`text`/ink), update `checks/test/repo/android-accent.suite.ts`
-- [ ] 9.2 Release assets: replace `release/assets/icon-foreground.svg` with the ember on warm dark, add iOS dark and tinted variants and the Android monochrome silhouette, set `brand.json` light and dark launch backgrounds, and make `scripts/release/lib/assets.ts` and `assets.suite.ts` compare both to the tokens; regenerate assets
-- [ ] 9.3 iOS launch screen: the ember on a light/dark `bg` colour asset; Android 12+ splash icon; a native `hideLaunchScreen()` that keeps the launch screen up until called (Home calls it on its first frame in 15.2)
-- [ ] 9.4 Retire the custom fonts: delete `assets/fonts/` and the Android font assets with their `_bold`/`_italic` copies, point every `TYPE_SCALE` face at the system font (no `fontFamily`) so current screens keep compiling, delete `android-fonts.suite.tsx` and the font references in `scripts/release/lib/assets.ts` (the `FONT_FAMILY` constant and face fields go in 21.4)
-- [ ] 9.5 Render the ember grey at 24 pt for the owner's silhouette check and store the PNG in the evidence archive (`Whim-evidence/`), never under `openspec/changes/`; note its path in the chain contract
+- [x] 9.1 Android: remove `MODE_NIGHT_NO` from `MainApplication.kt`, add `values-night` colours, launch/window backgrounds from the tokens' light and dark `bg`, caret and selection colours (`text`/ink), update `checks/test/repo/android-accent.suite.ts`
+- [x] 9.2 Release assets: replace `release/assets/icon-foreground.svg` with the ember on warm dark, add iOS dark and tinted variants and the Android monochrome silhouette, set `brand.json` light and dark launch backgrounds, and make `scripts/release/lib/assets.ts` and `assets.suite.ts` compare both to the tokens; regenerate assets
+- [x] 9.3 iOS launch screen: the ember on a light/dark `bg` colour asset; Android 12+ splash icon; a native `hideLaunchScreen()` that keeps the launch screen up until called (Home calls it on its first frame in 15.2)
+- [x] 9.4 Retire the custom fonts: delete `assets/fonts/` and the Android font assets with their `_bold`/`_italic` copies, point every `TYPE_SCALE` face at the system font (no `fontFamily`) so current screens keep compiling, delete `android-fonts.suite.tsx` and the font references in `scripts/release/lib/assets.ts` (the `FONT_FAMILY` constant and face fields go in 21.4)
+- [x] 9.5 Render the ember grey at 24 pt for the owner's silhouette check and store the PNG in the evidence archive (`Whim-evidence/`), never under `openspec/changes/`; note its path in the chain contract
 
 ## 10. Shell primitives: base
 
