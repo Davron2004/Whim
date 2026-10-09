@@ -18,6 +18,7 @@
  *   device delete <id>
  *   purge                            (`main.ts` routes it to `runPurge`)
  *   import-sqlite --data-dir <dir>   (`main.ts` routes it to `runImportSqlite`)
+ *   migrate-waitlist [--apply]       (`main.ts` routes it to `runMigrateWaitlist`)
  *
  * `list`/`show`/`usage`/`device export` never call a mutating store method — only the purges and
  * `device delete` do. Device ids and the records they key appear only in this module's returned
@@ -56,7 +57,8 @@ const USAGE_TEXT =
   '  device export <id>\n' +
   '  device delete <id>\n' +
   '  purge\n' +
-  '  import-sqlite --data-dir <dir>\n';
+  '  import-sqlite --data-dir <dir>\n' +
+  '  migrate-waitlist [--apply]\n';
 
 /** Everything `device export` prints: every server record keyed by one device id. */
 export interface DeviceExport {

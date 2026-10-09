@@ -2,10 +2,15 @@
  * `whim-admin import-sqlite --data-dir <dir>` (durable-server-stores D7; specs/server-storage-backends
  * "A SQLite data directory can be imported into Firestore").
  *
- * Copies every waitlist row, report, lifetime usage row and ledger row from the SQLite files in
- * `<dir>` into the configured Firestore database, under the ids and timestamps they already have.
- * The files are opened read-only and a file that is absent imports nothing. The command refuses
- * unless `WHIM_STORE_BACKEND=firestore`.
+ * Copies every waitlist row, waitlist removal fingerprint, report, lifetime usage row and ledger row
+ * from the SQLite files in `<dir>` into the configured Firestore database, under the ids and
+ * timestamps they already have. The files are opened read-only and a file that is absent imports
+ * nothing. The command refuses unless `WHIM_STORE_BACKEND=firestore`.
+ *
+ * A waitlist row arrives in the opt-in model with its news-consent fields, whichever model the file
+ * stores it in: `readWaitlistFile` reads an opt-out-model row through the shared legacy mapping. A
+ * fingerprint is copied as it is, so it only blocks a signup when the SQLite server used the same
+ * `WHIM_WAITLIST_FINGERPRINT_KEY` as the Firestore one.
  *
  * A document that does not exist yet is created. One that already exists is never overwritten: when
  * it equals what the import would write it counts as imported (an earlier run wrote it), otherwise
@@ -25,12 +30,13 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { isDeepStrictEqual } from 'node:util';
 import type { CollectionReference, DocumentData, DocumentReference, Firestore } from '@google-cloud/firestore';
 import type { ServerConfig } from '../config';
 import { openFirestoreClient, type FirestoreRoot } from '../firestore/client';
 import { REPORTS_COLLECTION } from '../firestore/report-store';
-import { WAITLIST_COLLECTION, waitlistDocId, waitlistDocOf } from '../firestore/waitlist-store';
+import { WAITLIST_COLLECTION, WAITLIST_SUPPRESSED_COLLECTION, waitlistDocId, waitlistDocOf } from '../firestore/waitlist-store';
 import {
   ADMISSION_COLLECTION,
   REQUESTS_COLLECTION,
@@ -42,7 +48,7 @@ import {
 } from '../firestore/usage-store';
 import { readReportsFile } from '../reports/store';
 import { readUsageFile, utcDayString, type RequestKind } from '../usage-store';
-import { readWaitlistFile } from '../waitlist/store';
+import { WAITLIST_SUPPRESSED_TABLE, readWaitlistFile } from '../waitlist/store';
 import type { AdminCliResult } from './cli';
 
 const DAY_MS = 86_400_000;
@@ -68,6 +74,7 @@ export interface CopyCount {
 
 export interface ImportCounts {
   waitlist: CopyCount;
+  fingerprints: CopyCount;
   reports: CopyCount;
   usage: CopyCount;
   requests: CopyCount;
@@ -84,12 +91,32 @@ interface SourceDoc {
 /** Everything the import writes, read from the SQLite files under `dataDir`. */
 interface SqliteSource {
   waitlist: SourceDoc[];
+  fingerprints: SourceDoc[];
   reports: SourceDoc[];
   usage: SourceDoc[];
   requests: { id: string; data: RequestDoc }[];
 }
 
 const SOURCE_FILES = ['usage.db', 'reports.db', 'waitlist.db'] as const;
+
+/** One kept removal fingerprint, as the SQLite waitlist store keeps it. */
+export interface StoredFingerprint {
+  readonly fingerprint: string;
+  readonly suppressedAt: number;
+}
+
+/** Every removal fingerprint in the `waitlist.db` at `dbPath`, read through a read-only connection;
+ *  none when the file predates them. */
+export function readWaitlistFingerprints(dbPath: string): StoredFingerprint[] {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(WAITLIST_SUPPRESSED_TABLE) === undefined) return [];
+    const rows = db.prepare(`SELECT fingerprint, suppressed_at FROM ${WAITLIST_SUPPRESSED_TABLE} ORDER BY fingerprint`).all() as unknown as { fingerprint: string; suppressed_at: number }[];
+    return rows.map((row) => ({ fingerprint: row.fingerprint, suppressedAt: row.suppressed_at }));
+  } finally {
+    db.close();
+  }
+}
 
 /** The SQLite files under `dataDir`, as the Firestore documents the stores keep. */
 function readSource(dataDir: string): SqliteSource {
@@ -106,6 +133,7 @@ function readSource(dataDir: string): SqliteSource {
       id: waitlistDocId(row.email),
       data: waitlistDocOf(row),
     })),
+    fingerprints: (waitlistFile === undefined ? [] : readWaitlistFingerprints(waitlistFile)).map(({ fingerprint, suppressedAt }) => ({ id: fingerprint, data: { suppressedAt } })),
     reports: (reportsFile === undefined ? [] : readReportsFile(reportsFile)).map(({ reportId, ...doc }) => ({ id: reportId, data: doc })),
     usage: usage.usage.map(({ deviceId, ...doc }) => ({ id: firestoreKey(deviceId), data: doc })),
     requests: usage.ledger.map(({ id, generationIds, ...row }) => ({
@@ -200,6 +228,7 @@ function rebuildDay(db: Firestore, root: FirestoreRoot, utcDay: string, kinds: r
 /** Copies `source` under `root` and rebuilds the admission counters of its ledger days on or after `keptFrom`. */
 async function importSource(db: Firestore, root: FirestoreRoot, source: SqliteSource, keptFrom: string): Promise<ImportCounts> {
   const waitlist = await copyInto(db, root.collection(WAITLIST_COLLECTION), source.waitlist, 'createdAt');
+  const fingerprints = await copyInto(db, root.collection(WAITLIST_SUPPRESSED_COLLECTION), source.fingerprints);
   const reports = await copyInto(db, root.collection(REPORTS_COLLECTION), source.reports);
   const usage = await copyInto(db, root.collection(USAGE_COLLECTION), source.usage);
   const requests = await copyInto(db, root.collection(REQUESTS_COLLECTION), source.requests);
@@ -210,7 +239,7 @@ async function importSource(db: Firestore, root: FirestoreRoot, source: SqliteSo
   // Each day is its own transaction over that day's documents only, and the days are bounded by retention.
   const perDay = await Promise.all([...days].map(([utcDay, kinds]) => rebuildDay(db, root, utcDay, [...kinds].sort((a, b) => a.localeCompare(b)))));
   const counters = perDay.reduce((sum, set) => sum + set, 0);
-  return { waitlist, reports, usage, requests, counters, counterDays: days.size };
+  return { waitlist, fingerprints, reports, usage, requests, counters, counterDays: days.size };
 }
 
 function formatCounts(counts: ImportCounts, dataDir: string): string {
@@ -219,6 +248,7 @@ function formatCounts(counts: ImportCounts, dataDir: string): string {
     `${name}: ${count.imported} imported, ${count.kept} kept as found${missing(file)}`;
   return [
     line('waitlist', counts.waitlist, 'waitlist.db'),
+    line('waitlist fingerprints', counts.fingerprints, 'waitlist.db'),
     line('reports', counts.reports, 'reports.db'),
     line('usage', counts.usage, 'usage.db'),
     line('requests', counts.requests, 'usage.db'),
