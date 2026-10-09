@@ -40,9 +40,11 @@ class MainApplication : Application(), ReactApplication {
   override fun onCreate() {
     super.onCreate()
     // The shell is light only (one fixed theme on every device). Pinning the app to day mode keeps
-    // the system bars' icons dark over it: edge to edge (`edgeToEdgeEnabled`), the app's window and
-    // every Modal's pick their bar icons from the configuration's night mode, so a phone in dark mode
-    // would otherwise draw light icons on the cream background.
+    // the navigation bar's icons (the gesture handle, the three buttons) dark over it: edge to edge
+    // (`edgeToEdgeEnabled`), React Native sets the navigation-bar icon colour of the app's window and
+    // of every Modal's from the configuration's night mode, so a phone in dark mode would otherwise
+    // draw light navigation icons on the cream background. The status bar's icons are the JS
+    // `StatusBar`'s (`LauncherRoot`).
     AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
     loadReactNative(this)
   }
