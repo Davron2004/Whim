@@ -33,7 +33,7 @@ import { createCueBackend } from '../cue-backend';
 import { tearDownLiveRealm } from './teardown';
 
 // The append-only capability table (storage + diag + cues), built once for the host (#41 D5). The
-// cue backend (RN Vibration + the WhimTone ToneGenerator module) is injected here — the only
+// cue backend (the WhimHaptics and WhimTone native modules) is injected here — the only
 // place RN cue APIs meet the bridge; the rows themselves stay RN-free (effects-and-cues D5).
 const REGISTRY = createDefaultRegistry({ cueBackend: createCueBackend() });
 

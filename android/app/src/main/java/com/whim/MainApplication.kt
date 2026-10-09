@@ -31,8 +31,9 @@ class MainApplication : Application(), ReactApplication {
           }
           // In-app TurboModules (not autolinked — they live in this app, not node_modules):
           // WhimTone audio cues (effects-and-cues D6), WhimAppInfo (request-envelope D2) and
-          // WhimAgeSignal (legal-surface-v2 D11).
+          // WhimAgeSignal (legal-surface-v2 D11); WhimHaptics (design-system-v1 D11).
           add(com.whim.tone.WhimTonePackage())
+          add(com.whim.haptics.WhimHapticsPackage())
         },
     )
   }

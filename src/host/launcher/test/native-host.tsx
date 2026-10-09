@@ -127,9 +127,13 @@ export const Alert = {
   shown: [] as { title: string; message?: string; buttons: AlertButton[] }[],
   alert: (title: string, message?: string, buttons: AlertButton[] = []) => { Alert.shown.push({ title, message, buttons }); },
 };
-export const Vibration = { vibrate: () => {}, cancel: () => {} };
 /** The platform locale sources `device-locale.ts` reads. Rendered suites pick the phone's locale
  *  through `LauncherRoot`'s `deviceLocale` instead; the legal-language suite swaps these per test. */
 export const I18nManager = { getConstants: () => ({ isRTL: false, doLeftAndRightSwapInRTL: true, localeIdentifier: undefined }) };
 export const Settings = { get: (_key: string): unknown => undefined };
-export const TurboModuleRegistry = { get: () => null, getEnforcing: () => ({ play: () => {}, stop: () => {} }) };
+/** Every call the `WhimHaptics` module received, oldest first, as `"<method>:<args joined by ,>"`.
+ *  It is the only TurboModule this host registers; every other name resolves to null. */
+export const hapticCalls: string[] = [];
+const record = (method: string) => (...args: unknown[]) => { hapticCalls.push(`${method}:${args.join(',')}`); };
+const whimHaptics = { impact: record('impact'), selection: record('selection'), notification: record('notification'), prepare: record('prepare'), cue: record('cue') };
+export const TurboModuleRegistry = { get: (name: string) => (name === 'WhimHaptics' ? whimHaptics : null), getEnforcing: () => ({ play: () => {}, stop: () => {} }) };

@@ -84,6 +84,7 @@ import { runWireFutureFramesTests } from './wire-future-frames.suite';
 import { runFlowMessagesUiTests } from './flow-messages-ui.suite';
 import { runKeyboardShellUiTests } from './keyboard-shell-ui.suite';
 import { runIconUiTests } from './icon-ui.suite';
+import { runHapticsTests } from './haptics.suite';
 
 const h = new Harness();
 
@@ -165,6 +166,7 @@ await runWireFutureFramesTests(h);
 await runFlowMessagesUiTests(h);
 await runKeyboardShellUiTests(h);
 await runIconUiTests(h);
+await runHapticsTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {
