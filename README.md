@@ -37,7 +37,7 @@ There is also a [one-minute video of a full session](https://www.linkedin.com/fe
 
 ## Why it is hard
 
-**Untrusted code on a phone.** Every mini-app is code no human reviewed, so the sandbox assumes it is hostile, including assuming it will lie about being contained. Containment has three legs and pen-testing showed none is enough alone:
+**Untrusted code on a phone.** Every mini-app is code no human reviewed, so the sandbox assumes it is hostile, including assuming it will lie about being contained. Containment has three web legs, and pen-testing showed none is enough alone; a fourth, native leg makes the WebView refuse every network load, because a frame navigating itself gets past all three (decision #74):
 
 ```mermaid
 flowchart TB
@@ -149,7 +149,7 @@ npm run launcher:test      # launcher acceptance (Node); vstore:test, storage:te
 npm run android:release    # debug-signed offline build onto a device or emulator; the store AAB comes only from `fastlane android closed`
 ```
 
-Generating needs the server: `npm run server:dev` with `OPENROUTER_API_KEY`, `WHIM_REWRITE_MODEL` and `WHIM_ENGINEER_MODEL` in `.env`, or `WHIM_PIPELINE=stub` for a canned pipeline. Opening apps you already have does not.
+Generating needs the server: `npm run server:dev` with `OPENROUTER_API_KEY`, `WHIM_REWRITE_MODEL` and `WHIM_ENGINEER_MODEL` in `.env`, or `WHIM_PIPELINE=stub` for a canned pipeline (`WHIM_STUB_DELAY_MS` sets its wait before each event, 200 by default). Opening apps you already have does not.
 
 Store releases (TestFlight and Play) are attended-only fastlane lanes — see `docs/release/mobile.md`.
 Deploying the server publicly is attended-only too — see `docs/deploy.md`.

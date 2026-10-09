@@ -133,12 +133,87 @@ environment, the same as the deploy scripts.
    ```
    From here on, `fastlane android closed` (without `upload:false`) uploads through the API.
 
+## Upgrade check (required before any beta build ships)
+
+No beta build goes to TestFlight or the Play closed track until the upgrade check has passed on a
+fresh emulator and on a newly created simulator (specs/release-upgrade-check). The check installs
+the previous release, seeds it, installs the candidate over it, and fails unless every app tile,
+version count, saved datum, the consent grant and the device id are unchanged. A failure blocks the
+release.
+
+**Evidence** goes to the releasing change's folder: pass
+`--evidence openspec/changes/<id>/upgrade-check/<platform>` and commit `before.json` (the seed
+record), `after.json` and `result.txt`. The raw captures under `raw/` stay local (the script writes
+a `.gitignore` for them). Then add one line per platform to that change's `progress.md`, for
+example `upgrade check android 382511 → <candidate build>: PASS (upgrade-check/android/result.txt)`.
+
+Both sides are built from source on the same machine, because a store artifact can't go on a
+simulator and Android only installs an upgrade signed with the same key. The previous release's
+commit is its release tag: `git rev-parse 'release/1.0.0+382511^{commit}'` gives `a9b03c47`.
+
+1. Check out the previous release next to the repo and build it with its own build number:
+   ```sh
+   git worktree add ~/.cache/whim-upgrade/382511 release/1.0.0+382511
+   cd ~/.cache/whim-upgrade/382511 && npm ci && npm run build
+   (cd android && ./gradlew :app:assembleOffline -PwhimBuildNumber=382511)
+   cp android/app/build/outputs/apk/offline/app-offline.apk ~/.cache/whim-upgrade/from.apk
+   mkdir -p vendor && ln -s <repo>/vendor/bundle vendor/bundle
+   (cd ios && bundle exec pod install && xcodebuild -workspace Whim.xcworkspace -scheme Whim \
+     -configuration Release -sdk iphonesimulator -derivedDataPath build/sim WHIM_BUILD_NUMBER=382511 build)
+   ```
+   A fresh worktree has no `vendor/bundle` (gems are never committed), so `bundle exec pod install`
+   fails there until it borrows the repo's gems. The symlink is safe while both checkouts have the
+   same `Gemfile.lock`; if they differ, run `bundle install` in the worktree instead.
+   The simulator app is `ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app`. Android
+   takes the `offline` build: it's debug-signed (so the upgrade installs) and debuggable (so the
+   script can read the app's store with `run-as`).
+2. Build the candidate the same way from its own checkout, with a higher build number
+   (`node scripts/release/run.mjs build-number`). In this repo, restore `ios/Podfile.lock` after the
+   build if `pod install` changed it.
+3. Start the previous release's server in stub mode, from its checkout. The candidate's server
+   answers 426 to a build that doesn't send `x-whim-protocol`. Up to 382511, the plan step
+   (`/v1/rewrite`) has no stub, so the server needs the model key and roster from `.env`. Generation
+   stays stubbed, and every generated app is named "Hello App":
+   ```sh
+   cd ~/.cache/whim-upgrade/382511
+   WHIM_PIPELINE=stub WHIM_DATA_DIR="$(mktemp -d)" node --env-file=<repo>/.env server/dev.mjs
+   ```
+4. From the candidate's checkout, run the check for each platform:
+   ```sh
+   scripts/release/upgrade-check.sh --platform android --avd Whim_Verify \
+     --from ~/.cache/whim-upgrade/from.apk --to android/app/build/outputs/apk/offline/app-offline.apk \
+     --evidence openspec/changes/<id>/upgrade-check/android
+   scripts/release/upgrade-check.sh --platform ios \
+     --from ~/.cache/whim-upgrade/382511/ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app \
+     --to ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app \
+     --evidence openspec/changes/<id>/upgrade-check/ios
+   ```
+   Android boots the AVD with `-wipe-data` on port 5580 (`--emulator-port`) and forwards the server
+   port with `adb reverse`. iOS creates and deletes its own iPhone 15 Plus simulator (`--sim-type`).
+   `--keep-device` leaves the device up for a look after a failure.
+
+The seed flow (`scripts/release/upgrade-check/seed.yaml`) is written against 382511's screens. When
+the check fails, the script names the step and keeps Maestro's log and screenshots under `raw/maestro`.
+On iOS a pressable reads as one element whose label joins its texts, so the flows match a tile's name
+inside that label and tap the tile menu's rows by position (the script measures the screen first).
+The seed gets past 382511's undismissable compose keyboard (#50) by switching to the emoji keyboard,
+after which a tap on the headline drops it. Maestro has crashed SpringBoard on this machine before;
+if the seed step fails there, rerun with `--manual-seed`: the script waits while you seed by hand,
+then reads and diffs as usual. Release builds made under legal-surface-v2 D10, 392403 among them,
+ignore the server-address override. From beta-1 D20 on, every build honours it, but only after the
+user takes Advanced → `Use your own server` and confirms once; an address saved before that stays
+unread. So a seed against a D20 build has to confirm that step before typing the address, and an
+address seeded into an older build reaches a D20 build unread until someone confirms there.
+
 ## Per-release commands
+
+Run the [upgrade check](#upgrade-check-required-before-any-beta-build-ships) first.
 
 ```sh
 fastlane ios testflight
 # ⇒ preflight, archive, source-map upload, TestFlight upload, prints the build number it used
 fastlane android closed build:<the number ios printed>
+# ⇒ preflight, AAB build and verify, source-map upload, AAB-only upload to the Play alpha track as a draft
 ```
 
 Passing the number the first platform's lane prints to the second gives both platforms the same
@@ -248,10 +323,13 @@ curl -sI https://whim.<domain>/.well-known/assetlinks.json
   ```
   This ships a store build that only 64-bit ARM devices can install (design D13) — use it only
   as a stopgap, and retry the three-ABI build for the next release.
-- **A tester needs the app talking to a LAN dev server.** The store AAB and the TestFlight
-  archive both forbid cleartext traffic, so neither can use an http Advanced Settings override
-  (compliance D7) — only the `offline` APK (`npm run android:release`) can. iOS can still reach a
-  LAN IP directly, since ATS exempts numeric hosts and local networking stays enabled.
+- **A tester needs the app talking to a LAN dev server.** Any store build can (beta-1 D20): in
+  Settings → Advanced, take `Use your own server`, confirm, and enter the address. The app takes
+  `http://` only for a loopback or private-range IP literal (loopback, RFC 1918, link-local, IPv6
+  unique-local, carrier-grade NAT such as Tailscale's 100.64.0.0/10), `localhost`, a `.local` name
+  or a single-label host that isn't numeric; anything else needs `https://`. Every Android build
+  type uses the one network config, which permits cleartext at its base for this, and iOS ATS
+  exempts numeric hosts and local networking.
 - **fastlane reports a version below `2.237.0`.** `brew upgrade fastlane`; the Fastfile's
   `min_fastlane_version` refuses to load otherwise.
 - **A lane crashes instead of naming a clean preflight finding.** Every lane calls the preflight
