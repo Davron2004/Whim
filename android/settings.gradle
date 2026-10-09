@@ -1,4 +1,19 @@
-pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
+pluginManagement {
+  // Tripwire, before anything below compiles into node_modules: this checkout's node_modules must
+  // be its own. Through a symlinked one (whole, or one link per package) Gradle, CMake and RN
+  // codegen write their build output into ANOTHER checkout's node_modules: even `./gradlew help`
+  // wrote 388 files there (measured 2026-09-25), and dead worktrees had left ~2.3 GB of Android
+  // build output in the primary tree's. Give the checkout its own node_modules instead
+  // (scripts/worktree.sh provision <checkout>, an APFS copy-on-write clone).
+  def checkout = settingsDir.parentFile.canonicalFile
+  ['node_modules', 'node_modules/react-native', 'node_modules/@react-native/gradle-plugin'].each { rel ->
+    def real = new File(checkout, rel).canonicalFile
+    if (!real.path.startsWith(checkout.path + File.separator)) {
+      throw new GradleException("${rel} resolves to ${real}, outside this checkout (${checkout}), so this build would write into that checkout's node_modules. Give this checkout its own node_modules instead: scripts/worktree.sh provision ${checkout}")
+    }
+  }
+  includeBuild("../node_modules/@react-native/gradle-plugin")
+}
 plugins { id("com.facebook.react.settings") }
 extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
 rootProject.name = 'Whim'

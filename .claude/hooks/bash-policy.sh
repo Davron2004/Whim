@@ -115,8 +115,10 @@ cleanup_lane() {
 # the old match-anywhere substring denied `git diff`/`cat` on the file and even report text that merely
 # quoted its path (critic 2026-07-02). Env-prefixed invocation (`VAR=x <script>`) slips this matcher;
 # the guard is anti-accident — the durable backstops stay the pinned-BASE diff + the orchestrator review.
-if [[ -n "$AGENT_ID" ]] && printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([^[:space:];&|]*/)?scripts/fixloop\.sh|(^|[[:space:]])(bash|sh|zsh|source|\.)[[:space:]]+([^;&|]*[[:space:]])?[^[:space:];&|]*scripts/fixloop\.sh'; then
-  deny "the fix-loop toolkit script is orchestrator-only (it runs git unhooked); subagents must not invoke it (class-B deviation)"
+# scripts/worktree.sh is the same kind of tool (`create` runs `git worktree add` unhooked), so the
+# same rule covers it; gate.sh's own `worktree.sh check` runs inside the gate, not through this hook.
+if [[ -n "$AGENT_ID" ]] && printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([^[:space:];&|]*/)?scripts/(fixloop|worktree)\.sh|(^|[[:space:]])(bash|sh|zsh|source|\.)[[:space:]]+([^;&|]*[[:space:]])?[^[:space:];&|]*scripts/(fixloop|worktree)\.sh'; then
+  deny "the fix-loop toolkit and worktree scripts are orchestrator-only (they run git unhooked); subagents must not invoke them (class-B deviation)"
 fi
 
 # Hard denies first — match anywhere in the command, including chained segments.
@@ -247,7 +249,7 @@ is_root_simulator_install() {
   return 0
 }
 
-PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|scripts/gate-full\.sh|scripts/fixloop\.sh|scripts/git-cleanup-check\.sh|scripts/sync-codex\.mjs|\.claude/(hooks|settings|agents|commands|fixloop/(grants|owners))|\.codex/|build/|invariants/'
+PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|scripts/gate-full\.sh|scripts/fixloop\.sh|scripts/git-cleanup-check\.sh|scripts/sync-codex\.mjs|scripts/worktree\.sh|\.claude/(hooks|settings|agents|commands|fixloop/(grants|owners))|\.codex/|build/|invariants/'
 BND='(^|[[:space:]&;|(])'
 if printf '%s' "$CMD" | grep -Eq ">>?[[:space:]]*[^|&;]*($PROTECTED)|${BND}sed[^|]*-i[^|]*($PROTECTED)|${BND}tee[[:space:]][^|]*($PROTECTED)|${BND}(cp|mv|ln|install|dd|truncate)[[:space:]][^|]*($PROTECTED)|npm[[:space:]]+pkg[[:space:]]+(set|delete)|(yarn|pnpm)[[:space:]]+config[[:space:]]+set"; then
   if ! is_root_simulator_install; then

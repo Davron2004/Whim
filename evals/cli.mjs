@@ -37,6 +37,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { devBundleExternals } from '../server/build.mjs';
+import { tmpBundlePath } from '../scripts/lib/tmp-bundle.mjs';
 
 const evalsDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(evalsDir, '..');
@@ -171,7 +172,7 @@ export async function runEvalSet(opts) {
 `;
 
 async function loadFacade() {
-  const outfile = join(evalsDir, `.cli-facade.${process.pid}.tmp.mjs`);
+  const outfile = tmpBundlePath('evals-cli-facade', repoRoot);
   await build({
     stdin: { contents: FACADE_SOURCE, resolveDir: evalsDir, sourcefile: 'facade.ts', loader: 'ts' },
     outfile,

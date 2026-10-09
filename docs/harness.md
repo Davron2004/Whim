@@ -79,8 +79,11 @@ the main thread, the schema instruction wins.
 - **The hermetic full gate** (`scripts/fixloop.sh gatefull <branch>`) runs `gate-full.sh` from the
   branch's *committed tip checked out into the main tree* — never the agent's worktree — because
   (a) untracked/gitignored poison in a worktree is invisible to the integrity diff but executed by
-  a gate run there, and (b) Metro cannot resolve `node_modules` from a fresh worktree the way
-  Node/esbuild/tsc can. "What you verified == what you tested."
+  a gate run there, and (b) Metro does not walk up to the primary tree's `node_modules` the way
+  Node/esbuild/tsc do, so it cannot bundle from a worktree that has no `node_modules` of its own.
+  (b) no longer applies to a worktree made by `scripts/worktree.sh create`, which has its own:
+  Metro bundles from it (measured 2026-09-25, §11). (a) alone keeps `gatefull` in the main tree.
+  "What you verified == what you tested."
 - **Unattended runs** go through `.devcontainer/` (Docker, egress locked to the Anthropic API) —
   the container is the Threat-C boundary. See `.devcontainer/README.md`.
 
@@ -90,7 +93,8 @@ The mechanical layer. Protected paths split by blast radius:
 
 - **Class 2 — the control plane (NEVER agent-editable, never grantable):** `scripts/gate.sh`,
   `scripts/gate-full.sh`, `scripts/fixloop.sh`, `scripts/git-cleanup-check.sh`,
-  `scripts/sync-codex.mjs`, `.claude/**` (hooks, settings, agents, commands, grants),
+  `scripts/sync-codex.mjs`, `scripts/worktree.sh` (the gate runs its `check`),
+  `.claude/**` (hooks, settings, agents, commands, grants),
   `.codex/**` (the Codex mirror — its hooks are symlinks into `.claude/hooks/`, so an edit via
   the `.codex` path IS a control-plane edit), `invariants/`, `build/`. These *do the verifying*;
   a bad edit makes every other green check lie.
@@ -101,11 +105,12 @@ The mechanical layer. Protected paths split by blast radius:
 
 | Mechanism | File | What it does |
 |---|---|---|
-| Fast gate | `scripts/gate.sh` | build → typecheck → lint → the Node suites (including independently-discovered `src/sdk/test/*.acceptance.ts(x)` suites) → the tracked bash-policy regression suite → scaffolding tripwires. Runs on every inner-loop attempt, in the agent's worktree. Refuses to run if any protected config differs from `GATE_BASE` (pinned-BASE tamper tripwire). Lint includes `plugin:sonarjs/recommended-legacy` (2026-07-12) — the same SonarJS rule implementations SonarCloud runs, so Sonar findings (cognitive complexity, nested ternaries, …) fail the inner loop locally instead of bouncing off the PR quality gate post-hoc. NOTE: the eslint plugin does NOT honor `// NOSONAR` comments — don't suppress, fix (or add a scoped `.eslintrc.js` override with a reason, a Class-1 human-ratified edit). |
+| Fast gate | `scripts/gate.sh` | build → typecheck → lint → the Node suites (including independently-discovered `src/sdk/test/*.acceptance.ts(x)` suites) → the tracked bash-policy regression suite → scaffolding tripwires. Runs on every inner-loop attempt, in the agent's worktree. Refuses to run if any protected config differs from `GATE_BASE` (pinned-BASE tamper tripwire), or if the checkout's `node_modules` is not its own (`scripts/worktree.sh check`: missing, symlinked, or a `@whim/*` link resolving into another checkout). Lint includes `plugin:sonarjs/recommended-legacy` (2026-07-12) — the same SonarJS rule implementations SonarCloud runs, so Sonar findings (cognitive complexity, nested ternaries, …) fail the inner loop locally instead of bouncing off the PR quality gate post-hoc. NOTE: the eslint plugin does NOT honor `// NOSONAR` comments — don't suppress, fix (or add a scoped `.eslintrc.js` override with a reason, a Class-1 human-ratified edit). |
 | Full gate | `scripts/gate-full.sh` | `gate.sh` + knip + `guard:metro` + the three Chromium invariant suites + `openspec validate` + the codex-mirror freshness check. Once per fix/change, pre-merge, main tree. The Chromium suites generate their scenario pages from `src/runtime/generated/runtime-artifacts.json`, emitted by `npm run build` — so invariants always assert against *this* build, never a stale snapshot. |
 | CI | `.github/workflows/invariants.yml` | Two blocking jobs on every push: `quality-gate` (typecheck, lint, knip, `openspec validate --all --strict`, scaffolding tripwires) and `isolation-suite` (every Node suite + `guard:metro` + `build` + all three Chromium invariant runners) — together effectively `gate-full.sh` on a fresh checkout. |
 | SonarCloud (external) | GitHub PR quality gate | Automatic analysis on every push to the staging branch's draft PR into `main` — server-side, no repo config (`sonar-project.properties` deliberately absent), not runnable locally or in the deny-egress container. Iteration happens on that draft PR: findings are ingested programmatically by `scripts/sonar-pr-issues.mjs` (Web API, auth-visibility-guarded) into the fix-loop findings format, driving a nested `/fix-loop` on the staging branch, re-pushed until green — orchestrator-executed on the attended host (§11) — before the final ratified merge, never after. The local sonarjs lint (row 1) is the in-loop mirror of its rule set; SonarCloud stays the authoritative external check at PR time. It honors `// NOSONAR`; the local lint does not — keep code clean under the stricter of the two. Every finding fixed this way is appended to `openspec/critic/sonar-ledger.md` (one line per finding per fix round) — the promotion loop is external finding → ledger line → critic recurrence candidate (≥3 distinct fix-round run-ids for the same rule/location pattern) → human-ratified `.eslintrc.js` promotion, after which the fast gate's lint catches the recurrence in the inner loop. |
 | Deterministic toolkit | `scripts/fixloop.sh` | `integrity` (0 clean / 6 sanctioned Class-1 / 3 tamper / 4 scope), `redcheck` (0 RED / 5 vacuous-GREEN), `stale` (0 live / 7 already-fixed), `gatefull`, `park`, `finish`, `status`. Orchestrator-only: its internal git bypasses the hooks. |
+| Worktree provisioning | `scripts/worktree.sh` | `create <id> [<base>] [--branch b]` (worktree under `.claude/worktrees/` + its own `node_modules` + build), `provision <checkout>` (the same for a checkout made another way), `check [<checkout>]` (the gate's `node_modules` tripwire). The one place worktrees are made; `fixloop.sh redcheck` calls it. Orchestrator-only, like `fixloop.sh`: `create` runs git unhooked. §11 has the why. |
 | Bash policy | `.claude/hooks/bash-policy.sh` | Deterministic allow/deny on the command vocabulary: tier-1 git denies for everyone (config/reflog/clone/remote/ref-rewrites naming `main` anywhere, incl. substrings — fail-closed); **any push naming `main` denied for everyone** (incl. refspec smuggling `integration/x:main`); a **main-thread** push of a non-`main` ref (incl. `--force-with-lease origin integration/<run-id>`) **auto-allows** — the server-side GitHub ruleset on `main` is the human gate, not a per-push `ask` (decision #49); subagents are denied every push form; main-thread `git fetch origin` and `git pull --ff-only origin main` relaxed (closure's teardown) — **bare simple commands only**, see §4.1; `gh` vocabulary — read-only for all callers, `pr create --draft`/`pr ready` main-thread only, `pr merge` denied for all; compound commands are **unrolled by `unroll-command.mjs` and judged by their worst segment** (deny > ask > none > allow), never blanket-prompted, with anything not soundly unrollable (`$()`, backticks, eval-family, …) falling closed to a prompt; scoped git for subagents inside their *own* worktree (owners binding); protected-path shell-writes (incl. `>`/`>>` redirects) denied. |
 | Edit/Write policy | `.claude/hooks/protect-harness.sh` | Class 2 blocked for subagents everywhere (incl. inside worktrees); Class 1 blocked unless granted; memory store blocked (report `MEMORY:` field instead); main-thread edits to protected files → `ask` (the human ratifies). |
 | Stop gate | `.claude/hooks/gate-on-subagent-stop.sh` | An `implementer` with a dirty main tree, or a `git-cleaner`, cannot finish until its gate passes (attempt-capped). Worktree agents self-gate instead — this hook is the legacy/backstop path. |
@@ -169,7 +174,7 @@ the run's staging branch (`integration/<change-id>`, from `main`'s recorded tip)
 
 1. Per eligible chain (deps merged): record BASE = the staging branch tip
    (`git rev-parse integration/<change-id>`), pre-create an orchestrator-owned worktree +
-   `chain/<change>-<id>` branch, `npm run build` in it.
+   `chain/<change>-<id>` branch with `scripts/worktree.sh create` (its own `node_modules`, built).
 2. One implementer per chain, in parallel where the DAG allows. Each self-gates `gate.sh`,
    commits, reports. Implementers do **not** tick tasks.md — the dispatcher ticks at merge.
 3. Per report: adjudicate deviations (A log / B adjudicate / C halt), `fixloop.sh integrity`,
@@ -387,9 +392,26 @@ schema `apply.instruction` is the durable routing anchor if any generated skill 
   a real test failure; the MachPort error is only a sandbox-startup failure.
 - An `isolation: worktree` tree is auto-removed at turn end "if unchanged" — hence the untracked
   `.gitkeep` pin. Orchestrator-pre-created worktrees don't have this problem (preferred).
-- Metro does not walk up to the repo root's `node_modules` from a fresh worktree (Node/esbuild/tsc
-  do) — hence the hermetic main-tree `gatefull`, and why `npm run build` must run in every fresh
-  worktree before `typecheck`.
+- **Every worktree gets its own `node_modules`: create it with `scripts/worktree.sh create`**
+  (runbooks: `opsx/apply.md` step 5, `fix-loop.md` step 2; `fixloop.sh redcheck` uses it too).
+  `node_modules` is gitignored, so a plain `git worktree add` has none. Node/esbuild/tsc then walk
+  up to the primary tree's, where `node_modules/@whim/contract -> ../../contract` resolves to the
+  PRIMARY tree's `contract/`: the chain's tests run the primary tree's code, and a red-check judges
+  whatever the primary tree has checked out instead of the branch. Metro does not walk up at all.
+  A symlinked `node_modules`, whole or per entry, is no fix: `@whim/*` still resolves to the
+  primary tree, codegen/Gradle/CMake write into the primary tree's `node_modules`, and Metro's
+  crawler does not follow the link. Measured 2026-09-25, Metro dev server serving
+  `/index.bundle?platform=android&dev=true` from a worktree at `.claude/worktrees/<id>` depth: with
+  a clone, HTTP 200 and all 927 absolute source-map paths inside the worktree; with a symlinked
+  `node_modules` or none, HTTP 500 `Unable to resolve module
+  @babel/runtime/helpers/interopRequireDefault`. From a clone, `guard:metro`, `react-native bundle`
+  and Gradle's `createBundleOfflineJsAndAssets` also pass, and codegen/Gradle/CMake wrote only into
+  the clone. The clone is APFS copy-on-write (one `clonefile(2)`, about a second, no disk until
+  written). On Linux the script requires reflinks and refuses without them rather than copying
+  gigabytes (`WHIM_WORKTREE_COPY=full` opts into a full copy); that path, like iOS/Pods and a full
+  native assemble from a clone, has not been exercised yet. `gate.sh` refuses a checkout whose
+  `node_modules` is not its own. `create` also runs `npm run build`, which every fresh worktree
+  needs before `typecheck`.
 - Test hooks by piping sample JSON from a file — trigger words in an inline test command trip the
   live hook before the hook under test runs.
 - The attended root task CAN request an exact protected-file patch through the reviewed Codex

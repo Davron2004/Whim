@@ -641,6 +641,228 @@ case_park_fix_branch_unchanged() {
   assert_not_contains "a fix park gets no staging-closure section" "$note" "runbook step 12"
 }
 
+# ================================================================================================
+# Cases 10-14 — every worktree gets its OWN node_modules (scripts/worktree.sh).
+#
+# node_modules is gitignored, so a plain `git worktree add` has none. Node then walks up to the
+# primary tree's, where the relative workspace link node_modules/@whim/contract -> ../../contract
+# resolves to the PRIMARY tree's contract/: a chain's tests run the primary tree's code. A
+# symlinked node_modules does the same through realpath and also routes build writes into the
+# primary tree. These cases pin the three claims the fix makes — a created worktree resolves
+# @whim/* inside itself, a symlinked node_modules is refused rather than written through, and a
+# red-check verdict describes the branch rather than whatever the primary tree has checked out —
+# each beside a control that reproduces the defect, so no assertion can pass vacuously.
+#
+# The fixture is a repo holding VERBATIM COPIES of the real scripts/worktree.sh, fixloop.sh and
+# gate.sh, one workspace package @whim/contract (answer 41 on `base`, 42 on `fix`), and an
+# npm-shaped node_modules: the relative @whim link, a plain package and a .bin link.
+# ================================================================================================
+
+REAL_WORKTREE="$REPO/scripts/worktree.sh"
+REAL_GATE="$REPO/scripts/gate.sh"
+
+# resolve_from <dir> — the realpath @whim/contract resolves to, the way a suite in <dir> sees it.
+resolve_from() {
+  local dir="$1"
+  (cd "$dir" && node -e 'console.log(require("fs").realpathSync(require.resolve("@whim/contract")))' 2>&1)
+  return 0
+}
+
+new_nm_fixture() {
+  local fx
+  fx="$(mktemp -d "${TMPDIR:-/tmp}/whim-worktree.XXXXXX")" || return 1
+  FIXTURES+=("$fx")
+  fx="$(cd "$fx" && pwd -P)" || return 1   # macOS: /var -> /private/var; realpaths must agree
+
+  fgit init -q -b base "$fx" >/dev/null 2>&1 || return 1
+  mkdir -p "$fx/scripts" "$fx/contract" || return 1
+  cp "$REAL_WORKTREE" "$fx/scripts/worktree.sh" && cp "$REAL_FIXLOOP" "$fx/scripts/fixloop.sh" \
+    && cp "$REAL_GATE" "$fx/scripts/gate.sh" || return 1
+  chmod +x "$fx/scripts/"*.sh
+  printf 'node_modules/\n.claude/worktrees/\nBUILD-RAN\n' > "$fx/.gitignore"
+  cat > "$fx/package.json" <<'JSON'
+{ "name": "fx", "private": true, "workspaces": ["contract"],
+  "scripts": { "build": "node -e \"require('fs').writeFileSync('BUILD-RAN', '')\"" } }
+JSON
+  echo '{ "lockfileVersion": 3, "fixture": true }' > "$fx/package-lock.json"
+  echo '{ "name": "@whim/contract", "main": "index.js" }' > "$fx/contract/package.json"
+  echo 'module.exports = { answer: 41 };' > "$fx/contract/index.js"
+  echo 'process.exit(require("@whim/contract").answer === 42 ? 0 : 1);' > "$fx/test.js"
+  fgit -C "$fx" add -A >/dev/null 2>&1
+  fgit -C "$fx" commit -qm "base" >/dev/null 2>&1 || return 1
+  fgit -C "$fx" switch -q -c fix >/dev/null 2>&1 || return 1
+  echo 'module.exports = { answer: 42 };' > "$fx/contract/index.js"
+  fgit -C "$fx" commit -qam "fix" >/dev/null 2>&1 || return 1
+  fgit -C "$fx" switch -q base >/dev/null 2>&1 || return 1
+
+  # The primary tree's install, shaped like npm's: relative workspace link, a package, a .bin link.
+  mkdir -p "$fx/node_modules/@whim" "$fx/node_modules/leftpad" "$fx/node_modules/.bin" || return 1
+  ln -s ../../contract "$fx/node_modules/@whim/contract"
+  echo 'module.exports = 1;' > "$fx/node_modules/leftpad/index.js"
+  ln -s ../leftpad/index.js "$fx/node_modules/.bin/leftpad"
+  printf '%s' "$fx"
+  return 0
+}
+
+# Where copy-on-write clones are impossible (Linux without reflinks), `create` must refuse loudly;
+# the resolution cases then run with the explicit full-copy opt-in, so they hold on every platform.
+cow_available() {
+  local probe
+  probe="$(mktemp -d "${TMPDIR:-/tmp}/whim-cow.XXXXXX")" || return 1
+  FIXTURES+=("$probe")
+  echo x > "$probe/a"
+  case "$(uname -s)" in
+    Darwin) cp -c "$probe/a" "$probe/b" 2>/dev/null || return 1 ;;
+    Linux)  cp --reflink=always "$probe/a" "$probe/b" 2>/dev/null || return 1 ;;
+    *)      return 1 ;;
+  esac
+  return 0
+}
+NM_COPY=""
+cow_available || NM_COPY=full
+
+case_worktree_create_resolves_inside() {
+  local fx wt out rc real
+  fx="$(new_nm_fixture)" || { fail "case 10 fixture" "could not build node_modules fixture"; return; }
+
+  # Control: the old way. A plain worktree resolves @whim/contract to the PRIMARY tree's copy.
+  fgit -C "$fx" worktree add -q --detach "$fx/.claude/worktrees/plain" base >/dev/null 2>&1 \
+    || { fail "case 10 fixture" "plain worktree add failed"; return; }
+  real="$(resolve_from "$fx/.claude/worktrees/plain")"
+  if [[ "$real" = "$fx/contract/index.js" ]]; then
+    pass "control: a plain worktree resolves @whim/contract to the primary tree"
+  else
+    fail "control: a plain worktree resolves @whim/contract to the primary tree" \
+      "resolved to '$real' — the fixture no longer reproduces the defect, so case 10 proves nothing"
+  fi
+
+  out="$(cd "$fx" && WHIM_WORKTREE_COPY="$NM_COPY" ./scripts/worktree.sh create wt1 base 2>&1)"; rc=$?
+  wt="$fx/.claude/worktrees/wt1"
+  assert_rc_zero  "create provisions a worktree"                 "$rc"  "$out"
+  assert_contains "create reports the BASE it pinned"            "$out" "BASE $(fgit -C "$fx" rev-parse base)"
+  real="$(resolve_from "$wt")"
+  if [[ "$real" = "$wt/contract/index.js" ]]; then
+    pass "a created worktree resolves @whim/contract to its OWN contract/"
+  else
+    fail "a created worktree resolves @whim/contract to its OWN contract/" "resolved to '$real'"
+  fi
+  if [[ -d "$wt/node_modules" ]] && [[ ! -L "$wt/node_modules" ]]; then
+    pass "a created worktree's node_modules is a real directory"
+  else
+    fail "a created worktree's node_modules is a real directory" "$(ls -ld "$wt/node_modules" 2>&1)"
+  fi
+  : > "$wt/node_modules/leftpad/written-in-worktree"
+  if [[ -e "$fx/node_modules/leftpad/written-in-worktree" ]]; then
+    fail "a write into the worktree's node_modules stays in the worktree" "it appeared in the primary tree"
+  else
+    pass "a write into the worktree's node_modules stays in the worktree"
+  fi
+  if [[ -e "$wt/BUILD-RAN" ]]; then pass "create builds the worktree"; else fail "create builds the worktree" "$out"; fi
+
+  out="$(cd "$fx" && ./scripts/worktree.sh check "$wt" 2>&1)"; rc=$?
+  assert_rc_zero "check accepts a created worktree" "$rc" "$out"
+
+  if [[ "$NM_COPY" = full ]]; then
+    out="$(cd "$fx" && ./scripts/worktree.sh create wt2 base 2>&1)"; rc=$?
+    assert_rc_nonzero "without copy-on-write, create refuses instead of silently copying" "$rc" "$out"
+    assert_contains   "the refusal names the explicit full-copy opt-in" "$out" "WHIM_WORKTREE_COPY=full"
+  fi
+  return 0
+}
+
+case_symlinked_node_modules_refused() {
+  local fx wt out rc
+  fx="$(new_nm_fixture)" || { fail "case 11 fixture" "could not build node_modules fixture"; return; }
+  wt="$fx/.claude/worktrees/linked"
+  fgit -C "$fx" worktree add -q --detach "$wt" base >/dev/null 2>&1 \
+    || { fail "case 11 fixture" "worktree add failed"; return; }
+  ln -s "$fx/node_modules" "$wt/node_modules"
+
+  out="$(cd "$fx" && WHIM_WORKTREE_COPY="$NM_COPY" ./scripts/worktree.sh provision "$wt" 2>&1)"; rc=$?
+  assert_rc_nonzero "provision refuses a symlinked node_modules" "$rc" "$out"
+  assert_contains   "the refusal says it is a symlink"           "$out" "is a symlink"
+  assert_contains   "the refusal says how to remove only the link" "$out" "no trailing slash"
+  # The danger being refused: copying through the link would write into the PRIMARY tree.
+  if [[ -e "$fx/node_modules/node_modules" ]] || [[ ! -L "$wt/node_modules" ]]; then
+    fail "a refused provision writes nothing through the link" "$(ls -la "$fx/node_modules" "$wt" 2>&1)"
+  else
+    pass "a refused provision writes nothing through the link"
+  fi
+
+  out="$(cd "$fx" && ./scripts/worktree.sh check "$wt" 2>&1)"; rc=$?
+  assert_rc_nonzero "check rejects a symlinked node_modules" "$rc" "$out"
+  assert_contains   "check names the symlink"                "$out" "is a symlink to $fx/node_modules"
+  return 0
+}
+
+case_check_rejects_unowned_node_modules() {
+  local fx wt out rc e
+  fx="$(new_nm_fixture)" || { fail "case 12 fixture" "could not build node_modules fixture"; return; }
+
+  # A worktree with no node_modules: everything would resolve from the primary tree's.
+  wt="$fx/.claude/worktrees/bare"
+  fgit -C "$fx" worktree add -q --detach "$wt" base >/dev/null 2>&1 \
+    || { fail "case 12 fixture" "worktree add failed"; return; }
+  out="$(cd "$fx" && ./scripts/worktree.sh check "$wt" 2>&1)"; rc=$?
+  assert_rc_nonzero "check rejects a worktree with no node_modules" "$rc" "$out"
+  assert_contains   "check says node_modules is missing"           "$out" "does not exist"
+
+  # A per-entry symlink tree (a real directory whose entries link into the primary tree) resolves
+  # and writes exactly like a whole-folder link.
+  mkdir -p "$wt/node_modules/@whim"
+  ln -s ../../contract "$wt/node_modules/@whim/contract"
+  for e in leftpad .bin; do ln -s "$fx/node_modules/$e" "$wt/node_modules/$e"; done
+  out="$(cd "$fx" && ./scripts/worktree.sh check "$wt" 2>&1)"; rc=$?
+  assert_rc_nonzero "check rejects a per-entry symlink tree" "$rc" "$out"
+  assert_contains   "check names the escaping entry"         "$out" "node_modules/leftpad -> $fx/node_modules/leftpad"
+
+  # A workspace link pointing at the primary tree's workspace, the hand-made-symlink mistake.
+  rm -f "$wt/node_modules/leftpad" "$wt/node_modules/.bin" "$wt/node_modules/@whim/contract"
+  ln -s "$fx/contract" "$wt/node_modules/@whim/contract"
+  out="$(cd "$fx" && ./scripts/worktree.sh check "$wt" 2>&1)"; rc=$?
+  assert_rc_nonzero "check rejects a workspace link into another checkout" "$rc" "$out"
+  assert_contains   "check names the workspace that escapes" "$out" "@whim/contract resolves to $fx/contract"
+
+  # Negative control: the primary tree's own install passes.
+  out="$(cd "$fx" && ./scripts/worktree.sh check "$fx" 2>&1)"; rc=$?
+  assert_rc_zero  "check accepts the primary tree's own node_modules" "$rc" "$out"
+  assert_contains "check reports the workspace links it verified"      "$out" "1 workspace link(s) resolve inside it"
+  return 0
+}
+
+case_gate_refuses_unowned_node_modules() {
+  local fx wt out rc
+  fx="$(new_nm_fixture)" || { fail "case 13 fixture" "could not build node_modules fixture"; return; }
+  wt="$fx/.claude/worktrees/ungated"
+  fgit -C "$fx" worktree add -q --detach "$wt" base >/dev/null 2>&1 \
+    || { fail "case 13 fixture" "worktree add failed"; return; }
+  out="$(cd "$wt" && ./scripts/gate.sh 2>&1)"; rc=$?
+  assert_rc_is      "gate.sh refuses (exit 2) in a worktree without its own node_modules" 2 "$rc" "$out"
+  assert_contains   "the gate names the node_modules cause"          "$out" "node_modules is not its own"
+  assert_not_contains "the gate stops before running any check"     "$out" "== build"
+  return 0
+}
+
+case_redcheck_ignores_primary_tree_checkout() {
+  local fx out rc
+  fx="$(new_nm_fixture)" || { fail "case 14 fixture" "could not build node_modules fixture"; return; }
+  # The primary tree already HAS the fix checked out (a re-run after a merge, a later tip). The
+  # test is not vacuous: with contract/index.js reverted it must fail, so the verdict is RED. A
+  # red-check whose test resolves @whim/contract from the primary tree sees 42 and says GREEN.
+  fgit -C "$fx" switch -q fix >/dev/null 2>&1 || { fail "case 14 fixture" "switch failed"; return; }
+  out="$(cd "$fx" && FIXLOOP_INTEGRATION_BRANCH=base WHIM_WORKTREE_COPY="$NM_COPY" \
+    ./scripts/fixloop.sh redcheck fix node test.js -- contract/index.js 2>&1)"; rc=$?
+  assert_rc_is    "redcheck judges the branch, not the primary tree's checkout (RED)" 0 "$rc" "$out"
+  assert_contains "redcheck reports RED"                        "$out" "RED"
+  assert_not_contains "redcheck does not call a real test vacuous" "$out" "GREEN"
+  if fgit -C "$fx" worktree list | grep -q redcheck-; then
+    fail "redcheck removes its worktree" "$(fgit -C "$fx" worktree list)"
+  else
+    pass "redcheck removes its worktree"
+  fi
+  return 0
+}
+
 case_incomplete_checkout
 case_linked_worktree
 case_unrelated_baseline
@@ -657,6 +879,11 @@ case_park_accepts_staging_branch
 case_park_staging_records_base_divergence
 case_park_still_refuses_unknown_branch_kind
 case_park_fix_branch_unchanged
+case_worktree_create_resolves_inside
+case_symlinked_node_modules_refused
+case_check_rejects_unowned_node_modules
+case_gate_refuses_unowned_node_modules
+case_redcheck_ignores_primary_tree_checkout
 
 printf '\n'
 if [ "$FAILURES" -gt 0 ]; then
