@@ -43,15 +43,15 @@ Constraints for every task: no `CONFIG_SET` file (`package.json`, lockfile, `scr
 
 ## 4. Cloud Run alerts and smoke (#138, #146)
 
-- [ ] 4.1 Retarget every file in `deploy/monitoring/` per design D5:
+- [x] 4.1 Retarget every file in `deploy/monitoring/` per design D5:
   - log filters use `resource.type="cloud_run_revision"`, `resource.labels.service_name="whim-server"` and the `run.googleapis.com%2Fstdout` log name;
   - the threshold policy names the metric on `cloud_run_revision`;
   - no file mentions `log_id("docker")` or `gce_instance`.
 
   Leave `policy-purge-failed.json` as it is (already Cloud Run).
-- [ ] 4.2 Move `provision.sh`'s monitoring render/apply-by-fingerprint helpers into `deploy/lib.sh`, so `provision.sh` keeps working through them. Generalise `deploy/cloudrun/deploy.sh`'s `apply_purge_alert` so that it applies the channel, the log metric, every `policy-*.json` and the uptime check on plain deploys, but not on `--tag` or `--site-only`. Forward the three env keys from `handoff/policy-bounds.md` as optional server keys.
-- [ ] 4.3 Factor the shared HTTP checks (`/health` parsing with `--commit` and the minimum builds, `426`, SSE spacing, pages, and association files compared against the site build's local output) out of `deploy/smoke.sh` into `deploy/lib.sh`. The VM smoke behaves exactly as before, and its existing deploy-config cases stay green.
-- [ ] 4.4 Add `deploy/cloudrun/smoke.sh` per spec and design D6:
+- [x] 4.2 Move `provision.sh`'s monitoring render/apply-by-fingerprint helpers into `deploy/lib.sh`, so `provision.sh` keeps working through them. Generalise `deploy/cloudrun/deploy.sh`'s `apply_purge_alert` so that it applies the channel, the log metric, every `policy-*.json` and the uptime check on plain deploys, but not on `--tag` or `--site-only`. Forward the three env keys from `handoff/policy-bounds.md` as optional server keys.
+- [x] 4.3 Factor the shared HTTP checks (`/health` parsing with `--commit` and the minimum builds, `426`, SSE spacing, pages, and association files compared against the site build's local output) out of `deploy/smoke.sh` into `deploy/lib.sh`. The VM smoke behaves exactly as before, and its existing deploy-config cases stay green.
+- [x] 4.4 Add `deploy/cloudrun/smoke.sh` per spec and design D6:
   - domain mappings and serving revision through read-only `gcloud describe`;
   - the shared HTTP checks;
   - the `whim-purge` job and scheduler;
@@ -59,8 +59,8 @@ Constraints for every task: no `CONFIG_SET` file (`package.json`, lockfile, `scr
   - one live `POST /v1/clarify` with the fixed smoke device id `5e0ce000-0000-4000-8000-00000000c1a1` unless `--no-live`;
   - a `--pages-only` mode;
   - no VM values required.
-- [ ] 4.5 Make `deploy/cloudrun/deploy.sh` run the smoke at the end of every mode (pages-only after `--site-only`), exit non-zero on failure, and print the rollback command with the replaced revision's commit.
-- [ ] 4.6 Extend `server/test/deploy-config.suite.ts`, using the fake `gcloud`/`curl`/DNS tools:
+- [x] 4.5 Make `deploy/cloudrun/deploy.sh` run the smoke at the end of every mode (pages-only after `--site-only`), exit non-zero on failure, and print the rollback command with the replaced revision's commit.
+- [x] 4.6 Extend `server/test/deploy-config.suite.ts`, using the fake `gcloud`/`curl`/DNS tools:
   - no monitoring file references Docker or GCE;
   - a plain deploy applies every policy file and leaves unchanged ones alone;
   - `--tag` applies none;
@@ -72,7 +72,7 @@ Constraints for every task: no `CONFIG_SET` file (`package.json`, lockfile, `scr
   - every new script passes the shell syntax check.
 
   Red-check the "deploy runs smoke" case against today's `deploy.sh`.
-- [ ] 4.7 Write `handoff/cloudrun-ops.md`: the smoke CLI and modes, its check list, the smoke device id and prompt, the monitoring apply behaviour, and the exact filters used.
+- [x] 4.7 Write `handoff/cloudrun-ops.md`: the smoke CLI and modes, its check list, the smoke device id and prompt, the monitoring apply behaviour, and the exact filters used.
 
 ## 5. Firestore admission load test (#143)
 
