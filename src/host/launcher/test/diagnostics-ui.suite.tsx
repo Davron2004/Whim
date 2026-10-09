@@ -23,12 +23,16 @@ import { keepFatalRecord, sendFatalRecord } from '../../logging/fatal-slot';
 import { DIAGNOSTICS_PATH } from '../../logging/diagnostics';
 import type { PostDiagnostics } from '../../logging/diagnostics';
 import { parsePlan, validatePlan } from '../../../../server/src/generation/plan';
-import { MapKVBackend } from '../../version-store/fs/kv-fs';
+import { MapKVBackend, type KVBackend } from '../../version-store/fs/kv-fs';
 import { acceptTerms } from '../terms-acceptance';
 import { grantConsent } from '../ai-consent';
-import { saveServerUrl } from '../server-address';
+import { acknowledgeOwnServer, saveServerUrl } from '../server-address';
+import { COPY, LEGAL_COPY } from '../copy';
+import { RELEASE } from '../release-config';
+import HomeScreen from '../HomeScreen';
 import { testAppInfo } from './client-fixtures';
-import { waitFor, withLauncher, type sseStream, type Tree } from './rendered-launcher';
+import { json, waitFor, withLauncher, type sseStream, type Tree } from './rendered-launcher';
+import { button, press } from './react-screen';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
@@ -63,6 +67,56 @@ function ThrowsWhileRendering({ error }: Readonly<{ error: Error }>): React.Reac
   throw error;
 }
 
+/** A server on the user's own network, over plain http (allowed for a private-range IP literal). */
+// eslint-disable-next-line sonarjs/no-clear-text-protocols -- a LAN server over plain http is the case under test; the diagnostics post is recorded, never sent
+const LAN = 'http://192.168.1.20:8787';
+
+/** A diagnostics POST that records the URL of each upload and answers `204`. */
+function recordingUrls(urls: string[]): PostDiagnostics {
+  return async (url) => {
+    urls.push(url);
+    return { ok: true, status: 204 };
+  };
+}
+
+/** Routes the shell's own diagnostics transport through the real upload gate over `kv`, records
+ *  where each upload goes, and puts the transport back to "no uploads" afterwards. */
+async function withDiagnostics(kv: KVBackend, body: (urls: string[]) => Promise<void>): Promise<void> {
+  const urls: string[] = [];
+  log.diagnostics.configure({ target: diagnosticsTarget(kv, testAppInfo), post: recordingUrls(urls), osVersion: '15' });
+  try {
+    await body(urls);
+  } finally {
+    log.diagnostics.stop();
+    log.diagnostics.configure({ target: () => null });
+  }
+}
+
+async function openSettings(tree: Tree): Promise<void> {
+  await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onSettings());
+}
+
+/** Settings, then a tap on the collapsed Advanced row. */
+async function openAdvanced(tree: Tree): Promise<void> {
+  await openSettings(tree);
+  await press(button(tree, COPY.settingsAdvancedSectionTitle));
+}
+
+async function confirmOwnServer(tree: Tree): Promise<void> {
+  await press(button(tree, LEGAL_COPY.en.ownServerAction));
+  await press(button(tree, LEGAL_COPY.en.ownServerConfirm));
+}
+
+async function typeAddress(tree: Tree, address: string): Promise<void> {
+  const field = () => tree.root.find((node) => node.type === 'TextInput');
+  await TestRenderer.act(async () => field().props.onChangeText(address));
+  await TestRenderer.act(async () => field().props.onSubmitEditing());
+}
+
+const toServer = (base: string) => base + DIAGNOSTICS_PATH;
+const flushDiagnostics = () => TestRenderer.act(async () => { await log.diagnostics.flush(); });
+const nothingElse = () => json({});
+
 /** A diagnostics POST that records each body it is given and answers `204`. */
 function recordingPost(bodies: string[]): PostDiagnostics {
   return async (url, _headers, body) => {
@@ -72,12 +126,72 @@ function recordingPost(bodies: string[]): PostDiagnostics {
 }
 
 export async function runDiagnosticsUiTests(h: Harness): Promise<void> {
+  // ── beta-1 D20: diagnostics follow the server the user chose, and never cross to another ─────
+
+  await h.test('own server: an address saved with no acknowledgement leaves diagnostics and the /health probe on the compiled-in server', async () => {
+    await withLauncher({ prepare: (kv) => saveServerUrl(kv, LAN), server: nothingElse }, async ({ kv, probeUrls }) => {
+      await withDiagnostics(kv, async (urls) => {
+        log.error(CHANNELS.gen, 'transport failed', { kind: 'network' });
+        await flushDiagnostics();
+        h.eq(urls, [toServer(RELEASE.serverUrl)], 'the upload goes to the compiled-in server');
+      });
+      h.ok(probeUrls.length > 0 && probeUrls.every((url) => url === `${RELEASE.serverUrl}/health`), `every probe targets the compiled-in server (got ${probeUrls.join(', ')})`);
+    });
+  });
+
+  await h.test('own server: records waiting when "Use Whim’s server" is taken are dropped, not sent to either server', async () => {
+    const prepare = (kv: KVBackend) => { acknowledgeOwnServer(kv); saveServerUrl(kv, LAN); };
+    await withLauncher({ prepare, server: nothingElse }, async ({ tree, kv }) => {
+      await withDiagnostics(kv, async (urls) => {
+        log.error(CHANNELS.gen, 'transport failed', { kind: 'own-server' });
+        await openSettings(tree);
+        await press(button(tree, COPY.settingsUseDefaultServer));
+        await flushDiagnostics();
+        h.eq(urls, [], 'the record about the own server reaches no server');
+        log.error(CHANNELS.gen, 'transport failed', { kind: 'whim-server' });
+        await flushDiagnostics();
+        h.eq(urls, [toServer(RELEASE.serverUrl)], 'a record made after the switch goes to the compiled-in server');
+      });
+    });
+  });
+
+  await h.test('own server: records waiting when the acknowledgement turns a saved address on are dropped, not sent to either server', async () => {
+    await withLauncher({ prepare: (kv) => saveServerUrl(kv, LAN), server: nothingElse }, async ({ tree, kv }) => {
+      await withDiagnostics(kv, async (urls) => {
+        log.error(CHANNELS.gen, 'transport failed', { kind: 'whim-server' });
+        await openAdvanced(tree);
+        await confirmOwnServer(tree);
+        await flushDiagnostics();
+        h.eq(urls, [], 'the record about the compiled-in server reaches no server');
+        log.error(CHANNELS.gen, 'transport failed', { kind: 'own-server' });
+        await flushDiagnostics();
+        h.eq(urls, [toServer(LAN)], 'a record made after the switch goes to the own server');
+      });
+    });
+  });
+
+  await h.test('own server: records waiting when a new address is saved are dropped, not sent to either server', async () => {
+    await withLauncher({ server: nothingElse }, async ({ tree, kv }) => {
+      await withDiagnostics(kv, async (urls) => {
+        await openAdvanced(tree);
+        await confirmOwnServer(tree);
+        log.error(CHANNELS.gen, 'transport failed', { kind: 'whim-server' });
+        await typeAddress(tree, LAN);
+        await flushDiagnostics();
+        h.eq(urls, [], 'the record about the compiled-in server reaches no server');
+        log.error(CHANNELS.gen, 'transport failed', { kind: 'own-server' });
+        await flushDiagnostics();
+        h.eq(urls, [toServer(LAN)], 'a record made after the switch goes to the own server');
+      });
+    });
+  });
+
   await h.test('diagnostics: a plan_failed terminal naming the user’s screens reaches the upload as a code, never as its sentence', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     const bodies: string[] = [];
     const post = recordingPost(bodies);
     await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
-      log.diagnostics.configure({ target: diagnosticsTarget(kv, testAppInfo, true), post, osVersion: '15' });
+      log.diagnostics.configure({ target: diagnosticsTarget(kv, testAppInfo), post, osVersion: '15' });
       try {
         await startBuild(tree, "A shared tab for Alice's Lisbon trip");
         const request = sent.find((r) => r.path === '/v1/generate')?.body as GenerateRequest | undefined;
@@ -106,8 +220,7 @@ export async function runDiagnosticsUiTests(h: Harness): Promise<void> {
     const kv = new MapKVBackend();
     acceptTerms(kv, '2026-09-24T00:00:00.000Z');
     grantConsent(kv, '2026-09-24T00:00:00.000Z');
-    saveServerUrl(kv, 'http://127.0.0.1:8787');
-    const target = diagnosticsTarget(kv, testAppInfo, true);
+    const target = diagnosticsTarget(kv, testAppInfo);
     const seam = createSeam({ console: false, diagnostics: { target, osVersion: '15', post: recordingPost([]) } });
     const onError = renderCrashRecorder({ seam, keepFatal: (record) => keepFatalRecord(kv, seam.diagnostics, record) });
     const error = new TypeError("cannot read 'Alice' of undefined");

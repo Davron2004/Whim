@@ -8,7 +8,16 @@
 
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
-import { clearServerUrl, effectiveServerUrl, loadServerUrl, saveServerUrl, serverOverride } from '../server-address';
+import {
+  acknowledgeOwnServer,
+  clearServerUrl,
+  effectiveServerUrl,
+  loadServerUrl,
+  ownServerAcknowledged,
+  saveServerUrl,
+  serverAddressAllowed,
+  serverOverride,
+} from '../server-address';
 import { RELEASE } from '../release-config';
 import { clarifyPrompt, rewritePrompt } from '../generation-client';
 import type { ConsentedClientOptions } from '../generation-client';
@@ -52,34 +61,34 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
 
   await h.test('server-address: a saved address round-trips exactly', () => {
     const kv = new MapKVBackend();
-    saveServerUrl(kv, '192.168.1.20:4000');
-    h.eq(loadServerUrl(kv), '192.168.1.20:4000', 'saved address must round-trip');
+    h.eq(saveServerUrl(kv, 'http://127.0.0.1:4000'), true, 'the save is taken');
+    h.eq(loadServerUrl(kv), 'http://127.0.0.1:4000', 'saved address must round-trip');
   });
 
   await h.test('server-address: whitespace is trimmed and a blank value clears to undefined', () => {
     const kv = new MapKVBackend();
-    saveServerUrl(kv, '  host:4000  ');
-    h.eq(loadServerUrl(kv), 'host:4000', 'must trim surrounding whitespace');
+    saveServerUrl(kv, '  http://localhost:4000  ');
+    h.eq(loadServerUrl(kv), 'http://localhost:4000', 'must trim surrounding whitespace');
     saveServerUrl(kv, '   ');
     h.eq(loadServerUrl(kv), undefined, 'a blank/whitespace-only value must clear to undefined');
   });
 
   await h.test('server-address: a trailing slash is stripped on save round-trip', () => {
     const kv = new MapKVBackend();
-    saveServerUrl(kv, '10.0.2.2:8787/');
-    h.eq(loadServerUrl(kv), '10.0.2.2:8787', 'a single trailing slash must not survive the round-trip');
+    saveServerUrl(kv, 'http://127.0.0.1:8787/');
+    h.eq(loadServerUrl(kv), 'http://127.0.0.1:8787', 'a single trailing slash must not survive the round-trip');
   });
 
   await h.test('server-address: multiple trailing slashes are all stripped', () => {
     const kv = new MapKVBackend();
-    saveServerUrl(kv, 'host:8787///');
-    h.eq(loadServerUrl(kv), 'host:8787', 'repeated trailing slashes collapse away entirely');
+    saveServerUrl(kv, 'http://localhost:8787///');
+    h.eq(loadServerUrl(kv), 'http://localhost:8787', 'repeated trailing slashes collapse away entirely');
   });
 
   await h.test('server-address: a previously-persisted trailing slash heals on load', () => {
     const kv = new MapKVBackend();
-    kv.set('whim.server-url:v1', '10.0.2.2:8787/');
-    h.eq(loadServerUrl(kv), '10.0.2.2:8787', 'an old install’s stored value is sanitized on read, not just on save');
+    kv.set('whim.server-url:v1', 'http://127.0.0.1:8787/');
+    h.eq(loadServerUrl(kv), 'http://127.0.0.1:8787', 'an old install’s stored value is sanitized on read, not just on save');
   });
 
   await h.test('server-address: never throws on a KVBackend returning null', () => {
@@ -90,50 +99,112 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.eq(loadServerUrl(nullish), undefined, 'a null read must resolve to undefined, not throw');
   });
 
-  // ── effectiveServerUrl / clearServerUrl (release-config "The compiled-in server is used
-  // unless the user sets an override") ───────────────────────────────────────────────────────
+  /* eslint-disable sonarjs/no-clear-text-protocols -- up to the clarify exchange, http:// addresses are inputs the address rule is tested on; none is ever contacted */
+  // ── the address rule (design D20; native-release-config "Store builds carry no cleartext
+  // exception"): plain http only for a server on the user's own network ─────────────────────
 
-  await h.test('effectiveServerUrl: in an internal build, a fresh store resolves to the compiled-in production server', () => {
-    const kv = new MapKVBackend();
-    h.eq(effectiveServerUrl(kv, true), RELEASE.serverUrl, 'no saved override -> RELEASE.serverUrl');
+  await h.test('server-address: http:// is allowed for loopback and private-range IP literals, localhost, .local and non-numeric single-label hosts', () => {
+    for (const address of [
+      'http://127.0.0.1', 'http://127.8.9.10:8787', 'http://10.0.2.2:8787/', 'http://172.16.0.1', 'http://172.31.255.255',
+      'http://192.168.1.20:8787', 'http://169.254.10.20', 'http://100.64.0.1', 'http://100.127.255.254:8787',
+      'http://[::1]:8787', 'http://[fe80::1ff:fe23:4567:890a]', 'http://[febf::1]', 'http://[fd12:3456::1]', 'http://[fc00::1]',
+      'http://[::ffff:192.168.1.20]:8787', 'http://[::ffff:c0a8:114]',
+      'http://localhost:8787', 'HTTP://LocalHost', 'http://whim-box.local:8787', 'http://devbox', 'http://devbox:8787/base', 'http://box-2',
+    ]) {
+      h.eq(serverAddressAllowed(address), true, `${address} is allowed`);
+    }
   });
 
-  await h.test('effectiveServerUrl: in an internal build, a saved override wins over the compiled-in server', () => {
+  await h.test('server-address: a public IP literal, a numeric single label and any other http:// host are refused', () => {
+    for (const address of [
+      'http://8.8.8.8', 'http://8.8.8.8:8787', 'http://1.1.1.1', 'http://0.0.0.0', 'http://172.32.0.1', 'http://172.15.255.255',
+      'http://192.169.0.1', 'http://169.255.0.1', 'http://100.128.0.1', 'http://100.63.255.255', 'http://11.0.0.1',
+      'http://[::ffff:8.8.8.8]', 'http://[::ffff:808:808]', 'http://[2001:4860:4860::8888]', 'http://[fec0::1]', 'http://[::]',
+      'http://[::1::1]', 'http://[1:2:3:4:5:6:7:8:9]', 'http://[fe80::1%25en0]',
+      'http://0x08080808', 'http://0X7F000001', 'http://134744072', 'http://2130706433', 'http://0177.0.0.1', 'http://192.168.1',
+    ]) {
+      h.eq(serverAddressAllowed(address), false, `${address} is refused`);
+    }
+  });
+
+  await h.test('server-address: a non-local host, a missing or other scheme, and a forged host are refused', () => {
+    for (const address of [
+      'http://example.com', 'http://api.example.com:8787', 'http://192.168.1.256', 'http://devbox.local.example.com',
+      'http://evil.com@192.168.1.20', 'http://192.168.1.20@evil.com', 'http://evil.com\\x.local', 'http://192.168.1.20:port',
+      'http://example.com.', 'http://', '192.168.1.20:8787', 'ftp://192.168.1.20', 'localhost:8787',
+    ]) {
+      h.eq(serverAddressAllowed(address), false, `${address} is refused`);
+    }
+    for (const address of ['https://example.com', 'https://8.8.8.8', 'https://api.example.com:8443/whim', '   ']) {
+      h.eq(serverAddressAllowed(address), true, `${JSON.stringify(address)} is allowed: https anywhere, or blank for no override`);
+    }
+  });
+
+  await h.test('server-address: a refused address is not saved, and the saved one stays', () => {
     const kv = new MapKVBackend();
-    saveServerUrl(kv, '10.0.2.2:8787');
-    h.eq(effectiveServerUrl(kv, true), '10.0.2.2:8787', 'a saved override takes priority');
+    saveServerUrl(kv, 'http://192.168.1.20:8787');
+    h.eq(saveServerUrl(kv, 'http://example.com'), false, 'the refused save says so');
+    h.eq(loadServerUrl(kv), 'http://192.168.1.20:8787', 'the earlier address is still the saved one');
+  });
+
+  // ── effectiveServerUrl / clearServerUrl (release-config "The compiled-in server is used
+  // unless the user sets an override"; design D20 acknowledgement) ─────────────────────────────
+
+  await h.test('effectiveServerUrl: a fresh store resolves to the compiled-in production server', () => {
+    const kv = new MapKVBackend();
+    h.eq(effectiveServerUrl(kv), RELEASE.serverUrl, 'no saved override -> RELEASE.serverUrl');
+  });
+
+  await h.test('effectiveServerUrl: once acknowledged, a saved override wins over the compiled-in server', () => {
+    const kv = new MapKVBackend();
+    acknowledgeOwnServer(kv);
+    saveServerUrl(kv, 'http://127.0.0.1:8787');
+    h.eq(effectiveServerUrl(kv), 'http://127.0.0.1:8787', 'a saved override takes priority');
   });
 
   await h.test('effectiveServerUrl: a whitespace-only saved value falls back to the default', () => {
     const kv = new MapKVBackend();
+    acknowledgeOwnServer(kv);
     saveServerUrl(kv, '   ');
-    h.eq(effectiveServerUrl(kv, true), RELEASE.serverUrl, 'blank/whitespace counts as no override');
+    h.eq(effectiveServerUrl(kv), RELEASE.serverUrl, 'blank/whitespace counts as no override');
   });
 
-  await h.test('clearServerUrl: removes a saved override, restoring the compiled-in default', () => {
+  await h.test('clearServerUrl: removes a saved override, restoring the compiled-in default, and keeps the acknowledgement', () => {
     const kv = new MapKVBackend();
-    saveServerUrl(kv, '10.0.2.2:8787');
-    h.eq(effectiveServerUrl(kv, true), '10.0.2.2:8787', 'override is active before clearing');
+    acknowledgeOwnServer(kv);
+    saveServerUrl(kv, 'http://127.0.0.1:8787');
+    h.eq(effectiveServerUrl(kv), 'http://127.0.0.1:8787', 'override is active before clearing');
     clearServerUrl(kv);
     h.eq(loadServerUrl(kv), undefined, 'the saved key is gone');
-    h.eq(effectiveServerUrl(kv, true), RELEASE.serverUrl, 'the next request goes to the compiled-in server');
+    h.eq(effectiveServerUrl(kv), RELEASE.serverUrl, 'the next request goes to the compiled-in server');
+    h.eq(ownServerAcknowledged(kv), true, 'the acknowledgement stays');
   });
 
-  await h.test('effectiveServerUrl: a store build ignores an override an earlier internal build saved, and keeps it unread', () => {
+  await h.test('effectiveServerUrl: an override an earlier build saved stays unread until acknowledged, and is kept', () => {
     const kv = new MapKVBackend();
-    saveServerUrl(kv, '10.0.2.2:8787');
-    h.eq(serverOverride(kv, { internalBuild: false }), undefined, 'a store build honours no override');
-    h.eq(effectiveServerUrl(kv, false), RELEASE.serverUrl, 'every request targets the compiled-in production server');
-    h.eq(loadServerUrl(kv), '10.0.2.2:8787', 'the saved value is left in place, not deleted');
-    h.eq(effectiveServerUrl(kv, true), '10.0.2.2:8787', 'so the same phone back on an internal build still has it');
+    saveServerUrl(kv, 'http://127.0.0.1:8787');
+    h.eq(serverOverride(kv), undefined, 'no override is honoured before the acknowledgement');
+    h.eq(effectiveServerUrl(kv), RELEASE.serverUrl, 'every request targets the compiled-in production server');
+    h.eq(loadServerUrl(kv), 'http://127.0.0.1:8787', 'the saved value is left in place, not deleted');
+    acknowledgeOwnServer(kv);
+    h.eq(effectiveServerUrl(kv), 'http://127.0.0.1:8787', 'acknowledged, the same phone uses it');
   });
+
+  await h.test('effectiveServerUrl: an acknowledged override the address rule refuses is never used', () => {
+    const kv = new MapKVBackend();
+    acknowledgeOwnServer(kv);
+    kv.set('whim.server-url:v1', 'http://api.example.com');
+    h.eq(effectiveServerUrl(kv), RELEASE.serverUrl, 'a plain-http public address an earlier build saved is not followed');
+  });
+
+  /* eslint-enable sonarjs/no-clear-text-protocols */
 
   // ── the clarify exchange, over an injected fetch ────────────────────────────────────────────
 
   await h.test('clarify: a request/response exchange, never a stream', async () => {
     const captured: CapturedRequest[] = [];
     const response = await clarifyPrompt(
-      OPTS(stubFetch(200, { questions: [{ id: 'alert', question: 'How?', options: ['Sound', 'Buzz'] }] }, captured)),
+      OPTS(stubFetch(200, { questions: [{ id: 'alert', question: 'How?', options: ['Sound', 'Buzz'], select: 'one', other: false }] }, captured)),
       'a brew timer',
     );
     h.eq(captured[0].url, 'http://server.test/v1/clarify', 'the exchange is its own unary route');
@@ -173,11 +244,11 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
   await h.test('rewrite: the clarify answers ride with the rewrite request', async () => {
     const captured: CapturedRequest[] = [];
     await rewritePrompt(OPTS(stubFetch(200, { rewrittenPrompt: 'a brew timer' }, captured)), 'a timer', [
-      { id: 'alert', question: 'How?', answer: 'Both' },
+      { id: 'alert', question: 'How?', choices: ['Both'] },
     ]);
     h.eq(
       captured[0].body,
-      { prompt: 'a timer', clarifications: [{ id: 'alert', question: 'How?', answer: 'Both' }] },
+      { prompt: 'a timer', clarifications: [{ id: 'alert', question: 'How?', choices: ['Both'] }] },
       'the answers travel by value with the prompt',
     );
   });
@@ -191,11 +262,11 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
   await h.test('generate: the request carries the clarifications for a new app', async () => {
     const noAccess = {} as unknown as StoreAccess;
     const withAnswers = await buildGenerateRequest(noAccess, () => ({}) as never, undefined, 'a brew timer', [
-      { id: 'alert', question: 'How?', answer: 'Both' },
+      { id: 'alert', question: 'How?', choices: ['Both'] },
     ]);
     h.eq(
       withAnswers,
-      { prompt: 'a brew timer', clarifications: [{ id: 'alert', question: 'How?', answer: 'Both' }] },
+      { prompt: 'a brew timer', clarifications: [{ id: 'alert', question: 'How?', choices: ['Both'] }] },
       'the answers reach generation',
     );
     const without = await buildGenerateRequest(noAccess, () => ({}) as never, undefined, 'a brew timer');

@@ -35,6 +35,7 @@
 <h1>Privacy policy</h1>
 <p class="languages"><a href="/fr/privacy" hreflang="fr" lang="fr">Version française</a></p>
 <p class="updated">Effective {{LEGAL_PRIVACY_EFFECTIVE}}. Version 2. What changed is listed at the end.</p>
+<p class="updated">Last updated 2026-10-03.</p>
 <p class="updated">The previous version applies until {{LEGAL_PRIVACY_EFFECTIVE}}: <a href="/privacy/v1">/privacy/v1</a></p>
 
 <p>This policy covers the Whim app and Whim’s website, whim.anycognition.ca, including the app-link pages that open when someone taps a link to a Whim app.</p>
@@ -184,7 +185,7 @@
 <p>Deleted records can remain in encrypted disk backups for up to 14 days before those backups expire.</p>
 
 <h2>Keeping it safe</h2>
-<p>Everything the app sends is encrypted in transit. We don’t store what you ask for, except inside a report you send, and we keep as little else as we can. Only the people who run Whim can reach our servers and the records on them.</p>
+<p>Everything the app sends to our server is encrypted in transit. We don’t store what you ask for, except inside a report you send, and we keep as little else as we can. Only the people who run Whim can reach our servers and the records on them.</p>
 <p>If a breach creates a real risk of significant harm, we’ll tell the regulators the law requires and the people affected. We don’t know who you are, so we may tell you in the app or publicly.</p>
 
 <h2>Your choices</h2>
@@ -195,6 +196,12 @@
   <li><strong>Make a new phone ID</strong> in Settings. Records tied to the old one are kept for up to 12 months, then deleted. Write to us if you want them deleted sooner.</li>
   <li><strong>Reports are up to you.</strong> You see what’s in one before you send it, and you choose whether to include the prompt.</li>
 </ul>
+
+<h2 id="own-server">If you point Whim at your own server</h2>
+<p>Whim is open source, so anyone can run its server. In Settings, under Advanced, you can tell the app to use a server you choose instead of ours. The app asks you to confirm first.</p>
+<p>While that address is set, everything the app would send us goes to that server instead: your requests and app material, the phone ID, error details and reports. That server also writes the code of the apps you build there, and those apps run in the same sandbox on your phone as apps built by ours.</p>
+<p>AnyCognition receives none of it from the app while the address is set, and this policy doesn’t cover it. Whoever runs that server decides what it keeps, for how long and who gets it, under their own rules. A plain http:// address on your own network isn’t encrypted.</p>
+<p>To switch back, tap “Use Whim’s server” in Settings. From then on the app sends to our server again, and this policy applies.</p>
 
 <h2>Your rights</h2>
 <p>Depending on where you live, you can ask us to tell you what we hold about you and give you a copy, correct it, delete it, limit how we use it, or take back your consent.</p>
@@ -214,8 +221,9 @@
 
 <h2>Changes to this policy</h2>
 <p>If we want to collect a new kind of information, use it for a new purpose, keep it longer than this page says, or give it to a new kind of recipient, the app will ask you first, and it won’t send anything new until you agree. A new feature you choose to turn on asks for itself when you first use it.</p>
-<p>For other changes, like clearer wording, a different company doing the same job, or keeping something for less time, we update this page, change the date at the top and add a line below.</p>
+<p>For other changes, like clearer wording, a different company doing the same job, or keeping something for less time, we update this page, change the “Last updated” date at the top and add a line below.</p>
 <ul>
+  <li>2026-10-03: adds “If you point Whim at your own server”. What Whim collects, why, how long it keeps it and who gets it don’t change.</li>
   <li>{{LEGAL_PRIVACY_EFFECTIVE}}, version 2: rewritten in plainer words. Adds error details, app-integrity checks by Apple or Google, connection data and logs, the list of companies that handle information for us, the beta waitlist on our website, the Privacy Officer, your rights, legal bases, and where information is handled. Reports may now be kept for up to 12 months, and usage records for up to 12 months after last use, instead of 90 days; those made before this version still go within 90 days. Also published in French.</li>
   <li>2026-09-22, version 1: first version.</li>
 </ul>

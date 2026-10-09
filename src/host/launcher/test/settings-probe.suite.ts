@@ -1,6 +1,6 @@
 /** Debounce and stale-result tests use a manual timer and await the exact probe promise. */
 import { Harness } from './harness';
-import { DebouncedProbe } from '../settings-probe';
+import { DebouncedProbe, DebouncedSave } from '../settings-probe';
 import type { SettingsProbeState } from '../settings-probe';
 import { FakeTimers } from './fake-timers';
 import type { ProbeResult } from '../server-probe';
@@ -111,4 +111,41 @@ export async function runSettingsProbeTests(h: Harness): Promise<void> {
     h.eq(timers.pendingCount, 1, 'cancel() does not disable the instance — a later schedule() still runs a fresh cycle');
   });
 
+  await h.test('DebouncedProbe: flush() runs the scheduled probe now, and does nothing with none scheduled', async () => {
+    const timers = new FakeTimers();
+    const d = deferredProbe();
+    const loop = new DebouncedProbe({ probe: d.probe, publish: () => {}, timers });
+
+    loop.flush();
+    h.eq(d.calls, [], 'nothing scheduled, nothing probed');
+    loop.schedule('https://a.example');
+    loop.flush();
+    h.eq([d.calls, timers.pendingCount], [['https://a.example'], 0], 'the probe runs at once and its debounce is gone');
+    loop.flush();
+    h.eq(d.calls.length, 1, 'a second flush does not probe again');
+  });
+
+  // ── DebouncedSave: really run, against a fake clock ─────────────────────────
+
+  await h.test('DebouncedSave: saves once, 600ms after the last edit; flush saves now; cancel drops the edit', async () => {
+    const timers = new FakeTimers();
+    const saved: string[] = [];
+    const save = new DebouncedSave({ save: (value) => saved.push(value), timers });
+
+    for (const value of ['localhost:', 'localhost:8', 'localhost:8787']) save.edit(value);
+    h.eq([saved, timers.delays, timers.pendingCount], [[], [600, 600, 600], 1], 'every edit restarts the one 600ms wait; nothing is saved yet');
+    timers.fireOnly();
+    h.eq(saved, ['localhost:8787'], 'the pause saves the latest edit, once');
+
+    save.edit('localhost:9');
+    save.flush();
+    h.eq([saved.at(-1), timers.pendingCount], ['localhost:9', 0], 'flush saves at once and clears the wait');
+    save.flush();
+    h.eq(saved.length, 2, 'a flush with nothing held saves nothing');
+
+    save.edit('localhost:90');
+    save.cancel();
+    save.flush();
+    h.eq([saved.length, timers.pendingCount], [2, 0], 'a cancelled edit is never saved');
+  });
 }

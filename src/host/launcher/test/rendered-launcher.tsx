@@ -16,6 +16,7 @@ import { SEED_VERSION } from '../seed';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import type { AppInfo } from '../app-info';
+import type { SignificantUpdateSheet } from '../age-check';
 import { resetNativeStorage } from './native-storage';
 import { captureTimeouts, renderScreen, unmountScreen } from './react-screen';
 import { testAppInfo } from './client-fixtures';
@@ -47,15 +48,18 @@ export interface LauncherSetup {
   prepare?: (kv: KVBackend) => void;
   /** The installed app's info reader the shell builds its envelope from (default `testAppInfo`). */
   appInfo?: () => AppInfo;
-  /** Whether the shell runs as an internal build, which shows and honours a server-address
-   *  override (default true); false runs it as a store build. */
-  internalBuild?: boolean;
   /** Answers the store age check the shell runs before the terms step, as the native module would
    *  (default: `unavailable`, a phone with no signal). */
   ageSignal?: () => Promise<unknown>;
-  /** Answers the connectivity probe's `/healthz` (default: healthy, with no `minBuild`). */
-  healthz?: () => Response | Promise<Response>;
-  /** Answers every request except `/healthz`. */
+  /** The platform's significant-change acknowledgment, as the iOS module would answer it
+   *  (default: none, as on Android). */
+  significantUpdate?: SignificantUpdateSheet;
+  /** Answers the connectivity probe's health route (default: healthy, with no `minBuild`). */
+  health?: () => Response | Promise<Response>;
+  /** A server from before `/health` existed (decision #70, a self-hosted server on older code):
+   *  `/health` is Hono's plain-text 404 and `health` answers on `/healthz` instead. */
+  olderServer?: boolean;
+  /** Answers every request except the health routes. */
   server: (request: SentRequest) => Response | Promise<Response>;
 }
 
@@ -63,8 +67,10 @@ export interface Launcher {
   tree: Tree;
   kv: KVBackend;
   sent: SentRequest[];
-  /** The headers of every `/healthz` probe, in order. */
+  /** The headers of every health probe request (`/health` and `/healthz`), in order. */
   probes: Headers[];
+  /** The full URL of every health probe request, in order, so a test can tell which server it went to. */
+  probeUrls: string[];
   paths: () => string[];
   /** Every `setTimeout` is held here instead of scheduled (connect timeouts, probe retries). */
   clock: ReturnType<typeof captureTimeouts>;
@@ -135,11 +141,16 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
   const originalFetch = globalThis.fetch;
   const sent: SentRequest[] = [];
   const probes: Headers[] = [];
+  const probeUrls: string[] = [];
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     const path = new URL(String(url)).pathname;
-    if (path === '/healthz') {
+    if (path === '/health' || path === '/healthz') {
       probes.push(new Headers(init?.headers));
-      return setup.healthz ? setup.healthz() : json({ service: 'whim-server' });
+      probeUrls.push(String(url));
+      if (setup.olderServer ? path === '/health' : path === '/healthz') {
+        return new Response('404 Not Found', { status: 404, headers: { 'Content-Type': 'text/plain' } });
+      }
+      return setup.health ? setup.health() : json({ service: 'whim-server' });
     }
     const request: SentRequest = {
       url: String(url),
@@ -156,9 +167,14 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
     const locale = setup.locale ?? 'en-US';
     const ageSignal = setup.ageSignal ?? (() => Promise.resolve('unavailable'));
     tree = await renderScreen(
-      <LauncherRoot appInfo={setup.appInfo ?? testAppInfo} internalBuild={setup.internalBuild ?? true} deviceLocale={() => locale} ageSignal={ageSignal} />,
+      <LauncherRoot
+        appInfo={setup.appInfo ?? testAppInfo}
+        deviceLocale={() => locale}
+        ageSignal={ageSignal}
+        significantUpdate={setup.significantUpdate}
+      />,
     );
-    await body({ tree, kv, sent, probes, paths: () => sent.map((r) => r.path), clock });
+    await body({ tree, kv, sent, probes, probeUrls, paths: () => sent.map((r) => r.path), clock });
   } finally {
     if (tree) await unmountScreen(tree);
     globalThis.fetch = originalFetch;

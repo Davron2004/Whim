@@ -6,21 +6,30 @@ import { COPY } from '../copy';
 import { AI_CONSENT_VERSION, RELEASE, WHIM_DOMAIN } from '../release-config';
 import { STATUS_COLORS } from '../../../sdk/theme';
 import { SHELL_PALETTE } from '../theme';
-import { button, captureTimeouts, press, renderScreen, unmountScreen } from './react-screen';
+import ReportSheet from '../ReportSheet';
+import type { InstalledApp } from '../app-index';
+import type { StoreAccess } from '../store-access';
+import { reportClientOptions } from '../transport-shared';
+import { testAppInfo } from './client-fixtures';
+import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen } from './react-screen';
 import { Linking, StyleSheet } from './native-host';
+import { log } from '../../logging';
 
 const noop = () => {};
-const isAdvancedTitle = (node: TestRenderer.ReactTestInstance) => node.type === 'Text' && node.children.includes(COPY.settingsAdvancedSectionTitle);
-const advancedHeader = (tree: TestRenderer.ReactTestRenderer) => tree.root.find(node => node.type === 'TouchableOpacity' && node.findAll(isAdvancedTitle).length > 0);
+const isAdvancedTitle = (node: TestRenderer.ReactTestInstance) => String(node.type) === 'Text' && node.children.includes(COPY.settingsAdvancedSectionTitle);
+const advancedHeader = (tree: TestRenderer.ReactTestRenderer) => tree.root.find(node => String(node.type) === 'TouchableOpacity' && node.findAll(isAdvancedTitle).length > 0);
 function isProbeResult(node: TestRenderer.ReactTestInstance): boolean {
-  return node.type === 'Text' && [COPY.serverProbeVerified, COPY.serverProbeUnverified, COPY.serverProbeUnreachable].some(text => node.children.includes(text));
+  return String(node.type) === 'Text' && [COPY.serverProbeVerified, COPY.serverProbeUnverified, COPY.serverProbeUnreachable].some(text => node.children.includes(text));
 }
+const addressField = (tree: TestRenderer.ReactTestRenderer) => tree.root.find(node => String(node.type) === 'TextInput');
+const isScrollView = (node: TestRenderer.ReactTestInstance) => String(node.type) === 'ScrollView';
+const type = (tree: TestRenderer.ReactTestRenderer, text: string) => TestRenderer.act(async () => addressField(tree).props.onChangeText(text));
 const props: SettingsScreenProps = {
   serverUrl: 'https://saved.example', highlighting: true, canProbe: true,
   consentStatus: { kind: 'granted', version: AI_CONSENT_VERSION, grantedAt: '2026-09-18' },
   onBack: noop, onServerUrlChange: noop, onUseDefaultServer: noop,
   onHighlightingChange: noop, onOpenAIFeatures: noop,
-  internalBuild: true, errorDetails: true, onErrorDetailsChange: noop, deviceId: 'test-device', onResetDeviceId: noop,
+  ownServerAcknowledged: true, onAcknowledgeOwnServer: () => undefined, errorDetails: true, onErrorDetailsChange: noop, deviceId: 'test-device', onResetDeviceId: noop,
   legalLanguage: 'en',
 };
 export async function runSettingsScreenTests(h: Harness): Promise<void> {
@@ -29,7 +38,7 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
     [200, {}, COPY.serverProbeUnverified, STATUS_COLORS.waiting],
     [503, {}, COPY.serverProbeUnreachable, SHELL_PALETTE.danger],
   ] as const) {
-    await h.test(`Settings: edit saves immediately and renders ${label} after verification`, async () => {
+    await h.test(`Settings: an edit saves once typing pauses, and renders ${label} after verification`, async () => {
       const clock = captureTimeouts();
       const originalFetch = globalThis.fetch;
       const requested: string[] = [];
@@ -42,20 +51,21 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
         tree = await renderScreen(<SettingsScreen {...props} onServerUrlChange={url => saved.push(url)} />);
         const results = () => tree!.root.findAll(isProbeResult);
         h.eq(results().length, 0, 'untouched address has no probe result');
-        await TestRenderer.act(async () => tree!.root.findByType('TextInput').props.onChangeText('https://edited.example/'));
-        h.eq(saved, ['https://edited.example/'], 'save occurs before verification');
-        h.eq(requested, [], 'typing alone sends nothing');
-        h.eq(clock.count(600), 1, 'edit schedules one debounce');
+        await type(tree, 'https://edited.example/');
+        h.eq([saved, requested], [[], []], 'typing alone saves and sends nothing');
+        h.eq(clock.count(600), 2, 'the edit waits on one pause for the save and one for the probe');
         await TestRenderer.act(async () => clock.fire(600));
-        h.eq(requested, ['https://edited.example/healthz'], 'probe uses the sanitized saved address');
+        h.eq(saved, ['https://edited.example/'], 'the pause saves the edit');
+        h.eq(requested, ['https://edited.example/health'], 'probe uses the sanitized saved address');
         h.eq(results().length, 0, 'in-flight probe has no settled result');
         await TestRenderer.act(async () => { resolve(new Response(JSON.stringify(body), { status })); await response; });
         h.eq(results().map(node => node.children.join('')), [label], 'the actual screen renders the classification');
         h.eq(StyleSheet.flatten(results()[0].props.style).color, color, 'classification uses its status color');
-        await TestRenderer.act(async () => tree!.root.findByType('TextInput').props.onChangeText(''));
-        h.eq(saved, ['https://edited.example/', ''], 'clearing still saves immediately');
-        h.eq(results().length, 0, 'cleared address removes the result');
-        h.eq(clock.count(600), 0, 'clearing leaves no debounce');
+        await type(tree, '');
+        h.eq(results().length, 0, 'cleared address removes the result at once');
+        h.eq(clock.count(600), 1, 'clearing waits on the save alone, with no probe');
+        await TestRenderer.act(async () => clock.fire(600));
+        h.eq(saved, ['https://edited.example/', ''], 'clearing saves once typing pauses');
       } finally {
         if (tree) await unmountScreen(tree);
         globalThis.fetch = originalFetch;
@@ -68,24 +78,47 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
     const saved: string[] = [];
     const tree = await renderScreen(<SettingsScreen {...props} canProbe={false} onServerUrlChange={url => saved.push(url)} />);
     try {
-      await TestRenderer.act(async () => tree.root.findByType('TextInput').props.onChangeText('https://new.example'));
+      await type(tree, 'https://new.example');
+      h.eq(clock.count(600), 1, 'only the save waits on the pause: no probe without consent');
+      await TestRenderer.act(async () => clock.fire(600));
       h.eq(saved, ['https://new.example'], 'consent does not gate saving');
-      h.eq(clock.count(600), 0, 'no probe scheduled without consent');
-      h.eq(tree.root.findAll(node => node.type === 'Text' && node.children.includes(COPY.settingsProbeNeutral)).length, 1, 'neutral consent explanation is visible');
+      h.eq(tree.root.findAll(node => String(node.type) === 'Text' && node.children.includes(COPY.settingsProbeNeutral)).length, 1, 'neutral consent explanation is visible');
     } finally { await unmountScreen(tree); clock.restore(); }
+  });
+  await h.test('Settings: a plain-http public address is neither saved nor probed, and the note says why', async () => {
+    const clock = captureTimeouts();
+    const originalFetch = globalThis.fetch;
+    const requested: string[] = [];
+    const saved: string[] = [];
+    globalThis.fetch = (async (url: string) => { requested.push(String(url)); return new Response(JSON.stringify({ service: 'whim-server' })); }) as typeof fetch;
+    const tree = await renderScreen(<SettingsScreen {...props} onServerUrlChange={url => saved.push(url)} />);
+    try {
+      await type(tree, 'http://api.example.com');
+      await TestRenderer.act(async () => clock.fire(600));
+      await TestRenderer.act(async () => addressField(tree).props.onSubmitEditing());
+      h.eq([saved, requested], [[], []], 'nothing saved and no request sent, after the pause or on submit');
+      h.ok(textOf(tree.root).includes(COPY.serverAddressRefused), 'the refusal is explained inline');
+      await type(tree, 'http://api.example.org');
+      h.ok(!textOf(tree.root).includes(COPY.serverAddressRefused), 'a new edit clears the note until it settles');
+    } finally {
+      await unmountScreen(tree);
+      globalThis.fetch = originalFetch;
+      clock.restore();
+    }
+    h.eq(saved, [], 'leaving with the refused edit saves nothing either');
   });
   await h.test('Settings: Advanced starts collapsed with no saved address, and open with one', async () => {
     for (const serverUrl of [undefined, '   ']) {
       const tree = await renderScreen(<SettingsScreen {...props} serverUrl={serverUrl} />);
       try {
-        h.eq(tree.root.findAll(node => node.type === 'TextInput').length, 0, `no address field while collapsed (saved: ${JSON.stringify(serverUrl)})`);
+        h.eq(tree.root.findAll(node => String(node.type) === 'TextInput').length, 0, `no address field while collapsed (saved: ${JSON.stringify(serverUrl)})`);
         await TestRenderer.act(async () => advancedHeader(tree).props.onPress());
-        h.eq(tree.root.findAll(node => node.type === 'TextInput').length, 1, 'opening Advanced shows the address field');
+        h.eq(tree.root.findAll(node => String(node.type) === 'TextInput').length, 1, 'opening Advanced shows the address field');
       } finally { await unmountScreen(tree); }
     }
-    const saved = await renderScreen(<SettingsScreen {...props} serverUrl="192.168.1.20:4000" />);
+    const saved = await renderScreen(<SettingsScreen {...props} serverUrl="http://localhost:4000" />);
     try {
-      h.eq(saved.root.findAll(node => node.type === 'TextInput').length, 1, 'a saved override opens Advanced already');
+      h.eq(saved.root.findAll(node => String(node.type) === 'TextInput').length, 1, 'a saved override opens Advanced already');
     } finally { await unmountScreen(saved); }
   });
   await h.test('Settings: About’s Terms of use opens the English terms page on the Whim web host', async () => {
@@ -99,14 +132,176 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
       h.ok(host === RELEASE.webHost && host.endsWith(`.${WHIM_DOMAIN}`), `on the host derived from the release domain (got ${host})`);
     } finally { await unmountScreen(tree); }
   });
-  await h.test('Settings: leaving before debounce cancels the pending probe', async () => {
+  await h.test('Settings: leaving before the pause saves the edit and cancels the pending probe', async () => {
     const clock = captureTimeouts();
+    const saved: string[] = [];
+    const tree = await renderScreen(<SettingsScreen {...props} onServerUrlChange={url => saved.push(url)} />);
+    let mounted = true;
+    try {
+      await type(tree, 'https://new.example');
+      h.eq([saved, clock.count(600)], [[], 2], 'the save and the probe are pending before leaving');
+      mounted = false;
+      await unmountScreen(tree);
+      h.eq(saved, ['https://new.example'], 'leaving saves what was typed');
+      h.eq(clock.count(600), 0, 'screen cleanup cancels its debounces');
+    } finally {
+      if (mounted) await unmountScreen(tree);
+      clock.restore();
+    }
+  });
+
+  await h.test('Settings: typing an address saves it once per pause, not per keystroke; submit and blur save it at once', async () => {
+    const clock = captureTimeouts();
+    const saved: string[] = [];
+    const cleared = { count: 0 };
+    const tree = await renderScreen(<SettingsScreen {...props} canProbe={false} onServerUrlChange={url => saved.push(url)} onUseDefaultServer={() => { cleared.count += 1; }} />);
+    let mounted = true;
+    try {
+      for (const keystroke of ['http://localhost:', 'http://localhost:8', 'http://localhost:87', 'http://localhost:8787']) await type(tree, keystroke);
+      h.eq([saved, clock.count(600)], [[], 1], 'four keystrokes save nothing yet and leave one pause pending');
+      await TestRenderer.act(async () => clock.fire(600));
+      h.eq(saved, ['http://localhost:8787'], 'the pause saves the finished address once');
+      await type(tree, 'http://localhost:9');
+      await TestRenderer.act(async () => addressField(tree).props.onSubmitEditing());
+      h.eq([saved.at(-1), clock.count(600)], ['http://localhost:9', 0], 'submitting saves at once, with nothing left pending');
+      await type(tree, 'http://localhost:90');
+      await TestRenderer.act(async () => addressField(tree).props.onBlur());
+      h.eq([saved.at(-1), clock.count(600)], ['http://localhost:90', 0], 'leaving the field saves at once');
+      await TestRenderer.act(async () => addressField(tree).props.onBlur());
+      h.eq(saved.length, 3, 'a blur with nothing new saves nothing');
+      await type(tree, 'http://localhost:900');
+      await press(button(tree, COPY.settingsUseDefaultServer));
+      mounted = false;
+      await unmountScreen(tree);
+      h.eq([saved.length, cleared.count, clock.count(600)], [3, 1, 0], '"Use the default server" drops the unsaved edit instead of saving it later');
+    } finally {
+      if (mounted) await unmountScreen(tree);
+      clock.restore();
+    }
+  });
+
+  await h.test('Settings: submitting the address verifies it at once', async () => {
+    const clock = captureTimeouts();
+    const originalFetch = globalThis.fetch;
+    const requested: string[] = [];
+    globalThis.fetch = (async (url: string) => { requested.push(String(url)); return new Response(JSON.stringify({ service: 'whim-server' })); }) as typeof fetch;
     const tree = await renderScreen(<SettingsScreen {...props} />);
     try {
-      await TestRenderer.act(async () => tree.root.findByType('TextInput').props.onChangeText('https://new.example'));
-      h.eq(clock.count(600), 1, 'probe is pending before leaving');
+      await type(tree, 'https://typed.example');
+      h.eq(requested, [], 'typing alone sends nothing');
+      await TestRenderer.act(async () => addressField(tree).props.onSubmitEditing());
+      h.eq([requested, clock.count(600)], [['https://typed.example/health'], 0], 'submitting probes the address without waiting for the pause');
+    } finally {
       await unmountScreen(tree);
-      h.eq(clock.count(600), 0, 'screen cleanup cancels its debounce');
-    } finally { clock.restore(); }
+      globalThis.fetch = originalFetch;
+      clock.restore();
+    }
   });
+
+  await h.test('Settings: expanding Advanced scrolls the revealed address field into view', async () => {
+    const scrolls: unknown[] = [];
+    const createNodeMock = (element: React.ReactElement) => (String(element.type) === 'ScrollView' ? { scrollToEnd: (options: unknown) => scrolls.push(options) } : null);
+    const open = async (serverUrl: string | undefined) => {
+      let tree!: TestRenderer.ReactTestRenderer;
+      await TestRenderer.act(async () => { tree = TestRenderer.create(<SettingsScreen {...props} serverUrl={serverUrl} />, { createNodeMock }); });
+      return tree;
+    };
+    const grow = (tree: TestRenderer.ReactTestRenderer) => {
+      const scroll = tree.root.find(isScrollView);
+      return TestRenderer.act(async () => scroll.props.onContentSizeChange(390, 1200));
+    };
+    const collapsed = await open(undefined);
+    try {
+      await grow(collapsed);
+      h.eq(scrolls, [], 'opening Settings scrolls nowhere');
+      await TestRenderer.act(async () => advancedHeader(collapsed).props.onPress());
+      await grow(collapsed);
+      h.eq(scrolls, [{ animated: true }], 'once Advanced has grown the content, the scroll view scrolls to its end, where the field is');
+      await grow(collapsed);
+      h.eq(scrolls.length, 1, 'later growth (typing, the probe line) leaves the scroll where the user put it');
+      await TestRenderer.act(async () => advancedHeader(collapsed).props.onPress());
+      await grow(collapsed);
+      h.eq(scrolls.length, 1, 'collapsing Advanced scrolls nowhere');
+    } finally { await unmountScreen(collapsed); }
+    const alreadyOpen = await open('http://localhost:4000');
+    try {
+      await grow(alreadyOpen);
+      h.eq(scrolls.length, 1, 'Advanced already open for a saved address scrolls nowhere on arrival');
+    } finally { await unmountScreen(alreadyOpen); }
+  });
+
+  await h.test('Settings: the report sheet’s switch wears the same colours as the Settings switches', async () => {
+    const settings = await renderScreen(<SettingsScreen {...props} />);
+    const colours = (node: TestRenderer.ReactTestInstance) => ({ trackColor: node.props.trackColor, thumbColor: node.props.thumbColor });
+    const settingsSwitches = settings.root.findAll(node => String(node.type) === 'Switch').map(colours);
+    await unmountScreen(settings);
+    const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
+    const access = { activeDescription: async () => 'A tea timer', activeSource: async () => undefined } as unknown as StoreAccess;
+    const sheet = await renderScreen(<ReportSheet app={app} access={access} options={reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo)} onClose={noop} onUpdateRequired={noop} legalLanguage="en" />);
+    try {
+      await TestRenderer.act(async () => { await new Promise(resolve => setImmediate(resolve)); });
+      const reportSwitches = sheet.root.findAll(node => String(node.type) === 'Switch').map(colours);
+      h.ok(settingsSwitches.length === 2 && settingsSwitches.every(c => c.trackColor !== undefined && c.thumbColor !== undefined), 'the Settings switches are coloured');
+      h.eq(reportSwitches, [settingsSwitches[0]], 'the report sheet’s one switch matches them, not the platform default');
+    } finally { await unmountScreen(sheet); }
+  });
+
+  for (const failedRead of ['activeDescription', 'activeSource'] as const) {
+    await h.test(`Report: rejected ${failedRead} offers content-free recovery and reopening reads a complete draft`, async () => {
+      const secret = 'private-report-content';
+      const app: InstalledApp = { id: 'timer', name: `${secret}-app`, createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: `${secret}-app`, manifest: { capabilities: [] } } };
+      let rejectRead!: (error: Error) => void;
+      const pending = new Promise<string>((_resolve, reject) => { rejectRead = reject; });
+      const reads: string[] = [];
+      let retry = false;
+      const read = (operation: string, value: string) => {
+        reads.push(operation);
+        return !retry && operation === failedRead ? pending : Promise.resolve(value);
+      };
+      const access = {
+        activeDescription: () => read('activeDescription', `${secret}-prompt`),
+        activeSource: () => read('activeSource', `${secret}-source`),
+      } as unknown as StoreAccess;
+      const unhandled: unknown[] = [];
+      const captureRejection = (reason: unknown) => { unhandled.push(reason); };
+      process.on('unhandledRejection', captureRejection);
+      const before = new Set(log.buffer.snapshot());
+      let closed = 0;
+      const sheetProps = { access, options: reportClientOptions({ kind: 'absent' } as const, 'https://server.test', `${secret}-device`, testAppInfo), onClose: () => { closed++; }, onUpdateRequired: noop, legalLanguage: 'en' as const };
+      const sheet = await renderScreen(<ReportSheet {...sheetProps} app={app} />);
+      try {
+        await TestRenderer.act(async () => {
+          rejectRead(new Error(`${secret}-raw-error`));
+          await new Promise(resolve => setImmediate(resolve));
+        });
+        h.eq(unhandled, [], 'the rejected mandatory read is handled after promise settlement');
+        h.ok(textOf(sheet.root).includes(COPY.reportDraftLoadFailed), 'the sheet explains that loading failed');
+        h.eq(sheet.root.findAll(node => String(node.type) === 'TextInput').length, 0, 'no partial report editor is offered');
+        const sends = sheet.root.findAll(node => String(node.type) === 'TouchableOpacity' && textOf(node) === COPY.reportSend);
+        h.ok(sends.every(node => node.props.disabled === true), 'Send is absent or disabled while the mandatory draft is unavailable');
+        h.ok(!textOf(sheet.root).includes(secret), 'failure UI exposes no report content or raw error');
+        const records = log.buffer.snapshot().filter(record => !before.has(record));
+        h.eq(records.map(record => [record.message, record.fields]), [['report draft load failed', { outcome: 'failed' }]], 'only the failed operation and outcome are logged');
+        h.ok(!JSON.stringify(records).includes(secret), 'logs exclude the app, prompt, source, device ID and raw error');
+        await press(button(sheet, COPY.reportDraftClose));
+        h.eq(closed, 1, 'the recovery action closes through the owner');
+        await TestRenderer.act(async () => sheet.update(<ReportSheet {...sheetProps} app={null} />));
+        retry = true;
+        await TestRenderer.act(async () => sheet.update(<ReportSheet {...sheetProps} app={app} />));
+        h.eq(reads, ['activeDescription', 'activeSource', 'activeDescription', 'activeSource'], 'reopening retries both mandatory reads');
+        h.ok(!textOf(sheet.root).includes(COPY.reportDraftLoadFailed), 'a successful fresh read clears the failure');
+        h.eq(button(sheet, COPY.reportSend).props.disabled, true, 'the fresh complete draft still requires a reason');
+        await press(button(sheet, COPY.reportReasonBroken));
+        h.eq(button(sheet, COPY.reportSend).props.disabled, false, 'a complete draft with a reason can be sent');
+        const codeLabel = sheet.root.find(node => String(node.type) === 'Text' && node.children.includes(COPY.reportFieldSource));
+        let header = codeLabel.parent;
+        while (header && String(header.type) !== 'View') header = header.parent;
+        await press(header!.find(node => String(node.type) === 'TouchableOpacity' && textOf(node) === COPY.reportShowMore));
+        h.ok(textOf(sheet.root).includes(`${secret}-source`), 'the recovered draft includes the mandatory original source');
+      } finally {
+        await unmountScreen(sheet);
+        process.off('unhandledRejection', captureRejection);
+      }
+    });
+  }
 }
