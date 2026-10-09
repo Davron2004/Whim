@@ -1,7 +1,7 @@
 ## 1. Design tokens (HUMAN-BOOTSTRAP: `package.json` script, `build/assemble.mjs`)
 
 
-> **HOLD (product owner, 2026-10-09):** the "Make a copy starts fresh, no share-or-fresh question" reversal of decision #52 D2 (tasks 15.3, 20.3 and the "copy made · fresh data" copy) is pending the owner's confirmation. Until then, implement "Make a copy" with #52 D2's existing share-or-fresh ask restyled to the new system; do not remove the question or its store path.
+> **RESOLVED (product owner, 2026-10-09):** "Make a copy" asks **"Copy the data, or start fresh?"** — both options give the copy its OWN storage-engine appId (#43b); there is no shared-data option for copies (sharing between two apps causes problems). "Copy the data" performs a one-time copy of the original's user data into the copy's new appId, provided by the separate change `copy-app-data`; until that lands, chains 15/20 render both options and wire "Copy the data" to its API behind a feature check (hidden if absent). Rewind continuations keep sharing (#53 D5, never asked). Tasks 15.3 and 20.3 follow this.
 
 - [x] 1.1 Create `src/design/tokens.ts` (pure data, no RN/DOM import): colour roles light/dark, ember and glow stops, status fill/on/text/soft, type scale with tracking, space steps and SDK names, layout constants, radii, shadows, the six springs (response, ζ, derived stiffness/damping) and timings, all values from `docs/design/system.md` §2 and §4.2
 - [x] 1.2 Create `src/design/tints.ts`: the ten tints with light/dark values, alias map, djb2 fallback by app id, ΔE2000, `nearestTint(hex)`, `assignTint(ranked, used)` and `farthestTint(original, used)`; unit tests in `src/sdk/test/tints.acceptance.ts` (auto-discovered by `sdk:test`)
