@@ -193,7 +193,7 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 <!-- Move items here with a one-line resolution + date when closed. -->
 
 ### [info] Stage demo prep folder
-- [ ] open until 2026-09-24
-- **Where:** `docs/demo/stage/` (`README.md` is the entry point).
+- [x] closed 2026-10-09 — the demo ran on 2026-09-24; `docs/demo/stage/` was removed (in git history).
+- **Where:** `docs/demo/stage/` (`README.md` was the entry point).
 - **What:** source of truth for the 2026-09-24 A TON of Demos presentation: constraints, decisions, run of show, checklist, agent prompt.
 - **Source:** 2026-09-22 planning session.
