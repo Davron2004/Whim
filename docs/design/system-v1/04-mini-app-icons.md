@@ -158,7 +158,7 @@ marks, flags of countries, weapons, and anything whose meaning depends on cultur
 | Changing (a change in flight on an installed app) | The app's tile with a 2pt `ember` ring 3pt outside, drawn as the same superellipse scaled out so it stays concentric, glowing with the stream | "Changing…" `ember-text` | Opens the app (current version) | Details, Stop the change |
 | Change failed | The app's tile with the 18pt badge | "Change didn't work" `danger-text` | Opens the app | What happened, Try again, Discard the change |
 
-The ember out is the mark's silhouette in `fill-strong` with no glow: Whim's light, gone out. The name under a
+The ember out is the mark's outline, 1.5 pt in `text-2` (≥ 4.66:1 on `fill`), with no fill and no glow: Whim's light, gone out. The name under a
 tile being made is a short working name: the name the plan response proposes when it has one, otherwise the
 first three words of the description without a leading "A", "An" or "The" ("Pomodoro timer", not "A Pomodoro
 timer", and not "A habit tracker: my…" as in `android/26b`).

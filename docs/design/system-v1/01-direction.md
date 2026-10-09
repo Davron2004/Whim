@@ -128,7 +128,7 @@ Warm, low-chroma greys built in OKLCH (hue 60–75). Every text pair below was c
 | `sheet-group` | `#FFFFFF` | `#252220` | Grouped lists, question groups, plan rows, cards inside a sheet | |
 | `raised` | `#FFFFFF` + shadow | `#252220` + top highlight | Menus, toasts, popovers, the orb; nothing grouped sits on it | |
 | `fill` | `#EBE9E6` | `#2E2B28` | Secondary buttons, segmented track, chips | |
-| `fill-strong` | `#E0DDDA` | `#3C3936` | Pressed fills, skeletons, the light-out ember | |
+| `fill-strong` | `#E0DDDA` | `#3C3936` | Pressed fills, skeletons | |
 | `thumb` | `#FFFFFF` + `shadow-raised` | `#3C3936` | Segmented thumb, slider thumb, switch knob when off | |
 | `separator` | `#E2DFDB` | `#34312F` | Hairlines between rows | |
 | `border` | `#908B86` | `#6E6862` | Input and outlined-control edges | 3.37 / 3.19 on surface (WCAG 1.4.11) |
@@ -511,7 +511,7 @@ Three states, all honest:
 |---|---|---|
 | Working | The stream is running | Intensity follows the stream (§9.5) |
 | Stuck | No bytes for 40 s | Dimmed to 35%, still |
-| Out | Failure, a failed tile | Light out: a `fill-strong` silhouette, no glow |
+| Out | Failure, a failed tile | Light out: the silhouette's outline, 1.5 pt in `text-2` (≥ 4.66:1 on `fill` and `surface`), no fill, no glow |
 
 Done is one `spark` flare as working ends.
 
@@ -628,7 +628,7 @@ theatre.
 - Flicker of amplitude `0.06 · ã`, only while a token arrived in the last 500 ms. Its timing comes from token
   arrivals, never from a timer.
 - Stuck after 40 s with no bytes (`STALL_MS`): intensity eases to 0.35 over 1.5 s and holds still.
-- Out (failure): the glow fades to nothing over `fade-out` and the `fill-strong` silhouette remains.
+- Out (failure): the glow fades to nothing over `fade-out` and the `text-2` outline remains.
 - The ambient light behind the making header and under the composer takes the same `I`, at lower opacity.
 - Nothing about the ember loops on a clock. If no work arrives, nothing moves.
 
@@ -866,7 +866,8 @@ carousel at the leading edge still drag; a forged depth only toggles the conveni
 
 ### 15.4 Phasing
 
-1. Tokens, type, dark mode, icons, `Sheet`, copy, Settings.
+1. One generated token source (values in one module; the shell, the SDK theme resolver, the mockup's token block
+   and `system.md`'s tables are all produced from it), then type, dark mode, icons, `Sheet`, copy, Settings.
 2. Reanimated with sheet, press and native-stack push.
 3. Container transforms and honest light.
 4. SDK motion and cue haptics.
@@ -885,3 +886,6 @@ carousel at the leading edge still drag; a forged depth only toggles the conveni
 | Reduce Motion switch | Removed; the OS setting only | §9.6 |
 | iOS tracking | Keep the table; the iOS capture renders SF, and the mockups show the table at 390pt. Re-check on a device in the implementation pass | `02-screens.md` |
 | Time ranges | Measured percentiles in one constant, from the flowbench; live server percentiles later | `06-ux.md` §1 |
+| Token source | One generated module; docs and mockup tables are outputs, never hand copies (finding 21) | §15.4 |
+| Details while making | No link on the making page; the ghost tile's menu and the failure sheet carry Details | `06-ux.md` §1 |
+| Report over a running app | From the Whim sheet, Report pushes inside the sheet (its own small stack); from History it pushes on the native stack | `06-ux.md` §3 |

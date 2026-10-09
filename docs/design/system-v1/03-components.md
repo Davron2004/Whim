@@ -171,7 +171,7 @@ accident. While an app is being made, the ambient light glows under it (`01-dire
 ### Ember
 
 Props: `size` (24, 48, 96 or 128), `state` (`working`, `stuck`, `out`), `activity` (0–1). Draws the flame
-silhouette, the three-stop gradient and the glow (`01-direction.md` §8.2); `out` draws the `fill-strong`
+silhouette, the three-stop gradient and the glow (`01-direction.md` §8.2); `out` draws the 1.5 pt `text-2` outline of the
 silhouette with no glow. Done is a `spark` flare the parent triggers. Hidden from screen readers; the parent's
 status line carries the label. With Reduce Motion each state is a still intensity. `AmbientLight` is the same
 glow as a soft radial wash with no silhouette, for the making header and under the composer.

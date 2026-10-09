@@ -67,7 +67,7 @@ recordings, in the capture index (`Whim-evidence/design-audit-2026-10-09/INDEX.m
 | M5 | Leave it running | The close X, back, swipe down or scrim tap | The making sheet shrinks into its ghost tile on the grid, ember first; the tile's glow takes over | `smooth` | Tapping the tile again reverses | Cross-fade |
 | M10 | Ready | The app is delivered while the making view is open | The ember flares (`spark`, scale 1 → 1.18 → 1) and settles into the 96 tile as the tile rises from 0.6 to 1 with `spark`; the name, the person's words and the buttons fade in 80 ms apart | `spark` | Tapping Done at any point jumps to the end state and closes | Cross-fade to the final layout, no flare |
 | M4 (R1) | Ghost becomes tile | Delivery while the home grid is visible | The ember tile flares once (`spark` on the glow); the squircle fills with the tint from the centre (a circle mask scaling from 0 to the tile's diagonal); the glyph fades in from 0.9 | Fill and glyph `morph`, glow `spark` | Opening the tile mid-way finishes it at once | Cross-fade from ember tile to app tile |
-| M22 (R11) | Making fails | Terminal failure | The ember goes out: the glow fades over `fade-out` and the `fill-strong` silhouette remains; the failure content cross-fades in. No shake | `fade-out` + `fade-in` | n/a | Cross-fade; ember still |
+| M22 (R11) | Making fails | Terminal failure | The ember goes out: the glow fades over `fade-out` and the `text-2` outline remains; the failure content cross-fades in. No shake | `fade-out` + `fade-in` | n/a | Cross-fade; ember still |
 
 ### Sheets, menus and screens
 
