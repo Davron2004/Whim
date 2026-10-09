@@ -3,7 +3,7 @@
 # test measures capacity without spending provider credit"). Three subcommands:
 #
 #   deploy/loadtest/run.sh start                                swap whim-server for the load-test image
-#   deploy/loadtest/run.sh drive --devices <N> --cap <C> [--json <file>]   drive it, print the report
+#   deploy/loadtest/run.sh drive --devices <N> --cap <C> --queue-max <Q> [--json <file>]   drive it, print the report
 #   deploy/loadtest/run.sh stop                                 restore production whim-server, then smoke
 #
 # `start` refuses unless the checkout's HEAD is the tag currently deployed on the VM — the load test
@@ -16,7 +16,7 @@ set -euo pipefail
 
 WHIM_SCRIPT=run.sh
 WHIM_USAGE='usage: deploy/loadtest/run.sh start|stop
-       deploy/loadtest/run.sh drive --devices <N> --cap <C> [--json <file>]'
+       deploy/loadtest/run.sh drive --devices <N> --cap <C> --queue-max <Q> [--json <file>]'
 # shellcheck source=deploy/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
@@ -127,7 +127,7 @@ cmd_drive() {
   whim_load_values
   whim_require_values WHIM_GCP_PROJECT WHIM_GCP_REGION WHIM_GCP_ZONE WHIM_API_HOST
 
-  local devices="" cap="" json=""
+  local devices="" cap="" queue_max="" json=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --devices)
@@ -140,6 +140,11 @@ cmd_drive() {
         cap="$2"
         shift 2
         ;;
+      --queue-max)
+        [[ "$#" -ge 2 ]] || whim_usage_error "--queue-max needs a number"
+        queue_max="$2"
+        shift 2
+        ;;
       --json)
         [ "$#" -ge 2 ] || whim_usage_error "--json needs a file path"
         json="$2"
@@ -150,6 +155,7 @@ cmd_drive() {
   done
   [[ "$devices" =~ ^[0-9]+$ ]] || whim_usage_error "--devices must be a positive integer"
   [[ "$cap" =~ ^[0-9]+$ ]] || whim_usage_error "--cap must be a positive integer"
+  [[ "$queue_max" =~ ^[0-9]+$ ]] || whim_usage_error "--queue-max must be the server's WHIM_QUEUE_MAX, 0 or more"
 
   local stats sampler_pid="" monitor_was_set=0
   stats="$(mktemp)"
@@ -163,11 +169,14 @@ cmd_drive() {
   trap cleanup EXIT
 
   echo "==> sampling docker stats on the VM every ${WHIM_LOADTEST_SAMPLE_INTERVAL_S}s" >&2
-  # CPU% and MEM% only — both are `docker stats`-native percentages, so the sampler needs no
-  # byte-unit conversion in bash. `server/src/loadtest/drive.ts#parseStatsCsv` reads this shape.
+  # A leading `cores,<N>` line (`nproc` on the VM, read once over this same ssh session — the
+  # driver never hardcodes a core count) then CPU% and MEM% per line — both are `docker
+  # stats`-native (per-core) percentages, so the sampler needs no byte-unit conversion in bash.
+  # `server/src/loadtest/drive.ts#parseCoresLine`/`#parseStatsCsv` read this shape.
   case "$-" in *m*) monitor_was_set=1 ;; esac
   set -m
   whim_vm_ssh "container=\$($WHIM_COMPOSE ps -q whim-server)
+printf 'cores,%s\\n' \"\$(nproc)\"
 while sudo docker inspect -f '{{.State.Running}}' \"\$container\" >/dev/null 2>&1; do
   sample=\$(sudo docker stats \"\$container\" --no-stream --format '{{.CPUPerc}},{{.MemPerc}}') || exit
   printf '%s\\n' \"\$sample\" | tr -d '%' || exit
@@ -176,7 +185,7 @@ done" >"$stats" 2>/dev/null &
   sampler_pid=$!
   [ "$monitor_was_set" -eq 1 ] || set +m
 
-  local -a args=(node "$WHIM_REPO_ROOT/server/loadtest.mjs" --target "https://$WHIM_API_HOST" --devices "$devices" --cap "$cap" --stats "$stats")
+  local -a args=(node "$WHIM_REPO_ROOT/server/loadtest.mjs" --target "https://$WHIM_API_HOST" --devices "$devices" --cap "$cap" --queue-max "$queue_max" --stats "$stats")
   [ -z "$json" ] || args+=(--json "$json")
   local driver_status=0
   "${args[@]}" || driver_status=$?

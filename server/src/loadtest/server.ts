@@ -58,7 +58,7 @@ export const LOADTEST_ROSTER: ModelRoster = defaultModelRoster('loadtest/rewrite
  *  would reject it (design D26's third no-spend guarantee). */
 export const LOADTEST_INERT_API_KEY = 'loadtest-no-network';
 
-/** The identity `/healthz` answers under the load-test server — never the production string. */
+/** The identity `/health` and `/healthz` answer under the load-test server — never the production string. */
 export const LOADTEST_HEALTHZ_SERVICE = 'whim-server-loadtest';
 
 export interface RunLoadtestServerOptions {
@@ -86,26 +86,26 @@ function readPositiveIntEnv(env: NodeJS.ProcessEnv, name: string, fallback: numb
 }
 
 const zeroCostStatsTransport: UsageAndCostTransport = {
-  async fetchStats() {
-    return { usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, totalCostUsd: 0 };
+  fetchStats() {
+    return Promise.resolve({ usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, totalCostUsd: 0 });
   },
 };
 
 /** `limit_remaining: null` is `checkCredit`'s own "no limit" value (`admission/credit.ts`) — never
  *  refuses, and never touches `fetch` (the value is returned directly, not fetched). */
 const noLimitCreditTransport: CreditTransport = {
-  async lookupKey() {
-    return { status: 200, bodyText: JSON.stringify({ data: { limit_remaining: null } }) };
+  lookupKey() {
+    return Promise.resolve({ status: 200, bodyText: JSON.stringify({ data: { limit_remaining: null } }) });
   },
 };
 
 type AppInstance = Parameters<NonNullable<StartServerOverrides['wrapApp']>>[0];
 
-/** Shadows `/healthz` with the load-test identity; every other route falls through to the real
- *  app unchanged. */
+/** Shadows `/health` and `/healthz` with the load-test identity; every other route falls through to
+ *  the real app unchanged. */
 function wrapWithLoadtestHealthz(app: AppInstance): Servable {
   const outer = new Hono();
-  outer.get('/healthz', (c) => c.json({ ok: true, service: LOADTEST_HEALTHZ_SERVICE }, 200));
+  outer.on('GET', ['/health', '/healthz'], (c) => c.json({ ok: true, service: LOADTEST_HEALTHZ_SERVICE }, 200));
   outer.all('*', (c) => app.fetch(c.req.raw, c.env));
   return outer;
 }
@@ -113,10 +113,12 @@ function wrapWithLoadtestHealthz(app: AppInstance): Servable {
 function installFetchTrap(): { restore: () => void; count: () => number } {
   const original = globalThis.fetch;
   let count = 0;
-  const throwing: typeof fetch = (async (...args: Parameters<typeof fetch>) => {
+  const throwing: typeof fetch = ((...args: Parameters<typeof fetch>) => {
     count += 1;
-    throw new Error(
-      `the load-test server attempted a network fetch (call #${count}) — this must never happen (design D26). args: ${JSON.stringify(String(args[0]))}`,
+    return Promise.reject(
+      new Error(
+        `the load-test server attempted a network fetch (call #${count}) — this must never happen (design D26). args: ${JSON.stringify(String(args[0]))}`,
+      ),
     );
   }) as typeof fetch;
   Object.defineProperty(globalThis, 'fetch', { value: throwing, writable: true, configurable: true });
