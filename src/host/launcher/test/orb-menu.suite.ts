@@ -197,7 +197,7 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('orb-menu: opening the menu shows a transparent, status-bar-translucent Modal, so the dim layer reaches the top of the screen', async () => {
+  await h.test('orb-menu: opening the menu shows a transparent Modal translucent under both system bars, so the dim layer covers the status bar and the navigation bar', async () => {
     resetNativeStorage();
     const tree = await renderScreen(React.createElement(Orb, { onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
     try {
@@ -206,9 +206,9 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
       const modals = tree.root.findAll((n) => n.type === 'Modal');
       h.eq(modals.length, 1, 'the open menu renders inside exactly one Modal');
       h.eq(
-        [modals[0].props.transparent, modals[0].props.statusBarTranslucent],
-        [true, true],
-        'transparent (the running app stays visible) and status-bar-translucent (Android draws the window behind the status bar instead of stopping short of it)',
+        [modals[0].props.transparent, modals[0].props.statusBarTranslucent, modals[0].props.navigationBarTranslucent],
+        [true, true, true],
+        'transparent (the running app stays visible), and translucent under the status bar and the navigation bar (Android draws the window behind both instead of stopping short of them)',
       );
     } finally {
       await unmountScreen(tree);
