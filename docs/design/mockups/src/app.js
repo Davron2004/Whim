@@ -28,7 +28,7 @@ function viewOverview() {
   const narrow = cw < 720;
   const scale = narrow ? Math.min(.62, (cw - (n - 1) * 12) / (n * W)) : (cw >= 1200 ? .5 : .46);
   const hero = `<section class="pg-hero"><div><div class="pg-flabel" style="color:var(--pg-accent)">Design system v1 · for review</div><h1>Whim, made calm, honest and yours</h1>
-<p class="lead">One system for the shell and every app Whim makes. System type, light and dark, an ember that only glows while Whim is working, and apps that wear their own colour. Tap any screen to see it on both platforms, in both themes.</p>
+<p class="lead">One system for the shell and every app Whim makes. System type, light and dark, an ember that only glows while Whim is working, and apps that wear their own colour. Tap any screen to see it on both platforms, in both themes, or <a href="#prototype" style="color:var(--pg-accent);font-weight:600">tap through the prototype</a>.</p>
 <ul class="pg-moves">
 <li><b>One system, two renderers</b>The launcher and the apps share type, space, shape and motion.</li>
 <li><b>Hue says who</b>Ember is Whim at work, a tint is an app, ink is you and the system.</li>
@@ -343,11 +343,66 @@ function wireMotion(root) {
   }
 }
 
+
+// ── Prototype ───────────────────────────────────────────────────────────────
+const PROTO = {
+  home: [['.w-composer', 'describe', 'sheet', 'Make an app'], ['.w-cell:first-child', 'app-timer', 'morph', 'Open Pour Timer']],
+  describe: [['.w-btn.ember', 'plan-thinking', 'push', 'Continue']],
+  'plan-thinking': [['@auto', 'plan', 'fade', 1500]],
+  plan: [['.w-btn.ember', 'making', 'fade', 'Make it']],
+  making: [['@auto', 'ready', 'fade', 3200], ['.w-btn.secondary', 'home-states', 'down', 'Back to your apps']],
+  ready: [['.w-btn.tint', 'app-timer', 'morph', 'Open Pour Timer'], ['.w-actions .w-btn.plain', 'home', 'down', 'Done']],
+  'home-states': [['.w-composer', 'describe', 'sheet', 'Make an app'], ['.w-cell:first-child', 'making', 'sheet', 'Show progress']],
+  'app-timer': [['.w-orb', 'whim-sheet', 'sheet', 'Whim menu']],
+  'whim-sheet': [['.w-field', 'whim-plan', 'sheet', 'What should change?'], ['.w-row:last-child', 'home', 'down', 'Your apps']],
+  'whim-plan': [['.w-btn.ember', 'app-changing', 'down', 'Make the change']],
+  'app-changing': [['.w-toast .ta', 'app-timer', 'fade', 'Reload']],
+};
+let protoTimer = 0;
+function viewPrototype() {
+  return `<div class="pg-focus-head"><div><div class="pg-flabel">Prototype</div><h2>Tap through it</h2><p>Make an app, open it, then change it while it runs. Highlighted areas are tappable; transitions use the system’s springs. The motion lab has the full gestures.</p></div><div class="pg-row"><button class="pg-btn dark" id="proto-restart">Start over</button></div></div>
+<div class="pg-proto"><div class="pg-proto-stage" id="proto-stage"></div><ol class="pg-proto-steps" id="proto-steps"><li>Tap <b>Make an app…</b></li><li><b>Continue</b>, then answer or skip the choices</li><li><b>Make it</b> and watch the wisp work</li><li><b>Open Pour Timer</b></li><li>Tap the ember in the corner, then <b>What should change?</b></li><li><b>Make the change</b>, then <b>Reload</b></li></ol></div>`;
+}
+function wireProto(root) {
+  const stage = root.querySelector('#proto-stage');
+  const { W, H } = dims(PG.platform);
+  const sc = Math.min(1, (Math.min(contentWidth(), 520)) / W);
+  stage.style.width = `${Math.round(W * sc)}px`; stage.style.height = `${Math.round(H * sc)}px`;
+  const scheme = PG.scheme === 'dark' ? 'dark' : 'light';
+  const ease = linearEasing(SPRINGS.smooth), easeM = linearEasing(SPRINGS.morph);
+  const show = (id, how) => {
+    clearTimeout(protoTimer);
+    const s = SCREENS.find((x) => x.id === id);
+    const layer = document.createElement('div');
+    layer.className = 'pg-proto-layer';
+    layer.style.transform = `scale(${sc})`;
+    layer.innerHTML = s.render({ p: PG.platform, s: scheme });
+    stage.appendChild(layer);
+    const old = [...stage.children].filter((c) => c !== layer);
+    const frames = { sheet: [{ transform: `translateY(60px) scale(${sc})`, opacity: 0 }, { transform: `scale(${sc})`, opacity: 1 }], push: [{ transform: `translateX(48px) scale(${sc})`, opacity: 0 }, { transform: `scale(${sc})`, opacity: 1 }], down: [{ transform: `scale(${sc * 1.03})`, opacity: 0 }, { transform: `scale(${sc})`, opacity: 1 }], morph: [{ transform: `scale(${sc * .9})`, opacity: 0 }, { transform: `scale(${sc})`, opacity: 1 }], fade: [{ opacity: 0 }, { opacity: 1 }] }[how || 'fade'];
+    const reduced = REDUCED;
+    const anim = layer.animate(reduced ? [{ opacity: 0 }, { opacity: 1 }] : frames, reduced ? { duration: 160, easing: 'ease-out' } : { duration: how === 'morph' ? easeM.ms : ease.ms, easing: how === 'morph' ? easeM.css : ease.css });
+    anim.onfinish = () => old.forEach((o) => o.remove());
+    const hops = PROTO[id] || [];
+    hops.forEach(([sel, next, kind, extra]) => {
+      if (sel === '@auto') { protoTimer = setTimeout(() => { if (stage.isConnected) show(next, kind); }, extra); return; }
+      const el = layer.querySelector(sel);
+      if (!el) return;
+      el.classList.add('proto-hot'); el.setAttribute('role', 'button'); el.setAttribute('tabindex', '0'); el.setAttribute('aria-label', extra);
+      const go = (e) => { e.stopPropagation(); show(next, kind); };
+      el.addEventListener('click', go);
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(e); } });
+    });
+  };
+  show('home', 'fade');
+  root.querySelector('#proto-restart').addEventListener('click', () => show('home', 'fade'));
+}
+
 // ── Shell ───────────────────────────────────────────────────────────────────
 function navHTML(route) {
   const link = (h, label) => `<a href="#${h}" class="${(route === h || (h === '' && (route === '' || route.startsWith('s-')))) ? 'on' : ''}">${label}</a>`;
   const seg = (key, opts) => `<div class="pg-seg" role="group" aria-label="${key}">${opts.map(([v, l]) => `<button data-${key}="${v}" class="${PG[key] === v ? 'on' : ''}" aria-pressed="${PG[key] === v}">${l}</button>`).join('')}</div>`;
-  return `<div class="pg-bar-in"><a class="pg-brand" href="#">${wispMini()}Whim · system v1</a><nav class="pg-nav">${link('', 'Screens')}${link('components', 'Components')}${link('tokens', 'Tokens')}${link('motion', 'Motion')}</nav><div class="pg-tools">${seg('platform', [['ios', 'iPhone'], ['android', 'Android']])}${seg('scheme', [['both', 'Both'], ['light', 'Light'], ['dark', 'Dark']])}</div></div>`;
+  return `<div class="pg-bar-in"><a class="pg-brand" href="#">${wispMini()}Whim · system v1</a><nav class="pg-nav">${link('', 'Screens')}${link('components', 'Components')}${link('tokens', 'Tokens')}${link('motion', 'Motion')}${link('prototype', 'Prototype')}</nav><div class="pg-tools">${seg('platform', [['ios', 'iPhone'], ['android', 'Android']])}${seg('scheme', [['both', 'Both'], ['light', 'Light'], ['dark', 'Dark']])}</div></div>`;
 }
 function wispMini() { return `<span class="phone" data-scheme="light" data-platform="ios" style="--pw:26px;--ph:26px;border-radius:0;background:none;display:inline-flex;overflow:visible">${wisp({ size: 26, eyes: false, activity: .8 })}</span>`; }
 
@@ -359,15 +414,18 @@ function render() {
   else if (route === 'components') html = viewComponents();
   else if (route === 'tokens') html = viewTokens();
   else if (route === 'motion') html = viewMotion();
+  else if (route === 'prototype') html = viewPrototype();
   else html = viewOverview();
   const main = document.getElementById('pg-main');
   main.innerHTML = html;
   if (route === 'motion') wireMotion(main);
+  if (route === 'prototype') wireProto(main);
+  else clearTimeout(protoTimer);
   document.querySelectorAll('[data-platform]').forEach((b) => { if (b.tagName === 'BUTTON') b.addEventListener('click', () => { PG.platform = b.dataset.platform; save(); render(); }); });
   document.querySelectorAll('[data-scheme]').forEach((b) => { if (b.tagName === 'BUTTON') b.addEventListener('click', () => { PG.scheme = b.dataset.scheme; save(); render(); }); });
 }
 
 document.body.insertAdjacentHTML('afterbegin', WISP_DEFS);
 window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); });
-let rT = 0; window.addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(() => { if (!location.hash.includes('motion')) render(); }, 200); });
+let rT = 0; window.addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(() => { if (!location.hash.includes('motion') && !location.hash.includes('prototype')) render(); }, 200); });
 render();
