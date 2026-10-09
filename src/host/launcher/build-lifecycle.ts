@@ -32,7 +32,7 @@ import type { StoreAccess } from './store-access';
 import type { PendingBuildFailure, PendingBuildRecord, PendingBuildStore, PendingFailureRemedy } from './pending-builds';
 import type { BuildScreen, RunSignals } from './prompt-flow';
 import type { RunJournalStore, RunTerminalCounts } from './run-journal';
-import { accumulateRunAggregates, ghostTileColorFor, withRestart, withTurnStart, workingTitleFromPrompt } from './prompt-flow';
+import { accumulateRunAggregates, ghostTileColorFor, withLinePlace, withRestart, withTurnStart, workingTitleFromPrompt } from './prompt-flow';
 import { promptEnvelope } from './prompt-envelope';
 import { liftManifestTileColor } from './manifest-tile-color';
 import { isAtTip } from './history-logic';
@@ -149,10 +149,12 @@ export function startPendingBuild(pending: PendingBuildStore, start: AttemptStar
 export function journalStreamEvent(
   journal: RunJournalStore,
   launcherId: string,
-  signals: RunSignals,
+  prior: RunSignals,
   event: GenerationEvent,
   at: number,
 ): RunSignals {
+  // Any event first settles the build's place in line: the clock starts over when its turn comes.
+  const signals = withLinePlace(prior, event, at);
   if (event.type === 'stage') {
     // ONE entry per stage, on its `start` edge only. The wire emits both edges (`status:
     // 'start'|'done'`), so journaling every stage event would double the timeline's spine and give

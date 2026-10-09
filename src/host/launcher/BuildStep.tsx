@@ -33,7 +33,7 @@ import { RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { buildLivenessLine, buildTitle, COPY } from './copy';
 import { EditingEyebrow } from './flow-chrome';
 import { WorkingLine } from './flow-working';
-import { BUILD_STEPS, buildProgressView, livenessOf, type RunSignals, type Stage } from './prompt-flow';
+import { BUILD_STEPS, buildProgressView, livenessOf, livenessPhaseOf, type RunSignals, type Stage } from './prompt-flow';
 import { SHELL_PALETTE } from './theme';
 import { useSystemBack } from './use-system-back';
 
@@ -110,7 +110,7 @@ export default function BuildStep({
 
         {signals !== null && liveness !== null && (
           <WorkingLine
-            phrase={buildLivenessLine(liveness, signals, now)}
+            phrase={buildLivenessLine(liveness, signals, now, livenessPhaseOf(stage, queuedPosition))}
             startedAt={signals.startedAt}
             tone={livenessTone}
             clock={false}

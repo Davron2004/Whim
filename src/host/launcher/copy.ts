@@ -742,7 +742,10 @@ function livenessElapsedLabel(startedAt: number, now: number): string {
  * `livenessOf`). `s`/`now` are typed structurally rather than importing `RunSignals` from
  * `prompt-flow.ts` — this module imports nothing else, the same discipline `timelineDurationLabel`
  * already keeps. `liveness` is the bare literal union for the same reason `ghostStateCaption`'s
- * `state` parameter is.
+ * `state` parameter is, and so is `phase` (`prompt-flow.ts#livenessPhaseOf`): in line, the line
+ * says so and counts the time in line; while the app is checked, nothing is being written, so it
+ * names the checks rather than a reply. Once the build's turn has come, its clock reads from then
+ * (`turnCameAt`), never from when it joined the line.
  *
  * No word here is "model" or "server" (`product-verbs.suite.ts` "the launcher surface speaks
  * product verbs only" — mechanism words, not merely git vocabulary, are the ones this line has to
@@ -750,22 +753,31 @@ function livenessElapsedLabel(startedAt: number, now: number): string {
  */
 export function buildLivenessLine(
   liveness: 'writing' | 'thinking' | 'connected' | 'stalled',
-  s: { readonly startedAt: number; readonly aggregates: { readonly chars: number }; readonly lastFrameAt: number },
+  s: {
+    readonly startedAt: number;
+    readonly turnCameAt?: number;
+    readonly aggregates: { readonly chars: number };
+    readonly lastFrameAt: number;
+  },
   now: number,
+  phase: 'line' | 'model' | 'checking' = 'model',
 ): string {
+  if (liveness === 'stalled') {
+    const quietSeconds = Math.max(0, Math.floor((now - s.lastFrameAt) / MS_PER_SECOND));
+    return `Nothing has arrived for ${quietSeconds}s`;
+  }
+  // In line, the clock is the time in line; once the build's turn comes, it starts over.
+  if (phase === 'line') return `Waiting in line · ${livenessElapsedLabel(s.startedAt, now)}`;
+  const clock = livenessElapsedLabel(s.turnCameAt ?? s.startedAt, now);
   if (liveness === 'writing') {
     // en-CA, not the phone's locale (#89): this is English copy, and a French-locale phone would
     // otherwise render the count with a non-breaking space and no comma (e.g. "1 204").
     return `Writing · ${s.aggregates.chars.toLocaleString('en-CA')} characters`;
   }
-  if (liveness === 'thinking') {
-    return `Thinking it through · ${livenessElapsedLabel(s.startedAt, now)}`;
-  }
-  if (liveness === 'connected') {
-    return `Connected, waiting for a reply · ${livenessElapsedLabel(s.startedAt, now)}`;
-  }
-  const quietSeconds = Math.max(0, Math.floor((now - s.lastFrameAt) / MS_PER_SECOND));
-  return `Nothing has arrived for ${quietSeconds}s`;
+  if (liveness === 'thinking') return `Thinking it through · ${clock}`;
+  // Checking writes nothing to wait for: the connection is up and the checks are running.
+  if (phase === 'checking') return `Running the checks · ${clock}`;
+  return `Connected, waiting for a reply · ${clock}`;
 }
 
 // ── the run timeline's lines (generation-observability, design D7) ───────────
