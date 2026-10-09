@@ -8,7 +8,8 @@
 // `ReactNativeWebView.postMessage` transport via `emitUiEvent` (constraint #2, shared from
 // `events.ts` — not duplicated).
 import * as React from 'react';
-import { space, radius, color, weight, textSize, type SpaceToken, type RadiusToken } from './tokens';
+import { space, radius, color, weight, textSize, textColor, type SpaceToken, type RadiusToken } from './tokens';
+import { Glyph } from './icon';
 import { emitUiEvent } from './events';
 import { CONTROL_RESET, TAP_RESET, usePressed } from './press';
 
@@ -201,9 +202,15 @@ export interface ListItemProps {
   title: string;
   subtitle?: string;
   trailing?: string;
+  /** An icon name, drawn at 20 in `text-muted` before the title. */
+  icon?: string;
   onPress?: () => void;
 }
-export function ListItem({ title, subtitle, trailing, onPress }: ListItemProps) {
+/** ListItem's leading icon, when it has one (system.md §7.1 grouped list: 20 pt `text-2`). */
+function listItemIcon(name: string | undefined): React.ReactElement[] {
+  return name ? [React.createElement(Glyph, { key: 'icon', name, sizePx: 20, colorValue: textColor('text-muted') })] : [];
+}
+export function ListItem({ title, subtitle, trailing, icon, onPress }: ListItemProps) {
   // `List` (the parent container) already paints `surface` as its own background, so a
   // pressed ListItem tinting to `surface` would be invisible against it — `bg` is the token
   // that actually reads as a distinct tint there (every preset's `bg`/`surface` pair differs).
@@ -231,9 +238,10 @@ export function ListItem({ title, subtitle, trailing, onPress }: ListItemProps) 
         ...(onPress ? CONTROL_RESET : {}),
       },
     },
+    ...listItemIcon(icon),
     React.createElement(
       'div',
-      { style: { display: 'flex', flexDirection: 'column', gap: space('xs') } },
+      { key: 'text', style: { display: 'flex', flexDirection: 'column', gap: space('xs'), flexGrow: 1 } },
       React.createElement(
         'span',
         {
@@ -289,10 +297,31 @@ export function ListItem({ title, subtitle, trailing, onPress }: ListItemProps) 
 // A centered, muted column — the "nothing here yet" placeholder every record-backed screen
 // needs.
 export interface EmptyStateProps {
+  /** An icon name, drawn at 32 in a 64 circle above the title. */
+  icon?: string;
   title: string;
   hint?: string;
 }
-export function EmptyState({ title, hint }: EmptyStateProps) {
+/** EmptyState's icon disc (system.md §7.2: a 32 icon in a 64 `fill` circle). */
+function EmptyStateIcon({ name }: { name: string }) {
+  return React.createElement(
+    'div',
+    {
+      style: {
+        width: '64px',
+        height: '64px',
+        borderRadius: radius('full'),
+        background: color('fill'),
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: space('sm'),
+      },
+    },
+    React.createElement(Glyph, { name, sizePx: 32, colorValue: textColor('text-muted') }),
+  );
+}
+export function EmptyState({ icon, title, hint }: EmptyStateProps) {
   return React.createElement(
     'div',
     {
@@ -306,9 +335,11 @@ export function EmptyState({ title, hint }: EmptyStateProps) {
         padding: space('xl'),
       },
     },
+    ...(icon ? [React.createElement(EmptyStateIcon, { key: 'icon', name: icon })] : []),
     React.createElement(
       'span',
       {
+        key: 'title',
         style: {
           fontSize: textSize('subtitle').size,
           lineHeight: textSize('subtitle').line,

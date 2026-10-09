@@ -27,6 +27,7 @@ import {
   textColor,
   FONT,
   TABULAR_NUMS,
+  activeTheme,
   type SpaceToken,
   type RadiusToken,
   type TextColorToken,
@@ -36,6 +37,9 @@ import {
 import { emitUiEvent } from './events';
 import { CONTROL_RESET, TAP_RESET, usePressed } from './press';
 import { chromeInsetContext } from './chrome-inset';
+import { navDepthContext, nav } from './navigation';
+import { Glyph } from './icon';
+import { LAYOUT } from '../design/tokens';
 
 // The theme model (design sdk-design-system D1/D4) — type-only, so nothing executable
 // crosses this seam beyond the resolvers above, which already read the active theme. `shape`
@@ -149,7 +153,16 @@ export interface AppSpec {
    *  truth, so a fixture cannot drift from its own declaration. The runtime gate reads only the
    *  host-held copy (design D6); this in-bundle declaration is what the build extracts. */
   schema?: SchemaArtifact;
-  /** The one thing the shell asks back from a generated app: its tile colour, as a `#rrggbb`
+  /** The app's tint: one of the ten names (`slate`, `stone`, `ocean`, `blue`, `indigo`, `violet`,
+   *  `purple`, `orchid`, `berry`, `rose`), or up to three ranked so the home screen can pick one no
+   *  other app uses. Extracted statically, like `capabilities`. A near name resolves through the
+   *  alias map and an unknown one falls back to a fixed tint for the app; neither fails a build. */
+  tint?: string | readonly [string] | readonly [string, string] | readonly [string, string, string];
+  /** The tile's glyph: one icon name from the glyph set. Extracted statically; an unknown name
+   *  resolves by keyword, else draws a circle. */
+  icon?: string;
+  /** @deprecated Declare `tint` instead; a `tileColor` maps to the nearest tint.
+   *  The one thing the shell asks back from a generated app: its tile colour, as a `#rrggbb`
    *  LITERAL. Extracted statically from this `defineApp` argument exactly as `capabilities` is —
    *  never obtained by executing or introspecting the bundle, so a non-literal value is simply not
    *  extracted. Absent, malformed, or equal to a reserved shell hue all mean "no declaration", and
@@ -168,6 +181,9 @@ export function defineApp(spec: AppSpec): AppSpec {
 }
 
 export { nav } from './navigation';
+export { toast } from './toast';
+export { Icon } from './icon';
+export type { IconProps, IconSize } from './icon';
 
 // ── The one-way UI-event transport (constraint #2) ───────────────────────────
 // Shared with `controls.tsx`/`surfaces.tsx` (design D5) via `events.ts` (imported at top) —
@@ -251,8 +267,20 @@ export const cues = {
 // ── Components (design D6 / task 3.2) ─────────────────────────────────────────
 // Each takes tokens and resolves them to CSS internally. The bundle never sees a raw value.
 
+export interface ScreenAction {
+  /** An icon name, drawn at 24 in the header's trailing corner. */
+  icon: string;
+  /** What the button does, for screen readers (the icon carries no text). */
+  label: string;
+  onPress: () => void;
+}
 export interface ScreenProps {
   padding?: SpaceToken;
+  /** The screen's title. With it, the screen gets a header: a back control on any screen above the
+   *  first (it calls `nav.back()`), the `action` button, and the title under them. */
+  title?: string;
+  /** A trailing icon button in the header; shown only with `title`. */
+  action?: ScreenAction;
   children?: React.ReactNode;
 }
 /** `Screen`'s padding: the token on every side, plus the host chrome inset (beta-1 D5) at the
@@ -265,9 +293,96 @@ function screenPadding(pad: string, chromeInset: number): string {
   }
   return pad;
 }
-export function Screen({ padding = 'lg', children }: ScreenProps) {
+/** Header glyph size (system.md §3.1: 24 in headers). */
+const HEADER_ICON_PX = 24;
+
+interface HeaderButtonProps {
+  icon: string;
+  label: string;
+  edge: 'start' | 'end';
+  onPress: () => void;
+}
+/** A plain icon button at the platform's touch target, pulled out to the screen's edge so its
+ *  glyph lines up with the content beside it. */
+function HeaderButton({ icon, label, edge, onPress }: HeaderButtonProps) {
+  const target = LAYOUT.touchTarget[activeTheme().platform];
+  const pull = `-${(target - HEADER_ICON_PX) / 2}px`;
+  return React.createElement(
+    'button',
+    {
+      type: 'button',
+      'aria-label': label,
+      onClick: () => {
+        emitUiEvent('press', label);
+        onPress();
+      },
+      style: {
+        boxSizing: 'border-box',
+        width: `${target}px`,
+        height: `${target}px`,
+        padding: 0,
+        border: 'none',
+        background: 'transparent',
+        color: textColor('text'),
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        ...(edge === 'start' ? { marginLeft: pull } : { marginRight: pull }),
+        ...CONTROL_RESET,
+      },
+    },
+    React.createElement(Glyph, { name: icon, sizePx: HEADER_ICON_PX }),
+  );
+}
+
+/** The header `Screen` draws above its content when it has a title. */
+function ScreenHeader({ title, action, depth }: { title: string; action?: ScreenAction; depth: number }) {
+  const t = textSize('title');
+  const back = activeTheme().platform === 'ios' ? 'chevron-left' : 'arrow-left';
+  return React.createElement(
+    'div',
+    { style: { display: 'flex', flexDirection: 'column', marginBottom: space('lg') } },
+    React.createElement(
+      'div',
+      {
+        style: {
+          display: 'flex',
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          minHeight: `${LAYOUT.headerRowHeight}px`,
+        },
+      },
+      depth > 0
+        ? React.createElement(HeaderButton, { icon: back, label: 'Back', edge: 'start', onPress: () => nav.back() })
+        : React.createElement('span'),
+      action
+        ? React.createElement(HeaderButton, { icon: action.icon, label: action.label, edge: 'end', onPress: action.onPress })
+        : null,
+    ),
+    React.createElement(
+      'h1',
+      {
+        style: {
+          margin: 0,
+          fontSize: t.size,
+          lineHeight: t.line,
+          letterSpacing: t.tracking,
+          fontWeight: weight(t.weight),
+          color: textColor('text'),
+        },
+      },
+      title,
+    ),
+  );
+}
+
+export function Screen({ padding = 'lg', title, action, children }: ScreenProps) {
   const insetContext = chromeInsetContext();
   const chromeInset = React.useContext(insetContext);
+  const depthContext = navDepthContext();
+  const depth = React.useContext(depthContext);
   const body = textSize('body');
   return React.createElement(
     'div',
@@ -284,8 +399,14 @@ export function Screen({ padding = 'lg', children }: ScreenProps) {
         overscrollBehavior: 'none',
       },
     },
-    // Only the outermost Screen is the scrollable content: one nested inside it pads as before.
-    React.createElement(insetContext.Provider, { value: 0 }, children),
+    title ? React.createElement(ScreenHeader, { title, action, depth }) : null,
+    // Only the outermost Screen is the scrollable content and the navigation stack's page: one
+    // nested inside it pads as before and never shows a back control.
+    React.createElement(
+      insetContext.Provider,
+      { value: 0 },
+      React.createElement(depthContext.Provider, { value: 0 }, children),
+    ),
   );
 }
 
@@ -442,6 +563,8 @@ export function NumberInput({ label, value, min, max, step, onChange }: NumberIn
 
 export interface ButtonProps {
   label: string;
+  /** An icon name, drawn at 20 before the label in the label's colour. */
+  icon?: string;
   radius?: RadiusToken;
   /** `'primary'` (default) renders byte-identical to the pre-D6 Button. */
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
@@ -474,6 +597,7 @@ function buttonOpacity(disabled: boolean, pressed: boolean): number {
 }
 export function Button({
   label,
+  icon,
   radius: radiusToken = 'md',
   variant = 'primary',
   disabled = false,
@@ -507,8 +631,10 @@ export function Button({
         transition: 'opacity 80ms',
         ...CONTROL_RESET,
         ...buttonVariantStyle(variant),
+        ...(icon ? { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: space('sm') } : {}),
       },
     },
+    icon ? React.createElement(Glyph, { name: icon, sizePx: 20 }) : null,
     label,
   );
 }
@@ -516,13 +642,17 @@ export function Button({
 // ── Controls (design D5/D6) ───────────────────────────────────────────────────
 // Interactive form controls live in `controls.tsx` (their own review lens, shared event/
 // appearance discipline) and are re-exported here so `vc-sdk` stays the single import surface.
-export { TextInput, Switch, Checkbox, Slider, SegmentedControl } from './controls';
+export { TextInput, Switch, Checkbox, Slider, SegmentedControl, Stepper, DateInput, Picker } from './controls';
 export type {
   TextInputProps,
   SwitchProps,
   CheckboxProps,
   SliderProps,
   SegmentedControlProps,
+  StepperProps,
+  DateInputProps,
+  DateInputMode,
+  PickerProps,
 } from './controls';
 
 // ── Surfaces (design D5/D6) ───────────────────────────────────────────────────

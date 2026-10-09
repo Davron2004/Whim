@@ -1,10 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // style-gallery — the sdk-design-system acceptance mini-app (design D9).
 // ─────────────────────────────────────────────────────────────────────────────
-// One screen, one file, imports ONLY from `vc-sdk`, `capabilities: []` (Tier-0, zero
-// syscalls — this fixture is manual QA + a knip anchor, not a data app). It exercises every
-// component controls.tsx/surfaces.tsx add, plus the new `Button` variants and `Row`
-// align/justify props, laid out the way a designer would use them: one `Card` per section. It
+// One file, imports ONLY from `vc-sdk`, `capabilities: []` (Tier-0, zero syscalls — this
+// fixture is manual QA + a knip anchor, not a data app). It exercises every component, variant
+// and prop, laid out the way a designer would use them: one `Card` per section, a titled `Screen`
+// whose header action opens a second screen (where the header shows its back control). It
 // holds no colour of its own, so it renders in whichever scheme (light or dark) and tint the host
 // delivers; the Type card shows every `Text` size, weight, alignment and colour.
 import {
@@ -33,6 +33,12 @@ import {
   EmptyState,
   Modal,
   Chart,
+  Icon,
+  Stepper,
+  DateInput,
+  Picker,
+  toast,
+  nav,
   type SeriesPoint,
   type DayPoint,
 } from 'vc-sdk';
@@ -79,11 +85,20 @@ function Home() {
   const [showList, setShowList] = useState(true);
   const [starred, setStarred] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [cups, setCups] = useState(2);
+  const [hours, setHours] = useState(1.5);
+  const [day, setDay] = useState<number | null>(null);
+  const [alarm, setAlarm] = useState<number | null>(() => new Date().setHours(7, 30, 0, 0));
+  const [due, setDue] = useState<number | null>(() => Date.now());
+  const [brewer, setBrewer] = useState('');
 
   return (
-    <Screen padding="lg">
+    <Screen
+      padding="lg"
+      title="Style Gallery"
+      action={{ icon: 'info', label: 'About', onPress: () => nav.navigate('About') }}
+    >
       <Stack gap="lg">
-        <Text size="title">Style Gallery</Text>
 
         <Card>
           <Stack gap="md">
@@ -124,6 +139,29 @@ function Home() {
               <Button label="Danger" variant="danger" />
               <Button label="Disabled" disabled />
             </Row>
+            <Row gap="sm" justify="start">
+              <Button label="Add item" icon="plus" variant="secondary" />
+              <Button label="Share" icon="share" variant="ghost" />
+            </Row>
+          </Stack>
+        </Card>
+
+        <Card>
+          <Stack gap="md">
+            <Text size="subtitle">Icons</Text>
+            <Row gap="md" justify="start">
+              <Icon name="timer" size="sm" />
+              <Icon name="timer" size="md" />
+              <Icon name="timer" size="lg" />
+            </Row>
+            <Row gap="md" justify="start">
+              <Icon name="coffee" color="text" />
+              <Icon name="leaf" color="text-muted" />
+              <Icon name="star" color="primary" />
+              <Icon name="circle-check" color="positive" />
+              <Icon name="triangle-alert" color="warning" />
+              <Icon name="heart" color="danger" label="Favourite" />
+            </Row>
           </Stack>
         </Card>
 
@@ -137,6 +175,18 @@ function Home() {
             <ProgressBar value={progress / 100} />
             <Switch label="Notifications" value={notify} onChange={setNotify} />
             <Checkbox label="I agree" checked={agree} onChange={setAgree} />
+            <Stepper label="Cups" value={cups} min={0} max={8} onChange={setCups} />
+            <Stepper value={hours} min={0.5} max={12} step={0.5} onChange={setHours} />
+            <DateInput label="Start day" value={day} onChange={setDay} />
+            <DateInput label="Alarm" mode="time" value={alarm} onChange={setAlarm} />
+            <DateInput label="Due" mode="datetime" value={due} onChange={setDue} />
+            <Picker
+              label="Brewer"
+              options={['V60', 'Chemex', 'Kalita Wave', 'AeroPress', 'French press']}
+              value={brewer}
+              placeholder="Pick a brewer"
+              onChange={setBrewer}
+            />
             <Row gap="sm" align="center">
               <SegmentedControl options={['Day', 'Week', 'Month']} value={range} onChange={setRange} />
               <Badge label={range} tone="primary" />
@@ -165,15 +215,15 @@ function Home() {
             </Row>
             {showList ? (
               <List>
-                <ListItem title="First item" subtitle="With a subtitle" />
-                <ListItem title="Second item" trailing="12" />
+                <ListItem title="First item" subtitle="With a subtitle" icon="list-checks" />
+                <ListItem title="Second item" trailing="12" icon="tag" />
                 <ListItem
                   title={starred ? 'Starred ★' : 'Tap to star'}
                   onPress={() => setStarred((s) => !s)}
                 />
               </List>
             ) : (
-              <EmptyState title="Nothing here" hint="Toggle Show to bring the list back" />
+              <EmptyState icon="inbox" title="Nothing here" hint="Toggle Show to bring the list back" />
             )}
           </Stack>
         </Card>
@@ -220,8 +270,9 @@ function Home() {
 
         <Card>
           <Stack gap="md">
-            <Text size="subtitle">Modal</Text>
+            <Text size="subtitle">Modal and toast</Text>
             <Button label="Open modal" variant="secondary" onPress={() => setModalOpen(true)} />
+            <Button label="Show a toast" variant="secondary" onPress={() => toast('Saved to your list')} />
           </Stack>
         </Card>
 
@@ -236,13 +287,29 @@ function Home() {
   );
 }
 
+function About() {
+  return (
+    <Screen padding="lg" title="About">
+      <Stack gap="md">
+        <Text>Every vc-sdk component, variant and state, in the theme the phone delivers.</Text>
+        <Text size="caption" color="text-muted">
+          The header shows a back control on every screen above the first.
+        </Text>
+      </Stack>
+    </Screen>
+  );
+}
+
 export default defineApp({
   name: 'Style Gallery',
   initial: 'Home',
-  screens: { Home },
+  screens: { Home, About },
   capabilities: [], // Tier-0: manual QA / knip anchor, zero syscalls
+  tint: 'orchid',
+  icon: 'palette',
   // Declared, with tip-splitter.app.tsx and water-counter.app.tsx (#48/#52): "Water Counter" and
   // "Style Gallery" hash to the same appColor(name) palette slot without this. A fuchsia the
-  // palette doesn't hold, so no generated app falls back to it.
+  // palette doesn't hold, so no generated app falls back to it. Kept beside `tint` to show the
+  // deprecated field still type-checks; its nearest tint is the declared `orchid`.
   tileColor: '#a21caf',
 });

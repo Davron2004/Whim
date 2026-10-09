@@ -49,6 +49,8 @@ Every prop below takes a **token**, never a raw color/pixel value.
 | Component | Prop | Type | Default | Semantics |
 |---|---|---|---|---|
 | `Screen` | `padding` | `SpaceToken` | `'lg'` | Outer page padding; sets bg/text color from the theme. |
+| `Screen` | `title` | `string?` | — | Adds a header: a back control on every screen above the first (calls `nav.back()`), then the title. |
+| `Screen` | `action` | `{ icon: string; label: string; onPress: () => void }?` | — | A trailing icon button in the header (shown only with `title`); `label` is read to screen readers. |
 | `Stack` | `gap` | `SpaceToken` | `'md'` | Vertical flex column with `gap`. |
 | `Row` | `gap` | `SpaceToken` | `'md'` | Horizontal flex row with `gap`; wraps to a new line when content overflows. |
 | `Row` | `align` | `'start' \| 'center' \| 'end'` | baseline (unset) | Cross-axis alignment. |
@@ -65,9 +67,14 @@ Every prop below takes a **token**, never a raw color/pixel value.
 | `NumberInput` | `onChange` | `(n: number) => void` | — | Fires on every keystroke; NaN coerces to `0`. |
 | `Button` | `label` | `string` (required) | — | Button text. |
 | `Button` | `variant` | `'primary' \| 'secondary' \| 'ghost' \| 'danger'` | `'primary'` | Visual weight/tone. |
+| `Button` | `icon` | `string?` | — | An icon name, drawn before the label. |
 | `Button` | `radius` | `RadiusToken` | `'md'` | Corner radius. |
 | `Button` | `disabled` | `boolean` | `false` | Suppresses press + dims to 50% opacity. |
 | `Button` | `onPress` | `() => void` | — | Tap handler. |
+| `Icon` | `name` | `string` (required) | — | An icon name (`timer`, `coffee`, `heart`, …); an unknown name draws a plain circle. |
+| `Icon` | `size` | `'sm' \| 'md' \| 'lg'` | `'md'` | 16 / 20 / 24 px. |
+| `Icon` | `color` | `TextColorToken` | `'text'` | Icon color. |
+| `Icon` | `label` | `string?` | — | What the icon means, for screen readers; omit when text beside it says it. |
 
 ### Controls (`controls.tsx`)
 
@@ -90,6 +97,19 @@ Every prop below takes a **token**, never a raw color/pixel value.
 | `SegmentedControl` | `options` | `string[]` (required) | — | The segment labels (also the values). |
 | `SegmentedControl` | `value` | `string` (required) | — | Currently selected option. |
 | `SegmentedControl` | `onChange` | `(s: string) => void` | — | Fires on segment tap. |
+| `Stepper` | `label` | `string?` | — | Label at the row's start. |
+| `Stepper` | `value` | `number` (required) | — | Current value. |
+| `Stepper` | `onChange` | `(n: number) => void` (required) | — | Fires on each step; holding a button repeats. |
+| `Stepper` | `min` / `max` / `step` | `number` | `0` / none / `1` | Bounds and step; a button at its bound is disabled. |
+| `DateInput` | `label` | `string?` | — | Optional caption label. |
+| `DateInput` | `value` | `number \| null` (required) | — | Epoch milliseconds, or `null` when unset. |
+| `DateInput` | `onChange` | `(ms: number \| null) => void` (required) | — | Fires with the picked value; `null` when cleared. |
+| `DateInput` | `mode` | `'date' \| 'time' \| 'datetime'` | `'date'` | Opens the phone's own picker; `date` stores local midnight of the day. |
+| `Picker` | `label` | `string?` | — | Optional caption label. |
+| `Picker` | `options` | `string[]` (required) | — | The choices (also the values), shown in the phone's own list. For 2–4 short options use `SegmentedControl`. |
+| `Picker` | `value` | `string` (required) | — | Current choice; a value not in `options` shows the placeholder. |
+| `Picker` | `onChange` | `(s: string) => void` (required) | — | Fires with the chosen option. |
+| `Picker` | `placeholder` | `string?` | `'Choose one'` | Shown until something is chosen. |
 
 ### Surfaces (`surfaces.tsx`)
 
@@ -110,9 +130,11 @@ Every prop below takes a **token**, never a raw color/pixel value.
 | `ListItem` | `title` | `string` (required) | — | Primary row text. |
 | `ListItem` | `subtitle` | `string?` | — | Muted caption line under the title. |
 | `ListItem` | `trailing` | `string?` | — | Muted text at the row's end. |
+| `ListItem` | `icon` | `string?` | — | An icon name, drawn before the title. |
 | `ListItem` | `onPress` | `() => void?` | — | When present, makes the row clickable. |
 | `EmptyState` | `title` | `string` (required) | — | The "nothing here" headline. |
 | `EmptyState` | `hint` | `string?` | — | Muted caption under the title. |
+| `EmptyState` | `icon` | `string?` | — | An icon name, drawn large above the title. |
 | `Modal` | `visible` | `boolean` (required) | — | Renders `null` when `false` — no imperative API. |
 | `Modal` | `title` | `string?` | — | Optional sheet header. |
 | `Modal` | `onClose` | `() => void` (required) | — | Fires on backdrop tap. |
@@ -183,6 +205,7 @@ timestamp becomes a heatmap label only by converting it: `new Date(ms).toISOStri
 | `useRef` | `React.useRef` | Stable mutable `{current}` box; no re-render on write; live-readable from an async closure. |
 | `delay` | `(ms: number) => Promise<void>` | Resolves after at least `ms`; negative/non-finite `ms` never resolves (cancelled only by realm teardown). |
 | `interval` | `(callback: () => void, ms: number, opts?: { running?: boolean }) => void` | Repeating timer as a hook — unmount cancels it structurally; `running: false` pauses without unmounting. |
+| `toast` | `(text: string) => void` | Shows a short message at the bottom for 4 s; a second call replaces the first. Call it from a handler (calls during the first render are ignored). |
 
 ## 5. Capability facades
 
