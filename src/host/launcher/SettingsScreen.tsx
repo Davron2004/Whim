@@ -416,14 +416,16 @@ export default function SettingsScreen({
             {serverUrl != null && (
               <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{legal.ownServerCaption}</Text>
             )}
+            {/* Inside the block the field keeps in view, so the way back to Whim's server shows
+                above the keyboard too. */}
+            {serverUrlDraft.trim().length > 0 && (
+              <TouchableOpacity onPress={onUseDefault} hitSlop={10}>
+                <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>
+                  {COPY.settingsUseDefaultServer}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
-          {serverUrlDraft.trim().length > 0 && (
-            <TouchableOpacity onPress={onUseDefault} hitSlop={10}>
-              <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>
-                {COPY.settingsUseDefaultServer}
-              </Text>
-            </TouchableOpacity>
-          )}
         </>
       )}
     </KeyboardShell>

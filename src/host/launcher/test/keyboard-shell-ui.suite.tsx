@@ -394,7 +394,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('clarify "Other", and the Settings server field with the helper line under it, are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
+  await h.test('clarify "Other", and the Settings server field with the lines and the Use Whim’s server action under it, are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
     // The Settings field names its block: the field, its helper line and the probe's line, 100 tall.
     const cases: [string, React.ReactElement, Geometry, string][] = [
       ['clarify', clarify(), { frame: SCREEN_FRAME, field: [500, 60] }, 'the field'],
@@ -415,6 +415,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
           h.eq(scrolls.at(-1), top + height + SPACING.md - 400, `${device.name} ${name}: once the keyboard shrinks the scroll view, ${shown} scroll clear above its end`);
           h.eq([field(tree).props.multiline === true, doneBars(tree).length], [false, 0], `${device.name} ${name}: one line, with no Done bar`);
           h.eq(scrollView(tree).props.keyboardShouldPersistTaps, 'handled', `${device.name} ${name}: the controls around it take their taps while typing`);
+          if (name === 'settings') h.ok(revealedBlock(tree).findAll((n) => String(n.type) === 'TouchableOpacity' && textOf(n) === COPY.settingsUseDefaultServer).length === 1, `${device.name} settings: Use Whim’s server is in the block kept above the keyboard`);
         }, geometry);
       }
     }
