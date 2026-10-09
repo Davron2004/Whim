@@ -35,14 +35,16 @@
 
 ## 5. SDK components: restyle and keyed lists
 
-- [ ] 5.1 `Button` (capsule 52, `primary` tint fill, `secondary`, `ghost`, `danger` as soft capsule, disabled `fill`/`text-3`, `radius` accepted and ignored), `Text` sizes and narrowed `color`, `Heading` as an alias of `Text size="title"`, `Row` defaults `center`/`start`
-- [ ] 5.2 Controls: `TextInput`/`NumberInput` field anatomy, `Switch` (platform shape), `Checkbox`, `Slider`, `SegmentedControl`, each with 44/48 targets from `platform` and stacking from `fontScale` 1.35
-- [ ] 5.3 Surfaces: `Card` and `List` without borders (`sheet-group` inside `Modal`, outline with `increaseContrast`), `Badge` tones with status icons and amber `warning`, `ProgressBar` `variant: 'ring'` and `label`, `EmptyState`, `Chart` colours, `Modal` sheet anatomy (grabber, `title2`, close button, scrim, action row padded by `chromeInsetBottom`)
-- [ ] 5.4 `List` `items`/`keyBy`/`renderItem` with stable identity; duplicate or index-shaped keys give a dev diagnostic and set a no-motion flag (motion itself lands in 6.x)
-- [ ] 5.5 Add a gallery-coverage check to `checks/test/repo/design-system.suite.ts`: every `vc-sdk` component export must appear in the style gallery
-- [ ] 5.6 Split `fixtures/style-gallery.app.tsx` into four screens (Text and buttons; Controls; Surfaces; Modal and toast) using `nav` and `Screen title`, tint `purple`, one filled button per screen, `danger` beside `secondary`, `List keyBy` with add/remove; update `list.acceptance.tsx` and component suites
+- [x] 5.1 `Button` (capsule 52, `primary` tint fill, `secondary`, `ghost`, `danger` as soft capsule, disabled `fill`/`text-3`, `radius` accepted and ignored), `Text` sizes and narrowed `color`, `Heading` as an alias of `Text size="title"`, `Row` defaults `center`/`start`
+- [x] 5.2 Controls: `TextInput`/`NumberInput` field anatomy, `Switch` (platform shape), `Checkbox`, `Slider`, `SegmentedControl`, each with 44/48 targets from `platform` and stacking from `fontScale` 1.35
+- [x] 5.3 Surfaces: `Card` and `List` without borders (`sheet-group` inside `Modal`, outline with `increaseContrast`), `Badge` tones with status icons and amber `warning`, `ProgressBar` `variant: 'ring'` and `label`, `EmptyState`, `Chart` colours, `Modal` sheet anatomy (grabber, `title2`, close button, scrim, action row padded by `chromeInsetBottom`)
+- [x] 5.4 `List` `items`/`keyBy`/`renderItem` with stable identity; duplicate or index-shaped keys give a dev diagnostic and set a no-motion flag (motion itself lands in 6.x)
+- [x] 5.5 Add a gallery-coverage check to `checks/test/repo/design-system.suite.ts`: every `vc-sdk` component export must appear in the style gallery
+- [x] 5.6 Split `fixtures/style-gallery.app.tsx` into four screens (Text and buttons; Controls; Surfaces; Modal and toast) using `nav` and `Screen title`, tint `purple`, one filled button per screen, `danger` beside `secondary`, `List keyBy` with add/remove; update `list.acceptance.tsx` and component suites
 
 ## 6. SDK motion
+
+- [ ] 6.0 (product-owner ruling 2026-10-09) The Switch "off" track and the empty Slider track must reach ≥ 3:1 non-text contrast against `surface` in light AND dark (WCAG 1.4.11 — the accessibility floor wins over iOS mimicry; chain-5 measured ~1.3:1). Pick the track colour from the token module (a stronger neutral role, or the tint's soft colour if it clears 3:1), update `docs/design/system.md` §7.2 and the token tables via the generator, and add the pair to the contrast checks so it can't regress.
 
 - [ ] 6.1 Motion helpers in `src/sdk/`: spring easings from `src/design/generated/springs.ts`, one-time `CSS.supports('animation-timing-function', 'linear(0, 1)')` gate with cubic-bezier fallback, WAAPI play helpers, a small rAF spring that keeps velocity on retarget
 - [ ] 6.2 Press feedback on every pressable (scale per kind, reduced: opacity 0.7), `Switch`/`SegmentedControl`/`Slider` thumbs on the rAF spring, `Checkbox` stroke, `Stepper` digit roll
