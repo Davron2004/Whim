@@ -15,12 +15,15 @@ import http from 'node:http';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { getRequestListener } from '@hono/node-server';
+import { Hono } from 'hono';
 import {
   ApiError,
   APP_VERSION_HEADER,
   BUILD_HEADER,
   CONSENT_HEADER,
   PLATFORM_HEADER,
+  PROTOCOL_HEADER,
+  PROTOCOL_LEVEL,
   REQUEST_ID_HEADER,
   type GenerationEvent,
   type Usage,
@@ -28,8 +31,9 @@ import {
 import { check, eq, section } from './harness';
 import { captureLogs, withMessage, type LogCapture } from './log-capture';
 import { readSseResponse } from './sse-reader';
-import { ControlledModelClient, RecordingUsageStore, TIMED_OUT, machinePipeline, within } from './route-doubles';
+import { ControlledModelClient, PROTOCOL_HEADERS, RecordingUsageStore, TIMED_OUT, machinePipeline, within } from './route-doubles';
 import { createApp, type AppOptions } from '../src/app';
+import { readProtocolLevel, type EdgeEnv } from '../src/request-edge';
 import { loadServerConfig, type ServerConfig } from '../src/config';
 import { createStubPipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
@@ -103,7 +107,9 @@ function forbiddenModelApp(config?: Partial<ServerConfig>): { app: ReturnType<ty
   return { app, model, usageStore };
 }
 
-async function send(
+/** A bounded request carrying exactly `headers` — with no `PROTOCOL_HEADER` unless they hold one,
+ *  as a build from before the protocol level sends it. */
+async function sendWithoutLevel(
   app: ReturnType<typeof createApp>,
   route: string,
   headers: Readonly<Record<string, string>>,
@@ -120,6 +126,17 @@ async function send(
   );
   if (res === TIMED_OUT) throw new Error(`${route} did not answer in time`);
   return res;
+}
+
+/** A bounded request that declares the protocol level, as every client does, unless `headers`
+ *  overrides it. */
+function send(
+  app: ReturnType<typeof createApp>,
+  route: string,
+  headers: Readonly<Record<string, string>>,
+  body?: unknown,
+): Promise<Response> {
+  return sendWithoutLevel(app, route, { ...PROTOCOL_HEADERS, ...headers }, body);
 }
 
 async function drain(label: string, res: Response): Promise<GenerationEvent[]> {
@@ -189,7 +206,9 @@ async function testRequestIdOnEveryResponse(): Promise<void> {
       const first = await send(app, '/v1/usage', { 'x-whim-device': DEVICE_ID });
       const second = await send(app, '/v1/usage', { 'x-whim-device': DEVICE_ID });
       check('two requests get two ids', first.headers.get(REQUEST_ID_HEADER) !== second.headers.get(REQUEST_ID_HEADER));
-      eq('a route outside /v1 carries no request id', (await send(app, '/healthz', {})).headers.get(REQUEST_ID_HEADER), null);
+      for (const route of ['/health', '/healthz']) {
+        eq(`${route} outside /v1 carries no request id`, (await send(app, route, {})).headers.get(REQUEST_ID_HEADER), null);
+      }
     }
   } finally {
     capture.stop();
@@ -501,6 +520,57 @@ async function testEveryV1RouteGated(): Promise<void> {
   eq('the envelope check runs before the minimum-build gate', [halfEnvelope.status, await refusalCode(halfEnvelope)], [400, 'invalid_envelope']);
 }
 
+// ─── The protocol level (beta-1 D16) ─────────────────────────────────────────
+
+async function testProtocolLevelRequired(): Promise<void> {
+  section('Protocol level — a request declaring none gets the minimum-build gate’s own 426, before any admission');
+
+  // The real minimum-build gate's refusal: the protocol refusal must be the same response.
+  const below = await send(testApp({ config: minimumsFrom({ WHIM_MIN_BUILD_ANDROID: '382000' }) }), '/v1/clarify', { 'x-whim-device': DEVICE_ID, ...ANDROID_ENVELOPE }, { prompt: 'a timer' });
+  const belowBody: unknown = await below.json();
+
+  const routes = [
+    ['/v1/generate', { prompt: 'a timer' }],
+    ['/v1/rewrite', { prompt: 'a timer' }],
+    ['/v1/clarify', { prompt: 'a timer' }],
+    ['/v1/report', { reason: 'broken' }],
+    ['/v1/usage', undefined],
+    ['/v1/diagnostics', { osVersion: '14', records: [{ at: 1, level: 'error', channel: 'whim', message: 'm' }] }],
+  ] as const;
+  for (const [route, body] of routes) {
+    const { app, model, usageStore } = forbiddenModelApp();
+    const res = await sendWithoutLevel(app, route, { 'x-whim-device': DEVICE_ID, ...ENVELOPE }, body);
+    eq(`${route}: no protocol level → the minimum-build gate's status and body`, [res.status, await res.json()], [below.status, belowBody]);
+    eq(`${route}: no model was called (classifier included)`, model.calls, 0);
+    eq(`${route}: no ledger row was admitted`, usageStore.admitted, []);
+  }
+
+  const legacy = await sendWithoutLevel(testApp({ stub: true }), '/v1/clarify', { 'x-whim-device': DEVICE_ID }, { prompt: 'a timer' });
+  eq('a pre-envelope build (no envelope, no level) → 426 update_required', [legacy.status, await refusalCode(legacy)], [426, 'update_required']);
+  for (const value of ['', 'one', '0', '-1', '1.5', '01', '1e0']) {
+    const res = await send(testApp({ stub: true }), '/v1/clarify', { 'x-whim-device': DEVICE_ID, ...ENVELOPE, [PROTOCOL_HEADER]: value }, { prompt: 'a timer' });
+    eq(`a protocol level of ${JSON.stringify(value)} → 426 update_required`, [res.status, await refusalCode(res)], [426, 'update_required']);
+  }
+
+  const noDevice = await sendWithoutLevel(testApp(), '/v1/clarify', ENVELOPE, { prompt: 'a timer' });
+  eq('the device gate runs before the protocol level', [noDevice.status, await refusalCode(noDevice)], [400, 'missing_device_id']);
+  const halfEnvelope = await sendWithoutLevel(testApp(), '/v1/clarify', { 'x-whim-device': DEVICE_ID, [PLATFORM_HEADER]: 'android' }, { prompt: 'a timer' });
+  eq('the envelope check runs before the protocol level', [halfEnvelope.status, await refusalCode(halfEnvelope)], [400, 'invalid_envelope']);
+  const health = await within(Promise.resolve(testApp().request('/healthz')));
+  eq('a route outside /v1 needs no protocol level', health === TIMED_OUT ? 'timed out' : health.status, 200);
+
+  for (const level of [PROTOCOL_LEVEL, PROTOCOL_LEVEL + 1]) {
+    const res = await send(testApp({ stub: true }), '/v1/clarify', { 'x-whim-device': DEVICE_ID, ...ENVELOPE, [PROTOCOL_HEADER]: String(level) }, { prompt: 'a timer' });
+    eq(`a client declaring level ${level} is served`, res.status, 200);
+  }
+
+  const probe = new Hono<EdgeEnv>();
+  probe.use('*', readProtocolLevel());
+  probe.get('/level', (c) => c.json({ level: c.get('protocolLevel') }));
+  const read = await within(Promise.resolve(probe.request('/level', { headers: { [PROTOCOL_HEADER]: '7' } })));
+  eq('a route reads the level the client declared, as a number', read === TIMED_OUT ? 'timed out' : await read.json(), { level: 7 });
+}
+
 async function testLegacyAndDefaults(): Promise<void> {
   section('Minimum build — a legacy client is build 0 on both platforms; minimums off by default');
 
@@ -520,26 +590,39 @@ async function testLegacyAndDefaults(): Promise<void> {
     const res = await send(app, '/v1/clarify', { ...legacy, ...ENVELOPE, [PLATFORM_HEADER]: platform, [BUILD_HEADER]: '1' }, { prompt: 'a timer' });
     eq(`neither minimum configured: ${platform} build 1 is served`, res.status, 200);
   }
-  eq('neither minimum configured: /healthz reports both as 0', await (await send(app, '/healthz', {})).json(), { ok: true, service: 'whim-server', commit: 'unknown', minBuild: { ios: 0, android: 0 } });
+  for (const route of ['/health', '/healthz']) {
+    eq(`neither minimum configured: ${route} reports both as 0`, await (await send(app, route, {})).json(), { ok: true, service: 'whim-server', commit: 'unknown', minBuild: { ios: 0, android: 0 } });
+  }
 }
 
 async function testHealthzReportsMinimums(): Promise<void> {
   section('Minimum build — /healthz reports the live minimums, anonymously and outside /v1');
 
   const app = testApp({ config: minimumsFrom({ WHIM_MIN_BUILD_IOS: '381000', WHIM_MIN_BUILD_ANDROID: '382000' }) });
-  const res = await send(app, '/healthz', {});
-  eq('no device header or envelope needed: 200', res.status, 200);
-  eq('the body carries both minimums, every other field unchanged', await res.json(), { ok: true, service: 'whim-server', commit: 'unknown', minBuild: { ios: 381000, android: 382000 } });
-  const junkEnvelope = await send(app, '/healthz', { [BUILD_HEADER]: 'junk' });
-  eq('a malformed envelope header does not reach /healthz (no envelope is read there)', junkEnvelope.status, 200);
+  const expected = { ok: true, service: 'whim-server', commit: 'unknown', minBuild: { ios: 381000, android: 382000 } };
+  const bodies: unknown[] = [];
+  for (const route of ['/health', '/healthz']) {
+    const res = await send(app, route, {});
+    eq(`${route}: no device header or envelope needed: 200`, res.status, 200);
+    const body: unknown = await res.json();
+    bodies.push(body);
+    eq(`${route}: the body carries both minimums, every other field unchanged`, body, expected);
+    const junkEnvelope = await send(app, route, { [BUILD_HEADER]: 'junk' });
+    eq(`${route}: a malformed envelope header does not reach it (no envelope is read there)`, junkEnvelope.status, 200);
+    eq(`${route}: a malformed envelope header leaves the body unchanged`, await junkEnvelope.json(), expected);
+  }
+  eq('/health and /healthz answer identical bodies', bodies[0], bodies[1]);
 }
 
 async function testHealthzReportsCommit(): Promise<void> {
   section('Commit — /healthz names the commit the image was built from (specs/server-observability)');
 
   const sha = '89abcdef0123456789abcdef0123456789abcdef';
-  const built = await send(testApp({ config: { commit: loadServerConfig({ WHIM_COMMIT: sha }).commit } }), '/healthz', {});
-  eq('an image built with WHIM_COMMIT reports it, beside ok, service and minBuild', await built.json(), { ok: true, service: 'whim-server', commit: sha, minBuild: { ios: 0, android: 0 } });
+  const builtApp = testApp({ config: { commit: loadServerConfig({ WHIM_COMMIT: sha }).commit } });
+  for (const route of ['/health', '/healthz']) {
+    const built = await send(builtApp, route, {});
+    eq(`an image built with WHIM_COMMIT reports it on ${route}, beside ok, service and minBuild`, await built.json(), { ok: true, service: 'whim-server', commit: sha, minBuild: { ios: 0, android: 0 } });
+  }
   const local = await send(testApp(), '/healthz', {});
   eq('a server outside the release image reports "unknown"', ((await local.json()) as { commit?: unknown }).commit, 'unknown');
 }
@@ -688,6 +771,7 @@ export async function runRequestEdgeTests(): Promise<void> {
   await testEnvelopeRefusals();
   await testOldBuildTurnedAway();
   await testEveryV1RouteGated();
+  await testProtocolLevelRequired();
   await testLegacyAndDefaults();
   await testHealthzReportsMinimums();
   await testHealthzReportsCommit();
