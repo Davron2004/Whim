@@ -134,7 +134,7 @@ export async function openXhrGenerateStream(
 
     // `requestId` is filled in by `decide()`, from the response headers, before the reader is
     // handed back.
-    const reader: { read: ResponseBodyReader['read']; requestId?: string } = {
+    const reader: { read: ResponseBodyReader['read']; cancel: ResponseBodyReader['cancel']; requestId?: string } = {
       read(): Promise<{ done: boolean; value?: Uint8Array }> {
         const next = queue.shift();
         if (next) {
@@ -143,6 +143,9 @@ export async function openXhrGenerateStream(
         return new Promise((resolve, reject) => {
           waiter = { resolve, reject };
         });
+      },
+      cancel(): void {
+        if (!finished) xhr.abort();
       },
     };
 
@@ -265,14 +268,26 @@ export async function openXhrGenerateStream(
         // forwards to `xhr.getResponseHeader`, the one header accessor it does have.
         headers: { get: (name: string) => xhr.getResponseHeader(name) },
       } as unknown as Response;
-      httpErrorFrom(fakeResponse, '/v1/generate', opts.baseUrl).then((err) => {
-        opened = true;
-        if (signal?.aborted) {
-          resolveOpen('aborted');
-        } else {
-          rejectOpen(err);
-        }
-      });
+      httpErrorFrom(fakeResponse, '/v1/generate', opts.baseUrl).then(
+        (err) => {
+          opened = true;
+          if (signal?.aborted) {
+            resolveOpen('aborted');
+          } else {
+            rejectOpen(err);
+          }
+        },
+        () => {
+          opened = true;
+          if (signal?.aborted) {
+            resolveOpen('aborted');
+          } else {
+            const hint = 'The generate request failed';
+            logMappedError('/v1/generate', opts.baseUrl, 'network', { readyState: xhr.readyState, message: hint });
+            rejectOpen(new GenerationClientError('network', { hint }));
+          }
+        },
+      );
     }
 
     xhr.open('POST', `${opts.baseUrl}/v1/generate`, true);
