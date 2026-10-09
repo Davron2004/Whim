@@ -1,12 +1,10 @@
 package com.whim
 
 import com.facebook.react.ReactActivity
-import com.facebook.react.ReactApplication
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 import com.swmansion.rnscreens.fragment.restoration.RNScreensFragmentFactory
-import com.whim.keyboard.KeyboardFrameReporter
 
 class MainActivity : ReactActivity() {
 
@@ -19,17 +17,7 @@ class MainActivity : ReactActivity() {
     supportFragmentManager.fragmentFactory = RNScreensFragmentFactory()
     setTheme(R.style.AppTheme)
     super.onCreate(savedInstanceState)
-    keyboardFrames.attach()
   }
-
-  override fun onDestroy() {
-    keyboardFrames.detach()
-    super.onDestroy()
-  }
-
-  // A keyboard that changes height while up reaches JS on Android 11+ as well (KeyboardFrameReporter).
-  private val keyboardFrames =
-      KeyboardFrameReporter(this) { (application as ReactApplication).reactHost?.currentReactContext }
 
   /**
    * Returns the name of the main component registered from JavaScript. This is used to schedule

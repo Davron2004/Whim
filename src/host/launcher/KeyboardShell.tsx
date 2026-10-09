@@ -1,13 +1,17 @@
 /**
  * KeyboardShell — the one keyboard-safe frame every launcher screen or sheet with a text field
- * renders (beta-1 D3; app-launcher "Text input never hides the content or action it belongs to").
- * React Native built-ins only; the decisions live in `keyboard-shell.ts`.
+ * renders (beta-1 D3; app-launcher "Text input never hides the content or action it belongs to";
+ * design-system-v1 task 11.3). The keyboard is tracked by `react-native-keyboard-controller`; the
+ * decisions live in `keyboard-shell.ts`.
  *
  * A pinned `header`, the scrolling content, and a pinned `footer` for the primary action. On a
- * screen the frame pads its bottom by the keyboard's overlap with it, so the footer rides above the
- * keyboard and the scroll view ends above the footer; inside a sheet the host (`SheetModal`) pads.
+ * screen the frame pads its bottom by the keyboard's overlap with it, frame by frame on the UI
+ * thread as the keyboard moves, so the footer rides above the keyboard on its own curve and the
+ * scroll view ends above the footer; inside a sheet the host (`SheetModal`, `Sheet`) pads.
  * While a field in the scroll view is focused, any change to what the scroll view shows (the
- * keyboard arriving, the field growing) scrolls the field, or the block it names, back into view.
+ * keyboard arriving or changing height, the field growing) scrolls the field, or the block it
+ * names, back into view, `REVEAL_MARGIN` clear of the keyboard and the footer; while the keyboard
+ * is still moving, that waits for it to settle.
  * A hairline under the header shows once content has scrolled beneath it, and one above the footer
  * while content continues below. A drag puts the keyboard away, a tap a control handles reaches the
  * control, and a tap on empty space anywhere in the frame puts the keyboard away.
@@ -17,7 +21,6 @@ import React, { createContext, useCallback, useContext, useEffect, useId, useMem
 import {
   InputAccessoryView,
   Keyboard,
-  LayoutAnimation,
   Platform,
   Pressable,
   ScrollView,
@@ -28,7 +31,6 @@ import {
   View,
 } from 'react-native';
 import type {
-  KeyboardEvent,
   LayoutChangeEvent,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -37,13 +39,21 @@ import type {
   TextInputProps,
   ViewStyle,
 } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import {
+  KeyboardController,
+  KeyboardEvents,
+  useGenericKeyboardHandler,
+  useWindowDimensions as useKeyboardWindow,
+  type NativeEvent,
+} from 'react-native-keyboard-controller';
 import { SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY } from './copy';
 import {
   keyboardDismissMode,
-  keyboardEvents,
   keyboardOverlap,
   pinsFooter,
+  REVEAL_MARGIN,
   revealOffset,
   scrollEdges,
   selectionColors,
@@ -59,7 +69,7 @@ export interface KeyboardShellProps {
   /** Pinned below the scrolling content and kept above the keyboard: the primary action and what
    *  sits with it. Leave it out on a screen with no primary action. */
   footer?: React.ReactNode;
-  /** `sheet` inside `SheetModal`, which pads for the keyboard itself. */
+  /** `sheet` inside `SheetModal` or `Sheet`, which pads for the keyboard itself. */
   host?: KeyboardShellHost;
   /** The frame's own style (its background). */
   style?: StyleProp<ViewStyle>;
@@ -84,50 +94,92 @@ const KeyboardShellContext = createContext<RevealRegistry | null>(null);
 
 const dismissKeyboard = () => Keyboard.dismiss();
 
-/** Moves the next layout with the keyboard, as iOS reports its motion (Android reports none). */
-function moveWithKeyboard(event: KeyboardEvent | undefined): void {
-  if (!event?.duration) return;
-  LayoutAnimation.configureNext({
-    duration: event.duration,
-    update: { duration: event.duration, type: LayoutAnimation.Types[event.easing] ?? LayoutAnimation.Types.keyboard },
-  });
+/** Where the view `frame` holds ends, measured from the top of its root (the app's, or a Modal's),
+ *  which fills its window wherever a frame pads, just as the keyboard's height is reported from that
+ *  window's bottom. `measureInWindow` would not do on Android, which measures from below the status bar. */
+function measureBottom(frame: React.RefObject<View | null>, done: (bottom: number) => void): void {
+  frame.current?.measure((_x, _y, _width, height, _pageX, pageY) => done(pageY + height));
+}
+
+/** What a frame that pads for the keyboard spreads onto the view it measures, and the padding. */
+export interface KeyboardOverlap {
+  /** The keyboard's overlap with the frame, on the UI thread; 0 when it is down or the frame is inactive. */
+  readonly overlap: SharedValue<number>;
+  /** Spread onto the measured view, whose bottom edge must not move with the padding this feeds. */
+  readonly onLayout: () => void;
+  /** The overlap a keyboard `keyboardHeight` tall will have with the frame, for planning ahead. */
+  readonly overlapFor: (keyboardHeight: number) => number;
 }
 
 /**
- * The keyboard's overlap with the view `frame` holds, while `active`; 0 when the keyboard is down or
- * `active` is false. The view's bottom edge must not move with the padding this feeds: a frame that
- * fills its parent, or a root that fills the window. The view is placed with `measure`'s page
- * coordinates, relative to its root (the app's, or a Modal's), which fills the window wherever a
- * frame pads, just as the keyboard's top edge is reported; `measureInWindow` would not do on
- * Android, which measures from below the status bar.
+ * The keyboard's overlap with the view `frame` holds, while `active`, following the keyboard frame
+ * by frame (showing, hiding, an interactive drag, and a keyboard that changes height while up). The
+ * view is measured on layout and again when the keyboard starts to show, in case an ancestor moved it.
+ */
+export function useKeyboardOverlap(frame: React.RefObject<View | null>, active: boolean): KeyboardOverlap {
+  const overlap = useSharedValue(0);
+  const frameBottom = useSharedValue(0);
+  const { height: windowHeight } = useKeyboardWindow();
+  const windowSize = useSharedValue(windowHeight);
+  useEffect(() => {
+    windowSize.value = windowHeight;
+  }, [windowSize, windowHeight]);
+  const onLayout = useCallback(() => {
+    measureBottom(frame, (bottom) => {
+      frameBottom.value = bottom;
+      if (active && KeyboardController.isVisible()) {
+        overlap.value = keyboardOverlap(KeyboardController.state().height, bottom, windowSize.value);
+      }
+    });
+  }, [active, frame, frameBottom, overlap, windowSize]);
+  const follow = (event: NativeEvent) => {
+    'worklet';
+    overlap.value = active ? keyboardOverlap(event.height, frameBottom.value, windowSize.value) : 0;
+  };
+  useGenericKeyboardHandler({ onMove: follow, onInteractive: follow, onEnd: follow }, [active]);
+  useEffect(() => {
+    if (!active) {
+      overlap.value = 0;
+      return undefined;
+    }
+    const subscription = KeyboardEvents.addListener('keyboardWillShow', onLayout);
+    return () => subscription.remove();
+  }, [active, onLayout, overlap]);
+  const overlapFor = useCallback(
+    (keyboardHeight: number) => (active ? keyboardOverlap(keyboardHeight, frameBottom.value, windowSize.value) : 0),
+    [active, frameBottom, windowSize],
+  );
+  return { overlap, onLayout, overlapFor };
+}
+
+/**
+ * The keyboard's overlap with the view `frame` holds, while `active`, as React state that changes
+ * once the keyboard has settled (shown, hidden, or a new height while up); 0 when it is down or
+ * `active` is false. For a frame whose padding should not follow the keyboard frame by frame (a
+ * mini-app's WebView, which would lay its page out again on every frame). The view's bottom edge
+ * must not move with the padding this feeds.
  */
 export function useKeyboardInset(frame: React.RefObject<View | null>, active: boolean): number {
   const [inset, setInset] = useState(0);
+  const { height: windowHeight } = useKeyboardWindow();
   useEffect(() => {
     if (!active) return undefined;
     let live = true;
-    const place = (keyboardTop: number, event?: KeyboardEvent) => {
-      frame.current?.measure((_x, _y, _width, height, _pageX, pageY) => {
-        if (!live) return;
-        moveWithKeyboard(event);
-        setInset(keyboardOverlap(pageY + height, keyboardTop));
+    const place = (keyboardHeight: number) => {
+      measureBottom(frame, (bottom) => {
+        if (live) setInset(keyboardOverlap(keyboardHeight, bottom, windowHeight));
       });
     };
-    const shown = Keyboard.metrics();
-    if (Keyboard.isVisible() && shown) place(shown.screenY);
-    const events = keyboardEvents(Platform.OS);
+    if (KeyboardController.isVisible()) place(KeyboardController.state().height);
     const subscriptions = [
-      Keyboard.addListener(events.moved, (event) => place(event.endCoordinates.screenY, event)),
-      Keyboard.addListener(events.hidden, (event) => {
-        moveWithKeyboard(event);
-        setInset(0);
-      }),
+      KeyboardEvents.addListener('keyboardDidShow', (event) => place(event.height)),
+      KeyboardEvents.addListener('keyboardDidHide', () => setInset(0)),
     ];
     return () => {
       live = false;
       for (const subscription of subscriptions) subscription.remove();
     };
-  }, [active, frame]);
+  }, [active, frame, windowHeight]);
   return active ? inset : 0;
 }
 
@@ -137,10 +189,13 @@ function assignRef<T>(ref: React.Ref<T> | undefined, node: T | null): void {
   else if (ref) (ref as React.MutableRefObject<T | null>).current = node;
 }
 
-/** The scroll view's wiring: its metrics, the edge hairlines, and revealing the focused block. */
+/** The scroll view's wiring: its metrics, the edge hairlines, and revealing the focused block.
+ *  `shrinkFor` says how much the scroll view will lose to a keyboard of a given height, when the
+ *  frame knows (a screen does; a sheet's host pads outside it). */
 function useRevealingScroll(
   scrollRef: React.Ref<ScrollView> | undefined,
   onContentSizeChange: ScrollViewProps['onContentSizeChange'],
+  shrinkFor?: (keyboardHeight: number) => number,
 ) {
   const scroll = useRef<ScrollView | null>(null);
   const inner = useRef<View>(null);
@@ -149,6 +204,7 @@ function useRevealingScroll(
   const [edges, setEdges] = useState({ above: false, below: false });
   const pendingReveal = useRef<number | null>(null);
   const revealVersion = useRef(0);
+  const keyboardMoving = useRef(false);
 
   const cancelReveal = useCallback(() => {
     revealVersion.current += 1;
@@ -162,7 +218,9 @@ function useRevealingScroll(
     setEdges((prev) => (prev.above === above && prev.below === below ? prev : { above, below }));
   }, []);
 
-  const reveal = useCallback(() => {
+  /** Scrolls the focused block into view: of the scroll view as it is, or, while the keyboard is on
+   *  its way, as tall as it will be (`viewport`). */
+  const reveal = useCallback((viewport?: number) => {
     cancelReveal();
     if (!focusedTarget.current) return;
     const version = revealVersion.current;
@@ -177,7 +235,8 @@ function useRevealingScroll(
         content,
         (_x, top, _width, height) => {
           if (version !== revealVersion.current || focusedTarget.current?.current !== target) return;
-          const next = revealOffset(metrics.current, top, top + height, SPACING.md);
+          const shown = viewport === undefined ? metrics.current : { ...metrics.current, viewport };
+          const next = revealOffset(shown, top, top + height, REVEAL_MARGIN);
           if (next != null) scroll.current?.scrollTo({ y: next, animated: true });
         },
         () => {},
@@ -186,15 +245,31 @@ function useRevealingScroll(
   }, [cancelReveal]);
 
   useEffect(() => {
-    // iOS can animate native bounds beyond the layout notification and the next frame. Recheck
-    // when showing has finished too; this is a one-shot event, not a scroll/layout retry loop.
-    const subscription = Keyboard.addListener('keyboardDidShow', reveal);
+    // The frame's padding follows the keyboard frame by frame, so the scroll view's height changes
+    // on every frame while it moves: not on each of those layouts, but once as the keyboard sets off,
+    // for the height it is heading to (so the field rides up with it), and once it has settled.
+    // Showing settles with `keyboardDidShow` (also sent for a new height while up), which rechecks;
+    // iOS can animate native bounds beyond the layout notification and the next frame. Each is a
+    // one-shot event, not a scroll/layout retry loop.
+    const subscriptions = [
+      KeyboardEvents.addListener('keyboardWillShow', (event) => {
+        keyboardMoving.current = true;
+        const shrink = shrinkFor?.(event.height) ?? 0;
+        if (shrink !== 0) reveal(metrics.current.viewport - shrink);
+      }),
+      KeyboardEvents.addListener('keyboardWillHide', () => { keyboardMoving.current = true; }),
+      KeyboardEvents.addListener('keyboardDidShow', () => {
+        keyboardMoving.current = false;
+        reveal();
+      }),
+      KeyboardEvents.addListener('keyboardDidHide', () => { keyboardMoving.current = false; }),
+    ];
     return () => {
-      subscription.remove();
+      for (const subscription of subscriptions) subscription.remove();
       cancelReveal();
       focusedTarget.current = null;
     };
-  }, [cancelReveal, reveal]);
+  }, [cancelReveal, reveal, shrinkFor]);
 
   const registry = useMemo<RevealRegistry>(
     () => ({
@@ -230,7 +305,7 @@ function useRevealingScroll(
       const viewport = event.nativeEvent.layout.height;
       const resized = viewport !== metrics.current.viewport;
       settle({ viewport });
-      if (resized) reveal();
+      if (resized && !keyboardMoving.current) reveal();
     },
     onContentSizeChange: (width: number, height: number) => {
       settle({ content: height });
@@ -259,8 +334,10 @@ export default function KeyboardShell({
 }: Readonly<KeyboardShellProps>) {
   const inSheet = host === 'sheet';
   const frameRef = useRef<View>(null);
-  const inset = useKeyboardInset(frameRef, !inSheet);
-  const { scrollProps, edges, registry } = useRevealingScroll(scrollRef, onContentSizeChange);
+  const { overlap, onLayout, overlapFor } = useKeyboardOverlap(frameRef, !inSheet);
+  const padding = useAnimatedStyle(() => ({ paddingBottom: overlap.value }));
+  const shrinkFor = useCallback((keyboardHeight: number) => overlapFor(keyboardHeight) - overlap.value, [overlap, overlapFor]);
+  const { scrollProps, edges, registry } = useRevealingScroll(scrollRef, onContentSizeChange, inSheet ? undefined : shrinkFor);
   const frame = (
     <KeyboardShellContext.Provider value={registry}>
       <Pressable
@@ -292,8 +369,8 @@ export default function KeyboardShell({
   );
   if (inSheet) return frame;
   return (
-    <View ref={frameRef} collapsable={false} style={[styles.fill, style, { paddingBottom: inset }]}>
-      {frame}
+    <View ref={frameRef} collapsable={false} onLayout={onLayout} style={[styles.fill, style]}>
+      <Animated.View style={[styles.fill, padding]}>{frame}</Animated.View>
     </View>
   );
 }
@@ -327,7 +404,15 @@ export function KeyboardTextInput({
   const target = revealTarget ?? input;
   const autoFocusOnMount = useRef(autoFocus === true);
   useEffect(() => {
-    if (autoFocusOnMount.current) input.current?.focus();
+    if (!autoFocusOnMount.current) return undefined;
+    // iOS: a frame after mounting, once the Done bar has linked to the field, so the keyboard comes
+    // up with the bar already on it (focused in the mount frame, it intermittently arrived without
+    // the bar in its reported frame, leaving the footer under the bar). Android: now, and again a
+    // frame later, because it can refuse to show the keyboard for a field it doesn't serve yet; a
+    // field already served ignores the second request.
+    if (Platform.OS === 'android') input.current?.focus();
+    const later = requestAnimationFrame(() => input.current?.focus());
+    return () => cancelAnimationFrame(later);
   }, []);
   const doneBar = showsDoneBar(Platform.OS, props.multiline);
   const field = (

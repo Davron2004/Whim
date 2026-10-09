@@ -23,15 +23,18 @@
  * version, and the sheet keeps clear of them with that window's own safe-area insets, read through a
  * `SafeAreaProvider` inside the Modal (the app's outer insets describe the app's window, not the
  * Modal's). A window drawn under the bars doesn't resize for the
- * keyboard, so the sheet pads its own bottom by the keyboard (`useKeyboardInset`, keyboard-shell.ts):
- * its card continues behind the keyboard rather than stopping at its top edge. It is the sheet's only
- * avoidance: a `KeyboardShell` inside a sheet (`host="sheet"`) adds none.
+ * keyboard, so the sheet pads its own bottom by the keyboard (`useKeyboardOverlap`, keyboard-shell.ts),
+ * frame by frame on the keyboard's own curve: its card continues behind the keyboard rather than
+ * stopping at its top edge. It is the sheet's only avoidance: a `KeyboardShell` inside a sheet
+ * (`host="sheet"`) adds none.
  */
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Modal, Pressable, StyleSheet, View } from 'react-native';
+import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MOTION, RADIUS, SPACING } from '../../sdk/theme';
-import { useKeyboardInset } from './KeyboardShell';
+import { sheetBottomPadding } from './keyboard-shell';
+import { useKeyboardOverlap } from './KeyboardShell';
 import { inkAlpha } from './theme';
 import { SHELL_PALETTE } from './theme';
 
@@ -85,17 +88,16 @@ function SheetFrame({
   const p = SHELL_PALETTE;
   const insets = useSafeAreaInsets();
   const frame = useRef<View>(null);
-  const keyboard = useKeyboardInset(frame, true);
+  const { overlap, onLayout } = useKeyboardOverlap(frame, true);
+  const bottom = insets.bottom;
+  const padding = useAnimatedStyle(() => ({ paddingBottom: sheetBottomPadding(overlap.value, bottom) + SPACING.md }));
   return (
-    <View ref={frame} collapsable={false} style={[styles.frame, { paddingTop: insets.top + SPACING.md }]}>
+    <View ref={frame} collapsable={false} onLayout={onLayout} style={[styles.frame, { paddingTop: insets.top + SPACING.md }]}>
       <Pressable style={[styles.scrim, { backgroundColor: inkAlpha(0.5) }]} onPress={onClose} accessibilityRole="none" />
       <Animated.View
         style={[
-          styles.sheet,
+          styles.rise,
           {
-            backgroundColor: p.card,
-            // The keyboard covers the home indicator's inset, so the larger of the two, not both.
-            paddingBottom: Math.max(insets.bottom, keyboard) + SPACING.md,
             opacity: riseAnim,
             transform: [
               { translateY: riseAnim.interpolate({ inputRange: [0, 1], outputRange: [RISE_DISTANCE_PX, 0] }) },
@@ -103,7 +105,7 @@ function SheetFrame({
           },
         ]}
       >
-        {children}
+        <Reanimated.View style={[styles.sheet, { backgroundColor: p.card }, padding]}>{children}</Reanimated.View>
       </Animated.View>
     </View>
   );
@@ -113,8 +115,9 @@ const styles = StyleSheet.create({
   frame: { flex: 1, justifyContent: 'flex-end' },
   // Its insets define it, so it spans the frame's whole box, the status bar's padding included.
   scrim: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
+  rise: { maxHeight: '100%' },
   sheet: {
-    maxHeight: '100%',
+    flexShrink: 1,
     borderTopLeftRadius: RADIUS.sheet,
     borderTopRightRadius: RADIUS.sheet,
     paddingTop: SPACING.md,

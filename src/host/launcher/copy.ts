@@ -62,6 +62,11 @@ export const COPY = {
   emptyTitle: 'No apps yet',
   settingsTitle: 'Settings',
   backLabel: 'Back',
+  /** The shell's surfaces (design-system-v1 11.1–11.3): a sheet's close control, a toast's
+   *  dismiss action for screen readers, a text field's clear button. */
+  sheetClose: 'Close',
+  toastDismiss: 'Dismiss',
+  fieldClear: 'Clear text',
   highlightingSectionTitle: 'Highlighting',
   highlightingHint: 'Colours and marks in what Whim tells you.',
 
