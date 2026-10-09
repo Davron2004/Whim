@@ -1,6 +1,7 @@
 """Whim system v1 palette proof: WCAG 2.2 contrast and CIEDE2000 distinctness of the app tints from the
 status hues and ember, in both modes and under Machado-2009 (severity 1.0) deutan, protan and tritan
-simulation. Run: python3 -I docs/design/system-v1/palette-check.py"""
+simulation. Reads palette.json (generated from src/design/tokens.ts by `npm run tokens`).
+Run: python3 -I docs/design/system-v1/palette-check.py"""
 import math
 def rgb(h):
     h=h.lstrip('#'); return tuple(int(h[i:i+2],16)/255 for i in (0,2,4))
@@ -71,24 +72,22 @@ def simhex(h,kind): return hexs(*(delin(c) for c in simlin(h,kind)))
 def dE(a,b,kind=None): return de2000(lab(None,simlin(a,kind)),lab(None,simlin(b,kind)))
 
 import itertools
-TINTS = {  # name: (light value, dark value). Light: white label. Dark: ink label.
-    'slate': ('#535E6F', '#B0B8C5'), 'stone': ('#52443F', '#B0A19A'), 'ocean': ('#00445A', '#A1CCDC'),
-    'blue': ('#0852CB', '#9DC7FE'), 'indigo': ('#1E20A3', '#909DEF'), 'violet': ('#6758B4', '#C1BBFC'),
-    'purple': ('#662A8D', '#C290F5'), 'orchid': ('#9D469E', '#FD91EC'), 'berry': ('#661258', '#E4B1DB'),
-    'rose': ('#7C3856', '#BD98AA'),
-}
-RESERVED_LIGHT = {'danger': '#C9292F', 'danger-text': '#C22630', 'positive': '#1E8347', 'positive-text': '#1A763F',
-                  'warning': '#F3BA25', 'warning-text': '#8A6000', 'ember': '#C14900', 'ember-text': '#B14200'}
-RESERVED_DARK = {'danger': '#F66C6D', 'positive': '#5BCC80', 'warning': '#ECBD3A', 'ember': '#F99549'}
-WHITE, INK = '#FFFFFF', '#1A1614'
-LIGHT = dict(bg='#F6F4F1', surface='#FFFFFF', fill='#EBE9E6')
-DARK = dict(bg='#100E0D', surface='#1B1917', raised='#252220', fill='#2E2B28')
+# Every value comes from palette.json, which `npm run tokens` generates from src/design/tokens.ts.
+import json, os
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'palette.json'), encoding='utf-8') as f:
+    PALETTE = json.load(f)
+TINTS = {n: tuple(v) for n, v in PALETTE['tints'].items()}  # name: (light value, dark value)
+RESERVED_LIGHT, RESERVED_DARK = PALETTE['reservedLight'], PALETTE['reservedDark']
+WHITE, INK = PALETTE['white'], PALETTE['ink']  # the label on a tint: white on light, ink on dark
+LIGHT, DARK = PALETTE['light'], PALETTE['dark']
+SOFT, RIM_MIX = PALETTE['soft'], PALETTE['rimMix']
 VIS = [None, 'deutan', 'protan', 'tritan']
 
 
 def mix(a, b, t):
-    A, B = rgb(a), rgb(b)
-    return hexs(*(A[i] * t + B[i] * (1 - t) for i in range(3)))
+    """`a` at weight t over `b`, per 8-bit channel, ties rounding up (as src/design/tints.ts mixHex)."""
+    A, B = (tuple(int(h.lstrip('#')[i:i + 2], 16) for i in (0, 2, 4)) for h in (a, b))
+    return '#%02X%02X%02X' % tuple(max(0, min(255, math.floor(A[i] * t + B[i] * (1 - t) + 0.5))) for i in range(3))
 
 
 def worst(h, reserved):
@@ -123,8 +122,8 @@ if __name__ == '__main__':
     print('|---|---|---|---|---|---|---|---|---|')
     for n, (l, d) in TINTS.items():
         print('| `%s` | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f |' % (
-            n, cr(l, WHITE), cr(l, LIGHT['fill']), cr(l, mix(l, WHITE, 0.12)), cr(d, INK), cr(d, DARK['fill']),
-            cr(d, mix(d, DARK['raised'], 0.18)), cr(l, DARK['bg']), cr(mix(d, l, 0.5), DARK['bg'])))
+            n, cr(l, WHITE), cr(l, LIGHT['fill']), cr(l, mix(l, SOFT['light']['over'], SOFT['light']['alpha'])), cr(d, INK), cr(d, DARK['fill']),
+            cr(d, mix(d, SOFT['dark']['over'], SOFT['dark']['alpha'])), cr(l, DARK['bg']), cr(mix(d, l, RIM_MIX), DARK['bg'])))
     print('\n## Labels under simulation (WCAG ratio after simulating both colours; worst of deutan, protan, tritan)\n')
     print('| Tint | White on light | Ink on dark | Light on `fill` | Dark on `fill` |')
     print('|---|---|---|---|---|')

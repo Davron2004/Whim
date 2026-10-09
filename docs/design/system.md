@@ -15,8 +15,9 @@ module's values win and this file's tables are checked against it.
   its line numbers. Don't build from it.
 
 **Token source.** Every value in §2–§5 lives in one module, `src/design/tokens.ts`. The RN shell
-imports it; `npm run build` emits the runtime page's CSS custom properties and the SDK's theme from it;
-the mockup's token block and the tables here are checked against it by a static check. Nobody copies a
+and the SDK import it; `npm run tokens` regenerates from it the tables here between `tokens:begin` /
+`tokens:end` markers, the mockup's token block, the palette proof's input, the runtime page's default
+background and the sampled springs, and the fast gate fails when any of them drifts. Nobody copies a
 value by hand.
 
 ## 1. Principles
@@ -58,6 +59,7 @@ badges always carry their icon.
 
 Warm low-chroma greys (OKLCH hue 60–75). Contrast is WCAG 2.2.
 
+<!-- tokens:begin roles -->
 | Role | Light | Dark | Use | Contrast |
 |---|---|---|---|---|
 | `bg` | `#F6F4F1` | `#100E0D` | Screen canvas; runtime page, iframe, SDK `Screen`, opening container | |
@@ -70,12 +72,13 @@ Warm low-chroma greys (OKLCH hue 60–75). Contrast is WCAG 2.2.
 | `thumb` | `#FFFFFF` + `shadow-raised` | `#3C3936` | Segmented thumb, slider thumb, switch knob when off | |
 | `separator` | `#E2DFDB` | `#34312F` | Hairlines between rows (holds no edge: 1.21:1) | |
 | `border` | `#908B86` | `#6E6862` | Input and outlined-control edges | 3.37 / 3.19 on `surface` |
-| `text` | `#1A1614` | `#F2F0EC` | Primary text | 16.2 / 15.2 |
-| `text-2` | `#6D6660` | `#ADA8A3` | Secondary text, placeholders, waiting steps | ≥ 4.66 on bg/surface/fill / ≥ 6.56 |
-| `text-3` | `#908B86` | `#78746E` | **Disabled only** | 3.05 / 3.77 |
+| `text` | `#1A1614` | `#F2F0EC` | Primary text | ≥ 14.83 / ≥ 12.36 on `bg`, `surface`, `sheet`, `sheet-group`, `fill` |
+| `text-2` | `#6D6660` | `#ADA8A3` | Secondary text, placeholders, waiting steps | ≥ 4.66 / ≥ 5.97 on `bg`, `surface`, `sheet`, `sheet-group`, `fill` |
+| `text-3` | `#908B86` | `#78746E` | **Disabled only** | Exempt (disabled) |
 | `ink` | `#1A1614` | `#F2F0EC` | The system's prominent fill | |
-| `on-ink` | `#FFFFFF` | `#1A1614` | Label on `ink` | 17.9 / 15.8 |
+| `on-ink` | `#FFFFFF` | `#1A1614` | Label on `ink` | 17.97 / 15.79 on `ink` |
 | `scrim` | `rgba(26,22,20,0.32)` | `rgba(0,0,0,0.60)` | Behind sheets and menus | |
+<!-- tokens:end roles -->
 
 Surfaces separate by tone, not outlines. In dark mode higher is lighter: `bg` < `surface` = `sheet` <
 `raised` = `sheet-group` < `fill` < `thumb`. In light mode a sheet is canvas-toned and its groups are
@@ -83,21 +86,25 @@ white, so a group never sits white on white.
 
 ### 2.2 Ember
 
+<!-- tokens:begin ember -->
 | Role | Light | Dark | Notes |
 |---|---|---|---|
 | `ember` | `#C14900` | `#F99549` | Fill of Whim's buttons; the current-step marker and 8 pt dots |
-| `on-ember` | `#FFFFFF` | `#1A1614` | 4.98 / 8.06 |
-| `ember-text` | `#B14200` | `#F99549` | Text and icons; ≥ 4.75 on bg, surface, fill, `ember-soft` |
+| `on-ember` | `#FFFFFF` | `#1A1614` | Label on `ember`; 4.98 / 8.06 on `ember` |
+| `ember-text` | `#B14200` | `#F99549` | Text and icons; ≥ 4.75 / ≥ 6.31 on `bg`, `surface`, `fill`, `ember-soft` |
 | `ember-soft` | `#FDEBDA` | `#3F2313` | Washes: a tile being made, picked "Decide for me" |
 | `glow-core` / `glow-mid` / `glow-edge` | `#FFC96A` / `#FF9127` / `#F25914` | same | The light itself. Never carries text, never marks state |
+<!-- tokens:end ember -->
 
 ### 2.3 Status (reserved hues)
 
+<!-- tokens:begin status -->
 | Role | Fill light / dark | On fill | Text light / dark | Soft light / dark | Icon |
 |---|---|---|---|---|---|
 | `positive` | `#1E8347` / `#5BCC80` | `#FFFFFF` / `#1A1614` | `#1A763F` / `#5BCC80` | `#DEF6E3` / `#193521` | `check` |
 | `danger` | `#C9292F` / `#F66C6D` | `#FFFFFF` / `#1A1614` | `#C22630` / `#F66C6D` | `#FFE7E5` / `#472020` | `circle-alert` |
 | `warning` | `#F3BA25` / `#ECBD3A` | `#1A1614` both | `#8A6000` / `#ECBD3A` | `#FDF2D0` / `#382C0C` | `triangle-alert` |
+<!-- tokens:end status -->
 
 Danger sits at OKLCH hue 24, ember at 45: red and orange side by side. The danger button is
 `danger-text` on `danger-soft`, a capsule, with `trash-2` when it fits. Status hues never stand alone.
@@ -109,24 +116,26 @@ has two values: the **light value** (fill, text, marks and tile plate in light m
 on `fill`, so it is also the mark colour, no separate mark token) and the **dark value** (fill, text and
 marks in dark mode, ink `#1A1614` label).
 
+<!-- tokens:begin tints -->
 | Tint | Light | Dark | ΔE2000 to nearest reserved colour, light / dark (normal vision) | White on light | Ink on dark | Dark rim on dark `bg` |
 |---|---|---|---|---|---|---|
 | `slate` | `#535E6F` | `#B0B8C5` | 30.4 / 30.4 | 6.57 | 8.99 | 5.60 |
-| `stone` | `#52443F` | `#B0A19A` | 24.2 / 22.1 | 9.30 | 7.20 | 4.18 |
-| `ocean` | `#00445A` | `#A1CCDC` | 34.4 / 30.3 | 10.64 | 10.43 | 4.89 |
-| `blue` | `#0852CB` | `#9DC7FE` | 42.5 / 41.6 | 6.82 | 10.30 | 5.71 |
-| `indigo` | `#1E20A3` | `#909DEF` | 42.2 / 37.1 | 11.73 | 7.06 | 3.53 |
+| `stone` | `#52443F` | `#B0A19A` | 24.2 / 22.1 | 9.30 | 7.20 | 4.22 |
+| `ocean` | `#00445A` | `#A1CCDC` | 34.4 / 30.3 | 10.64 | 10.43 | 4.90 |
+| `blue` | `#0852CB` | `#9DC7FE` | 42.5 / 41.6 | 6.82 | 10.30 | 5.78 |
+| `indigo` | `#1E20A3` | `#909DEF` | 42.2 / 37.1 | 11.73 | 7.06 | 3.56 |
 | `violet` | `#6758B4` | `#C1BBFC` | 36.8 / 34.9 | 5.78 | 10.08 | 6.31 |
 | `purple` | `#662A8D` | `#C290F5` | 34.9 / 31.8 | 9.21 | 7.36 | 4.21 |
 | `orchid` | `#9D469E` | `#FD91EC` | 29.2 / 26.4 | 5.52 | 8.93 | 6.00 |
 | `berry` | `#661258` | `#E4B1DB` | 30.2 / 25.4 | 11.72 | 9.93 | 4.41 |
-| `rose` | `#7C3856` | `#BD98AA` | 21.2 / 20.3 | 8.21 | 7.05 | 4.31 |
+| `rose` | `#7C3856` | `#BD98AA` | 21.2 / 20.3 | 8.21 | 7.05 | 4.33 |
+<!-- tokens:end tints -->
 
 **Thresholds the proof enforces** (any tint change reruns `palette-check.py`): ≥ 20 ΔE2000 from every
 status fill and text form and from ember in normal vision, ≥ 10 under Machado-2009 deutan, protan and
 tritan simulation (measured floors 20.3 / 11.6 / 11.1 / 10.0), ≥ 10 tint to tint in normal vision.
 Contrast floors: white on light ≥ 5.52; light value on `fill` ≥ 4.56; dark value on dark `fill` ≥ 5.52;
-badge text on its soft fill ≥ 4.67 light, ≥ 4.52 dark; ink on dark ≥ 7.05; dark rim on dark `bg` ≥ 3.53.
+badge text on its soft fill ≥ 4.67 light, ≥ 4.52 dark; ink on dark ≥ 7.05; dark rim on dark `bg` ≥ 3.56.
 Tints may collapse into each other under CVD (ocean–berry deutan 1.9); glyph and name tell tiles apart.
 What the system claims is that no tint is ever mistaken for a status or for Whim.
 
@@ -178,6 +187,7 @@ One family, the system's: SF Pro on iOS, Roboto on Android, `system-ui` in apps 
 `font-src 'none'`). Instrument Sans, IBM Plex Mono and Newsreader are retired, with their bundled files.
 Sizes in pt/dp; tracking in em.
 
+<!-- tokens:begin type -->
 | Token | Size / line | Weight | Tracking | Shell use | SDK `Text size` |
 |---|---|---|---|---|---|
 | `display` | 40 / 44 | 700 | −0.020 | Hero numbers in apps | `display` |
@@ -190,6 +200,7 @@ Sizes in pt/dp; tracking in em.
 | `callout` | 15 / 20 | 400 | +0.004 | Secondary lines, helper text | |
 | `footnote` | 13 / 18 | 400 (600 headers) | +0.008 | Meta, section headers | `caption` |
 | `caption` | 12 / 16 | 500 | +0.012 | Tile names, badges in the shell | |
+<!-- tokens:end type -->
 
 - 12 is the shell floor; 13 (SDK `caption`) is the in-app floor. Body and inputs are 17, so what you
   type is the size of what you read.
@@ -224,11 +235,14 @@ unambiguously rendered flat. `app`, `measure`, `yours` and `state` are applied b
 
 4-pt grid. The SDK keeps its five names on the same grid.
 
+<!-- tokens:begin space -->
 | Step | 1 | 2 | 3 | 4 | 5 | 6 | 8 | 10 | 12 | 16 |
 |---|---|---|---|---|---|---|---|---|---|---|
 | pt | 4 | 8 | 12 | 16 | 20 | 24 | 32 | 40 | 48 | 64 |
 | SDK | `xs` | `sm` | `md` | | `lg` | | `xl` | | | |
+<!-- tokens:end space -->
 
+<!-- tokens:begin layout -->
 | Constant | Value |
 |---|---|
 | Screen gutter | 20 |
@@ -238,6 +252,7 @@ unambiguously rendered flat. `app`, `measure`, `yours` and `state` are applied b
 | Bottom action area | 16 above the buttons, 12 below plus the safe area, ≥ 20 with no inset |
 | Button height | 52 large, 44 medium, 34 small visual with a 44 target |
 | Touch target | 44 pt iOS, 48 dp Android. Shell: `hitSlop` when the visual is smaller (36 min); adjacent small buttons keep 12 between targets. SDK: real padding (the DOM has no hit-slop) |
+<!-- tokens:end layout -->
 
 **Screen anatomy.** Every non-root screen: a 44 pt header row with the back control (44 × 44, iOS
 `chevron-left`, Android `arrow-left`) at the leading edge and up to two icon buttons or one text button
@@ -249,6 +264,7 @@ iOS, after back on Android); content fades out over 16 pt under floating chrome;
 
 ### 2.9 Shape
 
+<!-- tokens:begin shape -->
 | Token | Radius | Use |
 |---|---|---|
 | `r-xs` | 6 | Badges, small tags, chart bar tops |
@@ -257,6 +273,7 @@ iOS, after back on Android); content fades out over 16 pt under floating chrome;
 | `r-lg` | 20 | Cards, list groups, context menu |
 | `r-xl` | 28 | Sheet tops |
 | `r-full` | 999 | Buttons, pills, switches, the orb |
+<!-- tokens:end shape -->
 
 Buttons are capsules in the shell and apps. Concentric rule: inner radius = outer − inset, never below 6.
 iOS draws radii ≥ 10 with `borderCurve: 'continuous'`. Tiles are superellipses (corner 22.5% of side),
@@ -273,11 +290,13 @@ one SVG path on both platforms. SDK `sm`/`md`/`lg` radii become 10/14/20.
 | 3 | `raised` + `shadow-raised` | `raised` + highlight + dark shadow | Menus, toasts, popovers |
 | 4 | `raised` + `shadow-floating` | as 3, stronger shadow | The orb, the composer |
 
+<!-- tokens:begin shadows -->
 | Shadow | Light | Dark |
 |---|---|---|
 | `shadow-raised` | `0 1px 2px rgba(26,22,20,0.08), 0 8px 24px rgba(26,22,20,0.12)` | `0 1px 2px rgba(0,0,0,0.40), 0 8px 24px rgba(0,0,0,0.50)` |
 | `shadow-floating` | `0 2px 6px rgba(26,22,20,0.12), 0 12px 32px rgba(26,22,20,0.16)` | `0 2px 6px rgba(0,0,0,0.50), 0 12px 32px rgba(0,0,0,0.60)` |
 | `glow-ember` | `0 0 0 1px rgba(255,145,39,0.35), 0 6px 28px rgba(255,145,39,0.45)` | same |
+<!-- tokens:end shadows -->
 
 Shadows use RN `boxShadow` (works on both platforms; `shadow*` props are iOS-only) and the same string in
 CSS. A modal task dims behind with `scrim`; a non-blocking panel doesn't. **No blur in v1** (another
@@ -415,21 +434,25 @@ it becomes the icon it passes a silhouette test: grey at 24 pt reads as a flame,
 Physics mode, mass 1: `stiffness = (2π/response)²`, `damping = 4π·ζ/response`. Never mix with
 Reanimated's `duration`/`dampingRatio` mode.
 
+<!-- tokens:begin springs -->
 | Spring | Response | ζ | Stiffness | Damping | 95% / settled | Use |
 |---|---|---|---|---|---|---|
-| `instant` | 0.12 | 1.00 | 2741.6 | 104.72 | 91 / 215 ms | Press-in |
-| `snappy` | 0.28 | 1.00 | 503.6 | 44.88 | 212 / 451 ms | Press-out, toggles, selection, checkmarks |
-| `smooth` | 0.40 | 1.00 | 246.7 | 31.42 | 302 / 616 ms | Push/pop, tapped sheets, step changes, reflow, closing morphs |
-| `fling` | 0.35 | 0.80 | 322.3 | 28.72 | 189 / 521 ms | Anything released from a drag, with its velocity |
-| `morph` | 0.50 | 0.90 | 157.9 | 22.62 | 320 / 657 ms | Opening container transforms |
-| `spark` | 0.55 | 0.55 | 130.5 | 12.57 | 209 / 1145 ms, 12.6% overshoot | Rare celebrations |
+| `instant` | 0.12 | 1.00 | 2741.6 | 104.72 | 91 / 217 ms | Press-in |
+| `snappy` | 0.28 | 1.00 | 503.6 | 44.88 | 211 / 450 ms | Press-out, toggles, selection, checkmarks |
+| `smooth` | 0.40 | 1.00 | 246.7 | 31.42 | 302 / 617 ms | Push/pop, tapped sheets, step changes, reflow, closing morphs |
+| `fling` | 0.35 | 0.80 | 322.3 | 28.72 | 189 / 533 ms, 1.5% overshoot | Anything released from a drag, with its velocity |
+| `morph` | 0.50 | 0.90 | 157.9 | 22.62 | 319 / 667 ms | Opening container transforms |
+| `spark` | 0.55 | 0.55 | 130.5 | 12.57 | 209 / 1150 ms, 12.6% overshoot | Rare celebrations |
+<!-- tokens:end springs -->
 
+<!-- tokens:begin timings -->
 | Timing | Value | Use |
 |---|---|---|
 | `fade-in` / `fade-out` | 160 / 120 ms, `cubic-bezier(0.23, 1, 0.32, 1)` | Content swaps, reduced-motion replacements |
 | `color` | 150 ms, `cubic-bezier(0.25, 0.1, 0.25, 1)` | Colour and tint changes |
 | `stagger` | 30 ms per item, first 6, the rest together | First appearance of a set only |
 | `breathe` | 1900 ms cycle, opacity 0.34–0.72, after 300 ms | Skeletons for local loads |
+<!-- tokens:end timings -->
 
 ### 4.3 Rules
 

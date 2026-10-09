@@ -66,10 +66,8 @@ function handleDeliveryFrame(payload: any, startupDeadline: StartupDeadline): vo
 
 /** A `paint` frame ends the container's boot state (`boot-state.ts`) and disarms the watchdog --
  *  but only when it is nonce-authenticated (`paintAccepted`), the same trust check `probes`
- *  applies. It is NOT generation-fenced like `nav-depth`: the outer page forwards `paint`
- *  verbatim, so its `payload.generation` is the iframe-local counter and means nothing here
- *  (`boot-state.ts` carries the full reasoning). `generation` on HostState is owned by the
- *  `probes` branch alone. */
+ *  applies. It is NOT generation-fenced like `nav-depth` (`boot-state.ts` carries the reasoning).
+ *  `generation` on HostState is owned by the `probes` branch alone. */
 function handlePaintFrame(frame: any, startupDeadline: StartupDeadline, setS: (fn: (p: HostState) => HostState) => void): void {
   if (!startupDeadline.acceptPaint(frame)) return;
   setS((p) => ({ ...p, paintMs: frame.payload?.mountToFirstPaintMs ?? null }));

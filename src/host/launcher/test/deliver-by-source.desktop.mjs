@@ -15,7 +15,9 @@
 // the frames the outer page relays to RN: a render error the app never caught is ONE trusted
 // `render` frame (the one render-error-frame.json holds for the launcher suite), the orb inset
 // pads the app's Screen without reaching the theme global, and a focused field is scrolled back
-// into view when the viewport shrinks.
+// into view when the viewport shrinks. And what the page itself does (design-system-v1 D4,
+// sandbox-rendering): `paint` reaches RN stamped with the generation the host bound, the page, the
+// iframe and the realm's canvas paint the theme's `bg`, and the viewport allows zoom.
 //
 //   npm run build && node src/host/launcher/test/deliver-by-source.desktop.mjs
 import { chromium } from 'playwright';
@@ -25,6 +27,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { buildSrcdoc, buildOuterHtml } from '../../../../build/assemble.mjs';
+import { PAGE_BG } from '../../../design/generated/page.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..', '..', '..');
@@ -294,6 +297,60 @@ async function realmChecks(browser) {
     await page.close();
   }
 
+  // The outer page stamps `paint` with the generation the host bound the realm at, as it does
+  // nav-depth; the realm's own counter (1 for every fresh realm) never reaches the host.
+  {
+    const { page, relayed } = await openRealm(browser, SRC, { colors });
+    await page.evaluate((src) => globalThis.__whimControl.reinject({
+      reset: true, bundle: 'realm-check', bundleSource: src, generation: 5, theme: { colors: { primary: '#123456' } },
+    }), SRC);
+    const paints = async () => (await relayed()).filter((f) => f.kind === 'paint');
+    await until(async () => (await paints()).length >= 2);
+    const seen = (await paints()).map((f) => ({ trusted: f.trusted, generation: f.payload?.generation, ms: typeof f.payload?.mountToFirstPaintMs, app: f.payload?.appName }));
+    checks['paint stamped with the bound generation'] = isDeepStrictEqual(seen, [
+      { trusted: true, generation: 2, ms: 'number', app: 'Tip Splitter' },
+      { trusted: true, generation: 5, ms: 'number', app: 'Tip Splitter' },
+    ]);
+    detail['paint stamped with the bound generation'] = `paints=${JSON.stringify(seen)}`;
+    await page.close();
+  }
+
+  // The outer page, the iframe and the realm's own canvas paint the delivered theme's `bg` (the
+  // token module's light `bg` without one, or with one that is not a #rrggbb colour), and both
+  // documents let native controls follow the phone's scheme.
+  const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
+  for (const [name, theme, want] of [
+    ['canvas without a theme', undefined, PAGE_BG],
+    ['canvas in the theme bg', { colors: { bg: '#2A1B3C' } }, '#2A1B3C'],
+    ['canvas with a bg that is not a colour', { colors: { bg: 'red;background:url(x)' } }, PAGE_BG],
+  ]) {
+    const { page, realm } = await openRealm(browser, SRC, theme);
+    const outer = await page.evaluate(() => ({
+      html: window.getComputedStyle(document.documentElement).backgroundColor,
+      body: window.getComputedStyle(document.body).backgroundColor,
+      iframe: window.getComputedStyle(document.getElementById('whim-iframe')).backgroundColor,
+      scheme: window.getComputedStyle(document.documentElement).colorScheme,
+    }));
+    const inner = await realm().evaluate(() => ({
+      html: window.getComputedStyle(document.documentElement).backgroundColor,
+      body: window.getComputedStyle(document.body).backgroundColor,
+      scheme: window.getComputedStyle(document.documentElement).colorScheme,
+    }));
+    const painted = [outer.html, outer.body, outer.iframe, inner.html, inner.body];
+    checks[name] = painted.every((c) => c === rgb(want)) && outer.scheme === 'light dark' && inner.scheme === 'light dark';
+    detail[name] = `want ${rgb(want)}; outer=${JSON.stringify(outer)} realm=${JSON.stringify(inner)}`;
+    await page.close();
+  }
+
+  {
+    const page = await browser.newPage();
+    await page.goto(pathToFileURL(realmPage).href, { waitUntil: 'load', timeout: 20000 });
+    const viewport = await page.evaluate(() => document.querySelector('meta[name="viewport"]')?.getAttribute('content') ?? null);
+    checks['viewport allows zoom'] = typeof viewport === 'string' && viewport.includes('width=device-width') && !/maximum-scale|user-scalable/.test(viewport);
+    detail['viewport allows zoom'] = `viewport=${JSON.stringify(viewport)}`;
+    await page.close();
+  }
+
   {
     const { page, realm } = await openRealm(browser, INPUT_AT_THE_BOTTOM, undefined);
     const field = () => realm().evaluate(() => {
@@ -440,3 +497,4 @@ console.log('\n✅ by-source delivery renders + contains identically to its bake
 console.log('✅ non-default source (water-counter) renders correctly over tip-splitter initial (B1 guard green).');
 console.log('✅ navigation bootstrap stays loader-only and missing/invalid/undeletable states fail closed.');
 console.log('✅ a by-source realm reports an uncaught render error once, pads Screen by the sanitized orb inset without exposing it, and keeps a focused field in view.');
+console.log('✅ the page stamps paint with the bound generation, paints the theme bg (light bg by default) and allows zoom.');
