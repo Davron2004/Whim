@@ -44,7 +44,7 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 
 ### [idea — owner experiment] Digest the repo's Markdown into a knowledge graph
 - [ ] open
-- **Where:** 694 tracked `.md` files. Most sit in `openspec/changes/` (544, mostly archived proposals, designs, research and handoffs). The rest are `docs/` (handoffs, PR review notes, `spec.md`, which is stale per decision #42), `DEVLOG.md`, `HANDOFF-v1-sprint.md`, `openspec/critic/` and the agent skill/command mirrors. `graphify-out/` already holds dated Graphify runs.
+- **Where:** 368 tracked `.md` files after the 2026-10-09 cleanup (1,037 before it). `openspec/changes/` holds 195: the open beta-1 and harden-binding-provenance changes, and each archived change cut to its proposal and design (lessons from the deleted ledgers went to `DEVLOG.md`). The rest are `docs/` (`spec.md` is stale per decision #42), `DEVLOG.md`, `openspec/critic/` and the agent skill/command mirrors. `graphify-out/` already holds dated Graphify runs.
 - **What:** many of these files were written during development and no longer document anything current. They're historical, but they still hold real knowledge: decisions, measured gotchas, spike evidence. The goal is to distill that into one navigable form, possibly a graph, so the current knowledge is findable and the history stops competing with it.
 - **Why it matters:** agents and people who orient from the docs can't tell a live file from a dead one, so stale guidance gets followed and real lessons get missed.
 - **Suggested approach:** owner-led. The owner has specific ideas to try here, including Graphify. Don't start this without them.
