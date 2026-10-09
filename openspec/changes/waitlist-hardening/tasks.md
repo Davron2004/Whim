@@ -11,17 +11,17 @@ Constraints for every task:
 
 ## 1. Category surface keeps website data out of app consent (#110)
 
-- [ ] 1.1 `contract/src/disclosure-manifest.ts`: add a required `surface: 'app' | 'website'` to the category type, with no default. Mark every existing category `app` and `waitlist` `website`. Change the `waitlist` row description to the design D6 text. The snapshot reader treats a category without `surface` as `app`. Do not edit `contract/disclosure/released/*.json`.
-- [ ] 1.2 `server/src/consent-practices.ts`: `practicesFrom` keeps only `app` categories. Rewrite the "never gains a category" comment to state the invariant in design D6.
-- [ ] 1.3 Release check: add the finding "version N's category X changed surface since release" to the logic shared by the gate suite, the release preflight and `deploy.sh`. Extend `checks/test/release/disclosure.suite.ts` with these cases:
+- [x] 1.1 `contract/src/disclosure-manifest.ts`: add a required `surface: 'app' | 'website'` to the category type, with no default. Mark every existing category `app` and `waitlist` `website`. Change the `waitlist` row description to the design D6 text. The snapshot reader treats a category without `surface` as `app`. Do not edit `contract/disclosure/released/*.json`.
+- [x] 1.2 `server/src/consent-practices.ts`: `practicesFrom` keeps only `app` categories. Rewrite the "never gains a category" comment to state the invariant in design D6.
+- [x] 1.3 Release check: add the finding "version N's category X changed surface since release" to the logic shared by the gate suite, the release preflight and `deploy.sh`. Extend `checks/test/release/disclosure.suite.ts` with these cases:
   - a surface flip on a released version fails, naming the version and the category;
   - a snapshot without `surface` reads as `app`;
   - the live manifests produce no finding, and `AI_CONSENT_VERSION` is unchanged.
 
   Red-check the flip case against today's check.
-- [ ] 1.4 Route static check (`server/test/request-edge.suite.ts`, the "every route … declares its category" section): a `/v1` route that declares a `website` category fails, naming the route and the category. Red-check it with a forged route declaring `waitlist`.
-- [ ] 1.5 `request-edge.suite.ts`: drop `waitlist` from the version-2 expectation and assert that no version permits it. Add a forged-manifest case where a `website` category under version 1 is not permitted while an `app` category is. Red-check against today's unfiltered `practicesFrom`.
-- [ ] 1.6 Write `handoff/consent-surface.md`: the `surface` type, the waitlist category's new description verbatim, and the release-check finding text.
+- [x] 1.4 Route static check (`server/test/request-edge.suite.ts`, the "every route … declares its category" section): a `/v1` route that declares a `website` category fails, naming the route and the category. Red-check it with a forged route declaring `waitlist`.
+- [x] 1.5 `request-edge.suite.ts`: drop `waitlist` from the version-2 expectation and assert that no version permits it. Add a forged-manifest case where a `website` category under version 1 is not permitted while an `app` category is. Red-check against today's unfiltered `practicesFrom`.
+- [x] 1.6 Write `handoff/consent-surface.md`: the `surface` type, the waitlist category's new description verbatim, and the release-check finding text.
 
 ## 2. Waitlist store: news consent, sticky withdrawal, removal fingerprints (#109)
 
@@ -113,6 +113,8 @@ Constraints for every task:
 - [ ] 4.5 Write `handoff/signup-route.md`: the outcome codes and their redirects, the order of checks, the form field names, the CLI commands with their output and exit codes, and the CSV columns.
 
 ## 5. Signup page, privacy policy and provider rows (#109, #114)
+
+- [ ] 5.0 (added by the orchestrator after chain-1) Reword the `beta` purpose text in `contract/src/disclosure-manifest.ts` ("Invite people to test Whim and, unless they opt out, email them about Whim") to the opt-in model (ruling 1): invitations are requested messages; news only with express consent. Rewording must not widen any category (the disclosure check enforces this).
 
 - [ ] 5.1 `deploy/site/beta.html`: replace the opt-out checkbox with the unticked `updates_opt_in` box labelled "Email me news about Whim". Reword the consent line to the design D1 text, both as `data-notice`, and reword the "Other" hint to point at the box. In `server/src/waitlist/notices.ts`, register `beta-2` with the page's fingerprint and make it `CURRENT_NOTICE_ID`. `beta-1` stays.
 - [ ] 5.2 `server/test/beta-site.suite.ts`: the form contract (unticked `updates_opt_in`, no `updates_opt_out`), and the superseded-wording scenario: a page carrying `beta-1` text fails the build, naming both ids.
