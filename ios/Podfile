@@ -30,5 +30,16 @@ target 'Whim' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+    # react_native_post_install raises every pod target to React Native's minimum iOS but skips
+    # resource-bundle targets; react-native-svg's RNSVGFilters bundle declares 12.4, which Xcode
+    # refuses. Raise those too, never lowering one.
+    installer.target_installation_results.pod_target_installation_results.each_value do |result|
+      result.resource_bundle_targets.each do |bundle|
+        bundle.build_configurations.each do |build|
+          current = build.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] || min_ios_version_supported
+          build.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = [min_ios_version_supported.to_f, current.to_f].max.to_s
+        end
+      end
+    end
   end
 end
