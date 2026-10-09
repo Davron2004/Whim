@@ -114,11 +114,11 @@ Constraints for every task:
 
 ## 5. Signup page, privacy policy and provider rows (#109, #114)
 
-- [ ] 5.0 (added by the orchestrator after chain-1) Reword the `beta` purpose text in `contract/src/disclosure-manifest.ts` ("Invite people to test Whim and, unless they opt out, email them about Whim") to the opt-in model (ruling 1): invitations are requested messages; news only with express consent. Rewording must not widen any category (the disclosure check enforces this).
+- [x] 5.0 (added by the orchestrator after chain-1) Reword the `beta` purpose text in `contract/src/disclosure-manifest.ts` ("Invite people to test Whim and, unless they opt out, email them about Whim") to the opt-in model (ruling 1): invitations are requested messages; news only with express consent. Rewording must not widen any category (the disclosure check enforces this).
 
-- [ ] 5.1 `deploy/site/beta.html`: replace the opt-out checkbox with the unticked `updates_opt_in` box labelled "Email me news about Whim". Reword the consent line to the design D1 text, both as `data-notice`, and reword the "Other" hint to point at the box. In `server/src/waitlist/notices.ts`, register `beta-2` with the page's fingerprint and make it `CURRENT_NOTICE_ID`. `beta-1` stays.
-- [ ] 5.2 `server/test/beta-site.suite.ts`: the form contract (unticked `updates_opt_in`, no `updates_opt_out`), and the superseded-wording scenario: a page carrying `beta-1` text fails the build, naming both ids.
-- [ ] 5.3 `deploy/site/privacy.html` and `deploy/site/fr/privacy.html`, `#beta-waitlist`:
+- [x] 5.1 `deploy/site/beta.html`: replace the opt-out checkbox with the unticked `updates_opt_in` box labelled "Email me news about Whim". Reword the consent line to the design D1 text, both as `data-notice`, and reword the "Other" hint to point at the box. In `server/src/waitlist/notices.ts`, register `beta-2` with the page's fingerprint and make it `CURRENT_NOTICE_ID`. `beta-1` stays.
+- [x] 5.2 `server/test/beta-site.suite.ts`: the form contract (unticked `updates_opt_in`, no `updates_opt_out`), and the superseded-wording scenario: a page carrying `beta-1` text fails the build, naming both ids.
+- [x] 5.3 `deploy/site/privacy.html` and `deploy/site/fr/privacy.html`, `#beta-waitlist`:
   - the data kept: news consent with its time and wording, and the removal fingerprint;
   - news only when the box is ticked;
   - an unticked re-signup or a written request stops news for good unless the person writes to restart it;
@@ -128,8 +128,8 @@ Constraints for every task:
   - a dated note that the section changed.
 
   Match the waitlist category description from `handoff/consent-surface.md`.
-- [ ] 5.4 `deploy/site/legal-identity.json`: the Google Cloud and Zoho `receives` per design D10 in en, fr and ko, and `effectiveDates.privacy` and `providerList` moved to the change's date. Add the "Provider rows cover the website and the emails" assertion to the site suite that already reads the identity file.
-- [ ] 5.5 Run the legal-pages, site and disclosure checks, and confirm that `AI_CONSENT_VERSION` and the released snapshots are unchanged.
+- [x] 5.4 `deploy/site/legal-identity.json`: the Google Cloud and Zoho `receives` per design D10 in en, fr and ko, and `effectiveDates.privacy` and `providerList` moved to the change's date. Add the "Provider rows cover the website and the emails" assertion to the site suite that already reads the identity file.
+- [x] 5.5 Run the legal-pages, site and disclosure checks, and confirm that `AI_CONSENT_VERSION` and the released snapshots are unchanged.
 
 ## 6. Site build allowlist, referrer policy and profile tripwire (#113, #109, #112)
 

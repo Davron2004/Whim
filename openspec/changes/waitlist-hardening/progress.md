@@ -1,1 +1,2 @@
 - 2026-10-09 chain-4 merged (ba019af0). Runbook note for chain-7: send news only to `--updates-ok`; a withdrawn row keeps its old updates_consent_at while updates_opt_in is false — never select recipients from that column.
+- 2026-10-09 chain-5 merged (54759a86). ROLLOUT owner item: per docs/legal/change-process.md §8 the privacy change may need a Texas significant-change notice filed in Google Play first, effective date ≥ 3 days after; if so the owner moves effectiveDates.privacy before the site deploy.
