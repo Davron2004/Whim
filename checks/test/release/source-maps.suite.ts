@@ -21,6 +21,8 @@ import { spawnSync } from 'node:child_process';
 import nodeAssert from 'node:assert';
 import { test } from '../harness';
 import { loadNativeReleaseConfig } from '../../../scripts/release/lib/native-config';
+import { symbolicateStack, realCommandRunner } from '../../../scripts/release/lib/source-map';
+import { trimFrameLocations } from '../../../src/host/logging/crash-capture';
 
 const REPO_ROOT = process.cwd();
 const MAPS_DIR = path.join(REPO_ROOT, 'checks/test/release/fixtures/sourcemaps');
@@ -121,6 +123,25 @@ async function runCases(): Promise<void> {
     const result = symbolicate(makeSandbox(), ['android', '1.0.0', '1', '--maps-dir', MAPS_DIR]);
     nodeAssert.strictEqual(result.status, 0, result.stderr);
     nodeAssert.strictEqual(result.stdout, EXPECTED);
+  });
+
+  await test('source maps: an iOS-shaped stack, trimmed to file name + line:column (D7), symbolicates to the same lines as the untrimmed one', () => {
+    const iosStack = [
+      "TypeError: Cannot read property 'toLowerCase' of undefined",
+      '    at isSensitiveField (address at /private/var/containers/Bundle/Application/1234ABCD-1234-ABCD-1234-ABCD12345678/Whim.app/main.jsbundle:1:650510)',
+      '    at redactObject (address at /private/var/containers/Bundle/Application/1234ABCD-1234-ABCD-1234-ABCD12345678/Whim.app/main.jsbundle:1:650735)',
+      '    at redactValue (address at /private/var/containers/Bundle/Application/1234ABCD-1234-ABCD-1234-ABCD12345678/Whim.app/main.jsbundle:1:650616)',
+      '    at map (native)',
+      '    at sendFailureOutcome (address at /private/var/containers/Bundle/Application/1234ABCD-1234-ABCD-1234-ABCD12345678/Whim.app/main.jsbundle:1:668904)',
+      '',
+    ].join('\n');
+    const trimmed = trimFrameLocations(iosStack);
+    nodeAssert.ok(!trimmed.includes('/Bundle/Application/'), 'the install path is gone from the trimmed stack');
+    nodeAssert.ok(trimmed.includes('main.jsbundle:1:650510'), 'the file name and position survive');
+    const fromUntrimmed = symbolicateStack(realCommandRunner, REPO_ROOT, FIXTURE_MAP, iosStack);
+    const fromTrimmed = symbolicateStack(realCommandRunner, REPO_ROOT, FIXTURE_MAP, trimmed);
+    nodeAssert.strictEqual(fromTrimmed, fromUntrimmed, 'trimming the install path must not change what the frame resolves to');
+    nodeAssert.strictEqual(fromTrimmed, EXPECTED, 'and it still resolves to the same source lines as the real Android stack above');
   });
 
   await test('source maps: without --maps-dir, symbolicate reads <platform>/<version>+<build>.map from the source-map bucket', () => {
