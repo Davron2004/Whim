@@ -33,7 +33,7 @@ function stats(xs: number[]): string {
   const sorted = xs.slice().sort((a, b) => a - b);
   const med = sorted[Math.floor(sorted.length / 2)];
   const r1 = (n: number) => Math.round(n * 100) / 100;
-  return `min ${r1(sorted[0])} · med ${r1(med)} · max ${r1(sorted.at(-1)!)} ms (n=${xs.length})`;
+  return `min ${r1(sorted[0])} · med ${r1(med)} · max ${r1(sorted[sorted.length - 1])} ms (n=${xs.length})`;
 }
 
 // The diag transport is on `vc-sdk` only via the same syscall pipe; call it directly through

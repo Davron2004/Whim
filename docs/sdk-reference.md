@@ -43,6 +43,10 @@ Components take tokens (§6), never a colour, pixel size or style, and look righ
 props: their spacing, colours, sizes, light and dark, text size and motion are built in. The
 app's tint is `primary`.
 
+The app also runs in WebViews as old as Chromium 91, where `.at()`, `Object.hasOwn`, `findLast`,
+`toSorted`, `toReversed`, `with`, `structuredClone` and `Object.groupBy` throw. Write `xs[xs.length - 1]`,
+`[...xs].sort()` and `Object.keys(obj).includes(key)` instead.
+
 ## 2. Layout
 
 ```ts

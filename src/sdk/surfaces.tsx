@@ -8,7 +8,7 @@
 // `ReactNativeWebView.postMessage` transport via `emitUiEvent` (constraint #2, shared from
 // `events.ts` — not duplicated).
 import * as React from 'react';
-import { space, radius, color, textSize, textColor, activeTheme, FONT, TABULAR_NUMS, WEIGHT, type SpaceToken, type RadiusToken } from './tokens';
+import { space, radius, color, textSize, textColor, activeTheme, own, FONT, TABULAR_NUMS, WEIGHT, type SpaceToken, type RadiusToken } from './tokens';
 import { Glyph } from './icon';
 import { emitUiEvent } from './events';
 import { CONTROL_RESET, TAP_RESET, usePressed } from './press';
@@ -32,6 +32,7 @@ import {
   rubberBand,
   springTiming,
   stop,
+  supportsTranslateProperty,
   translateY,
   usePressMotion,
   type MotionElement,
@@ -132,7 +133,7 @@ export interface BadgeProps {
   tone?: BadgeTone;
 }
 function isStatus(tone: string): tone is StatusName {
-  return Object.hasOwn(STATUS, tone);
+  return own(STATUS, tone);
 }
 function badgeColors(tone: string): { background: string; color: string } {
   if (isStatus(tone)) return { background: color(`${tone}-soft`), color: textColor(tone) };
@@ -551,7 +552,7 @@ function KeyedList<T>({ items, keyBy, renderItem }: KeyedListProps<T>) {
     for (const [key, el] of elements.current) nextTops.set(key, el.offsetTop);
     const moving = changed && animate && !reduceMotion();
     if (group.current) groupHeight.current = resizeGroup(group.current, groupHeight.current, moving);
-    if (moving) closeGaps(elements.current, tops.current, nextTops);
+    if (moving && supportsTranslateProperty()) closeGaps(elements.current, tops.current, nextTops);
     tops.current = nextTops;
     mounted.current = true;
   });

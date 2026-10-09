@@ -21,6 +21,7 @@ import { manifestExtractionPass } from './passes/manifest-extraction';
 import { capabilityDirectionsPass } from './passes/capabilities';
 import { screenGraphPass } from './passes/screens';
 import { sdkLintPass } from './passes/sdk-lint';
+import { webviewFloorPass } from './passes/webview-floor';
 import { schemaCheckPass } from './passes/schema-check';
 import { storageContinuityPass } from './passes/storage-continuity';
 
@@ -39,6 +40,7 @@ const PASSES: readonly Pass[] = [
   capabilityDirectionsPass,
   screenGraphPass,
   sdkLintPass,
+  webviewFloorPass,
   schemaCheckPass,
   storageContinuityPass,
 ];

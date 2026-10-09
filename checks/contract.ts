@@ -96,6 +96,8 @@ export type Severity = 'error' | 'warning';
  *      - `raw_timer`           — raw `setTimeout`/`setInterval`/`requestAnimationFrame`
  *                                (function-arg form) instead of the SDK's `delay`/`interval`
  *                                (req "SDK lint steers toward the taught path")
+ *      - `post_floor_builtin`  — a JS built-in newer than the WebView floor (`POST_FLOOR_BUILTINS`
+ *                                below): it throws a TypeError in the oldest supported WebView
  *  - TILE IDENTITY (design-system-v1 D5, `handoff/generator.md`): WARNING-ONLY, emitted by the
  *    manifest-extraction pass when it resolves a declared `tint`/`icon` name. A name never fails a
  *    build or costs a repair turn, so the server's check stage keeps these out of the repair loop
@@ -159,6 +161,8 @@ export const DIAGNOSTIC_KINDS = [
   'unknown_record',
   'unqueryable_field',
   'kv_too_large',
+  // — WebView floor: a JS built-in the oldest supported WebView lacks (throws a TypeError there) —
+  'post_floor_builtin',
   // — tile identity (design-system-v1 D5): warning-only, never repaired —
   'tint_alias',
   'tint_fallback',
@@ -279,6 +283,56 @@ export const FORBIDDEN_DIRECT_NAMES: readonly string[] = [
 /** Forbidden MEMBER paths reachable only through a global root/alias (not bare identifiers
  *  in module scope — `navigator` itself is not forbidden, only `navigator.sendBeacon`). */
 export const FORBIDDEN_MEMBER_PATHS: readonly (readonly string[])[] = [['navigator', 'sendBeacon']];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Data table: built-ins above the WebView floor
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The oldest Chromium a mini-app's WebView may be: the Android 10 (API 29) system image's
+ *  WebView, the oldest one tested. esbuild (`target: 'es2019'`) lowers syntax for it but never
+ *  polyfills a built-in, so a built-in shipped after this version throws a TypeError there. */
+export const WEBVIEW_FLOOR_CHROMIUM = 91;
+
+/** A JS built-in shipped after `WEBVIEW_FLOOR_CHROMIUM`, in the shape its use takes in source:
+ *  - `method`: a call `x.name(...)` on any receiver (the receiver's type is unknown to a
+ *    syntactic pass; a feature test such as `typeof x.at` is not a call and is not matched);
+ *  - `static`: any reference to `owner.name` where `owner` is the real global;
+ *  - `global`: any reference to the global `name`.
+ *  Known boundary: iterator-helper calls (`map.values().map(...)`) share names with Array
+ *  methods and are not matched. */
+export interface PostFloorBuiltin {
+  form: 'method' | 'static' | 'global';
+  owner?: string;
+  name: string;
+  /** The first Chromium that ships it. */
+  chromium: number;
+  /** The floor-safe way to write it, for the diagnostic hint. */
+  instead: string;
+}
+
+export const POST_FLOOR_BUILTINS: readonly PostFloorBuiltin[] = [
+  { form: 'method', name: 'at', chromium: 92, instead: 'index directly: `xs[xs.length - 1]`, `xs[i]`' },
+  { form: 'static', owner: 'Object', name: 'hasOwn', chromium: 93, instead: '`Object.keys(obj).includes(key)`' },
+  { form: 'method', name: 'findLast', chromium: 97, instead: '`[...xs].reverse().find(...)`' },
+  { form: 'method', name: 'findLastIndex', chromium: 97, instead: 'a loop from the end' },
+  { form: 'global', name: 'structuredClone', chromium: 98, instead: '`JSON.parse(JSON.stringify(value))` for JSON data' },
+  { form: 'method', name: 'toSorted', chromium: 110, instead: '`[...xs].sort(...)`' },
+  { form: 'method', name: 'toReversed', chromium: 110, instead: '`[...xs].reverse()`' },
+  { form: 'method', name: 'toSpliced', chromium: 110, instead: 'copy with `[...xs]`, then `splice`' },
+  { form: 'method', name: 'with', chromium: 110, instead: '`xs.map((x, j) => (j === i ? value : x))`' },
+  { form: 'static', owner: 'Object', name: 'groupBy', chromium: 117, instead: 'a `reduce` into a plain object' },
+  { form: 'static', owner: 'Map', name: 'groupBy', chromium: 117, instead: 'a loop that fills a `Map`' },
+  { form: 'static', owner: 'Promise', name: 'withResolvers', chromium: 119, instead: '`new Promise((resolve, reject) => ...)`' },
+  { form: 'static', owner: 'Array', name: 'fromAsync', chromium: 121, instead: '`Promise.all(...)` over an array' },
+  { form: 'method', name: 'union', chromium: 122, instead: '`new Set([...a, ...b])`' },
+  { form: 'method', name: 'intersection', chromium: 122, instead: '`new Set([...a].filter((x) => b.has(x)))`' },
+  { form: 'method', name: 'difference', chromium: 122, instead: '`new Set([...a].filter((x) => !b.has(x)))`' },
+  { form: 'method', name: 'symmetricDifference', chromium: 122, instead: 'two `filter`s over the two sets' },
+  { form: 'method', name: 'isSubsetOf', chromium: 122, instead: '`[...a].every((x) => b.has(x))`' },
+  { form: 'method', name: 'isSupersetOf', chromium: 122, instead: '`[...b].every((x) => a.has(x))`' },
+  { form: 'method', name: 'isDisjointFrom', chromium: 122, instead: '`![...a].some((x) => b.has(x))`' },
+  { form: 'static', owner: 'Promise', name: 'try', chromium: 128, instead: '`new Promise((resolve) => resolve(fn()))`' },
+];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Data table: export → capability (design D6)
