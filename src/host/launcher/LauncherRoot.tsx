@@ -29,12 +29,13 @@ import type { AppRecord } from '../bridge';
 import { createPersistentStore } from '../version-store';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import type { KVBackend } from '../version-store/fs/kv-fs';
-import { deleteStorage, peekAppliedSchema } from '../storage-engine';
+import { copyStorage, deleteStorage, peekAppliedSchema } from '../storage-engine';
 import { HighlightingProvider } from '../ui/whim-prose/WhimProse';
 import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
 import type { AppBusyMap } from './app-busy';
-import { StoreAccess } from './store-access';
+import { StoreAccess, type ForkOptions } from './store-access';
+import { DataCopyJournal } from './data-copy-journal';
 import { PendingBuildStore } from './pending-builds';
 import type { PendingAttemptLease, PendingBuildRecord, PendingBuildView, PendingFailureRemedy } from './pending-builds';
 import { JOURNAL_KEY, RunJournalStore } from './run-journal';
@@ -409,7 +410,14 @@ export default function LauncherRoot({
     const launcherKv: KVBackend = createMmkvBackend('whim.launcher');
     const idx = new AppIndex(launcherKv);
     const store = createPersistentStore(createMmkvBackend('whim-version-store'));
-    const acc = new StoreAccess({ store, index: idx, deleteStorage: (appId) => deleteStorage({ appId }) });
+    const acc = new StoreAccess({
+      store,
+      index: idx,
+      deleteStorage: (appId) => deleteStorage({ appId }),
+      // The data copy and its crash journal (copy-app-data D2/D3), the journal on the same backend.
+      copyStorage,
+      copyJournal: new DataCopyJournal(launcherKv),
+    });
     return {
       index: idx,
       access: acc,
@@ -846,6 +854,14 @@ function LauncherShell({
     // `ready`, which this effect sets at its end — so nothing has rendered a record yet.
     pending.demoteBuildingToInterrupted();
     (async () => {
+      // Before any app can open: a data copy a closed process left unfinished becomes no copy, or
+      // the complete one it committed (copy-app-data D2). A copy that cannot be settled now keeps
+      // its record for the next launch.
+      try {
+        await access.sweepDataCopies();
+      } catch (e) {
+        log.error(CHANNELS.app, 'data-copy sweep failed', { operation: 'sweep', ...errorFields(e) });
+      }
       try {
         await seedFirstRun(index, access, defaultSeeds());
       } catch (e) {
@@ -913,7 +929,7 @@ function LauncherShell({
       }
     });
 
-  const onFork = (app: InstalledApp, opts: { shareData: boolean }) =>
+  const onFork = (app: InstalledApp, opts: ForkOptions) =>
     runAppOp(appOps, setAppBusy, app.id, 'fork', async () => {
       try {
         await access.fork(app, undefined, opts);

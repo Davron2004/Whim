@@ -22,6 +22,7 @@ import {
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FONT_FAMILY, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { InstalledApp } from './app-index';
+import type { ForkOptions } from './store-access';
 import { isAppBusy, type AppBusyMap } from './app-busy';
 import { ghostTileColorFor } from './prompt-flow';
 import type { PendingBuildRecord } from './pending-builds';
@@ -46,10 +47,9 @@ export { HOME_GRID_COLUMNS, HOME_GRID_COLUMN_GAP, HOME_GRID_ROW_GAP } from './ho
 export interface HomeScreenProps {
   apps: InstalledApp[];
   onOpen: (app: InstalledApp) => void;
-  /** opts.shareData answers the share-vs-fresh question asked between the Fork tap and the
-   *  actual fork (design D4) — never asked for rewind continuations, which call access.fork
-   *  directly with shareData: true. */
-  onFork: (app: InstalledApp, opts: { shareData: boolean }) => void;
+  /** `opts.data` is the answer to the question asked between the Fork tap and the actual fork:
+   *  what the copy's store starts with. No answer shares the original's data (app-data-copy). */
+  onFork: (app: InstalledApp, opts: ForkOptions) => void;
   onDelete: (app: InstalledApp) => void;
   /** Which apps have an open/fork/delete running right now (`app-busy.ts`), by app id. Drives the
    *  tile's own busy look — for ANY of the three operations, since the fork and delete sheets are
@@ -242,12 +242,11 @@ export default function HomeScreen({
         <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setSelected(null)} />
       </ActionSheet>
 
-      {/* Fork question sheet (design D4): asked only for an explicit Fork tap, never for rewind
-          continuations, which thread shareData: true straight into access.fork. */}
+      {/* Fork question sheet: asked only for an explicit Fork tap. A copy never shares the
+          original's data; only a rewind continuation does (StoreAccess.continueSharingData). */}
       <ActionSheet visible={forkTarget != null} onClose={() => setForkTarget(null)}>
         <Text style={[TYPE_SCALE.bodyEmphatic, styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{forkTarget?.name}</Text>
-        <SheetRow label={COPY.forkShareData} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = forkTarget!; setForkTarget(null); onFork(a, { shareData: true }); }} />
-        <SheetRow label={COPY.forkStartFresh} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = forkTarget!; setForkTarget(null); onFork(a, { shareData: false }); }} />
+        <SheetRow label={COPY.forkStartFresh} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = forkTarget!; setForkTarget(null); onFork(a, { data: 'fresh' }); }} />
         <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setForkTarget(null)} />
       </ActionSheet>
 

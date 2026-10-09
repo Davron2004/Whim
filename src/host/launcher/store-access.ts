@@ -27,18 +27,39 @@ import type { AppRecord } from '../bridge/contract';
 import { AppIndex, InstalledApp } from './app-index';
 import { parsePromptEnvelope } from './prompt-envelope';
 import { assignedTile, copyTile, declaredTile, resolveTileRequest, type TileRequest } from './tile-identity';
+import { DataCopyError, type CopyStorage } from '../storage-engine/copy-contract';
+import { sweepDataCopies, type DataCopyJournal } from './data-copy-journal';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 
 /** Drop an installed app's per-app user-data store (the storage engine's SQLite db). Device →
  *  op-sqlite `db.delete()`; Node tests → a spy. Injected so store-access stays device-free. */
 export type DeleteStorage = (appId: string) => void | Promise<void>;
 
-export interface StoreAccessOptions {
+interface StoreAccessBaseOptions {
   store: VersionStore;
   index: AppIndex;
   /** Drops the per-launcher-id user-data db. Defaults to a no-op (e.g. seeding-only contexts). */
   deleteStorage?: DeleteStorage;
   /** Injectable clock for deterministic tests. Defaults to Date.now. */
   now?: () => number;
+}
+
+/** The data-copy seam (copy-app-data D3): the snapshot routine and the journal that makes it
+ *  crash-safe, injected together or not at all — a copy without its journal could leave a
+ *  half-written store behind. Device: `copyStorage` from the storage engine and a journal over the
+ *  launcher KV; Node suites: `createNodeCopyStorage(dir)`. */
+type DataCopySeam =
+  | { copyStorage: CopyStorage; copyJournal: DataCopyJournal }
+  | { copyStorage?: undefined; copyJournal?: undefined };
+
+export type StoreAccessOptions = StoreAccessBaseOptions & DataCopySeam;
+
+/** What "Make a copy" does with the original's user data: `'fresh'` (the default) gives the copy an
+ *  empty store; `'copy'` gives it a one-time snapshot of the original's store. Either way the copy
+ *  gets its own store — no option shares the original's (app-data-copy, linked-apps). */
+export interface ForkOptions {
+  data?: 'fresh' | 'copy';
 }
 
 export interface InstallSpec {
@@ -72,6 +93,10 @@ export interface UpdateSpec {
   prompt: string;
 }
 
+function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 /** The version-store repo an entry reads/writes (its own id for originals; the shared repo for forks). */
 export function storeIdOf(entry: InstalledApp): string {
   return entry.storeId ?? entry.id;
@@ -81,7 +106,13 @@ export class StoreAccess {
   private readonly store: VersionStore;
   private readonly index: AppIndex;
   private readonly deleteStorage: DeleteStorage;
+  private readonly copyStorage: CopyStorage | undefined;
+  private readonly copyJournal: DataCopyJournal | undefined;
   private readonly now: () => number;
+  /** The copy appIds whose data copy is running in this process (the sweep leaves them alone). */
+  private readonly copying = new Set<string>();
+  /** Whether "Copy the data" can be offered: true exactly when the data-copy seam was injected. */
+  readonly canCopyData: boolean;
   /** repoId → the lineage the repo HEAD is currently on (this session's knowledge). */
   private readonly repoLineage = new Map<string, string>();
   /** repoId → the tail of that repo's in-flight operation chain (see `serial`). */
@@ -91,6 +122,9 @@ export class StoreAccess {
     this.store = opts.store;
     this.index = opts.index;
     this.deleteStorage = opts.deleteStorage ?? (() => {});
+    this.copyStorage = opts.copyStorage;
+    this.copyJournal = opts.copyJournal;
+    this.canCopyData = opts.copyStorage !== undefined;
     this.now = opts.now ?? (() => Date.now());
   }
 
@@ -318,53 +352,164 @@ export class StoreAccess {
     });
   }
 
+  /** Fork `entry`'s lineage in the version store from `versionId` (or its active snapshot) and
+   *  return the new lineage. Runs inside the caller's `serial(repo)` section. */
+  private async forkLineage(entry: InstalledApp, repo: string, versionId: string | undefined): Promise<string> {
+    await this.ensureLineage(entry);
+    let snapshotId: string;
+    if (versionId != null) {
+      snapshotId = versionId;
+    } else {
+      const active = await this.store.active(repo);
+      if (!active) throw new Error(`cannot fork "${entry.id}": no active snapshot`);
+      snapshotId = active.id;
+    }
+    const { lineageId } = await this.store.fork(repo, snapshotId);
+    // fork() left the repo HEAD on the new lineage.
+    this.repoLineage.set(repo, lineageId);
+    return lineageId;
+  }
+
+  /** The index entry for a new lineage of `entry`'s repo. Its tile is the original's glyph with the
+   *  tint farthest from the original's among the least used — read from the index now, so an
+   *  override set since the caller read `entry` counts. No await may sit between this and the
+   *  `index.put` that writes it, so two copies landing together cannot take the same tint. */
+  private lineageEntry(entry: InstalledApp, repo: string, lineageId: string, storageGroupId?: string): InstalledApp {
+    const tile = copyTile(this.index.get(entry.id) ?? entry, this.index.list());
+    return {
+      id: `${repo}__${lineageId}`,
+      name: entry.name,
+      createdAt: this.now(),
+      record: entry.record,
+      storeId: repo,
+      lineageId,
+      forkedFrom: { id: entry.id, name: entry.name },
+      ...(storageGroupId != null ? { storageGroupId } : {}),
+      tint: tile.tint,
+      icon: tile.icon,
+    };
+  }
+
   /**
-   * Fork an installed entry (D2): version-store fork from a snapshot → a new lineage in the
-   * SAME repo, then a new index entry tracking it. The fork shares the repo (and its pre-fork
-   * history) but evolves independently and gets its OWN engine appId (unless it joins a storage
-   * group, below). `versionId` (D6/research fact 2) forks from that snapshot instead of the
-   * entry's current active one — "make this version its own app" reuses this same fork→install
-   * flow unchanged.
+   * "Make a copy" (D2; copy-app-data D2/D3): version-store fork from a snapshot → a new lineage in
+   * the SAME repo, then a new index entry tracking it. The copy shares the repo (and its pre-fork
+   * history) but evolves independently, and ALWAYS gets its own engine appId (its launcher id):
+   * no option places it in the original's storage group. `versionId` forks from that snapshot
+   * instead of the entry's current active one ("make this version its own app").
    *
-   * `opts.shareData` (linked-apps-data-model D2) decides storage-group membership at creation
-   * time only: when true, the new entry's `storageGroupId` copies `entry.storageGroupId ??
-   * entry.id` (the founder's own id, whether `entry` is the founder or already a sharer — group
-   * membership is never re-rooted at an intermediate fork); when false/absent (including no
-   * third argument at all — every pre-existing call site), the new entry gets no
-   * `storageGroupId` and keeps its own group, exactly as before this change.
+   * `opts.data` decides what the copy's store starts with: `'fresh'` (the default) an empty store;
+   * `'copy'` a verified one-time snapshot of the store `entry` resolves to (`engineAppId`: its
+   * group's when it is grouped). Either way a stray store file under the copy's appId is deleted
+   * before the entry exists, and an appId some entry already uses is refused, never overwritten.
+   * A `'copy'` is all-or-nothing: the journal records the copy's appId before any byte is
+   * written, the snapshot is written and verified, and only then is the index entry written — the
+   * commit. A failure deletes what the copy wrote, writes no entry and rejects with a
+   * `DataCopyError`; a process death is settled by `sweepDataCopies` at the next launch. A
+   * `'copy'` on an instance without the seam rejects before any write. The version-store lineage
+   * a failed copy forked stays behind, unused and invisible, like any fork whose entry was never
+   * written.
    */
-  async fork(entry: InstalledApp, versionId?: string, opts?: { shareData?: boolean }): Promise<InstalledApp> {
+  async fork(entry: InstalledApp, versionId?: string, opts?: ForkOptions): Promise<InstalledApp> {
+    const data = opts?.data ?? 'fresh';
+    if (data !== 'fresh' && data !== 'copy') throw new Error(`cannot fork "${entry.id}": unknown data option "${String(data)}"`);
+    const seam = this.copyStorage && this.copyJournal ? { copy: this.copyStorage, journal: this.copyJournal } : undefined;
+    if (data === 'copy' && !seam) throw new Error(`cannot copy the data of "${entry.id}": this build has no data copy`);
     const repo = storeIdOf(entry);
     return this.serial(repo, async () => {
-      await this.ensureLineage(entry);
-      let snapshotId: string;
-      if (versionId != null) {
-        snapshotId = versionId;
-      } else {
-        const active = await this.store.active(repo);
-        if (!active) throw new Error(`cannot fork "${entry.id}": no active snapshot`);
-        snapshotId = active.id;
+      const lineageId = await this.forkLineage(entry, repo, versionId);
+      const copyAppId = `${repo}__${lineageId}`;
+      if (this.index.has(copyAppId) || this.index.storageRefCount(copyAppId) > 0) {
+        // Fork ids are never reused while their repo lives; an entry here is a broken invariant,
+        // and both that entry and its store must stay as they are.
+        throw new DataCopyError('io', `cannot make a copy: an app already uses "${copyAppId}"`);
       }
-      const { lineageId } = await this.store.fork(repo, snapshotId);
-      // fork() left the repo HEAD on the new lineage.
-      this.repoLineage.set(repo, lineageId);
-      // A copy's tile: the original's glyph, the tint farthest from the original's among the least
-      // used — read from the index now, so an override set since the caller read `entry` counts.
-      const tile = copyTile(this.index.get(entry.id) ?? entry, this.index.list());
-      const forkEntry: InstalledApp = {
-        id: `${repo}__${lineageId}`,
-        name: entry.name,
-        createdAt: this.now(),
-        record: entry.record,
-        storeId: repo,
-        lineageId,
-        forkedFrom: { id: entry.id, name: entry.name },
-        storageGroupId: opts?.shareData ? (entry.storageGroupId ?? entry.id) : undefined,
-        tint: tile.tint,
-        icon: tile.icon,
+      const commit = (): InstalledApp => {
+        const forkEntry = this.lineageEntry(entry, repo, lineageId);
+        this.index.put(forkEntry);
+        return forkEntry;
       };
-      this.index.put(forkEntry);
-      return forkEntry;
+      if (data === 'copy' && seam) return this.copyData(seam, this.engineAppId(entry), copyAppId, commit);
+      await this.deleteStorage(copyAppId); // a stray file never leaks into a fresh copy
+      return commit();
+    });
+  }
+
+  /**
+   * The data step of a `'copy'` fork (copy-app-data D2, steps 2–6), inside the repo's `serial`
+   * section, for a `copyAppId` no entry uses: journal → stray guard → snapshot (verified by
+   * `copyStorage`) → `commit` (the index entry) → clear the journal. A failure before the commit
+   * deletes the copy's store and then clears the journal; when that delete fails the record stays,
+   * and the next launch's sweep finishes it.
+   */
+  private async copyData(
+    seam: { copy: CopyStorage; journal: DataCopyJournal },
+    sourceAppId: string,
+    copyAppId: string,
+    commit: () => InstalledApp,
+  ): Promise<InstalledApp> {
+    seam.journal.put({ copyAppId, sourceAppId, startedAt: this.now() });
+    this.copying.add(copyAppId);
+    let committed: InstalledApp;
+    try {
+      await this.deleteStorage(copyAppId); // a stray file never leaks into the copy
+      await seam.copy({ from: sourceAppId, to: copyAppId });
+      committed = commit();
+    } catch (e) {
+      await this.discardCopy(seam.journal, copyAppId);
+      throw e instanceof DataCopyError ? e : new DataCopyError('io', `cannot copy the data: ${messageOf(e)}`, e);
+    } finally {
+      this.copying.delete(copyAppId);
+    }
+    try {
+      seam.journal.clear(copyAppId);
+    } catch (e) {
+      // The copy is committed; its leftover record only costs the next launch's sweep a clear.
+      log.warn(CHANNELS.app, 'a finished data copy is still recorded', { appId: copyAppId, detail: messageOf(e) });
+    }
+    return committed;
+  }
+
+  /** Undo an uncommitted copy: drop any index record the failed commit may have left, delete the
+   *  store, then clear the journal. Whatever fails here leaves the record for the launch sweep. */
+  private async discardCopy(journal: DataCopyJournal, copyAppId: string): Promise<void> {
+    try {
+      this.index.remove(copyAppId);
+      await this.deleteStorage(copyAppId);
+      journal.clear(copyAppId);
+    } catch (cleanup) {
+      log.error(CHANNELS.app, 'a failed data copy could not be cleaned up yet', { appId: copyAppId, detail: messageOf(cleanup) });
+    }
+  }
+
+  /**
+   * A rewind continuation (linked-apps "Rewind continuations share by default"; #53 D5): a new
+   * lineage from `entry`'s active snapshot whose entry joins `entry`'s storage group — the
+   * founder's own id, whether `entry` is the founder or already a member, so membership is never
+   * re-rooted at an intermediate member. The only creation path that can share a store; "Make a
+   * copy" goes through `fork`, which cannot.
+   */
+  async continueSharingData(entry: InstalledApp): Promise<InstalledApp> {
+    const repo = storeIdOf(entry);
+    return this.serial(repo, async () => {
+      const lineageId = await this.forkLineage(entry, repo, undefined);
+      const continuation = this.lineageEntry(entry, repo, lineageId, this.engineAppId(entry));
+      this.index.put(continuation);
+      return continuation;
+    });
+  }
+
+  /**
+   * At launch, before any app's store is opened: settle every data copy a closed process left
+   * unfinished (`sweepDataCopies`). Copies running in this process are left alone. A no-op without
+   * the data-copy seam.
+   */
+  async sweepDataCopies(): Promise<void> {
+    if (!this.copyJournal) return;
+    await sweepDataCopies({
+      journal: this.copyJournal,
+      index: this.index,
+      deleteStorage: this.deleteStorage,
+      inFlight: (copyAppId) => this.copying.has(copyAppId),
     });
   }
 
