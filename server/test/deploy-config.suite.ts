@@ -1495,13 +1495,22 @@ interface ServiceShape {
   readonly latestCreated?: string;
   readonly traffic?: ReadonlyArray<{ readonly revisionName: string; readonly percent: number }>;
   readonly cpuThrottling?: string;
+  /** The revision's `autoscaling.knative.dev/minScale`; absent by default, as gcloud leaves it for 0. */
+  readonly minScale?: string;
+  /** The revision's `autoscaling.knative.dev/maxScale`, `'1'` by default; `null` leaves it out. */
+  readonly maxScale?: string | null;
+  /** The service-level `run.googleapis.com/minScale`; absent by default. */
+  readonly serviceMinScale?: string;
 }
 
 /** `gcloud run services describe whim-server --format=json` for a service serving `commit`. */
-function servedService({ commit, latestCreated = SERVING_REVISION, traffic = [{ revisionName: SERVING_REVISION, percent: 100 }], cpuThrottling }: ServiceShape): string {
+function servedService({ commit, latestCreated = SERVING_REVISION, traffic = [{ revisionName: SERVING_REVISION, percent: 100 }], cpuThrottling, minScale, maxScale = '1', serviceMinScale }: ServiceShape): string {
   const annotations: Record<string, string> = { 'run.googleapis.com/execution-environment': 'gen2', 'run.googleapis.com/startup-cpu-boost': 'true' };
   if (cpuThrottling !== undefined) annotations['run.googleapis.com/cpu-throttling'] = cpuThrottling;
+  if (minScale !== undefined) annotations['autoscaling.knative.dev/minScale'] = minScale;
+  if (maxScale !== null) annotations['autoscaling.knative.dev/maxScale'] = maxScale;
   return JSON.stringify({
+    metadata: { annotations: serviceMinScale === undefined ? {} : { 'run.googleapis.com/minScale': serviceMinScale } },
     spec: { template: { metadata: { annotations }, spec: { containers: [{ image: `northamerica-northeast1-docker.pkg.dev/anycognition-whim/whim/server:${commit}` }] } } },
     status: { latestCreatedRevisionName: latestCreated, latestReadyRevisionName: SERVING_REVISION, traffic: traffic.map((target) => ({ ...target, latestRevision: true })) },
   });
@@ -1674,11 +1683,17 @@ async function cloudRunSmokeTests(): Promise<void> {
     ['a newest revision that is not ready', { latestCreated: 'whim-server-00043-bad' }, `newest revision whim-server-00043-bad is not ready; ${SERVING_REVISION} still serves`],
     ['traffic split with an older revision', { traffic: [{ revisionName: SERVING_REVISION, percent: 50 }, { revisionName: PREVIOUS_REVISION, percent: 50 }] }, `not 100% to ${SERVING_REVISION}`],
     ['CPU always allocated (instance-based billing)', { cpuThrottling: 'false' }, 'instance-based billing'],
+    ['a revision keeping one instance warm', { minScale: '1' }, `revision ${SERVING_REVISION} keeps 1 instance(s) warm, not 0`],
+    ['a service-level minimum of one instance', { serviceMinScale: '1' }, 'has a service-level minimum of 1 instance(s), not 0'],
+    ['a revision allowed five instances', { maxScale: '5' }, `revision ${SERVING_REVISION} may scale to 5 instance(s), not 1`],
+    ['a revision with no instance cap', { maxScale: null }, `revision ${SERVING_REVISION} may scale to an uncapped number of instance(s), not 1`],
   ] as const) {
     const run = cloudRunSmoke([], { service });
     check(`the smoke fails on ${what}, naming it`, run.run.status === 1 && run.run.stderr.includes(needle) && run.run.stderr.includes('1 smoke check(s) failed'), run.run.stderr);
   }
   eq('the smoke passes when the revision states request-based billing explicitly', cloudRunSmoke([], { service: { cpuThrottling: 'true' } }).run.status, 0);
+  const explicitBounds = cloudRunSmoke([], { service: { minScale: '0', serviceMinScale: '0' } });
+  check('the smoke passes when the revision states a minimum of 0 instances explicitly, naming the bounds', explicitBounds.run.status === 0 && explicitBounds.run.stdout.includes('CPU only during requests, 0-1 instances'), explicitBounds.run.stdout);
 
   const unmapped = cloudRunSmoke([], { gcloud: [[`*run domain-mappings describe --domain ${WEB_HOST} *`, 0, domainMapping('whim-site', 'Unknown')]] });
   check('a domain mapping that is not ready stops the smoke, naming it', unmapped.run.status === 1 && unmapped.run.stderr.includes(`domain mapping ${WEB_HOST} is not ready: Unknown`), unmapped.run.stderr);
@@ -2000,6 +2015,7 @@ function cloudRunDeploySmokeTests(): void {
     eq('  ... comparing the association files with the site this deploy built, building no second one', siteBuilds(sandbox), 1);
     const serverDeploy = toolLog(sandbox, 'gcloud').find((line) => line.includes('run deploy whim-server')) ?? '';
     check('  ... the server deployed with request-based billing (CPU only during requests)', / --cpu-throttling(?: |$)/.test(serverDeploy) && !serverDeploy.includes('--no-cpu-throttling'), serverDeploy);
+    check('  ... scaling to zero and to one instance at most, the bounds its smoke holds the revision to', serverDeploy.includes(' --min-instances 0 --max-instances 1 '), serverDeploy);
     const served = loadServerConfig(envVarsFileValues(stubFile(sandbox, 'env-vars-file')));
     eq(
       "  ... and the operator's content-policy attempt timeout and policy-check limits forwarded, as the server reads them",

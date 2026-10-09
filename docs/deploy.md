@@ -52,6 +52,11 @@ What changed from the VM, and what it costs:
   billed, only while a request is in flight, so an instance the 5-minute uptime check keeps warm
   costs nothing idle. The smoke fails when the serving template sets
   `run.googleapis.com/cpu-throttling: "false"`.
+- **Instance bounds.** The server deploys with `--min-instances 0 --max-instances 1`
+  (fixed constants in `deploy/lib.sh`, not operator values). The smoke fails when the
+  serving revision keeps an instance warm (`autoscaling.knative.dev/minScale`, or a service-level
+  `run.googleapis.com/minScale`, above 0) or its `autoscaling.knative.dev/maxScale` is anything but 1,
+  so a console edit that would bill idle or extra instances shows on the next smoke.
 - **Caps are the VM's.** The generation and synthetic-run caps (3 / 2, "Capacity profiles" below)
   were measured on the VM and are carried over unmeasured. Measuring them needs a real gen2 instance
   under replay load, which needs the owner's cost approval (#134).
@@ -84,7 +89,7 @@ deploy/cloudrun/smoke.sh --pages-only     # pages and association files only
 ```
 
 It needs no VM value. In order, it checks both domain mappings (route, `Ready`, an `A` record); the
-serving revision (latest ready, 100 % of traffic, the commit's image, request-based billing);
+serving revision (latest ready, 100 % of traffic, the commit's image, request-based billing, 0-1 instances);
 `/health`, the device gate `400`, the update gate `426`, `/healthz/sse` frame spacing and the beta
 signup trap (`303`, stores nothing); the `whim-purge` job and its hourly schedule; the live clarify;
 then the pages and association files. Failures print `FAIL  …` lines; domain problems stop it

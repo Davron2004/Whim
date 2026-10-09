@@ -81,6 +81,14 @@ const DEVICE_DELETE_CHUNK = 100;
  *  instead of answering. */
 const ADMISSION_MAX_ATTEMPTS = 25;
 
+/** A credit runs inside an open SSE stream (`routes/generate.ts` awaits it before the run's terminal
+ *  event), so its retries must end well inside Cloud Run's 900 s request timeout, after a line wait of
+ *  up to 180 s and a run of up to 600 s. Credits never conflict with each other (the usage document is
+ *  not read), so their retries only ride out a transient error. The client backs off 1 s, then x1.5
+ *  per attempt, +/-50% jitter: 5 attempts wait 4-12 s in all, where `ADMISSION_MAX_ATTEMPTS` (25)
+ *  would wait over 15 minutes. A credit that gives up leaves its tokens to the route's reconciliation. */
+const CREDIT_MAX_ATTEMPTS = 5;
+
 /** One ledger row's document: `LedgerRow` without its id. */
 export interface RequestDoc {
   deviceId: string;
@@ -248,7 +256,7 @@ export class FirestoreUsageStore implements UsageStore, UsageRecordKeeping {
         const mark: CreditMarkDoc = { utcDay };
         tx.create(marker, mark);
       },
-      { maxAttempts: ADMISSION_MAX_ATTEMPTS },
+      { maxAttempts: CREDIT_MAX_ATTEMPTS },
     );
   }
 

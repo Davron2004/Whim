@@ -577,8 +577,19 @@ function runGeneration(deps: StreamDeps, running: RunningGeneration, signal: Abo
     resolveGenerationUsage(deps, running, trace, ending.creditOwned);
   };
 
+  // A credit that fails is logged and left to the teardown's reconciliation: the stream still
+  // forwards the run's own terminal event, so a store outage never leaves it without one.
+  const credit = async (usage: Usage): Promise<boolean> => {
+    try {
+      await usageStore.credit(deviceId, usage);
+      return true;
+    } catch (err) {
+      deps.log.warn({ scope: 'request', detail: err instanceof Error ? err.message : String(err) }, 'generation usage credit failed');
+      return false;
+    }
+  };
   const run = (): AsyncIterable<GenerationEvent> => (pipeline.run as PipelineRun)(request, signal, trace);
-  return forwardEvents(run, signal, ending, (usage) => usageStore.credit(deviceId, usage), teardown, (event) => forClient(deps, event));
+  return forwardEvents(run, signal, ending, credit, teardown, (event) => forClient(deps, event));
 }
 
 /** `event` as this request's client may receive it: every event the route sends goes through here,
@@ -759,23 +770,24 @@ async function* waitInLine(ticket: LineTicket, signal: AbortSignal, lineClock: L
  * Forwards the pipeline's events and runs `teardown` exactly once, when iteration ends for any
  * reason. Nothing is forwarded once the request was aborted, and nothing after the first terminal
  * event, so a stream carries at most one terminal and none after an abort. A `usage` event is
- * credited before it is forwarded, which is before the terminal event. Every event goes out through
- * `toClient`, at the client's level, like every event this route makes.
+ * credited before it is forwarded, which is before the terminal event. `credit` never throws: it
+ * answers whether the tokens were credited, and a run whose credit failed is left uncredited for
+ * the teardown's reconciliation. Every event goes out through `toClient`, at the client's level,
+ * like every event this route makes.
  */
 async function* forwardEvents(
   run: () => AsyncIterable<GenerationEvent>,
   signal: AbortSignal,
   ending: StreamEnding,
-  credit: (usage: Usage) => Promise<void>,
+  credit: (usage: Usage) => Promise<boolean>,
   teardown: () => Promise<void>,
   toClient: (event: WireEvent) => WireEvent,
 ): AsyncGenerator<WireEvent> {
   try {
     for await (const event of run()) {
       if (event.type === 'usage') {
-        ending.creditOwned = true;
         ending.usage = event.usage;
-        await credit(event.usage);
+        ending.creditOwned = await credit(event.usage);
       }
       if (signal.aborted) return;
       if (event.type === 'result' || event.type === 'failure') ending.terminal = event.type;

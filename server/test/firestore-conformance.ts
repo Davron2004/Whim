@@ -20,7 +20,7 @@ import { needsComposite, recordQueryShapes, uncoveredShapes, unusedIndexes, type
 import { loadServerConfig } from '../src/config';
 import { startServer } from '../src/lifecycle';
 import { createFirestoreStoresOpener, openStores, type FirestoreStoresOptions, type OpenedStores, type StoreConfig } from '../src/stores';
-import type { DocumentReference } from '@google-cloud/firestore';
+import type { DocumentReference, Firestore } from '@google-cloud/firestore';
 import { deleteInBatches, openFirestoreClient } from '../src/firestore/client';
 import { runFirestoreImportTests } from './firestore-import';
 import { CREDIT_MARKS_COLLECTION, FirestoreUsageStore } from '../src/firestore/usage-store';
@@ -261,6 +261,48 @@ async function lostCommitReplyTest(): Promise<void> {
   }
 }
 
+/** The retry budget a credit gets (`CREDIT_MAX_ATTEMPTS`): small, because the generate route awaits
+ *  the credit inside an open stream, before the run's terminal event. */
+const CREDIT_ATTEMPT_BUDGET = 5;
+
+/** A credit whose every transaction attempt fails with a retryable code gives up after its own
+ *  budget. The attempt after the budget would succeed, so a credit retried on the admission budget
+ *  (25) resolves instead of rejecting, and one never retried stops at a single attempt. */
+async function failingCreditTest(): Promise<void> {
+  section('Firestore: a credit that keeps failing gives up within its own retry budget');
+  const db = await openFirestoreClient('(default)', { probeTimeoutMs: PROBE_CEILING_MS });
+  const root = db.collection('conformance').doc(`${RUN_ID}-failing-credit`);
+  let attempts = 0;
+  const failing = new Proxy(db, {
+    get(target, property) {
+      if (property === 'runTransaction') {
+        return (update: Parameters<Firestore['runTransaction']>[0], options?: Parameters<Firestore['runTransaction']>[1]): Promise<unknown> =>
+          target.runTransaction(async (tx) => {
+            attempts++;
+            const result: unknown = await update(tx);
+            if (attempts <= CREDIT_ATTEMPT_BUDGET) throw Object.assign(new Error('injected UNAVAILABLE'), { code: 14 });
+            return result;
+          }, options);
+      }
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+  try {
+    await verify(`a credit failing on every attempt rejects after exactly ${CREDIT_ATTEMPT_BUDGET} attempts, writing nothing`, async () => {
+      const outcome = await new FirestoreUsageStore(failing, root).credit('dev-failing', { promptTokens: 1, completionTokens: 1, totalTokens: 2 }).then(
+        () => 'credited',
+        (err: unknown) => (err as { code?: unknown }).code,
+      );
+      nodeAssert.deepStrictEqual([outcome, attempts], [14, CREDIT_ATTEMPT_BUDGET], 'the credit gave up with the store\'s error after its budget');
+      nodeAssert.strictEqual((await root.collection('usage').get()).size, 0, 'no usage document was written');
+      nodeAssert.strictEqual((await root.collection(CREDIT_MARKS_COLLECTION).get()).size, 0, 'no marker was written');
+    });
+  } finally {
+    await db.terminate();
+  }
+}
+
 /** specs/server-deployment "A burst never over-admits": the load test's harness (#143), one small
  *  burst through the production store. */
 async function admissionBurstTest(): Promise<void> {
@@ -418,6 +460,7 @@ await persistenceTest();
 await documentModelTest();
 await unsafeKeysTest();
 await lostCommitReplyTest();
+await failingCreditTest();
 await creditMarkerPurgeTest();
 await admissionBurstTest();
 await batchedDeleteTest();

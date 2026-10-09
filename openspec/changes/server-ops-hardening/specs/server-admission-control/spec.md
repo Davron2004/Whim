@@ -10,7 +10,7 @@ The row's id SHALL be the request's id followed by `:policy-check`, so it never 
 
 The row SHALL carry the check's tokens, generation ids and resolved cost. The server SHALL NOT refund a `policy-check` unit.
 
-Admitting, settling or limiting this row SHALL NOT spend or refund a `generate` unit. The generation's own `generate` row is admitted only when it takes a slot, as before. A generation that takes a free slot without waiting SHALL NOT write a `policy-check` row: its check stays attributed to its `generate` row.
+Admitting, settling or limiting this row SHALL NOT spend or refund a `generate` unit. The generation's own `generate` row is admitted only when it takes a slot, or when the content policy refuses it while it waits in line. In that refusal case the server SHALL admit the `generate` row and settle it `refused` with failure reason `content_policy` and cost 0, and SHALL NOT refund it, the same generation-unit cost as a refusal on a free slot (product-owner ruling 3). A check that allows or gives no verdict in line writes no `generate` row before a slot. A generation that takes a free slot without waiting SHALL NOT write a `policy-check` row: its check stays attributed to its `generate` row.
 
 #### Scenario: A join-and-abort loop is bounded
 - **WHEN** every slot is busy and one device repeatedly starts a generation and aborts it while it waits

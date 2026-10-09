@@ -1390,6 +1390,54 @@ async function drained(label: string, tracker: ResolveTracker): Promise<void> {
   eq(`${label}: every resolution finished`, tracker.pendingCount, 0);
 }
 
+/** A recording store whose first `failures` credits reject, as a store that gave up its retries. */
+class FailingCreditStore extends RecordingUsageStore {
+  constructor(private failures: number) {
+    super();
+  }
+
+  override credit(deviceId: string, usage: Usage): Promise<void> {
+    if (this.failures > 0) {
+      this.failures--;
+      return Promise.reject(new Error('usage store unavailable'));
+    }
+    return super.credit(deviceId, usage);
+  }
+}
+
+/** The in-stream credit is awaited between the run's `usage` event and its terminal event. A store
+ *  that gives up must not end the stream without that terminal, and the tokens it failed to credit
+ *  go to the teardown's reconciliation. */
+async function testFailedInStreamCredit(): Promise<void> {
+  section('Generate: an in-stream credit that fails still ends the stream in its one terminal event');
+  const pipeline: Pipeline = {
+    async *run(_request: GenerateRequest, _signal?: AbortSignal, trace?: RunTrace): AsyncIterable<GenerationEvent> {
+      trace?.generationIds.push('gen-1');
+      yield { type: 'usage', usage: RUN_USAGE };
+      yield { type: 'result', app: RESULT_APP };
+    },
+  };
+  const stats = { 'gen-1': { usage: STATS_USAGE, totalCostUsd: 0.012 } };
+
+  for (const [label, failures] of [['credit always failing', Number.POSITIVE_INFINITY], ['credit failing once', 1]] as const) {
+    const usageStore = new FailingCreditStore(failures);
+    const h = harness({ pipeline, usageStore, resolveTransport: statsTransport(stats).transport });
+    const res = await postGenerate(h.app, PROMPT, DEVICE_A);
+    // A stream that errors is a failed check here, not a rejection that aborts the suite.
+    const read = await within(readSseResponse(res).then((r) => r.events.map((e) => e.data), (err: unknown) => err));
+    check(`${label}: the stream ended without an error`, Array.isArray(read), String(read));
+    const events: GenerationEvent[] = Array.isArray(read) ? read : [];
+    eq(`${label}: the stream carries the usage and then the run's own result`, events.map((e) => e.type), ['usage', 'result']);
+    eq(`${label}: exactly one terminal event`, terminalsIn(events), 1);
+    await drained(label, h.tracker);
+    eq(`${label}: the row settled delivered`, h.usageStore.settlesFor(h.usageStore.admitted[0]).map((r) => r.outcome), ['delivered']);
+    eq(`${label}: the run is still costed`, h.usageStore.costFor(h.usageStore.admitted[0])?.state, 'resolved');
+    if (failures === 1) {
+      eq(`${label}: the uncredited tokens are reconciled from the provider, once`, await h.usageStore.read(DEVICE_A), STATS_USAGE);
+    }
+  }
+}
+
 async function testCostAndReconciliation(): Promise<void> {
   section('Generate: cost resolution and aborted-run reconciliation on the ledger row');
 
@@ -1666,6 +1714,7 @@ export async function runRoutesGenerateTests(): Promise<void> {
   await testErrorExpiryAndDrain();
   await testMidRunCreditExhaustion();
   await testCostAndReconciliation();
+  await testFailedInStreamCredit();
   await testProviderDropIsResentAndMetered();
   await testThrowingStoreSettlesTheLedgerRow();
   await testDataDirectoryHoldsOnlyTheTwoStores();

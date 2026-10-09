@@ -18,6 +18,12 @@ readonly WHIM_REGISTRY_REPO=whim
 readonly WHIM_OPENROUTER_SECRET_ID=whim-openrouter-api-key
 readonly WHIM_RUNBOOK_KEY_SECTION='docs/deploy.md, section "OpenRouter key"'
 
+# whim-server's instance bounds on Cloud Run: scale to zero, and one instance at most, so the in-memory
+# daily ceilings stay one set of counters and an idle service bills nothing. cloudrun/deploy.sh deploys
+# with them, and cloudrun/smoke.sh fails a served revision that runs with any other bounds.
+readonly WHIM_RUN_SERVER_MIN_INSTANCES=0
+readonly WHIM_RUN_SERVER_MAX_INSTANCES=1
+
 # Fixed VM paths (design D21, D24).
 readonly WHIM_VM_APP_DIR=/opt/whim
 readonly WHIM_VM_ETC_DIR=/etc/whim

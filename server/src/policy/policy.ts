@@ -169,7 +169,15 @@ export interface ModelContentPolicyOptions {
   /** `WHIM_POLICY_ATTEMPT_TIMEOUT_MS`: each attempt is bounded by the smaller of this and the
    *  deadline's remaining time. Omitted, an attempt is bounded by the deadline alone. */
   attemptTimeoutMs?: number;
+  /** The clock the deadline and the attempt bounds run on: `performance.now` and
+   *  `AbortSignal.timeout` unless a test steps its own. */
+  clock?: { now(): number; timeout(ms: number): AbortSignal };
 }
+
+const REAL_CLOCK: NonNullable<ModelContentPolicyOptions['clock']> = {
+  now: () => performance.now(),
+  timeout: (ms) => AbortSignal.timeout(ms),
+};
 
 /** At most this many classifier calls per check (spec "A transient classifier failure is retried
  *  once inside the policy deadline"). */
@@ -189,12 +197,17 @@ type AttemptOutcome =
  *  no well-formed verdict — with the request still live and at least `RETRY_FLOOR_MS` of the
  *  deadline left. A verdict, an auth or credit error, and any other request-side failure are final. */
 export class ModelContentPolicy implements ContentPolicy {
-  constructor(private readonly opts: ModelContentPolicyOptions) {}
+  private readonly clock: NonNullable<ModelContentPolicyOptions['clock']>;
+
+  constructor(private readonly opts: ModelContentPolicyOptions) {
+    this.clock = opts.clock ?? REAL_CLOCK;
+  }
 
   async check(input: string, route: PolicyRoute, signal?: AbortSignal, logger?: ServerLogger): Promise<PolicyCheckResult> {
-    const startedAt = performance.now();
-    const deadline = AbortSignal.timeout(this.opts.timeoutMs);
-    const remainingMs = (): number => this.opts.timeoutMs - (performance.now() - startedAt);
+    const clock = this.clock;
+    const startedAt = clock.now();
+    const deadline = clock.timeout(this.opts.timeoutMs);
+    const remainingMs = (): number => this.opts.timeoutMs - (clock.now() - startedAt);
     const calls: PolicyCall[] = [];
     for (let attempt = 1; ; attempt++) {
       const boundMs = Math.min(this.opts.attemptTimeoutMs ?? this.opts.timeoutMs, remainingMs());
@@ -215,7 +228,7 @@ export class ModelContentPolicy implements ContentPolicy {
     signal: AbortSignal | undefined,
     logger: ServerLogger | undefined,
   ): Promise<AttemptOutcome> {
-    const attemptTimer = AbortSignal.timeout(Math.max(1, Math.floor(boundMs)));
+    const attemptTimer = this.clock.timeout(Math.max(1, Math.floor(boundMs)));
     const combined = AbortSignal.any(signal ? [signal, deadline, attemptTimer] : [deadline, attemptTimer]);
     const request: ModelRequest = {
       model: this.opts.rewriteModelId,

@@ -23,7 +23,11 @@ export const CREDIT_MARKS_COLLECTION = 'creditMarks';
 
 ## `FirestoreUsageStore.credit` semantics
 
-One `db.runTransaction(fn, { maxAttempts: ADMISSION_MAX_ATTEMPTS /* 25 */ })`:
+One `db.runTransaction(fn, { maxAttempts: CREDIT_MAX_ATTEMPTS /* 5 */ })`. The budget is small
+because `routes/generate.ts` awaits the credit before the run's terminal event; a failed credit is
+logged there, the terminal still goes out, and the tokens go to reconciliation.
+
+The transaction:
 
 1. `tx.get(creditMarks/{markerId})`; if it exists, return (no writes).
 2. Otherwise `tx.set(usage/{firestoreKey(deviceId)}, { promptTokens, completionTokens,

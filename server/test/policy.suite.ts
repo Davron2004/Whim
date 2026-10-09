@@ -287,8 +287,42 @@ function failingWith(err: unknown): () => ModelStream {
   return () => erroringStream(err);
 }
 
-function retryPolicy(client: ModelClient, timeoutMs: number, attemptTimeoutMs: number): ModelContentPolicy {
-  return new ModelContentPolicy({ modelClient: client, rewriteModelId: REWRITE_MODEL_ID, categories: CATEGORIES, timeoutMs, attemptTimeoutMs });
+function retryPolicy(client: ModelClient, timeoutMs: number, attemptTimeoutMs: number, clock?: SteppedClock): ModelContentPolicy {
+  return new ModelContentPolicy({ modelClient: client, rewriteModelId: REWRITE_MODEL_ID, categories: CATEGORIES, timeoutMs, attemptTimeoutMs, clock });
+}
+
+/** A policy clock that moves only when the test steps it: each `timeout` signal aborts once the
+ *  clock reaches its due time, as `AbortSignal.timeout` would, with no wall-clock margin involved. */
+class SteppedClock {
+  private at = 0;
+  private readonly timers: Array<{ due: number; controller: AbortController }> = [];
+
+  now(): number {
+    return this.at;
+  }
+
+  timeout(ms: number): AbortSignal {
+    const controller = new AbortController();
+    this.timers.push({ due: this.at + ms, controller });
+    return controller.signal;
+  }
+
+  advanceTo(at: number): void {
+    this.at = at;
+    for (const { due, controller } of this.timers) {
+      if (due <= at && !controller.signal.aborted) controller.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+    }
+  }
+}
+
+/** Polls `condition` until it holds or `ms` of real time pass; answers whether it held. */
+async function eventually(condition: () => boolean, ms = 2000): Promise<boolean> {
+  const stopAt = Date.now() + ms;
+  while (!condition()) {
+    if (Date.now() > stopAt) return false;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  return true;
 }
 
 async function testBoundedRetry(): Promise<void> {
@@ -322,22 +356,29 @@ async function testBoundedRetry(): Promise<void> {
   }
 
   // Two hung attempts fail closed, and the second is cut to what is left of the deadline: 1500 ms,
-  // then the remaining ~1100 ms rather than another 1500.
+  // then the remaining 1100 ms rather than another 1500. On a stepped clock, so the check must be
+  // over once the clock reaches the deadline (2600), never only at a full second bound (3000).
   {
+    const clock = new SteppedClock();
     const client = plannedClient([hangingWithId('gen-hung-1'), hangingWithId('gen-hung-2')]);
     const capture = captureLogs();
-    const startedAt = performance.now();
     let outcome;
     try {
-      outcome = await settledWithin(cachedPolicy(retryPolicy(client, 2600, 1500)).check('hung twice', 'generate'), 5000);
+      const checking = cachedPolicy(retryPolicy(client, 2600, 1500, clock)).check('hung twice', 'generate');
+      clock.advanceTo(1500);
+      check('two timeouts: the first attempt\'s bound starts the second attempt', await eventually(() => client.signals.length === 2));
+      clock.advanceTo(2600);
+      // Settles on microtasks alone once the clock is at the deadline; the real-time cap only names a
+      // check that did not.
+      outcome = await settledWithin(checking, 4000);
     } finally {
       capture.stop();
     }
-    const elapsedMs = performance.now() - startedAt;
     const error = outcome !== NO_ANSWER && 'error' in outcome ? outcome.error : undefined;
+    check('two timeouts: answered by the deadline, not a full attempt bound past it', outcome !== NO_ANSWER, 'still pending with the clock at the deadline');
     check('two timeouts: fails closed with PolicyUnavailableError', error instanceof PolicyUnavailableError, String(error));
     eq('two timeouts: exactly two classifier calls', client.signals.length, 2);
-    check('two timeouts: answered by the deadline, not a full attempt bound past it', elapsedMs < 2600 + 250, `${Math.round(elapsedMs)} ms`);
+    check('two timeouts: the second call was cancelled at the deadline', client.signals[1]?.aborted === true);
     eq('two timeouts: both calls\' ids are carried for reconciliation', error instanceof PolicyUnavailableError ? error.calls : undefined, [{ generationId: 'gen-hung-1' }, { generationId: 'gen-hung-2' }]);
     eq('two timeouts: the log record says unavailable after 2 attempts', withMessage(capture, 'content policy check').map((r) => [r.verdict, r.attempts]), [['unavailable', 2]]);
   }
