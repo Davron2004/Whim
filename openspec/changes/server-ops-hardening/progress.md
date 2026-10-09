@@ -1,1 +1,2 @@
 - 2026-10-09 chain-1 merged (81c2e946): red-checks discriminate — plain merge set and transaction-without-marker both double-count (203 vs 103); marker version passes; firestore suite 44/44 from the worktree (per-run ports work).
+- 2026-10-09 chain-5 merged (ec41f9b6): emulator-proven guards (refuse (default)/deployed/unprefixed db, cap ≤ 50k counted before send, delete in finally incl. SIGTERM, leftover-db check), 5 weakened-variant red-checks; real run left to the orchestrator (7.3).

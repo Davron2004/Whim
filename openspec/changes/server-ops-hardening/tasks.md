@@ -76,23 +76,23 @@ Constraints for every task: no `CONFIG_SET` file (`package.json`, lockfile, `scr
 
 ## 5. Firestore admission load test (#143)
 
-- [ ] 5.1 Add the harness under `server/test/` (test code, never bundled into production), per design D7:
+- [x] 5.1 Add the harness under `server/test/` (test code, never bundled into production), per design D7:
   - drive N concurrent `FirestoreUsageStore.admit` calls in two profiles, `generate`, and a clarify+rewrite mix under the shared unary ceiling;
   - count transaction attempts by wrapping `runTransaction`'s update function;
   - output JSON with p50/p99 latency, an attempts histogram, the exhausted count, and admitted versus expected.
-- [ ] 5.2 Add `deploy/loadtest/firestore-admission.sh`.
+- [x] 5.2 Add `deploy/loadtest/firestore-admission.sh`.
   - Default: the emulator via the pinned `firebase-tools` `emulators:exec` command form used by `stores:firestore:test`.
   - `--database whim-loadtest-<suffix> --confirm-spend` runs against real Firestore with ADC, and the script:
     - refuses `(default)`, the deployed `WHIM_FIRESTORE_DATABASE`, and unprefixed names before creating any client;
     - enforces the operation cap (default 5,000, ceiling 20,000) and prints the estimated cost first;
     - creates the database in `WHIM_GCP_REGION` and deletes it in an `EXIT` trap.
   - The script never contacts a deployed server.
-- [ ] 5.3 Add the small-burst correctness case to `firestore-conformance.ts`: 50 concurrent admits for a global limit of 20 admit exactly 20, and none exhausts its retries.
-- [ ] 5.4 Extend `server/test/loadtest.suite.ts` with the script's guard cases, using a fake `gcloud`:
+- [x] 5.3 Add the small-burst correctness case to `firestore-conformance.ts`: 50 concurrent admits for a global limit of 20 admit exactly 20, and none exhausts its retries.
+- [x] 5.4 Extend `server/test/loadtest.suite.ts` with the script's guard cases, using a fake `gcloud`:
   - reserved and production names are refused before any `gcloud firestore databases create`;
   - a cap above the ceiling is refused;
   - a failing run still calls `gcloud firestore databases delete`.
-- [ ] 5.5 Write `handoff/firestore-admission-loadtest.md`: the CLI, the report fields, the cap and cost estimate, and how to read contention from the report.
+- [x] 5.5 Write `handoff/firestore-admission-loadtest.md`: the CLI, the report fields, the cap and cost estimate, and how to read contention from the report.
 
 ## 6. Runbook, decision, capability map
 
