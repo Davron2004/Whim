@@ -1,0 +1,1 @@
+- 2026-10-09 chain-1 merged (81c2e946): red-checks discriminate — plain merge set and transaction-without-marker both double-count (203 vs 103); marker version passes; firestore suite 44/44 from the worktree (per-run ports work).

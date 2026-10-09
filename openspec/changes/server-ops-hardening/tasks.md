@@ -2,16 +2,16 @@ Constraints for every task: no `CONFIG_SET` file (`package.json`, lockfile, `scr
 
 ## 1. Idempotent Firestore credit (#145)
 
-- [ ] 1.1 Extend the lost-reply harness in `server/test/firestore-conformance.ts` so that, for the duration of one case, it also replays plain commits (`WriteBatch.prototype.commit`, restored in `finally`) as well as `runTransaction`, and counts the replays it made.
+- [x] 1.1 Extend the lost-reply harness in `server/test/firestore-conformance.ts` so that, for the duration of one case, it also replays plain commits (`WriteBatch.prototype.commit`, restored in `finally`) as well as `runTransaction`, and counts the replays it made.
   - Add the case "a credit whose commit reply is lost counts once", which asserts that the replay count is greater than 0 and that `totalTokens` grew by exactly the credited amount.
   - Red-check it against today's `credit`, and against a weaker variant that increments inside a transaction without a marker. Both must fail. Record both red runs in the chain report.
-- [ ] 1.2 Rewrite `FirestoreUsageStore.credit` per design D1.
+- [x] 1.2 Rewrite `FirestoreUsageStore.credit` per design D1.
   - Mint the marker id once per call, outside the transaction function.
   - Run `runTransaction` with `ADMISSION_MAX_ATTEMPTS`.
   - Read `creditMarks/{markerId}`. When it is absent, increment the totals, stamp `lastCreditedDay`, and create the marker as `{ utcDay }`.
   - Keep the `UsageStore.credit` signature and every call site unchanged.
-- [ ] 1.3 Add marker purging to the Firestore ledger purge path, which both the in-process hourly purge and `whim-admin purge` run. Delete markers whose `utcDay` is before the previous UTC day. Add a conformance case for that cutoff, and confirm that `firestore-index-coverage.ts` reports no missing index.
-- [ ] 1.4 Confirm that the existing `creditIncrements` cases (including five concurrent credits) and every other conformance case pass on in-memory, SQLite and the emulator. Run `scripts/gate.sh`, plus `npm run -s stores:firestore:test` from the main tree.
+- [x] 1.3 Add marker purging to the Firestore ledger purge path, which both the in-process hourly purge and `whim-admin purge` run. Delete markers whose `utcDay` is before the previous UTC day. Add a conformance case for that cutoff, and confirm that `firestore-index-coverage.ts` reports no missing index.
+- [x] 1.4 Confirm that the existing `creditIncrements` cases (including five concurrent credits) and every other conformance case pass on in-memory, SQLite and the emulator. Run `scripts/gate.sh`, plus `npm run -s stores:firestore:test` from the main tree.
 
 ## 2. Classifier retry and line-check metering (#119, #120)
 
