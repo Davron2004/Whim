@@ -24,9 +24,9 @@ Admitting, settling or limiting this row SHALL NOT spend or refund a `generate` 
 - **WHEN** a generation waiting in line gets no verdict from the classifier
 - **THEN** the response is `503 policy_unavailable`, a `policy-check` row with outcome `unavailable` and reason `policy_unavailable` carries the classifier's tokens, and no `generate` row exists for the request
 
-#### Scenario: A refusal in line spends a check unit, not a generation
+#### Scenario: A refusal in line spends a check unit and a generation unit
 - **WHEN** a generation waiting in line is refused by the content policy
-- **THEN** its `policy-check` row has outcome `refused`, and no `generate` unit was spent or refunded
+- **THEN** its `policy-check` row has outcome `refused` with the check's tokens and cost, and a `generate` row is settled `refused` / `content_policy` with cost 0 and is not refunded — the same generation-unit cost as a refusal on a free slot (product-owner ruling 3)
 
 #### Scenario: The free-slot path is unchanged
 - **WHEN** a generation takes a free slot at once and its policy check allows it

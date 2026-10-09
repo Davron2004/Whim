@@ -15,18 +15,18 @@ Constraints for every task: no `CONFIG_SET` file (`package.json`, lockfile, `scr
 
 ## 2. Classifier retry and line-check metering (#119, #120)
 
-- [ ] 2.1 `server/src/policy/policy.ts` and `config.ts`: add `WHIM_POLICY_ATTEMPT_TIMEOUT_MS` (default 4500, validated as an integer between 500 and `WHIM_POLICY_TIMEOUT_MS`). Implement design D2:
+- [x] 2.1 `server/src/policy/policy.ts` and `config.ts`: add `WHIM_POLICY_ATTEMPT_TIMEOUT_MS` (default 4500, validated as an integer between 500 and `WHIM_POLICY_TIMEOUT_MS`). Implement design D2:
   - one overall deadline;
   - at most two attempts;
   - retry only on unable-to-verdict results, with at least 1000 ms left and no request abort;
   - never retry auth errors, `allow` or `refuse`;
   - both attempts' usage and generation ids are carried to the caller;
   - the `content policy check` log line gains `attempts`.
-- [ ] 2.2 Extend `policy.suite.ts` with the four content-policy scenarios: hung first attempt then allow; two timeouts fail closed within the deadline; refusal not retried; aborted request not retried. Use a scripted client and an injected clock or short timeouts, never a fixed tick budget. Red-check the "hung first attempt" case against today's single-attempt code.
-- [ ] 2.3 Add `RequestKind` `policy-check`, plus `WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY` (30) and `WHIM_LIMIT_POLICY_CHECKS_PER_DAY` (800) in `config.ts`. Make every store, the usage `summary` and report, and the operator usage report accept the new kind, grouping a `<id>:policy-check` row with its request. Extend the store conformance cases so the new kind admits, limits and purges identically on in-memory, SQLite and Firestore.
-- [ ] 2.4 `server/src/routes/generate.ts` line path, per design D3: after the existing credit check and `generate` `unitAvailable`, admit `<requestId>:policy-check`, refusing with `429 daily_limit` on a device or global limit. Then run `checkPolicy`, settle the row (`ok` / `refused`+`content_policy` / `unavailable`+`policy_unavailable`), and resolve the row's cost through `resolveRequestUsage`. Never refund the row. Replace `recordLineRefusal`'s admit-then-refund of a `generate` row. Leave the free-slot path and the unary routes unchanged.
-- [ ] 2.5 Extend `routes-generate.suite.ts` and `admission.suite.ts` with the five server-admission-control scenarios: join-and-abort loop bounded; fresh ids bounded globally; unavailable in line leaves a row with tokens; refusal in line spends a check unit only; free-slot path unchanged. Each case must also assert exactly one terminal event per opened stream. Red-check the loop case against today's code.
-- [ ] 2.6 Write `handoff/policy-bounds.md`: the new env names, defaults and validation; the `policy-check` kind and row-id rule; the new log field; and confirmation that an older image's `summary` tolerates the unknown kind (or what it does instead).
+- [x] 2.2 Extend `policy.suite.ts` with the four content-policy scenarios: hung first attempt then allow; two timeouts fail closed within the deadline; refusal not retried; aborted request not retried. Use a scripted client and an injected clock or short timeouts, never a fixed tick budget. Red-check the "hung first attempt" case against today's single-attempt code.
+- [x] 2.3 Add `RequestKind` `policy-check`, plus `WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY` (30) and `WHIM_LIMIT_POLICY_CHECKS_PER_DAY` (800) in `config.ts`. Make every store, the usage `summary` and report, and the operator usage report accept the new kind, grouping a `<id>:policy-check` row with its request. Extend the store conformance cases so the new kind admits, limits and purges identically on in-memory, SQLite and Firestore.
+- [x] 2.4 `server/src/routes/generate.ts` line path, per design D3: after the existing credit check and `generate` `unitAvailable`, admit `<requestId>:policy-check`, refusing with `429 daily_limit` on a device or global limit. Then run `checkPolicy`, settle the row (`ok` / `refused`+`content_policy` / `unavailable`+`policy_unavailable`), and resolve the row's cost through `resolveRequestUsage`. Never refund the row. Replace `recordLineRefusal`'s admit-then-refund of a `generate` row. Leave the free-slot path and the unary routes unchanged.
+- [x] 2.5 Extend `routes-generate.suite.ts` and `admission.suite.ts` with the five server-admission-control scenarios: join-and-abort loop bounded; fresh ids bounded globally; unavailable in line leaves a row with tokens; refusal in line spends a check unit only; free-slot path unchanged. Each case must also assert exactly one terminal event per opened stream. Red-check the loop case against today's code.
+- [x] 2.6 Write `handoff/policy-bounds.md`: the new env names, defaults and validation; the `policy-check` kind and row-id rule; the new log field; and confirmation that an older image's `summary` tolerates the unknown kind (or what it does instead).
 
 ## 3. Browser launch resilience (#139)
 
@@ -105,6 +105,7 @@ Constraints for every task: no `CONFIG_SET` file (`package.json`, lockfile, `scr
   - credit markers (`creditMarks`, purge cutoff);
   - the Firestore admission load test (emulator default, the throwaway-database rules, how to read the report);
   - a note that the capacity table's caps are the VM's, carried over unmeasured on Cloud Run (#134).
+- [ ] 6.3a Record in the decision entry and `docs/deploy.md` that a refusal in line writes a `policy-check` row AND a non-refunded `generate` row (ruling 3), and make the usage summary's `failureReasonCounts` count that refusal once (attribute `content_policy` to the `generate` row only), with a test that fails on the double count.
 - [ ] 6.3 Append the next-numbered entry to `docs/decisions.md`, covering D1, D3 and D4 plus #134's exclusion. Update the `server-deployment` and `server-admission-control` rows in `docs/capabilities.md`.
 
 ## 7. Rollout and verification (orchestrator, attended, after merge)
