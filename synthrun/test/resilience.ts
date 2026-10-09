@@ -9,11 +9,14 @@
  *
  * Called from `acceptance.ts` with that suite's own `test`/`ok` helpers.
  */
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { chromium, type BrowserContext, type LaunchOptions, type Page } from 'playwright';
 import { createSemaphore } from '../concurrency';
 import type { RunReport, Semaphore } from '../contract';
 import { createRunCandidate } from '../report';
-import { browserLaunchOptions, SessionError, SynthRunSession } from '../session';
+import { browserLaunchOptions, SessionError, SynthRunSession, type LaunchFailure } from '../session';
 import nodeAssert from 'node:assert';
 import { recordAssertion, test } from './harness';
 import { hasSwitch, processArgs, SANDBOX_DISABLING_SWITCHES } from './isolation';
@@ -93,28 +96,45 @@ function countingSemaphore(maxConcurrent: number): { semaphore: Semaphore; grant
   return record;
 }
 
-/** Records every `chromium.launch` call the session makes, optionally failing the next one. */
-function spyOnLaunch(): { calls: LaunchOptions[]; failNext(): void; restore(): void } {
+/** How a spied launch fails: `crash` hands Playwright an executable that kills itself with SIGKILL,
+ *  so the rejection is Playwright's own for a browser process that died at launch; `error` rejects
+ *  with a plain error naming no signal. */
+type LaunchFault = 'crash' | 'error';
+
+/** Records every `chromium.launch` call the session makes, failing the next calls as queued. */
+async function spyOnLaunch(): Promise<{ calls: LaunchOptions[]; failNext(...faults: LaunchFault[]): void; restore(): Promise<void> }> {
   const original = chromium.launch;
   const calls: LaunchOptions[] = [];
-  let failing = false;
+  const faults: LaunchFault[] = [];
+  const dir = await mkdtemp(path.join(tmpdir(), 'whim-launch-crash-'));
+  const crashing = path.join(dir, 'crash.sh');
+  await writeFile(crashing, '#!/bin/sh\nkill -KILL $$\n', 'utf8');
+  await chmod(crashing, 0o755);
   chromium.launch = (options?: LaunchOptions) => {
     calls.push(options ?? {});
-    if (failing) {
-      failing = false;
-      return Promise.reject(new Error('simulated launch failure'));
-    }
+    const fault = faults.shift();
+    if (fault === 'crash') return original.call(chromium, { ...options, executablePath: crashing });
+    if (fault === 'error') return Promise.reject(new Error('simulated launch failure'));
     return original.call(chromium, options);
   };
   return {
     calls,
-    failNext: () => {
-      failing = true;
+    failNext: (...next: LaunchFault[]) => {
+      faults.push(...next);
     },
-    restore: () => {
+    restore: async () => {
       chromium.launch = original;
+      await rm(dir, { recursive: true, force: true });
     },
   };
+}
+
+/** Every recorded launch carried exactly the production options, sandbox on. */
+function assertProductionOptions(calls: LaunchOptions[], what: string): void {
+  calls.forEach((options, i) => {
+    recordAssertion(() => nodeAssert.deepStrictEqual(options, browserLaunchOptions()), `${what}: attempt ${i + 1} used browserLaunchOptions() unchanged`);
+    ok(options.chromiumSandbox === true, `${what}: attempt ${i + 1} launched with the OS sandbox on`);
+  });
 }
 
 function isSessionError(outcome: Settled<unknown>, name: SessionError['name']): boolean {
@@ -145,8 +165,75 @@ export async function testResilience(): Promise<void> {
   await testSemaphore();
   await testAbortWhileQueued();
   await testAbortDuringMount();
+  await testLaunchRetry();
   await testCrashRecovery();
   await testFailedRelaunch();
+}
+
+/** A session started with a spied launch and a recorder for its reported launch failures. */
+async function launchRecorded(launches: Awaited<ReturnType<typeof spyOnLaunch>>): Promise<{ session: Settled<SynthRunSession>; failures: LaunchFailure[] }> {
+  const failures: LaunchFailure[] = [];
+  const session = await within(
+    settle(SynthRunSession.launch({ concurrency: 1, onLaunchFailure: (failure) => failures.push(failure) })),
+    60000,
+    'the session launch',
+  );
+  ok(launches.calls.length > 0, 'precondition: the spy saw the session launch');
+  return { session, failures };
+}
+
+async function testLaunchRetry(): Promise<void> {
+  await test('launch: a browser that dies at launch is relaunched with the same options, and the session serves (spec "One launch crash does not cost the instance")', async () => {
+    const launches = await spyOnLaunch();
+    launches.failNext('crash');
+    const { session, failures } = await launchRecorded(launches);
+    try {
+      ok(session.ok, `the session launched despite the crash (got ${describe(session)})`);
+      ok(launches.calls.length === 2, `the browser was launched twice (got ${launches.calls.length})`);
+      recordAssertion(() => nodeAssert.deepStrictEqual(failures, [{ attempt: 1, signal: 'SIGKILL' }]), `one failed attempt is reported, with its signal and nothing else (got ${JSON.stringify(failures)})`);
+      assertProductionOptions(launches.calls, 'one crash');
+      if (session.ok) {
+        const report = await within(settle(createRunCandidate(session.value)(HARMLESS)), 60000, 'a run on the relaunched browser');
+        ok(report.ok && report.value.contained === true, `a run completes on the second browser (got ${report.ok ? JSON.stringify(report.value.diagnostics) : describe(report)})`);
+      }
+    } finally {
+      await launches.restore();
+      if (session.ok) await session.value.close();
+    }
+  });
+
+  await test('launch: two failed attempts then a good one start the session, each failure reported once', async () => {
+    const launches = await spyOnLaunch();
+    launches.failNext('crash', 'error');
+    const { session, failures } = await launchRecorded(launches);
+    try {
+      ok(session.ok, `the third attempt started the session (got ${describe(session)})`);
+      ok(launches.calls.length === 3, `three launches were made (got ${launches.calls.length})`);
+      recordAssertion(
+        () => nodeAssert.deepStrictEqual(failures, [{ attempt: 1, signal: 'SIGKILL' }, { attempt: 2, error: 'simulated launch failure' }]),
+        `the crash is reported by its signal and the other failure by its error (got ${JSON.stringify(failures)})`,
+      );
+      assertProductionOptions(launches.calls, 'two failures');
+    } finally {
+      await launches.restore();
+      if (session.ok) await session.value.close();
+    }
+  });
+
+  await test('launch: a browser that fails every attempt fails the session with browser_launch_failed after three, all with the production options (spec "Retries never weaken the browser")', async () => {
+    const launches = await spyOnLaunch();
+    launches.failNext('crash', 'crash', 'crash', 'crash');
+    const { session, failures } = await launchRecorded(launches);
+    try {
+      ok(isSessionError(session, 'browser_launch_failed'), `the session launch rejects with browser_launch_failed (got ${describe(session)})`);
+      ok(launches.calls.length === 3, `exactly three attempts were made (got ${launches.calls.length})`);
+      ok(failures.map((f) => f.attempt).join() === '1,2,3', `each attempt's failure is reported in order (got ${JSON.stringify(failures)})`);
+      assertProductionOptions(launches.calls, 'three failures');
+    } finally {
+      await launches.restore();
+      if (session.ok) await session.value.close();
+    }
+  });
 }
 
 async function testSemaphore(): Promise<void> {
@@ -288,7 +375,7 @@ async function testCrashRecovery(): Promise<void> {
   await test('crash: killing the browser mid-run ends that run with browser_disconnected, and the next run completes on a fresh sandboxed browser (spec "Runs recover after the browser dies")', async () => {
     const counted = countingSemaphore(1);
     const session = await SynthRunSession.launch({ semaphore: counted.semaphore });
-    const launches = spyOnLaunch();
+    const launches = await spyOnLaunch();
     try {
       const runCandidate = createRunCandidate(session);
       const pidBefore = await session.browserProcessId();
@@ -313,34 +400,48 @@ async function testCrashRecovery(): Promise<void> {
       for (const name of SANDBOX_DISABLING_SWITCHES) ok(!hasSwitch(args, name), `the replacement browser was not started with ${name}`);
       ok(args.includes('--proxy-server=http://127.0.0.1:9') && hasSwitch(args, '--host-resolver-rules'), 'the replacement carries the dead proxy and the resolver rule');
     } finally {
-      launches.restore();
+      await launches.restore();
       await session.close();
     }
   });
 }
 
 async function testFailedRelaunch(): Promise<void> {
-  await test('crash: a failed relaunch fails only the run that needed it, and later runs share one retried launch', async () => {
-    const session = await SynthRunSession.launch({ concurrency: 2 });
-    const launches = spyOnLaunch();
+  await test('crash: a relaunch retries like boot, a relaunch failing every attempt fails only the run that needed it, and later runs share one launch', async () => {
+    const failures: LaunchFailure[] = [];
+    const session = await SynthRunSession.launch({ concurrency: 2, onLaunchFailure: (failure) => failures.push(failure) });
+    const launches = await spyOnLaunch();
     try {
       const runCandidate = createRunCandidate(session);
-      const inProgress = await startHangingRun(runCandidate);
-      process.kill(await session.browserProcessId(), 'SIGKILL');
-      const crashed = await within(inProgress.outcome, MOUNT_BUDGET_MS + 15000, 'the run on the killed browser');
-      ok(isSessionError(crashed, 'browser_disconnected'), `precondition: the session saw the crash (got ${describe(crashed)})`);
+      const crash = async (): Promise<void> => {
+        const inProgress = await startHangingRun(runCandidate);
+        process.kill(await session.browserProcessId(), 'SIGKILL');
+        const crashed = await within(inProgress.outcome, MOUNT_BUDGET_MS + 15000, 'the run on the killed browser');
+        ok(isSessionError(crashed, 'browser_disconnected'), `precondition: the session saw the crash (got ${describe(crashed)})`);
+      };
 
-      launches.failNext();
+      await crash();
+      launches.failNext('crash');
+      const recovered = await within(settle(runCandidate(HARMLESS)), 60000, 'the run whose relaunch crashes once');
+      ok(recovered.ok && recovered.value.contained === true, `a relaunch that crashes once is retried and the run completes (got ${recovered.ok ? JSON.stringify(recovered.value.diagnostics) : describe(recovered)})`);
+      ok(launches.calls.length === 2, `the relaunch took two attempts (got ${launches.calls.length})`);
+      recordAssertion(() => nodeAssert.deepStrictEqual(failures, [{ attempt: 1, signal: 'SIGKILL' }]), `the relaunch's failed attempt is reported (got ${JSON.stringify(failures)})`);
+
+      await crash();
+      launches.failNext('error', 'error', 'error');
       const failed = await within(settle(runCandidate(HARMLESS)), 30000, 'the run whose relaunch fails');
       ok(isSessionError(failed, 'browser_launch_failed'), `the run that needed the browser ends with browser_launch_failed (got ${describe(failed)})`);
       ok(!failed.ok && failed.error.message.includes('simulated launch failure'), 'the error carries the launch failure');
+      ok(launches.calls.length === 5, `the failing relaunch made three attempts (launches ${launches.calls.length})`);
+      ok(failures.map((f) => f.attempt).join() === '1,1,2,3', `each failed relaunch attempt is reported (got ${JSON.stringify(failures)})`);
       ok(session.openContextCount() === 0, 'nothing is left open');
 
       const [a, b] = await within(Promise.all([settle(runCandidate(HARMLESS)), settle(runCandidate(HARMLESS))]), 60000, 'two runs after the failed relaunch');
       ok(a.ok && a.value.contained === true && b.ok && b.value.contained === true, `both later runs complete normally (got ${describe(a)}, ${describe(b)})`);
-      ok(launches.calls.length === 2, `the session retried once, and the two concurrent runs shared that launch (launches ${launches.calls.length})`);
+      ok(launches.calls.length === 6, `the session launched once more, and the two concurrent runs shared that launch (launches ${launches.calls.length})`);
+      assertProductionOptions(launches.calls, 'relaunches');
     } finally {
-      launches.restore();
+      await launches.restore();
       await session.close();
     }
   });
