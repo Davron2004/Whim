@@ -1,0 +1,114 @@
+# The pages host on Cloud Run (deploy/cloudrun/deploy.sh): the published static site and nothing
+# else, the same route table as the pages site in deploy/Caddyfile. Cloud Run terminates TLS and maps
+# the custom domain to this service, so Caddy serves plain HTTP on the port Cloud Run injects. Routes
+# rewrite internally to flat files, so no answer is a redirect (Apple and Android refuse an
+# association file behind one). Keep the handles below in step with deploy/Caddyfile.
+{
+	auto_https off
+	admin off
+	log default {
+		format filter {
+			wrap json
+			fields {
+				request>headers delete
+				request>remote_ip delete
+				request>remote_port delete
+				request>client_ip delete
+				resp_headers delete
+			}
+		}
+	}
+}
+
+:{$PORT:8080} {
+	root * /srv/site
+	header {
+		Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'"
+		X-Content-Type-Options nosniff
+	}
+
+	handle /.well-known/apple-app-site-association {
+		header Content-Type application/json
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /.well-known/assetlinks.json {
+		header Content-Type application/json
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /privacy {
+		rewrite * /privacy.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /privacy/v1 {
+		rewrite * /privacy-v1.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /terms {
+		rewrite * /terms.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /fr/privacy {
+		rewrite * /fr/privacy.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /fr/terms {
+		rewrite * /fr/terms.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /support {
+		rewrite * /support.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /beta {
+		rewrite * /beta.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /beta/thanks {
+		rewrite * /beta-thanks.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /beta/retry {
+		rewrite * /beta-retry.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /assets/* {
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /a/* {
+		rewrite * /app-link.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle {
+		rewrite * /not-found.html
+		file_server {
+			status 404
+			disable_canonical_uris
+		}
+	}
+}
