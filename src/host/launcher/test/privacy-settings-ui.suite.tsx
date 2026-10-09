@@ -25,7 +25,7 @@ import { RELEASE, TERMS_VERSION } from '../release-config';
 import { loadServerUrl, saveServerUrl } from '../server-address';
 import { StoreAccess } from '../store-access';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
-import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen } from './react-screen';
+import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 import { buildIt, composeAndContinue, json, planLoaded, sseStream, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { Alert } from './native-host';
 import { testAppInfo } from './client-fixtures';
@@ -73,13 +73,13 @@ async function leaveSettings(tree: Tree): Promise<void> {
 
 /** The ID Settings shows: the one selectable text on the screen. */
 function shownDeviceId(tree: Tree): string {
-  const selectable = tree.root.findAll((node) => node.type === 'Text' && node.props.selectable === true);
+  const selectable = tree.root.findAll((node) => hostType(node) === 'Text' && node.props.selectable === true);
   if (selectable.length !== 1) throw new Error(`expected one selectable text, got ${selectable.length}`);
   return textOf(selectable[0]);
 }
 
 function errorDetailsSwitch(tree: Tree): TestRenderer.ReactTestInstance {
-  return tree.root.find((node) => node.type === 'Switch' && node.props.accessibilityLabel === COPY.settingsErrorDetailsTitle);
+  return tree.root.find((node) => hostType(node) === 'Switch' && node.props.accessibilityLabel === COPY.settingsErrorDetailsTitle);
 }
 
 /** Opens the confirm step: the launcher's own confirm sheet, never a system alert. Returns what the
@@ -102,7 +102,7 @@ const ownServer = (r: SentRequest): Response | Promise<Response> => {
   return sseStream(r.signal).response;
 };
 
-const addressFields = (tree: Tree) => tree.root.findAll((node) => node.type === 'TextInput');
+const addressFields = (tree: Tree) => tree.root.findAll((node) => hostType(node) === 'TextInput');
 
 async function openAdvanced(tree: Tree): Promise<void> {
   await press(button(tree, COPY.settingsAdvancedSectionTitle));
@@ -256,7 +256,7 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
       await openSettings(tree);
       const sheet = await openMakeNewId(tree);
       h.ok(sheet.modal.props.statusBarTranslucent === true && sheet.modal.props.navigationBarTranslucent === true, 'the dim uses the modal window through both system bars');
-      const cards = sheet.modal.findAll((node) => node.type === 'View' && (flatStyle(node).paddingBottom ?? 0) > 30);
+      const cards = sheet.modal.findAll((node) => hostType(node) === 'View' && (flatStyle(node).paddingBottom ?? 0) > 30);
       h.eq(cards.length, 1, 'the card leaves room below its last control for the bottom safe area');
     });
   });

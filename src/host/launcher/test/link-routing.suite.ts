@@ -42,7 +42,7 @@ export async function runLinkRoutingTests(h: Harness): Promise<void> {
   await h.test('link-routing: an id matching a failed record resolves to failed', () => {
     const pending = new PendingBuildStore(new MapKVBackend());
     pending.create({ id: 'app-1', prompt: 'a tip splitter', workingTitle: 'a tip splitter' });
-    pending.setFailed('app-1', { reason: 'stopped', diagnostics: [] });
+    pending.setFailed('app-1', { reason: 'stopped' });
     const resolution = resolveAppLink('app-1', [], pending.list());
     h.eq(resolution.kind, 'failed', 'a failed record resolves to failed');
   });

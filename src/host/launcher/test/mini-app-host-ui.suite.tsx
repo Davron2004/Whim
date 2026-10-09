@@ -20,7 +20,7 @@ import { log } from '../../logging';
 import { finishAnimations, injectedScripts, StyleSheet } from './native-host';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { closedDatabases, resetNativeStorage } from './native-storage';
-import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 import { grantedOptions } from './client-fixtures';
 
 type Tree = TestRenderer.ReactTestRenderer;
@@ -61,7 +61,7 @@ async function withMiniApp(record: AppRecord, body: (m: Mounted) => Promise<void
       legalLanguage="en"
     />,
   );
-  const webView = () => tree.root.findAll((n) => n.type === 'WebView')[0];
+  const webView = () => tree.root.findAll((n) => hostType(n) === 'WebView')[0];
   try {
     await body({
       tree,
@@ -339,7 +339,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await loadEnd();
       await press(button(tree, COPY.orbMenuOpenLabel));
       await TestRenderer.act(async () => { finishAnimations(); });
-      const home = tree.root.findAll((n) => n.type === 'Pressable' && textOf(n).endsWith(COPY.orbActionHome));
+      const home = tree.root.findAll((n) => hostType(n) === 'Pressable' && textOf(n).endsWith(COPY.orbActionHome));
       await press(home[0]);
       h.eq(exits(), 1, 'Home leaves the app');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'and no deadline outlives it');

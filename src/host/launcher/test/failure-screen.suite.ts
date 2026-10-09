@@ -96,7 +96,7 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
       h.eq([calls.back, dismissed], [1, 0], 'the Back button only leaves');
       await press(button(tree, COPY.failureDismiss));
       h.eq([calls.back, dismissed], [1, 1], 'the Discard button deletes');
-      h.ok(!/back to your apps/i.test(COPY.failureDismiss) && COPY.failureDismiss !== COPY.failureBack, 'and is not labelled as navigation');
+      h.ok(!/back to your apps/i.test(COPY.failureDismiss) && new Set<string>([COPY.failureDismiss, COPY.failureBack]).size === 2, 'and is not labelled as navigation');
       hardwareBack();
       h.eq([calls.back, dismissed], [2, 1], 'system back performs Back, never Discard');
     });

@@ -21,7 +21,7 @@ import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
 import { reportClientOptions } from '../transport-shared';
 import { AI_CONSENT_VERSION } from '../release-config';
-import { button, press, textOf, unmountScreen } from './react-screen';
+import { button, press, textOf, unmountScreen, hostType } from './react-screen';
 import { testAppInfo } from './client-fixtures';
 import { Keyboard, Platform, StyleSheet, useSafeAreaInsets, type KeyboardListener } from './native-host';
 
@@ -71,7 +71,7 @@ interface Geometry {
 
 // Native layout can finish after its JS onLayout notification. Advance frames explicitly so
 // tests can place the native commit between the notification and a reveal measurement.
-const revealFrames = new Map<number, FrameRequestCallback>();
+const revealFrames = new Map<number, (time: number) => void>();
 function flushRevealFrames(): void {
   const pending = [...revealFrames.values()];
   revealFrames.clear();
@@ -90,7 +90,7 @@ async function on(device: Device, element: React.ReactElement, body: (m: Mounted
   const animationFrames = { request: globalThis.requestAnimationFrame, cancel: globalThis.cancelAnimationFrame };
   let frameId = 0;
   globalThis.requestAnimationFrame = (callback) => { revealFrames.set(++frameId, callback); return frameId; };
-  globalThis.cancelAnimationFrame = (id) => { revealFrames.delete(id); };
+  globalThis.cancelAnimationFrame = (id) => { if (typeof id === 'number') revealFrames.delete(id); };
   Platform.OS = device.os;
   Platform.Version = device.version;
   Keyboard.visible = false;
@@ -534,7 +534,7 @@ const drawn = (line: Node) => flat(line).backgroundColor === SHELL_PALETTE.cardB
 
 /** The host view `node` sits in. */
 function hostParent(node: Node): Node | null {
-  for (let at: Node | null = node.parent; at; at = at.parent) if (typeof at.type === 'string') return at;
+  for (let at: Node | null = node.parent; at; at = at.parent) if (typeof hostType(at) === 'string') return at;
   return null;
 }
 

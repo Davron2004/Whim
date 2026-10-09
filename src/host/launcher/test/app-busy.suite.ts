@@ -26,7 +26,7 @@ import { AppBusy, isAppBusy, runAppOp } from '../app-busy';
 import type { AppBusyMap } from '../app-busy';
 import { StyleSheet } from './native-host';
 import { resetNativeStorage } from './native-storage';
-import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 
 /** A promise the test resolves/rejects by hand, so an in-flight operation can be inspected. */
 function deferred(): { promise: Promise<void>; resolve: () => void; reject: (e: Error) => void } {
@@ -164,12 +164,12 @@ export async function runAppBusyTests(h: Harness): Promise<void> {
     StoreAccess.prototype.fork = async function () { forks++; await gate.promise; return { ...app, id: 'timer-copy' }; } as typeof originalFork;
     const tree = await renderScreen(React.createElement(LauncherRoot));
     try {
-      const tile = () => tree.root.find((n) => n.type === 'TouchableOpacity' && typeof n.props.onLongPress === 'function' && textOf(n).includes('Timer'));
+      const tile = () => tree.root.find((n) => hostType(n) === 'TouchableOpacity' && typeof n.props.onLongPress === 'function' && textOf(n).includes('Timer'));
       await TestRenderer.act(async () => tile().props.onLongPress());
       await press(button(tree, COPY.actionFork));
       await press(button(tree, COPY.forkShareData));
       h.eq(forks, 1, 'the fork started');
-      const faded = tile().findAll((n) => n.type === 'View' && typeof (StyleSheet.flatten(n.props.style) as { opacity?: number }).opacity === 'number');
+      const faded = tile().findAll((n) => hostType(n) === 'View' && typeof (StyleSheet.flatten(n.props.style) as { opacity?: number }).opacity === 'number');
       h.ok(faded.some((n) => ((StyleSheet.flatten(n.props.style) as { opacity: number }).opacity) < 1), 'the tile reads as busy (faded, not a shadow, which Android does not draw)');
       await TestRenderer.act(async () => tile().props.onLongPress());
       await h.throws(() => press(button(tree, COPY.actionForkBusy)), 'Cannot press a disabled control', 'the sheet’s Fork row says a fork is running and cannot be chosen');

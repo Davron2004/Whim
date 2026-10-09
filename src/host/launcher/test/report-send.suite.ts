@@ -19,7 +19,7 @@ import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
 import { GenerationClientError, reportClientOptions } from '../transport-shared';
 import { log } from '../../logging';
-import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { button, press, renderScreen, textOf, unmountScreen, hostType, isHost } from './react-screen';
 import { testAppInfo } from './client-fixtures';
 import { Linking } from './native-host';
 import { RELEASE } from '../release-config';
@@ -52,8 +52,8 @@ export async function runReportSendTests(h: Harness): Promise<void> {
       h.ok(!textOf(tree.root).includes('Include the code'), 'code has no opt-out');
       await press(button(tree, COPY.reportReasonBroken));
       h.ok(textOf(tree.root).includes(COPY.reportPreviewTitle), 'choosing a reason reveals the preview');
-      h.eq(tree.root.findByType('Switch').props.accessibilityLabel, COPY.reportIncludePrompt, 'a screen reader announces the prompt switch by what it includes');
-      await TestRenderer.act(async () => tree.root.findByType('Switch').props.onValueChange(false));
+      h.eq(tree.root.find(isHost('Switch')).props.accessibilityLabel, COPY.reportIncludePrompt, 'a screen reader announces the prompt switch by what it includes');
+      await TestRenderer.act(async () => tree.root.find(isHost('Switch')).props.onValueChange(false));
 
       answers.push(async () => json({ error: 'payload_too_large', hint: 'That report is too large to send.' }, 413));
       await press(button(tree, COPY.reportSend));
@@ -95,9 +95,9 @@ export async function runReportSendTests(h: Harness): Promise<void> {
     try {
       await TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });
       await press(button(tree, COPY.reportReasonWrongResult));
-      await TestRenderer.act(async () => tree.root.findByType('TextInput').props.onChangeText('  The total is off by one  '));
+      await TestRenderer.act(async () => tree.root.find(isHost('TextInput')).props.onChangeText('  The total is off by one  '));
       // Expand the code row, so the preview shows the code itself rather than its size.
-      const showMore = tree.root.findAll((node) => node.type === 'TouchableOpacity' && textOf(node) === COPY.reportShowMore);
+      const showMore = tree.root.findAll((node) => hostType(node) === 'TouchableOpacity' && textOf(node) === COPY.reportShowMore);
       for (const toggle of showMore) await press(toggle);
       const preview = textOf(tree.root);
       h.ok(preview.includes('This phone’s Whim ID goes with your report.'), 'the sheet says this phone’s Whim ID goes with the report');

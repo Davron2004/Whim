@@ -26,7 +26,7 @@ import { buildIt, composeAndContinue, hasInstalled, json, planLoaded, resultEven
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 import { stubFutureFrame } from '../../../../server/src/stub-markers';
 import { serverBusyRefusal } from '../../../../server/src/admission/refusals';
-import { testAppInfo } from './client-fixtures';
+import { testAppInfo, streamResponse } from './client-fixtures';
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
@@ -40,7 +40,7 @@ function activeThrowingServer(setThrowStream: (throwStream: () => void) => void)
     const body = new ReadableStream<Uint8Array>({
       start: (controller) => { setThrowStream(() => controller.error(new Error('active stream failed'))); },
     });
-    return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
+    return streamResponse(body, { headers: { 'Content-Type': 'text/event-stream' } });
   };
 }
 
@@ -51,7 +51,7 @@ function activeThrowingStreamsServer(throwStreams: (() => void)[]) {
     const body = new ReadableStream<Uint8Array>({
       start: (controller) => { throwStreams.push(() => controller.error(new Error('active stream failed'))); },
     });
-    return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
+    return streamResponse(body, { headers: { 'Content-Type': 'text/event-stream' } });
   };
 }
 
@@ -69,7 +69,7 @@ function delayedRefusalThenActiveStream(releaseRefusals: (() => void)[]) {
         })));
       });
     }
-    return new Response(new ReadableStream<Uint8Array>(), { headers: { 'Content-Type': 'text/event-stream' } });
+    return streamResponse(new ReadableStream<Uint8Array>(), { headers: { 'Content-Type': 'text/event-stream' } });
   };
 }
 
@@ -94,7 +94,7 @@ function keepaliveStreamingServer(streams: KeepaliveStream[]) {
       controller.error(new DOMException('The operation was aborted.', 'AbortError'));
     });
     const stream: KeepaliveStream = {
-      response: new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }),
+      response: streamResponse(body, { headers: { 'Content-Type': 'text/event-stream' } }),
       push: (event) => { if (open) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)); },
       end: () => { if (open) { open = false; controller.close(); } },
       keepalive: () => { if (open) controller.enqueue(encoder.encode(': keepalive\n\n')); },
