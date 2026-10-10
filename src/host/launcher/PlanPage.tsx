@@ -140,16 +140,15 @@ function ChangingLine({ app }: Readonly<{ app: InstalledApp }>) {
 /** The radio (one pick, a ring with a dot) or checkbox (several, a square with a `check`) that
  *  shows an option row can be chosen, and whether it is. "Decide for me" draws it in `ember`, every
  *  other option in `ink`. */
-function OptionMark({ multiple, checked, decide }: Readonly<{ multiple: boolean; checked: boolean; decide: boolean }>) {
+export function OptionMark({ multiple, checked, decide }: Readonly<{ multiple: boolean; checked: boolean; decide: boolean }>) {
   const t = useTokens();
   const s = styles(t);
   const accent = decide ? t.colors.ember : t.colors.ink;
-  const kind = multiple ? 'checkbox' : 'radio';
   const shape = { borderRadius: multiple ? RADII.sm.radius : MARK / 2, borderColor: checked ? accent : t.colors['text-2'], backgroundColor: checked && multiple ? accent : 'transparent' };
   let inside: React.ReactNode = null;
   if (checked) inside = multiple ? <Icon name="check" size={16} color={decide ? t.colors['on-ember'] : t.colors['on-ink']} /> : <View style={[s.markDot, { backgroundColor: accent }]} />;
   return (
-    <View testID={`option-mark:${kind}`} style={[s.mark, shape]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+    <View style={[s.mark, shape]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
       {inside}
     </View>
   );

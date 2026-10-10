@@ -357,15 +357,17 @@ export const COPY = {
   // quotes every `consent` key word for word, and these are a short form of what it already quotes.
   // The first row is one sentence per manifest category, per screen-named recipient role and for
   // the purpose, joined in the order of `FIRST_RUN_SENT_KEYS`; `FIRST_RUN_COVERAGE` says which key
-  // names what, and the lead says no more than that something is sent, so it never repeats a row.
-  firstRunLead: 'To build or change an app, Whim has to send some things to our server.',
+  // names what. The lead says what the spec has it say (what you ask for goes to our server, AI
+  // companies write the code); the row's AI sentence says which things they receive, so no sentence
+  // is on the sheet twice.
+  firstRunLead: 'To build or change an app, Whim sends what you ask for to our server, and AI companies that work for us write the code.',
   firstRunSentTitle: 'What’s sent, and who gets it',
   firstRunSentRequest: 'What you ask for, your answers and the plan you approve.',
   firstRunSentDevice: 'An ID Whim makes for this phone.',
   firstRunSentErrors: 'Error details if something goes wrong.',
   firstRunWhoAnycognition: 'They go to AnyCognition, which makes Whim.',
   firstRunWhoHosting: 'Companies that host Whim for us handle them too.',
-  firstRunWhoAi: 'AI companies that work for us use them to write the code.',
+  firstRunWhoAi: 'The AI companies get what you ask for, your answers and the plan.',
   firstRunWhoPlatform: 'Apple or Google may check that the request is from the real Whim app.',
   firstRunWhoAuthorities: 'Authorities get information when the law requires it.',
   firstRunWhy: 'All of it is used to make your apps and run Whim.',
@@ -690,14 +692,14 @@ const FRENCH: LegalCopyTable = {
   consentOutdatedLine: 'Ce texte a changé depuis que vous l’avez accepté.',
   consentAgree: 'Accepter d’envoyer mes descriptions',
   consentDecline: 'Pas maintenant',
-  firstRunLead: 'Pour créer ou modifier une app, Whim doit envoyer certaines choses à notre serveur.',
+  firstRunLead: 'Pour créer ou modifier une app, Whim envoie ce que vous demandez à notre serveur, et des entreprises d’IA qui travaillent pour nous écrivent le code.',
   firstRunSentTitle: 'Ce qui est envoyé, et qui le reçoit',
   firstRunSentRequest: 'Ce que vous demandez, vos réponses et le plan que vous approuvez.',
   firstRunSentDevice: 'Un identifiant que Whim crée pour ce téléphone.',
   firstRunSentErrors: 'Des détails d’erreur quand quelque chose ne va pas.',
   firstRunWhoAnycognition: 'Ils vont à AnyCognition, qui conçoit Whim.',
   firstRunWhoHosting: 'Les entreprises qui hébergent Whim pour nous les traitent aussi.',
-  firstRunWhoAi: 'Des entreprises d’IA qui travaillent pour nous s’en servent pour écrire le code.',
+  firstRunWhoAi: 'Les entreprises d’IA reçoivent ce que vous demandez, vos réponses et le plan.',
   firstRunWhoPlatform: 'Apple ou Google peuvent vérifier que la demande vient de la véritable app Whim.',
   firstRunWhoAuthorities: 'Les autorités reçoivent des renseignements lorsque la loi l’exige.',
   firstRunWhy: 'Le tout sert à créer vos apps et à faire fonctionner Whim.',

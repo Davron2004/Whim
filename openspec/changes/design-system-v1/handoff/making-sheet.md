@@ -77,7 +77,7 @@ Both Sheet-hosted pages use `KeyboardShell host="sheet"`; `KeyboardShell` gained
 drawn by it over the screen they replaced (`stackFor(returnTo)`), the silent age check over the same. `onFirstRunAgree`
 records the terms acceptance when `kind === 'terms'` and the grant when `grantDue` (not current, or `refused`), then runs the
 continuation; the action reads `Agree to send descriptions` when `consentDue`, else `firstRunContinue` (terms only: the
-stored grant is left byte-identical). The first layer (`consentLead` + the three `firstRun*` rows) is held to the disclosure
+stored grant is left byte-identical). The first layer (`firstRunLead` + the three `firstRun*` rows, the first made of the `FIRST_RUN_SENT_KEYS` sentences) is held to the disclosure
 manifest by `FIRST_RUN_COVERAGE` (copy.ts) in `consent-coverage.suite.ts`. Held age (`AgeScreen`, `held` required) and review-mode `ConsentScreen` stay full screens.
 
 ## Answers and the build prompt

@@ -10,13 +10,15 @@ import { Harness } from './harness';
 import { COPY } from '../copy';
 import { describeStep, planStep, updatePlanRow, withPlan, withProblem, withQuestions, type FlowNotice, type FlowQuestion, type PlanScreen } from '../prompt-flow';
 import { DescribePage } from '../DescribePage';
-import { PlanPage } from '../PlanPage';
+import { OptionMark, PlanPage } from '../PlanPage';
 import BuildStep from '../BuildStep';
 import DoneStep from '../DoneStep';
 import WhimProse from '../../ui/whim-prose/WhimProse';
 import { Sheet } from '../../ui/Sheet';
 import { TilePlate } from '../../ui/AppTile';
 import { TILE_SIDE } from '../../ui/AppTile-geometry';
+import { Icon } from '../../ui/Icon';
+import { COLORS } from '../../../design/tokens';
 import type { InstalledApp } from '../app-index';
 import { androidBack, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 
@@ -105,8 +107,39 @@ function flat(style: unknown): Record<string, unknown> {
 const textShowing = (tree: Tree, words: string) => tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n) === words)[0];
 /** The colour of the text showing exactly `words` inside `control`. */
 const colourOf = (control: Node, words: string) => flat(control.findAll((n) => hostType(n) === 'Text' && textOf(n) === words)[0].props.style).color;
-/** The marks (radio or checkbox) an option row draws. */
-const marksIn = (row: Node) => row.findAll((n) => hostType(n) === 'View' && String(n.props.testID).startsWith('option-mark:'));
+/** What the radio or checkbox in an option row draws: its border and fill, the colour of the dot
+ *  inside a radio, and of the check inside a checkbox. */
+function drawnMark(row: Node) {
+  const marks = row.findAllByType(OptionMark);
+  if (marks.length !== 1) throw new Error(`Expected one mark in the row, got ${marks.length}`);
+  const [mark] = marks;
+  const box = flat(mark.find((n) => hostType(n) === 'View').props.style);
+  const insideIcon = (n: Node): boolean => n.type === Icon || (n.parent !== null && insideIcon(n.parent));
+  const dot = mark.findAll((n) => hostType(n) === 'View' && !insideIcon(n)).slice(1).map((n) => flat(n.props.style).backgroundColor);
+  return { multiple: mark.props.multiple, border: box.borderColor, fill: box.backgroundColor, dots: dot, checks: mark.findAllByType(Icon).map((icon) => [icon.props.name, icon.props.color]) };
+}
+
+/** The mark each full-width option of `LONG` (radios) and `LONG_MANY` (checkboxes) should draw when the
+ *  first option is `firstPicked` and Decide for me is `decidePicked`: ordinary options in `ink`,
+ *  Decide for me in `ember`, a picked mark filled and an unpicked one an empty `text-2` outline. */
+function expectedMarks(firstPicked: boolean, decidePicked: boolean) {
+  const c = COLORS.light;
+  return ([[LONG, 'radio'], [LONG_MANY, 'checkbox']] as const).flatMap(([question, kind]) => {
+    const many = kind === 'checkbox';
+    const markOf = (accent: 'ink' | 'ember', on: 'on-ink' | 'on-ember', isPicked: boolean) => ({
+      multiple: many,
+      border: isPicked ? c[accent] : c['text-2'],
+      fill: isPicked && many ? c[accent] : 'transparent',
+      dots: isPicked && !many ? [c[accent]] : [],
+      checks: isPicked && many ? [['check', c[on]]] : [],
+    });
+    return [
+      { kind, label: question.options[0], index: 0, drawn: markOf('ink', 'on-ink', firstPicked) },
+      { kind, label: question.options[1], index: 0, drawn: markOf('ink', 'on-ink', false) },
+      { kind, label: COPY.clarifyDecide, index: many ? 1 : 0, drawn: markOf('ember', 'on-ember', decidePicked) },
+    ];
+  });
+}
 
 /** Pre-order position of the first text holding `words`, to read the page's top-to-bottom order. */
 function positionOf(tree: Tree, words: string): number {
@@ -286,18 +319,19 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('questions: every full-width option shows a radio (one pick) or a checkbox (several), picked or not, and a picked one looks different', async () => {
-    await rendered(planPage(landed([LONG, LONG_MANY])), async (tree) => {
-      for (const [labels, kind] of [[[...LONG.options, COPY.clarifyDecide], 'radio'], [[...LONG_MANY.options, COPY.clarifyDecide], 'checkbox']] as const) {
-        const rows = labels.map((label) => labelled(tree, label)[label === COPY.clarifyDecide && kind === 'checkbox' ? 1 : 0]);
-        for (const [i, row] of rows.entries()) {
-          const marks = marksIn(row);
-          h.eq(marks.map((mark) => mark.props.testID), [`option-mark:${kind}`], `${labels[i]}: one ${kind} mark, picked or not`);
+  await h.test('questions: every full-width option shows a radio (one pick) or a checkbox (several); a picked one is filled in its role’s colour, Decide for me in ember, an unpicked one is empty', async () => {
+    const picks = { where: { choices: [LONG.options[0]], other: '', decide: false }, keep: { choices: [LONG_MANY.options[0]], other: '', decide: false } };
+    const screens = [
+      { screen: landed([LONG, LONG_MANY]), rows: expectedMarks(false, true), what: 'Decide for me picked, nothing else' },
+      { screen: { ...landed([LONG, LONG_MANY]), answers: picks }, rows: expectedMarks(true, false), what: 'the first option picked, Decide for me not' },
+    ];
+    for (const { screen, rows, what } of screens) {
+      await rendered(planPage(screen), async (tree) => {
+        for (const { kind, label, index, drawn } of rows) {
+          h.eq(drawnMark(labelled(tree, label)[index]), drawn, `${what}: ${label} draws its ${kind} mark`);
         }
-        const [first, , decide] = rows.map((row) => marksIn(row)[0]);
-        h.ok(decide.findAll(() => true).length > first.findAll(() => true).length, `${kind}: the picked row (Decide for me starts picked) draws its mark filled, the others empty`);
-      }
-    });
+      });
+    }
   });
 
   await h.test('questions: in a full-width list "Decide for me" keeps the ember treatment its chip has, and fills when picked', async () => {

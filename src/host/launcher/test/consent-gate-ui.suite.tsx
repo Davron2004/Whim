@@ -7,7 +7,7 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW, FIRST_RUN_COVERAGE, FIRST_RUN_SENT_KEYS, firstRunSentText, LEGAL_COPY, type LegalCopyTable } from '../copy';
+import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW, FIRST_RUN_COVERAGE, FIRST_RUN_SENT_KEYS, LEGAL_COPY, type LegalCopyTable } from '../copy';
 import { MANIFESTS, latestVersion } from '../../../../contract/src/disclosure-manifest';
 import { RELEASE } from '../release-config';
 import LauncherRoot from '../LauncherRoot';
@@ -136,8 +136,8 @@ function firstOutOfOrder(text: string, table: LegalCopyTable, order: readonly (k
 
 /** Each legal language, with the word the terms of use go by in it and its privacy policy page. */
 const LANGUAGES = [
-  { language: 'en', termsWord: /terms/i, privacyUrl: RELEASE.privacyPolicyUrl },
-  { language: 'fr', termsWord: /conditions/i, privacyUrl: RELEASE.privacyPolicyUrlFr },
+  { language: 'en', termsWord: /terms/i, privacyUrl: RELEASE.privacyPolicyUrl, leadSays: [/ask for/, /server/, /\bAI companies\b.*\bwrite the code/] },
+  { language: 'fr', termsWord: /conditions/i, privacyUrl: RELEASE.privacyPolicyUrlFr, leadSays: [/demandez/, /serveur/, /entreprises d.IA.*écrivent le code/] },
 ] as const;
 
 /** Every what's-new line, in every language, for every version. */
@@ -185,18 +185,9 @@ async function withLauncher(consent: ConsentSeed, body: (tree: Tree, requests: s
   }
 }
 
-/** The first four consecutive words of `a` that `b` also has in a row, or null: a lead and a row
- *  that say the same thing in the same words, however the sentences around them are cut. */
-function sharedPhrase(a: string, b: string): string | null {
-  const RUN = 4;
-  const words = (text: string) => text.toLowerCase().split(/[^a-zà-öø-ÿœ’]+/).filter((word) => word !== '');
-  const haystack = ` ${words(b).join(' ')} `;
-  const mine = words(a);
-  for (let i = 0; i + RUN <= mine.length; i++) {
-    const phrase = mine.slice(i, i + RUN).join(' ');
-    if (haystack.includes(` ${phrase} `)) return phrase;
-  }
-  return null;
+/** The sentences of `text`, split after a full stop, question mark or exclamation mark. */
+function sentencesOf(text: string): string[] {
+  return text.split(/(?<=[.!?])\s+/).filter((sentence) => sentence !== '');
 }
 
 export async function runConsentGateUiTests(h: Harness): Promise<void> {
@@ -238,7 +229,7 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
     });
   });
 
-  for (const { language, termsWord, privacyUrl } of LANGUAGES) {
+  for (const { language, termsWord, privacyUrl, leadSays } of LANGUAGES) {
     const table = LEGAL_COPY[language];
 
     /** What the disclosure must say, wherever it is shown: complete, and in the spec's order. */
@@ -289,15 +280,16 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
       }
     });
 
-    await h.test(`first-run sheet (${language}): the lead says no sentence the first row says, and every sentence of the row shows exactly once`, async () => {
+    await h.test(`first-run sheet (${language}): the lead says what the spec has it say, and no sentence is on the sheet twice, lead or row`, async () => {
       const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue={false} consentDue onAgree={() => {}} onClose={() => {}} />);
       try {
         const visible = textOf(tree.root);
-        h.eq(sharedPhrase(table.firstRunLead, firstRunSentText(table)), null, 'no run of words in the lead recurs in the row');
-        for (const key of FIRST_RUN_SENT_KEYS) {
-          h.eq(visible.split(table[key]).length - 1, 1, `${key} appears once on the sheet`);
+        h.ok(leadSays.every((claim) => claim.test(table.firstRunLead)), 'the lead says that what you ask for goes to our server and that AI companies write the code');
+        const sentences = [...sentencesOf(table.firstRunLead), ...FIRST_RUN_SENT_KEYS.flatMap((key) => sentencesOf(table[key]))];
+        h.eq(sentences.filter((sentence, i) => sentences.indexOf(sentence) !== i), [], 'no sentence of the lead is a sentence of the row, and no sentence of the row repeats');
+        for (const sentence of sentences) {
+          h.eq(visible.split(sentence).length - 1, 1, `“${sentence}” appears once on the sheet`);
         }
-        h.ok(!visible.includes(table.consentLead), 'and the sheet does not carry the consent screen’s lead, whose sentences the row already says');
       } finally {
         await unmountScreen(tree);
       }

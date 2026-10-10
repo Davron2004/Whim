@@ -45,8 +45,9 @@ export interface ConsentCoverageInput {
   /** The same for the first-run sheet's first layer. */
   readonly firstLayerCoverage: Coverage;
   /** What each coverage entry stands for, in words: entry (`category:<id>`, `role:<id>`, `purpose`) →
-   *  language → the pattern a string naming it matches. */
-  readonly naming: Readonly<Record<string, Readonly<Record<string, RegExp>>>>;
+   *  language → the patterns a string naming it matches, every one of them (one per part the manifest
+   *  says the entry has). */
+  readonly naming: Readonly<Record<string, Readonly<Record<string, readonly RegExp[]>>>>;
   /** Language → that language's legal copy table. */
   readonly tables: Readonly<Record<string, Readonly<Record<string, string>>>>;
   /** The keys the legal screens read, which every table must carry. */
@@ -73,15 +74,18 @@ function isBlank(text: string | undefined): boolean {
  *  for, written from the disclosure itself and not from the coverage tables they check. A language
  *  with no pattern for an entry fails, so a new language cannot pass unchecked. */
 const NAMING: ConsentCoverageInput['naming'] = {
-  'category:request-material': { en: /ask for/i, fr: /demandez/i },
-  'category:phone-id': { en: /\bID\b/, fr: /identifiant/i },
-  'category:error-details': { en: /error details/i, fr: /détails d.erreur/i },
-  'role:anycognition': { en: /AnyCognition/, fr: /AnyCognition/ },
-  'role:ai-providers': { en: /\bAI (providers|companies)/, fr: /(fournisseurs|entreprises) d.IA/ },
-  'role:hosting-providers': { en: /host/i, fr: /héberge/i },
-  'role:platform': { en: /Apple or Google/, fr: /Apple ou Google/ },
-  'role:authorities': { en: /authorities/i, fr: /autorités/i },
-  purpose: { en: /run Whim/, fr: /fonctionner Whim/ },
+  // What you ask for, your answers and the plan you approve: the three parts of the request.
+  'category:request-material': { en: [/ask for/i, /answers/i, /\bplan\b/i], fr: [/demandez/i, /réponses/i, /\bplan\b/i] },
+  // An ID, made for this phone.
+  'category:phone-id': { en: [/\bID\b/, /\bphone\b/i], fr: [/identifiant/i, /téléphone/i] },
+  'category:error-details': { en: [/error details/i], fr: [/détails d.erreur/i] },
+  'role:anycognition': { en: [/AnyCognition/], fr: [/AnyCognition/] },
+  'role:ai-providers': { en: [/\bAI (providers|companies)/], fr: [/(fournisseurs|entreprises) d.IA/] },
+  'role:hosting-providers': { en: [/host/i], fr: [/héberge/i] },
+  'role:platform': { en: [/Apple or Google/], fr: [/Apple ou Google/] },
+  'role:authorities': { en: [/authorities/i], fr: [/autorités/i] },
+  // Making the apps and running Whim: the manifest's build and operate purposes.
+  purpose: { en: [/(make|build) your apps/i, /run Whim/i], fr: [/créer vos apps/i, /fonctionner Whim/i] },
 };
 
 interface Entry {
@@ -105,10 +109,10 @@ function requiredOf(input: ConsentCoverageInput, coverage: Coverage): Entry[] {
 function namingFinding(input: ConsentCoverageInput, { entry, what, keys = [] }: Entry, language: string, table: Readonly<Record<string, string>>): string[] {
   const texts = keys.map((key) => table[key]).filter((text) => !isBlank(text));
   if (texts.length === 0) return [];
-  const pattern = input.naming[entry]?.[language];
-  if (pattern === undefined) return [`${what}: nothing says what naming it looks like in the ${language} table`];
-  if (texts.some((text) => pattern.test(text))) return [];
-  return [`${what}: none of ${keys.join(', ')} names it in the ${language} table (looked for ${pattern})`];
+  const patterns = input.naming[entry]?.[language];
+  if (patterns === undefined) return [`${what}: nothing says what naming it looks like in the ${language} table`];
+  if (texts.some((text) => patterns.every((pattern) => pattern.test(text)))) return [];
+  return [`${what}: none of ${keys.join(', ')} names it in the ${language} table (looked for ${patterns.join(' and ')})`];
 }
 
 /** Every on-screen category and screen-named role of the manifest, and the purpose, has copy keys in
@@ -285,6 +289,23 @@ export async function run(): Promise<void> {
       ['first-run purpose sentence that says nothing of running Whim', { tables: { en: { ...COPY, firstRunWhy: 'All of it is used for the good of everyone.' } } }, ['the purpose', 'firstRunWhy', 'en table']],
       ['consent screen purpose reworded away, in French', { tables: { fr: { ...LEGAL_COPY.fr, consentWhy: 'Pour des raisons diverses.' } } }, ['the purpose', 'consentWhy', 'fr table']],
       ['consent screen authorities sentence without the authorities', { tables: { en: { ...COPY, consentWhoAuthorities: 'We follow the law.' } } }, ['role authorities', 'consentWhoAuthorities', 'en table']],
+    ];
+    for (const [label, change, parts] of cases) {
+      assertFinding(consentCoverageFindings(liveInput(change)), parts, label);
+    }
+  });
+
+  await test('consent coverage: a sentence cut to half of what its entry says fails, in both languages and on both surfaces', () => {
+    const cases: readonly [string, Partial<ConsentCoverageInput>, readonly string[]][] = [
+      ['first-run request without the answers and the plan', { tables: { en: { ...COPY, firstRunSentRequest: 'What you ask for.' } } }, ['category request-material', 'firstRunSentRequest', 'en table']],
+      ['first-run request without the plan', { tables: { en: { ...COPY, firstRunSentRequest: 'What you ask for and your answers.' } } }, ['category request-material', 'firstRunSentRequest', 'en table']],
+      ['first-run request without the answers, in French', { tables: { fr: { ...LEGAL_COPY.fr, firstRunSentRequest: 'Ce que vous demandez et le plan que vous approuvez.' } } }, ['category request-material', 'firstRunSentRequest', 'fr table']],
+      ['consent request without the answers and the plan', { tables: { en: { ...COPY, consentSentRequest: 'What you ask for: your description' } } }, ['category request-material', 'consentSentRequest', 'en table']],
+      ['first-run phone ID without the phone', { tables: { en: { ...COPY, firstRunSentDevice: 'An ID Whim makes.' } } }, ['category phone-id', 'firstRunSentDevice', 'en table']],
+      ['first-run phone ID without the phone, in French', { tables: { fr: { ...LEGAL_COPY.fr, firstRunSentDevice: 'Un identifiant que Whim crée.' } } }, ['category phone-id', 'firstRunSentDevice', 'fr table']],
+      ['first-run purpose without making the apps', { tables: { en: { ...COPY, firstRunWhy: 'All of it is used to run Whim.' } } }, ['the purpose', 'firstRunWhy', 'en table']],
+      ['first-run purpose without running Whim, in French', { tables: { fr: { ...LEGAL_COPY.fr, firstRunWhy: 'Le tout sert à créer vos apps.' } } }, ['the purpose', 'firstRunWhy', 'fr table']],
+      ['consent purpose without running Whim', { tables: { en: { ...COPY, consentWhy: 'To build your apps.' } } }, ['the purpose', 'consentWhy', 'en table']],
     ];
     for (const [label, change, parts] of cases) {
       assertFinding(consentCoverageFindings(liveInput(change)), parts, label);
