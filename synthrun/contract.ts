@@ -165,7 +165,10 @@ export interface SweepCounts {
   /** Fingerprints the sweep acted on, including actions that then failed. */
   actions: number;
   /** Distinct fingerprints enumerated during the run and never acted on (covered, disabled or
-   *  otherwise unable to receive the action whenever the sweep looked). */
+   *  otherwise unable to receive the action whenever the sweep looked). It counts fingerprints, not
+   *  controls: a control whose label changed before it was acted on counts once under each label it
+   *  showed and was not acted on. For a run the total budget killed, it is what had been seen and
+   *  not yet acted on. */
   blocked: number;
   /** Actions that passed the hit test and still failed in the browser driver. */
   failedActions: number;

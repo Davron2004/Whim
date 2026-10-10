@@ -46,7 +46,7 @@ interface SweepOutcome {
 async function runSweep(
   session: SynthRunSession,
   source: string,
-  options: { budgets?: RunBudgets; engineFactory?: () => StorageEngine; sweep?: SweepOptions } = {},
+  options: { budgets?: RunBudgets; engineFactory?: () => StorageEngine; sweep?: SweepOptions; awaitText?: string } = {},
 ): Promise<SweepOutcome> {
   const budgets = options.budgets ?? FIXTURE_BUDGETS;
   const { ctx, obs, wiring, dispose } = await openWiredRun(session, source, { engineFactory: options.engineFactory });
@@ -54,7 +54,14 @@ async function runSweep(
     await within(awaitMount(obs, budgets), 10_000, 'the mount gate');
     const result = await within(sweepApp(ctx, obs, source, budgets, options.sweep), SWEEP_TIMEOUT_MS, 'the sweep');
     const frame = await findAppFrame(ctx.page);
-    const text = await frame.evaluate(() => (globalThis as unknown as { document: { body: { innerText: string } } }).document.body.innerText);
+    const readText = (): Promise<string> => frame.evaluate(() => (globalThis as unknown as { document: { body: { innerText: string } } }).document.body.innerText);
+    let text = await readText();
+    // A candidate's own follow-up to an action (an effect it runs a beat later) may land after the
+    // sweep returned; wait for the text it is expected to show rather than read the page once.
+    for (const deadline = Date.now() + 5000; options.awaitText !== undefined && !text.includes(options.awaitText) && Date.now() < deadline; ) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      text = await readText();
+    }
     return { result, wiring, text };
   } finally {
     await dispose();
@@ -152,8 +159,11 @@ function Home() {
 export default defineApp({ name: 'StuckModal', initial: 'Home', screens: { Home }, capabilities: [] });
 `;
 
-// A button that stays disabled for the whole run, and a Stepper resting on its lower bound (its
-// decrement button is disabled), between enabled buttons.
+// Controls that stay disabled for the whole run, between enabled buttons. The enumerator already
+// leaves out a disabled `button` (the SDK's disabled Button, the Stepper's button at its bound), so
+// those never reach the hit test. The text field is the one that does: no SDK control renders a
+// native `disabled` attribute on an element the enumerator returns, so it is a raw input, which the
+// enumerator takes for a text field whatever its state.
 const FIXTURE_DISABLED = `import { defineApp, Screen, Stack, Button, Stepper } from 'vc-sdk';
 function Home() {
   return (
@@ -161,6 +171,7 @@ function Home() {
       <Stack>
         <Button label="Alpha" onPress={() => {}} />
         <Button label="Locked" disabled onPress={() => {}} />
+        <input type="text" disabled placeholder="Locked field" />
         <Stepper label="Count" value={0} min={0} max={3} onChange={() => {}} />
         <Button label="Beta" onPress={() => {}} />
       </Stack>
@@ -207,7 +218,7 @@ function Home() {
     </Screen>
   );
 }
-export default defineApp({ name: 'PickerApp', initial: 'Home', screens: { Home }, capabilities: ['storage'] });
+export default defineApp({ name: 'PickerApp', initial: 'Home', screens: { Home }, capabilities: ['storage'], schema: { schemaVersion: 1, collections: {} } });
 `;
 
 // One DateInput per mode; each onChange writes the picked value, read back in local time, so the
@@ -235,7 +246,7 @@ function Home() {
     </Screen>
   );
 }
-export default defineApp({ name: 'Dates', initial: 'Home', screens: { Home }, capabilities: ['storage'] });
+export default defineApp({ name: 'Dates', initial: 'Home', screens: { Home }, capabilities: ['storage'], schema: { schemaVersion: 1, collections: {} } });
 `;
 
 /** Writes this many values, one reply at a time, before navigating. */
@@ -272,7 +283,7 @@ function Saved() {
     </Screen>
   );
 }
-export default defineApp({ name: 'WriteThenNavigate', initial: 'Home', screens: { Home, Saved }, capabilities: ['storage'] });
+export default defineApp({ name: 'WriteThenNavigate', initial: 'Home', screens: { Home, Saved }, capabilities: ['storage'], schema: { schemaVersion: 1, collections: {} } });
 `;
 
 // Each screen's only button is disabled until a chain of storage reads has resolved in the
@@ -311,7 +322,7 @@ function Orphan() {
     </Screen>
   );
 }
-export default defineApp({ name: 'Gated', initial: 'Home', screens: { Home, Orphan }, capabilities: ['storage'] });
+export default defineApp({ name: 'Gated', initial: 'Home', screens: { Home, Orphan }, capabilities: ['storage'], schema: { schemaVersion: 1, collections: {} } });
 `;
 
 // The list reads from storage and is empty on a fresh install. The header's plus opens a form whose
@@ -366,7 +377,7 @@ function Detail() {
     </Screen>
   );
 }
-export default defineApp({ name: 'EmptyList', initial: 'Home', screens: { Home, Form, Detail }, capabilities: ['storage'] });
+export default defineApp({ name: 'EmptyList', initial: 'Home', screens: { Home, Form, Detail }, capabilities: ['storage'], schema: { schemaVersion: 1, collections: {} } });
 `;
 
 // A pushed form. "Save" writes what the field holds, so the stored value shows whether the field was
@@ -387,7 +398,7 @@ function Form() {
     </Screen>
   );
 }
-export default defineApp({ name: 'PushedForm', initial: 'Home', screens: { Home, Form }, capabilities: ['storage'] });
+export default defineApp({ name: 'PushedForm', initial: 'Home', screens: { Home, Form }, capabilities: ['storage'], schema: { schemaVersion: 1, collections: {} } });
 `;
 
 // A card whose label carries a count that rises on every press, beside one ordinary button.
@@ -406,10 +417,22 @@ function Home() {
 export default defineApp({ name: 'RunningValue', initial: 'Home', screens: { Home }, capabilities: [] });
 `;
 
-// The only action shows a toast, which the SDK draws as a fixed region at the bottom of the app.
-const FIXTURE_TOAST = `import { defineApp, Screen, Stack, Button, toast } from 'vc-sdk';
+// The only action shows a toast, which the SDK draws as a fixed region at the bottom of the app. The
+// candidate looks for that region itself after the press and keeps what it found as text, so the
+// test can tell the toast was drawn however long ago it left.
+const FIXTURE_TOAST = `import { defineApp, Screen, Stack, Text, Button, toast, delay, useState } from 'vc-sdk';
 function Home() {
-  return <Screen><Stack><Button label="Show" onPress={() => toast('Hello there')} /></Stack></Screen>;
+  const [drawn, setDrawn] = useState(false);
+  const show = () => {
+    toast('Hello there');
+    (async () => {
+      for (let i = 0; i < 40; i += 1) {
+        await delay(50);
+        if (document.querySelector('[role="status"]')) { setDrawn(true); return; }
+      }
+    })().catch(() => {});
+  };
+  return <Screen><Stack><Button label="Show" onPress={show} /><Text>{drawn ? 'Toast was drawn' : 'No toast yet'}</Text></Stack></Screen>;
 }
 export default defineApp({ name: 'ToastOnly', initial: 'Home', screens: { Home }, capabilities: [] });
 `;
@@ -481,6 +504,22 @@ function Vault() {
   throw new Error('gated-vault-throws');
 }
 export default defineApp({ name: 'GatedThrows', initial: 'Home', screens: { Home, Vault }, capabilities: [] });
+`;
+
+// One screen of plain buttons that do nothing: the sweep presses them one after another, each press
+// followed by the quiet window, so a short total budget ends the run partway through.
+const MANY_BUTTONS = 30;
+const FIXTURE_MANY_BUTTONS = `import { defineApp, Screen, Stack, Button } from 'vc-sdk';
+function Home() {
+  return (
+    <Screen>
+      <Stack>
+        {Array.from({ length: ${MANY_BUTTONS} }, (_, i) => <Button key={i} label={'Press ' + (i + 1)} onPress={() => {}} />)}
+      </Stack>
+    </Screen>
+  );
+}
+export default defineApp({ name: 'ManyButtons', initial: 'Home', screens: { Home }, capabilities: [] });
 `;
 
 /** The `kv` verbs with each write holding the host for `ms`. */
@@ -562,8 +601,10 @@ async function runScenarios(session: SynthRunSession): Promise<void> {
     const { result } = await runSweep(session, FIXTURE_DISABLED);
     const order = labels(result);
     ok(!order.includes('Locked'), `no action was attempted on the disabled button (${describe(result)})`);
+    ok(!order.includes('Locked field'), `no action was attempted on the disabled field (${describe(result)})`);
     ok(order.includes('Alpha') && order.includes('Beta'), `the enabled buttons were acted on (${describe(result)})`);
-    ok(result.sweep.failedActions === 0 && result.sweep.blocked === 0, `no failed action and nothing blocked (${describe(result)})`);
+    ok(result.sweep.failedActions === 0, `no action failed (${describe(result)})`);
+    ok(result.sweep.blocked === 1, `the disabled field the enumerator returned is counted as blocked, nothing else is (${describe(result)})`);
   });
 
   await test('hit test: a control below the fold is scrolled into view and pressed', async () => {
@@ -710,8 +751,8 @@ async function runScenarios(session: SynthRunSession): Promise<void> {
   });
 
   await test('toast: showing a toast does not add a Modal backdrop dismissal to the action log', async () => {
-    const { result, text } = await runSweep(session, FIXTURE_TOAST, { budgets: ASYNC_BUDGETS });
-    ok(text.includes('Hello there'), `the toast was on screen when the sweep ended (page text: ${text.replace(/\s+/g, ' ')})`);
+    const { result, text } = await runSweep(session, FIXTURE_TOAST, { budgets: ASYNC_BUDGETS, awaitText: 'Toast was drawn' });
+    ok(text.includes('Toast was drawn'), `the SDK's toast host was drawn, so there was a toast to mistake for a Modal (page text: ${text.replace(/\s+/g, ' ')})`);
     ok(signature(result) === 'button:Show', `only the button was acted on (${describe(result)})`);
     ok(result.sweep.blocked === 0, `the toast is no fingerprint, so nothing is counted as blocked (${describe(result)})`);
   });
@@ -729,8 +770,8 @@ async function runScenarios(session: SynthRunSession): Promise<void> {
     ok(acted.slice(0, 3).join(',') === 'H1,H2,H3', `Home's first three buttons were pressed, each after the previous toast had gone (${describe(result)})`);
     ok(!acted.includes('H4'), `the third wait on Home never happened, so its fourth button stayed covered (${describe(result)})`);
     ok(result.coldMountedScreens.join(',') === 'Other', `Other was swept by a cold mount (${result.coldMountedScreens.join(',')})`);
-    ok(!acted.includes('O2'), `no wait was left for Other, so its second button stayed covered (${describe(result)})`);
-    ok(result.sweep.blocked >= 2 && result.sweep.blocked <= 3, `H4 and O2 (and O1, if a toast still covered it) are counted as blocked (${describe(result)})`);
+    ok(acted.includes('O1') && !acted.includes('O2'), `Other's first button was pressed in its fresh realm, which holds no toast of Home's, and no wait was left for its second (${describe(result)})`);
+    ok(result.sweep.blocked === 2, `exactly H4 and O2 are counted as blocked (${describe(result)})`);
     ok(result.sweep.failedActions === 0, `no action failed (${describe(result)})`);
     ok(result.truncated === false, 'the report is not truncated');
   });
@@ -750,6 +791,20 @@ async function runScenarios(session: SynthRunSession): Promise<void> {
     const flagged = result.diagnostics.filter((d) => d.kind === 'unreachable_screen');
     ok(flagged.length === 1 && flagged[0].severity === 'warning' && flagged[0].message.includes('"Orphan"'), `a warning names the orphan (${JSON.stringify(result.diagnostics)})`);
     ok(flagged[0]?.hint.includes('nav.navigate') ?? false, 'it carries the hint that tells the author what to add');
+  });
+
+  await test('watchdog: a run the total budget kills partway through still reports the screens and counts it had reached', async () => {
+    // Every press is followed by the 300 ms quiet window, so the 30 buttons need over 9 s and a 5 s
+    // budget ends the run after at most 16 of them; the first press comes well within one second.
+    const budgets = { mountBudgetMs: 5000, actionQuietMs: 300, actionHardCapMs: 2000, totalBudgetMs: 5000 };
+    const report = await within(createRunCandidate(session)(FIXTURE_MANY_BUTTONS, { budgets }), SWEEP_TIMEOUT_MS, 'the run');
+    ok(report.truncated === true, 'the report is truncated');
+    ok(report.diagnostics.some((d) => d.kind === 'run_truncated'), `it carries the run_truncated diagnostic (${JSON.stringify(report.diagnostics)})`);
+    ok(report.screens.declared.join(',') === 'Home', `the declared screens are listed (${JSON.stringify(report.screens)})`);
+    ok(report.screens.visited.includes('Home'), `the screen being swept is listed as visited (${JSON.stringify(report.screens)})`);
+    ok(report.sweep.actions >= 1 && report.sweep.actions < MANY_BUTTONS, `the actions taken before the kill are counted, and not all of them (${JSON.stringify(report.sweep)})`);
+    ok(report.sweep.actions + report.sweep.blocked === MANY_BUTTONS, `every button was seen, so each is acted on or blocked (${JSON.stringify(report.sweep)})`);
+    ok((report.timings.perScreenMs.Home ?? 0) > 0, `the time spent on the screen is kept (${JSON.stringify(report.timings.perScreenMs)})`);
   });
 
   await test('coverage: a gated screen that throws while rendering still fails the run, and carries no unreachable_screen', async () => {

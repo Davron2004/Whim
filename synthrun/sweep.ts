@@ -627,8 +627,57 @@ function noteSeen(ledger: SweepLedger, screenName: string, elements: SweptElemen
   }
 }
 
-interface ScreenSweepOutcome {
+/** What a sweep has learned so far: the one record of a run's sweep. `sweepApp` keeps it current as
+ *  it goes and the caller owns it, so a sweep abandoned mid-way (the total budget killed the page)
+ *  still leaves the screens it reached and the counts it had. `SweepResult` is derived from it
+ *  (`sweepResultOf`), so the two cannot disagree. */
+export interface SweepAccumulator {
+  /** Every screen the app declares, once the first read of the live app module has resolved. */
+  declared: string[];
+  /** Screens entered, live or by cold mount, as they are entered. */
+  visited: Set<string>;
+  /** The cold-mounted subset of `visited`, in the order they were mounted. */
+  coldMounted: string[];
+  /** Time spent on each screen, kept current after every action. */
+  perScreenMs: Record<string, number>;
+  /** Every fingerprint acted on, in execution order. */
   actionsLog: SweptElement[];
+  truncated: boolean;
+  diagnostics: SweepDiagnostic[];
+  ledger: SweepLedger;
+}
+
+export function newSweepAccumulator(): SweepAccumulator {
+  return { declared: [], visited: new Set<string>(), coldMounted: [], perScreenMs: {}, actionsLog: [], truncated: false, diagnostics: [], ledger: newLedger() };
+}
+
+/** The sweep's counts so far: `blocked` is what has been seen and not acted on yet, which for a
+ *  finished sweep is what was never acted on. */
+export function sweepCountsOf(acc: SweepAccumulator): SweepCounts {
+  const { ledger } = acc;
+  return {
+    actions: acc.actionsLog.length,
+    blocked: [...ledger.seen].filter((key) => !ledger.acted.has(key) && !ledger.retired.has(key)).length,
+    failedActions: ledger.failedActions,
+  };
+}
+
+/** A copy of the accumulator in `SweepResult` shape: later writes to `acc` (an abandoned sweep that
+ *  has not noticed its page is gone) do not reach it. */
+export function sweepResultOf(acc: SweepAccumulator): SweepResult {
+  return {
+    declaredScreens: [...acc.declared],
+    visitedScreens: [...acc.visited],
+    coldMountedScreens: [...acc.coldMounted],
+    truncated: acc.truncated,
+    diagnostics: [...acc.diagnostics],
+    perScreenMs: { ...acc.perScreenMs },
+    actionsLog: [...acc.actionsLog],
+    sweep: sweepCountsOf(acc),
+  };
+}
+
+interface ScreenSweepOutcome {
   truncated: boolean;
   /** The resolved screen name once an in-sweep action changed it (nav-aware traversal), else
    *  `null` (the screen's own sweep ran to no-unvisited-fingerprints or its action cap). */
@@ -653,7 +702,7 @@ function newScreenProgress(): ScreenProgress {
   return { visited: new Set<string>(), actions: 0, actedSinceDismissal: 0, pathActs: new Map<string, number>() };
 }
 
-/** The next fingerprint to act on, or `null` when this screen's sweep is over (design D2).
+/** The next fingerprint to act on, or `null` when none can receive its action right now (design D2).
  *
  *  The first unvisited fingerprint, in `orderUnvisited` order, that can receive its action. One
  *  that cannot is deferred: it is neither visited nor counted, so a later pick takes it once it
@@ -661,13 +710,9 @@ function newScreenProgress(): ScreenProgress {
  *
  *  When unvisited fingerprints remain and none can, a `Modal` backdrop that was already visited
  *  may be dismissed once more — a second trigger can reopen a Modal at the same path — but only if
- *  something was acted on since the previous dismissal. Otherwise the screen is over.
- *
- *  Why every loop around this ends: each pick is either an unvisited fingerprint (the visited set
- *  grows), a re-dismissal (which needs a fresh action since the last one, so re-dismissals never
- *  outnumber fresh actions), or `null`; and every pick spends one of the screen's
- *  `maxActionsPerScreen` actions. */
-async function pickFrom(frame: Frame, elements: SweptElement[], progress: ScreenProgress): Promise<SweptElement | null> {
+ *  something was acted on since the previous dismissal. Otherwise the answer is `null`; what a
+ *  `null` ends is decided by `sweepOneScreen`, whose comment holds the termination argument. */
+async function pickNext(frame: Frame, elements: SweptElement[], progress: ScreenProgress): Promise<SweptElement | null> {
   const ordered = orderUnvisited(elements, progress);
   if (ordered.length === 0) return null;
   const pick = await firstActionable(frame, ordered);
@@ -677,7 +722,8 @@ async function pickFrom(frame: Frame, elements: SweptElement[], progress: Screen
 }
 
 /** How long the sweep waits for a toast to leave: the SDK shows one for four seconds (`TOAST_MS` in
- *  `src/sdk/toast.tsx`, not exported), plus the time it takes to sink out. */
+ *  `src/sdk/toast.tsx`, which the SDK's index does not re-export and the sweep does not import),
+ *  plus the time it takes to sink out. */
 const TOAST_WAIT_CAP_MS = 5000;
 
 /** How many toasts the sweep waits out in one run, across all its screens. Counted, never timed, so
@@ -685,32 +731,20 @@ const TOAST_WAIT_CAP_MS = 5000;
  *  budget: each wait costs up to `TOAST_WAIT_CAP_MS` of it. */
 const MAX_TOAST_WAITS_PER_RUN = 2;
 
-/** Waits, up to `TOAST_WAIT_CAP_MS`, for the SDK's toast host to leave, and reports whether one was
- *  showing. A toast lies over the bottom of the screen and takes every click aimed there, but it is
- *  no fingerprint of its own: the controls under it are only late. */
-async function awaitToastGone(frame: Frame): Promise<boolean> {
+/** Before a stuck screen is looked at once more: waits, up to `TOAST_WAIT_CAP_MS`, for the SDK's
+ *  toast host to leave, if one is showing and the run has a wait left (`ledger.toastWaits`, spent
+ *  only when a toast was showing). A toast lies over the bottom of the screen and takes every click
+ *  aimed there, but it is no fingerprint of its own: the controls under it are only late. */
+async function awaitToastGone(frame: Frame, ledger: SweepLedger): Promise<void> {
+  if (ledger.toastWaits >= MAX_TOAST_WAITS_PER_RUN) return;
   const showing = (): Promise<boolean> =>
     frame
       .evaluate(() => (globalThis as unknown as { document: { querySelector(selector: string): unknown } }).document.querySelector('[role="status"]') !== null)
       .catch(() => false);
-  if (!(await showing())) return false;
+  if (!(await showing())) return;
+  ledger.toastWaits += 1;
   const deadline = Date.now() + TOAST_WAIT_CAP_MS;
   while (Date.now() < deadline && (await showing())) await sleep(30);
-  return true;
-}
-
-/** `pickFrom`, and when it finds nothing while a toast is showing, once more after the toast has
- *  gone (re-enumerated, the page having moved on). The wait happens at most once per pick and at
- *  most `MAX_TOAST_WAITS_PER_RUN` times in a run (`ledger.toastWaits`, spent only when a toast was
- *  showing); once they are spent, the first pick's answer stands. It adds nothing to the
- *  termination argument above: it spends no action and a pick that waited is still `pickFrom`'s
- *  answer. */
-async function pickNext(frame: Frame, elements: SweptElement[], progress: ScreenProgress, ledger: SweepLedger): Promise<SweptElement | null> {
-  const pick = await pickFrom(frame, elements, progress);
-  if (pick !== null || orderUnvisited(elements, progress).length === 0 || ledger.toastWaits >= MAX_TOAST_WAITS_PER_RUN) return pick;
-  if (!(await awaitToastGone(frame))) return pick;
-  ledger.toastWaits += 1;
-  return pickFrom(frame, await enumerateInteractiveElements(frame), progress);
 }
 
 /** Acts on `el` and books it: a recipe the driver could not complete is a failed action (counted,
@@ -728,10 +762,22 @@ async function act(frame: Frame, screenName: string, el: SweptElement, progress:
   progress.actedSinceDismissal = el.kind === 'modal-backdrop' ? 0 : progress.actedSinceDismissal + 1;
 }
 
-/** Sweeps ONE currently-rendered screen: sorted-fingerprint order, one action per fingerprint,
- *  re-enumerate after every action, stop on no-actionable-fingerprint / the per-screen cap / a
- *  detected navigation (spec requirement + design D1/D2). `progress` carries the screen's earlier
- *  visits. */
+/** Sweeps ONE currently-rendered screen: group-then-sorted-fingerprint order, one action per
+ *  fingerprint, re-enumerate after every action, stop on no-actionable-fingerprint / the per-screen
+ *  cap / a detected navigation (spec requirement + design D1/D2). `progress` carries the screen's
+ *  earlier visits. Everything it does is booked into `acc` as it goes, so a run killed mid-screen
+ *  still reports the actions and time spent here.
+ *
+ *  A pass that finds nothing to act on while unvisited fingerprints remain goes round the loop once
+ *  more, with no action spent: the page may have moved on since that first look (a toast left, a
+ *  sheet finished sliding), and a toast showing is waited for first (`awaitToastGone`). A second
+ *  empty pass in a row ends the screen, not truncated.
+ *
+ *  Why this ends: every pass either acts, which spends one of the screen's `maxActionsPerScreen`
+ *  and grows the visited set or the re-dismissals (`pickNext`), or finds nothing. Each stuck state
+ *  gets one retry and only an action re-arms it, never time, so retries are bounded by actions, and
+ *  actions are capped. The sweep's callers add no unbounded loop of their own: a screen is entered
+ *  again only after an action navigated to it or a back step (never more than actions) returned. */
 async function sweepOneScreen(
   frame: Frame,
   screenName: string,
@@ -739,19 +785,34 @@ async function sweepOneScreen(
   obs: AttachedObservers,
   budgets: RunBudgets,
   opts: ResolvedSweepOptions,
-  ledger: SweepLedger,
+  acc: SweepAccumulator,
 ): Promise<ScreenSweepOutcome> {
-  const actionsLog: SweptElement[] = [];
+  const startedAt = Date.now();
+  const spentBefore = acc.perScreenMs[screenName] ?? 0;
+  const stamp = (): void => {
+    acc.perScreenMs[screenName] = spentBefore + Date.now() - startedAt;
+  };
+  let retried = false;
 
   while (progress.actions < opts.maxActionsPerScreen) {
     await awaitMotionStill(frame, budgets.actionHardCapMs);
     const elements = await enumerateInteractiveElements(frame);
-    noteSeen(ledger, screenName, elements, progress);
-    const next = await pickNext(frame, elements, progress, ledger);
-    if (next === null) return { actionsLog, truncated: false, navigatedTo: null };
+    noteSeen(acc.ledger, screenName, elements, progress);
+    const next = await pickNext(frame, elements, progress);
+    if (next === null) {
+      if (retried || orderUnvisited(elements, progress).length === 0) {
+        stamp();
+        return { truncated: false, navigatedTo: null };
+      }
+      retried = true;
+      await awaitToastGone(frame, acc.ledger);
+      continue;
+    }
+    retried = false;
 
-    await act(frame, screenName, next, progress, ledger, opts);
-    actionsLog.push(next);
+    await act(frame, screenName, next, progress, acc.ledger, opts);
+    acc.actionsLog.push(next);
+    stamp();
 
     // The action is itself activity: what it sets going (a frame, a storage call) reaches the host
     // after the driver call returns, and a window measured only from earlier activity can close
@@ -760,14 +821,16 @@ async function sweepOneScreen(
     await awaitQuiet(obs, budgets);
     const info = await awaitSettledScreen(frame).catch((): ScreenInfo => ({ declared: [], mounted: [screenName], current: screenName }));
     if (info.current && info.current !== screenName) {
-      return { actionsLog, truncated: false, navigatedTo: info.current };
+      stamp();
+      return { truncated: false, navigatedTo: info.current };
     }
   }
 
   const remaining = await enumerateInteractiveElements(frame).catch(() => [] as SweptElement[]);
-  noteSeen(ledger, screenName, remaining, progress);
+  noteSeen(acc.ledger, screenName, remaining, progress);
   const truncated = sortedUnvisited(remaining, progress).length > 0;
-  return { actionsLog, truncated, navigatedTo: null };
+  stamp();
+  return { truncated, navigatedTo: null };
 }
 
 /** The navigation-stack depth the SDK last announced (`__whimNavDepth`, relayed by the outer
@@ -875,15 +938,6 @@ async function coldMountScreen(ctx: RunContext, obs: AttachedObservers, source: 
 // Top-level orchestration (tasks 4.2/4.3/4.4 composed)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** What the live and cold-mount passes accumulate into one `SweepResult`. */
-interface SweepTally {
-  visited: Set<string>;
-  perScreenMs: Record<string, number>;
-  actionsLog: SweptElement[];
-  truncated: boolean;
-  ledger: SweepLedger;
-}
-
 /** The nav-reachable live sweep, from the screen the app mounted on (see `sweepApp`). */
 async function sweepLive(
   ctx: RunContext,
@@ -892,21 +946,18 @@ async function sweepLive(
   obs: AttachedObservers,
   budgets: RunBudgets,
   opts: ResolvedSweepOptions,
-  tally: SweepTally,
+  acc: SweepAccumulator,
 ): Promise<void> {
   const progress = new Map<string, ScreenProgress>();
   let currentName = firstScreen;
   let backSteps = 0;
   while (currentName !== null) {
     const name = currentName;
-    tally.visited.add(name);
+    acc.visited.add(name);
     const screenProgress = progress.get(name) ?? newScreenProgress();
     progress.set(name, screenProgress);
-    const start = Date.now();
-    const outcome = await sweepOneScreen(frame, name, screenProgress, obs, budgets, opts, tally.ledger);
-    tally.perScreenMs[name] = (tally.perScreenMs[name] ?? 0) + Date.now() - start;
-    tally.actionsLog.push(...outcome.actionsLog);
-    if (outcome.truncated) tally.truncated = true;
+    const outcome = await sweepOneScreen(frame, name, screenProgress, obs, budgets, opts, acc);
+    if (outcome.truncated) acc.truncated = true;
     if (outcome.navigatedTo) {
       currentName = outcome.navigatedTo;
       continue;
@@ -915,7 +966,7 @@ async function sweepLive(
     // sibling reachable only from a screen further down is still reached live. Every pop undoes a
     // push some action caused, so back steps never outnumber actions — the nav-depth hint is
     // unauthenticated (F4) and a candidate claiming a deeper stack cannot loop the sweep.
-    if (backSteps >= tally.actionsLog.length || latestNavDepth(obs) <= 0) return;
+    if (backSteps >= acc.actionsLog.length || latestNavDepth(obs) <= 0) return;
     backSteps += 1;
     currentName = await navigateBack(ctx, frame, obs, budgets);
   }
@@ -927,50 +978,52 @@ async function sweepLive(
  * resumes its own remaining fingerprints rather than being re-swept; a finished screen steps
  * back to the one below it while the SDK reports one, so every sibling of a hub is reached),
  * then a cold-mount pass (task 4.4) for every declared `spec.screens` entry the live sweep never
- * reached, each producing an `unreachable_screen` warning. `obs` must already be attached
+ * reached; the ones no `navigate` call in `source` names also produce an `unreachable_screen`
+ * warning. `obs` must already be attached
  * (`attachObserversEarly`/`EarlyObservers.finish`, `handoff/observe-api.md`) — this function only
  * READS `obs.state`/calls `awaitQuiet`, it never attaches anything itself (chain 5 composes the
  * attachment via `RunOptions.beforeNavigate`, per the integration note this chain received).
+ *
+ * `acc` is the caller's: the sweep books everything it learns into it as it goes (declared screens
+ * once known, a screen as it is entered, every action, the time spent), so a caller that abandons
+ * this promise — the total budget killed the page — still reads how far the sweep got. The
+ * returned `SweepResult` is `sweepResultOf(acc)` at the end, never a second record.
  */
-export async function sweepApp(ctx: RunContext, obs: AttachedObservers, source: string, budgets: RunBudgets, opts?: SweepOptions): Promise<SweepResult> {
+export async function sweepApp(
+  ctx: RunContext,
+  obs: AttachedObservers,
+  source: string,
+  budgets: RunBudgets,
+  opts?: SweepOptions,
+  acc: SweepAccumulator = newSweepAccumulator(),
+): Promise<SweepResult> {
   const resolved = resolveOptions(opts);
-  const tally: SweepTally = { visited: new Set<string>(), perScreenMs: {}, actionsLog: [], truncated: false, ledger: newLedger() };
-  const { visited, perScreenMs, actionsLog } = tally;
 
   const frame = await findAppFrame(ctx.page);
   // A mount-time read must have resolved before the first enumeration, or what the sweep finds
   // depends on a race (and a control gated on that read is never seen).
   await awaitQuiet(obs, budgets);
   const seedInfo = await awaitSettledScreen(frame);
-  const declared = seedInfo.declared;
-  await sweepLive(ctx, frame, seedInfo.current, obs, budgets, resolved, tally);
+  acc.declared = seedInfo.declared;
+  await sweepLive(ctx, frame, seedInfo.current, obs, budgets, resolved, acc);
 
-  const diagnostics: SweepDiagnostic[] = [];
-  const coldMountedScreens: string[] = [];
-  for (const name of declared) {
-    if (visited.has(name)) continue;
-    if (!navigateNamesScreen(source, name)) diagnostics.push(unreachableScreenDiagnostic(name));
+  for (const name of acc.declared) {
+    if (acc.visited.has(name)) continue;
+    if (!navigateNamesScreen(source, name)) acc.diagnostics.push(unreachableScreenDiagnostic(name));
+    acc.visited.add(name);
+    acc.coldMounted.push(name);
     const start = Date.now();
     try {
       const coldFrame = await coldMountScreen(ctx, obs, source, name, budgets);
-      const outcome = await sweepOneScreen(coldFrame, name, newScreenProgress(), obs, budgets, resolved, tally.ledger);
-      actionsLog.push(...outcome.actionsLog);
-      if (outcome.truncated) tally.truncated = true;
+      const outcome = await sweepOneScreen(coldFrame, name, newScreenProgress(), obs, budgets, resolved, acc);
+      if (outcome.truncated) acc.truncated = true;
     // eslint-disable-next-line no-restricted-syntax -- intentional: best-effort — the unreachable_screen diagnostic already recorded the failure, so move on rather than abort the sweep.
     } catch {
       // best-effort (a cold-mount build/deliver failure still leaves the unreachable_screen
       // diagnostic above) — move on to the next declared screen rather than aborting the sweep.
     }
-    perScreenMs[name] = Date.now() - start;
-    visited.add(name);
-    coldMountedScreens.push(name);
+    acc.perScreenMs[name] = Date.now() - start;
   }
 
-  const { ledger } = tally;
-  const sweep: SweepCounts = {
-    actions: actionsLog.length,
-    blocked: [...ledger.seen].filter((key) => !ledger.acted.has(key) && !ledger.retired.has(key)).length,
-    failedActions: ledger.failedActions,
-  };
-  return { declaredScreens: declared, visitedScreens: [...visited], coldMountedScreens, truncated: tally.truncated, diagnostics, perScreenMs, actionsLog, sweep };
+  return sweepResultOf(acc);
 }

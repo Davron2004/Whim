@@ -12,7 +12,7 @@ import { assembleCandidatePage } from '../page';
 import { awaitMount, mergeBudgets } from '../observe';
 import { SynthRunSession } from '../session';
 import { wireCapabilityBridge, type CapabilityWiring } from '../capability';
-import type { AppRecord } from '../../src/host/bridge';
+import { appRecordForSource } from '../report';
 import { sweepApp } from '../sweep';
 import { recordAssertion, test } from './harness';
 import { flowbenchApp } from './flowbench';
@@ -21,13 +21,6 @@ import { openWiredRun, within } from './support';
 function ok(cond: boolean, msg: string): void {
   recordAssertion(() => nodeAssert.ok(cond, msg), msg);
 }
-
-const STORAGE_APP: AppRecord = {
-  appId: 'delivery-storage',
-  name: 'DeliveryStorage',
-  manifest: { capabilities: ['storage'] },
-  schemaArtifact: { schemaVersion: 1, collections: {} },
-};
 
 // Reads at mount and makes its second capability call only once the read resolved in the realm.
 const FIXTURE_READ_THEN_WRITE = `import { defineApp, Screen, Stack, Heading, useEffect, storage } from 'vc-sdk';
@@ -40,8 +33,10 @@ function Home() {
   }, []);
   return <Screen><Stack><Heading size="title">chain</Heading></Stack></Screen>;
 }
-export default defineApp({ name: 'ReadThenWrite', initial: 'Home', screens: { Home }, capabilities: ['storage'] });
+export default defineApp({ name: 'ReadThenWrite', initial: 'Home', screens: { Home }, capabilities: ['storage'], schema: { schemaVersion: 1, collections: {} } });
 `;
+
+const STORAGE_APP = appRecordForSource(FIXTURE_READ_THEN_WRITE, 'delivery-storage');
 
 /** How long the negative control watches for a call that must not come. The positive run gets its
  *  second call within tens of milliseconds, so this is two orders of magnitude of margin. */
@@ -55,6 +50,13 @@ function wait(ms: number): Promise<void> {
 async function waitUntil(predicate: () => boolean, budgetMs: number): Promise<void> {
   const deadline = Date.now() + budgetMs;
   while (Date.now() < deadline && !predicate()) await wait(15);
+}
+
+/** The origin the outer run page reports about itself. `self.origin` serialises the opaque origin of
+ *  a sandboxed document as `null`; `location.origin` does not (it keeps the URL's), so it cannot
+ *  tell the two deliveries apart. */
+async function outerOrigin(page: Page): Promise<string> {
+  return page.evaluate(() => (globalThis as unknown as { origin: string }).origin);
 }
 
 function syscalls(wiring: CapabilityWiring, method: string): number {
@@ -85,9 +87,10 @@ export async function testReplyDelivery(): Promise<void> {
   try {
     await test('reply delivery: a storage read made at mount resolves in the candidate, so its next call is made', async () => {
       const wiring = wireCapabilityBridge(STORAGE_APP);
-      const { dispose } = await session.openRun(FIXTURE_READ_THEN_WRITE, { appId: STORAGE_APP.appId, beforeNavigate: wiring.beforeNavigate });
+      const { ctx, dispose } = await session.openRun(FIXTURE_READ_THEN_WRITE, { appId: STORAGE_APP.appId, beforeNavigate: wiring.beforeNavigate });
       try {
         await waitUntil(() => syscalls(wiring, 'storage.kv.set') > 0, 5000);
+        ok((await outerOrigin(ctx.page)) === 'null', 'the run page is delivered as an opaque-origin document');
         ok(syscalls(wiring, 'storage.kv.get') === 1, `the mount read reached the host once (got ${syscalls(wiring, 'storage.kv.get')})`);
         ok(syscalls(wiring, 'storage.kv.set') === 1, `the write that only follows the resolved read reached the host (got ${syscalls(wiring, 'storage.kv.set')})`);
         ok(wiring.realm?.engine?.kv.get('after-read') === 'x', 'the write landed in the run\'s engine');
@@ -121,9 +124,11 @@ export async function testReplyDelivery(): Promise<void> {
         await wiring.beforeNavigate(page, context);
         await servePageWithoutPolicy(context, FIXTURE_READ_THEN_WRITE);
       };
-      const { dispose } = await session.openRun(FIXTURE_READ_THEN_WRITE, { appId: STORAGE_APP.appId, beforeNavigate });
+      const { ctx, dispose } = await session.openRun(FIXTURE_READ_THEN_WRITE, { appId: STORAGE_APP.appId, beforeNavigate });
       try {
         await waitUntil(() => syscalls(wiring, 'storage.kv.get') > 0, 5000);
+        const origin = await outerOrigin(ctx.page);
+        ok(origin !== 'null' && origin.startsWith('https://'), `the run page kept a real origin, which is the cause under test (got ${origin})`);
         ok(syscalls(wiring, 'storage.kv.get') === 1, 'the candidate ran and made its read, which the host answered');
         await wait(ABSENCE_WINDOW_MS);
         ok(syscalls(wiring, 'storage.kv.set') === 0, `the host's answer was dropped in the realm, so the dependent write never came (got ${syscalls(wiring, 'storage.kv.set')})`);
