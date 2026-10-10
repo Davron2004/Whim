@@ -150,8 +150,49 @@ async function layoutCard(tree: Tree, height = SHEET_HEIGHT): Promise<void> {
   await act(() => card(tree).props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } }));
 }
 const modalShown = (tree: Tree) => all(tree, 'Modal').length === 1;
+/** Makes every entry of a motion token table throw when read, and returns what puts them back. To a
+ *  callback on the UI thread the JS-thread helpers that read these tables are out of reach: Reanimated
+ *  throws when a worklet calls a function that is not one. */
+function hideTokens(table: object): () => void {
+  const kept = Object.getOwnPropertyDescriptors(table);
+  for (const key of Object.keys(kept)) {
+    Object.defineProperty(table, key, { configurable: true, enumerable: true, get: () => { throw new Error(`motion token “${key}” read during a release`); } });
+  }
+  return () => Object.defineProperties(table, kept);
+}
 
 // ── GroupedList helpers ─────────────────────────────────────────────────────
+
+/** Device pixels per point on the phones where a pixel is a third of a point. */
+const PIXELS = 3;
+/**
+ * The box a text of `lines` lines gets on an iPhone, and the height its lines need, in points. React
+ * Native measures the lines and rounds that up to a whole pixel (`RCTTextLayoutManager`); Yoga then
+ * rounds the top and the bottom to the pixel grid and stores the height as the difference of the two
+ * as 32-bit floats (`PixelGrid.cpp`), which is what the text is laid out and drawn in. `topPixels` is
+ * the box's top edge from the top of its window, in pixels.
+ */
+function textBox(lineHeight: number, lines: number, fontScale: number, topPixels: number): { box: number; lines: number } {
+  const needed = lines * lineHeight * fontScale;
+  const bottomPixels = topPixels + Math.ceil(needed * PIXELS - 1e-9);
+  return { box: Math.fround(Math.fround(bottomPixels / PIXELS) - Math.fround(topPixels / PIXELS)), lines: needed };
+}
+/** Every place a text set at `lineHeight` would get a box shorter than its lines: two to eight lines,
+ *  lying across each power of two a sheet's content reaches, its top on a whole point and on each
+ *  third of one. */
+function shortTextBoxes(words: string, lineHeight: number, fontScale: number): string[] {
+  const short: string[] = [];
+  for (const boundary of [256, 512, 1024, 2048, 4096]) {
+    for (let lines = 2; lines <= 8; lines++) {
+      const middle = Math.round((boundary - (lines * lineHeight * fontScale) / 2) * PIXELS);
+      for (const top of [middle, middle + 1, middle + 2]) {
+        const fit = textBox(lineHeight, lines, fontScale, top);
+        if (fit.box < fit.lines) short.push(`“${words}” at ${fontScale * 100}%: ${lines} lines across ${boundary} pt get ${fit.box}, need ${fit.lines}`);
+      }
+    }
+  }
+  return short;
+}
 
 /** The host view `node` sits in. */
 function hostParentOf(node: Node): Node | null {
@@ -447,6 +488,32 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
       h.eq(modalShown(tree), !closes, `${name}: its window ${closes ? 'goes' : 'stays'}`);
       await act(() => tree.unmount());
     }
+  });
+
+  await h.test('Sheet: releasing a drag reaches for no motion token — the release runs on the UI thread, where the helpers that read them cannot be called and a call ends the app', async () => {
+    const cases: [string, boolean, number[], number, boolean][] = [
+      ['a drag let go short of half', false, [20, 60, 100], 0, false],
+      ['a drag past half', false, [100, 220, 330], 0, true],
+      ['under Reduce Motion, a drag let go short of half', true, [20, 60, 100], 0, false],
+      ['under Reduce Motion, a drag past half', true, [100, 220, 330], 0, true],
+    ];
+    for (const [name, reduceMotion, moves, velocity, closes] of cases) {
+      await resetPhone();
+      accessibilitySettings.reduceMotion = reduceMotion;
+      const count = { n: 0 };
+      const tree = await render(<HeldSheet onCloseCount={count} />);
+      await settle();
+      await layoutCard(tree);
+      let thrown: unknown = null;
+      await act(() => {
+        const restore = [hideTokens(SPRINGS), hideTokens(TIMINGS)];
+        try { pan(dragOf(tree), moves, velocity); } catch (e) { thrown = e; } finally { for (const put of restore) put(); }
+      });
+      h.ok(thrown === null, `${name}: the release ran to its end (${thrown === null ? 'yes' : String(thrown)})`);
+      h.eq([count.n, modalShown(tree)], [closes ? 1 : 0, !closes], `${name}: the sheet ${closes ? 'closed' : 'stayed'}`);
+      await act(() => tree.unmount());
+    }
+    await resetPhone();
   });
 
   await h.test('Sheet: a drag tracks the finger 1:1 after the 10 pt slop, rubber-bands above its open place, and the scrim follows the card', async () => {
@@ -1402,6 +1469,30 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     for (const scale of [1, 1.2, 1.35, 2, 3]) seen.set(scale, await groupedRowsAt(scale));
     h.eq([...seen].map(([scale, row]) => [scale, row.stacked]), [[1, false], [1.2, false], [1.35, true], [2, true], [3, true]], 'beside its title below 135%, under it from 135%');
     h.ok([...seen.values()].every((row) => row.label === 'Language, Français' && row.marks === 1), 'the row reads the same to a screen reader, and a link row keeps its mark, at every size');
+    await resetPhone();
+  });
+
+  await h.test('GroupedList: a row’s text always has room for its last line — its box, as Yoga computes it in 32-bit floats, is never shorter than its lines, where the token’s own line height comes out short', async () => {
+    // What cut “Ce que nous ne faisons jamais” on the first-run sheet at the largest text size: two
+    // 48 pt lines in a box whose top, 1966⅓ pt down the window, and bottom lie either side of 2048.
+    const seen = textBox(TYPE_SCALE.body.lineHeight, 2, 2, Math.round(1966.3333 * PIXELS));
+    h.eq(seen.box.toFixed(6), '95.999878', 'setup: the model gives the box measured on the phone for the title that was cut');
+    h.ok(seen.box < seen.lines, 'setup: which is shorter than its two lines, so iOS dropped the second and ran the first off the edge');
+    const short: string[] = [];
+    for (const scale of [1, 2]) {
+      await resetPhone();
+      windowMetrics.fontScale = scale;
+      const tree = await render(
+        <GroupedSection header="This phone" footer="Only you see this.">
+          <GroupedRow title="What we never do" subtitle="Show ads, sell your data or track you." icon="info" />
+          <GroupedRow title="Language" subtitle="For the privacy policy" trailing={{ kind: 'value', text: 'Français' }} onPress={() => {}} />
+        </GroupedSection>,
+      );
+      const texts = all(tree, 'Text');
+      h.ok(texts.length >= 7, 'setup: the header, both titles, both subtitles, the value and the footer are drawn');
+      for (const text of texts) short.push(...shortTextBoxes(textOf(text), flat(text).lineHeight as number, scale));
+    }
+    h.eq(short, [], 'at 100% and 200% text, across every power of two a sheet reaches, at whole points and thirds of a point');
     await resetPhone();
   });
 

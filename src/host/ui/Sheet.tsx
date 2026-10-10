@@ -349,6 +349,13 @@ interface SheetFrameProps {
 const prepareCommit = () => haptics.prepare('commit');
 const playCommit = () => haptics.play('commit');
 
+// What a released drag animates with, worked out here on the JS thread. The release runs on the UI
+// thread, where `springConfig` and `timing` cannot be called: they are not worklets, a call to one
+// from a worklet throws, and that throw ends the app (every drag of a sheet's header did, on release).
+const FLING = springConfig('fling');
+const FADE_OUT = timing('fadeOut', true);
+const FADE_IN = timing('fadeIn', true);
+
 function SheetFrame({ motion, reduceMotion, title, detent, closeLabel, onClose, onBack, onDragClosed, onSettled, children }: Readonly<SheetFrameProps>) {
   const t = useTokens();
   const s = styles(t);
@@ -394,12 +401,12 @@ function SheetFrame({ motion, reduceMotion, title, detent, closeLabel, onClose, 
       };
       if (releaseCommits(y.value, e.velocityY, height.value)) {
         scheduleOnRN(onDragClosed);
-        if (reduceMotion) fade.value = withTiming(0, timing('fadeOut', true), done);
-        else y.value = withSpring(height.value, { ...springConfig('fling'), velocity: e.velocityY }, done);
+        if (reduceMotion) fade.value = withTiming(0, FADE_OUT, done);
+        else y.value = withSpring(height.value, { ...FLING, velocity: e.velocityY }, done);
       } else if (reduceMotion) {
-        y.value = withTiming(0, timing('fadeIn', true));
+        y.value = withTiming(0, FADE_IN);
       } else {
-        y.value = withSpring(0, { ...springConfig('fling'), velocity: e.velocityY });
+        y.value = withSpring(0, { ...FLING, velocity: e.velocityY });
       }
     },
   });
