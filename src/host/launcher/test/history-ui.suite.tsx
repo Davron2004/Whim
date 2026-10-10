@@ -12,7 +12,7 @@ import HomeScreen from '../HomeScreen';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { StoreAccess, storeIdOf } from '../store-access';
 import { createMemoryStore, MapKVBackend } from '../../version-store';
-import ComposeStep from '../ComposeStep';
+import { DescribePage } from '../DescribePage';
 import DoneStep from '../DoneStep';
 import MiniAppView from '../MiniAppView';
 import WhimProse from '../../ui/whim-prose/WhimProse';
@@ -257,8 +257,8 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       // to the second, and two versions stamped in the same second have no order between them.
       Date.now = () => realNow() + 60_000;
       await TestRenderer.act(async () => home(tree).props.onPromptAgain(tracker(tree)));
-      await TestRenderer.act(async () => tree.root.findByType(ComposeStep).props.onChangeText('Let me set my own daily goal'));
-      await tap(() => tree.root.findByType(ComposeStep).props.onContinue());
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('Let me set my own daily goal'));
+      await tap(() => tree.root.findByType(DescribePage).props.onContinue());
       await waitFor(() => planLoaded(tree), 'the edit’s plan');
       await buildIt(tree);
       await waitFor(() => streams.length === 2, 'the edit’s generation');

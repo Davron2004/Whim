@@ -10,7 +10,7 @@ import { Harness } from './harness';
 import HomeScreen from '../HomeScreen';
 import SettingsScreen from '../SettingsScreen';
 import ConsentScreen from '../ConsentScreen';
-import TermsScreen from '../TermsScreen';
+import { FirstRunSheet } from '../FirstRunSheet';
 import AgeScreen from '../AgeScreen';
 import LauncherRoot from '../LauncherRoot';
 import HistoryScreen from '../HistoryScreen';
@@ -53,9 +53,10 @@ const settings = (tree: Tree) => tree.root.findByType(SettingsScreen);
 /** Which screen shows on top: the consent screen and its mode, a legal step, or Settings (which
  *  stays mounted under the screens it pushes). */
 function shownScreen(tree: Tree): string {
-  if (on(tree, ConsentScreen)) return `consent:${tree.root.findByType(ConsentScreen).props.mode}`;
+  const sheet = tree.root.findAllByType(FirstRunSheet).find((open) => open.props.visible);
+  if (sheet) return sheet.props.termsDue ? 'terms' : 'consent:ask';
+  if (on(tree, ConsentScreen)) return 'consent:review';
   if (on(tree, AgeScreen)) return 'age';
-  if (on(tree, TermsScreen)) return 'terms';
   if (on(tree, SettingsScreen)) return 'settings';
   return 'another screen';
 }
@@ -456,9 +457,10 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
       await press(button(tree, COPY.consentReviewTurnOn));
       journey.push(shownScreen(tree));
       h.eq(consentStatus(kv).kind, 'absent', 'nothing is granted before the terms are accepted');
-      await press(button(tree, COPY.termsAccept));
+      await press(button(tree, COPY.firstRunTermsCheck));
+      await press(button(tree, COPY.consentAgree));
       journey.push(shownScreen(tree));
-      h.eq(journey, ['settings', 'consent:review', 'terms', 'settings'], 'the disclosure once, then the terms step, then Settings');
+      h.eq(journey, ['settings', 'consent:review', 'terms', 'settings'], 'the disclosure once, then the first-run sheet with its terms row, then Settings');
       h.eq([termsStatus(kv).kind, consentStatus(kv).kind], ['accepted', 'granted'], 'AI features are on after that one consent');
       h.eq(sent.length, 0, 'no request was sent along the way');
     });
@@ -488,11 +490,12 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
       await press(button(tree, COPY.consentReviewTurnOn));
       journey.push(shownScreen(tree));
       await TestRenderer.act(async () => answer('adult'));
-      await waitFor(() => !on(tree, AgeScreen), 'the age check to finish');
+      await waitFor(() => shownScreen(tree) === 'terms', 'the age check to finish');
       journey.push(shownScreen(tree));
-      await press(button(tree, COPY.termsAccept));
+      await press(button(tree, COPY.firstRunTermsCheck));
+      await press(button(tree, COPY.consentAgree));
       journey.push(shownScreen(tree));
-      h.eq(journey, ['settings', 'consent:review', 'age', 'terms', 'settings'], 'the disclosure, the age check and the terms step, once each');
+      h.eq(journey, ['settings', 'consent:review', 'settings', 'terms', 'settings'], 'the disclosure, the silent age check (Settings stays in view) and the first-run sheet, once each');
       h.eq([termsStatus(kv).kind, consentStatus(kv).kind], ['accepted', 'granted'], 'and AI features are on');
     });
   });
@@ -508,13 +511,13 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('Settings: declining the terms step after "Turn on AI features" returns to Settings with nothing stored', async () => {
+  await h.test('Settings: declining the first-run sheet after "Turn on AI features" returns to Settings with nothing stored', async () => {
     await withLauncher({ terms: false, consent: false, server: clarifyServer }, async ({ tree, kv }) => {
       await openSettings(tree);
       await press(button(tree, COPY.settingsAISectionTitle));
       await press(button(tree, COPY.consentReviewTurnOn));
-      await waitFor(() => on(tree, TermsScreen), 'the terms step');
-      await press(button(tree, COPY.termsDecline));
+      await waitFor(() => shownScreen(tree) === 'terms', 'the first-run sheet');
+      await press(button(tree, COPY.consentDecline));
       h.eq(shownScreen(tree), 'settings', 'back on Settings');
       h.eq([termsStatus(kv).kind, consentStatus(kv).kind], ['absent', 'absent'], 'no terms record and no grant');
     });

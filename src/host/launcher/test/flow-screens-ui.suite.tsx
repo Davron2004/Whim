@@ -1,24 +1,24 @@
-/** The prompt flow's step screens rendered on their own, for what their controls do: chips fill
- *  the field, a loading step offers no primary action, plan rows edit in place, and each exit on
- *  the build and done screens calls its own callback. */
+/** The making sheet's pages rendered on their own, for what their controls do: idea chips fill the
+ *  field, a loading plan offers a busy action in plain words, questions answer as chips or rows with
+ *  "Decide for me" exclusive, plan rows edit in place, the can't-make-as-asked state offers its two
+ *  actions, and each exit on the running pages calls its own callback. */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
+import { ClarifyQuestion } from '@whim/contract';
+import { STUB_LIMIT } from '../../../../server/src/stub-markers';
 import { Harness } from './harness';
-import { COPY, LEGAL_COPY, clarifyBuildInstead } from '../copy';
-import { composeStep, planStep, primaryActionLabel, updatePlanRow, withPlan, type FlowNotice, type FlowQuestion } from '../prompt-flow';
-import ComposeStep from '../ComposeStep';
-import ClarifyStep from '../ClarifyStep';
-import PlanStep from '../PlanStep';
+import { COPY } from '../copy';
+import { describeStep, planStep, updatePlanRow, withPlan, withProblem, withQuestions, type FlowNotice, type FlowQuestion, type PlanScreen } from '../prompt-flow';
+import { DescribePage } from '../DescribePage';
+import { PlanPage } from '../PlanPage';
 import BuildStep from '../BuildStep';
 import DoneStep from '../DoneStep';
-import ServiceNotice from '../ServiceNotice';
-import TermsScreen from '../TermsScreen';
+import WhimProse from '../../ui/whim-prose/WhimProse';
 import type { InstalledApp } from '../app-index';
-import { SPACING, TYPE_SCALE } from '../../../sdk/theme';
-import { StyleSheet } from './native-host';
-import { button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
+import { button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 
 type Tree = TestRenderer.ReactTestRenderer;
+type Node = TestRenderer.ReactTestInstance;
 
 /** Counts calls per callback name. */
 function spies() {
@@ -29,8 +29,7 @@ function spies() {
   return { calls, fn, count: (name: string) => calls[name]?.length ?? 0 };
 }
 
-const isTextInput = (node: TestRenderer.ReactTestInstance) => hostType(node) === 'TextInput';
-const touchableWith = (tree: Tree, text: string) => tree.root.find((n) => hostType(n) === 'TouchableOpacity' && textOf(n).includes(text));
+const noop = () => {};
 
 async function rendered(element: React.ReactElement, body: (tree: Tree) => Promise<void>): Promise<void> {
   const tree = await renderScreen(element);
@@ -38,160 +37,228 @@ async function rendered(element: React.ReactElement, body: (tree: Tree) => Promi
 }
 
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
-const QUESTION: FlowQuestion = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'], select: 'one', other: false };
+const BUSY: FlowNotice = { hint: 'This device is already making an app. Try again when it finishes.', tone: 'neutral' };
+
+/** Questions as the contract defines them, so a shape the wire would refuse cannot be tested here. */
+const ask = (q: unknown): FlowQuestion => ClarifyQuestion.parse(q);
+const SHORT = ask({ id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'], select: 'one', other: false });
+const LONG = ask({ id: 'where', question: 'Where should it keep the history?', options: ['Only on this phone', 'Remember every brew, with my notes'], select: 'one', other: false });
+const MANY = ask({ id: 'extras', question: 'What goes in it?', options: ['Honey', 'Lemon', 'Milk'], select: 'many', other: true });
 const ROWS = [{ label: 'Timer', text: 'Counts down' }, { label: 'Alert', text: 'Buzzes at zero' }];
-const BUSY: FlowNotice = { hint: 'This device is already building an app. Try again when it finishes.', tone: 'neutral' };
 
-type Node = TestRenderer.ReactTestInstance;
-const marginOf = (node: Node, side: 'marginTop' | 'marginBottom'): number => {
-  const style = StyleSheet.flatten(node.props.style) as Record<string, number | undefined>;
-  return style[side] ?? style.marginVertical ?? style.margin ?? 0;
-};
-const contains = (outer: Node, inner: Node): boolean => {
-  for (let at: Node | null = inner; at; at = at.parent) if (at === outer) return true;
-  return false;
-};
-
-/** The space between the notice's card and `action` below it: every bottom margin from the card up
- *  to the view the two share, and the action's top margin. */
-function gapBetween(notice: Node, action: Node): number {
-  let gap = marginOf(action, 'marginTop');
-  for (let at: Node | null = notice; at && !contains(at, action); at = at.parent) {
-    if (typeof hostType(at) === 'string') gap += marginOf(at, 'marginBottom');
-  }
-  return gap;
+/** A plan page as the shell holds it once everything has landed. */
+function landed(questions: FlowQuestion[] = [], over: Partial<PlanScreen> = {}): PlanScreen {
+  const asked = withQuestions(planStep(describeStep(undefined, 'A tea timer')), questions);
+  return { ...withPlan(asked, { rewrittenPrompt: 'A tea timer', plan: ROWS }), ...over };
 }
 
-/** A control's fill, and the colour its outer edge shows: its border's where it draws one. */
-function fillAndEdge(node: Node): [unknown, unknown] {
-  const style = StyleSheet.flatten(node.props.style) as { backgroundColor?: string; borderColor?: string; borderWidth?: number };
-  return [style.backgroundColor, (style.borderWidth ?? 0) > 0 ? style.borderColor : style.backgroundColor];
+function planPage(screen: PlanScreen, s = spies()): React.ReactElement {
+  return (
+    <PlanPage
+      screen={screen}
+      onBack={s.fn('back')}
+      onAnswer={s.fn('answer')}
+      onChangeRow={s.fn('row')}
+      onMake={s.fn('make')}
+      onTryAgain={s.fn('again')}
+      onMakeInstead={s.fn('instead')}
+    />
+  );
 }
 
-/** The face of the innermost text holding `words`. */
-function faceOf(tree: Tree, words: string): unknown {
-  const holds = (n: Node) => String(n.type) === 'Text' && textOf(n).includes(words);
-  const innermost = tree.root.findAll((n) => holds(n) && n.findAll((c) => c !== n && holds(c)).length === 0);
-  if (innermost.length !== 1) throw new Error(`expected one text holding “${words}”, got ${innermost.length}`);
-  return (StyleSheet.flatten(innermost[0].props.style) as { fontFamily?: string }).fontFamily;
-}
+const picked = (node: Node) => node.props.accessibilityState?.checked === true;
+const labelled = (tree: Tree, label: string) => tree.root.findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === label);
+/** The screen reader elements every control labelled `label` is read as. */
+const readAs = (tree: Tree, label: string) => labelled(tree, label).map((node) => screenReaderElement(node));
+/** The one text field showing. */
+const textField = (tree: Tree) => tree.root.find((n) => hostType(n) === 'TextInput');
 
-/** The card `ServiceNotice` draws. */
-const noticeCard = (tree: Tree): Node => tree.root.findByType(ServiceNotice).find((n) => typeof hostType(n) === 'string');
+/** Pre-order position of the first text holding `words`, to read the page's top-to-bottom order. */
+function positionOf(tree: Tree, words: string): number {
+  const order: Node[] = [];
+  const walk = (node: Node) => { order.push(node); node.children.forEach((child) => { if (typeof child !== 'string') walk(child); }); };
+  walk(tree.root);
+  return order.findIndex((n) => hostType(n) === 'Text' && textOf(n).includes(words));
+}
 
 export async function runFlowScreensUiTests(h: Harness): Promise<void> {
-  await h.test('compose: a starter chip fills the field and does not continue; editing an app shows no chips', async () => {
+  await h.test('describe: an idea chip fills the field and does not continue; changing an app shows no chips and says which app', async () => {
     const s = spies();
-    await rendered(<ComposeStep text="" editing={false} onChangeText={s.fn('change')} onContinue={s.fn('continue')} onBack={s.fn('back')} />, async (tree) => {
-      await press(button(tree, COPY.composeChipTimer));
-      h.eq(s.calls.change, [[COPY.composeChipTimer]], 'the chip’s words go into the field');
+    await rendered(<DescribePage text="" onChangeText={s.fn('change')} onContinue={s.fn('continue')} onClose={s.fn('close')} />, async (tree) => {
+      await press(button(tree, COPY.homeIdeaTimer));
+      h.eq(s.calls.change, [[COPY.homeIdeaTimer]], 'the chip’s words go into the field');
       h.eq(s.count('continue'), 0, 'and the flow does not move on');
     });
-    await rendered(<ComposeStep text="" editing editingName="Timer" onChangeText={s.fn('change')} onContinue={s.fn('continue')} onBack={s.fn('back')} />, async (tree) => {
-      h.ok(!textOf(tree.root).includes(COPY.composeChipTimer), 'no starter chips while changing an existing app');
+    await rendered(<DescribePage text="" editing={APP} onChangeText={noop} onContinue={noop} onClose={noop} />, async (tree) => {
+      h.ok(!textOf(tree.root).includes(COPY.homeIdeaTimer), 'no idea chips while changing an existing app');
+      h.ok(textOf(tree.root).includes(COPY.composeHeadlineEdit) && textOf(tree.root).includes('Changing Timer'), 'the header names the app and asks what should change');
     });
   });
 
-  await h.test('clarify and plan: while loading there is no primary action; once loaded it is live, with no answers required', async () => {
+  await h.test('describe: Continue waits for words, and is disabled through a refusal’s retry window', async () => {
     const s = spies();
-    const clarify = (loading: boolean) => (
-      <ClarifyStep prompt="A tea timer" questions={loading ? [] : [QUESTION]} answers={{}} loading={loading} editing={false}
-        onAnswer={s.fn('answer')} onContinue={s.fn('continue')} onBack={s.fn('back')} />
-    );
-    await rendered(clarify(true), async (tree) => {
-      h.ok(!textOf(tree.root).includes(primaryActionLabel('clarify', false)), 'the loading clarify step shows no primary action');
+    await rendered(<DescribePage text="  " onChangeText={noop} onContinue={s.fn('continue')} onClose={noop} />, async (tree) => {
+      h.eq(button(tree, COPY.flowContinue).props.disabled, true, 'no words, no Continue');
     });
-    await rendered(clarify(false), async (tree) => {
-      await press(button(tree, primaryActionLabel('clarify', false)));
-      h.eq(s.count('continue'), 1, 'the loaded clarify step continues with no question answered');
+    await rendered(<DescribePage text="A tea timer" onChangeText={noop} onContinue={s.fn('continue')} onClose={noop} />, async (tree) => {
+      await press(button(tree, COPY.flowContinue));
+      h.eq(s.count('continue'), 1, 'with words it continues');
     });
-    const plan = (loading: boolean) => (
-      <PlanStep rows={loading ? [] : ROWS} loading={loading} editing={false} onChangeRow={s.fn('row')} onBuild={s.fn('build')} onBack={s.fn('back')} />
-    );
-    await rendered(plan(true), async (tree) => {
-      h.ok(!textOf(tree.root).includes(primaryActionLabel('plan', false)), 'the loading plan step shows no primary action');
-    });
-    await rendered(plan(false), async (tree) => {
-      await press(button(tree, primaryActionLabel('plan', false)));
-      h.eq(s.count('build'), 1, 'the loaded plan builds');
+    await rendered(<DescribePage text="A tea timer" notice={{ ...BUSY, retryAt: Date.now() + 60_000 }} onChangeText={noop} onContinue={s.fn('continue')} onClose={noop} />, async (tree) => {
+      h.eq(button(tree, COPY.flowContinue).props.disabled, true, 'a retry window disables it');
+      h.ok(positionOf(tree, BUSY.hint) < positionOf(tree, COPY.flowContinue), 'with the refusal above it');
     });
   });
 
-  await h.test('a refusal notice stands at least a sibling gap above the action beneath it, on every step that shows one', async () => {
-    const noop = () => {};
-    const limit = { reason: 'That needs a camera.', alternative: 'a notes app' };
-    const steps: [string, React.ReactElement, string][] = [
-      ['compose', <ComposeStep text="A tea timer" notice={BUSY} editing={false} onChangeText={noop} onContinue={noop} onBack={noop} />, primaryActionLabel('compose', false)],
-      ['clarify', <ClarifyStep prompt="A tea timer" questions={[QUESTION]} answers={{}} loading={false} notice={BUSY} editing={false} onAnswer={noop} onContinue={noop} onBack={noop} />, primaryActionLabel('clarify', false)],
-      ['clarify limit', <ClarifyStep prompt="A tea timer" questions={[]} answers={{}} loading={false} notice={BUSY} limit={limit} editing={false} onAnswer={noop} onContinue={noop} onBack={noop} />, clarifyBuildInstead(limit.alternative)],
-      ['plan', <PlanStep rows={ROWS} loading={false} notice={BUSY} editing={false} onChangeRow={noop} onBuild={noop} onBack={noop} />, primaryActionLabel('plan', false)],
-    ];
-    for (const [name, element, action] of steps) {
-      await rendered(element, async (tree) => {
-        const gap = gapBetween(noticeCard(tree), button(tree, action));
-        h.ok(gap >= SPACING.sm, `${name}: the notice stands ${gap} clear of “${action}”, at least the ${SPACING.sm} between siblings`);
-      });
-    }
-  });
-
-  await h.test('every primary action that can be taken is filled edge to edge like the terms step’s Accept, with no ring of another colour', async () => {
-    const noop = () => {};
-    let accept: [unknown, unknown] = [undefined, undefined];
-    await rendered(<TermsScreen language="en" onLanguageChange={noop} onAccept={noop} onClose={noop} />, async (tree) => {
-      accept = fillAndEdge(button(tree, LEGAL_COPY.en.termsAccept));
-    });
-    h.ok(accept[0] !== undefined && accept[0] === accept[1], 'the reference: Accept’s edge is its fill');
-    const limit = { reason: 'That needs a camera.', alternative: 'a notes app' };
-    const primaries: [string, React.ReactElement, string][] = [
-      ['compose', <ComposeStep text="A tea timer" editing={false} onChangeText={noop} onContinue={noop} onBack={noop} />, primaryActionLabel('compose', false)],
-      ['clarify', <ClarifyStep prompt="A tea timer" questions={[QUESTION]} answers={{}} loading={false} editing={false} onAnswer={noop} onContinue={noop} onBack={noop} />, primaryActionLabel('clarify', false)],
-      ['clarify limit', <ClarifyStep prompt="A tea timer" questions={[]} answers={{}} loading={false} limit={limit} editing={false} onAnswer={noop} onContinue={noop} onBack={noop} />, clarifyBuildInstead(limit.alternative)],
-      ['plan', <PlanStep rows={ROWS} loading={false} editing={false} onChangeRow={noop} onBuild={noop} onBack={noop} />, primaryActionLabel('plan', false)],
-      ['done', <DoneStep app={APP} onOpen={noop} onBackToApps={noop} onReport={noop} />, COPY.doneOpen],
-    ];
-    for (const [name, element, label] of primaries) {
-      await rendered(element, async (tree) => {
-        h.eq(fillAndEdge(button(tree, label)), accept, `${name}: “${label}” is filled and edged like Accept`);
-      });
-    }
-  });
-
-  await h.test('plan: a row the user rewrote shows their words in the body face, a number they typed included, while the model’s rows keep Whim Syntax', async () => {
-    const noop = () => {};
-    const planned = withPlan(planStep(composeStep(undefined, 'A checklist for the day')), {
-      rewrittenPrompt: 'A checklist for the day',
-      plan: [
-        { label: 'Progress', text: 'A bar that fills as tasks are ticked off.' },
-        { label: 'Timer', text: 'Counts down from 90s.' },
-      ],
-    });
-    const edited = updatePlanRow(planned, 0, 'A bar that fills as tasks are ticked off. It turns green at 100.');
-    await rendered(<PlanStep rows={edited.rows} loading={false} editing={false} onChangeRow={noop} onBuild={noop} onBack={noop} />, async (tree) => {
-      h.eq(faceOf(tree, '100'), TYPE_SCALE.body.fontFamily, 'the 100 the user typed is in the body face, not set as a measure');
-      h.ok(faceOf(tree, '90s') !== TYPE_SCALE.body.fontFamily, 'the model’s own row still sets its measure apart');
-    });
-  });
-
-  await h.test('plan: tapping a row edits it in place; Save commits that row, Cancel commits nothing', async () => {
+  await h.test('plan: while its rows are coming Make it is busy in plain words and takes no taps; once they land it makes', async () => {
     const s = spies();
-    await rendered(<PlanStep rows={ROWS} loading={false} editing={false} onChangeRow={s.fn('row')} onBuild={s.fn('build')} onBack={s.fn('back')} />, async (tree) => {
-      const rowButton = (text: string) => touchableWith(tree, text);
+    await rendered(planPage(planStep(describeStep(undefined, 'A tea timer')), s), async (tree) => {
+      h.eq(button(tree, COPY.planBusy).props.accessibilityState.busy, true, 'the action says what is happening instead of Make it');
+      h.ok(tree.root.findAll((n) => n.props.accessibilityRole === 'progressbar').length >= 2, 'with skeletons standing in for the questions and for the plan');
+      await press(button(tree, COPY.planBusy));
+      h.eq(s.count('make'), 0, 'a tap while busy does nothing');
+    });
+    await rendered(planPage(landed([SHORT]), s), async (tree) => {
+      await press(button(tree, COPY.planBuild));
+      h.eq(s.count('make'), 1, 'the landed plan makes, with no question touched');
+    });
+  });
+
+  await h.test('plan: the person’s words are quoted, and change mode says what changes', async () => {
+    await rendered(planPage(landed()), async (tree) => {
+      h.ok(textOf(tree.root).includes('“A tea timer”'), 'the words are quoted exactly');
+      h.ok(textOf(tree.root).includes(COPY.planHeadline) && textOf(tree.root).includes(COPY.planMakeHeader), 'under "Here’s the plan", with "What I’ll make"');
+    });
+    const changing = { ...landed(), editing: APP };
+    await rendered(<PlanPage screen={changing} editing={APP} onBack={noop} onAnswer={noop} onChangeRow={noop} onMake={noop} onTryAgain={noop} onMakeInstead={noop} />, async (tree) => {
+      h.ok(textOf(tree.root).includes(COPY.planHeadlineEdit) && textOf(tree.root).includes(COPY.planMakeHeaderEdit), 'the headline and section say change');
+      h.ok(button(tree, COPY.planBuildEdit) != null, 'and the action is Make the change');
+    });
+  });
+
+  await h.test('questions: all-short options are chips and a 34-character option makes every option of that question a full-width row; Decide for me ends both', async () => {
+    h.eq(LONG.options[1].length, 34, 'the long option is the 34 characters the spec names');
+    await rendered(planPage(landed([SHORT, LONG])), async (tree) => {
+      const roleOf = (label: string) => labelled(tree, label)[0].props.accessibilityRole;
+      h.eq([roleOf('Sound'), roleOf('Buzz')], ['radio', 'radio'], 'a one-pick question with short options is chips (radios)');
+      const chips = labelled(tree, 'Sound')[0];
+      h.ok(JSON.stringify(chips.findAll((n) => hostType(n) === 'Animated.View').map((n) => n.props.style)).includes('999'), 'drawn as capsules');
+      const rowOption = labelled(tree, LONG.options[0])[0];
+      h.ok(!JSON.stringify(rowOption.findAll((n) => hostType(n) === 'Animated.View').map((n) => n.props.style)).includes('999'), 'a long option makes the whole question rows, not capsules');
+      h.eq(labelled(tree, COPY.clarifyDecide).length, 2, 'each question ends with Decide for me');
+    });
+  });
+
+  await h.test('questions: Decide for me starts selected and is exclusive both ways, in one-pick and several-picks questions', async () => {
+    const s = spies();
+    const screen = landed([SHORT, MANY]);
+    await rendered(planPage(screen, s), async (tree) => {
+      h.eq(labelled(tree, COPY.clarifyDecide).map(picked), [true, true], 'every question starts on Decide for me');
+      await press(labelled(tree, 'Buzz')[0]);
+      await press(labelled(tree, COPY.clarifyDecide)[1]);
+      await press(labelled(tree, 'Lemon')[0]);
+      h.eq(s.calls.answer, [['alert', { kind: 'pick', option: 'Buzz' }], ['extras', { kind: 'decide' }], ['extras', { kind: 'pick', option: 'Lemon' }]], 'each tap reports its change to the shell, which folds it in');
+    });
+    const answered = { ...screen, answers: { alert: { choices: ['Buzz'], other: '', decide: false }, extras: { choices: ['Honey', 'Lemon'], other: '', decide: false } } };
+    await rendered(planPage(answered), async (tree) => {
+      h.eq(labelled(tree, COPY.clarifyDecide).map(picked), [false, false], 'picking something clears Decide for me on both kinds of question');
+      h.eq(['Buzz', 'Sound', 'Honey', 'Lemon', 'Milk'].map((option) => picked(labelled(tree, option)[0])), [true, false, true, true, false], 'and the picks show');
+      h.eq(labelled(tree, 'Honey')[0].props.accessibilityRole, 'checkbox', 'a several-picks question reads as checkboxes');
+    });
+  });
+
+  await h.test('questions: every option, Decide for me and every plan row is its own accessibility element', async () => {
+    await rendered(planPage(landed([SHORT, LONG])), async (tree) => {
+      const labels = ['Sound', 'Buzz', COPY.clarifyDecide, LONG.options[0], LONG.options[1], 'Timer, Counts down', 'Alert, Buzzes at zero'];
+      const elements = labels.flatMap((label) => readAs(tree, label));
+      h.eq(elements.length, labels.length + 1, 'each label found, Decide for me once per question');
+      h.eq(new Set(elements).size, elements.length, 'and no two share a screen reader element');
+    });
+  });
+
+  await h.test('plan: a question with no questions asked shows no "A few choices"; with questions it does, and an answered one folds to one line when scrolled past', async () => {
+    await rendered(planPage(landed()), async (tree) => {
+      h.ok(!textOf(tree.root).includes(COPY.planChoicesHeader), 'nothing to choose, nothing to head');
+    });
+    const answered = { ...landed([SHORT, MANY]), answers: { alert: { choices: ['Buzz'], other: '', decide: false }, extras: { choices: [], other: '', decide: true } } };
+    await rendered(planPage(answered), async (tree) => {
+      h.ok(textOf(tree.root).includes(COPY.planChoicesHeader), 'the choices are headed');
+      const scroll = tree.root.find((n) => hostType(n) === 'ScrollView');
+      const questionBlock = tree.root.find((n) => hostType(n) === 'View' && typeof n.props.onLayout === 'function' && textOf(n).includes(SHORT.question));
+      await TestRenderer.act(async () => questionBlock.props.onLayout({ nativeEvent: { layout: { x: 0, y: 100, width: 350, height: 90 } } }));
+      await TestRenderer.act(async () => scroll.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 200 } } }));
+      h.eq(textOf(tree.root).includes(SHORT.question), false, 'scrolled wholly past, the answered question is one line');
+      const line = button(tree, `${SHORT.question}, Buzz`);
+      h.ok(textOf(line).includes('Buzz'), 'holding its answer');
+      await press(line);
+      h.ok(textOf(tree.root).includes(SHORT.question) && labelled(tree, 'Buzz').length === 1, 'and tapping it reopens the question');
+    });
+  });
+
+  await h.test('plan: tapping a row edits it in place; Save commits that row, Cancel commits nothing, and an edited row says so', async () => {
+    const s = spies();
+    await rendered(planPage(landed(), s), async (tree) => {
       h.eq(tree.root.findAll((n) => hostType(n) === 'TextInput').length, 0, 'no field until a row is tapped');
-      await press(rowButton('Buzzes at zero'));
-      const field = tree.root.find((n) => hostType(n) === 'TextInput');
+      await press(button(tree, 'Alert, Buzzes at zero'));
+      const field = textField(tree);
       h.eq(field.props.value, 'Buzzes at zero', 'the tapped row opens as a field holding its text');
+      h.eq(button(tree, COPY.planBuild).props.disabled, true, 'Make it waits for Save or Cancel');
       await TestRenderer.act(async () => field.props.onChangeText('Chimes at zero'));
       await press(button(tree, COPY.cancel));
       h.eq(s.count('row'), 0, 'Cancel changes nothing');
-      await press(rowButton('Buzzes at zero'));
-      await TestRenderer.act(async () => tree.root.find(isTextInput).props.onChangeText('Chimes at zero'));
+      await press(button(tree, 'Alert, Buzzes at zero'));
+      await TestRenderer.act(async () => textField(tree).props.onChangeText('Chimes at zero'));
       await press(button(tree, COPY.planRowSave));
       h.eq(s.calls.row, [[1, 'Chimes at zero']], 'Save commits the edit to that row, by position');
-      h.eq(s.count('build'), 0, 'and does not build');
+      h.eq(s.count('make'), 0, 'and does not make');
+    });
+    const edited = updatePlanRow(landed(), 0, 'Counts down from 90s and then rings.');
+    await rendered(planPage(edited), async (tree) => {
+      h.ok(textOf(button(tree, 'Timer, Counts down from 90s and then rings., Edited')).includes(COPY.planRowEdited), 'the edited row says Edited');
+      h.eq(tree.root.findAllByType(WhimProse).length, 1, 'only the model’s other row goes through the prose renderer; the person’s own words are shown as typed');
     });
   });
 
-  await h.test('build: Details and Leave it running each call their own callback', async () => {
+  await h.test('plan: back cancels an open row edit first, then returns to Describe, for the visible control and system back alike', async () => {
+    const s = spies();
+    await rendered(planPage(landed(), s), async (tree) => {
+      await press(button(tree, 'Timer, Counts down'));
+      h.eq(tree.root.findAll((n) => hostType(n) === 'TextInput').length, 1, 'a row is open');
+      await press(button(tree, COPY.backLabel));
+      h.eq([tree.root.findAll((n) => hostType(n) === 'TextInput').length, s.count('back')], [0, 0], 'back closes the edit and stays');
+      await press(button(tree, COPY.backLabel));
+      h.eq(s.count('back'), 1, 'the next back leaves for Describe');
+    });
+  });
+
+  await h.test('plan: a request the page could not send shows its sentence and Try again in place of Make it', async () => {
+    const s = spies();
+    const problem = withProblem(planStep(describeStep(undefined, 'A tea timer')), { request: 'rewrite', reason: 'I couldn’t reach the server.' });
+    await rendered(planPage(problem, s), async (tree) => {
+      h.ok(textOf(tree.root).includes('I couldn’t reach the server.'), 'the sentence shows');
+      h.eq(tree.root.findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === COPY.planBuild).length, 0, 'and Make it is not offered');
+      await press(button(tree, COPY.planTryAgain));
+      h.eq(s.count('again'), 1, 'Try again asks for the request again');
+    });
+  });
+
+  await h.test('can’t make as asked: the reason, a card with the alternative, Make that instead and Change my idea', async () => {
+    const limit = STUB_LIMIT.limit!;
+    const s = spies();
+    const screen = { ...planStep(describeStep(undefined, 'What to wear today')), asking: false, loading: false, limit };
+    await rendered(planPage(screen, s), async (tree) => {
+      const shown = textOf(tree.root);
+      h.ok(shown.includes(COPY.planLimitHeadline) && shown.includes('“What to wear today”'), 'the headline and the quote');
+      h.ok(shown.includes(limit.reason) && shown.includes(COPY.planLimitCardLead) && shown.includes(limit.alternative), 'the reason, and the card offering the alternative');
+      h.ok(!shown.includes(COPY.planChoicesHeader), 'no questions on a request that cannot be made');
+      await press(button(tree, COPY.planMakeInstead));
+      await press(button(tree, COPY.planChangeIdea));
+      h.eq([s.count('instead'), s.count('back')], [1, 1], 'Make that instead and Change my idea each do their own thing');
+      h.eq(s.count('make'), 0, 'and nothing is made');
+    });
+  });
+
+  await h.test('making: Details and Leave it running each call their own callback', async () => {
     const s = spies();
     await rendered(<BuildStep stage="generate" delivering={false} signals={null} now={0} onBack={s.fn('back')} onShowDetails={s.fn('details')} />, async (tree) => {
       await press(button(tree, COPY.buildDetails));
@@ -201,7 +268,7 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('done: Open it and Back to your apps go to different places', async () => {
+  await h.test('ready: Open it and Back to your apps go to different places', async () => {
     const s = spies();
     await rendered(<DoneStep app={APP} onOpen={s.fn('open')} onBackToApps={s.fn('apps')} onReport={s.fn('report')} />, async (tree) => {
       await press(button(tree, COPY.doneOpen));

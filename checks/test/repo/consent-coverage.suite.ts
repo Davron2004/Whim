@@ -165,7 +165,7 @@ export async function run(): Promise<void> {
   });
 
   await test('legal keys: a key deleted from the French table fails, naming the key and the French table', () => {
-    for (const key of ['termsLead', 'consentOutdatedLine', 'legalLanguageSwitch'] as const) {
+    for (const key of ['termsUpdatedLine', 'consentOutdatedLine', 'legalLanguageSwitch'] as const) {
       const findings = consentCoverageFindings(liveInput({ tables: { en: LEGAL_COPY.en, fr: without<string>(LEGAL_COPY.fr, key) } }));
       nodeAssert.deepStrictEqual(findings, [`legal key ${key} is missing or empty in the fr table`], `deleting ${key}`);
     }

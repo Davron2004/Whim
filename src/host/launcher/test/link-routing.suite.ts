@@ -76,10 +76,10 @@ export async function runLinkRoutingTests(h: Harness): Promise<void> {
     const cases: Array<[string, string, string]> = [
       ['sheet', 'close-overlay', 'an open sheet takes precedence over the screen behind it'],
       ['app', 'exit-app', 'a running mini-app exits'],
-      ['build', 'leave-build', 'the build screen behaves as Leave it running'],
+      ['making', 'leave-build', 'the making page behaves as leaving the run running'],
       ['failure', 'leave-failure', 'the failure screen takes its own non-destructive Back'],
       ['consent', 'decline-consent', 'the consent screen declines as Not now'],
-      ...['home', 'dev', 'settings', 'history', 'done', 'compose', 'clarify', 'plan', 'link-missing']
+      ...['home', 'dev', 'settings', 'history', 'ready', 'describe', 'plan', 'link-missing']
         .map((kind): [string, string, string] => [kind, 'home', `${kind} goes Home`]),
     ];
     for (const [kind, exit, why] of cases) h.eq(linkExitFor(kind), exit, why);

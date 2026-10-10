@@ -78,6 +78,8 @@ export interface KeyboardShellProps {
   scrollRef?: React.Ref<ScrollView>;
   /** Called when the scrolling content changes size. */
   onContentSizeChange?: ScrollViewProps['onContentSizeChange'];
+  /** Called with the content's vertical offset as it scrolls. */
+  onScrollOffset?: (offset: number) => void;
   children: React.ReactNode;
 }
 
@@ -195,6 +197,7 @@ function assignRef<T>(ref: React.Ref<T> | undefined, node: T | null): void {
 function useRevealingScroll(
   scrollRef: React.Ref<ScrollView> | undefined,
   onContentSizeChange: ScrollViewProps['onContentSizeChange'],
+  onScrollOffset: ((offset: number) => void) | undefined,
   shrinkFor?: (keyboardHeight: number) => number,
 ) {
   const scroll = useRef<ScrollView | null>(null);
@@ -300,7 +303,10 @@ function useRevealingScroll(
     // RN types this prop as never-null; React 19's `useRef(null)` is nullable until mounted.
     innerViewRef: inner as React.RefObject<View>,
     scrollEventThrottle: 16,
-    onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => settle({ offset: event.nativeEvent.contentOffset.y }),
+    onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      settle({ offset: event.nativeEvent.contentOffset.y });
+      onScrollOffset?.(event.nativeEvent.contentOffset.y);
+    },
     onLayout: (event: LayoutChangeEvent) => {
       const viewport = event.nativeEvent.layout.height;
       const resized = viewport !== metrics.current.viewport;
@@ -330,6 +336,7 @@ export default function KeyboardShell({
   contentContainerStyle,
   scrollRef,
   onContentSizeChange,
+  onScrollOffset,
   children,
 }: Readonly<KeyboardShellProps>) {
   const inSheet = host === 'sheet';
@@ -337,7 +344,7 @@ export default function KeyboardShell({
   const { overlap, onLayout, overlapFor } = useKeyboardOverlap(frameRef, !inSheet);
   const padding = useAnimatedStyle(() => ({ paddingBottom: overlap.value }));
   const shrinkFor = useCallback((keyboardHeight: number) => overlapFor(keyboardHeight) - overlap.value, [overlap, overlapFor]);
-  const { scrollProps, edges, registry } = useRevealingScroll(scrollRef, onContentSizeChange, inSheet ? undefined : shrinkFor);
+  const { scrollProps, edges, registry } = useRevealingScroll(scrollRef, onContentSizeChange, onScrollOffset, inSheet ? undefined : shrinkFor);
   const frame = (
     <KeyboardShellContext.Provider value={registry}>
       <Pressable

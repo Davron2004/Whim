@@ -12,11 +12,10 @@ export type ScreenKind =
   | 'age'
   | 'terms'
   | 'consent'
-  | 'compose'
-  | 'clarify'
+  | 'describe'
   | 'plan'
-  | 'build'
-  | 'done'
+  | 'making'
+  | 'ready'
   | 'failure';
 
 export const SCREEN_EXITS: Readonly<Record<ScreenKind, { back: 'root' | 'mini-app' | 'screen' }>> = {
@@ -32,11 +31,10 @@ export const SCREEN_EXITS: Readonly<Record<ScreenKind, { back: 'root' | 'mini-ap
   'age': { back: 'screen' },
   'terms': { back: 'screen' },
   'consent': { back: 'screen' },
-  'compose': { back: 'screen' },
-  'clarify': { back: 'screen' },
+  'describe': { back: 'screen' },
   'plan': { back: 'screen' },
-  'build': { back: 'screen' },
-  'done': { back: 'screen' },
+  'making': { back: 'screen' },
+  'ready': { back: 'screen' },
   'failure': { back: 'screen' },
 };
 

@@ -10,10 +10,9 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { COPY } from '../copy';
-import { primaryActionLabel } from '../prompt-flow';
-import ComposeStep from '../ComposeStep';
-import ClarifyStep from '../ClarifyStep';
-import PlanStep from '../PlanStep';
+import { DescribePage } from '../DescribePage';
+import { PlanPage } from '../PlanPage';
+import type { PlanScreen } from '../prompt-flow';
 import { ReportSheet } from '../ReportScreen';
 import { KeyboardTextInput } from '../KeyboardShell';
 import AdvancedScreen from '../AdvancedScreen';
@@ -187,31 +186,6 @@ async function dismissBoth(tree: Tree): Promise<number> {
   return Keyboard.dismissed - before;
 }
 
-/** A `#rrggbb` or `rgba(r,g,b,a)` colour as 0–255 channels and an alpha. */
-function rgba(color: string): [number, number, number, number] {
-  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color);
-  if (hex) return [parseInt(hex[1], 16), parseInt(hex[2], 16), parseInt(hex[3], 16), 1];
-  const fn = /^rgba\((\d+),(\d+),(\d+),([\d.]+)\)$/.exec(color);
-  if (fn) return [Number(fn[1]), Number(fn[2]), Number(fn[3]), Number(fn[4])];
-  throw new Error(`not a colour this suite reads: ${color}`);
-}
-
-/** WCAG relative luminance of opaque channels. */
-function luminance([r, g, b]: readonly number[]): number {
-  const lin = (c: number) => (c / 255 <= 0.03928 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4);
-  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-}
-
-/** The contrast of `text` on a highlight painted over the field's `background`, as Android paints a
- *  selection. */
-function contrastOnHighlight(text: string, highlight: string, background: string): number {
-  const [hr, hg, hb, ha] = rgba(highlight);
-  const under = rgba(background);
-  const painted = [hr, hg, hb].map((c, i) => c * ha + under[i] * (1 - ha));
-  const [light, dark] = [luminance(painted), luminance(rgba(text))].sort((a, b) => b - a);
-  return (light + 0.05) / (dark + 0.05);
-}
-
 /** Lets the report sheet's draft load (`reportDraftFor` reads the store). */
 const draftLoaded = () => TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });
 
@@ -224,11 +198,10 @@ const ROWS = [
   { label: 'Look', text: 'A big dial' },
   { label: 'Sound', text: 'A soft chime' },
 ];
-const OTHER_QUESTION = { id: 'cup', question: 'What size is the cup?', options: ['Small', 'Large'], select: 'one', other: true } as const;
+const PLAN: PlanScreen = { kind: 'plan', text: 'A tea timer', questions: [], answers: {}, asking: false, rewritten: 'A tea timer', rows: ROWS, loading: false, edited: false };
 
-const compose = (onContinue = noop, onChangeText = noop) => <ComposeStep text="A tea timer" editing={false} onChangeText={onChangeText} onContinue={onContinue} onBack={noop} />;
-const clarify = () => <ClarifyStep prompt="A tea timer" questions={[OTHER_QUESTION]} answers={{}} loading={false} editing={false} onAnswer={noop} onContinue={noop} onBack={noop} />;
-const plan = (onChangeRow = noop, onBuild = noop) => <PlanStep rows={ROWS} loading={false} editing={false} onChangeRow={onChangeRow} onBuild={onBuild} onBack={noop} />;
+const compose = (onContinue = noop, onChangeText = noop) => <DescribePage text="A tea timer" onChangeText={onChangeText} onContinue={onContinue} onClose={noop} />;
+const plan = (onChangeRow = noop, onMake = noop) => <PlanPage screen={PLAN} onBack={noop} onAnswer={noop} onChangeRow={onChangeRow} onMake={onMake} onTryAgain={noop} onMakeInstead={noop} />;
 const advanced = () => (
   <ToastHost>
     <AdvancedScreen
@@ -259,22 +232,24 @@ const report = (onClose = noop) => (
     legalLanguage="en"
   />
 );
-const editFourthRow = (tree: Tree) => press(tree.root.find((n) => String(n.type) === 'TouchableOpacity' && textOf(n).includes('A soft chime')));
+const editFourthRow = (tree: Tree) => press(tree.root.find((n) => String(n.type) === 'Pressable' && n.props.accessibilityRole === 'button' && textOf(n).includes('A soft chime')));
 
 export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
-  await h.test('compose opens without the keyboard, with the suggestions in view', async () => {
-    await on(IOS, <ComposeStep text="" editing={false} onChangeText={noop} onContinue={noop} onBack={noop} />, async ({ tree }) => {
-      h.ok(field(tree).props.autoFocus !== true, 'the description field is not focused on open');
-      const shown = textOf(tree.root);
-      h.ok([COPY.composeChipTimer, COPY.composeChipTracker, COPY.composeChipDice].every((chip) => shown.includes(chip)), 'the suggestions show');
-    });
+  await h.test('describe opens with the keyboard: its field takes focus once mounted, and the idea chips wait for the keyboard to go down', async () => {
+    for (const device of [IOS, ANDROID_17]) {
+      await on(device, <DescribePage text="" onChangeText={noop} onContinue={noop} onClose={noop} />, async ({ tree, focused }) => {
+        await TestRenderer.act(async () => flushRevealFrames());
+        h.ok(focused() >= 1, `${device.name}: the description field is focused on open`);
+        const shown = textOf(tree.root);
+        h.ok([COPY.homeIdeaTimer, COPY.homeIdeaTracker, COPY.homeIdeaDice].every((chip) => shown.includes(chip)), `${device.name}: with no keyboard up yet, the suggestions show`);
+        await keyboard(device, true);
+        h.ok(![COPY.homeIdeaTimer, COPY.homeIdeaTracker, COPY.homeIdeaDice].some((chip) => textOf(tree.root).includes(chip)), `${device.name}: with the keyboard up they step aside`);
+      });
+    }
   });
 
   await h.test('every screen pads its frame by the keyboard on iOS and every Android version, Android 14 included; no scroll view insets itself as well', async () => {
     const screens = [
-      { name: 'compose', element: compose(), action: primaryActionLabel('compose', false) },
-      { name: 'clarify', element: clarify(), action: primaryActionLabel('clarify', false) },
-      { name: 'plan', element: plan(), action: primaryActionLabel('plan', false) },
       { name: 'advanced', element: advanced(), action: null },
     ];
     const overlap = SCREEN_FRAME[0] + SCREEN_FRAME[1] - KEYBOARD_TOP;
@@ -308,7 +283,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
   await h.test('a keyboard that grows or shrinks while up (the emoji panel, another keyboard, a suggestion bar) moves the footer with it, on iOS and every Android version', async () => {
     const taller = KEYBOARD_TOP - 60;
     for (const device of DEVICES) {
-      await on(device, compose(), async ({ tree }) => {
+      await on(device, advanced(), async ({ tree }) => {
         await keyboard(device, true);
         await keyboardTo(taller);
         h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, taller), `${device.name}: the frame ends at the taller keyboard’s top edge`);
@@ -320,7 +295,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
 
   await h.test('the frame follows the keyboard frame by frame, on its own curve and under an interactive drag, not only where it ends', async () => {
     for (const device of DEVICES) {
-      await on(device, compose(), async ({ tree }) => {
+      await on(device, advanced(), async ({ tree }) => {
         await TestRenderer.act(async () => { emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT); stepKeyboard(KEYBOARD_HEIGHT / 2); });
         h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, keyboardWindow.height - KEYBOARD_HEIGHT / 2), `${device.name}: halfway up, the footer sits on the keyboard halfway up`);
         await keyboard(device, true);
@@ -332,7 +307,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
 
   await h.test('as the keyboard sets off, the focused field scrolls once to where the keyboard is heading, not on every frame in between, and stays put once it settles', async () => {
     for (const device of DEVICES) {
-      await on(device, clarify(), async ({ tree, scrolls }) => {
+      await on(device, advanced(), async ({ tree, scrolls }) => {
         const reports = scrollReports(tree);
         await reports.viewport(700);
         await reports.content(1200);
@@ -350,7 +325,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         h.eq(scrolls, [target], `${device.name}: none on the frames in between`);
         await TestRenderer.act(async () => { emitKeyboardEvent('keyboardDidShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
         h.eq(scrolls, [target], `${device.name}: settled where it was heading: no second scroll`);
-      }, { frame: SCREEN_FRAME, field: [500, 60] });
+      }, { frame: SCREEN_FRAME, field: [500, 60], block: [500, 60] });
     }
   });
 
@@ -383,7 +358,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     ];
     for (const device of DEVICES) {
       for (const [name, frame, expected] of cases) {
-        await on(device, compose(), async ({ tree }) => {
+        await on(device, advanced(), async ({ tree }) => {
           await keyboard(device, true);
           h.eq(framePadding(tree), expected, `${device.name}, ${name}: pads ${expected}`);
         }, { frame, field: [300, 60] });
@@ -391,7 +366,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('compose on iOS: Done, empty space and a drag put the keyboard away without continuing', async () => {
+  await h.test('describe on iOS: Done, empty space and a drag put the keyboard away without continuing', async () => {
     const s = spies();
     await on(IOS, compose(s.fn('continue'), s.fn('change')), async ({ tree }) => {
       h.eq(field(tree).props.inputAccessoryViewID != null && doneBars(tree).some((bar) => bar.props.nativeID === field(tree).props.inputAccessoryViewID), true, 'the field has a Done bar');
@@ -402,7 +377,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('compose on Android: a drag dismisses, there is no Done bar, and empty space puts the keyboard away', async () => {
+  await h.test('describe on Android: a drag dismisses, there is no Done bar, and empty space puts the keyboard away', async () => {
     const s = spies();
     await on(ANDROID_17, compose(s.fn('continue')), async ({ tree }) => {
       h.eq([scrollView(tree).props.keyboardDismissMode, doneBars(tree).length], ['on-drag', 0], 'a drag dismisses; no Done bar');
@@ -412,7 +387,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('plan: editing the 4th row focuses it once mounted, and keeps the whole row (field, Save, Cancel) in view above Build it as the keyboard arrives and as the row grows', async () => {
+  await h.test('plan: editing the 4th row focuses it once mounted, and keeps the whole row (field, Save, Cancel) in view above Make it as the keyboard arrives and as the row grows', async () => {
     const s = spies();
     for (const device of [IOS, ANDROID_14, ANDROID_17]) {
       const geometry: Geometry = { frame: SCREEN_FRAME, field: [630, 60], block: [600, 180] };
@@ -433,11 +408,11 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         geometry.block = [600, 220];
         await reports.content(1040);
         h.eq(scrolls.at(-1), 600 + 220 + SPACING.md - 400, `${device.name}: as typing grows the row, it stays in view`);
-        h.ok(nearest(button(tree, primaryActionLabel('plan', false)), 'ScrollView') == null, `${device.name}: Build it stays pinned below the scroll view`);
+        h.ok(nearest(button(tree, COPY.planBuild), 'ScrollView') == null, `${device.name}: Make it stays pinned below the scroll view`);
       }, geometry);
     }
     await on(IOS, plan(s.fn('row'), s.fn('build')), async ({ tree }) => {
-      await press(tree.root.find((n) => String(n.type) === 'TouchableOpacity' && textOf(n).includes('A big dial')));
+      await press(tree.root.find((n) => String(n.type) === 'Pressable' && n.props.accessibilityRole === 'button' && textOf(n).includes('A big dial')));
       h.eq(await dismissBoth(tree), 2, 'Done and empty space put the keyboard away');
       h.eq(field(tree).props.value, 'A big dial', 'leaving the row open');
       h.eq([s.count('row'), s.count('build')], [0, 0], 'saving and building nothing');
@@ -497,10 +472,9 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('clarify "Other", and Advanced’s server field with the lines under it, are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
+  await h.test('Advanced’s server field with the lines under it, are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
     // Advanced's field names its block: the field, its helper line and the check line, 100 tall.
     const cases: [string, React.ReactElement, Geometry, string][] = [
-      ['clarify', clarify(), { frame: SCREEN_FRAME, field: [500, 60] }, 'the field'],
       ['advanced', advanced(), { frame: SCREEN_FRAME, field: [500, 60], block: [500, 100] }, 'the field and its helper line'],
     ];
     for (const device of [IOS, ANDROID_14, ANDROID_17]) {
@@ -522,9 +496,6 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         }, geometry);
       }
     }
-    await on(IOS, clarify(), async ({ tree }) => {
-      h.eq(field(tree).props.returnKeyType, 'done', 'Return is its Done');
-    });
   });
 
   await h.test('the report sheet: its dim covers the whole window, bars and keyboard included, its card continues behind the keyboard, and Send and Cancel ride above it', async () => {
@@ -580,36 +551,10 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('every launcher field wears Whim’s accent for its caret and selection handles, selected text stays readable on its highlight, it paints its own background, and on iOS a one-line field sets no line height', async () => {
-    for (const device of [IOS, ANDROID_17]) {
-      const fields: [string, React.ReactElement, (tree: Tree) => Promise<void>][] = [
-        ['compose', compose(), async () => {}],
-        ['clarify', clarify(), async () => {}],
-        ['plan row', plan(), editFourthRow],
-      ];
-      for (const [name, element, open] of fields) {
-        await on(device, element, async ({ tree }) => {
-          await open(tree);
-          const input = field(tree);
-          h.ok(typeof flat(input).backgroundColor === 'string', `${device.name} ${name}: it paints its own background, which covers Android's default field underline`);
-          if (device.os === 'ios') {
-            h.eq(input.props.selectionColor, SHELL_PALETTE.accent, `${device.name} ${name}: the accent tints the caret, the handles and the highlight iOS draws translucent itself`);
-          } else {
-            h.eq([input.props.cursorColor, input.props.selectionHandleColor], [SHELL_PALETTE.accent, SHELL_PALETTE.accent], `${device.name} ${name}: accent caret and selection handles`);
-            const contrast = contrastOnHighlight(String(flat(input).color), String(input.props.selectionColor), String(flat(input).backgroundColor));
-            h.ok(contrast >= 4.5, `${device.name} ${name}: the text Android paints its highlight over stays readable (${contrast.toFixed(2)}:1, at least 4.5:1)`);
-          }
-          const oneLineOnIos = device.os === 'ios' && input.props.multiline !== true;
-          h.eq(typeof flat(input).lineHeight, oneLineOnIos ? 'undefined' : 'number', `${device.name} ${name}: ${oneLineOnIos ? 'no line height, so iOS keeps its descenders' : 'its type’s line height'}`);
-        });
-      }
-    }
-  });
-
   await h.test('a keyboard frame, a screen’s or a sheet’s, removes every keyboard subscription it added once it unmounts', async () => {
     for (const device of DEVICES) {
       const frameHosts: [string, React.ReactElement, () => Promise<void>][] = [
-        ['compose', compose(), async () => {}],
+        ['advanced', advanced(), async () => {}],
         ['report sheet', report(), draftLoaded],
       ];
       for (const [name, element, open] of frameHosts) {

@@ -1040,13 +1040,12 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('ghosts: a clarify failure has no attempt to discard, so its failure screen offers no Discard', async () => {
+  await h.test('ghosts: a clarify failure has no attempt to discard, so the plan page keeps its words, offers Try again and leaves no ghost', async () => {
     await withLauncher({ server: () => json({ error: 'internal' }, 500) }, async ({ tree }) => {
       await composeAndContinue(tree, 'A tea timer');
-      await waitFor(() => on(tree, FailureScreen), 'the failure screen');
-      h.ok(tree.root.findByType(FailureScreen).props.onDismiss === undefined, 'no discard action is wired');
-      await h.throws(() => button(tree, COPY.failureDismiss), 'Expected one visible button', 'and no Discard button renders');
-      await press(button(tree, COPY.failureBack));
+      await waitFor(() => button(tree, COPY.planTryAgain) != null, 'the notice with Try again');
+      h.eq(tree.root.findAllByType(FailureScreen).length, 0, 'no failure page: nothing was started');
+      await press(button(tree, COPY.sheetClose));
       h.eq(ghosts(tree), [], 'no ghost was ever created');
     });
   });

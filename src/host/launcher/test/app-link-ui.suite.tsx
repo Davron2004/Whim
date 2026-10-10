@@ -6,7 +6,7 @@ import { COPY } from '../copy';
 import HomeScreen from '../HomeScreen';
 import LauncherRoot from '../LauncherRoot';
 import MiniAppView from '../MiniAppView';
-import ComposeStep from '../ComposeStep';
+import { DescribePage } from '../DescribePage';
 import { StoreAccess } from '../store-access';
 import { grantConsent } from '../ai-consent';
 import { acceptTerms } from '../terms-acceptance';
@@ -90,9 +90,9 @@ export async function runAppLinkUiTests(h: Harness): Promise<void> {
     try {
       tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
       await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onCreate());
-      await TestRenderer.act(async () => tree!.root.findByType(ComposeStep).props.onChangeText('Timer'));
+      await TestRenderer.act(async () => tree!.root.findByType(DescribePage).props.onChangeText('Timer'));
       let request!: Promise<void>;
-      await TestRenderer.act(async () => { request = tree!.root.findByType(ComposeStep).props.onContinue(); });
+      await TestRenderer.act(async () => { request = tree!.root.findByType(DescribePage).props.onContinue(); });
       await TestRenderer.act(async () => openLink(appLinkFor('missing')));
       h.eq(signal?.aborted, true, 'arriving link aborts the request of the screen it leaves');
       await TestRenderer.act(async () => { finish(new Response(JSON.stringify({ questions: [] }))); await request; });

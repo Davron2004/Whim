@@ -1,8 +1,9 @@
 /**
  * ComposerBar — Home's way into making an app (system.md §9 Your apps; app-launcher "The home grid
  * orders and lays out apps for every text size"): a raised capsule at the bottom that reads
- * "Describe an app…", or the words already typed when a description is in progress (`draft`). Tapping
- * it opens the describe sheet. One line; the draft is cut with an ellipsis.
+ * "Describe an app…", or `Continue "A timer for my…"` when a description waits (`draft`, the start
+ * of the words, `flow-draft.ts#draftPreview`). Tapping it opens the making sheet at the page the
+ * draft was left on. One line.
  */
 import React from 'react';
 import { Pressable, View } from 'react-native';
@@ -13,7 +14,8 @@ import { usePressFeedback } from '../ui/motion';
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
 import { makeStyles, PRESS_RETENTION } from '../ui/tokens-pure';
-import { COPY } from './copy';
+import { COPY, composerContinueLine } from './copy';
+import { draftPreview } from './flow-draft';
 
 /** The capsule's height, and how far it reaches above the safe area: a toast sits above both. */
 export const COMPOSER_BAR = { height: LAYOUT.buttonHeight.large, bottomGap: LAYOUT.actionAreaBottom } as const;
@@ -24,7 +26,7 @@ const COMPOSER_CLEARANCE = COMPOSER_BAR.height + COMPOSER_BAR.bottomGap;
 export const toastClearance = (screen: string): number => (screen === 'home' ? COMPOSER_CLEARANCE : 0);
 
 export interface ComposerBarProps {
-  /** The description typed so far, if any; the bar shows it in place of the placeholder. */
+  /** The description left in the making sheet, if any; the bar offers to continue it. */
   draft?: string;
   onPress: () => void;
 }
@@ -67,7 +69,7 @@ export function ComposerBar({ draft, onPress }: Readonly<ComposerBarProps>) {
           <Icon name="plus" size={20} color={t.colors['text-2']} />
           <View style={s.words}>
             <Text type="body" color={drafting ? 'text' : 'text-2'} numberOfLines={1}>
-              {drafting ? draft : COPY.homeComposerPlaceholder}
+              {drafting ? composerContinueLine(draftPreview(draft ?? '')) : COPY.homeComposerPlaceholder}
             </Text>
           </View>
         </Animated.View>

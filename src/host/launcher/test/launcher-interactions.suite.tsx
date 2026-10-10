@@ -3,8 +3,8 @@ import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import LauncherRoot from '../LauncherRoot';
 import HomeScreen from '../HomeScreen';
-import ComposeStep from '../ComposeStep';
-import PlanStep from '../PlanStep';
+import { DescribePage } from '../DescribePage';
+import { PlanPage } from '../PlanPage';
 import BuildStep from '../BuildStep';
 import SettingsScreen from '../SettingsScreen';
 import AdvancedScreen from '../AdvancedScreen';
@@ -65,10 +65,10 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     try {
       tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
       await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onCreate());
-      await TestRenderer.act(async () => tree!.root.findByType(ComposeStep).props.onChangeText('A timer'));
-      await TestRenderer.act(async () => tree!.root.findByType(ComposeStep).props.onContinue());
+      await TestRenderer.act(async () => tree!.root.findByType(DescribePage).props.onChangeText('A timer'));
+      await TestRenderer.act(async () => tree!.root.findByType(DescribePage).props.onContinue());
       let attempt!: Promise<void>;
-      await TestRenderer.act(async () => { attempt = tree!.root.findByType(PlanStep).props.onBuild(); });
+      await TestRenderer.act(async () => { attempt = tree!.root.findByType(PlanPage).props.onMake(); });
       await TestRenderer.act(async () => tree!.root.findByType(BuildStep).props.onBack());
       await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onSettings());
       const advanced = async () => {
@@ -136,10 +136,10 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => clock.fire(2000));
       h.eq(probes, 2, 'retry probe is now in flight');
       await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onCreate());
-      await TestRenderer.act(async () => tree!.root.findByType(ComposeStep).props.onChangeText('A timer'));
-      await TestRenderer.act(async () => tree!.root.findByType(ComposeStep).props.onContinue());
-      await TestRenderer.act(async () => tree!.root.findByType(PlanStep).props.onBack());
-      await TestRenderer.act(async () => tree!.root.findByType(ComposeStep).props.onBack());
+      await TestRenderer.act(async () => tree!.root.findByType(DescribePage).props.onChangeText('A timer'));
+      await TestRenderer.act(async () => tree!.root.findByType(DescribePage).props.onContinue());
+      await TestRenderer.act(async () => tree!.root.findByType(PlanPage).props.onBack());
+      await TestRenderer.act(async () => tree!.root.findByType(DescribePage).props.onClose());
       h.eq(tree.root.findByType(HomeScreen).props.offline, false, 'successful current rewrite proves connectivity');
       await TestRenderer.act(async () => { finishProbe(new Response('', { status: 503 })); await probe; });
       h.eq(tree.root.findByType(HomeScreen).props.offline, false, 'late failed probe cannot undo current request success');

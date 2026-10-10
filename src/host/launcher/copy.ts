@@ -107,47 +107,46 @@ export const COPY = {
   toastDismiss: 'Dismiss',
   fieldClear: 'Clear text',
 
-  // ── the five-step prompt flow (2a) ──────────────────────────────────────────
+  // ── the making sheet: Describe and Plan (design-system-v1 16.x; system.md §8, §9) ──────────
   flowContinue: 'Continue',
   composeHeadline: 'What should it do?',
-  /** The edit flow's compose headline — "Prompt again"/"Change it" on an app that already
-   *  exists, never the new-app question (`editingEyebrow`/`composeHeadline` "the edit flow reads
-   *  as editing, on every step"). */
+  /** Change mode's headline: "Changing <app name>" sits over it (`editingEyebrow`). */
   composeHeadlineEdit: 'What should change?',
-  composeHelper: 'Plain words are enough. Whim will ask if something is unclear.',
-  /** The edit flow's compose field placeholder — `homeComposerPlaceholder` stays the new-app one
-   *  (it is shared with the home screen's own composer row). */
+  composeHelper: 'Plain words are enough. I’ll ask if anything’s unclear.',
+  /** Change mode's field placeholder — `homeComposerPlaceholder` stays the new-app one (it is
+   *  shared with the home screen's own composer). */
   composePlaceholderEdit: 'Add, change, or remove something…',
-  composeChipsEyebrow: 'Or start from',
-  composeChipTimer: 'a timer with my pour-over recipe',
-  composeChipTracker: 'a tracker for how often I water the plants',
-  composeChipDice: 'a dice roller for game night',
-  clarifyHeadlineOne: 'One quick thing',
-  clarifyHeadlineTwo: 'Two quick things',
-  clarifyHeadlineThree: 'Three quick things',
-  clarifyHelper: 'Skip these and Whim will pick sensible answers.',
-  /** Under a question that takes several picks (beta-1 D18). */
+  planHeadline: 'Here’s the plan',
+  /** Change mode's plan headline — the SAME approval gate, over a change instead of a new app. */
+  planHeadlineEdit: 'Here’s the change',
+  planChoicesHeader: 'A few choices',
+  planMakeHeader: 'What I’ll make',
+  planMakeHeaderEdit: 'What I’ll change',
+  /** Under a question that takes several picks. */
   clarifyPickMany: 'Pick any that fit.',
-  /** The pill every question carries, which hands that question to Whim (beta-1 D18). */
+  /** The option every question ends with, selected until the person picks something else. */
   clarifyDecide: 'Decide for me',
   /** The typed "Other" answer's placeholder, on a question that allows one. */
   clarifyOtherPlaceholder: 'Or type your own answer',
-  /** The clarify step when the request can't be built as asked (beta-1 D9): the reason follows in
-   *  the server's own words, then the alternative to build instead (`clarifyBuildInstead`). */
-  clarifyLimitHeadline: 'Whim can’t build this as asked',
-  clarifyLimitChangeIdea: 'Change my idea',
-  /** The one-line liveness phrase under the clarify skeleton (`WorkingLine`, `flow-working.tsx`). */
-  workingClarify: 'Thinking about what to ask',
-  planHeadline: 'Here’s the plan',
-  /** The edit flow's plan headline — the SAME approval gate, over a change instead of a new app. */
-  planHeadlineEdit: 'Here’s the change',
-  planSubhead: 'Tap anything to change it before building.',
-  planFooter: 'Nothing here is final — you can keep changing the app after it’s built.',
-  planBuild: 'Build it',
-  /** The edit flow's plan primary action. */
+  /** A question answered and scrolled out of view, read as one line: a hint for screen readers. */
+  planQuestionReopenHint: 'Change your answer',
+  planBuild: 'Make it',
+  /** Change mode's primary action. */
   planBuildEdit: 'Make the change',
+  /** The primary action's busy words while the plan is still being written. */
+  planBusy: 'Writing the plan…',
   planRowSave: 'Save',
-  /** The liveness phrase under the plan skeleton, new-app and edit variants. */
+  planRowEdited: 'Edited',
+  planRowEditHint: 'Edit this part of the plan',
+  planRowFieldLabel: 'Edit this part of the plan',
+  planTryAgain: 'Try again',
+  /** Can't make as asked: the headline, the card that offers the nearest thing, and its two actions. */
+  planLimitHeadline: 'I can’t make this as asked',
+  planLimitCardLead: 'I could make this instead…',
+  planMakeInstead: 'Make that instead',
+  planChangeIdea: 'Change my idea',
+  /** What the question and plan skeletons are, for screen readers, and the busy words under them. */
+  workingClarify: 'Thinking about what to ask',
   workingPlan: 'Writing the plan',
   workingPlanEdit: 'Writing up the change',
   buildTitle: 'Making it',
@@ -320,7 +319,7 @@ export const COPY = {
   // The consent screen's disclosure, shared verbatim between ask and review mode (design D5) —
   // only the bottom actions below differ by mode. Screen order is `ConsentScreen.tsx`'s; which key
   // carries each manifest category and recipient role is `CONSENT_SCREEN_COVERAGE` below.
-  consentTitle: 'Before Whim builds apps for you',
+  consentTitle: 'Before Whim makes apps for you',
   consentLead:
     'To build or change an app, Whim sends what you ask for to our server. AI companies that work for us write the code.',
   consentSentTitle: 'What gets sent',
@@ -351,8 +350,20 @@ export const COPY = {
   // Shown above the title only when the stored grant is outdated, followed by that grant version's
   // `CONSENT_WHATS_NEW` line (spec "Consent grants are versioned").
   consentOutdatedLine: 'This has changed since you last agreed.',
-  consentAgree: 'Agree and continue',
+  consentAgree: 'Agree to send descriptions',
   consentDecline: 'Not now',
+  // The first-run sheet's three summary rows, its expandable "Full details" (the disclosure above),
+  // its Language row and its terms checkbox. Prefixed `firstRun`, not `consent`: the privacy page
+  // quotes every `consent` key word for word, and these are a short form of what it already quotes.
+  firstRunSentTitle: 'What’s sent',
+  firstRunSent: 'What you ask for and the plan you approve go to Whim’s server. AI companies that work for us write the code.',
+  firstRunStaysTitle: 'What stays on your phone',
+  firstRunStays: 'What you save in your apps. Nobody at Whim can read it.',
+  firstRunNeverTitle: 'What we never do',
+  firstRunNever: 'Show ads, sell your data, or track you across other apps.',
+  firstRunDetails: 'Full details',
+  firstRunLanguage: 'Language',
+  firstRunTermsCheck: 'I accept the Terms of use',
   // ── refusals about this phone itself (request-envelope; design D5/D7) ──────
   // What the phone says for these two refusals in place of the server's hint
   // (`service-refusal.ts#REFUSAL_RULES`). The permission line also heads the consent screen a
@@ -380,22 +391,16 @@ export const COPY = {
   // from Settings").
   termsOfUseLabel: 'Terms of use',
 
-  // ── terms step (terms-acceptance; legal-surface-v2 design D5) ───────────────
-  // Shown before the consent screen while the terms aren't accepted. It says nothing about data:
-  // what is sent, to whom and why is the consent screen's alone (Play's prominent-disclosure rule).
-  termsTitle: 'Terms of use',
-  termsLead:
-    'Whim’s AI features come with a few rules: what you can build, what AI gets wrong, and what we’re responsible for.',
-  // Shown in place of `termsLead` when the stored acceptance is of another terms version.
+  // ── terms (terms-acceptance; legal-surface-v2 design D5) ────────────────────
+  // The first-run sheet's checkbox row carries the acceptance (`firstRunTermsCheck`); these two are
+  // its link out and the updated-terms line a guardian is asked to acknowledge.
   termsUpdatedLine: 'We’ve updated the terms of use.',
   termsLabel: 'Read the terms of use',
-  termsAccept: 'Accept',
-  termsDecline: 'Not now',
   // ── store age check (store-age-signals; legal-surface-v2 design D11) ─────────
   // Shown in place of the terms step when the store says the user is a minor without a parent's
   // approval (`ageBlocked*`) or under 13 (`ageUnder13*`). The AI features stay off; the apps on
-  // the phone keep working. `ageBack` also leaves the brief screen shown while the store is asked,
-  // which says only `ageChecking` so it never reads as a blank, broken screen.
+  // the phone keep working. The check itself shows nothing: this screen is only for the answer that
+  // stops the flow.
   ageBlockedTitle: 'A parent needs to approve Whim',
   ageBlockedBody:
     'Whim’s AI features need a parent’s approval on this account. A parent can approve Whim through the App Store or Google Play, then you can try again. The apps you already have keep working.',
@@ -403,7 +408,6 @@ export const COPY = {
   ageUnder13Body:
     'The App Store or Google Play says this account belongs to someone under 13, so Whim can’t make new apps for you. The apps you already have keep working.',
   ageBack: 'Back',
-  ageChecking: 'One moment…',
   // The one-tap switch the terms step and the consent screen show (legal-text-localization): it
   // names the OTHER language, in that language, so English's own entry is the French label.
   legalLanguageSwitch: 'Continuer en français',
@@ -560,18 +564,13 @@ export const CONSENT_WHATS_NEW: Readonly<Record<string, Readonly<Record<number, 
  *  copy key exists in both languages"). A runtime list, so the coverage check can require each one
  *  in every table. */
 export const LEGAL_COPY_KEYS = [
-  'termsTitle',
-  'termsLead',
   'termsUpdatedLine',
   'termsLabel',
-  'termsAccept',
-  'termsDecline',
   'ageBlockedTitle',
   'ageBlockedBody',
   'ageUnder13Title',
   'ageUnder13Body',
   'ageBack',
-  'ageChecking',
   'consentTitle',
   'consentLead',
   'consentSentTitle',
@@ -594,6 +593,15 @@ export const LEGAL_COPY_KEYS = [
   'consentOutdatedLine',
   'consentAgree',
   'consentDecline',
+  'firstRunSentTitle',
+  'firstRunSent',
+  'firstRunStaysTitle',
+  'firstRunStays',
+  'firstRunNeverTitle',
+  'firstRunNever',
+  'firstRunDetails',
+  'firstRunLanguage',
+  'firstRunTermsCheck',
   'consentReviewKeepOn',
   'consentReviewTurnOff',
   'consentReviewTurnOn',
@@ -617,13 +625,8 @@ export type LegalCopyTable = { readonly [K in LegalCopyKey]: string };
  *  (`server/test/web-site.suite.ts`). A non-breaking space goes before a colon, so the colon
  *  never starts a line. */
 const FRENCH: LegalCopyTable = {
-  termsTitle: 'Conditions d’utilisation',
-  termsLead:
-    'Les fonctions d’IA de Whim s’accompagnent de quelques règles\u00a0: ce que vous pouvez créer, là où l’IA se trompe et ce dont nous sommes responsables.',
   termsUpdatedLine: 'Nous avons mis à jour les conditions d’utilisation.',
   termsLabel: 'Lire les conditions d’utilisation',
-  termsAccept: 'Accepter',
-  termsDecline: 'Pas maintenant',
   ageBlockedTitle: 'Un parent doit approuver Whim',
   ageBlockedBody:
     'Les fonctions d’IA de Whim nécessitent l’approbation d’un parent pour ce compte. Un parent peut approuver Whim dans l’App Store ou Google Play, puis vous pourrez réessayer. Les apps que vous avez déjà continuent de fonctionner.',
@@ -631,7 +634,6 @@ const FRENCH: LegalCopyTable = {
   ageUnder13Body:
     'Selon l’App Store ou Google Play, ce compte appartient à une personne de moins de 13\u00a0ans, donc Whim ne peut pas créer de nouvelles apps pour vous. Les apps que vous avez déjà continuent de fonctionner.',
   ageBack: 'Retour',
-  ageChecking: 'Un instant…',
   consentTitle: 'Avant que Whim crée des apps pour vous',
   consentLead:
     'Pour créer ou modifier une app, Whim envoie ce que vous demandez à notre serveur. Des entreprises d’IA qui travaillent pour nous écrivent le code.',
@@ -661,8 +663,18 @@ const FRENCH: LegalCopyTable = {
   consentFootnote:
     'Vous pouvez désactiver les fonctions d’IA et les détails d’erreur dans les réglages de Whim (Settings). Les apps que vous avez déjà continuent de fonctionner dans les deux cas.',
   consentOutdatedLine: 'Ce texte a changé depuis que vous l’avez accepté.',
-  consentAgree: 'Accepter et continuer',
+  consentAgree: 'Accepter d’envoyer mes descriptions',
   consentDecline: 'Pas maintenant',
+  firstRunSentTitle: 'Ce qui est envoyé',
+  firstRunSent:
+    'Ce que vous demandez et le plan que vous approuvez sont envoyés au serveur de Whim. Des entreprises d’IA qui travaillent pour nous écrivent le code.',
+  firstRunStaysTitle: 'Ce qui reste sur votre téléphone',
+  firstRunStays: 'Ce que vous enregistrez dans vos apps. Personne chez Whim ne peut le lire.',
+  firstRunNeverTitle: 'Ce que nous ne faisons jamais',
+  firstRunNever: 'Afficher des publicités, vendre vos données ou vous suivre dans d’autres apps.',
+  firstRunDetails: 'Tous les détails',
+  firstRunLanguage: 'Langue',
+  firstRunTermsCheck: 'J’accepte les conditions d’utilisation',
   consentReviewKeepOn: 'Garder les fonctions d’IA activées',
   consentReviewTurnOff: 'Désactiver les fonctions d’IA',
   consentReviewTurnOn: 'Activer les fonctions d’IA',
@@ -890,37 +902,38 @@ export function buildQueuedLine(position: number): string {
   return ahead === 1 ? 'You’re in line, 1 build ahead.' : `You’re in line, ${ahead} builds ahead.`;
 }
 
-/** The limit step's primary action (beta-1 D9): the alternative clarify suggested, as plain words. */
+/** The button the clarify prompt (`server/src`) still quotes for a limit's alternative. The plan
+ *  page's own action is `COPY.planMakeInstead` and shows the alternative in a card; the server
+ *  test pins that the prompt asks for words that read right here, so the prompt and this stay one
+ *  change. */
 export function clarifyBuildInstead(alternative: string): string {
   return `Build ${alternative} instead`;
 }
 
-/** The clarify step's headline, counted: one, two or three quick things. */
-export function clarifyHeadline(questionCount: number): string {
-  if (questionCount <= 1) return COPY.clarifyHeadlineOne;
-  if (questionCount === 2) return COPY.clarifyHeadlineTwo;
-  return COPY.clarifyHeadlineThree;
-}
+// ── change mode reads as changing, on every page (C1) ────────────────────────
+// One function per branching string, so a page reads through a function rather than an inline
+// ternary — `prompt-flow-screens.suite.ts`'s static check pins that every page actually calls
+// these, so the branch cannot silently regress back to one un-branched string.
 
-// ── the edit flow reads as editing, on every step (C1) ────────────────────────
-// One function per branching string, so a step screen reads through a function rather than an
-// inline ternary — `prompt-flow-screens.suite.ts`'s static check pins that every gated step
-// actually calls these, so the branch cannot silently regress back to one un-branched string.
-
-/** The compose step's headline: the new-app question, or the edit flow's own. */
+/** The describe page's headline: the new-app question, or change mode's own. */
 export function composeHeadline(editing: boolean): string {
   return editing ? COPY.composeHeadlineEdit : COPY.composeHeadline;
 }
 
-/** The compose field's placeholder: the new-app prompt, or the edit flow's own. */
+/** The describe field's placeholder: the new-app prompt, or change mode's own. */
 export function composePlaceholder(editing: boolean): string {
   return editing ? COPY.composePlaceholderEdit : COPY.homeComposerPlaceholder;
 }
 
-/** The plan step's headline: "the plan" for a new app, "the change" for an edit — the SAME
+/** The plan page's headline: "the plan" for a new app, "the change" for a change — the SAME
  *  approval gate either way. */
 export function planHeadline(editing: boolean): string {
   return editing ? COPY.planHeadlineEdit : COPY.planHeadline;
+}
+
+/** The plan page's second section header: what will be made, or what will change. */
+export function planMakeHeader(editing: boolean): string {
+  return editing ? COPY.planMakeHeaderEdit : COPY.planMakeHeader;
 }
 
 /** The build step's title (copy only — `BuildStep.tsx` is out of this change's boundary; another
@@ -933,6 +946,11 @@ export function buildTitle(editing: boolean): string {
  *  still in flight. */
 export function workingPlanPhrase(editing: boolean): string {
   return editing ? COPY.workingPlanEdit : COPY.workingPlan;
+}
+
+/** The composer when a draft waits: the start of the person's words in quotation marks. */
+export function composerContinueLine(preview: string): string {
+  return `Continue “${preview}”`;
 }
 
 /** The shared "you are changing this app" eyebrow line, shown above every gated step's headline
