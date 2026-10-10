@@ -166,11 +166,19 @@ export function ContextMenu({ visible, title, anchor, rows, onClose }: Readonly<
   // The `open` last acted on: only a change of it opens or closes the menu, never a change of
   // settings while it shows.
   const actedOn = useRef(false);
+  // The entrance has played in this showing: a menu that is up without ever having opened has no
+  // exit to wait for.
+  const entered = useRef(false);
   useEffect(() => {
     openRef.current = open;
-    if (actedOn.current === open) return;
+    if (!up) entered.current = false;
+    if (actedOn.current === open) {
+      if (up && !open && !entered.current) exited();
+      return;
+    }
     actedOn.current = open;
     if (open) {
+      entered.current = true;
       chosen.current = null;
       appear.value = 0;
       scale.value = t.reduceMotion ? 1 : MENU.openScale;
@@ -183,7 +191,7 @@ export function ContextMenu({ visible, title, anchor, rows, onClose }: Readonly<
     };
     appear.value = withTiming(0, timing('fadeOut', t.reduceMotion), done);
     if (!t.reduceMotion) scale.value = withTiming(MENU.closeScale, timing('fadeOut'));
-  }, [open, up, t.reduceMotion, appear, scale, settled]);
+  }, [open, up, t.reduceMotion, appear, scale, settled, exited]);
 
   // The first row chosen while the menu is open is the one that counts: a second tap as it fades,
   // or a tap after the scrim closed it, chooses nothing.

@@ -27,7 +27,6 @@ import { consentRequiredRefusal } from '../../../../server/src/admission/refusal
 import { androidBack, button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 import { composeAndContinue, firstRunOpen, json, onHome, settle, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { Linking, Platform, StyleSheet, holdModalDismissals, injectedScripts, modalPresentations } from './native-host';
-import { DISMISS_REPORT_MS } from '../../ui/OverlayModal';
 
 const TERMS_KEY = 'whim.terms:v1';
 const CONSENT_KEY = 'whim.ai-consent:v1';
@@ -386,8 +385,9 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
       try {
         await press(agree(tree));
         h.eq([on(tree, DescribePage), modalHosts(tree).length], [false, 1], 'held while the dismissal is unreported: the first-run sheet’s hidden modal is still mounted');
-        h.ok(DISMISS_REPORT_MS <= 1000, 'the wait is at most a second, whatever the constant is set to');
-        await TestRenderer.act(async () => clock.fire(DISMISS_REPORT_MS));
+        let fired = 0;
+        await TestRenderer.act(async () => { fired = clock.fireWithin(1000); });
+        h.ok(fired > 0, 'a wait of at most a second is running, and it is up');
         h.eq([composingNewApp(tree), presented(tree, DescribePage), modalHosts(tree).length], [true, true, 1], 'when the wait is up that modal is unmounted and Describe is presented');
       } finally {
         release();

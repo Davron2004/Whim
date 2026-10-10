@@ -95,6 +95,12 @@ export function stepKeyboard(height: number): void {
   for (const ref of [...handlers]) ref.current.onMove?.({ height, progress: height > 0 ? 1 : 0, duration: 250, target: -1 });
 }
 
+/** The library's end report on its own, with no start before it: the keyboard's rest as it settled
+ *  it, whatever the frames before it were. */
+export function endKeyboard(height: number): void {
+  for (const ref of [...handlers]) ref.current.onEnd?.({ height, progress: height > 0 ? 1 : 0, duration: 250, target: -1 });
+}
+
 /** One JS keyboard event on its own, as the library sends it. */
 export function emitKeyboardEvent(name: EventName, height: number): void {
   emit(name, height);

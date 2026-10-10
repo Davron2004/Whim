@@ -7,6 +7,9 @@
  * row's title is `danger-text`. A section header (`footnote` 600 `text-2`) sits 8 pt above the
  * group, its footer (`footnote` `text-2`) 8 pt under. Switches are the platform's own, on-track `ink`.
  *
+ * From 135% text (§6, paired things stack) a trailing value goes under the title, so the title keeps
+ * the row's width. A chevron with `expanded` turns down while its row is open and says so.
+ *
  * Every row is its own accessibility element: a switch row is one switch (its title, its state),
  * a choice row one radio, a copy button is a button of its own beside its row.
  */
@@ -24,7 +27,9 @@ export type GroupedSurface = 'canvas' | 'sheet';
 
 export type RowTrailing =
   | { kind: 'value'; text: string }
-  | { kind: 'chevron' }
+  /** A row that opens something. `expanded` is for one that opens in place: the chevron turns down
+   *  while it is open, and a screen reader hears the state. */
+  | { kind: 'chevron'; expanded?: boolean }
   | { kind: 'switch'; value: boolean; onValueChange: (on: boolean) => void }
   | { kind: 'external' }
   | { kind: 'copy'; label: string; onCopy: () => void }
@@ -95,6 +100,8 @@ const styles = makeStyles((t) => ({
   title: { ...typeStyle('body') },
   subtitle: { ...typeStyle('footnote'), color: t.colors['text-2'], marginTop: LAYOUT.gapTitleToSubtitle / 2 },
   value: { ...typeStyle('callout'), color: t.colors['text-2'], flexShrink: 1, textAlign: 'right' as const },
+  // At large text the value sits under the title, where the whole width is the title's.
+  valueStacked: { ...typeStyle('callout'), color: t.colors['text-2'], marginTop: LAYOUT.gapTitleToSubtitle / 2 },
   pressed: { backgroundColor: t.colors.fill },
   copy: { paddingRight: ROW.paddingHorizontal },
 }));
@@ -147,7 +154,7 @@ function TrailingMark({ t, trailing }: Readonly<{ t: ShellTokens; trailing: RowT
         </RNText>
       );
     case 'chevron':
-      return <Icon name="chevron-right" size={ROW.trailingIcon} color={t.colors['text-2']} />;
+      return <Icon name={trailing.expanded ? 'chevron-down' : 'chevron-right'} size={ROW.trailingIcon} color={t.colors['text-2']} />;
     case 'external':
       return <Icon name="external-link" size={ROW.trailingIcon} color={t.colors['text-2']} />;
     case 'check':
@@ -190,10 +197,12 @@ function CopyButton({ t, label, onCopy }: Readonly<{ t: ShellTokens; label: stri
   );
 }
 
-/** A switch row's and a choice row's checked state, with every row's disabled one. */
-function rowState(trailing: RowTrailing | undefined, disabled: boolean): { checked?: boolean; disabled: boolean } {
+/** A switch row's and a choice row's checked state, an expanding row's expanded one, with every
+ *  row's disabled one. */
+function rowState(trailing: RowTrailing | undefined, disabled: boolean): { checked?: boolean; expanded?: boolean; disabled: boolean } {
   if (trailing?.kind === 'switch') return { checked: trailing.value, disabled };
   if (trailing?.kind === 'check') return { checked: trailing.checked, disabled };
+  if (trailing?.kind === 'chevron' && trailing.expanded !== undefined) return { expanded: trailing.expanded, disabled };
   return { disabled };
 }
 
@@ -214,6 +223,9 @@ export function GroupedRow(props: Readonly<GroupedRowProps>) {
   const flip = flipper(trailing);
   const press = flip ?? onPress;
   const value = trailing?.kind === 'value' ? `, ${trailing.text}` : '';
+  // A trailing value takes width the title needs: at large text (system.md §6, paired things stack)
+  // it goes under the title instead.
+  const stacked = trailing?.kind === 'value' && t.largeText;
   return (
     <View style={s.line}>
       <Pressable
@@ -230,13 +242,18 @@ export function GroupedRow(props: Readonly<GroupedRowProps>) {
           <RNText style={[s.title, { color: titleColor(t, destructive, disabled) }]} maxFontSizeMultiplier={MAX_FONT_SCALE}>
             {title}
           </RNText>
+          {stacked ? (
+            <RNText style={s.valueStacked} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+              {trailing.text}
+            </RNText>
+          ) : null}
           {subtitle ? (
             <RNText style={s.subtitle} maxFontSizeMultiplier={MAX_FONT_SCALE}>
               {subtitle}
             </RNText>
           ) : null}
         </View>
-        {trailing ? <TrailingMark t={t} trailing={trailing} /> : null}
+        {trailing && !stacked ? <TrailingMark t={t} trailing={trailing} /> : null}
         {trailing?.kind === 'switch' && flip ? <RowSwitch t={t} value={trailing.value} onFlip={flip} disabled={disabled} /> : null}
       </Pressable>
       {trailing?.kind === 'copy' ? <CopyButton t={t} label={trailing.label} onCopy={trailing.onCopy} /> : null}

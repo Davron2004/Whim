@@ -111,10 +111,6 @@ export interface SheetProps {
   detent?: SheetDetent;
   /** Default `COPY.sheetClose`. */
   closeLabel?: string;
-  /** Called once after the sheet has finished closing and nothing of it is left on screen: the exit
-   *  animation has ended and its `Modal` is gone (`OverlayModal`). Nothing needs to wait for it to
-   *  show another sheet: overlays take turns by themselves. */
-  onClosed?: () => void;
   children: React.ReactNode;
 }
 
@@ -233,10 +229,10 @@ interface SheetMotion {
   fade: SharedValue<number>;
 }
 
-export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = COPY.sheetClose, onClosed, children }: Readonly<SheetProps>) {
+export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = COPY.sheetClose, children }: Readonly<SheetProps>) {
   const t = useTokens();
   const { height: windowHeight } = useWindowDimensions();
-  const gate = useOverlayTurn(visible, { onGone: onClosed, onRefused: onClose });
+  const gate = useOverlayTurn(visible, { onRefused: onClose });
   // The window's own report that it is on screen, which Android needs before it serves a field in it.
   const [presented, setPresented] = useState(false);
   const turn = useMemo(() => ({ ...gate, shown: () => { gate.shown(); setPresented(true); } }), [gate]);
@@ -260,11 +256,19 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
   // The `open` last acted on: only a change of it plays the entrance or the exit, never a change of
   // settings while the sheet shows.
   const actedOn = useRef(false);
+  // The entrance has played in this showing: a sheet that is up without ever having opened has no
+  // exit to wait for.
+  const entered = useRef(false);
   useEffect(() => {
     openRef.current = open;
-    if (actedOn.current === open) return;
+    if (!up) entered.current = false;
+    if (actedOn.current === open) {
+      if (up && !open && !entered.current) exited();
+      return;
+    }
     actedOn.current = open;
     if (open) {
+      entered.current = true;
       closingRef.current = false;
       if (t.reduceMotion) {
         y.value = 0;
@@ -283,7 +287,7 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
     };
     if (t.reduceMotion) fade.value = withTiming(0, timing('fadeOut', true), done);
     else y.value = withSpring(height.value, springConfig('smooth'), done);
-  }, [open, up, t.reduceMotion, y, fade, height, settled]);
+  }, [open, up, t.reduceMotion, y, fade, height, settled, exited]);
 
   const dragClosed = useCallback(() => {
     closingRef.current = true;

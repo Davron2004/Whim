@@ -1,17 +1,6 @@
 /** Native host adapters for React interaction tests. Screen components and hooks run unchanged;
  * layout, animation and OS APIs are represented in memory, not asserted as device behavior. */
 import React from 'react';
-import TestRenderer from 'react-test-renderer';
-import { resetOverlayHolds } from '../../ui/OverlayModal';
-
-// Every tree a test creates is a fresh app: the dismissals an earlier one left in flight (overlays it
-// unmounted while up) are over, so they hold nothing of the new one's overlays.
-const createTree = TestRenderer.create;
-TestRenderer.create = ((...args: Parameters<typeof createTree>) => {
-  resetOverlayHolds();
-  return createTree(...args);
-}) as typeof createTree;
-
 // React Native's runtime provides the frame callbacks Node lacks; a suite that steps frames itself
 // swaps these out for the test's duration.
 globalThis.requestAnimationFrame ??= (callback) => setImmediate(() => callback(performance.now())) as unknown as number;
@@ -29,11 +18,24 @@ export const Switch = host('Switch');
 export const KeyboardAvoidingView = host('KeyboardAvoidingView');
 export const InputAccessoryView = host('InputAccessoryView');
 /** Counts `Keyboard.dismiss` calls, so a test can tell putting the keyboard away from submitting.
- *  The keyboard's motion is react-native-keyboard-controller's (`native-keyboard-controller.tsx`). */
+ *  The keyboard's motion is react-native-keyboard-controller's (`native-keyboard-controller.tsx`);
+ *  what it does not report, iOS's own `keyboardDidChangeFrame`, `changeKeyboardFrame` plays. */
+type KeyboardFrameListener = (event: { endCoordinates: { screenX: number; screenY: number; width: number; height: number } }) => void;
+const keyboardFrameListeners = new Set<KeyboardFrameListener>();
 export const Keyboard = {
   dismissed: 0,
   dismiss: () => { Keyboard.dismissed += 1; },
+  addListener: (_event: 'keyboardDidChangeFrame', listener: KeyboardFrameListener) => {
+    keyboardFrameListeners.add(listener);
+    return { remove: () => { keyboardFrameListeners.delete(listener); } };
+  },
 };
+/** iOS says the keyboard's frame now spans `height` up from the window's bottom edge. */
+export function changeKeyboardFrame(height: number): void {
+  const window = Dimensions.get();
+  for (const listener of [...keyboardFrameListeners]) listener({ endCoordinates: { screenX: 0, screenY: window.height - height, width: window.width, height } });
+}
+export function keyboardFrameListenerCount(): number { return keyboardFrameListeners.size; }
 export const SafeAreaView = host('SafeAreaView');
 export const SafeAreaProvider = host('SafeAreaProvider');
 export const StatusBar = host('StatusBar');

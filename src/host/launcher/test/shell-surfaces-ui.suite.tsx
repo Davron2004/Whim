@@ -28,7 +28,7 @@ import {
 import { animations, isStep, type Animation, type Step } from './native-reanimated';
 import { pan, type PanConfig } from './native-gesture-handler';
 import { keyboardWindow, moveKeyboard, resetKeyboard } from './native-keyboard-controller';
-import { captureTimeouts, hostType, press, screenReaderElement, textOf } from './react-screen';
+import { captureTimeouts, freshApp, hostType, press, screenReaderElement, textOf } from './react-screen';
 
 /** Every pending `setTimeout`, by delay, without running any. */
 function pendingTimeouts() {
@@ -50,6 +50,8 @@ import { ContextMenu, placeMenu, MENU, type MenuAnchor, type MenuRow } from '../
 import { ToastHost, useToast, TOAST, type ToastApi } from '../../ui/Toast';
 import { TextArea, TextField } from '../../ui/TextField';
 import { GroupedRow, GroupedSection } from '../../ui/GroupedList';
+import { Icon } from '../../ui/Icon';
+import SheetModal from '../SheetModal';
 import { gridLayout, TILE, TILE_SIDE } from '../../ui/AppTile-geometry';
 import KeyboardShell from '../KeyboardShell';
 import { COPY } from '../copy';
@@ -95,6 +97,7 @@ const rendered = new Set<Tree>();
 
 async function render(element: React.ReactElement, frame: readonly [number, number] = [0, keyboardWindow.height]): Promise<Tree> {
   let tree!: Tree;
+  freshApp();
   await TestRenderer.act(async () => { tree = TestRenderer.create(element, { createNodeMock: nodeMock(frame) }); });
   rendered.add(tree);
   return tree;
@@ -122,10 +125,10 @@ const settle = () => TestRenderer.act(async () => { await new Promise((r) => set
 // ── Sheet helpers ───────────────────────────────────────────────────────────
 
 /** A sheet its own state closes, as a screen holds one; `closes` counts `onClose`. */
-function HeldSheet({ detent, onCloseCount, onClosed }: Readonly<{ detent?: 'fit' | 'large'; onCloseCount: { n: number }; onClosed?: () => void }>) {
+function HeldSheet({ detent, onCloseCount }: Readonly<{ detent?: 'fit' | 'large'; onCloseCount: { n: number } }>) {
   const [visible, setVisible] = useState(true);
   return (
-    <Sheet visible={visible} detent={detent} title="Report this app" onClosed={onClosed} onClose={() => { onCloseCount.n += 1; setVisible(false); }}>
+    <Sheet visible={visible} detent={detent} title="Report this app" onClose={() => { onCloseCount.n += 1; setVisible(false); }}>
       <Body />
     </Sheet>
   );
@@ -147,6 +150,47 @@ async function layoutCard(tree: Tree, height = SHEET_HEIGHT): Promise<void> {
   await act(() => card(tree).props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } }));
 }
 const modalShown = (tree: Tree) => all(tree, 'Modal').length === 1;
+
+// ── GroupedList helpers ─────────────────────────────────────────────────────
+
+/** The host view `node` sits in. */
+function hostParentOf(node: Node): Node | null {
+  for (let at: Node | null = node.parent; at; at = at.parent) if (typeof hostType(at) === 'string') return at;
+  return null;
+}
+/** A value row and a link row at text size `scale`: whether the value sits under the title, the
+ *  value row's spoken label, and how many marks the link row draws. */
+async function groupedRowsAt(scale: number) {
+  await resetPhone();
+  windowMetrics.fontScale = scale;
+  const tree = await render(
+    <GroupedSection>
+      <GroupedRow title="Language" trailing={{ kind: 'value', text: 'Français' }} onPress={() => {}} />
+      <GroupedRow title="Privacy policy" trailing={{ kind: 'external' }} onPress={() => {}} />
+    </GroupedSection>,
+  );
+  const texts = all(tree, 'Text');
+  const title = texts.find((n) => textOf(n) === 'Language')!;
+  const value = texts.find((n) => textOf(n) === 'Français')!;
+  const [language, privacy] = all(tree, 'Pressable');
+  const result = {
+    stacked: hostParentOf(title) === hostParentOf(value),
+    label: language.props.accessibilityLabel,
+    marks: privacy.findAllByType(Icon).length,
+  };
+  await act(() => tree.unmount());
+  return result;
+}
+/** A row that opens in place beside a plain chevron row. */
+function OpeningRows() {
+  const [open, setOpen] = useState(false);
+  return (
+    <GroupedSection>
+      <GroupedRow title="Full details" trailing={{ kind: 'chevron', expanded: open }} onPress={() => setOpen((on) => !on)} />
+      <GroupedRow title="Privacy" trailing={{ kind: 'chevron' }} onPress={() => {}} />
+    </GroupedSection>
+  );
+}
 
 // ── Menu helpers ────────────────────────────────────────────────────────────
 
@@ -350,21 +394,20 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     await act(() => tree.unmount());
   });
 
-  await h.test('Sheet: onClosed fires once after it has finished closing — on Android as the exit ends, on iOS only when the system reports the dismissal', async () => {
+  await h.test('Sheet: its window goes after it has finished closing — on Android as the exit ends, on iOS only when the system reports the dismissal', async () => {
     try {
       for (const os of ['android', 'ios'] as const) {
         await resetPhone();
         Platform.OS = os;
-        const closed = { n: 0 };
-        const tree = await render(<HeldSheet onCloseCount={{ n: 0 }} onClosed={() => { closed.n += 1; }} />);
+        const tree = await render(<HeldSheet onCloseCount={{ n: 0 }} />);
         await layoutCard(tree);
-        h.eq(closed.n, 0, `${os}: open sheet has not closed`);
+        h.eq(modalHosts(tree).length, 1, `${os}: the open sheet has its window`);
         const release = holdModalDismissals();
         try {
           await press(rowButtons(tree).find((n) => n.props.accessibilityLabel === COPY.sheetClose)!);
-          h.eq(closed.n, os === 'android' ? 1 : 0, os === 'android' ? 'android: reported as the exit animation ends' : 'ios: the exit animation is over but the system has not said the modal is gone');
+          h.eq(modalHosts(tree).length, os === 'android' ? 0 : 1, os === 'android' ? 'android: the window goes as the exit animation ends' : 'ios: the exit animation is over but the system has not said the modal is gone, so its window is still mounted');
           await act(() => release());
-          h.eq(closed.n, 1, `${os}: reported exactly once, the system’s report included`);
+          h.eq(modalHosts(tree).length, 0, `${os}: gone once the system has said so`);
         } finally {
           release();
         }
@@ -375,13 +418,12 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('Sheet: a sheet that closes by a drag reports onClosed once as well', async () => {
+  await h.test('Sheet: a sheet that closes by a drag has left no window behind', async () => {
     await resetPhone();
-    const closed = { n: 0 };
-    const tree = await render(<HeldSheet onCloseCount={{ n: 0 }} onClosed={() => { closed.n += 1; }} />);
+    const tree = await render(<HeldSheet onCloseCount={{ n: 0 }} />);
     await layoutCard(tree);
     await act(() => pan(dragOf(tree), [100, 220, 330], 600));
-    h.eq(closed.n, 1, 'one report');
+    h.eq(modalHosts(tree).length, 0, 'no window');
     await act(() => tree.unmount());
   });
 
@@ -777,6 +819,112 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     await act(() => tree.unmount());
   });
 
+  const reportHeader = React.createElement('Text', { accessibilityRole: 'header' }, 'Report');
+
+  await h.test('SheetModal: it takes its turn with a sheet like any overlay: shown as a sheet is leaving it waits, and the system refuses nothing', async () => {
+    await resetPhone();
+    const refused = modalPresentations.refused;
+    const pair = (sheet: boolean, report: boolean) => (
+      <>
+        <Sheet visible={sheet} title="Making" onClose={() => {}}><Body /></Sheet>
+        <SheetModal visible={report} onClose={() => {}}>{reportHeader}</SheetModal>
+      </>
+    );
+    const tree = await render(pair(true, false));
+    const release = holdModalDismissals();
+    try {
+      await act(() => tree.update(pair(false, true)));
+      h.eq([overlayTitles(tree), modalPresentations.refused - refused], [[], 0], 'the sheet has left but its dismissal is not reported: the report form is not presented into it');
+      await act(() => release());
+      h.eq([overlayTitles(tree), modalPresentations.refused - refused], [['Report'], 0], 'once it is, the report form is presented');
+      await act(() => tree.update(pair(false, false)));
+      h.eq(modalHosts(tree).length, 0, 'and closing it leaves no window behind');
+    } finally {
+      release();
+      await act(() => tree.unmount());
+    }
+  });
+
+  await h.test('SheetModal: its close ends its turn at once on Android, and on iOS when the system reports the dismissal', async () => {
+    try {
+      for (const os of ['android', 'ios'] as const) {
+        await resetPhone();
+        Platform.OS = os;
+        const timers = captureTimeouts();
+        const release = holdModalDismissals();
+        try {
+          const element = (visible: boolean) => <SheetModal visible={visible} onClose={() => {}}>{reportHeader}</SheetModal>;
+          const tree = await render(element(true));
+          await act(() => tree.update(element(false)));
+          h.eq([modalHosts(tree).length, timers.count(EXIT_CEILING_MS)], [os === 'android' ? 0 : 1, 0], `${os}: closing has no exit to wait for: ${os === 'android' ? 'its window is gone' : 'its window waits for the system'}, and no ceiling runs`);
+          await act(() => release());
+          h.eq(modalHosts(tree).length, 0, `${os}: gone`);
+          await act(() => tree.unmount());
+        } finally {
+          release();
+          timers.restore();
+        }
+      }
+    } finally {
+      Platform.OS = 'ios';
+    }
+  });
+
+  await h.test('Overlays: a text-size change while a sheet holds another overlay builds the content again without presenting into the dismissal under way, and the inner overlay comes back', async () => {
+    await resetPhone();
+    const timers = captureTimeouts();
+    let dismissing = holdUnmountedModalDismissals();
+    try {
+      const refused = modalPresentations.refused;
+      const element = () => (
+        <Sheet visible title="Making" onClose={() => {}}>
+          <SheetModal visible onClose={() => {}}>{reportHeader}</SheetModal>
+        </Sheet>
+      );
+      const tree = await render(element());
+      h.eq([overlayTitles(tree), modalPresentations.refused - refused], [['Making', 'Report'], 0], 'setup: the report form is up over the sheet');
+      for (const scale of [3, 1, 3]) {
+        windowMetrics.fontScale = scale;
+        await act(() => tree.update(element()));
+        h.eq([overlayTitles(tree), modalPresentations.refused - refused], [['Making'], 0], `text at ${scale * 100}%: the content is built again and the form waits, not presented into the one it replaced`);
+        dismissing();
+        await act(() => timers.fire(DISMISS_REPORT_MS));
+        h.eq([overlayTitles(tree), modalPresentations.refused - refused, modalHosts(tree).length], [['Making', 'Report'], 0, 2], `text at ${scale * 100}%: and the form is back, nothing refused, no window left over`);
+        dismissing = holdUnmountedModalDismissals();
+      }
+      await act(() => tree.unmount());
+    } finally {
+      dismissing();
+      timers.restore();
+    }
+  });
+
+  await h.test('Overlays: an overlay whose owner stops wanting it in the very commit it is granted its turn ends at once: no exit to wait for, and no invisible window taking touches until the ceiling', async () => {
+    try {
+      for (const os of ['ios', 'android'] as const) {
+        for (const kind of ['menu', 'sheet'] as const) {
+          await resetPhone();
+          Platform.OS = os;
+          const timers = captureTimeouts();
+          try {
+            const Withdrawn = () => {
+              const [visible, setVisible] = useState(true);
+              React.useEffect(() => { setVisible(false); }, []);
+              return kind === 'menu'
+                ? <ContextMenu visible={visible} title="Timer" anchor={ANCHOR} rows={menuRows([])} onClose={() => {}} />
+                : <Sheet visible={visible} title="Report this app" onClose={() => {}}><Body /></Sheet>;
+            };
+            const tree = await render(<Withdrawn />);
+            h.eq([modalHosts(tree).length, timers.count(EXIT_CEILING_MS)], [0, 0], `${os} ${kind}: nothing is left over the screen and no ceiling is running`);
+            await act(() => tree.unmount());
+          } finally { timers.restore(); }
+        }
+      }
+    } finally {
+      Platform.OS = 'ios';
+    }
+  });
+
   await h.test('Overlays: an exit that never ends cannot hold the screen: an overlay no longer wanted is ended after a bounded wait and the next is presented; a normal exit passes the turn before it and leaves no wait', async () => {
     try {
       for (const os of ['ios', 'android'] as const) {
@@ -827,15 +975,13 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     } finally { timers.restore(); }
   });
 
-  await h.test('Overlays: a visible that goes off and on within one tick leaves the sheet up, never reported gone and never waiting', async () => {
+  await h.test('Overlays: a wanted that goes off and on within one tick leaves the overlay up, never reported gone and never waiting', async () => {
     await resetPhone();
     const timers = captureTimeouts();
     try {
-      const closed = { n: 0 };
-      const element = (visible: boolean) => <Sheet visible={visible} title="Report this app" onClose={() => {}} onClosed={() => { closed.n += 1; }}><Body /></Sheet>;
-      const tree = await render(element(true));
-      await TestRenderer.act(async () => { tree.update(element(false)); tree.update(element(true)); });
-      h.eq([overlayTitles(tree), modalHosts(tree).length, closed.n, queueTimers(timers)], [['Report this app'], 1, 0, 0], 'still up, once, with nothing running');
+      const tree = await render(probes({ A: true }));
+      await TestRenderer.act(async () => { tree.update(probes({ A: false })); tree.update(probes({ A: true })); });
+      h.eq([overlayTitles(tree), modalHosts(tree).length, gones, queueTimers(timers)], [['A'], 1, [], 0], 'still up, once, with nothing running');
       await act(() => tree.unmount());
     } finally { timers.restore(); }
   });
@@ -1249,6 +1395,26 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     const iconInset = withIcons.root.findAll((n) => hostType(n) === 'View' && flat(n).height === StyleSheet.hairlineWidth).map((n) => flat(n).marginLeft);
     h.eq([iconInset, flat(withIcons.root.find((n) => hostType(n) === 'View' && flat(n).borderRadius === 20)).backgroundColor], [[LAYOUT.separatorInsetWithIcon], LIGHT.surface], 'under an icon: inset 52; on the canvas: surface');
     await act(() => withIcons.unmount());
+  });
+
+  await h.test('GroupedList: from 135% text a trailing value goes under its title, so the title keeps the row’s width; the spoken label and the other trailing marks stay where they were', async () => {
+    const seen = new Map<number, Awaited<ReturnType<typeof groupedRowsAt>>>();
+    for (const scale of [1, 1.2, 1.35, 2, 3]) seen.set(scale, await groupedRowsAt(scale));
+    h.eq([...seen].map(([scale, row]) => [scale, row.stacked]), [[1, false], [1.2, false], [1.35, true], [2, true], [3, true]], 'beside its title below 135%, under it from 135%');
+    h.ok([...seen.values()].every((row) => row.label === 'Language, Français' && row.marks === 1), 'the row reads the same to a screen reader, and a link row keeps its mark, at every size');
+    await resetPhone();
+  });
+
+  await h.test('GroupedList: a chevron row that opens in place says whether it is open — its chevron turns down and the state is announced; a plain chevron row says nothing', async () => {
+    await resetPhone();
+    const tree = await render(<OpeningRows />);
+    const look = () => all(tree, 'Pressable').map((row) => [row.findAllByType(Icon)[0].props.name, row.props.accessibilityState.expanded]);
+    h.eq(look(), [['chevron-right', false], ['chevron-right', undefined]], 'closed: pointing right and not expanded; the plain row has no state to give');
+    await press(all(tree, 'Pressable')[0]);
+    h.eq(look(), [['chevron-down', true], ['chevron-right', undefined]], 'open: pointing down and expanded');
+    await press(all(tree, 'Pressable')[0]);
+    h.eq(look()[0], ['chevron-right', false], 'closed again');
+    await act(() => tree.unmount());
   });
 
   // ── AppTile geometry ───────────────────────────────────────────────────────
