@@ -24,9 +24,10 @@
 - [x] 3.6 Replay the 22 stored apps and record the same measures as 2.6
 - [x] 3.7 Bound the toast wait at two per run, by count, and add the two toast scenarios of the hit-test requirement
 - [x] 3.8 Review fixes: retry a stuck pick once through the loop (toast or not); keep the report's screens and sweep counts current so a truncated or aborted run reports them; a disabled-control test that reaches the hit test; one shared `AppRecord` builder for production and tests; stale comments; pin the negative control to its cause
+- [x] 3.9 Second-review fixes: an audit count that proves the toast wait happened, a test that navigation out of a cold-mounted screen ends its sweep, truthful toast comments, a per-screen time entry from the moment a screen is entered
 
 ## 4. Spec sync and closing
 
-- [ ] 4.1 Apply this change's delta to `openspec/specs/synthetic-run/spec.md`
+- [x] 4.1 Apply this change's delta to `openspec/specs/synthetic-run/spec.md`
 - [x] 4.2 Fill `evidence.md` §6 with the after numbers
-- [ ] 4.3 Pass `scripts/gate.sh` with `GATE_BASE` pinned, the Chromium suites that reach synthrun, knip and `openspec validate --all --strict`
+- [x] 4.3 Pass `scripts/gate.sh` with `GATE_BASE` pinned, the Chromium suites that reach synthrun, knip and `openspec validate --all --strict`

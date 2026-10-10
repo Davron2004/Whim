@@ -21,7 +21,7 @@ merge onto the staging branch from here. No chain touches Class-2 files.
 
 ## chain-3: sweep-order-and-coverage
 
-- tasks: 3.1–3.8
+- tasks: 3.1–3.9
 - rationale: fingerprint labels and order, and what the sweep reports for an unreached screen; same file as chain-2, so it follows it
 - reads: specs/synthetic-run/spec.md §"The sweep enters values before it presses commands", §"Screen coverage follows real navigation, then cold-mounts the rest", §"Interaction sweep covers the interactive surface with fingerprint dedup" (per-path limit, toast host, labels), §"One candidate in, one deterministic run report out"; design.md D5, D6, D7, D9; handoff: handoff/fixtures.md, handoff/sweep-loop.md
 - writes-contract: none
