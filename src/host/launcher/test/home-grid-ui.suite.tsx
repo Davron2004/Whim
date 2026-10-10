@@ -612,6 +612,31 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     } finally { await unmountScreen(tree); }
   });
 
+  await h.test('live text size: a size changed while Home shows builds its title, grid and composer again, and Home keeps what it holds — the search words and the open menu', async () => {
+    await resetPhone();
+    const apps = Array.from({ length: 13 }, (_, i) => app(`App ${String(i + 1).padStart(2, '0')}`, i + 1));
+    const tree = await renderHome({ apps });
+    try {
+      const field = () => tree.root.find((n) => hostType(n) === 'TextInput');
+      const bar = () => tree.root.find((n) => hostType(n) === 'Pressable' && n.props.accessibilityHint === COPY.homeComposerHint);
+      const title = () => tree.root.find((n) => hostType(n) === 'Text' && textOf(n) === COPY.homeTitle);
+      await TestRenderer.act(async () => field().props.onChangeText('app 07'));
+      await longPress(tree, 'App 07');
+      h.ok(menuLabels(tree).length > 0, 'setup: the tile’s menu is open');
+      const built = { bar: bar(), title: title(), tile: tile(tree, 'App 07') };
+      await updateHome(tree, { apps });
+      h.ok(bar() === built.bar && title() === built.title && tile(tree, 'App 07') === built.tile, 'setup: a render at the same text size keeps what is drawn');
+      windowMetrics.fontScale = 2;
+      await updateHome(tree, { apps });
+      h.ok(bar() !== built.bar && title() !== built.title && tile(tree, 'App 07') !== built.tile, 'the size changed: the title, the tiles and the composer are built again, so iOS measures every text at the new size');
+      h.eq([field().props.value, tileLabels(tree)], ['app 07', ['App 07']], 'the search words are still in the field and still filter the grid');
+      h.ok(menuLabels(tree).length > 0, 'and the menu that was open is still open');
+      const rebuilt = bar();
+      await updateHome(tree, { apps });
+      h.ok(bar() === rebuilt, 'built again once per size, not on every render');
+    } finally { await unmountScreen(tree); windowMetrics.fontScale = 1; }
+  });
+
   // ── skeleton ────────────────────────────────────────────────────────────────
   await h.test('skeleton: the real title and composer, and one cell per known app in the very geometry the grid will have', async () => {
     for (const scale of [1, 1.35, 2]) {

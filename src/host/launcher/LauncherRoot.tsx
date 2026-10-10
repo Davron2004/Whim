@@ -2972,7 +2972,12 @@ function LauncherShell({
     }
   };
 
-  /** A stack screen's content, given the handler that leaves it. */
+  /** A stack screen's content, given the handler that leaves it. Settings and AI features are keyed
+   *  by the text size, as a sheet's frame is: iOS keeps every text measured at the size it was first
+   *  laid out at, so a size changed while they show left rows at their old height with the words cut
+   *  in half. They hold nothing of their own, so only their scroll position starts again; the stack
+   *  under them, drafts and a running build live in this shell and are untouched. Home keys its own
+   *  layout under its state (`HomeScreen`). */
   const renderStackScreen = (on: StackScreen, leave: () => void): React.ReactNode => {
     switch (on.kind) {
       case 'home':
@@ -2980,6 +2985,7 @@ function LauncherShell({
       case 'settings':
         return (
           <SettingsScreen
+            key={tokens.fontScale}
             onBack={leave}
             onOpenAIFeatures={onOpenAIFeatures}
             legalLanguage={legalLanguage}
@@ -3011,6 +3017,7 @@ function LauncherShell({
       case 'consent':
         return (
           <ConsentScreen
+            key={tokens.fontScale}
             language={legalLanguage}
             onLanguageChange={onLegalLanguageChange}
             consentOn={consentStatus(kv).kind === 'granted'}

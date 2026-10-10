@@ -64,14 +64,35 @@ export interface FirstRunSheetProps {
 
 const BOX = 24;
 
+/**
+ * Answers a touch on the sheet's words and the space around its rows, so that touch is held inside
+ * the scroll view. iOS does not scroll while a view around the scroll view holds the touch (React
+ * Native's `RCTScrollViewComponentView` will not take a touch from an ancestor that is the JS
+ * responder), and `KeyboardShell`'s tap-to-put-the-keyboard-away `Pressable` is around its scroll
+ * view: a drag that started anywhere but on a pressable row moved nothing, and at first sight this
+ * sheet shows no pressable row. A touch held by a view inside the scroll view is one it takes over.
+ */
+const holdsTouch = () => true;
+
 const styles = makeStyles((t) => ({
+  // The gutters are this view's own padding, never the scroll view's: a drag may start on them too.
   content: { paddingHorizontal: LAYOUT.gutter, paddingBottom: SPACE[4], gap: SPACE[4] },
   notice: { gap: SPACE[1] },
   details: { gap: SPACE[3], paddingHorizontal: LAYOUT.listRowPaddingHorizontal, paddingBottom: SPACE[4] },
   bullet: { flexDirection: 'row' as const, gap: SPACE[2] },
   bulletText: { flex: 1 },
   termsLine: { flexDirection: 'row' as const, alignItems: 'center' as const, backgroundColor: t.colors['sheet-group'], borderRadius: RADII.lg.radius, borderCurve: 'continuous' as const },
-  termsCheck: { flex: 1, minHeight: LAYOUT.listRowMinHeight, flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], paddingHorizontal: LAYOUT.listRowPaddingHorizontal },
+  termsCheck: {
+    flex: 1,
+    minHeight: LAYOUT.listRowMinHeight,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: SPACE[3],
+    paddingVertical: LAYOUT.listRowPaddingVertical,
+    paddingHorizontal: LAYOUT.listRowPaddingHorizontal,
+  },
+  // The words take what the box leaves and wrap inside it, however long the language makes them.
+  termsWords: { flex: 1 },
   // A target of its own beside the checkbox row, never a `hitSlop` that would reach into it.
   termsLink: { minWidth: t.touchTarget, minHeight: t.touchTarget, alignItems: 'center' as const, justifyContent: 'center' as const },
   box: { width: BOX, height: BOX, borderRadius: RADII.sm.radius, borderWidth: 2, alignItems: 'center' as const, justifyContent: 'center' as const },
@@ -131,7 +152,9 @@ function TermsRow({ language, accepted, onToggle }: Readonly<{ language: LegalLa
         <View style={[s.box, boxLook]}>
           {accepted ? <Icon name="check" size={16} color={t.colors['on-ink']} /> : null}
         </View>
-        <Text>{copy.firstRunTermsCheck}</Text>
+        <View style={s.termsWords}>
+          <Text>{copy.firstRunTermsCheck}</Text>
+        </View>
       </Pressable>
       <Pressable
         onPress={() => Linking.openURL(termsUrl(language))}
@@ -171,33 +194,34 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
   return (
     <KeyboardShell
       host="sheet"
-      contentContainerStyle={s.content}
       footer={
-        <View style={s.footer}>
+        <View style={s.footer} onStartShouldSetResponder={holdsTouch}>
           <Button label={consentDue ? copy.consentAgree : copy.firstRunContinue} variant="ink" disabled={termsDue && !accepted} onPress={onAgree} />
           <Button label={copy.consentDecline} variant="plain" onPress={onClose} />
         </View>
       }
     >
-      {lines.map((line) => (
-        <Notice key={line} message={line} />
-      ))}
-      <Text type="title2">{copy.consentTitle}</Text>
-      <Text color="text-2">{copy.firstRunLead}</Text>
-      <GroupedSection on="sheet">
-        <GroupedRow icon="arrow-up" title={copy.firstRunSentTitle} subtitle={firstRunSentText(copy)} />
-        <GroupedRow icon="phone" title={copy.firstRunStaysTitle} subtitle={copy.firstRunStays} />
-        <GroupedRow icon="lock" title={copy.firstRunNeverTitle} subtitle={copy.firstRunNever} />
-      </GroupedSection>
-      <GroupedSection on="sheet">
-        <GroupedRow title={copy.privacyPolicyLabel} trailing={{ kind: 'external' }} onPress={() => Linking.openURL(privacyPolicyUrl(language))} />
-        <GroupedRow title={copy.firstRunDetails} trailing={{ kind: 'chevron', expanded }} onPress={() => setExpanded((open) => !open)} />
-      </GroupedSection>
-      {expanded ? <Disclosure language={language} /> : null}
-      <GroupedSection on="sheet">
-        <GroupedRow title={copy.firstRunLanguage} trailing={{ kind: 'value', text: copy.legalLanguageSwitch }} onPress={() => onLanguageChange(otherLegalLanguage(language))} />
-      </GroupedSection>
-      {termsDue ? <TermsRow language={language} accepted={accepted} onToggle={() => setAccepted((on) => !on)} /> : null}
+      <View style={s.content} onStartShouldSetResponder={holdsTouch}>
+        {lines.map((line) => (
+          <Notice key={line} message={line} />
+        ))}
+        <Text type="title2">{copy.consentTitle}</Text>
+        <Text color="text-2">{copy.firstRunLead}</Text>
+        <GroupedSection on="sheet">
+          <GroupedRow icon="arrow-up" title={copy.firstRunSentTitle} subtitle={firstRunSentText(copy)} />
+          <GroupedRow icon="phone" title={copy.firstRunStaysTitle} subtitle={copy.firstRunStays} />
+          <GroupedRow icon="lock" title={copy.firstRunNeverTitle} subtitle={copy.firstRunNever} />
+        </GroupedSection>
+        <GroupedSection on="sheet">
+          <GroupedRow title={copy.privacyPolicyLabel} trailing={{ kind: 'external' }} onPress={() => Linking.openURL(privacyPolicyUrl(language))} />
+          <GroupedRow title={copy.firstRunDetails} trailing={{ kind: 'chevron', expanded }} onPress={() => setExpanded((open) => !open)} />
+        </GroupedSection>
+        {expanded ? <Disclosure language={language} /> : null}
+        <GroupedSection on="sheet">
+          <GroupedRow title={copy.firstRunLanguage} trailing={{ kind: 'value', text: copy.legalLanguageSwitch }} onPress={() => onLanguageChange(otherLegalLanguage(language))} />
+        </GroupedSection>
+        {termsDue ? <TermsRow language={language} accepted={accepted} onToggle={() => setAccepted((on) => !on)} /> : null}
+      </View>
     </KeyboardShell>
   );
 }

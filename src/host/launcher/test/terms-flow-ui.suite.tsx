@@ -12,6 +12,8 @@ import { DescribePage } from '../DescribePage';
 import { FirstRunSheet } from '../FirstRunSheet';
 import HistoryScreen from '../HistoryScreen';
 import MiniAppView from '../MiniAppView';
+import SettingsScreen from '../SettingsScreen';
+import ConsentScreen from '../ConsentScreen';
 import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW, LEGAL_COPY } from '../copy';
 import { consentStatus } from '../ai-consent';
 import { AI_CONSENT_VERSION, TERMS_VERSION } from '../release-config';
@@ -26,7 +28,7 @@ import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { consentRequiredRefusal } from '../../../../server/src/admission/refusals';
 import { androidBack, button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 import { composeAndContinue, firstRunOpen, json, onHome, settle, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
-import { Linking, Platform, StyleSheet, holdModalDismissals, injectedScripts, modalPresentations } from './native-host';
+import { Linking, Platform, StyleSheet, holdModalDismissals, injectedScripts, modalPresentations, setColorScheme, windowMetrics } from './native-host';
 
 const TERMS_KEY = 'whim.terms:v1';
 const CONSENT_KEY = 'whim.ai-consent:v1';
@@ -75,6 +77,48 @@ const presented = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0
 const firstRunPresented = (tree: Tree) => modalHosts(tree).some((modal) => modal.props.visible === true && textOf(modal).includes(COPY.consentDecline));
 /** The first-run sheet that is open, if one is. */
 const firstRun = (tree: Tree) => tree.root.findAllByType(FirstRunSheet).filter((sheet) => sheet.props.visible)[0];
+/** Whether `node` sits inside `ancestor`. */
+function within(node: TestRenderer.ReactTestInstance, ancestor: TestRenderer.ReactTestInstance): boolean {
+  for (let at = node.parent; at; at = at.parent) if (at === ancestor) return true;
+  return false;
+}
+/** The view that answers a touch landing on `node`, as React Native's responder system picks it: the
+ *  nearest one, from the touched view outward, that asks for the touch (a touchable that is not
+ *  disabled, or a view whose `onStartShouldSetResponder` says yes). Null when none asks. */
+function touchAnswerer(node: TestRenderer.ReactTestInstance): TestRenderer.ReactTestInstance | null {
+  for (let at: TestRenderer.ReactTestInstance | null = node; at; at = at.parent) {
+    const type = hostType(at);
+    if ((type === 'Pressable' || type === 'TouchableOpacity') && at.props.disabled !== true) return at;
+    if (type !== undefined && typeof at.props.onStartShouldSetResponder === 'function' && at.props.onStartShouldSetResponder() === true) return at;
+  }
+  return null;
+}
+/** Whether a touch can land on `node` itself. A view with no padding that one child fills has no
+ *  surface of its own: every point of it is that child's. */
+function hasSurface(node: TestRenderer.ReactTestInstance): boolean {
+  if (hostType(node) !== 'View') return true;
+  const hostChildren = node.children.filter((child) => typeof child !== 'string' && child.findAll((n) => hostType(n) !== undefined).length > 0);
+  const style = StyleSheet.flatten(node.props.style) as Record<string, unknown>;
+  const padded = Object.entries(style).some(([key, value]) => key.startsWith('padding') && value !== 0);
+  return hostChildren.length !== 1 || padded;
+}
+/** The views in `scroll` whose touch a view around the scroll view would answer, as words. iOS does
+ *  not scroll while such a view holds the touch. */
+function strayTouches(scroll: TestRenderer.ReactTestInstance): string[] {
+  const answeredOutside = (node: TestRenderer.ReactTestInstance) => {
+    const answerer = touchAnswerer(node);
+    return answerer !== null && !within(answerer, scroll);
+  };
+  return scroll
+    .findAll((n) => hostType(n) !== undefined && n !== scroll && hasSurface(n))
+    .filter(answeredOutside)
+    .map((n) => `${hostType(n)} “${textOf(n).slice(0, 24)}”`);
+}
+/** The phone re-renders the shell. The rig's text size does not announce itself, so a change of
+ *  appearance stands in for the render the phone's own announcement causes. */
+async function rerender(scheme: 'light' | 'dark'): Promise<void> {
+  await TestRenderer.act(async () => setColorScheme(scheme));
+}
 const agree = (tree: Tree) => button(tree, COPY.consentAgree);
 /** The action when only the terms are due. */
 const proceed = (tree: Tree) => button(tree, COPY.firstRunContinue);
@@ -320,6 +364,77 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
     } finally {
       await unmountScreen(tree);
     }
+  });
+
+  await h.test('first run: a drag that starts anywhere on the sheet’s scrolling content can scroll it — the touch is answered inside the scroll view, never by a view around it, with the footer pinned or scrolling along', async () => {
+    const tree = await renderScreen(<FirstRunSheet visible language="fr" onLanguageChange={() => {}} termsDue consentDue refused onAgree={() => {}} onClose={() => {}} />);
+    try {
+      const scroll = () => tree.root.find((n) => hostType(n) === 'ScrollView');
+      const strays = () => strayTouches(scroll());
+      /** The scroll view's own padding: a touch there lands on the scroll view itself. */
+      const ownPadding = () => Object.entries(StyleSheet.flatten(scroll().props.contentContainerStyle) as Record<string, unknown>).filter(([key, value]) => key.startsWith('padding') && value !== 0);
+      const notNow = () => button(tree, LEGAL_COPY.fr.consentDecline);
+      h.ok(within(button(tree, LEGAL_COPY.fr.firstRunTermsCheck), scroll()) && scroll().findAll((n) => hostType(n) === 'Text').length > 5, 'setup: the sheet’s words and its terms row are in the scroll view');
+      h.eq(strays(), [], 'a touch on any view in the scroll view — a word, a row that does nothing, the space between groups — is answered inside it');
+      h.eq(ownPadding(), [], 'and the scroll view keeps no padding of its own around them, so the gutters are part of the content too');
+      h.ok(!within(notNow(), scroll()), 'setup: the footer starts pinned under the scroll view');
+      let measured: TestRenderer.ReactTestInstance | null = notNow();
+      while (measured && !(hostType(measured) === 'View' && typeof measured.props.onLayout === 'function')) measured = measured.parent;
+      await TestRenderer.act(async () => measured!.props.onLayout({ nativeEvent: { layout: { height: 2000 } } }));
+      h.ok(within(notNow(), scroll()), 'setup: a footer that has outgrown its share of the window scrolls with the content');
+      h.eq(strays(), [], 'then a touch on the footer, between its buttons, is answered inside the scroll view as well');
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
+  await h.test('first run: the terms row has a list row’s padding above and below its words, and the words wrap in what the box leaves them', async () => {
+    const tree = await renderScreen(<FirstRunSheet visible language="fr" onLanguageChange={() => {}} termsDue consentDue onAgree={() => {}} onClose={() => {}} />);
+    try {
+      /** A view's style at rest; a pressable may give its style as a function of being pressed. */
+      const style = (node: TestRenderer.ReactTestInstance) =>
+        StyleSheet.flatten(typeof node.props.style === 'function' ? node.props.style({ pressed: false }) : node.props.style) as { flex?: number; paddingVertical?: number };
+      const row = button(tree, LEGAL_COPY.fr.firstRunTermsCheck);
+      const listRow = button(tree, `${LEGAL_COPY.fr.firstRunLanguage}, ${LEGAL_COPY.fr.legalLanguageSwitch}`);
+      h.ok(typeof style(listRow).paddingVertical === 'number' && (style(listRow).paddingVertical ?? 0) > 0, 'setup: a list row pads its words above and below');
+      h.eq(style(row).paddingVertical, style(listRow).paddingVertical, 'the terms row pads its words as the Language row above it does');
+      const words = row.find((n) => hostType(n) === 'Text' && textOf(n) === LEGAL_COPY.fr.firstRunTermsCheck);
+      let box = words.parent;
+      while (box && hostType(box) === undefined) box = box.parent;
+      h.ok(box !== null && box !== row && within(box, row), 'the words sit in a box of their own beside the checkbox');
+      h.eq(style(box!).flex, 1, 'which takes the width the checkbox leaves, so a long line wraps inside the row and never runs under the link');
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
+  await h.test('live text size: Settings and AI features are built again when the text size changes while they show, and the stack under them is the same Home', async () => {
+    await withLauncher({ apps: [APP], server: clarifyServer }, async ({ tree }) => {
+      const settings = () => tree.root.findByType(SettingsScreen);
+      const review = () => tree.root.findByType(ConsentScreen);
+      try {
+        await TestRenderer.act(async () => home(tree).props.onSettings());
+        const built = { home: home(tree), settings: settings() };
+        await rerender('dark');
+        h.ok(settings() === built.settings, 'setup: a render at the same text size keeps Settings as it was built');
+        windowMetrics.fontScale = 2;
+        await rerender('light');
+        h.ok(settings() !== built.settings, 'the size changed: Settings is built again, so iOS measures every text at the new size');
+        h.ok(home(tree) === built.home, 'Home, under it on the stack, is the same Home with what it holds');
+        await TestRenderer.act(async () => settings().props.onOpenAIFeatures());
+        const reviewBuilt = review();
+        await rerender('dark');
+        h.ok(review() === reviewBuilt, 'setup: a render at the same text size keeps AI features as it was built');
+        windowMetrics.fontScale = 1.35;
+        await rerender('light');
+        h.ok(review() !== reviewBuilt, 'the size changed again: AI features is built again');
+        await TestRenderer.act(async () => review().props.onClose());
+        h.ok(tree.root.findAllByType(ConsentScreen).length === 0 && tree.root.findAllByType(SettingsScreen).length === 1 && home(tree) === built.home, 'and leaving it lands on Settings, over the same Home: the stack was never rebuilt');
+      } finally {
+        windowMetrics.fontScale = 1;
+        await rerender('light');
+      }
+    });
   });
 
   for (const language of ['en', 'fr'] as const) {

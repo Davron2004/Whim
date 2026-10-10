@@ -16,12 +16,12 @@
 
 import React from 'react';
 import { Pressable, StyleSheet, Switch, Text as RNText, View } from 'react-native';
-import { LAYOUT, RADII, SPACE } from '../../design/tokens';
+import { LAYOUT, RADII, SPACE, type TypeToken } from '../../design/tokens';
 import type { IconName } from '../../design/icons/names';
 import { haptics } from '../haptics';
 import { Icon } from './Icon';
 import { useTokens, type ShellTokens } from './tokens';
-import { hitSlopFor, makeStyles, MAX_FONT_SCALE, typeStyle } from './tokens-pure';
+import { hitSlopFor, makeStyles, MAX_FONT_SCALE, typeStyle, type TypeStyle } from './tokens-pure';
 
 export type GroupedSurface = 'canvas' | 'sheet';
 
@@ -74,10 +74,29 @@ export function groupFill(t: ShellTokens, on: GroupedSurface): string {
   return on === 'sheet' ? t.colors['sheet-group'] : t.colors.surface;
 }
 
+/** How far under the token's line height a row's text is set, in pt per line. */
+const LINE_ROOM = 0.01;
+
+/**
+ * A type-scale size for text in a row: its lines a hair under the token's line height, so the box
+ * the text is given always holds its last line. Where the token's line height lands on whole pixels
+ * (100% and 200% text) the box is exactly as tall as the lines, and Yoga computes that height as the
+ * difference of two 32-bit floats (`PixelGrid.cpp`): across a power of two from the top of the
+ * window, at a position that is not a whole point (under a hairline separator), it comes out short
+ * by about 0.0001 pt (95.999878 for two 48 pt lines, measured on iOS). iOS then lays the text out in
+ * a box its last line does not fit: that line is dropped and the one before it runs on unwrapped and
+ * is cut at the edge. A hair of room per line is far more than that arithmetic can lose and nothing
+ * the eye can see.
+ */
+function rowType(token: TypeToken, header = false): TypeStyle {
+  const type = typeStyle(token, header);
+  return { ...type, lineHeight: type.lineHeight - LINE_ROOM };
+}
+
 const styles = makeStyles((t) => ({
   section: { marginBottom: LAYOUT.gapBetweenGroups },
-  header: { ...typeStyle('footnote', true), color: t.colors['text-2'], paddingHorizontal: ROW.paddingHorizontal, marginBottom: ROW.headerGap },
-  footer: { ...typeStyle('footnote'), color: t.colors['text-2'], paddingHorizontal: ROW.paddingHorizontal, marginTop: ROW.headerGap },
+  header: { ...rowType('footnote', true), color: t.colors['text-2'], paddingHorizontal: ROW.paddingHorizontal, marginBottom: ROW.headerGap },
+  footer: { ...rowType('footnote'), color: t.colors['text-2'], paddingHorizontal: ROW.paddingHorizontal, marginTop: ROW.headerGap },
   group: {
     borderRadius: RADII.lg.radius,
     borderCurve: 'continuous' as const,
@@ -97,11 +116,11 @@ const styles = makeStyles((t) => ({
     paddingHorizontal: ROW.paddingHorizontal,
   },
   texts: { flex: 1 },
-  title: { ...typeStyle('body') },
-  subtitle: { ...typeStyle('footnote'), color: t.colors['text-2'], marginTop: LAYOUT.gapTitleToSubtitle / 2 },
-  value: { ...typeStyle('callout'), color: t.colors['text-2'], flexShrink: 1, textAlign: 'right' as const },
+  title: { ...rowType('body') },
+  subtitle: { ...rowType('footnote'), color: t.colors['text-2'], marginTop: LAYOUT.gapTitleToSubtitle / 2 },
+  value: { ...rowType('callout'), color: t.colors['text-2'], flexShrink: 1, textAlign: 'right' as const },
   // At large text the value sits under the title, where the whole width is the title's.
-  valueStacked: { ...typeStyle('callout'), color: t.colors['text-2'], marginTop: LAYOUT.gapTitleToSubtitle / 2 },
+  valueStacked: { ...rowType('callout'), color: t.colors['text-2'], marginTop: LAYOUT.gapTitleToSubtitle / 2 },
   pressed: { backgroundColor: t.colors.fill },
   copy: { paddingRight: ROW.paddingHorizontal },
 }));
