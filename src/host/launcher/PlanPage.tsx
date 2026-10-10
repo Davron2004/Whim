@@ -28,7 +28,7 @@ import { Skeleton, SkeletonBlock } from '../ui/Skeleton';
 import { Text } from '../ui/Text';
 import { TextArea, TextField } from '../ui/TextField';
 import { useTokens } from '../ui/tokens';
-import { CHIP, makeStyles, PRESS_RETENTION } from '../ui/tokens-pure';
+import { CHIP, makeStyles, PRESS_RETENTION, typeStyle } from '../ui/tokens-pure';
 import WhimProse from '../ui/whim-prose/WhimProse';
 import { TilePlate } from '../ui/AppTile';
 import type { InstalledApp } from './app-index';
@@ -49,6 +49,9 @@ import {
 } from './prompt-flow';
 import { useRetryGate } from './ServiceNotice';
 import { tileOf } from './tile-identity';
+
+/** The radio or checkbox drawn at the start of an option row. */
+const MARK = 24;
 
 /** The plan row's geometry, exported so its skeleton draws the same space. */
 export const PLAN_ROW = { minHeight: 72, count: 3 } as const;
@@ -90,6 +93,8 @@ const styles = makeStyles((t) => ({
     paddingHorizontal: LAYOUT.listRowPaddingHorizontal,
   },
   grow: { flex: 1 },
+  mark: { width: MARK, height: MARK, alignItems: 'center' as const, justifyContent: 'center' as const, borderWidth: 2 },
+  markDot: { width: MARK / 2, height: MARK / 2, borderRadius: MARK / 4 },
   folded: {
     minHeight: LAYOUT.listRowMinHeight,
     flexDirection: 'row' as const,
@@ -132,24 +137,45 @@ function ChangingLine({ app }: Readonly<{ app: InstalledApp }>) {
   );
 }
 
-/** One full-width option row: a radio (one pick) or a checkbox (several), checked with a `check`. */
-function OptionRow({ label, checked, multiple, onPress, last }: Readonly<{ label: string; checked: boolean; multiple: boolean; onPress: () => void; last: boolean }>) {
+/** The radio (one pick, a ring with a dot) or checkbox (several, a square with a `check`) that
+ *  shows an option row can be chosen, and whether it is. "Decide for me" draws it in `ember`, every
+ *  other option in `ink`. */
+function OptionMark({ multiple, checked, decide }: Readonly<{ multiple: boolean; checked: boolean; decide: boolean }>) {
   const t = useTokens();
   const s = styles(t);
+  const accent = decide ? t.colors.ember : t.colors.ink;
+  const kind = multiple ? 'checkbox' : 'radio';
+  const shape = { borderRadius: multiple ? RADII.sm.radius : MARK / 2, borderColor: checked ? accent : t.colors['text-2'], backgroundColor: checked && multiple ? accent : 'transparent' };
+  let inside: React.ReactNode = null;
+  if (checked) inside = multiple ? <Icon name="check" size={16} color={decide ? t.colors['on-ember'] : t.colors['on-ink']} /> : <View style={[s.markDot, { backgroundColor: accent }]} />;
+  return (
+    <View testID={`option-mark:${kind}`} style={[s.mark, shape]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      {inside}
+    </View>
+  );
+}
+
+/** One full-width option row (system.md §7.1 Question row): a radio (one pick) or a checkbox
+ *  (several) ahead of the label. "Decide for me" keeps its chip look: `ember-text` label,
+ *  `ember-soft` fill when picked. */
+function OptionRow({ label, checked, multiple, decide, onPress, last }: Readonly<{ label: string; checked: boolean; multiple: boolean; decide: boolean; onPress: () => void; last: boolean }>) {
+  const t = useTokens();
+  const s = styles(t);
+  const resting = decide && checked ? { backgroundColor: t.colors['ember-soft'] } : null;
   return (
     <>
       <Pressable
         onPress={onPress}
         pressRetentionOffset={PRESS_RETENTION}
-        style={({ pressed }) => [s.option, pressed ? { backgroundColor: t.colors.fill } : null]}
+        style={({ pressed }) => [s.option, pressed ? { backgroundColor: t.colors.fill } : resting]}
         accessibilityRole={multiple ? 'checkbox' : 'radio'}
         accessibilityLabel={label}
         accessibilityState={{ checked }}
       >
+        <OptionMark multiple={multiple} checked={checked} decide={decide} />
         <View style={s.grow}>
-          <Text>{label}</Text>
+          <Text color={decide ? 'ember-text' : 'text'}>{label}</Text>
         </View>
-        {checked ? <Icon name="check" size={20} color={t.colors.text} /> : null}
       </Pressable>
       {last ? null : <View style={s.separator} />}
     </>
@@ -217,7 +243,7 @@ function QuestionRow({ question, answer, folded, onAnswer, onReopen, onExtent }:
       ) : (
         <View style={s.group}>
           {options.map((option, i) => (
-            <OptionRow key={option.label} label={option.label} checked={option.checked} multiple={multiple} last={i === options.length - 1} onPress={() => onAnswer(option.change)} />
+            <OptionRow key={option.label} label={option.label} checked={option.checked} multiple={multiple} decide={i === options.length - 1} last={i === options.length - 1} onPress={() => onAnswer(option.change)} />
           ))}
         </View>
       )}
@@ -289,8 +315,8 @@ function PlanRowView({ row, editing, onStart, onSave, onCancel }: Readonly<PlanR
         ) : null}
         <TextArea value={draft} onChangeText={setDraft} accessibilityLabel={row.label.length > 0 ? row.label : COPY.planRowFieldLabel} revealTarget={block} autoFocus />
         <View style={s.rowActions}>
-          <Button label={COPY.cancel} variant="plain" size="small" onPress={onCancel} />
-          <Button label={COPY.planRowSave} variant="ink" size="small" disabled={draft.trim().length === 0} onPress={() => onSave(draft)} />
+          <Button label={COPY.cancel} variant="plain" size="medium" onPress={onCancel} />
+          <Button label={COPY.planRowSave} variant="ink" size="medium" disabled={draft.trim().length === 0} onPress={() => onSave(draft)} />
         </View>
       </View>
     );
@@ -314,7 +340,7 @@ function PlanRowView({ row, editing, onStart, onSave, onCancel }: Readonly<PlanR
             {row.label}
           </Text>
         ) : null}
-        {row.edited ? <Text>{row.text}</Text> : <WhimProse text={row.text} />}
+        {row.edited ? <Text>{row.text}</Text> : <WhimProse text={row.text} style={{ ...typeStyle('body'), color: t.colors.text }} />}
       </View>
       {row.edited ? (
         <Text type="footnote" color="text-2">
@@ -324,6 +350,46 @@ function PlanRowView({ row, editing, onStart, onSave, onCancel }: Readonly<PlanR
         <Icon name="pencil" size={16} color={t.colors['text-2']} />
       )}
     </Pressable>
+  );
+}
+
+interface PlanRowsProps {
+  rows: readonly FlowPlanRow[];
+  /** The plan is on its way: skeleton rows stand in. */
+  arriving: boolean;
+  changing: boolean;
+  editingRow: number | null;
+  onEditing: (index: number | null) => void;
+  onChangeRow: (index: number, text: string) => void;
+}
+
+/** "What I'll make" and its rows, or their skeletons. With neither (the plan did not arrive) no label
+ *  is drawn: it would head an empty gap. */
+function PlanRows({ rows, arriving, changing, editingRow, onEditing, onChangeRow }: Readonly<PlanRowsProps>) {
+  const s = styles(useTokens());
+  if (!arriving && rows.length === 0) return null;
+  return (
+    <>
+      <Text type="footnote" header color="text-2">
+        {planMakeHeader(changing)}
+      </Text>
+      {arriving ? <RowsSkeleton editing={changing} /> : null}
+      <View style={s.rows}>
+        {rows.map((row, index) => (
+          <PlanRowView
+            key={`${index}:${row.label}`}
+            row={row}
+            editing={editingRow === index}
+            onStart={() => onEditing(index)}
+            onSave={(text) => {
+              onChangeRow(index, text);
+              onEditing(null);
+            }}
+            onCancel={() => onEditing(null)}
+          />
+        ))}
+      </View>
+    </>
   );
 }
 
@@ -378,6 +444,7 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
   }
 
   const showChoices = screen.asking || screen.questions.length > 0;
+  const planArriving = screen.loading && !screen.problem;
   return (
     <KeyboardShell
       host="sheet"
@@ -423,25 +490,14 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
           onExtent={(extent) => recordExtent(question.id, extent)}
         />
       ))}
-      <Text type="footnote" header color="text-2">
-        {planMakeHeader(changing)}
-      </Text>
-      {screen.loading && !screen.problem ? <RowsSkeleton editing={changing} /> : null}
-      <View style={s.rows}>
-        {screen.rows.map((row, index) => (
-          <PlanRowView
-            key={`${index}:${row.label}`}
-            row={row}
-            editing={editingRow === index}
-            onStart={() => setEditingRow(index)}
-            onSave={(text) => {
-              onChangeRow(index, text);
-              setEditingRow(null);
-            }}
-            onCancel={() => setEditingRow(null)}
-          />
-        ))}
-      </View>
+      <PlanRows
+        rows={screen.rows}
+        arriving={planArriving}
+        changing={changing}
+        editingRow={editingRow}
+        onEditing={setEditingRow}
+        onChangeRow={onChangeRow}
+      />
     </KeyboardShell>
   );
 }

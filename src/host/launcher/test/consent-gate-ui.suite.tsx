@@ -7,7 +7,7 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW, FIRST_RUN_COVERAGE, LEGAL_COPY, type LegalCopyTable } from '../copy';
+import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW, FIRST_RUN_COVERAGE, FIRST_RUN_SENT_KEYS, firstRunSentText, LEGAL_COPY, type LegalCopyTable } from '../copy';
 import { MANIFESTS, latestVersion } from '../../../../contract/src/disclosure-manifest';
 import { RELEASE } from '../release-config';
 import LauncherRoot from '../LauncherRoot';
@@ -18,6 +18,7 @@ import FailureScreen from '../FailureScreen';
 import { DescribePage } from '../DescribePage';
 import ConsentScreen from '../ConsentScreen';
 import { FirstRunSheet } from '../FirstRunSheet';
+import { Icon } from '../../ui/Icon';
 import { StoreAccess } from '../store-access';
 import { grantConsent } from '../ai-consent';
 import { acceptTerms } from '../terms-acceptance';
@@ -184,6 +185,20 @@ async function withLauncher(consent: ConsentSeed, body: (tree: Tree, requests: s
   }
 }
 
+/** The first four consecutive words of `a` that `b` also has in a row, or null: a lead and a row
+ *  that say the same thing in the same words, however the sentences around them are cut. */
+function sharedPhrase(a: string, b: string): string | null {
+  const RUN = 4;
+  const words = (text: string) => text.toLowerCase().split(/[^a-zà-öø-ÿœ’]+/).filter((word) => word !== '');
+  const haystack = ` ${words(b).join(' ')} `;
+  const mine = words(a);
+  for (let i = 0; i + RUN <= mine.length; i++) {
+    const phrase = mine.slice(i, i + RUN).join(' ');
+    if (haystack.includes(` ${phrase} `)) return phrase;
+  }
+  return null;
+}
+
 export async function runConsentGateUiTests(h: Harness): Promise<void> {
   for (const consent of ['none', 'outdated'] as const) {
     for (const entry of ENTRIES) {
@@ -262,12 +277,44 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
         for (const [what, id, keys] of [
           ...sent.map((category) => ['category', category.id, FIRST_RUN_COVERAGE.categories[category.id]] as const),
           ...named.map((role) => ['role', role.id, FIRST_RUN_COVERAGE.roles[role.id]] as const),
+          ['purpose', 'of the data', FIRST_RUN_COVERAGE.purpose] as const,
         ]) {
           h.ok(keys !== undefined && keys.length > 0, `${what} ${id}: the first layer declares which text names it`);
           h.ok((keys ?? []).every((key) => visible.includes(table[key])), `${what} ${id}: that text is on the sheet before anything is expanded`);
         }
         h.ok(visible.includes(table.firstRunStays) && visible.includes(table.firstRunNever), 'what stays on the phone and what Whim never does are there too');
         h.ok(visible.includes(table.privacyPolicyLabel) && !termsWord.test(visible), 'with the privacy link and no wording about the terms of use');
+      } finally {
+        await unmountScreen(tree);
+      }
+    });
+
+    await h.test(`first-run sheet (${language}): the lead says no sentence the first row says, and every sentence of the row shows exactly once`, async () => {
+      const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue={false} consentDue onAgree={() => {}} onClose={() => {}} />);
+      try {
+        const visible = textOf(tree.root);
+        h.eq(sharedPhrase(table.firstRunLead, firstRunSentText(table)), null, 'no run of words in the lead recurs in the row');
+        for (const key of FIRST_RUN_SENT_KEYS) {
+          h.eq(visible.split(table[key]).length - 1, 1, `${key} appears once on the sheet`);
+        }
+        h.ok(!visible.includes(table.consentLead), 'and the sheet does not carry the consent screen’s lead, whose sentences the row already says');
+      } finally {
+        await unmountScreen(tree);
+      }
+    });
+
+    await h.test(`first-run sheet (${language}): the Full details row shows whether it is open, to the eye and to a screen reader, and closes again`, async () => {
+      const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue={false} consentDue onAgree={() => {}} onClose={() => {}} />);
+      try {
+        const row = () => button(tree, table.firstRunDetails);
+        const glyph = () => row().findByType(Icon).props.name;
+        const [closedGlyph, closedState] = [glyph(), row().props.accessibilityState?.expanded];
+        h.eq(closedState, false, 'closed, the row says it is not expanded');
+        await press(row());
+        h.eq(row().props.accessibilityState?.expanded, true, 'open, the row says it is expanded');
+        h.ok(glyph() !== closedGlyph, 'and its chevron no longer points the way the closed one does');
+        await press(row());
+        h.eq([row().props.accessibilityState?.expanded, glyph()], [false, closedGlyph], 'pressed again, both go back');
       } finally {
         await unmountScreen(tree);
       }
@@ -298,7 +345,7 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
       const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue={false} consentDue onAgree={() => {}} onClose={() => {}} />);
       try {
         const summary = textOf(tree.root);
-        h.ok(summary.includes(table.consentTitle) && summary.includes(table.consentLead), 'the title and the lead');
+        h.ok(summary.includes(table.consentTitle) && summary.includes(table.firstRunLead), 'the title and the lead');
         h.ok([table.firstRunSentTitle, table.firstRunStaysTitle, table.firstRunNeverTitle].every((title) => summary.includes(title)), 'three summary rows: what is sent, what stays on the phone, what is never done');
         h.ok(!summary.includes(table.consentWhy), 'the long disclosure is folded away');
         await press(button(tree, table.firstRunDetails));

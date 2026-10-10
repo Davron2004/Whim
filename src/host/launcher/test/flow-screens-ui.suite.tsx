@@ -47,6 +47,7 @@ const ask = (q: unknown): FlowQuestion => ClarifyQuestion.parse(q);
 const SHORT = ask({ id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'], select: 'one', other: false });
 const LONG = ask({ id: 'where', question: 'Where should it keep the history?', options: ['Only on this phone', 'Remember every brew, with my notes'], select: 'one', other: false });
 const MANY = ask({ id: 'extras', question: 'What goes in it?', options: ['Honey', 'Lemon', 'Milk'], select: 'many', other: true });
+const LONG_MANY = ask({ id: 'keep', question: 'What should it keep?', options: ['Every brew, with my notes', 'Only the last brew I made'], select: 'many', other: false });
 const ROWS = [{ label: 'Timer', text: 'Counts down' }, { label: 'Alert', text: 'Buzzes at zero' }];
 
 /** A plan page as the shell holds it once everything has landed. */
@@ -94,6 +95,18 @@ const labelled = (tree: Tree, label: string) => tree.root.findAll((n) => hostTyp
 const readAs = (tree: Tree, label: string) => labelled(tree, label).map((node) => screenReaderElement(node));
 /** The one text field showing. */
 const textField = (tree: Tree) => tree.root.find((n) => hostType(n) === 'TextInput');
+
+/** A style prop as the one flat object a device would draw, whatever nesting the component gave it. */
+function flat(style: unknown): Record<string, unknown> {
+  if (Array.isArray(style)) return Object.assign({}, ...style.map(flat));
+  return style !== null && typeof style === 'object' ? (style as Record<string, unknown>) : {};
+}
+/** The outermost text node showing exactly `words`. */
+const textShowing = (tree: Tree, words: string) => tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n) === words)[0];
+/** The colour of the text showing exactly `words` inside `control`. */
+const colourOf = (control: Node, words: string) => flat(control.findAll((n) => hostType(n) === 'Text' && textOf(n) === words)[0].props.style).color;
+/** The marks (radio or checkbox) an option row draws. */
+const marksIn = (row: Node) => row.findAll((n) => hostType(n) === 'View' && String(n.props.testID).startsWith('option-mark:'));
 
 /** Pre-order position of the first text holding `words`, to read the page's top-to-bottom order. */
 function positionOf(tree: Tree, words: string): number {
@@ -271,6 +284,72 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
         h.eq(closes, 1, `${via}: closes once`);
       });
     }
+  });
+
+  await h.test('questions: every full-width option shows a radio (one pick) or a checkbox (several), picked or not, and a picked one looks different', async () => {
+    await rendered(planPage(landed([LONG, LONG_MANY])), async (tree) => {
+      for (const [labels, kind] of [[[...LONG.options, COPY.clarifyDecide], 'radio'], [[...LONG_MANY.options, COPY.clarifyDecide], 'checkbox']] as const) {
+        const rows = labels.map((label) => labelled(tree, label)[label === COPY.clarifyDecide && kind === 'checkbox' ? 1 : 0]);
+        for (const [i, row] of rows.entries()) {
+          const marks = marksIn(row);
+          h.eq(marks.map((mark) => mark.props.testID), [`option-mark:${kind}`], `${labels[i]}: one ${kind} mark, picked or not`);
+        }
+        const [first, , decide] = rows.map((row) => marksIn(row)[0]);
+        h.ok(decide.findAll(() => true).length > first.findAll(() => true).length, `${kind}: the picked row (Decide for me starts picked) draws its mark filled, the others empty`);
+      }
+    });
+  });
+
+  await h.test('questions: in a full-width list "Decide for me" keeps the ember treatment its chip has, and fills when picked', async () => {
+    const answered = { ...landed([SHORT, LONG]), answers: { alert: { choices: [], other: '', decide: true }, where: { choices: [LONG.options[0]], other: '', decide: false } } };
+    await rendered(planPage(landed([SHORT, LONG])), async (tree) => {
+      const [chip, row] = labelled(tree, COPY.clarifyDecide);
+      h.ok(colourOf(row, COPY.clarifyDecide) !== undefined && colourOf(row, COPY.clarifyDecide) === colourOf(chip, COPY.clarifyDecide), 'the row’s label is the chip’s colour');
+      h.ok(colourOf(row, COPY.clarifyDecide) !== flat(textShowing(tree, LONG.options[0]).props.style).color, 'and not the colour of an ordinary option');
+      const fill = (node: Node) => flat(node.props.style({ pressed: false })).backgroundColor;
+      h.ok(typeof fill(row) === 'string', 'picked, the row is filled');
+      h.eq(fill(labelled(tree, LONG.options[0])[0]), undefined, 'an ordinary option unpicked is not');
+    });
+    await rendered(planPage(answered), async (tree) => {
+      const row = labelled(tree, COPY.clarifyDecide)[1];
+      h.eq(flat(row.props.style({ pressed: false })).backgroundColor, undefined, 'another option picked, Decide for me gives up its fill');
+    });
+  });
+
+  await h.test('plan: a plan row’s words are body text in the text colour, the same as the words of a row the person rewrote; Save and Cancel are full-height targets', async () => {
+    const mixed = updatePlanRow(landed(), 0, 'Counts down from 90s and then rings.');
+    await rendered(planPage(mixed), async (tree) => {
+      const ours = flat(textShowing(tree, 'Buzzes at zero').props.style);
+      const theirs = flat(textShowing(tree, 'Counts down from 90s and then rings.').props.style);
+      h.eq([ours.fontSize, ours.lineHeight, ours.color], [theirs.fontSize, theirs.lineHeight, theirs.color], 'the model’s words and the person’s share size, line height and colour');
+      const label = flat(textShowing(tree, 'Alert').props.style);
+      h.ok(Number(ours.fontSize) > Number(label.fontSize) && ours.color !== label.color, 'larger than the label above and not its dimmer colour');
+    });
+    await rendered(planPage(landed()), async (tree) => {
+      await press(button(tree, 'Timer, Counts down'));
+      for (const label of [COPY.cancel, COPY.planRowSave]) {
+        const capsule = button(tree, label).findAll((n) => hostType(n) === 'Animated.View')[0];
+        h.ok(Number(flat(capsule.props.style).minHeight) >= 44, `${label} is at least 44 high`);
+      }
+    });
+  });
+
+  await h.test('plan: with no rows and nothing on the way, "What I’ll make" is not drawn above an empty gap; skeletons and rows bring it back', async () => {
+    const notArrived = { ...planStep(describeStep(undefined, 'A tea timer')), asking: false, loading: false, notice: BUSY };
+    await rendered(planPage(notArrived), async (tree) => {
+      h.ok(textOf(tree.root).includes(BUSY.hint), 'the notice shows');
+      h.ok(!textOf(tree.root).includes(COPY.planMakeHeader), 'with no label over nothing');
+    });
+    const failed = { ...withProblem(planStep(describeStep(undefined, 'A tea timer')), { request: 'rewrite', reason: 'I couldn’t reach the server.' }), asking: false };
+    await rendered(planPage(failed), async (tree) => {
+      h.ok(!textOf(tree.root).includes(COPY.planMakeHeader), 'a plan that failed to come has no label either');
+    });
+    await rendered(planPage(planStep(describeStep(undefined, 'A tea timer'))), async (tree) => {
+      h.ok(textOf(tree.root).includes(COPY.planMakeHeader), 'rows on their way: the label shows over the skeletons');
+    });
+    await rendered(planPage(landed()), async (tree) => {
+      h.ok(textOf(tree.root).includes(COPY.planMakeHeader), 'rows landed: the label shows');
+    });
   });
 
   await h.test('plan: a request the page could not send shows its sentence and Try again in place of Make it', async () => {
