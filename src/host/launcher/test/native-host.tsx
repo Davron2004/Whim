@@ -248,19 +248,6 @@ export const Linking = {
 };
 export function linkListenerCount(): number { return urlListeners.size; }
 export function openLink(url: string): void { for (const listener of urlListeners) listener({ url }); }
-const appStateListeners = new Set<(state: string) => void>();
-/** The app's foreground state: `AppState.currentState` as the OS reports it; `setAppState` moves it. */
-export const AppState = {
-  currentState: 'active',
-  addEventListener: (_event: string, listener: (state: string) => void) => {
-    appStateListeners.add(listener);
-    return { remove: () => appStateListeners.delete(listener) };
-  },
-};
-export function setAppState(state: string): void {
-  AppState.currentState = state;
-  for (const listener of appStateListeners) listener(state);
-}
 /** The system clipboard: what was last copied. */
 export const Clipboard = {
   copied: [] as string[],

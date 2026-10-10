@@ -264,6 +264,21 @@ async function runRequestEvidenceTests(h: Harness): Promise<void> {
       h.eq(launcher.probes.length - before, 2, 'the next one after the floor sends another');
     }));
 
+  await h.test('Launcher: a launcher opened while the app is inactive sends its startup probe on the first return to active', async () => {
+    await TestRenderer.act(async () => setAppState('inactive'));
+    try {
+      await withLauncher({ server: () => new Response('', { status: 503 }) }, async (launcher) => {
+        await settle();
+        h.eq(launcher.probes.length, 0, 'nothing is sent while the app is not active');
+        await TestRenderer.act(async () => setAppState('active'));
+        await settle();
+        h.eq(launcher.probes.length, 1, 'the startup probe goes out when it is');
+      });
+    } finally {
+      await TestRenderer.act(async () => setAppState('active'));
+    }
+  });
+
   await h.test('Launcher: one failed probe on return does not flash the notice; the second confirms it and a success clears it', () =>
     onlineLauncher(async (launcher, net, pass) => {
       net.up = false;

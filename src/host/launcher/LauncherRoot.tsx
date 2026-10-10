@@ -141,7 +141,7 @@ import { probeServerHealth } from './server-probe';
 import { ConnectivityLoop } from './connectivity';
 import type { Connectivity } from './connectivity';
 import { isNetworkFailure, showOfflineIndicator, showServerUnreachableNotice } from './connectivity-ux';
-import { useAppForeground } from './use-app-foreground';
+import { appIsForeground, useAppForeground } from './use-app-foreground';
 import { FlowDrafts, draftKey } from './flow-draft';
 import { loadHighlighting } from './highlighting';
 import { getDeviceId, resetDeviceId } from './device-id';
@@ -844,6 +844,7 @@ function LauncherShell({
         return health.result;
       },
       publish: setConnectivity,
+      foreground: appIsForeground(),
     });
     connectivityLoopRef.current = loop;
     loop.start();

@@ -64,6 +64,9 @@ export interface ConnectivityLoopOptions {
   timers?: TimerLike;
   /** Milliseconds clock for the foreground floor. Defaults to `Date.now`. */
   now?: () => number;
+  /** Whether the app is in the foreground when the loop is built; nothing is sent until it is.
+   *  Defaults to true. */
+  foreground?: boolean;
 }
 
 /**
@@ -93,7 +96,7 @@ export class ConnectivityLoop {
   private failures = 0;
   private pendingTimer: unknown = null;
   private stopped = false;
-  private foreground = true;
+  private foreground: boolean;
   private lastProbeAt = Number.NEGATIVE_INFINITY;
   /** Bumped by every real response: a probe that started before it is older than that proof and
    *  must not turn the session offline. */
@@ -109,13 +112,15 @@ export class ConnectivityLoop {
   constructor(private readonly opts: ConnectivityLoopOptions) {
     this.timers = opts.timers ?? REAL_TIMERS;
     this.now = opts.now ?? Date.now;
+    this.foreground = opts.foreground ?? true;
   }
 
-  /** Begins the checking → probe cycle. A no-op once stopped or already online. */
+  /** Begins the checking → probe cycle; while the app is not in the foreground the startup probe
+   *  waits for the first return to it. A no-op once stopped or already online. */
   start(): void {
     if (this.stopped || this.state === 'online') return;
     this.setState('checking');
-    this.probeNow();
+    if (this.foreground) this.probeNow();
   }
 
   /** Resolves once the loop's current probe — and the timer or state change it just produced —
@@ -134,6 +139,11 @@ export class ConnectivityLoop {
     if (!foreground) {
       this.clearPendingTimer();
       this.failures = 0;
+      return;
+    }
+    this.failures = 0;
+    if (this.state === 'checking') {
+      this.probeNow();
       return;
     }
     if (this.state !== 'online' && this.state !== 'offline') return;
@@ -197,16 +207,16 @@ export class ConnectivityLoop {
       this.schedule();
       return;
     }
-    if (result === null && this.state === 'online') {
-      this.failures = 0;
-      return;
-    }
     if (result === 'verified' || result === 'unverified') {
       this.failures = 0;
       this.goOnline();
       return;
     }
     if (this.state === 'online') {
+      if (result === null || !this.foreground) {
+        this.failures = 0;
+        return;
+      }
       this.failures += 1;
       if (this.failures < OFFLINE_AFTER_FAILURES) {
         this.schedule();

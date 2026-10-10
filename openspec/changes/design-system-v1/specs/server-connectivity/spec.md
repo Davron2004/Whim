@@ -10,7 +10,7 @@ result, the system SHALL retry with
 exponential backoff starting at ~2 seconds and doubling on each subsequent failure, capped at
 ~30 seconds, repeating perpetually until the first successful probe. While the server is reachable and the app is idle, the system SHALL NOT schedule periodic probes: a successful probe schedules nothing, so an idle online session sends no further probe, however long it stays open. Turning consent off SHALL cancel any scheduled probe.
 
-An online session SHALL turn offline only on evidence, by one of two routes. First, a request of the app's own (clarify, rewrite or generate) fails at the network level, meaning no server answered it, AND one probe started after that failure is unreachable. A refusal, an HTTP error status, an unusable reply, or the person leaving the request is not a network-level failure, and a failed request whose probe succeeds SHALL NOT change the state. Second, a probe asked for by a return to the foreground (see "The retry loop runs only while the app is foregrounded") is unreachable AND the confirmation probe, sent after the first backoff step (~2 seconds), is unreachable too: one failed foreground probe alone SHALL NOT change the state. Once offline, the system SHALL keep to the backoff above while the app is in the foreground, and the state SHALL return to online on the first success, whether a probe or a real response.
+An online session SHALL turn offline only on evidence, by one of two routes. First, a request of the app's own (clarify, rewrite or generate) fails at the network level, meaning no server answered it, AND a probe that completes after that failure is unreachable (a probe already in flight is that probe: its answer is newer than the failure; one that started before a real response is older than that response and is no evidence). A refusal, an HTTP error status, an unusable reply, or the person leaving the request is not a network-level failure, and a failed request whose probe succeeds SHALL NOT change the state. Second, a probe asked for by a return to the foreground (see "The retry loop runs only while the app is foregrounded") is unreachable AND the confirmation probe, sent after the first backoff step (~2 seconds), is unreachable too: one failed foreground probe alone SHALL NOT change the state. A failure awaiting its confirmation SHALL be forgotten when the app leaves the foreground, so a probe that fails while the app is not in the foreground is no evidence about an online session. A probe that throws instead of answering learned nothing: it counts as a failure while the session is starting or offline, so the backoff carries on, and as no evidence while the session is online. Once offline, the system SHALL keep to the backoff above while the app is in the foreground, and the state SHALL return to online on the first success, whether a probe or a real response.
 
 #### Scenario: Backoff doubles up to the cap
 
@@ -49,6 +49,11 @@ An online session SHALL turn offline only on evidence, by one of two routes. Fir
 - **WHEN** the session is online, the app returns to the foreground, and that probe is unreachable
 - **THEN** the offline notice does not show; it shows only if the confirmation probe, ~2 seconds later, is unreachable too
 
+#### Scenario: A failure that lands in the background is forgotten
+
+- **WHEN** the session is online, a probe is in flight, the app goes to the background, and the probe is unreachable
+- **THEN** the state stays online, and after the app returns one unreachable probe still does not change it; the confirmation probe after it, if also unreachable, does
+
 #### Scenario: A 200-but-unverified startup probe still counts as success
 
 - **WHEN** the startup probe reaches a listener that answers 200 without the Whim service
@@ -72,12 +77,17 @@ An online session SHALL turn offline only on evidence, by one of two routes. Fir
 
 ### Requirement: The retry loop runs only while the app is foregrounded
 
-The system SHALL NOT introduce any background or push-triggered scheduling for the connectivity loop: no probe SHALL be sent or scheduled while the app is not in the foreground, and an app that is merely inactive (the iOS app switcher, Control Center, a system sheet) counts as not in the foreground. Leaving the foreground SHALL cancel any pending probe. When the app returns to the foreground the system SHALL re-check the server with one probe, at most once per 10 seconds: a return less than 10 seconds after the previous probe SHALL send none, and an offline session then continues its backoff. The loop SHALL read the foreground state the host runtime reports and SHALL NOT depend on an operating-system network-status signal.
+The system SHALL NOT introduce any background or push-triggered scheduling for the connectivity loop: no probe SHALL be sent or scheduled while the app is not in the foreground, and an app that is merely inactive (the iOS app switcher, Control Center, a system sheet) counts as not in the foreground. Leaving the foreground SHALL cancel any pending probe, and a loop started while the app is not in the foreground SHALL send its startup probe on the first return to it. When the app returns to the foreground the system SHALL re-check the server with one probe, at most once per 10 seconds: a return less than 10 seconds after the previous probe SHALL send none, and an offline session then continues its backoff. The loop SHALL read the foreground state the host runtime reports and SHALL NOT depend on an operating-system network-status signal.
 
 #### Scenario: Backgrounding pauses retries
 
 - **WHEN** the app is backgrounded mid-retry-loop and later foregrounded
 - **THEN** no retry attempt occurs while backgrounded, and on the return one probe is sent unless the previous probe was less than 10 seconds before
+
+#### Scenario: A launcher opened while the app is inactive waits to probe
+
+- **WHEN** consent exists and the launcher starts while the app is inactive
+- **THEN** no probe is sent until the app is active
 
 #### Scenario: Nothing runs in the background
 

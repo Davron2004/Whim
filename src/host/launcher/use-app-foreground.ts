@@ -4,8 +4,13 @@
 import { useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 
+/** The app's state right now: what a loop built this instant starts from. */
+export function appIsForeground(): boolean {
+  return AppState.currentState === 'active';
+}
+
 export function useAppForeground(): boolean {
-  const [foreground, setForeground] = useState(AppState.currentState === 'active');
+  const [foreground, setForeground] = useState(appIsForeground);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => setForeground(state === 'active'));
     return () => subscription.remove();

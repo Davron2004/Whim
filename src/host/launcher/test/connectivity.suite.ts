@@ -379,6 +379,76 @@ async function runRequestEvidenceTests(h: Harness): Promise<void> {
     h.eq(clock.pendingDelay, 2000, 'it awaits its own confirmation');
   });
 
+  await h.test('ConnectivityLoop: a probe that fails after the app went to the background is not the first of two failures', async () => {
+    const clock = new VirtualClock();
+    const held = heldProbe();
+    const states: Connectivity[] = [];
+    const loop = new ConnectivityLoop({ probe: held.probe, publish: (s) => states.push(s), timers: clock, now: clock.now });
+    loop.start();
+    held.settle('verified');
+    await idle(loop);
+    loop.setForeground(false);
+    clock.time += 20 * SECOND;
+    loop.setForeground(true);
+    h.eq(held.log.calls, 2, 'precondition: the return probe is in flight');
+    loop.setForeground(false);
+    held.settle('unreachable');
+    await idle(loop);
+    h.eq(clock.pendingCount, 0, 'a failure that lands in the background schedules nothing');
+
+    clock.time += 20 * SECOND;
+    loop.setForeground(true);
+    h.eq(held.log.calls, 3, 'the next return probes');
+    held.settle('unreachable');
+    await idle(loop);
+    h.eq(states, ['checking', 'online'], 'one failed probe after the return is still not an outage');
+    h.eq(clock.pendingDelay, 2000, 'it awaits its confirmation');
+
+    clock.fireNext();
+    held.settle('unreachable');
+    await idle(loop);
+    h.eq(states, ['checking', 'online', 'offline'], 'the confirming second failure turns it offline');
+  });
+
+  await h.test('ConnectivityLoop: a request failure whose probe lands in the background does not count towards the next return', async () => {
+    const clock = new VirtualClock();
+    const held = heldProbe();
+    const states: Connectivity[] = [];
+    const loop = new ConnectivityLoop({ probe: held.probe, publish: (s) => states.push(s), timers: clock, now: clock.now });
+    loop.start();
+    held.settle('verified');
+    await idle(loop);
+    loop.noteNetworkFailure();
+    h.eq(held.log.calls, 2, 'precondition: the failure is being checked');
+    loop.setForeground(false);
+    held.settle('unreachable');
+    await idle(loop);
+
+    clock.time += 20 * SECOND;
+    loop.setForeground(true);
+    held.settle('unreachable');
+    await idle(loop);
+    h.eq(states, ['checking', 'online'], 'the old request failure is forgotten: one failed probe on return is not an outage');
+  });
+
+  await h.test('ConnectivityLoop: a loop built while the app is not in the foreground sends nothing until the first return', async () => {
+    const clock = new VirtualClock();
+    const { probe, log } = scriptedProbe(['verified']);
+    const states: Connectivity[] = [];
+    const loop = new ConnectivityLoop({ probe, publish: (s) => states.push(s), timers: clock, now: clock.now, foreground: false });
+    loop.start();
+    await idle(loop);
+    await clock.advance(loop, HOUR);
+    h.eq(log.calls, 0, 'no startup probe while the app is inactive');
+    h.eq(clock.pendingCount, 0, 'and nothing scheduled');
+    h.eq(states, ['checking'], 'the session is checking');
+
+    loop.setForeground(true);
+    await idle(loop);
+    h.eq(log.calls, 1, 'the startup probe goes out on the first return');
+    h.eq(states, ['checking', 'online'], 'and its answer settles the session');
+  });
+
   await h.test('ConnectivityLoop: returns to the foreground probe at most once per ten seconds', async () => {
     const { clock, log, loop } = await onlineLoop(['verified']);
     await leaveAndReturn(loop, clock, 4 * SECOND);
