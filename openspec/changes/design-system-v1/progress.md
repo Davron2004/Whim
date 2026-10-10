@@ -186,3 +186,18 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
 - ruling received (product-owner session) on chain-16h: option C, request evidence only, no steady poll; a MODIFIED delta
   for `server-connectivity`; recorded as design.md D20 by the rework. Option D (OS network status) filed as #182.
   chain-16h rework dispatched (fresh implementer, same branch and worktree).
+- report: chain-16d STATUS complete, fast gate PASS, knip clean, commit `4f193232` (10 files). On an iOS 27 simulator
+  with `scripts/ios-ui-driver` from the repo (its first real run: build, start, verbs, shot, stop all worked; `type`
+  with no focused field hangs it): iOS-B3 did NOT reproduce as unreachable on BASE (at AX5 `tapText` and a plain drag
+  both scroll the first-run sheet, the terms row is reachable, Agree enables, Describe opens); a footer rule was added
+  anyway (a pinned footer taller than 30% of the window joins the scroll). iOS-M1 reproduced and fixed (`Sheet` keys its
+  frame by `fontScale`). Continue rides the keyboard, one header row, sheet top fade, Report keyboard gap, close glyph
+  scaling: seen fixed on the simulator. Android focus-after-`onShow`: by reasoning, not device-proven.
+- integrity: exit 0; removal ratchet PASS. reviewer on `735c8531..4f193232`: VERDICT findings. Mediums, for fix chain 16i:
+  the `fontScale` key remounts a nested raw `Modal` (`ReportSheet` on the Ready page uses `SheetModal`), the unmount-while-up
+  hazard; `KeyboardShell`'s `header` slot and header hairline are dead in production; the hairline test now renders a
+  screen-host shell, so sheet-host coverage is gone. Low: `Sheet.onClosed` has no production caller.
+- merged: `c225b462` (--no-ff). regate (fast): PASS.
+- report: chain-16f STATUS complete, fast gate PASS, knip clean, commit `735c79f8` (11 files). integrity exit 0; removal
+  ratchet PASS; with the reviewer. Proven on emulator-5560: the menu sits 8 dp under its cell at 1.0/1.4/2.0 in both
+  themes (cause: `measureInWindow` starts below the status bar on Android), Undo fires 12 dp above its text.
