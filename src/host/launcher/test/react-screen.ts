@@ -44,6 +44,16 @@ export async function press(node: TestRenderer.ReactTestInstance): Promise<void>
   await TestRenderer.act(async () => { node.props.onPress(); });
 }
 
+/** Android back as a device delivers it while a sheet is up: to the topmost `Modal`'s
+ *  `onRequestClose`, never to `BackHandler` (a Modal consumes the press). The last `Modal` in tree
+ *  order is the one presented last. */
+export async function androidBack(tree: TestRenderer.ReactTestRenderer): Promise<void> {
+  const modals = tree.root.findAll(isHost('Modal'));
+  const top = modals.at(-1);
+  if (!top || typeof top.props.onRequestClose !== 'function') throw new Error('No modal is up to take Android back');
+  await TestRenderer.act(async () => { top.props.onRequestClose(); });
+}
+
 /** React Native's touchables, text and inputs are accessibility elements unless `accessible={false}`
  *  (`Pressable` passes `accessible !== false`); a plain View is one only with `accessible`. */
 const ACCESSIBLE_BY_DEFAULT = new Set(['TouchableOpacity', 'Pressable', 'Text', 'TextInput', 'Switch']);

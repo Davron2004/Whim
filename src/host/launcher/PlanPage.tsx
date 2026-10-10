@@ -23,6 +23,7 @@ import { Button } from '../ui/Button';
 import { Chip } from '../ui/Chip';
 import { Icon } from '../ui/Icon';
 import { Notice } from '../ui/Notice';
+import { useSheetBack } from '../ui/Sheet';
 import { Skeleton, SkeletonBlock } from '../ui/Skeleton';
 import { Text } from '../ui/Text';
 import { TextArea, TextField } from '../ui/TextField';
@@ -48,7 +49,6 @@ import {
 } from './prompt-flow';
 import { useRetryGate } from './ServiceNotice';
 import { tileOf } from './tile-identity';
-import { useSystemBack } from './use-system-back';
 
 /** The plan row's geometry, exported so its skeleton draws the same space. */
 export const PLAN_ROW = { minHeight: 72, count: 3 } as const;
@@ -60,7 +60,7 @@ export interface PlanPageProps {
   /** Change mode: the app being changed heads the page with its tile and name. */
   editing?: InstalledApp;
   /** Back: return to Describe with the words and answers kept. While a row is being edited, back
-   *  cancels that edit instead (`planBackAction`). */
+   *  cancels that edit instead (`planBackAction`). Android back takes the same step (`useSheetBack`). */
   onBack: () => void;
   onAnswer: (questionId: string, change: AnswerChange) => void;
   onChangeRow: (index: number, text: string) => void;
@@ -339,7 +339,7 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
     if (planBackAction(editingRow !== null) === 'cancel-edit') setEditingRow(null);
     else onBack();
   };
-  useSystemBack(handleBack);
+  useSheetBack(handleBack);
   const onScrollOffset = useCallback(
     (offset: number) => setFolded((current) => foldedAt(current, offset, extents.current, screen.answers)),
     [screen.answers],

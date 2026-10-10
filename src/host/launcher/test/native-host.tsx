@@ -35,7 +35,32 @@ export const WebView = React.forwardRef<{ injectJavaScript: (js: string) => void
   React.useImperativeHandle(ref, () => ({ injectJavaScript: (js: string) => { injectedScripts.push(js); } }), []);
   return React.createElement('WebView', props, props.children as React.ReactNode);
 });
-export const Modal = (props: HostProps) => props.visible ? React.createElement('Modal', props, props.children) : null;
+/** iOS reports a dismissed `Modal` through `onDismiss` after it is gone; `holdModalDismissals` keeps
+ *  those reports back until the returned release runs, so a test can play a slow dismissal. */
+const heldDismissals: { queue: (() => void)[] | null } = { queue: null };
+export function holdModalDismissals(): () => void {
+  heldDismissals.queue = [];
+  return () => {
+    const queue = heldDismissals.queue ?? [];
+    heldDismissals.queue = null;
+    for (const report of queue) report();
+  };
+}
+export function Modal(props: HostProps) {
+  const visible = Boolean(props.visible);
+  const wasVisible = React.useRef(visible);
+  const onDismiss = React.useRef(props.onDismiss as (() => void) | undefined);
+  onDismiss.current = props.onDismiss as (() => void) | undefined;
+  React.useEffect(() => {
+    if (wasVisible.current && !visible) {
+      const report = () => onDismiss.current?.();
+      if (heldDismissals.queue) heldDismissals.queue.push(report);
+      else report();
+    }
+    wasVisible.current = visible;
+  }, [visible]);
+  return visible ? React.createElement('Modal', props, props.children) : null;
+}
 export function FlatList({ data, renderItem, ...props }: HostProps & { data: unknown[]; renderItem: (args: { item: unknown; index: number }) => React.ReactNode }) {
   return React.createElement('FlatList', props, data.map((item, index) => React.createElement(React.Fragment, { key: index }, renderItem({ item, index }))));
 }

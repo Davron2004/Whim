@@ -8,7 +8,8 @@
  * Two rules this page exists to hold: the field is NEVER live-highlighted (Whim Syntax rule 6 — a
  * prompt is marked up only after submission, so nothing here renders through `WhimProse`), and an
  * idea chip FILLS the field without advancing the flow. Purely presentational: the clarify request
- * lives in `LauncherRoot`.
+ * lives in `LauncherRoot`. Android back closes the sheet and keeps the draft, as the close control
+ * does, so the page registers nothing with the sheet.
  */
 import React, { useEffect, useState } from 'react';
 import { View } from 'react-native';
@@ -30,7 +31,6 @@ import { PageHead } from './MakingSheet';
 import type { FlowNotice } from './prompt-flow';
 import { useRetryGate } from './ServiceNotice';
 import { tileOf } from './tile-identity';
-import { useSystemBack } from './use-system-back';
 
 /** The three idea chips, verbatim from the copy table. */
 const IDEAS: readonly string[] = [COPY.homeIdeaTimer, COPY.homeIdeaTracker, COPY.homeIdeaDice];
@@ -49,8 +49,6 @@ export interface DescribePageProps {
   onChangeText: (text: string) => void;
   /** Sends the clarify request and opens the plan page. */
   onContinue: () => void;
-  /** Android back: closes the sheet and keeps the draft, the same as the close control. */
-  onClose: () => void;
 }
 
 const styles = makeStyles(() => ({
@@ -75,12 +73,11 @@ function useKeyboardShown(): boolean {
   return shown;
 }
 
-export function DescribePage({ text, editing, serverUnreachable, notice, onChangeText, onContinue, onClose }: Readonly<DescribePageProps>) {
+export function DescribePage({ text, editing, serverUnreachable, notice, onChangeText, onContinue }: Readonly<DescribePageProps>) {
   const t = useTokens();
   const s = styles(t);
   const gated = useRetryGate(notice?.retryAt);
   const keyboardShown = useKeyboardShown();
-  useSystemBack(onClose);
   const changing = editing !== undefined;
   const headline = composeHeadline(changing);
   const tile = editing ? tileOf(editing) : null;

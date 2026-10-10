@@ -29,7 +29,7 @@ import { middleTruncated } from '../settings-sections';
 import { StoreAccess } from '../store-access';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
-import { buildIt, composeAndContinue, json, planLoaded, sseStream, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, firstRunOpen, json, planLoaded, sseStream, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { Alert, Clipboard, Linking } from './native-host';
 import { stackIds } from './native-screens';
 import { testAppInfo } from './client-fixtures';
@@ -468,6 +468,7 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
 
   await h.test('Settings: turning AI features on with current terms shows exactly one consent screen and no terms step', async () => {
     await withLauncher({ consent: false, server: clarifyServer }, async ({ tree, kv }) => {
+      const termsBefore = kv.getString('whim.terms:v1');
       await openSettings(tree);
       const journey = [shownScreen(tree)];
       await press(button(tree, COPY.settingsAISectionTitle));
@@ -476,6 +477,8 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
       journey.push(shownScreen(tree));
       h.eq(journey, ['settings', 'consent:review', 'settings'], 'one consent screen, then Settings');
       h.eq(consentStatus(kv).kind, 'granted', 'AI features are on');
+      h.eq(kv.getString('whim.terms:v1'), termsBefore, 'the terms were not asked again, and their record was not rewritten');
+      h.ok(!firstRunOpen(tree), 'and the first-run sheet never opened');
     });
   });
 

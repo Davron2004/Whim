@@ -7,7 +7,10 @@ Interface only. Rules: system.md §4.3–4.5, §6, §7.1. Colours via `useTokens
 ```ts
 export interface SheetProps { visible: boolean; onClose: () => void /* must set visible false */;
   title?: string /* title2; screen-reader focus lands here */; detent?: 'fit' | 'large' /* fit */;
-  closeLabel?: string /* COPY.sheetClose */; children: React.ReactNode }
+  closeLabel?: string /* COPY.sheetClose */;
+  onClosed?: () => void /* once, after the exit animation AND (iOS) the Modal's onDismiss; present the next sheet here */;
+  children: React.ReactNode }
+export function useSheetBack(handler: () => void): void; // Android back goes to the page, not onClose; no-op outside a Sheet
 // drag physics worklets for any dragged surface (downward-positive pt, velocity pt/s); DRAG_SLOP = 10
 export function projectRelease(position: number, velocity: number): number;  // + (v/1000)·0.998/(1−0.998)
 export function rubberBand(overshoot: number, dimension: number): number;     // coefficient 0.55
@@ -18,7 +21,10 @@ export function dragPosition(start: number, translation: number, dimension: numb
   → `fling` with velocity. Reduce Motion: 160/120 ms cross-fade, drag still tracks.
 - Closes via scrim (sibling, hidden from a11y), close `x`, `onRequestClose` (Android back; hardware
   Escape arrives as back), `onAccessibilityEscape`, drag past commit. Card `accessibilityViewIsModal`.
-  iOS hardware Escape is not delivered (no RN key events).
+  iOS hardware Escape is not delivered (no RN key events). A Modal consumes back, so `BackHandler` never
+  sees it: a page that steps back before closing registers with `useSheetBack`; `onRequestClose` calls it
+  in place of `onClose`. `onClosed`: iOS hides the Modal and waits for `onDismiss` (1 s fallback); Android
+  reports as the exit animation ends. Needs a simulator check (iOS dismissal timing).
 - `commit` haptic: prepared on touch-down, played once per crossing. Drag source: grabber + header.
 - Keyboard: card `paddingBottom = max(overlap, safe bottom)`, frame by frame. Fields go in a
   `<KeyboardShell host="sheet">` body (pads nothing; reveals the focused field).

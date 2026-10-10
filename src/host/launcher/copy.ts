@@ -355,14 +355,21 @@ export const COPY = {
   // The first-run sheet's three summary rows, its expandable "Full details" (the disclosure above),
   // its Language row and its terms checkbox. Prefixed `firstRun`, not `consent`: the privacy page
   // quotes every `consent` key word for word, and these are a short form of what it already quotes.
-  firstRunSentTitle: 'What’s sent',
-  firstRunSent: 'What you ask for and the plan you approve go to Whim’s server. AI companies that work for us write the code.',
+  // With `consentLead` the first row names every category sent and every screen-named recipient
+  // role and what they are for, the others what stays on the phone and what Whim never does
+  // (`FIRST_RUN_COVERAGE` says which key names what).
+  firstRunSentTitle: 'What’s sent, and who gets it',
+  firstRunSent:
+    'What you ask for, your answers and the plan you approve. An ID Whim makes for this phone. Error details if something goes wrong. They go to AnyCognition, which makes Whim, and to the companies that work for us, including the AI companies that write the code. Apple or Google may check that the request is from the real Whim app. Authorities get information when the law requires it. All of it is used to make your apps and run Whim.',
   firstRunStaysTitle: 'What stays on your phone',
-  firstRunStays: 'What you save in your apps. Nobody at Whim can read it.',
+  firstRunStays: 'What you save in your apps. Nobody at Whim can read it, and Whim doesn’t send it anywhere.',
   firstRunNeverTitle: 'What we never do',
-  firstRunNever: 'Show ads, sell your data, or track you across other apps.',
+  firstRunNever: 'Show ads, sell your data, or track you across other apps and websites.',
   firstRunDetails: 'Full details',
   firstRunLanguage: 'Language',
+  // The sheet's action when only the terms are due and the grant stands: it continues, and agrees to
+  // nothing new.
+  firstRunContinue: 'Continue',
   firstRunTermsCheck: 'I accept the Terms of use',
   // ── refusals about this phone itself (request-envelope; design D5/D7) ──────
   // What the phone says for these two refusals in place of the server's hint
@@ -601,6 +608,7 @@ export const LEGAL_COPY_KEYS = [
   'firstRunNever',
   'firstRunDetails',
   'firstRunLanguage',
+  'firstRunContinue',
   'firstRunTermsCheck',
   'consentReviewKeepOn',
   'consentReviewTurnOff',
@@ -665,15 +673,16 @@ const FRENCH: LegalCopyTable = {
   consentOutdatedLine: 'Ce texte a changé depuis que vous l’avez accepté.',
   consentAgree: 'Accepter d’envoyer mes descriptions',
   consentDecline: 'Pas maintenant',
-  firstRunSentTitle: 'Ce qui est envoyé',
+  firstRunSentTitle: 'Ce qui est envoyé, et qui le reçoit',
   firstRunSent:
-    'Ce que vous demandez et le plan que vous approuvez sont envoyés au serveur de Whim. Des entreprises d’IA qui travaillent pour nous écrivent le code.',
+    'Ce que vous demandez, vos réponses et le plan que vous approuvez. Un identifiant que Whim crée pour ce téléphone. Des détails d’erreur quand quelque chose ne va pas. Ils vont à AnyCognition, qui conçoit Whim, et aux entreprises qui travaillent pour nous, dont les entreprises d’IA qui écrivent le code. Apple ou Google peuvent vérifier que la demande vient de la véritable app Whim. Les autorités reçoivent des renseignements lorsque la loi l’exige. Le tout sert à créer vos apps et à faire fonctionner Whim.',
   firstRunStaysTitle: 'Ce qui reste sur votre téléphone',
-  firstRunStays: 'Ce que vous enregistrez dans vos apps. Personne chez Whim ne peut le lire.',
+  firstRunStays: 'Ce que vous enregistrez dans vos apps. Personne chez Whim ne peut le lire, et Whim ne l’envoie nulle part.',
   firstRunNeverTitle: 'Ce que nous ne faisons jamais',
-  firstRunNever: 'Afficher des publicités, vendre vos données ou vous suivre dans d’autres apps.',
+  firstRunNever: 'Afficher des publicités, vendre vos données ou vous suivre dans d’autres apps et sites Web.',
   firstRunDetails: 'Tous les détails',
   firstRunLanguage: 'Langue',
+  firstRunContinue: 'Continuer',
   firstRunTermsCheck: 'J’accepte les conditions d’utilisation',
   consentReviewKeepOn: 'Garder les fonctions d’IA activées',
   consentReviewTurnOff: 'Désactiver les fonctions d’IA',
@@ -714,6 +723,29 @@ export const CONSENT_SCREEN_COVERAGE: {
     'hosting-providers': ['consentWho'],
     platform: ['consentWhoPlatform'],
     authorities: ['consentWhoAuthorities'],
+  },
+};
+
+/** Which keys put each disclosure-manifest category and screen-named recipient role on the first-run
+ *  sheet's first layer, which is always visible: the title and lead (`consentLead` names the AI
+ *  companies and what is sent to Whim's server) and the three summary rows. Same shape and same
+ *  check as `CONSENT_SCREEN_COVERAGE`; the first layer is the short form of that disclosure and may
+ *  not leave a category or role out of it. */
+export const FIRST_RUN_COVERAGE: {
+  readonly categories: Readonly<Record<string, readonly LegalCopyKey[]>>;
+  readonly roles: Readonly<Record<string, readonly LegalCopyKey[]>>;
+} = {
+  categories: {
+    'request-material': ['firstRunSent'],
+    'phone-id': ['firstRunSent'],
+    'error-details': ['firstRunSent'],
+  },
+  roles: {
+    anycognition: ['firstRunSent'],
+    'ai-providers': ['consentLead', 'firstRunSent'],
+    'hosting-providers': ['firstRunSent'],
+    platform: ['firstRunSent'],
+    authorities: ['firstRunSent'],
   },
 };
 

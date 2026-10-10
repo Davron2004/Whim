@@ -17,7 +17,7 @@ import { grantConsent } from '../ai-consent';
 import { acceptTerms } from '../terms-acceptance';
 import { acknowledgeOwnServer, saveServerUrl } from '../server-address';
 import { resetNativeStorage } from './native-storage';
-import { renderScreen, unmountScreen, captureTimeouts, textOf, hostType, press } from './react-screen';
+import { androidBack, renderScreen, unmountScreen, captureTimeouts, textOf, hostType, press } from './react-screen';
 import { testAppInfo } from './client-fixtures';
 import { json, settle, waitFor, withLauncher } from './rendered-launcher';
 import { chooseRow, dismissToast, longPress, pressToastAction, renderRoot, sheetRows, sheetTitled, tile, tileLabels, toastOf } from './home-rig';
@@ -139,7 +139,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => tree!.root.findByType(DescribePage).props.onChangeText('A timer'));
       await TestRenderer.act(async () => tree!.root.findByType(DescribePage).props.onContinue());
       await TestRenderer.act(async () => tree!.root.findByType(PlanPage).props.onBack());
-      await TestRenderer.act(async () => tree!.root.findByType(DescribePage).props.onClose());
+      await androidBack(tree);
       h.eq(tree.root.findByType(HomeScreen).props.offline, false, 'successful current rewrite proves connectivity');
       await TestRenderer.act(async () => { finishProbe(new Response('', { status: 503 })); await probe; });
       h.eq(tree.root.findByType(HomeScreen).props.offline, false, 'late failed probe cannot undo current request success');

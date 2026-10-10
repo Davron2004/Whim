@@ -15,7 +15,9 @@
  *   springs back with `fling`. Position alone never closes it. Crossing the commit point plays the
  *   `commit` haptic once per crossing, on that frame.
  * - Closes by scrim, close, Android back (and a hardware Escape, which Android delivers as back),
- *   the screen reader's escape gesture, or a drag. `onClose` must close it (`visible` false).
+ *   the screen reader's escape gesture, or a drag. `onClose` must close it (`visible` false). Android
+ *   back is the exception a page may take over (`useSheetBack`): the Modal consumes the press, so a
+ *   page that steps back before it closes registers there, never on `BackHandler`.
  * - Modal to screen readers (`accessibilityViewIsModal`; its own window on Android), focus moves to
  *   its title on open, close reads "Close".
  * - The keyboard: the card's bottom padding follows the keyboard frame by frame on the keyboard's own
@@ -25,8 +27,8 @@
  *   finger and settles with a cross-fade.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Modal, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, Modal, Platform, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
 import type { LayoutChangeEvent } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -102,7 +104,39 @@ export interface SheetProps {
   detent?: SheetDetent;
   /** Default `COPY.sheetClose`. */
   closeLabel?: string;
+  /** Called once after the sheet has finished closing and its `Modal` is gone: the exit animation has
+   *  ended and, on iOS, the system has reported the dismissal (`Modal`'s `onDismiss`; a second
+   *  presentation issued earlier can be dropped). Present the next sheet from here. */
+  onClosed?: () => void;
   children: React.ReactNode;
+}
+
+/** How long iOS may take to report a dismissal before the sheet counts as closed anyway, so a missed
+ *  `onDismiss` cannot hold the next sheet back for good. */
+const DISMISS_FALLBACK_MS = 1000;
+
+/** What Android back does on the sheet's current page, when it is not "close". */
+type SheetBackSlot = React.MutableRefObject<(() => void) | null>;
+const SheetBackContext = createContext<SheetBackSlot | null>(null);
+
+/**
+ * Takes Android back (and hardware Escape) on the page that calls it, in place of closing the sheet:
+ * a page that steps back before it closes — Plan returning to Describe, a row edit cancelling —
+ * passes the step here. A `Modal` consumes the press, so `BackHandler` never sees it while a sheet is
+ * up. The close control, the scrim and a drag still call `onClose`. Outside a sheet it does nothing.
+ */
+export function useSheetBack(handler: () => void): void {
+  const slot = useContext(SheetBackContext);
+  const latest = useRef(handler);
+  latest.current = handler;
+  useEffect(() => {
+    if (slot === null) return undefined;
+    const call = () => latest.current();
+    slot.current = call;
+    return () => {
+      if (slot.current === call) slot.current = null;
+    };
+  }, [slot]);
 }
 
 const styles = makeStyles((t) => ({
@@ -145,22 +179,39 @@ interface SheetMotion {
   fade: SharedValue<number>;
 }
 
-export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = COPY.sheetClose, children }: Readonly<SheetProps>) {
+export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = COPY.sheetClose, onClosed, children }: Readonly<SheetProps>) {
   const t = useTokens();
   const { height: windowHeight } = useWindowDimensions();
   const [mounted, setMounted] = useState(visible);
+  // iOS: the `Modal` is hidden but kept until the system says it is gone.
+  const [dismissing, setDismissing] = useState(false);
   const visibleRef = useRef(visible);
+  const onClosedRef = useRef(onClosed);
+  onClosedRef.current = onClosed;
   // A drag past the commit point already carries the card out; closing must not restart it.
   const closingRef = useRef(false);
   const y = useSharedValue(windowHeight);
   const height = useSharedValue(windowHeight);
   const fade = useSharedValue(t.reduceMotion ? 0 : 1);
 
+  const closed = useCallback(() => {
+    setDismissing(false);
+    setMounted(false);
+    onClosedRef.current?.();
+  }, []);
+
   const settled = useCallback(() => {
     if (!closingRef.current && visibleRef.current) return;
     closingRef.current = false;
-    setMounted(false);
-  }, []);
+    if (Platform.OS === 'ios') setDismissing(true);
+    else closed();
+  }, [closed]);
+
+  useEffect(() => {
+    if (!dismissing) return undefined;
+    const fallback = setTimeout(closed, DISMISS_FALLBACK_MS);
+    return () => clearTimeout(fallback);
+  }, [dismissing, closed]);
 
   // The `visible` last acted on: only a change of it presents or dismisses the sheet, never a change
   // of settings while it shows.
@@ -168,9 +219,11 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
   useEffect(() => {
     visibleRef.current = visible;
     if (actedOn.current === visible) return;
+    const wasOpen = actedOn.current === true;
     actedOn.current = visible;
     if (visible) {
       closingRef.current = false;
+      setDismissing(false);
       setMounted(true);
       if (t.reduceMotion) {
         y.value = 0;
@@ -181,7 +234,11 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
       }
       return;
     }
-    if (closingRef.current || !mounted) return;
+    if (!mounted) {
+      if (wasOpen) onClosedRef.current?.();
+      return;
+    }
+    if (closingRef.current) return;
     const done = (finished?: boolean) => {
       'worklet';
       if (finished) scheduleOnRN(settled);
@@ -195,22 +252,38 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
     onClose();
   }, [onClose]);
 
+  const backSlot = useRef<(() => void) | null>(null);
+  const requestClose = () => {
+    if (backSlot.current) backSlot.current();
+    else onClose();
+  };
+
   if (!mounted) return null;
   return (
-    <Modal visible transparent animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
+    <Modal
+      visible={!dismissing}
+      transparent
+      animationType="none"
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={requestClose}
+      onDismiss={dismissing ? closed : undefined}
+    >
       <SafeAreaProvider>
-        <SheetFrame
-          motion={{ y, height, fade }}
-          reduceMotion={t.reduceMotion}
-          title={title}
-          detent={detent}
-          closeLabel={closeLabel}
-          onClose={onClose}
-          onDragClosed={dragClosed}
-          onSettled={settled}
-        >
-          {children}
-        </SheetFrame>
+        <SheetBackContext.Provider value={backSlot}>
+          <SheetFrame
+            motion={{ y, height, fade }}
+            reduceMotion={t.reduceMotion}
+            title={title}
+            detent={detent}
+            closeLabel={closeLabel}
+            onClose={onClose}
+            onDragClosed={dragClosed}
+            onSettled={settled}
+          >
+            {children}
+          </SheetFrame>
+        </SheetBackContext.Provider>
       </SafeAreaProvider>
     </Modal>
   );
