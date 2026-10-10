@@ -38,3 +38,9 @@ Chains 1–14 and 23 were merged before this ledger existed; their record is the
   that is longer than 10 s (the toast pauses there by system.md §7.1). The launch sweep stays the backstop.
 - decision: a changing or change-failed app's menu has no Delete, as system.md §3.2 lists; the spec's
   "Delete on every installed app" is met once the change is stopped or discarded. No requirement changed.
+- dispatched: chain-15b (reviewer fixes for home), BASE `dbfebc71`, worktree `.claude/worktrees/design-system-v1-chain-15b`, branch `chain/design-system-v1-chain-15b`, implementer on sonnet.
+- report: chain-15b STATUS complete, 7/7 fixes, fast gate PASS, commit `071b2901`. Class-A: `ToastSpec.onEnd`
+  added (shell-surfaces contract updated); `PurgeWindows` lost its timers (`finish(kind, id)` runs the purge,
+  Home gained `onSettleDelete`/`onSettleDiscard`, `onUndo*` return boolean, "Too late to undo." toast);
+  `HomeHeader.tsx` and `AppTile.tsx` touched outside the listed scope; a degenerate grid width gets a 64 pt cell.
+- integrity: exit 0 (INTEGRITY OK).
