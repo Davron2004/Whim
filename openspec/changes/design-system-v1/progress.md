@@ -122,3 +122,15 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   `.claude/worktrees/ios-ui-driver`: chain-16c (overlays on iOS; implementer on opus, iOS simulator), chain-16e
   (Home and tiles; sonnet, emulator-5560), chain-16g (first-run copy and Plan rows; sonnet, no device),
   `chain/ios-ui-driver` (the XCUITest driver as `scripts/ios-ui-driver/`; sonnet, no device).
+- report: chain-16e STATUS complete, fast gate PASS, knip clean, commit `57e7fc2a` (9 files). Proven on emulator-5560
+  (light, dark, 100/140/200%): first row clear of the fade (26 dp under the title), ember composer mark, plates on
+  one line, whole halo, chips at 200%. AND-M9 reported as no defect (Undo 40 x 22 dp plus `hitSlop` = 64 x 46).
+- integrity: exit 0; removal ratchet PASS (additions only). reviewer on `4ad56468..57e7fc2a`: VERDICT findings, report
+  matches the diff, nothing removed. Mediums, all carried into chain-16f: Undo is 46 dp tall against Android's 48
+  (`LAYOUT.touchTarget`), two of the four "plates line up" assertions pass on the old code, and the grid label's
+  side padding became 8 from 135% text where `system.md` §3.2 says 4.
+- decision: the grid label keeps 4 pt side padding at every text size (`system.md` §3.2, `handoff/shell-surfaces.md`);
+  16f reverts 16e's 8 pt variant.
+- merged: `f824c725` (--no-ff). regate (fast): PASS.
+- report: chain-16g STATUS complete, fast gate PASS, knip clean, commit `c49599a1` (6 files). integrity exit 0; removal
+  ratchet PASS; with the reviewer.
