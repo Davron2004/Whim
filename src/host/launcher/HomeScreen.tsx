@@ -70,12 +70,16 @@ export interface HomeScreenProps {
   /** Makes the copy. Resolves the new entry; resolves `null` when a copy of this app is already
    *  running; rejects when the copy could not be made (nothing was created). */
   onFork: (app: InstalledApp, opts: ForkOptions) => Promise<InstalledApp | null>;
-  /** Delete: hide the app and arm its purge. The toast's Undo calls `onUndoDelete`. */
+  /** Delete: hide the app and arm its purge. The toast's Undo calls `onUndoDelete`, which answers
+   *  whether the app was restored; the toast ending (however) calls `onSettleDelete`, which
+   *  completes the purge. */
   onDelete: (app: InstalledApp) => void;
-  onUndoDelete: (app: InstalledApp) => void;
-  /** Discard: hide these attempts and arm their purges. The toast's Undo calls `onUndoDiscard`. */
+  onUndoDelete: (app: InstalledApp) => boolean;
+  onSettleDelete: (app: InstalledApp) => void;
+  /** Discard: hide these attempts and arm their purges; Undo and the toast's end as for Delete. */
   onDiscard: (recs: readonly PendingBuildRecord[]) => void;
-  onUndoDiscard: (recs: readonly PendingBuildRecord[]) => void;
+  onUndoDiscard: (recs: readonly PendingBuildRecord[]) => boolean;
+  onSettleDiscard: (recs: readonly PendingBuildRecord[]) => void;
   /** Opens the app's History. */
   onHistory: (app: InstalledApp) => void;
   /** "Change it": opens the describe sheet scoped to this app. */
@@ -135,8 +139,10 @@ export default function HomeScreen({
   onFork,
   onDelete,
   onUndoDelete,
+  onSettleDelete,
   onDiscard,
   onUndoDiscard,
+  onSettleDiscard,
   onHistory,
   onPromptAgain,
   onCreate,
@@ -173,19 +179,30 @@ export default function HomeScreen({
 
   const closeMenu = () => setMenu((m) => (m ? { ...m, open: false } : m));
 
+  /** An Undo that could not restore everything is said, never silent. */
+  const undone = (restored: boolean) => {
+    if (!restored) toast.show({ message: COPY.undoTooLateToast });
+  };
+
   const discard = (recs: readonly PendingBuildRecord[]) => {
     onDiscard(recs);
     haptics.play('warning');
     toast.show({
       message: recs.length === 1 ? COPY.discardedToast : discardedManyToast(recs.length),
-      action: { label: COPY.toastUndo, onPress: () => onUndoDiscard(recs) },
+      action: { label: COPY.toastUndo, onPress: () => undone(onUndoDiscard(recs)) },
+      onEnd: () => onSettleDiscard(recs),
     });
   };
 
   const remove = (app: InstalledApp) => {
     onDelete(app);
     haptics.play('warning');
-    toast.show({ message: deletedToast(app.name), undo: true, action: { label: COPY.toastUndo, onPress: () => onUndoDelete(app) } });
+    toast.show({
+      message: deletedToast(app.name),
+      undo: true,
+      action: { label: COPY.toastUndo, onPress: () => undone(onUndoDelete(app)) },
+      onEnd: () => onSettleDelete(app),
+    });
   };
 
   const makeCopy = async (app: InstalledApp, data: ForkOptions['data']) => {

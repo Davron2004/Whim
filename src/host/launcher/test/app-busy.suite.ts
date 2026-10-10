@@ -24,12 +24,12 @@ import { SEED_VERSION } from '../seed';
 import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { AppBusy, isAppBusy, runAppOp } from '../app-busy';
 import { runFork } from '../fork-op';
-import { PurgeWindows, UNDO_WINDOW_MS } from '../soft-delete';
+import { PurgeWindows } from '../soft-delete';
 import { PendingPurgeStore, type PurgeMarker } from '../pending-purge';
 import { MapKVBackend } from '../../version-store';
 import type { AppBusyMap } from '../app-busy';
 import { resetNativeStorage } from './native-storage';
-import { captureTimeouts, press, unmountScreen } from './react-screen';
+import { press, unmountScreen } from './react-screen';
 import { chooseRow, longPress, menuCard, renderRoot, sheetRows, tile } from './home-rig';
 
 /** A promise the test resolves/rejects by hand, so an in-flight operation can be inspected. */
@@ -68,7 +68,7 @@ export async function runAppBusyTests(h: Harness): Promise<void> {
 
   // The shipped handlers catch their own failure and raise `Alert.alert`; a failure they do NOT
   // catch must not strand the tile either.
-  for (const [op, failure] of [['open', 'caught'], ['delete', 'caught'], ['fork', 'thrown']] as const) {
+  for (const [op, failure] of [['open', 'caught'], ['fork', 'thrown']] as const) {
     await h.test(`busy: a ${failure} failure of ${op} clears the busy state`, async () => {
       const registry = new AppBusy();
       const rec = recorder();
@@ -98,7 +98,7 @@ export async function runAppBusyTests(h: Harness): Promise<void> {
     });
   }
 
-  for (const op of ['fork', 'delete'] as const) {
+  for (const op of ['fork', 'open'] as const) {
     await h.test(`${op}: a second ${op} for the same app while one is in flight never runs`, async () => {
       const registry = new AppBusy();
       const rec = recorder();
@@ -127,24 +127,24 @@ export async function runAppBusyTests(h: Harness): Promise<void> {
     const gate = deferred();
     let openedOther = false;
 
-    const first = runAppOp(registry, rec.publish, 'a1', 'delete', () => gate.promise);
+    const first = runAppOp(registry, rec.publish, 'a1', 'fork', () => gate.promise);
     h.eq(
       await runAppOp(registry, rec.publish, 'a2', 'open', async () => { openedOther = true; }),
       true,
-      'a different app opens while the first is deleting',
+      'a different app opens while the first is being copied',
     );
     h.ok(openedOther, 'and its work ran');
-    h.eq(rec.latest(), { a1: 'delete' }, 'the first app is still the only busy one');
+    h.eq(rec.latest(), { a1: 'fork' }, 'the first app is still the only busy one');
     gate.resolve();
     await first;
   });
 
-  // Scenario: fork and delete are triggered from sheets that are already dismissed when their
-  // version-store call starts, so the tile is the ONLY control left to carry their wait.
-  await h.test('busy: the tile affordance covers fork and delete, not only open', async () => {
+  // Scenario: fork is triggered from a menu that is already dismissed when its version-store call
+  // starts, so the tile is the ONLY control left to carry its wait.
+  await h.test('busy: the tile affordance covers fork, not only open', async () => {
     const registry = new AppBusy();
     const rec = recorder();
-    for (const op of ['open', 'fork', 'delete'] as const) {
+    for (const op of ['open', 'fork'] as const) {
       const gate = deferred();
       const running = runAppOp(registry, rec.publish, 'a1', op, () => gate.promise);
       h.eq(isAppBusy(rec.latest(), 'a1'), true, `a tile with a '${op}' in flight reads as busy`);
@@ -204,43 +204,42 @@ export async function runAppBusyTests(h: Harness): Promise<void> {
     h.eq(isAppBusy(busy.snapshot(), app.id), false, 'and the slot is free again');
   });
 
-  await h.test('undo windows: Undo within the window cancels the purge; the window’s end runs it once; Undo no longer applies once it is running', async () => {
-    const clock = captureTimeouts();
-    try {
-      const purges = new PendingPurgeStore(new MapKVBackend());
-      const completed: string[] = [];
-      const release = deferred();
-      let changes = 0;
-      const windows = new PurgeWindows({
-        purges,
-        complete: async (m: PurgeMarker) => { completed.push(`${m.kind}:${m.id}`); await release.promise; purges.cancel(m.kind, m.id); },
-        changed: () => { changes += 1; },
-        failed: () => {},
-      });
-      const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
+  await h.test('undo windows: Undo cancels the purge; the window’s end runs it once; Undo no longer applies once it is running; closing keeps the markers', async () => {
+    const purges = new PendingPurgeStore(new MapKVBackend());
+    const completed: string[] = [];
+    const release = deferred();
+    let changes = 0;
+    const windows = new PurgeWindows({
+      purges,
+      complete: async (m: PurgeMarker) => { completed.push(`${m.kind}:${m.id}`); await release.promise; purges.cancel(m.kind, m.id); },
+      changed: () => { changes += 1; },
+      failed: () => {},
+    });
+    const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
-      windows.armApp(app);
-      h.ok(purges.has('app', 'timer') && changes === 1, 'armed, and Home is told it is hidden');
-      h.eq(windows.undo('app', 'timer'), true, 'Undo within the window');
-      h.ok(!purges.has('app', 'timer') && changes === 2, 'clears the marker and tells Home');
-      h.eq(clock.count(UNDO_WINDOW_MS.app), 0, 'and stops the timer');
-      h.eq(windows.undo('app', 'timer'), false, 'a second Undo finds nothing');
+    windows.armApp(app);
+    h.ok(purges.has('app', 'timer') && changes === 1, 'armed, and Home is told it is hidden');
+    h.eq(windows.undo('app', 'timer'), true, 'Undo while the window is open');
+    h.ok(!purges.has('app', 'timer') && changes === 2, 'clears the marker and tells Home');
+    h.eq(windows.undo('app', 'timer'), false, 'a second Undo finds nothing');
+    await windows.finish('app', 'timer');
+    h.eq(completed, [], 'the end of an undone window purges nothing');
 
-      windows.armApp(app);
-      windows.armAttempt('draft');
-      h.eq([clock.count(UNDO_WINDOW_MS.app), clock.count(UNDO_WINDOW_MS.attempt)], [1, 1], 'Delete waits 10 s and Discard 6 s');
-      clock.fire(UNDO_WINDOW_MS.app);
-      h.eq(completed, ['app:timer'], 'the window’s end runs the purge once, and only that one');
-      h.eq(windows.undo('app', 'timer'), false, 'too late to undo a purge that is running');
-      h.ok(purges.has('app', 'timer'), 'the marker stays until the purge finishes');
-      release.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-      windows.dispose();
-      h.eq(clock.count(UNDO_WINDOW_MS.attempt), 0, 'closing stops the timers that remain; their markers wait for the next launch');
-      h.ok(purges.has('attempt', 'draft'), 'the discard is still armed');
-    } finally {
-      clock.restore();
-    }
+    windows.armApp(app);
+    windows.armAttempt('draft');
+    h.eq(completed, [], 'arming alone purges nothing: no clock runs a window out');
+    const running = windows.finish('app', 'timer');
+    h.eq(completed, ['app:timer'], 'the window’s end runs the purge, and only that one');
+    h.eq(windows.undo('app', 'timer'), false, 'too late to undo a purge that is running');
+    h.ok(purges.has('app', 'timer'), 'the marker stays until the purge finishes');
+    await windows.finish('app', 'timer');
+    h.eq(completed, ['app:timer'], 'ending it twice runs it once');
+    release.resolve();
+    await running;
+    h.ok(!purges.has('app', 'timer'), 'the finished purge cleared its marker');
+    windows.dispose();
+    await windows.finish('attempt', 'draft');
+    h.eq(completed, ['app:timer'], 'closing forgets the windows that remain; their purges wait for the next launch');
+    h.ok(purges.has('attempt', 'draft'), 'the discard is still armed');
   });
 }

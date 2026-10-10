@@ -27,6 +27,7 @@ export async function renderRoot(element: React.ReactElement): Promise<Tree> {
 
 const noop = () => {};
 const never = async () => null;
+const restored = () => true;
 
 /** Home's props with every callback a no-op, for a test to override the ones it watches. */
 export function homeProps(over: Partial<HomeScreenProps> = {}): HomeScreenProps {
@@ -35,9 +36,11 @@ export function homeProps(over: Partial<HomeScreenProps> = {}): HomeScreenProps 
     onOpen: noop,
     onFork: never,
     onDelete: noop,
-    onUndoDelete: noop,
+    onUndoDelete: restored,
+    onSettleDelete: noop,
     onDiscard: noop,
-    onUndoDiscard: noop,
+    onUndoDiscard: restored,
+    onSettleDiscard: noop,
     onHistory: noop,
     onPromptAgain: noop,
     onCreate: noop,
@@ -115,6 +118,12 @@ export function toastOf(tree: Tree): { message: string; action?: string } | null
 export async function pressToastAction(tree: Tree): Promise<void> {
   const capsule = tree.root.findAll((n) => hostType(n) === 'Animated.View' && n.props.accessibilityLiveRegion === 'polite')[0];
   await press(capsule.findAll((n) => hostType(n) === 'Pressable')[0]);
+}
+
+/** Dismiss the toast on screen the way a screen reader does (its `dismiss` action). */
+export async function dismissToast(tree: Tree): Promise<void> {
+  const capsule = tree.root.findAll((n) => hostType(n) === 'Animated.View' && n.props.accessibilityLiveRegion === 'polite')[0];
+  await TestRenderer.act(async () => capsule.props.onAccessibilityAction({ nativeEvent: { actionName: 'dismiss' } }));
 }
 
 /** A sheet by title: the Modal whose card is headed by it. */

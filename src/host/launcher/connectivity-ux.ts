@@ -5,7 +5,7 @@
  * unreachable" notice (`prompt-flow` "The compose entry point shows a server-unreachable notice
  * without blocking generation"). No `react-native` import — `LauncherRoot.tsx` computes both
  * booleans through this module at its `HomeScreen`/`ComposeStep` call sites, mirroring this repo's
- * pure-logic-in-non-RN-siblings convention (`tile-pill.ts`, `server-probe.ts`), so the visibility
+ * pure-logic-in-non-RN-siblings convention (`tile-menus.ts`, `server-probe.ts`), so the visibility
  * matrix is exercisable under Node without rendering either screen.
  */
 

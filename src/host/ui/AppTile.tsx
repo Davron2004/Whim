@@ -32,7 +32,7 @@ import { Ember } from './Ember';
 import { Icon } from './Icon';
 import type { MenuAnchor } from './ContextMenu';
 import { timing, usePressFeedback } from './motion';
-import { GRID, TILE, TILE_SIDE, type GridLayout, type TileSize } from './AppTile-geometry';
+import { GRID, TILE, TILE_SIDE, listRowPadding, type GridLayout, type TileSize } from './AppTile-geometry';
 import { stateLine, tileAccessibilityHint, tileAccessibilityLabel, tileLook, type StateLine, type TileState } from './AppTile-states';
 import { Text } from './Text';
 import { useTokens } from './tokens';
@@ -162,7 +162,7 @@ export interface AppTileProps {
 const cellStyles = makeStyles((t) => ({
   column: { alignItems: 'center' as const, paddingHorizontal: GRID.labelSidePadding },
   label: { marginTop: GRID.labelGap, textAlign: 'center' as const, alignSelf: 'stretch' as const },
-  row: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], paddingHorizontal: t.largeText ? SPACE[4] : SPACE[5] },
+  row: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], paddingHorizontal: listRowPadding(t.largeText) },
   texts: { flex: 1 },
   touch: { justifyContent: 'center' as const },
   lifted: { boxShadow: t.shadows.floating },

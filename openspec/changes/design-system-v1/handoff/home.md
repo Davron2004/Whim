@@ -53,8 +53,9 @@ LONG_PRESS_MS = 350
 ```ts
 { apps; pending?; purges?: Pick<PendingPurgeStore,'has'>; appBusy?; offline?; queued?: ReadonlySet<string>;
   activity?: Readonly<Record<string, number>>; canCopyData?: boolean /* false */; draft?: string;
-  onOpen(app); onFork(app, opts: ForkOptions): Promise<InstalledApp | null>; onDelete(app); onUndoDelete(app);
-  onDiscard(recs); onUndoDiscard(recs); onHistory(app); onPromptAgain(app); onCreate(idea?: string); onSettings();
+  onOpen(app); onFork(app, opts: ForkOptions): Promise<InstalledApp | null>; onDelete(app);
+  onUndoDelete(app): boolean; onSettleDelete(app); onDiscard(recs); onUndoDiscard(recs): boolean;
+  onSettleDiscard(recs); onHistory(app); onPromptAgain(app); onCreate(idea?: string); onSettings();
   onOpenDevProbe?; onOpenPending?(rec); onCancelPending?(rec); onRetryPending?(rec);
   onCustomizeTile(app, tile: TileIdentity); onResetTile(app) }
 ```
@@ -68,15 +69,20 @@ LONG_PRESS_MS = 350
   `ConsentContinuation` compose member gained `text?`, `runContinuation` -> `openCompose(editing, text)`).
 - Composer bar: `ComposerBar({ draft?: string; onPress })` (own file). `draft` set = shows the words, label
   "Describe an app, draft in progress: ...". chain-16 drives it by passing `draft` to `HomeScreen`
-  (today `renderHome` passes none). `HomeSkeleton({ count })` and `HomeHeader({ onSettings, onOpenDevProbe? })` are shared chrome.
+  (today `renderHome` passes none). `HomeSkeleton({ count })` and `HomeHeader({ onSettings?, onOpenDevProbe? })` are shared
+chrome; without `onSettings` the header's button is inert and hidden from screen readers (the skeleton also inerts its
+composer). `count` excludes apps with an armed purge. List rows take `listRowPadding(largeText)` (geometry module).
 
 ## Delete, Discard, launch sweep (`soft-delete.ts`, `pending-purge.ts`)
 
 `LauncherShell` owns `PurgeWindows` (built over `PendingPurgeStore`, `completePurge`, `refresh`) and arms from Home's
 callbacks: `onDelete` -> `armApp(app)`; `onDiscard` -> `armAttempt(rec.id)` each; `onUndoDelete`/`onUndoDiscard` ->
-`undo(kind, id)`. `UNDO_WINDOW_MS = { app: 10_000, attempt: 6_000 }` (= the Undo toast's times). Home shows the toast
+`undo(kind, id)` (true = restored; false = Home says `COPY.undoTooLateToast`); `onSettleDelete`/`onSettleDiscard` ->
+`finish(kind, id)`. The window belongs to the Undo toast (no clock of its own): Home passes `onEnd` on the toast, which
+`Toast` runs once when it stops being offered (timeout 10 s / 6 s, swipe, dismiss, action, replaced), so under a screen
+reader Undo lasts as long as the toast does. Home shows the toast
 (`"<name> deleted"` `undo:true`; `"Discarded"` / `"N discarded"` with an Undo action) and plays the `warning` haptic.
-Arm hides (Home reads `purges.has`) and deletes nothing; the window's end runs `completePurge` then `refresh()`; a
+Arm hides (Home reads `purges.has`) and deletes nothing; `finish` runs `completePurge` then `refresh()`; a
 failed purge keeps its marker (still hidden). Undo is refused once the purge is running. `completeInterruptedPurges` runs
 in the mount effect after the data-copy sweep and before seeding and `ready`. App links ignore armed entries
 (`reachableApps/Attempts`). Home's Discard uses this path; the failure screen's Discard still calls `onDismissPending`.

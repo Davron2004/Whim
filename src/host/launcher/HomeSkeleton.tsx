@@ -1,13 +1,14 @@
 /**
  * HomeSkeleton — Home while the apps are still being read (system.md §7.1 Skeleton, §9 Your apps):
  * the real title and composer, and one cell per known app in the real grid geometry, so nothing
- * moves when the tiles arrive. A promise of content, so it draws nothing for an empty grid (the
+ * moves when the tiles arrive. The chrome it draws for the Settings button and the composer is
+ * inert and hidden from screen readers: a placeholder is not a control. A promise of content, so it draws nothing for an empty grid (the
  * empty state is its own thing).
  */
 import React from 'react';
 import { useWindowDimensions, View } from 'react-native';
 import { RADII, SHAPE, SPACE } from '../../design/tokens';
-import { gridLayout, GRID, TILE_SIDE } from '../ui/AppTile-geometry';
+import { gridLayout, listRowPadding, GRID, TILE_SIDE } from '../ui/AppTile-geometry';
 import { Skeleton, SkeletonBlock } from '../ui/Skeleton';
 import { useTokens } from '../ui/tokens';
 import { makeStyles } from '../ui/tokens-pure';
@@ -26,7 +27,7 @@ const styles = makeStyles((t) => ({
   list: { flexDirection: 'column' as const },
   fill: { flex: 1 },
   gridCell: { alignItems: 'center' as const },
-  listRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], width: '100%' as const },
+  listRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], width: '100%' as const, paddingHorizontal: listRowPadding(t.largeText) },
 }));
 
 const noop = () => undefined;
@@ -42,7 +43,7 @@ export function HomeSkeleton({ count }: Readonly<HomeSkeletonProps>) {
   const frame = { paddingHorizontal: layout.gutter, rowGap: layout.kind === 'grid' ? layout.rowGap : 0 };
   return (
     <View style={s.root}>
-      <HomeHeader onSettings={noop} />
+      <HomeHeader />
       <View style={s.fill}>
         {cells.length > 0 ? (
           <Skeleton label={COPY.homeLoadingLabel} style={[layout.kind === 'grid' ? s.grid : s.list, frame]}>
@@ -64,7 +65,9 @@ export function HomeSkeleton({ count }: Readonly<HomeSkeletonProps>) {
           </Skeleton>
         ) : null}
       </View>
-      <ComposerBar onPress={noop} />
+      <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        <ComposerBar onPress={noop} />
+      </View>
     </View>
   );
 }

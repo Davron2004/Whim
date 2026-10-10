@@ -81,6 +81,8 @@ export const COPY = {
   // ── delete, discard, copy (Undo toasts; the copy question) ──────────────────
   toastUndo: 'Undo',
   discardedToast: 'Discarded',
+  /** An Undo that found nothing to restore: said in the system's voice, never silence. */
+  undoTooLateToast: 'Too late to undo.',
   copyMadeToast: 'Copy made',
   copyFailedToast: 'Couldn’t make the copy. Your app is unchanged.',
   copyQuestionTitle: 'Copy the data, or start fresh?',
@@ -93,8 +95,6 @@ export const COPY = {
   customizeSearchLabel: 'Search glyphs',
   customizeSearchEmpty: 'No glyph has that name.',
   customizeReset: 'Use the original tile',
-  /** The tile a person is customizing, read to screen readers. */
-  customizePreviewLabel: 'Preview',
   /** What an `interrupted` pending-build record's failure screen says: it carries no failure
    *  payload, because nothing failed — the process that owned the stream went away. Stated
    *  plainly rather than borrowed from a generic stream-error string, which would claim a failure

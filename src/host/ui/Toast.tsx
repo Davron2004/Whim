@@ -8,7 +8,8 @@
  *   Whim, else `text`).
  * - Shows 4 s, 6 s with an action, 10 s for a delete's Undo; the time pauses while it is touched
  *   and stops altogether while a screen reader runs (it stays until replaced or dismissed; every
- *   Undo stays reachable from History).
+ *   Undo stays reachable from History). `onEnd` runs once when it stops being offered, however that
+ *   comes about: an Undo's window lasts exactly as long as its toast.
  * - Rises 16 pt with a fade (`smooth`); a swipe down tracks the finger and dismisses on the same
  *   projection rule as a sheet (`fling`). Reduce Motion: cross-fades.
  * - Announced politely: iOS announces it, Android reads it as a polite live region. Screen readers
@@ -41,6 +42,9 @@ export interface ToastSpec {
   action?: ToastAction;
   /** A delete's Undo: shows for 10 s. */
   undo?: boolean;
+  /** Runs once when the toast stops being offered: its time ran out, it was swiped away or dismissed,
+   *  its action ran, or another toast replaced it. Whatever an Undo keeps alive ends here. */
+  onEnd?: () => void;
 }
 
 export interface ToastApi {
@@ -102,21 +106,41 @@ interface Shown {
 export function ToastHost({ bottomOffset = 0, children }: Readonly<ToastHostProps>) {
   const [shown, setShown] = useState<Shown | null>(null);
   const next = useRef(0);
-  const gone = useCallback((id: number) => setShown((now) => (now?.id === id ? null : now)), []);
+  // The toast on offer and its `onEnd`, kept outside React state so each runs exactly once, at the
+  // moment the toast stops being offered.
+  const offered = useRef<{ id: number; onEnd?: () => void } | null>(null);
+  const end = useCallback((id: number) => {
+    const now = offered.current;
+    if (now?.id !== id) return;
+    offered.current = null;
+    now.onEnd?.();
+  }, []);
+  const gone = useCallback(
+    (id: number) => {
+      end(id);
+      setShown((now) => (now?.id === id ? null : now));
+    },
+    [end],
+  );
   const api = useMemo<ToastApi>(
     () => ({
       show: (toast) => {
+        if (offered.current) end(offered.current.id);
         next.current += 1;
+        offered.current = { id: next.current, onEnd: toast.onEnd };
         setShown({ toast, id: next.current });
       },
-      dismiss: () => setShown(null),
+      dismiss: () => {
+        if (offered.current) end(offered.current.id);
+        setShown(null);
+      },
     }),
-    [],
+    [end],
   );
   return (
     <ToastContext.Provider value={api}>
       {children}
-      {shown ? <ToastView key="toast" shown={shown} bottomOffset={bottomOffset} onGone={gone} /> : null}
+      {shown ? <ToastView key="toast" shown={shown} bottomOffset={bottomOffset} onEnd={end} onGone={gone} /> : null}
     </ToastContext.Provider>
   );
 }
@@ -144,11 +168,13 @@ const styles = makeStyles((t) => ({
 interface ToastViewProps {
   shown: Shown;
   bottomOffset: number;
+  /** The toast `id` stopped being offered (it starts to leave). */
+  onEnd: (id: number) => void;
   /** The toast `id` has left. */
   onGone: (id: number) => void;
 }
 
-function ToastView({ shown, bottomOffset, onGone }: Readonly<ToastViewProps>) {
+function ToastView({ shown, bottomOffset, onEnd, onGone }: Readonly<ToastViewProps>) {
   const t = useTokens();
   const s = styles(t);
   const insets = useSafeAreaInsets();
@@ -162,7 +188,10 @@ function ToastView({ shown, bottomOffset, onGone }: Readonly<ToastViewProps>) {
   const fade = useSharedValue(0);
   const height = useSharedValue<number>(TOAST.minHeight);
 
-  const leave = useCallback(() => setLeftId(id), [id]);
+  const leave = useCallback(() => {
+    setLeftId(id);
+    onEnd(id);
+  }, [id, onEnd]);
 
   // Enter, and announce, once per toast; a replacement keeps the capsule where it is and swaps its
   // words. The settings are read as they are when it arrives.
@@ -265,7 +294,7 @@ function ToastView({ shown, bottomOffset, onGone }: Readonly<ToastViewProps>) {
             {toast.message}
           </RNText>
           {toast.action ? (
-            <Pressable onPress={runAction} accessibilityRole="button" accessibilityLabel={toast.action.label} hitSlop={SPACE[3]}>
+            <Pressable onPress={runAction} disabled={leaving} accessibilityRole="button" accessibilityLabel={toast.action.label} hitSlop={SPACE[3]}>
               <RNText
                 style={[s.action, { color: toast.action.asksWhim ? t.colors['ember-text'] : t.colors.text }]}
                 maxFontSizeMultiplier={MAX_FONT_SCALE}
