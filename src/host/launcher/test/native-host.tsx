@@ -35,31 +35,74 @@ export const WebView = React.forwardRef<{ injectJavaScript: (js: string) => void
   React.useImperativeHandle(ref, () => ({ injectJavaScript: (js: string) => { injectedScripts.push(js); } }), []);
   return React.createElement('WebView', props, props.children as React.ReactNode);
 });
-/** iOS reports a dismissed `Modal` through `onDismiss` after it is gone; `holdModalDismissals` keeps
- *  those reports back until the returned release runs, so a test can play a slow dismissal. */
-const heldDismissals: { queue: (() => void)[] | null } = { queue: null };
+/** What the system does with a `Modal`, as React Native 0.85 shows it (measured on iOS 27):
+ *  - A presentation is confirmed through `onShow` on both platforms. iOS presents a modal from the
+ *    surface it sits on (the window, or the modal it is inside) and refuses one issued while that
+ *    surface is still presenting another: no `onShow`, and the host stays mounted and unseen, taking
+ *    every touch. `modalPresentations.refused` counts those. A surface is free again once its modal
+ *    was hidden or unmounted in an earlier commit. `refuseModalPresentations` refuses every
+ *    presentation until the returned release runs, as a presenter outside React does (an alert).
+ *  - iOS reports a hidden `Modal` through `onDismiss` once it is gone, and keeps its host and content
+ *    mounted (`visible` false) until then. `holdModalDismissals` keeps those reports back until the
+ *    returned release runs, so a test can play a slow dismissal, or one that is never reported.
+ *  - Android shows every modal in a window of its own, refuses none, reports no dismissal and drops
+ *    a hidden `Modal` at once. Neither platform reports anything to a `Modal` that was unmounted. */
+interface Presenter { presenting: object | null }
+const PresenterContext = React.createContext<Presenter>({ presenting: null });
+const modalSystem: { held: (() => void)[] | null; refusing: boolean } = { held: null, refusing: false };
+export const modalPresentations = { refused: 0 };
 export function holdModalDismissals(): () => void {
-  heldDismissals.queue = [];
+  modalSystem.held = [];
   return () => {
-    const queue = heldDismissals.queue ?? [];
-    heldDismissals.queue = null;
+    const queue = modalSystem.held ?? [];
+    modalSystem.held = null;
     for (const report of queue) report();
   };
 }
+export function refuseModalPresentations(): () => void {
+  modalSystem.refusing = true;
+  return () => { modalSystem.refusing = false; };
+}
 export function Modal(props: HostProps) {
   const visible = Boolean(props.visible);
-  const wasVisible = React.useRef(visible);
-  const onDismiss = React.useRef(props.onDismiss as (() => void) | undefined);
-  onDismiss.current = props.onDismiss as (() => void) | undefined;
+  const ios = Platform.OS === 'ios';
+  const presenter = React.useContext(PresenterContext);
+  const [self] = React.useState<Presenter>(() => ({ presenting: null }));
+  const [kept, setKept] = React.useState(visible);
+  if (visible && !kept) setKept(true);
+  const wasVisible = React.useRef(false);
+  const latest = React.useRef(props);
+  latest.current = props;
+  const mounted = React.useRef(true);
+  React.useEffect(() => () => {
+    mounted.current = false;
+    if (presenter.presenting === self) presenter.presenting = null;
+  }, [presenter, self]);
   React.useEffect(() => {
+    if (visible && !wasVisible.current) {
+      const taken = ios && presenter.presenting !== null && presenter.presenting !== self;
+      if (taken || modalSystem.refusing) {
+        modalPresentations.refused += 1;
+      } else {
+        presenter.presenting = self;
+        (latest.current.onShow as (() => void) | undefined)?.();
+      }
+    }
     if (wasVisible.current && !visible) {
-      const report = () => onDismiss.current?.();
-      if (heldDismissals.queue) heldDismissals.queue.push(report);
+      if (presenter.presenting === self) presenter.presenting = null;
+      const report = () => {
+        if (!mounted.current) return;
+        setKept(false);
+        (latest.current.onDismiss as (() => void) | undefined)?.();
+      };
+      if (!ios) setKept(false);
+      else if (modalSystem.held) modalSystem.held.push(report);
       else report();
     }
     wasVisible.current = visible;
-  }, [visible]);
-  return visible ? React.createElement('Modal', props, props.children) : null;
+  }, [visible, ios, presenter, self]);
+  if (!visible && !(ios && kept)) return null;
+  return React.createElement('Modal', props, React.createElement(PresenterContext.Provider, { value: self }, props.children));
 }
 export function FlatList({ data, renderItem, ...props }: HostProps & { data: unknown[]; renderItem: (args: { item: unknown; index: number }) => React.ReactNode }) {
   return React.createElement('FlatList', props, data.map((item, index) => React.createElement(React.Fragment, { key: index }, renderItem({ item, index }))));
