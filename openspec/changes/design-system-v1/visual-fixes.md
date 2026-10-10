@@ -68,11 +68,17 @@ Wave 1 (base: the staging tip after the removal ratchet lands)
   `flow-screens-ui` suites.
 - ios-ui-driver (sonnet, no device). The XCUITest driver as `scripts/ios-ui-driver/` with a README (#157).
 
-Wave 2 (base: the staging tip after wave 1)
+Wave 2 (base: the staging tip after wave 1, `476a1a30` plus the ledger commit)
 - 16d, sheet layout and keyboard (sonnet, iOS simulator). iOS-B3, iOS-M1, iOS-M3 / AND-M4 / AND-m8,
-  iOS-M4, iOS-m1, iOS-m8, the close glyph at 200%.
+  iOS-M4, iOS-m1, iOS-m8, the close glyph at 200%; from the 16c review, the unused `onClosed` props.
   Files: `FirstRunSheet.tsx`, `MakingSheet.tsx`, `DescribePage.tsx`, `PlanPage.tsx`, `KeyboardShell.tsx`,
-  `keyboard-shell.ts`, `ReportScreen.tsx`, `Sheet.tsx`, `keyboard-shell-ui` and `flow-screens-ui` suites.
-- 16f, menu placement and the offline edge (sonnet, Android emulator). AND-M1 (placement), AND-M2.
-  Files: `ContextMenu.tsx`, `HomeScreen.tsx`, `connectivity.ts`, `connectivity-ux.ts`,
-  `LauncherRoot.tsx`, `connectivity` suites, `shell-surfaces-ui`.
+  `keyboard-shell.ts`, `ReportScreen.tsx`, `Sheet.tsx`, `handoff/making-sheet.md`, `keyboard-shell-ui` and
+  `flow-screens-ui` suites.
+- 16f, menu placement and review fixes (sonnet, Android emulator). AND-M1 (placement); from the 16c
+  review, the overlay queue's stuck and unmount cases and its untested states; from the 16e review,
+  the Undo target on Android (48), the two "plates line up" assertions that pass on old code, and the
+  grid label back to 4 pt side padding.
+  Files: `ContextMenu.tsx`, `OverlayModal.tsx`, `HomeScreen.tsx`, `Toast.tsx`, `AppTile-geometry.ts`,
+  `AppTile.tsx`, `handoff/shell-surfaces.md`, `shell-surfaces-ui`, `terms-flow-ui` and `home-grid-ui` suites.
+- 16h, the offline edge (sonnet, no device). AND-M2.
+  Files: `connectivity.ts`, `connectivity-ux.ts`, `LauncherRoot.tsx`, `connectivity` suites.

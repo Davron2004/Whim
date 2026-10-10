@@ -146,3 +146,26 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   diff read by the orchestrator. integrity exit 0; removal ratchet PASS. merged: `4692bcca` (--no-ff). regate (fast): PASS.
 - follow-ups from 16g, not done: `expanded` belongs in `GroupedRow` (the sheet has a local `DetailsRow`); `WhimProse`
   sets no `maxFontSizeMultiplier`; `system.md` §6 Checkbox says a `tint` fill where `OptionMark` and the terms row use `ink`.
+- report: chain-16c STATUS complete, fast gate PASS, knip clean, commit `e495f3f3` (8 files, new
+  `src/host/ui/OverlayModal.tsx`). On an iOS 27 simulator: B2 reproduced at BASE (Customize tile 2/2, Change it 1/1),
+  B1 did not (3/3 fresh installs opened Describe: 16b's hand-over works on a device). Measured: a `Modal` mounted
+  while another is still up is refused by UIKit, gets no `onShow`, and its full-window host view takes every touch;
+  `onDismiss` arrives about 17 ms after the hide. Fix: `Sheet` and `ContextMenu` reach `Modal` only through
+  `OverlayModal`, one turn queue per presenting surface; a menu row's action runs once the menu has gone;
+  `useSheetHandOver` removed. Proven on the final commit, 3 runs each from a fresh launch with a touch afterwards:
+  Agree, Not now then composer, Customize tile, Change it, History, Make a copy, Share link, a quick sequence.
+  #175 a, b, c, d, f, g done.
+- integrity: exit 0; removal ratchet PASS. reviewer on `4ad56468..e495f3f3`: VERDICT findings, report matches. Mediums,
+  carried into chain-16f: an overlay that is up, no longer wanted, and whose exit animation was cancelled holds the
+  queue for every other overlay; an overlay unmounted while up passes the turn at once on iOS (unmeasured). Lows: a
+  chosen menu row lost if the menu's owner unmounts, the 1 s show watchdog ignores a backgrounded app, the dismissal
+  bound no longer pinned by a number in the test, stale contract lines, unused `onClosed` props (16d).
+- merged: `1f800bbb` (--no-ff). regate (fast): PASS.
+- `chain/ios-ui-driver`: the first implementer stalled for 80 minutes on an approval prompt (one Bash call chaining a
+  heredoc, `rm -rf` and a background job) that the orchestrator can neither answer nor cancel; its worktree
+  `.claude/worktrees/ios-ui-driver` is left untouched and unmerged. Redispatched fresh as `chain/ios-ui-driver-2`
+  (BASE `ebc76c96`): commit `310a3036`, 5 source files under `scripts/ios-ui-driver/`, fast gate PASS, built with
+  `build-for-testing`, not run against a simulator. integrity exit 0; `driver.sh` read by the orchestrator.
+  merged: `476a1a30` (--no-ff).
+- decision: wave 2 is three chains, 16d, 16f and 16h (`visual-fixes.md` updated), so the reviewers' mediums on 16c and
+  16e land before the device re-check.
