@@ -130,12 +130,12 @@
 
 ## 16. Making flow: sheet, first run, describe, plan
 
-- [ ] 16.1 The making sheet with pages `describe | plan | making | ready | failure` keyed by the run journal id; composer opens Describe; closing keeps the draft (text, answers, plan edits) and aborts in-flight clarify/rewrite
-- [ ] 16.2 First-run sheet: summary rows, Privacy policy, Full details (expands in place), Language, unticked terms checkbox row with the Terms link outside its hit area, "Agree to send descriptions" (`ink`) and "Not now"; both acts recorded as today; age stays silent unless blocked
-- [ ] 16.3 Describe page: `title1`, 17 pt area focused, helper line, Continue (`ember`) riding the keyboard (#49), idea chips when empty, change mode header
-- [ ] 16.4 Plan page: quoted words, "A few choices" (question rows with chips ≤ 20 characters or radio/checkbox rows, "Decide for me" default and exclusive, collapse when scrolled past), "What I'll make" (plan rows, skeletons, in-place edit, "Edited"), notice above Make it; rewrite sent at once with every question delegated; answers to generate as `clarifications`
-- [ ] 16.5 Can't-make-as-asked state ("I can't make this as asked", alternative card, Make that instead, Change my idea)
-- [ ] 16.6 Update `prompt-flow-ui`, `prompt-flow-screens`, `flow-screens-ui` and consent suites
+- [x] 16.1 The making sheet with pages `describe | plan | making | ready | failure` keyed by the run journal id; composer opens Describe; closing keeps the draft (text, answers, plan edits) and aborts in-flight clarify/rewrite
+- [x] 16.2 First-run sheet: summary rows, Privacy policy, Full details (expands in place), Language, unticked terms checkbox row with the Terms link outside its hit area, "Agree to send descriptions" (`ink`) and "Not now"; both acts recorded as today; age stays silent unless blocked
+- [x] 16.3 Describe page: `title1`, 17 pt area focused, helper line, Continue (`ember`) riding the keyboard (#49), idea chips when empty, change mode header
+- [x] 16.4 Plan page: quoted words, "A few choices" (question rows with chips ≤ 20 characters or radio/checkbox rows, "Decide for me" default and exclusive, collapse when scrolled past), "What I'll make" (plan rows, skeletons, in-place edit, "Edited"), notice above Make it; rewrite sent at once with every question delegated; answers to generate as `clarifications`
+- [x] 16.5 Can't-make-as-asked state ("I can't make this as asked", alternative card, Make that instead, Change my idea)
+- [x] 16.6 Update `prompt-flow-ui`, `prompt-flow-screens`, `flow-screens-ui` and consent suites
 
 ## 17. Making flow: making, ready, failure
 

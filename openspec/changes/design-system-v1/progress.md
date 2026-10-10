@@ -88,3 +88,22 @@ Chains 1–14 and 23 were merged before this ledger existed; their record is the
   recorded; exits record nothing; the age gate blocks; the full disclosure is on the sheet and may start collapsed.
   Tightened: the first layer names every data category sent, the recipients and the purpose, in every legal
   language. Chain-16b implements the deltas; 16.2 is ticked when it merges.
+- dispatched: chain-16b (reviewer fixes A1–A6 and first-run deltas B1–B7), BASE `5ccb0ea5`, worktree `.claude/worktrees/design-system-v1-chain-16b`, branch `chain/design-system-v1-chain-16b`, implementer on sonnet. #173 commented: option A applied provisionally, B named as the alternative, left open.
+- report: chain-16b STATUS complete, 13/13 (A1–A6, B1–B7), fast gate PASS, knip clean, commit `31e9c74a`. Class-A:
+  `Sheet` gained `useSheetBack` and `onClosed` (1 s fallback), `FirstRunSheet` gained `consentDue`, `DescribePage.onClose`
+  removed, new legal key `firstRunContinue` (en, fr); only `firstRun*` strings changed, no `consent*` key, no version bump.
+- integrity: exit 0. merged: `44532e5c` (--no-ff). gate-full on `44532e5c`: FULL GATE PASSED.
+- reviewer on `5ccb0ea5..31e9c74a`: VERDICT findings, no report-mismatch, spec conforms. Left for the next shift
+  (no new worktrees this shift, by the product-owner session's instruction): #174 (the first-layer coverage test
+  passes by key presence) and #175 (label flip while the first-run sheet closes, Make it swallowed after a null
+  client-options result, render-phase write in `useSheetHandOver`, the 1 s fallback, dead `useSystemBack` on
+  Making/Ready/Failure, stale-record Describe after the app was deleted, two test-hygiene lows).
+- tasks 16.1–16.6 ticked (16.2 under the provisional ruling D19; #173 stays open for the owner).
+
+### Shift 1 closing summary
+
+Chains run: 15, 15b (reviewer fixes), 16, 16b (reviewer fixes + first-run deltas). Redispatches: none.
+Deviations: all class A; no class B or C. Reviewer verdicts: 15 findings, 16 report-mismatch (undeclared dropped
+assertions, restored in 16b), 16b findings. Full gates: `71bd7a6d` pass, `bb5d760f` pass, `895ae528` fail on the
+synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain blocks and where it went: see the
+"deferred" lines above. Nothing on a device was verified this shift.
