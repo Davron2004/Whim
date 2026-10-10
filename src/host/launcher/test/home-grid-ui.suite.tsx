@@ -11,11 +11,12 @@ import { MapKVBackend } from '../../version-store';
 import type { InstalledApp } from '../app-index';
 import { appLinkFor } from '../app-link';
 import { tileOf } from '../tile-identity';
-import { gridLayout } from '../../ui/AppTile-geometry';
+import { gridLayout, TILE_SIDE } from '../../ui/AppTile-geometry';
 import { TilePlate } from '../../ui/AppTile';
 import { HomeSkeleton } from '../HomeSkeleton';
-import { COLORS, LAYOUT, ON_PLATE, SHAPE, TILE_RIM, TINTS } from '../../../design/tokens';
+import { COLORS, LAYOUT, ON_PLATE, SHAPE, TILE_RIM, TINTS, TYPE_SCALE } from '../../../design/tokens';
 import { ICON_PATHS } from '../../../design/icons/paths';
+import { EMBER_PATH } from '../../../design/icons/ember';
 import { squirclePath } from '../../../design/icons/squircle';
 import { mixHex } from '../../../design/tints';
 import AppTile from '../app-tile';
@@ -116,6 +117,63 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     try {
       h.ok(name(list).props.numberOfLines === undefined, 'the list shows it in full');
     } finally { await unmountScreen(list); windowMetrics.fontScale = 1; }
+  });
+
+  await h.test('home layout: the first row starts below the top fade, on Home and on its skeleton, at every text size', async () => {
+    const host = (node: TestRenderer.ReactTestInstance) => {
+      let up = node.parent;
+      while (up && hostType(up) !== 'View') up = up.parent;
+      return up!;
+    };
+    /** The 16 pt fade over the top of the list, as drawn: the absolute, touch-through View at top 0. */
+    const topFade = (tree: Tree) => tree.root.find((n) => hostType(n) === 'View' && n.props.pointerEvents === 'none' && flat(n).position === 'absolute' && flat(n).top === 0 && typeof flat(n).height === 'number');
+    for (const scale of [1, 1.35, 2]) {
+      await resetPhone();
+      windowMetrics.fontScale = scale;
+      const real = await renderHome({ apps: [TIMER, app('Dice', 2)] });
+      const skeleton = await renderScreen(<HomeSkeleton count={2} />);
+      await settle();
+      try {
+        const fade = flat(topFade(real)).height as number;
+        const inset = flat(host(frameOf(tile(real, 'Timer')))).paddingTop as number;
+        h.ok(inset >= fade, `at ${scale * 100}% the grid is inset ${inset} pt, the fade is ${fade} pt: nothing at rest sits under it`);
+        const bar = skeleton.root.find((n) => hostType(n) === 'Animated.View' && n.props.accessibilityRole === 'progressbar');
+        h.eq(flat(bar).paddingTop, inset, 'the skeleton leaves the same room, so nothing moves when the tiles arrive');
+      } finally { await unmountScreen(real); await unmountScreen(skeleton); windowMetrics.fontScale = 1; }
+    }
+  });
+
+  await h.test('home layout: plates line up — a grid cell holds its plate at the top, a list row is as tall with or without a state line', async () => {
+    const seen: Record<string, { justify: unknown; plain: unknown; stated: unknown }> = {};
+    for (const [scale, key] of [[1, 'normal'], [1.35, '135%'], [2, '200%']] as const) {
+      await resetPhone();
+      windowMetrics.fontScale = scale;
+      const tree = await renderHome({ apps: [TIMER, app('Dice', 2, { example: true })] });
+      try {
+        seen[key] = { justify: flat(tile(tree, 'Timer')).justifyContent, plain: flat(frameOf(tile(tree, 'Timer'))).minHeight, stated: flat(frameOf(tile(tree, 'Dice, example'))).minHeight };
+      } finally { await unmountScreen(tree); windowMetrics.fontScale = 1; }
+    }
+    h.ok(seen.normal.justify !== 'center' && seen['135%'].justify !== 'center', 'a cell without a state line is not centred in its cell, so its plate sits where its neighbours’ do');
+    h.eq(seen.normal.plain, seen.normal.stated, 'cells have one height');
+    h.eq(seen['200%'].plain, seen['200%'].stated, 'list rows have one height');
+    const list = gridLayout(390, 2);
+    h.ok(list.kind === 'list' && list.rowHeight >= (TYPE_SCALE.body.lineHeight + TYPE_SCALE.caption.lineHeight) * 2, 'and it is tall enough for the name and the state line at 200% text');
+  });
+
+  await h.test('long-press lift: the shadow is on the plate, with the plate’s corner, and never on the rectangular cell around it', async () => {
+    await resetPhone();
+    const tree = await renderHome({ apps: [TIMER] });
+    try {
+      const shadowed = () => tile(tree, 'Timer').findAll((n) => hostType(n) === 'View' && flat(n).boxShadow !== undefined);
+      h.eq(shadowed().length, 0, 'no shadow at rest');
+      await longPress(tree, 'Timer');
+      const cell = frameOf(tile(tree, 'Timer'));
+      h.eq(flat(cell).boxShadow, undefined, 'the cell frame carries none while the menu is open');
+      const lifted = shadowed();
+      h.eq(lifted.length, 1, 'one shadowed shape');
+      h.eq(flat(lifted[0]).borderRadius, SHAPE.tileCorner * TILE_SIDE.grid, 'with the plate’s corner');
+      h.ok(paths(lifted[0]).some((p) => p.props.d === squirclePath(TILE_SIDE.grid)), 'and it wraps the plate');
+    } finally { await unmountScreen(tree); }
   });
 
   // ── what is on the grid ─────────────────────────────────────────────────────
@@ -499,6 +557,12 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       h.ok(textOf(bar()).includes('A tea timer that buzzes') && !textOf(bar()).includes(COPY.homeComposerPlaceholder), 'and on the bar');
       await press(bar());
       h.eq(opened, 1, 'a tap opens the describe sheet');
+      const mark = () => bar().findAll((n) => hostType(n) === 'Path' && n.props.d === EMBER_PATH);
+      h.eq(mark().length, 1, 'the ember leads while a description waits');
+      await updateHome(tree, { apps: [TIMER], onCreate: () => { opened += 1; } });
+      const emberSvg = bar().find((n) => hostType(n) === 'Svg' && n.findAll((m) => hostType(m) === 'Path' && m.props.d === EMBER_PATH).length > 0);
+      h.eq(emberSvg.props.width, 24, 'and the ember leads the empty bar, 24 pt');
+      h.ok(bar().findAll((n) => hostType(n) === 'Path' && n.props.d === ICON_PATHS.plus).length === 0, 'in place of the plus');
     } finally { await unmountScreen(tree); }
   });
 

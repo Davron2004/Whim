@@ -15,6 +15,7 @@ import { makeStyles } from '../ui/tokens-pure';
 import { ComposerBar } from './ComposerBar';
 import { COPY } from './copy';
 import { HomeHeader } from './HomeHeader';
+import { EDGE_FADE_HEIGHT } from './ScrollEdgeFade';
 
 export interface HomeSkeletonProps {
   /** How many apps are known to be coming. */
@@ -40,7 +41,7 @@ export function HomeSkeleton({ count }: Readonly<HomeSkeletonProps>) {
   const cells = Array.from({ length: Math.max(0, count) }, (_, i) => i);
   const side = layout.tile;
   const plate = <SkeletonBlock width={side} height={side} radius={SHAPE.tileCorner * side} />;
-  const frame = { paddingHorizontal: layout.gutter, rowGap: layout.kind === 'grid' ? layout.rowGap : 0 };
+  const frame = { paddingHorizontal: layout.gutter, paddingTop: EDGE_FADE_HEIGHT, rowGap: layout.kind === 'grid' ? layout.rowGap : 0 };
   return (
     <View style={s.root}>
       <HomeHeader />

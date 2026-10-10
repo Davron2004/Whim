@@ -35,6 +35,9 @@ export const GRID = {
   /** The label's two lines and side padding. */
   labelLines: 2,
   labelSidePadding: SPACE[1],
+  /** From 135% text a label keeps more air at the cell's edges, so a name that fills the line does not
+   *  touch its neighbour's. */
+  largeTextLabelSidePadding: SPACE[2],
   /** Between a label and the next tile below. */
   rowGap: SPACE[5],
   /** The smallest touch area a cell gives. */
@@ -50,6 +53,11 @@ export function listRowPadding(largeText: boolean): number {
   return largeText ? SPACE[4] : SPACE[5];
 }
 
+/** The label's padding on each side of a grid cell. */
+export function labelSidePadding(largeText: boolean): number {
+  return largeText ? GRID.largeTextLabelSidePadding : GRID.labelSidePadding;
+}
+
 /** The home grid for a screen `width` wide at text size `fontScale`: four columns of
  *  `⌊(width − 40) / 4⌋` (rounded down, so a row of cells never outgrows the gutters and a last cell
  *  cannot drop to its own row; a width that leaves no room, or is not a number, gets the 64 pt touch
@@ -59,8 +67,10 @@ export function listRowPadding(largeText: boolean): number {
 export function gridLayout(width: number, fontScale: number): GridLayout {
   const scale = Math.max(1, fontScale);
   if (scale >= GRID.listFrom) {
-    const line = TYPE_SCALE.body.lineHeight * scale;
-    return { kind: 'list', tile: TILE_SIDE.menu, rowHeight: Math.max(LAYOUT.listRowMinHeight, line + 2 * LAYOUT.listRowPaddingVertical), gutter: LAYOUT.gutter };
+    // Every row is as tall as one that says its state under its name, so the rhythm does not change
+    // with which apps have a state line.
+    const lines = (TYPE_SCALE.body.lineHeight + TYPE_SCALE.caption.lineHeight) * scale;
+    return { kind: 'list', tile: TILE_SIDE.menu, rowHeight: Math.max(LAYOUT.listRowMinHeight, lines), gutter: LAYOUT.gutter };
   }
   const columns = scale >= GRID.largeTextFrom ? GRID.largeTextColumns : GRID.columns;
   const label = GRID.labelLines * TYPE_SCALE.caption.lineHeight * scale;

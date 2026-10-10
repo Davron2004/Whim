@@ -21,7 +21,7 @@ import { ContextMenu, type MenuAnchor, type MenuRow } from '../ui/ContextMenu';
 import { AppTile } from '../ui/AppTile';
 import { gridLayout } from '../ui/AppTile-geometry';
 import { Chip } from '../ui/Chip';
-import { Ember } from '../ui/Ember';
+import { Ember, RESTING_ACTIVITY } from '../ui/Ember';
 import { Notice } from '../ui/Notice';
 import { Text } from '../ui/Text';
 import { TextField } from '../ui/TextField';
@@ -40,7 +40,7 @@ import { HomeHeader } from './HomeHeader';
 import { OlderAttemptsSheet } from './OlderAttemptsSheet';
 import type { PendingBuildRecord } from './pending-builds';
 import type { PendingPurgeStore } from './pending-purge';
-import { ScrollEdgeFade } from './ScrollEdgeFade';
+import { EDGE_FADE_HEIGHT, ScrollEdgeFade } from './ScrollEdgeFade';
 import type { ForkOptions } from './store-access';
 import { menuFor, type MenuAction } from './tile-menus';
 import { tileOf, type TileIdentity } from './tile-identity';
@@ -306,7 +306,8 @@ export default function HomeScreen({
   };
 
   const empty = all.length === 0;
-  const gridFrame = { paddingHorizontal: layout.gutter, rowGap: layout.kind === 'grid' ? layout.rowGap : 0 };
+  // The first row starts below the top fade: the fade only ever covers what has scrolled under it.
+  const gridFrame = { paddingHorizontal: layout.gutter, paddingTop: EDGE_FADE_HEIGHT, rowGap: layout.kind === 'grid' ? layout.rowGap : 0 };
   const ideas = [COPY.homeIdeaTimer, COPY.homeIdeaTracker, COPY.homeIdeaDice];
 
   return (
@@ -326,7 +327,7 @@ export default function HomeScreen({
         <ScrollView contentContainerStyle={empty ? s.empty : undefined} keyboardShouldPersistTaps="handled">
           {empty ? (
             <>
-              <Ember size={128} state="working" />
+              <Ember size={128} state="working" activity={RESTING_ACTIVITY} />
               <Text type="title1" style={s.centred}>
                 {COPY.homeEmptyTitle}
               </Text>
