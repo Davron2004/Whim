@@ -144,6 +144,11 @@ export const Clipboard = {
   setString: (text: string) => { Clipboard.copied.push(text); },
   getString: async () => Clipboard.copied.at(-1) ?? '',
 };
+/** Every `Share.share` call, so a test can read what the share sheet was handed. */
+export const Share = {
+  shared: [] as { message?: string; url?: string }[],
+  share: async (content: { message?: string; url?: string }) => { Share.shared.push(content); return { action: 'sharedAction' }; },
+};
 export interface AlertButton { text?: string; style?: string; onPress?: () => void }
 /** Every `Alert.alert` call, in order, so a test can read the dialog and press one of its buttons. */
 export const Alert = {

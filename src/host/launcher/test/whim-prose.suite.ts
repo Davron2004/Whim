@@ -32,8 +32,9 @@ import {
   clarifyHeadline,
   copySheetBody,
   copySheetTitle,
-  deleteBody,
-  forkedFromLabel,
+  copyQuestionDataSubtitle,
+  deletedToast,
+  discardedManyToast,
   historyFilterAll,
   historyQuotedPrompt,
   historySubtitle,
@@ -41,6 +42,7 @@ import {
   restoreSheetBody,
   restoreSheetTitle,
   restoredToast,
+  tileOlderLine,
 } from '../copy';
 
 const POUR_TIMER = { name: 'Pour Timer' };
@@ -63,8 +65,10 @@ function everyCopyString(): string[] {
     ...Object.values(COPY),
     ...Object.values(LEGAL_COPY.fr),
     ...Object.values(CONSENT_WHATS_NEW).flatMap((lines) => Object.values(lines).map((line) => line.text)),
-    forkedFromLabel('Water Counter'),
-    deleteBody('Pour Timer'),
+    copyQuestionDataSubtitle('Water Counter'),
+    deletedToast('Pour Timer'),
+    discardedManyToast(2),
+    tileOlderLine(2),
     addedFieldsLine(['notes (text)']),
     readyTitle('Pour Timer'),
     clarifyHeadline(1),

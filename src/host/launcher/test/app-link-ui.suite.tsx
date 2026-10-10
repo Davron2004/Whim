@@ -20,33 +20,11 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { SEED_VERSION } from '../seed';
 import { resetNativeStorage } from './native-storage';
 import { Linking, linkListenerCount, openLink } from './native-host';
-import { button, press, renderScreen, unmountScreen, textOf, hostType } from './react-screen';
+import { button, press, renderScreen, unmountScreen } from './react-screen';
 import { testAppInfo } from './client-fixtures';
 
 const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
-const noop = () => {};
 export async function runAppLinkUiTests(h: Harness): Promise<void> {
-  await h.test('App link: installed tile reveals selectable link and Close dismisses it', async () => {
-    const tree = await renderScreen(<HomeScreen apps={[app]} onOpen={noop} onFork={noop} onDelete={noop} onHistory={noop} onPromptAgain={noop} onCreate={noop} onSettings={noop} />);
-    try {
-      await TestRenderer.act(async () => tree.root.find(node => hostType(node) === 'TouchableOpacity' && typeof node.props.onLongPress === 'function').props.onLongPress());
-      await press(button(tree, COPY.actionAppLink));
-      const link = tree.root.find(node => hostType(node) === 'Text' && node.props.selectable === true);
-      h.eq(textOf(link), appLinkFor(app.id), 'sheet exposes this app’s link as selectable text');
-      await press(button(tree, COPY.appLinkSheetClose));
-      h.eq(tree.root.findAll(node => hostType(node) === 'Text' && node.props.selectable === true).length, 0, 'close removes the link from the rendered tree');
-    } finally { await unmountScreen(tree); }
-  });
-  await h.test('App link: pending tile actions never offer a shareable link', async () => {
-    resetNativeStorage();
-    const pending = new PendingBuildStore(createMmkvBackend('whim.launcher'));
-    pending.create({ id: 'building', prompt: 'Timer', workingTitle: 'Timer' });
-    const tree = await renderScreen(<HomeScreen apps={[]} pending={pending.list()} onOpen={noop} onFork={noop} onDelete={noop} onHistory={noop} onPromptAgain={noop} onCreate={noop} onSettings={noop} onOpenPending={noop} onCancelPending={noop} onDismissPending={noop} />);
-    try {
-      await TestRenderer.act(async () => tree.root.find(node => hostType(node) === 'TouchableOpacity' && typeof node.props.onLongPress === 'function').props.onLongPress());
-      h.eq(tree.root.findAll(node => hostType(node) === 'Text' && node.children.includes(COPY.actionAppLink)).length, 0, 'ghost quick actions contain no App link');
-    } finally { await unmountScreen(tree); }
-  });
   for (const cold of [false, true]) {
     await h.test(`App link: ${cold ? 'cold' : 'warm'} URL reaches missing and persisted-failure screens`, async () => {
       resetNativeStorage();

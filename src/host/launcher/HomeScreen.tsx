@@ -1,443 +1,374 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// HomeScreen — the `2a` home (shell-redesign-v2, task D9).
-// ─────────────────────────────────────────────────────────────────────────────
-// The `Whim` title, the `Your apps` eyebrow, a three-column grid of ghost-letterform tiles
-// (chain-F's `AppTile`, per its contract — this screen never re-derives a colour or a monogram),
-// and the composer entry row that opens the prompt flow's compose step. Long-press a tile for the
-// action sheet (Open / Fork / History / Prompt again / Delete-with-confirmation); a long-press on
-// the title opens the __DEV__ probe surface. Every visible string comes from `copy.ts` and passes
-// the product-verbs guard.
+/**
+ * HomeScreen — "Your apps" (app-launcher "The home grid orders and lays out apps for every text
+ * size", "Tiles show their state", "Tile menus follow the tile's state"; system.md §3.2, §9;
+ * design-system-v1 tasks 15.1–15.5). The title and the settings button, the grid of tiles (four
+ * columns of 64 pt tiles, three from 135% text, a list of rows from 200%), a search field from 13
+ * apps, the live offline notice, and the composer bar at the bottom.
+ *
+ * What the grid holds and in what order is `grid-composition.ts`; the rows a long-press offers are
+ * `tile-menus.ts`; this file draws them and routes what the person chooses. Delete and Discard hide
+ * at once and offer Undo (`soft-delete.ts` owns the windows, `LauncherRoot` the stores). "Make a copy"
+ * asks `CopyQuestionSheet` only when the copy can copy data. Share link opens the platform share sheet
+ * with the app's link. No native alert anywhere.
+ */
 import React, { useState } from 'react';
-import {
-  Alert,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  useWindowDimensions,
-  View,
-} from 'react-native';
-import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { FONT_FAMILY, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
-import { InstalledApp } from './app-index';
-import type { ForkOptions } from './store-access';
+import { ScrollView, Share, useWindowDimensions, View } from 'react-native';
+import { LAYOUT, SPACE } from '../../design/tokens';
+import { haptics } from '../haptics';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
+import { ContextMenu, type MenuAnchor, type MenuRow } from '../ui/ContextMenu';
+import { AppTile } from '../ui/AppTile';
+import { gridLayout } from '../ui/AppTile-geometry';
+import { Chip } from '../ui/Chip';
+import { Ember } from '../ui/Ember';
+import { Notice } from '../ui/Notice';
+import { Text } from '../ui/Text';
+import { TextField } from '../ui/TextField';
+import { useToast } from '../ui/Toast';
+import { useTokens } from '../ui/tokens';
+import { makeStyles } from '../ui/tokens-pure';
+import type { InstalledApp } from './app-index';
 import { isAppBusy, type AppBusyMap } from './app-busy';
-import { ghostTileColorFor } from './prompt-flow';
+import { appLinkFor } from './app-link';
+import { ComposerBar } from './ComposerBar';
+import { COPY, deletedToast, discardedManyToast, tileOlderLine } from './copy';
+import { CopyQuestionSheet } from './CopyQuestionSheet';
+import { CustomizeTileSheet } from './CustomizeTileSheet';
+import { cellKey, cellName, composeGrid, searchCells, SEARCH_FROM_APPS, type GridCell } from './grid-composition';
+import { HomeHeader } from './HomeHeader';
+import { OlderAttemptsSheet } from './OlderAttemptsSheet';
 import type { PendingBuildRecord } from './pending-builds';
-import AppTile, { APP_TILE_SIZE } from './app-tile';
-import AppLinkSheet from './AppLinkSheet';
-import { COPY, deleteBody, forkedFromLabel } from './copy';
-import { composeGrid, InstalledTile } from './grid-composition';
-import { tilePillFor, TILE_PILL } from './tile-pill';
-import {
-  HOME_GRID_COLUMN_GAP,
-  HOME_GRID_ROW_GAP,
-  HOME_GRID_SIDE_PADDING,
-  homeGridCellWidth,
-} from './home-grid';
-import { SHELL_PALETTE } from './theme';
-
-/** The grid's geometry and its cell-width derivation live in `home-grid.ts` — a module free of
- *  `react-native` so the arithmetic that decides whether the row wraps can be tested under Node.
- *  Re-exported here so `LauncherRoot.tsx` keeps importing them from the screen that owns them. */
-export { HOME_GRID_COLUMNS, HOME_GRID_COLUMN_GAP, HOME_GRID_ROW_GAP } from './home-grid';
+import type { PendingPurgeStore } from './pending-purge';
+import { ScrollEdgeFade } from './ScrollEdgeFade';
+import type { ForkOptions } from './store-access';
+import { menuFor, type MenuAction } from './tile-menus';
+import { tileOf, type TileIdentity } from './tile-identity';
 
 export interface HomeScreenProps {
   apps: InstalledApp[];
-  onOpen: (app: InstalledApp) => void;
-  /** `opts.data` is the answer to the question asked between the Fork tap and the actual fork:
-   *  what the copy's store starts with. No answer shares the original's data (app-data-copy). */
-  onFork: (app: InstalledApp, opts: ForkOptions) => void;
-  onDelete: (app: InstalledApp) => void;
-  /** Which apps have an open/fork/delete running right now (`app-busy.ts`), by app id. Drives the
-   *  tile's own busy look — for ANY of the three operations, since the fork and delete sheets are
-   *  closed by the time their version-store call starts — and the Fork/Delete rows'
-   *  busy-and-disabled state for the re-open case (`app-launcher`:
-   *  "Opening an app shows an immediate busy affordance" / "Fork and delete show a busy state and
-   *  cannot be re-triggered mid-operation"). Omitted = nothing is in flight. */
-  appBusy?: AppBusyMap;
-  /** Opens the app's full-screen history surface (version-history-ux). */
-  onHistory: (app: InstalledApp) => void;
-  /** Opens the compose step scoped to re-prompting this app (`app-launcher` spec's "create
-   *  affordance and per-app re-prompt action" requirement). */
-  onPromptAgain: (app: InstalledApp) => void;
-  /** The composer entry row: opens the compose step with no app being edited (same requirement). */
-  onCreate: () => void;
-  onSettings: () => void;
-  /** __DEV__ entry: long-press the title to reach the containment/bridge probe surface (D6). */
-  onOpenDevProbe?: () => void;
-  /** The session connectivity indicator (server-connectivity, design.md decision 7): visible only
-   *  while the configured server is unreachable — omitted/false for `'unknown'`, `'checking'` and
-   *  `'online'`. Never obscures or gates the grid below it. */
-  offline?: boolean;
-
-  // ── Pending builds (launcher-ghost-tiles; contract `handoff/ghost-handlers.md`) ─────────────
-  // The shell supplies all four together or none of them. The grid composition and the ghost
-  // visuals that consume them are their own chain's work; declared here so the shell has exactly
-  // one place to hand them over.
-
-  /** Every in-flight / failed / interrupted generation attempt, NEWEST FIRST, straight from
-   *  `PendingBuildStore.list()`. Records carrying `editingAppId` are rebuilds and must not become
-   *  their own tile — they belong to the installed tile of that id. */
+  /** Every in-flight, failed or stopped attempt, NEWEST FIRST, straight from `PendingBuildStore.list()`.
+   *  A record with `editingAppId` is a change in flight on that app and decorates its tile. */
   pending?: readonly PendingBuildRecord[];
-  /** Tap: `building` reattaches to its build-progress screen, `failed`/`interrupted` opens the
-   *  failure screen hydrated from the record. Never call this for a rebuild record's tile — that
-   *  tile is a launchable installed app and its tap belongs to `onOpen`. */
+  /** The armed purges: an app or an attempt with one is waiting out its Undo window and is not shown. */
+  purges?: Pick<PendingPurgeStore, 'has'>;
+  /** Which apps have an open or copy running right now (`app-busy.ts`), by app id. Such a tile reads
+   *  busy and opens no menu. Omitted = nothing is in flight. */
+  appBusy?: AppBusyMap;
+  /** The session says the server cannot be reached: the live notice shows. False while unknown. */
+  offline?: boolean;
+  /** Ids of attempts waiting for a free spot, which show "Waiting…" instead of "Making…". */
+  queued?: ReadonlySet<string>;
+  /** The stream's activity, 0–1, per attempt id: the ember on a tile being made or changed follows it. */
+  activity?: Readonly<Record<string, number>>;
+  /** Whether "Make a copy" can copy the data (`StoreAccess.canCopyData`). When false the copy is made
+   *  fresh at once and no question is asked. */
+  canCopyData?: boolean;
+  /** The description typed so far in the describe sheet, shown in the composer bar. */
+  draft?: string;
+  onOpen: (app: InstalledApp) => void;
+  /** Makes the copy. Resolves the new entry; resolves `null` when a copy of this app is already
+   *  running; rejects when the copy could not be made (nothing was created). */
+  onFork: (app: InstalledApp, opts: ForkOptions) => Promise<InstalledApp | null>;
+  /** Delete: hide the app and arm its purge. The toast's Undo calls `onUndoDelete`. */
+  onDelete: (app: InstalledApp) => void;
+  onUndoDelete: (app: InstalledApp) => void;
+  /** Discard: hide these attempts and arm their purges. The toast's Undo calls `onUndoDiscard`. */
+  onDiscard: (recs: readonly PendingBuildRecord[]) => void;
+  onUndoDiscard: (recs: readonly PendingBuildRecord[]) => void;
+  /** Opens the app's History. */
+  onHistory: (app: InstalledApp) => void;
+  /** "Change it": opens the describe sheet scoped to this app. */
+  onPromptAgain: (app: InstalledApp) => void;
+  /** The composer bar, or an idea chip (its words): opens the describe sheet. */
+  onCreate: (idea?: string) => void;
+  onSettings: () => void;
+  /** __DEV__ entry: long-press the title to reach the containment/bridge probe surface. */
+  onOpenDevProbe?: () => void;
+  /** A tile being made, failed or stopped: its page. Details, What happened and Update Whim use it too. */
   onOpenPending?: (rec: PendingBuildRecord) => void;
-  /** Quick action on a `building` record: aborts the run and deletes the record. */
+  /** Stop: aborts the run and ends the record. */
   onCancelPending?: (rec: PendingBuildRecord) => void;
-  /** Quick action on a `failed`/`interrupted` record: deletes the record. */
-  onDismissPending?: (rec: PendingBuildRecord) => void;
+  /** Try again on a failed or stopped attempt. */
+  onRetryPending?: (rec: PendingBuildRecord) => void;
+  /** "Customize tile": store this tile as the app's override. */
+  onCustomizeTile: (app: InstalledApp, tile: TileIdentity) => void;
+  /** "Use the original tile": drop the override. */
+  onResetTile: (app: InstalledApp) => void;
+}
+
+const styles = makeStyles((t) => ({
+  root: { flex: 1, backgroundColor: t.colors.bg },
+  gutter: { paddingHorizontal: LAYOUT.gutter, paddingBottom: SPACE[3] },
+  listArea: { flex: 1 },
+  grid: { flexDirection: 'row' as const, flexWrap: 'wrap' as const },
+  list: { flexDirection: 'column' as const },
+  gridEnd: { paddingBottom: SPACE[4] },
+  empty: { flexGrow: 1, alignItems: 'center' as const, justifyContent: 'center' as const, paddingHorizontal: LAYOUT.gutter, gap: SPACE[3] },
+  chips: { alignItems: 'center' as const, gap: SPACE[2], marginTop: SPACE[2] },
+  centred: { textAlign: 'center' as const },
+}));
+
+interface OpenMenu {
+  cell: GridCell;
+  anchor: MenuAnchor;
+  open: boolean;
+}
+
+/** The attempt a menu action acts on: the cell's own, or the change in flight on an app. */
+function attemptOf(cell: GridCell): PendingBuildRecord | undefined {
+  if (cell.kind === 'attempt') return cell.rec;
+  return cell.kind === 'app' ? cell.rebuild : undefined;
 }
 
 export default function HomeScreen({
   apps,
+  pending,
+  purges,
+  appBusy,
+  offline,
+  queued,
+  activity,
+  canCopyData = false,
+  draft,
   onOpen,
   onFork,
   onDelete,
-  appBusy,
+  onUndoDelete,
+  onDiscard,
+  onUndoDiscard,
   onHistory,
   onPromptAgain,
   onCreate,
   onSettings,
   onOpenDevProbe,
-  offline,
-  pending,
   onOpenPending,
   onCancelPending,
-  onDismissPending,
+  onRetryPending,
+  onCustomizeTile,
+  onResetTile,
 }: Readonly<HomeScreenProps>) {
-  const [selected, setSelected] = useState<InstalledApp | null>(null);
-  const [forkTarget, setForkTarget] = useState<InstalledApp | null>(null);
-  const [selectedGhost, setSelectedGhost] = useState<PendingBuildRecord | null>(null);
-  // The App link reveal sheet (spec app-links "Every installed app can reveal its link from the
-  // home grid") — installed-tile only, never offered for a ghost.
-  const [appLinkTarget, setAppLinkTarget] = useState<InstalledApp | null>(null);
-  const p = SHELL_PALETTE;
-  const cellWidth = homeGridCellWidth(useWindowDimensions().width, APP_TILE_SIZE);
+  const t = useTokens();
+  const s = styles(t);
+  const toast = useToast();
+  const { width, fontScale } = useWindowDimensions();
+  const layout = gridLayout(width, fontScale);
+  const [query, setQuery] = useState('');
+  const [menu, setMenu] = useState<OpenMenu | null>(null);
+  const [copying, setCopying] = useState<{ app: InstalledApp; open: boolean } | null>(null);
+  const [customizing, setCustomizing] = useState<{ id: string; open: boolean } | null>(null);
+  const [olderOpen, setOlderOpen] = useState(false);
 
-  // Ghosts newest-first, before installed apps; dedupe-by-id (pending wins) and rebuild
-  // flagging both live in `grid-composition.ts` (`handoff/ghost-handlers.md`'s invariants).
-  const tiles = composeGrid(pending ?? [], apps);
-  const selectedRebuild = selected
-    ? tiles.find((t): t is InstalledTile => t.kind === 'app' && t.app.id === selected.id)?.rebuild
-    : undefined;
+  const all = composeGrid(pending ?? [], apps, {
+    now: Date.now(),
+    queued,
+    deletedApps: new Set(apps.filter((a) => purges?.has('app', a.id)).map((a) => a.id)),
+    discardedAttempts: new Set((pending ?? []).filter((r) => purges?.has('attempt', r.id)).map((r) => r.id)),
+  });
+  const appCount = all.filter((c) => c.kind === 'app').length;
+  const searching = appCount >= SEARCH_FROM_APPS;
+  const cells = searching ? searchCells(all, query) : all;
+  const olderRecs = all.flatMap((c) => (c.kind === 'older' ? c.recs : []));
+  const customized = customizing ? (apps.find((a) => a.id === customizing.id) ?? null) : null;
 
-  /** What the long-pressed app is busy with, if anything — the sheet's Fork and Delete rows read
-   *  it. One app has at most one operation in flight, so ANY in-flight operation disables both
-   *  rows; only the matching one also carries the busy label. */
-  const selectedBusy = selected ? appBusy?.[selected.id] : undefined;
+  const closeMenu = () => setMenu((m) => (m ? { ...m, open: false } : m));
 
-  const confirmDelete = (app: InstalledApp) => {
-    setSelected(null);
-    Alert.alert(COPY.deleteTitle, deleteBody(app.name), [
-      { text: COPY.cancel, style: 'cancel' },
-      { text: COPY.deleteConfirm, style: 'destructive', onPress: () => onDelete(app) },
-    ]);
+  const discard = (recs: readonly PendingBuildRecord[]) => {
+    onDiscard(recs);
+    haptics.play('warning');
+    toast.show({
+      message: recs.length === 1 ? COPY.discardedToast : discardedManyToast(recs.length),
+      action: { label: COPY.toastUndo, onPress: () => onUndoDiscard(recs) },
+    });
   };
 
-  return (
-    <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <View style={styles.header}>
-        <View style={styles.headerText}>
-          <Text style={[TYPE_SCALE.display, { color: p.text }]} onLongPress={onOpenDevProbe} suppressHighlighting>
-            {COPY.homeTitle}
-          </Text>
-          <Text style={[TYPE_SCALE.eyebrow, styles.eyebrow, { color: p.textMuted }]}>{COPY.homeSubtitle}</Text>
-          {offline && (
-            <View style={styles.offlineRow}>
-              <View style={[styles.offlineDot, { backgroundColor: p.textMuted }]} />
-              <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{COPY.homeOfflineIndicator}</Text>
-            </View>
-          )}
-        </View>
-        <TouchableOpacity
-          onPress={onSettings}
-          accessibilityLabel={COPY.settingsTitle}
-          style={[styles.settingsBtn, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-        >
-          <Text style={[styles.settingsGlyph, { color: p.text }]}>{'⚙︎'}</Text>
-        </TouchableOpacity>
-      </View>
+  const remove = (app: InstalledApp) => {
+    onDelete(app);
+    haptics.play('warning');
+    toast.show({ message: deletedToast(app.name), undo: true, action: { label: COPY.toastUndo, onPress: () => onUndoDelete(app) } });
+  };
 
-      <ScrollView contentContainerStyle={styles.scroll}>
-        {tiles.length === 0 && (
-          <Text style={[TYPE_SCALE.body, styles.empty, { color: p.textMuted }]}>{COPY.emptyTitle}</Text>
-        )}
+  const makeCopy = async (app: InstalledApp, data: ForkOptions['data']) => {
+    try {
+      const made = await onFork(app, { data });
+      if (!made) return;
+      haptics.play('success');
+      toast.show({ message: COPY.copyMadeToast, action: { label: COPY.actionOpen, onPress: () => onOpen(made) } });
+    } catch (e) {
+      log.warn(CHANNELS.app, 'copy did not complete', { appId: app.id, detail: e instanceof Error ? e.message : String(e) });
+      haptics.play('failure');
+      toast.show({ message: COPY.copyFailedToast });
+    }
+  };
 
-        <View style={styles.grid}>
-          {tiles.map((tile) => {
-            if (tile.kind === 'ghost') {
-              return (
-                <GhostGridTile
-                  key={tile.rec.id}
-                  rec={tile.rec}
-                  cellWidth={cellWidth}
-                  onOpenPending={onOpenPending}
-                  onLongPress={() => setSelectedGhost(tile.rec)}
-                />
-              );
-            }
-            const { app, rebuild } = tile;
-            const pillKind = tilePillFor(rebuild);
-            const onPressPill = rebuild && pillKind && TILE_PILL[pillKind].tappable ? () => onOpenPending?.(rebuild) : undefined;
-            return (
-              <View key={app.id} style={{ width: cellWidth }}>
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={() => onOpen(app)}
-                  onLongPress={() => setSelected(app)}
-                >
-                  <AppTile name={app.name} manifest={app.record.manifest} width={cellWidth} busy={isAppBusy(appBusy, app.id)} pill={pillKind ? { kind: pillKind, onPress: onPressPill } : null} example={app.example} />
-                </TouchableOpacity>
-                {app.forkedFrom && (
-                  <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]} numberOfLines={1}>
-                    {forkedFromLabel(app.forkedFrom.name)}
-                  </Text>
-                )}
-              </View>
-            );
-          })}
-        </View>
-      </ScrollView>
+  const askCopy = (app: InstalledApp) => {
+    if (canCopyData) setCopying({ app, open: true });
+    else makeCopy(app, 'fresh');
+  };
 
-      {/* The create affordance: one row, always reachable, opening the compose step. */}
-      <TouchableOpacity
-        onPress={onCreate}
-        accessibilityRole="button"
-        style={[styles.composer, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-      >
-        <View style={[styles.composerPlus, { backgroundColor: p.accent }]}>
-          {/* Drawn from two bars, not a '+' glyph: a text glyph's ascender/descender and side
-              bearings differ per platform/font and can never land exactly centered (it was
-              reading ~1px low-left). Two Views sharing one geometric center center by
-              construction, on every platform. */}
-          <View style={styles.composerPlusIcon}>
-            <View style={[styles.composerPlusBarH, { backgroundColor: p.onAccent }]} />
-            <View style={[styles.composerPlusBarV, { backgroundColor: p.onAccent }]} />
-          </View>
-        </View>
-        <Text style={[TYPE_SCALE.body, { color: p.textMuted }]}>{COPY.homeComposerPlaceholder}</Text>
-      </TouchableOpacity>
+  const answerCopy = (data: ForkOptions['data']) => {
+    const app = copying?.app;
+    setCopying((c) => (c ? { ...c, open: false } : c));
+    if (app) makeCopy(app, data);
+  };
 
-      {/* Action sheet (long-press): Open / Fork / History / Prompt again / Delete. */}
-      <ActionSheet visible={selected != null} onClose={() => setSelected(null)}>
-        <Text style={[TYPE_SCALE.bodyEmphatic, styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{selected?.name}</Text>
-        <SheetRow label={COPY.actionOpen} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onOpen(a); }} />
-        <SheetRow label={selectedBusy === 'fork' ? COPY.actionForkBusy : COPY.actionFork} color={p.accent} borderColor={p.cardBorder} disabled={selectedBusy != null} onPress={() => { const a = selected!; setSelected(null); setForkTarget(a); }} />
-        <SheetRow label={COPY.actionHistory} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onHistory(a); }} />
-        <SheetRow label={COPY.actionPromptAgain} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onPromptAgain(a); }} />
-        <SheetRow label={COPY.actionAppLink} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); setAppLinkTarget(a); }} />
-        <SheetRow label={selectedBusy === 'delete' ? COPY.actionDeleteBusy : COPY.actionDelete} color={p.danger} borderColor={p.cardBorder} disabled={selectedBusy != null} onPress={() => confirmDelete(selected!)} />
-        {selectedRebuild && (
-          <GhostActionRow
-            rec={selectedRebuild}
-            onCancelPending={onCancelPending}
-            onDismissPending={onDismissPending}
-            onDone={() => setSelected(null)}
-          />
-        )}
-        <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setSelected(null)} />
-      </ActionSheet>
+  const share = (app: InstalledApp) => {
+    Share.share({ message: appLinkFor(app.id) }).catch(() => undefined);
+  };
 
-      {/* Fork question sheet: asked only for an explicit Fork tap. A copy never shares the
-          original's data; only a rewind continuation does (StoreAccess.continueSharingData). */}
-      <ActionSheet visible={forkTarget != null} onClose={() => setForkTarget(null)}>
-        <Text style={[TYPE_SCALE.bodyEmphatic, styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{forkTarget?.name}</Text>
-        <SheetRow label={COPY.forkStartFresh} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = forkTarget!; setForkTarget(null); onFork(a, { data: 'fresh' }); }} />
-        <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setForkTarget(null)} />
-      </ActionSheet>
+  const perform = (action: MenuAction, cell: GridCell) => {
+    const rec = attemptOf(cell);
+    const app = cell.kind === 'app' ? cell.app : undefined;
+    const actions: Record<MenuAction, () => void> = {
+      open: () => app && onOpen(app),
+      change: () => app && onPromptAgain(app),
+      history: () => app && onHistory(app),
+      copy: () => app && askCopy(app),
+      customize: () => app && setCustomizing({ id: app.id, open: true }),
+      share: () => app && share(app),
+      delete: () => app && remove(app),
+      details: () => rec && onOpenPending?.(rec),
+      stop: () => rec && onCancelPending?.(rec),
+      'stop-change': () => rec && onCancelPending?.(rec),
+      'what-happened': () => rec && onOpenPending?.(rec),
+      'try-again': () => rec && onRetryPending?.(rec),
+      discard: () => rec && discard([rec]),
+      'discard-change': () => rec && discard([rec]),
+      update: () => rec && onOpenPending?.(rec),
+      'discard-all': () => cell.kind === 'older' && discard(cell.recs),
+    };
+    actions[action]();
+  };
 
-      {/* Ghost tile's own long-press sheet (spec "Long-press on a ghost tile offers Cancel or
-          Dismiss, never both"): a ghost has no installed-app rows (Open/Fork/History/Prompt
-          again/Delete don't apply — nothing is installed yet), just the one state-appropriate
-          quick action plus the sheet's own close row. */}
-      <ActionSheet visible={selectedGhost != null} onClose={() => setSelectedGhost(null)}>
-        <Text style={[TYPE_SCALE.bodyEmphatic, styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{selectedGhost?.workingTitle}</Text>
-        {selectedGhost && (
-          <GhostActionRow
-            rec={selectedGhost}
-            onCancelPending={onCancelPending}
-            onDismissPending={onDismissPending}
-            onDone={() => setSelectedGhost(null)}
-          />
-        )}
-        <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setSelectedGhost(null)} />
-      </ActionSheet>
+  const press = (cell: GridCell) => {
+    if (cell.kind === 'older') setOlderOpen(true);
+    else if (cell.kind === 'app') onOpen(cell.app);
+    else onOpenPending?.(cell.rec);
+  };
 
-      <AppLinkSheet app={appLinkTarget} onClose={() => setAppLinkTarget(null)} />
-    </View>
-  );
-}
+  const menuRows = (cell: GridCell): MenuRow[] =>
+    menuFor(cell).map((item) => ({
+      key: item.action,
+      label: item.label,
+      icon: item.icon,
+      destructive: item.destructive,
+      onPress: () => perform(item.action, cell),
+    }));
 
-/** A ghost tile: greyed, non-launchable, tapping opens the build/failure screen by state
- *  (`onOpenPending`), long-press opens its own quick-action sheet — never `onOpen`, since no
- *  mini-app realm exists yet (spec "A ghost tile does not launch an app"). */
-function GhostGridTile({
-  rec,
-  cellWidth,
-  onOpenPending,
-  onLongPress,
-}: Readonly<{
-  rec: PendingBuildRecord;
-  cellWidth: number;
-  onOpenPending?: (rec: PendingBuildRecord) => void;
-  onLongPress: () => void;
-}>) {
-  return (
-    <View style={{ width: cellWidth }}>
-      <TouchableOpacity activeOpacity={0.85} onPress={() => onOpenPending?.(rec)} onLongPress={onLongPress}>
-        <AppTile
-          name={rec.workingTitle}
-          manifest={{ tileColor: ghostTileColorFor(rec.id) }}
-          ghost={rec.state}
-          remedy={rec.failure?.remedy}
-          width={cellWidth}
-        />
-      </TouchableOpacity>
-    </View>
-  );
-}
+  const menuTitle = (cell: GridCell) => (cell.kind === 'older' ? tileOlderLine(cell.recs.length) : cellName(cell));
 
-/** The long-press quick action a ghost/rebuild record offers: Cancel while `building`, Dismiss
- *  once `failed`/`interrupted` — never both (spec "Long-press on a ghost tile offers Cancel or
- *  Dismiss, never both"). Shared by the pure-ghost sheet and the installed-tile sheet's rebuild
- *  row, so the two never drift. */
-function GhostActionRow({
-  rec,
-  onCancelPending,
-  onDismissPending,
-  onDone,
-}: Readonly<{
-  rec: PendingBuildRecord;
-  onCancelPending?: (rec: PendingBuildRecord) => void;
-  onDismissPending?: (rec: PendingBuildRecord) => void;
-  onDone: () => void;
-}>) {
-  if (rec.state === 'building') {
+  const tileOfCell = (cell: GridCell) => {
+    if (cell.kind === 'app') return tileOf(cell.app);
+    return { tint: 'slate' as const, icon: 'circle' as const };
+  };
+
+  const renderCell = (cell: GridCell) => {
+    const { tint, icon } = tileOfCell(cell);
+    const live = cell.kind === 'attempt' ? cell.rec : attemptOf(cell);
+    const busy = cell.kind === 'app' && isAppBusy(appBusy, cell.app.id);
     return (
-      <SheetRow
-        label={COPY.actionCancelBuild}
-        color={SHELL_PALETTE.danger}
-        borderColor={SHELL_PALETTE.cardBorder}
-        onPress={() => { onDone(); onCancelPending?.(rec); }}
+      <AppTile
+        key={cellKey(cell)}
+        layout={layout}
+        name={cell.kind === 'older' ? '' : cellName(cell)}
+        state={cell.kind === 'older' ? 'older' : cell.state}
+        tint={tint}
+        glyph={icon}
+        example={cell.kind === 'app' && cell.app.example === true}
+        copy={cell.kind === 'app' && cell.app.forkedFrom !== undefined}
+        count={cell.kind === 'older' ? cell.recs.length : undefined}
+        activity={live ? activity?.[live.id] : undefined}
+        busy={busy}
+        lifted={menu?.open === true && cellKey(menu.cell) === cellKey(cell)}
+        onPress={() => press(cell)}
+        onLongPress={(anchor) => {
+          if (!busy) setMenu({ cell, anchor, open: true });
+        }}
       />
     );
-  }
-  return (
-    <SheetRow
-      label={COPY.actionDismissBuild}
-      color={SHELL_PALETTE.danger}
-      borderColor={SHELL_PALETTE.cardBorder}
-      onPress={() => { onDone(); onDismissPending?.(rec); }}
-    />
-  );
-}
+  };
 
-/** A long-press sheet: its rows on a card at the bottom, over a dim that closes it on a tap, as
- *  system back does. The dim is a SIBLING behind the card, never its parent: a touchable is one
- *  accessibility element, so with the card inside it iOS read the whole sheet as one element with a
- *  joined label (#135) and a VoiceOver double-tap only closed it (`SheetModal.tsx`, `Orb.tsx`). */
-function ActionSheet({ visible, onClose, children }: Readonly<{ visible: boolean; onClose: () => void; children: React.ReactNode }>) {
-  return (
-    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
-      <SafeAreaProvider>
-        <ActionSheetFrame onClose={onClose}>{children}</ActionSheetFrame>
-      </SafeAreaProvider>
-    </Modal>
-  );
-}
+  const empty = all.length === 0;
+  const gridFrame = { paddingHorizontal: layout.gutter, rowGap: layout.kind === 'grid' ? layout.rowGap : 0 };
+  const ideas = [COPY.homeIdeaTimer, COPY.homeIdeaTracker, COPY.homeIdeaDice];
 
-function ActionSheetFrame({ onClose, children }: Readonly<{ onClose: () => void; children: React.ReactNode }>) {
-  const insets = useSafeAreaInsets();
   return (
-    <View style={[styles.sheetFrame, { paddingTop: insets.top + SPACING.md }]}>
-      <Pressable style={styles.sheetScrim} onPress={onClose} accessibilityRole="none" />
-      <View style={[styles.sheet, { backgroundColor: SHELL_PALETTE.card, paddingBottom: insets.bottom + SPACING.md }]}>{children}</View>
+    <View style={s.root}>
+      <HomeHeader onSettings={onSettings} onOpenDevProbe={onOpenDevProbe} />
+      {offline ? (
+        <View style={s.gutter}>
+          <Notice message={COPY.homeOfflineNotice} />
+        </View>
+      ) : null}
+      {searching ? (
+        <View style={s.gutter}>
+          <TextField value={query} onChangeText={setQuery} accessibilityLabel={COPY.homeSearchLabel} placeholder={COPY.homeSearchLabel} autoCorrect={false} autoCapitalize="none" returnKeyType="search" />
+        </View>
+      ) : null}
+      <View style={s.listArea}>
+        <ScrollView contentContainerStyle={empty ? s.empty : undefined} keyboardShouldPersistTaps="handled">
+          {empty ? (
+            <>
+              <Ember size={128} state="working" />
+              <Text type="title1" style={s.centred}>
+                {COPY.homeEmptyTitle}
+              </Text>
+              <Text type="callout" color="text-2" style={s.centred}>
+                {COPY.homeEmptyLine}
+              </Text>
+              <View style={s.chips}>
+                {ideas.map((idea) => (
+                  <Chip key={idea} kind="suggestion" label={idea} onPress={() => onCreate(idea)} />
+                ))}
+              </View>
+            </>
+          ) : (
+            <View style={[layout.kind === 'grid' ? s.grid : s.list, s.gridEnd, gridFrame]}>
+              {cells.map(renderCell)}
+              {cells.length === 0 ? (
+                <Text type="callout" color="text-2">
+                  {COPY.homeSearchEmpty}
+                </Text>
+              ) : null}
+            </View>
+          )}
+        </ScrollView>
+        <ScrollEdgeFade edge="top" />
+        <ScrollEdgeFade edge="bottom" />
+      </View>
+      <ComposerBar draft={draft} onPress={() => onCreate()} />
+
+      <ContextMenu
+        visible={menu?.open === true}
+        title={menu ? menuTitle(menu.cell) : ''}
+        anchor={menu?.anchor ?? null}
+        rows={menu ? menuRows(menu.cell) : []}
+        onClose={closeMenu}
+      />
+      <CopyQuestionSheet
+        visible={copying?.open === true}
+        appName={copying?.app.name ?? ''}
+        onCopyData={() => answerCopy('copy')}
+        onStartFresh={() => answerCopy('fresh')}
+        onClose={() => setCopying((c) => (c ? { ...c, open: false } : c))}
+      />
+      <CustomizeTileSheet
+        visible={customizing?.open === true}
+        app={customized}
+        onChoose={(tile) => customized && onCustomizeTile(customized, tile)}
+        onReset={() => customized && onResetTile(customized)}
+        onClose={() => setCustomizing((c) => (c ? { ...c, open: false } : c))}
+      />
+      <OlderAttemptsSheet
+        attempts={olderRecs}
+        visible={olderOpen}
+        onOpen={(rec) => {
+          setOlderOpen(false);
+          onOpenPending?.(rec);
+        }}
+        onClose={() => setOlderOpen(false)}
+      />
     </View>
   );
 }
 
-/** `disabled` is the row's wait affordance: an operation is already running for this app, so the
- *  row neither fires nor reads as tappable. Dimming is opacity-only — `shadow*` props are
- *  iOS-only, so a raised/flattened treatment would be invisible on Android. */
-function SheetRow({ label, onPress, color, borderColor, disabled }: Readonly<{ label: string; onPress: () => void; color: string; borderColor: string; disabled?: boolean }>) {
-  return (
-    <TouchableOpacity
-      style={[styles.sheetRow, { borderTopColor: borderColor }, disabled ? styles.sheetRowDisabled : null]}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled: disabled === true }}
-      disabled={disabled}
-      onPress={onPress}
-    >
-      <Text style={[TYPE_SCALE.bodyEmphatic, { color }]}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
-
-const styles = StyleSheet.create({
-  root: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    paddingHorizontal: SPACING.lg,
-    // design html:384 `padding:20px 22px 14px`. 20 and 14 have no `SPACING` counterpart (the scale
-    // is 8/12/16/22/34) and get no one-off token (ruling R9) — they stay literals, cited.
-    paddingTop: 20,
-    paddingBottom: 14,
-  },
-  headerText: { flexShrink: 1 },
-  eyebrow: { marginTop: SPACING.xs },
-  // The quiet offline indicator (server-connectivity, design.md decision 7): a small muted dot
-  // plus a caption, sitting under the eyebrow — never a banner, never anything that competes with
-  // the grid for attention.
-  offlineRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs, marginTop: SPACING.xs },
-  offlineDot: { width: 6, height: 6, borderRadius: 3 },
-  settingsBtn: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  /** design html:386 `font:400 16px/1` (ruling R25). Was `TYPE_SCALE.body`, which L1 retargeted
-   *  15 -> 13.5 this batch — that widened a 1px gap to 2.5px AND dragged body's 20.925 line-height
-   *  into a 38x38 circle the design gives `/1`. A one-off icon glyph is not a typographic role, so
-   *  it takes a local face, exactly like `composerPlusGlyph` below (V2). */
-  settingsGlyph: { fontFamily: FONT_FAMILY.sansRegular, fontSize: 16, lineHeight: 16, fontWeight: '400' },
-  // `paddingHorizontal` is the term `homeGridCellWidth` subtracts — read from the one constant so
-  // the two cannot drift (a drift here overflows the row and wraps the grid to two columns).
-  scroll: { paddingHorizontal: HOME_GRID_SIDE_PADDING, paddingBottom: SPACING.lg, flexGrow: 1 },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    columnGap: HOME_GRID_COLUMN_GAP,
-    rowGap: HOME_GRID_ROW_GAP,
-  },
-  empty: { paddingVertical: SPACING.xl },
-  composer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACING.sm,
-    marginHorizontal: SPACING.lg,
-    marginBottom: SPACING.lg,
-    // design html:401 `padding:14px 16px`; 14 has no `SPACING` counterpart, so it is a cited
-    // literal (ruling R9). The horizontal 16 is `SPACING.md` and already matched.
-    paddingVertical: 14,
-    paddingHorizontal: SPACING.md,
-    borderWidth: 1,
-    borderRadius: 20,
-  },
-  composerPlus: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  // design html:402 sized the old glyph `font:400 17px/1`; the two-bar plus matches that visible
-  // ink size. Even dimensions throughout (14, 2, 6) so neither platform ever rounds to a half
-  // pixel, which is what let the two bars drift out of alignment in the first place.
-  composerPlusIcon: { width: 14, height: 14 },
-  composerPlusBarH: { position: 'absolute', top: 6, left: 0, width: 14, height: 2 },
-  composerPlusBarV: { position: 'absolute', top: 0, left: 6, width: 2, height: 14 },
-  sheetFrame: { flex: 1, justifyContent: 'flex-end' },
-  // Its insets define it, so it spans the whole frame behind the card.
-  sheetScrim: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.5)' },
-  sheet: { maxHeight: '100%', borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, paddingTop: SPACING.xs },
-  sheetTitle: { textAlign: 'center', paddingVertical: SPACING.sm },
-  sheetRow: { paddingVertical: SPACING.md, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth },
-  sheetRowDisabled: { opacity: 0.45 },
-});

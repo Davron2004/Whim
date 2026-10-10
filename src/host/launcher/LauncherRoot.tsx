@@ -15,7 +15,7 @@
 // one app: launching reads the active bundle source from the record and hands it to MiniAppView
 // (keyed by launcher id, so each launch is a fresh realm).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Linking, StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
+import { Linking, StatusBar, StyleSheet, Text, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
@@ -35,6 +35,7 @@ import { ToastHost } from '../ui/Toast';
 import { useTokens } from '../ui/tokens';
 import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
+import { runFork } from './fork-op';
 import type { AppBusyMap } from './app-busy';
 import { StoreAccess, type ForkOptions } from './store-access';
 import { DataCopyJournal } from './data-copy-journal';
@@ -55,7 +56,7 @@ import {
 import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAppContext } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
 import { COPY, LEGAL_COPY } from './copy';
-import HomeScreen, { HOME_GRID_COLUMNS, HOME_GRID_COLUMN_GAP } from './HomeScreen';
+import HomeScreen from './HomeScreen';
 import MiniAppView from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
 import SettingsScreen from './SettingsScreen';
@@ -84,7 +85,12 @@ import DevLogOverlay from './DevLogOverlay';
 import { devLogOverlayEnabled } from './dev-log-view';
 import RunDetailsSheet from './RunDetailsSheet';
 import { runTimelineDevModeEnabled } from './run-timeline-view';
-import { HomeGridSkeleton } from './flow-skeletons';
+import { HomeSkeleton } from './HomeSkeleton';
+import { toastClearance } from './ComposerBar';
+import { useHomeLive } from './use-home-live';
+import { PendingPurgeStore, completeInterruptedPurges, completePurge } from './pending-purge';
+import { PurgeWindows } from './soft-delete';
+import type { TileIdentity } from './tile-identity';
 import {
   EMPTY_RUN_AGGREGATES,
   RUN_SIGNAL_TICK_MS,
@@ -280,11 +286,11 @@ function stackTitle(on: StackScreen): string | undefined {
   }
 }
 
-/** Whether a stack screen draws from the token module, following the phone's appearance; Home,
- *  History and the consent screen still draw the fixed light v2 palette (`theme.ts`). Their header
- *  and the status bar follow whichever the screen on top draws. */
+/** Whether a stack screen draws from the token module, following the phone's appearance; History
+ *  and the consent screen still draw the fixed light v2 palette (`theme.ts`). Their header and the
+ *  status bar follow whichever the screen on top draws. */
 function schemeFollowing(on: StackScreen): boolean {
-  return on.kind === 'settings' || on.kind === 'advanced' || on.kind === 'report';
+  return on.kind === 'home' || on.kind === 'settings' || on.kind === 'advanced' || on.kind === 'report';
 }
 
 /** The update screen in place of `from`, holding the prompt typed there when `from` is a flow step
@@ -472,7 +478,7 @@ export default function LauncherRoot({
   // Construct the persistent host services once (device native modules — lazy under the hood).
   // The device id, server address and highlighting flag all read from the SAME `whim.launcher`
   // KVBackend instance the installed-apps index uses (one MMKV instance, several consumers).
-  const { index, access, pending, journal, kv } = useMemo(() => {
+  const { index, access, pending, journal, kv, purges } = useMemo(() => {
     const launcherKv: KVBackend = createMmkvBackend('whim.launcher');
     const idx = new AppIndex(launcherKv);
     const store = createPersistentStore(createMmkvBackend('whim-version-store'));
@@ -492,6 +498,8 @@ export default function LauncherRoot({
       // key of (design D1), under the same single-writer discipline.
       journal: new RunJournalStore(launcherKv),
       kv: launcherKv,
+      // Delete and Discard wait out their Undo window on markers in the same KV (D16).
+      purges: new PendingPurgeStore(launcherKv),
     };
   }, []);
 
@@ -501,6 +509,7 @@ export default function LauncherRoot({
       access={access}
       pending={pending}
       journal={journal}
+      purges={purges}
       kv={kv}
       appInfo={appInfo}
       deviceLocale={deviceLocale}
@@ -619,6 +628,7 @@ function LauncherShell({
   access,
   pending,
   journal,
+  purges,
   kv,
   appInfo,
   deviceLocale,
@@ -630,6 +640,7 @@ function LauncherShell({
   access: StoreAccess;
   pending: PendingBuildStore;
   journal: RunJournalStore;
+  purges: PendingPurgeStore;
   kv: KVBackend;
   appInfo: () => AppInfo;
   deviceLocale: () => string | undefined;
@@ -892,6 +903,32 @@ function LauncherShell({
     setPendingBuilds(pending.listCurrent());
   };
 
+  // Delete and Discard hide at once and purge when their Undo window ends (design D16). The windows
+  // outlive Home (a delete is not undone by opening Settings); the markers outlive the process.
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+  const purgeWindows = useMemo(
+    () =>
+      new PurgeWindows({
+        purges,
+        complete: (marker) => completePurge({ purges, index, access, pending, journal }, marker),
+        changed: () => refreshRef.current(),
+        failed: (marker, e) =>
+          log.error(CHANNELS.app, 'purge did not complete', { kind: marker.kind, appId: marker.id, ...errorFields(e) }),
+      }),
+    [purges, index, access, pending, journal],
+  );
+  useEffect(() => () => purgeWindows.dispose(), [purgeWindows]);
+
+  // Home's view of the attempts running right now: which wait for a spot, how hard each stream works.
+  const liveView = useHomeLive(screen.kind === 'home', () => [...liveAttemptsRef.values()]);
+
+  /** The installed apps and the attempts a person can reach: those whose purge is armed are gone as far
+   *  as a link or a tile is concerned. */
+  const reachableApps = () => index.list().filter((a) => !purges.has('app', a.id));
+  const reachableAttempts = () =>
+    pending.listCurrent().map((view) => view.record).filter((r) => !purges.has('attempt', r.id));
+
   // The sink's destination is the address the device ALREADY persists for `/v1/generate` (design
   // D4) — no second setting. It stays inert until both the flag and an address are set, so this
   // runs on every address change and is a no-op in every build that ships.
@@ -914,6 +951,9 @@ function LauncherShell({
       } catch (e) {
         log.error(CHANNELS.app, 'data-copy sweep failed', { operation: 'sweep', ...errorFields(e) });
       }
+      // A delete or a discard a closed process had not finished is finished now, before the grid is
+      // first drawn; one that cannot be finished keeps its marker (and stays hidden) for next time.
+      await completeInterruptedPurges({ purges, index, access, pending, journal });
       try {
         await seedFirstRun(index, access, defaultSeeds());
       } catch (e) {
@@ -981,16 +1021,19 @@ function LauncherShell({
       }
     });
 
-  const onFork = (app: InstalledApp, opts: ForkOptions) =>
-    runAppOp(appOps, setAppBusy, app.id, 'fork', async () => {
-      try {
-        await access.fork(app, undefined, opts);
+  /** Make a copy: busy for that app while it runs. Resolves the new entry, or `null` when a copy (or
+   *  an open) of the app is already running; rejects when the copy could not be made, with nothing
+   *  created (`StoreAccess.fork`'s error surface), for Home to say so in a toast. */
+  const onFork = (app: InstalledApp, opts: ForkOptions): Promise<InstalledApp | null> =>
+    runFork(
+      (work) => runAppOp(appOps, setAppBusy, app.id, 'fork', work),
+      async () => {
+        const made = await access.fork(app, undefined, opts);
         refresh();
-      } catch (e) {
-        log.error(CHANNELS.app, 'installed-app action failed', { operation: 'fork', ...errorFields(e) });
-        Alert.alert('Could not fork this app', (e as Error)?.message ?? String(e));
-      }
-    });
+        return made;
+      },
+      (e) => log.error(CHANNELS.app, 'installed-app action failed', { operation: 'fork', ...errorFields(e) }),
+    );
 
   const onHistory = (app: InstalledApp, from: 'home' | 'app') => {
     setScreen({ kind: 'history', app, from });
@@ -1005,20 +1048,26 @@ function LauncherShell({
     if (from === 'app') onOpen(index.get(app.id) ?? app);
   };
 
-  const onDelete = (app: InstalledApp) =>
-    runAppOp(appOps, setAppBusy, app.id, 'delete', async () => {
-      try {
-        await access.remove(app);
-        // The app's retained last-run report goes with it, in the SAME operation — the discipline
-        // "dismissing a ghost deletes its journal" applied to the other journal key. Nothing else
-        // ever revisits this id, so a report left behind would never be reclaimed.
-        journal.deleteLastRun(app.id);
-        refresh();
-      } catch (e) {
-        log.error(CHANNELS.app, 'installed-app action failed', { operation: 'delete', ...errorFields(e) });
-        Alert.alert('Could not delete this app', (e as Error)?.message ?? String(e));
-      }
+  /** Delete and Discard hide at once and complete when the Undo window ends (`soft-delete.ts`). */
+  const onDelete = (app: InstalledApp) => purgeWindows.armApp(app);
+  const onUndoDelete = (app: InstalledApp) => {
+    purgeWindows.undo('app', app.id);
+  };
+  const onDiscard = (recs: readonly PendingBuildRecord[]) => recs.forEach((rec) => purgeWindows.armAttempt(rec.id));
+  const onUndoDiscard = (recs: readonly PendingBuildRecord[]) =>
+    recs.forEach((rec) => {
+      purgeWindows.undo('attempt', rec.id);
     });
+
+  /** "Customize tile": the override is stored host-side and wins over the assigned tile. */
+  const onCustomizeTile = (app: InstalledApp, tile: TileIdentity) => {
+    index.setTileOverride(app.id, tile);
+    refresh();
+  };
+  const onResetTile = (app: InstalledApp) => {
+    index.clearTileOverride(app.id);
+    refresh();
+  };
 
   /** The leave-handler half of the flow's cancellation pattern: the step being left cancels its
    *  OWN in-flight request and nothing else. The clarify exchange now starts the moment compose's
@@ -1146,7 +1195,7 @@ function LauncherShell({
    *  was, for the user to send it again. */
   const runContinuation = (continuation: ConsentContinuation) => {
     if (continuation.kind === 'compose') {
-      openCompose(continuation.editing);
+      openCompose(continuation.editing, continuation.text);
     } else if (continuation.kind === 'resume') {
       setScreen(continuation.screen);
     } else if (continuation.kind === 'settings') {
@@ -2535,7 +2584,7 @@ function LauncherShell({
    *  settles (the "waits" release, above). */
   const openAppLink = (id: string) => {
     if (screen.kind === 'app' && screen.app.id === id) return;
-    const resolution = resolveAppLink(id, index.list(), pending.listCurrent().map((view) => view.record));
+    const resolution = resolveAppLink(id, reachableApps(), reachableAttempts());
     leaveForLink(linkExitFor(reportTarget != null ? 'sheet' : screen.kind));
     if (resolution.kind === 'open') {
       onOpen(resolution.app);
@@ -2769,19 +2818,28 @@ function LauncherShell({
     <HomeScreen
       apps={apps}
       pending={pendingBuilds.map((view) => view.record)}
+      purges={purges}
       onOpen={onOpen}
       onFork={onFork}
       onDelete={onDelete}
+      onUndoDelete={onUndoDelete}
+      onDiscard={onDiscard}
+      onUndoDiscard={onUndoDiscard}
       appBusy={appBusy}
+      canCopyData={access.canCopyData}
+      queued={liveView.queued}
+      activity={liveView.activity}
       onHistory={(app) => onHistory(app, 'home')}
       onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
-      onCreate={() => openWithConsent({ kind: 'compose' })}
+      onCreate={(idea) => openWithConsent({ kind: 'compose', text: idea })}
       onSettings={() => setScreen({ kind: 'settings' })}
       onOpenDevProbe={onOpenDevProbe}
       offline={showOfflineIndicator(connectivity)}
       onOpenPending={onOpenPending}
       onCancelPending={onCancelPending}
-      onDismissPending={onDismissPending}
+      onRetryPending={(rec) => openWithConsent({ kind: 'retry', record: rec })}
+      onCustomizeTile={onCustomizeTile}
+      onResetTile={onResetTile}
     />
   );
 
@@ -2885,16 +2943,7 @@ function LauncherShell({
   const stack = ready ? stackFor(screen) : null;
   let content: React.ReactNode;
   if (!ready) {
-    content = (
-      <View style={styles.loading}>
-        <HomeGridSkeleton
-          count={knownAppCount}
-          columns={HOME_GRID_COLUMNS}
-          gap={HOME_GRID_COLUMN_GAP}
-          color={palette.card}
-        />
-      </View>
-    );
+    content = <HomeSkeleton count={knownAppCount} />;
   } else if (stack !== null) {
     content = <NativeStack entries={stack.map(stackEntry)} />;
   } else {
@@ -2926,7 +2975,7 @@ function LauncherShell({
     <HighlightingProvider enabled={highlighting}>
       <SafeAreaView edges={frameEdgesFor(screen.kind, stack !== null)} style={[styles.root, { backgroundColor: palette.bg }]}>
         <StatusBar barStyle={top !== undefined && schemeFollowing(top) ? tokens.barStyle : 'dark-content'} />
-        <ToastHost>
+        <ToastHost bottomOffset={toastClearance(screen.kind)}>
           <ScreenBoundary
             screen={screen.kind}
             FallbackComponent={ScreenErrorFallback}
@@ -2943,7 +2992,6 @@ function LauncherShell({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  loading: { flex: 1, padding: SPACING.lg },
   // The details view is `RunDetailsSheet` (build-liveness B5) — a bottom sheet anchored to its
   // own edge, not an absolutely-positioned overlay sized off this component's styles.
   devLogBtn: {

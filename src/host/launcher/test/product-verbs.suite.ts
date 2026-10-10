@@ -6,7 +6,7 @@
  */
 
 import { Harness } from './harness';
-import { COPY, CONSENT_WHATS_NEW, LEGAL_COPY, forkedFromLabel, deleteBody, addedFieldsLine } from '../copy';
+import { COPY, CONSENT_WHATS_NEW, LEGAL_COPY, copyQuestionDataSubtitle, deletedToast, discardedManyToast, tileOlderLine, addedFieldsLine } from '../copy';
 import { monogram, tileColor } from '../tiles';
 
 // Mechanism / git vocabulary that must never reach the launcher surface. NOTE: "fork" is NOT
@@ -24,8 +24,10 @@ export async function runProductVerbsTests(h: Harness): Promise<void> {
       ...Object.values(COPY),
       ...Object.values(LEGAL_COPY.fr),
       ...Object.values(CONSENT_WHATS_NEW).flatMap((lines) => Object.values(lines).map((line) => line.text)),
-      forkedFromLabel('Water Counter'),
-      deleteBody('Tip Splitter'),
+      copyQuestionDataSubtitle('Water Counter'),
+      deletedToast('Tip Splitter'),
+      discardedManyToast(2),
+      tileOlderLine(2),
       monogram('Water Counter'),
       tileColor('Water Counter'),
       addedFieldsLine(['notes (text)']),
@@ -35,9 +37,5 @@ export async function runProductVerbsTests(h: Harness): Promise<void> {
         h.ok(!bad.test(str), `"${str}" must not contain mechanism term ${bad}`);
       }
     }
-  });
-
-  await h.test('product-verbs: the product verbs themselves survive (Open/Fork/Delete present)', async () => {
-    h.ok(COPY.actionOpen === 'Open' && COPY.actionFork === 'Fork' && COPY.actionDelete === 'Delete', 'product verbs intact');
   });
 }

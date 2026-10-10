@@ -19,6 +19,7 @@ import WhimProse from '../../ui/whim-prose/WhimProse';
 import { SHELL_COLORS } from '../../../sdk/theme';
 import { Alert, finishAnimations, hardwareBack, StyleSheet } from './native-host';
 import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
+import { chooseRow, longPress, renderHome } from './home-rig';
 import { buildIt, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
@@ -344,13 +345,13 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('history screen: Home’s long-press sheet opens History for that app', async () => {
+  await h.test('history screen: Home’s tile menu opens History for that app', async () => {
     const app: InstalledApp = { id: 'tea', name: 'Tea', createdAt: 1, lineageId: 'main', record: { appId: 'tea', name: 'Tea', manifest: { capabilities: [] } } };
     const opened: InstalledApp[] = [];
-    const tree = await renderScreen(<HomeScreen apps={[app]} onOpen={noop} onFork={noop} onDelete={noop} onHistory={(a) => { opened.push(a); }} onPromptAgain={noop} onCreate={noop} onSettings={noop} />);
+    const tree = await renderHome({ apps: [app], onHistory: (a) => { opened.push(a); } });
     try {
-      await TestRenderer.act(async () => tree.root.find((n) => hostType(n) === 'TouchableOpacity' && typeof n.props.onLongPress === 'function').props.onLongPress());
-      await press(button(tree, COPY.actionHistory));
+      await longPress(tree, 'Tea');
+      await chooseRow(tree, COPY.actionHistory);
       h.eq(opened.map((a) => a.id), [app.id], 'History opens for the long-pressed app');
     } finally {
       await unmountScreen(tree);

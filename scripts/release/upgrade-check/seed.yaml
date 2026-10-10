@@ -131,18 +131,20 @@ env:
     visible: "(.*, )?${GENERATED_APP}(, .*)?"
     timeout: 30000
 
-# 4. Its second version: Prompt again → compose → clarify → plan → build. On iOS the tile menu is
-#    one accessibility element ("Hello App, Open, Fork, History, Prompt again, …"), so Maestro
-#    can't find its rows: tap Prompt again where the menu draws it, three rows above Cancel.
+# 4. Its second version: Change it → compose → clarify → plan → build. This flow runs on the PREVIOUS
+#    release, whose tile menu says "Prompt again" (and, on iOS, is one accessibility element
+#    ("Hello App, Open, Fork, History, Prompt again, …") whose rows Maestro can't find: tap Prompt
+#    again where the menu draws it, three rows above Cancel); the menu of this build says "Change it"
+#    with every row its own element, so both names are accepted.
 - longPressOn: "(.*, )?${GENERATED_APP}(, .*)?"
 - extendedWaitUntil:
-    visible: "Prompt again|.*, Prompt again, .*"
+    visible: "Prompt again|Change it|.*, Prompt again, .*"
     timeout: 15000
 - runFlow:
     when:
-      visible: "Prompt again"
+      visible: "Prompt again|Change it"
     commands:
-      - tapOn: "Prompt again"
+      - tapOn: "Prompt again|Change it"
 - runFlow:
     when:
       platform: iOS

@@ -34,7 +34,7 @@ import type { ClarifyScreen, ComposeScreen, PlanScreen } from './prompt-flow';
  * the flow grants through its own steps and ends back on Settings.
  */
 export type ConsentContinuation =
-  | { kind: 'compose'; editing?: InstalledApp }
+  | { kind: 'compose'; editing?: InstalledApp; text?: string }
   | { kind: 'retry'; record: PendingBuildRecord }
   | { kind: 'resume'; screen: ComposeScreen | ClarifyScreen | PlanScreen }
   | { kind: 'settings' };
