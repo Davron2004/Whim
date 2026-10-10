@@ -75,7 +75,7 @@ const presented = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0
 /** The first-run sheet is drawn in a modal the system has on screen. */
 const firstRunPresented = (tree: Tree) => modalHosts(tree).some((modal) => modal.props.visible === true && textOf(modal).includes(COPY.consentDecline));
 /** The first-run sheet that is open, if one is. */
-const firstRun =(tree: Tree) => tree.root.findAllByType(FirstRunSheet).filter((sheet) => sheet.props.visible)[0];
+const firstRun = (tree: Tree) => tree.root.findAllByType(FirstRunSheet).filter((sheet) => sheet.props.visible)[0];
 const agree = (tree: Tree) => button(tree, COPY.consentAgree);
 /** The action when only the terms are due. */
 const proceed = (tree: Tree) => button(tree, COPY.firstRunContinue);
@@ -386,6 +386,7 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
       try {
         await press(agree(tree));
         h.eq([on(tree, DescribePage), modalHosts(tree).length], [false, 1], 'held while the dismissal is unreported: the first-run sheet’s hidden modal is still mounted');
+        h.ok(DISMISS_REPORT_MS <= 1000, 'the wait is at most a second, whatever the constant is set to');
         await TestRenderer.act(async () => clock.fire(DISMISS_REPORT_MS));
         h.eq([composingNewApp(tree), presented(tree, DescribePage), modalHosts(tree).length], [true, true, 1], 'when the wait is up that modal is unmounted and Describe is presented');
       } finally {

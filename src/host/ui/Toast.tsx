@@ -23,12 +23,12 @@ import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } fr
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
-import { RADII, SPACE } from '../../design/tokens';
+import { RADII, SPACE, TYPE_SCALE } from '../../design/tokens';
 import { COPY } from '../launcher/copy';
 import { timing } from './motion';
 import { DRAG_SLOP, dragPosition, releaseCommits } from './Sheet';
 import { useTokens } from './tokens';
-import { makeStyles, MAX_FONT_SCALE, springConfig, typeStyle } from './tokens-pure';
+import { hitSlopFor, makeStyles, MAX_FONT_SCALE, springConfig, typeStyle } from './tokens-pure';
 
 export interface ToastAction {
   label: string;
@@ -294,7 +294,7 @@ function ToastView({ shown, bottomOffset, onEnd, onGone }: Readonly<ToastViewPro
             {toast.message}
           </RNText>
           {toast.action ? (
-            <Pressable onPress={runAction} disabled={leaving} accessibilityRole="button" accessibilityLabel={toast.action.label} hitSlop={SPACE[3]}>
+            <Pressable onPress={runAction} disabled={leaving} accessibilityRole="button" accessibilityLabel={toast.action.label} hitSlop={hitSlopFor(TYPE_SCALE.headline.lineHeight, t)}>
               <RNText
                 style={[s.action, { color: toast.action.asksWhim ? t.colors['ember-text'] : t.colors.text }]}
                 maxFontSizeMultiplier={MAX_FONT_SCALE}
