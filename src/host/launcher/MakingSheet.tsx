@@ -11,29 +11,14 @@
  *
  * The page is keyed by the run it belongs to (`prompt-flow.ts#pageKeyOf`), so a page never shows
  * another run's progress, and a close animates out the page the sheet was showing rather than
- * a blank one.
+ * a blank one. Every page starts its headline right under the sheet's header row, where a page that
+ * steps back (Plan) has its back control beside the close control (`useSheetBack` with `control`),
+ * so the headlines start at the same height.
  */
 import React, { Fragment, useRef } from 'react';
 import { useWindowDimensions, View } from 'react-native';
 import { LAYOUT } from '../../design/tokens';
-import { BackButton } from '../ui/IconButton';
 import { Sheet, SHEET_GRABBER, SHEET_MAX_HEIGHT } from '../ui/Sheet';
-import { useTokens } from '../ui/tokens';
-import { makeStyles } from '../ui/tokens-pure';
-
-/** Every page starts under a row this tall (the back control, on the pages that have one), so each
- *  headline starts at the same height. */
-export const PAGE_HEAD_HEIGHT = LAYOUT.headerRowHeight;
-
-const styles = makeStyles(() => ({
-  head: { height: PAGE_HEAD_HEIGHT, flexDirection: 'row' as const, alignItems: 'center' as const },
-}));
-
-/** The row above a page's headline: the back control, or nothing on a page that cannot go back. */
-export function PageHead({ onBack }: Readonly<{ onBack?: () => void }>) {
-  const s = styles(useTokens());
-  return <View style={s.head}>{onBack ? <BackButton onPress={onBack} /> : null}</View>;
-}
 
 /** A page to show: what it is shown under, and the page itself. */
 export interface SheetContent {
@@ -46,17 +31,15 @@ export interface MakingSheetProps {
   content: SheetContent | null;
   /** Every way out: close, scrim, drag, Android back. The shell decides what each page's close does. */
   onClose: () => void;
-  /** The sheet has finished closing (`Sheet`'s `onClosed`): the next sheet may be presented. */
-  onClosed?: () => void;
 }
 
-export function MakingSheet({ content, onClose, onClosed }: Readonly<MakingSheetProps>) {
+export function MakingSheet({ content, onClose }: Readonly<MakingSheetProps>) {
   // What the sheet showed last, kept so a close animates that page out.
   const last = useRef<SheetContent | null>(null);
   if (content !== null) last.current = content;
   const shown = last.current;
   return (
-    <Sheet visible={content !== null} onClose={onClose} onClosed={onClosed} detent="large">
+    <Sheet visible={content !== null} onClose={onClose} detent="large">
       {shown ? <Fragment key={shown.key}>{shown.node}</Fragment> : null}
     </Sheet>
   );
