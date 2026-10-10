@@ -6,6 +6,7 @@ import HomeScreen from '../HomeScreen';
 import { DescribePage } from '../DescribePage';
 import { FirstRunSheet } from '../FirstRunSheet';
 import LauncherRoot from '../LauncherRoot';
+import UpdateRequiredScreen from '../UpdateRequiredScreen';
 import { COPY } from '../copy';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { SEED_VERSION } from '../seed';
@@ -15,6 +16,8 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { resetNativeStorage } from './native-storage';
 import { button, press, renderScreen, unmountScreen, textOf, captureTimeouts, hostType, isHost } from './react-screen';
 import { renderHome, tile } from './home-rig';
+import { setAppState } from './native-host';
+import { json, settle, waitFor, withLauncher, type Launcher } from './rendered-launcher';
 
 const noop = () => {};
 const app: InstalledApp = {
@@ -124,4 +127,129 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
       }
     });
   }
+
+  await runFollowsConnectivityTests(h);
+}
+
+/** The network the launcher's fake server sits behind. */
+interface Network {
+  /** False: every request fails at the network level, as with airplane mode on. */
+  up: boolean;
+  /** The status the server answers a `/v1` request with while the network is up. */
+  answer: number;
+}
+
+/** A consented launcher on Home with a healthy server whose startup probe has answered, so the
+ *  session is online. `net` steers the network from then on. */
+async function onlineLauncher(
+  run: (launcher: Launcher, net: Network) => Promise<void>,
+): Promise<void> {
+  const net: Network = { up: true, answer: 503 };
+  const reach = <T,>(answer: () => T): T => {
+    if (!net.up) throw new TypeError('Network request failed');
+    return answer();
+  };
+  await withLauncher(
+    {
+      health: () => reach(() => json({ service: 'whim-server' })),
+      server: () => reach(() => new Response('', { status: net.answer })),
+    },
+    async (launcher) => {
+      await settle();
+      try {
+        await run(launcher, net);
+      } finally {
+        await TestRenderer.act(async () => setAppState('active'));
+      }
+    },
+  );
+}
+
+const advance = (launcher: Launcher, delay: number) => TestRenderer.act(async () => launcher.clock.fire(delay));
+
+async function typeAndContinue(launcher: Launcher): Promise<void> {
+  const { tree } = launcher;
+  await press(createButton(tree));
+  const field = tree.root.find(isHost('TextInput'));
+  await TestRenderer.act(async () => field.props.onChangeText('A tea timer'));
+  await press(button(tree, COPY.flowContinue));
+  await waitFor(() => launcher.paths().includes('/v1/clarify'), 'the plan request');
+  await settle();
+}
+
+async function runFollowsConnectivityTests(h: Harness): Promise<void> {
+  await h.test('Launcher: Home follows the connection going away and coming back while the app stays open', () =>
+    onlineLauncher(async (launcher, net) => {
+      const { tree, clock } = launcher;
+      h.eq(noticeCount(tree), 0, 'a reachable server shows no notice');
+      h.eq(clock.count(30000), 1, 'an online Home re-checks every 30s');
+
+      net.up = false;
+      await advance(launcher, 30000);
+      h.eq(noticeCount(tree), 0, 'one failed check is not an outage');
+      await advance(launcher, 2000);
+      h.eq(noticeCount(tree), 1, 'the second failed check shows the notice, with no restart and no navigation');
+
+      net.up = true;
+      await advance(launcher, 2000);
+      h.eq(noticeCount(tree), 0, 'the next successful probe clears it');
+      h.eq(clock.count(30000), 1, 'and Home goes back to its 30s re-check');
+    }));
+
+  await h.test('Launcher: nothing is probed while the app is in the background; coming back probes at once', () =>
+    onlineLauncher(async (launcher, net) => {
+      await TestRenderer.act(async () => setAppState('background'));
+      h.eq(launcher.clock.count(30000), 0, 'backgrounding cancels the 30s re-check');
+      const before = launcher.probes.length;
+
+      net.up = false;
+      await TestRenderer.act(async () => setAppState('active'));
+      await settle();
+      h.eq(launcher.probes.length - before, 1, 'the return sends exactly one probe');
+      h.eq(noticeCount(launcher.tree), 0, 'whose single failure is not yet an outage');
+      h.eq(launcher.clock.count(2000), 1, 'it is confirmed by the next probe');
+    }));
+
+  await h.test('Launcher: a screen other than Home does not re-check an online session', () =>
+    onlineLauncher(async ({ tree, clock }) => {
+      await press(createButton(tree));
+      h.eq(tree.root.findAllByType(DescribePage).length, 1, 'Describe is open');
+      h.eq(clock.count(30000), 0, 'no 30s re-check while Home is not showing');
+    }));
+
+  await h.test('Launcher: a plan request that gets no answer turns the offline notice on at once', () =>
+    onlineLauncher(async (launcher, net) => {
+      const probesBefore = launcher.probes.length;
+      net.up = false;
+      await typeAndContinue(launcher);
+      h.eq(launcher.probes.length - probesBefore, 1, 'the failed request was confirmed by one probe');
+      h.eq(noticeCount(launcher.tree), 1, 'and the notice shows without waiting for the 30s interval');
+    }));
+
+  await h.test('Launcher: Home re-checks never bring back an update screen the person dismissed', () =>
+    withLauncher(
+      {
+        health: () => json({ ok: true, service: 'whim-server', minBuild: { ios: Number.MAX_SAFE_INTEGER, android: Number.MAX_SAFE_INTEGER } }),
+        server: () => new Response('', { status: 503 }),
+      },
+      async (launcher) => {
+        const { tree } = launcher;
+        await waitFor(() => tree.root.findAllByType(UpdateRequiredScreen).length === 1, 'the launch-time update screen');
+        await press(button(tree, COPY.updateNotNow));
+        const probesBefore = launcher.probes.length;
+        await advance(launcher, 30000);
+        await settle();
+        h.eq(launcher.probes.length - probesBefore, 1, 'Home did re-check');
+        h.eq(tree.root.findAllByType(UpdateRequiredScreen).length, 0, 'and the dismissed update screen stayed away');
+      },
+    ));
+
+  await h.test('Launcher: a plan request the server answered with an error does not mean offline', () =>
+    onlineLauncher(async (launcher, net) => {
+      const probesBefore = launcher.probes.length;
+      net.answer = 500;
+      await typeAndContinue(launcher);
+      h.eq(launcher.probes.length - probesBefore, 0, 'no probe was asked for');
+      h.eq(noticeCount(launcher.tree), 0, 'a server that answered is online');
+    }));
 }

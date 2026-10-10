@@ -140,7 +140,8 @@ import { versionLabel, type SessionProbe } from './settings-sections';
 import { probeServerHealth } from './server-probe';
 import { ConnectivityLoop } from './connectivity';
 import type { Connectivity } from './connectivity';
-import { showOfflineIndicator, showServerUnreachableNotice } from './connectivity-ux';
+import { isNetworkFailure, showOfflineIndicator, showServerUnreachableNotice } from './connectivity-ux';
+import { useAppForeground } from './use-app-foreground';
 import { FlowDrafts, draftKey } from './flow-draft';
 import { loadHighlighting } from './highlighting';
 import { getDeviceId, resetDeviceId } from './device-id';
@@ -775,12 +776,25 @@ function LauncherShell({
 
   // Capture at request start. A response belongs to the address and consent session that sent
   // it, even if a detached generation outlives a Settings edit or a revoke/regrant cycle.
-  const onlineForRequest = (options: ConsentedClientOptions): (() => void) => {
+  const connectivityOfRequest = (options: ConsentedClientOptions) => {
     const epoch = connectivityEpoch.current;
-    return () => {
+    return (act: (loop: ConnectivityLoop) => void): void => {
       if (epoch === connectivityEpoch.current && options.baseUrl === effectiveServerUrl(kv)) {
-        connectivityLoopRef.current?.markOnline();
+        const loop = connectivityLoopRef.current;
+        if (loop) act(loop);
       }
+    };
+  };
+  const onlineForRequest = (options: ConsentedClientOptions): (() => void) => {
+    const inSession = connectivityOfRequest(options);
+    return () => inSession((loop) => loop.markOnline());
+  };
+  // A request that got no answer at all is the strongest sign the connection is gone: the loop
+  // confirms it with a probe and turns offline, and the notice follows.
+  const failureForRequest = (options: ConsentedClientOptions): ((error: unknown, abandoned?: boolean) => void) => {
+    const inSession = connectivityOfRequest(options);
+    return (error, abandoned = false) => {
+      if (!abandoned && isNetworkFailure(error)) inSession((loop) => loop.noteNetworkFailure());
     };
   };
 
@@ -808,11 +822,21 @@ function LauncherShell({
       return undefined;
     }
     let live = true;
+    // The update check is a launch-time one: the first probe that reads a minimum decides it, so
+    // Home's later re-checks never bring back an update screen the person has dismissed.
+    let minimumRead = false;
     const loop = new ConnectivityLoop({
       probe: async () => {
         const health = await probeServerHealth(decision.baseUrl);
-        if (live) setLastProbe({ address: decision.baseUrl, result: health.result });
-        if (live && belowMinimumBuild(appInfo, health.minBuild)) {
+        // A re-check that finds what the last one found leaves the screens as they are.
+        if (live) {
+          setLastProbe((prev) => (prev?.address === decision.baseUrl && prev.result === health.result
+            ? prev
+            : { address: decision.baseUrl, result: health.result }));
+        }
+        const firstMinimum = !minimumRead && health.minBuild !== undefined;
+        if (firstMinimum) minimumRead = true;
+        if (live && firstMinimum && belowMinimumBuild(appInfo, health.minBuild)) {
           log.warn(CHANNELS.app, 'installed build is below the server minimum', { ...health.minBuild });
           setScreen((prev) => (updateMayInterrupt(prev) ? updateScreenFrom(prev) : prev));
         }
@@ -828,6 +852,15 @@ function LauncherShell({
       if (connectivityLoopRef.current === loop) connectivityLoopRef.current = null;
     };
   }, [clientOptions, appInfo]);
+
+  // Where the loop may look, applied to every loop the effect above builds (it runs first): the
+  // app must be in the foreground, and an online session re-checks on its own only at Home.
+  const appForeground = useAppForeground();
+  const homeShowing = screen.kind === 'home';
+  useEffect(() => {
+    connectivityLoopRef.current?.setForeground(appForeground);
+    connectivityLoopRef.current?.setWatching(homeShowing);
+  }, [clientOptions, appInfo, appForeground, homeShowing]);
 
   // A breadcrumb for every connectivity transition, the same device-observability discipline as
   // the `serverUrl`-keyed sink-config effect above: this session state has no screen surface of
@@ -1544,6 +1577,7 @@ function LauncherShell({
     const options = resolveClientOptions();
     if (!options) return;
     const markOnline = onlineForRequest(options);
+    const requestFailed = failureForRequest(options);
     const request = flowRequests.start('compose');
     let questions: FlowQuestion[] = [];
     let limit: FlowLimit | undefined;
@@ -1566,6 +1600,7 @@ function LauncherShell({
       // The sheet was left while this was in flight: the abort surfaces here as a plain
       // `AbortError`, and it is swallowed — no failure, no breadcrumb.
       if (request.cancelled) return;
+      requestFailed(e);
       const landing = refusalLandingOf(plan, 'clarify', e, markOnline);
       if (landing) {
         setScreen(onlyOnStep<Screen, 'plan'>('plan', () => landing));
@@ -1598,6 +1633,7 @@ function LauncherShell({
     const options = resolveClientOptions();
     if (!options) return;
     const markOnline = onlineForRequest(options);
+    const requestFailed = failureForRequest(options);
     const request = flowRequests.start('plan');
     try {
       const response = await rewritePrompt(
@@ -1616,6 +1652,7 @@ function LauncherShell({
     } catch (e) {
       // A request the user walked away from fails as an abort: no failure, no breadcrumb.
       if (request.cancelled) return;
+      requestFailed(e);
       const landing = refusalLandingOf(plan, 'rewrite', e, markOnline);
       setScreen(onlyOnStep<Screen, 'plan'>('plan', landing ? () => landing : planProblem('rewrite', e)));
     } finally {
@@ -2260,6 +2297,7 @@ function LauncherShell({
     const options = resolveClientOptions();
     if (!options) return;
     const markOnline = onlineForRequest(options);
+    const requestFailed = failureForRequest(options);
     setScreen(opening);
 
     const controller = new AbortController();
@@ -2420,6 +2458,7 @@ function LauncherShell({
         if (selected) setDoneIfAttached((s) => (s.kind === 'making' ? readyStep(s, installed) : s));
       });
     } catch (error) {
+      requestFailed(error, ctl.cancelled);
       settleUnexpectedAttemptFailure({
         error,
         ctl,
