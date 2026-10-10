@@ -258,3 +258,12 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   exit 0; the removal ratchet on the merged tree against the staging tip before it: PASS, no trailer needed; decisions
   #79 and #80 written from its design D1 and D6), `proposal/separate-shared-data` merged as `039be5a3` (documents only;
   not built). copy-app-data task 3.0 now says `hasSavedData` is asked of `engineAppId(entry)`.
+- gate-full on `ceabd1d8` (synthrun-reach and the proposal merged): FULL GATE PASSED, synthetic-run suite 519 checks;
+  pushed. #162, #163, #166 closed.
+- report: chain-16k STATUS complete, fast gate PASS, knip clean, commit `d7ba03b6` (3 files). Cause, from the emulator's
+  log: the focus request made on the overlay's `onShow` is still too early ("view is not served", or aborted after
+  layout), and `focus()` on a focused field does nothing, so nothing asked again. Fix: on Android the field asks the
+  keyboard library once a frame until `keyboardWillShow`, at most 120 frames; iOS unchanged. Proven on emulator-5560,
+  three fresh processes each for the composer, Agree on first run and Change it: keyboard up with no tap, Continue
+  just above it. integrity exit 0; removal ratchet PASS; the 53-line product diff read by the orchestrator.
+  merged: `76b41ef4` (--no-ff). regate (fast): PASS.
