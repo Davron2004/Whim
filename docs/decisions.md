@@ -1592,6 +1592,10 @@ assertion-call count or test-declaration count. A commit that touches the file a
 `Check-removal: <reason>` trailer lets it through; the orchestrator lists those at merge
 and accepts or rejects each. Full mechanism: `docs/harness.md` §4.3.
 
+- **Epoch (#169).** The check does not apply to history from before it existed. A base (pinned or
+  merge-base) that is a strict ancestor of the oldest commit adding the script is replaced by that
+  commit, with one printed line; a later base is used unchanged, and with no such commit there is no
+  clamp. The removals already on the staging branch can't get a trailer without rewriting history.
 - **Counts, not lines.** A raw line diff flags a reword that keeps the assertion. The script parses
   (TypeScript's parser, a small shell scanner), so comments and strings are ignored and
   commenting an assertion out is a removal. The vocabulary is one table in the script.

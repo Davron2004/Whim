@@ -484,6 +484,90 @@ await test('shell: a delimiter with a dash, and an arithmetic shift, do not swal
   assert.match(r.out, /assertions 2 -> 1/);
 });
 
+// ---- the epoch: history from before the ratchet existed is not held to it -------------------------
+const OLD = 'checks/test/old.suite.ts';
+const NEW = 'checks/test/new.suite.ts';
+const ENGINE = 'scripts/removal-ratchet.mjs';
+
+// c0 holds two suites; c1 deletes OLD (before the ratchet exists); c2 adds the ratchet script (the
+// epoch); c3 is an unrelated commit; NEW is deleted by the test, after the epoch.
+function epochFixture() {
+  const { dir, base: c0 } = fixture({ [OLD]: SUITE_TEXT, [NEW]: SUITE_TEXT });
+  fs.rmSync(path.join(dir, OLD));
+  const c1 = commit(dir, 'pre-epoch removal');
+  write(dir, ENGINE, '// the ratchet lands here\n');
+  const epoch = commit(dir, 'add the ratchet');
+  write(dir, 'docs/n.md', 'n\n');
+  const c3 = commit(dir, 'unrelated');
+  return { dir, c0, c1, epoch, c3 };
+}
+
+await test('epoch: a base older than the epoch passes a pre-epoch removal, and says it clamped', async () => {
+  const f = epochFixture();
+  const r = ratchet(f.dir, { base: f.c0 });
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, new RegExp(`base ${f.c0.slice(0, 8)} predates the ratchet \\(added in ${f.epoch.slice(0, 8)}\\); comparing from ${f.epoch.slice(0, 8)}`));
+});
+
+await test('epoch: a post-epoch removal without a trailer still fails when the base is older', async () => {
+  const f = epochFixture();
+  fs.rmSync(path.join(f.dir, NEW));
+  commit(f.dir, 'post-epoch removal');
+  const r = ratchet(f.dir, { base: f.c0 });
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /new\.suite\.ts: deleted/);
+  assert.doesNotMatch(r.out, /old\.suite\.ts/);
+});
+
+await test('epoch: a post-epoch removal with a trailer passes when the base is older', async () => {
+  const f = epochFixture();
+  fs.rmSync(path.join(f.dir, NEW));
+  commit(f.dir, 'post-epoch removal\n\nCheck-removal: the screen is gone');
+  const r = ratchet(f.dir, { base: f.c0 });
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /authorised: checks\/test\/new\.suite\.ts: deleted/);
+});
+
+await test('epoch: an older base clamps the same way unpinned (merge-base with main) and with --head', async () => {
+  const f = epochFixture();
+  git(f.dir, ['switch', '-q', '-c', 'work', f.c0]);
+  git(f.dir, ['merge', '-q', '--ff-only', 'main']);
+  git(f.dir, ['branch', '-f', 'main', f.c0]); // main is where the branch started: older than the epoch
+  fs.rmSync(path.join(f.dir, NEW));
+  commit(f.dir, 'post-epoch removal');
+  const unpinned = ratchet(f.dir);
+  assert.equal(unpinned.code, 1, unpinned.out);
+  assert.match(unpinned.out, /predates the ratchet/);
+  assert.doesNotMatch(unpinned.out, /old\.suite\.ts/);
+  const head = ratchet(f.dir, { base: f.c0, args: ['--head', f.c3] });
+  assert.equal(head.code, 0, head.out);
+});
+
+await test('epoch: a base after the epoch is used unchanged, with no clamp line', async () => {
+  const f = epochFixture();
+  fs.rmSync(path.join(f.dir, NEW));
+  commit(f.dir, 'post-epoch removal');
+  const after = ratchet(f.dir, { base: f.c3 });
+  assert.equal(after.code, 1, after.out);
+  assert.doesNotMatch(after.out, /predates the ratchet/);
+  const atEpoch = ratchet(f.dir, { base: f.epoch });
+  assert.equal(atEpoch.code, 1, atEpoch.out);
+  assert.doesNotMatch(atEpoch.out, /predates the ratchet/);
+});
+
+await test('epoch: with no commit that added the script there is no clamp', async () => {
+  const { dir, base } = fixture(BASE_FILES);
+  fs.rmSync(path.join(dir, SUITE));
+  commit(dir, 'delete');
+  const absent = ratchet(dir, { base });
+  assert.equal(absent.code, 1, absent.out);
+  assert.doesNotMatch(absent.out, /predates the ratchet/);
+  write(dir, ENGINE, '// uncommitted\n'); // present in the working tree only
+  const uncommitted = ratchet(dir, { base });
+  assert.equal(uncommitted.code, 1, uncommitted.out);
+  assert.doesNotMatch(uncommitted.out, /predates the ratchet/);
+});
+
 // ---- the base -------------------------------------------------------------------------------------
 await test('without GATE_BASE the base is the merge-base with main', async () => {
   const { dir } = fixture(BASE_FILES);

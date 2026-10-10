@@ -15,6 +15,12 @@
 //         over history, and the tests). With the working tree, a removal in a file that has
 //         uncommitted changes can never be authorised: the trailer lives on a commit.
 //
+// EPOCH. The ratchet does not apply to history from before it existed: the epoch is the oldest
+// commit, reachable from the tree being gated, that added scripts/removal-ratchet.mjs. A base that
+// is a strict ancestor of the epoch is replaced by the epoch (however the base was chosen), and one
+// line says so. A base at or after the epoch is used as given. With no such commit (the script is
+// uncommitted, or absent from the history) there is no clamp.
+//
 // Exit 0 = pass, 1 = a removal without authorisation, 2 = the base could not be resolved.
 //
 // WHAT IS COUNTED (one table, below). Per file, two numbers: assertion call sites and test
@@ -261,6 +267,22 @@ function resolveBase(explicit) {
   return sha ? { sha: sha.trim(), label } : { error: `base ${rev} (${label}) is not a commit in this repository` };
 }
 
+// The commit that first added this script, reachable from `head` (default HEAD), or null.
+function findEpoch(head) {
+  const out = git(['log', '--diff-filter=A', '--format=%H', head ?? 'HEAD', '--', 'scripts/removal-ratchet.mjs'], { allowFail: true });
+  const hits = (out ?? '').split('\n').filter(Boolean);
+  return hits.length > 0 ? hits[hits.length - 1] : null;
+}
+
+// Replace a base that predates the ratchet with the commit that introduced it.
+function clampToEpoch(base, head) {
+  const epoch = findEpoch(head);
+  if (epoch === null || epoch === base.sha) return base;
+  if (git(['merge-base', '--is-ancestor', base.sha, epoch], { allowFail: true }) === null) return base;
+  console.log(`removal ratchet: base ${base.sha.slice(0, 8)} predates the ratchet (added in ${epoch.slice(0, 8)}); comparing from ${epoch.slice(0, 8)}`);
+  return { sha: epoch, label: `${base.label}, clamped to the commit that added the ratchet` };
+}
+
 // Changed files between base and the tree being gated, renames paired: [{ status, oldPath, newPath }].
 function changedFiles(base, head) {
   const args = ['diff', '--name-status', '-M', '-l20000', '-z', base];
@@ -403,12 +425,13 @@ function run() {
   const opts = parseArgs(process.argv.slice(2));
   const top = git(['rev-parse', '--show-toplevel']).trim();
   process.chdir(top);
-  const base = resolveBase(opts.base);
-  if (base.error) {
-    console.error(`removal ratchet: ${base.error}`);
+  const resolved = resolveBase(opts.base);
+  if (resolved.error) {
+    console.error(`removal ratchet: ${resolved.error}`);
     console.error('Set GATE_BASE to the pinned base commit, or make `main` resolvable.');
     return 2;
   }
+  const base = clampToEpoch(resolved, opts.head);
 
   const rows = changedFiles(base.sha, opts.head);
   const removals = rows.map((row) => removalFor(row, base.sha, top, opts.head)).filter((r) => r !== null);
