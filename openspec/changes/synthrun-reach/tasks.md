@@ -23,10 +23,10 @@
 - [x] 3.5 Add the scenarios of "The sweep enters values before it presses commands" on the recipe-box-p1 and workout-log-p1 fixtures, plus the gated-screen, gated-screen-throws, orphan, icon-only-label, running-value and toast scenarios (score-keeper-p1 for the running value); red-check the order against values-after-buttons, the diagnostic against always-warn, and the per-path limit against none
 - [x] 3.6 Replay the 22 stored apps and record the same measures as 2.6
 - [x] 3.7 Bound the toast wait at two per run, by count, and add the two toast scenarios of the hit-test requirement
-- [ ] 3.8 Review fixes: retry a stuck pick once through the loop (toast or not); keep the report's screens and sweep counts current so a truncated or aborted run reports them; a disabled-control test that reaches the hit test; one shared `AppRecord` builder for production and tests; stale comments; pin the negative control to its cause
+- [x] 3.8 Review fixes: retry a stuck pick once through the loop (toast or not); keep the report's screens and sweep counts current so a truncated or aborted run reports them; a disabled-control test that reaches the hit test; one shared `AppRecord` builder for production and tests; stale comments; pin the negative control to its cause
 
 ## 4. Spec sync and closing
 
 - [ ] 4.1 Apply this change's delta to `openspec/specs/synthetic-run/spec.md`
-- [ ] 4.2 Fill `evidence.md` §6 with the after numbers
+- [x] 4.2 Fill `evidence.md` §6 with the after numbers
 - [ ] 4.3 Pass `scripts/gate.sh` with `GATE_BASE` pinned, the Chromium suites that reach synthrun, knip and `openspec validate --all --strict`

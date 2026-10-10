@@ -94,4 +94,46 @@ instead of deferred, and the header Back button is pressed before the screen's f
 
 ## 6. After the change
 
-Filled in at the end of implementation (task 4.2).
+The same replay at `96835687` (all chains and the review fixes). Raw output:
+`Whim-evidence/flowbench-2026-10-09/synthrun-reach/replay-after-96835687.jsonl`.
+
+| Measure | a579f6f8 | After |
+|---|---|---|
+| Apps whose run report triggers a repair turn | 7 of 22 (all warnings-only) | 0 |
+| `unreachable_screen` warnings | 11 | 0 |
+| Declared screens reached only by cold-mount | 11 of 48 | 2 of 48 |
+| `run_truncated` | 0 | 0 |
+| Actions that hit Playwright's 3 s timeout | 18 | 0 |
+| Sweep wall time, sum over 22 apps | 137.9 s | 266.9 s |
+| Slowest app | 27.5 s (workout-log-p2) | 32.7 s (workout-log-p2, 41 actions) |
+| Actions taken, sum | not recorded | 390 |
+| Fingerprints seen and never acted on, sum | not recorded | 52 |
+
+The two screens still cold-mounted are flashcards-p1's Done (reached only after every card in a
+review is answered) and workout-log-p1's SessionDetail (design D5 explains why). Both have a
+navigate call, so neither raises a diagnostic.
+
+**Why the sweep takes longer.** A blocked click now costs nothing, yet total sweep time nearly
+doubled, and there are two reasons. Apps do more once storage answers: water-counter-p1 went from
+0 actions to 2, recipe-box-p1 from 3 to 21. And the quiet window is now honoured. At a579f6f8
+`awaitQuiet` judged the window on activity recorded before the click, so it usually returned at
+once and an action cost about 0.2 s (tip-splitter-p1: 7 actions in 1.3 s). An action now waits
+the full 300 ms after its own effects and costs about 0.68 s on average (390 actions in 264 s of
+sweep time; tip-splitter-p1: the same 7 actions in 3.9 s). The 45 s budget therefore covers
+about 65 actions. No stored app truncates, and the margin on the slowest shrank from 17.5 s to
+12.3 s. Issue #176 puts the budget question to the owner.
+
+**Effect on generate time, estimated from the flowbench run's own stage times.** The seven
+warnings-only repairs each cost a repair turn plus a second run: 115.7 s in total across the
+seven apps (`flow-visible.json`: 7.8, 36.1, 10.6, 11.6, 22.9, 9.8 and 16.9 s). The longer sweep
+adds 129 s across the 22 apps. Net, about 13 s more over 22 generations that took 1552 s, with
+seven fewer paid repair turns out of eleven. This is an estimate from replay; flowbench itself
+was not re-run, so no model was called.
+
+**Run-to-run stability.** Three replays of chore-rotation-p2 and two each of recipe-box-p2 and
+water-counter-p2 gave identical action counts. `blocked` differed by 2 for recipe-box-p2 between
+the full replay and the repeat (2 and 0); the cause was not investigated.
+
+**packing-checklist-p1**, the app that failed in the flowbench run with four 45 s truncations, was
+not stored, so the replay cannot show it fixed. Its sibling packing-checklist-p2 had 3 timed-out
+actions at a579f6f8 and has none now.
