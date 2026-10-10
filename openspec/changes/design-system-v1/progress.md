@@ -44,3 +44,47 @@ Chains 1–14 and 23 were merged before this ledger existed; their record is the
   Home gained `onSettleDelete`/`onSettleDiscard`, `onUndo*` return boolean, "Too late to undo." toast);
   `HomeHeader.tsx` and `AppTile.tsx` touched outside the listed scope; a degenerate grid width gets a 64 pt cell.
 - integrity: exit 0 (INTEGRITY OK).
+- merged: chain-15b as `51b6d2e2`; ledger commit `bb5d760f`. gate-full on `bb5d760f` started.
+- dispatched: chain-16 (making-describe-plan), BASE `bb5d760f`, worktree `.claude/worktrees/design-system-v1-chain-16`,
+  branch `chain/design-system-v1-chain-16`, implementer on sonnet. It started before the gate-full verdict on its
+  BASE: the merged tree equals 15b's fast-gated tip, so only the full-gate extras were outstanding.
+- decision: the making sheet's draft lives in memory for the session (one for a new app, one per app being
+  changed); persisting drafts across launches is not in v1's chain-16. Cleared when Make it starts the run.
+- decision: chain-16 hosts the existing Making/Ready/Failure components inside the sheet unchanged; chain-17
+  redesigns them. The plan's proposed name is stored on the pending record only if the wire already carries one.
+- gate-full on `bb5d760f` (after chain-15b): FULL GATE PASSED.
+- report: chain-16 STATUS complete, fast gate PASS, knip clean, commit `eee46534` (55 files). Class-A deviations
+  logged: screen kinds renamed (`compose`→`describe`, `clarify` merged into `plan`, `build`→`making`, `done`→`ready`);
+  a clarify/rewrite error stays on Plan with Try again; the sheet presents over Home only; out-of-scope edits
+  (`ComposerBar`, `KeyboardShell`, `AgeScreen`, `refusal-landing`, `flow-chrome`, `flow-skeletons`, upgrade-check
+  `seed.yaml`, `consent-coverage.suite.ts`); `ConsentScreen` kept for Settings' review mode.
+- integrity: exit 0 (INTEGRITY OK). merged: `895ae528` (--no-ff).
+- gate-full on `895ae528`: FAILED in `synthetic-run`, one assertion (`synthrun/test/isolation.ts:589`, the bare-browser
+  egress control saw no UDP datagram within its 2 s poll). Chain-16 touches nothing the suite loads; the suite passed
+  in the two earlier full gates and 391/391 on an immediate rerun. Timing flake under load → issue #172. Every other
+  full-gate step passed in that run. The final gate-full of the shift runs after chain-16b.
+- reviewer on `bb5d760f..eee46534`: VERDICT report-mismatch (undeclared dropped assertions; code otherwise verified:
+  nothing is sent before both legal acts, both recorded with versions, approval gate, abort on close, runs never
+  cross, draft rules). Mediums: Android back inside the sheet never reaches the page handlers on a device (the
+  Modal's `onRequestClose` closes the sheet), a restored change-mode draft keeps a stale `editing` snapshot, a
+  possible iOS double-Modal overlap between the first-run sheet and the making sheet (needs a simulator), and a
+  spec contradiction (next line). → fix chain 16b for everything but the contradiction.
+- OPEN, owner ruling needed (issue #173): task 16.2 and system.md §9 "First run" put terms acceptance and AI-data
+  consent on one sheet with the full disclosure collapsed under "Full details". Live `terms-acceptance` ("own step",
+  "SHALL say nothing about data") and `ai-data-consent` (every disclosure section "before any choice is offered",
+  nothing about the terms) say otherwise, and this change has no delta for either. No requirement was changed.
+  Task 16.2 stays unticked until the ruling.
+- decision: Android back inside the making sheet steps back before it closes: on Plan it cancels an open row edit,
+  else returns to Describe (text and answers kept); on Describe it closes the sheet and keeps the draft. This follows
+  the delta spec's "Back on Plan SHALL return to Describe" and replaces the dispatch note that back always closes.
+- deferred: the making sheet presents over Home even when started from History or a running app. Chain-19 (the
+  Whim sheet grows into the change's plan) and chain-20 (History's "Change it") own those entry points.
+- side findings filed: #167 stale demo flows, #170 no producer for the plan's proposed name, #171 stub rewrite
+  restates clarify questions, #172 synthrun UDP canary flake.
+- ruling received (product-owner session, provisional until the owner confirms on #173): option A, keep the one
+  sheet. Recorded as design.md D19. MODIFIED deltas written for `terms-acceptance` (one requirement renamed) and
+  `ai-data-consent`; `openspec validate design-system-v1 --strict` passes. Kept as requirements: two separate
+  affirmative acts, neither pre-selected, each recorded with its own version; nothing sent before every due act is
+  recorded; exits record nothing; the age gate blocks; the full disclosure is on the sheet and may start collapsed.
+  Tightened: the first layer names every data category sent, the recipients and the purpose, in every legal
+  language. Chain-16b implements the deltas; 16.2 is ticked when it merges.

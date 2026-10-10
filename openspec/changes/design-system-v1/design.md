@@ -136,6 +136,18 @@ language (#89). `product-verbs.suite.ts` is extended rather than duplicated.
 **D18 — Style gallery rule.** Every SDK chain updates `fixtures/style-gallery.app.tsx`; a check fails when an
 exported component isn't used in it. The gallery becomes four screens using `nav` and `Screen title`.
 
+**D19 — First run: one sheet, two acts (ruled 2026-10-10 by the product-owner session, provisional until the
+owner confirms on #173).** `system.md` §9 "First run" wins over the "own step" wording the live
+`terms-acceptance` and `ai-data-consent` specs kept from legal-surface-v2; this change now carries MODIFIED
+deltas for both. What stays a requirement: accepting the terms (the checkbox) and agreeing to send data (the
+button) are two separate affirmative acts, neither pre-selected, each recorded with its own version; nothing
+leaves the phone before every due act is recorded; "Not now" and back record nothing; the age gate still
+blocks. The full disclosure sits on the sheet under "Full details" and may start collapsed. One tightening:
+the always-visible first layer (the lead and the three summary rows) names every category of data sent, who
+receives it and what for, in every legal language. Alternative not taken: two pages in one sheet (terms, then
+the whole disclosure before the buttons). D8 ("copies: fresh data, no question") is superseded by the RESOLVED
+note in tasks.md and the Forking requirement.
+
 ## Risks / Trade-offs
 
 - [New native dependencies on RN 0.85.3 bridgeless break a platform build] → one bootstrap chain adds and pins
