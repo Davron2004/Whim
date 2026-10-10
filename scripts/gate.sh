@@ -25,6 +25,7 @@ CONFIG_SET=(
   eslint.config.* .eslintrc* .eslintignore knip.json knip.config.*
   scripts/gate.sh scripts/gate-full.sh scripts/fixloop.sh scripts/git-cleanup-check.sh scripts/sync-codex.mjs
   scripts/worktree.sh   # executed below (the node_modules precondition)
+  scripts/removal-ratchet.mjs   # executed below (the removal ratchet)
   .claude/hooks .claude/settings.json .claude/agents .claude/commands
   .codex   # Codex mirror — hook symlinks into .claude/hooks + generated agent TOMLs
   babel.config.js metro.config.js
@@ -59,6 +60,12 @@ check() {
   return 0
 }
 
+# Removal ratchet (#159): verification code may grow freely; a deleted check file or a drop in a
+# file's assertion or test count fails unless a commit touching it carries `Check-removal: <reason>`.
+# Compares against the same base as the tripwire (GATE_BASE, else the merge-base with main). Cheap,
+# and it needs no build, so it goes first. See docs/harness.md.
+check "removal ratchet"   node scripts/removal-ratchet.mjs
+
 # build first: ≈0.3s (esbuild), and it writes the gitignored src/runtime/generated/* that
 # typecheck imports (useMiniAppHost / LauncherRoot / DevProbeScreen) and that Metro + the
 # invariants read. A fresh worktree has none of these. Cheap enough to rerun every attempt,
@@ -76,6 +83,7 @@ check "static-checks"     npm run -s checks:test
 check "corpus-eval"       npm run -s evals:test
 check "sonar ingestion"   node scripts/test/sonar-pr-issues.test.mjs
 check "tmp bundles"       node scripts/test/tmp-bundle.test.mjs
+check "removal ratchet suite" node scripts/test/removal-ratchet.test.mjs
 check "netdeny canary"    node scripts/netdeny/test/canary.test.mjs
 check "fixloop preflight" bash scripts/test/fixloop-preflight.test.sh
 check "bash policy"       bash .claude/hooks/test/bash-policy.test.sh

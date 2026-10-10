@@ -37,6 +37,13 @@
 # This file is human-edited only (Class-2 adjacent: it verifies the verifier).
 set -uo pipefail
 
+# Hermetic against the caller's environment (#155). Every fixture runs the real gate and fixloop
+# logic against a throwaway repo, and those read GATE_BASE, FIXLOOP_* and WHIM_* from the
+# environment: an exported GATE_BASE made the nested gate refuse on config drift against the
+# caller's base and never reach the message a case asserts. A case that needs one sets it itself.
+for _v in $(compgen -e | grep -E '^(GATE_|FIXLOOP_|WHIM_MAIN$|WHIM_WORKTREE_COPY$)'); do unset "$_v"; done
+unset _v
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 REAL_FIXLOOP="$REPO/scripts/fixloop.sh"
 REAL_CLEANUP="$REPO/scripts/git-cleanup-check.sh"
