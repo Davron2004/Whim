@@ -15,11 +15,13 @@
 //         over history, and the tests). With the working tree, a removal in a file that has
 //         uncommitted changes can never be authorised: the trailer lives on a commit.
 //
-// EPOCH. The ratchet does not apply to history from before it existed: the epoch is the oldest
-// commit, reachable from the tree being gated, that added scripts/removal-ratchet.mjs. A base that
-// is a strict ancestor of the epoch is replaced by the epoch (however the base was chosen), and one
-// line says so. A base at or after the epoch is used as given. With no such commit (the script is
-// uncommitted, or absent from the history) there is no clamp.
+// EPOCH. The ratchet does not apply to history from before it existed: the epoch is the first commit
+// on the gated tree's first-parent line that added scripts/removal-ratchet.mjs (for a merge, the
+// merge that brought it in). A base that is a strict ancestor of the epoch's first parent is
+// replaced by that parent (however the base was chosen), and one line says so, so a removal made in
+// the epoch commit itself, or on the branch it arrived on, is still checked. A base at or after
+// that point is used as given. With no such commit (the script is uncommitted, or absent from the
+// history) there is no clamp. First-parent keeps the walk linear and independent of commit dates.
 //
 // Exit 0 = pass, 1 = a removal without authorisation, 2 = the base could not be resolved.
 //
@@ -267,20 +269,22 @@ function resolveBase(explicit) {
   return sha ? { sha: sha.trim(), label } : { error: `base ${rev} (${label}) is not a commit in this repository` };
 }
 
-// The commit that first added this script, reachable from `head` (default HEAD), or null.
+// The first commit on `head`'s first-parent line (default HEAD) that added this script, or null.
 function findEpoch(head) {
-  const out = git(['log', '--diff-filter=A', '--format=%H', head ?? 'HEAD', '--', 'scripts/removal-ratchet.mjs'], { allowFail: true });
+  const out = git(['log', '--first-parent', '--diff-filter=A', '--format=%H', head ?? 'HEAD', '--', 'scripts/removal-ratchet.mjs'], { allowFail: true });
   const hits = (out ?? '').split('\n').filter(Boolean);
   return hits.length > 0 ? hits[hits.length - 1] : null;
 }
 
-// Replace a base that predates the ratchet with the commit that introduced it.
+// Replace a base that predates the ratchet with the point just before it arrived.
 function clampToEpoch(base, head) {
   const epoch = findEpoch(head);
-  if (epoch === null || epoch === base.sha) return base;
-  if (git(['merge-base', '--is-ancestor', base.sha, epoch], { allowFail: true }) === null) return base;
-  console.log(`removal ratchet: base ${base.sha.slice(0, 8)} predates the ratchet (added in ${epoch.slice(0, 8)}); comparing from ${epoch.slice(0, 8)}`);
-  return { sha: epoch, label: `${base.label}, clamped to the commit that added the ratchet` };
+  if (epoch === null) return base;
+  const before = git(['rev-parse', '--verify', '--quiet', `${epoch}^`], { allowFail: true })?.trim() || epoch;
+  if (before === base.sha) return base;
+  if (git(['merge-base', '--is-ancestor', base.sha, before], { allowFail: true }) === null) return base;
+  console.log(`removal ratchet: base ${base.sha.slice(0, 8)} predates the ratchet (added in ${epoch.slice(0, 8)}); comparing from ${before.slice(0, 8)}`);
+  return { sha: before, label: `${base.label}, clamped to just before the ratchet` };
 }
 
 // Changed files between base and the tree being gated, renames paired: [{ status, oldPath, newPath }].

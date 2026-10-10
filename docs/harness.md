@@ -168,9 +168,9 @@ get green. `scripts/removal-ratchet.mjs` (issue #159) lets additions through and
 visible. "Ratchet" is only the name: a per-file count may go up but not down.
 
 It compares code under `checks/` and any `test/` directory (not `fixtures/` or `invariants/`)
-against `GATE_BASE`, else the merge-base with `main`; a base older than the commit that first added the
-script is replaced by that commit (the epoch), so history from before the check existed is not held to it.
-Per file it counts assertion calls and test
+against `GATE_BASE`, else the merge-base with `main`. A base older than the first commit on the gated
+first-parent line that added the script (the epoch) is replaced by that commit's parent, so history from
+before the check existed is not held to it, but the epoch commit and the branch it arrived on are. Per file it counts assertion calls and test
 declarations (an import of a `*.suite` module is one, since that is how a sequencer runs it) with
 TypeScript's parser, or a small scanner for `.sh`; the `VOCABULARY` table at the top of the script
 is the whole rule. Comments and strings never count, so commenting an assertion out is a removal

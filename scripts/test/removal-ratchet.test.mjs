@@ -490,7 +490,8 @@ const NEW = 'checks/test/new.suite.ts';
 const ENGINE = 'scripts/removal-ratchet.mjs';
 
 // c0 holds two suites; c1 deletes OLD (before the ratchet exists); c2 adds the ratchet script (the
-// epoch); c3 is an unrelated commit; NEW is deleted by the test, after the epoch.
+// epoch; the clamp point is its parent c1); c3 is an unrelated commit; NEW is deleted by the test,
+// after the epoch.
 function epochFixture() {
   const { dir, base: c0 } = fixture({ [OLD]: SUITE_TEXT, [NEW]: SUITE_TEXT });
   fs.rmSync(path.join(dir, OLD));
@@ -506,7 +507,7 @@ await test('epoch: a base older than the epoch passes a pre-epoch removal, and s
   const f = epochFixture();
   const r = ratchet(f.dir, { base: f.c0 });
   assert.equal(r.code, 0, r.out);
-  assert.match(r.out, new RegExp(`base ${f.c0.slice(0, 8)} predates the ratchet \\(added in ${f.epoch.slice(0, 8)}\\); comparing from ${f.epoch.slice(0, 8)}`));
+  assert.match(r.out, new RegExp(`base ${f.c0.slice(0, 8)} predates the ratchet \\(added in ${f.epoch.slice(0, 8)}\\); comparing from ${f.c1.slice(0, 8)}`));
 });
 
 await test('epoch: a post-epoch removal without a trailer still fails when the base is older', async () => {
@@ -550,9 +551,64 @@ await test('epoch: a base after the epoch is used unchanged, with no clamp line'
   const after = ratchet(f.dir, { base: f.c3 });
   assert.equal(after.code, 1, after.out);
   assert.doesNotMatch(after.out, /predates the ratchet/);
-  const atEpoch = ratchet(f.dir, { base: f.epoch });
-  assert.equal(atEpoch.code, 1, atEpoch.out);
-  assert.doesNotMatch(atEpoch.out, /predates the ratchet/);
+  for (const pinned of [f.epoch, f.c1]) {
+    const r = ratchet(f.dir, { base: pinned });
+    assert.equal(r.code, 1, r.out);
+    assert.doesNotMatch(r.out, /predates the ratchet/);
+  }
+});
+
+await test('epoch: a removal in the epoch commit itself is still checked', async () => {
+  const { dir, base } = fixture({ [OLD]: SUITE_TEXT });
+  fs.rmSync(path.join(dir, OLD));
+  write(dir, ENGINE, '// the ratchet lands with a removal\n');
+  commit(dir, 'add the ratchet and drop a suite');
+  const r = ratchet(dir, { base });
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /old\.suite\.ts: deleted/);
+});
+
+await test('epoch: the ratchet arriving by merge clamps to the merge, so earlier staging removals pass but the branch own removals do not', async () => {
+  const { dir, base } = fixture({ [OLD]: SUITE_TEXT, [NEW]: SUITE_TEXT });
+  git(dir, ['switch', '-q', '-c', 'ratchet']);
+  fs.rmSync(path.join(dir, NEW)); // removed on the branch that brings the ratchet, before it
+  commit(dir, 'drop on the ratchet branch');
+  write(dir, ENGINE, '// the ratchet\n');
+  commit(dir, 'add the ratchet');
+  git(dir, ['switch', '-q', 'main']);
+  fs.rmSync(path.join(dir, OLD)); // staging moved on meanwhile, without the ratchet
+  commit(dir, 'staging drops a suite');
+  git(dir, ['merge', '-q', '--no-ff', 'ratchet', '-m', 'merge the ratchet']);
+  const r = ratchet(dir, { base });
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /new\.suite\.ts: deleted/);
+  assert.doesNotMatch(r.out, /old\.suite\.ts/);
+});
+
+await test('epoch: re-adding the script with a back-dated commit does not move the epoch later', async () => {
+  // eslint-disable-next-line sonarjs/no-os-command-from-path -- intentional: see git() above
+  const gitRaw = (dir, args, env = {}) => spawnSync('git', ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8', env: cleanEnv(env) });
+  const { dir, base } = fixture({ [OLD]: SUITE_TEXT });
+  write(dir, ENGINE, '// v1\n');
+  commit(dir, 'add the ratchet');
+  fs.rmSync(path.join(dir, OLD));
+  commit(dir, 'post-epoch removal');
+  git(dir, ['switch', '-q', '-c', 'x']);
+  git(dir, ['rm', '-q', ENGINE]);
+  commit(dir, 'delete the script');
+  write(dir, ENGINE, '// v2\n');
+  git(dir, ['add', '-A']);
+  const old = '2001-01-01T00:00:00Z';
+  gitRaw(dir, ['commit', '-q', '-m', 'back-dated re-add'], { GIT_COMMITTER_DATE: old, GIT_AUTHOR_DATE: old });
+  git(dir, ['switch', '-q', 'main']);
+  write(dir, ENGINE, '// v3\n');
+  commit(dir, 'edit the script on main');
+  gitRaw(dir, ['merge', '--no-ff', '--no-commit', 'x']);
+  write(dir, ENGINE, '// v4\n');
+  commit(dir, 'merge x');
+  const r = ratchet(dir, { base });
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /old\.suite\.ts: deleted/);
 });
 
 await test('epoch: with no commit that added the script there is no clamp', async () => {
