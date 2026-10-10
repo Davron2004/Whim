@@ -121,12 +121,12 @@
 
 ## 15. Home and tiles
 
-- [ ] 15.1 `AppTile` states of `system.md` §3.2 (being made, queued, failed, stopped, collapsed old attempts, needs update, changing ring, change failed, copy, example) with accessibility labels and hints (#48, #133)
-- [ ] 15.2 Home layout (calls `hideLaunchScreen()` on its first frame): "Your apps", settings button, 4/3-column grid and the 200% list, order rule (being made, recent attempts, apps, newest first) (#132), search from 13 apps, skeleton with exact cells, empty state with idea chips, live offline notice, composer bar with draft state
-- [ ] 15.3 Tile context menus per state (Open, Change it, History, Make a copy, Customize tile, Share link, Delete; Details/Stop; What happened/Try again/Discard) on `ContextMenu` (#135); Share link via the platform share sheet; remove the share-or-fresh fork sheet and its copy keys
-- [ ] 15.4 Soft delete with the 10 s Undo toast and Discard with 6 s, on the pending-purge marker; no native `Alert`
-- [ ] 15.5 Customize tile sheet (ten tints, searchable glyph grid) writing the override
-- [ ] 15.6 Update `home-grid-ui`, `launcher-interactions` and product-verbs suites
+- [x] 15.1 `AppTile` states of `system.md` §3.2 (being made, queued, failed, stopped, collapsed old attempts, needs update, changing ring, change failed, copy, example) with accessibility labels and hints (#48, #133)
+- [x] 15.2 Home layout (calls `hideLaunchScreen()` on its first frame): "Your apps", settings button, 4/3-column grid and the 200% list, order rule (being made, recent attempts, apps, newest first) (#132), search from 13 apps, skeleton with exact cells, empty state with idea chips, live offline notice, composer bar with draft state
+- [x] 15.3 Tile context menus per state (Open, Change it, History, Make a copy, Customize tile, Share link, Delete; Details/Stop; What happened/Try again/Discard) on `ContextMenu` (#135); Share link via the platform share sheet; remove the share-or-fresh fork sheet and its copy keys
+- [x] 15.4 Soft delete with the 10 s Undo toast and Discard with 6 s, on the pending-purge marker; no native `Alert`
+- [x] 15.5 Customize tile sheet (ten tints, searchable glyph grid) writing the override
+- [x] 15.6 Update `home-grid-ui`, `launcher-interactions` and product-verbs suites
 
 ## 16. Making flow: sheet, first run, describe, plan
 
