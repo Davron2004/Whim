@@ -157,7 +157,7 @@ import { runAgeCheck, storedAgeGate, type AgeGate, type AgeHold, type Significan
 import { installedAgeSignal, installedSignificantUpdate } from './installed-age-signal';
 import { activeLegalLanguage, chooseLegalLanguage, type LegalLanguage } from './legal-language';
 import { deviceLocale as installedDeviceLocale } from './device-locale';
-import { declineTarget, nextLegalStep } from './consent-flow';
+import { consentGrantDue, declineTarget, nextLegalStep } from './consent-flow';
 import type { ConsentContinuation, LegalFlow } from './consent-flow';
 import { REFUSAL_RULES, refusalRemedy, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
 import type { ServiceRefusal } from './service-refusal';
@@ -592,6 +592,50 @@ function firstRunAskOf(screen: Screen): FirstRunAsk | null {
   return screen.kind === 'consent' && screen.mode === 'ask' ? screen : null;
 }
 
+/**
+ * Whether `page` is a page whose forward action has not been taken yet. A second tap on the same
+ * page lands before React has drawn the next one, and a busy action ignores taps (system.md Button):
+ * it would otherwise send a second request, or start a second run. Every page the machine moves to
+ * is a new object.
+ */
+function useFirstTake() {
+  const taken = useRef<object | null>(null);
+  const firstTake = (page: object): boolean => {
+    if (taken.current === page) return false;
+    taken.current = page;
+    return true;
+  };
+  /** Runs `action` on `page` unless its forward action was already taken. */
+  const takeOnce = <P extends object>(page: P, action: (page: P) => unknown): unknown => (firstTake(page) ? action(page) : undefined);
+  return { firstTake, takeOnce };
+}
+
+/**
+ * Presents the making sheet and the first-run sheet one after the other, never overlapping: a sheet
+ * the screen wants is held back while the other is still on screen, and is presented the moment that
+ * one reports it has finished closing (`Sheet`'s `onClosed`). iOS can drop a presentation issued
+ * while another modal is still being dismissed, which is what agreeing (first-run closes, making
+ * opens) and a `consent_required` refusal (the reverse) would otherwise do.
+ */
+function useSheetHandOver(page: SheetContent | null, ask: FirstRunAsk | null) {
+  const [, redraw] = useState(0);
+  const onScreen = useRef({ making: false, firstRun: false }).current;
+  const making = page !== null && !onScreen.firstRun;
+  const firstRun = ask !== null && !onScreen.making;
+  if (making) onScreen.making = true;
+  if (firstRun) onScreen.firstRun = true;
+  const closed = (sheet: 'making' | 'firstRun') => {
+    onScreen[sheet] = false;
+    redraw((n) => n + 1);
+  };
+  return {
+    page: making ? page : null,
+    ask: firstRun ? ask : null,
+    onMakingClosed: () => closed('making'),
+    onFirstRunClosed: () => closed('firstRun'),
+  };
+}
+
 /** What the first-run sheet needs of the current terms and consent state, read fresh at render. */
 interface FirstRunHostProps {
   ask: FirstRunAsk | null;
@@ -599,8 +643,11 @@ interface FirstRunHostProps {
   onLanguageChange: (language: LegalLanguage) => void;
   /** The stored consent grant's version when it is outdated. */
   outdatedFrom: number | undefined;
+  /** Whether the ask also needs the consent grant recorded (see `grantDue`). */
+  consentDue: (ask: FirstRunAsk) => boolean;
   onAgree: (ask: FirstRunAsk) => void;
   onDecline: (returnTo: Screen) => void;
+  onClosed: () => void;
 }
 
 /**
@@ -608,7 +655,7 @@ interface FirstRunHostProps {
  * is shown while the machine is on the terms or ask-mode consent step; closing it keeps showing the
  * ask that was open for the length of the sheet's exit, so it never animates out blank.
  */
-function FirstRunHost({ ask, language, onLanguageChange, outdatedFrom, onAgree, onDecline }: Readonly<FirstRunHostProps>) {
+function FirstRunHost({ ask, language, onLanguageChange, outdatedFrom, consentDue, onAgree, onDecline, onClosed }: Readonly<FirstRunHostProps>) {
   const last = useRef<FirstRunAsk | null>(null);
   if (ask !== null) last.current = ask;
   const shown = last.current;
@@ -619,11 +666,13 @@ function FirstRunHost({ ask, language, onLanguageChange, outdatedFrom, onAgree, 
       language={language}
       onLanguageChange={onLanguageChange}
       termsDue={shown.kind === 'terms'}
+      consentDue={consentDue(shown)}
       termsOutdated={shown.kind === 'terms' && shown.outdated}
       outdatedFrom={outdatedFrom}
       refused={shown.refused}
       onAgree={() => onAgree(shown)}
       onClose={() => onDecline(shown.returnTo)}
+      onClosed={onClosed}
     />
   );
 }
@@ -1322,6 +1371,10 @@ function LauncherShell({
     return legalScreen({ continuation: resume, returnTo: back, refused: true });
   };
 
+  /** Whether `ask` also needs the consent grant recorded: it is not current, or the server refused it
+   *  again. When only the terms are due the stored grant is left exactly as it is. */
+  const grantDue = (ask: FirstRunAsk): boolean => consentGrantDue(consentStatus(kv), ask.refused);
+
   /** The first-run sheet's `Agree to send descriptions`: the two acts on purpose, each recorded as it
    *  always was with its own version — the terms acceptance when it was due, and the consent grant
    *  when it is not current (or a `consent_required` refusal asked again) — then the action the
@@ -1329,7 +1382,7 @@ function LauncherShell({
    *  agrees, the action they started SHALL continue as if consent had already existed"). */
   const onFirstRunAgree = (ask: FirstRunAsk) => {
     if (ask.kind === 'terms') onAcceptTerms();
-    if (ask.refused || consentStatus(kv).kind !== 'granted') onGrantConsent();
+    if (grantDue(ask)) onGrantConsent();
     runContinuation(ask.continuation);
   };
 
@@ -1425,6 +1478,8 @@ function LauncherShell({
     ...(pendingId != null ? { pendingId } : {}),
   });
 
+  const { firstTake, takeOnce } = useFirstTake();
+
   /** Opens the making sheet, optionally scoped to one app being changed: on the draft the person left
    *  for it (a plan page comes back as it was, with its answers and edits; its missing requests are
    *  sent again), or on a fresh describe page. `about` (change mode's shared clarify/rewrite
@@ -1437,8 +1492,13 @@ function LauncherShell({
    *  `APP_CONTEXT_DESCRIPTION_MAX_CHARS` doc comment) — a cap enforced only on the read side is not
    *  a cap. A read that fails or finds no snapshot leaves `aboutRef` untouched for this id, which
    *  `aboutFor` already treats as "no description" — a degraded change flow, never a blocked one. */
-  const openCompose = (editing?: InstalledApp, text?: string) => {
-    const kept = text === undefined ? drafts.get(draftKey({ editing })) : undefined;
+  const openCompose = (requested?: InstalledApp, text?: string) => {
+    // The app as it is now: a draft kept for it carries the app as it was when the draft was kept (a
+    // new version, a new name, a customised tile), and the plan's requests must send the current one.
+    // An app that has gone takes its draft with it.
+    const live = reachableApps().find((app) => app.id === requested?.id);
+    const editing = live ?? requested;
+    const kept = text === undefined ? drafts.reopen(requested, live) : undefined;
     const opened = kept ?? describeStep(editing, text ?? takeHeldPrompt(editing) ?? '');
     setScreen(opened);
     if (opened.kind === 'plan') resumePlan(opened);
@@ -1599,7 +1659,7 @@ function LauncherShell({
    *  that page, never a grey Continue — and the one clarify request that fills it in goes out
    *  straight after. */
   const onDescribeContinue = async (from: DescribeScreen) => {
-    if (!resolveClientOptions()) return;
+    if (!resolveClientOptions() || !firstTake(from)) return;
     if (from.kept) {
       setScreen(from.kept);
       resumePlan(from.kept);
@@ -2743,7 +2803,6 @@ function LauncherShell({
             notice={from.notice}
             onChangeText={(text) => setScreen(onlyOnStep<Screen, 'describe'>('describe', (s) => describeTextChanged(s, text)))}
             onContinue={() => onDescribeContinue(from)}
-            onClose={closeSheet}
           />
         ),
       };
@@ -2759,7 +2818,7 @@ function LauncherShell({
             onBack={() => backToDescribePage(from)}
             onAnswer={(id, change) => setScreen(onlyOnStep<Screen, 'plan'>('plan', (s) => withAnswer(s, id, change)))}
             onChangeRow={(rowIndex, text) => setScreen(onlyOnStep<Screen, 'plan'>('plan', (s) => updatePlanRow(s, rowIndex, text)))}
-            onMake={() => onBuildIt(from)}
+            onMake={() => takeOnce(from, onBuildIt)}
             onTryAgain={() => onPlanTryAgain(from)}
             onMakeInstead={() => onBuildInstead(from)}
           />
@@ -3002,6 +3061,8 @@ function LauncherShell({
   const exit = SCREEN_EXITS[screen.kind];
   const top = stack?.at(-1);
 
+  const handOver = useSheetHandOver(renderSheetPage(), firstRunAskOf(screen));
+
   return (
     <HighlightingProvider enabled={highlighting}>
       <SafeAreaView edges={frameEdgesFor(screen.kind, stack !== null)} style={[styles.root, { backgroundColor: palette.bg }]}>
@@ -3013,15 +3074,17 @@ function LauncherShell({
             onLeave={exit.back === 'root' ? undefined : goHome}
           >
             {content}
-            <MakingSheet content={renderSheetPage()} onClose={closeSheet} />
+            <MakingSheet content={handOver.page} onClose={closeSheet} onClosed={handOver.onMakingClosed} />
             {checkingAge !== undefined && <AgeCheckBack onLeave={() => onLegalDecline(checkingAge.returnTo)} />}
             <FirstRunHost
-              ask={firstRunAskOf(screen)}
+              ask={handOver.ask}
               language={legalLanguage}
               onLanguageChange={onLegalLanguageChange}
               outdatedFrom={outdatedGrantVersion(consentStatus(kv))}
+              consentDue={grantDue}
               onAgree={onFirstRunAgree}
               onDecline={onLegalDecline}
+              onClosed={handOver.onFirstRunClosed}
             />
           </ScreenBoundary>
         </ToastHost>

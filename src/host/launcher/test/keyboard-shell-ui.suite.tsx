@@ -16,16 +16,19 @@ import type { PlanScreen } from '../prompt-flow';
 import { ReportSheet } from '../ReportScreen';
 import { KeyboardTextInput } from '../KeyboardShell';
 import AdvancedScreen from '../AdvancedScreen';
-import { TextArea, TextField } from '../../ui/TextField';
-import { ToastHost } from '../../ui/Toast';
 import { SHELL_PALETTE } from '../theme';
+import { TextArea, TextField } from '../../ui/TextField';
+import { Sheet } from '../../ui/Sheet';
+import { sheetBottomPadding } from '../keyboard-shell';
+import { COLORS } from '../../../design/tokens';
+import { ToastHost } from '../../ui/Toast';
 import { SPACING } from '../../../sdk/theme';
 import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
 import { reportClientOptions } from '../transport-shared';
 import { button, press, textOf, unmountScreen, hostType } from './react-screen';
 import { testAppInfo } from './client-fixtures';
-import { Keyboard, Platform, StyleSheet, useSafeAreaInsets } from './native-host';
+import { Keyboard, Platform, StyleSheet, setColorScheme, useSafeAreaInsets } from './native-host';
 import { dragKeyboard, emitKeyboardEvent, keyboardSubscriptions, keyboardWindow, moveKeyboard, resetKeyboard, stepKeyboard } from './native-keyboard-controller';
 
 type Tree = TestRenderer.ReactTestRenderer;
@@ -186,6 +189,42 @@ async function dismissBoth(tree: Tree): Promise<number> {
   return Keyboard.dismissed - before;
 }
 
+/** A `#rrggbb` or `rgba(r,g,b,a)` colour as 0–255 channels and an alpha. */
+function rgba(color: string): [number, number, number, number] {
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color);
+  if (hex) return [parseInt(hex[1], 16), parseInt(hex[2], 16), parseInt(hex[3], 16), 1];
+  const fn = /^rgba\((\d+),(\d+),(\d+),([\d.]+)\)$/.exec(color);
+  if (fn) return [Number(fn[1]), Number(fn[2]), Number(fn[3]), Number(fn[4])];
+  throw new Error(`not a colour this suite reads: ${color}`);
+}
+
+/** WCAG relative luminance of opaque channels. */
+function luminance([r, g, b]: readonly number[]): number {
+  const lin = (c: number) => (c / 255 <= 0.03928 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** The contrast of `text` on a highlight painted over the field's `background`, as Android paints a
+ *  selection. */
+function contrastOnHighlight(text: string, highlight: string, background: string): number {
+  const [hr, hg, hb, ha] = rgba(highlight);
+  const under = rgba(background);
+  const painted = [hr, hg, hb].map((c, i) => c * ha + under[i] * (1 - ha));
+  const [light, dark] = [luminance(painted), luminance(rgba(text))].sort((a, b) => b - a);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+/** The background a field paints behind its text: its own, or its box's around it. */
+function paintedBackground(input: Node): string | undefined {
+  for (let at: Node | null = input; at; at = at.parent) {
+    if (typeof at.type !== 'string') continue;
+    const fill = flat(at).backgroundColor;
+    if (typeof fill === 'string') return fill;
+    if (isType('ScrollView')(at)) return undefined;
+  }
+  return undefined;
+}
+
 /** Lets the report sheet's draft load (`reportDraftFor` reads the store). */
 const draftLoaded = () => TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });
 
@@ -200,8 +239,11 @@ const ROWS = [
 ];
 const PLAN: PlanScreen = { kind: 'plan', text: 'A tea timer', questions: [], answers: {}, asking: false, rewritten: 'A tea timer', rows: ROWS, loading: false, edited: false };
 
-const compose = (onContinue = noop, onChangeText = noop) => <DescribePage text="A tea timer" onChangeText={onChangeText} onContinue={onContinue} onClose={noop} />;
+const compose = (onContinue = noop, onChangeText = noop) => <DescribePage text="A tea timer" onChangeText={onChangeText} onContinue={onContinue} />;
 const plan = (onChangeRow = noop, onMake = noop) => <PlanPage screen={PLAN} onBack={noop} onAnswer={noop} onChangeRow={onChangeRow} onMake={onMake} onTryAgain={noop} onMakeInstead={noop} />;
+/** A page in a real sheet, as the making flow shows it. */
+const sheeted = (page: React.ReactElement) => <Sheet visible detent="large" onClose={noop}>{page}</Sheet>;
+const sheetCard = (tree: Tree) => tree.root.find((n) => String(n.type) === 'Animated.View' && n.props.accessibilityViewIsModal === true);
 const advanced = () => (
   <ToastHost>
     <AdvancedScreen
@@ -237,7 +279,7 @@ const editFourthRow = (tree: Tree) => press(tree.root.find((n) => String(n.type)
 export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
   await h.test('describe opens with the keyboard: its field takes focus once mounted, and the idea chips wait for the keyboard to go down', async () => {
     for (const device of [IOS, ANDROID_17]) {
-      await on(device, <DescribePage text="" onChangeText={noop} onContinue={noop} onClose={noop} />, async ({ tree, focused }) => {
+      await on(device, <DescribePage text="" onChangeText={noop} onContinue={noop} />, async ({ tree, focused }) => {
         await TestRenderer.act(async () => flushRevealFrames());
         h.ok(focused() >= 1, `${device.name}: the description field is focused on open`);
         const shown = textOf(tree.root);
@@ -362,6 +404,80 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
           await keyboard(device, true);
           h.eq(framePadding(tree), expected, `${device.name}, ${name}: pads ${expected}`);
         }, { frame, field: [300, 60] });
+      }
+    }
+  });
+
+  await h.test('the sheet-hosted pages pad by the keyboard frame: Describe and Plan lift the sheet’s card to the keyboard, and Continue and Make it stay pinned above it', async () => {
+    const pages: [string, React.ReactElement, string][] = [
+      ['describe', sheeted(compose()), COPY.flowContinue],
+      ['plan', sheeted(plan()), COPY.planBuild],
+    ];
+    const overlap = overlapOf(SCREEN_FRAME, KEYBOARD_TOP);
+    for (const device of DEVICES) {
+      for (const [name, element, action] of pages) {
+        await on(device, element, async ({ tree }) => {
+          const safe = useSafeAreaInsets().bottom;
+          const padding = () => flat(sheetCard(tree)).paddingBottom;
+          h.eq(padding(), sheetBottomPadding(0, safe), `${device.name} ${name}: with the keyboard down the card clears the home indicator`);
+          await keyboard(device, true);
+          h.eq(padding(), sheetBottomPadding(overlap, safe), `${device.name} ${name}: with the keyboard up the card ends at its top edge`);
+          const pinned = button(tree, action);
+          h.ok(nearest(pinned, 'ScrollView') == null, `${device.name} ${name}: ${action} sits below the scroll view, in the padded card, so it is above the keyboard`);
+          await keyboard(device, false);
+          h.eq(padding(), sheetBottomPadding(0, safe), `${device.name} ${name}: back down, the card drops back`);
+        });
+      }
+    }
+  });
+
+  await h.test('describe opens with the keyboard: Continue is in the card the keyboard lifts, so it is above the keyboard with the field focused', async () => {
+    for (const device of [IOS, ANDROID_17]) {
+      await on(device, sheeted(compose()), async ({ tree, focused }) => {
+        await TestRenderer.act(async () => flushRevealFrames());
+        h.ok(focused() >= 1, `${device.name}: the field is focused on open`);
+        await keyboard(device, true);
+        const continueButton = button(tree, COPY.flowContinue);
+        const ancestors: Node[] = [];
+        for (let at: Node | null = continueButton; at; at = at.parent) ancestors.push(at);
+        h.ok(ancestors.includes(sheetCard(tree)) && nearest(continueButton, 'ScrollView') == null, `${device.name}: Continue rides in the lifted card, not in the scrolling content under the keyboard`);
+      });
+    }
+  });
+
+  await h.test('every launcher field wears ink for its caret and selection handles, selected text stays readable on its highlight, it paints its own background, and on iOS a one-line field sets no line height', async () => {
+    for (const scheme of ['light', 'dark'] as const) {
+      await TestRenderer.act(async () => setColorScheme(scheme));
+      try {
+        const ink = COLORS[scheme].ink;
+        for (const device of [IOS, ANDROID_17]) {
+          const fields: [string, React.ReactElement, (tree: Tree) => Promise<void>, boolean][] = [
+            ['text field', <TextField value="Ada" onChangeText={noop} accessibilityLabel="Name" />, async () => {}, false],
+            ['text area', <TextArea value="Ada" onChangeText={noop} accessibilityLabel="Notes" />, async () => {}, true],
+            ['describe', compose(), async () => {}, true],
+            ['plan row', plan(), editFourthRow, true],
+          ];
+          for (const [name, element, open, multiline] of fields) {
+            await on(device, element, async ({ tree }) => {
+              await open(tree);
+              const input = field(tree);
+              const where = `${scheme} ${device.name} ${name}`;
+              const background = paintedBackground(input);
+              h.ok(background !== undefined, `${where}: it paints its own background, which covers Android's default field underline`);
+              if (device.os === 'ios') {
+                h.eq(input.props.selectionColor, ink, `${where}: ink tints the caret, the handles and the highlight iOS draws translucent itself`);
+              } else {
+                h.eq([input.props.cursorColor, input.props.selectionHandleColor], [ink, ink], `${where}: ink caret and selection handles`);
+                const contrast = contrastOnHighlight(String(flat(input).color), String(input.props.selectionColor), String(background));
+                h.ok(contrast >= 4.5, `${where}: the text Android paints its highlight over stays readable (${contrast.toFixed(2)}:1, at least 4.5:1)`);
+              }
+              const oneLineOnIos = device.os === 'ios' && !multiline;
+              h.eq(typeof flat(input).lineHeight, oneLineOnIos ? 'undefined' : 'number', `${where}: ${oneLineOnIos ? 'no line height, so iOS keeps its descenders' : 'its type’s line height'}`);
+            });
+          }
+        }
+      } finally {
+        await TestRenderer.act(async () => setColorScheme('light'));
       }
     }
   });

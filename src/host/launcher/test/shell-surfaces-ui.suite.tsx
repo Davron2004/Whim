@@ -14,6 +14,7 @@ import {
   announcements,
   emitAccessibility,
   hapticCalls,
+  holdModalDismissals,
   Platform,
   StyleSheet,
   useSafeAreaInsets,
@@ -37,7 +38,7 @@ function pendingTimeouts() {
     restore: () => { globalThis.setTimeout = originalSet; globalThis.clearTimeout = originalClear; },
   };
 }
-import { Sheet, SHEET_GRABBER } from '../../ui/Sheet';
+import { Sheet, SHEET_GRABBER, useSheetBack } from '../../ui/Sheet';
 import { ConfirmSheet } from '../../ui/ConfirmSheet';
 import { ContextMenu, placeMenu, MENU, type MenuAnchor, type MenuRow } from '../../ui/ContextMenu';
 import { ToastHost, useToast, TOAST, type ToastApi } from '../../ui/Toast';
@@ -105,10 +106,10 @@ const settle = () => TestRenderer.act(async () => { await new Promise((r) => set
 // ── Sheet helpers ───────────────────────────────────────────────────────────
 
 /** A sheet its own state closes, as a screen holds one; `closes` counts `onClose`. */
-function HeldSheet({ detent, onCloseCount }: Readonly<{ detent?: 'fit' | 'large'; onCloseCount: { n: number } }>) {
+function HeldSheet({ detent, onCloseCount, onClosed }: Readonly<{ detent?: 'fit' | 'large'; onCloseCount: { n: number }; onClosed?: () => void }>) {
   const [visible, setVisible] = useState(true);
   return (
-    <Sheet visible={visible} detent={detent} title="Report this app" onClose={() => { onCloseCount.n += 1; setVisible(false); }}>
+    <Sheet visible={visible} detent={detent} title="Report this app" onClosed={onClosed} onClose={() => { onCloseCount.n += 1; setVisible(false); }}>
       <Body />
     </Sheet>
   );
@@ -255,6 +256,56 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
       h.ok(!modalShown(tree), `${way}: its window goes once it has left`);
       await act(() => tree.unmount());
     }
+  });
+
+  await h.test('Sheet: a page that takes Android back with useSheetBack gets it in place of the close; the close control and the scrim still close, and a page that has gone gives back to close', async () => {
+    await resetPhone();
+    const calls = { back: 0, close: 0 };
+    const BackPage = () => { useSheetBack(() => { calls.back += 1; }); return <Body />; };
+    const sheet = (page: boolean) => <Sheet visible detent="large" onClose={() => { calls.close += 1; }}>{page ? <BackPage /> : <Body />}</Sheet>;
+    const tree = await render(sheet(true));
+    await act(() => all(tree, 'Modal')[0].props.onRequestClose());
+    h.eq([calls.back, calls.close], [1, 0], 'Android back goes to the page, and the sheet stays');
+    await act(() => card(tree).props.onAccessibilityEscape());
+    await press(rowButtons(tree).find((n) => n.props.accessibilityLabel === COPY.sheetClose)!);
+    await press(tree.root.find((n) => hostType(n) === 'Pressable' && n.props.accessible === false));
+    h.eq([calls.back, calls.close], [1, 3], 'the screen reader’s escape, the close control and the scrim still close it');
+    await act(() => tree.update(sheet(false)));
+    await act(() => all(tree, 'Modal')[0].props.onRequestClose());
+    h.eq([calls.back, calls.close], [1, 4], 'once the page is gone Android back closes again');
+    await act(() => tree.unmount());
+  });
+
+  await h.test('Sheet: onClosed fires once after it has finished closing — on Android as the exit ends, on iOS only when the system reports the dismissal', async () => {
+    for (const os of ['android', 'ios'] as const) {
+      await resetPhone();
+      Platform.OS = os;
+      const closed = { n: 0 };
+      const tree = await render(<HeldSheet onCloseCount={{ n: 0 }} onClosed={() => { closed.n += 1; }} />);
+      await layoutCard(tree);
+      h.eq(closed.n, 0, `${os}: open sheet has not closed`);
+      const release = holdModalDismissals();
+      try {
+        await press(rowButtons(tree).find((n) => n.props.accessibilityLabel === COPY.sheetClose)!);
+        h.eq(closed.n, os === 'android' ? 1 : 0, os === 'android' ? 'android: reported as the exit animation ends' : 'ios: the exit animation is over but the system has not said the modal is gone');
+        await act(() => release());
+        h.eq(closed.n, 1, `${os}: reported exactly once, the system’s report included`);
+      } finally {
+        release();
+      }
+      await act(() => tree.unmount());
+    }
+    Platform.OS = 'ios';
+  });
+
+  await h.test('Sheet: a sheet that closes by a drag reports onClosed once as well', async () => {
+    await resetPhone();
+    const closed = { n: 0 };
+    const tree = await render(<HeldSheet onCloseCount={{ n: 0 }} onClosed={() => { closed.n += 1; }} />);
+    await layoutCard(tree);
+    await act(() => pan(dragOf(tree), [100, 220, 330], 600));
+    h.eq(closed.n, 1, 'one report');
+    await act(() => tree.unmount());
   });
 
   await h.test('Sheet: a release closes it only when its projected end passes half its height and it isn’t flicked back; it springs back otherwise; position alone never decides', async () => {

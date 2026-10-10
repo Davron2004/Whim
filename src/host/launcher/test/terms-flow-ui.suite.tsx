@@ -17,15 +17,16 @@ import { consentStatus } from '../ai-consent';
 import { AI_CONSENT_VERSION, TERMS_VERSION } from '../release-config';
 import type { LegalLanguage } from '../legal-language';
 import { RELEASE } from '../release-config';
+import { LAYOUT } from '../../../design/tokens';
 import { StoreAccess } from '../store-access';
 import { termsStatus } from '../terms-acceptance';
 import type { InstalledApp } from '../app-index';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { consentRequiredRefusal } from '../../../../server/src/admission/refusals';
-import { button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
-import { composeAndContinue, firstRunOpen, json, onHome, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
-import { Linking, hardwareBack, injectedScripts } from './native-host';
+import { androidBack, button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
+import { composeAndContinue, firstRunOpen, json, onHome, settle, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
+import { Linking, Platform, StyleSheet, holdModalDismissals, injectedScripts } from './native-host';
 
 const TERMS_KEY = 'whim.terms:v1';
 const CONSENT_KEY = 'whim.ai-consent:v1';
@@ -35,6 +36,11 @@ const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId:
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
+/** The version a store wrote into its record under `key`, or undefined when it wrote none. */
+function storedVersion(kv: KVBackend, key: string): number | undefined {
+  const raw = kv.getString(key);
+  return raw == null ? undefined : (JSON.parse(raw) as { version: number }).version;
+}
 
 /** The Tip Splitter example first-run seeding installs, once Home lists it. */
 function tipSplitter(tree: Tree): InstalledApp | undefined {
@@ -58,13 +64,24 @@ function composingNewApp(tree: Tree): boolean {
 }
 
 /** The first-run sheet that is open, if one is. */
+/** How many modals are up. */
+const modalCount = (tree: Tree) => tree.root.findAll(isModal).length;
+const isModal = (n: TestRenderer.ReactTestInstance) => hostType(n) === 'Modal';
 const firstRun = (tree: Tree) => tree.root.findAllByType(FirstRunSheet).filter((sheet) => sheet.props.visible)[0];
 const agree = (tree: Tree) => button(tree, COPY.consentAgree);
+/** The action when only the terms are due. */
+const proceed = (tree: Tree) => button(tree, COPY.firstRunContinue);
 const termsRow = (tree: Tree) => button(tree, COPY.firstRunTermsCheck);
 
 /** Answers clarify with no questions; nothing else is expected. */
 const clarifyServer = (r: SentRequest): Response | Promise<Response> =>
   r.path === '/v1/clarify' ? json({ questions: [] }) : new Promise<Response>(() => {});
+
+/** The server refusing a request for want of consent, as the real one does. */
+const consentRefusedResponse = (): Response => {
+  const refusal = consentRequiredRefusal();
+  return new Response(JSON.stringify(refusal.body), { status: refusal.status, headers: { 'Content-Type': 'application/json', ...refusal.headers } });
+};
 
 /** Word stems, per language, that would make the terms step a data disclosure: what is sent, to
  *  whom, or why. */
@@ -144,7 +161,7 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
       await withLauncher({ terms: false, consent: false, server: clarifyServer }, async ({ tree, kv }) => {
         await describeAnApp(tree);
         if (exit === 'close') await press(button(tree, COPY.sheetClose));
-        else await TestRenderer.act(async () => { hardwareBack(); });
+        else await androidBack(tree);
         h.ok(onHome(tree), `${exit} returns to Home`);
         h.eq([termsStatus(kv).kind, consentStatus(kv).kind], ['absent', 'absent'], `${exit} records nothing`);
       });
@@ -190,10 +207,12 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
       const grant = kv.getString(CONSENT_KEY);
       await describeAnApp(tree);
       h.ok(firstRun(tree)?.props.termsDue === true && textOf(tree.root).includes(COPY.termsUpdatedLine), 'the terms row, headed by the updated-terms line');
+      h.eq(tree.root.findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === COPY.consentAgree).length, 0, 'the action does not ask to agree to send descriptions, which the person already has');
+      h.eq(proceed(tree).props.disabled, true, 'it reads as continuing, and waits for the box');
       await press(termsRow(tree));
-      await press(agree(tree));
-      h.ok(composingNewApp(tree), 'Agree goes straight to the action');
-      h.eq([termsStatus(kv).kind, kv.getString(CONSENT_KEY)], ['accepted', grant], 'the terms were accepted again; the current grant was not rewritten');
+      await press(proceed(tree));
+      h.ok(composingNewApp(tree), 'it goes straight to the action');
+      h.eq([termsStatus(kv).kind, kv.getString(CONSENT_KEY)], ['accepted', grant], 'the terms were accepted again; the stored grant is byte for byte what it was');
     });
   });
 
@@ -204,7 +223,7 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
       h.ok(firstRunOpen(tree) && firstRun(tree).props.termsDue, 'the data-sending action opens the sheet with its terms row');
       h.eq([sent.length, probes.length], [0, 0], 'nothing was sent');
       await press(termsRow(tree));
-      await press(agree(tree));
+      await press(proceed(tree));
       h.ok(composingNewApp(tree), 'with the grant current, Agree continues straight to the describe page');
       await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('A tea timer'));
       await tap(() => tree.root.findByType(DescribePage).props.onContinue());
@@ -237,13 +256,138 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('first run: ticking the box alone records nothing — closing leaves no record and no request, and the box is unticked the next time the sheet opens', async () => {
+    await withLauncher({ terms: false, consent: false, server: clarifyServer }, async ({ tree, kv, sent, probes }) => {
+      await describeAnApp(tree);
+      await press(termsRow(tree));
+      h.eq(termsRow(tree).props.accessibilityState.checked, true, 'the box is ticked');
+      h.eq([termsStatus(kv).kind, consentStatus(kv).kind, kv.getString(TERMS_KEY)], ['absent', 'absent', undefined], 'ticking recorded neither act');
+      await press(button(tree, COPY.sheetClose));
+      h.eq([termsStatus(kv).kind, consentStatus(kv).kind, sent.length, probes.length], ['absent', 'absent', 0, 0], 'closing records nothing and sends nothing');
+      await describeAnApp(tree);
+      h.eq(termsRow(tree).props.accessibilityState.checked, false, 'the next time the sheet opens the box is unticked');
+      h.eq(agree(tree).props.disabled, true, 'and the action waits for it again');
+    });
+  });
+
+  await h.test('first run: the first request leaves only after the action has recorded both acts, each under its own key and version', async () => {
+    let held: KVBackend | undefined;
+    let atFirstRequest: unknown;
+    const watch = (r: SentRequest): Response | Promise<Response> => {
+      atFirstRequest ??= held && [storedVersion(held, TERMS_KEY), storedVersion(held, CONSENT_KEY)];
+      return clarifyServer(r);
+    };
+    await withLauncher({ terms: false, consent: false, prepare: (kv) => { held = kv; }, server: watch }, async ({ tree, kv, sent, probes }) => {
+      await describeAnApp(tree);
+      await press(termsRow(tree));
+      h.eq([sent.length, probes.length], [0, 0], 'with the box ticked and the action not yet taken, nothing has left the phone');
+      await press(agree(tree));
+      h.eq(sent.length, 0, 'taking the action sends no request by itself');
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('A tea timer'));
+      await tap(() => tree.root.findByType(DescribePage).props.onContinue());
+      await waitFor(() => wasSent(sent, '/v1/clarify'), 'the first request');
+      h.eq(atFirstRequest, [TERMS_VERSION, AI_CONSENT_VERSION], 'when it left, both acts were already stored, each with its own version');
+      h.ok(kv.getString(TERMS_KEY) != null && kv.getString(CONSENT_KEY) != null, 'under two keys');
+    });
+  });
+
+  await h.test('first run: the terms link and the checkbox are two touch targets that do not overlap, each at least the platform’s minimum', async () => {
+    const tree = await renderScreen(<FirstRunSheet visible language="en" onLanguageChange={() => {}} termsDue consentDue onAgree={() => {}} onClose={() => {}} />);
+    try {
+      const row = termsRow(tree);
+      const link = button(tree, COPY.termsLabel);
+      const style = (node: TestRenderer.ReactTestInstance) => StyleSheet.flatten(node.props.style) as { flex?: number; minWidth?: number; minHeight?: number };
+      h.eq([row.props.hitSlop, link.props.hitSlop], [undefined, undefined], 'neither target reaches past its own box with a hit slop');
+      const line = (node: TestRenderer.ReactTestInstance) => {
+        let up = node.parent;
+        while (up && hostType(up) !== 'View') up = up.parent;
+        return up;
+      };
+      h.ok(line(row) != null && line(row) === line(link), 'they sit in one row');
+      h.eq(line(row)!.findAll((n) => n === row || n === link), [row, link], 'the checkbox first, the link after it');
+      h.eq((StyleSheet.flatten(line(row)!.props.style) as { flexDirection?: string }).flexDirection, 'row', 'side by side, so the two boxes share no pixel');
+      h.ok(style(row).flex === 1, 'the checkbox takes what the link leaves');
+      const touch = LAYOUT.touchTarget[Platform.OS === 'android' ? 'android' : 'ios'];
+      h.ok((style(link).minWidth ?? 0) >= touch && (style(link).minHeight ?? 0) >= touch, `the link’s own box is at least ${touch} pt each way`);
+      h.ok((style(row).minHeight ?? 0) >= touch, `and the checkbox row is at least ${touch} pt tall`);
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
+  for (const language of ['en', 'fr'] as const) {
+    await h.test(`first run (${language}): the action agrees to send descriptions when consent is due and reads as continuing when only the terms are`, async () => {
+      const copy = LEGAL_COPY[language];
+      const render = (consentDue: boolean) => <FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue consentDue={consentDue} onAgree={() => {}} onClose={() => {}} />;
+      const tree = await renderScreen(render(true));
+      try {
+        h.ok(button(tree, copy.consentAgree) != null, 'consent due: the agree action');
+        await TestRenderer.act(async () => tree.update(render(false)));
+        h.ok(button(tree, copy.firstRunContinue) != null, 'only the terms due: the continue action');
+        h.ok(copy.firstRunContinue.trim() !== '' && copy.firstRunContinue !== copy.consentAgree, 'a plain word of its own, in this language');
+        h.ok(!textOf(tree.root).includes(copy.consentAgree), 'and nowhere does the sheet ask to agree to send descriptions');
+      } finally {
+        await unmountScreen(tree);
+      }
+    });
+  }
+
+  await h.test('first run: agreeing hands over to the Describe sheet only after the first-run sheet has finished closing, so two modals never overlap', async () => {
+    await withLauncher({ terms: false, consent: false, server: clarifyServer }, async ({ tree }) => {
+      const modals = () => modalCount(tree);
+      await describeAnApp(tree);
+      h.eq(modals(), 1, 'the first-run sheet is the one modal up');
+      await press(termsRow(tree));
+      const release = holdModalDismissals();
+      try {
+        await press(agree(tree));
+        h.eq([on(tree, DescribePage), modals()], [false, 0], 'the first-run sheet is gone, but the system has not said it is dismissed: Describe is not presented yet');
+        await TestRenderer.act(async () => release());
+        h.eq([composingNewApp(tree), modals()], [true, 1], 'once it has, Describe is presented, alone');
+      } finally {
+        release();
+      }
+    });
+  });
+
+  await h.test('first run: if the system never reports the dismissal, the hand-over goes ahead after a second rather than leaving the person with no sheet', async () => {
+    await withLauncher({ terms: false, consent: false, server: clarifyServer }, async ({ tree, clock }) => {
+      await describeAnApp(tree);
+      await press(termsRow(tree));
+      const release = holdModalDismissals();
+      try {
+        await press(agree(tree));
+        h.ok(!on(tree, DescribePage), 'held while the dismissal is unreported');
+        await TestRenderer.act(async () => clock.fire(1000));
+        h.ok(composingNewApp(tree), 'Describe is presented when the second is up');
+      } finally {
+        release();
+      }
+    });
+  });
+
+  await h.test('first run: a refusal that reopens the first-run sheet waits for the making sheet to finish closing', async () => {
+    await withLauncher({ server: consentRefusedResponse }, async ({ tree }) => {
+      const release = holdModalDismissals();
+      try {
+        await composeAndContinue(tree, 'A tea timer');
+        await settle();
+        h.ok(!firstRunOpen(tree), 'the making sheet has left but is not reported dismissed: the first-run sheet is not presented yet');
+        await TestRenderer.act(async () => release());
+        await waitFor(() => firstRunOpen(tree), 'the first-run sheet once the making sheet is gone');
+        h.eq(modalCount(tree), 1, 'alone');
+      } finally {
+        release();
+      }
+    });
+  });
+
   // A `consent_required` refusal arriving after the terms record went missing (the request was
   // gated on it, so it can only vanish in between): the refusal routes through the sheet.
   let store: KVBackend | undefined;
   const refusesAndLosesTerms = (): Response => {
     store?.delete(TERMS_KEY);
-    const refusal = consentRequiredRefusal();
-    return new Response(JSON.stringify(refusal.body), { status: refusal.status, headers: { 'Content-Type': 'application/json', ...refusal.headers } });
+    return consentRefusedResponse();
   };
   const keepStore = (kv: KVBackend) => { store = kv; };
 
@@ -275,7 +419,7 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
   for (const language of ['en', 'fr'] as const) {
     await h.test(`first run (${language}): the terms row and its link say nothing about data`, async () => {
       const copy = LEGAL_COPY[language];
-      const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue onAgree={() => {}} onClose={() => {}} />);
+      const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue consentDue onAgree={() => {}} onClose={() => {}} />);
       try {
         const row = textOf(button(tree, copy.firstRunTermsCheck));
         h.ok(row === copy.firstRunTermsCheck, 'the checkbox row carries the terms line');

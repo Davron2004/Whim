@@ -1,7 +1,7 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { button, press, renderScreen, unmountScreen, textOf, hostType } from './react-screen';
+import { androidBack, button, press, renderScreen, unmountScreen, textOf, hostType } from './react-screen';
 import { finishAnimations, hardwareBack, backListenerCount } from './native-host';
 import { androidHeaderBack, headerBackShown, iosPop } from './native-screens';
 import { COPY } from '../copy';
@@ -61,7 +61,7 @@ type Exit = string | 'native header';
 
 // Adding a screen kind requires a behavioral fixture (home and mini-app exits have separate
 // contracts). These are real screens with only their outside callbacks/storage supplied.
-const cases: Record<Exclude<ScreenKind, 'home' | 'app' | 'dev'>, { label: Exit; render: (leave: () => void) => React.ReactElement }> = {
+const cases: Record<Exclude<ScreenKind, 'home' | 'app' | 'dev'>, { label: Exit; render: (leave: () => void) => React.ReactElement; sheet?: true }> = {
   settings: { label: 'native header', render: leave => pushed(COPY.settingsTitle, leave, <SettingsScreen onBack={leave} onOpenAIFeatures={noop} legalLanguage="en" onLegalLanguageChange={noop} onReportProblem={noop} onOpenAdvanced={noop} />) },
   advanced: { label: 'native header', render: leave => pushed(COPY.settingsAdvancedSectionTitle, leave, <AdvancedScreen onBack={leave} errorDetails onErrorDetailsChange={noop} deviceId="test-device" onResetDeviceId={noop} serverChoice="whim" ownServerAcknowledged={false} onAcknowledgeOwnServer={noop} onChooseServer={noop} onServerUrlChange={noop} canProbe={false} probe={null} legalLanguage="en" />) },
   report: { label: 'native header', render: leave => pushed(COPY.reportScreenTitle, leave, <ReportScreen app={null} access={access} options={reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo)} onLeave={leave} onUpdateRequired={noop} legalLanguage="en" />) },
@@ -69,10 +69,10 @@ const cases: Record<Exclude<ScreenKind, 'home' | 'app' | 'dev'>, { label: Exit; 
   'link-missing': { label: COPY.appLinkMissingBack, render: leave => <AppLinkMissingScreen onBackToApps={leave} /> },
   'update-required': { label: COPY.updateNotNow, render: leave => <UpdateRequiredScreen onNotNow={leave} /> },
   age: { label: COPY.ageBack, render: leave => <AgeScreen language="en" onLanguageChange={noop} held="minor-not-approved" onClose={leave} /> },
-  terms: { label: COPY.consentDecline, render: leave => <FirstRunSheet visible language="en" onLanguageChange={noop} termsDue onAgree={noop} onClose={leave} /> },
-  consent: { label: COPY.consentDecline, render: leave => <FirstRunSheet visible language="en" onLanguageChange={noop} termsDue={false} onAgree={noop} onClose={leave} /> },
-  describe: { label: COPY.sheetClose, render: leave => sheeted(leave, <DescribePage text="" onChangeText={noop} onContinue={noop} onClose={leave} />) },
-  plan: { label: COPY.backLabel, render: leave => sheeted(noop, <PlanPage screen={planStep(describeStep(undefined, 'Timer'))} onBack={leave} onAnswer={noop} onChangeRow={noop} onMake={noop} onTryAgain={noop} onMakeInstead={noop} />) },
+  terms: { label: COPY.consentDecline, render: leave => <FirstRunSheet visible language="en" onLanguageChange={noop} termsDue consentDue onAgree={noop} onClose={leave} />, sheet: true },
+  consent: { label: COPY.consentDecline, render: leave => <FirstRunSheet visible language="en" onLanguageChange={noop} termsDue={false} consentDue onAgree={noop} onClose={leave} />, sheet: true },
+  describe: { label: COPY.sheetClose, render: leave => sheeted(leave, <DescribePage text="" onChangeText={noop} onContinue={noop} />), sheet: true },
+  plan: { label: COPY.backLabel, render: leave => sheeted(noop, <PlanPage screen={planStep(describeStep(undefined, 'Timer'))} onBack={leave} onAnswer={noop} onChangeRow={noop} onMake={noop} onTryAgain={noop} onMakeInstead={noop} />), sheet: true },
   making: { label: COPY.buildLeaveRunning, render: leave => <BuildStep stage={null} delivering={false} signals={null} now={0} onBack={leave} /> },
   ready: { label: COPY.doneBackToApps, render: leave => <DoneStep app={SCREEN_APP} onOpen={noop} onBackToApps={leave} onReport={noop} /> },
   failure: { label: COPY.failureBack, render: leave => <FailureScreen reason="Unavailable" diagnostics={[]} retryable onRephrase={noop} onBack={leave} /> },
@@ -85,7 +85,9 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
       // A valid wrapper is intentional: behavior must not require a bare handler identifier.
       const tree = await renderScreen(fixture.render(() => { leaves++; }));
       try {
-        h.eq(backListenerCount(), 1, 'screen owns one system-back subscription');
+        // A sheet's Modal takes Android back itself: nothing registers on `BackHandler`, and the press
+        // reaches the page through the Modal's `onRequestClose`.
+        h.eq(backListenerCount(), fixture.sheet ? 0 : 1, fixture.sheet ? 'a sheet-hosted page registers no BackHandler listener, which a Modal would starve' : 'screen owns one system-back subscription');
         let visible = 1;
         if (fixture.label === 'native header') {
           h.ok(headerBackShown(tree), 'the stack’s header shows its back control');
@@ -98,7 +100,8 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
           await press(button(tree, fixture.label));
           h.eq(leaves, 1, 'visible exit leaves once');
         }
-        await TestRenderer.act(async () => { h.eq(hardwareBack(), true, 'system back is handled'); });
+        if (fixture.sheet) await androidBack(tree);
+        else await TestRenderer.act(async () => { h.eq(hardwareBack(), true, 'system back is handled'); });
         h.eq(leaves, visible + 1, 'system back performs the same exit');
       } finally { await unmountScreen(tree); }
       h.eq(backListenerCount(), 0, 'unmount removes the listener');

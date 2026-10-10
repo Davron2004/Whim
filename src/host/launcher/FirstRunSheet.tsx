@@ -9,9 +9,14 @@
  * with the Terms link beside it and outside its hit area; and two actions on purpose (GDPR art.
  * 7(2)): `Agree to send descriptions` (`ink`, enabled once the terms are ticked) and `Not now`.
  *
- * Both acts are recorded by the caller exactly as before, with their versions: the terms
- * acceptance (when it was due) and the consent grant. Nothing is sent before `onAgree`; `onClose`
- * (Not now, close, scrim, drag, Android back) grants and accepts nothing.
+ * Both acts are recorded by the caller, each with its own version: the terms acceptance (when it was
+ * due) and the consent grant (when it was). Nothing is sent before `onAgree`; `onClose` (Not now,
+ * close, scrim, drag, Android back) grants and accepts nothing. Neither act is pre-selected: the box
+ * starts unticked every time the sheet opens, and ticking it records nothing by itself.
+ *
+ * The first layer (the lead and the three rows) names what is sent, who gets it and what for, what
+ * stays on the phone and what Whim never does; "Full details" is the whole disclosure, one tap away
+ * before either act.
  *
  * Every string comes from the active legal language's table (`LEGAL_COPY`) and the links open that
  * language's pages (spec legal-text-localization).
@@ -26,12 +31,11 @@ import { Notice } from '../ui/Notice';
 import { Sheet } from '../ui/Sheet';
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
-import { hitSlopFor, makeStyles, PRESS_RETENTION } from '../ui/tokens-pure';
+import { makeStyles, PRESS_RETENTION } from '../ui/tokens-pure';
 import { consentWhatsNewText, LEGAL_COPY } from './copy';
 import { disclosureOf } from './consent-disclosure';
 import KeyboardShell from './KeyboardShell';
 import { otherLegalLanguage, privacyPolicyUrl, termsUrl, type LegalLanguage } from './legal-language';
-import { useSystemBack } from './use-system-back';
 
 export interface FirstRunSheetProps {
   visible: boolean;
@@ -41,6 +45,10 @@ export interface FirstRunSheetProps {
   /** The terms of use are not accepted at the current version: the sheet shows the terms row, and
    *  `Agree to send descriptions` stays disabled until it is ticked. */
   termsDue: boolean;
+  /** The consent grant is not current (or a refusal asked again): the action reads `Agree to send
+   *  descriptions` and records it. When only the terms are due the action continues, agreeing to
+   *  nothing new, and no grant is recorded. */
+  consentDue: boolean;
   /** The stored terms acceptance is of another version: the updated-terms line heads the sheet. */
   termsOutdated?: boolean;
   /** The stored consent grant's version, when that grant is outdated: its outdated line and the
@@ -52,6 +60,8 @@ export interface FirstRunSheetProps {
   onAgree: () => void;
   /** Every way out that grants and accepts nothing. */
   onClose: () => void;
+  /** The sheet has finished closing (`Sheet`'s `onClosed`): the next sheet may be presented. */
+  onClosed?: () => void;
 }
 
 const BOX = 24;
@@ -64,7 +74,8 @@ const styles = makeStyles((t) => ({
   bulletText: { flex: 1 },
   termsLine: { flexDirection: 'row' as const, alignItems: 'center' as const, backgroundColor: t.colors['sheet-group'], borderRadius: RADII.lg.radius, borderCurve: 'continuous' as const },
   termsCheck: { flex: 1, minHeight: LAYOUT.listRowMinHeight, flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], paddingHorizontal: LAYOUT.listRowPaddingHorizontal },
-  termsLink: { paddingRight: LAYOUT.listRowPaddingHorizontal, paddingLeft: SPACE[2] },
+  // A target of its own beside the checkbox row, never a `hitSlop` that would reach into it.
+  termsLink: { minWidth: t.touchTarget, minHeight: t.touchTarget, alignItems: 'center' as const, justifyContent: 'center' as const },
   box: { width: BOX, height: BOX, borderRadius: RADII.sm.radius, borderWidth: 2, alignItems: 'center' as const, justifyContent: 'center' as const },
   footer: { paddingHorizontal: LAYOUT.gutter, paddingTop: LAYOUT.actionAreaTop, paddingBottom: LAYOUT.actionAreaBottom, gap: SPACE[1] },
 }));
@@ -124,7 +135,7 @@ function TermsRow({ language, accepted, onToggle }: Readonly<{ language: LegalLa
       </Pressable>
       <Pressable
         onPress={() => Linking.openURL(termsUrl(language))}
-        hitSlop={hitSlopFor(20, t)}
+        pressRetentionOffset={PRESS_RETENTION}
         style={s.termsLink}
         accessibilityRole="link"
         accessibilityLabel={copy.termsLabel}
@@ -150,13 +161,12 @@ function leadLines(language: LegalLanguage, { termsOutdated, outdatedFrom, refus
 }
 
 function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
-  const { language, onLanguageChange, termsDue, onAgree, onClose } = props;
+  const { language, onLanguageChange, termsDue, consentDue, onAgree, onClose } = props;
   const t = useTokens();
   const s = styles(t);
   const copy = LEGAL_COPY[language];
   const [accepted, setAccepted] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  useSystemBack(onClose);
   const lines = leadLines(language, props);
   return (
     <KeyboardShell
@@ -164,7 +174,7 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
       contentContainerStyle={s.content}
       footer={
         <View style={s.footer}>
-          <Button label={copy.consentAgree} variant="ink" disabled={termsDue && !accepted} onPress={onAgree} />
+          <Button label={consentDue ? copy.consentAgree : copy.firstRunContinue} variant="ink" disabled={termsDue && !accepted} onPress={onAgree} />
           <Button label={copy.consentDecline} variant="plain" onPress={onClose} />
         </View>
       }
@@ -192,9 +202,9 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
   );
 }
 
-export function FirstRunSheet({ visible, ...body }: Readonly<FirstRunSheetProps>) {
+export function FirstRunSheet({ visible, onClosed, ...body }: Readonly<FirstRunSheetProps>) {
   return (
-    <Sheet visible={visible} onClose={body.onClose} detent="large">
+    <Sheet visible={visible} onClose={body.onClose} onClosed={onClosed} detent="large">
       <FirstRunBody {...body} />
     </Sheet>
   );

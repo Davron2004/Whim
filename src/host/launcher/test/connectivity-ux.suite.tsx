@@ -53,7 +53,7 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
       const edits: string[] = [];
       let continues = 0;
       const tree = await renderScreen(<DescribePage text="Timer" serverUnreachable={offline}
-        onChangeText={(text: string) => edits.push(text)} onContinue={() => { continues++; }} onClose={noop} />);
+        onChangeText={(text: string) => edits.push(text)} onContinue={() => { continues++; }} />);
       try {
         h.eq(visibleTextCount(tree, COPY.promptServerUnreachable), offline ? 1 : 0, 'the describe notice follows connectivity');
         const field = tree.root.find(isHost('TextInput'));
@@ -73,7 +73,7 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
     try {
       tree = await renderScreen(<DescribePage text="Timer" serverUnreachable
         notice={{ hint: 'Try again later', tone: 'neutral', retryAt: Date.now() + 60_000 }}
-        onChangeText={noop} onContinue={() => { continues++; }} onClose={noop} />);
+        onChangeText={noop} onContinue={() => { continues++; }} />);
       h.eq(visibleTextCount(tree, COPY.promptServerUnreachable), 1, 'offline notice is still visible');
       h.eq(visibleTextCount(tree, 'Try again later'), 1, 'the refusal remains visible too');
       h.eq(button(tree, COPY.flowContinue).props.disabled, true, 'the retry window disables the actual Continue control');

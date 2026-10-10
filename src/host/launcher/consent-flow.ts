@@ -70,8 +70,17 @@ export function nextLegalStep(age: AgeGate, terms: TermsStatus, consent: Consent
     if (age === 'unchecked') return 'age-check';
     return age === 'allowed' ? 'terms' : 'age-blocked';
   }
-  if (refused || consent.kind !== 'granted') return 'consent';
-  return null;
+  return consentGrantDue(consent, refused) ? 'consent' : null;
+}
+
+/**
+ * Whether the consent grant has to be recorded: there is no current grant, or the server has just
+ * refused for want of one (`refused`) even over a current local grant. Both the legal flow and the
+ * first-run sheet's action read it, so a sheet that only asks for the terms leaves a standing grant
+ * exactly as it is.
+ */
+export function consentGrantDue(consent: ConsentStatus, refused: boolean): boolean {
+  return refused || consent.kind !== 'granted';
 }
 
 /** The minimal shape `declineTarget` needs from the screen that opened the legal flow — any

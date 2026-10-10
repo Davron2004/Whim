@@ -27,7 +27,10 @@ Transitions (the shell, `LauncherRoot.tsx`, owns the requests; the pages never f
 - Make it (`onBuildIt`): clears the draft, `makingStep(plan)`, `runAttempt`. Stamps `runId` = the attempt's journal
   id (also the launcher id and, normally, the delivered app's id). Delivery -> `readyStep`; a terminal failure -> the
   shell's `failure` screen. A refused generate returns to the plan page with `notice`.
-- Back on Plan while a row is edited cancels the edit (`planBackAction`); system back and the visible control share it.
+- Back on Plan while a row is edited cancels the edit (`planBackAction`); Android back (`useSheetBack`) and the visible control
+  share it. A second tap on a page's forward action (Continue, Make it) before React draws the next page is ignored (`firstTake`).
+- The making sheet and the first-run sheet never overlap: `useSheetHandOver` holds the sheet the screen wants until the other
+  reports `onClosed` (iOS can drop a present issued while another Modal is dismissing).
 
 ## Closing and reopening — `LauncherRoot.closeSheet`
 
@@ -46,31 +49,36 @@ run's own `LiveAttempt.screen` (and its signals); `MakingSheet` mounts the page 
 ```ts
 type FlowDraftScreen = DescribeScreen | PlanScreen;  NEW_APP_DRAFT_KEY = 'new-app';  draftKey({ editing? }): string
 class FlowDrafts { get(key); keep(page) /* no words = clear */; clear(key); composerWords(): string | undefined }
+withEditing(page: FlowDraftScreen, editing: InstalledApp): FlowDraftScreen
 draftPreview(text): string   // <= 24 chars at a word boundary + "…"; ComposerBar shows `Continue "<preview>"`
 ```
 In memory for the session (a `useRef` in `LauncherShell`). Set by `keepDraft` (every way off Describe/Plan: close, a
 link, `goHome`); cleared by `onBuildIt` and by empty words. `openCompose(editing, text?)` restores the draft of
-that app (a plan page resumes whatever request it lacks: `missingRequest`/`resumePlan`) unless `text` is given.
+that app (a plan page resumes whatever request it lacks: `missingRequest`/`resumePlan`) unless `text` is given. The draft is
+restored for the app as it is NOW (`withEditing(page, liveApp)`, also on a Describe page's `kept` plan); a deleted app takes its
+draft with it.
 `LauncherShell` feeds `HomeScreen.draft` from `composerWords()` (state `composerDraft`, synced by `syncComposerDraft`).
 
 ## Components (props verbatim)
 
 ```ts
-MakingSheet({ content: SheetContent | null /* null closes */; onClose })      // SheetContent { key: string; node }
+MakingSheet({ content: SheetContent | null /* null closes */; onClose; onClosed? })   // SheetContent { key: string; node }
   PageHead({ onBack? })  PAGE_HEAD_HEIGHT = 44   // every page starts under this row: headlines align
   HostedPage({ children })                        // gives a `flex:1` full-screen page the sheet body's height
 DescribePage({ text; editing?: InstalledApp; serverUnreachable?; notice?: FlowNotice;
-               onChangeText; onContinue; onClose })
+               onChangeText; onContinue })       // Android back = the sheet's close: no prop, no registration
 PlanPage({ screen: PlanScreen; editing?: InstalledApp; onBack; onAnswer(id, AnswerChange); onChangeRow(index, text);
            onMake; onTryAgain; onMakeInstead })
-FirstRunSheet({ visible; language: LegalLanguage; onLanguageChange; termsDue: boolean; termsOutdated?: boolean;
-                outdatedFrom?: number; refused?: boolean; onAgree; onClose })
+FirstRunSheet({ visible; language: LegalLanguage; onLanguageChange; termsDue: boolean; consentDue: boolean;
+                termsOutdated?: boolean; outdatedFrom?: number; refused?: boolean; onAgree; onClose; onClosed? })
 ```
 Both Sheet-hosted pages use `KeyboardShell host="sheet"`; `KeyboardShell` gained `onScrollOffset?(offset)`.
 `FirstRunSheet` replaces the terms and ask-consent screens; the shell's `terms` and `consent` (ask) screens are
 drawn by it over the screen they replaced (`stackFor(returnTo)`), the silent age check over the same. `onFirstRunAgree`
-records the terms acceptance when `kind === 'terms'` and the grant when it is not current (or `refused`), then runs the
-continuation. Held age (`AgeScreen`, `held` required) and review-mode `ConsentScreen` stay full screens.
+records the terms acceptance when `kind === 'terms'` and the grant when `grantDue` (not current, or `refused`), then runs the
+continuation; the action reads `Agree to send descriptions` when `consentDue`, else `firstRunContinue` (terms only: the
+stored grant is left byte-identical). The first layer (`consentLead` + the three `firstRun*` rows) is held to the disclosure
+manifest by `FIRST_RUN_COVERAGE` (copy.ts) in `consent-coverage.suite.ts`. Held age (`AgeScreen`, `held` required) and review-mode `ConsentScreen` stay full screens.
 
 ## Answers and the build prompt
 
@@ -90,8 +98,9 @@ Each branch returns `{ key: pageKeyOf(screen), node }`. Replace the node, keep t
 - `screen.kind === 'ready'` (`ReadyScreen`): `<HostedPage><DoneStep app onOpen onBackToApps onReport/><ReportSheet/></HostedPage>`.
 - `screen.kind === 'failure'`: `<HostedPage><FailureScreen ...failureActions(screen)/></HostedPage>`; its state carries `journalId`.
 - A page that sizes itself (a `KeyboardShell host="sheet"` body, or `PageHead` + content) drops `HostedPage`.
-- The sheet closes via `closeSheet` for all of them; a page registers its own `useSystemBack` (Android back reaches it only in
-  tests: on a device the Modal's `onRequestClose` calls `closeSheet`).
+- The sheet closes via `closeSheet` for all of them. Android back reaches a page through the Sheet's Modal, never `BackHandler`:
+  a page that steps back before it closes calls `useSheetBack(step)` (`ui/Sheet.tsx`; Plan does); every other page's back is
+  `closeSheet`. Making/Ready/Failure keep their own `useSystemBack`, which a Modal starves on a device (back = `closeSheet`).
 
 ## Gone
 

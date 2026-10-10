@@ -15,14 +15,18 @@ import { TextArea } from '../../ui/TextField';
 import { COPY } from '../copy';
 import { StoreAccess } from '../store-access';
 import { RunJournalStore } from '../run-journal';
-import type { InstalledApp } from '../app-index';
+import { AppIndex, type InstalledApp } from '../app-index';
 import { hardwareBack } from './native-host';
-import { button, press, textOf } from './react-screen';
+import { androidBack, button, press, textOf } from './react-screen';
 import { buildIt, composeAndContinue, hasInstalled, json, makingSheetOpen, onHome, planLoaded, questionsLanded, resultEvent, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 
 const QUESTION = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'], select: 'one', other: false };
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
+/** The rewrite requests among `sent`. */
+const rewritesIn = (sent: readonly SentRequest[]) => sent.filter((r) => r.path === '/v1/rewrite');
+/** The name of the app a request says it concerns. */
+const appNameOf = (request: SentRequest): string | undefined => (request.body?.app as { name?: string } | undefined)?.name;
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
 const plan = (tree: Tree) => tree.root.findByType(PlanPage).props.screen;
@@ -209,6 +213,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => home(tree).props.onCreate());
       h.eq(plan(tree).rows, [{ label: 'Timer', text: 'Counts down in minutes.', edited: true }], 'the edited row is back, marked Edited');
       h.eq([plan(tree).edited, checked(chip(tree, 'Buzz'))], [true, true], 'with the edit flag and the answer');
+      h.ok(textOf(button(tree, 'Timer, Counts down in minutes., Edited')).includes(COPY.planRowEdited), 'and the row still says Edited after the draft was closed and restored');
       h.eq(paths(), ['/v1/clarify', '/v1/rewrite'], 'and nothing was sent again');
     });
   });
@@ -264,13 +269,14 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('sheet: Android back closes Describe keeping the draft, on Plan goes back to Describe first, and on Making leaves the run running', async () => {
+  await h.test('sheet: Android back, as the sheet’s Modal delivers it, closes Describe keeping the draft, on Plan goes back to Describe first, and on Making leaves the run running', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     await withLauncher({ server: streamingServer(streams) }, async ({ tree, sent }) => {
       await composeToPlan(tree, 'A tea timer');
-      await TestRenderer.act(async () => { hardwareBack(); });
+      await androidBack(tree);
       h.ok(on(tree, DescribePage), 'back on Plan returns to Describe');
-      await TestRenderer.act(async () => { hardwareBack(); });
+      h.eq(tree.root.findByType(DescribePage).props.text, 'A tea timer', 'with the words kept');
+      await androidBack(tree);
       h.ok(onHome(tree) && home(tree).props.draft === 'A tea timer', 'back on Describe closes the sheet and keeps the draft');
       await TestRenderer.act(async () => home(tree).props.onCreate());
       await tap(() => tree.root.findByType(DescribePage).props.onContinue());
@@ -278,9 +284,79 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       await buildIt(tree);
       await waitFor(() => on(tree, BuildStep), 'the making page');
       const generate = sent.find((r) => r.path === '/v1/generate');
-      await TestRenderer.act(async () => { hardwareBack(); });
+      await androidBack(tree);
       h.ok(onHome(tree), 'back on Making closes the sheet');
       h.eq(generate?.signal?.aborted, false, 'without stopping the run');
+      streams[0].end();
+    });
+  });
+
+  await h.test('sheet: Android back on Plan with a row being edited cancels that edit, keeps every saved row, and only the next back leaves for Describe', async () => {
+    await withLauncher({
+      server: (r) => (r.path === '/v1/clarify' ? json({ questions: [] }) : json({ rewrittenPrompt: 'A tea timer', plan: [{ label: 'Timer', text: 'Counts down.' }, { label: 'Alert', text: 'Buzzes.' }] })),
+    }, async ({ tree }) => {
+      await composeToPlan(tree, 'A tea timer');
+      await press(button(tree, 'Timer, Counts down.'));
+      await TestRenderer.act(async () => textInput(tree).props.onChangeText('Counts down in minutes.'));
+      await press(button(tree, COPY.planRowSave));
+      await press(button(tree, 'Alert, Buzzes.'));
+      await TestRenderer.act(async () => textInput(tree).props.onChangeText('Half-typed and never saved'));
+      await androidBack(tree);
+      h.ok(on(tree, PlanPage), 'back with a row open stays on the plan page');
+      h.eq(tree.root.findAll((n) => String(n.type) === 'TextInput').length, 0, 'and closes the open edit');
+      h.eq(plan(tree).rows.map((row: { text: string }) => row.text), ['Counts down in minutes.', 'Buzzes.'], 'the saved row keeps its text and the unsaved one is untouched');
+      await androidBack(tree);
+      h.ok(on(tree, DescribePage), 'the next back leaves for Describe');
+      await tap(() => tree.root.findByType(DescribePage).props.onContinue());
+      h.eq(plan(tree).rows.map((row: { text: string }) => row.text), ['Counts down in minutes.', 'Buzzes.'], 'and Continue brings the plan back with the saved edit');
+    });
+  });
+
+  await h.test('draft: reopening a change draft sends and shows the app as it is now, not as it was when the draft was kept; a deleted app takes its draft with it', async () => {
+    const first = held<Response>();
+    let rewrites = 0;
+    await withLauncher({
+      apps: [APP],
+      server: (r) => {
+        if (r.path === '/v1/clarify') return json({ questions: [] });
+        rewrites++;
+        return rewrites === 1 ? first.promise : json({ rewrittenPrompt: 'Timer with laps', plan: [] });
+      },
+    }, async ({ tree, kv, sent }) => {
+      await TestRenderer.act(async () => home(tree).props.onPromptAgain(APP));
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('Add laps'));
+      await tap(() => tree.root.findByType(DescribePage).props.onContinue());
+      await waitFor(() => wasSent(sent, '/v1/rewrite'), 'the first rewrite');
+      await press(button(tree, COPY.sheetClose));
+      new AppIndex(kv).put({ ...APP, name: 'Stopwatch' });
+      await TestRenderer.act(async () => home(tree).props.onPromptAgain(APP));
+      await waitFor(() => rewritesIn(sent).length === 2, 'the rewrite, sent again');
+      h.eq(rewritesIn(sent).map(appNameOf), ['Timer', 'Stopwatch'], 'the request sent after reopening carries the app’s current name');
+      h.eq(tree.root.findByType(PlanPage).props.editing.name, 'Stopwatch', 'and the page is handed the current app');
+      h.ok(textOf(tree.root).includes('Changing Stopwatch'), 'whose name heads it');
+      await press(button(tree, COPY.sheetClose));
+      new AppIndex(kv).remove(APP.id);
+      await TestRenderer.act(async () => home(tree).props.onPromptAgain(APP));
+      h.ok(on(tree, DescribePage), 'with the app gone, the draft is not restored');
+      h.eq(tree.root.findByType(DescribePage).props.text, '', 'and starts empty');
+      first.resolve(json({ rewrittenPrompt: 'late', plan: [] }));
+    });
+  });
+
+  await h.test('flow: two fast taps on Continue send exactly one clarify, and two on Make it start exactly one run', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, sent }) => {
+      await TestRenderer.act(async () => home(tree).props.onCreate());
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('A tea timer'));
+      const continueTap = tree.root.findByType(DescribePage).props.onContinue;
+      await tap(() => { continueTap(); return continueTap(); });
+      await waitFor(() => planLoaded(tree), 'the plan');
+      h.eq(sent.filter((r) => r.path === '/v1/clarify').length, 1, 'the second tap, before the page changed, sent nothing');
+      h.eq(sent.filter((r) => r.path === '/v1/clarify' && r.signal?.aborted).length, 0, 'and the first request was never aborted by a second one');
+      const makeTap = tree.root.findByType(PlanPage).props.onMake;
+      await tap(() => { makeTap(); return makeTap(); });
+      await waitFor(() => on(tree, BuildStep), 'the making page');
+      h.eq(sent.filter((r) => r.path === '/v1/generate').length, 1, 'one generation was started');
       streams[0].end();
     });
   });

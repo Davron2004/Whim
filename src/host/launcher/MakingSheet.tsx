@@ -46,15 +46,17 @@ export interface MakingSheetProps {
   content: SheetContent | null;
   /** Every way out: close, scrim, drag, Android back. The shell decides what each page's close does. */
   onClose: () => void;
+  /** The sheet has finished closing (`Sheet`'s `onClosed`): the next sheet may be presented. */
+  onClosed?: () => void;
 }
 
-export function MakingSheet({ content, onClose }: Readonly<MakingSheetProps>) {
+export function MakingSheet({ content, onClose, onClosed }: Readonly<MakingSheetProps>) {
   // What the sheet showed last, kept so a close animates that page out.
   const last = useRef<SheetContent | null>(null);
   if (content !== null) last.current = content;
   const shown = last.current;
   return (
-    <Sheet visible={content !== null} onClose={onClose} detent="large">
+    <Sheet visible={content !== null} onClose={onClose} onClosed={onClosed} detent="large">
       {shown ? <Fragment key={shown.key}>{shown.node}</Fragment> : null}
     </Sheet>
   );

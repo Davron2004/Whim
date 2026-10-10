@@ -10,6 +10,7 @@
  * No React Native import — this module must load under the Node acceptance suite.
  */
 
+import type { InstalledApp } from './app-index';
 import type { DescribeScreen, PlanScreen } from './prompt-flow';
 
 /** The page a draft restores. */
@@ -21,6 +22,14 @@ export const NEW_APP_DRAFT_KEY = 'new-app';
 /** Which draft a page belongs to: the app it changes, else the new-app draft. */
 export function draftKey(page: { readonly editing?: { readonly id: string } }): string {
   return page.editing?.id ?? NEW_APP_DRAFT_KEY;
+}
+
+/** `page` for the app as it is now. A draft holds the app as it was when it was kept (a new version,
+ *  a new name, a customised tile since), and the requests the plan page sends carry that app's name
+ *  and context; the plan a Describe page returns to holds it too. */
+export function withEditing(page: FlowDraftScreen, editing: InstalledApp): FlowDraftScreen {
+  if (page.kind === 'plan') return { ...page, editing };
+  return { ...page, editing, ...(page.kept ? { kept: { ...page.kept, editing } } : {}) };
 }
 
 /** The longest start of the words the composer shows, in characters. */
@@ -57,6 +66,15 @@ export class FlowDrafts {
 
   clear(key: string): void {
     this.byKey.delete(key);
+  }
+
+  /** The draft to reopen for `requested`, for the app as it is now (`live`; undefined once it is
+   *  gone, which takes its draft with it). */
+  reopen(requested: InstalledApp | undefined, live: InstalledApp | undefined): FlowDraftScreen | undefined {
+    const key = draftKey({ editing: requested });
+    if (requested && !live) this.clear(key);
+    const draft = this.get(key);
+    return draft && live ? withEditing(draft, live) : draft;
   }
 
   /** The new-app draft's words, as the composer shows them, or `undefined` when there is none. */

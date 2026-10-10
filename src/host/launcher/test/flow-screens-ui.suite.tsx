@@ -2,7 +2,7 @@
  *  field, a loading plan offers a busy action in plain words, questions answer as chips or rows with
  *  "Decide for me" exclusive, plan rows edit in place, the can't-make-as-asked state offers its two
  *  actions, and each exit on the running pages calls its own callback. */
-import React from 'react';
+import React, { useState } from 'react';
 import TestRenderer from 'react-test-renderer';
 import { ClarifyQuestion } from '@whim/contract';
 import { STUB_LIMIT } from '../../../../server/src/stub-markers';
@@ -14,8 +14,11 @@ import { PlanPage } from '../PlanPage';
 import BuildStep from '../BuildStep';
 import DoneStep from '../DoneStep';
 import WhimProse from '../../ui/whim-prose/WhimProse';
+import { Sheet } from '../../ui/Sheet';
+import { TilePlate } from '../../ui/AppTile';
+import { TILE_SIDE } from '../../ui/AppTile-geometry';
 import type { InstalledApp } from '../app-index';
-import { button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
+import { androidBack, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -66,6 +69,25 @@ function planPage(screen: PlanScreen, s = spies()): React.ReactElement {
   );
 }
 
+/** A plan page in a real sheet that keeps its own screen, as the shell does, so a saved row stays
+ *  saved: back and close are what the test counts. */
+function HeldPlan({ initial, s }: Readonly<{ initial: PlanScreen; s: ReturnType<typeof spies> }>) {
+  const [screen, setScreen] = useState(initial);
+  return (
+    <Sheet visible detent="large" onClose={s.fn('close')}>
+      <PlanPage
+        screen={screen}
+        onBack={s.fn('back')}
+        onAnswer={noop}
+        onChangeRow={(index, text) => setScreen((current) => updatePlanRow(current, index, text))}
+        onMake={noop}
+        onTryAgain={noop}
+        onMakeInstead={noop}
+      />
+    </Sheet>
+  );
+}
+
 const picked = (node: Node) => node.props.accessibilityState?.checked === true;
 const labelled = (tree: Tree, label: string) => tree.root.findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === label);
 /** The screen reader elements every control labelled `label` is read as. */
@@ -84,12 +106,12 @@ function positionOf(tree: Tree, words: string): number {
 export async function runFlowScreensUiTests(h: Harness): Promise<void> {
   await h.test('describe: an idea chip fills the field and does not continue; changing an app shows no chips and says which app', async () => {
     const s = spies();
-    await rendered(<DescribePage text="" onChangeText={s.fn('change')} onContinue={s.fn('continue')} onClose={s.fn('close')} />, async (tree) => {
+    await rendered(<DescribePage text="" onChangeText={s.fn('change')} onContinue={s.fn('continue')} />, async (tree) => {
       await press(button(tree, COPY.homeIdeaTimer));
       h.eq(s.calls.change, [[COPY.homeIdeaTimer]], 'the chip’s words go into the field');
       h.eq(s.count('continue'), 0, 'and the flow does not move on');
     });
-    await rendered(<DescribePage text="" editing={APP} onChangeText={noop} onContinue={noop} onClose={noop} />, async (tree) => {
+    await rendered(<DescribePage text="" editing={APP} onChangeText={noop} onContinue={noop} />, async (tree) => {
       h.ok(!textOf(tree.root).includes(COPY.homeIdeaTimer), 'no idea chips while changing an existing app');
       h.ok(textOf(tree.root).includes(COPY.composeHeadlineEdit) && textOf(tree.root).includes('Changing Timer'), 'the header names the app and asks what should change');
     });
@@ -97,14 +119,14 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
 
   await h.test('describe: Continue waits for words, and is disabled through a refusal’s retry window', async () => {
     const s = spies();
-    await rendered(<DescribePage text="  " onChangeText={noop} onContinue={s.fn('continue')} onClose={noop} />, async (tree) => {
+    await rendered(<DescribePage text="  " onChangeText={noop} onContinue={s.fn('continue')} />, async (tree) => {
       h.eq(button(tree, COPY.flowContinue).props.disabled, true, 'no words, no Continue');
     });
-    await rendered(<DescribePage text="A tea timer" onChangeText={noop} onContinue={s.fn('continue')} onClose={noop} />, async (tree) => {
+    await rendered(<DescribePage text="A tea timer" onChangeText={noop} onContinue={s.fn('continue')} />, async (tree) => {
       await press(button(tree, COPY.flowContinue));
       h.eq(s.count('continue'), 1, 'with words it continues');
     });
-    await rendered(<DescribePage text="A tea timer" notice={{ ...BUSY, retryAt: Date.now() + 60_000 }} onChangeText={noop} onContinue={s.fn('continue')} onClose={noop} />, async (tree) => {
+    await rendered(<DescribePage text="A tea timer" notice={{ ...BUSY, retryAt: Date.now() + 60_000 }} onChangeText={noop} onContinue={s.fn('continue')} />, async (tree) => {
       h.eq(button(tree, COPY.flowContinue).props.disabled, true, 'a retry window disables it');
       h.ok(positionOf(tree, BUSY.hint) < positionOf(tree, COPY.flowContinue), 'with the refusal above it');
     });
@@ -132,6 +154,8 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
     const changing = { ...landed(), editing: APP };
     await rendered(<PlanPage screen={changing} editing={APP} onBack={noop} onAnswer={noop} onChangeRow={noop} onMake={noop} onTryAgain={noop} onMakeInstead={noop} />, async (tree) => {
       h.ok(textOf(tree.root).includes(COPY.planHeadlineEdit) && textOf(tree.root).includes(COPY.planMakeHeaderEdit), 'the headline and section say change');
+      h.ok(textOf(tree.root).includes('Changing Timer'), 'the page says which app it changes');
+      h.eq(tree.root.findAllByType(TilePlate).map((tile) => TILE_SIDE[tile.props.size as keyof typeof TILE_SIDE]), [24], 'beside the app’s 24 pt tile');
       h.ok(button(tree, COPY.planBuildEdit) != null, 'and the action is Make the change');
     });
   });
@@ -219,16 +243,34 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('plan: back cancels an open row edit first, then returns to Describe, for the visible control and system back alike', async () => {
-    const s = spies();
-    await rendered(planPage(landed(), s), async (tree) => {
-      await press(button(tree, 'Timer, Counts down'));
-      h.eq(tree.root.findAll((n) => hostType(n) === 'TextInput').length, 1, 'a row is open');
-      await press(button(tree, COPY.backLabel));
-      h.eq([tree.root.findAll((n) => hostType(n) === 'TextInput').length, s.count('back')], [0, 0], 'back closes the edit and stays');
-      await press(button(tree, COPY.backLabel));
-      h.eq(s.count('back'), 1, 'the next back leaves for Describe');
-    });
+  await h.test('plan: back cancels an open row edit first, then returns to Describe; the visible control and Android back through the sheet’s Modal do the same', async () => {
+    for (const via of ['visible control', 'Android back'] as const) {
+      const s = spies();
+      const back = async (tree: Tree) => (via === 'Android back' ? androidBack(tree) : press(button(tree, COPY.backLabel)));
+      await rendered(<HeldPlan initial={landed()} s={s} />, async (tree) => {
+        await press(button(tree, 'Timer, Counts down'));
+        await TestRenderer.act(async () => textField(tree).props.onChangeText('Counts down in minutes'));
+        await press(button(tree, COPY.planRowSave));
+        await press(button(tree, 'Alert, Buzzes at zero'));
+        await TestRenderer.act(async () => textField(tree).props.onChangeText('Half-typed and never saved'));
+        await back(tree);
+        h.eq([tree.root.findAll((n) => hostType(n) === 'TextInput').length, s.count('back'), s.count('close')], [0, 0, 0], `${via}: with a row open it closes the edit and stays`);
+        h.ok(labelled(tree, 'Timer, Counts down in minutes, Edited').length === 1 && labelled(tree, 'Alert, Buzzes at zero').length === 1, `${via}: the saved row keeps its text and the cancelled one reverts`);
+        await back(tree);
+        h.eq([s.count('back'), s.count('close')], [1, 0], `${via}: the next back leaves for Describe, and does not close the sheet`);
+      });
+    }
+  });
+
+  await h.test('describe: Android back through the sheet’s Modal closes the sheet, as the close control does', async () => {
+    for (const via of ['close control', 'Android back'] as const) {
+      let closes = 0;
+      await rendered(<Sheet visible detent="large" onClose={() => { closes++; }}><DescribePage text="A tea timer" onChangeText={noop} onContinue={noop} /></Sheet>, async (tree) => {
+        if (via === 'Android back') await androidBack(tree);
+        else await press(button(tree, COPY.sheetClose));
+        h.eq(closes, 1, `${via}: closes once`);
+      });
+    }
   });
 
   await h.test('plan: a request the page could not send shows its sentence and Try again in place of Make it', async () => {
@@ -239,6 +281,13 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
       h.eq(tree.root.findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === COPY.planBuild).length, 0, 'and Make it is not offered');
       await press(button(tree, COPY.planTryAgain));
       h.eq(s.count('again'), 1, 'Try again asks for the request again');
+    });
+  });
+
+  await h.test('plan: a server notice stands above Make it', async () => {
+    await rendered(planPage({ ...landed(), notice: BUSY }), async (tree) => {
+      const notice = positionOf(tree, BUSY.hint);
+      h.ok(notice >= 0 && notice < positionOf(tree, COPY.planBuild), 'the notice comes before the action in the page');
     });
   });
 

@@ -7,7 +7,8 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW, LEGAL_COPY, type LegalCopyTable } from '../copy';
+import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW, FIRST_RUN_COVERAGE, LEGAL_COPY, type LegalCopyTable } from '../copy';
+import { MANIFESTS, latestVersion } from '../../../../contract/src/disclosure-manifest';
 import { RELEASE } from '../release-config';
 import LauncherRoot from '../LauncherRoot';
 import HomeScreen from '../HomeScreen';
@@ -249,8 +250,52 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
       }
     });
 
+    await h.test(`first-run sheet (${language}): the first layer names every category sent and every screen-named recipient role of the current manifest, with nothing expanded`, async () => {
+      const manifest = MANIFESTS[latestVersion()];
+      const sent = manifest.categories.filter((category) => category.onScreen);
+      const named = manifest.roles.filter((role) => role.namedOnScreen);
+      h.ok(sent.length > 0 && named.length > 0, 'the manifest puts something on the screen, so this cannot pass vacuously');
+      const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue={false} consentDue onAgree={() => {}} onClose={() => {}} />);
+      try {
+        const visible = textOf(tree.root);
+        h.ok(!visible.includes(table.consentWho), 'Full details is collapsed, so none of this comes from the long disclosure');
+        for (const [what, id, keys] of [
+          ...sent.map((category) => ['category', category.id, FIRST_RUN_COVERAGE.categories[category.id]] as const),
+          ...named.map((role) => ['role', role.id, FIRST_RUN_COVERAGE.roles[role.id]] as const),
+        ]) {
+          h.ok(keys !== undefined && keys.length > 0, `${what} ${id}: the first layer declares which text names it`);
+          h.ok((keys ?? []).every((key) => visible.includes(table[key])), `${what} ${id}: that text is on the sheet before anything is expanded`);
+        }
+        h.ok(visible.includes(table.firstRunStays) && visible.includes(table.firstRunNever), 'what stays on the phone and what Whim never does are there too');
+        h.ok(visible.includes(table.privacyPolicyLabel) && !termsWord.test(visible), 'with the privacy link and no wording about the terms of use');
+      } finally {
+        await unmountScreen(tree);
+      }
+    });
+
+    await h.test(`first-run sheet (${language}): Full details opens before the terms box is ticked or anything is agreed, and shows every section in order, naming every screen-named role`, async () => {
+      const manifest = MANIFESTS[latestVersion()];
+      const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue consentDue onAgree={() => { throw new Error('nothing was agreed'); }} onClose={() => {}} />);
+      try {
+        await press(button(tree, table.firstRunDetails));
+        const text = textOf(tree.root);
+        const outOfOrder = firstOutOfOrder(text, table, SPEC_ORDER.filter((key) => key !== 'privacyPolicyLabel'));
+        h.ok(outOfOrder === null, `with the terms still due and the box unticked, every section renders in the spec's order (first missing or out of order: ${outOfOrder ?? 'none'})`);
+        for (const role of manifest.roles.filter((r) => r.namedOnScreen)) {
+          const keys = CONSENT_SCREEN_COVERAGE.roles[role.id];
+          h.ok(keys !== undefined && keys.every((key) => text.includes(table[key])), `the details name ${role.id}`);
+        }
+        for (const category of manifest.categories.filter((c) => c.onScreen)) {
+          const keys = CONSENT_SCREEN_COVERAGE.categories[category.id];
+          h.ok(keys !== undefined && keys.every((key) => text.includes(table[key])), `the details name ${category.id}`);
+        }
+      } finally {
+        await unmountScreen(tree);
+      }
+    });
+
     await h.test(`first-run sheet (${language}): the summary shows at first; Full details expands the complete disclosure in place, in order; the privacy link follows the language`, async () => {
-      const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue={false} onAgree={() => {}} onClose={() => {}} />);
+      const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue={false} consentDue onAgree={() => {}} onClose={() => {}} />);
       try {
         const summary = textOf(tree.root);
         h.ok(summary.includes(table.consentTitle) && summary.includes(table.consentLead), 'the title and the lead');

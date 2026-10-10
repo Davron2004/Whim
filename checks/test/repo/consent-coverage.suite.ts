@@ -19,20 +19,26 @@ import {
   COPY,
   CONSENT_SCREEN_COVERAGE,
   CONSENT_WHATS_NEW,
+  FIRST_RUN_COVERAGE,
   LEGAL_COPY,
   LEGAL_COPY_KEYS,
   type LegalCopyTable,
 } from '../../../src/host/launcher/copy';
+
+/** Which copy keys put each manifest category and recipient role on a surface. */
+interface Coverage {
+  readonly categories: Readonly<Record<string, readonly string[]>>;
+  readonly roles: Readonly<Record<string, readonly string[]>>;
+}
 
 export interface ConsentCoverageInput {
   /** The current disclosure manifest. */
   readonly manifest: DisclosureManifest;
   /** Every consent version before the current one: a grant under any of them is outdated. */
   readonly olderVersions: readonly number[];
-  readonly coverage: {
-    readonly categories: Readonly<Record<string, readonly string[]>>;
-    readonly roles: Readonly<Record<string, readonly string[]>>;
-  };
+  readonly coverage: Coverage;
+  /** The same for the first-run sheet's first layer. */
+  readonly firstLayerCoverage: Coverage;
   /** Language → that language's legal copy table. */
   readonly tables: Readonly<Record<string, Readonly<Record<string, string>>>>;
   /** The keys the legal screens read, which every table must carry. */
@@ -41,11 +47,11 @@ export interface ConsentCoverageInput {
   readonly whatsNew: Readonly<Record<string, Readonly<Record<number, { readonly text: string }>>>>;
 }
 
-/** What no consent or report string, in any language, may say: the router's name (the screen names
+/** What no consent, report or first-run string, in any language, may say: the router's name (the screen names
  *  roles, never a provider), or that the phone ID is anonymous (it is pseudonymous). */
 const BANNED: readonly RegExp[] = [/open\s*router/i, /anonym/i];
 
-const SCANNED_KEY = /^(consent|report)/;
+const SCANNED_KEY = /^(consent|report|firstRun)/;
 
 function bannedFindings(where: string, text: string): string[] {
   return BANNED.filter((pattern) => pattern.test(text)).map((pattern) => `${where} matches ${pattern}: ${JSON.stringify(text)}`);
@@ -55,16 +61,16 @@ function isBlank(text: string | undefined): boolean {
   return (text ?? '').trim() === '';
 }
 
-/** Every on-screen category and screen-named role of the manifest has copy keys, each non-empty
- *  in every table. */
-function coverageFindings(input: ConsentCoverageInput): string[] {
+/** Every on-screen category and screen-named role of the manifest has copy keys in `coverage`, each
+ *  non-empty in every table. `name` is the coverage table and `surface` the place, for the finding. */
+function coverageFindings(input: ConsentCoverageInput, coverage: Coverage, name: string, surface: string): string[] {
   const required: [string, readonly string[] | undefined][] = [
-    ...input.manifest.categories.filter((c) => c.onScreen).map((c): [string, readonly string[] | undefined] => [`category ${c.id}`, input.coverage.categories[c.id]]),
-    ...input.manifest.roles.filter((r) => r.namedOnScreen).map((r): [string, readonly string[] | undefined] => [`role ${r.id}`, input.coverage.roles[r.id]]),
+    ...input.manifest.categories.filter((c) => c.onScreen).map((c): [string, readonly string[] | undefined] => [`category ${c.id}`, coverage.categories[c.id]]),
+    ...input.manifest.roles.filter((r) => r.namedOnScreen).map((r): [string, readonly string[] | undefined] => [`role ${r.id}`, coverage.roles[r.id]]),
   ];
   return required.flatMap(([what, keys]) => {
     if (keys === undefined || keys.length === 0) {
-      return [`${what} belongs on the consent screen, but CONSENT_SCREEN_COVERAGE names no copy key for it`];
+      return [`${what} belongs on ${surface}, but ${name} names no copy key for it`];
     }
     return Object.entries(input.tables).flatMap(([language, table]) =>
       keys.filter((key) => isBlank(table[key])).map((key) => `${what}: ${key} is missing or empty in the ${language} table`),
@@ -107,7 +113,13 @@ function wordingFindings(input: ConsentCoverageInput): string[] {
 
 /** One finding per gap; `[]` means the screen covers the manifest in every language. */
 export function consentCoverageFindings(input: ConsentCoverageInput): string[] {
-  return [...coverageFindings(input), ...whatsNewFindings(input), ...legalKeyFindings(input), ...wordingFindings(input)];
+  return [
+    ...coverageFindings(input, input.coverage, 'CONSENT_SCREEN_COVERAGE', 'the consent screen'),
+    ...coverageFindings(input, input.firstLayerCoverage, 'FIRST_RUN_COVERAGE', 'the first-run sheet’s first layer'),
+    ...whatsNewFindings(input),
+    ...legalKeyFindings(input),
+    ...wordingFindings(input),
+  ];
 }
 
 const CURRENT = latestVersion();
@@ -118,6 +130,7 @@ function liveInput(change: Partial<ConsentCoverageInput> = {}): ConsentCoverageI
     manifest: MANIFESTS[CURRENT],
     olderVersions: Object.keys(MANIFESTS).map(Number).filter((v) => v < CURRENT),
     coverage: CONSENT_SCREEN_COVERAGE,
+    firstLayerCoverage: FIRST_RUN_COVERAGE,
     tables: LEGAL_COPY,
     legalKeys: LEGAL_COPY_KEYS,
     whatsNew: CONSENT_WHATS_NEW,
@@ -192,14 +205,27 @@ export async function run(): Promise<void> {
     assertFinding(findings, ['role authorities', 'names no copy key'], 'dropped role');
   });
 
+  await test('consent coverage: dropping a role or category from FIRST_RUN_COVERAGE, or blanking its text in one language, fails, naming it and the first-run sheet', () => {
+    const roles = without(FIRST_RUN_COVERAGE.roles, 'platform');
+    const dropped = consentCoverageFindings(liveInput({ firstLayerCoverage: { ...FIRST_RUN_COVERAGE, roles } }));
+    assertFinding(dropped, ['role platform', 'first-run sheet', 'FIRST_RUN_COVERAGE names no copy key'], 'dropped role');
+    const categories = without(FIRST_RUN_COVERAGE.categories, 'phone-id');
+    assertFinding(consentCoverageFindings(liveInput({ firstLayerCoverage: { ...FIRST_RUN_COVERAGE, categories } })), ['category phone-id', 'first-run sheet'], 'dropped category');
+    const french: LegalCopyTable = { ...LEGAL_COPY.en, firstRunSent: '' };
+    const blanked = consentCoverageFindings(liveInput({ tables: { en: LEGAL_COPY.en, fr: french }, whatsNew: { ...CONSENT_WHATS_NEW, fr: CONSENT_WHATS_NEW.en } }));
+    assertFinding(blanked, ['role authorities', 'firstRunSent', 'fr table'], 'blanked first-layer text');
+  });
+
   await test('consent coverage: a language with no what’s-new line for version 1 fails, naming it', () => {
     const findings = consentCoverageFindings(liveInput({ whatsNew: without(CONSENT_WHATS_NEW, 'fr') }));
     assertFinding(findings, ['fr table', 'version-1 grant'], 'missing what’s-new');
   });
 
-  await test('consent coverage: OpenRouter or "anonymous" in a consent, report or what’s-new string fails', () => {
+  await test('consent coverage: OpenRouter or "anonymous" in a consent, report, first-run or what’s-new string fails', () => {
     const cases: readonly [string, Partial<ConsentCoverageInput>, readonly string[]][] = [
       ['a consent string naming the router', { tables: { en: { ...COPY, consentLead: 'Requests reach AI providers through OpenRouter.' } } }, ['en consentLead', 'open']],
+      ['a first-run row naming the router', { tables: { en: { ...COPY, firstRunSent: 'Your request goes to OpenRouter and then to the AI companies.' } } }, ['en firstRunSent', 'open']],
+      ['a first-run row calling the ID anonymous, in French', { tables: { fr: { ...LEGAL_COPY.fr, firstRunSent: 'Un identifiant anonyme accompagne la demande.' } } }, ['fr firstRunSent', 'anonym']],
       ['a report string calling the ID anonymous', { tables: { en: { ...COPY, reportDeviceIdLine: 'An anonymous ID goes with your report.' } } }, ['en reportDeviceIdLine', 'anonym']],
       ['a what’s-new line calling the ID anonymous', { whatsNew: { en: { 1: { text: 'Your anonymous ID now stays longer.' } } } }, ["en what's-new for version 1", 'anonym']],
     ];
