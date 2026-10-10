@@ -21,6 +21,7 @@ import { Icon } from '../../ui/Icon';
 import { COLORS } from '../../../design/tokens';
 import type { InstalledApp } from '../app-index';
 import { androidBack, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
+import { windowMetrics } from './native-host';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -97,6 +98,22 @@ const labelled = (tree: Tree, label: string) => tree.root.findAll((n) => hostTyp
 const readAs = (tree: Tree, label: string) => labelled(tree, label).map((node) => screenReaderElement(node));
 /** The one text field showing. */
 const textField = (tree: Tree) => tree.root.find((n) => hostType(n) === 'TextInput');
+
+/** A sheet's close control as drawn at a text size: its glyph's side and its box's side. */
+async function closeControlAt(scale: number): Promise<{ side: number; target: number }> {
+  windowMetrics.fontScale = scale;
+  const tree = await renderScreen(<Sheet visible detent="fit" onClose={noop}><DescribePage text="" onChangeText={noop} onContinue={noop} /></Sheet>);
+  try {
+    const close = button(tree, COPY.sheetClose);
+    return {
+      side: Number(close.find((n) => hostType(n) === 'Svg').props.width),
+      target: Number(flat(close.find((n) => String(n.type) === 'Animated.View').props.style).width),
+    };
+  } finally {
+    windowMetrics.fontScale = 1;
+    await unmountScreen(tree);
+  }
+}
 
 /** A style prop as the one flat object a device would draw, whatever nesting the component gave it. */
 function flat(style: unknown): Record<string, unknown> {
@@ -305,6 +322,47 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
         await back(tree);
         h.eq([s.count('back'), s.count('close')], [1, 0], `${via}: the next back leaves for Describe, and does not close the sheet`);
       });
+    }
+  });
+
+  await h.test('plan: the back control sits in the sheet’s header row beside the close control, not in a row of its own under it; Describe, which cannot go back, has none', async () => {
+    const rowOf = (node: Node) => {
+      for (let at = node.parent; at; at = at.parent) if (typeof hostType(at) === 'string') return at;
+      return null;
+    };
+    await rendered(<HeldPlan initial={landed()} s={spies()} />, async (tree) => {
+      const back = labelled(tree, COPY.backLabel);
+      h.eq(back.length, 1, 'one back control');
+      h.ok(rowOf(back[0]) !== null && rowOf(back[0]) === rowOf(button(tree, COPY.sheetClose)), 'it shares its row with the close control');
+    });
+    await rendered(<Sheet visible detent="large" onClose={noop}><DescribePage text="A tea timer" onChangeText={noop} onContinue={noop} /></Sheet>, async (tree) => {
+      h.eq(labelled(tree, COPY.backLabel).length, 0, 'Describe has no back control');
+    });
+  });
+
+  await h.test('a sheet’s close glyph is 24 at the default text size and grows with the text, to a cap, inside the same 44 target', async () => {
+    const [normal, large, huge, max] = [await closeControlAt(1), await closeControlAt(1.35), await closeControlAt(2), await closeControlAt(3)];
+    h.eq(normal.side, 24, 'at the default size, the 24 headers use');
+    h.ok(large.side > normal.side && huge.side >= large.side, 'larger text, a larger glyph');
+    h.eq(max.side, huge.side, 'which stops growing past the cap');
+    h.ok([normal, large, huge, max].every((glyph) => glyph.target === 44 && glyph.side <= glyph.target), 'in a target that stays 44 and holds the glyph');
+  });
+
+  await h.test('a sheet whose text size changes while it is up lays its content out again: iOS keeps every text measured at the old size otherwise', async () => {
+    const mounts = { count: 0 };
+    const Probe = () => { React.useEffect(() => { mounts.count += 1; }, []); return null; };
+    const sheet = <Sheet visible detent="large" onClose={noop}><Probe /></Sheet>;
+    const tree = await renderScreen(sheet);
+    try {
+      h.eq(mounts.count, 1, 'setup: mounted once');
+      windowMetrics.fontScale = 2;
+      await TestRenderer.act(async () => tree.update(<Sheet visible detent="large" onClose={noop}><Probe /></Sheet>));
+      h.eq(mounts.count, 2, 'the text size changed: the content is built again');
+      await TestRenderer.act(async () => tree.update(<Sheet visible detent="large" onClose={noop}><Probe /></Sheet>));
+      h.eq(mounts.count, 2, 'and only then, not on every render');
+    } finally {
+      windowMetrics.fontScale = 1;
+      await unmountScreen(tree);
     }
   });
 

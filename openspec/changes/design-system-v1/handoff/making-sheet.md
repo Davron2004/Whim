@@ -29,8 +29,8 @@ Transitions (the shell, `LauncherRoot.tsx`, owns the requests; the pages never f
   shell's `failure` screen. A refused generate returns to the plan page with `notice`.
 - Back on Plan while a row is edited cancels the edit (`planBackAction`); Android back (`useSheetBack`) and the visible control
   share it. A second tap on a page's forward action (Continue, Make it) before React draws the next page is ignored (`firstTake`).
-- The making sheet and the first-run sheet never overlap: `useSheetHandOver` holds the sheet the screen wants until the other
-  reports `onClosed` (iOS can drop a present issued while another Modal is dismissing).
+- The making sheet and the first-run sheet never overlap: overlays take turns by themselves (`ui/OverlayModal.tsx`), so neither
+  sheet has an `onClosed` prop and nothing in the shell waits for a sheet to close before showing the next.
 
 ## Closing and reopening — `LauncherRoot.closeSheet`
 
@@ -62,17 +62,21 @@ draft with it.
 ## Components (props verbatim)
 
 ```ts
-MakingSheet({ content: SheetContent | null /* null closes */; onClose; onClosed? })   // SheetContent { key: string; node }
-  PageHead({ onBack? })  PAGE_HEAD_HEIGHT = 44   // every page starts under this row: headlines align
+MakingSheet({ content: SheetContent | null /* null closes */; onClose })   // SheetContent { key: string; node }
   HostedPage({ children })                        // gives a `flex:1` full-screen page the sheet body's height
 DescribePage({ text; editing?: InstalledApp; serverUnreachable?; notice?: FlowNotice;
                onChangeText; onContinue })       // Android back = the sheet's close: no prop, no registration
 PlanPage({ screen: PlanScreen; editing?: InstalledApp; onBack; onAnswer(id, AnswerChange); onChangeRow(index, text);
            onMake; onTryAgain; onMakeInstead })
 FirstRunSheet({ visible; language: LegalLanguage; onLanguageChange; termsDue: boolean; consentDue: boolean;
-                termsOutdated?: boolean; outdatedFrom?: number; refused?: boolean; onAgree; onClose; onClosed? })
+                termsOutdated?: boolean; outdatedFrom?: number; refused?: boolean; onAgree; onClose })
+useSheetBack(handler, { control?: boolean })     // `control` also draws the back control in the sheet's header row
 ```
-Both Sheet-hosted pages use `KeyboardShell host="sheet"`; `KeyboardShell` gained `onScrollOffset?(offset)`.
+Every page starts its headline right under the sheet's header row (grabber, then one 44 row holding the close control and, when a
+page asked for it, the back control): there is no `PageHead` any more. In a `large` sheet the page body fills the card, so a
+`KeyboardShell host="sheet"` footer sits at the bottom of the sheet, above the keyboard when it is up. That footer scrolls with the
+content instead when it takes more than `FOOTER_SHARE` (0.3) of the window (the largest text sizes). The content fades out over
+16 pt under the header once scrolled. Both sheet-hosted pages use `KeyboardShell host="sheet"`; `KeyboardShell` gained `onScrollOffset?(offset)`.
 `FirstRunSheet` replaces the terms and ask-consent screens; the shell's `terms` and `consent` (ask) screens are
 drawn by it over the screen they replaced (`stackFor(returnTo)`), the silent age check over the same. `onFirstRunAgree`
 records the terms acceptance when `kind === 'terms'` and the grant when `grantDue` (not current, or `refused`), then runs the
@@ -97,7 +101,7 @@ Each branch returns `{ key: pageKeyOf(screen), node }`. Replace the node, keep t
   signals (set by `onOpenPending`); Stop = `abortLiveAttempt` + drop (today `onCancelBuild`, in line only).
 - `screen.kind === 'ready'` (`ReadyScreen`): `<HostedPage><DoneStep app onOpen onBackToApps onReport/><ReportSheet/></HostedPage>`.
 - `screen.kind === 'failure'`: `<HostedPage><FailureScreen ...failureActions(screen)/></HostedPage>`; its state carries `journalId`.
-- A page that sizes itself (a `KeyboardShell host="sheet"` body, or `PageHead` + content) drops `HostedPage`.
+- A page that sizes itself (a `KeyboardShell host="sheet"` body) drops `HostedPage`.
 - The sheet closes via `closeSheet` for all of them. Android back reaches a page through the Sheet's Modal, never `BackHandler`:
   a page that steps back before it closes calls `useSheetBack(step)` (`ui/Sheet.tsx`; Plan does); every other page's back is
   `closeSheet`. Making/Ready/Failure keep their own `useSystemBack`, which a Modal starves on a device (back = `closeSheet`).
