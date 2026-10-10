@@ -107,3 +107,12 @@ Deviations: all class A; no class B or C. Reviewer verdicts: 15 findings, 16 rep
 assertions, restored in 16b), 16b findings. Full gates: `71bd7a6d` pass, `bb5d760f` pass, `895ae528` fail on the
 synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain blocks and where it went: see the
 "deferred" lines above. Nothing on a device was verified this shift.
+
+## Shift 2 (2026-10-10)
+
+- side branches landed first: `chain/copy-app-data-4` merged as `0ccd05d2` (integrity 0; reviewer: findings, three
+  lows, no test removed; gate-full PASS), then `harness/removal-ratchet` as `d25e330d` (decision #78). From
+  `d25e330d` on, a commit that removes an assertion or a test needs a `Check-removal: <reason>` trailer on a commit
+  touching that file, and the orchestrator reviews each at merge.
+- triage of the two device passes on `895ae528` plus #174 and #175: `visual-fixes.md` in this folder (classification,
+  the decisions taken for the owner, and the fix chains 16c–16g in two waves).

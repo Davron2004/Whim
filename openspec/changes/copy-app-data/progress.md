@@ -132,3 +132,9 @@ PID=$(xcrun simctl launch $U com.anycognition.whim | awk '{print $2}'); xcrun si
 kill -9 $PID; xcrun simctl launch $U com.anycognition.whim                                   # durability read-back
 xcrun simctl shutdown $U; xcrun simctl delete $U
 ```
+
+## Merge (integration orchestrator, shift 2)
+
+- chain-4 merged into `integration/beta-2` as `0ccd05d2`; integrity exit 0; gate-full PASS. Reviewer (not the
+  author): findings, all low. The probe files open raw handles with no busy timeout (not product paths), and the
+  new test's `waited >= HOLD_MS / 2` check can fail on a machine that schedules the parent more than 200 ms late.
