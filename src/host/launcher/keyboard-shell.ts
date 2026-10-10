@@ -76,9 +76,9 @@ export interface ScrollMetrics {
   readonly content: number;
 }
 
-/** Whether content is hidden above (the header shows its divider) or below (the footer does). */
-export function scrollEdges({ offset, viewport, content }: ScrollMetrics): { readonly above: boolean; readonly below: boolean } {
-  return { above: offset > 0.5, below: offset + viewport < content - 0.5 };
+/** Whether content continues below the visible part (the footer shows its divider). */
+export function contentBelow({ offset, viewport, content }: ScrollMetrics): boolean {
+  return offset + viewport < content - 0.5;
 }
 
 /**

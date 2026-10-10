@@ -14,7 +14,7 @@ import { DescribePage } from '../DescribePage';
 import { PlanPage } from '../PlanPage';
 import type { PlanScreen } from '../prompt-flow';
 import { ReportSheet } from '../ReportScreen';
-import KeyboardShell, { KeyboardTextInput } from '../KeyboardShell';
+import { KeyboardTextInput } from '../KeyboardShell';
 import AdvancedScreen from '../AdvancedScreen';
 import { SHELL_PALETTE } from '../theme';
 import { TextArea, TextField } from '../../ui/TextField';
@@ -26,10 +26,10 @@ import { SPACING } from '../../../sdk/theme';
 import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
 import { reportClientOptions } from '../transport-shared';
-import { button, press, textOf, unmountScreen, hostType } from './react-screen';
+import { button, freshApp, press, textOf, unmountScreen, hostType } from './react-screen';
 import { testAppInfo } from './client-fixtures';
-import { Keyboard, Platform, StyleSheet, View, refuseModalPresentations, setColorScheme, useSafeAreaInsets } from './native-host';
-import { dragKeyboard, emitKeyboardEvent, keyboardSubscriptions, keyboardWindow, moveKeyboard, resetKeyboard, stepKeyboard } from './native-keyboard-controller';
+import { Keyboard, Platform, StyleSheet, changeKeyboardFrame, keyboardFrameListenerCount, refuseModalPresentations, setColorScheme, useSafeAreaInsets } from './native-host';
+import { dragKeyboard, emitKeyboardEvent, endKeyboard, keyboardSubscriptions, keyboardWindow, moveKeyboard, resetKeyboard, stepKeyboard } from './native-keyboard-controller';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -124,6 +124,7 @@ async function on(device: Device, element: React.ReactElement, body: (m: Mounted
   };
   try {
     let tree!: Tree;
+    freshApp();
     await TestRenderer.act(async () => { tree = TestRenderer.create(element, { createNodeMock }); });
     try {
       await body({ tree, geometry, scrolls, focused: () => focusCalls });
@@ -334,6 +335,32 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, KEYBOARD_TOP), `${device.name}: and follows it back down`);
       });
     }
+  });
+
+  await h.test('iOS: the first keyboard of a process reports a height without the Done bar that attaches a moment later; the frame iOS reports then moves the footer, on a screen and in a sheet', async () => {
+    const withoutBar = KEYBOARD_HEIGHT - 44;
+    await on(IOS, advanced(), async ({ tree }) => {
+      await TestRenderer.act(async () => { moveKeyboard(withoutBar); flushRevealFrames(); });
+      h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, keyboardWindow.height - withoutBar), 'the screen first ends at the height the library reported');
+      await TestRenderer.act(async () => { changeKeyboardFrame(KEYBOARD_HEIGHT); });
+      h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, KEYBOARD_TOP), 'and clears the whole keyboard, bar included, once iOS reports its frame');
+      await TestRenderer.act(async () => { endKeyboard(withoutBar); });
+      h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, KEYBOARD_TOP), 'the library then ends where it started, without the bar: the footer stays clear of the bar');
+      await TestRenderer.act(async () => { dragKeyboard(KEYBOARD_HEIGHT / 2); });
+      h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, keyboardWindow.height - KEYBOARD_HEIGHT / 2), 'a drag still takes the footer wherever the keyboard is');
+      await TestRenderer.act(async () => { moveKeyboard(KEYBOARD_HEIGHT - 100); flushRevealFrames(); });
+      h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, keyboardWindow.height - KEYBOARD_HEIGHT + 100), 'a keyboard that then changes height is followed to it, not held at the earlier report');
+      await TestRenderer.act(async () => { moveKeyboard(0); changeKeyboardFrame(0); });
+      h.eq(framePadding(tree), 0, 'a keyboard that has left covers nothing');
+      await TestRenderer.act(async () => { moveKeyboard(withoutBar); });
+      h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, keyboardWindow.height - withoutBar), 'the next keyboard starts from what the library says: nothing is kept from the last');
+    });
+    await on(IOS, sheeted(compose()), async ({ tree }) => {
+      const safe = useSafeAreaInsets().bottom;
+      await TestRenderer.act(async () => { moveKeyboard(withoutBar); flushRevealFrames(); });
+      await TestRenderer.act(async () => { changeKeyboardFrame(KEYBOARD_HEIGHT); });
+      h.eq(flat(sheetCard(tree)).paddingBottom, sheetBottomPadding(overlapOf(SCREEN_FRAME, KEYBOARD_TOP), safe), 'the sheet’s card ends at the whole keyboard’s top edge, so Continue is not under the bar');
+    });
   });
 
   await h.test('the frame follows the keyboard frame by frame, on its own curve and under an interactive drag, not only where it ends', async () => {
@@ -721,19 +748,19 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('the header hairline shows once content scrolls beneath it, and the footer hairline while content continues below', async () => {
-    await on(IOS, <KeyboardShell header={<View />} footer={<View />}><View /></KeyboardShell>, async ({ tree }) => {
+  await h.test('the footer hairline shows while content continues below, in a sheet’s page, and no hairline sits under the sheet’s header', async () => {
+    await on(IOS, sheeted(compose()), async ({ tree }) => {
       const reports = scrollReports(tree);
       const lines = () => edgeLines(tree).map(drawn);
       await reports.viewport(600);
       await reports.content(500);
-      h.eq(lines(), [false, false], 'all content in view: no hairline');
+      h.eq(lines(), [false], 'all content in view: no hairline');
       await reports.content(900);
-      h.eq(lines(), [false, true], 'content running past the footer: its hairline shows');
+      h.eq(lines(), [true], 'content running past the footer: its hairline shows');
       await reports.offset(120);
-      h.eq(lines(), [true, true], 'scrolled: the header hairline shows too');
+      h.eq(lines(), [true], 'scrolled, content still continuing: the one hairline is the footer’s, nothing appears under the header');
       await reports.offset(300);
-      h.eq(lines(), [true, false], 'scrolled to the end: only the header hairline');
+      h.eq(lines(), [false], 'scrolled to the end: no hairline');
     });
   });
 
@@ -745,14 +772,18 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
       ];
       for (const [name, element, open] of frameHosts) {
         const before = keyboardSubscriptions();
+        const framesBefore = keyboardFrameListenerCount();
         let added: unknown[] = [];
+        let framesWhile = 0;
         await on(device, element, async () => {
           await open();
           added = [...keyboardSubscriptions()].filter((subscription) => !before.has(subscription));
+          framesWhile = keyboardFrameListenerCount();
         });
         h.ok(added.length > 0, `${device.name} ${name}: setup: the frame listens to the keyboard while it pads`);
         const after = keyboardSubscriptions();
         h.eq(added.filter((listener) => after.has(listener)).length, 0, `${device.name} ${name}: none of the subscriptions it added outlive it`);
+        h.eq([framesWhile > framesBefore, keyboardFrameListenerCount()], [device.os === 'ios', framesBefore], `${device.name} ${name}: iOS listens to the system’s keyboard frame while it pads, and stops once it unmounts`);
       }
     }
   });
@@ -770,9 +801,9 @@ const measureFooter = (box: Node, height: number) => TestRenderer.act(async () =
 /** The edge fade under a sheet's header: the one non-touchable animated overlay. */
 const topFadeOf = (tree: Tree) => tree.root.find((n) => String(n.type) === 'Animated.View' && n.props.pointerEvents === 'none');
 
-/** The frame's edge hairlines, header's first, outside the scrolling content. */
+/** The hairlines of the sheet's page frame, outside the scrolling content. */
 const isEdgeLine = (n: Node) => String(n.type) === 'View' && flat(n).height === StyleSheet.hairlineWidth && nearest(n, 'ScrollView') == null;
-const edgeLines = (tree: Tree) => emptySpace(tree).findAll(isEdgeLine);
+const edgeLines = (tree: Tree) => sheetCard(tree).findAll(isEdgeLine);
 /** Whether a hairline is drawn (it is always laid out). */
 const drawn = (line: Node) => flat(line).backgroundColor === SHELL_PALETTE.cardBorder;
 

@@ -24,7 +24,8 @@
  * the `Modal` after `SHOW_REPORT_MS` of the app being active (a presentation asked for while it is
  * inactive or in the background waits for it), which gives touch back, and presents it again; refused
  * `SHOW_ATTEMPTS` times, the overlay closes. Android shows each `Modal` in a window of its own and
- * reports no dismissal; there the turn passes as the exit ends, and nothing is timed.
+ * reports no dismissal; there the turn passes as the exit ends, and the only timer is the exit ceiling
+ * below.
  *
  * An exit that never ends (its animation was cancelled) cannot hold the screen either: an overlay
  * that is up but no longer wanted is ended after `EXIT_CEILING_MS`. An overlay unmounted while its

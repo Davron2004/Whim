@@ -24,9 +24,7 @@ export const DISMISS_REPORT_MS = 500, EXIT_CEILING_MS = 2000, SHOW_REPORT_MS = 1
 ```ts
 export interface SheetProps { visible: boolean; onClose: () => void /* must set visible false */;
   title?: string /* title2; screen-reader focus lands here */; detent?: 'fit' | 'large' /* fit */;
-  closeLabel?: string /* COPY.sheetClose */;
-  onClosed?: () => void /* once per showing, when nothing of it is left on screen */;
-  children: React.ReactNode }
+  closeLabel?: string /* COPY.sheetClose */; children: React.ReactNode }
 export function useSheetBack(handler: () => void): void; // Android back goes to the page, not onClose; no-op outside a Sheet
 // drag worklets for any dragged surface (downward-positive pt, velocity pt/s); DRAG_SLOP = 10
 export function projectRelease(position, velocity): number;  // + (v/1000)·0.998/(1−0.998)
@@ -34,6 +32,7 @@ export function rubberBand(overshoot, dimension): number;    // coefficient 0.55
 export function releaseCommits(position, velocity, dimension): boolean;  // v >= 0 && projected > dim/2
 export function dragPosition(start, translation, dimension): number;
 ```
+- `launcher/SheetModal.tsx` (Report's form) takes turns through `OverlayModal` too. `Sheet`'s frame is keyed by `fontScale`: its content, nested overlays included, is rebuilt on a live size change.
 - Mounted through its exit. Opens/closes `smooth`; drag release → `fling` with velocity. Reduce Motion:
   160/120 ms cross-fade, drag still tracks. Closes via scrim (sibling, hidden from a11y), close `x`,
   `onRequestClose` (Android back; hardware Escape arrives as back), `onAccessibilityEscape`, drag past commit.
@@ -85,12 +84,13 @@ accessibilityLabel? /* when no label */; revealTarget?: RefObject<View | null> }
 
 ## GroupedList — `src/host/ui/GroupedList.tsx`
 ```ts
-export type RowTrailing = { kind: 'value'; text: string } | { kind: 'chevron' } | { kind: 'external' }
+export type RowTrailing = { kind: 'value'; text: string } | { kind: 'chevron'; expanded?: boolean } | { kind: 'external' }
   | { kind: 'switch'; value: boolean; onValueChange: (on: boolean) => void } | { kind: 'copy'; label: string; onCopy: () => void };
 // GroupedRowProps { title; subtitle?; icon?: IconName; trailing?: RowTrailing; onPress?; destructive?; disabled?; accessibilityHint? }
 // GroupedSectionProps { header?; footer?; on?: 'canvas' | 'sheet'; children }
 ```
-Switch row = one element role `switch` (press flips, toggle haptic); copy = its own button.
+Switch row = one element role `switch` (press flips, toggle haptic); copy = its own button. `expanded` turns the
+chevron down and sets `accessibilityState.expanded`. From 135% text a `value` trailing goes under the title.
 
 ## AppTile geometry — `src/host/ui/AppTile-geometry.ts` (no RN import)
 ```ts
@@ -110,10 +110,11 @@ export function useKeyboardInset(frame, active): number;  // settled, React stat
 export function keyboardOverlap(keyboardHeight, frameBottom, windowHeight): number;  // worklet
 export function sheetBottomPadding(overlap, safeBottom): number;  // worklet; REVEAL_MARGIN = 16
 ```
-Source: react-native-keyboard-controller (RN `Keyboard` events are read nowhere in `src/host`). Reveal: once at
-`keyboardWillShow` for the destination viewport, a recheck at `keyboardDidShow`.
+Source: react-native-keyboard-controller, plus iOS `Keyboard` `keyboardDidChangeFrame` in `useKeyboardOverlap`: the first keyboard
+of a process is reported without its Done bar, so the library's end report may not make a frame shorter than the system's. `KeyboardShell` has `footer`, no header slot. Reveal: once at `keyboardWillShow`, rechecked at `keyboardDidShow`.
 
 ## Tests: `shell-surfaces-ui.suite.tsx`, `keyboard-shell-ui.suite.tsx`; `run.mjs` aliases gesture-handler →
 `native-gesture-handler.tsx` (`pan(config, ys, vy)`), keyboard-controller → `native-keyboard-controller.tsx`, worklets →
-`native-reanimated.tsx` (`scheduleOnRN` inline; end callbacks run on assignment). `native-host.tsx` models the
-Modal system (`holdModalDismissals`, `refuseModalPresentations`, `holdUnmountedModalDismissals`) and `AppState`.
+`native-reanimated.tsx` (`scheduleOnRN` inline; end callbacks run on assignment). `native-host.tsx` models the Modal
+system (`holdModalDismissals`, `refuseModalPresentations`, `holdUnmountedModalDismissals`), `AppState` and `Keyboard`
+(`changeKeyboardFrame`); a render helper calls `freshApp()` (react-screen.ts) before creating a tree.

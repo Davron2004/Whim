@@ -5,7 +5,7 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import HomeScreen, { type HomeScreenProps } from '../HomeScreen';
 import { ToastHost } from '../../ui/Toast';
-import { press, textOf, hostType } from './react-screen';
+import { freshApp, press, textOf, hostType } from './react-screen';
 
 export type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -32,6 +32,7 @@ export const tileNodeMock = (element: React.ReactElement<{ onLongPress?: unknown
 /** Render any screen (the whole `LauncherRoot`) so its tiles measure as `CELL_RECT`. */
 export async function renderRoot(element: React.ReactElement): Promise<Tree> {
   let tree!: Tree;
+  freshApp();
   await TestRenderer.act(async () => { tree = TestRenderer.create(element, { createNodeMock: tileNodeMock }); });
   return tree;
 }
