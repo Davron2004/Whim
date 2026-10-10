@@ -16,12 +16,13 @@
 
 ## 3. Order and unreachable_screen
 
-- [ ] 3.1 Use `aria-label` as the label when an element has no text, and give the SDK header Back button its own kind
-- [ ] 3.2 Order fingerprints by group (rows, values, buttons, backdrop, header Back) and then by fingerprint
-- [ ] 3.3 Raise `unreachable_screen` only for a cold-mounted screen no `navigate` call names, and correct the kind's description in `checks/contract.ts`
-- [ ] 3.4 Act on one DOM path of a screen at most three times however its label changes (a Modal backdrop excepted), retire later fingerprints at that path without counting them as blocked or truncating, and stop enumerating the toast host as a Modal backdrop
-- [ ] 3.5 Add the scenarios of "The sweep enters values before it presses commands" on the recipe-box-p1 and workout-log-p1 fixtures, plus the gated-screen, gated-screen-throws, orphan, icon-only-label, running-value and toast scenarios (score-keeper-p1 for the running value); red-check the order against values-after-buttons, the diagnostic against always-warn, and the per-path limit against none
-- [ ] 3.6 Replay the 22 stored apps and record the same measures as 2.6
+- [x] 3.1 Use `aria-label` as the label when an element has no text, and give the SDK header Back button its own kind
+- [x] 3.2 Order fingerprints by group (rows, values, buttons, backdrop, header Back) and then by fingerprint
+- [x] 3.3 Raise `unreachable_screen` only for a cold-mounted screen no `navigate` call names, and correct the kind's description in `checks/contract.ts`
+- [x] 3.4 Act on one DOM path of a screen at most three times however its label changes (a Modal backdrop excepted), retire later fingerprints at that path without counting them as blocked or truncating, and stop enumerating the toast host as a Modal backdrop
+- [x] 3.5 Add the scenarios of "The sweep enters values before it presses commands" on the recipe-box-p1 and workout-log-p1 fixtures, plus the gated-screen, gated-screen-throws, orphan, icon-only-label, running-value and toast scenarios (score-keeper-p1 for the running value); red-check the order against values-after-buttons, the diagnostic against always-warn, and the per-path limit against none
+- [x] 3.6 Replay the 22 stored apps and record the same measures as 2.6
+- [ ] 3.7 Bound the toast wait at two per run, by count, and add the two toast scenarios of the hit-test requirement
 
 ## 4. Spec sync and closing
 

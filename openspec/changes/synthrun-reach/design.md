@@ -137,6 +137,16 @@ SDK's back label. Only `HeaderButton` renders an icon-only button with an `aria-
 `src/sdk` change is needed. Reading `aria-label` as the label fallback also turns today's
 `(button)` fingerprints into named ones.
 
+One stored app shows the order's limit. workout-log-p1's form adds a set with "Add set", and the
+set appears as a row whose press removes it. Rows go first, so the sweep removes the set before
+it presses "Save session", which then stays disabled, and SessionDetail stays cold-mounted. The
+chain-3 implementer prototyped a variant (rows present when a visit starts go first, rows minted
+during the visit go after buttons). It reached SessionDetail live and left more of other apps
+unexercised: blocked fingerprints went 9→27 on packing-checklist-p2, 1→8 on tic-tac-toe-p1 and
+2→6 on flashcards-p1. One live screen is not worth a second ordering rule and about 30 controls
+left untouched elsewhere, and with D6 a cold-mounted screen costs no repair. The simple order
+stays.
+
 Alternatives considered:
 - A second full pass with cleared visited sets. It doubles sweep time and still presses Back
   first on every form.
@@ -204,6 +214,20 @@ Alternatives considered:
 The toast host is a fixed `role="status"` region and was classified as a Modal backdrop, so every
 screen carried a phantom backdrop that was clicked last. It is excluded from enumeration.
 
+### D10. Wait for a toast, at most twice per run
+
+Excluding the toast host exposed what the phantom backdrop click had been hiding. A toast lies
+over the bottom of the page for four seconds and takes every click aimed there. The hit test
+rightly defers a button under it, and if that button is all that is left the screen's sweep
+ends; workout-log-p2 lost its live History screen that way. A toast is the one cover that goes
+away by itself, so the sweep waits for it (capped at 5 s) when nothing else can be picked, then
+picks again.
+
+Each wait costs about 4 s of a 45 s budget, and a run that goes over the budget is an error that
+can burn three repairs. A missed live screen costs nothing since D6. So the waits are bounded at
+two per run, by count. A clock-based bound ("no waits after half the budget") would make the
+action order depend on machine load, which the determinism requirement forbids.
+
 ### D7. Report fields
 
 `RunReport.screens` gains `coldMounted: string[]`, a subset of `visited`. `visited` keeps
@@ -243,5 +267,8 @@ the branch.
 ## Open Questions
 
 - Whether `run_truncated` from the total budget should stay an error that can exhaust all three
-  repairs on an app that is merely large. Not decided here; the after-measurement says whether it
-  still occurs.
+  repairs on an app that is merely large, and whether 45 s is still the right budget. The sweep
+  now honours the quiet window after every action (at a579f6f8 it usually returned at once, see
+  D4), so an action costs about 0.6 s where it cost about 0.2 s, and 45 s covers roughly 65
+  actions. No stored app truncates and the slowest takes 33 s (`evidence.md` §6). Filed as an
+  issue for the owner; not decided here.

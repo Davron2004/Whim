@@ -29,6 +29,8 @@ A deferred element SHALL NOT be marked visited, SHALL NOT count toward the per-s
 
 When unvisited fingerprints remain on a screen and none passes the test, the sweep SHALL dismiss a `Modal` backdrop that does pass once more, counted as an action, but only if it acted on at least one fingerprint since its previous dismissal on that screen. Otherwise the screen's sweep ends. Every fingerprint that was enumerated and never acted on by the end of the run SHALL be counted in the report as blocked, except one retired by the per-path limit.
 
+A toast is the one cover that leaves by itself. When unvisited fingerprints remain on a screen, none passes the test and the SDK's toast host is showing, the sweep SHALL wait for the toast to leave, up to five seconds, and pick again, spending no action. It SHALL do so at most twice in one run, counted and not timed, so the order of actions never depends on the clock and toasts cannot spend the total budget.
+
 An action that passes the test and still fails in the browser driver SHALL be counted in the report as a failed action, and its fingerprint marked visited. No action failure SHALL be discarded without a count.
 
 #### Scenario: A control under an open Modal is pressed after the Modal closes
@@ -40,6 +42,16 @@ An action that passes the test and still fails in the browser driver SHALL be co
 
 - **WHEN** a screen shows a control that stays disabled for the whole run next to enabled ones
 - **THEN** no action is attempted on it, the enabled controls are all acted on, and the report counts zero failed actions
+
+#### Scenario: A button under a toast is pressed once the toast has gone
+
+- **WHEN** pressing one button shows a toast that covers the only other unvisited button
+- **THEN** the sweep waits for the toast to leave and presses the second button, and the report counts zero failed actions
+
+#### Scenario: Toast waits are bounded per run
+
+- **WHEN** every press on a screen raises a toast over the next unvisited button, more than twice in a row
+- **THEN** the sweep waits for a toast twice, ends the screen's sweep with the remaining buttons counted as blocked, and the report is not truncated
 
 #### Scenario: A screen whose remaining controls stay covered ends without a timeout
 
