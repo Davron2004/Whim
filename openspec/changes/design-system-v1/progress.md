@@ -116,3 +116,9 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   touching that file, and the orchestrator reviews each at merge.
 - triage of the two device passes on `895ae528` plus #174 and #175: `visual-fixes.md` in this folder (classification,
   the decisions taken for the owner, and the fix chains 16c–16g in two waves).
+- gate-full on `4ad56468` (ratchet landed, plan committed): FULL GATE PASSED; pushed. #165, #155, #159, #169 closed.
+  `fix/synthrun-reach` has no ready file yet: left alone.
+- dispatched, wave 1, BASE `4ad56468`, worktrees `.claude/worktrees/design-system-v1-chain-16{c,e,g}` and
+  `.claude/worktrees/ios-ui-driver`: chain-16c (overlays on iOS; implementer on opus, iOS simulator), chain-16e
+  (Home and tiles; sonnet, emulator-5560), chain-16g (first-run copy and Plan rows; sonnet, no device),
+  `chain/ios-ui-driver` (the XCUITest driver as `scripts/ios-ui-driver/`; sonnet, no device).
