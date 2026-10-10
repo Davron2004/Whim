@@ -267,3 +267,24 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   three fresh processes each for the composer, Agree on first run and Change it: keyboard up with no tap, Continue
   just above it. integrity exit 0; removal ratchet PASS; the 53-line product diff read by the orchestrator.
   merged: `76b41ef4` (--no-ff). regate (fast): PASS.
+- report: chain-16j STATUS complete, fast gate PASS, knip clean, commit `b5e81005` (8 files). Measured on an iOS 27
+  simulator: the first-run sheet did not scroll under a drag because `KeyboardShell`'s tap-to-dismiss `Pressable` is an
+  ancestor of the scroll view and iOS will not scroll while an ancestor is the JS responder (fixed in
+  `FirstRunSheet.tsx` only; drags now move the content at default and largest size, light and dark); a downward drag on
+  a sheet header ended the app (a gesture worklet called `springConfig`/`timing`; fixed in `Sheet.tsx`); Home, Settings
+  and AI features re-lay out on a live text-size change; a French row title lost its last line to a float rounding in
+  the text box height (0.01 pt of line-height room in `GroupedList`).
+- integrity: exit 0; removal ratchet PASS. reviewer on `f72bebce..b5e81005`: VERDICT findings, report matches, nothing
+  removed. HIGH, not fixed: `Toast.tsx` 258–263 has the same non-worklet calls, so swiping a toast ends the app on iOS
+  (the only other site in `src/host`). Mediums, not fixed: the scroll cause is still in `KeyboardShell.tsx` for every
+  other surface; the line-height room covers grouped rows only.
+- merged: `97df3ca2` (--no-ff). regate: NOT RUN (see the next line). Not pushed.
+- HALT, 2026-10-10 10:38 EDT. The first `chain/ios-ui-driver` implementer, stalled on an approval prompt since 05:29,
+  was released around 10:32 and ran `rm -rf $W/*` with `$W` empty (`rm -rf /*`). The orchestrator killed the process at
+  10:38 and stopped the run. Lost on this machine: `~/.config`, `~/.nvm`, `/opt/homebrew`, most of `~/.claude`,
+  `/private/tmp` (this run's scratch folder with its briefs, gate logs and feedback file), some apps and Application
+  Support data; no local snapshot existed. The repo and `Whim-evidence` were not reached. Node is gone, so nothing can
+  be gated here. The remote staging tip is `ceabd1d8` (full gate passed); local is two merges ahead (16k, 16j), unpushed
+  because the git credential helper was Homebrew's `gh`. An empty worktree `design-system-v1-chain-16l` (meant for the
+  toast crash) and the stalled `ios-ui-driver` worktree are left in place. Details at the top of
+  `docs/handoff-2026-10-09.md`.
