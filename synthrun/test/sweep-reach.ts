@@ -414,6 +414,33 @@ function Home() {
 export default defineApp({ name: 'ToastOnly', initial: 'Home', screens: { Home }, capabilities: [] });
 `;
 
+// A screen of `count` buttons, "<prefix>1" to "<prefix>N", in a row along the bottom edge, where
+// the SDK's toast lies. Every press raises a toast wide enough to cover the whole row, so while one
+// is showing every button not yet pressed is under it. The page is exactly one viewport high, so
+// there is nothing to scroll and scrolling a button into view cannot move it out from under the toast.
+function toastRowScreen(name: string, prefix: string, count: number): string {
+  const buttons = Array.from({ length: count }, (_, i) => `<div style={{ width: 70 }}><Button label="${prefix}${i + 1}" onPress={() => toast('${'x'.repeat(60)}')} /></div>`).join('');
+  return `function ${name}() {
+  return (
+    <Screen padding="none">
+      <div style={{ height: '100vh', boxSizing: 'border-box', paddingBottom: 20, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: 8 }}>${buttons}</div>
+    </Screen>
+  );
+}
+`;
+}
+
+// The first of two buttons raises a toast over the second.
+const FIXTURE_TOAST_COVERS = `import { defineApp, Screen, Button, toast } from 'vc-sdk';
+${toastRowScreen('Home', 'B', 2)}export default defineApp({ name: 'ToastCovers', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
+// Home has four such buttons. Other is declared and never navigated to, so the sweep reaches it by a
+// cold mount, after Home, with two such buttons of its own.
+const FIXTURE_TOASTS_WITHOUT_END = `import { defineApp, Screen, Button, toast } from 'vc-sdk';
+${toastRowScreen('Home', 'H', 4)}${toastRowScreen('Other', 'O', 2)}export default defineApp({ name: 'ToastsWithoutEnd', initial: 'Home', screens: { Home, Other }, capabilities: [] });
+`;
+
 // Five screens the sweep cannot reach: the field takes a phrase the canonical text never matches.
 // Four are navigated to, each written another way (single, double and backtick quotes, a receiver
 // that is not "nav", spacing inside the call); "Gated" is named by no call and its name is a prefix
@@ -687,6 +714,25 @@ async function runScenarios(session: SynthRunSession): Promise<void> {
     ok(text.includes('Hello there'), `the toast was on screen when the sweep ended (page text: ${text.replace(/\s+/g, ' ')})`);
     ok(signature(result) === 'button:Show', `only the button was acted on (${describe(result)})`);
     ok(result.sweep.blocked === 0, `the toast is no fingerprint, so nothing is counted as blocked (${describe(result)})`);
+  });
+
+  await test('toast: a button under a toast is pressed once the toast has gone, with no failed action', async () => {
+    const { result } = await runSweep(session, FIXTURE_TOAST_COVERS, { budgets: ASYNC_BUDGETS });
+    ok(signature(result) === 'button:B1,button:B2', `the button the toast covered was pressed after it (${describe(result)})`);
+    ok(result.sweep.blocked === 0, `nothing was left blocked (${describe(result)})`);
+    ok(result.sweep.failedActions === 0, `no action failed (${describe(result)})`);
+  });
+
+  await test('toast: the sweep waits for a toast at most twice in a run, however many screens it sweeps', async () => {
+    const { result } = await runSweep(session, FIXTURE_TOASTS_WITHOUT_END, { budgets: ASYNC_BUDGETS });
+    const acted = labels(result);
+    ok(acted.slice(0, 3).join(',') === 'H1,H2,H3', `Home's first three buttons were pressed, each after the previous toast had gone (${describe(result)})`);
+    ok(!acted.includes('H4'), `the third wait on Home never happened, so its fourth button stayed covered (${describe(result)})`);
+    ok(result.coldMountedScreens.join(',') === 'Other', `Other was swept by a cold mount (${result.coldMountedScreens.join(',')})`);
+    ok(!acted.includes('O2'), `no wait was left for Other, so its second button stayed covered (${describe(result)})`);
+    ok(result.sweep.blocked >= 2 && result.sweep.blocked <= 3, `H4 and O2 (and O1, if a toast still covered it) are counted as blocked (${describe(result)})`);
+    ok(result.sweep.failedActions === 0, `no action failed (${describe(result)})`);
+    ok(result.truncated === false, 'the report is not truncated');
   });
 
   await test('coverage: a gated screen is cold-mounted and listed, with no diagnostic when a navigate call names it, however the call is written', async () => {

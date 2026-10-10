@@ -608,10 +608,12 @@ interface SweepLedger {
   /** Fingerprints retired by the per-path limit: they are not blocked, they are spent. */
   retired: Set<string>;
   failedActions: number;
+  /** Toasts the sweep has waited out so far, in the whole run (`MAX_TOAST_WAITS_PER_RUN`). */
+  toastWaits: number;
 }
 
 function newLedger(): SweepLedger {
-  return { seen: new Set<string>(), acted: new Set<string>(), retired: new Set<string>(), failedActions: 0 };
+  return { seen: new Set<string>(), acted: new Set<string>(), retired: new Set<string>(), failedActions: 0, toastWaits: 0 };
 }
 
 function ledgerKey(screenName: string, el: SweptElement): string {
@@ -678,6 +680,11 @@ async function pickFrom(frame: Frame, elements: SweptElement[], progress: Screen
  *  `src/sdk/toast.tsx`, not exported), plus the time it takes to sink out. */
 const TOAST_WAIT_CAP_MS = 5000;
 
+/** How many toasts the sweep waits out in one run, across all its screens. Counted, never timed, so
+ *  what the sweep acts on never depends on the clock, and toasts cannot spend the run's total
+ *  budget: each wait costs up to `TOAST_WAIT_CAP_MS` of it. */
+const MAX_TOAST_WAITS_PER_RUN = 2;
+
 /** Waits, up to `TOAST_WAIT_CAP_MS`, for the SDK's toast host to leave, and reports whether one was
  *  showing. A toast lies over the bottom of the screen and takes every click aimed there, but it is
  *  no fingerprint of its own: the controls under it are only late. */
@@ -693,12 +700,16 @@ async function awaitToastGone(frame: Frame): Promise<boolean> {
 }
 
 /** `pickFrom`, and when it finds nothing while a toast is showing, once more after the toast has
- *  gone (re-enumerated, the page having moved on). The wait happens at most once per pick, so it
- *  adds nothing to the termination argument above: it spends no action and a pick that waited is
- *  still `pickFrom`'s answer. */
-async function pickNext(frame: Frame, elements: SweptElement[], progress: ScreenProgress): Promise<SweptElement | null> {
+ *  gone (re-enumerated, the page having moved on). The wait happens at most once per pick and at
+ *  most `MAX_TOAST_WAITS_PER_RUN` times in a run (`ledger.toastWaits`, spent only when a toast was
+ *  showing); once they are spent, the first pick's answer stands. It adds nothing to the
+ *  termination argument above: it spends no action and a pick that waited is still `pickFrom`'s
+ *  answer. */
+async function pickNext(frame: Frame, elements: SweptElement[], progress: ScreenProgress, ledger: SweepLedger): Promise<SweptElement | null> {
   const pick = await pickFrom(frame, elements, progress);
-  if (pick !== null || orderUnvisited(elements, progress).length === 0 || !(await awaitToastGone(frame))) return pick;
+  if (pick !== null || orderUnvisited(elements, progress).length === 0 || ledger.toastWaits >= MAX_TOAST_WAITS_PER_RUN) return pick;
+  if (!(await awaitToastGone(frame))) return pick;
+  ledger.toastWaits += 1;
   return pickFrom(frame, await enumerateInteractiveElements(frame), progress);
 }
 
@@ -736,7 +747,7 @@ async function sweepOneScreen(
     await awaitMotionStill(frame, budgets.actionHardCapMs);
     const elements = await enumerateInteractiveElements(frame);
     noteSeen(ledger, screenName, elements, progress);
-    const next = await pickNext(frame, elements, progress);
+    const next = await pickNext(frame, elements, progress, ledger);
     if (next === null) return { actionsLog, truncated: false, navigatedTo: null };
 
     await act(frame, screenName, next, progress, ledger, opts);
