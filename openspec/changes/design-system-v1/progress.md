@@ -218,3 +218,8 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   added an `AppState` stub to the test rig).
 - dispatched: chain-16h-r2 (same branch and worktree, no device) and chain-16i (BASE the staging tip; reviewer mediums
   on 16d plus two device side findings; sonnet, iOS simulator).
+- chain-16h-r2: commit `49da4f44` (one `AppState` stub in the rig, the staging one; a probe that settles in the
+  background is no evidence and a return starts from zero; no startup probe while inactive; delta wording and two rules
+  added; `system.md` §9 clause made exact). fast gate PASS on the merged tree, `openspec validate --strict` PASS,
+  integrity exit 0, removal ratchet PASS; the round's product diff read by the orchestrator.
+  merged: `99c59ae7` (--no-ff). regate (fast): PASS. Not device-proven yet: the Android verifier checks it.
