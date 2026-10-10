@@ -16,6 +16,7 @@
  * Pure over an injected opener: `copy-device.ts` (op-sqlite) and `copy-node.ts` (node:sqlite).
  */
 
+import { BUSY_TIMEOUT_MS } from './busy-timeout';
 import { readAppliedSchema } from './engine';
 import { SqlBindValue } from './marshal';
 import { AppliedSchema } from './schema';
@@ -156,7 +157,7 @@ export async function copyStore(opener: CopyOpener, args: { from: string; to: st
     // Connection settings only; neither writes the source. FULL syncs the copy before the
     // statement returns (design D2, Durability); the timeout rides out a writer's brief commit.
     source.sql.execute('PRAGMA synchronous = FULL');
-    source.sql.execute('PRAGMA busy_timeout = 5000');
+    source.sql.execute(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
 
     const target = `${source.dir}/${storeFileName(args.to)}`;
     wroteTarget = true;

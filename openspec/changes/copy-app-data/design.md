@@ -118,6 +118,8 @@ The snapshot opens its own connection to the source by name. SQLite allows sever
 
 If op-sqlite refuses or shares the handle, the fallback is that the launcher unbinds the source realm before calling `fork({ data: 'copy' })`. Home and History are already outside a bound realm, so only a copy started from inside a running app would need that step.
 
+The probe (progress.md, chain-4) showed op-sqlite does open its own connection, so that fallback is not needed to make the copy work. It also showed a cost: stores run in rollback-journal mode, so while the snapshot's read transaction is open, a write on the live engine's connection could not commit and threw `database is locked`. Every connection to a store now sets `PRAGMA busy_timeout = BUSY_TIMEOUT_MS` (5000 ms, `storage-engine/busy-timeout.ts`, at least D7's copy budget), so such a write waits out the snapshot. Unbinding the source realm before the copy stays the fallback if a store ever grows large enough for a copy to outlast that timeout.
+
 ## Risks / Trade-offs
 
 - [op-sqlite may not allow a second connection to an open store, or `getDbPath` may differ between platforms] → The on-device probe (tasks 1.5, 5.1–5.2) checks this on Android and iOS before the end-to-end checks. D8's fallback (unbind first) is fully specified.
