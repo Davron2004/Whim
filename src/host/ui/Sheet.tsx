@@ -6,8 +6,11 @@
  * still on screen, it rises once that one has gone.
  *
  * - Grabber (36 × 5 `fill-strong`, 6 pt from the top, always), an optional `title2` title 12 pt
- *   under it, a close `x` trailing on both platforms. Detents: `fit` (content height, to 92% of the
- *   window) and `large` (92%; the making flow).
+ *   under it, a close `x` trailing on both platforms, and, on a page that steps back, a back control
+ *   leading in the same row (`useSheetBack` with `control`), so no page needs a row of its own for
+ *   it. Both glyphs follow the text size to 1.5 times 24. Detents: `fit` (content height, to 92% of
+ *   the window) and `large` (92%; the making flow); in `large` the page body fills the card, so its
+ *   footer sits at the bottom.
  * - Opens from off-screen with `smooth`; a tapped close leaves the same way. The scrim's opacity
  *   follows the card's position, so a drag fades it with the finger.
  * - Drag from the grabber or the header: 1:1 after 10 pt of slop, rubber-banding at 0.55 above the
@@ -29,7 +32,7 @@
  *   finger and settles with a cross-fade.
  */
 
-import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
 import type { LayoutChangeEvent } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
@@ -40,12 +43,13 @@ import { LAYOUT, RADII, SPACE } from '../../design/tokens';
 import { haptics } from '../haptics';
 import { COPY } from '../launcher/copy';
 import { sheetBottomPadding } from '../launcher/keyboard-shell';
-import { useKeyboardOverlap } from '../launcher/KeyboardShell';
-import { IconButton } from './IconButton';
-import { timing } from './motion';
+import { OverlayShownContext, useKeyboardOverlap } from '../launcher/KeyboardShell';
+import type { IconName } from '../../design/icons/names';
+import { Icon } from './Icon';
+import { timing, usePressFeedback } from './motion';
 import { OverlayModal, useOverlayTurn } from './OverlayModal';
 import { useTokens } from './tokens';
-import { makeStyles, MAX_FONT_SCALE, springConfig, typeStyle } from './tokens-pure';
+import { hitSlopFor, ICON_BUTTON, makeStyles, MAX_FONT_SCALE, PRESS_RETENTION, springConfig, typeStyle } from './tokens-pure';
 
 // ── Drag physics (§4.3 rule 6), shared by every dragged surface ─────────────────
 
@@ -114,9 +118,19 @@ export interface SheetProps {
   children: React.ReactNode;
 }
 
-/** What Android back does on the sheet's current page, when it is not "close". */
-type SheetBackSlot = React.MutableRefObject<(() => void) | null>;
-const SheetBackContext = createContext<SheetBackSlot | null>(null);
+/** What Android back does on the sheet's current page, when it is not "close", and the sheet's say
+ *  over whether its header shows a back control for it. */
+interface SheetBack {
+  readonly slot: React.MutableRefObject<(() => void) | null>;
+  readonly showControl: (shown: boolean) => void;
+}
+const SheetBackContext = createContext<SheetBack | null>(null);
+
+export interface SheetBackOptions {
+  /** Also draws the back control in the sheet's header row, beside the close control, for as long as
+   *  the page is up: the page's visible way back, taking the same step. */
+  readonly control?: boolean;
+}
 
 /**
  * Takes Android back (and hardware Escape) on the page that calls it, in place of closing the sheet:
@@ -124,18 +138,54 @@ const SheetBackContext = createContext<SheetBackSlot | null>(null);
  * passes the step here. A `Modal` consumes the press, so `BackHandler` never sees it while a sheet is
  * up. The close control, the scrim and a drag still call `onClose`. Outside a sheet it does nothing.
  */
-export function useSheetBack(handler: () => void): void {
-  const slot = useContext(SheetBackContext);
+export function useSheetBack(handler: () => void, { control = false }: SheetBackOptions = {}): void {
+  const back = useContext(SheetBackContext);
   const latest = useRef(handler);
   latest.current = handler;
   useEffect(() => {
-    if (slot === null) return undefined;
+    if (back === null) return undefined;
+    const { slot, showControl } = back;
     const call = () => latest.current();
     slot.current = call;
+    showControl(control);
     return () => {
       if (slot.current === call) slot.current = null;
+      showControl(false);
     };
-  }, [slot]);
+  }, [back, control]);
+}
+
+const HEADER_ICON = 24;
+const HEADER_ICON_MAX_SCALE = 1.5;
+
+/** The glyph size of a control in a sheet's header: 24 (system.md §7.1 "24 in headers"), growing with
+ *  the text size to 1.5 times that, where it stops being a header icon and starts crowding the title.
+ *  The target stays the 44 the control already has. */
+export function headerIconSize(fontScale: number): number {
+  return Math.round(HEADER_ICON * Math.min(HEADER_ICON_MAX_SCALE, Math.max(1, fontScale)));
+}
+
+/** An icon control in the sheet's header row. `IconButton` draws its glyph at a fixed 20 or 24;
+ *  these follow the text size (`headerIconSize`). */
+function HeaderIconButton({ icon, label, onPress }: Readonly<{ icon: IconName; label: string; onPress: () => void }>) {
+  const t = useTokens();
+  const s = styles(t);
+  const press = usePressFeedback('icon', t);
+  return (
+    <Pressable
+      onPress={onPress}
+      onPressIn={press.pressIn}
+      onPressOut={press.pressOut}
+      hitSlop={hitSlopFor(ICON_BUTTON.size, t)}
+      pressRetentionOffset={PRESS_RETENTION}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <Animated.View style={[s.headerIcon, press.style]}>
+        <Icon name={icon} size={headerIconSize(t.fontScale)} color={t.colors.text} />
+      </Animated.View>
+    </Pressable>
+  );
 }
 
 const styles = makeStyles((t) => ({
@@ -165,9 +215,14 @@ const styles = makeStyles((t) => ({
     paddingRight: SPACE[2],
     marginTop: TITLE_GAP - SPACE[2],
   },
+  // A back control sits where the close control does, so the row reads the same from both edges.
+  titleRowBack: { paddingLeft: SPACE[2] },
   titleSlot: { flex: 1 },
   title: { color: t.colors.text, ...typeStyle('title2') },
-  body: { flexShrink: 1 },
+  headerIcon: { width: ICON_BUTTON.size, height: ICON_BUTTON.size, alignItems: 'center' as const, justifyContent: 'center' as const },
+  // Fills the card of a `large` sheet, which has a height of its own, so a page's footer sits at its
+  // bottom; a `fit` sheet has none to fill and is as tall as its content, up to its cap.
+  body: { flexGrow: 1, flexShrink: 1 },
 }));
 
 /** The motion state a sheet's frame reads: the card's offset from open, its height, and the fade
@@ -181,8 +236,14 @@ interface SheetMotion {
 export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = COPY.sheetClose, onClosed, children }: Readonly<SheetProps>) {
   const t = useTokens();
   const { height: windowHeight } = useWindowDimensions();
-  const turn = useOverlayTurn(visible, { onGone: onClosed, onRefused: onClose });
+  const gate = useOverlayTurn(visible, { onGone: onClosed, onRefused: onClose });
+  // The window's own report that it is on screen, which Android needs before it serves a field in it.
+  const [presented, setPresented] = useState(false);
+  const turn = useMemo(() => ({ ...gate, shown: () => { gate.shown(); setPresented(true); } }), [gate]);
   const { open, up, exited } = turn;
+  useEffect(() => {
+    if (!up) setPresented(false);
+  }, [up]);
   const openRef = useRef(open);
   // A drag past the commit point already carries the card out; closing must not restart it.
   const closingRef = useRef(false);
@@ -230,27 +291,37 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
   }, [onClose]);
 
   const backSlot = useRef<(() => void) | null>(null);
+  const [backControl, setBackControl] = useState(false);
+  const back = useMemo<SheetBack>(() => ({ slot: backSlot, showControl: setBackControl }), []);
   const requestClose = () => {
     if (backSlot.current) backSlot.current();
     else onClose();
   };
 
   return (
+    // The frame is keyed by the text size: a size changed while the sheet is up leaves every text
+    // measured at the old size on iOS (rows keep their height, words are cut in half), and only text
+    // that is laid out again fits the new one. The sheet's own motion and the page's state in the
+    // shell survive; what the page holds in itself (a ticked box, a half-edited row) starts again.
     <OverlayModal turn={turn} onRequestClose={requestClose}>
       <SafeAreaProvider>
-        <SheetBackContext.Provider value={backSlot}>
-          <SheetFrame
-            motion={{ y, height, fade }}
-            reduceMotion={t.reduceMotion}
-            title={title}
-            detent={detent}
-            closeLabel={closeLabel}
-            onClose={onClose}
-            onDragClosed={dragClosed}
-            onSettled={settled}
-          >
-            {children}
-          </SheetFrame>
+        <SheetBackContext.Provider value={back}>
+          <OverlayShownContext.Provider value={presented}>
+            <SheetFrame
+              key={t.fontScale}
+              motion={{ y, height, fade }}
+              reduceMotion={t.reduceMotion}
+              title={title}
+              detent={detent}
+              closeLabel={closeLabel}
+              onClose={onClose}
+              onBack={backControl ? () => backSlot.current?.() : undefined}
+              onDragClosed={dragClosed}
+              onSettled={settled}
+            >
+              {children}
+            </SheetFrame>
+          </OverlayShownContext.Provider>
         </SheetBackContext.Provider>
       </SafeAreaProvider>
     </OverlayModal>
@@ -264,6 +335,8 @@ interface SheetFrameProps {
   detent: SheetDetent;
   closeLabel: string;
   onClose: () => void;
+  /** The page's step back, when it asks for a control: drawn in the header row, leading. */
+  onBack?: () => void;
   onDragClosed: () => void;
   onSettled: () => void;
   children: React.ReactNode;
@@ -272,7 +345,7 @@ interface SheetFrameProps {
 const prepareCommit = () => haptics.prepare('commit');
 const playCommit = () => haptics.play('commit');
 
-function SheetFrame({ motion, reduceMotion, title, detent, closeLabel, onClose, onDragClosed, onSettled, children }: Readonly<SheetFrameProps>) {
+function SheetFrame({ motion, reduceMotion, title, detent, closeLabel, onClose, onBack, onDragClosed, onSettled, children }: Readonly<SheetFrameProps>) {
   const t = useTokens();
   const s = styles(t);
   const insets = useSafeAreaInsets();
@@ -354,7 +427,8 @@ function SheetFrame({ motion, reduceMotion, title, detent, closeLabel, onClose, 
         <GestureDetector gesture={drag}>
           <View style={s.header}>
             <View style={s.grabber} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" />
-            <View style={s.titleRow}>
+            <View style={[s.titleRow, onBack ? s.titleRowBack : null]}>
+              {onBack ? <HeaderIconButton icon={t.platform === 'ios' ? 'chevron-left' : 'arrow-left'} label={COPY.backLabel} onPress={onBack} /> : null}
               <View style={s.titleSlot}>
                 {title ? (
                   <RNText ref={titleRef} style={s.title} accessibilityRole="header" maxFontSizeMultiplier={MAX_FONT_SCALE}>
@@ -362,7 +436,7 @@ function SheetFrame({ motion, reduceMotion, title, detent, closeLabel, onClose, 
                   </RNText>
                 ) : null}
               </View>
-              <IconButton icon="x" label={closeLabel} onPress={onClose} />
+              <HeaderIconButton icon="x" label={closeLabel} onPress={onClose} />
             </View>
           </View>
         </GestureDetector>

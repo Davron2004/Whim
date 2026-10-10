@@ -12,10 +12,21 @@ type Node = TestRenderer.ReactTestInstance;
 
 export const CELL_RECT = { x: 20, y: 160, width: 88, height: 100 } as const;
 
-/** Only a tile (a pressable with a long-press) measures; every other host node stays unmocked. */
+/** How far below the top of the root Android's `measureInWindow` starts counting: the status bar's
+ *  height on the device the menu was seen 53 dp too high on. */
+export const STATUS_BAR_OFFSET = 53;
+
+/** Only a tile (a pressable with a long-press) measures; every other host node stays unmocked. It
+ *  measures as the native views do on Android: `measure`'s page offsets from the top of the root, which
+ *  is where a Modal's content starts, and `measureInWindow` from below the status bar. */
 export const tileNodeMock = (element: React.ReactElement<{ onLongPress?: unknown }>) =>
   typeof element.props.onLongPress === 'function'
-    ? { measureInWindow: (cb: (x: number, y: number, w: number, h: number) => void) => cb(CELL_RECT.x, CELL_RECT.y, CELL_RECT.width, CELL_RECT.height) }
+    ? {
+        measure: (cb: (x: number, y: number, w: number, h: number, pageX: number, pageY: number) => void) =>
+          cb(0, 0, CELL_RECT.width, CELL_RECT.height, CELL_RECT.x, CELL_RECT.y),
+        measureInWindow: (cb: (x: number, y: number, w: number, h: number) => void) =>
+          cb(CELL_RECT.x, CELL_RECT.y - STATUS_BAR_OFFSET, CELL_RECT.width, CELL_RECT.height),
+      }
     : null;
 
 /** Render any screen (the whole `LauncherRoot`) so its tiles measure as `CELL_RECT`. */

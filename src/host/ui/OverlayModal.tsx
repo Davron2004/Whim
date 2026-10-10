@@ -21,19 +21,28 @@
  * dismissal unmounts the `Modal` after `DISMISS_REPORT_MS` and passes the turn: the dismissal was
  * issued when it was hidden, so nothing presents early. An unconfirmed presentation (something this
  * module does not order is presenting: an alert, the share sheet, a `Modal` of another kind) unmounts
- * the `Modal` after `SHOW_REPORT_MS`, which gives touch back, and presents it again; refused
+ * the `Modal` after `SHOW_REPORT_MS` of the app being active (a presentation asked for while it is
+ * inactive or in the background waits for it), which gives touch back, and presents it again; refused
  * `SHOW_ATTEMPTS` times, the overlay closes. Android shows each `Modal` in a window of its own and
  * reports no dismissal; there the turn passes as the exit ends, and nothing is timed.
+ *
+ * An exit that never ends (its animation was cancelled) cannot hold the screen either: an overlay
+ * that is up but no longer wanted is ended after `EXIT_CEILING_MS`. An overlay unmounted while its
+ * `Modal` is up or hiding leaves the dismissal unreported to anyone, so on iOS the queue itself keeps
+ * the turn for `DISMISS_REPORT_MS` before the next overlay may present.
  *
  * An overlay inside another's content presents from that overlay, so it takes turns with its
  * siblings there, not with the overlays under it.
  */
 
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Platform } from 'react-native';
+import { AppState, Modal, Platform } from 'react-native';
 
 /** How long iOS may take to report a dismissal before the `Modal` is unmounted and counted gone. */
 export const DISMISS_REPORT_MS = 500;
+/** How long an overlay that is up but no longer wanted may take to finish its exit (a few times the
+ *  slowest exit, a sheet's spring) before it is ended without it. */
+export const EXIT_CEILING_MS = 2000;
 /** How long iOS may take to confirm a presentation before it counts as refused. */
 export const SHOW_REPORT_MS = 1000;
 /** How long a refused presentation waits before it is tried again. */
@@ -47,6 +56,8 @@ type Grant = () => void;
 class OverlayTurns {
   private holder: Grant | null = null;
   private readonly waiting: Grant[] = [];
+  /** Turns kept by nobody until their timer ends, after an overlay unmounted while up. */
+  private readonly holds = new Map<Grant, ReturnType<typeof setTimeout>>();
 
   /** Asks for the turn: `grant` runs when it comes, at once when the surface is free. */
   ask(grant: Grant): void {
@@ -58,17 +69,48 @@ class OverlayTurns {
     grant();
   }
 
-  /** Gives up the turn, which passes to whoever has waited longest, or the place in line. */
-  leave(grant: Grant): void {
+  /** Gives up the turn, which passes to whoever has waited longest, or the place in line. With
+   *  `holdMs` the surface stays taken that much longer, by nobody: the next overlay waits it out. */
+  leave(grant: Grant, holdMs = 0): void {
     const place = this.waiting.indexOf(grant);
     if (place >= 0) this.waiting.splice(place, 1);
     if (this.holder !== grant) return;
+    if (holdMs > 0) {
+      const hold: Grant = () => {};
+      this.holder = hold;
+      this.holds.set(
+        hold,
+        setTimeout(() => this.release(hold), holdMs),
+      );
+      return;
+    }
     this.holder = this.waiting.shift() ?? null;
     this.holder?.();
   }
+
+  /** Ends every hold now, as if each timer had run. */
+  releaseHolds(): void {
+    for (const hold of [...this.holds.keys()]) this.release(hold);
+  }
+
+  private release(hold: Grant): void {
+    clearTimeout(this.holds.get(hold));
+    this.holds.delete(hold);
+    this.leave(hold);
+  }
 }
 
-const TurnsContext = createContext(new OverlayTurns());
+const rootTurns = new OverlayTurns();
+
+/** For a test rig: a new app starts with no dismissal in flight, whatever the last one unmounted
+ *  while up. */
+export function resetOverlayHolds(): void {
+  rootTurns.releaseHolds();
+}
+
+const isActive = (state: string | null | undefined) => state !== 'background' && state !== 'inactive';
+
+const TurnsContext = createContext(rootTurns);
 
 /** `away`: no turn asked for. `waiting`: in line, or between two tries at presenting. `up`: its
  *  `Modal` is presented. `hiding`: hidden, until the system reports the dismissal. */
@@ -93,8 +135,12 @@ class OverlayPresence {
   /** React Native has been told this `Modal` was dismissed while it is up, so hiding it reports
    *  nothing. */
   private silent = false;
+  /** `Modal.onShow` has come for this presentation. */
+  private confirmed = false;
   private attempts = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** Ends an overlay that is up and no longer wanted, should its exit never end. */
+  private ceiling: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly turns: OverlayTurns,
@@ -104,19 +150,35 @@ class OverlayPresence {
   want(wanted: boolean): void {
     this.wanted = wanted;
     if (!wanted) this.spent = false;
+    this.unceil();
     if (wanted && this.phase === 'away' && !this.spent) {
       this.move('waiting');
       this.turns.ask(this.present);
     } else if (!wanted && this.phase === 'waiting') {
       this.leave();
+    } else if (wanted && this.phase === 'up' && !this.confirmed) {
+      this.watchShow();
+    } else if (!wanted && this.phase === 'up') {
+      // Nothing is left to confirm, and a refused presentation must not be tried again.
+      this.unwatch();
+      this.ceiling = setTimeout(this.exited, EXIT_CEILING_MS);
     }
   }
 
   /** `Modal.onShow`: the presentation happened. */
   readonly shown = (): void => {
     if (this.phase !== 'up') return;
+    this.confirmed = true;
     this.attempts = 0;
     this.unwatch();
+  };
+
+  /** The app became active or left it: an unconfirmed presentation is only timed while it is active,
+   *  since a presentation asked for in the background is not reported until it returns. */
+  readonly appActive = (active: boolean): void => {
+    if (this.phase !== 'up' || this.confirmed || !this.wanted) return;
+    if (active) this.watchShow();
+    else this.unwatch();
   };
 
   /** The overlay's exit has ended: its `Modal` goes. */
@@ -137,18 +199,26 @@ class OverlayPresence {
     else this.silent = true;
   };
 
-  /** The overlay is unmounted. */
+  /** The overlay is unmounted. A `Modal` unmounted while up or hiding reports its dismissal to no one
+   *  (iOS), so the turn is held for as long as that may take. */
   drop(): void {
+    const mounted = this.phase === 'up' || this.phase === 'hiding';
     this.unwatch();
+    this.unceil();
     this.phase = 'away';
-    this.turns.leave(this.present);
+    this.turns.leave(this.present, mounted && Platform.OS === 'ios' ? DISMISS_REPORT_MS : 0);
   }
 
   private readonly present = (): void => {
     this.silent = false;
+    this.confirmed = false;
     this.move('up');
-    if (Platform.OS === 'ios') this.watch(SHOW_REPORT_MS, this.unconfirmed);
+    this.watchShow();
   };
+
+  private watchShow(): void {
+    if (Platform.OS === 'ios' && isActive(AppState.currentState)) this.watch(SHOW_REPORT_MS, this.unconfirmed);
+  }
 
   /** No `onShow` in time. One more turn of the timers first, so a report already queued behind a
    *  busy JS thread is heard. */
@@ -181,8 +251,14 @@ class OverlayPresence {
 
   private move(phase: Phase): void {
     this.unwatch();
+    this.unceil();
     this.phase = phase;
     this.events.phase(phase);
+  }
+
+  private unceil(): void {
+    if (this.ceiling !== null) clearTimeout(this.ceiling);
+    this.ceiling = null;
   }
 
   private watch(ms: number, then: () => void): void {
@@ -244,6 +320,10 @@ export function useOverlayTurn(wanted: boolean, options: OverlayTurnOptions): Ov
   useEffect(() => {
     presence.want(wanted);
   }, [presence, wanted]);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => presence.appActive(isActive(state)));
+    return () => subscription.remove();
+  }, [presence]);
   useEffect(() => () => presence.drop(), [presence]);
   return useMemo(
     () => ({

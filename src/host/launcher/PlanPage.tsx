@@ -35,7 +35,6 @@ import type { InstalledApp } from './app-index';
 import { COPY, editingEyebrow, planHeadline, planMakeHeader, workingPlanPhrase } from './copy';
 import { FlowNoticeBlock } from './FlowNoticeBlock';
 import KeyboardShell from './KeyboardShell';
-import { PageHead } from './MakingSheet';
 import { answerSummary, foldedAt, isAnswered, type BlockExtent } from './plan-questions';
 import {
   OTHER_ANSWER_MAX_CHARS,
@@ -404,7 +403,7 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
     if (planBackAction(editingRow !== null) === 'cancel-edit') setEditingRow(null);
     else onBack();
   };
-  useSheetBack(handleBack);
+  useSheetBack(handleBack, { control: true });
   const onScrollOffset = useCallback(
     (offset: number) => setFolded((current) => foldedAt(current, offset, extents.current, screen.answers)),
     [screen.answers],
@@ -420,7 +419,6 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
       <KeyboardShell
         host="sheet"
         contentContainerStyle={s.content}
-        header={<PageHead onBack={handleBack} />}
         footer={
           <View style={s.footer}>
             <Button label={COPY.planMakeInstead} variant="ember" onPress={onMakeInstead} />
@@ -449,7 +447,6 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
       host="sheet"
       contentContainerStyle={s.content}
       onScrollOffset={onScrollOffset}
-      header={<PageHead onBack={handleBack} />}
       footer={
         <View style={s.footer}>
           {screen.problem ? <Notice tone="danger" message={screen.problem.reason} /> : null}

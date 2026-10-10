@@ -60,8 +60,6 @@ export interface FirstRunSheetProps {
   onAgree: () => void;
   /** Every way out that grants and accepts nothing. */
   onClose: () => void;
-  /** The sheet has finished closing (`Sheet`'s `onClosed`): the next sheet may be presented. */
-  onClosed?: () => void;
 }
 
 const BOX = 24;
@@ -228,9 +226,9 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
   );
 }
 
-export function FirstRunSheet({ visible, onClosed, ...body }: Readonly<FirstRunSheetProps>) {
+export function FirstRunSheet({ visible, ...body }: Readonly<FirstRunSheetProps>) {
   return (
-    <Sheet visible={visible} onClose={body.onClose} onClosed={onClosed} detent="large">
+    <Sheet visible={visible} onClose={body.onClose} detent="large">
       <FirstRunBody {...body} />
     </Sheet>
   );

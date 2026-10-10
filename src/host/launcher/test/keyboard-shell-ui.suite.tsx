@@ -14,13 +14,13 @@ import { DescribePage } from '../DescribePage';
 import { PlanPage } from '../PlanPage';
 import type { PlanScreen } from '../prompt-flow';
 import { ReportSheet } from '../ReportScreen';
-import { KeyboardTextInput } from '../KeyboardShell';
+import KeyboardShell, { KeyboardTextInput } from '../KeyboardShell';
 import AdvancedScreen from '../AdvancedScreen';
 import { SHELL_PALETTE } from '../theme';
 import { TextArea, TextField } from '../../ui/TextField';
 import { Sheet } from '../../ui/Sheet';
 import { sheetBottomPadding } from '../keyboard-shell';
-import { COLORS } from '../../../design/tokens';
+import { COLORS, LAYOUT } from '../../../design/tokens';
 import { ToastHost } from '../../ui/Toast';
 import { SPACING } from '../../../sdk/theme';
 import type { InstalledApp } from '../app-index';
@@ -28,7 +28,7 @@ import type { StoreAccess } from '../store-access';
 import { reportClientOptions } from '../transport-shared';
 import { button, press, textOf, unmountScreen, hostType } from './react-screen';
 import { testAppInfo } from './client-fixtures';
-import { Keyboard, Platform, StyleSheet, setColorScheme, useSafeAreaInsets } from './native-host';
+import { Keyboard, Platform, StyleSheet, View, refuseModalPresentations, setColorScheme, useSafeAreaInsets } from './native-host';
 import { dragKeyboard, emitKeyboardEvent, keyboardSubscriptions, keyboardWindow, moveKeyboard, resetKeyboard, stepKeyboard } from './native-keyboard-controller';
 
 type Tree = TestRenderer.ReactTestRenderer;
@@ -69,9 +69,10 @@ const DEVICES = [IOS, ANDROID_14, ANDROID_15, ANDROID_17] as const;
 
 /** Where things sit, as the native views would measure them. `frame` is a padding frame's place on
  *  its root's page (which fills the window); `field` and `block` are a field's and a named block's
- *  place in the scroll content. */
+ *  place in the scroll content. `rootOffset` is how far below the window its root's page starts
+ *  (a screen on the native stack: its `measure` counts from a root laid out far below the window). */
 interface Geometry {
-  frame: Rect; field: Rect; block?: Rect;
+  frame: Rect; field: Rect; block?: Rect; rootOffset?: number;
   nativeScroll?: { viewport: number; content: number; offset: number };
 }
 
@@ -117,7 +118,7 @@ async function on(device: Device, element: React.ReactElement, body: (m: Mounted
       return { focus: () => { focusCalls += 1; }, measureLayout: (_to: unknown, ok: (x: number, y: number, w: number, h: number) => void) => ok(0, geometry.field[0], 350, geometry.field[1]) };
     }
     if (node.props.collapsable === false) {
-      return { measure: (cb: (x: number, y: number, w: number, h: number, pageX: number, pageY: number) => void) => cb(0, 0, 390, geometry.frame[1], 0, geometry.frame[0]) };
+      return { measure: (cb: (x: number, y: number, w: number, h: number, pageX: number, pageY: number) => void) => cb(0, 0, 390, geometry.frame[1], 0, geometry.frame[0] + (geometry.rootOffset ?? 0)) };
     }
     return { measureLayout: (_to: unknown, ok: (x: number, y: number, w: number, h: number) => void) => { if (geometry.block) ok(0, geometry.block[0], 350, geometry.block[1]); } };
   };
@@ -391,6 +392,13 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('on iOS a screen on the native stack never reads as running below the home indicator it keeps clear of: `measure` there counts from a root far below the window, which would pad the frame by the home indicator’s inset on top of what the keyboard covers', async () => {
+    const overlap = overlapOf(SCREEN_FRAME, KEYBOARD_TOP);
+    await on(IOS, advanced(), async ({ tree }) => {
+      h.eq(await paddingAcrossKeyboard(tree, IOS), [0, overlap, 0], 'the frame ends at the keyboard, not above it, while it is up');
+    }, { frame: SCREEN_FRAME, field: [300, 60], rootOffset: 1546 });
+  });
+
   await h.test('a frame pads only by the part of it the keyboard covers: never twice, never for a keyboard below it', async () => {
     // A frame above a bottom bar (or a window resized for the keyboard after all) ends 124 above the
     // window's bottom; one in the top half of a split screen ends above where the keyboard reaches.
@@ -443,6 +451,68 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         h.ok(ancestors.includes(sheetCard(tree)) && nearest(continueButton, 'ScrollView') == null, `${device.name}: Continue rides in the lifted card, not in the scrolling content under the keyboard`);
       });
     }
+  });
+
+  await h.test('a large sheet hands its page the whole card, so the footer sits at the sheet’s bottom whatever the page holds: nothing between the card and the page’s frame is sized by its content', async () => {
+    for (const [name, page] of [['describe', compose()], ['plan', plan()]] as const) {
+      await on(IOS, sheeted(page), async ({ tree }) => {
+        const card = sheetCard(tree);
+        const chain: Node[] = [];
+        const pageFrame = card.find((n) => String(n.type) === 'Pressable' && n.props.accessible === false);
+        for (let at: Node | null = pageFrame; at && at !== card; at = hostParent(at)) chain.push(at);
+        h.ok(chain.length >= 2, `${name}: setup: the page's frame sits inside the card's body`);
+        h.ok(chain.every((link) => Number(flat(link).flexGrow) >= 1), `${name}: the frame and the body around it grow to fill the card`);
+      });
+    }
+  });
+
+  await h.test('Android raises the keyboard for an overlay’s field only once the overlay has reported it is shown; iOS does not wait for the report', async () => {
+    const emptyDescribe = sheeted(<DescribePage text="" onChangeText={noop} onContinue={noop} />);
+    const release = refuseModalPresentations();
+    try {
+      await on(ANDROID_17, emptyDescribe, async ({ tree, focused }) => {
+        await TestRenderer.act(async () => flushRevealFrames());
+        h.eq(focused(), 0, 'Android: the window is not shown yet, so the field has not asked for focus');
+        await TestRenderer.act(async () => tree.root.find(isType('Modal')).props.onShow());
+        await TestRenderer.act(async () => flushRevealFrames());
+        h.ok(focused() >= 1, 'Android: once the window reports it is shown, the field asks for focus');
+      });
+      await on(IOS, emptyDescribe, async ({ focused }) => {
+        await TestRenderer.act(async () => flushRevealFrames());
+        h.ok(focused() >= 1, 'iOS: the field asks for focus a frame after it mounts, shown or not');
+      });
+    } finally {
+      release();
+    }
+  });
+
+  await h.test('a sheet footer that has outgrown its share of the window (the largest text size) scrolls with the content, edge to edge; a footer of ordinary height stays pinned', async () => {
+    await on(IOS, sheeted(compose()), async ({ tree }) => {
+      const action = () => button(tree, COPY.flowContinue);
+      const footerBox = () => measuredFooterAround(action());
+      const measure = (height: number) => measureFooter(footerBox(), height);
+      await measure(140);
+      h.ok(nearest(action(), 'ScrollView') == null, 'an ordinary footer is pinned below the scroll view');
+      await measure(keyboardWindow.height * 0.4);
+      h.ok(nearest(action(), 'ScrollView') != null, 'a footer taking two fifths of the window moves into the scrolling content');
+      h.eq(flat(footerBox()).marginHorizontal, -LAYOUT.gutter, 'where it runs edge to edge: the content pads its sides and the actions already do');
+      await measure(140);
+      h.ok(nearest(action(), 'ScrollView') == null, 'and is pinned again once the text gets smaller');
+    });
+  });
+
+  await h.test('a sheet’s content fades out under the header in proportion to how far it has scrolled, over 16 pt, and is not faded at rest', async () => {
+    await on(IOS, sheeted(compose()), async ({ tree }) => {
+      const fade = () => flat(topFadeOf(tree)).opacity;
+      const reports = scrollReports(tree);
+      h.eq(fade(), 0, 'at rest nothing is faded');
+      await reports.offset(8);
+      h.eq(fade(), 0.5, 'half its height scrolled: half faded');
+      await reports.offset(300);
+      h.eq(fade(), 1, 'scrolled well past: fully faded');
+      await reports.offset(0);
+      h.eq(fade(), 0, 'back at the top: nothing faded again');
+    });
   });
 
   await h.test('every launcher field wears ink for its caret and selection handles, selected text stays readable on its highlight, it paints its own background, and on iOS a one-line field sets no line height', async () => {
@@ -652,7 +722,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('the header hairline shows once content scrolls beneath it, and the footer hairline while content continues below', async () => {
-    await on(IOS, compose(), async ({ tree }) => {
+    await on(IOS, <KeyboardShell header={<View />} footer={<View />}><View /></KeyboardShell>, async ({ tree }) => {
       const reports = scrollReports(tree);
       const lines = () => edgeLines(tree).map(drawn);
       await reports.viewport(600);
@@ -687,6 +757,18 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 }
+
+/** The view that measures a sheet's footer: the nearest one around `node` that reports its layout. */
+function measuredFooterAround(node: Node): Node {
+  for (let at: Node | null = node; at; at = at.parent) if (String(at.type) === 'View' && typeof at.props.onLayout === 'function') return at;
+  throw new Error('no measured footer around the node');
+}
+
+/** Plays the native layout pass reporting the footer `height` tall. */
+const measureFooter = (box: Node, height: number) => TestRenderer.act(async () => box.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } }));
+
+/** The edge fade under a sheet's header: the one non-touchable animated overlay. */
+const topFadeOf = (tree: Tree) => tree.root.find((n) => String(n.type) === 'Animated.View' && n.props.pointerEvents === 'none');
 
 /** The frame's edge hairlines, header's first, outside the scrolling content. */
 const isEdgeLine = (n: Node) => String(n.type) === 'View' && flat(n).height === StyleSheet.hairlineWidth && nearest(n, 'ScrollView') == null;
