@@ -201,7 +201,10 @@ export interface RunReport {
    *  no byte of a forged frame reaches this or any other report field, any diagnostic, any log
    *  line, or any model-facing path. */
   forgeries: ForgeryTally;
-  /** The total wall-clock budget fired and the page was killed mid-run (`run_truncated`). */
+  /** The run is incomplete. Set when the total wall-clock budget fired (the page was killed
+   *  mid-run; a `run_truncated` diagnostic is recorded too) OR when a screen reached its
+   *  per-screen action cap with unvisited fingerprints left (no diagnostic of its own). A consumer
+   *  treats either as an incomplete run, never a pass. */
   truncated: boolean;
   timings: StageTimings;
   trace: TraceEntry[];

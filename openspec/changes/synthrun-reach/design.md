@@ -80,6 +80,11 @@ visited, leaving everything else covered. The sweep may dismiss a visited backdr
 as an action, only if it acted on some fingerprint since the last dismissal on that screen. A
 Modal that cannot be dismissed therefore ends the screen's sweep after one attempt.
 
+The `disabled` clause of the hit test is a guard, not a path today's apps take: the enumerator
+already leaves out a disabled `button` and `select`, and no other SDK control renders a native
+`disabled`. The suite covers the clause with a raw disabled `<input>`, a shape a generated app
+cannot ship, so that a future SDK control that can be disabled is deferred and not timed out on.
+
 Playwright's own actionability wait stays in place behind the hit test, with the 3 s timeout
 unchanged. An action that passes the test and still fails is counted as `sweep.failedActions`
 and its fingerprint marked visited, so the sweep always makes progress. The count replaces
@@ -233,8 +238,14 @@ fingerprints remain, toast or not, and only a second empty pick ends the screen.
 
 Each wait costs about 4 s of a 45 s budget, and a run that goes over the budget is an error that
 can burn three repairs. A missed live screen costs nothing since D6. So the waits are bounded at
-two per run, by count. A clock-based bound ("no waits after half the budget") would make the
-action order depend on machine load, which the determinism requirement forbids.
+two per run, by count. A clock-based bound ("no waits after half the budget") would tie the
+number of waits to machine load.
+
+The count does not make toasts deterministic. A toast leaves four seconds after it appeared, so
+whether it still covers a control when the sweep looks depends on how long the sweep took to get
+there, and once both waits are spent a toast-covered control is reached only if its toast
+happens to be gone at the second look. The same was true at a579f6f8, where Playwright's own
+3 s wait decided it. The spec names this as the one exception to the determinism requirement.
 
 ### D7. Report fields
 
@@ -246,7 +257,10 @@ fakes in `server/test` follow the type. `evals/` only reads `screens.declared` a
 maps diagnostics only and needs no change.
 
 The sweep keeps these fields current in an accumulator the report owns, so a run the total
-budget killed, or an aborted one, reports the screens and counts it had reached. Before this
+budget killed reports the screens and counts it had reached. (An aborted run takes the same
+path, but its report is discarded by contract, so the spec makes no promise about it.) The
+action in flight when the page is killed can be booked as a failed action; nothing reads
+`failedActions` to make a decision. Before this
 change such a report carried empty screen lists, and the new counts would have read zero for a
 run that took dozens of actions (review finding).
 

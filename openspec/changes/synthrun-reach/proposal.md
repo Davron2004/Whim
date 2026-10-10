@@ -47,10 +47,10 @@ None.
 ## Impact
 
 - `synthrun/session.ts`, `synthrun/sweep.ts`, `synthrun/report.ts`, `synthrun/contract.ts`,
-  `synthrun/capability.ts` or `observe.ts` (activity hook), and the synthrun suite with fixtures
-  copied from the stored flowbench apps.
-- `RunReport` gains `screens.coldMounted` and `sweep`; the fakes in `server/test` and the evals
-  adapter's tests follow the type.
+  `synthrun/capability.ts` and `observe.ts` (activity hook), and the synthrun suite with fixtures
+  copied from the stored flowbench apps. One comment line in `checks/contract.ts`.
+- `RunReport` gains `screens.coldMounted` and `sweep`; the fakes in `server/test` follow the
+  type. `evals/` reads only `screens.declared` and `screens.visited` and does not change.
 - No change to `src/sdk/**`, `src/runtime/**`, `build/`, `invariants/`, or the gate's
   `CONFIG_SET`. No server routing change: the machine's warnings policy stays as specified.
 - Sweeps reach more of each app, so `sweepMs` rises on apps whose storage reads used to hang. The
