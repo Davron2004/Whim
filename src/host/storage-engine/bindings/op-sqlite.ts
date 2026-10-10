@@ -10,6 +10,7 @@
  * Not exercised by the Node suite — its acceptance is the on-device probe run (task 7).
  */
 
+import { BUSY_TIMEOUT_MS } from '../busy-timeout';
 import { SqlBindValue } from '../marshal';
 import { readAppliedSchema } from '../engine';
 import { AppliedSchema } from '../schema';
@@ -51,6 +52,8 @@ export function createOpSqlExecutorOver(db: OpSqlDb): SqlExecutor {
   // assertExecuteSyncAvailable so its throw is unit-testable under Node — this file
   // can't load outside React Native (it imports the native module).
   assertExecuteSyncAvailable(db);
+  // A write that meets another connection's lock (a copy's snapshot) waits instead of throwing.
+  db.executeSync(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`, []);
 
   // op-sqlite v16+ JSI build: executeSync is always present and synchronous.
   const runOne = (sql: string, params: SqlBindValue[]): SqlResult => {

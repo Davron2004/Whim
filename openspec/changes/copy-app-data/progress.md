@@ -36,8 +36,33 @@ engine's connection has no `busy_timeout` (the copy's own source connection sets
 
 The failed write is refused, not lost (the copy and the source stay consistent; the caller sees a thrown error). It matters only
 when a bound realm of the source app writes during a copy. The probe asserts zero failed writes, so it reports FAIL (1)
-whenever the race hits (3 of 4 runs). Filed as GitHub issue #165 for chain-2/3 to decide between
-unbinding the source realm before `fork({ data: 'copy' })` and a `busy_timeout` on the engine's persistent connection.
+whenever the race hits (3 of 4 runs). Filed as GitHub issue #165 and fixed (next section).
+
+### Fix for #165: `busy_timeout` on every connection
+
+Decision (product owner): every connection to a store sets `PRAGMA busy_timeout = BUSY_TIMEOUT_MS`, one named constant
+(`src/host/storage-engine/busy-timeout.ts`, 5000 ms, at least D7's copy budget). It is set where each binding builds its
+executor: `createNodeSqlExecutor` (node:sqlite) and `createOpSqlExecutorOver` (op-sqlite, which `createOpSqlExecutor` and the
+copy's device opener both go through); `copy.ts` uses the same constant for its source connection. A write that meets the
+snapshot's read lock now waits instead of throwing. Unbinding the source realm stays D8's fallback (design.md D8).
+
+Node test: `§H copy: a live-engine write that meets the snapshot's lock waits for it and succeeds` (`test/copy.suite.ts`). A
+second process holds a read transaction on the store for 400 ms (this thread cannot both hold the lock and be the blocked
+writer); the engine write must not throw, must have waited, and must land. Red-check: with the pragma deleted, and with it set
+to 0, the suite fails 3 checks, "live write during a snapshot: the write that met the lock did not throw (got Error: database
+is locked)", "...the write waited for the lock instead of slipping past it (0 ms)" and "...the write is in the store".
+
+Device re-run with the fix (flag on in the installed builds only; builds proven fresh by the bundle's changed pragma string):
+
+| platform | runs | failed writes per run | writes during copy | probe |
+|---|---|---|---|---|
+| Android (emulator-5560) | 5 | 0, 0, 0, 0, 0 | 4, 2, 2, 2, 2 | PASS x5 |
+| iOS (fresh iPhone 17 sim) | 5 | 0, 0, 0, 0, 0 | 2, 2, 2, 2, 2 | PASS x5 |
+
+Before the fix: Android 1 and 5 failed writes (FAIL(1) both runs), iOS 1 and 0. Every run also read back the prior launch's
+copy (500 of 500 rows, `quick_check` `ok`), and the 70 MB copy took 176-595 ms (Android) and 162-413 ms (iOS). The iOS
+snapshot of the 2000-row store is so short (12-24 ms) that the race rarely hit even before the fix; Android is the platform that
+discriminates.
 
 ### `getDbPath`
 
@@ -70,13 +95,12 @@ induced on an emulator or simulator, so the `synchronous=FULL` guarantee itself 
 
 ### Contradictions with D2/D7/D8
 
-None to the shipped copy engine. The only new fact is the live-writer `database is locked` race above, which concerns the
-caller (when a source realm can write) rather than `copyStore`.
+None to `copyStore`. The live-writer `database is locked` race was in the engine connection (no busy timeout) and is fixed above.
 
 ### Device state at the end
 
 No emulator or simulator of this run is left running. The iOS simulator was deleted. On `Whim_Verify` the probe build replaced
-the installed Whim (`install -r -d`, the installed versionCode was higher) and its `data-copy-*` store files were removed.
+the installed Whim (`install -r -d`, the installed versionCode was higher) and its `data-copy-*` store files were removed (again after the #165 re-run).
 
 ### Commands that worked (from a worktree made by `scripts/worktree.sh create`)
 

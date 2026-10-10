@@ -5,6 +5,7 @@
  * the snapshot statement. Run from `acceptance.ts`.
  */
 
+import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,6 +19,7 @@ import { AppliedSchema, burnedIdFloor } from '../schema';
 import { CopyOpener, copyStore, storeFileName } from '../copy';
 import { createNodeCopyOpener, createNodeCopyStorage } from '../copy-node';
 import { DataCopyError, DataCopyErrorKind, isSupersetSchema } from '../copy-contract';
+import { BUSY_TIMEOUT_MS } from '../busy-timeout';
 
 export interface CopySuiteHelpers {
   ok(cond: boolean, msg: string): void;
@@ -225,6 +227,60 @@ export async function runCopyTests(root: string, h: CopySuiteHelpers): Promise<v
     eq(copied, ['note 3', 'note 7', 'note 12', 'committed before'], 'the copy holds the committed write and none of the uncommitted ones');
     const source = query(src, 'SELECT "f1" FROM "c1" ORDER BY id').map(r => r.f1);
     eq(source, ['changed in flight', 'note 7', 'note 12', 'committed before', 'in flight'], 'the writer\'s transaction still committed to the source');
+  });
+
+  await test('§H copy: a live-engine write that meets the snapshot\'s lock waits for it and succeeds', async () => {
+    const dir = freshDir();
+    seedSource(dir, 'busy');
+    const src = fileIn(dir, 'busy');
+    const { store } = engineOver(src);
+    store.open(notesV2);
+
+    // The snapshot holds a read transaction on the source for its whole run. Another PROCESS holds
+    // one here (this thread cannot hold the lock and also be the blocked writer), released after
+    // HOLD_MS, so the write below meets the lock deterministically and must outlast it.
+    const HOLD_MS = 400;
+    const holder = spawn(
+      process.execPath,
+      [
+        '-e',
+        `const { DatabaseSync } = require('node:sqlite');
+         const db = new DatabaseSync(process.argv[1]);
+         db.exec('BEGIN'); db.prepare('SELECT count(*) FROM "c1"').all();
+         process.stdout.write('held\\n');
+         setTimeout(() => { db.exec('COMMIT'); db.close(); }, ${HOLD_MS});`,
+        src,
+      ],
+      { stdio: ['ignore', 'pipe', 'inherit'] },
+    );
+    const exited = new Promise<number | null>(resolve => holder.once('exit', code => resolve(code)));
+    try {
+      await withTimeout(
+        new Promise<void>((resolve, reject) => {
+          holder.stdout.once('data', () => resolve());
+          holder.once('error', reject);
+          holder.once('exit', () => reject(new Error('the lock holder exited before it held the lock')));
+        }),
+        10_000,
+      );
+
+      const started = Date.now();
+      let thrown: unknown;
+      try {
+        store.records.append('Notes', { title: 'written during the snapshot' });
+      } catch (err) {
+        thrown = err;
+      }
+      const waited = Date.now() - started;
+      ok(thrown === undefined, `live write during a snapshot: the write that met the lock did not throw (got ${String(thrown)})`);
+      ok(waited >= HOLD_MS / 2, `live write during a snapshot: the write waited for the lock instead of slipping past it (${waited} ms)`);
+      ok(waited < BUSY_TIMEOUT_MS, `live write during a snapshot: the write finished inside the busy timeout (${waited} ms)`);
+      eq(await withTimeout(exited, 10_000), 0, 'live write during a snapshot: the lock holder released the lock and exited cleanly');
+      eq(store.records.list('Notes').some(r => r.title === 'written during the snapshot'), true, 'live write during a snapshot: the write is in the store');
+    } finally {
+      holder.kill();
+      store.close();
+    }
   });
 
   // ── refusal ───────────────────────────────────────────────────────────────
