@@ -492,6 +492,47 @@ export default function KeyboardShell({
   );
 }
 
+/** How many frames an Android field asks for the keyboard before it gives up: about two seconds at
+ *  60 Hz, which only a window that is never served (a hardware keyboard that keeps the soft one away)
+ *  outlasts. */
+const KEYBOARD_ASK_FRAMES = 120;
+
+/**
+ * Android: focuses `input` and asks for its keyboard once a frame until the keyboard sets off. A
+ * request is dropped (the field takes focus, with its caret and ring, and no keyboard comes) while
+ * the window the field sits in is not yet served by the keyboard, which is after the window's report
+ * that it is shown: measured, the first request, 80 to 300 ms after the report, was ignored ("view is
+ * not served") or aborted by the system after layout. Nothing reports the moment the window is served,
+ * and `focus()` of a field that is already focused does nothing, so the field has the keyboard library
+ * request it again, frame by frame, until `keyboardWillShow` says it did. It stops when the field
+ * loses focus, and at once if the keyboard is already up. Returns the stop.
+ */
+function askForKeyboard(input: React.RefObject<TextInput | null>, blurred: { current: boolean }): () => void {
+  blurred.current = false;
+  input.current?.focus();
+  if (KeyboardController.isVisible()) return () => {};
+  let frames = KEYBOARD_ASK_FRAMES;
+  let pending = 0;
+  let stopped = false;
+  const stop = () => {
+    stopped = true;
+    cancelAnimationFrame(pending);
+    subscription.remove();
+  };
+  const subscription = KeyboardEvents.addListener('keyboardWillShow', stop);
+  const ask = () => {
+    frames -= 1;
+    if (blurred.current || frames < 0) {
+      stop();
+      return;
+    }
+    KeyboardController.setFocusTo('current');
+    if (!stopped) pending = requestAnimationFrame(ask);
+  };
+  pending = requestAnimationFrame(ask);
+  return stop;
+}
+
 export interface KeyboardTextInputProps extends TextInputProps {
   /** The block to keep in view while this field is focused (a plan row with its Save and Cancel);
    *  the field itself when left out. */
@@ -521,17 +562,16 @@ export function KeyboardTextInput({
   const target = revealTarget ?? input;
   const autoFocusOnMount = useRef(autoFocus === true);
   const overlayShown = useContext(OverlayShownContext) || Platform.OS !== 'android';
+  // The field lost focus after it asked for the keyboard (the person put it away): it stops asking.
+  const blurred = useRef(false);
   useEffect(() => {
     if (!autoFocusOnMount.current) return undefined;
     // iOS: a frame after mounting, once the Done bar has linked to the field, so the keyboard comes
     // up with the bar already on it (focused in the mount frame, it intermittently arrived without
-    // the bar in its reported frame, leaving the footer under the bar). Android: now, and again a
-    // frame later, because it can refuse to show the keyboard for a field it doesn't serve yet; a
-    // field already served ignores the second request. In an overlay, Android serves the field only
-    // once the overlay's window is on screen: a request made before that focuses the field (caret and
-    // ring) but never raises the keyboard, so the first request waits for the overlay's report.
+    // the bar in its reported frame, leaving the footer under the bar). Android: see `askForKeyboard`.
+    // In an overlay, the first request waits for the overlay's own report that it is on screen.
     if (!overlayShown) return undefined;
-    if (Platform.OS === 'android') input.current?.focus();
+    if (Platform.OS === 'android') return askForKeyboard(input, blurred);
     const later = requestAnimationFrame(() => input.current?.focus());
     return () => cancelAnimationFrame(later);
   }, [overlayShown]);
@@ -547,6 +587,7 @@ export function KeyboardTextInput({
         onFocus?.(event);
       }}
       onBlur={(event) => {
+        blurred.current = true;
         shell?.blurred(target);
         onBlur?.(event);
       }}
