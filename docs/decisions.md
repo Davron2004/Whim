@@ -1589,18 +1589,20 @@ out lets an agent delete or loosen a detector to reach green with nobody seeing 
 a step, `scripts/removal-ratchet.mjs`, that compares verification code against the base
 (`GATE_BASE`, else the merge-base with `main`) and fails on a deleted file or a drop in a file's
 assertion-call count or test-declaration count. A commit that touches the file and carries a
-`Check-removal: <reason>` trailer lets it through; the orchestrator lists those trailers at merge
+`Check-removal: <reason>` trailer lets it through; the orchestrator lists those at merge
 and accepts or rejects each. Full mechanism: `docs/harness.md` §4.3.
 
 - **Counts, not lines.** A raw line diff flags a reword that keeps the assertion. The script parses
   (TypeScript's parser, a small shell scanner), so comments and strings are ignored and
   commenting an assertion out is a removal. The vocabulary is one table in the script.
-- **Calibration.** Over the last 40 first-parent merges of `integration/beta-2`, 6 failed and none
+- **Calibration.** Over the last 40 first-parent merges of `integration/beta-2` (tip 71bd7a6d), 6 failed and none
   was a reword: each deleted a suite for a retired screen or replaced tests when a screen was
   rewritten (design-system-v1). Those are the removals the trailer exists to record.
-- **Known gaps.** Cases removed from a table that one loop asserts over, a weakened expectation, an
-  assertion moved to another file, and the detectors in `checks/` outside `test/` (deletion only).
-  Rejected for now: counting `ctx.report(...)`-style emissions in the detectors, because they have
-  no single form (`report(...)`, `errors.push(...)`, `ctx.report(...)`).
+- **Known gaps.** Cases removed from a table that one loop asserts over, a weakened expectation,
+  unreachable code around an assertion, an assertion moved to another file, a `testXxx()` call
+  dropped from `checks/test/acceptance.ts`, a `case_*` left out of a shell dispatch, and the
+  detectors in `checks/` outside `test/` (deletion only). Rejected for now: counting
+  `ctx.report(...)`-style emissions in the detectors, because they have no single form
+  (`report(...)`, `errors.push(...)`, `ctx.report(...)`).
 - **Rejected.** `checks/` in `CONFIG_SET` (a human edit per new test); a per-line `Check-removal`
   marker in the source (an agent can write it itself, and it hides the removal in a diff).

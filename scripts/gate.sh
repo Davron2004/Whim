@@ -62,8 +62,9 @@ check() {
 
 # Removal ratchet (#159): verification code may grow freely; a deleted check file or a drop in a
 # file's assertion or test count fails unless a commit touching it carries `Check-removal: <reason>`.
-# Compares against the same base as the tripwire (GATE_BASE, else the merge-base with main). Cheap,
-# and it needs no build, so it goes first. See docs/harness.md.
+# Compares against GATE_BASE, the tripwire's pinned base (unset: the merge-base with main, not HEAD
+# like the tripwire, so a plain run covers the whole branch). Cheap, needs no build, so it goes first.
+# See docs/harness.md.
 check "removal ratchet"   node scripts/removal-ratchet.mjs
 
 # build first: ≈0.3s (esbuild), and it writes the gitignored src/runtime/generated/* that

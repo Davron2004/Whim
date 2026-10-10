@@ -22,9 +22,13 @@
 // so comments and string literals never count: commenting an assertion out is a removal, and
 // rewording one that keeps the same call is not. Counts, not line diffs.
 // NOT COVERED: a case removed from a data table that one loop asserts over, a weakened
-// expectation (`h.eq(x, 1)` -> `h.eq(x, x)`), a moved assertion (count it in the new file and
-// authorise the old), the detectors under checks/ outside test dirs (deletion only), and
-// invariants/ (owner-authored, under the gate's CONFIG_SET tripwire instead).
+// expectation (`h.eq(x, 1)` -> `h.eq(x, x)`), unreachable code around an assertion, an assertion
+// moved to another file (count it in the new file and authorise the old), a `testXxx()` call
+// dropped from checks/test/acceptance.ts or a `case_*` function left out of a shell dispatch list,
+// the detectors under checks/ outside test dirs (deletion only), fixtures/ (inputs, not checks),
+// and invariants/ (owner-authored, under the gate's CONFIG_SET tripwire instead).
+// A refactor that merges assertions or turns tests into a loop reads as a removal: say so in the
+// trailer.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -49,10 +53,14 @@ const VOCABULARY = {
     assertionFamilies: [/^assert[A-Z]\w*$/, /^expect[A-Z]\w*$/],
     // Test declarations: `test(name, fn)` and the server suites' `h.test(name, fn)`.
     testCallees: new Set(['test', 'h.test', 'it']),
+    // A sequencer registers a suite by importing its module (server|launcher|checks/test/acceptance.ts),
+    // so each import of a `*.suite` module counts as a test declaration: dropping one stops the suite.
+    suiteImport: /\.suite$/,
   },
   // Shell tests: a command word at command position (function definitions excluded).
   sh: {
     assertionWords: [/^assert_\w+$/, /^expect_\w+$/, /^ok$/, /^pass$/, /^fail$/],
+    // A `case_x() {` definition and each `case_x` call both count (the call is the dispatch).
     testFunctions: /^(?:case|test)_\w+$/,
   },
 };
@@ -70,6 +78,12 @@ function classify(file) {
   return null;
 }
 
+// Runners find suites by file name (`*.acceptance.ts`, `*.test.ts`, imports of `*.suite`), so a
+// rename that drops the marker silently stops the suite even though the content is unchanged.
+function discoverable(file) {
+  return /\.(?:suite|acceptance|test)\.[a-z]+$/.test(file);
+}
+
 // ---- counting: JavaScript and TypeScript ---------------------------------------------------------
 function calleeText(node) {
   if (ts.isIdentifier(node)) return node.text;
@@ -84,9 +98,10 @@ function calleeText(node) {
 function isAssertionCallee(name) {
   const v = VOCABULARY.js;
   if (v.assertionCallees.has(name)) return true;
-  const dot = name.indexOf('.');
+  const normal = name.replace(/^(assert|nodeAssert)\.strict\./, '$1.');
+  const dot = normal.indexOf('.');
   if (dot < 0) return v.assertionFamilies.some((re) => re.test(name));
-  return v.nodeAssertReceivers.has(name.slice(0, dot)) && v.nodeAssertMethods.has(name.slice(dot + 1));
+  return v.nodeAssertReceivers.has(normal.slice(0, dot)) && v.nodeAssertMethods.has(normal.slice(dot + 1));
 }
 
 function scriptKind(file) {
@@ -98,6 +113,9 @@ function countJs(file, text) {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false, scriptKind(file));
   const counts = { assertions: 0, tests: 0 };
   const walk = (node) => {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && VOCABULARY.js.suiteImport.test(node.moduleSpecifier.text)) {
+      counts.tests += 1;
+    }
     if (ts.isCallExpression(node)) {
       const name = calleeText(node.expression);
       if (name !== null && VOCABULARY.js.testCallees.has(name)) counts.tests += 1;
@@ -146,7 +164,9 @@ function shellStep(src, st) {
 // `<<WORD`, `<<-WORD`, `<<'WORD'`, `<<"WORD"` at i, but not the here-string `<<<`.
 function heredocStart(src, i) {
   if (src[i + 1] !== '<' || src[i + 2] === '<' || src[i - 1] === '<') return null;
-  const m = /^<<(-?)[ \t]*(?:'([^']+)'|"([^"]+)"|\\?(\w+))/.exec(src.slice(i, i + 200));
+  const before = src.slice(src.lastIndexOf('\n', i) + 1, i);
+  if (before.lastIndexOf('((') > before.lastIndexOf('))')) return null; // `$(( 1 << k ))` is a shift
+  const m = /^<<(-?)[ \t]*(?:'([^']+)'|"([^"]+)"|\\?([^\s;&|<>()]+))/.exec(src.slice(i, i + 200));
   return m ? { delim: m[2] ?? m[3] ?? m[4], dash: m[1] === '-' } : null;
 }
 
@@ -177,6 +197,17 @@ function shellNewline(src, st) {
   }
 }
 
+// First word of a command piece, after any `VAR=value` prefixes.
+function commandWord(piece) {
+  let rest = piece.trimStart();
+  for (;;) {
+    const assignment = /^\w+=\S*/.exec(rest);
+    if (assignment === null) break;
+    rest = rest.slice(assignment[0].length).trimStart();
+  }
+  return /^(\w+)(?![\w=])/.exec(rest)?.[1];
+}
+
 function countSh(text) {
   const clean = stripShell(text);
   let tests = 0;
@@ -186,13 +217,15 @@ function countSh(text) {
   // Command position: split on the things that start a command, then read each piece's first word.
   const pieces = clean
     .replaceAll(/^[ \t]*(?:function[ \t]+)?\w+[ \t]*\(\)/gm, ' ') // function definitions are not calls
-    .replaceAll(/&&|\|\||\$\(|[;|&({]|!(?=[ \t])/g, '\n')
+    .replaceAll(/&&|\|\||\$\(|[;|&(){`]|!(?=[ \t])/g, '\n')
     .replaceAll(/\b(?:then|do|else|elif|if|while|until)\b/g, '\n')
     .split('\n');
   let assertions = 0;
   for (const piece of pieces) {
-    const word = /^\s*(\w+)(?![\w=])/.exec(piece)?.[1];
-    if (word !== undefined && VOCABULARY.sh.assertionWords.some((re) => re.test(word))) assertions += 1;
+    const word = commandWord(piece);
+    if (word === undefined) continue;
+    if (VOCABULARY.sh.testFunctions.test(word)) tests += 1;
+    else if (VOCABULARY.sh.assertionWords.some((re) => re.test(word))) assertions += 1;
   }
   return { assertions, tests };
 }
@@ -230,7 +263,7 @@ function resolveBase(explicit) {
 
 // Changed files between base and the tree being gated, renames paired: [{ status, oldPath, newPath }].
 function changedFiles(base, head) {
-  const args = ['diff', '--name-status', '-M', '-z', base];
+  const args = ['diff', '--name-status', '-M', '-l20000', '-z', base];
   if (head) args.push(head);
   const parts = git(args).split('\0');
   const rows = [];
@@ -274,18 +307,34 @@ function removalFor(row, base, top, head) {
   const before = git(['show', `${base}:${row.oldPath}`], { allowFail: true });
   if (before === null) return null;
   const beforeCounts = kind === 'counted' ? countFile(row.oldPath, before) : null;
+  // A helper under test/ with no assertion and no test (a fixture builder, a shim) holds no check.
+  if (beforeCounts && beforeCounts.assertions + beforeCounts.tests === 0) return null;
+  const moved = row.oldPath !== row.newPath;
+  const paths = moved ? [row.oldPath, row.newPath] : [row.oldPath];
   const now = row.status === 'D' ? null : currentText(top, head, row.newPath);
-  if (now === null) return { file: row.oldPath, paths: [row.oldPath], deleted: true, before: beforeCounts };
+  if (now === null) return { file: row.oldPath, paths, deleted: true, before: beforeCounts };
+  // Moved out of verification code, or renamed so no runner finds it: the checks are gone.
+  if (moved && (classify(row.newPath) !== kind || (kind === 'counted' && discoverable(row.oldPath) && !discoverable(row.newPath)))) {
+    return { file: row.oldPath, paths, deleted: true, movedTo: row.newPath, before: beforeCounts };
+  }
   if (kind !== 'counted') return null;
   const after = countFile(row.oldPath, now);
   if (after.assertions >= beforeCounts.assertions && after.tests >= beforeCounts.tests) return null;
-  const paths = row.oldPath === row.newPath ? [row.oldPath] : [row.oldPath, row.newPath];
   return { file: row.newPath, paths, deleted: false, before: beforeCounts, after };
 }
 
 function dirtyPaths() {
-  const porcelain = git(['status', '--porcelain', '-z', '--untracked-files=all']);
-  return new Set(porcelain.split('\0').filter((rec) => rec.length > 3).map((rec) => rec.slice(3)));
+  const records = git(['status', '--porcelain', '-z']).split('\0');
+  const dirty = new Set();
+  for (let i = 0; i < records.length; i += 1) {
+    if (records[i].length <= 3) continue;
+    dirty.add(records[i].slice(3));
+    if (/[RC]/.test(records[i].slice(0, 2))) {
+      i += 1; // a rename or copy is followed by a bare record holding its source path
+      if (records[i]) dirty.add(records[i]);
+    }
+  }
+  return dirty;
 }
 
 function whyRejected(uncommitted, trailers) {
@@ -317,9 +366,9 @@ const WHY = {
 
 function describe(r) {
   if (r.deleted) {
-    return r.before
-      ? `${r.file}: deleted (was ${r.before.assertions} assertions, ${r.before.tests} tests)`
-      : `${r.file}: deleted`;
+    const was = r.before ? ` (was ${r.before.assertions} assertions, ${r.before.tests} tests)` : '';
+    if (r.movedTo) return `${r.file}: moved to ${r.movedTo}, which no runner or check scan reads as verification code${was}`;
+    return `${r.file}: deleted${was}`;
   }
   return `${r.file}: assertions ${r.before.assertions} -> ${r.after.assertions}, tests ${r.before.tests} -> ${r.after.tests}`;
 }
@@ -380,4 +429,9 @@ function run() {
   return 1;
 }
 
-process.exitCode = run();
+try {
+  process.exitCode = run();
+} catch (err) {
+  console.error(`removal ratchet: could not compare (${err instanceof Error ? err.message : String(err)})`);
+  process.exitCode = 2;
+}

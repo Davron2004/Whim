@@ -51,7 +51,15 @@ function commit(repo, message) {
   return git(repo, ['rev-parse', 'HEAD']);
 }
 
+// Throwaway repos live under mktemp only; remove exactly those, even when a case fails.
 const TMPS = [];
+process.on('exit', () => {
+  for (const dir of TMPS) {
+    if (path.dirname(dir) === fs.realpathSync(os.tmpdir()) && path.basename(dir).startsWith(PREFIX)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
 function fixture(files) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), PREFIX)));
   TMPS.push(dir);
@@ -91,7 +99,7 @@ case_one() {
   assert_contains "abc" "c" "has c"
 }
 case_one
-`; // 2 assertions (+ pass/fail inside helpers: 1 + 1 + 1 ... see below), 1 test
+`; // assertions: pass + fail + 2 assert_contains calls + 1 inside the helper = 5; tests: case_one() + its call = 2
 
 const BASE_FILES = { [SUITE]: SUITE_TEXT, 'src/product.ts': 'export const x = 1;\n' };
 
@@ -279,7 +287,201 @@ await test('shell: rewording the arguments keeps the count and a dropped case fu
   commit(dir, 'rename the case');
   const r = ratchet(dir, { base });
   assert.equal(r.code, 1, r.out);
-  assert.match(r.out, /tests 1 -> 0/);
+  assert.match(r.out, /tests 2 -> 1/);
+});
+
+// ---- the vocabulary: dropping any one form is a removal ---------------------------------------------
+const ASSERTION_FORMS = [
+  'h.ok(1, "m")', 'h.eq(1, 1, "m")', 'h.throws(() => 1)', 'ok(1, "m")', 'eq(1, 1, "m")', 'equal(1, 1, "m")',
+  'check("n", true)', 'assert(1, "m")', 'assert.ok(1)', 'assert.strict.equal(1, 1)', 'nodeAssert.rejects(f)',
+  'nodeAssert.deepStrictEqual(1, 1)', 'assertHasKind(r, "k")', 'expectRefusal(r)', 'h?.ok(1)',
+];
+for (const form of ASSERTION_FORMS) {
+  await test(`vocabulary: dropping \`${form}\` is a removal`, async () => {
+    const withIt = `test('t', () => {\n  ${form};\n  ok(2, 'keeper');\n});\n`;
+    const { dir, base } = fixture({ 'src/x/test/v.suite.ts': withIt });
+    write(dir, 'src/x/test/v.suite.ts', withIt.replace(`  ${form};\n`, ''));
+    commit(dir, 'drop it');
+    const r = ratchet(dir, { base });
+    assert.equal(r.code, 1, `${form}: ${r.out}`);
+    assert.match(r.out, /assertions 2 -> 1/);
+  });
+}
+
+for (const form of ["h.test('t', () => {})", "it('t', () => {})", "import { run } from './x.suite'"]) {
+  await test(`vocabulary: dropping \`${form}\` drops the test count`, async () => {
+    const withIt = `ok(1, 'keeper');\n${form};\n`;
+    const { dir, base } = fixture({ 'src/x/test/v.suite.ts': withIt });
+    write(dir, 'src/x/test/v.suite.ts', "ok(1, 'keeper');\n");
+    commit(dir, 'drop it');
+    const r = ratchet(dir, { base });
+    assert.equal(r.code, 1, `${form}: ${r.out}`);
+    assert.match(r.out, /tests 1 -> 0/);
+  });
+}
+
+await test('.tsx and .mjs files are counted, wrapped and non-null callees included', async () => {
+  const body = "test('t', () => {\n  (h.ok)(1);\n  h!.eq(1, 1);\n  ok(2);\n});\n";
+  for (const file of ['src/x/test/a.suite.tsx', 'scripts/test/b.test.mjs']) {
+    const { dir, base } = fixture({ [file]: body });
+    write(dir, file, body.replace('  ok(2);\n', ''));
+    commit(dir, 'drop');
+    const r = ratchet(dir, { base });
+    assert.equal(r.code, 1, `${file}: ${r.out}`);
+    assert.match(r.out, /assertions 3 -> 2/);
+  }
+});
+
+await test('removing a suite from its sequencer fails, though the suite file is untouched', async () => {
+  const files = {
+    'server/test/acceptance.ts': "import { runA } from './a.suite';\nimport { runB } from './b.suite';\nrunA();\nrunB();\n",
+    'server/test/a.suite.ts': 'ok(1);\n',
+    'server/test/b.suite.ts': 'ok(1);\n',
+  };
+  const { dir, base } = fixture(files);
+  write(dir, 'server/test/acceptance.ts', "import { runA } from './a.suite';\nrunA();\n");
+  commit(dir, 'unwire b');
+  const r = ratchet(dir, { base });
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /server\/test\/acceptance\.ts: assertions 0 -> 0, tests 2 -> 1/);
+});
+
+// ---- moving a suite out of reach ------------------------------------------------------------------
+await test('a rename out of test/, or to a name no runner discovers, is a removal', async () => {
+  for (const to of ['src/a.suite.ts', 'checks/test/a.suite.ts.bak', 'checks/test/a.ts']) {
+    const { dir, base } = fixture(BASE_FILES);
+    fs.mkdirSync(path.dirname(path.join(dir, to)), { recursive: true });
+    git(dir, ['mv', SUITE, to]);
+    commit(dir, 'move it');
+    const r = ratchet(dir, { base });
+    assert.equal(r.code, 1, `${to}: ${r.out}`);
+    assert.match(r.out, /moved to/);
+  }
+});
+
+await test('a detector renamed out of checks/ is a removal', async () => {
+  const { dir, base } = fixture({ ...BASE_FILES, 'checks/passes/a.ts': 'export const a = 1;\n' });
+  git(dir, ['mv', 'checks/passes/a.ts', 'src/a.ts']);
+  commit(dir, 'move detector');
+  assert.equal(ratchet(dir, { base }).code, 1);
+});
+
+await test('deleting a helper that holds no assertion or test is free', async () => {
+  const { dir, base } = fixture({ ...BASE_FILES, 'checks/test/helper.ts': 'export const h = 1;\n' });
+  fs.rmSync(path.join(dir, 'checks/test/helper.ts'));
+  commit(dir, 'drop helper');
+  assert.equal(ratchet(dir, { base }).code, 0);
+});
+
+await test('a rename carries its trailer: it is found through the new path too', async () => {
+  const { dir, base } = fixture(BASE_FILES);
+  git(dir, ['mv', SUITE, 'checks/test/renamed.suite.ts']);
+  write(dir, 'checks/test/renamed.suite.ts', SUITE_TEXT.replace("  nodeAssert.ok(true, 'second assertion');\n", ''));
+  commit(dir, 'rename and trim\n\nCheck-removal: one assertion was redundant');
+  const r = ratchet(dir, { base });
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /authorised: checks\/test\/renamed\.suite\.ts: assertions 3 -> 2/);
+});
+
+// ---- history shapes and the working tree ----------------------------------------------------------
+await test('a trailer on a side branch that was merged in still authorises the removal', async () => {
+  const { dir, base } = fixture(BASE_FILES);
+  git(dir, ['switch', '-q', '-c', 'side']);
+  fs.rmSync(path.join(dir, SUITE));
+  commit(dir, 'drop it\n\nCheck-removal: obsolete');
+  git(dir, ['switch', '-q', 'main']);
+  write(dir, 'docs/other.md', 'x\n');
+  commit(dir, 'main moves on');
+  git(dir, ['merge', '-q', '--no-ff', 'side', '-m', 'merge side']);
+  const r = ratchet(dir, { base });
+  assert.equal(r.code, 0, r.out);
+});
+
+await test('a trailer on the side of a merge that main also removed (same result on both sides) is still found', async () => {
+  const { dir, base } = fixture(BASE_FILES);
+  git(dir, ['switch', '-q', '-c', 'side']);
+  fs.rmSync(path.join(dir, SUITE));
+  commit(dir, 'side drops it\n\nCheck-removal: obsolete');
+  git(dir, ['switch', '-q', 'main']);
+  fs.rmSync(path.join(dir, SUITE));
+  commit(dir, 'main drops it too');
+  git(dir, ['merge', '-q', '--no-ff', 'side', '-m', 'merge side']);
+  const r = ratchet(dir, { base });
+  assert.equal(r.code, 0, r.out);
+});
+
+await test('a trailer on the old path still covers the file after a later pure rename', async () => {
+  const { dir, base } = fixture(BASE_FILES);
+  write(dir, SUITE, SUITE_TEXT.replace("  nodeAssert.ok(true, 'second assertion');\n", ''));
+  commit(dir, 'trim\n\nCheck-removal: one assertion was redundant');
+  git(dir, ['mv', SUITE, 'checks/test/renamed.suite.ts']);
+  commit(dir, 'rename');
+  const r = ratchet(dir, { base });
+  assert.equal(r.code, 0, r.out);
+});
+
+await test('an uncommitted drop in a file that still exists fails and names the file', async () => {
+  const { dir, base } = fixture(BASE_FILES);
+  write(dir, SUITE, SUITE_TEXT.replace("  nodeAssert.ok(true, 'second assertion');\n", ''));
+  const r = ratchet(dir, { base });
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /sample\.suite\.ts: assertions 3 -> 2/);
+  assert.match(r.out, /uncommitted changes/);
+});
+
+await test('--head compares that commit, ignoring the working tree', async () => {
+  const { dir, base } = fixture(BASE_FILES);
+  write(dir, 'docs/n.md', 'n\n');
+  const tip = commit(dir, 'unrelated change');
+  fs.rmSync(path.join(dir, SUITE)); // uncommitted deletion must not count
+  assert.equal(ratchet(dir, { base, args: ['--head', tip] }).code, 0);
+});
+
+await test('GATE_BASE wins over the merge-base with main', async () => {
+  const { dir } = fixture(BASE_FILES);
+  git(dir, ['switch', '-q', '-c', 'work']);
+  fs.rmSync(path.join(dir, SUITE));
+  const mid = commit(dir, 'delete on a branch');
+  write(dir, 'docs/n.md', 'n\n');
+  commit(dir, 'later');
+  // Pinned after the deletion, nothing was lost since; unpinned, the merge-base still sees it.
+  assert.equal(ratchet(dir, { base: mid }).code, 0);
+  assert.equal(ratchet(dir).code, 1);
+});
+
+await test('node_modules and invariants/ are not verification code', async () => {
+  const { dir, base } = fixture({
+    ...BASE_FILES,
+    'invariants/test/i.suite.ts': 'ok(1);\n',
+    'node_modules/pkg/test/n.suite.ts': 'ok(1);\n',
+  });
+  fs.rmSync(path.join(dir, 'invariants'), { recursive: true });
+  git(dir, ['rm', '-rq', '--cached', 'node_modules']);
+  commit(dir, 'drop them');
+  assert.equal(ratchet(dir, { base }).code, 0);
+});
+
+// ---- more shell ------------------------------------------------------------------------------------
+await test('shell: the helper words and a dispatch call each count', async () => {
+  const forms = ['expect_value a b', 'ok "x"', 'pass "x"', 'fail "x"', 'case_two', 'VAR=1 assert_x a', 'true && assert_y b'];
+  for (const form of forms) {
+    const text = `#!/usr/bin/env bash\n${form}\nok "keeper"\n`;
+    const { dir, base } = fixture({ 'scripts/test/s.test.sh': text });
+    write(dir, 'scripts/test/s.test.sh', '#!/usr/bin/env bash\nok "keeper"\n');
+    commit(dir, 'drop');
+    const r = ratchet(dir, { base });
+    assert.equal(r.code, 1, `${form}: ${r.out}`);
+  }
+});
+
+await test('shell: a delimiter with a dash, and an arithmetic shift, do not swallow the assertions after them', async () => {
+  const text = "#!/usr/bin/env bash\ncat <<END-OF\nbody\nEND-OF\nx=$(( 1 << 3 ))\nok \"a\"\nok \"b\"\n";
+  const { dir, base } = fixture({ 'scripts/test/s.test.sh': text });
+  write(dir, 'scripts/test/s.test.sh', text.replace('ok "b"\n', ''));
+  commit(dir, 'drop b');
+  const r = ratchet(dir, { base });
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /assertions 2 -> 1/);
 });
 
 // ---- the base -------------------------------------------------------------------------------------
@@ -300,9 +502,4 @@ await test('an unresolvable GATE_BASE refuses with exit 2', async () => {
   assert.match(r.out, /not a commit/);
 });
 
-for (const dir of TMPS) {
-  if (path.dirname(dir) === fs.realpathSync(os.tmpdir()) && path.basename(dir).startsWith(PREFIX)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-}
 console.log(`\n${pass} passed`);

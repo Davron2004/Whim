@@ -164,30 +164,33 @@ caller — fetch, then check.
 
 Agents add checks all the time, so `checks/` and the suites stay out of `CONFIG_SET`; that would
 make every new test a human edit. What an agent must not do quietly is delete or weaken a check to
-get green. `scripts/removal-ratchet.mjs` (issue #159, owner direction 2026-10-09) lets additions
-through and makes removals visible. "Ratchet" is only the name; the mechanism is a per-file count
-that may go up but not down.
+get green. `scripts/removal-ratchet.mjs` (issue #159) lets additions through and makes removals
+visible. "Ratchet" is only the name: a per-file count may go up but not down.
 
-- **Scope.** Code under `checks/` and under any `test/` directory (suites, harnesses, runners),
-  except `fixtures/` and `invariants/`. Detectors in `checks/` outside `test/` are deletion-only:
-  you can edit one freely, not delete it.
-- **Counting.** Per file, two numbers: assertion calls and test declarations. TypeScript's parser
-  reads `.ts`, `.tsx` and `.mjs`; a small scanner reads `.sh`. Comments and string literals never
-  count, so commenting an assertion out is a removal and rewording one is not. The whole
-  vocabulary is the `VOCABULARY` table at the top of the script. A rename is compared by content.
-- **The escape.** A commit in `BASE..HEAD` that touches the file carries the trailer
-  `Check-removal: <reason>` (last paragraph of the message, non-empty reason). The reason prints at
-  every gate run. An uncommitted removal never passes; the failure names the file, the before and
-  after counts, and the trailer syntax.
-- **At merge.** The orchestrator lists the branch's trailers (`git log --grep='^Check-removal:'
-  <base>..<branch>`) and accepts or rejects each. A rejected one means the check comes back.
-- **Blind spots, by design.** A case dropped from a data table that one loop asserts over, a
-  weakened expectation (`h.eq(x, 1)` to `h.eq(x, x)`), and an assertion moved between files
-  (authorise the old file) are not seen. Calibration over the last 40 first-parent merges of
-  `integration/beta-2`: 6 failed, all real removals during the design-system rewrite of launcher
-  suites, none a reword.
-- **Protection.** The script is in the gate's `CONFIG_SET`, so loosening it needs a base commit
-  like any other gate edit.
+It compares code under `checks/` and any `test/` directory (not `fixtures/` or `invariants/`)
+against `GATE_BASE`, else the merge-base with `main`. Per file it counts assertion calls and test
+declarations (an import of a `*.suite` module is one, since that is how a sequencer runs it) with
+TypeScript's parser, or a small scanner for `.sh`; the `VOCABULARY` table at the top of the script
+is the whole rule. Comments and strings never count, so commenting an assertion out is a removal
+and rewording one is not. A deleted file is a removal, and so is moving one out of this set or
+renaming a suite so no runner finds it. Detectors in `checks/` outside `test/` are deletion-only,
+and a helper with no assertion and no test is free to delete.
+
+A removal passes when a commit in `BASE..HEAD` that touches the file carries a `Check-removal:
+<reason>` trailer (last paragraph, non-empty reason). The gate prints each as an `authorised:` line
+with file, commit and reason; an uncommitted removal never passes. At merge, run
+`node scripts/removal-ratchet.mjs --base <staging> --head <branch>` and accept or reject each line;
+a rejected one means the check comes back. `/git-cleanup` must keep the trailers when it squashes,
+or the next gate against the merge-base with `main` fails.
+
+Not seen, by design: a case dropped from a data table that one loop asserts over, a weakened
+expectation (`h.eq(x, 1)` to `h.eq(x, x)`), code made unreachable around an assertion, an assertion
+moved to another file (authorise the old one), a `testXxx()` call dropped from
+`checks/test/acceptance.ts`, a `case_*` left out of a shell dispatch, and anything under
+`fixtures/`. Merging assertions or looping a test reads as a removal; say so in the trailer. Over
+the last 40 first-parent merges of `integration/beta-2` (tip 71bd7a6d), 6 failed, each a real
+removal during the design-system rewrite of launcher suites. The script is in `CONFIG_SET`, so
+loosening it needs a base commit like any other gate edit.
 
 ## 5. The feature loop (`/opsx:propose` → `/opsx:apply`)
 
