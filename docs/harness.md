@@ -111,6 +111,7 @@ The mechanical layer. Protected paths split by blast radius:
 | SonarCloud (external) | GitHub PR quality gate | Automatic analysis on every push to the staging branch's draft PR into `main` — server-side, no repo config (`sonar-project.properties` deliberately absent), not runnable locally or in the deny-egress container. Iteration happens on that draft PR: findings are ingested programmatically by `scripts/sonar-pr-issues.mjs` (Web API, auth-visibility-guarded) into the fix-loop findings format, driving a nested `/fix-loop` on the staging branch, re-pushed until green — orchestrator-executed on the attended host (§11) — before the final ratified merge, never after. The local sonarjs lint (row 1) is the in-loop mirror of its rule set; SonarCloud stays the authoritative external check at PR time. It honors `// NOSONAR`; the local lint does not — keep code clean under the stricter of the two. Every finding fixed this way is appended to `openspec/critic/sonar-ledger.md` (one line per finding per fix round) — the promotion loop is external finding → ledger line → critic recurrence candidate (≥3 distinct fix-round run-ids for the same rule/location pattern) → human-ratified `.eslintrc.js` promotion, after which the fast gate's lint catches the recurrence in the inner loop. |
 | Deterministic toolkit | `scripts/fixloop.sh` | `integrity` (0 clean / 6 sanctioned Class-1 / 3 tamper / 4 scope), `redcheck` (0 RED / 5 vacuous-GREEN), `stale` (0 live / 7 already-fixed), `gatefull`, `park`, `finish`, `status`. Orchestrator-only: its internal git bypasses the hooks. |
 | Worktree provisioning | `scripts/worktree.sh` | `create <id> [<base>] [--branch b]` (worktree under `.claude/worktrees/` + its own `node_modules` + build), `provision <checkout>` (the same for a checkout made another way), `check [<checkout>]` (the gate's `node_modules` tripwire). The one place worktrees are made; `fixloop.sh redcheck` calls it. Orchestrator-only, like `fixloop.sh`: `create` runs git unhooked. §11 has the why. |
+| Removal ratchet | `scripts/removal-ratchet.mjs` (gate.sh step `removal ratchet`) | Fails when verification code lost a check since `GATE_BASE` (else the merge-base with `main`): a deleted file, or a file whose count of assertion calls or of test declarations dropped. Additions pass untouched. A removal passes only if a commit in `BASE..HEAD` that touches the file carries a `Check-removal: <reason>` trailer. §4.3. |
 | Bash policy | `.claude/hooks/bash-policy.sh` | Deterministic allow/deny on the command vocabulary: tier-1 git denies for everyone (config/reflog/clone/remote/ref-rewrites naming `main` anywhere, incl. substrings — fail-closed); **any push naming `main` denied for everyone** (incl. refspec smuggling `integration/x:main`); a **main-thread** push of a non-`main` ref (incl. `--force-with-lease origin integration/<run-id>`) **auto-allows** — the server-side GitHub ruleset on `main` is the human gate, not a per-push `ask` (decision #49); subagents are denied every push form; main-thread `git fetch origin` and `git pull --ff-only origin main` relaxed (closure's teardown) — **bare simple commands only**, see §4.1; `gh` vocabulary — read-only for all callers, `pr create --draft`/`pr ready` main-thread only, `pr merge` denied for all; compound commands are **unrolled by `unroll-command.mjs` and judged by their worst segment** (deny > ask > none > allow), never blanket-prompted, with anything not soundly unrollable (`$()`, backticks, eval-family, …) falling closed to a prompt; scoped git for subagents inside their *own* worktree (owners binding); protected-path shell-writes (incl. `>`/`>>` redirects) denied. |
 | Edit/Write policy | `.claude/hooks/protect-harness.sh` | Class 2 blocked for subagents everywhere (incl. inside worktrees); Class 1 blocked unless granted; memory store blocked (report `MEMORY:` field instead); main-thread edits to protected files → `ask` (the human ratifies). |
 | Stop gate | `.claude/hooks/gate-on-subagent-stop.sh` | An `implementer` with a dirty main tree, or a `git-cleaner`, cannot finish until its gate passes (attempt-capped). Worktree agents self-gate instead — this hook is the legacy/backstop path. |
@@ -158,6 +159,40 @@ unsandboxed override (§4.1c, §11). Swapping a sandbox-runnable gate for one th
 default environment is a regression in precisely the step whose job is to gate the ready flip. If
 the concern is a stale local ref, the bare `git fetch origin` above is permitted for the same
 caller — fetch, then check.
+
+### 4.3 The removal ratchet
+
+Agents add checks all the time, so `checks/` and the suites stay out of `CONFIG_SET`; that would
+make every new test a human edit. What an agent must not do quietly is delete or weaken a check to
+get green. `scripts/removal-ratchet.mjs` (issue #159) lets additions through and makes removals
+visible. "Ratchet" is only the name: a per-file count may go up but not down.
+
+It compares code under `checks/` and any `test/` directory (not `fixtures/` or `invariants/`)
+against `GATE_BASE`, else the merge-base with `main`. A base older than the first commit on the gated
+first-parent line that added the script (the epoch) is replaced by that commit's parent, so history from
+before the check existed is not held to it, but the epoch commit and the branch it arrived on are. Per file it counts assertion calls and test
+declarations (an import of a `*.suite` module is one, since that is how a sequencer runs it) with
+TypeScript's parser, or a small scanner for `.sh`; the `VOCABULARY` table at the top of the script
+is the whole rule. Comments and strings never count, so commenting an assertion out is a removal
+and rewording one is not. A deleted file is a removal, and so is moving one out of this set or
+renaming a suite so no runner finds it. Detectors in `checks/` outside `test/` are deletion-only,
+and a helper with no assertion and no test is free to delete.
+
+A removal passes when a commit in `BASE..HEAD` that touches the file carries a `Check-removal:
+<reason>` trailer (last paragraph, non-empty reason). The gate prints each as an `authorised:` line
+with file, commit and reason; an uncommitted removal never passes. At merge, run
+`node scripts/removal-ratchet.mjs --base <staging> --head <branch>` and accept or reject each line;
+a rejected one means the check comes back. `/git-cleanup` must keep the trailers when it squashes,
+or the next gate against the merge-base with `main` fails.
+
+Not seen, by design: a case dropped from a data table that one loop asserts over, a weakened
+expectation (`h.eq(x, 1)` to `h.eq(x, x)`), code made unreachable around an assertion, an assertion
+moved to another file (authorise the old one), a `testXxx()` call dropped from
+`checks/test/acceptance.ts`, a `case_*` left out of a shell dispatch, and anything under
+`fixtures/`. Merging assertions or looping a test reads as a removal; say so in the trailer. Over
+the last 40 first-parent merges of `integration/beta-2` (tip 71bd7a6d), 6 failed, each a real
+removal during the design-system rewrite of launcher suites. The script is in `CONFIG_SET`, so
+loosening it needs a base commit like any other gate edit.
 
 ## 5. The feature loop (`/opsx:propose` → `/opsx:apply`)
 
