@@ -52,7 +52,8 @@ export function placeMenu(anchor, size: {width;height}, window: {width;height}, 
 
 ```ts
 export interface ToastAction { label: string; onPress: () => void; asksWhim?: boolean /* ember-text */ }
-export interface ToastSpec { message: string; action?: ToastAction; undo?: boolean /* 10 s */ }
+export interface ToastSpec { message: string; action?: ToastAction; undo?: boolean /* 10 s */;
+  onEnd?: () => void /* once, when no longer offered: timeout, swipe, dismiss, action, or replaced */ }
 export interface ToastApi { show(toast: ToastSpec): void /* replaces in place */; dismiss(): void }
 export function ToastHost(props: { bottomOffset?: number /* chrome above safe area */; children }): JSX.Element;
 export function useToast(): ToastApi;  // throws outside a ToastHost; toastDuration(t): 4000|6000|10000
@@ -95,7 +96,7 @@ export const TILE = { corner: 0.225, glyph: 0.5, glyphStroke: 2, badge: 18 };
 export const GRID = { columns: 4, largeTextColumns: 3, largeTextFrom: 1.35, listFrom: 2, labelGap: 4,
   labelLines: 2, labelSidePadding: 4, rowGap: 20, minTouch: { width: 64, height: 84 } };
 export function gridLayout(width: number, fontScale: number): GridLayout; // { kind:'grid'; columns;
-  // columnWidth=(width−40)/columns; tile; cellHeight; rowGap; gutter } | { kind:'list'; tile: 40; rowHeight; gutter }
+  // columnWidth=⌊(width−40)/columns⌋ (a degenerate width gets 64); tile; cellHeight; rowGap; gutter } | { kind:'list'; tile: 40; rowHeight; gutter }
 ```
 
 ## Keyboard — `src/host/launcher/KeyboardShell.tsx`, `keyboard-shell.ts`

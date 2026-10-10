@@ -14,7 +14,9 @@ import { makeStyles } from '../ui/tokens-pure';
 import { COPY } from './copy';
 
 export interface HomeHeaderProps {
-  onSettings: () => void;
+  /** Opens Settings. Absent (the loading skeleton), the button is drawn but inert and hidden from
+   *  screen readers: a placeholder is never an activatable control. */
+  onSettings?: () => void;
   /** Long-press on the title; present only in a build with the developer tools. */
   onOpenDevProbe?: () => void;
 }
@@ -32,6 +34,10 @@ const styles = makeStyles(() => ({
   title: { flexShrink: 1 },
 }));
 
+const settingsButton = (onSettings: () => void) => (
+  <IconButton icon="settings" label={COPY.settingsTitle} onPress={onSettings} iconSize={24} />
+);
+
 export function HomeHeader({ onSettings, onOpenDevProbe }: Readonly<HomeHeaderProps>) {
   const t = useTokens();
   const s = styles(t);
@@ -42,7 +48,13 @@ export function HomeHeader({ onSettings, onOpenDevProbe }: Readonly<HomeHeaderPr
           {COPY.homeTitle}
         </Text>
       </Pressable>
-      <IconButton icon="settings" label={COPY.settingsTitle} onPress={onSettings} iconSize={24} />
+      {onSettings ? (
+        settingsButton(onSettings)
+      ) : (
+        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          {settingsButton(() => undefined)}
+        </View>
+      )}
     </View>
   );
 }

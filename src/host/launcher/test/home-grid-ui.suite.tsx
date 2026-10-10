@@ -80,7 +80,7 @@ async function plate(element: React.ReactElement): Promise<Tree> {
 
 export async function runHomeGridUiTests(h: Harness): Promise<void> {
   // ── layout ──────────────────────────────────────────────────────────────────
-  await h.test('home layout: four columns of (screen − 40) / 4 at normal text, three from 135%, a list of 40 pt tiles from 200%', async () => {
+  await h.test('home layout: four columns of ⌊(screen − 40) / 4⌋ at normal text, three from 135%, a list of 40 pt tiles from 200%', async () => {
     const apps = [TIMER, app('Dice', 2), app('Plants', 3)];
     const seen: Record<string, { width: unknown; plate: number; height: unknown }> = {};
     for (const [scale, key] of [[1, 'normal'], [1.35, '135%'], [2, '200%']] as const) {
@@ -93,10 +93,10 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
         seen[key] = { width: flat(cell).width, plate: side, height: flat(cell).minHeight };
       } finally { await unmountScreen(tree); }
     }
-    h.eq(seen.normal.width, (390 - 40) / 4, 'four columns across the 350 pt between the gutters');
+    h.eq(seen.normal.width, 87, 'four columns across the 350 pt between the gutters, 87.5 rounded down');
     h.eq(seen.normal.plate, 64, 'of 64 pt tiles');
     h.ok((seen.normal.height as number) >= 84 && (seen.normal.width as number) >= 64, 'a cell is at least 64 × 84 to touch');
-    h.eq(seen['135%'].width, (390 - 40) / 3, 'three columns from 135%');
+    h.eq(seen['135%'].width, 116, 'three columns from 135%, 116.67 rounded down');
     h.eq(seen['135%'].plate, 64, 'the tile keeps its 64');
     h.eq(seen['200%'].width, '100%', 'a list of full-width rows from 200%');
     h.eq(seen['200%'].plate, 40, 'with 40 pt tiles');
@@ -277,7 +277,7 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
   await h.test('Delete: no dialog; the callback runs at once and a toast “Timer deleted” offers Undo for 10 seconds', async () => {
     await resetPhone();
     const log: string[] = [];
-    const tree = await renderHome({ apps: [TIMER], onDelete: (a) => log.push(`delete ${a.id}`), onUndoDelete: (a) => log.push(`undo ${a.id}`) });
+    const tree = await renderHome({ apps: [TIMER], onDelete: (a) => log.push(`delete ${a.id}`), onUndoDelete: (a) => { log.push(`undo ${a.id}`); return true; }, onSettleDelete: (a) => log.push(`settle ${a.id}`) });
     try {
       await longPress(tree, 'Timer');
       await chooseRow(tree, COPY.actionDelete);
@@ -287,7 +287,32 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       h.eq(toast?.action, COPY.toastUndo, 'and offers Undo');
       h.eq(tree.root.findAll((n) => String(n.type) === 'Alert').length, 0, 'no alert');
       await pressToastAction(tree);
-      h.eq(log, ['delete Timer', 'undo Timer'], 'Undo undoes that delete');
+      h.eq(log, ['delete Timer', 'undo Timer', 'settle Timer'], 'Undo undoes that delete, and the toast leaving then ends its window');
+    } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('Delete: a second delete while the first toast shows ends the first window at once and keeps the second’s Undo; an Undo that restores nothing says so', async () => {
+    await resetPhone();
+    const log: string[] = [];
+    const dice = app('Dice', 2);
+    let restores = true;
+    const tree = await renderHome({
+      apps: [TIMER, dice],
+      onDelete: (a) => log.push(`delete ${a.id}`),
+      onUndoDelete: (a) => { log.push(`undo ${a.id}`); return restores; },
+      onSettleDelete: (a) => log.push(`settle ${a.id}`),
+    });
+    try {
+      await longPress(tree, 'Timer');
+      await chooseRow(tree, COPY.actionDelete);
+      await longPress(tree, 'Dice');
+      await chooseRow(tree, COPY.actionDelete);
+      h.eq(log, ['delete Timer', 'delete Dice', 'settle Timer'], 'the second delete replaced the first toast: the first window ended, the second’s is open');
+      h.eq(toastOf(tree)?.message, 'Dice deleted', 'the second toast shows');
+      restores = false;
+      await pressToastAction(tree);
+      h.eq(log.slice(3), ['undo Dice', 'settle Dice'], 'Undo reaches the second delete');
+      h.eq(toastOf(tree)?.message, COPY.undoTooLateToast, 'an Undo that could not restore the app says so, in a toast');
     } finally { await unmountScreen(tree); }
   });
 
@@ -299,7 +324,7 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       { id: 'o1', prompt: 'Plant watering tracker app', state: 'failed', age: 2 * DAY },
       { id: 'o2', prompt: 'The garden planner', state: 'interrupted', age: 3 * DAY },
     ]);
-    const tree = await renderHome({ pending, onDiscard: (r) => log.push(`discard ${r.map((x) => x.id).join('+')}`), onUndoDiscard: (r) => log.push(`undo ${r.map((x) => x.id).join('+')}`) });
+    const tree = await renderHome({ pending, onDiscard: (r) => log.push(`discard ${r.map((x) => x.id).join('+')}`), onUndoDiscard: (r) => { log.push(`undo ${r.map((x) => x.id).join('+')}`); return true; }, onSettleDiscard: (r) => log.push(`settle ${r.map((x) => x.id).join('+')}`) });
     try {
       await longPress(tree, 'Dice roller game');
       await chooseRow(tree, COPY.actionDiscard);
@@ -309,7 +334,7 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       h.eq(menuLabels(tree), [COPY.actionDiscardAll], 'the older tile’s menu');
       await chooseRow(tree, COPY.actionDiscardAll);
       await pressToastAction(tree);
-      h.eq(log, ['discard p-failed', 'undo p-failed', 'discard o1+o2', 'undo o1+o2'], 'one Discard and one Undo for the whole set');
+      h.eq(log, ['discard p-failed', 'undo p-failed', 'settle p-failed', 'discard o1+o2', 'undo o1+o2', 'settle o1+o2'], 'one Discard and one Undo for the whole set, each window ended with its toast');
     } finally { await unmountScreen(tree); }
   });
 
@@ -502,6 +527,65 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
         h.eq([flat(blockSide).width, flat(blockSide).height], [layout.tile, layout.tile], 'with a tile-sized block, corner 22.5%');
       } finally { await unmountScreen(skeleton); await unmountScreen(real); windowMetrics.fontScale = 1; }
     }
+  });
+
+  await h.test('skeleton: the plate sits where the real tile’s does — the same inset in a list row, centred in the same width in a grid cell', async () => {
+    for (const scale of [1, 1.35, 2]) {
+      await resetPhone();
+      windowMetrics.fontScale = scale;
+      const layout = gridLayout(390, scale);
+      const skeleton = await renderScreen(<HomeSkeleton count={2} />);
+      await settle();
+      const real = await renderHome({ apps: [app('App 1', 1), app('App 2', 2)] });
+      try {
+        type Node = TestRenderer.ReactTestInstance;
+        const plateIn = (root: Node) => root.find((n) => hostType(n) === 'View' && flat(n).width === layout.tile && flat(n).height === layout.tile);
+        /** Where the plate's left edge falls in its cell, following the styles from the cell down. */
+        const plateX = (plateNode: Node, cell: Node): number => {
+          const chain: Node[] = [];
+          for (let n: Node | null = plateNode.parent; n; n = n.parent) {
+            if (hostType(n)) chain.unshift(n);
+            if (n === cell) break;
+          }
+          let left = 0;
+          let room = typeof flat(cell).width === 'number' ? (flat(cell).width as number) : 390 - 2 * layout.gutter;
+          for (const n of chain) {
+            const style = flat(n) ?? {};
+            const pad = Number(style.paddingHorizontal ?? 0);
+            left += pad;
+            room -= 2 * pad;
+            if (style.alignItems === 'center' && style.flexDirection !== 'row') return left + (room - layout.tile) / 2;
+          }
+          return left;
+        };
+        const bar = skeleton.root.find((n) => hostType(n) === 'Animated.View' && n.props.accessibilityRole === 'progressbar');
+        const skeletonCell = bar.children[0] as Node;
+        const realCell = frameOf(tile(real, 'App 1'));
+        h.eq(plateX(plateIn(skeletonCell), skeletonCell), plateX(plateIn(tile(real, 'App 1')), realCell), `${scale * 100}% text: the plate's left edge in the cell`);
+        h.eq(layout.kind === 'list' ? plateX(plateIn(skeletonCell), skeletonCell) > 0 : true, true, 'and a list row is inset, not flush with the gutter');
+      } finally { await unmountScreen(skeleton); await unmountScreen(real); windowMetrics.fontScale = 1; }
+    }
+  });
+
+  await h.test('skeleton: the Settings button and the composer it draws are placeholders — they cannot be pressed and screen readers skip them', async () => {
+    await resetPhone();
+    const skeleton = await renderScreen(<HomeSkeleton count={2} />);
+    await settle();
+    try {
+      for (const label of [COPY.settingsTitle, COPY.homeComposerPlaceholder]) {
+        const control = skeleton.root.find((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === label);
+        await h.throws(() => press(control), 'disabled', `“${label}” cannot be pressed`);
+        let hidden = false;
+        for (let n: TestRenderer.ReactTestInstance | null = control; n; n = n.parent) hidden = hidden || n.props.accessibilityElementsHidden === true;
+        h.ok(hidden, `“${label}” is hidden from screen readers`);
+      }
+    } finally { await unmountScreen(skeleton); }
+    let opened = 0;
+    const real = await renderHome({ apps: [TIMER], onSettings: () => { opened += 1; } });
+    try {
+      await press(real.root.find((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === COPY.settingsTitle));
+      h.eq(opened, 1, 'the real Home’s Settings button presses');
+    } finally { await unmountScreen(real); }
   });
 
   await h.test('skeleton: nothing for an empty grid — it is promised content', async () => {

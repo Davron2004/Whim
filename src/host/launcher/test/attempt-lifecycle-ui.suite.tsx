@@ -17,7 +17,6 @@ import { GENERIC_STREAM_ERROR } from '../error-reason';
 import type { InstalledApp } from '../app-index';
 import { StoreAccess } from '../store-access';
 import { PendingPurgeStore } from '../pending-purge';
-import { UNDO_WINDOW_MS } from '../soft-delete';
 import { renderRoot } from './home-rig';
 import { revokeConsent } from '../ai-consent';
 import { hardwareBack, openLink } from './native-host';
@@ -1095,7 +1094,7 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
 
   await h.test('ghosts: deleting a delivered app deletes its last-run report with it, at the purge — a purge that failed is finished at the next launch', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
-    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv, clock }) => {
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
       await startBuild(tree, 'A tea timer');
       streams[0].push(resultEvent('Tea Timer'));
       streams[0].end();
@@ -1110,7 +1109,7 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       try {
         StoreAccess.prototype.remove = async () => { throw new Error('storage busy'); };
         await TestRenderer.act(async () => { home(tree).props.onDelete(installed); });
-        await TestRenderer.act(async () => { clock.fire(UNDO_WINDOW_MS.app); });
+        await TestRenderer.act(async () => { home(tree).props.onSettleDelete(installed); });
         await settle();
         h.ok(kv.getString(LAST_RUN_KEY(app.id)) != null, 'a removal that failed keeps the report of the app still installed');
         h.ok(new PendingPurgeStore(kv).has('app', app.id), 'and keeps the purge armed for the next launch');

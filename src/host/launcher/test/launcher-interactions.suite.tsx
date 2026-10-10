@@ -17,16 +17,17 @@ import { grantConsent } from '../ai-consent';
 import { acceptTerms } from '../terms-acceptance';
 import { acknowledgeOwnServer, saveServerUrl } from '../server-address';
 import { resetNativeStorage } from './native-storage';
-import { renderScreen, unmountScreen, captureTimeouts, textOf, hostType } from './react-screen';
+import { renderScreen, unmountScreen, captureTimeouts, textOf, hostType, press } from './react-screen';
 import { testAppInfo } from './client-fixtures';
 import { json, settle, waitFor, withLauncher } from './rendered-launcher';
-import { chooseRow, longPress, pressToastAction, renderRoot, sheetTitled, tile, tileLabels, toastOf } from './home-rig';
+import { chooseRow, dismissToast, longPress, pressToastAction, renderRoot, sheetRows, sheetTitled, tile, tileLabels, toastOf } from './home-rig';
+import { accessibilitySettings } from './native-host';
+import { open as openNativeDb } from './native-storage';
 import MiniAppView from '../MiniAppView';
 import { PendingPurgeStore } from '../pending-purge';
+import { HomeSkeleton } from '../HomeSkeleton';
 import { PendingBuildStore } from '../pending-builds';
 import { RunJournalStore } from '../run-journal';
-import { UNDO_WINDOW_MS } from '../soft-delete';
-import { toastDuration } from '../../ui/Toast';
 import { StoreAccess } from '../store-access';
 import { createPersistentStore } from '../../version-store';
 import { tileOf } from '../tile-identity';
@@ -35,6 +36,9 @@ import { TINTS } from '../../../design/tokens';
 /** The radio (a tint swatch or a glyph) labelled `label` in a sheet. */
 const radioNamed = (sheet: TestRenderer.ReactTestInstance, label: string) =>
   sheet.find((n) => hostType(n) === 'Pressable' && n.props.accessibilityRole === 'radio' && n.props.accessibilityLabel === label);
+
+/** The copy made from the app `id`, if the index has one. */
+const copyOf = (index: AppIndex, id: string) => index.list().find((a) => a.forkedFrom?.id === id);
 
 export async function runLauncherInteractionTests(h: Harness): Promise<void> {
   for (const change of ['server', 'consent', 'same'] as const) {
@@ -224,8 +228,9 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
       const purges = new PendingPurgeStore(kv);
       await longPress(tree, 'Water Counter');
       await chooseRow(tree, COPY.actionDelete);
-      h.ok(clock.count(UNDO_WINDOW_MS.app) >= 1, 'the window is running');
-      await TestRenderer.act(async () => { clock.fire(UNDO_WINDOW_MS.app); });
+      h.ok(clock.count(10_000) >= 1, 'the Undo toast is running its 10 s');
+      h.ok(index.get('water-counter') !== null, 'and nothing is removed while it does');
+      await TestRenderer.act(async () => { clock.fire(10_000); });
       await waitFor(() => index.get('water-counter') === null, 'the purge to finish');
       h.eq(purges.list(), [], 'the marker is cleared last');
       h.eq(tileLabels(tree).length, 2, 'the other two apps remain');
@@ -241,6 +246,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
       await chooseRow(tree, COPY.actionDelete);
       await unmountScreen(tree);
       h.ok(index.get('water-counter') !== null, 'the closed process had not finished it');
+      h.ok(new PendingPurgeStore(kv).has('app', 'water-counter'), 'closing the toast’s host did not end the window: the marker waits for the next launch');
       const relaunched = await renderRoot(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
       try {
         await waitFor(() => tileLabels(relaunched).length === 2, 'the relaunched grid');
@@ -272,7 +278,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
       h.eq(tileLabels(tree), ['Dice roller game, didn’t work'], 'Undo returns the tile');
       await longPress(tree, 'Dice roller game');
       await chooseRow(tree, COPY.actionDiscard);
-      await TestRenderer.act(async () => { clock.fire(UNDO_WINDOW_MS.attempt); });
+      await TestRenderer.act(async () => { clock.fire(6_000); });
       await waitFor(() => pending.get('failed-1') === null, 'the discard to finish');
       h.eq(journal.get('failed-1'), null, 'its journal goes with it');
       h.eq(new PendingPurgeStore(kv).list(), [], 'and its marker');
@@ -280,9 +286,105 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('undo windows: Delete’s 10 s and Discard’s 6 s are the times the Undo toast is shown', () => {
-    h.eq(UNDO_WINDOW_MS.app, toastDuration({ message: '', undo: true }), 'Delete');
-    h.eq(UNDO_WINDOW_MS.attempt, toastDuration({ message: '', action: { label: COPY.toastUndo, onPress: () => {} } }), 'Discard');
+  await h.test('launch: the skeleton promises no cell for an app whose delete the launch sweep is about to finish', async () => {
+    let release: (() => void) | undefined;
+    const original = StoreAccess.prototype.remove;
+    StoreAccess.prototype.remove = () => new Promise<void>((resolve) => { release = resolve; });
+    const kept = { id: 'kept', name: 'Kept', createdAt: 1, lineageId: 'main', record: { appId: 'kept', name: 'Kept', manifest: { capabilities: [] } } };
+    const going = { ...kept, id: 'going', name: 'Going', createdAt: 2, record: { appId: 'going', name: 'Going', manifest: { capabilities: [] } } };
+    try {
+      await withLauncher({ apps: [kept, going], prepare: (kv) => new PendingPurgeStore(kv).armApp(going), server: idle }, async ({ tree }) => {
+        await waitFor(() => release !== undefined, 'the sweep to reach the delete');
+        h.eq(tree.root.findAllByType(HomeScreen).length, 0, 'the sweep is still running, so the grid is not drawn yet');
+        h.eq(tree.root.findByType(HomeSkeleton).props.count, 1, 'and the skeleton draws a cell for the one app that will stay');
+        release?.();
+        await waitFor(() => tree.root.findAllByType(HomeScreen).length === 1, 'the grid, once the sweep is done');
+      });
+    } finally {
+      release?.();
+      StoreAccess.prototype.remove = original;
+    }
+  });
+
+  await h.test('delete with a screen reader: the Undo toast stays while it is offered, so Undo restores the app whole however long it takes; dismissing the toast completes the delete', async () => {
+    accessibilitySettings.screenReader = true;
+    try {
+      await withLauncher({ examples: true, server: idle }, async ({ tree, kv, clock }) => {
+        await ready(tree);
+        const index = new AppIndex(kv);
+        const purges = new PendingPurgeStore(kv);
+        const before = tileLabels(tree);
+        const record = index.get('water-counter');
+        await longPress(tree, 'Water Counter');
+        await chooseRow(tree, COPY.actionDelete);
+        await settle();
+        h.eq(clock.count(10_000), 0, 'the toast runs no time under a screen reader, and neither does the delete');
+        h.eq(toastOf(tree)?.action, COPY.toastUndo, 'Undo is still on offer');
+        h.ok(index.get('water-counter') !== null && purges.has('app', 'water-counter'), 'the app is hidden, not removed');
+        await pressToastAction(tree);
+        h.eq(tileLabels(tree), before, 'Undo brings the tile back in its place');
+        h.eq(index.get('water-counter'), record, 'with its record whole');
+        h.eq(purges.list(), [], 'and no purge left armed');
+        await longPress(tree, 'Water Counter');
+        await chooseRow(tree, COPY.actionDelete);
+        await settle();
+        h.ok(index.get('water-counter') !== null, 'a second delete waits too');
+        await dismissToast(tree);
+        await waitFor(() => index.get('water-counter') === null, 'the delete to finish once the toast was dismissed');
+        h.eq(purges.list(), [], 'its marker is cleared last');
+      });
+    } finally {
+      accessibilitySettings.screenReader = false;
+    }
+  });
+
+  await h.test('delete: a second delete while the first toast shows completes the first delete at once and keeps the second’s Undo', async () => {
+    await withLauncher({ examples: true, server: idle }, async ({ tree, kv }) => {
+      await ready(tree);
+      const index = new AppIndex(kv);
+      const purges = new PendingPurgeStore(kv);
+      const record = index.get('tip-splitter');
+      await longPress(tree, 'Water Counter');
+      await chooseRow(tree, COPY.actionDelete);
+      await longPress(tree, 'Tip Splitter');
+      await chooseRow(tree, COPY.actionDelete);
+      await waitFor(() => index.get('water-counter') === null, 'the first delete to finish when its toast was replaced');
+      h.eq(toastOf(tree)?.message, 'Tip Splitter deleted', 'the second toast shows');
+      h.ok(index.get('tip-splitter') !== null && purges.has('app', 'tip-splitter'), 'the second app is hidden and whole');
+      await pressToastAction(tree);
+      h.eq(index.get('tip-splitter'), record, 'its Undo restores it');
+      h.ok(tileLabels(tree).some((l) => l.startsWith('Tip Splitter')) && !tileLabels(tree).some((l) => l.startsWith('Water Counter')), 'the second tile is back and the first stays gone');
+      h.eq(purges.list(), [], 'no marker left');
+    });
+  });
+
+  await h.test('delete: deleting the original spares a surviving copy — it stays on the grid with its own data and the shared history', async () => {
+    await withLauncher({ examples: true, server: idle }, async ({ tree, kv, clock }) => {
+      await ready(tree);
+      const index = new AppIndex(kv);
+      await longPress(tree, 'Water Counter, example');
+      await chooseRow(tree, COPY.actionMakeCopy);
+      const startFresh = sheetRows(tree, COPY.copyQuestionTitle).find((r) => String(r.props.accessibilityLabel).startsWith(COPY.copyQuestionFresh))!;
+      await press(startFresh);
+      await waitFor(() => copyOf(index, 'water-counter') !== undefined, 'the copy');
+      const copy = copyOf(index, 'water-counter')!;
+      const access = new StoreAccess({ store: createPersistentStore(createMmkvBackend('whim-version-store')), index });
+      const historyBefore = (await access.history(copy)).map((s) => s.id);
+      h.ok(historyBefore.length > 0, 'the copy has history to lose');
+      const keep = (id: string) => openNativeDb({ name: `${id}.db` }).executeSync('CREATE TABLE IF NOT EXISTS kept (x)');
+      keep(copy.id);
+      keep('water-counter');
+      const tables = (id: string) => openNativeDb({ name: `${id}.db` }).executeSync("SELECT name FROM sqlite_master WHERE type = 'table'").rows.length;
+
+      await longPress(tree, 'Water Counter, example');
+      await chooseRow(tree, COPY.actionDelete);
+      await TestRenderer.act(async () => { clock.fire(10_000); });
+      await waitFor(() => index.get('water-counter') === null, 'the original to be removed');
+      h.eq(tables('water-counter'), 0, 'the original’s own data went with it');
+      h.eq(tileLabels(tree).filter((l) => l.startsWith('Water Counter')), ['Water Counter, copy'], 'the copy is the Water Counter still on the grid');
+      h.eq(tables(copy.id), 1, 'with its data');
+      h.eq((await access.history(copy)).map((s) => s.id), historyBefore, 'and its history unchanged');
+    });
   });
 
   // ── Customize tile persists on the host, and survives a change ──────────────────────────────

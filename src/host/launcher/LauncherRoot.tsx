@@ -805,8 +805,9 @@ function LauncherShell({
   }, [connectivity]);
 
   /** How many tiles the grid is known to be about to show — the skeleton's exact count. Read
-   *  synchronously from the index at mount, before first-run seeding resolves. */
-  const knownAppCount = useMemo(() => index.list().length, [index]);
+   *  synchronously from the index at mount, before first-run seeding resolves. An app whose purge is
+   *  armed is about to be removed by the launch sweep, so it is not a cell to promise. */
+  const knownAppCount = useMemo(() => index.list().filter((a) => !purges.has('app', a.id)).length, [index, purges]);
 
   // Tracks the in-flight generation's abort controller, the caller's own cancellation intent, and
   // whether the user left it running (generation-client's abort contract: the caller must track
@@ -1048,16 +1049,21 @@ function LauncherShell({
     if (from === 'app') onOpen(index.get(app.id) ?? app);
   };
 
-  /** Delete and Discard hide at once and complete when the Undo window ends (`soft-delete.ts`). */
+  /** Delete and Discard hide at once and complete when their Undo toast ends (`soft-delete.ts`):
+   *  Home calls the `Settle` pair then. An Undo answers whether it restored everything. */
   const onDelete = (app: InstalledApp) => purgeWindows.armApp(app);
-  const onUndoDelete = (app: InstalledApp) => {
-    purgeWindows.undo('app', app.id);
+  const onUndoDelete = (app: InstalledApp) => purgeWindows.undo('app', app.id);
+  const onSettleDelete = (app: InstalledApp) => {
+    purgeWindows.finish('app', app.id).catch(() => undefined);
   };
   const onDiscard = (recs: readonly PendingBuildRecord[]) => recs.forEach((rec) => purgeWindows.armAttempt(rec.id));
   const onUndoDiscard = (recs: readonly PendingBuildRecord[]) =>
+    recs.map((rec) => purgeWindows.undo('attempt', rec.id)).every(Boolean);
+  const onSettleDiscard = (recs: readonly PendingBuildRecord[]) => {
     recs.forEach((rec) => {
-      purgeWindows.undo('attempt', rec.id);
+      purgeWindows.finish('attempt', rec.id).catch(() => undefined);
     });
+  };
 
   /** "Customize tile": the override is stored host-side and wins over the assigned tile. */
   const onCustomizeTile = (app: InstalledApp, tile: TileIdentity) => {
@@ -2823,8 +2829,10 @@ function LauncherShell({
       onFork={onFork}
       onDelete={onDelete}
       onUndoDelete={onUndoDelete}
+      onSettleDelete={onSettleDelete}
       onDiscard={onDiscard}
       onUndoDiscard={onUndoDiscard}
+      onSettleDiscard={onSettleDiscard}
       appBusy={appBusy}
       canCopyData={access.canCopyData}
       queued={liveView.queued}

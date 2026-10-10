@@ -45,9 +45,17 @@ export type GridLayout =
   | { kind: 'grid'; columns: number; columnWidth: number; tile: number; cellHeight: number; rowGap: number; gutter: number }
   | { kind: 'list'; tile: number; rowHeight: number; gutter: number };
 
+/** The row padding of a list-mode cell, on each side; the loading skeleton draws the same. */
+export function listRowPadding(largeText: boolean): number {
+  return largeText ? SPACE[4] : SPACE[5];
+}
+
 /** The home grid for a screen `width` wide at text size `fontScale`: four columns of
- *  `(width − 40) / 4` with the 64 tile and a two-line `caption` label; three from 135%; a list of
- *  rows with the 40 tile from 200%. Heights grow with the label's text size. */
+ *  `⌊(width − 40) / 4⌋` (rounded down, so a row of cells never outgrows the gutters and a last cell
+ *  cannot drop to its own row; a width that leaves no room, or is not a number, gets the 64 pt touch
+ *  minimum rather than a zero or NaN cell) with the 64 tile
+ *  and a two-line `caption` label; three from 135%; a list of rows with the 40 tile from 200%.
+ *  Heights grow with the label's text size. */
 export function gridLayout(width: number, fontScale: number): GridLayout {
   const scale = Math.max(1, fontScale);
   if (scale >= GRID.listFrom) {
@@ -57,10 +65,11 @@ export function gridLayout(width: number, fontScale: number): GridLayout {
   const columns = scale >= GRID.largeTextFrom ? GRID.largeTextColumns : GRID.columns;
   const label = GRID.labelLines * TYPE_SCALE.caption.lineHeight * scale;
   const cellHeight = Math.max(GRID.minTouch.height, TILE_SIDE.grid + GRID.labelGap + label);
+  const fitted = Math.floor((width - 2 * LAYOUT.gutter) / columns);
   return {
     kind: 'grid',
     columns,
-    columnWidth: (width - 2 * LAYOUT.gutter) / columns,
+    columnWidth: Number.isFinite(fitted) && fitted > 0 ? fitted : GRID.minTouch.width,
     tile: TILE_SIDE.grid,
     cellHeight,
     rowGap: GRID.rowGap,

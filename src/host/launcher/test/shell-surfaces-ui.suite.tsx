@@ -176,6 +176,24 @@ function documentedTileSizes(): Record<string, number> {
   return sizes;
 }
 
+/** What is wrong with the grid at `scale`, width by width from 280 to 1100 pt: not `columns` whole
+ *  columns, a row that outgrows the screen, or a column a whole point short of what fits. */
+function gridFitViolations(scale: number, columns: number): string[] {
+  const violations: string[] = [];
+  for (let width = 280; width <= 1100; width += 1) {
+    const grid = gridLayout(width, scale);
+    if (grid.kind !== 'grid' || grid.columns !== columns) {
+      violations.push(`${width} pt at ${scale}: not ${columns} columns`);
+      continue;
+    }
+    const row = (cell: number) => columns * cell + 2 * grid.gutter;
+    if (!Number.isInteger(grid.columnWidth)) violations.push(`${width} pt at ${scale}: ${grid.columnWidth} is not whole points`);
+    if (row(grid.columnWidth) > width) violations.push(`${width} pt at ${scale}: ${columns} cells of ${grid.columnWidth} outgrow the screen`);
+    if (row(grid.columnWidth + 1) <= width) violations.push(`${width} pt at ${scale}: ${grid.columnWidth} leaves room for a wider cell`);
+  }
+  return violations;
+}
+
 export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
   // ── Sheet ──────────────────────────────────────────────────────────────────
 
@@ -646,7 +664,7 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     h.eq([documented.inline, documented.sheets, documented.grid, documented.hero], [TILE_SIDE.inline, TILE_SIDE.menu, TILE_SIDE.grid, TILE_SIDE.hero], `the sizes system.md §3.2 lists (${JSON.stringify(documented)})`);
     for (const width of [320, 390, 430]) {
       const grid = gridLayout(width, 1);
-      h.ok(grid.kind === 'grid' && grid.columns === 4 && grid.columnWidth === (width - 40) / 4 && grid.tile === 64, `${width} pt: four columns of (screen − 40) / 4 with the 64 tile`);
+      h.ok(grid.kind === 'grid' && grid.columns === 4 && grid.columnWidth === Math.floor((width - 40) / 4) && grid.tile === 64, `${width} pt: four columns of (screen − 40) / 4, rounded down, with the 64 tile`);
       h.ok(grid.kind === 'grid' && grid.columnWidth >= 64 && grid.cellHeight >= 84, `${width} pt: each cell at least 64 × 84`);
     }
     const large = gridLayout(390, 1.35);
@@ -660,6 +678,22 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     h.eq(TILE.corner * 100, Number(/corner (\d{1,2}(?:\.\d{1,2})?)% of side/.exec(SYSTEM_MD)?.[1]), 'the squircle corner §2.9 gives');
     const grown = gridLayout(390, 1.3);
     h.ok(grown.kind === 'grid' && grown.cellHeight > (gridLayout(390, 1) as { cellHeight: number }).cellHeight, 'a cell grows with its label’s text size');
+  });
+
+  await h.test('AppTile geometry: at any width a row of cells and the gutters fit the screen, rounded down so no cell wraps; a degenerate width still gives a real cell', async () => {
+    h.eq(gridFitViolations(1, 4).concat(gridFitViolations(1.35, 3)), [], 'from 280 to 1100 pt, four columns and three, every cell fits and none is smaller than it could be');
+    const degenerate: string[] = [];
+    for (const width of [0, -1, -390, 40, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      for (const scale of [1, 1.35]) {
+        const grid = gridLayout(width, scale);
+        if (grid.kind !== 'grid' || !Number.isFinite(grid.columnWidth) || grid.columnWidth <= 0) degenerate.push(`${width} at ${scale}`);
+      }
+    }
+    h.eq(degenerate, [], 'a width of 0, negative, too small, NaN or infinite never yields a zero, negative or NaN cell');
+    for (const width of [0, 320, 390, Number.NaN]) {
+      const list = gridLayout(width, 2);
+      h.ok(list.kind === 'list' && list.tile === 40 && Number.isFinite(list.rowHeight) && list.rowHeight > 0, `width ${width}: the list at 200% is rows of the 40 tile`);
+    }
   });
 
   await resetPhone();

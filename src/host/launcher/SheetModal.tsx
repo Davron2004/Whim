@@ -1,6 +1,5 @@
 /**
- * SheetModal — the one bottom-rising sheet primitive (design D14), shared by `ReportSheet.tsx`
- * and `AppLinkSheet.tsx`.
+ * SheetModal — the one bottom-rising sheet primitive (design D14), used by `ReportScreen.tsx`.
  *
  * A genuine RN `Modal` — not an absolutely-positioned sibling `View` like `RunDetailsSheet.tsx`
  * uses — because a `Modal` mounts into its own native window and so reliably layers above a
