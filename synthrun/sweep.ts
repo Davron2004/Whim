@@ -86,6 +86,8 @@ export interface SweepResult {
   truncated: boolean;
   diagnostics: SweepDiagnostic[];
   perScreenMs: Record<string, number>;
+  /** Toasts the sweep waited out in the whole run: an audit field, not part of the report. */
+  toastWaits: number;
   /** Every fingerprint acted on, in execution order — the determinism/audit trail. A Modal
    *  backdrop dismissed a second time appears twice. */
   actionsLog: SweptElement[];
@@ -672,6 +674,7 @@ export function sweepResultOf(acc: SweepAccumulator): SweepResult {
     truncated: acc.truncated,
     diagnostics: [...acc.diagnostics],
     perScreenMs: { ...acc.perScreenMs },
+    toastWaits: acc.ledger.toastWaits,
     actionsLog: [...acc.actionsLog],
     sweep: sweepCountsOf(acc),
   };
@@ -726,15 +729,19 @@ async function pickNext(frame: Frame, elements: SweptElement[], progress: Screen
  *  plus the time it takes to sink out. */
 const TOAST_WAIT_CAP_MS = 5000;
 
-/** How many toasts the sweep waits out in one run, across all its screens. Counted, never timed, so
- *  what the sweep acts on never depends on the clock, and toasts cannot spend the run's total
- *  budget: each wait costs up to `TOAST_WAIT_CAP_MS` of it. */
+/** How many toasts the sweep waits out in one run, across all its screens. The number of waits is
+ *  bounded by this count and never by the clock, so toasts cannot spend the run's total budget:
+ *  each wait costs up to `TOAST_WAIT_CAP_MS` of it. Which control a toast still covers when the
+ *  sweep looks does depend on when the toast leaves, and once both waits are spent a covered
+ *  control is reached only if its toast is gone at the next look: the one place the action
+ *  sequence is not fully determined. */
 const MAX_TOAST_WAITS_PER_RUN = 2;
 
 /** Before a stuck screen is looked at once more: waits, up to `TOAST_WAIT_CAP_MS`, for the SDK's
  *  toast host to leave, if one is showing and the run has a wait left (`ledger.toastWaits`, spent
  *  only when a toast was showing). A toast lies over the bottom of the screen and takes every click
- *  aimed there, but it is no fingerprint of its own: the controls under it are only late. */
+ *  aimed there, but it is no fingerprint of its own: the controls under it are only late. Whether
+ *  the toast is gone by the next look is up to the clock, which the wait bounds but cannot decide. */
 async function awaitToastGone(frame: Frame, ledger: SweepLedger): Promise<void> {
   if (ledger.toastWaits >= MAX_TOAST_WAITS_PER_RUN) return;
   const showing = (): Promise<boolean> =>
@@ -792,6 +799,7 @@ async function sweepOneScreen(
   const stamp = (): void => {
     acc.perScreenMs[screenName] = spentBefore + Date.now() - startedAt;
   };
+  stamp();
   let retried = false;
 
   while (progress.actions < opts.maxActionsPerScreen) {
@@ -1013,6 +1021,7 @@ export async function sweepApp(
     acc.visited.add(name);
     acc.coldMounted.push(name);
     const start = Date.now();
+    acc.perScreenMs[name] = 0;
     try {
       const coldFrame = await coldMountScreen(ctx, obs, source, name, budgets);
       const outcome = await sweepOneScreen(coldFrame, name, newScreenProgress(), obs, budgets, resolved, acc);

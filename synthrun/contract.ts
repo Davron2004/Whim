@@ -170,7 +170,8 @@ export interface SweepCounts {
    *  showed and was not acted on. For a run the total budget killed, it is what had been seen and
    *  not yet acted on. */
   blocked: number;
-  /** Actions that passed the hit test and still failed in the browser driver. */
+  /** Actions that passed the hit test and still failed in the browser driver. For a run the total
+   *  budget killed, the action in flight when the page was closed may be counted here. */
   failedActions: number;
 }
 

@@ -464,6 +464,20 @@ const FIXTURE_TOASTS_WITHOUT_END = `import { defineApp, Screen, Button, toast } 
 ${toastRowScreen('Home', 'H', 4)}${toastRowScreen('Other', 'O', 2)}export default defineApp({ name: 'ToastsWithoutEnd', initial: 'Home', screens: { Home, Other }, capabilities: [] });
 `;
 
+// `Side` is declared and never navigated to, so the sweep reaches it by a cold mount. Its buttons
+// sort "Go home" first, then "Later": the first navigates to Home, whose only control counts its
+// presses and is pressed once, by the live sweep, before Side is mounted.
+const FIXTURE_COLD_NAVIGATES = `import { defineApp, nav, Screen, Stack, Heading, Text, Button, useState } from 'vc-sdk';
+function Home() {
+  const [bumps, setBumps] = useState(0);
+  return <Screen><Stack><Heading size="title">Home</Heading><Button label="Bump" onPress={() => setBumps(bumps + 1)} /><Text>{'Bumps ' + bumps}</Text></Stack></Screen>;
+}
+function Side() {
+  return <Screen><Stack><Heading size="title">Side</Heading><Button label="Go home" onPress={() => nav.navigate('Home')} /><Button label="Later" onPress={() => {}} /></Stack></Screen>;
+}
+export default defineApp({ name: 'ColdNavigates', initial: 'Home', screens: { Home, Side }, capabilities: [] });
+`;
+
 // Five screens the sweep cannot reach: the field takes a phrase the canonical text never matches.
 // Four are navigated to, each written another way (single, double and backtick quotes, a receiver
 // that is not "nav", spacing inside the call); "Gated" is named by no call and its name is a prefix
@@ -760,6 +774,7 @@ async function runScenarios(session: SynthRunSession): Promise<void> {
   await test('toast: a button under a toast is pressed once the toast has gone, with no failed action', async () => {
     const { result } = await runSweep(session, FIXTURE_TOAST_COVERS, { budgets: ASYNC_BUDGETS });
     ok(signature(result) === 'button:B1,button:B2', `the button the toast covered was pressed after it (${describe(result)})`);
+    ok(result.toastWaits === 1, `B2 was covered, so exactly one wait was spent on it (${result.toastWaits})`);
     ok(result.sweep.blocked === 0, `nothing was left blocked (${describe(result)})`);
     ok(result.sweep.failedActions === 0, `no action failed (${describe(result)})`);
   });
@@ -774,6 +789,17 @@ async function runScenarios(session: SynthRunSession): Promise<void> {
     ok(result.sweep.blocked === 2, `exactly H4 and O2 are counted as blocked (${describe(result)})`);
     ok(result.sweep.failedActions === 0, `no action failed (${describe(result)})`);
     ok(result.truncated === false, 'the report is not truncated');
+    ok(result.toastWaits === 2, `exactly two waits were spent in the run (${result.toastWaits})`);
+  });
+
+  await test('coverage: navigation out of a cold-mounted screen is not followed, it ends that screen\'s sweep', async () => {
+    const { result } = await runSweep(session, FIXTURE_COLD_NAVIGATES, { budgets: ASYNC_BUDGETS });
+    const acted = result.actionsLog.map((el) => el.label);
+    ok(result.coldMountedScreens.join(',') === 'Side', `Side was cold-mounted (${result.coldMountedScreens.join(',')})`);
+    ok(result.diagnostics.map((d) => d.kind).join(',') === 'unreachable_screen', `and no navigate call names it (${JSON.stringify(result.diagnostics)})`);
+    ok(acted.join(',') === 'Bump,Go home', `Home's button was pressed live, then Side's navigating button, and nothing after it (${describe(result)})`);
+    ok(acted.filter((label) => label === 'Bump').length === 1, `Home was not swept again after Side navigated to it (${describe(result)})`);
+    ok(!acted.includes('Later'), `Side's later button was not pressed (${describe(result)})`);
   });
 
   await test('coverage: a gated screen is cold-mounted and listed, with no diagnostic when a navigate call names it, however the call is written', async () => {
