@@ -169,3 +169,7 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   merged: `476a1a30` (--no-ff).
 - decision: wave 2 is three chains, 16d, 16f and 16h (`visual-fixes.md` updated), so the reviewers' mediums on 16c and
   16e land before the device re-check.
+- dispatched, wave 2, BASE `735c8531`, worktrees `.claude/worktrees/design-system-v1-chain-16{d,f,h}`: chain-16d (sheet
+  layout and keyboard; sonnet, iOS simulator, first user of `scripts/ios-ui-driver`), chain-16f (menu placement, overlay
+  queue hardening, 16e review fixes; sonnet, emulator-5560), chain-16h (offline edge; sonnet, no device). #157 commented.
+- gate-full on `735c8531` (wave 1 and the driver merged): FULL GATE PASSED.
