@@ -4,8 +4,7 @@
  * verbatim, plus `tsconfigRaw: '{}'` (the esbuild jsx-runtime gotcha). Exits non-zero on any
  * failed check.
  *
- * Not yet wired to an `npm run` script (chain 5, task 5.3 — package.json is Class-2):
- *   node synthrun/test/run.mjs
+ * Run it with `npm run synthrun:test` (`node synthrun/test/run.mjs`).
  */
 import { build } from 'esbuild';
 import { pathToFileURL, fileURLToPath } from 'node:url';

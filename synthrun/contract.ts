@@ -160,6 +160,21 @@ export interface RunOptions {
   signal?: AbortSignal;
 }
 
+/** What the interaction sweep did, counted for the whole run. */
+export interface SweepCounts {
+  /** Fingerprints the sweep acted on, including actions that then failed. */
+  actions: number;
+  /** Distinct fingerprints enumerated during the run and never acted on (covered, disabled or
+   *  otherwise unable to receive the action whenever the sweep looked). It counts fingerprints, not
+   *  controls: a control whose label changed before it was acted on counts once under each label it
+   *  showed and was not acted on. For a run the total budget killed, it is what had been seen and
+   *  not yet acted on. */
+  blocked: number;
+  /** Actions that passed the hit test and still failed in the browser driver. For a run the total
+   *  budget killed, the action in flight when the page was closed may be counted here. */
+  failedActions: number;
+}
+
 export interface RunReport {
   /** `true` IFF `diagnostics.length === 0` (the `checks/contract.ts` `CheckReport` precedent). */
   ok: boolean;
@@ -187,11 +202,17 @@ export interface RunReport {
    *  no byte of a forged frame reaches this or any other report field, any diagnostic, any log
    *  line, or any model-facing path. */
   forgeries: ForgeryTally;
-  /** The total wall-clock budget fired and the page was killed mid-run (`run_truncated`). */
+  /** The run is incomplete. Set when the total wall-clock budget fired (the page was killed
+   *  mid-run; a `run_truncated` diagnostic is recorded too) OR when a screen reached its
+   *  per-screen action cap with unvisited fingerprints left (no diagnostic of its own). A consumer
+   *  treats either as an incomplete run, never a pass. */
   truncated: boolean;
   timings: StageTimings;
   trace: TraceEntry[];
-  screens: { declared: string[]; visited: string[] };
+  /** `visited` includes the cold-mounted screens; `coldMounted` is the subset the live sweep never
+   *  reached and only the cold-mount pass covered. */
+  screens: { declared: string[]; visited: string[]; coldMounted: string[] };
+  sweep: SweepCounts;
   /** The budget values actually applied to this run (session defaults merged with
    *  `RunOptions.budgets`), recorded verbatim. */
   budgets: RunBudgets;

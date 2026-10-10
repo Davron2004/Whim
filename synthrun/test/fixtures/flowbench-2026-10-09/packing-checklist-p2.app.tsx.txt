@@ -1,0 +1,471 @@
+import {
+  defineApp,
+  Screen,
+  Stack,
+  Row,
+  Card,
+  Text,
+  Button,
+  TextInput,
+  List,
+  ListItem,
+  EmptyState,
+  Modal,
+  ProgressBar,
+  Badge,
+  toast,
+  nav,
+  useState,
+  useEffect,
+  storage,
+  type SchemaArtifact,
+} from 'vc-sdk';
+
+// Trip Checklists: pack a list once as a template, then start a trip from it. Starting a trip
+// copies every item into the trip's own rows, so ticking things off as you go never changes the
+// template it came from. Templates and the running trip are settings in storage.kv.
+const SCHEMA: SchemaArtifact = { schemaVersion: 1, collections: {} };
+
+type Template = { id: string; name: string; items: string[] };
+type TripItem = { text: string; checked: boolean };
+type Trip = { id: string; templateId: string; name: string; items: TripItem[] };
+
+const DEFAULT_TEMPLATES: Template[] = [
+  {
+    id: 'tpl-camping',
+    name: 'Weekend camping',
+    items: ['Tent and pegs', 'Sleeping bag', 'Torch and spare batteries', 'Water bottle', 'Snacks', 'Warm layer', 'Toothbrush'],
+  },
+  {
+    id: 'tpl-beach',
+    name: 'Beach day',
+    items: ['Towel', 'Swimwear', 'Sunscreen', 'Sun hat', 'Water', 'Snorkel mask'],
+  },
+  {
+    id: 'tpl-city',
+    name: 'City break',
+    items: ['Tickets', 'ID or passport', 'Phone charger', 'Umbrella', 'Comfortable shoes'],
+  },
+];
+
+// Which template the editor screen is working on.
+let editingId = '';
+
+let idSeed = 0;
+function newId(prefix: string): string {
+  idSeed += 1;
+  return `${prefix}-${Date.now().toString(36)}-${idSeed}`;
+}
+
+function readTemplates(value: unknown): Template[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: Template[] = [];
+  for (const raw of value) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const row = raw as Record<string, unknown>;
+    const items: string[] = Array.isArray(row.items)
+      ? row.items.filter((item): item is string => typeof item === 'string')
+      : [];
+    out.push({ id: String(row.id ?? newId('tpl')), name: String(row.name ?? ''), items });
+  }
+  return out;
+}
+
+function readTrip(value: unknown): Trip | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const row = value as Record<string, unknown>;
+  const rawItems = Array.isArray(row.items) ? row.items : [];
+  const items: TripItem[] = [];
+  for (const raw of rawItems) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const item = raw as Record<string, unknown>;
+    items.push({ text: String(item.text ?? ''), checked: item.checked === true });
+  }
+  return {
+    id: String(row.id ?? newId('trip')),
+    templateId: String(row.templateId ?? ''),
+    name: String(row.name ?? 'Trip'),
+    items,
+  };
+}
+
+function templateTitle(template: Template): string {
+  return template.name.trim() === '' ? 'Untitled list' : template.name;
+}
+
+function countLabel(n: number): string {
+  return n === 1 ? '1 item' : `${n} items`;
+}
+
+// ── Templates: every saved list, plus the trip that is currently running ──────
+function Templates() {
+  const [templates, setTemplates] = useState<Template[]>(DEFAULT_TEMPLATES);
+  const [trip, setTrip] = useState<Trip | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState('');
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const savedTemplates = await storage.kv.get('templates');
+      const savedTrip = await storage.kv.get('activeTrip');
+      if (!live) return;
+      const parsed = readTemplates(savedTemplates);
+      if (parsed !== null) setTemplates(parsed);
+      setTrip(readTrip(savedTrip));
+    })().catch(() => {
+      if (live) toast('Couldn’t load your templates.');
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const writeTemplates = (next: Template[]) => {
+    setTemplates(next);
+    storage.kv.set('templates', next).catch(() => toast('Couldn’t save your templates.'));
+  };
+
+  const opened = templates.find((template) => template.id === openId) ?? null;
+
+  const createTemplate = () => {
+    const trimmed = name.trim();
+    if (trimmed === '') return;
+    const template: Template = { id: newId('tpl'), name: trimmed, items: [] };
+    writeTemplates([...templates, template]);
+    setCreating(false);
+    setName('');
+    editingId = template.id;
+    nav.navigate('Editor');
+  };
+
+  // The trip takes its own copy of every item: the template is left exactly as it was.
+  const startTrip = (template: Template) => {
+    const next: Trip = {
+      id: newId('trip'),
+      templateId: template.id,
+      name: templateTitle(template),
+      items: template.items.map((text) => ({ text, checked: false })),
+    };
+    setTrip(next);
+    setOpenId(null);
+    storage.kv
+      .set('activeTrip', next)
+      .then(() => toast('New trip started'))
+      .catch(() => toast('Couldn’t save the new trip.'));
+    nav.navigate('Trip');
+  };
+
+  const finishTrip = () => {
+    setTrip(null);
+    storage.kv.remove('activeTrip').catch(() => toast('Couldn’t clear the trip.'));
+    toast('Trip finished');
+  };
+
+  const editTemplate = (template: Template) => {
+    editingId = template.id;
+    setOpenId(null);
+    nav.navigate('Editor');
+  };
+
+  return (
+    <Screen title="Trip Checklists" action={{ icon: 'plus', label: 'New template', onPress: () => setCreating(true) }}>
+      <Stack gap="lg">
+        {trip && (
+          <Card>
+            <Stack gap="sm">
+              <Row justify="between">
+                <Text weight="semibold">{trip.name}</Text>
+                <Badge label="Trip in progress" tone="primary" />
+              </Row>
+              <Text size="caption" color="text-muted">
+                Ticking items off a trip never changes the template it came from.
+              </Text>
+              <Row>
+                <Button label="Resume trip" variant="secondary" icon="list-checks" onPress={() => nav.navigate('Trip')} />
+                <Button label="Finish trip" variant="danger" icon="check" onPress={finishTrip} />
+              </Row>
+            </Stack>
+          </Card>
+        )}
+
+        <Stack gap="sm">
+          <Text size="subtitle">Templates</Text>
+          <Text size="caption" color="text-muted">Tap a template to start a trip from it or edit its items.</Text>
+          {templates.length === 0 ? (
+            <Card>
+              <EmptyState icon="list-checks" title="No templates yet" hint="Tap + to save the list you always pack." />
+            </Card>
+          ) : (
+            <List
+              items={templates}
+              keyBy="id"
+              renderItem={(template) => (
+                <ListItem
+                  title={templateTitle(template)}
+                  subtitle={countLabel(template.items.length)}
+                  icon="list-checks"
+                  onPress={() => setOpenId(template.id)}
+                />
+              )}
+            />
+          )}
+        </Stack>
+      </Stack>
+
+      <Modal visible={creating} title="New template" onClose={() => setCreating(false)}>
+        <Stack gap="lg">
+          <TextInput label="Template name" value={name} placeholder="Winter hiking" onChange={setName} />
+          <Button label="Create and add items" icon="plus" disabled={name.trim() === ''} onPress={createTemplate} />
+        </Stack>
+      </Modal>
+
+      <Modal visible={opened !== null} title={opened === null ? 'Template' : templateTitle(opened)} onClose={() => setOpenId(null)}>
+        {opened && (
+          <Stack gap="lg">
+            <Text color="text-muted">
+              {opened.items.length === 0
+                ? 'This template has no items yet.'
+                : `${countLabel(opened.items.length)}: ${opened.items.join(' · ')}`}
+            </Text>
+            <Button label="Start a new trip" icon="list-checks" onPress={() => startTrip(opened)} />
+            <Row>
+              <Button label="Edit items" variant="secondary" icon="pencil" onPress={() => editTemplate(opened)} />
+              <Button
+                label="Delete"
+                variant="danger"
+                icon="trash-2"
+                onPress={() => {
+                  setOpenId(null);
+                  writeTemplates(templates.filter((template) => template.id !== opened.id));
+                  toast('Template deleted');
+                }}
+              />
+            </Row>
+          </Stack>
+        )}
+      </Modal>
+    </Screen>
+  );
+}
+
+// ── Template Editor: the item list of one template, saved as it is typed ──────
+function Editor() {
+  const [templates, setTemplates] = useState<Template[] | null>(null);
+  const [draft, setDraft] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    storage.kv
+      .get('templates')
+      .then((saved) => {
+        if (live) setTemplates(readTemplates(saved) ?? DEFAULT_TEMPLATES);
+      })
+      .catch(() => {
+        if (live) {
+          setTemplates(DEFAULT_TEMPLATES);
+          toast('Couldn’t load the template.');
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const template = templates === null ? null : templates.find((row) => row.id === editingId) ?? null;
+
+  const write = (next: Template[]) => {
+    setTemplates(next);
+    storage.kv.set('templates', next).catch(() => toast('Couldn’t save that.'));
+  };
+
+  const saveName = (next: string) => {
+    if (templates === null || template === null) return;
+    write(templates.map((row) => (row.id === template.id ? { id: row.id, name: next, items: row.items } : row)));
+  };
+
+  const saveItems = (next: string[]) => {
+    if (templates === null || template === null) return;
+    write(templates.map((row) => (row.id === template.id ? { id: row.id, name: row.name, items: next } : row)));
+  };
+
+  const addItem = () => {
+    const text = draft.trim();
+    if (template === null || text === '') return;
+    saveItems([...template.items, text]);
+    setDraft('');
+  };
+
+  if (templates === null) {
+    return (
+      <Screen title="Template">
+        <Stack>
+          <Text color="text-muted">Loading your template…</Text>
+        </Stack>
+      </Screen>
+    );
+  }
+
+  if (template === null) {
+    return (
+      <Screen title="Template">
+        <Stack gap="lg">
+          <Card>
+            <EmptyState icon="list-checks" title="This template is gone" hint="Go back and pick another one." />
+          </Card>
+          <Button label="Back to templates" variant="secondary" onPress={() => nav.back()} />
+        </Stack>
+      </Screen>
+    );
+  }
+
+  return (
+    <Screen title={templateTitle(template)}>
+      <Stack gap="lg">
+        <TextInput label="Template name" value={template.name} placeholder="Weekend camping" onChange={saveName} />
+
+        <Stack gap="sm">
+          <Text size="subtitle">Items</Text>
+          <Text size="caption" color="text-muted">Tap an item to remove it. Trips already started keep their own copy.</Text>
+          {template.items.length === 0 ? (
+            <Card>
+              <EmptyState icon="list-checks" title="No items yet" hint="Add the first thing you always pack." />
+            </Card>
+          ) : (
+            <List>
+              {template.items.map((item, index) => (
+                <ListItem
+                  key={`${index}-${item}`}
+                  title={item}
+                  trailing="Remove"
+                  onPress={() => saveItems(template.items.filter((_, other) => other !== index))}
+                />
+              ))}
+            </List>
+          )}
+        </Stack>
+
+        <Card>
+          <Stack>
+            <TextInput label="New item" value={draft} placeholder="Torch and spare batteries" onChange={setDraft} />
+            <Button label="Add item" icon="plus" disabled={draft.trim() === ''} onPress={addItem} />
+          </Stack>
+        </Card>
+
+        <Button label="Done" variant="secondary" icon="check" onPress={() => nav.back()} />
+      </Stack>
+    </Screen>
+  );
+}
+
+// ── Trip Checklist: the running trip, ticked off as you go ────────────────────
+function Trip() {
+  const [trip, setTrip] = useState<Trip | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    storage.kv
+      .get('activeTrip')
+      .then((saved) => {
+        if (live) setTrip(readTrip(saved));
+      })
+      .catch(() => {
+        if (live) toast('Couldn’t load the trip.');
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const save = (next: Trip) => {
+    setTrip(next);
+    storage.kv.set('activeTrip', next).catch(() => toast('Couldn’t save that.'));
+  };
+
+  const toggle = (index: number) => {
+    if (trip === null) return;
+    save({
+      ...trip,
+      items: trip.items.map((item, other) => (other === index ? { text: item.text, checked: !item.checked } : item)),
+    });
+  };
+
+  const addItem = () => {
+    const text = draft.trim();
+    if (trip === null || text === '') return;
+    save({ ...trip, items: [...trip.items, { text, checked: false }] });
+    setDraft('');
+    setAdding(false);
+  };
+
+  const checked = trip === null ? 0 : trip.items.filter((item) => item.checked).length;
+  const total = trip === null ? 0 : trip.items.length;
+  const allDone = total > 0 && checked === total;
+
+  return (
+    <Screen
+      title={trip === null ? 'Trip' : trip.name}
+      action={trip === null ? undefined : { icon: 'plus', label: 'Add an item', onPress: () => setAdding(true) }}
+    >
+      <Stack gap="lg">
+        {trip === null ? (
+          <Card>
+            <EmptyState icon="list-checks" title="No trip in progress" hint="Go back and start one from a template." />
+          </Card>
+        ) : (
+          <>
+            <ProgressBar
+              value={total === 0 ? 0 : checked / total}
+              tone={allDone ? 'positive' : 'primary'}
+              label={`${checked} of ${total} packed`}
+            />
+            {allDone && <Badge label="All packed — have a good trip" tone="positive" />}
+            {total === 0 ? (
+              <Card>
+                <EmptyState icon="list-checks" title="Nothing on this list" hint="Tap + to add the first item." />
+              </Card>
+            ) : (
+              <>
+                <List>
+                  {trip.items.map((item, index) => (
+                    <ListItem
+                      key={`${index}-${item.text}`}
+                      title={item.text}
+                      icon={item.checked ? 'circle-check' : 'square-check'}
+                      trailing={item.checked ? 'Packed' : undefined}
+                      onPress={() => toggle(index)}
+                    />
+                  ))}
+                </List>
+                <Text size="caption" color="text-muted" align="center">
+                  Ticking items here only changes this trip — the template stays as it is.
+                </Text>
+              </>
+            )}
+          </>
+        )}
+      </Stack>
+
+      <Modal visible={adding} title="Add an item" onClose={() => setAdding(false)}>
+        <Stack gap="lg">
+          <TextInput label="Item" value={draft} placeholder="Passport" onChange={setDraft} />
+          <Text size="caption" color="text-muted">This goes on your trip only — your template stays as it is.</Text>
+          <Button label="Add to trip" icon="plus" disabled={draft.trim() === ''} onPress={addItem} />
+        </Stack>
+      </Modal>
+    </Screen>
+  );
+}
+
+export default defineApp({
+  name: 'Trip Checklists',
+  initial: 'Templates',
+  screens: { Templates, Editor, Trip },
+  capabilities: ['storage'],
+  schema: SCHEMA,
+  tint: ['ocean', 'indigo', 'slate'],
+  icon: 'list-checks',
+});
