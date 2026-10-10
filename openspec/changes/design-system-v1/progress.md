@@ -223,3 +223,15 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   added; `system.md` §9 clause made exact). fast gate PASS on the merged tree, `openspec validate --strict` PASS,
   integrity exit 0, removal ratchet PASS; the round's product diff read by the orchestrator.
   merged: `99c59ae7` (--no-ff). regate (fast): PASS. Not device-proven yet: the Android verifier checks it.
+- report: chain-16i STATUS complete, fast gate PASS, knip clean, commit `3292d769` (16 files): `SheetModal` presents
+  through `OverlayModal`; `KeyboardShell`'s header slot and header hairline deleted; on iOS the footer follows the
+  system keyboard frame (the first keyboard of a process reports no "Done" bar, and the library's end report then
+  undid a plain frame listener: seen on the simulator); `GroupedRow` stacks a trailing value from 135% text and has
+  `chevron.expanded` (the first-run `DetailsRow` is gone, #180's first half); a menu or sheet withdrawn before its
+  entrance ends its turn at once; `Sheet.onClosed` removed; the rig resets overlay holds in its render helpers.
+- integrity: exit 0; removal ratchet PASS with no count drop. `Check-removal` review (orchestrator): accepted. The
+  removed assertions are the header halves of the footer-hairline test (the header slot no longer exists) and the
+  once-only checks on `Sheet.onClosed` (the prop no longer exists; `onGone` once-ness is tested by the queue probes).
+  reviewer on `4f84f89f..3292d769`: VERDICT findings, all low (the orb menu is still a raw Modal, now recoverable in
+  about 1.25 s, #179; the text-size test does not count `onClose` calls; one test's subject moved from `Sheet` to a probe).
+- merged: `02822fc3` (--no-ff). The full gate on the commit after it is the regate.
