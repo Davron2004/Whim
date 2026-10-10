@@ -9,7 +9,9 @@
  *   600 `text-2`); rows 48 pt with a 20 pt icon and `body` text; a separator, then the destructive
  *   rows in `danger-text`.
  * - A row with `next` swaps the card's rows for a second step (with a back row) in 120 ms; any other
- *   row closes the menu and runs its action.
+ *   row closes the menu, and its action runs once the menu has gone from the screen. The menu takes
+ *   its turn with the shell's other overlays (`OverlayModal`), so the action is free to show a
+ *   sheet, the share sheet or an alert.
  * - Announced as a menu; every row is its own button, reachable and activatable on its own. The
  *   scrim behind is a sibling screen readers skip, never the card's parent.
  * - Opens growing from the anchor's edge 0.92 → 1 (`smooth`) with a fade; closes with `fade-out` and
@@ -18,7 +20,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
+import { Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
 import type { LayoutChangeEvent } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -28,6 +30,7 @@ import type { IconName } from '../../design/icons/names';
 import { COPY } from '../launcher/copy';
 import { Icon } from './Icon';
 import { timing } from './motion';
+import { OverlayModal, useOverlayTurn } from './OverlayModal';
 import { useTokens } from './tokens';
 import { makeStyles, MAX_FONT_SCALE, springConfig, typeStyle } from './tokens-pure';
 
@@ -36,7 +39,7 @@ export interface MenuRow {
   key: string;
   label: string;
   icon: IconName;
-  /** Runs after the menu closes. Leave out on a row that opens a second step. */
+  /** Runs once the menu has closed and gone from the screen. Leave out on a row that opens a second step. */
   onPress?: () => void;
   /** Drawn in `danger-text` after a separator, below every other row. */
   destructive?: boolean;
@@ -62,6 +65,9 @@ export interface ContextMenuProps {
 }
 
 export const MENU = { width: 248, gap: SPACE[2], row: 48, icon: 20, openScale: 0.92, closeScale: 0.96 } as const;
+
+/** What a chosen row with no action of its own runs. */
+const NO_ACTION = () => {};
 
 /** Where a menu `size` goes for `anchor` in a window `window` tall and wide with `insets`: 8 pt under
  *  the anchor, or above it when it doesn't fit below (whichever side has more room when neither
@@ -130,47 +136,68 @@ const styles = makeStyles((t) => ({
 
 export function ContextMenu({ visible, title, anchor, rows, onClose }: Readonly<ContextMenuProps>) {
   const t = useTokens();
-  const [mounted, setMounted] = useState(visible);
+  // The anchor the card is drawn from, kept through its exit should the caller clear it early.
+  const [from, setFrom] = useState(anchor);
+  if (anchor !== null && anchor !== from) setFrom(anchor);
+  const at = anchor ?? from;
+  // The chosen row's action, held until the menu has gone: whatever it shows next (a sheet, the
+  // share sheet, an alert) must not meet the menu still on screen.
+  const chosen = useRef<(() => void) | null>(null);
+  const gone = useCallback(() => {
+    const action = chosen.current;
+    chosen.current = null;
+    action?.();
+  }, []);
+  const turn = useOverlayTurn(visible && at !== null, { onGone: gone, onRefused: onClose });
+  const { open, up, exited } = turn;
   // Each opening mounts a fresh card, so it measures and grows in again.
-  const [opening, setOpening] = useState(0);
-  const visibleRef = useRef(visible);
+  const [opening, setOpening] = useState({ open, count: 0 });
+  if (opening.open !== open) setOpening({ open, count: opening.count + (open ? 1 : 0) });
+  const openRef = useRef(open);
   const appear = useSharedValue(0);
   const scale = useSharedValue(t.reduceMotion ? 1 : MENU.openScale);
 
   const settled = useCallback(() => {
-    if (!visibleRef.current) setMounted(false);
-  }, []);
+    if (!openRef.current) exited();
+  }, [exited]);
 
-  // The `visible` last acted on: only a change of it opens or closes the menu, never a change of
+  // The `open` last acted on: only a change of it opens or closes the menu, never a change of
   // settings while it shows.
-  const actedOn = useRef<boolean | null>(null);
+  const actedOn = useRef(false);
   useEffect(() => {
-    visibleRef.current = visible;
-    if (actedOn.current === visible) return;
-    actedOn.current = visible;
-    if (visible) {
+    openRef.current = open;
+    if (actedOn.current === open) return;
+    actedOn.current = open;
+    if (open) {
+      chosen.current = null;
       appear.value = 0;
       scale.value = t.reduceMotion ? 1 : MENU.openScale;
-      setOpening((n) => n + 1);
-      setMounted(true);
       return;
     }
-    if (!mounted) return;
+    if (!up) return;
     const done = (finished?: boolean) => {
       'worklet';
       if (finished) scheduleOnRN(settled);
     };
     appear.value = withTiming(0, timing('fadeOut', t.reduceMotion), done);
     if (!t.reduceMotion) scale.value = withTiming(MENU.closeScale, timing('fadeOut'));
-  }, [visible, t.reduceMotion, appear, scale, settled, mounted]);
+  }, [open, up, t.reduceMotion, appear, scale, settled]);
 
-  if (!mounted || !anchor) return null;
+  // The first row chosen while the menu is open is the one that counts: a second tap as it fades,
+  // or a tap after the scrim closed it, chooses nothing.
+  const choose = (row: MenuRow) => {
+    if (!openRef.current || chosen.current !== null) return;
+    chosen.current = row.onPress ?? NO_ACTION;
+    onClose();
+  };
+
+  if (at === null) return null;
   return (
-    <Modal visible transparent animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
+    <OverlayModal turn={turn} onRequestClose={onClose}>
       <SafeAreaProvider>
-        <MenuCard key={opening} title={title} anchor={anchor} rows={rows} onClose={onClose} appear={appear} scale={scale} />
+        <MenuCard key={opening.count} title={title} anchor={at} rows={rows} onClose={onClose} onChoose={choose} appear={appear} scale={scale} />
       </SafeAreaProvider>
-    </Modal>
+    </OverlayModal>
   );
 }
 
@@ -179,11 +206,13 @@ interface MenuCardProps {
   anchor: MenuAnchor;
   rows: readonly MenuRow[];
   onClose: () => void;
+  /** A row that is not a second step was tapped. */
+  onChoose: (row: MenuRow) => void;
   appear: SharedValue<number>;
   scale: SharedValue<number>;
 }
 
-function MenuCard({ title, anchor, rows, onClose, appear, scale }: Readonly<MenuCardProps>) {
+function MenuCard({ title, anchor, rows, onClose, onChoose, appear, scale }: Readonly<MenuCardProps>) {
   const t = useTokens();
   const s = styles(t);
   const insets = useSafeAreaInsets();
@@ -216,12 +245,8 @@ function MenuCard({ title, anchor, rows, onClose, appear, scale }: Readonly<Menu
   };
 
   const choose = (row: MenuRow) => {
-    if (row.next) {
-      showStep(row.next);
-      return;
-    }
-    onClose();
-    row.onPress?.();
+    if (row.next) showStep(row.next);
+    else onChoose(row);
   };
   const back: MenuRow = { key: 'back', label: COPY.backLabel, icon: t.platform === 'ios' ? 'chevron-left' : 'arrow-left' };
 

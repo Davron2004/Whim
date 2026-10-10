@@ -16,8 +16,10 @@ import { COPY } from '../copy';
 import { StoreAccess } from '../store-access';
 import { RunJournalStore } from '../run-journal';
 import { AppIndex, type InstalledApp } from '../app-index';
-import { hardwareBack } from './native-host';
-import { androidBack, button, press, textOf } from './react-screen';
+import { grantConsent, revokeConsent } from '../ai-consent';
+import { Share, hardwareBack, holdModalDismissals, modalPresentations } from './native-host';
+import { chooseRow, longPress } from './home-rig';
+import { androidBack, button, isHost, press, textOf } from './react-screen';
 import { buildIt, composeAndContinue, hasInstalled, json, makingSheetOpen, onHome, planLoaded, questionsLanded, resultEvent, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 
 const QUESTION = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'], select: 'one', other: false };
@@ -33,6 +35,8 @@ const plan = (tree: Tree) => tree.root.findByType(PlanPage).props.screen;
 const textInput = (tree: Tree) => tree.root.find((n) => String(n.type) === 'TextInput');
 const chip = (tree: Tree, label: string) => tree.root.find((n) => String(n.type) === 'Pressable' && n.props.accessibilityLabel === label);
 const checked = (node: TestRenderer.ReactTestInstance) => node.props.accessibilityState?.checked === true;
+/** The modals the system has on screen: mounted hosts that are not hidden. */
+const presentedModals = (tree: Tree) => tree.root.findAll(isHost('Modal')).filter((modal) => modal.props.visible === true);
 
 /** Describe `text` and continue through a zero-question clarify to a loaded plan. */
 async function composeToPlan(tree: Tree, text: string): Promise<void> {
@@ -358,6 +362,85 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       await waitFor(() => on(tree, BuildStep), 'the making page');
       h.eq(sent.filter((r) => r.path === '/v1/generate').length, 1, 'one generation was started');
       streams[0].end();
+    });
+  });
+
+  await h.test('flow: a Make it that cannot send takes nothing — the plan stays, and the next Make it on it starts the run', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    // The shell mounts with no grant, so nothing it has cached can stand in for the stored one.
+    await withLauncher({ consent: false, server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
+      grantConsent(kv, '2026-09-18T12:00:00.000Z');
+      await composeToPlan(tree, 'A tea timer');
+      revokeConsent(kv);
+      await buildIt(tree);
+      await settle();
+      h.eq([on(tree, PlanPage), sent.filter((r) => r.path === '/v1/generate').length], [true, 0], 'with the grant gone, Make it sends nothing and the plan stays');
+      grantConsent(kv, '2026-09-18T12:00:00.000Z');
+      await buildIt(tree);
+      await waitFor(() => on(tree, BuildStep), 'the making page');
+      h.eq(sent.filter((r) => r.path === '/v1/generate').length, 1, 'with the grant back, the same plan’s Make it starts the one run');
+      streams[0].end();
+    });
+  });
+
+  await h.test('draft: asking to change an app that has gone opens the new-app Describe, not a page for the app that is no longer there', async () => {
+    await withLauncher({ apps: [APP], server: streamingServer([]) }, async ({ tree, kv }) => {
+      await TestRenderer.act(async () => home(tree).props.onCreate());
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('A dice roller'));
+      await press(button(tree, COPY.sheetClose));
+      await TestRenderer.act(async () => home(tree).props.onPromptAgain(APP));
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('Add laps'));
+      await press(button(tree, COPY.sheetClose));
+      new AppIndex(kv).remove(APP.id);
+      await TestRenderer.act(async () => home(tree).props.onPromptAgain(APP));
+      const page = tree.root.findByType(DescribePage);
+      h.eq(page.props.editing, undefined, 'the page changes no app');
+      h.ok(textOf(tree.root).includes(COPY.composeHeadline) && !textOf(tree.root).includes('Changing Timer'), 'it asks what the new app should do, and names no app');
+      h.eq(page.props.text, 'A dice roller', 'and carries the new-app draft, as the composer would: the words kept for the app that went are gone with it');
+      await press(button(tree, COPY.sheetClose));
+      h.eq(home(tree).props.draft, 'A dice roller', 'closing it keeps the new-app draft');
+    });
+  });
+
+  await h.test('menu: Change it and Customize tile from a tile’s menu present their sheet only after the menu’s modal has dismissed, and the system refuses nothing', async () => {
+    const sheets: [string, (tree: Tree) => boolean][] = [
+      [COPY.actionChangeIt, (tree) => presentedModals(tree).some((modal) => modal.findAllByType(DescribePage).length === 1)],
+      [COPY.actionCustomize, (tree) => presentedModals(tree).some((modal) => textOf(modal).includes(COPY.customizeTitle))],
+    ];
+    for (const [row, sheetUp] of sheets) {
+      await withLauncher({ apps: [APP], server: streamingServer([]) }, async ({ tree }) => {
+        const refused = modalPresentations.refused;
+        await longPress(tree, 'Timer');
+        h.eq(presentedModals(tree).length, 1, `${row}: the menu is the one modal up`);
+        const release = holdModalDismissals();
+        try {
+          await chooseRow(tree, row);
+          await settle();
+          h.eq([sheetUp(tree), presentedModals(tree).length], [false, 0], `${row}: the menu is still dismissing: no sheet is presented`);
+          await TestRenderer.act(async () => release());
+          await waitFor(() => sheetUp(tree), `${row}: its sheet, once the menu has gone`);
+          h.eq([presentedModals(tree).length, tree.root.findAll(isHost('Modal')).length], [1, 1], `${row}: alone`);
+          h.eq(modalPresentations.refused - refused, 0, `${row}: the system refused no presentation`);
+        } finally {
+          release();
+        }
+      });
+    }
+  });
+
+  await h.test('menu: Share link opens the system share sheet once the menu has gone, never under it', async () => {
+    await withLauncher({ apps: [APP], server: streamingServer([]) }, async ({ tree }) => {
+      Share.shared.splice(0);
+      await longPress(tree, 'Timer');
+      const release = holdModalDismissals();
+      try {
+        await chooseRow(tree, COPY.actionShareLink);
+        h.eq(Share.shared.length, 0, 'the menu is still dismissing: nothing is handed to the share sheet');
+        await TestRenderer.act(async () => release());
+        h.eq(Share.shared.length, 1, 'once it has gone, the link is');
+      } finally {
+        release();
+      }
     });
   });
 

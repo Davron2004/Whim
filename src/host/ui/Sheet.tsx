@@ -1,7 +1,9 @@
 /**
  * Sheet — the shell's one presentation container (system.md §7.1 Sheet, §4.3 rule 6, M11; design-
  * system-v1 task 11.1). A `sheet` card rising from the bottom edge over a scrim, in its own
- * full-window `Modal` so it layers above a WebView and the orb and dims both system bars.
+ * full-window `Modal` so it layers above a WebView and the orb and dims both system bars. It takes
+ * its turn with the shell's other overlays (`OverlayModal`): shown while another sheet or a menu is
+ * still on screen, it rises once that one has gone.
  *
  * - Grabber (36 × 5 `fill-strong`, 6 pt from the top, always), an optional `title2` title 12 pt
  *   under it, a close `x` trailing on both platforms. Detents: `fit` (content height, to 92% of the
@@ -27,8 +29,8 @@
  *   finger and settles with a cross-fade.
  */
 
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Modal, Platform, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
+import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
+import { AccessibilityInfo, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
 import type { LayoutChangeEvent } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -41,6 +43,7 @@ import { sheetBottomPadding } from '../launcher/keyboard-shell';
 import { useKeyboardOverlap } from '../launcher/KeyboardShell';
 import { IconButton } from './IconButton';
 import { timing } from './motion';
+import { OverlayModal, useOverlayTurn } from './OverlayModal';
 import { useTokens } from './tokens';
 import { makeStyles, MAX_FONT_SCALE, springConfig, typeStyle } from './tokens-pure';
 
@@ -104,16 +107,12 @@ export interface SheetProps {
   detent?: SheetDetent;
   /** Default `COPY.sheetClose`. */
   closeLabel?: string;
-  /** Called once after the sheet has finished closing and its `Modal` is gone: the exit animation has
-   *  ended and, on iOS, the system has reported the dismissal (`Modal`'s `onDismiss`; a second
-   *  presentation issued earlier can be dropped). Present the next sheet from here. */
+  /** Called once after the sheet has finished closing and nothing of it is left on screen: the exit
+   *  animation has ended and its `Modal` is gone (`OverlayModal`). Nothing needs to wait for it to
+   *  show another sheet: overlays take turns by themselves. */
   onClosed?: () => void;
   children: React.ReactNode;
 }
-
-/** How long iOS may take to report a dismissal before the sheet counts as closed anyway, so a missed
- *  `onDismiss` cannot hold the next sheet back for good. */
-const DISMISS_FALLBACK_MS = 1000;
 
 /** What Android back does on the sheet's current page, when it is not "close". */
 type SheetBackSlot = React.MutableRefObject<(() => void) | null>;
@@ -182,49 +181,30 @@ interface SheetMotion {
 export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = COPY.sheetClose, onClosed, children }: Readonly<SheetProps>) {
   const t = useTokens();
   const { height: windowHeight } = useWindowDimensions();
-  const [mounted, setMounted] = useState(visible);
-  // iOS: the `Modal` is hidden but kept until the system says it is gone.
-  const [dismissing, setDismissing] = useState(false);
-  const visibleRef = useRef(visible);
-  const onClosedRef = useRef(onClosed);
-  onClosedRef.current = onClosed;
+  const turn = useOverlayTurn(visible, { onGone: onClosed, onRefused: onClose });
+  const { open, up, exited } = turn;
+  const openRef = useRef(open);
   // A drag past the commit point already carries the card out; closing must not restart it.
   const closingRef = useRef(false);
   const y = useSharedValue(windowHeight);
   const height = useSharedValue(windowHeight);
   const fade = useSharedValue(t.reduceMotion ? 0 : 1);
 
-  const closed = useCallback(() => {
-    setDismissing(false);
-    setMounted(false);
-    onClosedRef.current?.();
-  }, []);
-
   const settled = useCallback(() => {
-    if (!closingRef.current && visibleRef.current) return;
+    if (!closingRef.current && openRef.current) return;
     closingRef.current = false;
-    if (Platform.OS === 'ios') setDismissing(true);
-    else closed();
-  }, [closed]);
+    exited();
+  }, [exited]);
 
+  // The `open` last acted on: only a change of it plays the entrance or the exit, never a change of
+  // settings while the sheet shows.
+  const actedOn = useRef(false);
   useEffect(() => {
-    if (!dismissing) return undefined;
-    const fallback = setTimeout(closed, DISMISS_FALLBACK_MS);
-    return () => clearTimeout(fallback);
-  }, [dismissing, closed]);
-
-  // The `visible` last acted on: only a change of it presents or dismisses the sheet, never a change
-  // of settings while it shows.
-  const actedOn = useRef<boolean | null>(null);
-  useEffect(() => {
-    visibleRef.current = visible;
-    if (actedOn.current === visible) return;
-    const wasOpen = actedOn.current === true;
-    actedOn.current = visible;
-    if (visible) {
+    openRef.current = open;
+    if (actedOn.current === open) return;
+    actedOn.current = open;
+    if (open) {
       closingRef.current = false;
-      setDismissing(false);
-      setMounted(true);
       if (t.reduceMotion) {
         y.value = 0;
         fade.value = withTiming(1, timing('fadeIn', true));
@@ -234,18 +214,15 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
       }
       return;
     }
-    if (!mounted) {
-      if (wasOpen) onClosedRef.current?.();
-      return;
-    }
-    if (closingRef.current) return;
+    // Off screen already (its own drag ended it, or the system refused it), or a drag is carrying it out.
+    if (!up || closingRef.current) return;
     const done = (finished?: boolean) => {
       'worklet';
       if (finished) scheduleOnRN(settled);
     };
     if (t.reduceMotion) fade.value = withTiming(0, timing('fadeOut', true), done);
     else y.value = withSpring(height.value, springConfig('smooth'), done);
-  }, [visible, mounted, t.reduceMotion, y, fade, height, settled]);
+  }, [open, up, t.reduceMotion, y, fade, height, settled]);
 
   const dragClosed = useCallback(() => {
     closingRef.current = true;
@@ -258,17 +235,8 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
     else onClose();
   };
 
-  if (!mounted) return null;
   return (
-    <Modal
-      visible={!dismissing}
-      transparent
-      animationType="none"
-      statusBarTranslucent
-      navigationBarTranslucent
-      onRequestClose={requestClose}
-      onDismiss={dismissing ? closed : undefined}
-    >
+    <OverlayModal turn={turn} onRequestClose={requestClose}>
       <SafeAreaProvider>
         <SheetBackContext.Provider value={backSlot}>
           <SheetFrame
@@ -285,7 +253,7 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
           </SheetFrame>
         </SheetBackContext.Provider>
       </SafeAreaProvider>
-    </Modal>
+    </OverlayModal>
   );
 }
 
