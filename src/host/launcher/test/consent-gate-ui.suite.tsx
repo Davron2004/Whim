@@ -7,7 +7,7 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW, FIRST_RUN_COVERAGE, LEGAL_COPY, type LegalCopyTable } from '../copy';
+import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW, FIRST_RUN_COVERAGE, FIRST_RUN_SENT_KEYS, LEGAL_COPY, type LegalCopyTable } from '../copy';
 import { MANIFESTS, latestVersion } from '../../../../contract/src/disclosure-manifest';
 import { RELEASE } from '../release-config';
 import LauncherRoot from '../LauncherRoot';
@@ -18,6 +18,7 @@ import FailureScreen from '../FailureScreen';
 import { DescribePage } from '../DescribePage';
 import ConsentScreen from '../ConsentScreen';
 import { FirstRunSheet } from '../FirstRunSheet';
+import { Icon } from '../../ui/Icon';
 import { StoreAccess } from '../store-access';
 import { grantConsent } from '../ai-consent';
 import { acceptTerms } from '../terms-acceptance';
@@ -135,8 +136,8 @@ function firstOutOfOrder(text: string, table: LegalCopyTable, order: readonly (k
 
 /** Each legal language, with the word the terms of use go by in it and its privacy policy page. */
 const LANGUAGES = [
-  { language: 'en', termsWord: /terms/i, privacyUrl: RELEASE.privacyPolicyUrl },
-  { language: 'fr', termsWord: /conditions/i, privacyUrl: RELEASE.privacyPolicyUrlFr },
+  { language: 'en', termsWord: /terms/i, privacyUrl: RELEASE.privacyPolicyUrl, leadSays: [/ask for/, /server/, /\bAI companies\b.*\bwrite the code/] },
+  { language: 'fr', termsWord: /conditions/i, privacyUrl: RELEASE.privacyPolicyUrlFr, leadSays: [/demandez/, /serveur/, /entreprises d.IA.*écrivent le code/] },
 ] as const;
 
 /** Every what's-new line, in every language, for every version. */
@@ -184,6 +185,11 @@ async function withLauncher(consent: ConsentSeed, body: (tree: Tree, requests: s
   }
 }
 
+/** The sentences of `text`, split after a full stop, question mark or exclamation mark. */
+function sentencesOf(text: string): string[] {
+  return text.split(/(?<=[.!?])\s+/).filter((sentence) => sentence !== '');
+}
+
 export async function runConsentGateUiTests(h: Harness): Promise<void> {
   for (const consent of ['none', 'outdated'] as const) {
     for (const entry of ENTRIES) {
@@ -223,7 +229,7 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
     });
   });
 
-  for (const { language, termsWord, privacyUrl } of LANGUAGES) {
+  for (const { language, termsWord, privacyUrl, leadSays } of LANGUAGES) {
     const table = LEGAL_COPY[language];
 
     /** What the disclosure must say, wherever it is shown: complete, and in the spec's order. */
@@ -262,12 +268,45 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
         for (const [what, id, keys] of [
           ...sent.map((category) => ['category', category.id, FIRST_RUN_COVERAGE.categories[category.id]] as const),
           ...named.map((role) => ['role', role.id, FIRST_RUN_COVERAGE.roles[role.id]] as const),
+          ['purpose', 'of the data', FIRST_RUN_COVERAGE.purpose] as const,
         ]) {
           h.ok(keys !== undefined && keys.length > 0, `${what} ${id}: the first layer declares which text names it`);
           h.ok((keys ?? []).every((key) => visible.includes(table[key])), `${what} ${id}: that text is on the sheet before anything is expanded`);
         }
         h.ok(visible.includes(table.firstRunStays) && visible.includes(table.firstRunNever), 'what stays on the phone and what Whim never does are there too');
         h.ok(visible.includes(table.privacyPolicyLabel) && !termsWord.test(visible), 'with the privacy link and no wording about the terms of use');
+      } finally {
+        await unmountScreen(tree);
+      }
+    });
+
+    await h.test(`first-run sheet (${language}): the lead says what the spec has it say, and no sentence is on the sheet twice, lead or row`, async () => {
+      const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue={false} consentDue onAgree={() => {}} onClose={() => {}} />);
+      try {
+        const visible = textOf(tree.root);
+        h.ok(leadSays.every((claim) => claim.test(table.firstRunLead)), 'the lead says that what you ask for goes to our server and that AI companies write the code');
+        const sentences = [...sentencesOf(table.firstRunLead), ...FIRST_RUN_SENT_KEYS.flatMap((key) => sentencesOf(table[key]))];
+        h.eq(sentences.filter((sentence, i) => sentences.indexOf(sentence) !== i), [], 'no sentence of the lead is a sentence of the row, and no sentence of the row repeats');
+        for (const sentence of sentences) {
+          h.eq(visible.split(sentence).length - 1, 1, `“${sentence}” appears once on the sheet`);
+        }
+      } finally {
+        await unmountScreen(tree);
+      }
+    });
+
+    await h.test(`first-run sheet (${language}): the Full details row shows whether it is open, to the eye and to a screen reader, and closes again`, async () => {
+      const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue={false} consentDue onAgree={() => {}} onClose={() => {}} />);
+      try {
+        const row = () => button(tree, table.firstRunDetails);
+        const glyph = () => row().findByType(Icon).props.name;
+        const [closedGlyph, closedState] = [glyph(), row().props.accessibilityState?.expanded];
+        h.eq(closedState, false, 'closed, the row says it is not expanded');
+        await press(row());
+        h.eq(row().props.accessibilityState?.expanded, true, 'open, the row says it is expanded');
+        h.ok(glyph() !== closedGlyph, 'and its chevron no longer points the way the closed one does');
+        await press(row());
+        h.eq([row().props.accessibilityState?.expanded, glyph()], [false, closedGlyph], 'pressed again, both go back');
       } finally {
         await unmountScreen(tree);
       }
@@ -298,7 +337,7 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
       const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue={false} consentDue onAgree={() => {}} onClose={() => {}} />);
       try {
         const summary = textOf(tree.root);
-        h.ok(summary.includes(table.consentTitle) && summary.includes(table.consentLead), 'the title and the lead');
+        h.ok(summary.includes(table.consentTitle) && summary.includes(table.firstRunLead), 'the title and the lead');
         h.ok([table.firstRunSentTitle, table.firstRunStaysTitle, table.firstRunNeverTitle].every((title) => summary.includes(title)), 'three summary rows: what is sent, what stays on the phone, what is never done');
         h.ok(!summary.includes(table.consentWhy), 'the long disclosure is folded away');
         await press(button(tree, table.firstRunDetails));

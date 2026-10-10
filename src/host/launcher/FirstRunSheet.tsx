@@ -25,14 +25,14 @@ import React, { useState } from 'react';
 import { Linking, Pressable, View } from 'react-native';
 import { LAYOUT, RADII, SPACE } from '../../design/tokens';
 import { Button } from '../ui/Button';
-import { GroupedRow, GroupedSection } from '../ui/GroupedList';
+import { GroupedRow, GroupedSection, ROW } from '../ui/GroupedList';
 import { Icon } from '../ui/Icon';
 import { Notice } from '../ui/Notice';
 import { Sheet } from '../ui/Sheet';
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
 import { makeStyles, PRESS_RETENTION } from '../ui/tokens-pure';
-import { consentWhatsNewText, LEGAL_COPY } from './copy';
+import { consentWhatsNewText, firstRunSentText, LEGAL_COPY } from './copy';
 import { disclosureOf } from './consent-disclosure';
 import KeyboardShell from './KeyboardShell';
 import { otherLegalLanguage, privacyPolicyUrl, termsUrl, type LegalLanguage } from './legal-language';
@@ -72,6 +72,8 @@ const styles = makeStyles((t) => ({
   details: { gap: SPACE[3], paddingHorizontal: LAYOUT.listRowPaddingHorizontal, paddingBottom: SPACE[4] },
   bullet: { flexDirection: 'row' as const, gap: SPACE[2] },
   bulletText: { flex: 1 },
+  detailsRow: { minHeight: ROW.minHeight, flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], paddingVertical: ROW.paddingVertical, paddingHorizontal: ROW.paddingHorizontal },
+  detailsTitle: { flex: 1 },
   termsLine: { flexDirection: 'row' as const, alignItems: 'center' as const, backgroundColor: t.colors['sheet-group'], borderRadius: RADII.lg.radius, borderCurve: 'continuous' as const },
   termsCheck: { flex: 1, minHeight: LAYOUT.listRowMinHeight, flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], paddingHorizontal: LAYOUT.listRowPaddingHorizontal },
   // A target of its own beside the checkbox row, never a `hitSlop` that would reach into it.
@@ -80,12 +82,14 @@ const styles = makeStyles((t) => ({
   footer: { paddingHorizontal: LAYOUT.gutter, paddingTop: LAYOUT.actionAreaTop, paddingBottom: LAYOUT.actionAreaBottom, gap: SPACE[1] },
 }));
 
-/** The whole consent disclosure, in the order the spec lists it. */
+/** The whole consent disclosure, in the order the spec lists it: the consent screen's own lead
+ *  first, then its sections. The sheet's lead above is shorter, so nothing repeats while it is folded. */
 function Disclosure({ language }: Readonly<{ language: LegalLanguage }>) {
   const s = styles(useTokens());
   const { sections, closing } = disclosureOf(LEGAL_COPY[language]);
   return (
     <View style={s.details}>
+      <Text color="text-2">{LEGAL_COPY[language].consentLead}</Text>
       {sections.map((section) => (
         <View key={section.title} style={s.notice}>
           <Text type="footnote" header color="text-2">
@@ -108,6 +112,28 @@ function Disclosure({ language }: Readonly<{ language: LegalLanguage }>) {
         </Text>
       ))}
     </View>
+  );
+}
+
+/** The "Full details" row: a list row whose chevron points down while the disclosure is open, and
+ *  says so to a screen reader. `GroupedRow` has no expanded state, and `GroupedSection` takes any row. */
+function DetailsRow({ title, expanded, onPress }: Readonly<{ title: string; expanded: boolean; onPress: () => void }>) {
+  const t = useTokens();
+  const s = styles(t);
+  return (
+    <Pressable
+      onPress={onPress}
+      pressRetentionOffset={PRESS_RETENTION}
+      style={({ pressed }) => [s.detailsRow, pressed ? { backgroundColor: t.colors.fill } : null]}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      accessibilityState={{ expanded }}
+    >
+      <View style={s.detailsTitle}>
+        <Text>{title}</Text>
+      </View>
+      <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={ROW.trailingIcon} color={t.colors['text-2']} />
+    </Pressable>
   );
 }
 
@@ -183,15 +209,15 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
         <Notice key={line} message={line} />
       ))}
       <Text type="title2">{copy.consentTitle}</Text>
-      <Text color="text-2">{copy.consentLead}</Text>
+      <Text color="text-2">{copy.firstRunLead}</Text>
       <GroupedSection on="sheet">
-        <GroupedRow icon="arrow-up" title={copy.firstRunSentTitle} subtitle={copy.firstRunSent} />
+        <GroupedRow icon="arrow-up" title={copy.firstRunSentTitle} subtitle={firstRunSentText(copy)} />
         <GroupedRow icon="phone" title={copy.firstRunStaysTitle} subtitle={copy.firstRunStays} />
         <GroupedRow icon="lock" title={copy.firstRunNeverTitle} subtitle={copy.firstRunNever} />
       </GroupedSection>
       <GroupedSection on="sheet">
         <GroupedRow title={copy.privacyPolicyLabel} trailing={{ kind: 'external' }} onPress={() => Linking.openURL(privacyPolicyUrl(language))} />
-        <GroupedRow title={copy.firstRunDetails} trailing={{ kind: 'chevron' }} onPress={() => setExpanded((open) => !open)} />
+        <DetailsRow title={copy.firstRunDetails} expanded={expanded} onPress={() => setExpanded((open) => !open)} />
       </GroupedSection>
       {expanded ? <Disclosure language={language} /> : null}
       <GroupedSection on="sheet">
