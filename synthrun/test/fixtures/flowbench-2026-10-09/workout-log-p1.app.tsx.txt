@@ -1,0 +1,377 @@
+// Workout Log: log a session as a list of exercises, each with its sets, reps and weight in
+// kilograms. Sessions are kept as one JSON list in storage.kv, and the full history stays on the
+// first screen. Tapping a past session opens it; the + starts a new one.
+import {
+  defineApp,
+  nav,
+  Screen,
+  Stack,
+  Row,
+  Card,
+  Divider,
+  Grid,
+  Text,
+  Button,
+  TextInput,
+  NumberInput,
+  DateInput,
+  List,
+  ListItem,
+  EmptyState,
+  Badge,
+  toast,
+  useState,
+  useEffect,
+  storage,
+  type SchemaArtifact,
+} from 'vc-sdk';
+
+// The whole app keeps its rows as one JSON list under one kv key, so the schema declares no
+// collections.
+const SCHEMA: SchemaArtifact = {
+  schemaVersion: 1,
+  collections: {},
+};
+
+type SetEntry = { reps: number; weight: number };
+type Exercise = { name: string; sets: SetEntry[] };
+type Session = { id: number; at: number; exercises: Exercise[] };
+
+// Module-level state: a tiny store the screens subscribe to, so the history repaints the moment a
+// session is saved or deleted.
+let sessions: Session[] = [];
+let opened: Session | null = null;
+const listeners = new Set<() => void>();
+
+function publish(next: Session[]): void {
+  sessions = next;
+  listeners.forEach((listener) => listener());
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function toSet(value: unknown): SetEntry | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const entry = value as { reps?: unknown; weight?: unknown };
+  return {
+    reps: typeof entry.reps === 'number' ? entry.reps : 0,
+    weight: typeof entry.weight === 'number' ? entry.weight : 0,
+  };
+}
+
+function toExercise(value: unknown): Exercise | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const row = value as { name?: unknown; sets?: unknown };
+  const sets: SetEntry[] = Array.isArray(row.sets)
+    ? row.sets.map(toSet).filter((entry): entry is SetEntry => entry !== null)
+    : [];
+  return { name: typeof row.name === 'string' ? row.name : 'Exercise', sets };
+}
+
+function toSession(value: unknown): Session | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const row = value as { id?: unknown; at?: unknown; exercises?: unknown };
+  const at = typeof row.at === 'number' ? row.at : Date.now();
+  const exercises: Exercise[] = Array.isArray(row.exercises)
+    ? row.exercises.map(toExercise).filter((exercise): exercise is Exercise => exercise !== null)
+    : [];
+  return { id: typeof row.id === 'number' ? row.id : at, at, exercises };
+}
+
+async function loadSessions(): Promise<void> {
+  const raw = await storage.kv.get('sessions');
+  const rows: unknown[] = Array.isArray(raw) ? raw : [];
+  publish(rows.map(toSession).filter((session): session is Session => session !== null));
+}
+
+async function saveSessions(next: Session[]): Promise<void> {
+  await storage.kv.set('sessions', next);
+  publish(next);
+}
+
+function formatDay(ms: number): string {
+  return new Date(ms).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function setCount(session: Session): number {
+  return session.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
+}
+
+function volume(session: Session): number {
+  return session.exercises.reduce(
+    (sum, exercise) => sum + exercise.sets.reduce((total, entry) => total + entry.reps * entry.weight, 0),
+    0,
+  );
+}
+
+function History() {
+  const [list, setList] = useState<Session[]>(sessions);
+
+  useEffect(() => {
+    let live = true;
+    const unsubscribe = subscribe(() => setList(sessions));
+    loadSessions().catch(() => {
+      if (live) toast('Couldn’t load your sessions.');
+    });
+    return () => {
+      live = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const ordered = [...list].sort((a, b) => b.at - a.at);
+  const totalSets = ordered.reduce((sum, session) => sum + setCount(session), 0);
+  const totalVolume = Math.round(ordered.reduce((sum, session) => sum + volume(session), 0));
+
+  return (
+    <Screen
+      title="Workout Log"
+      action={{ icon: 'plus', label: 'Log a session', onPress: () => nav.navigate('LogSession') }}
+    >
+      <Stack gap="lg">
+        <Card>
+          <Row justify="between">
+            <Stack gap="none">
+              <Text size="caption" color="text-muted">Sessions</Text>
+              <Text size="title">{String(ordered.length)}</Text>
+            </Stack>
+            <Stack gap="none">
+              <Text size="caption" color="text-muted">Sets</Text>
+              <Text size="title">{String(totalSets)}</Text>
+            </Stack>
+            <Stack gap="none">
+              <Text size="caption" color="text-muted">Total kg</Text>
+              <Text size="title">{totalVolume.toLocaleString()}</Text>
+            </Stack>
+          </Row>
+        </Card>
+
+        {ordered.length === 0 ? (
+          <EmptyState icon="dumbbell" title="No sessions yet" hint="Tap + to log your first workout." />
+        ) : (
+          <List
+            items={ordered}
+            keyBy="id"
+            renderItem={(session) => (
+              <ListItem
+                title={formatDay(session.at)}
+                subtitle={`${session.exercises.length} exercise${session.exercises.length === 1 ? '' : 's'} · ${setCount(session)} sets`}
+                trailing={`${Math.round(volume(session)).toLocaleString()} kg`}
+                icon="dumbbell"
+                onPress={() => {
+                  opened = session;
+                  nav.navigate('SessionDetail');
+                }}
+              />
+            )}
+          />
+        )}
+      </Stack>
+    </Screen>
+  );
+}
+
+function SessionDetail() {
+  const session = opened;
+
+  const remove = () => {
+    if (session === null) return;
+    saveSessions(sessions.filter((s) => s.id !== session.id))
+      .then(() => {
+        toast('Session deleted');
+        nav.back();
+      })
+      .catch(() => toast('Couldn’t delete that session.'));
+  };
+
+  if (session === null) {
+    return (
+      <Screen title="Session">
+        <EmptyState icon="clipboard-list" title="Nothing to show" hint="Open a session from your history." />
+      </Screen>
+    );
+  }
+
+  return (
+    <Screen title={formatDay(session.at)}>
+      <Stack gap="lg">
+        <Row gap="sm">
+          <Badge label={`${session.exercises.length} exercises`} tone="primary" />
+          <Text color="text-muted">{`${setCount(session)} sets · ${Math.round(volume(session)).toLocaleString()} kg`}</Text>
+        </Row>
+
+        {session.exercises.map((exercise, index) => (
+          <Card key={`${exercise.name}-${index}`}>
+            <Stack gap="sm">
+              <Row justify="between">
+                <Text size="subtitle">{exercise.name}</Text>
+                <Text size="caption" color="text-muted">{`${exercise.sets.length} sets`}</Text>
+              </Row>
+              <Divider />
+              {exercise.sets.map((entry, position) => (
+                <Row key={position} justify="between">
+                  <Text color="text-muted">{`Set ${position + 1}`}</Text>
+                  <Text>{`${entry.reps} reps · ${entry.weight} kg`}</Text>
+                </Row>
+              ))}
+            </Stack>
+          </Card>
+        ))}
+
+        <Button label="Delete session" variant="danger" icon="trash-2" onPress={remove} />
+      </Stack>
+    </Screen>
+  );
+}
+
+type DraftSet = { id: number; reps: number; weight: number };
+type DraftExercise = { id: number; name: string; sets: SetEntry[] };
+
+let nextDraftId = 1;
+
+function today(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function LogSession() {
+  const [at, setAt] = useState<number | null>(today());
+  const [name, setName] = useState('');
+  const [reps, setReps] = useState(10);
+  const [weight, setWeight] = useState(20);
+  const [sets, setSets] = useState<DraftSet[]>([]);
+  const [draft, setDraft] = useState<DraftExercise[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  const addSet = () => setSets([...sets, { id: nextDraftId++, reps, weight }]);
+  const removeSet = (id: number) => setSets(sets.filter((entry) => entry.id !== id));
+  const removeExercise = (id: number) => setDraft(draft.filter((exercise) => exercise.id !== id));
+
+  const addExercise = () => {
+    const label = name.trim();
+    setDraft([
+      ...draft,
+      { id: nextDraftId++, name: label, sets: sets.map((entry) => ({ reps: entry.reps, weight: entry.weight })) },
+    ]);
+    setSets([]);
+    setName('');
+    toast(`${label} added`);
+  };
+
+  const pending: Exercise | null =
+    name.trim() !== '' && sets.length > 0
+      ? { name: name.trim(), sets: sets.map((entry) => ({ reps: entry.reps, weight: entry.weight })) }
+      : null;
+
+  // Anything still on the bench counts as the last exercise of the session when you save.
+  const exercises: Exercise[] = (pending ? [...draft, pending] : draft).map((exercise) => ({
+    name: exercise.name,
+    sets: exercise.sets,
+  }));
+  const ready = exercises.length > 0;
+
+  const openDraft = (id: number) => {
+    const exercise = draft.find((entry) => entry.id === id);
+    if (exercise === undefined) return;
+    setName(exercise.name);
+    setSets(exercise.sets.map((entry) => ({ id: nextDraftId++, reps: entry.reps, weight: entry.weight })));
+    setDraft(draft.filter((entry) => entry.id !== id));
+  };
+
+  const save = () => {
+    if (!ready || saving) return;
+    setSaving(true);
+    const session: Session = { id: Date.now(), at: at ?? Date.now(), exercises };
+    saveSessions([session, ...sessions])
+      .then(() => {
+        toast('Session saved');
+        nav.back();
+      })
+      .catch(() => {
+        setSaving(false);
+        toast('Couldn’t save the session. Try again.');
+      });
+  };
+
+  return (
+    <Screen title="Log a session">
+      <Stack gap="lg">
+        <DateInput label="Date" value={at} onChange={setAt} />
+
+        {draft.length > 0 ? (
+          <Stack gap="sm">
+            <Text size="caption" color="text-muted">In this session · tap one to edit it</Text>
+            <List
+              items={draft}
+              keyBy="id"
+              renderItem={(exercise) => (
+                <ListItem
+                  title={exercise.name}
+                  subtitle={exercise.sets.map((entry) => `${entry.reps} × ${entry.weight} kg`).join(' · ')}
+                  icon="dumbbell"
+                  onPress={() => openDraft(exercise.id)}
+                />
+              )}
+            />
+          </Stack>
+        ) : null}
+
+        <Card>
+          <Stack gap="sm">
+            <TextInput label="Exercise" value={name} placeholder="Bench press" onChange={setName} />
+            <Grid columns={2}>
+              <NumberInput label="Reps" value={reps} min={1} max={100} onChange={setReps} />
+              <NumberInput label="Weight (kg)" value={weight} min={0} max={500} step={2.5} onChange={setWeight} />
+            </Grid>
+            <Button label="Add set" variant="secondary" icon="plus" onPress={addSet} />
+          </Stack>
+        </Card>
+
+        {sets.length > 0 ? (
+          <List
+            items={sets}
+            keyBy="id"
+            renderItem={(entry, index) => (
+              <ListItem
+                title={`Set ${index + 1}`}
+                trailing={`${entry.reps} reps · ${entry.weight} kg`}
+                onPress={() => removeSet(entry.id)}
+              />
+            )}
+          />
+        ) : (
+          <Text size="caption" color="text-muted">
+            Add a set above, name the exercise, then save the session.
+          </Text>
+        )}
+
+        <Grid columns={2}>
+          <Button
+            label="Add exercise"
+            variant="secondary"
+            icon="check"
+            disabled={name.trim() === '' || sets.length === 0}
+            onPress={addExercise}
+          />
+          <Button label="Save session" icon="dumbbell" disabled={!ready || saving} onPress={save} />
+        </Grid>
+      </Stack>
+    </Screen>
+  );
+}
+
+export default defineApp({
+  name: 'Workout Log',
+  initial: 'History',
+  screens: { History, SessionDetail, LogSession },
+  capabilities: ['storage'],
+  schema: SCHEMA,
+  tint: ['indigo', 'violet', 'slate'],
+  icon: 'dumbbell',
+});

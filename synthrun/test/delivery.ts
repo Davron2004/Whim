@@ -1,0 +1,160 @@
+/**
+ * synthrun-reach: a capability reply reaches the candidate realm. The assertions are on effects
+ * that happen only after the candidate received a reply (a call it makes once an earlier one
+ * resolved, a control that was disabled until a read resolved). A host-side trace entry for the
+ * FIRST call is no evidence: the host records a call it answered whether or not the answer was
+ * accepted in the realm.
+ */
+import nodeAssert from 'node:assert';
+import type { BrowserContext, Page } from 'playwright';
+import { buildCandidateSource } from '../builder';
+import { assembleCandidatePage } from '../page';
+import { awaitMount, mergeBudgets, openObservedRun } from '../observe';
+import { SynthRunSession } from '../session';
+import { wireCapabilityBridge, type CapabilityWiring } from '../capability';
+import type { AppRecord } from '../../src/host/bridge';
+import { sweepApp, findAppFrame } from '../sweep';
+import { recordAssertion, test } from './harness';
+import { flowbenchApp } from './flowbench';
+
+function ok(cond: boolean, msg: string): void {
+  recordAssertion(() => nodeAssert.ok(cond, msg), msg);
+}
+
+const STORAGE_APP: AppRecord = {
+  appId: 'delivery-storage',
+  name: 'DeliveryStorage',
+  manifest: { capabilities: ['storage'] },
+  schemaArtifact: { schemaVersion: 1, collections: {} },
+};
+
+// Reads at mount and makes its second capability call only once the read resolved in the realm.
+const FIXTURE_READ_THEN_WRITE = `import { defineApp, Screen, Stack, Heading, useEffect, storage } from 'vc-sdk';
+function Home() {
+  useEffect(() => {
+    (async () => {
+      await storage.kv.get('seed');
+      await storage.kv.set('after-read', 'x');
+    })().catch(() => {});
+  }, []);
+  return <Screen><Stack><Heading size="title">chain</Heading></Stack></Screen>;
+}
+export default defineApp({ name: 'ReadThenWrite', initial: 'Home', screens: { Home }, capabilities: ['storage'] });
+`;
+
+/** How long the negative control watches for a call that must not come. The positive run gets its
+ *  second call within tens of milliseconds, so this is two orders of magnitude of margin. */
+const ABSENCE_WINDOW_MS = 1500;
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Polls until `predicate` holds or `budgetMs` expires, then returns regardless; the caller asserts. */
+async function waitUntil(predicate: () => boolean, budgetMs: number): Promise<void> {
+  const deadline = Date.now() + budgetMs;
+  while (Date.now() < deadline && !predicate()) await wait(15);
+}
+
+/** Rejects with a named message if `work` outlasts `ms`, so a hang is a failed test and not a hung suite. */
+async function within<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} did not finish within ${ms} ms`)), ms);
+  });
+  try {
+    return await Promise.race([work, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function syscalls(wiring: CapabilityWiring, method: string): number {
+  return wiring.trace.filter((t) => t.kind === 'syscall' && t.method === method).length;
+}
+
+/**
+ * A route registered after the context's own, so it answers first: it serves the SAME candidate
+ * through the SAME page assembly, but with no response policy, so the page keeps its real origin.
+ */
+async function servePageWithoutPolicy(context: BrowserContext, source: string): Promise<void> {
+  let served = false;
+  await context.route('**/run/*', async (route) => {
+    const request = route.request();
+    if (served || !request.isNavigationRequest()) {
+      await route.fallback();
+      return;
+    }
+    served = true;
+    const runId = new URL(request.url()).pathname.split('/').pop() ?? '';
+    const { js } = await buildCandidateSource(source, { filenameHint: runId });
+    await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: await assembleCandidatePage(js, runId) });
+  });
+}
+
+/** In-page: whether the button whose label starts with `prefix` exists and is enabled. */
+function buttonEnabledInPage(prefix: string): boolean {
+  const doc = (globalThis as unknown as { document: { querySelectorAll(s: string): ArrayLike<{ textContent: string | null; disabled: boolean }> } }).document;
+  return Array.from(doc.querySelectorAll('button')).some((b) => (b.textContent ?? '').startsWith(prefix) && !b.disabled);
+}
+
+export async function testReplyDelivery(): Promise<void> {
+  const session = await SynthRunSession.launch({ concurrency: 2 });
+  try {
+    await test('reply delivery: a storage read made at mount resolves in the candidate, so its next call is made', async () => {
+      const wiring = wireCapabilityBridge(STORAGE_APP);
+      const { dispose } = await session.openRun(FIXTURE_READ_THEN_WRITE, { appId: STORAGE_APP.appId, beforeNavigate: wiring.beforeNavigate });
+      try {
+        await waitUntil(() => syscalls(wiring, 'storage.kv.set') > 0, 5000);
+        ok(syscalls(wiring, 'storage.kv.get') === 1, `the mount read reached the host once (got ${syscalls(wiring, 'storage.kv.get')})`);
+        ok(syscalls(wiring, 'storage.kv.set') === 1, `the write that only follows the resolved read reached the host (got ${syscalls(wiring, 'storage.kv.set')})`);
+        ok(wiring.realm?.engine?.kv.get('after-read') === 'x', 'the write landed in the run\'s engine');
+      } finally {
+        await dispose();
+      }
+    });
+
+    await test('reply delivery: a control disabled until two mount reads resolve is swept (water-counter-p1)', async () => {
+      const source = flowbenchApp('water-counter-p1');
+      const wiring = wireCapabilityBridge(STORAGE_APP);
+      const { ctx, obs, dispose } = await openObservedRun(session, source, { appId: STORAGE_APP.appId, beforeNavigate: wiring.beforeNavigate });
+      try {
+        const budgets = mergeBudgets({ mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 });
+        await within(awaitMount(obs, budgets), 10000, 'the mount gate');
+        const frame = await findAppFrame(ctx.page);
+        // The button turns enabled only after both reads resolved IN the candidate. If the replies
+        // never arrive this times out and the test fails here, naming the wait.
+        await frame.waitForFunction(buttonEnabledInPage, 'Log a glass', { timeout: 5000 });
+        const setsAtMount = syscalls(wiring, 'storage.kv.set');
+
+        const result = await within(sweepApp(ctx, obs, source, budgets), 30000, 'the sweep');
+        const labels = result.actionsLog.map((el) => el.label);
+        ok(labels.some((l) => l.startsWith('Log a glass')), `the sweep pressed the gated button (acted on: ${labels.join(' ; ')})`);
+        const setsAfter = syscalls(wiring, 'storage.kv.set') - setsAtMount;
+        ok(setsAfter >= 2, `the press wrote the day and the count, two storage.kv.set beyond the mount effect's own (got ${setsAfter})`);
+      } finally {
+        obs.detach();
+        await dispose();
+      }
+    });
+
+    await test('reply delivery control: served with a real origin, the same candidate never makes its second call', async () => {
+      const wiring = wireCapabilityBridge(STORAGE_APP);
+      const beforeNavigate = async (page: Page, context: BrowserContext): Promise<void> => {
+        await wiring.beforeNavigate(page, context);
+        await servePageWithoutPolicy(context, FIXTURE_READ_THEN_WRITE);
+      };
+      const { dispose } = await session.openRun(FIXTURE_READ_THEN_WRITE, { appId: STORAGE_APP.appId, beforeNavigate });
+      try {
+        await waitUntil(() => syscalls(wiring, 'storage.kv.get') > 0, 5000);
+        ok(syscalls(wiring, 'storage.kv.get') === 1, 'the candidate ran and made its read, which the host answered');
+        await wait(ABSENCE_WINDOW_MS);
+        ok(syscalls(wiring, 'storage.kv.set') === 0, `the host's answer was dropped in the realm, so the dependent write never came (got ${syscalls(wiring, 'storage.kv.set')})`);
+      } finally {
+        await dispose();
+      }
+    });
+  } finally {
+    await session.close();
+  }
+}

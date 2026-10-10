@@ -758,20 +758,18 @@ function readServiceWorkerApiInPage(): string {
 async function testServiceWorkers(): Promise<void> {
   const register = (page: Page): Promise<string> => page.evaluate(registerServiceWorkerInPage);
 
-  await test('service workers: the outer page cannot register one, the refusal is counted, and the candidate realm cannot reach the API', async () => {
+  await test('service workers: neither the outer page nor the candidate realm can reach the API, both refused as opaque origins', async () => {
     const session = await SynthRunSession.launch({ concurrency: 1 });
     try {
       const { ctx, dispose } = await session.openRun(HARMLESS);
       try {
-        const before = ctx.egress.count;
         const outcome = await register(ctx.page);
-        ok(outcome.startsWith('refused:'), `registration from the run's main frame fails (got ${outcome})`);
-        ok(ctx.egress.count > before, `the worker script fetch was refused as egress (count ${before} → ${ctx.egress.count})`);
+        ok(outcome === 'refused:SecurityError', `registration from the run's main frame is refused by the browser itself, before any script fetch (got ${outcome})`);
 
         const inRealm = await (await findAppFrame(ctx.page)).evaluate(readServiceWorkerApiInPage);
         ok(inRealm === 'SecurityError', `Chromium refuses the service worker API inside the candidate's sandboxed realm (got ${inRealm})`);
         const inOuter = await ctx.page.evaluate(readServiceWorkerApiInPage);
-        ok(inOuter === 'object', `the same read in the outer page returns the API, so the refusal above is the realm's (got ${inOuter})`);
+        ok(inOuter === 'SecurityError', `the run page, served as an opaque-origin document, is refused the API too (got ${inOuter})`);
       } finally {
         await dispose();
       }
@@ -786,7 +784,9 @@ async function testServiceWorkers(): Promise<void> {
     try {
       const context = await browser.newContext();
       await context.route(`${DELIVERY_ORIGIN}/sw.js`, (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: "self.addEventListener('fetch', () => {});" }));
-      const outcome = await register(await plainSecurePage(context));
+      const page = await plainSecurePage(context);
+      ok((await page.evaluate(readServiceWorkerApiInPage)) === 'object', 'a page with a real origin is given the API, so the refusals above are the opaque origin\'s');
+      const outcome = await register(page);
       ok(outcome === 'active', `a served worker script registers and activates (got ${outcome})`);
       await context.close();
     } finally {

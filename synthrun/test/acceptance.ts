@@ -30,6 +30,7 @@ import nodeAssert from 'node:assert';
 import { recordAssertion, results, test } from './harness';
 import { testIsolation } from './isolation';
 import { testResilience } from './resilience';
+import { testReplyDelivery } from './delivery';
 
 function ok(cond: boolean, msg: string): void {
   recordAssertion(() => nodeAssert.ok(cond, msg), msg);
@@ -67,6 +68,9 @@ async function main(): Promise<void> {
 
   // ── chain 4 (task 4.5): interaction sweep + nav-aware screen coverage + cold-mount ──────────
   await testSweep();
+
+  // ── synthrun-reach: a capability reply reaches the candidate realm ──────────────────────────
+  await testReplyDelivery();
 
   // ── chain 5 (task 5.3): the assembled RunCandidate — end-to-end acceptance ──────────────────
   await testRunCandidate();

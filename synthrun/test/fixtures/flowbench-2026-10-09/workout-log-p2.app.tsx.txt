@@ -1,0 +1,416 @@
+import {
+  defineApp,
+  nav,
+  Screen,
+  Stack,
+  Row,
+  Card,
+  Divider,
+  Text,
+  List,
+  ListItem,
+  EmptyState,
+  Modal,
+  TextInput,
+  NumberInput,
+  Stepper,
+  Picker,
+  DateInput,
+  Button,
+  toast,
+  useState,
+  useEffect,
+  storage,
+  type SchemaArtifact,
+} from 'vc-sdk';
+
+const SCHEMA: SchemaArtifact = {
+  schemaVersion: 1,
+  collections: {},
+};
+
+type Exercise = { id: string; name: string; weight: number; reps: number };
+type Workout = { id: string; date: number; exercises: Exercise[] };
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const COMMON_LIFTS = [
+  'Back squat',
+  'Bench press',
+  'Deadlift',
+  'Overhead press',
+  'Barbell row',
+  'Romanian deadlift',
+  'Lat pulldown',
+  'Leg press',
+  'Pull-up',
+  'Bicep curl',
+];
+
+const TEMPLATE: { name: string; weight: number; reps: number }[] = [
+  { name: 'Back squat', weight: 20, reps: 8 },
+  { name: 'Bench press', weight: 20, reps: 8 },
+  { name: 'Barbell row', weight: 20, reps: 8 },
+  { name: 'Overhead press', weight: 20, reps: 8 },
+  { name: 'Romanian deadlift', weight: 20, reps: 8 },
+];
+
+let seq = 0;
+
+function uid(): string {
+  seq += 1;
+  return `x${Date.now().toString(36)}${seq.toString(36)}`;
+}
+
+let selected: Workout | null = null;
+
+function todayStart(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function startOfDaysAgo(days: number): number {
+  const d = new Date(Date.now() - days * DAY_MS);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function dayLabel(ms: number): string {
+  if (ms === todayStart()) return 'Today';
+  if (ms === startOfDaysAgo(1)) return 'Yesterday';
+  return new Date(ms).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function kg(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+function volume(w: Workout): number {
+  return w.exercises.reduce((sum, ex) => sum + ex.weight * ex.reps, 0);
+}
+
+function totalReps(w: Workout): number {
+  return w.exercises.reduce((sum, ex) => sum + ex.reps, 0);
+}
+
+function toExercise(raw: unknown): Exercise | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const weight = Number(r.weight);
+  const reps = Number(r.reps);
+  return {
+    id: typeof r.id === 'string' ? r.id : uid(),
+    name: typeof r.name === 'string' && r.name !== '' ? r.name : 'Exercise',
+    weight: Number.isFinite(weight) ? weight : 0,
+    reps: Number.isFinite(reps) ? reps : 0,
+  };
+}
+
+function toWorkout(raw: unknown): Workout | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const date = Number(r.date);
+  if (!Number.isFinite(date)) return null;
+  const list = Array.isArray(r.exercises) ? r.exercises : [];
+  const exercises = list.map(toExercise).filter((ex): ex is Exercise => ex !== null);
+  return { id: typeof r.id === 'string' ? r.id : uid(), date, exercises };
+}
+
+function sortWorkouts(list: Workout[]): Workout[] {
+  return [...list].sort((a, b) => b.date - a.date);
+}
+
+async function loadWorkouts(): Promise<Workout[]> {
+  const raw = await storage.kv.get('workouts');
+  return sortWorkouts(Array.isArray(raw) ? raw.map(toWorkout).filter((w): w is Workout => w !== null) : []);
+}
+
+function openWorkout(workout: Workout) {
+  selected = workout;
+  nav.navigate('Detail');
+}
+
+// ── Log workout ──────────────────────────────────────────────────────────────
+function LogWorkout() {
+  const [date, setDate] = useState<number | null>(() => todayStart());
+  const [draft, setDraft] = useState<Exercise[]>(() => TEMPLATE.map((t) => ({ id: uid(), ...t })));
+  const [last, setLast] = useState<Workout | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const [weight, setWeight] = useState(20);
+  const [reps, setReps] = useState(8);
+
+  useEffect(() => {
+    let live = true;
+    loadWorkouts()
+      .then((list) => {
+        if (live) setLast(list.length > 0 ? list[0] : null);
+      })
+      .catch(() => {
+        if (live) toast('Couldn’t load your saved workouts.');
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const openAdd = () => {
+    setName('');
+    setWeight(20);
+    setReps(8);
+    setAdding(true);
+  };
+
+  const addExercise = () => {
+    const exercise = { id: uid(), name: name.trim(), weight, reps };
+    setDraft([...draft, exercise]);
+    setAdding(false);
+    toast(`${exercise.name} added`);
+  };
+
+  const openEdit = (exercise: Exercise) => {
+    setName(exercise.name);
+    setWeight(exercise.weight);
+    setReps(exercise.reps);
+    setOpenId(exercise.id);
+  };
+
+  const saveEdit = () => {
+    const id = openId;
+    if (id === null) return;
+    setDraft(draft.map((ex) => (ex.id === id ? { ...ex, name: name.trim() || ex.name, weight, reps } : ex)));
+    setOpenId(null);
+  };
+
+  const removeEdited = () => {
+    const id = openId;
+    if (id === null) return;
+    setDraft(draft.filter((ex) => ex.id !== id));
+    setOpenId(null);
+  };
+
+  const repeatLast = () => {
+    if (last === null) return;
+    setDraft(last.exercises.map((ex) => ({ ...ex, id: uid() })));
+    toast('Loaded your last session');
+  };
+
+  const save = () => {
+    const at = date === null ? todayStart() : date;
+    const workout: Workout = { id: uid(), date: at, exercises: draft };
+    loadWorkouts()
+      .then((list) => {
+        const next = sortWorkouts([...list.filter((w) => w.date !== at), workout]);
+        return storage.kv.set('workouts', next).then(() => next);
+      })
+      .then((next) => {
+        setLast(next.length > 0 ? next[0] : null);
+        toast(`Saved · ${draft.length} exercises on ${dayLabel(at).toLowerCase()}`);
+      })
+      .catch(() => toast('Couldn’t save that workout. Try again.'));
+  };
+
+  return (
+    <Screen title="Log workout" action={{ icon: 'plus', label: 'Add exercise', onPress: openAdd }}>
+      <Stack gap="lg">
+        <DateInput label="Workout date" value={date} onChange={setDate} />
+        <Stack gap="sm">
+          <Row justify="between">
+            <Text size="subtitle">Full body</Text>
+            <Text color="text-muted">{draft.length === 1 ? '1 exercise' : `${draft.length} exercises`}</Text>
+          </Row>
+          {draft.length === 0 ? (
+            <EmptyState icon="dumbbell" title="No exercises yet" hint="Tap + to add your first lift." />
+          ) : (
+            <List
+              items={draft}
+              keyBy="id"
+              renderItem={(exercise) => (
+                <ListItem
+                  title={exercise.name}
+                  subtitle={`${kg(exercise.weight)} kg × ${exercise.reps} reps`}
+                  trailing={`${kg(exercise.weight * exercise.reps)} kg`}
+                  icon="dumbbell"
+                  onPress={() => openEdit(exercise)}
+                />
+              )}
+            />
+          )}
+          <Text size="caption" color="text-muted">Tap an exercise to change its weight or reps.</Text>
+        </Stack>
+        <Button label="Save workout" icon="check" disabled={draft.length === 0} onPress={save} />
+        {last !== null ? (
+          <Button label="Repeat last workout" variant="secondary" icon="repeat" onPress={repeatLast} />
+        ) : null}
+        <Stack gap="xs">
+          {last !== null ? (
+            <Button
+              label={`Last session: ${dayLabel(last.date)} · ${last.exercises.length} exercises`}
+              variant="ghost"
+              icon="dumbbell"
+              onPress={() => openWorkout(last)}
+            />
+          ) : (
+            <Text size="caption" color="text-muted" align="center">Your saved sessions show up here.</Text>
+          )}
+          <Button label="View history" variant="ghost" icon="calendar-days" onPress={() => nav.navigate('History')} />
+        </Stack>
+      </Stack>
+
+      <Modal visible={adding} title="Add exercise" onClose={() => setAdding(false)}>
+        <Stack gap="lg">
+          <Picker
+            label="Common lifts"
+            options={COMMON_LIFTS}
+            value={COMMON_LIFTS.includes(name) ? name : ''}
+            placeholder="Pick a lift"
+            onChange={setName}
+          />
+          <TextInput label="Exercise" value={name} placeholder="Anything else" onChange={setName} />
+          <NumberInput label="Weight (kg)" value={weight} min={0} step={2.5} onChange={setWeight} />
+          <Stepper label="Reps" value={reps} min={1} max={50} onChange={setReps} />
+          <Button label="Add to workout" variant="secondary" icon="plus" disabled={name.trim() === ''} onPress={addExercise} />
+        </Stack>
+      </Modal>
+
+      <Modal visible={openId !== null} title="Edit exercise" onClose={() => setOpenId(null)}>
+        <Stack gap="lg">
+          <TextInput label="Exercise" value={name} onChange={setName} />
+          <NumberInput label="Weight (kg)" value={weight} min={0} step={2.5} onChange={setWeight} />
+          <Stepper label="Reps" value={reps} min={1} max={50} onChange={setReps} />
+          <Row>
+            <Button label="Remove" variant="danger" icon="trash-2" onPress={removeEdited} />
+            <Button label="Save" variant="secondary" icon="check" disabled={name.trim() === ''} onPress={saveEdit} />
+          </Row>
+        </Stack>
+      </Modal>
+    </Screen>
+  );
+}
+
+// ── History ──────────────────────────────────────────────────────────────────
+function History() {
+  const [workouts, setWorkouts] = useState<Workout[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    loadWorkouts()
+      .then((list) => {
+        if (!live) return;
+        setWorkouts(list);
+        setLoaded(true);
+      })
+      .catch(() => {
+        if (!live) return;
+        setLoaded(true);
+        toast('Couldn’t load your history.');
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  return (
+    <Screen title="History">
+      <Stack gap="lg">
+        {workouts.length === 0 ? (
+          loaded ? (
+            <EmptyState icon="calendar-days" title="No workouts yet" hint="Save a session and it appears here by date." />
+          ) : (
+            <Text color="text-muted">Loading your workouts…</Text>
+          )
+        ) : (
+          <List
+            items={workouts}
+            keyBy="id"
+            renderItem={(workout) => (
+              <ListItem
+                title={dayLabel(workout.date)}
+                subtitle={`${workout.exercises.length === 1 ? '1 exercise' : `${workout.exercises.length} exercises`} · ${kg(volume(workout))} kg`}
+                icon="dumbbell"
+                onPress={() => openWorkout(workout)}
+              />
+            )}
+          />
+        )}
+      </Stack>
+    </Screen>
+  );
+}
+
+// ── Workout detail ───────────────────────────────────────────────────────────
+function WorkoutDetail() {
+  if (selected === null) {
+    return (
+      <Screen title="Workout">
+        <Stack>
+          <Text color="text-muted">Open a date in History to see what you lifted.</Text>
+        </Stack>
+      </Screen>
+    );
+  }
+
+  const workout = selected;
+
+  const remove = () => {
+    loadWorkouts()
+      .then((list) => storage.kv.set('workouts', list.filter((w) => w.date !== workout.date)))
+      .then(() => {
+        toast('Workout deleted');
+        nav.back();
+      })
+      .catch(() => toast('Couldn’t delete that workout.'));
+  };
+
+  return (
+    <Screen title={dayLabel(workout.date)}>
+      <Stack gap="lg">
+        <Card>
+          <Stack>
+            <Row justify="between">
+              <Text color="text-muted">Exercises</Text>
+              <Text>{String(workout.exercises.length)}</Text>
+            </Row>
+            <Row justify="between">
+              <Text color="text-muted">Total reps</Text>
+              <Text>{String(totalReps(workout))}</Text>
+            </Row>
+            <Divider />
+            <Row justify="between">
+              <Text weight="semibold">Volume lifted</Text>
+              <Text size="title" color="primary">{`${kg(volume(workout))} kg`}</Text>
+            </Row>
+          </Stack>
+        </Card>
+
+        <List
+          items={workout.exercises}
+          keyBy="id"
+          renderItem={(exercise) => (
+            <ListItem
+              title={exercise.name}
+              subtitle={`${kg(exercise.weight)} kg × ${exercise.reps} reps`}
+              trailing={`${kg(exercise.weight * exercise.reps)} kg`}
+              icon="dumbbell"
+            />
+          )}
+        />
+
+        <Button label="Delete workout" variant="danger" icon="trash-2" onPress={remove} />
+      </Stack>
+    </Screen>
+  );
+}
+
+export default defineApp({
+  name: 'Workout Log',
+  initial: 'Log',
+  screens: { Log: LogWorkout, History, Detail: WorkoutDetail },
+  capabilities: ['storage'],
+  schema: SCHEMA,
+  tint: ['indigo', 'slate', 'violet'],
+  icon: 'dumbbell',
+});
