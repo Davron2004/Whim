@@ -96,7 +96,7 @@
 
 ## 5. On-device verification (attended)
 
-- [ ] 5.1 Android (headless emulator on a non-5554 port; `adb -s` every time). Build an offline release with `RUN_DATA_COPY_PROBE = true` and record the probe JSON:
+- [x] 5.1 Android (headless emulator on a non-5554 port; `adb -s` every time). Build an offline release with `RUN_DATA_COPY_PROBE = true` and record the probe JSON:
   - second-connection behaviour;
   - `getDbPath`;
   - snapshot while writing;
@@ -104,7 +104,7 @@
   - read-back after a kill.
 
   Record the results in the decision entry. If the second connection is refused, implement design D8's fallback before continuing. Turn the flag back off.
-- [ ] 5.2 iOS simulator: the same probe and the same record.
+- [x] 5.2 iOS simulator: the same probe and the same record.
 - [ ] 5.3 Android end to end with the product build:
   - make an app and save records and kv values;
   - "Make a copy" with "Copy the data" shows the data in the copy; add data on each side and confirm independence; delete the original and confirm the copy keeps its data;
