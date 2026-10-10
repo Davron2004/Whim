@@ -128,44 +128,78 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
     });
   }
 
-  await runFollowsConnectivityTests(h);
+  await runRequestEvidenceTests(h);
 }
 
 /** The network the launcher's fake server sits behind. */
 interface Network {
   /** False: every request fails at the network level, as with airplane mode on. */
   up: boolean;
+  /** True: the health route answers but every other request fails at the network level. */
+  requestsDown: boolean;
   /** The status the server answers a `/v1` request with while the network is up. */
   answer: number;
 }
 
+/** Runs `body` with `Date.now` under the test's control, so the foreground floor (ten seconds
+ *  between probes asked for by returns to the foreground) passes without waiting. Installed before
+ *  the launcher renders, because the loop reads the clock it finds then. */
+async function withSkewedClock(body: (pass: (ms: number) => void) => Promise<void>): Promise<void> {
+  const realNow = Date.now;
+  let skew = 0;
+  Date.now = () => realNow() + skew;
+  try {
+    await body((ms) => { skew += ms; });
+  } finally {
+    Date.now = realNow;
+  }
+}
+
 /** A consented launcher on Home with a healthy server whose startup probe has answered, so the
- *  session is online. `net` steers the network from then on. */
+ *  session is online. `net` steers the network from then on; `pass` lets time go by. */
 async function onlineLauncher(
-  run: (launcher: Launcher, net: Network) => Promise<void>,
+  run: (launcher: Launcher, net: Network, pass: (ms: number) => void) => Promise<void>,
 ): Promise<void> {
-  const net: Network = { up: true, answer: 503 };
+  const net: Network = { up: true, requestsDown: false, answer: 503 };
   const reach = <T,>(answer: () => T): T => {
     if (!net.up) throw new TypeError('Network request failed');
     return answer();
   };
-  await withLauncher(
+  await withSkewedClock((pass) => withLauncher(
     {
       health: () => reach(() => json({ service: 'whim-server' })),
-      server: () => reach(() => new Response('', { status: net.answer })),
+      server: () => {
+        if (net.requestsDown) throw new TypeError('Network request failed');
+        return reach(() => new Response('', { status: net.answer }));
+      },
     },
     async (launcher) => {
       await settle();
       try {
-        await run(launcher, net);
+        await run(launcher, net, pass);
       } finally {
         await TestRenderer.act(async () => setAppState('active'));
       }
     },
-  );
+  ));
 }
 
-const advance = (launcher: Launcher, delay: number) => TestRenderer.act(async () => launcher.clock.fire(delay));
+async function advance(launcher: Launcher, delay: number): Promise<void> {
+  await TestRenderer.act(async () => launcher.clock.fire(delay));
+  await settle();
+}
+
+/** Every timer the connectivity loop could have pending: the confirmation and the backoff steps. */
+const loopTimers = (launcher: Launcher) =>
+  [2000, 4000, 8000, 16000, 30000].reduce((sum, delay) => sum + launcher.clock.count(delay), 0);
+
+/** The app goes to the background and comes back `away` ms later. */
+async function leaveAndReturn(pass: (ms: number) => void, away: number): Promise<void> {
+  await TestRenderer.act(async () => setAppState('background'));
+  pass(away);
+  await TestRenderer.act(async () => setAppState('active'));
+  await settle();
+}
 
 async function typeAndContinue(launcher: Launcher): Promise<void> {
   const { tree } = launcher;
@@ -177,72 +211,32 @@ async function typeAndContinue(launcher: Launcher): Promise<void> {
   await settle();
 }
 
-async function runFollowsConnectivityTests(h: Harness): Promise<void> {
-  await h.test('Launcher: Home follows the connection going away and coming back while the app stays open', () =>
-    onlineLauncher(async (launcher, net) => {
-      const { tree, clock } = launcher;
-      h.eq(noticeCount(tree), 0, 'a reachable server shows no notice');
-      h.eq(clock.count(30000), 1, 'an online Home re-checks every 30s');
-
-      net.up = false;
-      await advance(launcher, 30000);
-      h.eq(noticeCount(tree), 0, 'one failed check is not an outage');
-      await advance(launcher, 2000);
-      h.eq(noticeCount(tree), 1, 'the second failed check shows the notice, with no restart and no navigation');
-
-      net.up = true;
-      await advance(launcher, 2000);
-      h.eq(noticeCount(tree), 0, 'the next successful probe clears it');
-      h.eq(clock.count(30000), 1, 'and Home goes back to its 30s re-check');
+async function runRequestEvidenceTests(h: Harness): Promise<void> {
+  await h.test('Launcher: an online Home with nothing happening schedules no probe', () =>
+    onlineLauncher(async (launcher) => {
+      h.eq(launcher.probes.length, 1, 'only the startup probe was sent');
+      h.eq(loopTimers(launcher), 0, 'and no timer waits to send another');
+      h.eq(noticeCount(launcher.tree), 0, 'a reachable server shows no notice');
     }));
 
-  await h.test('Launcher: nothing is probed while the app is in the background; coming back probes at once', () =>
-    onlineLauncher(async (launcher, net) => {
-      await TestRenderer.act(async () => setAppState('background'));
-      h.eq(launcher.clock.count(30000), 0, 'backgrounding cancels the 30s re-check');
-      const before = launcher.probes.length;
-
-      net.up = false;
-      await TestRenderer.act(async () => setAppState('active'));
-      await settle();
-      h.eq(launcher.probes.length - before, 1, 'the return sends exactly one probe');
-      h.eq(noticeCount(launcher.tree), 0, 'whose single failure is not yet an outage');
-      h.eq(launcher.clock.count(2000), 1, 'it is confirmed by the next probe');
-    }));
-
-  await h.test('Launcher: a screen other than Home does not re-check an online session', () =>
-    onlineLauncher(async ({ tree, clock }) => {
-      await press(createButton(tree));
-      h.eq(tree.root.findAllByType(DescribePage).length, 1, 'Describe is open');
-      h.eq(clock.count(30000), 0, 'no 30s re-check while Home is not showing');
-    }));
-
-  await h.test('Launcher: a plan request that gets no answer turns the offline notice on at once', () =>
+  await h.test('Launcher: a plan request that gets no answer, with the probe failing too, turns the offline notice on at once', () =>
     onlineLauncher(async (launcher, net) => {
       const probesBefore = launcher.probes.length;
       net.up = false;
       await typeAndContinue(launcher);
       h.eq(launcher.probes.length - probesBefore, 1, 'the failed request was confirmed by one probe');
-      h.eq(noticeCount(launcher.tree), 1, 'and the notice shows without waiting for the 30s interval');
+      h.eq(noticeCount(launcher.tree), 1, 'and the notice shows without waiting for anything else');
     }));
 
-  await h.test('Launcher: Home re-checks never bring back an update screen the person dismissed', () =>
-    withLauncher(
-      {
-        health: () => json({ ok: true, service: 'whim-server', minBuild: { ios: Number.MAX_SAFE_INTEGER, android: Number.MAX_SAFE_INTEGER } }),
-        server: () => new Response('', { status: 503 }),
-      },
-      async (launcher) => {
-        const { tree } = launcher;
-        await waitFor(() => tree.root.findAllByType(UpdateRequiredScreen).length === 1, 'the launch-time update screen');
-        await press(button(tree, COPY.updateNotNow));
-        const probesBefore = launcher.probes.length;
-        await advance(launcher, 30000);
-        await settle();
-        h.eq(launcher.probes.length - probesBefore, 1, 'Home did re-check');
-        h.eq(tree.root.findAllByType(UpdateRequiredScreen).length, 0, 'and the dismissed update screen stayed away');
-      },
-    ));
+  await h.test('Launcher: a plan request that gets no answer while the server answers the probe does not turn the notice on', () =>
+    onlineLauncher(async (launcher, net) => {
+      const probesBefore = launcher.probes.length;
+      net.requestsDown = true;
+      await typeAndContinue(launcher);
+      h.eq(launcher.probes.length - probesBefore, 1, 'the failed request was checked by one probe');
+      h.eq(noticeCount(launcher.tree), 0, 'a server that answers the probe is online');
+      h.eq(loopTimers(launcher), 0, 'and nothing is left scheduled');
+    }));
 
   await h.test('Launcher: a plan request the server answered with an error does not mean offline', () =>
     onlineLauncher(async (launcher, net) => {
@@ -252,4 +246,78 @@ async function runFollowsConnectivityTests(h: Harness): Promise<void> {
       h.eq(launcher.probes.length - probesBefore, 0, 'no probe was asked for');
       h.eq(noticeCount(launcher.tree), 0, 'a server that answered is online');
     }));
+
+  await h.test('Launcher: returns to the foreground probe at most once per ten seconds', () =>
+    onlineLauncher(async (launcher, _net, pass) => {
+      const before = launcher.probes.length;
+      await leaveAndReturn(pass, 4000);
+      h.eq(launcher.probes.length - before, 0, 'a return soon after the startup probe sends none');
+
+      await leaveAndReturn(pass, 7000);
+      h.eq(launcher.probes.length - before, 1, 'a return after the floor sends one');
+
+      await leaveAndReturn(pass, 3000);
+      await leaveAndReturn(pass, 3000);
+      h.eq(launcher.probes.length - before, 1, 'two more inside the floor send none');
+
+      await leaveAndReturn(pass, 5000);
+      h.eq(launcher.probes.length - before, 2, 'the next one after the floor sends another');
+    }));
+
+  await h.test('Launcher: one failed probe on return does not flash the notice; the second confirms it and a success clears it', () =>
+    onlineLauncher(async (launcher, net, pass) => {
+      net.up = false;
+      await leaveAndReturn(pass, 20000);
+      h.eq(noticeCount(launcher.tree), 0, 'one failed probe is not an outage');
+      h.eq(launcher.clock.count(2000), 1, 'it is confirmed after the first backoff step');
+
+      await advance(launcher, 2000);
+      h.eq(noticeCount(launcher.tree), 1, 'the second failure shows the notice');
+
+      await TestRenderer.act(async () => setAppState('background'));
+      h.eq(loopTimers(launcher), 0, 'no backoff probe waits in the background');
+
+      pass(20000);
+      net.up = true;
+      await TestRenderer.act(async () => setAppState('active'));
+      await settle();
+      h.eq(noticeCount(launcher.tree), 0, 'the return found the server and cleared the notice');
+      h.eq(loopTimers(launcher), 0, 'and nothing is left scheduled');
+    }));
+
+  await h.test('Launcher: offline in the foreground, the backoff probe clears the notice on its first success', () =>
+    onlineLauncher(async (launcher, net) => {
+      net.up = false;
+      await typeAndContinue(launcher);
+      h.eq(noticeCount(launcher.tree), 1, 'precondition: the notice is on');
+      h.eq(launcher.clock.count(2000), 1, 'the backoff probe is waiting');
+
+      net.up = true;
+      await advance(launcher, 2000);
+      await settle();
+      h.eq(launcher.probes.length, 3, 'the backoff probe was sent');
+      h.eq(noticeCount(launcher.tree), 0, 'and its success cleared the notice');
+      h.eq(loopTimers(launcher), 0, 'with nothing scheduled after it');
+    }));
+
+  await h.test('Launcher: a return to the foreground never brings back an update screen the person dismissed', () =>
+    outdatedBuildLauncher(async (launcher, pass) => {
+      const { tree } = launcher;
+      await waitFor(() => tree.root.findAllByType(UpdateRequiredScreen).length === 1, 'the launch-time update screen');
+      await press(button(tree, COPY.updateNotNow));
+      const probesBefore = launcher.probes.length;
+      await leaveAndReturn(pass, 20000);
+      h.eq(launcher.probes.length - probesBefore, 1, 'the return did probe');
+      h.eq(tree.root.findAllByType(UpdateRequiredScreen).length, 0, 'and the dismissed update screen stayed away');
+    }));
 }
+
+/** A launcher whose server demands a build newer than any installed one. */
+const outdatedBuildLauncher = (run: (launcher: Launcher, pass: (ms: number) => void) => Promise<void>) =>
+  withSkewedClock((pass) => withLauncher(
+    {
+      health: () => json({ ok: true, service: 'whim-server', minBuild: { ios: Number.MAX_SAFE_INTEGER, android: Number.MAX_SAFE_INTEGER } }),
+      server: () => new Response('', { status: 503 }),
+    },
+    (launcher) => run(launcher, pass),
+  ));

@@ -823,12 +823,13 @@ function LauncherShell({
     }
     let live = true;
     // The update check is a launch-time one: the first probe that reads a minimum decides it, so
-    // Home's later re-checks never bring back an update screen the person has dismissed.
+    // a later probe (a return to the foreground, a retry) never brings back an update screen the
+    // person has dismissed.
     let minimumRead = false;
     const loop = new ConnectivityLoop({
       probe: async () => {
         const health = await probeServerHealth(decision.baseUrl);
-        // A re-check that finds what the last one found leaves the screens as they are.
+        // A later probe that finds what the last one found leaves the screens as they are.
         if (live) {
           setLastProbe((prev) => (prev?.address === decision.baseUrl && prev.result === health.result
             ? prev
@@ -853,14 +854,12 @@ function LauncherShell({
     };
   }, [clientOptions, appInfo]);
 
-  // Where the loop may look, applied to every loop the effect above builds (it runs first): the
-  // app must be in the foreground, and an online session re-checks on its own only at Home.
+  // The loop touches the network only while the app is in the foreground, and a return to it
+  // re-checks. Applied to every loop the effect above builds (it runs first).
   const appForeground = useAppForeground();
-  const homeShowing = screen.kind === 'home';
   useEffect(() => {
     connectivityLoopRef.current?.setForeground(appForeground);
-    connectivityLoopRef.current?.setWatching(homeShowing);
-  }, [clientOptions, appInfo, appForeground, homeShowing]);
+  }, [clientOptions, appInfo, appForeground]);
 
   // A breadcrumb for every connectivity transition, the same device-observability discipline as
   // the `serverUrl`-keyed sink-config effect above: this session state has no screen surface of

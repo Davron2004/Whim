@@ -11,14 +11,18 @@
  * pure-logic-in-non-RN-siblings convention (`server-probe.ts`, `history-wait.ts`).
  */
 
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
+
 export type Connectivity = 'unknown' | 'checking' | 'online' | 'offline';
 
 const INITIAL_BACKOFF_MS = 2000;
 const MAX_BACKOFF_MS = 30000;
-/** How often Home re-checks while the session is online and the app is open: the backoff's cap, so
- *  the steady-state cost is the same one probe per 30s an unreachable server already gets. */
-const ONLINE_PROBE_INTERVAL_MS = MAX_BACKOFF_MS;
-/** Consecutive failed probes that turn an online session offline. One lost probe on a slow network
+/** The least time between two probes asked for by returns to the foreground. iOS flips the app
+ *  through inactive and back for the app switcher, Control Center and permission sheets, none of
+ *  which says anything about the network. */
+const FOREGROUND_PROBE_FLOOR_MS = 10000;
+/** Failed probes in a row that turn an online session offline. One lost probe on a slow network
  *  is not evidence of an outage; the startup path needs no such margin because there is no earlier
  *  success to contradict. The second probe follows after the first backoff step. */
 const OFFLINE_AFTER_FAILURES = 2;
@@ -46,15 +50,20 @@ const REAL_TIMERS: TimerLike = {
   clearTimeout: (handle) => clearTimeout(handle as Parameters<typeof clearTimeout>[0]),
 };
 
+type ProbeResult = 'verified' | 'unverified' | 'unreachable';
+
 export interface ConnectivityLoopOptions {
-  /** One probe attempt. Never rejects (`server-probe.ts`'s `probeServer` contract) —
+  /** One probe attempt. `probeServer` never rejects, but the caller's wrapper around it may — a
+   *  rejection is a probe that learned nothing (see `ConnectivityLoop`).
    *  `'verified'`/`'unverified'` both count as a successful probe for retry purposes (design
    *  decision 5); only `'unreachable'` schedules a retry. */
-  probe: () => Promise<'verified' | 'unverified' | 'unreachable'>;
+  probe: () => Promise<ProbeResult>;
   /** Published on every state transition — the screen's `setState` mirror. */
   publish: (state: Connectivity) => void;
   /** Defaults to the real global timers. */
   timers?: TimerLike;
+  /** Milliseconds clock for the foreground floor. Defaults to `Date.now`. */
+  now?: () => number;
 }
 
 /**
@@ -63,12 +72,17 @@ export interface ConnectivityLoopOptions {
  * clarify/generate call also invokes (spec "A real generation or rewrite call succeeding...");
  * `stop()` cancels any pending timer without publishing a new state (effect cleanup / unmount).
  *
- * Online is not terminal: while the app is in the foreground (`setForeground`) and Home is showing
- * (`setWatching`) an online session probes every 30s, and `noteNetworkFailure()` — a request of the
- * app's own that failed at the network level — asks for a probe straight away. A probe failure
- * turns an online session offline only on the second consecutive one; the session then follows the
- * same backoff as at startup until a probe or a real response proves the server is back. A backgrounded
- * app schedules nothing, and returning to the foreground probes at once.
+ * An online, idle session schedules nothing: a steady probe would keep the server from ever
+ * scaling to zero. Two things look again, both foreground only. `noteNetworkFailure()` — a
+ * request of the app's own that failed at the network level — asks for a probe straight away, and
+ * the probe's own failure confirms it. Returning to the foreground probes, at most once per
+ * `FOREGROUND_PROBE_FLOOR_MS`. A probe failure turns an online session offline only on the second
+ * in a row, the second following after the first backoff step; the session then follows the same
+ * backoff as at startup until a probe or a real response proves the server is back. Nothing is
+ * probed or scheduled in the background.
+ *
+ * A probe that rejects (the caller's wrapper threw) learned nothing: it is a failure while the
+ * session is starting or offline, so the backoff carries on, and not a failure while it is online.
  *
  * `start()` and `stop()` are idempotent. Owns at most one pending timer and at most one probe in
  * flight at a time: a probe asked for while one is running is that probe.
@@ -80,11 +94,12 @@ export class ConnectivityLoop {
   private pendingTimer: unknown = null;
   private stopped = false;
   private foreground = true;
-  private watching = false;
+  private lastProbeAt = Number.NEGATIVE_INFINITY;
   /** Bumped by every real response: a probe that started before it is older than that proof and
    *  must not turn the session offline. */
   private proofs = 0;
   private readonly timers: TimerLike;
+  private readonly now: () => number;
   /** The probe running right now, if any — also what `whenIdle()` awaits, so a suite driving a
    *  fake clock can await one full cycle (probe + resulting schedule/state) deterministically,
    *  without polling or a fixed flush budget. Real callers never need this: the loop is
@@ -93,6 +108,7 @@ export class ConnectivityLoop {
 
   constructor(private readonly opts: ConnectivityLoopOptions) {
     this.timers = opts.timers ?? REAL_TIMERS;
+    this.now = opts.now ?? Date.now;
   }
 
   /** Begins the checking → probe cycle. A no-op once stopped or already online. */
@@ -108,34 +124,32 @@ export class ConnectivityLoop {
     await this.probing;
   }
 
-  /** Whether the app is in the foreground. Nothing is probed or scheduled while it is not; coming
-   *  back probes at once, because whatever happened meanwhile is unknown. */
+  /** Whether the app is in the foreground. Nothing is probed or scheduled while it is not, and an
+   *  unconfirmed failure is forgotten. Coming back probes, because whatever happened meanwhile is
+   *  unknown, unless the last probe was under the floor ago; an offline session then keeps to its
+   *  backoff. */
   setForeground(foreground: boolean): void {
     if (this.stopped || this.foreground === foreground) return;
     this.foreground = foreground;
     if (!foreground) {
       this.clearPendingTimer();
+      this.failures = 0;
       return;
     }
-    if (this.state === 'online' || this.state === 'offline') this.probeNow();
-  }
-
-  /** Whether Home is showing — the only place an online session re-checks on its own. Offline
-   *  retries do not depend on it. */
-  setWatching(watching: boolean): void {
-    if (this.stopped || this.watching === watching) return;
-    this.watching = watching;
-    if (this.state === 'online' && this.probing === null) this.schedule();
+    if (this.state !== 'online' && this.state !== 'offline') return;
+    if (this.now() - this.lastProbeAt >= FOREGROUND_PROBE_FLOOR_MS) this.probeNow();
+    else this.schedule();
   }
 
   /** A request of the app's own failed at the network level (no answer from a server). One such
    *  failure plus one failed probe is as much evidence as two failed probes, so the probe runs now
-   *  and a single failure of it turns the session offline. Ignored unless the session is online:
-   *  startup and offline are already probing. */
+   *  and a single failure of it turns the session offline. Ignored unless the session is online
+   *  and in the foreground: startup and offline are already probing, and a request that fails in
+   *  the background says nothing the return to the foreground will not check. */
   noteNetworkFailure(): void {
-    if (this.stopped || this.state !== 'online') return;
+    if (this.stopped || this.state !== 'online' || !this.foreground) return;
     this.failures = OFFLINE_AFTER_FAILURES - 1;
-    if (this.foreground) this.probeNow();
+    this.probeNow();
   }
 
   /** Any successful server response — the dedicated probe, or a real clarify/generate call (spec
@@ -158,20 +172,36 @@ export class ConnectivityLoop {
   private probeNow(): void {
     if (this.probing) return;
     this.clearPendingTimer();
-    const proofs = this.proofs;
-    this.probing = this.opts.probe().then((result) => {
-      this.probing = null;
-      this.settle(result, proofs);
+    this.lastProbeAt = this.now();
+    const running: Promise<void> = this.runProbe().finally(() => {
+      if (this.probing === running) this.probing = null;
     });
+    this.probing = running;
   }
 
-  private settle(result: 'verified' | 'unverified' | 'unreachable', proofs: number): void {
+  private async runProbe(): Promise<void> {
+    const proofs = this.proofs;
+    let result: ProbeResult | null = null;
+    try {
+      result = await this.opts.probe();
+    } catch (e) {
+      // The probe learned nothing; `settle` decides what that means for the session's state.
+      log.warn(CHANNELS.app, 'connectivity probe failed to run', { detail: e instanceof Error ? e.message : String(e) });
+    }
+    this.settle(result, proofs);
+  }
+
+  private settle(result: ProbeResult | null, proofs: number): void {
     if (this.stopped) return;
     if (proofs !== this.proofs) {
       this.schedule();
       return;
     }
-    if (result !== 'unreachable') {
+    if (result === null && this.state === 'online') {
+      this.failures = 0;
+      return;
+    }
+    if (result === 'verified' || result === 'unverified') {
       this.failures = 0;
       this.goOnline();
       return;
@@ -192,25 +222,25 @@ export class ConnectivityLoop {
     this.clearPendingTimer();
     this.attempt = 0;
     this.setState('online');
-    this.schedule();
   }
 
-  /** The next probe, by what the session is: offline backs off; online re-checks quickly while a
-   *  failure is unconfirmed and otherwise every 30s, but only for a watched Home. */
+  /** The next probe, foreground only: an offline session backs off, and an online one with an
+   *  unconfirmed failure confirms it after the first backoff step. An online session with nothing
+   *  to confirm schedules nothing. */
   private schedule(): void {
     this.clearPendingTimer();
     if (this.stopped || !this.foreground) return;
     let delay: number;
     if (this.state === 'offline') {
       delay = backoffDelayMs(this.attempt);
-      this.attempt += 1;
-    } else if (this.state === 'online' && (this.watching || this.failures > 0)) {
-      delay = this.failures > 0 ? backoffDelayMs(0) : ONLINE_PROBE_INTERVAL_MS;
+    } else if (this.state === 'online' && this.failures > 0) {
+      delay = backoffDelayMs(0);
     } else {
       return;
     }
     this.pendingTimer = this.timers.setTimeout(() => {
       this.pendingTimer = null;
+      if (this.state === 'offline') this.attempt += 1;
       this.probeNow();
     }, delay);
   }

@@ -71,6 +71,7 @@ None. The design system already has a home in `sdk-design-system`; the shell par
 - `content-reporting`: Report is a pushed screen.
 - `privacy-settings`: the phone ID moves under Advanced.
 - `app-icon-and-launch`: the ember mark, light and dark launch backgrounds from the tokens.
+- `server-connectivity`: the offline notice turns on by request evidence and a foreground return, no steady probe.
 
 ## Impact
 
