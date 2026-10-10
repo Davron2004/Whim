@@ -110,8 +110,16 @@ export interface ObservationState {
   paintAtMs: number | null;
   /** `Date.now()` of the most recent FrameEvent, CDP exception, or console message — the
    *  quiet-window heuristic's activity clock (design D2: "no new paint/console/telemetry
-   *  activity"). Never itself inspected for diagnostic content. */
+   *  activity"), plus every capability call the host dispatched and every reply it returned
+   *  (`noteActivity`). Never itself inspected for diagnostic content. */
   lastActivityAtMs: number;
+}
+
+/** Records host-side activity that no observer listener sees by itself (a capability call the host
+ *  dispatched, the reply it returned) on the quiet window's clock. The state stays the one owner of
+ *  `lastActivityAtMs`; a caller holds this function's effect, never the observers. */
+export function noteActivity(state: ObservationState): void {
+  state.lastActivityAtMs = Date.now();
 }
 
 export interface AttachedObservers {

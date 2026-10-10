@@ -15,10 +15,10 @@ import type { StorageErrorKind } from '../src/host/storage-engine/contract';
 import { DIAGNOSTIC_KINDS, type DiagnosticKind } from '../checks/contract';
 import { runStaticChecks } from '../checks';
 import { wireCapabilityBridge, type CapabilityTraceEntry } from './capability';
-import { attachObserversEarly, awaitMount, finalizeContainmentVerdict, mergeBudgets, withTotalBudget, type EarlyObservers } from './observe';
+import { attachObserversEarly, awaitMount, finalizeContainmentVerdict, mergeBudgets, noteActivity, withTotalBudget, type EarlyObservers } from './observe';
 import type { RunContext, SynthRunSession } from './session';
 import { sweepApp } from './sweep';
-import type { EgressBlockedTraceEntry, RunCandidate, RunOptions, RunReport, RuntimeDiagnostic } from './contract';
+import type { EgressBlockedTraceEntry, RunCandidate, RunOptions, RunReport, RuntimeDiagnostic, SweepCounts } from './contract';
 
 const CLOSED_KINDS: readonly string[] = DIAGNOSTIC_KINDS;
 
@@ -117,9 +117,15 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
       manifest: { capabilities: manifest?.capabilities ?? [] },
       schemaArtifact: manifest?.schema as AppRecord['schemaArtifact'],
     };
-    const wiring = wireCapabilityBridge(appRecord);
-
+    // Declared before the wiring so its activity callback can reach the observers once they exist
+    // (they attach in `beforeNavigate`, ahead of any capability call).
     let early: EarlyObservers | undefined;
+    const wiring = wireCapabilityBridge(appRecord, {
+      onActivity: () => {
+        if (early) noteActivity(early.state);
+      },
+    });
+
     const { ctx, dispose } = await session.openRun(source, {
       ...opts,
       appId,
@@ -157,6 +163,8 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
       let sweepMs = 0;
       let declared: string[] = [];
       let visited: string[] = [];
+      let coldMounted: string[] = [];
+      let sweepCounts: SweepCounts = { actions: 0, blocked: 0, failedActions: 0 };
       let sweepTruncated = false;
       let perScreenMs: Record<string, number> = {};
 
@@ -172,6 +180,8 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
           sweepMs = Date.now() - sweepStart;
           declared = sweep.declaredScreens;
           visited = sweep.visitedScreens;
+          coldMounted = sweep.coldMountedScreens;
+          sweepCounts = sweep.sweep;
           sweepTruncated = sweep.truncated;
           perScreenMs = sweep.perScreenMs;
           diagnostics.push(...sweep.diagnostics);
@@ -229,7 +239,8 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
         },
         // Read once, here: refusals recorded after this point belong to a report already built.
         trace: ctx.egress.count > 0 ? [...wiring.trace, egressBlockedEntry(ctx)] : wiring.trace,
-        screens: { declared, visited },
+        screens: { declared, visited, coldMounted },
+        sweep: sweepCounts,
         budgets,
       };
     } catch (err) {

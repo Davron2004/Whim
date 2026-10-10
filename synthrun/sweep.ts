@@ -21,11 +21,11 @@
  * coverage — design D1) and delivers it via `__whimControl.reinject({reset:true, bundleSource})`
  * — a fresh realm, never in-place re-delivery (T7).
  */
-import type { Frame, Page } from 'playwright';
-import type { RunBudgets } from './contract';
+import type { Frame, Locator, Page } from 'playwright';
+import type { RunBudgets, SweepCounts } from './contract';
 import type { RunContext } from './session';
 import { buildCandidateSource } from './builder';
-import { type AttachedObservers, awaitQuiet } from './observe';
+import { type AttachedObservers, awaitQuiet, noteActivity } from './observe';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fingerprints (spec: "(component kind, label/accessible text, DOM path)")
@@ -35,6 +35,10 @@ export type SweepElementKind =
   | 'button'
   | 'text-input'
   | 'number-input'
+  | 'select'
+  | 'date-input'
+  | 'time-input'
+  | 'datetime-input'
   | 'switch'
   | 'checkbox'
   | 'slider'
@@ -75,8 +79,13 @@ export interface SweepResult {
   truncated: boolean;
   diagnostics: SweepDiagnostic[];
   perScreenMs: Record<string, number>;
-  /** Every fingerprint acted on, in execution order — the determinism/audit trail. */
+  /** Every fingerprint acted on, in execution order — the determinism/audit trail. A Modal
+   *  backdrop dismissed a second time appears twice. */
   actionsLog: SweptElement[];
+  /** The declared screens only the cold-mount pass covered: a subset of `visitedScreens`. */
+  coldMountedScreens: string[];
+  /** Whole-run counts: actions taken, fingerprints never acted on, actions that failed. */
+  sweep: SweepCounts;
 }
 
 export const DEFAULT_MAX_ACTIONS_PER_SCREEN = 40;
@@ -221,6 +230,8 @@ export async function awaitSettledScreen(frame: Frame, timeoutMs = SETTLE_TIMEOU
  *  to this SDK's actual DOM shapes since none of Card/ListItem/Switch/Checkbox/Slider expose a
  *  native ARIA role a div gets for free):
  *   - `input[type=text|number]`         → text-input / number-input (native `type` attribute)
+ *   - `select` / `input[type=date|time|datetime-local]` → select / date-input / time-input / datetime-input
+ *                                          (a Picker's and a DateInput's transparent native control)
  *   - `[role=switch|checkbox]`          → switch / checkbox (Switch/Checkbox set these explicitly)
  *   - `button:not([disabled])`          → button (covers plain `Button` AND every
  *                                          `SegmentedControl` option — each is its own fingerprint,
@@ -299,6 +310,21 @@ export async function enumerateInteractiveElements(frame: Frame): Promise<SweptE
     root.querySelectorAll('input[type="number"]').forEach((el) => {
       push('number-input', fieldLabel(el) || '(number)', el);
     });
+    // A Picker's transparent native <select> and a DateInput's native input lie over a field box
+    // that is itself a plain div (no cursor, not fixed), so the box is never a fingerprint of its
+    // own: only the native control is.
+    root.querySelectorAll('select:not([disabled])').forEach((el) => {
+      push('select', el.getAttribute('aria-label') || fieldLabel(el) || '(select)', el);
+    });
+    root.querySelectorAll('input[type="date"]').forEach((el) => {
+      push('date-input', el.getAttribute('aria-label') || fieldLabel(el) || '(date)', el);
+    });
+    root.querySelectorAll('input[type="time"]').forEach((el) => {
+      push('time-input', el.getAttribute('aria-label') || fieldLabel(el) || '(time)', el);
+    });
+    root.querySelectorAll('input[type="datetime-local"]').forEach((el) => {
+      push('datetime-input', el.getAttribute('aria-label') || fieldLabel(el) || '(datetime)', el);
+    });
     root.querySelectorAll('[role="switch"]').forEach((el) => push('switch', textOf(el) || 'switch', el));
     root.querySelectorAll('[role="checkbox"]').forEach((el) => push('checkbox', textOf(el) || 'checkbox', el));
     root.querySelectorAll('button:not([disabled])').forEach((el) => push('button', textOf(el) || '(button)', el));
@@ -317,47 +343,188 @@ export async function enumerateInteractiveElements(frame: Frame): Promise<SweptE
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Hit test (spec: "The sweep acts only on an element that can receive the action")
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Where on a `Modal` backdrop the dismissing click lands, from its top-left corner — away from
+ *  the sheet (anchored `justifyContent:'flex-end'`, so the top-left corner is backdrop-only). The
+ *  hit test probes the same point the click will use. */
+const BACKDROP_CLICK_OFFSET_PX = 5;
+/** How far in from each end of a `Slider`'s track the low and high clicks land. */
+const SLIDER_EDGE_PX = 2;
+
+interface HitProbe {
+  items: { domPath: string; kind: SweepElementKind }[];
+  backdropOffset: number;
+  sliderEdge: number;
+}
+
+/** Waits, up to `capMs`, until no finite animation is running in the candidate's frame. The quiet
+ *  window cannot see motion: a Modal's sheet is still sliding in when the window closes, and
+ *  testing its controls then reads them as covered or off screen, so the backdrop (which a fixed
+ *  layer lets pass at once) would be dismissed before they are used. An animation that never ends
+ *  (a spinner) is not waited for, and the cap bounds the rest. */
+async function awaitMotionStill(frame: Frame, capMs: number): Promise<void> {
+  const deadline = Date.now() + capMs;
+  while (Date.now() < deadline) {
+    const moving = await frame
+      .evaluate((): number => {
+        interface Animation {
+          playState: string;
+          effect: { getComputedTiming(): { iterations: number } } | null;
+        }
+        const doc = (globalThis as unknown as { document: { getAnimations(): Animation[] } }).document;
+        return doc.getAnimations().filter((a) => a.playState !== 'finished' && a.effect !== null && Number.isFinite(a.effect.getComputedTiming().iterations)).length;
+      })
+      .catch(() => 0);
+    if (moving === 0) return;
+    await sleep(30);
+  }
+}
+
+/** Index of the first of `candidates` (in the given order) that can receive its action right now,
+ *  or -1. Runs entirely inside the candidate's frame: the element is scrolled into view, then it
+ *  passes only if it has a non-empty box, is not `disabled`, has no ancestor-or-self with
+ *  `aria-hidden="true"`, and the topmost element at every point the action will use is the
+ *  element itself or one of its descendants. No DOM lib types exist here — minimal shapes only. */
+async function firstActionableIndex(frame: Frame, candidates: SweptElement[]): Promise<number> {
+  const probe: HitProbe = {
+    items: candidates.map((el) => ({ domPath: el.domPath, kind: el.kind })),
+    backdropOffset: BACKDROP_CLICK_OFFSET_PX,
+    sliderEdge: SLIDER_EDGE_PX,
+  };
+  return frame.evaluate((arg: HitProbe): number => {
+    interface Rect {
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+    }
+    interface DomNode {
+      disabled?: boolean;
+      getBoundingClientRect(): Rect;
+      scrollIntoView(options: { block: string; inline: string; behavior: string }): void;
+      closest(selector: string): DomNode | null;
+      contains(other: unknown): boolean;
+    }
+    interface DomDocument {
+      querySelector(selector: string): DomNode | null;
+      elementFromPoint(x: number, y: number): unknown;
+    }
+    const doc = (globalThis as unknown as { document: DomDocument }).document;
+    function pointsOf(kind: SweepElementKind, r: Rect): [number, number][] {
+      if (kind === 'modal-backdrop') return [[r.left + arg.backdropOffset, r.top + arg.backdropOffset]];
+      if (kind === 'slider') {
+        const y = r.top + Math.max(1, r.height / 2);
+        return [
+          [r.left + arg.sliderEdge, y],
+          [r.left + Math.max(arg.sliderEdge, r.width - arg.sliderEdge), y],
+        ];
+      }
+      return [[r.left + r.width / 2, r.top + r.height / 2]];
+    }
+    function receives(item: HitProbe['items'][number]): boolean {
+      const el = doc.querySelector(item.domPath);
+      if (!el) return false;
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0 || el.disabled === true) return false;
+      if (el.closest('[aria-hidden="true"]')) return false;
+      return pointsOf(item.kind, rect).every(([x, y]) => {
+        const hit = doc.elementFromPoint(x, y);
+        return hit === el || el.contains(hit);
+      });
+    }
+    return arg.items.findIndex(receives);
+  }, probe);
+}
+
+async function firstActionable(frame: Frame, candidates: SweptElement[]): Promise<SweptElement | null> {
+  if (candidates.length === 0) return null;
+  const index = await firstActionableIndex(frame, candidates);
+  return index >= 0 ? candidates[index] : null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Per-fingerprint action recipes (spec: tap / type / toggle-both / select-each / drag-both /
 // modal-inside-first-backdrop-last)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ACTION_TIMEOUT_MS = 3000;
 
+/** The fixed values typed into a DateInput's native input, in that input's own value format. */
+const CANONICAL_DATE = '2026-01-15';
+const CANONICAL_TIME = '09:30';
+const CANONICAL_DATETIME = '2026-01-15T09:30';
+
+/** Chooses a `Picker`'s first enabled option with a non-empty value that is not already selected,
+ *  through the driver's select-option call: a click on the transparent native `<select>` only
+ *  opens a popup the page cannot see. A select with no such option is left alone. */
+async function chooseFirstOption(locator: Locator): Promise<void> {
+  interface SelectNode {
+    options: ArrayLike<{ disabled: boolean; selected: boolean; value: string }>;
+  }
+  const value = await locator.evaluate(
+    (select: unknown): string | null => {
+      const { options } = select as SelectNode;
+      for (let i = 0; i < options.length; i += 1) {
+        if (!options[i].disabled && !options[i].selected && options[i].value !== '') return options[i].value;
+      }
+      return null;
+    },
+    undefined,
+    { timeout: ACTION_TIMEOUT_MS },
+  );
+  if (value !== null) await locator.selectOption({ value }, { timeout: ACTION_TIMEOUT_MS });
+}
+
+async function clickSliderEnds(locator: Locator): Promise<void> {
+  const box = await locator.boundingBox({ timeout: ACTION_TIMEOUT_MS });
+  if (!box) throw new Error('synthrun sweep: slider has no box');
+  const y = Math.max(1, box.height / 2);
+  await locator.click({ position: { x: SLIDER_EDGE_PX, y }, timeout: ACTION_TIMEOUT_MS });
+  await locator.click({ position: { x: Math.max(SLIDER_EDGE_PX, box.width - SLIDER_EDGE_PX), y }, timeout: ACTION_TIMEOUT_MS });
+}
+
+/** Performs the recipe for one fingerprint; throws when the driver cannot complete it. */
 async function performAction(frame: Frame, el: SweptElement, opts: ResolvedSweepOptions): Promise<void> {
   const locator = frame.locator(el.domPath);
   switch (el.kind) {
     case 'text-input':
-      await locator.fill(opts.canonicalText, { timeout: ACTION_TIMEOUT_MS }).catch(() => {});
+      await locator.fill(opts.canonicalText, { timeout: ACTION_TIMEOUT_MS });
       return;
     case 'number-input':
-      await locator.fill(String(opts.canonicalNumber), { timeout: ACTION_TIMEOUT_MS }).catch(() => {});
+      await locator.fill(String(opts.canonicalNumber), { timeout: ACTION_TIMEOUT_MS });
+      return;
+    case 'date-input':
+      await locator.fill(CANONICAL_DATE, { timeout: ACTION_TIMEOUT_MS });
+      return;
+    case 'time-input':
+      await locator.fill(CANONICAL_TIME, { timeout: ACTION_TIMEOUT_MS });
+      return;
+    case 'datetime-input':
+      await locator.fill(CANONICAL_DATETIME, { timeout: ACTION_TIMEOUT_MS });
+      return;
+    case 'select':
+      await chooseFirstOption(locator);
       return;
     case 'switch':
     case 'checkbox':
       // toggle on, then off (spec: "toggle Switch/Checkbox on and off") — same DOM node, its
       // `aria-checked` flips; this stays ONE fingerprint-visit, not two.
-      await locator.click({ timeout: ACTION_TIMEOUT_MS }).catch(() => {});
-      await locator.click({ timeout: ACTION_TIMEOUT_MS }).catch(() => {});
+      await locator.click({ timeout: ACTION_TIMEOUT_MS });
+      await locator.click({ timeout: ACTION_TIMEOUT_MS });
       return;
-    case 'slider': {
-      const box = await locator.boundingBox().catch(() => null);
-      if (box) {
-        const y = Math.max(1, box.height / 2);
-        await locator.click({ position: { x: 2, y }, timeout: ACTION_TIMEOUT_MS }).catch(() => {});
-        await locator.click({ position: { x: Math.max(2, box.width - 2), y }, timeout: ACTION_TIMEOUT_MS }).catch(() => {});
-      }
+    case 'slider':
+      await clickSliderEnds(locator);
       return;
-    }
     case 'modal-backdrop':
-      // Clicked only when it is the LAST unvisited fingerprint on screen (see `pickNext` below)
-      // — "interact inside a Modal first, backdrop-dismiss last". Offset away from the sheet
-      // (anchored `justifyContent:'flex-end'`, so the top-left corner is backdrop-only).
-      await locator.click({ position: { x: 5, y: 5 }, timeout: ACTION_TIMEOUT_MS }).catch(() => {});
+      await locator.click({ position: { x: BACKDROP_CLICK_OFFSET_PX, y: BACKDROP_CLICK_OFFSET_PX }, timeout: ACTION_TIMEOUT_MS });
       return;
     case 'button':
     case 'pressable':
     default:
-      await locator.click({ timeout: ACTION_TIMEOUT_MS }).catch(() => {});
+      await locator.click({ timeout: ACTION_TIMEOUT_MS });
   }
 }
 
@@ -369,16 +536,41 @@ function fingerprintKey(el: SweptElement): string {
   return `${el.kind}::${el.label}::${el.domPath}`;
 }
 
-function sortedUnvisited(elements: SweptElement[], visited: Set<string>): SweptElement[] {
-  return elements.filter((el) => !visited.has(fingerprintKey(el))).sort((a, b) => fingerprintKey(a).localeCompare(fingerprintKey(b)));
+function byFingerprint(a: SweptElement, b: SweptElement): number {
+  return fingerprintKey(a).localeCompare(fingerprintKey(b));
 }
 
-/** Modal-aware pick (design D1): prefer any non-backdrop fingerprint; only pick a backdrop when
- *  it is the sole unvisited fingerprint left — realizes "interact inside first, dismiss last"
- *  without needing to know DOM nesting. */
-function pickNext(unvisited: SweptElement[]): SweptElement {
-  const nonBackdrop = unvisited.filter((el) => el.kind !== 'modal-backdrop');
-  return nonBackdrop.length > 0 ? nonBackdrop[0] : unvisited[0];
+function sortedUnvisited(elements: SweptElement[], visited: Set<string>): SweptElement[] {
+  return elements.filter((el) => !visited.has(fingerprintKey(el))).sort(byFingerprint);
+}
+
+/** The order unvisited fingerprints are TRIED in (design D2): the sorted fingerprint order with a
+ *  `Modal` backdrop after every other kind, so a Modal's own controls are used before it is
+ *  dismissed. A fingerprint tried and found unable to receive its action is skipped for this
+ *  pick only (see `pickNext`), never visited. */
+function orderUnvisited(elements: SweptElement[], visited: Set<string>): SweptElement[] {
+  const unvisited = sortedUnvisited(elements, visited);
+  return [...unvisited.filter((el) => el.kind !== 'modal-backdrop'), ...unvisited.filter((el) => el.kind === 'modal-backdrop')];
+}
+
+/** What the whole run has seen and done, for the report's counts. Fingerprints are scoped by the
+ *  screen they were enumerated on: two screens can render the same kind, label and path. */
+interface SweepLedger {
+  seen: Set<string>;
+  acted: Set<string>;
+  failedActions: number;
+}
+
+function newLedger(): SweepLedger {
+  return { seen: new Set<string>(), acted: new Set<string>(), failedActions: 0 };
+}
+
+function ledgerKey(screenName: string, el: SweptElement): string {
+  return `${screenName}::${fingerprintKey(el)}`;
+}
+
+function noteSeen(ledger: SweepLedger, screenName: string, elements: SweptElement[]): void {
+  for (const el of elements) ledger.seen.add(ledgerKey(screenName, el));
 }
 
 interface ScreenSweepOutcome {
@@ -395,15 +587,57 @@ interface ScreenSweepOutcome {
 interface ScreenProgress {
   visited: Set<string>;
   actions: number;
+  /** Fingerprints acted on since the last `Modal` backdrop dismissal on this screen (all of them,
+   *  before the first one). A backdrop already visited may be dismissed again only when this is
+   *  above zero. */
+  actedSinceDismissal: number;
 }
 
 function newScreenProgress(): ScreenProgress {
-  return { visited: new Set<string>(), actions: 0 };
+  return { visited: new Set<string>(), actions: 0, actedSinceDismissal: 0 };
+}
+
+/** The next fingerprint to act on, or `null` when this screen's sweep is over (design D2).
+ *
+ *  The first unvisited fingerprint, in `orderUnvisited` order, that can receive its action. One
+ *  that cannot is deferred: it is neither visited nor counted, so a later pick takes it once it
+ *  can (a control under an open Modal, after the Modal is dismissed).
+ *
+ *  When unvisited fingerprints remain and none can, a `Modal` backdrop that was already visited
+ *  may be dismissed once more — a second trigger can reopen a Modal at the same path — but only if
+ *  something was acted on since the previous dismissal. Otherwise the screen is over.
+ *
+ *  Why every loop around this ends: each pick is either an unvisited fingerprint (the visited set
+ *  grows), a re-dismissal (which needs a fresh action since the last one, so re-dismissals never
+ *  outnumber fresh actions), or `null`; and every pick spends one of the screen's
+ *  `maxActionsPerScreen` actions. */
+async function pickNext(frame: Frame, elements: SweptElement[], progress: ScreenProgress): Promise<SweptElement | null> {
+  const ordered = orderUnvisited(elements, progress.visited);
+  if (ordered.length === 0) return null;
+  const pick = await firstActionable(frame, ordered);
+  if (pick !== null || progress.actedSinceDismissal === 0) return pick;
+  const dismissed = elements.filter((el) => el.kind === 'modal-backdrop' && progress.visited.has(fingerprintKey(el))).sort(byFingerprint);
+  return firstActionable(frame, dismissed);
+}
+
+/** Acts on `el` and books it: a recipe the driver could not complete is a failed action (counted,
+ *  never discarded) and the fingerprint is still visited, so the sweep always progresses. */
+async function act(frame: Frame, screenName: string, el: SweptElement, progress: ScreenProgress, ledger: SweepLedger, opts: ResolvedSweepOptions): Promise<void> {
+  const failed = await performAction(frame, el, opts).then(
+    () => false,
+    () => true,
+  );
+  if (failed) ledger.failedActions += 1;
+  progress.visited.add(fingerprintKey(el));
+  ledger.acted.add(ledgerKey(screenName, el));
+  progress.actions += 1;
+  progress.actedSinceDismissal = el.kind === 'modal-backdrop' ? 0 : progress.actedSinceDismissal + 1;
 }
 
 /** Sweeps ONE currently-rendered screen: sorted-fingerprint order, one action per fingerprint,
- *  re-enumerate after every action, stop on no-unvisited / the per-screen cap / a detected
- *  navigation (spec requirement + design D1). `progress` carries the screen's earlier visits. */
+ *  re-enumerate after every action, stop on no-actionable-fingerprint / the per-screen cap / a
+ *  detected navigation (spec requirement + design D1/D2). `progress` carries the screen's earlier
+ *  visits. */
 async function sweepOneScreen(
   frame: Frame,
   screenName: string,
@@ -411,21 +645,25 @@ async function sweepOneScreen(
   obs: AttachedObservers,
   budgets: RunBudgets,
   opts: ResolvedSweepOptions,
+  ledger: SweepLedger,
 ): Promise<ScreenSweepOutcome> {
   const { visited } = progress;
   const actionsLog: SweptElement[] = [];
 
   while (progress.actions < opts.maxActionsPerScreen) {
+    await awaitMotionStill(frame, budgets.actionHardCapMs);
     const elements = await enumerateInteractiveElements(frame);
-    const unvisited = sortedUnvisited(elements, visited);
-    if (unvisited.length === 0) return { actionsLog, truncated: false, navigatedTo: null };
+    noteSeen(ledger, screenName, elements);
+    const next = await pickNext(frame, elements, progress);
+    if (next === null) return { actionsLog, truncated: false, navigatedTo: null };
 
-    const next = pickNext(unvisited);
-    await performAction(frame, next, opts);
-    visited.add(fingerprintKey(next));
+    await act(frame, screenName, next, progress, ledger, opts);
     actionsLog.push(next);
-    progress.actions += 1;
 
+    // The action is itself activity: what it sets going (a frame, a storage call) reaches the host
+    // after the driver call returns, and a window measured only from earlier activity can close
+    // before any of it has arrived.
+    noteActivity(obs.state);
     await awaitQuiet(obs, budgets);
     const info = await awaitSettledScreen(frame).catch((): ScreenInfo => ({ declared: [], mounted: [screenName], current: screenName }));
     if (info.current && info.current !== screenName) {
@@ -434,6 +672,7 @@ async function sweepOneScreen(
   }
 
   const remaining = await enumerateInteractiveElements(frame).catch(() => [] as SweptElement[]);
+  noteSeen(ledger, screenName, remaining);
   const truncated = sortedUnvisited(remaining, visited).length > 0;
   return { actionsLog, truncated, navigatedTo: null };
 }
@@ -508,7 +747,9 @@ async function coldMountScreen(ctx: RunContext, obs: AttachedObservers, source: 
     ).__whimControl.reinject({ reset: true, bundleSource: bundleJs });
   }, js);
   await waitForNewMount(obs, sinceEventCount, budgets.mountBudgetMs);
-  return findAppFrame(ctx.page);
+  const frame = await findAppFrame(ctx.page);
+  await awaitQuiet(obs, budgets);
+  return frame;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -521,6 +762,7 @@ interface SweepTally {
   perScreenMs: Record<string, number>;
   actionsLog: SweptElement[];
   truncated: boolean;
+  ledger: SweepLedger;
 }
 
 /** The nav-reachable live sweep, from the screen the app mounted on (see `sweepApp`). */
@@ -542,7 +784,7 @@ async function sweepLive(
     const screenProgress = progress.get(name) ?? newScreenProgress();
     progress.set(name, screenProgress);
     const start = Date.now();
-    const outcome = await sweepOneScreen(frame, name, screenProgress, obs, budgets, opts);
+    const outcome = await sweepOneScreen(frame, name, screenProgress, obs, budgets, opts, tally.ledger);
     tally.perScreenMs[name] = (tally.perScreenMs[name] ?? 0) + Date.now() - start;
     tally.actionsLog.push(...outcome.actionsLog);
     if (outcome.truncated) tally.truncated = true;
@@ -573,15 +815,19 @@ async function sweepLive(
  */
 export async function sweepApp(ctx: RunContext, obs: AttachedObservers, source: string, budgets: RunBudgets, opts?: SweepOptions): Promise<SweepResult> {
   const resolved = resolveOptions(opts);
-  const tally: SweepTally = { visited: new Set<string>(), perScreenMs: {}, actionsLog: [], truncated: false };
+  const tally: SweepTally = { visited: new Set<string>(), perScreenMs: {}, actionsLog: [], truncated: false, ledger: newLedger() };
   const { visited, perScreenMs, actionsLog } = tally;
 
   const frame = await findAppFrame(ctx.page);
+  // A mount-time read must have resolved before the first enumeration, or what the sweep finds
+  // depends on a race (and a control gated on that read is never seen).
+  await awaitQuiet(obs, budgets);
   const seedInfo = await awaitSettledScreen(frame);
   const declared = seedInfo.declared;
   await sweepLive(ctx, frame, seedInfo.current, obs, budgets, resolved, tally);
 
   const diagnostics: SweepDiagnostic[] = [];
+  const coldMountedScreens: string[] = [];
   for (const name of declared) {
     if (visited.has(name)) continue;
     diagnostics.push({
@@ -593,7 +839,7 @@ export async function sweepApp(ctx: RunContext, obs: AttachedObservers, source: 
     const start = Date.now();
     try {
       const coldFrame = await coldMountScreen(ctx, obs, source, name, budgets);
-      const outcome = await sweepOneScreen(coldFrame, name, newScreenProgress(), obs, budgets, resolved);
+      const outcome = await sweepOneScreen(coldFrame, name, newScreenProgress(), obs, budgets, resolved, tally.ledger);
       actionsLog.push(...outcome.actionsLog);
       if (outcome.truncated) tally.truncated = true;
     // eslint-disable-next-line no-restricted-syntax -- intentional: best-effort — the unreachable_screen diagnostic already recorded the failure, so move on rather than abort the sweep.
@@ -603,7 +849,14 @@ export async function sweepApp(ctx: RunContext, obs: AttachedObservers, source: 
     }
     perScreenMs[name] = Date.now() - start;
     visited.add(name);
+    coldMountedScreens.push(name);
   }
 
-  return { declaredScreens: declared, visitedScreens: [...visited], truncated: tally.truncated, diagnostics, perScreenMs, actionsLog };
+  const { ledger } = tally;
+  const sweep: SweepCounts = {
+    actions: actionsLog.length,
+    blocked: [...ledger.seen].filter((key) => !ledger.acted.has(key)).length,
+    failedActions: ledger.failedActions,
+  };
+  return { declaredScreens: declared, visitedScreens: [...visited], coldMountedScreens, truncated: tally.truncated, diagnostics, perScreenMs, actionsLog, sweep };
 }

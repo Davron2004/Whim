@@ -9,13 +9,14 @@ import nodeAssert from 'node:assert';
 import type { BrowserContext, Page } from 'playwright';
 import { buildCandidateSource } from '../builder';
 import { assembleCandidatePage } from '../page';
-import { awaitMount, mergeBudgets, openObservedRun } from '../observe';
+import { awaitMount, mergeBudgets } from '../observe';
 import { SynthRunSession } from '../session';
 import { wireCapabilityBridge, type CapabilityWiring } from '../capability';
 import type { AppRecord } from '../../src/host/bridge';
-import { sweepApp, findAppFrame } from '../sweep';
+import { sweepApp } from '../sweep';
 import { recordAssertion, test } from './harness';
 import { flowbenchApp } from './flowbench';
+import { openWiredRun, within } from './support';
 
 function ok(cond: boolean, msg: string): void {
   recordAssertion(() => nodeAssert.ok(cond, msg), msg);
@@ -56,19 +57,6 @@ async function waitUntil(predicate: () => boolean, budgetMs: number): Promise<vo
   while (Date.now() < deadline && !predicate()) await wait(15);
 }
 
-/** Rejects with a named message if `work` outlasts `ms`, so a hang is a failed test and not a hung suite. */
-async function within<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${what} did not finish within ${ms} ms`)), ms);
-  });
-  try {
-    return await Promise.race([work, deadline]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function syscalls(wiring: CapabilityWiring, method: string): number {
   return wiring.trace.filter((t) => t.kind === 'syscall' && t.method === method).length;
 }
@@ -92,12 +80,6 @@ async function servePageWithoutPolicy(context: BrowserContext, source: string): 
   });
 }
 
-/** In-page: whether the button whose label starts with `prefix` exists and is enabled. */
-function buttonEnabledInPage(prefix: string): boolean {
-  const doc = (globalThis as unknown as { document: { querySelectorAll(s: string): ArrayLike<{ textContent: string | null; disabled: boolean }> } }).document;
-  return Array.from(doc.querySelectorAll('button')).some((b) => (b.textContent ?? '').startsWith(prefix) && !b.disabled);
-}
-
 export async function testReplyDelivery(): Promise<void> {
   const session = await SynthRunSession.launch({ concurrency: 2 });
   try {
@@ -116,24 +98,19 @@ export async function testReplyDelivery(): Promise<void> {
 
     await test('reply delivery: a control disabled until two mount reads resolve is swept (water-counter-p1)', async () => {
       const source = flowbenchApp('water-counter-p1');
-      const wiring = wireCapabilityBridge(STORAGE_APP);
-      const { ctx, obs, dispose } = await openObservedRun(session, source, { appId: STORAGE_APP.appId, beforeNavigate: wiring.beforeNavigate });
+      const { ctx, obs, wiring, dispose } = await openWiredRun(session, source);
       try {
-        const budgets = mergeBudgets({ mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 });
+        const budgets = mergeBudgets({ mountBudgetMs: 5000, actionQuietMs: 300, actionHardCapMs: 1000 });
         await within(awaitMount(obs, budgets), 10000, 'the mount gate');
-        const frame = await findAppFrame(ctx.page);
-        // The button turns enabled only after both reads resolved IN the candidate. If the replies
-        // never arrive this times out and the test fails here, naming the wait.
-        await frame.waitForFunction(buttonEnabledInPage, 'Log a glass', { timeout: 5000 });
-        const setsAtMount = syscalls(wiring, 'storage.kv.set');
-
+        // No wait of ours on the page: the sweep itself waits for the quiet window before it first
+        // enumerates, so the button is enabled by the time it looks. If the replies never arrive,
+        // the button stays disabled and the sweep acts on nothing.
         const result = await within(sweepApp(ctx, obs, source, budgets), 30000, 'the sweep');
         const labels = result.actionsLog.map((el) => el.label);
         ok(labels.some((l) => l.startsWith('Log a glass')), `the sweep pressed the gated button (acted on: ${labels.join(' ; ')})`);
-        const setsAfter = syscalls(wiring, 'storage.kv.set') - setsAtMount;
-        ok(setsAfter >= 2, `the press wrote the day and the count, two storage.kv.set beyond the mount effect's own (got ${setsAfter})`);
+        ok(labels.some((l) => l.startsWith('Undo')), `the press enabled "Undo", which the sweep then pressed (acted on: ${labels.join(' ; ')})`);
+        ok(syscalls(wiring, 'storage.kv.set') >= 4, `the two presses wrote the day and the count each (got ${syscalls(wiring, 'storage.kv.set')} writes)`);
       } finally {
-        obs.detach();
         await dispose();
       }
     });

@@ -160,6 +160,17 @@ export interface RunOptions {
   signal?: AbortSignal;
 }
 
+/** What the interaction sweep did, counted for the whole run. */
+export interface SweepCounts {
+  /** Fingerprints the sweep acted on, including actions that then failed. */
+  actions: number;
+  /** Distinct fingerprints enumerated during the run and never acted on (covered, disabled or
+   *  otherwise unable to receive the action whenever the sweep looked). */
+  blocked: number;
+  /** Actions that passed the hit test and still failed in the browser driver. */
+  failedActions: number;
+}
+
 export interface RunReport {
   /** `true` IFF `diagnostics.length === 0` (the `checks/contract.ts` `CheckReport` precedent). */
   ok: boolean;
@@ -191,7 +202,10 @@ export interface RunReport {
   truncated: boolean;
   timings: StageTimings;
   trace: TraceEntry[];
-  screens: { declared: string[]; visited: string[] };
+  /** `visited` includes the cold-mounted screens; `coldMounted` is the subset the live sweep never
+   *  reached and only the cold-mount pass covered. */
+  screens: { declared: string[]; visited: string[]; coldMounted: string[] };
+  sweep: SweepCounts;
   /** The budget values actually applied to this run (session defaults merged with
    *  `RunOptions.budgets`), recorded verbatim. */
   budgets: RunBudgets;

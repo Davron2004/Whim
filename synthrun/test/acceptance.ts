@@ -31,6 +31,7 @@ import { recordAssertion, results, test } from './harness';
 import { testIsolation } from './isolation';
 import { testResilience } from './resilience';
 import { testReplyDelivery } from './delivery';
+import { testSweepReach } from './sweep-reach';
 
 function ok(cond: boolean, msg: string): void {
   recordAssertion(() => nodeAssert.ok(cond, msg), msg);
@@ -71,6 +72,9 @@ async function main(): Promise<void> {
 
   // ── synthrun-reach: a capability reply reaches the candidate realm ──────────────────────────
   await testReplyDelivery();
+
+  // ── synthrun-reach: the sweep acts on what can receive the action ───────────────────────────
+  await testSweepReach();
 
   // ── chain 5 (task 5.3): the assembled RunCandidate — end-to-end acceptance ──────────────────
   await testRunCandidate();

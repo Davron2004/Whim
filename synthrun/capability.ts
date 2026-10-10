@@ -40,6 +40,11 @@ export interface CapabilityWiringOptions {
    *  D3, no candidate state survives into another run; the default ignores `appId`, since a
    *  fresh `:memory:` database is isolated by construction). */
   engineFactory?: EngineFactory;
+  /** Called when the host dispatches a capability call and again when it returns the reply, so
+   *  the run's quiet window counts both as activity (a candidate that writes and navigates when the
+   *  write resolves is read after it navigated). The observer state owns the clock; this wiring is
+   *  handed a callback and never the observers. */
+  onActivity?: () => void;
 }
 
 export interface CapabilityWiring {
@@ -103,6 +108,7 @@ export function wireCapabilityBridge(appRecord: AppRecord, opts: CapabilityWirin
   const dispatcher = Dispatcher.forRealm(realm, registry);
 
   const dispatch = async (raw: string): Promise<string | null> => {
+    opts.onActivity?.();
     const method = methodOf(raw);
     const sysret = await dispatcher.handle(raw);
     if (sysret && !sysret.ok && sysret.error) {
@@ -125,6 +131,7 @@ export function wireCapabilityBridge(appRecord: AppRecord, opts: CapabilityWirin
         trace.push({ kind: 'syscall', method, atMs: elapsed() });
       }
     }
+    opts.onActivity?.();
     return sysret ? JSON.stringify(sysret) : null;
   };
 
