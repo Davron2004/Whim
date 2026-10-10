@@ -235,3 +235,22 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   reviewer on `4f84f89f..3292d769`: VERDICT findings, all low (the orb menu is still a raw Modal, now recoverable in
   about 1.25 s, #179; the text-size test does not count `onClose` calls; one test's subject moved from `Sheet` to a probe).
 - merged: `02822fc3` (--no-ff). The full gate on the commit after it is the regate.
+- gate-full on `f72bebce` (chains 16c–16i merged): FULL GATE PASSED; pushed.
+- device re-check on `f72bebce`, two fresh verifiers that fixed nothing (findings files copied to
+  `~/Work/other/Whim-evidence/visual-2026-10-10/shift2/findings/`, screenshots beside them):
+  - Android (emulator-5560): 14 of 16 checklist items fixed, among them menu placement, every menu action, the first-run
+    sheet and its hand-over, Continue above the keyboard, back inside the sheet, the Plan page, Settings at 140% and
+    200%, and the offline notice under D20 (69 s offline and idle: no notice; a failed Continue: notice; back online:
+    cleared in under 30 s; reopened offline: notice 6 s later; cold start offline: notice). NOT fixed: the Describe
+    keyboard does not come up by itself on first open. Not checked: plate alignment (no tile without a state line
+    without a generation run; chain 16e saw it on a throwaway build).
+  - iOS (iPhone 17 simulator, iOS 27): B1 fixed (Agree opens Describe, 4 of 4 fresh installs, touches alive), B2 fixed
+    (Customize tile and Change it 3 of 3, History, Make a copy, Share link once each, a quick sequence 3 of 3). B3
+    partly: at the largest text size the scroll area is 513 pt and the terms row is reachable through accessibility
+    scrolling, but about 25 synthetic drags never moved the first-run sheet while the same drags scroll Settings,
+    Customize tile and Plan. New: Home does not re-lay out on a live text-size change; a French first-run row title is
+    clipped at the largest size. Everything else on the list fixed, including the first keyboard of a process, the
+    Report keyboard gap and the screens the first pass could not reach.
+- dispatched, last fix round, BASE `f72bebce`: chain-16j (first-run sheet scroll under a drag, live text size on Home,
+  the clipped row title; implementer on opus, iOS simulator) and chain-16k (Android Describe keyboard on open; sonnet,
+  emulator-5560).
