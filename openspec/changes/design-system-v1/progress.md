@@ -173,3 +173,16 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   layout and keyboard; sonnet, iOS simulator, first user of `scripts/ios-ui-driver`), chain-16f (menu placement, overlay
   queue hardening, 16e review fixes; sonnet, emulator-5560), chain-16h (offline edge; sonnet, no device). #157 commented.
 - gate-full on `735c8531` (wave 1 and the driver merged): FULL GATE PASSED.
+- report: chain-16h STATUS complete, fast gate PASS, knip clean, commit `46964314` (7 files). integrity exit 0; removal
+  ratchet PASS. reviewer on `735c8531..46964314`: VERDICT findings. HIGH (conformance): the live `server-connectivity`
+  spec says no probe is scheduled after the first success ("even if the server later becomes unreachable again") and
+  "no additional lifecycle wiring"; the chain adds a 30 s Home re-check and an `AppState` hook with no delta. Cost as
+  built: about 120 `GET /health` per phone per hour on Home, which also keeps Cloud Run from scaling to zero while a
+  phone has Home open. Medium: the foreground-return probe has no minimum gap.
+- HELD, ruling asked of the product-owner session (options A keep the spec, B merge with a delta, C request evidence
+  only and no poll, D a network-status dependency later): chain-16h is NOT merged; branch `chain/design-system-v1-chain-16h`
+  and its worktree are kept. `system.md` §9 ("following connectivity live") and the live spec disagree, and every fix
+  changes a requirement. Until a ruling arrives AND-M2 stays open.
+- ruling received (product-owner session) on chain-16h: option C, request evidence only, no steady poll; a MODIFIED delta
+  for `server-connectivity`; recorded as design.md D20 by the rework. Option D (OS network status) filed as #182.
+  chain-16h rework dispatched (fresh implementer, same branch and worktree).
