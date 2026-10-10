@@ -254,3 +254,7 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
 - dispatched, last fix round, BASE `f72bebce`: chain-16j (first-run sheet scroll under a drag, live text size on Home,
   the clipped row title; implementer on opus, iOS simulator) and chain-16k (Android Describe keyboard on open; sonnet,
   emulator-5560).
+- other branches landed at this boundary (product-owner session): `fix/synthrun-reach` merged as `1445ff03` (integrity
+  exit 0; the removal ratchet on the merged tree against the staging tip before it: PASS, no trailer needed; decisions
+  #79 and #80 written from its design D1 and D6), `proposal/separate-shared-data` merged as `039be5a3` (documents only;
+  not built). copy-app-data task 3.0 now says `hasSavedData` is asked of `engineAppId(entry)`.
