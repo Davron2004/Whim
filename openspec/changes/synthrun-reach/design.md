@@ -54,9 +54,12 @@ Alternatives considered:
 The header is a second policy next to the page's own `<meta>` CSP. Policies intersect, so nothing
 the page allowed is widened; the outer page loses same-origin storage and popups, which it does
 not use. The egress requirement says only delivery may change, and a response header is delivery.
-The service-worker block gets stronger, since an opaque origin cannot register one at all; if
-the suite's service-worker test counted the aborted script fetch, it now asserts the refusal
-itself and keeps its positive control.
+The service-worker block gets stronger, since an opaque origin cannot register one at all. The
+suite's service-worker test used to count the aborted worker-script fetch; the browser now
+refuses before any fetch, so the test asserts the refusal itself (`SecurityError` in the outer
+page and in the candidate's realm) and its positive control shows a real-origin page gets the
+API and registers. The route's abort of a worker-script fetch is no longer reached by a
+worker-specific test; the general egress tests still cover "every other request is aborted".
 
 ### D2. Hit-test before acting, and defer instead of skip
 
@@ -223,6 +226,11 @@ ends; workout-log-p2 lost its live History screen that way. A toast is the one c
 away by itself, so the sweep waits for it (capped at 5 s) when nothing else can be picked, then
 picks again.
 
+The check for a showing toast comes after the hit test, so a toast that leaves in between would
+read as "no toast" and end the screen with controls that had just become free (review finding).
+The sweep therefore goes round once more whenever a pick finds nothing while unvisited
+fingerprints remain, toast or not, and only a second empty pick ends the screen.
+
 Each wait costs about 4 s of a 45 s budget, and a run that goes over the budget is an error that
 can burn three repairs. A missed live screen costs nothing since D6. So the waits are bounded at
 two per run, by count. A clock-based bound ("no waits after half the budget") would make the
@@ -233,8 +241,14 @@ action order depend on machine load, which the determinism requirement forbids.
 `RunReport.screens` gains `coldMounted: string[]`, a subset of `visited`. `visited` keeps
 its meaning (it has always included cold-mounted screens, and the evals adapter reads it).
 `RunReport.sweep` is new: `{ actions, blocked, failedActions }`. Both are required fields; the
-fakes in `server/test` and `evals` follow the type. The server's run adapter maps diagnostics
-only and needs no change.
+fakes in `server/test` follow the type. `evals/` only reads `screens.declared` and
+`screens.visited` from recorded JSON reports, so nothing there changes. The server's run adapter
+maps diagnostics only and needs no change.
+
+The sweep keeps these fields current in an accumulator the report owns, so a run the total
+budget killed, or an aborted one, reports the screens and counts it had reached. Before this
+change such a report carried empty screen lists, and the new counts would have read zero for a
+run that took dozens of actions (review finding).
 
 ### D8. Fixtures come from the stored flowbench apps
 

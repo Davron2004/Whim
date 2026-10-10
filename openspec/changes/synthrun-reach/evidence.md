@@ -45,7 +45,7 @@ a second after the press, while the host trace records both calls as successful.
 
 The reply is dropped inside the candidate's realm. `src/runtime/web/syscall.js:83` accepts a
 reply only from a parent whose origin serialises as `null` (the device WebView's does) or equals
-the frame's own. Since `2187bb42` (2026-09-22) the run page is served from
+the frame's own. Since `2187bb42` (committed 2026-09-22) the run page is served from
 `https://synthrun.invalid`, so every reply carries that origin and is ignored. Each call then
 rejects with `syscall_timeout` after 10 s, which is the "Couldn't load your templates." toast in
 packing-checklist-p2's trace.
@@ -94,4 +94,4 @@ instead of deferred, and the header Back button is pressed before the screen's f
 
 ## 6. After the change
 
-Filled in at the end of implementation (task 5.2).
+Filled in at the end of implementation (task 4.2).

@@ -27,9 +27,9 @@ The harness SHALL test, immediately before acting on a picked fingerprint, that 
 
 A deferred element SHALL NOT be marked visited, SHALL NOT count toward the per-screen action cap and SHALL NOT spend an action timeout. It stays eligible, and the sweep SHALL pick it on a later enumeration once it passes. An open `Modal` therefore gets its own controls used and its backdrop dismissed before the controls beneath it.
 
-When unvisited fingerprints remain on a screen and none passes the test, the sweep SHALL dismiss a `Modal` backdrop that does pass once more, counted as an action, but only if it acted on at least one fingerprint since its previous dismissal on that screen. Otherwise the screen's sweep ends. Every fingerprint that was enumerated and never acted on by the end of the run SHALL be counted in the report as blocked, except one retired by the per-path limit.
+When unvisited fingerprints remain on a screen and none passes the test, the sweep SHALL dismiss a `Modal` backdrop that does pass once more, counted as an action, but only if it acted on at least one fingerprint since its previous dismissal on that screen. Otherwise the screen's sweep ends. Every fingerprint that was enumerated and never acted on by the end of the run SHALL be counted in the report as blocked, except one retired by the per-path limit. The count is of fingerprints, so a control whose label changed before it was acted on counts once under each label it showed and was not acted on.
 
-A toast is the one cover that leaves by itself. When unvisited fingerprints remain on a screen, none passes the test and the SDK's toast host is showing, the sweep SHALL wait for the toast to leave, up to five seconds, and pick again, spending no action. It SHALL do so at most twice in one run, counted and not timed, so the order of actions never depends on the clock and toasts cannot spend the total budget.
+A toast is the one cover that leaves by itself. When unvisited fingerprints remain on a screen and none passes the test, the sweep SHALL enumerate and pick once more before it ends the screen's sweep, spending no action, and if the SDK's toast host is showing it SHALL first wait for the toast to leave, up to five seconds. The second pick happens whether or not a toast was seen, so a toast that left between the test and the check cannot end the screen early. The sweep SHALL wait for a toast at most twice in one run, counted and not timed, so toasts cannot spend the total budget and the bound never depends on the clock.
 
 An action that passes the test and still fails in the browser driver SHALL be counted in the report as a failed action, and its fingerprint marked visited. No action failure SHALL be discarded without a count.
 
@@ -146,7 +146,7 @@ The harness SHALL resolve the screen on top of the navigation stack from the bro
 
 Progress SHALL be kept per declared screen across visits: the fingerprints already acted on and the action count. A screen entered again resumes with what is left, and the per-screen action cap spans all its visits. When a screen has nothing left to act on, the sweep SHALL step back one screen through the host's system-back control and continue on the screen it lands on, while the SDK's last announced navigation depth is above zero. The `__whimNavDepth` frame is an unauthenticated hint and only gates that step: the number of back steps SHALL never exceed the number of actions taken, so a candidate that announces a false depth cannot make the sweep loop.
 
-After the live sweep, each declared `spec.screens` entry it never reached SHALL be cold-mounted in a fresh realm (via `__whimControl.reinject({reset:true, …})` with the same source rebuilt to start on that screen — never in-place re-delivery, per T7) and swept on its own after the quiet window. Navigation out of a cold-mounted screen is not followed. A cold-mounted screen is listed in the report's visited screens and in its cold-mounted screens.
+After the live sweep, each declared `spec.screens` entry it never reached SHALL be cold-mounted in a fresh realm (via `__whimControl.reinject({reset:true, …})` with the same source rebuilt to start on that screen — never in-place re-delivery, per T7) and swept on its own after the quiet window. Navigation out of a cold-mounted screen is not followed: it ends that screen's sweep. A cold-mounted screen is listed in the report's visited screens and in its cold-mounted screens.
 
 A cold-mounted screen SHALL produce an `unreachable_screen` warning diagnostic only when no `navigate` call in the candidate source names it as a string-literal target. A cold-mounted screen the candidate does navigate to SHALL produce no diagnostic: the candidate has a path, the sweep could not satisfy what gates it, and the report's cold-mounted list already records the gap. The harness cannot tell a gated path from a broken one, and the hint on `unreachable_screen` is true only for a screen with no path.
 
@@ -183,6 +183,8 @@ Activity for the quiet window is every frame, console and CDP event the observer
 
 The report's `truncated` flag SHALL be set in two cases: the total budget fired, which also records the `run_truncated` diagnostic, or a screen reached its action cap with unvisited fingerprints left, which records no diagnostic of its own. A consumer SHALL treat the flag, with or without the diagnostic, as an incomplete run and never as a pass.
 
+A run the total budget ended, or one that was aborted mid-sweep, SHALL still report what the sweep had reached when it stopped: the declared, visited and cold-mounted screens, the per-screen timings and the sweep counts. A truncated report that reads as if nothing was swept hides how far the run got.
+
 #### Scenario: Never-settling mount
 
 - **WHEN** a candidate's mount path hangs (e.g. an unresolvable `delay` before first render) past the mount budget
@@ -192,6 +194,11 @@ The report's `truncated` flag SHALL be set in two cases: the total budget fired,
 
 - **WHEN** a candidate runs a 100ms `interval` forever but mounts and responds normally
 - **THEN** the sweep completes with no timeout diagnostic
+
+#### Scenario: A run the budget ended still says how far it got
+
+- **WHEN** the total budget fires while the sweep is partway through a screen with many controls
+- **THEN** the report is truncated with a `run_truncated` diagnostic, lists the declared screens and the screen being swept as visited, and counts the actions taken before the kill
 
 #### Scenario: A write-then-navigate is followed
 

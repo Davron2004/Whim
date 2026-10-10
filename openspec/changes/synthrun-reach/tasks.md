@@ -10,7 +10,7 @@
 - [x] 2.1 Count a dispatched capability call and its reply as quiet-window activity, and wait for the quiet window before the first enumeration at the initial mount and after each cold-mount
 - [x] 2.2 Hit-test the picked element in the candidate's frame and defer one that fails; drop `pickNext`'s sole-unvisited backdrop rule in favour of the hit test plus the bounded re-dismissal
 - [x] 2.3 Enumerate and drive a Picker's `<select>` with `selectOption` and DateInput's date, time and datetime-local inputs with fixed values; do not enumerate their wrapper
-- [x] 2.4 Count failed actions and blocked fingerprints, add `RunReport.sweep` and `RunReport.screens.coldMounted`, and update the report fakes in `server/test` and `evals`
+- [x] 2.4 Count failed actions and blocked fingerprints, add `RunReport.sweep` and `RunReport.screens.coldMounted`, and update the report fakes in `server/test`
 - [x] 2.5 Add the scenarios of "The sweep acts only on an element that can receive the action", the Picker scenario and the write-then-navigate scenario; red-check the hit test against an attribute-only variant and against a variant that marks a deferred element visited
 - [x] 2.6 Replay the 22 stored apps and record repair-triggering apps, total and slowest sweep time, truncations and failed actions
 
@@ -22,7 +22,8 @@
 - [x] 3.4 Act on one DOM path of a screen at most three times however its label changes (a Modal backdrop excepted), retire later fingerprints at that path without counting them as blocked or truncating, and stop enumerating the toast host as a Modal backdrop
 - [x] 3.5 Add the scenarios of "The sweep enters values before it presses commands" on the recipe-box-p1 and workout-log-p1 fixtures, plus the gated-screen, gated-screen-throws, orphan, icon-only-label, running-value and toast scenarios (score-keeper-p1 for the running value); red-check the order against values-after-buttons, the diagnostic against always-warn, and the per-path limit against none
 - [x] 3.6 Replay the 22 stored apps and record the same measures as 2.6
-- [ ] 3.7 Bound the toast wait at two per run, by count, and add the two toast scenarios of the hit-test requirement
+- [x] 3.7 Bound the toast wait at two per run, by count, and add the two toast scenarios of the hit-test requirement
+- [ ] 3.8 Review fixes: retry a stuck pick once through the loop (toast or not); keep the report's screens and sweep counts current so a truncated or aborted run reports them; a disabled-control test that reaches the hit test; one shared `AppRecord` builder for production and tests; stale comments; pin the negative control to its cause
 
 ## 4. Spec sync and closing
 

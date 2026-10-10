@@ -32,6 +32,6 @@ All seven declare `storage`. Wire as `synthrun/test/delivery.ts` does: an `AppRe
 ## Invariants for consumers
 - A host trace entry for a call is not evidence the candidate got the reply; assert an effect that follows it
   (see `delivery.ts`: enabled button, a dependent call).
-- Today's sweep enumerates the moment the mount paints (chain-2 adds the quiet wait): wait on a DOM condition
-  with `frame.waitForFunction(..., { timeout })` before `sweepApp` if the assertion depends on a mount-time read.
+- The sweep waits for the quiet window before its first enumeration, so a test needs no DOM wait of its own
+  before `sweepApp` for a mount-time read.
 - `delivery.ts` also holds `servePageWithoutPolicy`, a test-local override route (no policy) for negative controls.
