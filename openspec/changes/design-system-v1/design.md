@@ -148,6 +148,17 @@ receives it and what for, in every legal language. Alternative not taken: two pa
 the whole disclosure before the buttons). D8 ("copies: fresh data, no question") is superseded by the RESOLVED
 note in tasks.md and the Forking requirement.
 
+**D20 — Offline by request evidence, no steady probe (ruled 2026-10-10 by the product-owner session).**
+`system.md` §9 says the Home offline notice follows connectivity live; the live `server-connectivity` spec says
+no probe is scheduled after the first success. Both could not hold, and a cold start was the only time the notice
+showed (AND-M2). Ruled option C: the notice turns on when a request of the app's own fails at the network level
+and one probe confirms it, and on a failed return-to-foreground probe confirmed once after the first backoff
+step; offline recovers on the existing backoff, foreground only; returns probe at most once per 10 s (iOS flips
+inactive/active for the switcher and system sheets); an idle online app sends no probe. The cost reason: a probe
+every 30 s from any phone with Home open keeps the Cloud Run server from ever scaling to zero. Rejected: the
+30 s Home poll (cost; and it contradicted the spec), keeping the spec as written (the notice never returns).
+Deferred: an OS network-status dependency (reacts the moment the radio changes), to be filed as an issue.
+
 ## Risks / Trade-offs
 
 - [New native dependencies on RN 0.85.3 bridgeless break a platform build] → one bootstrap chain adds and pins
