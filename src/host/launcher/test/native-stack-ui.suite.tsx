@@ -113,12 +113,12 @@ export async function runNativeStackUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('native stack: in dark mode the token screens’ header and the status bar follow the scheme, while Home keeps the light shell', async () => {
+  await h.test('native stack: in dark mode Home and the token screens’ header and the status bar follow the scheme, while the screens not yet moved keep the light shell', async () => {
     try {
       await withLauncher({ server: nothing }, async ({ tree }) => {
         await TestRenderer.act(async () => setColorScheme('dark'));
         const barStyle = () => statusBarStyle(tree);
-        h.eq(barStyle(), 'dark-content', 'Home still draws the light shell, so dark status-bar content');
+        h.eq([barStyle(), stackItems(tree).find((item) => item.props.screenId === 'home')?.props.contentStyle.backgroundColor], ['light-content', COLORS.dark.bg], 'Home follows the dark scheme: light status-bar content, its canvas in the dark roles');
         await openSettings(tree);
         h.eq(barStyle(), 'light-content', 'Settings follows the dark scheme: light status-bar content');
         h.eq([header(tree, 'settings').backgroundColor, header(tree, 'settings').titleColor], [COLORS.dark.bg, COLORS.dark.text], 'its header is drawn in the dark roles');

@@ -14,6 +14,7 @@ import { acceptTerms } from '../terms-acceptance';
 import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { resetNativeStorage } from './native-storage';
 import { button, press, renderScreen, unmountScreen, textOf, captureTimeouts, hostType, isHost } from './react-screen';
+import { renderHome, tile } from './home-rig';
 
 const noop = () => {};
 const app: InstalledApp = {
@@ -25,8 +26,11 @@ function visibleTextCount(tree: TestRenderer.ReactTestRenderer, text: string): n
   return tree.root.findAll(node => hostType(node) === 'Text' && textOf(node) === text).length;
 }
 function createButton(tree: TestRenderer.ReactTestRenderer): TestRenderer.ReactTestInstance {
-  return tree.root.find(node => hostType(node) === 'TouchableOpacity' &&
-    node.findAll(child => hostType(child) === 'Text' && textOf(child) === COPY.homeComposerPlaceholder).length === 1);
+  return tree.root.find(node => hostType(node) === 'Pressable' && node.props.accessibilityLabel === COPY.homeComposerPlaceholder);
+}
+/** How many offline notices Home shows. */
+function noticeCount(tree: TestRenderer.ReactTestRenderer): number {
+  return tree.root.findAll(node => hostType(node) === 'View' && node.props.accessibilityLabel === COPY.homeOfflineNotice).length;
 }
 
 export async function runConnectivityUxTests(h: Harness): Promise<void> {
@@ -35,14 +39,10 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
     await h.test(`Home: offline=${offline} shows the matching notice and keeps app/create controls enabled`, async () => {
       const opened: string[] = [];
       let creates = 0;
-      const tree = await renderScreen(<HomeScreen apps={[app]} offline={offline}
-        onOpen={target => opened.push(target.id)} onCreate={() => { creates++; }}
-        onFork={noop} onDelete={noop} onHistory={noop} onPromptAgain={noop} onSettings={noop} />);
+      const tree = await renderHome({ apps: [app], offline, onOpen: target => opened.push(target.id), onCreate: () => { creates++; } });
       try {
-        h.eq(visibleTextCount(tree, COPY.homeOfflineIndicator), offline ? 1 : 0, 'the home notice follows connectivity');
-        const tile = tree.root.find(node => hostType(node) === 'TouchableOpacity' &&
-          typeof node.props.onLongPress === 'function' && textOf(node).includes(app.name));
-        await press(tile);
+        h.eq(noticeCount(tree), offline ? 1 : 0, 'the home notice follows connectivity');
+        await press(tile(tree, app.name));
         await press(createButton(tree));
         h.eq(opened, [app.id], 'the visible installed tile opens its app');
         h.eq(creates, 1, 'the visible create control starts creation');
@@ -102,7 +102,7 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
       try {
         tree = await renderScreen(<LauncherRoot deviceLocale={() => 'en-US'} />);
         h.eq(requested.map(url => new URL(url).pathname), consented ? ['/health'] : [], 'only a current grant starts the failed health probe');
-        h.eq(visibleTextCount(tree, COPY.homeOfflineIndicator), consented ? 1 : 0, 'failed probe is visible at Home; no consent stays unknown');
+        h.eq(noticeCount(tree), consented ? 1 : 0, 'failed probe is visible at Home; no consent stays unknown');
         await press(createButton(tree));
         h.eq(tree.root.findAllByType(ComposeStep).length, consented ? 1 : 0, 'creation opens compose only with consent');
         h.eq(tree.root.findAllByType(ConsentScreen).length, consented ? 0 : 1, 'absent consent opens the disclosure');
@@ -114,7 +114,7 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
         } else {
           await press(button(tree, COPY.consentDecline));
           h.eq(tree.root.findAllByType(HomeScreen).length, 1, 'declining returns to Home');
-          h.eq(visibleTextCount(tree, COPY.homeOfflineIndicator), 0, 'declining does not invent offline state');
+          h.eq(noticeCount(tree), 0, 'declining does not invent offline state');
           h.eq(requested, [], 'entering and declining consent send no requests');
         }
       } finally {

@@ -1,4 +1,4 @@
-/** Forking from Home asks first, and the answer reaches `StoreAccess.fork` as its data option;
+/** Making a copy from Home asks first, and the answer reaches `StoreAccess.fork` as its data option;
  *  and a launch settles any data copy a closed process left unfinished. */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
@@ -11,12 +11,14 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { SEED_VERSION } from '../seed';
 import { DataCopyJournal } from '../data-copy-journal';
 import { open as openNativeDb, resetNativeStorage } from './native-storage';
-import { button, press, renderScreen, unmountScreen, hostType } from './react-screen';
+import HomeScreen from '../HomeScreen';
+import { press, renderScreen, unmountScreen } from './react-screen';
+import { chooseRow, longPress, renderRoot, sheetRows, tile, tileLabels, toastOf } from './home-rig';
 
 const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
 export async function runForkUiTests(h: Harness): Promise<void> {
-  await h.test('fork: answering "Start fresh" forks with data fresh', async () => {
+  await h.test('make a copy: on the device the question is asked, “Copy the data” and “Start fresh” fork with that data, and closing the sheet forks nothing', async () => {
     resetNativeStorage();
     const index = new AppIndex(createMmkvBackend('whim.launcher'));
     index.markSeeded(SEED_VERSION);
@@ -24,16 +26,43 @@ export async function runForkUiTests(h: Harness): Promise<void> {
     const originalFork = StoreAccess.prototype.fork;
     const calls: unknown[][] = [];
     StoreAccess.prototype.fork = async function (...args: unknown[]) { calls.push(args); return { ...app, id: 'timer-copy' }; } as typeof originalFork;
-    const tree = await renderScreen(<LauncherRoot deviceLocale={() => 'en-US'} />);
+    const tree = await renderRoot(<LauncherRoot deviceLocale={() => 'en-US'} />);
     try {
-      await TestRenderer.act(async () => tree.root.find(node => hostType(node) === 'TouchableOpacity' && typeof node.props.onLongPress === 'function').props.onLongPress());
-      await press(button(tree, COPY.actionFork));
-      h.eq(calls.length, 0, 'choosing Fork asks first; nothing is forked yet');
-      await press(button(tree, COPY.forkStartFresh));
-      h.eq(calls.length, 1, 'the answer forks once');
-      h.eq((calls[0]?.[0] as InstalledApp | undefined)?.id, app.id, 'the long-pressed app is the one forked');
-      h.eq(calls[0]?.[1], undefined, 'from its current version');
-      h.eq(calls[0]?.[2], { data: 'fresh' }, 'with data fresh and nothing else');
+      h.eq(tree.root.findByType(HomeScreen).props.canCopyData, true, 'the device shell can copy data, so Home is told');
+      const ask = async () => { await longPress(tree, 'Timer'); await chooseRow(tree, COPY.actionMakeCopy); };
+      const answer = (label: string) => press(sheetRows(tree, COPY.copyQuestionTitle).find((r) => String(r.props.accessibilityLabel).startsWith(label))!);
+      await ask();
+      h.eq(calls.length, 0, 'choosing Make a copy asks first; nothing is forked yet');
+      await TestRenderer.act(async () => sheetRows(tree, COPY.copyQuestionTitle).find((r) => r.props.accessibilityLabel === COPY.sheetClose)!.props.onPress());
+      h.eq(calls.length, 0, 'closing the sheet forks nothing');
+      await ask();
+      await answer(COPY.copyQuestionData);
+      await ask();
+      await answer(COPY.copyQuestionFresh);
+      h.eq(calls.map((c) => (c[0] as InstalledApp).id), [app.id, app.id], 'the long-pressed app is the one forked, each time');
+      h.eq(calls.map((c) => c[1]), [undefined, undefined], 'from its current version');
+      h.eq(calls.map((c) => c[2]), [{ data: 'copy' }, { data: 'fresh' }], 'with the data each answer names and nothing else');
+    } finally {
+      await unmountScreen(tree);
+      StoreAccess.prototype.fork = originalFork;
+    }
+  });
+
+  await h.test('make a copy: a copy that cannot be made says so in one toast and adds no tile', async () => {
+    resetNativeStorage();
+    const index = new AppIndex(createMmkvBackend('whim.launcher'));
+    index.markSeeded(SEED_VERSION);
+    index.put(app);
+    const originalFork = StoreAccess.prototype.fork;
+    StoreAccess.prototype.fork = async function () { throw new Error('no room'); } as typeof originalFork;
+    const tree = await renderRoot(<LauncherRoot deviceLocale={() => 'en-US'} />);
+    try {
+      await longPress(tree, 'Timer');
+      await chooseRow(tree, COPY.actionMakeCopy);
+      await press(sheetRows(tree, COPY.copyQuestionTitle).find((r) => String(r.props.accessibilityLabel).startsWith(COPY.copyQuestionData))!);
+      h.eq(toastOf(tree)?.message, COPY.copyFailedToast, 'the failure toast');
+      h.eq(tileLabels(tree), ['Timer'], 'and still one tile');
+      h.eq(tile(tree, 'Timer').props.accessibilityState, { busy: false }, 'the tile is free again');
     } finally {
       await unmountScreen(tree);
       StoreAccess.prototype.fork = originalFork;

@@ -6,14 +6,12 @@
  * sweep, no travelling gradient), and every dimension is imported from the real component's
  * exported size constants — a literal in a skeleton style is the defect, because the layout would
  * jump when the real thing arrives. A skeleton is drawn only where the thing is genuinely coming
- * AND its shape is already known: `HomeGridSkeleton` renders nothing for a count of zero, since an
- * empty grid gets an empty-state affordance, never a skeleton.
+ * AND its shape is already known. (Home's own skeleton is `HomeSkeleton.tsx`, on the shell primitives.)
  */
 
 import React, { useEffect, useMemo, useRef } from 'react';
 import { Animated, Easing, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { MOTION, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
-import { APP_TILE_RADIUS, APP_TILE_SIZE } from './app-tile';
 
 export interface BreathingViewProps {
   style?: StyleProp<ViewStyle>;
@@ -47,31 +45,6 @@ export function BreathingView({ style, delayMs = 0 }: Readonly<BreathingViewProp
   );
 
   return <Animated.View style={[style, { opacity }]} />;
-}
-
-export interface HomeGridSkeletonProps {
-  /** How many tiles are known to be coming. Zero renders nothing at all. */
-  count: number;
-  columns: number;
-  gap: number;
-  color: string;
-}
-
-/** The home grid's loading state: the EXACT tile geometry and the known count, so the grid does
- *  not move when the real tiles land. */
-export function HomeGridSkeleton({ count, columns, gap, color }: Readonly<HomeGridSkeletonProps>) {
-  if (count <= 0) return null;
-  return (
-    <View style={[styles.grid, { gap }]} accessibilityRole="progressbar">
-      {Array.from({ length: count }, (_, i) => (
-        <BreathingView
-          key={`tile-${i}`}
-          delayMs={(i % columns) * 120}
-          style={[styles.tile, { backgroundColor: color }]}
-        />
-      ))}
-    </View>
-  );
 }
 
 /** A clarify pill's real rendered height (`ClarifyStep.tsx`'s `styles.pill`): two `SPACING.xs`
@@ -118,8 +91,6 @@ export function ClarifyQuestionsSkeleton({ color }: Readonly<ClarifyQuestionsSke
 }
 
 const styles = StyleSheet.create({
-  grid: { flexDirection: 'row', flexWrap: 'wrap' },
-  tile: { width: APP_TILE_SIZE, height: APP_TILE_SIZE, borderRadius: APP_TILE_RADIUS },
   // The vertical gap between groups matches `ClarifyStep.tsx`'s own `question: { marginTop:
   // SPACING.lg }` — the same token, read directly, rather than a second exported constant for a
   // single spacing value.

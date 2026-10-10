@@ -24,43 +24,82 @@ import type { WideningId } from '@whim/contract';
 import type { LegalLanguage } from './legal-language';
 
 export const COPY = {
-  // ── home (2a) ───────────────────────────────────────────────────────────────
-  homeTitle: 'Whim',
-  homeSubtitle: 'Your apps',
+  // ── home: Your apps (design-system-v1 15.x; system.md §3.2, §9) ─────────────
+  homeTitle: 'Your apps',
   homeComposerPlaceholder: 'Describe an app…',
+  /** The composer bar when a description is in progress: the words, so the person sees their draft. */
+  homeComposerDraftLabel: 'Describe an app, draft in progress',
+  homeComposerHint: 'Opens the describe sheet',
+  homeSearchLabel: 'Search your apps',
+  homeSearchEmpty: 'No app has that name.',
+  homeLoadingLabel: 'Loading your apps',
+  homeOfflineNotice: 'Offline. Your apps still work; making new ones needs a connection.',
+  homeEmptyTitle: 'Make your first app',
+  homeEmptyLine: 'A timer, a tracker, a dice roller. Say it in plain words.',
+  /** The three idea chips on an empty Home; each opens the describe sheet with its words. */
+  homeIdeaTimer: 'A timer for my pour-over',
+  homeIdeaTracker: 'A plant watering tracker',
+  homeIdeaDice: 'A dice roller for game night',
   exampleBadge: 'Example',
+  settingsTitle: 'Settings',
   actionOpen: 'Open',
-  actionFork: 'Fork',
-  actionPromptAgain: 'Prompt again',
+  actionChangeIt: 'Change it',
+  actionMakeCopy: 'Make a copy',
+  actionCustomize: 'Customize tile',
+  actionShareLink: 'Share link',
   actionDelete: 'Delete',
-  /** The Fork/Delete rows while that app's operation is running (`app-launcher` "Fork and delete
-   *  show a busy state and cannot be re-triggered mid-operation"): the row says what it is doing
-   *  rather than what it offers, so the disabled row never reads as an unregistered tap. */
-  actionForkBusy: 'Forking…',
-  actionDeleteBusy: 'Deleting…',
+  actionDetails: 'Details',
+  actionStop: 'Stop',
+  actionStopChange: 'Stop the change',
+  actionWhatHappened: 'What happened',
+  actionTryAgain: 'Try again',
+  actionDiscard: 'Discard',
+  actionDiscardChange: 'Discard the change',
+  actionDiscardAll: 'Discard all',
+  actionUpdateWhim: 'Update Whim',
   cancel: 'Cancel',
-  // ── ghost tiles (launcher-ghost-tiles) ──────────────────────────────────────
-  /** A ghost/rebuild tile's state caption — names its own state, distinguishing `building` from
-   *  the shared `failed`/`interrupted` alert treatment (spec "Building and failed/interrupted
-   *  ghosts are visually distinct"). */
-  ghostCaptionBuilding: 'Building…',
-  ghostCaptionFailed: 'Didn’t finish',
-  ghostCaptionInterrupted: 'Interrupted',
-  ghostCaptionUpdate: 'Update needed',
-  /** Long-press quick actions (spec "Long-press on a ghost tile offers Cancel or Dismiss, never
-   *  both"). Named distinctly from the sheet's own closing `cancel` row so the two never collide
-   *  in the same menu. */
+  /** The build screen's own stop control (the making flow moves it; the Home menu says `actionStop`). */
   actionCancelBuild: 'Cancel build',
-  actionDismissBuild: 'Dismiss',
+  // ── tile states (system.md §3.2) ────────────────────────────────────────────
+  tileMaking: 'Making…',
+  tileQueued: 'Waiting…',
+  tileFailed: 'Didn’t work',
+  tileStopped: 'Stopped',
+  tileNeedsUpdate: 'Needs update',
+  tileChanging: 'Changing…',
+  tileChangeFailed: 'Change didn’t work',
+  tileCopy: 'Copy',
+  tileHintOpens: 'Opens the app',
+  tileHintProgress: 'Shows progress',
+  tileHintFailure: 'Shows what happened',
+  tileHintUpdate: 'Shows the update',
+  tileHintOlder: 'Shows the list',
+  /** The screen-reader name of the long-press action a tile offers. */
+  tileMenuAction: 'Show actions',
+  /** The list the "2 didn't work" tile opens. */
+  olderTitle: 'Attempts that didn’t work',
+  // ── delete, discard, copy (Undo toasts; the copy question) ──────────────────
+  toastUndo: 'Undo',
+  discardedToast: 'Discarded',
+  copyMadeToast: 'Copy made',
+  copyFailedToast: 'Couldn’t make the copy. Your app is unchanged.',
+  copyQuestionTitle: 'Copy the data, or start fresh?',
+  copyQuestionData: 'Copy the data',
+  copyQuestionFresh: 'Start fresh',
+  copyQuestionFreshSubtitle: 'The copy starts empty.',
+  customizeTitle: 'Customize tile',
+  customizeTintHeader: 'Colour',
+  customizeGlyphHeader: 'Glyph',
+  customizeSearchLabel: 'Search glyphs',
+  customizeSearchEmpty: 'No glyph has that name.',
+  customizeReset: 'Use the original tile',
+  /** The tile a person is customizing, read to screen readers. */
+  customizePreviewLabel: 'Preview',
   /** What an `interrupted` pending-build record's failure screen says: it carries no failure
    *  payload, because nothing failed — the process that owned the stream went away. Stated
    *  plainly rather than borrowed from a generic stream-error string, which would claim a failure
    *  that never happened. */
   interruptedBuildReason: 'This build stopped when the app closed. You can try it again.',
-  deleteTitle: 'Delete this app?',
-  deleteConfirm: 'Delete',
-  emptyTitle: 'No apps yet',
-  settingsTitle: 'Settings',
   backLabel: 'Back',
   /** The shell's surfaces (design-system-v1 11.1–11.3): a sheet's close control, a toast's
    *  dismiss action for screen readers, a text field's clear button. */
@@ -181,8 +220,6 @@ export const COPY = {
   historyRestoreConfirmBusy: 'Going back…',
   historyCopyConfirmBusy: 'Making the copy…',
   historyReassurancePending: 'Checking what this changes',
-  forkShareData: 'Use the same saved data',
-  forkStartFresh: 'Start fresh',
 
   // ── inside a running app: the orb menu (3a) ─────────────────────────────────
   // `versions` opens the real History screen and `change` opens the real compose step (review
@@ -429,16 +466,13 @@ export const COPY = {
   // without blocking generation") — the compose step opens only once AI-data consent is granted,
   // so there is no separate "no address configured" message any more (a server address always
   // exists, per `release-config`).
-  homeOfflineIndicator: 'Can’t reach the server',
   promptServerUnreachable: 'Can’t reach your server right now — you can still try.',
 
   // ── app links (app-links; design D15/D16) ───────────────────────────────────
-  actionAppLink: 'App link',
   appLinkMissingTitle: 'This app lives on another phone',
   appLinkMissingBody:
     'Apps made with Whim stay on the phone that made them, so this link only opens there.',
   appLinkMissingBack: 'Back to your apps',
-  appLinkSheetClose: 'Done',
 
   // ── the keyboard (beta-1 D3) ────────────────────────────────────────────────
   /** The iOS keyboard bar's one action on a multiline field: puts the keyboard away and submits
@@ -677,43 +711,34 @@ export function consentWhatsNewText(language: LegalLanguage, grantVersion: numbe
   return CONSENT_WHATS_NEW[language]?.[grantVersion]?.text;
 }
 
-/** "Forked from Water Counter" — fork provenance for a tile (product vocabulary). */
-export function forkedFromLabel(name: string): string {
-  return `Forked from ${name}`;
+/** The "2 didn’t work" line of the tile that gathers attempts older than a day. */
+export function tileOlderLine(count: number): string {
+  return `${count} didn’t work`;
 }
 
-/** The App link reveal sheet's one line of copy (design D16): "Opens Water Counter on this phone.
- *  Press and hold the link to copy it." — the selectable `<Text>` itself carries the link. */
-export function appLinkSheetLine(name: string): string {
-  return `Opens ${name} on this phone. Press and hold the link to copy it.`;
+/** The Undo toast after a delete: "Water Counter deleted". */
+export function deletedToast(name: string): string {
+  return `${name} deleted`;
 }
 
-/** A ghost/rebuild tile's state caption, by `PendingBuildRecord.state` (kept as the bare literal
- *  union rather than importing `PendingBuildState` — `copy.ts` stays free of any non-`react` /
- *  non-`react-native` module dependency). */
-export function ghostStateCaption(
-  state: 'building' | 'failed' | 'interrupted',
-  remedy?: { kind: 'retry' } | { kind: 'update'; protocolLevel: number },
-): string {
-  if (state === 'failed' && remedy?.kind === 'update') return COPY.ghostCaptionUpdate;
-  if (state === 'building') return COPY.ghostCaptionBuilding;
-  if (state === 'failed') return COPY.ghostCaptionFailed;
-  return COPY.ghostCaptionInterrupted;
+/** The Undo toast after Discard all gathered `count` attempts. */
+export function discardedManyToast(count: number): string {
+  return `${count} discarded`;
+}
+
+/** The copy question's first row says what it would copy: the data `name` has saved now. */
+export function copyQuestionDataSubtitle(name: string): string {
+  return `Starts with what ${name} has saved now.`;
 }
 
 /** The Settings screen's save-time probe result (server-connectivity, design.md decision 1;
  *  `server-probe.ts`'s `ProbeResult`). Kept as the bare literal union rather than importing
  *  `ProbeResult` — `copy.ts` stays free of any non-`react`/non-`react-native` module dependency,
- *  the same discipline `ghostStateCaption` keeps. */
+ *  the same discipline `tileOlderLine` keeps. */
 export function serverProbeLabel(result: 'verified' | 'unverified' | 'unreachable'): string {
   if (result === 'verified') return COPY.serverProbeVerified;
   if (result === 'unverified') return COPY.serverProbeUnverified;
   return COPY.serverProbeUnreachable;
-}
-
-/** The delete confirmation body for a named app. */
-export function deleteBody(name: string): string {
-  return `“${name}” and all its data will be removed. This can’t be undone.`;
 }
 
 /** The History screen's data-shape annotation line (design D5): "Added: notes (text)". `fields`
@@ -772,8 +797,7 @@ function livenessElapsedLabel(startedAt: number, now: number): string {
  * heartbeat the user reported as misleading — see the module-level rationale in `prompt-flow.ts`'s
  * `livenessOf`). `s`/`now` are typed structurally rather than importing `RunSignals` from
  * `prompt-flow.ts` — this module imports nothing else, the same discipline `timelineDurationLabel`
- * already keeps. `liveness` is the bare literal union for the same reason `ghostStateCaption`'s
- * `state` parameter is, and so is `phase` (`prompt-flow.ts#livenessPhaseOf`): in line, the line
+ * already keeps. `liveness` is the bare literal union, as `serverProbeLabel`'s parameter is, and so is `phase` (`prompt-flow.ts#livenessPhaseOf`): in line, the line
  * says so and counts the time in line; while the app is checked, nothing is being written, so it
  * names the checks rather than a reply. Once the build's turn has come, its clock reads from then
  * (`turnCameAt`), never from when it joined the line.
@@ -820,7 +844,7 @@ export function buildLivenessLine(
 const TENTHS_PER_SECOND = 10;
 
 /** A stage's plain-words label. Kept as the bare literal union rather than importing `Stage`, the
- *  same standing `ghostStateCaption` has: `copy.ts` depends on no other module. */
+ *  same standing `serverProbeLabel` has: `copy.ts` depends on no other module. */
 export function timelineStageLabel(stage: 'plan' | 'generate' | 'check' | 'run' | 'repair'): string {
   if (stage === 'plan') return COPY.timelineStagePlan;
   if (stage === 'generate') return COPY.timelineStageGenerate;

@@ -20,6 +20,7 @@ import type { SignificantUpdateSheet } from '../age-check';
 import { resetNativeStorage } from './native-storage';
 import { captureTimeouts, renderScreen, unmountScreen } from './react-screen';
 import { testAppInfo, streamResponse } from './client-fixtures';
+import { tileNodeMock } from './home-rig';
 
 export type Tree = TestRenderer.ReactTestRenderer;
 
@@ -173,6 +174,7 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
         ageSignal={ageSignal}
         significantUpdate={setup.significantUpdate}
       />,
+      { createNodeMock: tileNodeMock },
     );
     await body({ tree, kv, sent, probes, probeUrls, paths: () => sent.map((r) => r.path), clock });
   } finally {
