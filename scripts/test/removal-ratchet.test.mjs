@@ -32,6 +32,7 @@ function cleanEnv(extra = {}) {
 }
 
 function git(repo, args) {
+  // eslint-disable-next-line sonarjs/no-os-command-from-path -- intentional: the suite runs inside the repo's own dev/CI toolchain, which always has trustworthy `git` and `node` on PATH
   const r = spawnSync('git', ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], {
     cwd: repo, encoding: 'utf8', env: cleanEnv(),
   });
@@ -61,6 +62,7 @@ function fixture(files) {
 }
 
 function ratchet(repo, { base, env = {}, args = [] } = {}) {
+  // eslint-disable-next-line sonarjs/no-os-command-from-path -- intentional: the suite runs inside the repo's own dev/CI toolchain, which always has trustworthy `git` and `node` on PATH
   const r = spawnSync('node', [SCRIPT, ...args], {
     cwd: repo, encoding: 'utf8', env: cleanEnv(base ? { GATE_BASE: base, ...env } : env),
   });
