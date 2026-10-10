@@ -105,6 +105,16 @@ and its reply as activity, in addition to frames, console and CDP events, which 
 The observer state stays the single owner of `lastActivityAtMs`; the capability wiring gets a
 callback, not a reference to the observers.
 
+Two additions came out of implementing it (chain-2 report). The sweep marks its own action as
+activity when the driver call returns: what the action causes reaches the host about 10 ms later,
+and a window measured from older activity closed before any of it arrived (the write-then-navigate
+test failed 2 runs in 5 without this). And before every enumeration the sweep waits, capped by
+the action hard cap, until no finite animation is running in the frame. The quiet window cannot
+see motion, so 300 ms after the click that opens a Modal the sheet is still sliding in, its
+controls read as covered or off screen, and the backdrop was dismissed before they were used.
+The SDK animates through the Web Animations API, so `document.getAnimations()` sees it. An
+animation with infinite iterations (a spinner) is ignored.
+
 ### D5. Order: rows, values, buttons, leave
 
 The sort key gains a leading group:
@@ -171,6 +181,28 @@ Alternatives considered:
   remain (flashcards' Done), and each would still cost a turn that cannot fix it.
 
 A gated screen that throws on render is still an error, because cold-mount still renders it.
+
+### D9. At most three actions on one DOM path of a screen
+
+Chain-2's replay turned up one regression: score-keeper-p1 ends truncated. Its player cards show
+the running score in their label, so each press mints a new fingerprint at the same path, and 29
+presses of one card filled the 40-action cap. A truncation is an error and costs repairs. At
+a579f6f8 the same app only looked healthy because a Modal scrim ate those clicks.
+
+The loop was always there in the fingerprint definition: any control whose label changes with
+each press mints without end. Working clicks expose it. The sweep now acts on one DOM path of a
+screen at most three times however its label changes, and retires later fingerprints at that
+path: they do not keep the screen open, do not truncate the run and are not counted as blocked.
+Three covers a toggle that relabels (Start, Stop, Start) and a short stepper, and bounds a
+counter. A Modal backdrop is excepted because its re-dismissal has its own bound (D2).
+
+Alternatives considered:
+- Fingerprint by kind and path only. A row that takes a deleted row's place would then never be
+  pressed, and a button that turns from Start into Stop would be pressed once.
+- Strip digits from labels. It fixes scores and leaves every non-numeric relabel looping.
+
+The toast host is a fixed `role="status"` region and was classified as a Modal backdrop, so every
+screen carried a phantom backdrop that was clicked last. It is excluded from enumeration.
 
 ### D7. Report fields
 

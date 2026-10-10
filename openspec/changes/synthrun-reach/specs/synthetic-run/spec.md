@@ -27,7 +27,7 @@ The harness SHALL test, immediately before acting on a picked fingerprint, that 
 
 A deferred element SHALL NOT be marked visited, SHALL NOT count toward the per-screen action cap and SHALL NOT spend an action timeout. It stays eligible, and the sweep SHALL pick it on a later enumeration once it passes. An open `Modal` therefore gets its own controls used and its backdrop dismissed before the controls beneath it.
 
-When unvisited fingerprints remain on a screen and none passes the test, the sweep SHALL dismiss a `Modal` backdrop that does pass once more, counted as an action, but only if it acted on at least one fingerprint since its previous dismissal on that screen. Otherwise the screen's sweep ends. Every fingerprint that was enumerated and never acted on by the end of the run SHALL be counted in the report as blocked.
+When unvisited fingerprints remain on a screen and none passes the test, the sweep SHALL dismiss a `Modal` backdrop that does pass once more, counted as an action, but only if it acted on at least one fingerprint since its previous dismissal on that screen. Otherwise the screen's sweep ends. Every fingerprint that was enumerated and never acted on by the end of the run SHALL be counted in the report as blocked, except one retired by the per-path limit.
 
 An action that passes the test and still fails in the browser driver SHALL be counted in the report as a failed action, and its fingerprint marked visited. No action failure SHALL be discarded without a count.
 
@@ -97,14 +97,26 @@ The report's containment verdict SHALL be three-valued: `true` (a nonce-authenti
 
 ### Requirement: Interaction sweep covers the interactive surface with fingerprint dedup
 
-Per rendered screen the harness SHALL enumerate interactive SDK elements from outside the realm, by evaluating in the candidate's frame at browser level, fingerprint each as (structural kind, accessible label, DOM path), and act on each fingerprint at most once: tap `Button`, `Card` and `ListItem`; tap each `SegmentedControl` option, which is a button of its own; type canonical values into `TextInput` and `NumberInput`; choose an option of a `Picker`'s native `<select>` through the driver's select-option call, taking the first enabled option with a non-empty value that is not already selected; type a canonical date, time or date-time into a `DateInput`'s native input; toggle `Switch` and `Checkbox` on and off; click a `Slider`'s track at its low and high ends; dismiss a `Modal` by its backdrop. The kind is inferred from the element's DOM shape, not from a component name. The accessible label is the element's text, or its `aria-label` when it has no text. A wrapper that only hosts a native `<select>` or date input is not a fingerprint of its own.
+Per rendered screen the harness SHALL enumerate interactive SDK elements from outside the realm, by evaluating in the candidate's frame at browser level, fingerprint each as (structural kind, accessible label, DOM path), and act on each fingerprint at most once: tap `Button`, `Card` and `ListItem`; tap each `SegmentedControl` option, which is a button of its own; type canonical values into `TextInput` and `NumberInput`; choose an option of a `Picker`'s native `<select>` through the driver's select-option call, taking the first enabled option with a non-empty value that is not already selected; type a canonical date, time or date-time into a `DateInput`'s native input; toggle `Switch` and `Checkbox` on and off; click a `Slider`'s track at its low and high ends; dismiss a `Modal` by its backdrop. The kind is inferred from the element's DOM shape, not from a component name. The accessible label is the element's text, or its `aria-label` when it has no text. A wrapper that only hosts a native `<select>` or date input is not a fingerprint of its own, and neither is the SDK's toast host, a fixed `role="status"` region that is not a `Modal` backdrop.
 
-The harness SHALL wait for the quiet window before its first enumeration on a freshly mounted realm, at the initial mount and after each cold-mount, so a control that appears once a mount-time read resolves is enumerated. It SHALL re-enumerate after every action, and SHALL end a screen's sweep when no unvisited fingerprint can be acted on or when the per-screen action cap is reached. The total budget ends the whole run from outside the sweep. A screen that reaches the cap with unvisited fingerprints left SHALL mark the report truncated, never silently complete.
+The harness SHALL wait for the quiet window before its first enumeration on a freshly mounted realm, at the initial mount and after each cold-mount, so a control that appears once a mount-time read resolves is enumerated. Before every enumeration it SHALL also wait, up to the action hard cap, until no finite animation is running in the candidate's frame, because the quiet window cannot see motion and a `Modal` sheet that is still sliding in reads as covered. An animation that never ends is not waited for. It SHALL re-enumerate after every action, and SHALL end a screen's sweep when no unvisited fingerprint can be acted on or when the per-screen action cap is reached. The total budget ends the whole run from outside the sweep. A screen that reaches the cap with unvisited fingerprints left SHALL mark the report truncated, never silently complete.
+
+A label that carries a running value mints a new fingerprint at the same DOM path on every press. The harness SHALL act on one DOM path of a screen at most three times however its label changes, a `Modal` backdrop excepted, and SHALL retire any further fingerprint at that path: it is not acted on, does not keep the screen's sweep open, does not mark the report truncated and is not counted as blocked.
 
 #### Scenario: State-minted elements are swept without looping
 
 - **WHEN** tapping a button re-renders the screen with one new button and the existing elements
 - **THEN** the new fingerprint is acted on once, already-visited fingerprints are not re-acted on, and the sweep terminates
+
+#### Scenario: A control whose label carries a running value does not exhaust the cap
+
+- **WHEN** a card's label shows a count that rises each time the card is pressed
+- **THEN** the sweep presses that card three times, goes on to the screen's other fingerprints, and the report is not truncated
+
+#### Scenario: A toast is not dismissed as a Modal
+
+- **WHEN** an action shows a toast on a screen with no `Modal`
+- **THEN** the sweep's action log contains no backdrop dismissal
 
 #### Scenario: A Picker's option is chosen without a click
 
@@ -155,7 +167,7 @@ A cold-mounted screen SHALL produce an `unreachable_screen` warning diagnostic o
 
 The harness SHALL enforce: a mount budget (no nonce-authenticated `paint` frame in time ⇒ `mount_timeout` error diagnostic); a per-action quiet-window settle with a hard cap (a heuristic only — steady background activity such as a legal `interval` SHALL NOT produce a diagnostic and SHALL NOT block the sweep past the cap); and a total wall-clock budget (hard page kill ⇒ a `run_truncated` error diagnostic and the report's `truncated` flag). No code path SHALL swallow a timeout silently. The runtime page itself SHALL remain watchdog-free.
 
-Activity for the quiet window is every frame, console and CDP event the observers record, plus every capability call the host dispatches and every reply it returns, so a candidate that writes to storage and navigates when the write resolves is read after it navigated.
+Activity for the quiet window is every frame, console and CDP event the observers record, plus every capability call the host dispatches and every reply it returns, plus the sweep's own action at the moment the driver call returns, so a candidate that writes to storage and navigates when the write resolves is read after it navigated.
 
 The report's `truncated` flag SHALL be set in two cases: the total budget fired, which also records the `run_truncated` diagnostic, or a screen reached its action cap with unvisited fingerprints left, which records no diagnostic of its own. A consumer SHALL treat the flag, with or without the diagnostic, as an incomplete run and never as a pass.
 
