@@ -47,7 +47,9 @@ export interface MenuRow {
   next?: readonly MenuRow[];
 }
 
-/** The anchor's rect in window coordinates: the whole cell the menu opens from, its name included. */
+/** The anchor's rect from the top-left of the app's root, which fills the window under both system
+ *  bars, as the menu's own `Modal` does: the whole cell the menu opens from, its name included.
+ *  Read it with `measure`'s page offsets; Android's `measureInWindow` starts below the status bar. */
 export interface MenuAnchor {
   x: number;
   y: number;
@@ -195,7 +197,7 @@ export function ContextMenu({ visible, title, anchor, rows, onClose }: Readonly<
   return (
     <OverlayModal turn={turn} onRequestClose={onClose}>
       <SafeAreaProvider>
-        <MenuCard key={opening.count} title={title} anchor={at} rows={rows} onClose={onClose} onChoose={choose} appear={appear} scale={scale} />
+        <MenuCard key={opening.count} title={title} anchor={at} rows={rows} open={open} onClose={onClose} onChoose={choose} appear={appear} scale={scale} />
       </SafeAreaProvider>
     </OverlayModal>
   );
@@ -205,6 +207,9 @@ interface MenuCardProps {
   title: string;
   anchor: MenuAnchor;
   rows: readonly MenuRow[];
+  /** The menu is wanted: a card measured after it was closed does not grow in, or it would cancel
+   *  the exit that is ending the menu's turn. */
+  open: boolean;
   onClose: () => void;
   /** A row that is not a second step was tapped. */
   onChoose: (row: MenuRow) => void;
@@ -212,7 +217,7 @@ interface MenuCardProps {
   scale: SharedValue<number>;
 }
 
-function MenuCard({ title, anchor, rows, onClose, onChoose, appear, scale }: Readonly<MenuCardProps>) {
+function MenuCard({ title, anchor, rows, open, onClose, onChoose, appear, scale }: Readonly<MenuCardProps>) {
   const t = useTokens();
   const s = styles(t);
   const insets = useSafeAreaInsets();
@@ -228,10 +233,10 @@ function MenuCard({ title, anchor, rows, onClose, onChoose, appear, scale }: Rea
   // measurement opens it; a second step's new size moves nothing.
   const measured = size != null;
   useEffect(() => {
-    if (!measured) return;
+    if (!measured || !open) return;
     appear.value = withTiming(1, timing('fadeIn', t.reduceMotion));
     if (!t.reduceMotion) scale.value = withSpring(1, springConfig('smooth'));
-  }, [measured, t.reduceMotion, appear, scale]);
+  }, [measured, open, t.reduceMotion, appear, scale]);
 
   const onLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;

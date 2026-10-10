@@ -14,7 +14,7 @@
  * `AppTile` is the whole cell: plate, name under it (two lines, then ellipsis), the line that states
  * the state, and the touch area (at least 64 × 84). Its label is the name plus the state ("Pour
  * Timer, making") with a hint for what a double tap does. A long-press of 350 ms plays the haptic
- * and reports the cell's rect in window coordinates, which the context menu anchors to; the caller
+ * and reports the cell's rect (from the top-left of the app's root), which the context menu anchors to; the caller
  * owns the menu and passes `lifted` while it is open.
  */
 
@@ -32,7 +32,7 @@ import { Ember } from './Ember';
 import { Icon } from './Icon';
 import type { MenuAnchor } from './ContextMenu';
 import { timing, usePressFeedback } from './motion';
-import { GRID, TILE, TILE_SIDE, labelSidePadding, listRowPadding, type GridLayout, type TileSize } from './AppTile-geometry';
+import { GRID, TILE, TILE_SIDE, listRowPadding, type GridLayout, type TileSize } from './AppTile-geometry';
 import { stateLine, tileAccessibilityHint, tileAccessibilityLabel, tileLook, type StateLine, type TileState } from './AppTile-states';
 import { Text } from './Text';
 import { useTokens } from './tokens';
@@ -155,12 +155,12 @@ export interface AppTileProps {
   /** Its menu is open: the tile is lifted. */
   lifted?: boolean;
   onPress: () => void;
-  /** After the 350 ms hold, with the cell's rect in window coordinates. */
+  /** After the 350 ms hold, with the cell's rect from the top-left of the app's root (`MenuAnchor`). */
   onLongPress: (anchor: MenuAnchor) => void;
 }
 
 const cellStyles = makeStyles((t) => ({
-  column: { alignItems: 'center' as const, paddingHorizontal: labelSidePadding(t.largeText) },
+  column: { alignItems: 'center' as const, paddingHorizontal: GRID.labelSidePadding },
   label: { marginTop: GRID.labelGap, textAlign: 'center' as const, alignSelf: 'stretch' as const },
   row: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], paddingHorizontal: listRowPadding(t.largeText) },
   texts: { flex: 1 },
@@ -200,7 +200,10 @@ export function AppTile({
 
   const openMenu = () => {
     haptics.play('long-press');
-    ref.current?.measureInWindow((x, y, width, height) => onLongPress({ x, y, width, height }));
+    // `measure`'s page offsets run from the top of the app's root, which fills the window, as a
+    // `Modal`'s do. Android's `measureInWindow` runs from below the status bar and would put the menu
+    // that much too high.
+    ref.current?.measure((_x, _y, width, height, pageX, pageY) => onLongPress({ x: pageX, y: pageY, width, height }));
   };
 
   const inList = layout.kind === 'list';

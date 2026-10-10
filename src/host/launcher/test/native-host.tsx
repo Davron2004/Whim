@@ -1,6 +1,16 @@
 /** Native host adapters for React interaction tests. Screen components and hooks run unchanged;
  * layout, animation and OS APIs are represented in memory, not asserted as device behavior. */
 import React from 'react';
+import TestRenderer from 'react-test-renderer';
+import { resetOverlayHolds } from '../../ui/OverlayModal';
+
+// Every tree a test creates is a fresh app: the dismissals an earlier one left in flight (overlays it
+// unmounted while up) are over, so they hold nothing of the new one's overlays.
+const createTree = TestRenderer.create;
+TestRenderer.create = ((...args: Parameters<typeof createTree>) => {
+  resetOverlayHolds();
+  return createTree(...args);
+}) as typeof createTree;
 
 // React Native's runtime provides the frame callbacks Node lacks; a suite that steps frames itself
 // swaps these out for the test's duration.
@@ -46,11 +56,22 @@ export const WebView = React.forwardRef<{ injectJavaScript: (js: string) => void
  *    mounted (`visible` false) until then. `holdModalDismissals` keeps those reports back until the
  *    returned release runs, so a test can play a slow dismissal, or one that is never reported.
  *  - Android shows every modal in a window of its own, refuses none, reports no dismissal and drops
- *    a hidden `Modal` at once. Neither platform reports anything to a `Modal` that was unmounted. */
+ *    a hidden `Modal` at once. Neither platform reports anything to a `Modal` that was unmounted.
+ *  - An iOS `Modal` unmounted while it is up is dismissed all the same, and its surface is still
+ *    presenting until that is done (15–18 ms on the device): a presentation issued meanwhile is refused.
+ *    `holdUnmountedModalDismissals` keeps those dismissals pending until the returned release runs. */
 interface Presenter { presenting: object | null }
 const PresenterContext = React.createContext<Presenter>({ presenting: null });
-const modalSystem: { held: (() => void)[] | null; refusing: boolean } = { held: null, refusing: false };
+const modalSystem: { held: (() => void)[] | null; refusing: boolean; unmounting: (() => void)[] | null } = { held: null, refusing: false, unmounting: null };
 export const modalPresentations = { refused: 0 };
+export function holdUnmountedModalDismissals(): () => void {
+  modalSystem.unmounting = [];
+  return () => {
+    const queue = modalSystem.unmounting ?? [];
+    modalSystem.unmounting = null;
+    for (const done of queue) done();
+  };
+}
 export function holdModalDismissals(): () => void {
   modalSystem.held = [];
   return () => {
@@ -76,8 +97,15 @@ export function Modal(props: HostProps) {
   const mounted = React.useRef(true);
   React.useEffect(() => () => {
     mounted.current = false;
-    if (presenter.presenting === self) presenter.presenting = null;
-  }, [presenter, self]);
+    if (presenter.presenting !== self) return;
+    if (ios && modalSystem.unmounting) {
+      const dismissing = {};
+      presenter.presenting = dismissing;
+      modalSystem.unmounting.push(() => { if (presenter.presenting === dismissing) presenter.presenting = null; });
+    } else {
+      presenter.presenting = null;
+    }
+  }, [presenter, self, ios]);
   React.useEffect(() => {
     if (visible && !wasVisible.current) {
       const taken = ios && presenter.presenting !== null && presenter.presenting !== self;
@@ -107,6 +135,20 @@ export function Modal(props: HostProps) {
 export function FlatList({ data, renderItem, ...props }: HostProps & { data: unknown[]; renderItem: (args: { item: unknown; index: number }) => React.ReactNode }) {
   return React.createElement('FlatList', props, data.map((item, index) => React.createElement(React.Fragment, { key: index }, renderItem({ item, index }))));
 }
+/** The app's state, as `AppState` reports it; `setAppState` plays a change to every listener. */
+const appStateListeners = new Set<(state: string) => void>();
+export const AppState = {
+  currentState: 'active',
+  addEventListener: (_event: 'change', listener: (state: string) => void) => {
+    appStateListeners.add(listener);
+    return { remove: () => { appStateListeners.delete(listener); } };
+  },
+};
+export function setAppState(state: 'active' | 'inactive' | 'background'): void {
+  AppState.currentState = state;
+  for (const listener of [...appStateListeners]) listener(state);
+}
+export function appStateListenerCount(): number { return appStateListeners.size; }
 export const Platform = { OS: 'ios', Version: '26.0' as string | number, select: (options: Record<string, unknown>) => options.ios ?? options.default };
 export const StyleSheet = { create: <T,>(styles: T): T => styles, hairlineWidth: 1, absoluteFill: {}, absoluteFillObject: {}, flatten: (styles: unknown) => Object.assign({}, ...([styles].flat(Infinity))) };
 export const useSafeAreaInsets = () => ({ top: 20, bottom: 30, left: 0, right: 0 });

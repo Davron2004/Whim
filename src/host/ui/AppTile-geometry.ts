@@ -35,9 +35,6 @@ export const GRID = {
   /** The label's two lines and side padding. */
   labelLines: 2,
   labelSidePadding: SPACE[1],
-  /** From 135% text a label keeps more air at the cell's edges, so a name that fills the line does not
-   *  touch its neighbour's. */
-  largeTextLabelSidePadding: SPACE[2],
   /** Between a label and the next tile below. */
   rowGap: SPACE[5],
   /** The smallest touch area a cell gives. */
@@ -51,11 +48,6 @@ export type GridLayout =
 /** The row padding of a list-mode cell, on each side; the loading skeleton draws the same. */
 export function listRowPadding(largeText: boolean): number {
   return largeText ? SPACE[4] : SPACE[5];
-}
-
-/** The label's padding on each side of a grid cell. */
-export function labelSidePadding(largeText: boolean): number {
-  return largeText ? GRID.largeTextLabelSidePadding : GRID.labelSidePadding;
 }
 
 /** The home grid for a screen `width` wide at text size `fontScale`: four columns of

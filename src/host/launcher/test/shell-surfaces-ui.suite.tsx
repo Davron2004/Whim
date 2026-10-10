@@ -12,12 +12,15 @@ import {
   accessibilityFocus,
   accessibilitySettings,
   announcements,
+  appStateListenerCount,
   emitAccessibility,
   hapticCalls,
   holdModalDismissals,
+  holdUnmountedModalDismissals,
   modalPresentations,
   Platform,
   refuseModalPresentations,
+  setAppState,
   StyleSheet,
   useSafeAreaInsets,
   windowMetrics,
@@ -41,7 +44,7 @@ function pendingTimeouts() {
   };
 }
 import { Sheet, SHEET_GRABBER, useSheetBack } from '../../ui/Sheet';
-import { DISMISS_REPORT_MS, SHOW_ATTEMPTS, SHOW_REPORT_MS, SHOW_RETRY_MS } from '../../ui/OverlayModal';
+import { DISMISS_REPORT_MS, EXIT_CEILING_MS, OverlayModal, SHOW_ATTEMPTS, SHOW_REPORT_MS, SHOW_RETRY_MS, useOverlayTurn } from '../../ui/OverlayModal';
 import { ConfirmSheet } from '../../ui/ConfirmSheet';
 import { ContextMenu, placeMenu, MENU, type MenuAnchor, type MenuRow } from '../../ui/ContextMenu';
 import { ToastHost, useToast, TOAST, type ToastApi } from '../../ui/Toast';
@@ -104,6 +107,9 @@ async function resetPhone(): Promise<void> {
   accessibilitySettings.screenReader = false;
   windowMetrics.fontScale = 1;
   Platform.OS = 'ios';
+  setAppState('active');
+  gones.splice(0);
+  exits.clear();
   resetKeyboard();
   hapticCalls.splice(0);
   announcements.splice(0);
@@ -160,6 +166,12 @@ function HeldMenu({ title = 'Timer', rows, onCloseCount }: Readonly<{ title?: st
   const [visible, setVisible] = useState(true);
   return <ContextMenu visible={visible} title={title} anchor={ANCHOR} rows={rows} onClose={() => { onCloseCount.n += 1; setVisible(false); }} />;
 }
+/** A menu its owner can open again: `control.open()` asks for it once more after it has closed. */
+function ToggleMenu({ log, control }: Readonly<{ log: string[]; control: { open: () => void } }>) {
+  const [visible, setVisible] = useState(true);
+  control.open = () => setVisible(true);
+  return <ContextMenu visible={visible} title="Timer" anchor={ANCHOR} rows={menuRows(log)} onClose={() => setVisible(false)} />;
+}
 /** A menu over a screen that shows a sheet next: from the chosen row, or (`together`) in the very
  *  tick it closes the menu, as a screen that closes one overlay and opens another at once does. */
 function MenuThenSheet({ together = false, log }: Readonly<{ together?: boolean; log: string[] }>) {
@@ -180,6 +192,27 @@ const sheetPair = (which: 'First' | 'Second' | null) => (
     <Sheet key="second" visible={which === 'Second'} title="Second" onClose={() => {}}><Body /></Sheet>
   </>
 );
+/** How each probe overlay ends its exit, and which of them reported themselves gone. */
+const exits = new Map<string, () => void>();
+const gones: string[] = [];
+/** An overlay as its owner holds one, with no motion of its own: its exit ends only when a test
+ *  says so (`exits`), so a test can play one that never ends. */
+function Probe({ name, wanted }: Readonly<{ name: string; wanted: boolean }>) {
+  const turn = useOverlayTurn(wanted, { onGone: () => { gones.push(name); }, onRefused: () => {} });
+  exits.set(name, turn.exited);
+  return (
+    <OverlayModal turn={turn} onRequestClose={() => {}}>
+      {React.createElement('Text', { accessibilityRole: 'header' }, name)}
+    </OverlayModal>
+  );
+}
+/** The probes named in `wanted`, in that order, each wanted or not. */
+const probes = (wanted: Record<string, boolean>) => (
+  <>{Object.entries(wanted).map(([name, on]) => <Probe key={name} name={name} wanted={on} />)}</>
+);
+/** Every timer the overlay queue may have pending. */
+const queueTimers = (timers: ReturnType<typeof captureTimeouts>) =>
+  [0, DISMISS_REPORT_MS, EXIT_CEILING_MS, SHOW_REPORT_MS, SHOW_RETRY_MS].reduce((n, ms) => n + timers.count(ms), 0);
 /** Every modal host in the tree: on screen, hidden and not yet reported gone, or refused by the
  *  system. Any of them covers the screen and takes its touches. */
 const modalHosts = (tree: Tree) => all(tree, 'Modal');
@@ -744,6 +777,266 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     await act(() => tree.unmount());
   });
 
+  await h.test('Overlays: an exit that never ends cannot hold the screen: an overlay no longer wanted is ended after a bounded wait and the next is presented; a normal exit passes the turn before it and leaves no wait', async () => {
+    try {
+      for (const os of ['ios', 'android'] as const) {
+        await resetPhone();
+        Platform.OS = os;
+        const timers = captureTimeouts();
+        try {
+          const refused = modalPresentations.refused;
+          const tree = await render(probes({ A: true, B: false }));
+          await act(() => tree.update(probes({ A: false, B: true })));
+          h.eq([overlayTitles(tree), timers.count(EXIT_CEILING_MS)], [['A'], 1], `${os}: A’s exit has not ended: it is still up, B waits, and one bounded wait is running`);
+          await act(() => timers.fire(EXIT_CEILING_MS));
+          h.eq([overlayTitles(tree), modalHosts(tree).length, gones], [['B'], 1, ['A']], `${os}: the wait is up: A is ended and B is presented, alone`);
+          h.eq([modalPresentations.refused - refused, queueTimers(timers)], [0, 0], `${os}: the system refused nothing and nothing is left running`);
+          await act(() => tree.unmount());
+        } finally { timers.restore(); }
+      }
+    } finally {
+      Platform.OS = 'ios';
+    }
+  });
+
+  await h.test('Overlays: an exit that ends in time passes the turn at once and cancels the wait', async () => {
+    await resetPhone();
+    const timers = captureTimeouts();
+    try {
+      const tree = await render(probes({ A: true, B: false }));
+      await act(() => tree.update(probes({ A: false, B: true })));
+      await act(() => exits.get('A')!());
+      h.eq([overlayTitles(tree), timers.count(EXIT_CEILING_MS), queueTimers(timers)], [['B'], 0, 0], 'B is up as A’s exit ends, and no wait is left for A');
+      await act(() => tree.unmount());
+    } finally { timers.restore(); }
+  });
+
+  await h.test('Overlays: wanted again while its exit is still running, an overlay stays up and its wait is cancelled', async () => {
+    await resetPhone();
+    const timers = captureTimeouts();
+    try {
+      const tree = await render(probes({ A: true }));
+      await act(() => tree.update(probes({ A: false })));
+      h.eq(timers.count(EXIT_CEILING_MS), 1, 'no longer wanted: the wait runs');
+      await act(() => tree.update(probes({ A: true })));
+      h.eq([timers.count(EXIT_CEILING_MS), overlayTitles(tree), gones], [0, ['A'], []], 'wanted again: the wait is cancelled, A is still up and has not gone');
+      await act(() => tree.update(probes({ A: false })));
+      await act(() => exits.get('A')!());
+      h.eq([overlayTitles(tree), modalHosts(tree).length, gones, queueTimers(timers)], [[], 0, ['A'], 0], 'then it leaves once, for good, with nothing running');
+      await act(() => tree.unmount());
+    } finally { timers.restore(); }
+  });
+
+  await h.test('Overlays: a visible that goes off and on within one tick leaves the sheet up, never reported gone and never waiting', async () => {
+    await resetPhone();
+    const timers = captureTimeouts();
+    try {
+      const closed = { n: 0 };
+      const element = (visible: boolean) => <Sheet visible={visible} title="Report this app" onClose={() => {}} onClosed={() => { closed.n += 1; }}><Body /></Sheet>;
+      const tree = await render(element(true));
+      await TestRenderer.act(async () => { tree.update(element(false)); tree.update(element(true)); });
+      h.eq([overlayTitles(tree), modalHosts(tree).length, closed.n, queueTimers(timers)], [['Report this app'], 1, 0, 0], 'still up, once, with nothing running');
+      await act(() => tree.unmount());
+    } finally { timers.restore(); }
+  });
+
+  await h.test('Overlays: an overlay unmounted while up on iOS keeps the screen taken until its dismissal is over: the next is not presented into it, then is presented without the system reporting anything', async () => {
+    await resetPhone();
+    const timers = captureTimeouts();
+    const dismissing = holdUnmountedModalDismissals();
+    try {
+      const refused = modalPresentations.refused;
+      const tree = await render(probes({ A: true }));
+      await act(() => tree.update(probes({ B: true })));
+      h.eq([overlayTitles(tree), modalPresentations.refused - refused, timers.count(DISMISS_REPORT_MS)], [[], 0, 1], 'A is gone while its dismissal is under way: B is not presented yet, and the queue holds the turn for a bounded time');
+      dismissing();
+      await act(() => timers.fire(DISMISS_REPORT_MS));
+      h.eq([overlayTitles(tree), modalPresentations.refused - refused, queueTimers(timers)], [['B'], 0, 0], 'once it is over B is presented, and nothing is refused or left running');
+      await act(() => tree.unmount());
+    } finally {
+      dismissing();
+      timers.restore();
+    }
+  });
+
+  await h.test('Overlays: an overlay unmounted while up on Android passes the turn at once: nothing is dismissed there that anyone would wait for', async () => {
+    try {
+      await resetPhone();
+      Platform.OS = 'android';
+      const timers = captureTimeouts();
+      try {
+        const tree = await render(probes({ A: true }));
+        await act(() => tree.update(probes({ B: true })));
+        h.eq([overlayTitles(tree), queueTimers(timers)], [['B'], 0], 'B is presented as A goes, with no wait');
+        await act(() => tree.unmount());
+      } finally { timers.restore(); }
+    } finally {
+      Platform.OS = 'ios';
+    }
+  });
+
+  await h.test('Overlays: an overlay unmounted while its modal is hiding (iOS) also holds the turn for the dismissal, which was never going to be reported', async () => {
+    await resetPhone();
+    const timers = captureTimeouts();
+    const release = holdModalDismissals();
+    try {
+      const tree = await render(probes({ A: true, B: true }));
+      await act(() => tree.update(probes({ A: false, B: true })));
+      await act(() => exits.get('A')!());
+      h.eq([overlayTitles(tree), modalHosts(tree).length], [[], 1], 'A is hiding, its dismissal unreported, and B waits');
+      await act(() => tree.update(probes({ B: true })));
+      h.eq([overlayTitles(tree), timers.count(DISMISS_REPORT_MS)], [[], 1], 'unmounted there, A leaves one bounded wait, and B still waits');
+      await act(() => timers.fire(DISMISS_REPORT_MS));
+      h.eq([overlayTitles(tree), queueTimers(timers)], [['B'], 0], 'B is presented when it is up, with nothing left running');
+      await act(() => tree.unmount());
+    } finally {
+      release();
+      timers.restore();
+    }
+  });
+
+  await h.test('Overlays: an overlay unmounted while it waits, or in the gap between two tries at presenting, gives up its place and its timers and the next in line is presented', async () => {
+    await resetPhone();
+    const timers = captureTimeouts();
+    let allow = () => {};
+    try {
+      let tree = await render(probes({ A: true, B: true, C: true }));
+      await act(() => tree.update(probes({ A: true, C: true })));
+      h.eq([overlayTitles(tree), queueTimers(timers)], [['A'], 0], 'B, waiting, is gone: A is up, C waits, and nothing is running');
+      await act(() => tree.update(probes({ A: false, C: true })));
+      await act(() => exits.get('A')!());
+      h.eq([overlayTitles(tree), gones], [['C'], ['A']], 'A leaves and C, not the B that went, is next');
+      await act(() => tree.unmount());
+
+      allow = refuseModalPresentations();
+      tree = await render(probes({ A: true }));
+      await act(() => timers.fire(SHOW_REPORT_MS));
+      await act(() => timers.fire(0));
+      await act(() => tree.update(probes({ A: true, B: true })));
+      h.eq([modalHosts(tree).length, timers.count(SHOW_RETRY_MS)], [0, 1], 'A is between two tries, B waits behind it');
+      allow();
+      await act(() => tree.update(probes({ B: true })));
+      h.eq([overlayTitles(tree), queueTimers(timers)], [['B'], 0], 'A unmounted in the gap: B is presented at once and A’s retry is not left running');
+      await act(() => tree.unmount());
+    } finally {
+      allow();
+      timers.restore();
+    }
+  });
+
+  await h.test('Overlays: an overlay that closed and is wanted again lines up like any other, behind the one that took the screen meanwhile', async () => {
+    try {
+      for (const os of ['ios', 'android'] as const) {
+        await resetPhone();
+        Platform.OS = os;
+        const tree = await render(probes({ A: true, B: false }));
+        await act(() => tree.update(probes({ A: false, B: true })));
+        await act(() => exits.get('A')!());
+        h.eq([overlayTitles(tree), gones], [['B'], ['A']], `${os}: A has closed and B has the screen`);
+        await act(() => tree.update(probes({ A: true, B: true })));
+        h.eq([overlayTitles(tree), modalHosts(tree).length], [['B'], 1], `${os}: A is asked for again but waits its turn`);
+        await act(() => tree.update(probes({ A: true, B: false })));
+        await act(() => exits.get('B')!());
+        h.eq([overlayTitles(tree), gones], [['A'], ['A', 'B']], `${os}: B closes and A is presented again`);
+        await act(() => tree.unmount());
+      }
+    } finally {
+      Platform.OS = 'ios';
+    }
+  });
+
+  await h.test('Overlays: an unconfirmed presentation is only timed while the app is active: asked for in the background it waits, and nothing closes the sheet meanwhile', async () => {
+    await resetPhone();
+    const timers = captureTimeouts();
+    const allow = refuseModalPresentations();
+    try {
+      setAppState('inactive');
+      const closes = { n: 0 };
+      const tree = await render(<HeldSheet onCloseCount={closes} />);
+      h.eq([modalHosts(tree).length, timers.count(SHOW_REPORT_MS)], [1, 0], 'asked for while inactive: the modal is mounted and nothing times it');
+      await act(() => setAppState('active'));
+      h.eq(timers.count(SHOW_REPORT_MS), 1, 'back to active: the timing starts');
+      await act(() => setAppState('background'));
+      h.eq(timers.count(SHOW_REPORT_MS), 0, 'sent to the background while it waits: the timing stops');
+      await act(() => setAppState('active'));
+      h.eq([timers.count(SHOW_REPORT_MS), closes.n], [1, 0], 'and starts over on return, with the sheet still wanted');
+      allow();
+      await act(() => timers.fire(SHOW_REPORT_MS));
+      await act(() => timers.fire(0));
+      await act(() => timers.fire(SHOW_RETRY_MS));
+      h.eq([overlayTitles(tree), closes.n], [['Report this app'], 0], 'it is presented once the system takes it');
+      await act(() => tree.unmount());
+    } finally {
+      allow();
+      timers.restore();
+    }
+  });
+
+  await h.test('Overlays: no overlay keeps listening to the app’s state once it is unmounted', async () => {
+    await resetPhone();
+    const before = appStateListenerCount();
+    const tree = await render(sheetPair('First'));
+    h.ok(appStateListenerCount() > before, 'mounted overlays listen');
+    await act(() => tree.unmount());
+    h.eq(appStateListenerCount(), before, 'unmounted ones stop');
+  });
+
+  await h.test('ContextMenu: a card measured after the menu has closed does not grow in, which would cancel the exit that hands the screen on', async () => {
+    await resetPhone();
+    const release = holdModalDismissals();
+    try {
+      const tree = await render(<HeldMenu rows={menuRows([])} onCloseCount={{ n: 0 }} />);
+      await press(tree.root.find((n) => hostType(n) === 'Pressable' && n.props.accessible === false));
+      const from = animations.length;
+      await layoutMenu(tree);
+      h.eq(steps(from).filter((s) => s.to === 1).length, 0, 'no fade or spring toward open once it is closing');
+      await act(() => tree.unmount());
+    } finally {
+      release();
+    }
+  });
+
+  await h.test('ContextMenu: a row chosen as the menu’s owner goes away is dropped: the screen that would have run it is gone', async () => {
+    await resetPhone();
+    const timers = captureTimeouts();
+    const release = holdModalDismissals();
+    try {
+      const log: string[] = [];
+      const tree = await render(<HeldMenu rows={menuRows(log)} onCloseCount={{ n: 0 }} />);
+      await layoutMenu(tree);
+      await press(rowButtons(tree)[0]);
+      h.eq(log, [], 'chosen, but the menu has not gone from the screen yet');
+      await act(() => tree.unmount());
+      release();
+      await act(() => timers.fire(DISMISS_REPORT_MS));
+      h.eq(log, [], 'and it never runs once the owner is gone');
+    } finally {
+      release();
+      timers.restore();
+    }
+  });
+
+  await h.test('ContextMenu: asked for again, the menu takes one row once more; a row chosen before it went still runs, and only that one', async () => {
+    await resetPhone();
+    const release = holdModalDismissals();
+    try {
+      const log: string[] = [];
+      const control = { open: () => {} };
+      const tree = await render(<ToggleMenu log={log} control={control} />);
+      await layoutMenu(tree);
+      await press(rowButtons(tree)[0]);
+      await act(() => control.open());
+      await act(() => release());
+      h.eq(log, ['open'], 'the row chosen before the menu closed ran once it had gone, though the menu was asked for again');
+      await layoutMenu(tree);
+      await press(rowButtons(tree).find((r) => r.props.accessibilityLabel === 'Delete')!);
+      h.eq(log, ['open', 'delete'], 'the second opening takes the row chosen in it');
+      await act(() => tree.unmount());
+    } finally {
+      release();
+    }
+  });
+
   // ── Toast ──────────────────────────────────────────────────────────────────
 
   await h.test('Toast: shows 4 s, 6 s with an action, 10 s for Undo, then goes; a new toast replaces the one showing in place and restarts the time', async () => {
@@ -824,6 +1117,25 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     h.eq(flat(slot).bottom, useSafeAreaInsets().bottom + 64 + 12, '12 pt above what floats over the safe area');
     h.eq(flat(floating.root.find((n) => n.props.accessibilityLiveRegion === 'polite')).maxWidth, TOAST.maxWidth, 'at most 360 wide');
     await act(() => floating.unmount());
+  });
+
+  await h.test('Toast: its action reaches the platform’s touch target — 44 on iOS, 48 on Android — through its hit slop, whatever the words measure', async () => {
+    try {
+      for (const os of ['ios', 'android'] as const) {
+        await resetPhone();
+        Platform.OS = os;
+        let api!: ToastApi;
+        const Grab = () => { api = useToast(); return null; };
+        const tree = await render(<ToastHost><Grab /></ToastHost>);
+        await act(() => api.show({ message: 'Tip Splitter deleted', undo: true, action: { label: 'Undo', onPress: () => {} } }));
+        const undo = rowButtons(tree).find((n) => n.props.accessibilityLabel === 'Undo')!;
+        const slop = undo.props.hitSlop as number;
+        h.ok(TYPE_SCALE.headline.lineHeight + 2 * slop >= LAYOUT.touchTarget[os], `${os}: ${TYPE_SCALE.headline.lineHeight} pt of text and ${slop} of slop on each side reach ${LAYOUT.touchTarget[os]}`);
+        await act(() => tree.unmount());
+      }
+    } finally {
+      Platform.OS = 'ios';
+    }
   });
 
   // ── TextField ──────────────────────────────────────────────────────────────
