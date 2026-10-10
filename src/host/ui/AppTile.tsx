@@ -32,7 +32,7 @@ import { Ember } from './Ember';
 import { Icon } from './Icon';
 import type { MenuAnchor } from './ContextMenu';
 import { timing, usePressFeedback } from './motion';
-import { GRID, TILE, TILE_SIDE, listRowPadding, type GridLayout, type TileSize } from './AppTile-geometry';
+import { GRID, TILE, TILE_SIDE, labelSidePadding, listRowPadding, type GridLayout, type TileSize } from './AppTile-geometry';
 import { stateLine, tileAccessibilityHint, tileAccessibilityLabel, tileLook, type StateLine, type TileState } from './AppTile-states';
 import { Text } from './Text';
 import { useTokens } from './tokens';
@@ -160,11 +160,13 @@ export interface AppTileProps {
 }
 
 const cellStyles = makeStyles((t) => ({
-  column: { alignItems: 'center' as const, paddingHorizontal: GRID.labelSidePadding },
+  column: { alignItems: 'center' as const, paddingHorizontal: labelSidePadding(t.largeText) },
   label: { marginTop: GRID.labelGap, textAlign: 'center' as const, alignSelf: 'stretch' as const },
   row: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], paddingHorizontal: listRowPadding(t.largeText) },
   texts: { flex: 1 },
-  touch: { justifyContent: 'center' as const },
+  /** A list row centres its plate on the text beside it; a grid cell holds every plate on one line. */
+  touchGrid: { justifyContent: 'flex-start' as const },
+  touchList: { justifyContent: 'center' as const },
   lifted: { boxShadow: t.shadows.floating },
 }));
 
@@ -206,7 +208,12 @@ export function AppTile({
   const frame = inList
     ? { minHeight: layout.rowHeight, width: '100%' as const }
     : { minHeight: layout.cellHeight, width: layout.columnWidth };
-  const plate = <TilePlate size={size} state={state} tint={tint} glyph={glyph} activity={activity} />;
+  // Only the plate carries the lift's shadow, with the plate's own corner: the cell around it is not a shape.
+  const plate = (
+    <View style={lifted ? [s.lifted, { borderRadius: TILE.corner * TILE_SIDE[size] }] : null}>
+      <TilePlate size={size} state={state} tint={tint} glyph={glyph} activity={activity} />
+    </View>
+  );
   const lines = line ? (
     <Text type="caption" color={line.color} numberOfLines={1} style={inList ? undefined : s.label}>
       {line.text}
@@ -214,7 +221,7 @@ export function AppTile({
   ) : null;
 
   return (
-    <Animated.View style={[frame, liftStyle, lifted ? s.lifted : null]}>
+    <Animated.View style={[frame, liftStyle]}>
       <Pressable
         ref={ref}
         onPress={onPress}
@@ -234,7 +241,7 @@ export function AppTile({
         onAccessibilityAction={(event) => {
           if (event.nativeEvent.actionName === 'longpress') openMenu();
         }}
-        style={[s.touch, { minHeight: frame.minHeight }]}
+        style={[inList ? s.touchList : s.touchGrid, { minHeight: frame.minHeight }]}
       >
         <Animated.View style={[press.style, busy ? { opacity: BUSY_OPACITY } : null]}>
           {inList ? (
