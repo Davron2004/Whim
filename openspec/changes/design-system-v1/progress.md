@@ -201,3 +201,20 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
 - report: chain-16f STATUS complete, fast gate PASS, knip clean, commit `735c79f8` (11 files). integrity exit 0; removal
   ratchet PASS; with the reviewer. Proven on emulator-5560: the menu sits 8 dp under its cell at 1.0/1.4/2.0 in both
   themes (cause: `measureInWindow` starts below the status bar on Android), Undo fires 12 dp above its text.
+- reviewer on `735c8531..735c79f8` (16f): VERDICT findings, report matches, all low or low/medium: a menu closed in the
+  commit it was granted its turn waits for the 2 s ceiling with an invisible scrim up; a comment that still says Android
+  is never timed; `resetOverlayHolds` exported for the rig and applied by patching `TestRenderer.create`; a constant
+  compared with a literal in `terms-flow-ui`; one near-tautological assertion dropped from "plates line up" (the test has
+  5 assertion calls, was 4). A menu that flips above at 200% reaches 5 dp into the "Your apps" title: `placeMenu` clamps
+  to the safe area only, and §7.1 speaks of the row's names, so it is left as it is.
+- merged: `7cc09cac` (--no-ff). regate (fast): PASS.
+- chain-16h rework: commit `8a3ddf5a` (30 s poll removed; request evidence plus one confirming probe; foreground re-check
+  at most once per 10 s; delta `specs/server-connectivity/spec.md`; design.md D20; `system.md` §9 one clause). Fake-clock
+  probe count for an idle hour on Home: 1 (the startup probe); the 30 s variant gave 124. reviewer on
+  `735c8531..8a3ddf5a`: VERDICT findings. Medium: a probe that settles after the app was backgrounded leaves a failure
+  count that lets a later single failed probe turn the notice on. Lows: an in-flight probe is shared with a request
+  failure where the delta says "started after"; a loop built while inactive sends its startup probe; two code rules
+  missing from the delta. One more round (16h-r2) with these, after staging was merged into the branch (16f and 16h both
+  added an `AppState` stub to the test rig).
+- dispatched: chain-16h-r2 (same branch and worktree, no device) and chain-16i (BASE the staging tip; reviewer mediums
+  on 16d plus two device side findings; sonnet, iOS simulator).
