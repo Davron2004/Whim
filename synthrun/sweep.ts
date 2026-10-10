@@ -22,6 +22,7 @@
  * — a fresh realm, never in-place re-delivery (T7).
  */
 import type { Frame, Locator, Page } from 'playwright';
+import { NAV_CALL_SHAPES } from '../checks/contract';
 import type { RunBudgets, SweepCounts } from './contract';
 import type { RunContext } from './session';
 import { buildCandidateSource } from './builder';
@@ -43,7 +44,8 @@ export type SweepElementKind =
   | 'checkbox'
   | 'slider'
   | 'pressable'
-  | 'modal-backdrop';
+  | 'modal-backdrop'
+  | 'nav-back';
 
 export interface SweptElement {
   kind: SweepElementKind;
@@ -52,6 +54,11 @@ export interface SweptElement {
    *  AND a directly-usable `Frame.locator()` selector. */
   domPath: string;
 }
+
+/** The accessible name of the SDK header's Back button: the `label: 'Back'` `ScreenHeader` gives
+ *  its `HeaderButton` (`src/sdk/index.tsx`). The SDK exports no constant for it, so this is a copy;
+ *  the sweep suite detects it from a real SDK-rendered pushed screen, so a rename turns it red. */
+const NAV_BACK_LABEL = 'Back';
 
 export interface SweepDiagnostic {
   kind: 'unreachable_screen';
@@ -235,16 +242,19 @@ export async function awaitSettledScreen(frame: Frame, timeoutMs = SETTLE_TIMEOU
  *   - `[role=switch|checkbox]`          → switch / checkbox (Switch/Checkbox set these explicitly)
  *   - `button:not([disabled])`          → button (covers plain `Button` AND every
  *                                          `SegmentedControl` option — each is its own fingerprint,
- *                                          so sweeping every button already "selects every option")
+ *                                          so sweeping every button already "selects every option"),
+ *                                          or nav-back for the SDK header's text-less Back button
+ *   - the label is the element's text, or its `aria-label` when it has none
  *   - inline `style.touchAction:'none'` → slider (unique to `Slider`'s touch-area div)
- *   - inline `style.position:'fixed'`   → modal-backdrop (unique to `Modal`'s backdrop div)
+ *   - inline `style.position:'fixed'`   → modal-backdrop (unique to `Modal`'s backdrop div; the
+ *                                          toast host is fixed too but `role="status"`, and no fingerprint)
  *   - inline `style.cursor:'pointer'`, excluding the above → pressable (`Card`/`ListItem` with
  *     `onPress`; inline (not computed/inherited) `style.cursor` is only ever set by the element
  *     ITSELF, never inherited from an ancestor, so this cannot false-positive on a pressable's
  *     children).
  */
 export async function enumerateInteractiveElements(frame: Frame): Promise<SweptElement[]> {
-  return frame.evaluate((): SweptElement[] => {
+  return frame.evaluate((backLabel: string): SweptElement[] => {
     interface DomNode {
       tagName: string;
       parentElement: DomNode | null;
@@ -293,6 +303,10 @@ export async function enumerateInteractiveElements(frame: Frame): Promise<SweptE
       const span = label.querySelector('span');
       return span ? textOf(span) : '';
     }
+    /** The element's text, or its accessible name when it shows none, or `fallback`. */
+    function nameOf(el: DomNode, fallback: string): string {
+      return textOf(el) || el.getAttribute('aria-label') || fallback;
+    }
     const seen = new Set<string>();
     function push(kind: SweepElementKind, label: string, el: DomNode): void {
       const path = cssPath(el);
@@ -302,7 +316,7 @@ export async function enumerateInteractiveElements(frame: Frame): Promise<SweptE
     }
 
     root.querySelectorAll('*').forEach((el) => {
-      if (el.style && el.style.position === 'fixed') push('modal-backdrop', 'modal', el);
+      if (el.style && el.style.position === 'fixed' && el.getAttribute('role') !== 'status') push('modal-backdrop', 'modal', el);
     });
     root.querySelectorAll('input[type="text"]').forEach((el) => {
       push('text-input', fieldLabel(el) || el.placeholder || '(text)', el);
@@ -325,21 +339,24 @@ export async function enumerateInteractiveElements(frame: Frame): Promise<SweptE
     root.querySelectorAll('input[type="datetime-local"]').forEach((el) => {
       push('datetime-input', el.getAttribute('aria-label') || fieldLabel(el) || '(datetime)', el);
     });
-    root.querySelectorAll('[role="switch"]').forEach((el) => push('switch', textOf(el) || 'switch', el));
-    root.querySelectorAll('[role="checkbox"]').forEach((el) => push('checkbox', textOf(el) || 'checkbox', el));
-    root.querySelectorAll('button:not([disabled])').forEach((el) => push('button', textOf(el) || '(button)', el));
+    root.querySelectorAll('[role="switch"]').forEach((el) => push('switch', nameOf(el, 'switch'), el));
+    root.querySelectorAll('[role="checkbox"]').forEach((el) => push('checkbox', nameOf(el, 'checkbox'), el));
+    root.querySelectorAll('button:not([disabled])').forEach((el) => {
+      const isBack = textOf(el) === '' && el.getAttribute('aria-label') === backLabel;
+      push(isBack ? 'nav-back' : 'button', nameOf(el, '(button)'), el);
+    });
     root.querySelectorAll('div').forEach((el) => {
       if (el.style && el.style.touchAction === 'none') push('slider', fieldLabel(el) || 'slider', el);
     });
     root.querySelectorAll('div').forEach((el) => {
       const roleHandled = el.getAttribute('role') === 'switch' || el.getAttribute('role') === 'checkbox';
       if (el.style && el.style.cursor === 'pointer' && !roleHandled && el.style.position !== 'fixed') {
-        push('pressable', textOf(el) || '(pressable)', el);
+        push('pressable', nameOf(el, '(pressable)'), el);
       }
     });
 
     return results;
-  });
+  }, NAV_BACK_LABEL);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -523,6 +540,7 @@ async function performAction(frame: Frame, el: SweptElement, opts: ResolvedSweep
       return;
     case 'button':
     case 'pressable':
+    case 'nav-back':
     default:
       await locator.click({ timeout: ACTION_TIMEOUT_MS });
   }
@@ -540,17 +558,46 @@ function byFingerprint(a: SweptElement, b: SweptElement): number {
   return fingerprintKey(a).localeCompare(fingerprintKey(b));
 }
 
-function sortedUnvisited(elements: SweptElement[], visited: Set<string>): SweptElement[] {
-  return elements.filter((el) => !visited.has(fingerprintKey(el))).sort(byFingerprint);
+/** Most times one DOM path of a screen is acted on, however its label changes (design D9): a label
+ *  that carries a running value mints a new fingerprint at the same path on every press. */
+const MAX_ACTIONS_PER_PATH = 3;
+
+/** The groups fingerprints are tried in (design D5), earlier first: rows and cards, then value
+ *  controls, then buttons, then the controls that leave what is on screen — a `Modal` backdrop
+ *  before the header's Back button. */
+const KIND_GROUP: Record<SweepElementKind, number> = {
+  pressable: 0,
+  'text-input': 1,
+  'number-input': 1,
+  select: 1,
+  'date-input': 1,
+  'time-input': 1,
+  'datetime-input': 1,
+  slider: 1,
+  switch: 1,
+  checkbox: 1,
+  button: 2,
+  'modal-backdrop': 3,
+  'nav-back': 4,
+};
+
+/** A fingerprint at a DOM path already acted on `MAX_ACTIONS_PER_PATH` times is retired: never
+ *  acted on, never keeping the screen's sweep open, never blocked. A backdrop is exempt, its
+ *  re-dismissal has its own bound (see `pickNext`). */
+function isRetired(el: SweptElement, progress: ScreenProgress): boolean {
+  return el.kind !== 'modal-backdrop' && (progress.pathActs.get(el.domPath) ?? 0) >= MAX_ACTIONS_PER_PATH;
 }
 
-/** The order unvisited fingerprints are TRIED in (design D2): the sorted fingerprint order with a
- *  `Modal` backdrop after every other kind, so a Modal's own controls are used before it is
- *  dismissed. A fingerprint tried and found unable to receive its action is skipped for this
- *  pick only (see `pickNext`), never visited. */
-function orderUnvisited(elements: SweptElement[], visited: Set<string>): SweptElement[] {
-  const unvisited = sortedUnvisited(elements, visited);
-  return [...unvisited.filter((el) => el.kind !== 'modal-backdrop'), ...unvisited.filter((el) => el.kind === 'modal-backdrop')];
+function sortedUnvisited(elements: SweptElement[], progress: ScreenProgress): SweptElement[] {
+  return elements.filter((el) => !progress.visited.has(fingerprintKey(el)) && !isRetired(el, progress)).sort(byFingerprint);
+}
+
+/** The order unvisited fingerprints are TRIED in (design D2/D5): by group, then sorted fingerprint
+ *  inside a group, so a Modal's own controls are used before it is dismissed and nothing that
+ *  leaves the screen precedes a control on it. A fingerprint tried and found unable to receive its
+ *  action is skipped for this pick only (see `pickNext`), never visited. */
+function orderUnvisited(elements: SweptElement[], progress: ScreenProgress): SweptElement[] {
+  return sortedUnvisited(elements, progress).sort((a, b) => KIND_GROUP[a.kind] - KIND_GROUP[b.kind] || byFingerprint(a, b));
 }
 
 /** What the whole run has seen and done, for the report's counts. Fingerprints are scoped by the
@@ -558,19 +605,24 @@ function orderUnvisited(elements: SweptElement[], visited: Set<string>): SweptEl
 interface SweepLedger {
   seen: Set<string>;
   acted: Set<string>;
+  /** Fingerprints retired by the per-path limit: they are not blocked, they are spent. */
+  retired: Set<string>;
   failedActions: number;
 }
 
 function newLedger(): SweepLedger {
-  return { seen: new Set<string>(), acted: new Set<string>(), failedActions: 0 };
+  return { seen: new Set<string>(), acted: new Set<string>(), retired: new Set<string>(), failedActions: 0 };
 }
 
 function ledgerKey(screenName: string, el: SweptElement): string {
   return `${screenName}::${fingerprintKey(el)}`;
 }
 
-function noteSeen(ledger: SweepLedger, screenName: string, elements: SweptElement[]): void {
-  for (const el of elements) ledger.seen.add(ledgerKey(screenName, el));
+function noteSeen(ledger: SweepLedger, screenName: string, elements: SweptElement[], progress: ScreenProgress): void {
+  for (const el of elements) {
+    ledger.seen.add(ledgerKey(screenName, el));
+    if (isRetired(el, progress)) ledger.retired.add(ledgerKey(screenName, el));
+  }
 }
 
 interface ScreenSweepOutcome {
@@ -591,10 +643,12 @@ interface ScreenProgress {
    *  before the first one). A backdrop already visited may be dismissed again only when this is
    *  above zero. */
   actedSinceDismissal: number;
+  /** Times each DOM path was acted on, whatever its label was then (`MAX_ACTIONS_PER_PATH`). */
+  pathActs: Map<string, number>;
 }
 
 function newScreenProgress(): ScreenProgress {
-  return { visited: new Set<string>(), actions: 0, actedSinceDismissal: 0 };
+  return { visited: new Set<string>(), actions: 0, actedSinceDismissal: 0, pathActs: new Map<string, number>() };
 }
 
 /** The next fingerprint to act on, or `null` when this screen's sweep is over (design D2).
@@ -611,13 +665,41 @@ function newScreenProgress(): ScreenProgress {
  *  grows), a re-dismissal (which needs a fresh action since the last one, so re-dismissals never
  *  outnumber fresh actions), or `null`; and every pick spends one of the screen's
  *  `maxActionsPerScreen` actions. */
-async function pickNext(frame: Frame, elements: SweptElement[], progress: ScreenProgress): Promise<SweptElement | null> {
-  const ordered = orderUnvisited(elements, progress.visited);
+async function pickFrom(frame: Frame, elements: SweptElement[], progress: ScreenProgress): Promise<SweptElement | null> {
+  const ordered = orderUnvisited(elements, progress);
   if (ordered.length === 0) return null;
   const pick = await firstActionable(frame, ordered);
   if (pick !== null || progress.actedSinceDismissal === 0) return pick;
   const dismissed = elements.filter((el) => el.kind === 'modal-backdrop' && progress.visited.has(fingerprintKey(el))).sort(byFingerprint);
   return firstActionable(frame, dismissed);
+}
+
+/** How long the sweep waits for a toast to leave: the SDK shows one for four seconds (`TOAST_MS` in
+ *  `src/sdk/toast.tsx`, not exported), plus the time it takes to sink out. */
+const TOAST_WAIT_CAP_MS = 5000;
+
+/** Waits, up to `TOAST_WAIT_CAP_MS`, for the SDK's toast host to leave, and reports whether one was
+ *  showing. A toast lies over the bottom of the screen and takes every click aimed there, but it is
+ *  no fingerprint of its own: the controls under it are only late. */
+async function awaitToastGone(frame: Frame): Promise<boolean> {
+  const showing = (): Promise<boolean> =>
+    frame
+      .evaluate(() => (globalThis as unknown as { document: { querySelector(selector: string): unknown } }).document.querySelector('[role="status"]') !== null)
+      .catch(() => false);
+  if (!(await showing())) return false;
+  const deadline = Date.now() + TOAST_WAIT_CAP_MS;
+  while (Date.now() < deadline && (await showing())) await sleep(30);
+  return true;
+}
+
+/** `pickFrom`, and when it finds nothing while a toast is showing, once more after the toast has
+ *  gone (re-enumerated, the page having moved on). The wait happens at most once per pick, so it
+ *  adds nothing to the termination argument above: it spends no action and a pick that waited is
+ *  still `pickFrom`'s answer. */
+async function pickNext(frame: Frame, elements: SweptElement[], progress: ScreenProgress): Promise<SweptElement | null> {
+  const pick = await pickFrom(frame, elements, progress);
+  if (pick !== null || orderUnvisited(elements, progress).length === 0 || !(await awaitToastGone(frame))) return pick;
+  return pickFrom(frame, await enumerateInteractiveElements(frame), progress);
 }
 
 /** Acts on `el` and books it: a recipe the driver could not complete is a failed action (counted,
@@ -631,6 +713,7 @@ async function act(frame: Frame, screenName: string, el: SweptElement, progress:
   progress.visited.add(fingerprintKey(el));
   ledger.acted.add(ledgerKey(screenName, el));
   progress.actions += 1;
+  if (el.kind !== 'modal-backdrop') progress.pathActs.set(el.domPath, (progress.pathActs.get(el.domPath) ?? 0) + 1);
   progress.actedSinceDismissal = el.kind === 'modal-backdrop' ? 0 : progress.actedSinceDismissal + 1;
 }
 
@@ -647,13 +730,12 @@ async function sweepOneScreen(
   opts: ResolvedSweepOptions,
   ledger: SweepLedger,
 ): Promise<ScreenSweepOutcome> {
-  const { visited } = progress;
   const actionsLog: SweptElement[] = [];
 
   while (progress.actions < opts.maxActionsPerScreen) {
     await awaitMotionStill(frame, budgets.actionHardCapMs);
     const elements = await enumerateInteractiveElements(frame);
-    noteSeen(ledger, screenName, elements);
+    noteSeen(ledger, screenName, elements, progress);
     const next = await pickNext(frame, elements, progress);
     if (next === null) return { actionsLog, truncated: false, navigatedTo: null };
 
@@ -672,8 +754,8 @@ async function sweepOneScreen(
   }
 
   const remaining = await enumerateInteractiveElements(frame).catch(() => [] as SweptElement[]);
-  noteSeen(ledger, screenName, remaining);
-  const truncated = sortedUnvisited(remaining, visited).length > 0;
+  noteSeen(ledger, screenName, remaining, progress);
+  const truncated = sortedUnvisited(remaining, progress).length > 0;
   return { actionsLog, truncated, navigatedTo: null };
 }
 
@@ -728,6 +810,32 @@ async function waitForNewMount(obs: AttachedObservers, sinceEventCount: number, 
     if (newEvents.some((e) => e.kind === 'paint' || e.kind === 'error')) return;
     await sleep(30);
   }
+}
+
+function escapeRegExp(text: string): string {
+  return text.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** True when some navigate call in `source` names `screenName` as its string-literal target, in any
+ *  quote style. It keys on the method (`NAV_CALL_SHAPES`), not the receiver, so an aliased or
+ *  namespaced receiver counts. A text scan, not a parse: a call inside a comment counts too, which
+ *  errs toward no warning. */
+function navigateNamesScreen(source: string, screenName: string): boolean {
+  const methods = NAV_CALL_SHAPES.filter((shape) => shape.argIndex === 0).map((shape) => escapeRegExp(shape.method));
+  if (methods.length === 0) return false;
+  const call = new RegExp(String.raw`\b(?:${methods.join('|')})\s*\(\s*(['"\x60])${escapeRegExp(screenName)}\1`);
+  return call.test(source);
+}
+
+/** The warning for a declared screen no navigate call names: the candidate has no path to it, so the
+ *  hint is true and one repair turn can act on it. */
+function unreachableScreenDiagnostic(name: string): SweepDiagnostic {
+  return {
+    kind: 'unreachable_screen',
+    severity: 'warning',
+    message: `screen "${name}" was never reached via navigation — cold-mounted directly to cover it`,
+    hint: 'add a reachable nav.navigate(...) path to this screen, or remove it if it is unused',
+  };
 }
 
 /** Builds a cold-mount variant of `source` targeting `screenName`, delivers it into a FRESH
@@ -830,12 +938,7 @@ export async function sweepApp(ctx: RunContext, obs: AttachedObservers, source: 
   const coldMountedScreens: string[] = [];
   for (const name of declared) {
     if (visited.has(name)) continue;
-    diagnostics.push({
-      kind: 'unreachable_screen',
-      severity: 'warning',
-      message: `screen "${name}" was never reached via navigation — cold-mounted directly to cover it`,
-      hint: 'add a reachable nav.navigate(...) path to this screen, or remove it if it is unused',
-    });
+    if (!navigateNamesScreen(source, name)) diagnostics.push(unreachableScreenDiagnostic(name));
     const start = Date.now();
     try {
       const coldFrame = await coldMountScreen(ctx, obs, source, name, budgets);
@@ -855,7 +958,7 @@ export async function sweepApp(ctx: RunContext, obs: AttachedObservers, source: 
   const { ledger } = tally;
   const sweep: SweepCounts = {
     actions: actionsLog.length,
-    blocked: [...ledger.seen].filter((key) => !ledger.acted.has(key)).length,
+    blocked: [...ledger.seen].filter((key) => !ledger.acted.has(key) && !ledger.retired.has(key)).length,
     failedActions: ledger.failedActions,
   };
   return { declaredScreens: declared, visitedScreens: [...visited], coldMountedScreens, truncated: tally.truncated, diagnostics, perScreenMs, actionsLog, sweep };

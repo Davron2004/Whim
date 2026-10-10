@@ -8,6 +8,7 @@
 import nodeAssert from 'node:assert';
 import { awaitMount, mergeBudgets } from '../observe';
 import type { RunBudgets } from '../contract';
+import { createRunCandidate } from '../report';
 import { SynthRunSession } from '../session';
 import { findAppFrame, sweepApp, type SweepOptions, type SweepResult } from '../sweep';
 import { createEngine } from '../../src/host/storage-engine/engine';
@@ -62,6 +63,11 @@ async function runSweep(
 
 function labels(result: SweepResult): string[] {
   return result.actionsLog.map((el) => el.label);
+}
+
+/** What was acted on, in order, as `kind:label` joined by commas. */
+function signature(result: SweepResult): string {
+  return result.actionsLog.map((el) => el.kind + ':' + el.label).join(',');
 }
 
 function describe(result: SweepResult): string {
@@ -308,6 +314,148 @@ function Orphan() {
 export default defineApp({ name: 'Gated', initial: 'Home', screens: { Home, Orphan }, capabilities: ['storage'] });
 `;
 
+// The list reads from storage and is empty on a fresh install. The header's plus opens a form whose
+// save control is disabled until the field is filled; saving pops back to a list that now holds a
+// row, and the row opens a detail screen.
+const FIXTURE_EMPTY_LIST = `import { defineApp, nav, Screen, Stack, Heading, TextInput, Button, List, ListItem, EmptyState, useState, useEffect, storage } from 'vc-sdk';
+let ITEMS = [];
+let picked = '';
+const listeners = new Set();
+function publish(next) {
+  ITEMS = next;
+  listeners.forEach((listener) => listener(next));
+}
+function Home() {
+  const [items, setItems] = useState(ITEMS);
+  useEffect(() => {
+    listeners.add(setItems);
+    storage.kv.get('items').then((saved) => { if (Array.isArray(saved)) publish(saved); }).catch(() => {});
+    return () => { listeners.delete(setItems); };
+  }, []);
+  return (
+    <Screen title="Items" action={{ icon: 'plus', label: 'Add item', onPress: () => nav.navigate('Form') }}>
+      <Stack>
+        {items.length === 0 ? (
+          <EmptyState icon="search" title="Nothing yet" hint="Add the first one." />
+        ) : (
+          <List items={items} keyBy="name" renderItem={(item) => <ListItem title={item.name} onPress={() => { picked = item.name; nav.navigate('Detail'); }} />} />
+        )}
+      </Stack>
+    </Screen>
+  );
+}
+function Form() {
+  const [name, setName] = useState('');
+  const save = () => {
+    const next = [...ITEMS, { name: name.trim() }];
+    storage.kv.set('items', next).then(() => { publish(next); nav.back(); }).catch(() => {});
+  };
+  return (
+    <Screen title="New item">
+      <Stack>
+        <TextInput label="Item name" value={name} onChange={setName} />
+        <Button label="Save item" disabled={name.trim() === ''} onPress={save} />
+      </Stack>
+    </Screen>
+  );
+}
+function Detail() {
+  return (
+    <Screen title="Item">
+      <Stack><Heading size="title">{picked}</Heading><Button label="Archive" onPress={() => {}} /></Stack>
+    </Screen>
+  );
+}
+export default defineApp({ name: 'EmptyList', initial: 'Home', screens: { Home, Form, Detail }, capabilities: ['storage'] });
+`;
+
+// A pushed form. "Save" writes what the field holds, so the stored value shows whether the field was
+// filled before the button was pressed. "Back" is an ordinary text button, not the header's.
+const FIXTURE_PUSHED_FORM = `import { defineApp, nav, Screen, Stack, TextInput, Button, useState, storage } from 'vc-sdk';
+function Home() {
+  return <Screen><Stack><Button label="Open form" onPress={() => nav.navigate('Form')} /></Stack></Screen>;
+}
+function Form() {
+  const [note, setNote] = useState('');
+  return (
+    <Screen title="Form">
+      <Stack>
+        <TextInput label="Note" value={note} onChange={setNote} />
+        <Button label="Save" onPress={() => { storage.kv.set('saved', note).catch(() => {}); }} />
+        <Button label="Back" onPress={() => {}} />
+      </Stack>
+    </Screen>
+  );
+}
+export default defineApp({ name: 'PushedForm', initial: 'Home', screens: { Home, Form }, capabilities: ['storage'] });
+`;
+
+// A card whose label carries a count that rises on every press, beside one ordinary button.
+const FIXTURE_RUNNING_VALUE = `import { defineApp, Screen, Stack, Button, ListItem, useState } from 'vc-sdk';
+function Home() {
+  const [taps, setTaps] = useState(0);
+  return (
+    <Screen>
+      <Stack>
+        <ListItem title={'Taps ' + taps} onPress={() => setTaps(taps + 1)} />
+        <Button label="Other" onPress={() => {}} />
+      </Stack>
+    </Screen>
+  );
+}
+export default defineApp({ name: 'RunningValue', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
+// The only action shows a toast, which the SDK draws as a fixed region at the bottom of the app.
+const FIXTURE_TOAST = `import { defineApp, Screen, Stack, Button, toast } from 'vc-sdk';
+function Home() {
+  return <Screen><Stack><Button label="Show" onPress={() => toast('Hello there')} /></Stack></Screen>;
+}
+export default defineApp({ name: 'ToastOnly', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
+// Five screens the sweep cannot reach: the field takes a phrase the canonical text never matches.
+// Four are navigated to, each written another way (single, double and backtick quotes, a receiver
+// that is not "nav", spacing inside the call); "Gated" is named by no call and its name is a prefix
+// of "GatedA".
+const FIXTURE_GATED_SCREENS = `import { defineApp, nav, Screen, Stack, Heading, TextInput, useState } from 'vc-sdk';
+const sdk = { nav };
+function Home() {
+  const [phrase, setPhrase] = useState('');
+  const go = (text) => {
+    setPhrase(text);
+    if (text === 'open a') nav.navigate('GatedA');
+    if (text === 'open b') nav.navigate("GatedB");
+    if (text === 'open c') nav.navigate(\`GatedC\`);
+    if (text === 'open d') sdk.nav.navigate( 'GatedD' );
+  };
+  return <Screen><Stack><Heading size="title">Home</Heading><TextInput label="Phrase" value={phrase} onChange={go} /></Stack></Screen>;
+}
+const page = (title) => () => <Screen><Stack><Heading size="title">{title}</Heading></Stack></Screen>;
+const Gated = page('Gated');
+const GatedA = page('GatedA');
+const GatedB = page('GatedB');
+const GatedC = page('GatedC');
+const GatedD = page('GatedD');
+export default defineApp({ name: 'GatedScreens', initial: 'Home', screens: { Home, Gated, GatedA, GatedB, GatedC, GatedD }, capabilities: [] });
+`;
+
+// A screen behind a phrase the sweep does not type, which throws as it renders.
+const FIXTURE_GATED_THROWS = `import { defineApp, nav, Screen, Stack, Heading, TextInput, useState } from 'vc-sdk';
+function Home() {
+  const [phrase, setPhrase] = useState('');
+  const go = (text) => {
+    setPhrase(text);
+    if (text === 'open sesame') nav.navigate('Vault');
+  };
+  return <Screen><Stack><Heading size="title">Home</Heading><TextInput label="Phrase" value={phrase} onChange={go} /></Stack></Screen>;
+}
+function Vault() {
+  throw new Error('gated-vault-throws');
+}
+export default defineApp({ name: 'GatedThrows', initial: 'Home', screens: { Home, Vault }, capabilities: [] });
+`;
+
 /** The `kv` verbs with each write holding the host for `ms`. */
 function slowKv(kv: StorageEngine['kv'], ms: number): StorageEngine['kv'] {
   return {
@@ -455,5 +603,114 @@ async function runScenarios(session: SynthRunSession): Promise<void> {
     const { result } = await runSweep(session, flowbenchApp('score-keeper-p1'), { budgets: ASYNC_BUDGETS, sweep: { maxActionsPerScreen: 12 } });
     ok(result.actionsLog.some((el) => el.kind === 'pressable' && el.label.startsWith('Player 1')), `a player card beneath the Modal was pressed (${describe(result)})`);
     ok(result.sweep.failedActions === 0, `no action failed (${describe(result)})`);
+  });
+
+  await test('order: the header Back button of a pushed screen is a kind of its own, detected on a real SDK screen, and a text button named Back is not it', async () => {
+    const { result, wiring } = await runSweep(session, FIXTURE_PUSHED_FORM, { budgets: ASYNC_BUDGETS });
+    ok(
+      signature(result) === 'button:Open form,text-input:Note,button:Back,button:Save,nav-back:Back',
+      `the form was filled and saved, the text "Back" button pressed as a button, and the header Back button last (${describe(result)})`,
+    );
+    const stored = await holds(() => wiring.realm?.engine?.kv.get('saved') === 'synthrun-probe', 5000);
+    ok(stored, `"Save" was pressed after the field was filled (stored ${JSON.stringify(wiring.realm?.engine?.kv.get('saved'))})`);
+    ok(result.sweep.failedActions === 0, `no action failed (${describe(result)})`);
+  });
+
+  await test('labels: an icon-only header action is labelled by its accessible name, not by the placeholder', async () => {
+    const { result } = await runSweep(session, FIXTURE_EMPTY_LIST, { budgets: REPLY_BUDGETS });
+    ok(result.actionsLog.some((el) => el.kind === 'button' && el.label === 'Add item'), `the header action is a button labelled by its aria-label (${describe(result)})`);
+    ok(result.actionsLog.every((el) => el.label !== '(button)'), `no fingerprint fell back to the placeholder label (${describe(result)})`);
+  });
+
+  await test('order: a detail screen behind an empty list is reached live, through the form that creates the row', async () => {
+    const { result } = await runSweep(session, FIXTURE_EMPTY_LIST, { budgets: REPLY_BUDGETS });
+    ok(result.visitedScreens.includes('Detail'), `the detail screen was visited (${result.visitedScreens.join(',')})`);
+    ok(!result.coldMountedScreens.includes('Detail'), `and not by a cold mount (cold: ${result.coldMountedScreens.join(',')}; ${describe(result)})`);
+    ok(result.coldMountedScreens.length === 0 && result.diagnostics.length === 0, `no screen needed a cold mount and no diagnostic was raised (${describe(result)})`);
+    const order = result.actionsLog.map((el) => el.kind + ':' + el.label);
+    const at = (entry: string): number => order.indexOf(entry);
+    ok(at('text-input:Item name') >= 0 && at('button:Save item') > at('text-input:Item name'), `the field was filled and then saved (${describe(result)})`);
+    ok(at('pressable:synthrun-probe') > at('button:Save item'), `the row the form created was pressed after the save (${describe(result)})`);
+    ok(at('button:Archive') > at('pressable:synthrun-probe'), `the detail screen was swept after the row (${describe(result)})`);
+    ok(!order.slice(0, at('button:Save item')).includes('nav-back:Back'), `the form was not left before it was saved (${describe(result)})`);
+  });
+
+  await test('order: workout-log-p1 fills the pushed form before it presses the header Back button', async () => {
+    const { result } = await runSweep(session, flowbenchApp('workout-log-p1'), { budgets: REPLY_BUDGETS });
+    const order = result.actionsLog.map((el) => el.kind + ':' + el.label);
+    const back = order.indexOf('nav-back:Back');
+    ok(back >= 0, `the header Back button was recognised as nav-back (${describe(result)})`);
+    for (const field of ['date-input:Date', 'text-input:Exercise', 'number-input:Reps', 'number-input:Weight (kg)', 'button:Add set']) {
+      const at = order.indexOf(field);
+      ok(at >= 0 && at < back, `${field} was acted on before the header Back button (${describe(result)})`);
+    }
+  });
+
+  await test('order: recipe-box-p1 presses its rows before it types into the search field', async () => {
+    const { result } = await runSweep(session, flowbenchApp('recipe-box-p1'), { budgets: REPLY_BUDGETS });
+    // The list screen's only text field; the form's three are labelled.
+    const formFields = ['Recipe name', 'Ingredients', 'Steps'];
+    const search = result.actionsLog.findIndex((el) => el.kind === 'text-input' && !formFields.includes(el.label));
+    ok(search >= 0, `the search field was typed into (${describe(result)})`);
+    for (const recipe of ['Banana Oat Pancakes', 'Tomato Pasta', 'Berry Yogurt Bowl']) {
+      const row = result.actionsLog.findIndex((el) => el.kind === 'pressable' && el.label.startsWith(recipe));
+      ok(row >= 0 && row < search, `the "${recipe}" row was pressed before the search field was typed into (${describe(result)})`);
+    }
+    ok(result.visitedScreens.includes('RecipeDetail') && !result.coldMountedScreens.includes('RecipeDetail'), `a row led to the detail screen live (${describe(result)})`);
+  });
+
+  await test('limit: a card whose label carries a running value is pressed three times, the screen goes on, and the report is not truncated', async () => {
+    const { result } = await runSweep(session, FIXTURE_RUNNING_VALUE);
+    ok(labels(result).join(',') === 'Taps 0,Taps 1,Taps 2,Other', `the card was pressed three times, then the other button (${describe(result)})`);
+    ok(result.truncated === false, 'the report is not truncated');
+    ok(result.sweep.blocked === 0, `the spent card is not counted as blocked (${describe(result)})`);
+  });
+
+  await test('limit: a cap reached only because of spent fingerprints is not a truncation', async () => {
+    const { result } = await runSweep(session, FIXTURE_RUNNING_VALUE, { sweep: { maxActionsPerScreen: 4 } });
+    ok(result.actionsLog.length === 4, `the cap was reached exactly (${describe(result)})`);
+    ok(result.truncated === false, `only the spent card was left, so the report is not truncated (${describe(result)})`);
+    ok(result.sweep.blocked === 0, `and it is not counted as blocked (${describe(result)})`);
+  });
+
+  await test('limit: score-keeper-p1 is not truncated, and no DOM path is acted on more than three times', async () => {
+    const { result } = await runSweep(session, flowbenchApp('score-keeper-p1'), { budgets: ASYNC_BUDGETS });
+    ok(result.truncated === false, `the report is not truncated (${describe(result)})`);
+    const perPath = new Map<string, number>();
+    for (const el of result.actionsLog.filter((e) => e.kind !== 'modal-backdrop')) perPath.set(el.domPath, (perPath.get(el.domPath) ?? 0) + 1);
+    ok(Math.max(0, ...perPath.values()) <= 3, `no DOM path was acted on more than three times (${describe(result)})`);
+    ok(result.actionsLog.some((el) => el.kind === 'pressable' && el.label.startsWith('Player 1')), `a player card was pressed (${describe(result)})`);
+  });
+
+  await test('toast: showing a toast does not add a Modal backdrop dismissal to the action log', async () => {
+    const { result, text } = await runSweep(session, FIXTURE_TOAST, { budgets: ASYNC_BUDGETS });
+    ok(text.includes('Hello there'), `the toast was on screen when the sweep ended (page text: ${text.replace(/\s+/g, ' ')})`);
+    ok(signature(result) === 'button:Show', `only the button was acted on (${describe(result)})`);
+    ok(result.sweep.blocked === 0, `the toast is no fingerprint, so nothing is counted as blocked (${describe(result)})`);
+  });
+
+  await test('coverage: a gated screen is cold-mounted and listed, with no diagnostic when a navigate call names it, however the call is written', async () => {
+    const { result } = await runSweep(session, FIXTURE_GATED_SCREENS, { budgets: ASYNC_BUDGETS });
+    ok(
+      [...result.coldMountedScreens].sort((a, b) => a.localeCompare(b)).join(',') === 'Gated,GatedA,GatedB,GatedC,GatedD',
+      `every screen the sweep could not reach live was cold-mounted (${result.coldMountedScreens.join(',')})`,
+    );
+    ok(result.diagnostics.map((d) => d.kind).join(',') === 'unreachable_screen', `exactly one diagnostic (${JSON.stringify(result.diagnostics)})`);
+    ok(result.diagnostics[0]?.message.includes('"Gated"') ?? false, `and it names the screen no call names, not its longer neighbour (${JSON.stringify(result.diagnostics)})`);
+  });
+
+  await test('coverage: a screen no navigate call names is still flagged, hint included', async () => {
+    const { result } = await runSweep(session, FIXTURE_GATED_BUTTONS, { budgets: REPLY_BUDGETS });
+    const flagged = result.diagnostics.filter((d) => d.kind === 'unreachable_screen');
+    ok(flagged.length === 1 && flagged[0].severity === 'warning' && flagged[0].message.includes('"Orphan"'), `a warning names the orphan (${JSON.stringify(result.diagnostics)})`);
+    ok(flagged[0]?.hint.includes('nav.navigate') ?? false, 'it carries the hint that tells the author what to add');
+  });
+
+  await test('coverage: a gated screen that throws while rendering still fails the run, and carries no unreachable_screen', async () => {
+    const report = await within(createRunCandidate(session)(FIXTURE_GATED_THROWS, { budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 2000 } }), SWEEP_TIMEOUT_MS, 'the run');
+    ok(report.diagnostics.some((d) => d.kind === 'runtime_throw' && d.message.includes('gated-vault-throws')), `the render error is a runtime_throw (${JSON.stringify(report.diagnostics)})`);
+    ok(report.ok === false, 'the run did not pass');
+    ok(report.screens.coldMounted.join(',') === 'Vault', `the gated screen is listed as cold-mounted (${report.screens.coldMounted.join(',')})`);
+    ok(!report.diagnostics.some((d) => d.kind === 'unreachable_screen'), 'and no unreachable_screen was raised for it');
   });
 }

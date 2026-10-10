@@ -47,7 +47,7 @@ export type Severity = 'error' | 'warning';
  *        a rename of `containment_failure` (an authenticated verdict reporting a breach) nor of
  *        `mount_timeout` (no authenticated `paint` frame in the mount budget): a verdict can go
  *        unobserved without a mount timeout, and no producer may emit one of the three for another.
- *      - `unreachable_screen`    — a declared screen no live nav path reaches (cold-mount warning)
+ *      - `unreachable_screen`    — a declared screen no navigate call names (cold-mounted, warning)
  *      - `missing_schema`        — `launchApp` refused: `storage` declared, no schema artifact
  *        shipped (`src/host/bridge/launch.ts`'s own `LaunchResult` kind, reused verbatim — not
  *        caught by the static schema-check pass, which only runs when a `schema` literal IS
