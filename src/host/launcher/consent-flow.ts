@@ -22,7 +22,7 @@ import type { PendingBuildRecord } from './pending-builds';
 import type { ConsentStatus } from './ai-consent';
 import type { TermsStatus } from './terms-acceptance';
 import type { AgeGate } from './age-check';
-import type { ClarifyScreen, ComposeScreen, PlanScreen } from './prompt-flow';
+import type { DescribeScreen, PlanScreen } from './prompt-flow';
 
 /**
  * What a gated action resumes once the terms and consent are current. The five entry points (the
@@ -36,7 +36,7 @@ import type { ClarifyScreen, ComposeScreen, PlanScreen } from './prompt-flow';
 export type ConsentContinuation =
   | { kind: 'compose'; editing?: InstalledApp; text?: string }
   | { kind: 'retry'; record: PendingBuildRecord }
-  | { kind: 'resume'; screen: ComposeScreen | ClarifyScreen | PlanScreen }
+  | { kind: 'resume'; screen: DescribeScreen | PlanScreen }
   | { kind: 'settings' };
 
 /** A step of the legal flow: the store age check and, when it holds the user, the parental-approval

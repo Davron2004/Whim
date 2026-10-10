@@ -1,8 +1,9 @@
 /** Every data-sending entry point in the rendered launcher asks for AI-data consent first (the
  *  terms are already accepted here; `terms-flow-ui.suite.tsx` covers the step before), sends
- *  nothing until the user agrees, and then continues the action the user started. The consent
- *  screen shows the version-2 disclosure in the spec's order, and an outdated grant (a version-1
- *  one included) adds the outdated line and the what's-new line written for that version. */
+ *  nothing until the user agrees, and then continues the action the user started. The first-run
+ *  sheet and the Settings review screen show the version-2 disclosure in the spec's order, and an
+ *  outdated grant (a version-1 one included) adds the outdated line and the what's-new line written
+ *  for that version. */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
@@ -13,8 +14,9 @@ import HomeScreen from '../HomeScreen';
 import HistoryScreen from '../HistoryScreen';
 import MiniAppView from '../MiniAppView';
 import FailureScreen from '../FailureScreen';
-import ComposeStep from '../ComposeStep';
+import { DescribePage } from '../DescribePage';
 import ConsentScreen from '../ConsentScreen';
+import { FirstRunSheet } from '../FirstRunSheet';
 import { StoreAccess } from '../store-access';
 import { grantConsent } from '../ai-consent';
 import { acceptTerms } from '../terms-acceptance';
@@ -27,6 +29,7 @@ import { resetNativeStorage } from './native-storage';
 import { button, press, renderScreen, textOf, unmountScreen, captureTimeouts, hostType } from './react-screen';
 import { Linking } from './native-host';
 import { testAppInfo } from './client-fixtures';
+import { onHome } from './rendered-launcher';
 
 const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
@@ -40,10 +43,11 @@ type Entry = {
 };
 
 const composeFor = (editing: InstalledApp | null) => (tree: Tree): string | null => {
-  const compose = tree.root.findAllByType(ComposeStep);
-  if (compose.length !== 1) return `expected the composer, found ${compose.length}`;
-  if (compose[0].props.editing !== (editing != null)) return `composer editing=${compose[0].props.editing}`;
-  if (editing != null && compose[0].props.editingName !== editing.name) return `composer is scoped to ${compose[0].props.editingName}`;
+  const describe = tree.root.findAllByType(DescribePage);
+  if (describe.length !== 1) return `expected the describe page, found ${describe.length}`;
+  const scoped = describe[0].props.editing as InstalledApp | undefined;
+  if ((scoped != null) !== (editing != null)) return `describe page editing=${scoped?.name}`;
+  if (editing != null && scoped?.name !== editing.name) return `describe page is scoped to ${scoped?.name}`;
   return null;
 };
 
@@ -103,9 +107,9 @@ function seedConsent(kv: KVBackend, consent: ConsentSeed): void {
   if (consent === 'v1') kv.set('whim.ai-consent:v1', '{"version":1,"grantedAt":"2026-09-01T12:00:00.000Z"}');
 }
 
-/** The consent screen's disclosure keys in the order spec ai-data-consent "The disclosure names
- *  what is sent…" lists its sections: title and lead, what gets sent, why, who gets it, what the
- *  user saves, what Whim never does, ask first, the Settings footnote, then the privacy link. */
+/** The disclosure keys in the order spec ai-data-consent "The disclosure names what is sent…" lists
+ *  its sections: title and lead, what gets sent, why, who gets it, what the user saves, what Whim
+ *  never does, ask first, the Settings footnote, then (on the review screen) the privacy link. */
 const SPEC_ORDER = [
   'consentTitle', 'consentLead',
   'consentSentTitle', 'consentSentRequest', 'consentSentEdit', 'consentSentDevice', 'consentSentErrors',
@@ -116,11 +120,11 @@ const SPEC_ORDER = [
   'consentAskFirst', 'consentFootnote', 'privacyPolicyLabel',
 ] as const;
 
-/** The first key of `SPEC_ORDER` the rendered text doesn't show, in `table`'s wording, after the
+/** The first key of `order` the rendered text doesn't show, in `table`'s wording, after the
  *  previous one, or null. */
-function firstOutOfOrder(text: string, table: LegalCopyTable): string | null {
+function firstOutOfOrder(text: string, table: LegalCopyTable, order: readonly (keyof LegalCopyTable)[] = SPEC_ORDER): string | null {
   let cursor = 0;
-  for (const key of SPEC_ORDER) {
+  for (const key of order) {
     const at = text.indexOf(table[key], cursor);
     if (at < 0) return key;
     cursor = at + table[key].length;
@@ -185,9 +189,9 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
       await h.test(`consent gate (${consent === 'none' ? 'no grant' : 'outdated grant'}): ${entry.name} asks first, sends nothing, then continues on agree`, async () => {
         await withLauncher(consent, async (tree, requests) => {
           await entry.trigger(tree);
-          const consentScreens = tree.root.findAllByType(ConsentScreen);
-          h.eq(consentScreens.length, 1, 'the consent screen opens in place of the action');
-          h.eq(consentScreens[0]?.props.mode, 'ask', 'in ask mode');
+          const firstRun = tree.root.findAllByType(FirstRunSheet).filter((sheet) => sheet.props.visible);
+          h.eq(firstRun.length, 1, 'the first-run sheet opens in place of the action');
+          h.eq(firstRun[0]?.props.termsDue, false, 'asking for consent alone: the terms are already accepted');
           h.eq(requests, [], 'nothing was sent before agreeing');
           await press(button(tree, COPY.consentAgree));
           const problem = entry.continued(tree, requests);
@@ -201,8 +205,8 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
     await withLauncher('none', async (tree, requests, headers) => {
       await ENTRIES[0].trigger(tree);
       await press(button(tree, COPY.consentAgree));
-      await TestRenderer.act(async () => tree.root.findByType(ComposeStep).props.onChangeText('A tea timer'));
-      await TestRenderer.act(async () => tree.root.findByType(ComposeStep).props.onContinue());
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('A tea timer'));
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onContinue());
       const clarify = requests.indexOf('/v1/clarify');
       h.ok(clarify >= 0, `continuing sends the clarify request (sent ${JSON.stringify(requests)})`);
       h.ok((headers[clarify]?.get('x-whim-device') ?? '').length > 0, 'with the device header');
@@ -213,33 +217,56 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
     await withLauncher('none', async (tree, requests) => {
       await ENTRIES[3].trigger(tree);
       await press(button(tree, COPY.consentDecline));
-      h.eq(tree.root.findAllByType(HomeScreen).length, 1, 'declining returns to Home, not to the torn-down app');
+      h.ok(onHome(tree), 'declining returns to Home, not to the torn-down app');
       h.eq(requests, [], 'nothing was sent');
     });
   });
 
   for (const { language, termsWord, privacyUrl } of LANGUAGES) {
-    for (const mode of ['ask', 'review'] as const) {
-      await h.test(`consent screen (${language}, ${mode}): the disclosure is complete, in order, with the privacy link and no terms`, async () => {
-        const table = LEGAL_COPY[language];
-        const tree = await renderScreen(<ConsentScreen mode={mode} language={language} onLanguageChange={() => {}} consentOn={false} onAgree={() => {}} onClose={() => {}} />);
-        try {
-          const text = textOf(tree.root);
-          const outOfOrder = firstOutOfOrder(text, table);
-          h.ok(outOfOrder === null, `every section renders in the spec's order (first missing or out of order: ${outOfOrder ?? 'none'})`);
-          const covered = [...Object.entries(CONSENT_SCREEN_COVERAGE.categories), ...Object.entries(CONSENT_SCREEN_COVERAGE.roles)];
-          for (const [id, keys] of covered) {
-            h.ok(keys.every((key) => text.includes(table[key])), `the screen shows what names ${id}`);
-          }
-          h.ok(!termsWord.test(text), 'nothing on the screen is about the terms of use');
-          const opened = Linking.opened.length;
-          await press(button(tree, table.privacyPolicyLabel));
-          h.eq(Linking.opened.slice(opened), [privacyUrl], 'the privacy link opens the policy in the screen’s language');
-        } finally {
-          await unmountScreen(tree);
-        }
-      });
-    }
+    const table = LEGAL_COPY[language];
+
+    /** What the disclosure must say, wherever it is shown: complete, and in the spec's order. */
+    const checkDisclosure = (text: string, order: readonly (keyof LegalCopyTable)[]) => {
+      const outOfOrder = firstOutOfOrder(text, table, order);
+      h.ok(outOfOrder === null, `every section renders in the spec's order (first missing or out of order: ${outOfOrder ?? 'none'})`);
+      const covered = [...Object.entries(CONSENT_SCREEN_COVERAGE.categories), ...Object.entries(CONSENT_SCREEN_COVERAGE.roles)];
+      for (const [id, keys] of covered) {
+        h.ok(keys.every((key) => text.includes(table[key])), `the screen shows what names ${id}`);
+      }
+    };
+
+    await h.test(`consent review (${language}): the disclosure is complete, in order, with the privacy link and no terms`, async () => {
+      const tree = await renderScreen(<ConsentScreen language={language} onLanguageChange={() => {}} consentOn={false} onAgree={() => {}} onClose={() => {}} />);
+      try {
+        const text = textOf(tree.root);
+        checkDisclosure(text, SPEC_ORDER);
+        h.ok(!termsWord.test(text), 'nothing on the screen is about the terms of use');
+        const opened = Linking.opened.length;
+        await press(button(tree, table.privacyPolicyLabel));
+        h.eq(Linking.opened.slice(opened), [privacyUrl], 'the privacy link opens the policy in the screen’s language');
+      } finally {
+        await unmountScreen(tree);
+      }
+    });
+
+    await h.test(`first-run sheet (${language}): the summary shows at first; Full details expands the complete disclosure in place, in order; the privacy link follows the language`, async () => {
+      const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={() => {}} termsDue={false} onAgree={() => {}} onClose={() => {}} />);
+      try {
+        const summary = textOf(tree.root);
+        h.ok(summary.includes(table.consentTitle) && summary.includes(table.consentLead), 'the title and the lead');
+        h.ok([table.firstRunSentTitle, table.firstRunStaysTitle, table.firstRunNeverTitle].every((title) => summary.includes(title)), 'three summary rows: what is sent, what stays on the phone, what is never done');
+        h.ok(!summary.includes(table.consentWhy), 'the long disclosure is folded away');
+        await press(button(tree, table.firstRunDetails));
+        const text = textOf(tree.root);
+        checkDisclosure(text, SPEC_ORDER.filter((key) => key !== 'privacyPolicyLabel'));
+        h.ok(!termsWord.test(text), 'with no terms row when the terms are already accepted');
+        const opened = Linking.opened.length;
+        await press(button(tree, table.privacyPolicyLabel));
+        h.eq(Linking.opened.slice(opened), [privacyUrl], 'the privacy row opens the policy in the sheet’s language');
+      } finally {
+        await unmountScreen(tree);
+      }
+    });
   }
 
   await h.test('consent gate: a version-1 grant asks again, saying in full what changed since version 1', async () => {

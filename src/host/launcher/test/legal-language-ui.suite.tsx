@@ -8,10 +8,10 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import HomeScreen from '../HomeScreen';
-import ComposeStep from '../ComposeStep';
+import { DescribePage } from '../DescribePage';
 import ConsentScreen from '../ConsentScreen';
+import { FirstRunSheet } from '../FirstRunSheet';
 import SettingsScreen from '../SettingsScreen';
-import TermsScreen from '../TermsScreen';
 import LauncherRoot from '../LauncherRoot';
 import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW, LEGAL_COPY, type LegalCopyTable } from '../copy';
 import { RELEASE } from '../release-config';
@@ -59,9 +59,18 @@ function coveredLines(table: LegalCopyTable): string[] {
   return [...Object.values(CONSENT_SCREEN_COVERAGE.categories), ...Object.values(CONSENT_SCREEN_COVERAGE.roles)].flat().map((key) => table[key]);
 }
 
-/** The screen shows every line of `table`'s terms step and none of `other`'s. */
+/** The sheet shows `table`'s terms row and none of `other`'s. */
 function termsIn(text: string, table: LegalCopyTable, other: LegalCopyTable): boolean {
-  return text.includes(table.termsTitle) && text.includes(table.termsLead) && !text.includes(other.termsLead);
+  return text.includes(table.firstRunTermsCheck) && !text.includes(other.firstRunTermsCheck);
+}
+
+/** The Language row, whose value is the one-tap switch to the other language. */
+const languageRow = (tree: Tree, table: LegalCopyTable) => button(tree, `${table.firstRunLanguage}, ${table.legalLanguageSwitch}`);
+
+/** Ticks the terms and agrees on the first-run sheet. */
+async function acceptAndAgree(tree: Tree, table: LegalCopyTable): Promise<void> {
+  await press(button(tree, table.firstRunTermsCheck));
+  await press(button(tree, table.consentAgree));
 }
 
 /** The screen shows `table`'s consent disclosure and none of `other`'s covered lines. */
@@ -75,30 +84,29 @@ function consentIn(text: string, table: LegalCopyTable, other: LegalCopyTable): 
 }
 
 export async function runLegalLanguageUiTests(h: Harness): Promise<void> {
-  await h.test('legal language: a fr-CA phone sees the terms step, then the consent screen, in French, each with "Continue in English"', async () => {
+  await h.test('legal language: a fr-CA phone sees the first-run sheet in French, with its terms row, its disclosure and a "Continue in English" switch', async () => {
     await withLauncher({ terms: false, consent: false, locale: 'fr-CA', server: clarifyServer }, async ({ tree }) => {
       await describeAnApp(tree);
-      h.ok(on(tree, TermsScreen) && termsIn(textOf(tree.root), FR, COPY), 'the terms step renders in French');
-      h.eq(textOf(button(tree, TO_ENGLISH)), TO_ENGLISH, 'with a "Continue in English" switch');
-      h.eq(await opens(tree, FR.termsLabel), [RELEASE.termsUrlFr], 'its link opens /fr/terms');
-      await press(button(tree, FR.termsAccept));
-      h.ok(on(tree, ConsentScreen) && consentIn(textOf(tree.root), FR, COPY), 'then the consent screen renders in French');
-      h.eq(textOf(button(tree, TO_ENGLISH)), TO_ENGLISH, 'also with a "Continue in English" switch');
-      h.eq(await opens(tree, FR.privacyPolicyLabel), [RELEASE.privacyPolicyUrlFr], 'its privacy link opens /fr/privacy');
-      await press(button(tree, FR.consentAgree));
-      h.ok(on(tree, ComposeStep), 'agreeing in French continues the action');
+      h.ok(on(tree, FirstRunSheet) && termsIn(textOf(tree.root), FR, COPY), 'the sheet renders in French, with the terms row');
+      h.ok(textOf(languageRow(tree, FR)).includes(TO_ENGLISH), 'the Language row carries a "Continue in English" switch');
+      h.eq(await opens(tree, FR.termsLabel), [RELEASE.termsUrlFr], 'the terms link opens /fr/terms');
+      h.eq(await opens(tree, FR.privacyPolicyLabel), [RELEASE.privacyPolicyUrlFr], 'the privacy row opens /fr/privacy');
+      await press(button(tree, FR.firstRunDetails));
+      h.ok(consentIn(textOf(tree.root), FR, COPY), 'and Full details shows the French disclosure');
+      await acceptAndAgree(tree, FR);
+      h.ok(on(tree, DescribePage), 'agreeing in French continues the action');
     });
   });
 
   await h.test('legal language: choosing English is remembered — after a restart, the consent screen from Settings is English and opens /privacy', async () => {
     await withLauncher({ terms: false, consent: false, locale: 'fr-CA', server: clarifyServer }, async ({ tree }) => {
       await describeAnApp(tree);
-      await press(button(tree, TO_ENGLISH));
-      h.ok(on(tree, TermsScreen) && termsIn(textOf(tree.root), COPY, FR), 'the terms step switches to English in place');
-      h.eq(textOf(button(tree, TO_FRENCH)), TO_FRENCH, 'now offering French');
-      await press(button(tree, COPY.termsAccept));
-      h.ok(consentIn(textOf(tree.root), COPY, FR), 'the consent screen that follows is English too');
-      await press(button(tree, COPY.consentAgree));
+      await press(languageRow(tree, FR));
+      h.ok(termsIn(textOf(tree.root), COPY, FR), 'the sheet switches to English in place');
+      h.ok(textOf(languageRow(tree, COPY)).includes(TO_FRENCH), 'now offering French');
+      await press(button(tree, COPY.firstRunDetails));
+      h.ok(consentIn(textOf(tree.root), COPY, FR), 'the disclosure is English too');
+      await acceptAndAgree(tree, COPY);
       await unmountScreen(tree);
       const restarted = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'fr-CA'} />);
       try {
@@ -113,16 +121,16 @@ export async function runLegalLanguageUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('legal language: an en-US phone sees the terms step in English with "Continuer en français", which switches and is kept', async () => {
+  await h.test('legal language: an en-US phone sees the sheet in English with "Continuer en français", which switches and is kept', async () => {
     await withLauncher({ terms: false, consent: false, locale: 'en-US', server: clarifyServer }, async ({ tree }) => {
       await describeAnApp(tree);
-      h.ok(on(tree, TermsScreen) && termsIn(textOf(tree.root), COPY, FR), 'the terms step renders in English');
+      h.ok(on(tree, FirstRunSheet) && termsIn(textOf(tree.root), COPY, FR), 'the sheet renders in English');
       h.ok(!textOf(tree.root).includes(TO_ENGLISH), 'with no switch to the language already shown');
-      h.eq(await opens(tree, COPY.termsLabel), [RELEASE.termsUrl], 'its link opens /terms');
-      await press(button(tree, TO_FRENCH));
-      h.ok(termsIn(textOf(tree.root), FR, COPY), '"Continuer en français" switches the step to French');
-      await press(button(tree, FR.termsAccept));
-      h.ok(consentIn(textOf(tree.root), FR, COPY), 'and the consent screen after it');
+      h.eq(await opens(tree, COPY.termsLabel), [RELEASE.termsUrl], 'its terms link opens /terms');
+      await press(languageRow(tree, COPY));
+      h.ok(termsIn(textOf(tree.root), FR, COPY), '"Continuer en français" switches the sheet to French');
+      await press(button(tree, FR.firstRunDetails));
+      h.ok(consentIn(textOf(tree.root), FR, COPY), 'and its disclosure');
     });
   });
 

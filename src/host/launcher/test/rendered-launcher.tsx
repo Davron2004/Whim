@@ -5,8 +5,10 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import LauncherRoot from '../LauncherRoot';
 import HomeScreen from '../HomeScreen';
-import ComposeStep from '../ComposeStep';
-import PlanStep from '../PlanStep';
+import { DescribePage } from '../DescribePage';
+import { PlanPage } from '../PlanPage';
+import { MakingSheet } from '../MakingSheet';
+import { FirstRunSheet } from '../FirstRunSheet';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { grantConsent } from '../ai-consent';
 import { acceptTerms } from '../terms-acceptance';
@@ -198,22 +200,43 @@ export async function tap(handler: () => unknown): Promise<void> {
   });
 }
 
-/** Home → compose → type → Continue: the clarify exchange is sent. */
+/** Home → describe → type → Continue: the clarify exchange is sent. */
 export async function composeAndContinue(tree: Tree, text: string): Promise<void> {
   await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onCreate());
-  await TestRenderer.act(async () => tree.root.findByType(ComposeStep).props.onChangeText(text));
-  await tap(() => tree.root.findByType(ComposeStep).props.onContinue());
+  await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText(text));
+  await tap(() => tree.root.findByType(DescribePage).props.onContinue());
 }
 
-/** Tap the plan's `Build it` without awaiting the attempt (it runs until the stream ends). */
+/** Tap the plan's `Make it` without awaiting the attempt (it runs until the stream ends). */
 export async function buildIt(tree: Tree): Promise<void> {
-  await tap(() => tree.root.findByType(PlanStep).props.onBuild());
+  await tap(() => tree.root.findByType(PlanPage).props.onMake());
 }
 
-/** The plan step is showing, with its rows loaded. */
+/** The plan page is showing, with its rows loaded. */
 export function planLoaded(tree: Tree): boolean {
-  const plan = tree.root.findAllByType(PlanStep);
-  return plan.length === 1 && !plan[0].props.loading;
+  const plan = tree.root.findAllByType(PlanPage);
+  return plan.length === 1 && !plan[0].props.screen.loading;
+}
+
+/** The plan page is showing, with its questions landed. */
+export function questionsLanded(tree: Tree): boolean {
+  const plan = tree.root.findAllByType(PlanPage);
+  return plan.length === 1 && !plan[0].props.screen.asking;
+}
+
+/** The making sheet is open, on a page. */
+export function makingSheetOpen(tree: Tree): boolean {
+  return tree.root.findAllByType(MakingSheet).some((sheet) => sheet.props.content !== null);
+}
+
+/** The first-run sheet is open. */
+export function firstRunOpen(tree: Tree): boolean {
+  return tree.root.findAllByType(FirstRunSheet).some((sheet) => sheet.props.visible === true);
+}
+
+/** The person is on Home itself: the grid shows and no sheet is open over it. */
+export function onHome(tree: Tree): boolean {
+  return tree.root.findAllByType(HomeScreen).length === 1 && !makingSheetOpen(tree) && !firstRunOpen(tree);
 }
 
 /** Home lists an installed app with this name. */

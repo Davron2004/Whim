@@ -1,7 +1,7 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { button, press, renderScreen, unmountScreen, textOf, hostType, isHost } from './react-screen';
+import { button, press, renderScreen, unmountScreen, textOf, hostType } from './react-screen';
 import { finishAnimations, hardwareBack, backListenerCount } from './native-host';
 import { androidHeaderBack, headerBackShown, iosPop } from './native-screens';
 import { COPY } from '../copy';
@@ -20,11 +20,12 @@ import HistoryScreen from '../HistoryScreen';
 import AppLinkMissingScreen from '../AppLinkMissingScreen';
 import UpdateRequiredScreen from '../UpdateRequiredScreen';
 import ConsentScreen from '../ConsentScreen';
-import TermsScreen from '../TermsScreen';
+import { FirstRunSheet } from '../FirstRunSheet';
 import AgeScreen from '../AgeScreen';
-import ComposeStep from '../ComposeStep';
-import ClarifyStep from '../ClarifyStep';
-import PlanStep from '../PlanStep';
+import { DescribePage } from '../DescribePage';
+import { PlanPage } from '../PlanPage';
+import { MakingSheet } from '../MakingSheet';
+import { describeStep, planStep } from '../prompt-flow';
 import BuildStep from '../BuildStep';
 import DoneStep from '../DoneStep';
 import FailureScreen from '../FailureScreen';
@@ -49,6 +50,11 @@ function pushed(title: string, leave: () => void, screen: React.ReactElement): R
   );
 }
 
+/** `page` in the making sheet, whose close control calls `close`. */
+function sheeted(close: () => void, page: React.ReactElement): React.ReactElement {
+  return <MakingSheet content={{ key: 'page', node: page }} onClose={close} />;
+}
+
 /** The visible control that leaves a screen: a labelled control of its own, or, on the native
  *  stack, the stack's header back (an iOS pop, or Android's header back button). */
 type Exit = string | 'native header';
@@ -63,13 +69,12 @@ const cases: Record<Exclude<ScreenKind, 'home' | 'app' | 'dev'>, { label: Exit; 
   'link-missing': { label: COPY.appLinkMissingBack, render: leave => <AppLinkMissingScreen onBackToApps={leave} /> },
   'update-required': { label: COPY.updateNotNow, render: leave => <UpdateRequiredScreen onNotNow={leave} /> },
   age: { label: COPY.ageBack, render: leave => <AgeScreen language="en" onLanguageChange={noop} held="minor-not-approved" onClose={leave} /> },
-  terms: { label: COPY.termsDecline, render: leave => <TermsScreen language="en" onLanguageChange={noop} onClose={leave} onAccept={noop} /> },
-  consent: { label: COPY.consentDecline, render: leave => <ConsentScreen mode="ask" language="en" onLanguageChange={noop} onClose={leave} onAgree={noop} /> },
-  compose: { label: COPY.backLabel, render: leave => <ComposeStep text="" editing={false} onChangeText={noop} onContinue={noop} onBack={leave} /> },
-  clarify: { label: COPY.backLabel, render: leave => <ClarifyStep prompt="Timer" questions={[]} answers={{}} loading editing={false} onAnswer={noop} onContinue={noop} onBack={leave} /> },
-  plan: { label: COPY.backLabel, render: leave => <PlanStep rows={[]} loading editing={false} onChangeRow={noop} onBuild={noop} onBack={leave} /> },
-  build: { label: COPY.buildLeaveRunning, render: leave => <BuildStep stage={null} delivering={false} signals={null} now={0} onBack={leave} /> },
-  done: { label: COPY.doneBackToApps, render: leave => <DoneStep app={SCREEN_APP} onOpen={noop} onBackToApps={leave} onReport={noop} /> },
+  terms: { label: COPY.consentDecline, render: leave => <FirstRunSheet visible language="en" onLanguageChange={noop} termsDue onAgree={noop} onClose={leave} /> },
+  consent: { label: COPY.consentDecline, render: leave => <FirstRunSheet visible language="en" onLanguageChange={noop} termsDue={false} onAgree={noop} onClose={leave} /> },
+  describe: { label: COPY.sheetClose, render: leave => sheeted(leave, <DescribePage text="" onChangeText={noop} onContinue={noop} onClose={leave} />) },
+  plan: { label: COPY.backLabel, render: leave => sheeted(noop, <PlanPage screen={planStep(describeStep(undefined, 'Timer'))} onBack={leave} onAnswer={noop} onChangeRow={noop} onMake={noop} onTryAgain={noop} onMakeInstead={noop} />) },
+  making: { label: COPY.buildLeaveRunning, render: leave => <BuildStep stage={null} delivering={false} signals={null} now={0} onBack={leave} /> },
+  ready: { label: COPY.doneBackToApps, render: leave => <DoneStep app={SCREEN_APP} onOpen={noop} onBackToApps={leave} onReport={noop} /> },
   failure: { label: COPY.failureBack, render: leave => <FailureScreen reason="Unavailable" diagnostics={[]} retryable onRephrase={noop} onBack={leave} /> },
 };
 
@@ -103,7 +108,7 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
     await h.test(`consent review (${consentOn}): safe exit neither grants nor revokes`, async () => {
       let closed = 0;
       let changes = 0;
-      const tree = await renderScreen(<ConsentScreen mode="review" language="en" onLanguageChange={() => {}} consentOn={consentOn} onClose={() => { closed++; }} onAgree={() => { changes++; }} onTurnOff={() => { changes++; }} />);
+      const tree = await renderScreen(<ConsentScreen language="en" onLanguageChange={() => {}} consentOn={consentOn} onClose={() => { closed++; }} onAgree={() => { changes++; }} onTurnOff={() => { changes++; }} />);
       try {
         await press(button(tree, consentOn ? COPY.consentReviewKeepOn : COPY.consentDecline));
         await TestRenderer.act(async () => { hardwareBack(); });
@@ -111,23 +116,6 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
       } finally { await unmountScreen(tree); }
     });
   }
-  await h.test('plan: back cancels a row edit before leaving, for visible and system back', async () => {
-    let leaves = 0;
-    let saves = 0;
-    const tree = await renderScreen(<PlanStep rows={[{ label: '', text: 'Track time' }]} loading={false} editing={false} onChangeRow={() => { saves++; }} onBuild={noop} onBack={() => { leaves++; }} />);
-    try {
-      for (const system of [false, true]) {
-        await press(button(tree, 'Track time'));
-        h.eq(tree.root.findAll(isHost('TextInput')).length, 1, 'row edit is visible');
-        if (system) await TestRenderer.act(async () => { hardwareBack(); });
-        else await press(button(tree, COPY.backLabel));
-        h.eq(tree.root.findAll(isHost('TextInput')).length, 0, 'back dismisses the editor');
-        h.eq([leaves, saves], [0, 0], 'cancel does not leave or save');
-      }
-      await press(button(tree, COPY.backLabel));
-      h.eq(leaves, 1, 'next back leaves the plan');
-    } finally { await unmountScreen(tree); }
-  });
   await h.test('error fallback: leave is visible only when supplied, and differs from retry', async () => {
     let leaves = 0;
     let retries = 0;

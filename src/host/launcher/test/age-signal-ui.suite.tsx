@@ -6,10 +6,9 @@
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import HomeScreen from '../HomeScreen';
-import ComposeStep from '../ComposeStep';
-import ConsentScreen from '../ConsentScreen';
+import { DescribePage } from '../DescribePage';
+import { FirstRunSheet } from '../FirstRunSheet';
 import MiniAppView from '../MiniAppView';
-import TermsScreen from '../TermsScreen';
 import AgeScreen from '../AgeScreen';
 import { COPY, LEGAL_COPY } from '../copy';
 import type { InstalledApp } from '../app-index';
@@ -17,15 +16,25 @@ import { termsStatus } from '../terms-acceptance';
 import { TERMS_VERSION } from '../release-config';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { button, press, textOf, hostType } from './react-screen';
-import { json, settle, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
-import { injectedScripts } from './native-host';
+import { firstRunOpen, json, onHome, settle, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
+import { hardwareBack, injectedScripts } from './native-host';
 
 const AGE_CHECK_KEY = 'whim.age-check:v1';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
+const composing = (tree: Tree) => on(tree, DescribePage);
 const blockedShown = (tree: Tree) => on(tree, AgeScreen) && tree.root.findByType(AgeScreen).props.held !== undefined;
+/** The first-run sheet is open with its terms row (the terms are due) or without it (consent alone). */
+const termsShown = (tree: Tree) => tree.root.findAllByType(FirstRunSheet).some((sheet) => sheet.props.visible && sheet.props.termsDue === true);
+/** The age check is running: it shows nothing at all, so the person is looking at Home. */
+const checkRunning = (tree: Tree) => onHome(tree) && !on(tree, AgeScreen);
+/** Ticks the terms and agrees on the first-run sheet. */
+async function acceptAndAgree(tree: Tree): Promise<void> {
+  await press(button(tree, COPY.firstRunTermsCheck));
+  await press(button(tree, COPY.consentAgree));
+}
 
 /** The Tip Splitter example first-run seeding installs, once Home lists it. */
 function tipSplitter(tree: Tree): InstalledApp | undefined {
@@ -94,18 +103,18 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
     const store = scripted(() => 'minor-approved');
     await withLauncher({ terms: false, consent: false, ageSignal: store.ask, server: clarifyServer }, async ({ tree, kv }) => {
       await describeAnApp(tree);
-      await waitFor(() => on(tree, TermsScreen), 'the terms step');
+      await waitFor(() => termsShown(tree), 'the terms step');
       h.eq(store.calls, 1, 'the store was asked once');
       h.eq(JSON.parse(kv.getString(AGE_CHECK_KEY) ?? 'null').outcome, 'allowed', 'the outcome stored is allowed');
-      await press(button(tree, COPY.termsAccept));
-      h.ok(on(tree, ConsentScreen), 'and the flow goes on to consent');
+      await acceptAndAgree(tree);
+      h.ok(composing(tree), 'and agreeing continues the action');
     });
   });
 
   await h.test('age signal: no signal lets the user through — a failing platform API reaches the terms step', async () => {
     await withLauncher({ terms: false, consent: false, ageSignal: () => Promise.reject(new Error('Play services missing')), server: clarifyServer }, async ({ tree }) => {
       await describeAnApp(tree);
-      await waitFor(() => on(tree, TermsScreen), 'the terms step');
+      await waitFor(() => termsShown(tree), 'the terms step');
       h.ok(!on(tree, AgeScreen), 'no age message');
     });
   });
@@ -118,10 +127,10 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
       const text = textOf(tree.root);
       h.ok(text.includes(COPY.ageBlockedTitle) && text.includes(COPY.ageBlockedBody), 'the message says a parent can approve through the store');
       h.ok(!text.includes(COPY.ageUnder13Title), 'not the 13-and-over message');
-      h.ok(!on(tree, TermsScreen) && !on(tree, ConsentScreen), 'neither the terms step nor the consent screen opens');
+      h.ok(!firstRunOpen(tree), 'the first-run sheet does not open');
       h.eq(termsStatus(kv).kind, 'absent', 'no terms acceptance is stored');
       await press(button(tree, COPY.ageBack));
-      h.ok(on(tree, HomeScreen), 'Back returns Home');
+      h.ok(onHome(tree), 'Back returns Home');
       h.eq([sent.length, probes.length], [0, 0], 'no request was sent, not even a probe');
 
       injectedScripts.length = 0;
@@ -140,10 +149,10 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
       const text = textOf(tree.root);
       h.ok(text.includes(COPY.ageUnder13Title) && text.includes(COPY.ageUnder13Body), 'the message says Whim’s AI features are for people 13 and over');
       h.ok(!text.includes(COPY.ageBlockedTitle) && !text.includes(COPY.ageBlockedBody), 'not the parental-approval message: a parent can’t approve this');
-      h.ok(!on(tree, TermsScreen) && !on(tree, ConsentScreen), 'neither the terms step nor the consent screen opens');
+      h.ok(!firstRunOpen(tree), 'the first-run sheet does not open');
       h.eq(JSON.parse(kv.getString(AGE_CHECK_KEY) ?? 'null').outcome, 'blocked', 'only "blocked" is stored');
       await press(button(tree, COPY.ageBack));
-      h.ok(on(tree, HomeScreen), 'Back returns Home');
+      h.ok(onHome(tree), 'Back returns Home');
       h.eq([sent.length, probes.length], [0, 0], 'no request was sent, not even a probe');
 
       injectedScripts.length = 0;
@@ -176,7 +185,7 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
     const store = scripted(() => 'minor-approved');
     await withLauncher({ terms: false, consent: false, prepare: storedCheck('blocked', 0), ageSignal: store.ask, server: clarifyServer }, async ({ tree }) => {
       await describeAnApp(tree);
-      await waitFor(() => on(tree, TermsScreen), 'the terms step');
+      await waitFor(() => termsShown(tree), 'the terms step');
       h.eq(store.calls, 1, 'the store was asked again');
     });
   });
@@ -195,38 +204,38 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
     const recent = scripted(() => 'adult');
     await withLauncher({ terms: false, consent: false, prepare: storedCheck('allowed', 2), ageSignal: recent.ask, server: clarifyServer }, async ({ tree }) => {
       await describeAnApp(tree);
-      h.ok(on(tree, TermsScreen), 'the terms step opens directly');
+      h.ok(termsShown(tree), 'the terms step opens directly');
       h.eq(recent.calls, 0, 'without asking the store');
     });
     const stale = scripted(() => 'adult');
     await withLauncher({ terms: false, consent: false, prepare: storedCheck('allowed', 31), ageSignal: stale.ask, server: clarifyServer }, async ({ tree }) => {
       await describeAnApp(tree);
-      await waitFor(() => on(tree, TermsScreen), 'the terms step');
+      await waitFor(() => termsShown(tree), 'the terms step');
       h.eq(stale.calls, 1, 'a stale outcome is checked again first');
     });
   });
 
-  await h.test('age signal: while the store is asked the screen says it is working, in the phone’s language, and the line goes once the store holds the user', async () => {
-    for (const [locale, copy] of [['en-CA', LEGAL_COPY.en], ['fr-CA', LEGAL_COPY.fr]] as const) {
+  await h.test('age signal: while the store is asked nothing shows — Home stays as it is, with no working line and no sheet — and the message comes only once the store holds the user', async () => {
+    for (const locale of ['en-CA', 'fr-CA']) {
       await withLauncher({ locale, terms: false, consent: false, ageSignal: () => new Promise<unknown>(() => {}), server: clarifyServer }, async ({ tree }) => {
         await describeAnApp(tree);
-        h.ok(on(tree, AgeScreen) && !blockedShown(tree), `${locale}: the check is running`);
-        h.ok(copy.ageChecking.length > 0 && textOf(tree.root).includes(copy.ageChecking), `${locale}: the screen is not blank while it runs`);
+        h.ok(checkRunning(tree), `${locale}: the check is running, silently`);
+        h.ok(!firstRunOpen(tree) && !blockedShown(tree), `${locale}: no sheet and no message yet`);
       });
     }
     await withLauncher({ terms: false, consent: false, ageSignal: () => Promise.resolve('under-13'), server: clarifyServer }, async ({ tree }) => {
       await describeAnApp(tree);
       await waitFor(() => blockedShown(tree), 'the 13-and-over message');
-      h.ok(!textOf(tree.root).includes(LEGAL_COPY.en.ageChecking), 'the working line does not linger under the answer');
+      h.ok(!firstRunOpen(tree), 'and still no sheet');
     });
   });
 
   await h.test('age signal: a store that never answers is given up on after 3 seconds, and the flow goes on to the terms step', async () => {
     await withLauncher({ terms: false, consent: false, ageSignal: () => new Promise<unknown>(() => {}), server: clarifyServer }, async ({ tree, kv, clock }) => {
       await describeAnApp(tree);
-      h.ok(on(tree, AgeScreen) && !blockedShown(tree), 'the check is running');
+      h.ok(checkRunning(tree), 'the check is running');
       await TestRenderer.act(async () => clock.fire(3000));
-      await waitFor(() => on(tree, TermsScreen), 'the terms step');
+      await waitFor(() => termsShown(tree), 'the terms step');
       h.eq(JSON.parse(kv.getString(AGE_CHECK_KEY) ?? 'null').outcome, 'allowed', 'the outcome stored is allowed, as for no signal');
     });
   });
@@ -237,12 +246,12 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
     const sheet = guardianSheet(() => Promise.resolve('acknowledged'));
     await withLauncher({ consent: false, prepare: olderTerms, ageSignal: () => Promise.resolve('minor-approved'), significantUpdate: sheet, server: clarifyServer }, async ({ tree, kv, sent }) => {
       await describeAnApp(tree);
-      await waitFor(() => on(tree, TermsScreen), 'the terms step');
+      await waitFor(() => termsShown(tree), 'the terms step');
       h.eq(sheet.shown, [LEGAL_COPY.en.termsUpdatedLine], 'the guardian was shown the updated-terms line, in the active legal language');
-      await press(button(tree, COPY.termsDecline));
+      await press(button(tree, COPY.consentDecline));
       storedCheck('blocked', 0)(kv);
       await describeAnApp(tree);
-      await waitFor(() => on(tree, TermsScreen), 'the terms step, after a fresh age check');
+      await waitFor(() => termsShown(tree), 'the terms step, after a fresh age check');
       h.eq(sheet.shown.length, 1, 'the guardian is not asked again for these terms');
       h.eq(sent.length, 0, 'nothing was sent');
     });
@@ -254,10 +263,10 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
       await describeAnApp(tree);
       await waitFor(() => blockedShown(tree), 'the parental-approval message');
       h.ok(textOf(tree.root).includes(COPY.ageBlockedTitle), 'the same message as for an unapproved minor');
-      h.ok(!on(tree, TermsScreen) && !on(tree, ConsentScreen), 'neither the terms step nor the consent screen opens');
+      h.ok(!firstRunOpen(tree), 'the first-run sheet does not open');
       h.eq(termsStatus(kv).kind, 'outdated', 'the older acceptance is left as it was');
       await press(button(tree, COPY.ageBack));
-      h.ok(on(tree, HomeScreen), 'Back returns Home');
+      h.ok(onHome(tree), 'Back returns Home');
       h.eq([sent.length, probes.length], [0, 0], 'no request was sent, not even a probe');
     });
   });
@@ -267,10 +276,10 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
     await withLauncher({ consent: false, prepare: olderTerms, ageSignal: () => Promise.resolve('minor-approved'), significantUpdate: sheet, server: clarifyServer }, async ({ tree, clock }) => {
       await describeAnApp(tree);
       await waitFor(() => sheet.shown.length === 1, 'the acknowledgment');
-      h.ok(on(tree, AgeScreen) && !blockedShown(tree), 'the check screen stays while the guardian decides');
+      h.ok(checkRunning(tree) && !firstRunOpen(tree), 'nothing shows while the guardian decides');
       h.eq(clock.count(3000), 0, 'no 3-second deadline cuts the guardian off');
       await TestRenderer.act(async () => clock.fire(60000));
-      await waitFor(() => on(tree, TermsScreen), 'the terms step');
+      await waitFor(() => termsShown(tree), 'the terms step');
     });
   });
 
@@ -279,24 +288,23 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
     const pending = () => new Promise<unknown>((resolve) => { answer = resolve; });
     await withLauncher({ terms: false, consent: false, ageSignal: pending, server: clarifyServer }, async ({ tree }) => {
       await describeAnApp(tree);
-      h.ok(on(tree, AgeScreen) && !blockedShown(tree), 'the check is running');
-      await press(button(tree, COPY.ageBack));
-      h.ok(on(tree, HomeScreen), 'Back returns Home at once');
+      h.ok(checkRunning(tree), 'the check is running');
+      await TestRenderer.act(async () => { hardwareBack(); });
+      h.ok(onHome(tree), 'Back returns Home at once, though nothing was showing to press');
       await TestRenderer.act(async () => answer('adult'));
       await settle();
-      h.ok(on(tree, HomeScreen) && !on(tree, TermsScreen), 'the answer arriving later does not open the terms step');
+      h.ok(onHome(tree), 'the answer arriving later does not open the first-run sheet');
     });
   });
 
   await h.test('age signal: nothing about age leaves the phone — requests after an age check carry no age field or value', async () => {
     await withLauncher({ terms: false, consent: false, ageSignal: () => Promise.resolve('minor-approved'), server: clarifyServer }, async ({ tree, kv, sent, probes }) => {
       await describeAnApp(tree);
-      await waitFor(() => on(tree, TermsScreen), 'the terms step');
+      await waitFor(() => termsShown(tree), 'the terms step');
       const checkedAt = JSON.parse(kv.getString(AGE_CHECK_KEY) ?? 'null').checkedAt as string;
-      await press(button(tree, COPY.termsAccept));
-      await press(button(tree, COPY.consentAgree));
-      await TestRenderer.act(async () => tree.root.findByType(ComposeStep).props.onChangeText('A tea timer'));
-      await tap(() => tree.root.findByType(ComposeStep).props.onContinue());
+      await acceptAndAgree(tree);
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('A tea timer'));
+      await tap(() => tree.root.findByType(DescribePage).props.onContinue());
       await waitFor(() => wasSent(sent, '/v1/clarify'), 'the clarify request');
       await waitFor(() => probes.length > 0, 'the connectivity probe');
       const requests = [...sent, ...probes.map((headers) => ({ headers, body: null }) as unknown as SentRequest)];

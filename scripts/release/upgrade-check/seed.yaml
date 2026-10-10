@@ -79,24 +79,27 @@ env:
     visible: "YOUR APPS"
     timeout: 30000
 
-# 3. A generated app: the legal steps and consent, then compose → clarify → plan → build.
+# 3. A generated app: the legal steps and consent, then describe → plan → make. The previous release
+#    asks in two full screens ("Accept", then "Agree and continue") and shows the questions as a
+#    step of their own; this build asks in one sheet (a terms checkbox, then "Agree to send
+#    descriptions") and shows the questions with the plan, so each word is accepted in both.
 - tapOn: "Describe an app…"
 - extendedWaitUntil:
-    visible: "Accept|Agree and continue|What should it do\\?"
+    visible: "Accept|I accept the Terms of use|Agree and continue|Agree to send descriptions|What should it do\\?"
     timeout: 60000
 - runFlow:
     when:
-      visible: "Accept"
+      visible: "Accept|I accept the Terms of use"
     commands:
-      - tapOn: "Accept"
+      - tapOn: "Accept|I accept the Terms of use"
       - extendedWaitUntil:
-          visible: "Agree and continue|What should it do\\?"
+          visible: "Agree and continue|Agree to send descriptions|What should it do\\?"
           timeout: 60000
 - runFlow:
     when:
-      visible: "Agree and continue"
+      visible: "Agree and continue|Agree to send descriptions"
     commands:
-      - tapOn: "Agree and continue"
+      - tapOn: "Agree and continue|Agree to send descriptions"
 - extendedWaitUntil:
     visible: "What should it do\\?"
     timeout: 30000
@@ -112,17 +115,17 @@ env:
 - tapOn: "What should it do\\?"
 - tapOn: "Continue"
 - extendedWaitUntil:
-    visible: ".*quick thing.*|Build it"
+    visible: "Continue|Build it|Make it"
     timeout: 180000
 - runFlow:
     when:
-      visible: ".*quick thing.*"
+      visible: "Continue"
     commands:
       - tapOn: "Continue"
 - extendedWaitUntil:
-    visible: "Build it"
+    visible: "Build it|Make it"
     timeout: 180000
-- tapOn: "Build it"
+- tapOn: "Build it|Make it"
 - extendedWaitUntil:
     visible: "Back to your apps"
     timeout: 300000
@@ -167,11 +170,11 @@ env:
 - tapOn: "What should change\\?"
 - tapOn: "Continue"
 - extendedWaitUntil:
-    visible: ".*quick thing.*|Make the change"
+    visible: "Continue|Make the change"
     timeout: 180000
 - runFlow:
     when:
-      visible: ".*quick thing.*"
+      visible: "Continue"
     commands:
       - tapOn: "Continue"
 - extendedWaitUntil:

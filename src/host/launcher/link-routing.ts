@@ -39,7 +39,7 @@ export function resolveAppLink(
  *  `'close-overlay'` closes an open sheet without acting — never forwarded into anything, never
  *  counted toward anything, the same unconditional-precedence idiom `back-policy.ts`'s
  *  `overlayOpen` already keeps for hardware back. Every other kind (home, dev, settings, history,
- *  done, and every step of the compose/clarify/plan flow) already goes Home under its own existing
+ *  ready, and every draft page of the making sheet) already goes Home under its own existing
  *  cancellation rule, so `'home'` is both their exit and the default. */
 export type LinkExit = 'exit-app' | 'leave-build' | 'leave-failure' | 'decline-consent' | 'close-overlay' | 'home';
 
@@ -51,7 +51,7 @@ export function linkExitFor(screen: string): LinkExit {
   switch (screen) {
     case 'app':
       return 'exit-app';
-    case 'build':
+    case 'making':
       return 'leave-build';
     case 'failure':
       return 'leave-failure';

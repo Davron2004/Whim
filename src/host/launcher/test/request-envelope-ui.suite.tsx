@@ -9,12 +9,11 @@ import TestRenderer from 'react-test-renderer';
 import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER, REQUEST_ID_HEADER } from '@whim/contract';
 import { Harness } from './harness';
 import HomeScreen from '../HomeScreen';
-import ComposeStep from '../ComposeStep';
-import ClarifyStep from '../ClarifyStep';
-import PlanStep from '../PlanStep';
+import { DescribePage } from '../DescribePage';
+import { PlanPage } from '../PlanPage';
 import BuildStep from '../BuildStep';
 import FailureScreen from '../FailureScreen';
-import ConsentScreen from '../ConsentScreen';
+import { FirstRunSheet } from '../FirstRunSheet';
 import HistoryScreen from '../HistoryScreen';
 import DoneStep from '../DoneStep';
 import MiniAppView from '../MiniAppView';
@@ -28,7 +27,7 @@ import { appInfoFrom, appInfoReader } from '../app-info';
 import type { InstalledApp } from '../app-index';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { button, press, textOf, hostType } from './react-screen';
-import { buildIt, composeAndContinue, json, planLoaded, resultEvent, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, json, onHome, planLoaded, resultEvent, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 import { TEST_APP_INFO, streamResponse } from './client-fixtures';
 import { Linking, Platform, injectedScripts } from './native-host';
@@ -175,16 +174,15 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
     await withLauncher({ server }, async ({ tree }) => {
       log.buffer.clear();
       await composeAndContinue(tree, 'A tea timer');
-      await waitFor(() => on(tree, FailureScreen), 'the failure screen');
+      await waitFor(() => on(tree, PlanPage) && tree.root.findByType(PlanPage).props.screen.problem !== undefined, 'the notice with Try again');
       const errors = log.buffer.snapshot().filter((r) => r.level === 'error');
       h.eq(
         errors.map((r) => [r.message, toDiagnostic(r).requestId]),
         [
           ['transport failed', 'req-clarify-9'],
           ['generation step failed', 'req-clarify-9'],
-          ['failure screen shown', 'req-clarify-9'],
         ],
-        'the transport breadcrumb, the step failure and the failure screen each carry it, and it survives the projection',
+        'the transport breadcrumb and the step failure each carry it, and it survives the projection',
       );
     });
   });
@@ -208,46 +206,43 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('envelope: on a build missing the app-info module, Continue shows the failure screen and sends nothing', async () => {
+  await h.test('envelope: on a build missing the app-info module, Continue shows a notice on the plan page and sends nothing', async () => {
     await withLauncher({ appInfo: appInfoReader('ios', () => null), server: () => json({ questions: [] }) }, async ({ tree, paths }) => {
       await composeAndContinue(tree, 'A tea timer');
-      await waitFor(() => on(tree, FailureScreen), 'the failure screen');
+      await waitFor(() => on(tree, PlanPage) && tree.root.findByType(PlanPage).props.screen.problem !== undefined, 'the notice');
       h.eq(paths(), [], 'no /v1 request left the phone, with or without an envelope');
-      h.ok(!textOf(tree.root).includes('WhimAppInfo'), 'and the screen never shows the mechanism message');
+      h.ok(!textOf(tree.root).includes('WhimAppInfo'), 'and the page never shows the mechanism message');
     });
   });
 
-  await h.test('consent_required on clarify: the consent screen says why; either answer returns to compose with the typed prompt', async () => {
+  await h.test('consent_required on clarify: the first-run sheet says why; either answer returns to describe with the typed prompt', async () => {
     await withLauncher({ server: () => consentRefused() }, async ({ tree, sent }) => {
       await composeAndContinue(tree, 'A tea timer');
-      await waitFor(() => on(tree, ConsentScreen), 'the consent screen');
-      h.eq(tree.root.findByType(ConsentScreen).props.mode, 'ask', 'in ask mode');
+      await waitFor(() => on(tree, FirstRunSheet), 'the consent screen');
+      h.eq(tree.root.findByType(FirstRunSheet).props.refused, true, 'opened by the refusal, not by a first ask');
       h.ok(textOf(tree.root).includes(COPY.permissionRequiredLine), 'saying why it is back');
       h.eq(tree.root.findAllByType(FailureScreen).length, 0, 'never the failure screen');
       await press(button(tree, COPY.consentDecline));
-      h.ok(on(tree, ComposeStep), 'Not now returns to compose');
-      h.eq(tree.root.findByType(ComposeStep).props.text, 'A tea timer', 'with the typed prompt');
-      await tap(() => tree.root.findByType(ComposeStep).props.onContinue());
-      await waitFor(() => on(tree, ConsentScreen), 'the consent screen, again');
+      h.ok(on(tree, DescribePage), 'Not now returns to describe');
+      h.eq(tree.root.findByType(DescribePage).props.text, 'A tea timer', 'with the typed prompt');
+      await tap(() => tree.root.findByType(DescribePage).props.onContinue());
+      await waitFor(() => on(tree, FirstRunSheet), 'the consent screen, again');
       await press(button(tree, COPY.consentAgree));
-      h.ok(on(tree, ComposeStep), 'agreeing returns to compose too');
-      h.eq([tree.root.findByType(ComposeStep).props.text, tree.root.findByType(ComposeStep).props.notice], ['A tea timer', undefined], 'with the typed prompt and no stale notice');
+      h.ok(on(tree, DescribePage), 'agreeing returns to describe too');
+      h.eq([tree.root.findByType(DescribePage).props.text, tree.root.findByType(DescribePage).props.notice], ['A tea timer', undefined], 'with the typed prompt and no stale notice');
       h.eq(sent.filter((r) => r.path === '/v1/clarify').length, 2, 'each Continue sent one clarify, and agreeing sent nothing by itself');
     });
   });
 
-  await h.test('consent_required on a rewrite sent from clarify: declining returns to clarify with the answers', async () => {
+  await h.test('consent_required on a rewrite: declining returns to describe with the typed prompt', async () => {
     await withLauncher({
       server: (r) => (r.path === '/v1/clarify' ? json({ questions: [QUESTION] }) : consentRefused()),
     }, async ({ tree }) => {
       await composeAndContinue(tree, 'A tea timer');
-      await waitFor(() => on(tree, ClarifyStep) && !tree.root.findByType(ClarifyStep).props.loading, 'the question');
-      await TestRenderer.act(async () => tree.root.findByType(ClarifyStep).props.onAnswer('alert', { kind: 'pick', option: 'Buzz' }));
-      await tap(() => tree.root.findByType(ClarifyStep).props.onContinue());
-      await waitFor(() => on(tree, ConsentScreen), 'the consent screen');
+      await waitFor(() => on(tree, FirstRunSheet), 'the first-run sheet');
       await press(button(tree, COPY.consentDecline));
-      h.ok(on(tree, ClarifyStep), 'back on the clarify step that sent it');
-      h.eq([tree.root.findByType(ClarifyStep).props.prompt, tree.root.findByType(ClarifyStep).props.answers], ['A tea timer', { alert: { choices: ['Buzz'], other: '', decide: false } }], 'prompt and answers intact');
+      h.ok(on(tree, DescribePage), 'back on the page whose Continue sent it');
+      h.eq(tree.root.findByType(DescribePage).props.text, 'A tea timer', 'with the typed prompt');
     });
   });
 
@@ -255,13 +250,13 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
     await withLauncher({ server: flowServer(() => consentRefused()) }, async ({ tree, kv }) => {
       await composeAndContinue(tree, 'A tea timer');
       await waitFor(() => planLoaded(tree), 'the plan');
-      await TestRenderer.act(async () => tree.root.findByType(PlanStep).props.onChangeRow(0, 'Counts down four minutes'));
+      await TestRenderer.act(async () => tree.root.findByType(PlanPage).props.onChangeRow(0, 'Counts down four minutes'));
       await buildIt(tree);
-      await waitFor(() => on(tree, ConsentScreen), 'the consent screen');
+      await waitFor(() => on(tree, FirstRunSheet), 'the consent screen');
       h.eq(new PendingBuildStore(kv).list(), [], 'the refused attempt leaves no ghost');
       await press(button(tree, COPY.consentAgree));
-      h.ok(on(tree, PlanStep), 'agreeing returns to the plan');
-      h.eq(tree.root.findByType(PlanStep).props.rows.map((row: { text: string }) => row.text), ['Counts down four minutes'], 'with the row as the user edited it');
+      h.ok(on(tree, PlanPage), 'agreeing returns to the plan');
+      h.eq(tree.root.findByType(PlanPage).props.screen.rows.map((row: { text: string }) => row.text), ['Counts down four minutes'], 'with the row as the user edited it');
     });
   });
 
@@ -282,12 +277,12 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       const ghost = new PendingBuildStore(kv).get('failed');
       await TestRenderer.act(async () => home(tree).props.onOpenPending(ghost));
       await press(button(tree, COPY.screenErrorRetry));
-      await waitFor(() => on(tree, ConsentScreen), 'the consent screen');
+      await waitFor(() => on(tree, FirstRunSheet), 'the consent screen');
       await press(button(tree, COPY.consentDecline));
       h.ok(on(tree, FailureScreen), 'Not now returns to the failed build');
       h.eq(new PendingBuildStore(kv).get('failed')?.state, 'failed', 'whose record is still there to retry');
       await press(button(tree, COPY.screenErrorRetry));
-      await waitFor(() => on(tree, ConsentScreen), 'the consent screen, again');
+      await waitFor(() => on(tree, FirstRunSheet), 'the consent screen, again');
       await press(button(tree, COPY.consentAgree));
       await waitFor(() => on(tree, BuildStep), 'the retried build');
       h.eq(sent.filter((r) => r.path === '/v1/generate').map((r) => r.body?.prompt), ['A tea timer', 'A tea timer', 'A tea timer'], 'agreeing retried the stored prompt');
@@ -305,7 +300,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       await press(button(tree, COPY.buildLeaveRunning));
       await TestRenderer.act(async () => { generation.resolve(consentRefused()); });
       await waitFor(() => new PendingBuildStore(kv).list()[0]?.state === 'failed', 'the refused run to settle');
-      h.ok(on(tree, HomeScreen), 'the user is still on Home');
+      h.ok(onHome(tree), 'the user is still on Home');
       h.eq(new PendingBuildStore(kv).list()[0]?.failure?.reason, COPY.permissionRequiredLine, 'and the ghost keeps the phone’s reason');
     });
   });
@@ -317,30 +312,27 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       h.ok(textOf(tree.root).includes(COPY.updateTitle), 'saying Whim needs an update');
       h.eq(tree.root.findAllByType(FailureScreen).length, 0, 'never the failure screen');
       await press(button(tree, COPY.updateNotNow));
-      h.ok(on(tree, HomeScreen), 'Not now goes Home');
+      h.ok(onHome(tree), 'Not now goes Home');
       await TestRenderer.act(async () => home(tree).props.onPromptAgain(APP));
-      h.eq(tree.root.findByType(ComposeStep).props.text, '', 'changing another app does not pick up the new app’s prompt');
-      await press(button(tree, COPY.backLabel));
+      h.eq(tree.root.findByType(DescribePage).props.text, '', 'changing another app does not pick up the new app’s prompt');
+      await press(button(tree, COPY.sheetClose));
       await TestRenderer.act(async () => home(tree).props.onCreate());
-      h.eq(tree.root.findByType(ComposeStep).props.text, 'A tea timer', 'the next new-app compose has the typed prompt back');
-      await tap(() => tree.root.findByType(ComposeStep).props.onContinue());
+      h.eq(tree.root.findByType(DescribePage).props.text, 'A tea timer', 'the next new-app describe has the typed prompt back');
+      await tap(() => tree.root.findByType(DescribePage).props.onContinue());
       await waitFor(() => updateShown(tree), 'the update screen, again');
       h.eq(sent.filter((r) => r.path === '/v1/clarify').length, 2, 'the second one came from the server refusing the next clarify');
     });
   });
 
-  await h.test('update_required on a rewrite sent from clarify: the update screen opens, and the typed prompt comes back', async () => {
+  await h.test('update_required on a rewrite: the update screen opens, and the typed prompt comes back', async () => {
     await withLauncher({
       server: (r) => (r.path === '/v1/clarify' ? json({ questions: [QUESTION] }) : updateRefused()),
     }, async ({ tree }) => {
       await composeAndContinue(tree, 'A tea timer');
-      await waitFor(() => on(tree, ClarifyStep) && !tree.root.findByType(ClarifyStep).props.loading, 'the question');
-      await TestRenderer.act(async () => tree.root.findByType(ClarifyStep).props.onAnswer('alert', { kind: 'pick', option: 'Buzz' }));
-      await tap(() => tree.root.findByType(ClarifyStep).props.onContinue());
       await waitFor(() => updateShown(tree), 'the update screen');
       await press(button(tree, COPY.updateNotNow));
       await TestRenderer.act(async () => home(tree).props.onCreate());
-      h.eq(tree.root.findByType(ComposeStep).props.text, 'A tea timer', 'with the typed prompt');
+      h.eq(tree.root.findByType(DescribePage).props.text, 'A tea timer', 'with the typed prompt');
     });
   });
 
@@ -353,7 +345,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       h.eq(new PendingBuildStore(kv).list(), [], 'the refused attempt leaves no ghost');
       await press(button(tree, COPY.updateNotNow));
       await TestRenderer.act(async () => home(tree).props.onCreate());
-      h.eq(tree.root.findByType(ComposeStep).props.text, 'A tea timer', 'with the typed prompt');
+      h.eq(tree.root.findByType(DescribePage).props.text, 'A tea timer', 'with the typed prompt');
     });
   });
 
@@ -370,7 +362,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       await press(button(tree, COPY.screenErrorRetry));
       await waitFor(() => updateShown(tree), 'the update screen');
       await press(button(tree, COPY.updateNotNow));
-      h.ok(on(tree, HomeScreen), 'Not now goes Home');
+      h.ok(onHome(tree), 'Not now goes Home');
       h.eq(new PendingBuildStore(kv).list().map((r) => [r.id, r.state, r.prompt]), [['failed', 'failed', 'A tea timer']], 'where the ghost still holds the prompt to retry');
     });
   });
@@ -453,7 +445,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
         h.ok(wasSent(sent, '/v1/report'), 'after the server refused the report');
         h.ok(!textOf(tree.root).includes(COPY.reportSheetTitle), 'the sheet is gone');
         await press(button(tree, COPY.updateNotNow));
-        h.ok(on(tree, HomeScreen), 'Not now goes Home');
+        h.ok(onHome(tree), 'Not now goes Home');
       });
     });
   }
@@ -463,7 +455,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       await waitFor(() => updateShown(tree), 'the update screen');
       h.eq([tree.root.findAllByType(HomeScreen).length, sent.length], [0, 0], 'in place of Home, before any /v1 request');
       await press(button(tree, COPY.updateNotNow));
-      h.ok(on(tree, HomeScreen), 'Not now goes Home');
+      h.ok(onHome(tree), 'Not now goes Home');
       const example = await exampleApp(tree);
       h.ok(await opensAndRuns(tree, example, APP_BUNDLES['tip-splitter']), 'an example app opens and runs');
       await TestRenderer.act(async () => tree.root.findByType(MiniAppView).props.onExit());
@@ -478,15 +470,15 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
     await withLauncher({ health: () => health.promise, server: () => updateRefused() }, async ({ tree, sent, probes }) => {
       await waitFor(() => probes.length > 0, 'the launch probe');
       await TestRenderer.act(async () => home(tree).props.onCreate());
-      await TestRenderer.act(async () => tree.root.findByType(ComposeStep).props.onChangeText('A tea timer'));
-      h.ok(on(tree, ComposeStep) && !updateShown(tree), 'while /health has not answered, the user types in compose');
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('A tea timer'));
+      h.ok(on(tree, DescribePage) && !updateShown(tree), 'while /health has not answered, the user types in compose');
       await TestRenderer.act(async () => { health.resolve(healthy(ABOVE)()); });
       await waitFor(() => updateShown(tree), 'the update screen, once the minimum arrives');
-      h.eq([tree.root.findAllByType(ComposeStep).length, sent.length], [0, 0], 'in place of compose, with nothing sent');
+      h.eq([tree.root.findAllByType(DescribePage).length, sent.length], [0, 0], 'in place of compose, with nothing sent');
       await press(button(tree, COPY.updateNotNow));
-      h.ok(on(tree, HomeScreen), 'Not now goes Home');
+      h.ok(onHome(tree), 'Not now goes Home');
       await TestRenderer.act(async () => home(tree).props.onCreate());
-      h.eq(tree.root.findByType(ComposeStep).props.text, 'A tea timer', 'and the next compose has the typed prompt back');
+      h.eq(tree.root.findByType(DescribePage).props.text, 'A tea timer', 'and the next compose has the typed prompt back');
     });
   });
 
@@ -498,9 +490,9 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       await waitFor(() => updateShown(tree), 'the update screen');
       h.eq(sent.map((r) => r.path), ['/v1/clarify'], 'shown by the server refusing the clarify, while /health is still unanswered');
       await press(button(tree, COPY.updateNotNow));
-      h.ok(on(tree, HomeScreen), 'Not now goes Home');
+      h.ok(onHome(tree), 'Not now goes Home');
       await TestRenderer.act(async () => home(tree).props.onCreate());
-      h.eq(tree.root.findByType(ComposeStep).props.text, 'A tea timer', 'and the next compose has the typed prompt back');
+      h.eq(tree.root.findByType(DescribePage).props.text, 'A tea timer', 'and the next compose has the typed prompt back');
     });
   });
 
@@ -522,7 +514,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       await withLauncher({ health: entry.health, server: flowServer(() => json({})) }, async ({ tree, probes }) => {
         await waitFor(() => probes.length > 0, 'the launch probe');
         await settle();
-        h.ok(on(tree, HomeScreen), 'Home, not the update screen');
+        h.ok(onHome(tree), 'Home, not the update screen');
         await composeAndContinue(tree, 'A tea timer');
         await waitFor(() => planLoaded(tree), 'the plan');
         h.ok(!updateShown(tree), 'the prompt went through clarify and rewrite, and no update screen opened');

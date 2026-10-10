@@ -1,14 +1,10 @@
 /**
  * refusal-landing Node suite (store-launch-compliance chain-4, task 4.2; fix-notice-window) —
- * `refusalLanding` against every `ServiceRefusalCode` across the four request/sender shapes the
- * flow can actually produce, `retryWindowState`'s pure disabled/enabled arithmetic, and
- * `noticeExpiredAt`'s pure D12 clear-at-window-end predicate.
+ * `retryWindowState`'s pure disabled/enabled arithmetic and `noticeExpiredAt`'s pure D12
+ * clear-at-window-end predicate. Where each refusal lands (Describe for a clarify or rewrite, Plan
+ * for a generate) is driven through the rendered shell in `prompt-flow-ui.suite.tsx`.
  *
  * Covers spec `service-refusals`:
- *   - "A refusal of what the user wrote lands where they can change it" — `content_policy`/
- *     `payload_too_large` always return to compose (or plan for a plan-started generate).
- *   - "An availability or limit refusal lands on the step whose action sent the request" — the
- *     other five codes return to `sentFrom`, except a generate request, always plan-started.
  *   - "Retry-After holds the retry action until the window passes" — the disabled/enabled split,
  *     not the copy-table line (covered in `service-refusal.suite.ts`).
  *
@@ -17,52 +13,9 @@
  * never expires this way.
  */
 import { Harness } from './harness';
-import { noticeExpiredAt, refusalLanding, retryWindowState } from '../refusal-landing';
-import { ServiceRefusalCode } from '@whim/contract';
-
-// Expectations come from the service-refusals spec, independently of the production table.
-const TEXT_LANDING_CODES = ['content_policy', 'payload_too_large'] as const;
-const SENDER_LANDING_CODES = [
-  'policy_unavailable',
-  'budget_exhausted',
-  'daily_limit',
-  'device_busy',
-  'server_busy',
-  'update_required',
-  'consent_required',
-] as const;
+import { noticeExpiredAt, retryWindowState } from '../refusal-landing';
 
 export async function runRefusalLandingTests(h: Harness): Promise<void> {
-  await h.test('refusalLanding: a text-landing code always returns to compose for clarify or rewrite', () => {
-    for (const code of TEXT_LANDING_CODES) {
-      h.eq(refusalLanding('clarify', 'compose', code), 'compose', `clarify-from-compose, ${code}`);
-      h.eq(refusalLanding('rewrite', 'compose', code), 'compose', `rewrite-from-compose, ${code}`);
-      h.eq(refusalLanding('rewrite', 'clarify', code), 'compose', `rewrite-from-clarify, ${code}`);
-    }
-  });
-
-  await h.test('refusalLanding: a sender-landing code returns to whichever step sent the request', () => {
-    for (const code of SENDER_LANDING_CODES) {
-      h.eq(refusalLanding('clarify', 'compose', code), 'compose', `clarify-from-compose, ${code}`);
-      h.eq(refusalLanding('rewrite', 'compose', code), 'compose', `rewrite-from-compose, ${code}`);
-      h.eq(refusalLanding('rewrite', 'clarify', code), 'clarify', `rewrite-from-clarify, ${code}`);
-    }
-  });
-
-  await h.test('refusalLanding: a generate request always lands on plan, whichever way the code lands', () => {
-    for (const code of ServiceRefusalCode.options) {
-      h.eq(refusalLanding('generate', 'plan', code), 'plan', `generate-from-plan, ${code}`);
-    }
-  });
-
-  await h.test('refusalLanding: expected landings cover every contract code exactly once', () => {
-    h.eq(
-      [...TEXT_LANDING_CODES, ...SENDER_LANDING_CODES].sort((left, right) => left.localeCompare(right)),
-      [...ServiceRefusalCode.options].sort((left, right) => left.localeCompare(right)),
-      'the independent expected groups contain every code, with no duplicates or extras',
-    );
-  });
-
   await h.test('retryWindowState: disabled with the remaining milliseconds, while retryAt is still ahead', () => {
     h.eq(retryWindowState(1_000_500, 1_000_000), { disabled: true, msUntilEnable: 500 }, 'still open');
   });

@@ -114,7 +114,7 @@ export async function runLaunchScreenTests(h: Harness): Promise<void> {
         await coldStart(async ({ hides, frame }) => {
           await frame();
           await frame();
-          h.eq(hides, [[landing]], `the hold ends once, over the ${landing} screen and never over Home`);
+          h.eq(hides, [landing === 'failure' ? ['home', 'failure'] : [landing]], `the hold ends once, over the ${landing} page${landing === 'failure' ? ', a sheet that covers Home' : ' and never over Home'}`);
         });
       } finally { Linking.initialURL = null; }
     });
