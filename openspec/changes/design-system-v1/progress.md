@@ -134,3 +134,15 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
 - merged: `f824c725` (--no-ff). regate (fast): PASS.
 - report: chain-16g STATUS complete, fast gate PASS, knip clean, commit `c49599a1` (6 files). integrity exit 0; removal
   ratchet PASS; with the reviewer.
+- reviewer on `4ad56468..c49599a1` (16g): VERDICT findings, report matches, nothing removed. Medium: the new
+  `firstRunLead` ("Whim has to send some things to our server.") no longer said what the `ai-data-consent` delta
+  defines the lead as saying. Lows: coverage patterns that pass a half-dropped sentence, the first `testID` in
+  product code, a "picked looks different" test that compared node counts, one stale contract line.
+- decision: a legal first layer follows the spec, the spec text does not move. The lead again says that what you ask
+  for goes to our server and that AI companies write the code; the row's AI sentence says what they receive
+  ("The AI companies get what you ask for, your answers and the plan.", matching the manifest, where AI providers
+  get request material only). No `consent*` string and no legal version changed.
+- chain-16g fix round (fresh implementer, same branch): commit `107b29e6`, fast gate PASS, knip clean; the follow-up
+  diff read by the orchestrator. integrity exit 0; removal ratchet PASS. merged: `4692bcca` (--no-ff). regate (fast): PASS.
+- follow-ups from 16g, not done: `expanded` belongs in `GroupedRow` (the sheet has a local `DetailsRow`); `WhimProse`
+  sets no `maxFontSizeMultiplier`; `system.md` §6 Checkbox says a `tint` fill where `OptionMark` and the terms row use `ink`.
