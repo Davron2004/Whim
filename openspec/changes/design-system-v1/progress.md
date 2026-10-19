@@ -340,3 +340,18 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
 - merged: `9887f859` (--no-ff). regate (fast): PASS. Worktree and branch removed. gate-full on the merged tip next.
 - gate-full on `e7154634` (16l merged): FULL GATE PASSED, synthetic-run 519 checks. Pushed.
 - dispatched: chain-17 (making-progress), BASE `6113c030`, worktree `.claude/worktrees/design-system-v1-chain-17`; implementer on opus (effort high), Whim_Verify on emulator-5560 + one iOS 27 simulator. Brief carries the handoff's chain-17 items (useSystemBack → useSheetBack first, Stopped tile M5, stable run page key, HostedPage) and the 16j/16l lessons (worklet configs on the JS thread, wrappingType). #185 reproduction deferred until no device builds are running.
+- wrap-up requested at ~818k tokens (owner: big chains get split into small sequential implementers or a chain
+  orchestrator from now on). report: chain-17 STATUS blocked (class B), 4/5 tasks, fast gate PASS (GATE_BASE=6113c030),
+  knip clean, commit `4f8e5183` (full chain commit). Status for successors: scratchpad `c17-status.md`. Contract
+  `handoff/making-progress.md` written.
+- adjudication: [A] Stop leaves a stopped tile — implementer right, the orchestrator's brief misread the handoff (the
+  spec says Stop SHALL leave a stopped tile; AND-M5 is the bug "no Stopped tile"). [B] Discard: the delta says "Discard
+  in the body with a 6 s Undo" (SHALL), so option (a): `completePurge` learns volatile records, Discard goes through
+  `PurgeWindows` with the Undo toast. [A→rejected] "needs a newer Whim" kept on `UpdateRequiredScreen`: the delta lists
+  it as a Failure-page kind (system.md §8 row), so it moves to the next piece. Device: Android Making/Checking/Ready/
+  back/closed-sheet toast seen right; Failure page, stopped tile, offline notices, queue/stall, large text, dark, all
+  of iOS not yet seen.
+- integrity: exit 0. removal ratchet: PASS with three `authorised:` lines (failure-screen 17→13 tests, home-grid-ui
+  37→36, prompt-flow-screens 42→40, one trailer on 4f8e5183): acceptance held until the reviewer rules per test.
+  reviewer on `6113c030..4f8e5183` dispatched. Plan for the rest of chain-17 as small pieces on the same branch:
+  17b (Undo + newer-Whim kind + review findings), then device verification split by platform.
