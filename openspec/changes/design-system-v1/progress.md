@@ -369,3 +369,5 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   → 17c Discard with Undo → 17d needs-update kind + structured cause → 17e tests/contracts/dead code → 17f Android ∥ 17g
   iOS device verification (report-only) → whole-chain reviewer → merge.
 - dispatched: 17b (opus, effort high), no devices.
+- 17b: complete, commit `5f9cd581` (4 files), fast gate PASS, ~102k tokens. Delivery wins: `stopLiveAttempt` refuses once `delivering`; Making page hides Stop then; the tile-menu Stop stays (app-launcher spec: "Details and Stop") but does nothing. Tests red on 4f8e5183 (5 and 3 checks). [A] accepted: `detachSelectedRun()` also detaches the page's own run, so closing the sheet mid-delivery now gives the ready toast (was missing). No other path found that lets an app and a pending record share an id.
+- dispatched: 17c (Discard with the 6 s Undo; opus, effort high).
