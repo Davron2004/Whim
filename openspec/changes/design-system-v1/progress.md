@@ -355,3 +355,17 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   37→36, prompt-flow-screens 42→40, one trailer on 4f8e5183): acceptance held until the reviewer rules per test.
   reviewer on `6113c030..4f8e5183` dispatched. Plan for the rest of chain-17 as small pieces on the same branch:
   17b (Undo + newer-Whim kind + review findings), then device verification split by platform.
+- reviewer on `6113c030..4f8e5183`: VERDICT findings; report matches diff: no (the "stable page key" fix has no
+  test that can fail; the trailer claims every removed behaviour is re-asserted). HIGH: Stop during delivery leaves an
+  installed app AND a stopped tile with the same id; Try again then installs into the existing app and shares its
+  storage appId (#43b). MEDIUM: page-key test vacuous; the refused-notice dedupe check dropped though its code remains;
+  #151's no-terminal path and the 3-repair reopen untested. LOW: contracts home.md/making-sheet.md made false, dead
+  link-routing branches, connection kind matched by copy text, queue>stall untested. Clean: details-of-a-run still met,
+  Android back (no handler, the Sheet's onRequestClose) correct, Making page conforms, worklets/overlays/text clean.
+- ratchet ruling: accept every removal except failure-screen "what happened: reason not repeated" (rejected in part:
+  the refused-notice dedupe comes back in 17e).
+- plan for the rest of chain-17 (owner rule: small pieces), sequential on the chain branch, each a fresh implementer
+  appending to the status file; findings per piece in scratchpad `c17-review.md`: 17b HIGH (delivery wins over Stop)
+  → 17c Discard with Undo → 17d needs-update kind + structured cause → 17e tests/contracts/dead code → 17f Android ∥ 17g
+  iOS device verification (report-only) → whole-chain reviewer → merge.
+- dispatched: 17b (opus, effort high), no devices.
