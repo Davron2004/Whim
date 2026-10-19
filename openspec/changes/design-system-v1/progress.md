@@ -313,3 +313,13 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
 - integrity: exit 0 (16 files, all in the declared scope plus the two Class A files). An earlier run without
   `FIXLOOP_INTEGRATION_BRANCH` measured against `main` and reported every beta-2 harness edit as tamper (exit 3): the
   orchestrator's invocation error, not the chain's. removal ratchet: PASS, no `authorised:` lines.
+- reviewer on `41981cfc..00e2a7e5`: VERDICT findings, no HIGH; report matches diff "mostly". MEDIUM: (1) the 0.001 pt
+  room fails in the test's own textBox model (title1 at 178.6%, 6+ lines, 2× screens, ≥2048 pt down) and the tests cover
+  scales [1, 2] at 3× only, so the `Text.tsx` comment overclaims; (2) tap-to-dismiss inside the scroll view now rests on
+  RN's `keyboardShouldPersistTaps="handled"`, untested and unverified on device; the "empty space" tests tap the footer
+  strip only; Android API ≥30 Modal case at risk (app-launcher spec ~696); (3) item 4 partial: TextField helper/error,
+  ContextMenu labels/heading, Button 2-line labels lack the room. LOW: shell-controls check could pin to `doc.line − room`.
+  Clean: no other worklet hazard, Reduce Motion not stale, state above every rebuild, contracts still true.
+- revision 1/2 sent to the same implementer: all three MEDIUMs (scope widened to TextField, ContextMenu, Button), device
+  proof of in-scroll tap-to-dismiss on iOS and Android ≥30 in a screen and a sheet. History's legacy text with no 200%
+  cap filed as #186 (for chain-20).
