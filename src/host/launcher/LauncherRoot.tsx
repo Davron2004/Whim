@@ -14,7 +14,7 @@
 // the same `whim.launcher` KVBackend the installed-apps index uses. One WebView == one realm ==
 // one app: launching reads the active bundle source from the record and hands it to MiniAppView
 // (keyed by launcher id, so each launch is a fresh realm).
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Linking, StatusBar, StyleSheet, Text, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
@@ -31,7 +31,7 @@ import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import type { KVBackend } from '../version-store/fs/kv-fs';
 import { copyStorage, deleteStorage, peekAppliedSchema } from '../storage-engine';
 import { HighlightingProvider } from '../ui/whim-prose/WhimProse';
-import { ToastHost } from '../ui/Toast';
+import { ToastHost, useToast, type ToastApi } from '../ui/Toast';
 import { useTokens } from '../ui/tokens';
 import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
@@ -42,7 +42,7 @@ import { DataCopyJournal } from './data-copy-journal';
 import { PendingBuildStore } from './pending-builds';
 import type { PendingAttemptLease, PendingBuildRecord, PendingBuildView, PendingFailureRemedy } from './pending-builds';
 import { JOURNAL_KEY, RunJournalStore } from './run-journal';
-import type { RunJournal, RunTerminalCounts } from './run-journal';
+import type { RunTerminalCounts } from './run-journal';
 import {
   deliverAndSettleIfOwned,
   dropPendingBuild,
@@ -55,7 +55,7 @@ import {
 } from './build-lifecycle';
 import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAppContext } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
-import { COPY, LEGAL_COPY } from './copy';
+import { COPY, LEGAL_COPY, readyTitle } from './copy';
 import HomeScreen from './HomeScreen';
 import MiniAppView from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
@@ -66,10 +66,12 @@ import HistoryScreen from './HistoryScreen';
 import { DescribePage } from './DescribePage';
 import { PlanPage } from './PlanPage';
 import { FirstRunSheet } from './FirstRunSheet';
-import { HostedPage, MakingSheet, type SheetContent } from './MakingSheet';
-import BuildStep from './BuildStep';
-import DoneStep from './DoneStep';
-import FailureScreen from './FailureScreen';
+import { MakingSheet, type SheetContent } from './MakingSheet';
+import MakingPage from './MakingPage';
+import ReadyPage from './ReadyPage';
+import FailurePage from './FailurePage';
+import { failureKindOf } from './failure-kind';
+import { attemptName } from './grid-composition';
 import ConsentScreen from './ConsentScreen';
 import AgeScreen from './AgeScreen';
 import AppLinkMissingScreen from './AppLinkMissingScreen';
@@ -84,8 +86,7 @@ import { SCREEN_EXITS, frameEdgesFor } from './screen-exits';
 import { useSystemBack } from './use-system-back';
 import DevLogOverlay from './DevLogOverlay';
 import { devLogOverlayEnabled } from './dev-log-view';
-import RunDetailsSheet from './RunDetailsSheet';
-import { runTimelineDevModeEnabled } from './run-timeline-view';
+import { repairAttemptsIn, runTimelineDevModeEnabled } from './run-timeline-view';
 import { HomeSkeleton } from './HomeSkeleton';
 import { toastClearance } from './ComposerBar';
 import { useHomeLive } from './use-home-live';
@@ -97,7 +98,6 @@ import {
   RUN_SIGNAL_TICK_MS,
   acceptClarifyQuestions,
   backToDescribe,
-  buildBackAction,
   clarificationsFrom,
   clarifyLimitOf,
   delegatedAnswers,
@@ -119,8 +119,9 @@ import {
   withProblem,
   withQuestions,
   withStreamEvent,
+  workingTitleFromPrompt,
 } from './prompt-flow';
-import type { DescribeScreen, FlowLimit, FlowNotice, FlowQuestion, FlowScreen, MakingScreen, PlanScreen, RunSignals } from './prompt-flow';
+import type { DescribeScreen, FlowLimit, FlowNotice, FlowQuestion, FlowScreen, MakingScreen, PlanProblem, PlanScreen, RunSignals } from './prompt-flow';
 import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 import { PROTOCOL_LEVEL } from './wire-headers';
 import { FlowRequests, onlyOnStep } from './flow-request';
@@ -151,7 +152,7 @@ import type { ClientOptions, ConsentedClientOptions, GenerationStream } from './
 import { reportClientOptions } from './transport-shared';
 import type { AppInfo } from './app-info';
 import { installedAppInfo } from './installed-app-info';
-import ReportScreen, { ReportSheet } from './ReportScreen';
+import ReportScreen from './ReportScreen';
 import { consentStatus, grantConsent, outdatedGrantVersion, revokeConsent } from './ai-consent';
 import { acceptTerms, termsStatus } from './terms-acceptance';
 import { runAgeCheck, storedAgeGate, type AgeGate, type AgeHold, type SignificantUpdateSheet } from './age-check';
@@ -231,7 +232,7 @@ type Screen =
       observedRepairAttempts: number;
       hasWorkingVersion: boolean;
       /** Whether describing the app differently could get past this failure — the failure
-       *  screen's rephrase advice (`FailureScreenProps.rephraseHelps`). */
+       *  screen's rephrase advice (`FailurePageProps.rephraseHelps`). */
       rephraseHelps: boolean;
       /** Set ONLY when this screen was opened from a `failed`/`interrupted` pending-build record
        *  rather than from a live terminal event — the one thing that distinguishes the two, and
@@ -252,6 +253,8 @@ type Screen =
        *  still showing on this exact screen — never resurrected from a hydrated ghost, since the
        *  retry window is not persisted (design D11: "the server stays authoritative"). */
       notice?: FlowNotice;
+      /** An `interrupted` record's page: Whim closed under the run, or the person stopped it. */
+      interrupted?: 'closed' | 'stopped';
     };
 
 /** The screens the native stack shows (design-system-v1 D6): Home at its root, then Settings and
@@ -485,6 +488,21 @@ function countEvent(counts: EventCounts, event: GenerationEvent): void {
   }
 }
 
+/** A generation attempt's error as its Failure page says it (system.md §8): a request no server
+ *  answered is a lost connection, which rewording never fixes; any other error as `errorReason`
+ *  words it. */
+function attemptErrorReason(err: unknown): { reason: string; diagnostics: readonly { hint: string }[] } {
+  return isNetworkFailure(err) ? { reason: COPY.failureConnection, diagnostics: [] } : errorReason(err);
+}
+
+function attemptRephraseHelps(err: unknown): boolean {
+  return !isNetworkFailure(err) && errorRephraseHelps(err);
+}
+
+function attemptRemedy(err: unknown): PendingFailureRemedy | undefined {
+  return isNetworkFailure(err) ? { kind: 'retry' } : errorRemedy(err);
+}
+
 /** `appInfo` reads the installed app's platform, version and build for the request envelope;
  *  `deviceLocale` reads the phone's preferred
  *  locale, which picks the legal language until the user chooses one (legal-surface-v2 D6);
@@ -694,6 +712,11 @@ function LauncherShell({
   };
 
   const [screen, setScreen] = useState<Screen>({ kind: 'home' });
+  // What is on screen now, for a run that settles later: its closure holds the screen it started on.
+  const screenKindRef = useRef(screen.kind);
+  useEffect(() => {
+    screenKindRef.current = screen.kind;
+  }, [screen.kind]);
   // A sender-landing (`neutral`-tone) notice on whichever step currently carries one clears the
   // instant its retry window ends (design D12: "A sender refusal clears when its window ends").
   // Leaving the step already clears it for free — the step's own constructor never carries a
@@ -725,11 +748,6 @@ function LauncherShell({
   const [lastProbe, setLastProbe] = useState<SessionProbe | null>(null);
   const [highlighting] = useState<boolean>(() => loadHighlighting(kv));
   const [errorDetailsShown, setErrorDetailsShown] = useState<boolean>(() => errorDetailsEnabled(kv));
-  // The report sheet's target for the done step's entry point (design D13) — `null` closes it.
-  // History and Settings push the Report screen instead. The orb's own entry point (inside a
-  // running mini-app) is a separate, local state owned by `MiniAppView` itself, since it also
-  // drives that realm's `overlayOpen` back-policy input.
-  const [reportTarget, setReportTarget] = useState<InstalledApp | null>(null);
 
   // State, not a memo: Settings' "Make a new ID" replaces it, and every options memo below is keyed
   // on it, so the next request carries the new ID.
@@ -916,10 +934,9 @@ function LauncherShell({
   const [appBusy, setAppBusy] = useState<AppBusyMap>({});
 
   // App links (design D15): the last link that arrived before first-run finished, and a stable
-  // handle onto the latest `openAppLink` closure — refreshed every render below, the same
-  // stable-identity idiom `onLeaveRunningRef`/`timelineRef` already keep, so the mount-once
-  // `Linking` subscription (registered once, further down) always reaches the CURRENT `screen`/
-  // `reportTarget` rather than the ones captured at mount.
+  // handle onto the latest `openAppLink` closure — refreshed every render below, so the mount-once
+  // `Linking` subscription (registered once, further down) always reaches the CURRENT `screen`
+  // rather than the one captured at mount.
   const pendingLinkHolder = useRef(new PendingLinkHolder()).current;
   const openAppLinkRef = useRef<(id: string) => void>(() => {});
 
@@ -939,7 +956,7 @@ function LauncherShell({
   // The live attempt's derived-signal state (design D6): its start time, the cumulative counts
   // folded from its stream and the arrival that the heartbeat measures quiet from. A REF, not
   // state, because it moves on every token — re-rendering per token is exactly the cadence this
-  // change refuses. The build screen's clock moves on the tick below instead, and the journal is
+  // change refuses. The Making page's clock moves on the tick below instead, and the journal is
   // never read to produce any of it.
   const signalsRef = useRef<RunSignals | null>(null);
   const [, setTick] = useState(0);
@@ -950,19 +967,12 @@ function LauncherShell({
     return () => clearInterval(timer);
   }, [screen.kind]);
 
-  // The build screen's details view (task 5.4): the entries read at the moment it was opened, or
-  // `null` while it is closed. STATE, not a ref, because opening it is exactly the one moment this
-  // screen should re-render — and the read happens there, never on the tick above.
-  const [timeline, setTimeline] = useState<RunJournal | null>(null);
+  // The shell's one toast host is mounted above this component's own render, so its API reaches
+  // the shell through `ToastBridge`: a run that delivers with the sheet closed says so on Home.
+  const toastRef = useRef<ToastApi | null>(null);
 
-  // Leaving the making page closes it, so returning to a later attempt never opens onto the
-  // previous one's entries.
-  useEffect(() => {
-    if (screen.kind !== 'making') setTimeline(null);
-  }, [screen.kind]);
-
-  /** Whether the timeline shows the developer counts, decided ONCE for both surfaces — never a
-   *  bare `__DEV__` check (decision #60(c)). */
+  /** Whether the timeline shows the developer counts, decided once — never a bare `__DEV__` check
+   *  (decision #60(c)). */
   const timelineDevMode = runTimelineDevModeEnabled(__DEV__);
 
   const refresh = () => {
@@ -987,8 +997,9 @@ function LauncherShell({
   );
   useEffect(() => () => purgeWindows.dispose(), [purgeWindows]);
 
-  // Home's view of the attempts running right now: which wait for a spot, how hard each stream works.
-  const liveView = useHomeLive(screen.kind === 'home', () => [...liveAttemptsRef.values()]);
+  // The view of the attempts running right now: which wait for a spot, how hard each stream works.
+  // Home's tiles read it, and so does the Making page's ember, for its own run only.
+  const liveView = useHomeLive(screen.kind === 'home' || screen.kind === 'making', () => [...liveAttemptsRef.values()]);
 
   /** The installed apps and the attempts a person can reach: those whose purge is armed are gone as far
    *  as a link or a tile is concerned. */
@@ -1183,14 +1194,11 @@ function LauncherShell({
   };
 
   /** A report refused `update_required`, or answered with an `update` fallback carrying `notice`,
-   *  from the Report screen or either sheet: the update screen replaces the screen the report sits
-   *  on — only while that screen still shows, the same never-pull-back rule every other refusal
-   *  follows. */
+   *  from the Report screen or the running app's sheet: the update screen replaces the screen the
+   *  report sits on — only while that screen still shows, the same never-pull-back rule every other
+   *  refusal follows. */
   const onReportUpdateRequired = (notice?: string) => {
-    setReportTarget(null);
-    setScreen((prev) =>
-      prev.kind === 'ready' || prev.kind === 'report' || prev.kind === 'app' ? updateScreenFrom(prev, notice) : prev,
-    );
+    setScreen((prev) => (prev.kind === 'report' || prev.kind === 'app' ? updateScreenFrom(prev, notice) : prev));
   };
 
   /** After a write that may have moved where requests go: when it did, the connectivity session
@@ -1453,7 +1461,7 @@ function LauncherShell({
     settledAttemptId?: string,
     streamRequestId?: string,
   ): Screen => {
-    const reasoned = errorReason(err);
+    const reasoned = attemptErrorReason(err);
     logGenFailureShown({ stage, reasonCode: errorReasonCode(err), reason: reasoned.reason, observedRepairAttempts: observed, err, streamRequestId });
     return {
       kind: 'failure',
@@ -1468,7 +1476,7 @@ function LauncherShell({
       observedRepairAttempts: observed,
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: editing != null,
-      rephraseHelps: errorRephraseHelps(err),
+      rephraseHelps: attemptRephraseHelps(err),
     };
   };
 
@@ -1538,10 +1546,12 @@ function LauncherShell({
 
   /** A request-failure on the plan page that is not a refusal and not an update: stays on the page
    *  with the sentence and Try again (spec "A connection problem before any run ... SHALL NOT open
-   *  the failure page"). */
+   *  the failure page"). A request no server answered says so as a connection problem. */
   const planProblem = (request: 'clarify' | 'rewrite', e: unknown): ((s: PlanScreen) => PlanScreen) => {
     logGenError(`${request} failed`, e);
-    const problem = { request, reason: errorReason(e).reason } as const;
+    const problem: PlanProblem = isNetworkFailure(e)
+      ? { request, reason: COPY.planOffline, offline: true }
+      : { request, reason: errorReason(e).reason };
     return (current) => withProblem(current, problem);
   };
 
@@ -1688,11 +1698,10 @@ function LauncherShell({
   };
 
   /** A settling attempt releases ONLY the refs that still point at ITSELF. Two attempts can
-   *  overlap — "Leave it running" and then a Retry or a new build — and the newer one has already
-   *  overwritten both refs. Clearing the older attempt's way would strand the newer one:
-   *  uncancellable (`abortLiveAttempt` would see null) and with its `building` ghost tapping into
-   *  the "no live run to reattach to" branch forever. Cancel is the deliberate exception — it
-   *  clears whatever is live because that is what the user asked for. */
+   *  overlap — closing the sheet on one and then a Retry or a new build — and the newer one has
+   *  already overwritten both refs. Clearing the older attempt's way would strand the newer one:
+   *  unstoppable (Stop on its page would see no live run) and with its `building` ghost tapping into
+   *  the "no live run to reattach to" branch forever. */
   const releaseGenRef = (ctl: NonNullable<typeof genRef.current>) => {
     if (genRef.current === ctl) genRef.current = null;
   };
@@ -1731,14 +1740,15 @@ function LauncherShell({
     const currentLive = liveAttemptsRef.get(attemptId);
     if (currentLive?.lease !== lease) return undefined;
     countEvent(counts, event);
-    const nextSignals = journalStreamEvent(journal, attemptId, signals, event, Date.now());
+    const at = Date.now();
+    const nextSignals = journalStreamEvent(journal, attemptId, signals, event, at);
     currentLive.signals = nextSignals;
     const selected = isSelectedLiveAttempt(lease);
     if (selected) signalsRef.current = nextSignals;
-    const nextScreen = withStreamEvent(currentLive.screen, event);
+    const nextScreen = withStreamEvent(currentLive.screen, event, at);
     if (nextScreen !== currentLive.screen) {
       currentLive.screen = nextScreen;
-      if (selected) setScreen((previous) => (previous.kind === 'making' ? withStreamEvent(previous, event) : previous));
+      if (selected) setScreen((previous) => (previous.kind === 'making' ? withStreamEvent(previous, event, at) : previous));
     }
     return nextSignals;
   };
@@ -1797,18 +1807,27 @@ function LauncherShell({
     }
   };
 
-  /** The abort + record deletion behind an explicit cancel — reachable only from a Cancel chosen on
-   *  a `building` ghost's quick actions (`onCancelPending`, below) and from the build screen's
-   *  `Cancel build` while the build waits in line (`onCancelBuild`). Hardware back on the build
-   *  screen no longer calls this (bug fix: it used to, and cancelled the whole run) — see
-   *  `prompt-flow.ts#buildBackAction`. */
-  const abortLiveAttempt = (live = liveRef.current) => {
-    if (live) {
-      live.ctl.cancelled = true;
-      live.ctl.controller.abort();
-      releaseGenRef(live.ctl);
-      releaseLiveRef(live.lease);
+  /** Stop, from the Making page or a tile being made (`prompt-flow` "Stop SHALL end the run at once
+   *  and leave a stopped tile"): the request is aborted at once and the attempt stays on Home as a
+   *  stopped tile, with its journal, to try again or discard. A change has no tile of its own: its
+   *  app simply stays as it was, so a stopped change leaves nothing behind. Never reached from back
+   *  or from closing the sheet, which leave the run going. */
+  const stopLiveAttempt = (live: LiveAttempt) => {
+    live.ctl.cancelled = true;
+    live.ctl.controller.abort();
+    releaseGenRef(live.ctl);
+    releaseLiveRef(live.lease);
+    const record = pending.get(live.id);
+    if (record?.editingAppId != null) {
       dropAttempt(live.id);
+    } else {
+      try {
+        pending.stop(live.id);
+        pending.releaseAttempt(live.lease);
+      } catch (error) {
+        log.warn(CHANNELS.gen, 'stopped attempt did not persist', { operation: 'stop-attempt', ...errorFields(error) });
+        dropAttempt(live.id);
+      }
     }
     refresh();
   };
@@ -1827,6 +1846,8 @@ function LauncherShell({
     counts: RunTerminalCounts;
     retrySnapshot?: AttemptSnapshot;
     lease: PendingAttemptLease;
+    /** Set when rewording can't get past the ending: a stream cut partway. */
+    remedy?: PendingFailureRemedy;
   }) => {
     const selected = isSelectedLiveAttempt(input.lease);
     const settlement = settleFailed(
@@ -1834,7 +1855,7 @@ function LauncherShell({
       input.reason,
       input.hints,
       input.counts,
-      undefined,
+      input.remedy,
       input.retrySnapshot,
       input.lease,
     );
@@ -1859,9 +1880,9 @@ function LauncherShell({
       observedRepairAttempts: input.observed,
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: input.editing != null,
-      // A terminal `failure` or a stream that ended without one: both offer rephrasing (prompt-flow
-      // "Failure is shown honestly, never as a crash").
-      rephraseHelps: true,
+      // A terminal `failure` offers rephrasing; a stream cut partway never does (prompt-flow "A
+      // dropped connection SHALL never suggest rewording").
+      rephraseHelps: input.remedy == null,
     });
   };
 
@@ -2059,13 +2080,13 @@ function LauncherShell({
     if (settleServerEnding(input.error, input.ctl, attempt, input.markOnline)) return;
     releaseGenRef(input.ctl);
     logGenError('build failed', input.error, input.streamRequestId);
-    const reasoned = errorReason(input.error);
+    const reasoned = attemptErrorReason(input.error);
     const settlement = settleFailed(
       input.attemptId,
       reasoned.reason,
       reasoned.diagnostics,
       input.terminalCounts(),
-      errorRemedy(input.error),
+      attemptRemedy(input.error),
       input.retrySnapshot,
       input.lease,
     );
@@ -2298,14 +2319,10 @@ function LauncherShell({
     if (!options) return;
     const markOnline = onlineForRequest(options);
     const requestFailed = failureForRequest(options);
-    setScreen(opening);
 
     const controller = new AbortController();
     const ctl = { controller, cancelled: false, detached: false };
     genRef.current = ctl;
-    const setDoneIfAttached = (next: (current: Screen) => Screen) => {
-      if (!ctl.detached) setScreen(next);
-    };
     const editing = opening.editing;
     // Declared outside the try so a throw mid-stream still knows what the device observed, and on
     // which request (the stream's `x-whim-request-id`, once it has opened).
@@ -2317,9 +2334,10 @@ function LauncherShell({
     const startedAttempt = beginPendingAttempt(opening, editing, reuseId, ctl);
     if (startedAttempt == null) return;
     const { id: attemptId, lease, retrySnapshot } = startedAttempt;
-    // The page is this run's from here on: keyed by its own journal id, so it never shows another's.
-    const building: MakingScreen = { ...opening, runId: attemptId };
+    // The page opens as this run's: keyed by its own journal id from its first frame, so it never
+    // shows another's and never remounts when the run gets its id.
     const startedAt = Date.now();
+    const building: MakingScreen = { ...opening, runId: attemptId, stepSince: startedAt };
     let signals: RunSignals = {
       startedAt,
       aggregates: EMPTY_RUN_AGGREGATES,
@@ -2374,16 +2392,17 @@ function LauncherShell({
       if (!pending.isCurrentAttempt(lease)) return;
       markOnline();
 
-      if (ctl.cancelled) return; // explicit cancel (abortLiveAttempt) already deleted the record
+      if (ctl.cancelled) return; // an explicit Stop (stopLiveAttempt) already settled the record
       releaseGenRef(ctl);
 
       if (terminal == null) {
-        // Stream ended with no terminal event and no cancel — a stream error, not a crash.
+        // Stream ended with no terminal event and no cancel: the connection was cut partway (a
+        // server always ends a run it still serves with one), not a crash and not the words.
         log.error(CHANNELS.gen, 'stream ended with no terminal event', { ...counts, requestId: stream.requestId });
         logGenFailureShown({
           stage: 'stream ended with no terminal event',
           reasonCode: 'no_terminal_event',
-          reason: GENERIC_STREAM_ERROR,
+          reason: COPY.failureConnection,
           observedRepairAttempts: counts.repair,
           failureClass: 'StreamEndedWithoutTerminalEvent',
           streamRequestId: stream.requestId,
@@ -2392,7 +2411,8 @@ function LauncherShell({
           attemptId,
           editing,
           prompt: building.text,
-          reason: GENERIC_STREAM_ERROR,
+          reason: COPY.failureConnection,
+          remedy: { kind: 'retry' },
           hints: [],
           observed: counts.repair,
           counts: terminalCounts(),
@@ -2431,9 +2451,10 @@ function LauncherShell({
       const currentLive = liveAttemptsRef.get(attemptId);
       if (currentLive?.lease !== lease) return;
       journal.appendTerminal(attemptId, terminalCounts());
-      currentLive.screen = withDelivering(currentLive.screen);
+      const deliveringAt = Date.now();
+      currentLive.screen = withDelivering(currentLive.screen, deliveringAt);
       if (liveRef.current?.lease === lease) {
-        setScreen((s) => (s.kind === 'making' ? withDelivering(s) : s));
+        setScreen((s) => (s.kind === 'making' ? withDelivering(s, deliveringAt) : s));
       }
       // Store first, index second, pending record deleted LAST (design D5) — a process death
       // anywhere inside this await leaves the record behind to surface as `interrupted`.
@@ -2454,8 +2475,14 @@ function LauncherShell({
         pending.releaseAttempt(lease);
         releaseLiveRef(lease);
         refresh();
-        // "Leave it running": delivered silently, the user is elsewhere.
-        if (selected) setDoneIfAttached((s) => (s.kind === 'making' ? readyStep(s, installed) : s));
+        if (selected && !ctl.detached) {
+          setScreen((s) => (s.kind === 'making' ? readyStep(s, installed) : s));
+          return;
+        }
+        // Delivered with the sheet closed: Home says so, and opens it from the toast.
+        if (screenKindRef.current === 'home') {
+          toastRef.current?.show({ message: readyTitle(installed.name), action: { label: COPY.actionOpen, onPress: () => onOpen(installed) } });
+        }
       });
     } catch (error) {
       requestFailed(error, ctl.cancelled);
@@ -2496,11 +2523,11 @@ function LauncherShell({
     goHome();
   };
 
-  /** `Cancel build`, offered on the build screen while the build waits in line (beta-1 D8): the
-   *  request is aborted and the attempt deleted, exactly as a ghost's Cancel does — no ghost is
-   *  left behind — and the user lands on Home. */
-  const onCancelBuild = () => {
-    abortLiveAttempt();
+  /** Stop on the Making page, in line or making: the run ends at once, its stopped tile stays on
+   *  Home, and the sheet closes onto it. */
+  const onStopMaking = () => {
+    const live = liveRef.current;
+    if (live) stopLiveAttempt(live);
     goHome();
   };
 
@@ -2517,56 +2544,35 @@ function LauncherShell({
     if (from.problem) resumePlan(from, from.problem.request);
   };
 
-  // `onBuildBack` reads the latest `timeline`/`onLeaveRunning` through refs so its identity never
-  // changes: a dependency on either would hand `BuildStep` a new callback on every render, including
-  // the once-a-second liveness tick, and `BuildStep` would re-register its back listener each tick.
-  // That re-registration was the old bug: the build screen's listener was always the newest, ran
-  // ahead of the sheet's, and cancelled the run instead of closing the sheet.
-  const timelineRef = useRef(timeline);
-  timelineRef.current = timeline;
-  const onLeaveRunningRef = useRef(onLeaveRunning);
-  onLeaveRunningRef.current = onLeaveRunning;
-
-  /** Hardware back on the build screen (bug fix — see `BuildStep.tsx`'s header comment and
-   *  `prompt-flow.ts#buildBackAction`): NEVER cancels. Closes the details sheet if it is open;
-   *  otherwise defers to `onLeaveRunning`, the exact action the "Leave it running" button performs.
-   *  The hook binds once per mount through a ref regardless of handler identity; `useCallback` here
-   *  is kept for render stability only, not for the listener's registration count. Cancellation
-   *  stays reachable only from other explicit affordances (a ghost tile's own Cancel,
-   *  `onCancelPending` below). */
-  const onBuildBack = useCallback(() => {
-    if (buildBackAction(timelineRef.current !== null) === 'close-sheet') {
-      setTimeline(null);
-      return;
-    }
-    onLeaveRunningRef.current();
-  }, []);
-
   // ── Ghost-tile handlers (design D7) ────────────────────────────────────────────────────────
   // The grid's four entry points into a pending-build record. Chain-3's tiles bind them;
   // `handoff/ghost-handlers.md` is their contract.
 
-  /** The failure screen for a `failed`/`interrupted` record, hydrated from what was PERSISTED —
-   *  no live stream is involved, so the observed-repair count is zero rather than invented, and an
-   *  `interrupted` record (which never carried a payload, because nothing failed) says so. */
+  /** The failure page for a `failed`/`interrupted` record, hydrated from what was PERSISTED — no
+   *  live stream is involved, so the repair tries are the ones its verified journal recorded, never
+   *  invented, and an `interrupted` record (which never carried a payload, because nothing failed)
+   *  says whether Whim closed under it or the person stopped it. */
   const failureFromRecord = (rec: PendingBuildRecord): Screen => {
     const view = pending.readCurrent(rec.id);
     const current = view?.record ?? rec;
     const edited = current.editingAppId ? index.get(current.editingAppId) : null;
+    const journalReadable = view?.durability !== 'volatile' && current.journalUnavailable !== true;
+    const interrupted = current.state === 'interrupted' ? { interrupted: current.stopped ? 'stopped' as const : 'closed' as const } : {};
     return {
       kind: 'failure',
       ...(edited ? { editing: edited } : {}),
       prompt: current.prompt,
       reason: current.failure?.reason ?? COPY.interruptedBuildReason,
       diagnostics: hydratedDiagnostics(current.failure),
-      observedRepairAttempts: 0,
+      observedRepairAttempts: journalReadable ? repairAttemptsIn(journal.get(current.id) ?? []) : 0,
       hasWorkingVersion: edited != null,
       // A record that names a remedy is one rewording can't get past (`PendingFailureRemedy`), and
       // neither is an interruption (no failure payload, as `reason` reads it): the app closed, the
       // request was never the problem.
       rephraseHelps: current.failure != null && current.failure.remedy == null,
       pendingId: current.id,
-      ...(view?.durability !== 'volatile' && current.journalUnavailable !== true ? { journalId: current.id } : {}),
+      ...interrupted,
+      ...(journalReadable ? { journalId: current.id } : {}),
     };
   };
 
@@ -2594,14 +2600,13 @@ function LauncherShell({
     setScreen(live.screen);
   };
 
-  /** Cancel from a `building` ghost's quick actions: `abortLiveAttempt`'s abort + delete, without
-   *  taking the user off the grid. The one remaining reachable path to cancellation — the build
-   *  screen's own hardware back no longer takes this route (`prompt-flow.ts#buildBackAction`). */
+  /** Stop from a tile being made: `stopLiveAttempt`, without taking the person off the grid. A
+   *  `building` record with no run left in this process has nothing to stop and is dropped. */
   const onCancelPending = (rec: PendingBuildRecord) => {
     const current = pending.readCurrent(rec.id)?.record ?? rec;
     const live = liveAttemptsRef.get(current.id);
     if (live) {
-      abortLiveAttempt(live);
+      stopLiveAttempt(live);
       return;
     }
     dropAttempt(current.id);
@@ -2631,14 +2636,6 @@ function LauncherShell({
     if (removed) goHome();
   };
 
-  /** Leave a failure screen without acting on the attempt at all — the honest counterpart to
-   *  Dismiss, and what the hardware back gesture performs. It touches NO store: the record keeps
-   *  its ghost tile and its run journal stays readable, so a user who only wanted to read the
-   *  failure can walk away without destroying it. */
-  const onLeaveFailure = () => {
-    goHome();
-  };
-
   /** Retry from a hydrated failure screen: a NEW generation from the record's stored prompt,
    *  reusing the same launcher id, so the ghost the user is looking at is the one that resolves. */
   const onRetryPending = (rec: PendingBuildRecord) => {
@@ -2661,17 +2658,13 @@ function LauncherShell({
    *  request the CURRENT screen owns applies unconditionally (a no-op off those two steps), the
    *  same way `goHome` always does it. `'leave-build'` additionally detaches the live attempt so it
    *  keeps streaming (exactly `onLeaveRunning`, without ALSO navigating home first — the caller is
-   *  about to navigate somewhere more specific). `'close-overlay'` also clears the host-level
-   *  report sheet, mirroring `back-policy.ts`'s `overlayOpen` precedent: never forwarded, never
-   *  counted toward anything else. */
+   *  about to navigate somewhere more specific). */
   const leaveForLink = (exit: LinkExit) => {
     keepDraft(screen);
     aboutRef.current = null;
     if (exit === 'leave-build') {
       const ctl = genRef.current;
       if (ctl) ctl.detached = true;
-    } else if (exit === 'close-overlay') {
-      setReportTarget(null);
     }
   };
 
@@ -2686,7 +2679,7 @@ function LauncherShell({
   const openAppLink = (id: string) => {
     if (screen.kind === 'app' && screen.app.id === id) return;
     const resolution = resolveAppLink(id, reachableApps(), reachableAttempts());
-    leaveForLink(linkExitFor(reportTarget != null ? 'sheet' : screen.kind));
+    leaveForLink(linkExitFor(screen.kind));
     if (resolution.kind === 'open') {
       onOpen(resolution.app);
     } else if (resolution.kind === 'missing') {
@@ -2708,44 +2701,27 @@ function LauncherShell({
     [screen, journal],
   );
 
-  /** The build screen's Details affordance: ONE read of the in-flight attempt's journal, at the
-   *  moment the user asks for it. */
-  const onShowDetails = () => {
-    const id = liveRef.current?.id;
-    setTimeline((id != null ? journal.get(id) : null) ?? []);
-  };
-
   /**
-   * The failure screen's actions. Back is the same non-destructive leave in every shape; the
-   * primary is Retry when the screen was hydrated from a ghost (`pendingId`) and Rephrase when it
-   * was shown live. Discard is offered ONLY when there is an attempt to discard, and it always
-   * deletes one: a hydrated ghost's record, or — for a live failure that already settled one
-   * (`recordId`, every ending that went through `settleFailed`) — that record. Both go through
-   * `onDismissPending`, so record and journal die together in the shell's single deletion path.
-   * The clarify and rewrite failures fail before any attempt exists, so they get NO Discard at all
-   * rather than one that would merely navigate under a destructive label. A record discarded
-   * elsewhere in the meantime drops the button the same way, instead of acting on a ghost that is
-   * no longer there.
+   * The failure page's actions. "Change the description" is always there: the describe page with
+   * the words kept. Try again re-runs the attempt the page is about, from its record — a hydrated
+   * ghost's (`pendingId`) or the one a live failure already settled (`recordId`, every ending that
+   * went through `settleFailed`) — and is absent when there is none (a setup that failed before any
+   * record existed). Try again is a data-sending action (spec ai-data-consent "The first action that
+   * would send data asks for consent at that moment"), gated like the other entry points through
+   * `openWithConsent`. Discard is offered ONLY when there is an attempt to discard, and goes through
+   * `onDismissPending`, so record and journal die together in the shell's single deletion path. A
+   * record discarded elsewhere in the meantime drops both, instead of acting on one that is gone.
+   * Leaving is the sheet's close, which leaves the attempt as it is.
    */
   const failureActions = (s: Extract<Screen, { kind: 'failure' }>) => {
     const ghost = s.pendingId != null ? pending.readCurrent(s.pendingId)?.record ?? null : null;
-    if (ghost != null) {
-      return {
-        retryable: true,
-        // Retry is a data-sending action (spec ai-data-consent "The first action that would send
-        // data asks for consent at that moment") — gated the same way as the other four entry
-        // points, through `openWithConsent`.
-        onRephrase: () => openWithConsent({ kind: 'retry', record: ghost }),
-        onBack: onLeaveFailure,
-        onDismiss: () => onDismissPending(ghost),
-      };
-    }
     const settled = s.recordId != null ? pending.readCurrent(s.recordId)?.record ?? null : null;
+    const attempt = ghost ?? settled;
     return {
-      retryable: false,
-      onRephrase: () => openCompose(s.editing, s.prompt),
-      onBack: onLeaveFailure,
-      ...(settled != null ? { onDismiss: () => onDismissPending(settled) } : {}),
+      onChange: () => openCompose(s.editing, s.prompt),
+      ...(attempt != null
+        ? { onRetry: () => openWithConsent({ kind: 'retry', record: attempt }), onDismiss: () => onDismissPending(attempt) }
+        : {}),
     };
   };
 
@@ -2801,16 +2777,14 @@ function LauncherShell({
   /** Closing the sheet by any route (the close control, the scrim, a drag, Android back): on Making the
    *  run keeps going and the sheet collapses into its tile; on Describe and Plan the in-flight
    *  clarify or rewrite is aborted and the draft kept (`goHome` → `keepDraft`); on Ready it is Done;
-   *  on Failure it leaves the attempt as it is (`onLeaveFailure`). */
+   *  on Failure it leaves the attempt as it is, its tile and journal kept. */
   const closeSheet = () => {
     if (screen.kind === 'making') onLeaveRunning();
     else goHome();
   };
 
   /** The page the making sheet shows for the current screen, with the key it is shown under; `null`
-   *  closes the sheet. Describe and Plan are drawn here by their own pages. Making, Ready and
-   *  Failure are the run's existing screens, hosted in the sheet as they are until the
-   *  making-progress pages replace them. */
+   *  closes the sheet. */
   const renderSheetPage = (): SheetContent | null => {
     if (screen.kind === 'describe') {
       const from = screen;
@@ -2846,80 +2820,57 @@ function LauncherShell({
         ),
       };
     }
-    if (screen.kind === 'making') {
-      const from = screen;
-      return {
-        key: pageKeyOf(from),
-        node: (
-          <HostedPage>
-            <BuildStep
-              stage={from.stage}
-              delivering={from.delivering}
-              queuedPosition={from.queuedPosition}
-              onCancel={onCancelBuild}
-              signals={signalsRef.current}
-              now={Date.now()}
-              editing={from.editing != null}
-              editingName={from.editing?.name}
-              onBack={onBuildBack}
-              onShowDetails={onShowDetails}
-            />
-            <RunDetailsSheet
-              open={timeline !== null}
-              entries={timeline}
-              devMode={timelineDevMode}
-              onClose={() => setTimeline(null)}
-            />
-          </HostedPage>
-        ),
-      };
-    }
-    if (screen.kind === 'ready') {
-      const from = screen;
-      return {
-        key: pageKeyOf(from),
-        node: (
-          <HostedPage>
-            <DoneStep
-              app={from.app}
-              onOpen={() => onOpen(from.app)}
-              onBackToApps={goHome}
-              onReport={() => setReportTarget(from.app)}
-            />
-            <ReportSheet
-              app={reportTarget}
-              access={access}
-              options={reportOptions}
-              legalLanguage={legalLanguage}
-              onClose={() => setReportTarget(null)}
-              onUpdateRequired={onReportUpdateRequired}
-            />
-          </HostedPage>
-        ),
-      };
-    }
-    if (screen.kind === 'failure') {
-      return {
-        key: pageKeyOf(screen),
-        node: (
-          <HostedPage>
-            <FailureScreen
-              reason={screen.reason}
-              diagnostics={screen.diagnostics}
-              observedRepairAttempts={screen.observedRepairAttempts}
-              hasWorkingVersion={screen.hasWorkingVersion}
-              rephraseHelps={screen.rephraseHelps}
-              notice={screen.notice}
-              journal={failureJournal}
-              attemptStarted={screen.journalId != null}
-              devMode={timelineDevMode}
-              {...failureActions(screen)}
-            />
-          </HostedPage>
-        ),
-      };
+    if (screen.kind === 'making' || screen.kind === 'ready' || screen.kind === 'failure') {
+      return { key: pageKeyOf(screen), node: renderRunPage(screen) };
     }
     return null;
+  };
+
+  /** A run's own page: Making while it runs, Ready when it delivered, Failure when it didn't. Each
+   *  reads only that run's state: its screen, its signals, its sampled activity, its journal. */
+  const renderRunPage = (from: MakingScreen | Extract<Screen, { kind: 'ready' | 'failure' }>): React.ReactNode => {
+    if (from.kind === 'making') {
+      return (
+        <MakingPage
+          name={from.editing?.name ?? attemptName({ prompt: from.text, workingTitle: workingTitleFromPrompt(from.text) })}
+          changing={from.editing != null}
+          words={from.text}
+          stage={from.stage}
+          delivering={from.delivering}
+          queuedPosition={from.queuedPosition}
+          repairAttempt={from.repairAttempt}
+          stepSince={from.stepSince}
+          signals={signalsRef.current}
+          now={Date.now()}
+          activity={from.runId != null ? liveView.activity[from.runId] ?? 0 : 0}
+          onStop={onStopMaking}
+        />
+      );
+    }
+    if (from.kind === 'ready') {
+      return <ReadyPage app={from.app} words={from.text} onOpen={() => onOpen(from.app)} onDone={goHome} />;
+    }
+    return (
+      <FailurePage
+        kind={failureKindOf({
+          reason: from.reason,
+          rephraseHelps: from.rephraseHelps,
+          repairs: from.observedRepairAttempts,
+          interrupted: from.interrupted,
+          refused: from.notice != null,
+        })}
+        reason={from.reason}
+        diagnostics={from.diagnostics}
+        rephraseHelps={from.rephraseHelps}
+        changing={from.hasWorkingVersion}
+        notice={from.notice}
+        offline={showOfflineIndicator(connectivity)}
+        journal={failureJournal}
+        attemptStarted={from.journalId != null}
+        devMode={timelineDevMode}
+        {...failureActions(from)}
+      />
+    );
   };
 
   const renderHome = (): React.ReactNode => (
@@ -3094,6 +3045,7 @@ function LauncherShell({
       <SafeAreaView edges={frameEdgesFor(screen.kind, stack !== null)} style={[styles.root, { backgroundColor: palette.bg }]}>
         <StatusBar barStyle={top !== undefined && schemeFollowing(top) ? tokens.barStyle : 'dark-content'} />
         <ToastHost bottomOffset={toastClearance(screen.kind)}>
+          <ToastBridge api={toastRef} />
           <ScreenBoundary
             screen={screen.kind}
             FallbackComponent={ScreenErrorFallback}
@@ -3117,6 +3069,19 @@ function LauncherShell({
       </SafeAreaView>
     </HighlightingProvider>
   );
+}
+
+/** Hands the one toast host's API to the shell that mounts it, which cannot call `useToast` above
+ *  its own `ToastHost`. Renders nothing. */
+function ToastBridge({ api }: Readonly<{ api: React.MutableRefObject<ToastApi | null> }>) {
+  const toast = useToast();
+  useEffect(() => {
+    api.current = toast;
+    return () => {
+      api.current = null;
+    };
+  }, [api, toast]);
+  return null;
 }
 
 const styles = StyleSheet.create({

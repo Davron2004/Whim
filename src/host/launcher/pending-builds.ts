@@ -63,6 +63,9 @@ export interface PendingBuildRecord {
   editingAppId?: string;
   /** True when no journal can be associated with this record's current attempt. */
   journalUnavailable?: true;
+  /** Present only in state `interrupted`: the person stopped the attempt (Stop). Absent, an
+   *  interruption means Whim closed under it. */
+  stopped?: true;
 }
 
 export type PendingJournalAvailability = 'verified' | 'unavailable';
@@ -263,6 +266,16 @@ export class PendingBuildStore {
       ...(availability === 'unavailable' ? { journalUnavailable: true } : {}),
       ...(availability === 'verified' ? { journalUnavailable: undefined } : {}),
     };
+    this.kv.set(PENDING_KEY(id), JSON.stringify(updated));
+    this.current.set(id, { record: updated, durability: 'persisted' });
+  }
+
+  /** The person stopped this attempt: its record becomes `interrupted`, marked `stopped`, and stays
+   *  on the grid as a stopped tile to try again or discard. A no-op if the id has no record. */
+  stop(id: string): void {
+    const rec = this.get(id);
+    if (!rec) return;
+    const updated: PendingBuildRecord = { ...rec, state: 'interrupted', stopped: true, updatedAt: Date.now() };
     this.kv.set(PENDING_KEY(id), JSON.stringify(updated));
     this.current.set(id, { record: updated, durability: 'persisted' });
   }

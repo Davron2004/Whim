@@ -18,7 +18,7 @@
 import type { Clarification, ClarifyQuestion, ClarifyResponse, GenerationEvent, PlanRow, RewriteResponse } from '@whim/contract';
 import type { InstalledApp } from './app-index';
 import type { RunAggregates, RunJournalEntry } from './run-journal';
-import { COPY, buildQueuedLine } from './copy';
+import { COPY } from './copy';
 import { GenerationClientError } from './transport-shared';
 import { appColor } from '../../sdk/theme';
 
@@ -119,6 +119,8 @@ export interface DescribeScreen {
 export interface PlanProblem {
   readonly request: 'clarify' | 'rewrite';
   readonly reason: string;
+  /** No server answered: the phone could not reach it. Said as a connection problem, not an error. */
+  readonly offline?: true;
 }
 
 export interface PlanScreen {
@@ -172,11 +174,22 @@ export interface MakingScreen {
   /** Set while the stream's latest event is `queued`: the build is waiting its turn, at this
    *  position (generations ahead + 1). Absent once any other event arrives (`withStreamEvent`). */
   queuedPosition?: number;
+  /** The latest repair try the stream announced (a `repair` stage start, its `attempt`): the
+   *  "Fixing a problem" row under the check. The marker moves down to it and never back up. */
+  repairAttempt?: number;
+  /** When the marker reached the row it is on: the current step's elapsed time reads from here.
+   *  Set when the run starts and each time the marker moves. */
+  stepSince?: number;
 }
 
 export interface ReadyScreen {
   kind: 'ready';
   editing?: InstalledApp;
+  /** The run this page closes, so the page keeps the key it was made under (`pageKeyOf`) even when
+   *  the app was delivered under another id (a change made onto a copy). */
+  runId?: string;
+  /** The person's words, quoted under the name. */
+  text: string;
   /** The delivered app, whose own tile and colour this page shows. */
   app: InstalledApp;
 }
@@ -205,7 +218,7 @@ export function pageKeyOf(screen: FlowScreen | FailedRunKey): string {
     case 'making':
       return `run:${screen.runId ?? 'starting'}`;
     case 'ready':
-      return `run:${screen.app.id}`;
+      return `run:${screen.runId ?? screen.app.id}`;
     case 'failure':
       return `run:${screen.journalId ?? screen.recordId ?? screen.pendingId ?? 'failed'}`;
   }
@@ -471,39 +484,59 @@ function outOfLine(screen: MakingScreen): MakingScreen {
   return next;
 }
 
-/** A `stage` event: the build's turn has come (if it was waiting), and the step moves on. */
-export function withStage(screen: MakingScreen, stage: Stage): MakingScreen {
-  return { ...outOfLine(screen), stage };
+/** A `stage` event: the build's turn has come (if it was waiting), and the step moves on. A
+ *  repair's start adds (or advances) the "Fixing a problem" row. */
+function withStage(screen: MakingScreen, event: Extract<GenerationEvent, { type: 'stage' }>): MakingScreen {
+  const staged = { ...outOfLine(screen), stage: event.stage };
+  if (event.stage !== 'repair' || event.status !== 'start') return staged;
+  return { ...staged, repairAttempt: event.attempt ?? (screen.repairAttempt ?? 0) + 1 };
+}
+
+/** Which row the making page's marker is on: none while in line, a named step, the repair row
+ *  (each try its own), or the last step once delivery runs. A change of it restarts the elapsed time. */
+function markerOf(screen: MakingScreen): string {
+  if (screen.queuedPosition !== undefined) return 'line';
+  if (screen.delivering) return 'deliver';
+  if (screen.repairAttempt !== undefined) return `repair:${screen.repairAttempt}`;
+  return `step:${activeBuildStepIndex(screen.stage, false)}`;
 }
 
 /**
  * One stream event folded into the making page's state (the only two that carry any are `stage`
  * and `queued`): `queued` records the build's place in line, `stage` moves the step, and any other
- * event ends the waiting state — "in line" holds only while the latest event is `queued`. Returns
- * the same object when nothing changes, so the shell sets no state for a token.
+ * event ends the waiting state — "in line" holds only while the latest event is `queued`. `at` is
+ * the event's arrival: when the marker moves, the new row's elapsed time starts there. Returns the
+ * same object when nothing changes, so the shell sets no state for a token.
  */
-export function withStreamEvent(screen: MakingScreen, event: GenerationEvent): MakingScreen {
-  if (event.type === 'stage') return withStage(screen, event.stage);
-  if (event.type === 'queued') {
-    return screen.queuedPosition === event.position ? screen : { ...screen, queuedPosition: event.position };
-  }
-  return outOfLine(screen);
+export function withStreamEvent(screen: MakingScreen, event: GenerationEvent, at: number): MakingScreen {
+  let next: MakingScreen;
+  if (event.type === 'stage') next = withStage(screen, event);
+  else if (event.type === 'queued') next = screen.queuedPosition === event.position ? screen : { ...screen, queuedPosition: event.position };
+  else next = outOfLine(screen);
+  if (next === screen || markerOf(next) === markerOf(screen)) return next;
+  return { ...next, stepSince: at };
 }
 
-/** The stream produced its record; the last named step is now the live one. */
-export function withDelivering(screen: MakingScreen): MakingScreen {
-  return { ...screen, delivering: true };
+/** The stream produced its record; the last named step is now the live one, from `at`. */
+export function withDelivering(screen: MakingScreen, at: number): MakingScreen {
+  return { ...screen, delivering: true, stepSince: at };
 }
 
-/** The ready page, showing the delivered app. */
+/** The ready page, showing the delivered app under the run's own key, with the person's words. */
 export function readyStep(prev: MakingScreen, app: InstalledApp): ReadyScreen {
-  return { kind: 'ready', ...(prev.editing ? { editing: prev.editing } : {}), app };
+  return {
+    kind: 'ready',
+    ...(prev.editing ? { editing: prev.editing } : {}),
+    ...(prev.runId ? { runId: prev.runId } : {}),
+    text: prev.text,
+    app,
+  };
 }
 
 /** What a back press on the plan page does: leave it for Describe, or — while a row is being
  *  edited — cancel that edit and keep the page (spec launcher-screen-exits "System back and the
  *  visible control perform the same action"). `PlanPage` builds one handler from this and gives it
- *  to both `useSystemBack` and its back control, so a tap on Back mid-edit can no longer discard
+ *  to both `useSheetBack` and its back control, so a tap on Back mid-edit can no longer discard
  *  a draft. */
 export function planBackAction(editingRow: boolean): 'cancel-edit' | 'leave' {
   return editingRow ? 'cancel-edit' : 'leave';
@@ -515,19 +548,6 @@ export function backToDescribe(plan: PlanScreen): DescribeScreen {
   return { ...describeStep(plan.editing, plan.text), kept: plan };
 }
 
-/**
- * Hardware back on the making page (bug fix: back must never cancel a run — see `BuildStep.tsx`'s
- * header comment). The details sheet, when open, has no back handling of its own
- * (`RunDetailsSheet.tsx`), so the shell must decide between the sheet and the run itself from the
- * one signal it has: whether the sheet is open. `close-sheet` only ever closes the sheet; `leave`
- * is exactly the `onLeaveRunning` action — the run keeps going and is still delivered, it just
- * stops taking over the screen. Cancellation is reachable only from explicit affordances
- * elsewhere (a tile's own Stop), never from back.
- */
-export function buildBackAction(sheetOpen: boolean): 'close-sheet' | 'leave' {
-  return sheetOpen ? 'close-sheet' : 'leave';
-}
-
 /** The four named build steps, in order — derived from `stage` events, never from raw tokens. */
 export const BUILD_STEPS: readonly string[] = [
   COPY.buildStepReading,
@@ -536,10 +556,8 @@ export const BUILD_STEPS: readonly string[] = [
   COPY.buildStepInstalling,
 ];
 
-export type BuildStepStatus = 'passed' | 'active' | 'todo';
-
-/** Which named step each generation stage belongs to. `check`, `run` and `repair` are all the one
- *  user-visible "checking it runs safely" step — the repair ladder is not exposed as its own. */
+/** Which named step each generation stage belongs to. `check`, `run` and `repair` all belong to
+ *  "Checking it runs safely"; a repair also gets its own row under it (`repairAttempt`). */
 const STAGE_STEP_INDEX: Record<Stage, number> = {
   plan: 0,
   generate: 1,
@@ -552,61 +570,6 @@ const STAGE_STEP_INDEX: Record<Stage, number> = {
 export function activeBuildStepIndex(stage: Stage | null, delivering: boolean): number {
   if (delivering) return BUILD_STEPS.length - 1;
   return stage == null ? 0 : STAGE_STEP_INDEX[stage];
-}
-
-/** Not-started / in-progress / passed for each named step. Passed steps stay passed. */
-export function buildStepStatuses(stage: Stage | null, delivering = false): BuildStepStatus[] {
-  const active = activeBuildStepIndex(stage, delivering);
-  return BUILD_STEPS.map((_, i) => {
-    if (i < active) return 'passed';
-    return i === active ? 'active' : 'todo';
-  });
-}
-
-const ACTIVE_STEP_CREDIT = 0.5;
-
-/**
- * How full the build screen's progress bar reads, 0..1. Each passed step is a full quarter and the
- * live one a half quarter, so the bar reads 12.5 / 37.5 / 62.5 / 87.5 and NEVER fabricates 100%
- * before the done screen replaces it. It is derived from the same stage events the named steps are,
- * with no timer smoothing it to look busier — a bar that moves on its own would be reporting
- * progress that did not happen (ruling R21).
- *
- * There is always exactly one live step — `activeBuildStepIndex` returns an index inside the list
- * for every input, delivery included — so the half-quarter is unconditional and 1.0 is unreachable
- * by construction, not by a check that could be dropped.
- */
-export function buildProgressFraction(stage: Stage | null, delivering = false): number {
-  const passed = buildStepStatuses(stage, delivering).filter((s) => s === 'passed').length;
-  return (passed + ACTIVE_STEP_CREDIT) / BUILD_STEPS.length;
-}
-
-/** The one plain-words sentence describing what is happening right now, in the user's terms. */
-export function currentActionSentence(stage: Stage | null, delivering = false): string {
-  return BUILD_STEPS[activeBuildStepIndex(stage, delivering)];
-}
-
-/** Everything the build screen's progress reads: the named steps, the bar and the sentence. */
-export interface BuildProgressView {
-  statuses: BuildStepStatus[];
-  fraction: number;
-  sentence: string;
-}
-
-/**
- * The build screen's progress (beta-1 D8). While the build waits in line nothing has started, so
- * no step is live, the bar is empty and the sentence says where the build is in line. From the
- * first `stage` on it is the stage-driven progress above.
- */
-export function buildProgressView(stage: Stage | null, delivering: boolean, queuedPosition?: number): BuildProgressView {
-  if (queuedPosition !== undefined) {
-    return { statuses: BUILD_STEPS.map(() => 'todo'), fraction: 0, sentence: buildQueuedLine(queuedPosition) };
-  }
-  return {
-    statuses: buildStepStatuses(stage, delivering),
-    fraction: buildProgressFraction(stage, delivering),
-    sentence: currentActionSentence(stage, delivering),
-  };
 }
 
 /** A pending-build ghost tile's working title (`pending-builds` design D2): the first ~28 chars
@@ -645,9 +608,8 @@ export const EMPTY_RUN_AGGREGATES: RunAggregates = { chars: 0, tokens: 0 };
  *   - `lastFrameAt` — ANY frame arrived at all, INCLUDING the transport's own keepalive comment
  *     (`ClientOptions.onKeepalive`) — the one clock that answers "is the connection still there",
  *     independent of what the model is doing. Starts at `startedAt`.
- * `livenessOf` folds the three into the one state the build screen renders; the rendered values —
- * `buildLivenessLine(liveness, s, now)` — are computed per render from a single `now`, so the
- * clock and the liveness verdict can never disagree.
+ * `livenessOf` folds the three into one state; the Making page reads it (`making-progress.ts`)
+ * per render from a single `now`, so its clock and its stall line can never disagree.
  */
 export interface RunSignals {
   startedAt: number;
@@ -671,15 +633,6 @@ export function withLinePlace(signals: RunSignals, event: GenerationEvent, at: n
   if (event.type === 'queued') return signals.inLine === true ? signals : { ...signals, inLine: true };
   if (signals.inLine !== true) return signals;
   return { ...signals, inLine: false, turnCameAt: at };
-}
-
-/** What the build is doing, as its liveness line tells it: waiting in line, waiting on or reading
- *  a model turn, or checking the app it wrote (`check`/`run`, where no model writes anything). */
-export type LivenessPhase = 'line' | 'model' | 'checking';
-
-export function livenessPhaseOf(stage: Stage | null, queuedPosition: number | undefined): LivenessPhase {
-  if (queuedPosition !== undefined) return 'line';
-  return stage === 'check' || stage === 'run' ? 'checking' : 'model';
 }
 
 /** A `stage` start begins a new model turn: the counts so far are where a restart of it returns. */
@@ -740,20 +693,6 @@ export function elapsedLabel(startedAt: number, now: number): string {
   const minutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE);
   const seconds = totalSeconds % SECONDS_PER_MINUTE;
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
-}
-
-/** Below this, `WorkingLine` shows the phrase alone — a clock that has barely moved reads as
- *  theatre, not honesty (`flow-working.tsx#WorkingLine`). */
-const WORKING_LINE_CLOCK_THRESHOLD_MS = 5_000;
-
-/**
- * `WorkingLine`'s rendered text: the phrase alone under the threshold, and `phrase · m:ss` once
- * `now - startedAt` reaches it. The phrase itself never changes here — a rotating phrase reads as
- * theatre (`flow-working.tsx` doc comment) — only whether the clock suffix has appeared yet.
- */
-export function workingLineText(phrase: string, startedAt: number, now: number): string {
-  if (now - startedAt < WORKING_LINE_CLOCK_THRESHOLD_MS) return phrase;
-  return `${phrase} · ${elapsedLabel(startedAt, now)}`;
 }
 
 // ── Liveness: thinking from hanging (build-liveness B1) ──────────────────────────────────────────

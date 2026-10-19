@@ -6,7 +6,7 @@
  */
 
 import { Harness } from './harness';
-import { COPY, CONSENT_WHATS_NEW, LEGAL_COPY, copyQuestionDataSubtitle, deletedToast, discardedManyToast, tileOlderLine, addedFieldsLine } from '../copy';
+import { COPY, CONSENT_WHATS_NEW, LEGAL_COPY, copyQuestionDataSubtitle, deletedToast, discardedManyToast, tileOlderLine, addedFieldsLine, failureCouldntRunLine, makingQueueLine, makingRepairLine, makingStallLine, makingTitle } from '../copy';
 import { monogram, tileColor } from '../tiles';
 
 // Mechanism / git vocabulary that must never reach the launcher surface. NOTE: "fork" is NOT
@@ -31,6 +31,11 @@ export async function runProductVerbsTests(h: Harness): Promise<void> {
       monogram('Water Counter'),
       tileColor('Water Counter'),
       addedFieldsLine(['notes (text)']),
+      makingTitle('Water Counter', true),
+      makingRepairLine(2, 3),
+      makingQueueLine(3),
+      makingStallLine(40),
+      failureCouldntRunLine(3, true),
     ];
     for (const str of strings) {
       for (const bad of FORBIDDEN) {

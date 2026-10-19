@@ -44,6 +44,7 @@ import {
   type FlowAnswer,
   type FlowPlanRow,
   type FlowQuestion,
+  type PlanProblem,
   type PlanScreen,
 } from './prompt-flow';
 import { useRetryGate } from './ServiceNotice';
@@ -134,6 +135,12 @@ function ChangingLine({ app }: Readonly<{ app: InstalledApp }>) {
       </Text>
     </View>
   );
+}
+
+/** A request the page needed and did not get: a connection problem is said plainly, never as an
+ *  error (system.md §8); anything else is. */
+function ProblemNotice({ problem }: Readonly<{ problem: PlanProblem }>) {
+  return <Notice tone={problem.offline ? 'neutral' : 'danger'} message={problem.reason} />;
 }
 
 /** The radio (one pick, a ring with a dot) or checkbox (several, a square with a `check`) that
@@ -449,7 +456,7 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
       onScrollOffset={onScrollOffset}
       footer={
         <View style={s.footer}>
-          {screen.problem ? <Notice tone="danger" message={screen.problem.reason} /> : null}
+          {screen.problem ? <ProblemNotice problem={screen.problem} /> : null}
           {screen.notice ? <FlowNoticeBlock notice={screen.notice} /> : null}
           {screen.problem ? (
             <Button label={COPY.planTryAgain} variant="ember" onPress={onTryAgain} />

@@ -1,0 +1,100 @@
+# Contract: making-progress (chain-17)
+
+Interface only. Rules: spec prompt-flow (Making, Ready, Failure, Details), system.md §7.1 Step list, §8, §9.
+Pure logic is Node-importable: `making-progress.ts`, `failure-kind.ts`, `prompt-flow.ts`, `home-live.ts`.
+Supersedes `handoff/making-sheet.md` "Where chain-17 plugs in" and `handoff/home.md` "Stop ... does not leave a Stopped tile".
+
+## Pages (props verbatim; each is a `KeyboardShell host="sheet"` body; `HostedPage` is gone)
+
+```ts
+MakingPage({ name: string /* attemptName(rec) or the app's name */; changing: boolean; words: string;
+  stage: Stage | null; delivering: boolean; queuedPosition?: number; repairAttempt?: number; stepSince?: number;
+  signals: RunSignals | null /* this run's own */; now: number /* shell tick, 1 s */; activity: number /* 0–1 */;
+  onStop(): void })
+ReadyPage({ app: InstalledApp; words: string; onOpen(): void; onDone(): void })   // TilePlate size 'hero', Button 'tint'
+FailurePage({ kind: FailureKind; reason: string; diagnostics: readonly { hint: string }[]; rephraseHelps: boolean;
+  changing: boolean; journal?: readonly RunJournalEntry[] | null; attemptStarted?: boolean; notice?: FlowNotice;
+  offline?: boolean; devMode?: boolean; onChange(): void; onRetry?(): void /* absent: no attempt */; onDismiss?(): void })
+```
+Android back on all three is the sheet's close (`closeSheet`): none registers `useSheetBack` or `BackHandler`.
+Making: close = leave running; Ready: close = Done; Failure: close = leave (tile and journal kept).
+
+## Page state — `prompt-flow.ts`
+
+```ts
+MakingScreen += { repairAttempt?: number /* latest repair try; marker never moves back up */; stepSince?: number }
+ReadyScreen  += { runId?: string; text: string }
+withStreamEvent(screen: MakingScreen, event: GenerationEvent, at: number): MakingScreen  // stamps stepSince when the marker moves
+withDelivering(screen: MakingScreen, at: number): MakingScreen
+readyStep(prev: MakingScreen, app): ReadyScreen     // carries runId + text
+pageKeyOf(ready) = `run:${runId ?? app.id}`         // one key from the first frame to Ready/Failure
+PlanProblem += { offline?: true }                   // reason COPY.planOffline, neutral notice
+```
+`runAttempt` sets the page only once the attempt id exists: `{ ...opening, runId, stepSince: startedAt }` (no `run:starting` frame).
+
+## Progress — `making-progress.ts`
+
+```ts
+MAKING_TIMES = { measuredBy, medianMs: 53_000, p90Ms: 144_000, worstMs: 225_000, usualUntilMs: 75_000, longerUntilMs: 150_000 }
+makingTimeLine(elapsedMs): string                    // ≤75 s usual, ≤150 s longer, else slow (copy.ts making*)
+type MakingRowState = 'done' | 'current' | 'waiting'
+MakingRow { key: 'step:0'..'step:3' | 'repair'; label; state; elapsed?: string /* m:ss, current row only */ }
+MakingEmber { state: 'working' | 'stuck'; activity: number }
+MakingProgress { rows: readonly MakingRow[]; line: string; ember: MakingEmber }
+makingProgress(state: Pick<MakingScreen,'stage'|'delivering'|'queuedPosition'|'repairAttempt'|'stepSince'>,
+  signals: RunSignals | null, now: number, activity: number): MakingProgress
+```
+Line priority: in line (`makingQueueLine(position)`) > stalled (`makingStallLine(40)`) > time line from `turnCameAt ?? startedAt`.
+Repair row `makingRepairLine(min(N, 3), 3)` sits under the check; while it is current the check reads done.
+
+## Stream-activity signal (the Ember consumes it; chain-22)
+
+```ts
+// home-live.ts (unchanged API)
+activityOf(tokensPerSecond): number                  // clamp(t/40, 0, 1)
+sampleLive(attempts: { id; signals: LiveSignals }[], previous: Map<string, LiveSample>, now): LiveView
+LiveView { queued: ReadonlySet<string>; activity: Readonly<Record<string /* run id */, number>> }
+useHomeLive(active: boolean, attempts: () => readonly { id; signals }[]): LiveView   // samples every 1 s while active
+```
+- `LauncherRoot.liveView` is active while the screen is `home` OR `making`; Home tiles read `activity[rec.id]`, the
+  Making page reads `activity[screen.runId] ?? 0` and passes it through `makingProgress(...).ember`.
+- Tokens per second count `token` events plus reasoning (`thinkingChars / 4`); first sample of a run is 0.
+- In line: ember `working` at activity 0 (still, dim). Stuck: `livenessOf(signals, now) === 'stalled'` (no frame,
+  keepalives included, for `STALL_MS` 40 s) → `Ember state 'stuck'`, AmbientLight activity 0.
+- Not provided yet: §4.6 flicker (token arrival in the last 500 ms) — derive from `RunSignals.lastTokenAt`.
+- `Ember({ size: 20|24|48|96|128; state: 'working'|'stuck'|'out'; activity?; spark? })`, `AmbientLight({ width; height; activity })`.
+
+## Failure — `failure-kind.ts`
+
+```ts
+type FailureKind = 'couldnt-run' | 'refused' | 'closed' | 'stopped' | 'connection' | 'other'
+FailureFacts { reason; rephraseHelps: boolean; repairs: number; interrupted?: 'closed' | 'stopped'; refused: boolean }
+failureKindOf(facts): FailureKind     // refused > interrupted > reason === COPY.failureConnection > repairs >= 3
+failureSentence(kind, { reason, rephraseHelps }): string | null    // null for 'refused' (its notice speaks)
+FailureAction { move: 'change' | 'retry'; label; variant: 'ember' | 'ink' | 'plain' }
+failureActions(kind, rephraseHelps, canRetry): readonly FailureAction[]
+```
+- Shell `failure` screen += `interrupted?: 'closed' | 'stopped'`; repairs = live `counts.repair`, or
+  `repairAttemptsIn(journal)` (run-timeline-view.ts) when reopened from a tile with a readable journal.
+- A stream that ends without a terminal event, or a network error mid-run, settles with reason
+  `COPY.failureConnection` and remedy `{ kind: 'retry' }`; Try again is disabled while `showOfflineIndicator`.
+- "What happened" rows: `runTimelineRows(journal, devMode, sentence, true)` + hints it lacks, each a `GroupedRow`.
+- Discard deletes at once through `onDismissPending` (no Undo window yet, see the chain-17 report).
+
+## Stop and records — `pending-builds.ts`
+
+```ts
+PendingBuildRecord += { stopped?: true }            // only on 'interrupted'; absent = Whim closed under it
+PendingBuildStore.stop(id: string): void           // building → interrupted, stopped: true
+```
+Stop (Making page `onStopMaking`, tile menu `onCancelPending`) aborts at once; a new app keeps its record (stopped tile,
+journal kept) and lands on Home; a change (`editingAppId`) is dropped, its app untouched.
+
+## Delivery and the toast
+
+Selected and attached → Ready. Otherwise, when the screen is `home`: `toast.show({ message: readyTitle(name),
+action: { label: COPY.actionOpen, onPress: () => onOpen(app) } })` through `toastRef` (`ToastBridge` inside the one
+`ToastHost`). Over a running app nothing is shown yet: the orb's ember dot is chain-19's.
+
+## For chain-18 (opening)
+Ready's `Open it` and the toast's `Open` both call `LauncherRoot.onOpen(app)`; no tile rect is measured on Ready yet.

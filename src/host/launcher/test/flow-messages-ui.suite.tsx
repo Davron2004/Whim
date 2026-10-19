@@ -9,10 +9,11 @@ import { Harness } from './harness';
 import HomeScreen from '../HomeScreen';
 import { DescribePage } from '../DescribePage';
 import { PlanPage } from '../PlanPage';
-import BuildStep from '../BuildStep';
-import DoneStep from '../DoneStep';
-import FailureScreen from '../FailureScreen';
+import MakingPage from '../MakingPage';
+import ReadyPage from '../ReadyPage';
+import FailurePage from '../FailurePage';
 import UpdateRequiredScreen from '../UpdateRequiredScreen';
+import HistoryScreen from '../HistoryScreen';
 import { COPY } from '../copy';
 import { AppIndex } from '../app-index';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
@@ -30,14 +31,14 @@ type Stream = ReturnType<typeof sseStream>;
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
-const build = (tree: Tree) => tree.root.findByType(BuildStep);
+const build = (tree: Tree) => tree.root.findByType(MakingPage);
 const plan = (tree: Tree) => tree.root.findByType(PlanPage).props.screen;
 const ghosts = (tree: Tree): PendingBuildRecord[] => home(tree).props.pending;
 const records = (kv: KVBackend) => new PendingBuildStore(kv).list().map((record) => [record.state, record.failure?.reason]);
 const generateSignal = (sent: readonly SentRequest[]) => sent.find((r) => r.path === '/v1/generate')?.signal;
 const occurrences = (text: string, part: string) => text.split(part).length - 1;
-/** The failure screen's two ways of suggesting the user reword the request, as far as they show. */
-const rephraseAdvice = (tree: Tree) => [COPY.failureRowSayItDifferently, COPY.failureRephrase].filter((line) => textOf(tree.root).includes(line));
+/** The failure page's ways of suggesting the person reword the request, as far as they show. */
+const rephraseAdvice = (tree: Tree) => [COPY.failureChangeDescription, COPY.failureTryAgainAsIs].filter((line) => textOf(tree.root).includes(line));
 /** A refusal as the server's own builder makes it and its route answers it. */
 const refused = (refusal: ServiceRefusal): Response =>
   new Response(JSON.stringify(refusal.body), { status: refusal.status, headers: { 'Content-Type': 'application/json', ...refusal.headers } });
@@ -74,42 +75,42 @@ const futureBody = (body: Record<string, unknown>, fallback: 'fail' | 'update') 
 export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
   // ── the line (4.1) ────────────────────────────────────────────────────────────────────────────
 
-  await h.test('line: waiting behind two builds shows the place in line with Cancel and Leave it running; the first stage replaces it', async () => {
+  await h.test('line: waiting behind two runs says how many are ahead, with Stop; the first stage replaces it with the time line', async () => {
     const streams: Stream[] = [];
     await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
       await startBuild(tree, 'A tea timer');
       streams[0].push({ type: 'queued', position: 3 });
       await waitFor(() => build(tree).props.queuedPosition === 3, 'the place in line');
-      h.ok(textOf(tree.root).includes('2 builds ahead'), 'the build screen says it is in line with 2 ahead');
-      h.ok(textOf(tree.root).includes('Waiting in line · ') && !textOf(tree.root).includes('waiting for a reply'), 'and its status line says it is waiting in line, not for a reply');
-      h.ok(button(tree, COPY.actionCancelBuild) != null && button(tree, COPY.buildLeaveRunning) != null, 'with Cancel and Leave it running');
+      h.ok(textOf(tree.root).includes('2 ahead of you.'), 'the page says two runs are ahead');
+      h.ok(!textOf(tree.root).includes(COPY.makingTimeUsual), 'in place of the time line');
+      h.ok(button(tree, COPY.actionStop) != null && button(tree, COPY.sheetClose) != null, 'with Stop, and the close that leaves it running');
       streams[0].push({ type: 'queued', position: 1 });
-      await waitFor(() => textOf(tree.root).includes(COPY.buildQueuedNext), 'the front of the line');
+      await waitFor(() => textOf(tree.root).includes(COPY.makingQueuedNext), 'the front of the line');
       streams[0].push(STAGE);
       await waitFor(() => build(tree).props.stage === 'plan', 'the first stage');
-      h.ok(!textOf(tree.root).includes('in line'), 'the in-line message is replaced by normal progress');
+      h.ok(!textOf(tree.root).includes(COPY.makingQueuedNext) && !textOf(tree.root).includes('ahead of you'), 'the place in line is gone');
+      h.ok(textOf(tree.root).includes(COPY.makingTimeUsual), 'and the time line has taken its place');
       streams[0].push({ type: 'stage', stage: 'check', status: 'start' });
       await waitFor(() => build(tree).props.stage === 'check', 'the check stage');
-      h.ok(textOf(tree.root).includes('Running the checks · ') && !textOf(tree.root).includes('waiting for a reply'), 'while the app is checked, the status line names the checks');
-      await h.throws(() => { button(tree, COPY.actionCancelBuild); }, 'Expected one visible button', 'and Cancel goes with it');
+      h.ok(button(tree, COPY.actionStop) != null, 'Stop stays while it makes');
       streams[0].push(resultEvent('Tea Timer'));
       streams[0].end();
-      await waitFor(() => on(tree, DoneStep), 'the build to deliver');
+      await waitFor(() => on(tree, ReadyPage), 'the build to deliver');
     });
   });
 
-  await h.test('line: Cancel while in line aborts the request and leaves no ghost and no journal', async () => {
+  await h.test('line: Stop while in line aborts the request and leaves a stopped tile with its journal', async () => {
     const streams: Stream[] = [];
     await withLauncher({ server: streamingServer(streams) }, async ({ tree, sent, kv }) => {
       await startBuild(tree, 'A tea timer');
       streams[0].push({ type: 'queued', position: 2 });
       await waitFor(() => build(tree).props.queuedPosition === 2, 'the place in line');
-      await press(button(tree, COPY.actionCancelBuild));
+      await press(button(tree, COPY.actionStop));
       h.eq(sent.find((r) => r.path === '/v1/generate')?.signal?.aborted, true, 'the generation request is aborted');
-      h.ok(onHome(tree), 'the user lands on Home');
-      h.eq(ghosts(tree), [], 'with no ghost left behind');
-      h.eq(new PendingBuildStore(kv).list(), [], 'no pending record');
-      h.eq(kv.getAllKeys().filter((k) => k.startsWith('journal:')), [], 'and no journal');
+      h.ok(onHome(tree), 'the person lands on Home');
+      h.eq(ghosts(tree).map((g) => [g.state, g.stopped]), [['interrupted', true]], 'where a stopped tile stays');
+      h.eq(new PendingBuildStore(kv).list().map((r) => r.state), ['interrupted'], 'its record says so');
+      h.eq(kv.getAllKeys().filter((k) => k.startsWith('journal:')).length, 1, 'and its journal is kept');
     });
   });
 
@@ -119,7 +120,7 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       await startBuild(tree, 'A tea timer');
       streams[0].push({ type: 'queued', position: 2 });
       await waitFor(() => build(tree).props.queuedPosition === 2, 'the place in line');
-      await press(button(tree, COPY.buildLeaveRunning));
+      await press(button(tree, COPY.sheetClose));
       h.eq(ghosts(tree).map((g) => g.state), ['building'], 'it waits as a building ghost');
       streams[0].push({ type: 'queued', position: 1 });
       streams[0].push(STAGE);
@@ -139,21 +140,18 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       await startBuild(tree, 'A tea timer');
       streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
       for (let i = 0; i < 12; i++) streams[0].push({ type: 'token', text: 'x'.repeat(100) });
-      // en-CA, matching buildLivenessLine's own fixed locale (#89): the phone's locale must not
-      // change this comparison (see run-signals.suite.ts's LANG=fr_CA.UTF-8 red-check).
-      const written = `${(1_200).toLocaleString('en-CA')} characters`;
-      await waitFor(() => textOf(tree.root).includes(written), 'the 1,200 characters written to show');
+      await waitFor(() => build(tree).props.signals?.aggregates.chars === 1_200, 'the 1,200 characters written to count');
+      h.ok(!textOf(tree.root).includes('characters') && !textOf(tree.root).includes('1,200'), 'the page shows no output counter');
       streams[0].push({ type: 'restart' });
-      await waitFor(() => build(tree).props.signals?.aggregates.chars === 0, 'the restart to reach the screen');
-      h.ok(!textOf(tree.root).includes(written), 'the voided characters are no longer counted');
-      h.eq(tree.root.findAllByType(FailureScreen).length, 0, 'and no failure is shown');
-      h.ok(on(tree, BuildStep), 'the build carries on');
+      await waitFor(() => build(tree).props.signals?.aggregates.chars === 0, 'the restart to reach the page');
+      h.eq(tree.root.findAllByType(FailurePage).length, 0, 'no failure is shown');
+      h.ok(on(tree, MakingPage), 'the build carries on');
       streams[0].push({ type: 'token', text: 'abc' });
-      await waitFor(() => textOf(tree.root).includes('3 characters'), 'the resent turn to count from zero');
+      await waitFor(() => build(tree).props.signals?.aggregates.chars === 3, 'the resent turn to count from zero');
       streams[0].push(resultEvent('Tea Timer'));
       streams[0].end();
-      await waitFor(() => on(tree, DoneStep), 'the build to deliver');
-      const app = tree.root.findByType(DoneStep).props.app as InstalledApp;
+      await waitFor(() => on(tree, ReadyPage), 'the build to deliver');
+      const app = tree.root.findByType(ReadyPage).props.app as InstalledApp;
       const report = new RunJournalStore(kv).getLastRun(app.id) ?? [];
       h.eq(report.at(-1)?.aggregates, { chars: 3, tokens: 1 }, 'the run’s record counts only what was kept');
       h.eq(report.filter((entry) => entry.failure != null).length, 0, 'and holds no failure');
@@ -230,9 +228,9 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       streams[0].push(STAGE);
       streams[0].push(stubFutureFrame('fail'));
       streams[0].push(resultEvent('Tip Splitter'));
-      await waitFor(() => on(tree, FailureScreen), 'the failure screen');
+      await waitFor(() => on(tree, FailurePage), 'the failure screen');
       h.eq(generateSignal(sent)?.aborted, true, 'the generation request is aborted, so the server stops building');
-      h.eq(tree.root.findByType(FailureScreen).props.reason, notice, 'the notice is the reason, as plain text');
+      h.eq(tree.root.findByType(FailurePage).props.reason, notice, 'the notice is the reason, as plain text');
       h.eq(records(kv), [['failed', notice]], 'the pending record resolves as failed');
       h.eq(new AppIndex(kv).list(), [], 'and nothing is installed');
       streams[0].end();
@@ -246,13 +244,13 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       await startBuild(tree, 'A tip splitter');
       streams[0].push(STAGE);
       streams[0].push(stubFutureFrame('fail'));
-      await waitFor(() => on(tree, FailureScreen), 'the failure screen');
+      await waitFor(() => on(tree, FailurePage), 'the failure screen');
       h.ok(notice.length > 0, 'the stub sends a notice');
       h.eq(occurrences(textOf(tree.root), notice), 1, 'the notice reads once');
       h.eq(rephraseAdvice(tree), [], 'and nothing suggests rephrasing');
-      await press(button(tree, COPY.failureBack));
+      await press(button(tree, COPY.sheetClose));
       await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
-      h.ok(on(tree, FailureScreen), 'its ghost reopens the failure');
+      h.ok(on(tree, FailurePage), 'its ghost reopens the failure');
       h.eq(occurrences(textOf(tree.root), notice), 1, 'with the notice once');
       h.eq(rephraseAdvice(tree), [], 'and still no rephrasing advice');
       streams[0].end();
@@ -266,8 +264,8 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       streams[0].push(STAGE);
       streams[0].push({ type: 'failure', reason: 'The app did not build.', attempts: 0, diagnostics: [] });
       streams[0].end();
-      await waitFor(() => on(tree, FailureScreen), 'the failure screen');
-      h.eq(rephraseAdvice(tree), [COPY.failureRowSayItDifferently, COPY.failureRephrase], 'describing it differently is advised');
+      await waitFor(() => on(tree, FailurePage), 'the failure screen');
+      h.eq(rephraseAdvice(tree), [COPY.failureChangeDescription, COPY.failureTryAgainAsIs], 'describing it differently is advised');
       h.eq(occurrences(textOf(tree.root), 'The app did not build.'), 1, 'and the reason reads once');
     });
   });
@@ -283,12 +281,12 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
         server: () => refused(refusal),
       }, async ({ tree, kv }) => {
         await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get('failed')));
-        h.eq(rephraseAdvice(tree), [COPY.failureRowSayItDifferently], 'a failed generation advises rephrasing');
-        await press(button(tree, COPY.screenErrorRetry));
-        await waitFor(() => tree.root.findAllByType(FailureScreen)[0]?.props.notice != null, 'the refused Retry');
+        h.eq(rephraseAdvice(tree), [COPY.failureChangeDescription, COPY.failureTryAgainAsIs], 'a failed generation advises rephrasing');
+        await press(button(tree, COPY.failureTryAgainAsIs));
+        await waitFor(() => tree.root.findAllByType(FailurePage)[0]?.props.notice != null, 'the refused Retry');
         h.eq(occurrences(textOf(tree.root), refusal.body.hint), 1, 'the refusal reads once');
         h.eq(rephraseAdvice(tree).length > 0, advised, advised ? 'a refusal about the words keeps the advice' : 'a busy server gets no rephrasing advice');
-        await press(button(tree, COPY.failureBack));
+        await press(button(tree, COPY.sheetClose));
         await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get('failed')));
         h.eq(rephraseAdvice(tree).length > 0, advised, 'and its ghost reopens the same way');
       });
@@ -305,7 +303,7 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       await waitFor(() => on(tree, UpdateRequiredScreen), 'the update screen');
       await press(button(tree, COPY.updateNotNow));
       await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
-      h.ok(on(tree, UpdateRequiredScreen) && !on(tree, FailureScreen), 'the ghost reopens the update screen');
+      h.ok(on(tree, UpdateRequiredScreen) && !on(tree, FailurePage), 'the ghost reopens the update screen');
       h.ok(notice.length > 0 && textOf(tree.root).includes(notice), 'showing the notice');
       h.ok(!textOf(tree.root).includes(COPY.updateBody), 'in place of the standard body, as it did live');
       await press(button(tree, COPY.updateNotNow));
@@ -328,8 +326,8 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       h.eq(remedy, { kind: 'update', protocolLevel: PROTOCOL_LEVEL }, 'the record keeps the level the fallback ended on');
       kv.set(`pending:${written.id}`, JSON.stringify({ ...written, failure: { ...written.failure, remedy: { kind: 'update', protocolLevel: PROTOCOL_LEVEL - 1 } } }));
       await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get(written.id)));
-      h.ok(on(tree, FailureScreen) && !on(tree, UpdateRequiredScreen), 'the ghost reopens the failure screen');
-      h.eq(tree.root.findByType(FailureScreen).props.retryable, true, 'with Retry');
+      h.ok(on(tree, FailurePage) && !on(tree, UpdateRequiredScreen), 'the ghost reopens the failure screen');
+      h.ok(typeof tree.root.findByType(FailurePage).props.onRetry === 'function' && button(tree, COPY.actionTryAgain) != null, 'with Try again');
       h.eq(rephraseAdvice(tree), [], 'and no rephrasing advice');
       streams[0].end();
     });
@@ -339,7 +337,7 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
     const streams: Stream[] = [];
     await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
       await startBuild(tree, 'A tip splitter');
-      await press(button(tree, COPY.buildLeaveRunning));
+      await press(button(tree, COPY.sheetClose));
       streams[0].push(STAGE);
       streams[0].push(stubFutureFrame('update'));
       await waitFor(() => on(tree, UpdateRequiredScreen), 'the update screen, over Home');
@@ -357,7 +355,7 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       streams[0].push(stubFutureFrame('skip'));
       streams[0].push(resultEvent('Tea Timer'));
       streams[0].end();
-      await waitFor(() => on(tree, DoneStep), 'the delivered build');
+      await waitFor(() => on(tree, ReadyPage), 'the delivered build');
     });
   });
 
@@ -387,7 +385,7 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
         await waitFor(() => on(tree, PlanPage) && plan(tree).problem !== undefined, 'the notice');
         h.eq(plan(tree).problem?.reason, UNARY_NOTICE, 'the notice is the reason');
         h.ok(textOf(tree.root).includes(UNARY_NOTICE) && button(tree, COPY.planTryAgain) != null, 'shown with Try again');
-        h.eq(tree.root.findAllByType(FailureScreen).length, 0, 'never the failure page, which is for a run');
+        h.eq(tree.root.findAllByType(FailurePage).length, 0, 'never the failure page, which is for a run');
         h.eq(paths(), sentPaths, 'no build was started');
         h.eq(new PendingBuildStore(kv).list(), [], 'and no attempt exists to discard');
       });
@@ -397,12 +395,11 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
   await h.test('fallback: an update fallback on a report opens the update screen with the notice', async () => {
     const streams: Stream[] = [];
     const deliver = streamingServer(streams);
-    await withLauncher({ server: (r) => (r.path === '/v1/report' ? futureBody({ reportId: 'report-1' }, 'update') : deliver(r)) }, async ({ tree, paths }) => {
-      await startBuild(tree, 'A tea timer');
-      streams[0].push(resultEvent('Tea Timer'));
-      streams[0].end();
-      await waitFor(() => on(tree, DoneStep), 'the done step');
-      await TestRenderer.act(async () => tree.root.findByType(DoneStep).props.onReport());
+    await withLauncher({ examples: true, server: (r) => (r.path === '/v1/report' ? futureBody({ reportId: 'report-1' }, 'update') : deliver(r)) }, async ({ tree, paths }) => {
+      await waitFor(() => onHome(tree) && hasInstalled(tree, 'Tip Splitter'), 'the example apps');
+      const example = (home(tree).props.apps as InstalledApp[]).find((a) => a.name === 'Tip Splitter')!;
+      await TestRenderer.act(async () => home(tree).props.onHistory(example));
+      await TestRenderer.act(async () => tree.root.findByType(HistoryScreen).props.onReport());
       await waitFor(() => textOf(tree.root).includes(COPY.reportReasonBroken), 'the report draft');
       await press(button(tree, COPY.reportReasonBroken));
       await press(button(tree, COPY.reportSend));

@@ -15,12 +15,8 @@ import {
   acceptClarifyQuestions,
   answerAfter,
   backToDescribe,
-  buildProgressFraction,
-  buildProgressView,
-  buildStepStatuses,
   clarificationsFrom,
   clarifyLimitOf,
-  currentActionSentence,
   delegatedAnswers,
   describeStep,
   describeTextChanged,
@@ -42,11 +38,10 @@ import {
   withPlan,
   withProblem,
   withQuestions,
-  withStage,
   withStreamEvent,
-  workingLineText,
 } from '../prompt-flow';
-import type { AnswerChange, DescribeScreen, FlowNotice, FlowQuestion, PlanScreen } from '../prompt-flow';
+import { makingProgress } from '../making-progress';
+import type { AnswerChange, DescribeScreen, FlowNotice, FlowQuestion, MakingScreen, PlanScreen } from '../prompt-flow';
 import { FlowDrafts, NEW_APP_DRAFT_KEY, draftKey, draftPreview } from '../flow-draft';
 import { foldedAt, answerSummary, isAnswered } from '../plan-questions';
 import type { InstalledApp } from '../app-index';
@@ -377,10 +372,11 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(clarificationsFrom(making.questions, making.answers).map((c) => [c.id, c.decide === true]), [['history', true], ['alert', false]], 'the answers reach generation, the delegated one as such');
   });
 
-  await h.test('flow: the ready page carries the delivered app', () => {
-    const ready = readyStep(makingStep(plannedFlow()), { id: 'app-9', name: 'Pour Timer' } as unknown as InstalledApp);
+  await h.test('flow: the ready page carries the delivered app and the person’s words', () => {
+    const ready = readyStep({ ...makingStep(plannedFlow()), runId: 'run-9' }, { id: 'app-9', name: 'Pour Timer' } as unknown as InstalledApp);
     h.eq(ready.kind, 'ready', 'delivery ends on the ready page');
     h.eq(ready.app.name, 'Pour Timer', 'the ready page shows the app that was just delivered');
+    h.eq(ready.text, plannedFlow().text, 'under the words the person used');
   });
 
   // ── backward movement and the draft ─────────────────────────────────────────────────────────
@@ -423,7 +419,8 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     const second = { ...makingStep(plannedFlow()), runId: 'run-2' };
     h.ok(pageKeyOf(first) !== pageKeyOf(second), 'two runs, two keys');
     h.eq(pageKeyOf(first), pageKeyOf({ kind: 'failure', journalId: 'run-1' }), 'a run’s making and failure pages share its key');
-    h.eq(pageKeyOf(readyStep(first, { id: 'run-1' } as unknown as InstalledApp)), pageKeyOf(first), 'and its ready page, since the app takes the attempt’s id');
+    h.eq(pageKeyOf(readyStep(first, { id: 'run-1' } as unknown as InstalledApp)), pageKeyOf(first), 'and its ready page');
+    h.eq(pageKeyOf(readyStep(first, { id: 'fork-of-run-1' } as unknown as InstalledApp)), pageKeyOf(first), 'even when the app was delivered under another id (a change made onto a copy)');
     h.ok(pageKeyOf(describeStep(undefined, 'x')) !== pageKeyOf(describeStep(EDITED, 'x')), 'a new app’s draft and an app’s change draft are different pages');
     h.eq(pageKeyOf(describedFlow()), pageKeyOf(plannedFlow()), 'describe and plan are the same draft');
   });
@@ -442,86 +439,66 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(answerAfter(q, current, type('hello')) === current, 'no Other field');
   });
 
-  await h.test('WorkingLine: no clock suffix under 5s, the phrase alone; a clock past it', () => {
-    const startedAt = 1_000_000;
-    h.eq(workingLineText('Thinking about what to ask', startedAt, startedAt), 'Thinking about what to ask', 'at the very start, no clock');
-    h.eq(workingLineText('Thinking about what to ask', startedAt, startedAt + 4_999), 'Thinking about what to ask', 'still no clock just under 5s');
-    h.eq(workingLineText('Thinking about what to ask', startedAt, startedAt + 5_000), 'Thinking about what to ask · 0:05', 'the clock appears at exactly 5s');
-    h.eq(workingLineText('Thinking about what to ask', startedAt, startedAt + 7_000), 'Thinking about what to ask · 0:07', 'and keeps advancing');
-    h.eq(workingLineText('Writing the plan', startedAt, startedAt + 65_000), 'Writing the plan · 1:05', 'minutes read the same as elapsedLabel elsewhere');
-  });
+  // ── the making page's steps and line ─────────────────────────────────────────────────────────
 
-  // ── the making page's four named steps ───────────────────────────────────────────────────────
+  /** A run's making page as the shell holds it, started at 0. */
+  const running = () => ({ ...makingStep(plannedFlow()), runId: 'run-1', stepSince: 0 });
 
-  await h.test('build: stage events drive the steps and passed steps stay passed', () => {
-    h.eq(buildStepStatuses(null), ['active', 'todo', 'todo', 'todo'], 'an unstarted stream sits on the first step');
-    h.eq(buildStepStatuses('generate'), ['passed', 'active', 'todo', 'todo'], 'writing the app: the step before it has passed');
-    for (const stage of ['check', 'run', 'repair'] as const) {
-      h.eq(buildStepStatuses(stage), ['passed', 'passed', 'active', 'todo'], `${stage} reads as checking it runs safely`);
+  await h.test('making: stage events move the marker down the four steps, and the steps above it are done', () => {
+    const states = (page: MakingScreen) => makingProgress(page, null, 0, 0).rows.map((row) => row.state);
+    const page = running();
+    h.eq(states(page), ['current', 'waiting', 'waiting', 'waiting'], 'an unstarted stream sits on the first step');
+    h.eq(states(withStreamEvent(page, { type: 'stage', stage: 'generate', status: 'start' }, 1)), ['done', 'current', 'waiting', 'waiting'], 'writing the app: the step before it is done');
+    for (const stage of ['check', 'run'] as const) {
+      h.eq(states(withStreamEvent(page, { type: 'stage', stage, status: 'start' }, 1)), ['done', 'done', 'current', 'waiting'], `${stage} reads as checking it runs safely`);
     }
-    h.eq(buildStepStatuses('run', true), ['passed', 'passed', 'passed', 'active'], 'delivery is the last named step');
+    h.eq(states(withDelivering(withStreamEvent(page, { type: 'stage', stage: 'run', status: 'start' }, 1), 2)), ['done', 'done', 'done', 'current'], 'delivery is the last step');
+    h.eq(makingProgress(page, null, 0, 0).rows.map((row) => row.label), [COPY.buildStepReading, COPY.buildStepWriting, COPY.buildStepChecking, COPY.buildStepInstalling], 'the four steps, in order');
   });
 
-  await h.test('build: one plain-words sentence describes the current action', () => {
-    h.eq(currentActionSentence(null), COPY.buildStepReading, 'the first sentence is the first step');
-    h.eq(currentActionSentence('generate'), COPY.buildStepWriting, 'the sentence follows the live stage');
-    h.eq(currentActionSentence('run', true), COPY.buildStepInstalling, 'delivery has its own sentence');
+  await h.test('making: a repair adds "Fixing a problem · try N of M" under the check, the marker moves down to it, and a next try advances it', () => {
+    const checking = withStreamEvent(running(), { type: 'stage', stage: 'check', status: 'start' }, 10_000);
+    const repairing = withStreamEvent(checking, { type: 'stage', stage: 'repair', status: 'start', attempt: 2 }, 20_000);
+    const rows = makingProgress(repairing, null, 25_000, 0).rows;
+    h.eq(rows.map((row) => [row.label, row.state]), [
+      [COPY.buildStepReading, 'done'],
+      [COPY.buildStepWriting, 'done'],
+      [COPY.buildStepChecking, 'done'],
+      ['Fixing a problem · try 2 of 3', 'current'],
+      [COPY.buildStepInstalling, 'waiting'],
+    ], 'the fix is the current row, under the check that found the problem');
+    h.eq(rows[3].elapsed, '0:05', 'with its own time');
+    const next = withStreamEvent(repairing, { type: 'stage', stage: 'repair', status: 'start', attempt: 3 }, 40_000);
+    h.eq(makingProgress(next, null, 41_000, 0).rows[3].label, 'Fixing a problem · try 3 of 3', 'the next try is counted');
+    h.eq(makingProgress(withStreamEvent(running(), { type: 'stage', stage: 'repair', status: 'start' }, 1), null, 1, 0).rows[3].label, 'Fixing a problem · try 1 of 3', 'a repair without its try number counts from one');
   });
 
-  await h.test('build: the progress bar reports real stage progress and never fabricates 100%', () => {
-    // A passed step is a full quarter, the live one a half quarter — so the bar tracks the same
-    // stage events the named steps do, with nothing invented in between.
-    const along = [
-      buildProgressFraction(null, false),
-      buildProgressFraction('generate', false),
-      buildProgressFraction('check', false),
-      buildProgressFraction('check', true),
-    ];
-    h.ok(along[0] > 0, 'an unstarted stream already shows it has begun');
-    h.ok(along.every((v, i) => i === 0 || v > along[i - 1]), `each step moves the bar forward (${along.join(' → ')})`);
-    for (const stage of ['plan', 'generate', 'check', 'run', 'repair'] as const) {
-      h.eq(buildProgressFraction(stage, true), along[3], `delivering (${stage}) is the last step, wherever the stream was`);
-    }
-    for (const stage of [null, 'plan', 'generate', 'check', 'run', 'repair'] as const) {
-      for (const delivering of [false, true]) {
-        h.ok(buildProgressFraction(stage, delivering) < 1, `${stage}/${delivering} never reads as finished`);
-      }
-    }
-  });
-
-  await h.test('build: only stage and queued events change the screen’s state', () => {
-    const build = makingStep(plannedFlow());
-    h.eq(withStage(build, 'check').stage, 'check', 'a stage event lands');
-    h.eq(withDelivering(build).delivering, true, 'delivery flips the last step on');
-    h.eq(withStage(build, 'check').text, build.text, 'nothing else about the step moves');
+  await h.test('making: only stage and queued events change the page, and a token is nothing to it', () => {
+    const page = running();
+    h.eq(withStreamEvent(page, { type: 'stage', stage: 'check', status: 'start' }, 5).stage, 'check', 'a stage event lands');
+    h.eq(withDelivering(page, 5).delivering, true, 'delivery flips the last step on');
+    h.eq(withStreamEvent(page, { type: 'stage', stage: 'check', status: 'start' }, 5).text, page.text, 'nothing else about the page moves');
     const token: GenerationEvent = { type: 'token', text: 'const x = 1;' };
-    h.ok(withStreamEvent(build, token) === build, 'a token outside the line changes nothing');
+    h.ok(withStreamEvent(page, token, 5) === page, 'a token outside the line changes nothing');
+    h.ok(!JSON.stringify(makingProgress(page, null, 5, 1)).includes('const x'), 'and no token text can reach what the page shows');
   });
 
-  await h.test('build: waiting behind two builds says the build is in line with 2 ahead, and no step is live', () => {
-    const waiting = withStreamEvent(makingStep(plannedFlow()), { type: 'queued', position: 3 });
+  await h.test('making: waiting behind two runs says "2 ahead of you.", no step has started, and the ember is still and dim', () => {
+    const waiting = withStreamEvent(running(), { type: 'queued', position: 3 }, 1);
     h.eq(waiting.queuedPosition, 3, 'the place in line is held');
-    const view = buildProgressView(waiting.stage, waiting.delivering, waiting.queuedPosition);
-    h.ok(view.sentence.includes('2 builds ahead'), `the sentence counts the two builds ahead (got "${view.sentence}")`);
-    h.eq(view.statuses, ['todo', 'todo', 'todo', 'todo'], 'nothing has started, so no step is live');
-    h.eq(view.fraction, 0, 'and the bar claims no progress');
-    const next = withStreamEvent(waiting, { type: 'queued', position: 1 });
-    h.eq(buildProgressView(next.stage, next.delivering, next.queuedPosition).sentence, COPY.buildQueuedNext, 'at the front it says the build is next');
-    const one = withStreamEvent(waiting, { type: 'queued', position: 2 });
-    h.ok(buildProgressView(one.stage, one.delivering, one.queuedPosition).sentence.includes('1 build ahead'), 'one build ahead is counted in the singular');
+    const view = makingProgress(waiting, null, 2, 0.8);
+    h.eq(view.line, '2 ahead of you.', 'two ahead');
+    h.ok(view.rows.every((row) => row.state === 'waiting' && row.elapsed === undefined), 'nothing has started, so no step is live or timed');
+    h.eq(view.ember, { state: 'working', activity: 0 }, 'the ember rests, whatever the stream sample says');
+    h.eq(makingProgress(withStreamEvent(waiting, { type: 'queued', position: 1 }, 3), null, 3, 0).line, COPY.makingQueuedNext, 'at the front it is next');
   });
 
-  await h.test('build: the first stage after queued events replaces the in-line message with normal progress', () => {
-    const waiting = withStreamEvent(makingStep(plannedFlow()), { type: 'queued', position: 2 });
-    const started = withStreamEvent(waiting, { type: 'stage', stage: 'plan', status: 'start' });
-    h.eq(started.queuedPosition, undefined, 'the build is out of the line');
-    h.eq(buildProgressView(started.stage, started.delivering, started.queuedPosition), {
-      statuses: buildStepStatuses('plan'),
-      fraction: buildProgressFraction('plan'),
-      sentence: currentActionSentence('plan'),
-    }, 'the screen reads the stage-driven progress');
-    const ended = withStreamEvent(waiting, { type: 'failure', reason: 'Waited too long.', attempts: 0, diagnostics: [] });
+  await h.test('making: the first stage after queued events ends the line, and the step’s time starts then', () => {
+    const waiting = withStreamEvent(running(), { type: 'queued', position: 2 }, 1_000);
+    const started = withStreamEvent(waiting, { type: 'stage', stage: 'plan', status: 'start' }, 90_000);
+    h.eq(started.queuedPosition, undefined, 'the run is out of the line');
+    h.eq(makingProgress(started, null, 93_000, 0).rows[0], { key: 'step:0', label: COPY.buildStepReading, state: 'current', elapsed: '0:03' }, 'the first step is current, timed from its turn');
+    const ended = withStreamEvent(waiting, { type: 'failure', reason: 'Waited too long.', attempts: 0, diagnostics: [] }, 5_000);
     h.eq(ended.queuedPosition, undefined, 'any other event ends the waiting state too — in line only while the latest event is queued');
   });
-
 }

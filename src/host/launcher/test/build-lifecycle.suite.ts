@@ -30,9 +30,10 @@ import {
   startPendingBuild,
 } from '../build-lifecycle';
 import { RunJournalStore } from '../run-journal';
-import { EMPTY_RUN_AGGREGATES, STALL_MS, ghostTileColorFor, livenessOf, livenessPhaseOf } from '../prompt-flow';
-import type { RunSignals, Stage } from '../prompt-flow';
-import { buildLivenessLine } from '../copy';
+import { EMPTY_RUN_AGGREGATES, STALL_MS, ghostTileColorFor, livenessOf, withStreamEvent } from '../prompt-flow';
+import type { MakingScreen, RunSignals } from '../prompt-flow';
+import { makingProgress } from '../making-progress';
+import { COPY, makingStallLine } from '../copy';
 import type { GenerationEvent } from '@whim/contract';
 import { tileColor } from '../tiles';
 import { tileOf } from '../tile-identity';
@@ -457,36 +458,49 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(rec.failure!.reason, 'Something is over its daily limit.', 'the reason is the refusal’s hint, not a generic one');
   });
 
-  await h.test('the build’s status line: in line it says so and counts the time in line; once the turn comes its clock starts over; checking names the checks', () => {
+  /** One run's stream folded the way the shell folds it: into its journal and signals, and into
+   *  its Making page's state. */
+  const makingRun = () => {
     const journal = new RunJournalStore(new MapKVBackend());
     journal.create('run-1');
-    let s: RunSignals = { startedAt: 0, aggregates: EMPTY_RUN_AGGREGATES, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: 0 };
-    const fold = (event: GenerationEvent, at: number) => { s = journalStreamEvent(journal, 'run-1', s, event, at); };
-    const line = (now: number, stage: Stage | null, queuedPosition?: number) =>
-      buildLivenessLine(livenessOf(s, now), s, now, livenessPhaseOf(stage, queuedPosition));
+    const run = {
+      signals: { startedAt: 0, aggregates: EMPTY_RUN_AGGREGATES, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: 0 } as RunSignals,
+      page: { kind: 'making', text: 'A tea timer', rewritten: 'A tea timer', answers: {}, questions: [], stage: null, delivering: false, stepSince: 0 } as MakingScreen,
+    };
+    const fold = (event: GenerationEvent, at: number) => {
+      run.signals = journalStreamEvent(journal, 'run-1', run.signals, event, at);
+      run.page = withStreamEvent(run.page, event, at);
+    };
+    const at = (now: number) => makingProgress(run.page, run.signals, now, 0);
+    return { fold, at };
+  };
+
+  await h.test('the Making page’s line: in line it counts the runs ahead; once the turn comes the time line counts from then, not from joining the line', () => {
+    const { fold, at } = makingRun();
     fold({ type: 'queued', position: 2 }, 1_000);
-    h.eq(line(16_000, null, 2), 'Waiting in line · 0:16', 'in line, the line says so, with the time in line');
+    h.eq(at(16_000).line, '1 ahead of you.', 'in line, the line says how many are ahead');
+    h.ok(at(16_000).rows.every((row) => row.state === 'waiting'), 'and no step has started');
     fold({ type: 'queued', position: 1 }, 30_000);
+    h.eq(at(31_000).line, COPY.makingQueuedNext, 'first in line, it is next');
     fold({ type: 'stage', stage: 'plan', status: 'start' }, 150_000);
-    h.eq(line(157_000, 'plan'), 'Connected, waiting for a reply · 0:07', 'once its turn comes, the clock reads from then, not from joining the line');
-    fold({ type: 'stage', stage: 'check', status: 'start' }, 170_000);
-    fold({ type: 'stage', stage: 'run', status: 'start' }, 175_000);
-    h.eq(line(179_000, 'run'), 'Running the checks · 0:29', 'while the app is checked, the line names the checks rather than a reply');
+    h.eq(at(157_000).line, COPY.makingTimeUsual, 'its turn came 7 s ago: the usual line, although it joined the line 156 s ago');
+    fold({ type: 'token', text: 'const app = 1;' }, 229_000);
+    h.eq(at(230_000).line, COPY.makingTimeLonger, 'and 80 s into its turn it is taking longer than most, not slow');
+    h.eq(at(270_000).line, makingStallLine(STALL_MS / 1000), 'while 41 s with no frame at all is a stall, whatever the time');
   });
 
-  await h.test('the build’s status line: once the checks start, the last seconds of writing or thinking no longer show', () => {
-    const journal = new RunJournalStore(new MapKVBackend());
-    journal.create('run-1');
-    let s: RunSignals = { startedAt: 0, aggregates: EMPTY_RUN_AGGREGATES, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: 0 };
-    const fold = (event: GenerationEvent, at: number) => { s = journalStreamEvent(journal, 'run-1', s, event, at); };
-    const line = (now: number, stage: Stage | null) => buildLivenessLine(livenessOf(s, now), s, now, livenessPhaseOf(stage, undefined));
+  await h.test('the Making page’s steps: the current step’s time starts when the marker reaches it, and a check after a repair keeps the marker on the repair', () => {
+    const { fold, at } = makingRun();
     fold({ type: 'stage', stage: 'generate', status: 'start' }, 10_000);
     fold({ type: 'token', text: 'const app = 1;' }, 20_000);
-    h.ok(line(21_000, 'generate').startsWith('Writing · '), 'while code arrives, the line says it is being written');
+    h.eq(at(21_000).rows.map((row) => [row.state, row.elapsed]), [['done', undefined], ['current', '0:11'], ['waiting', undefined], ['waiting', undefined]], 'writing for 11 s');
     fold({ type: 'stage', stage: 'check', status: 'start' }, 21_500);
-    h.eq(livenessOf(s, 22_000), 'writing', 'precondition: the last token is still inside the writing window');
-    h.eq(line(22_000, 'check'), 'Running the checks · 0:22', 'the check stage names the checks at once, not the writing that just ended');
-    h.eq(line(22_000, 'run'), 'Running the checks · 0:22', 'and so does the run stage');
+    h.eq(at(25_500).rows[2], { key: 'step:2', label: COPY.buildStepChecking, state: 'current', elapsed: '0:04' }, 'the check’s own time, not the run’s');
+    fold({ type: 'stage', stage: 'repair', status: 'start', attempt: 1 }, 30_000);
+    fold({ type: 'stage', stage: 'check', status: 'start' }, 50_000);
+    const rows = at(52_000).rows;
+    h.eq(rows.map((row) => row.state), ['done', 'done', 'done', 'current', 'waiting'], 'the check that came back after the fix does not pull the marker back up');
+    h.eq([rows[3].label, rows[3].elapsed], ['Fixing a problem · try 1 of 3', '0:22'], 'the repair row keeps its own time');
   });
 
   // ── retry ────────────────────────────────────────────────────────────────────────────────────
