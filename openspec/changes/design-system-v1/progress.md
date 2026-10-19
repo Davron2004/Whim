@@ -298,3 +298,18 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   branches already merged into the staging branch: `design-system-v1-chain-16l` (empty, old base), `ios-ui-driver`
   (an untracked earlier draft of the merged driver, no README), `separate-shared-data`, `synthrun-reach`.
 - dispatched: chain-16l, BASE `41981cfc`, worktree `.claude/worktrees/design-system-v1-chain-16l`, branch `chain/design-system-v1-chain-16l`; implementer on opus (effort high), iOS 27 simulator + Whim_Verify on emulator-5560. The USB phone `c2463a92` is attached and is off limits in the brief.
+- report: chain-16l STATUS complete, fast gate PASS, knip clean, commit `00e2a7e5` (16 files, +389/−171). Each finding
+  reproduced on BASE on an iOS 27 simulator first (the toast swipe quit Whim: crash report
+  `Whim-2026-10-19-172621.ips`, SIGABRT from `HermesRuntimeImpl::throwPendingError` under
+  `RNGestureHandlerDetector dispatchReanimatedStateChangeEvent`), then shown fixed. Toast configs worked out on the JS
+  thread as 16j did in Sheet; no other non-worklet call in a gesture callback in `src/host`. `KeyboardShell`'s frame is a
+  plain View (tap-to-dismiss via `keyboardShouldPersistTaps="handled"` + a footer responder View); FirstRunSheet's local
+  workaround removed. Advanced, Report, History rebuild on a live text-size change with state above the rebuild. The
+  line-height room moved into `wrappingType()` in `Text.tsx` and lowered 0.01 → 0.001 pt per line (0.01 shortened single
+  lines by 1 px at three token/size pairs). Class A deviations: `PlanPage.tsx` (plan row uses `wrappingType('body')`),
+  `shell-controls-ui` (system.md line-height check accepts up to 0.01 pt under the token), terms-flow-ui's 16j padding
+  assertion replaced not deleted. Class B not done: the room is not on ContextMenu/Chip labels, TextField helper text or
+  History's legacy text styles. Found: History's legacy text has no 200% cap ("Wat/er Cou/nter" at the largest size).
+- integrity: exit 0 (16 files, all in the declared scope plus the two Class A files). An earlier run without
+  `FIXLOOP_INTEGRATION_BRANCH` measured against `main` and reported every beta-2 harness edit as tamper (exit 3): the
+  orchestrator's invocation error, not the chain's. removal ratchet: PASS, no `authorised:` lines.
