@@ -333,3 +333,8 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   helper/error, ContextMenu heading/labels, Button labels. LOW done: shell-controls check strictly under by < 0.001 pt.
 - integrity: exit 0 (scope widened to Button, TextField, ContextMenu by the orchestrator in revision 1). removal
   ratchet: PASS. Focused re-review of `00e2a7e5..94dd0270` dispatched.
+- re-review of `00e2a7e5..94dd0270`: VERDICT approve. Reran its own models against 0.0006 (0 short boxes; 0.001 fails
+  only the title1 cases); the matrix executes (launcher suite 15912 checks); the new tests fail on revert. LOW, no
+  action: every room value fails past 16384 pt (32-bit float error outgrows it; ~20 screens of scroll content), stated
+  in the comment; Android rounds lines up to whole pixels, nothing regresses there.
+- merged: `9887f859` (--no-ff). regate (fast): PASS. Worktree and branch removed. gate-full on the merged tip next.
