@@ -339,3 +339,4 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   in the comment; Android rounds lines up to whole pixels, nothing regresses there.
 - merged: `9887f859` (--no-ff). regate (fast): PASS. Worktree and branch removed. gate-full on the merged tip next.
 - gate-full on `e7154634` (16l merged): FULL GATE PASSED, synthetic-run 519 checks. Pushed.
+- dispatched: chain-17 (making-progress), BASE `6113c030`, worktree `.claude/worktrees/design-system-v1-chain-17`; implementer on opus (effort high), Whim_Verify on emulator-5560 + one iOS 27 simulator. Brief carries the handoff's chain-17 items (useSystemBack → useSheetBack first, Stopped tile M5, stable run page key, HostedPage) and the 16j/16l lessons (worklet configs on the JS thread, wrappingType). #185 reproduction deferred until no device builds are running.
