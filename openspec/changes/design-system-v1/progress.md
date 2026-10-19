@@ -297,3 +297,4 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
 - planned: chain-16l (the 16j review's leftovers; scope in `visual-fixes.md` Wave 4). Stale worktrees removed, all four
   branches already merged into the staging branch: `design-system-v1-chain-16l` (empty, old base), `ios-ui-driver`
   (an untracked earlier draft of the merged driver, no README), `separate-shared-data`, `synthrun-reach`.
+- dispatched: chain-16l, BASE `41981cfc`, worktree `.claude/worktrees/design-system-v1-chain-16l`, branch `chain/design-system-v1-chain-16l`; implementer on opus (effort high), iOS 27 simulator + Whim_Verify on emulator-5560. The USB phone `c2463a92` is attached and is off limits in the brief.
