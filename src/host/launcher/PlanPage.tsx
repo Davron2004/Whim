@@ -25,10 +25,10 @@ import { Icon } from '../ui/Icon';
 import { Notice } from '../ui/Notice';
 import { useSheetBack } from '../ui/Sheet';
 import { Skeleton, SkeletonBlock } from '../ui/Skeleton';
-import { Text } from '../ui/Text';
+import { Text, wrappingType } from '../ui/Text';
 import { TextArea, TextField } from '../ui/TextField';
 import { useTokens } from '../ui/tokens';
-import { CHIP, makeStyles, PRESS_RETENTION, typeStyle } from '../ui/tokens-pure';
+import { CHIP, makeStyles, PRESS_RETENTION } from '../ui/tokens-pure';
 import WhimProse from '../ui/whim-prose/WhimProse';
 import { TilePlate } from '../ui/AppTile';
 import type { InstalledApp } from './app-index';
@@ -338,7 +338,7 @@ function PlanRowView({ row, editing, onStart, onSave, onCancel }: Readonly<PlanR
             {row.label}
           </Text>
         ) : null}
-        {row.edited ? <Text>{row.text}</Text> : <WhimProse text={row.text} style={{ ...typeStyle('body'), color: t.colors.text }} />}
+        {row.edited ? <Text>{row.text}</Text> : <WhimProse text={row.text} style={{ ...wrappingType('body'), color: t.colors.text }} />}
       </View>
       {row.edited ? (
         <Text type="footnote" color="text-2">

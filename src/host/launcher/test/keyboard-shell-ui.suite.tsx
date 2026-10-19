@@ -52,8 +52,32 @@ const isType = (type: string) => (n: Node) => String(n.type) === type;
 const field = (tree: Tree) => tree.root.find(isType('TextInput'));
 const scrollView = (tree: Tree) => tree.root.find(isType('ScrollView'));
 const doneBars = (tree: Tree) => tree.root.findAll(isType('InputAccessoryView'));
-/** The frame's empty-space target: the one press target screen readers skip. */
-const emptySpace = (tree: Tree) => tree.root.find((n) => String(n.type) === 'Pressable' && n.props.accessible === false);
+/** The footer’s empty space: the view around the pinned footer that takes a touch nothing in the
+ *  footer takes. */
+const emptySpace = (tree: Tree) => tree.root.find((n) => String(n.type) === 'View' && typeof n.props.onResponderRelease === 'function');
+/** A tap that lands on `target` and lifts there, as the responder system delivers it. */
+async function tapOn(target: Node): Promise<void> {
+  await TestRenderer.act(async () => {
+    if (target.props.onStartShouldSetResponder() !== true) throw new Error('the touch was not taken');
+    target.props.onResponderRelease();
+  });
+}
+/** The views around `scroll` that would answer a touch on plain content inside it, which nothing
+ *  inside answers and React Native's responder system hands outward: a touchable that is not
+ *  disabled, or a view whose `onStartShouldSetResponder` says yes. iOS does not scroll while a view
+ *  around the scroll view holds the touch (`RCTScrollViewComponentView` will not take a drag from an
+ *  ancestor that is the JS responder). */
+function answerersAround(scroll: Node): string[] {
+  const found: string[] = [];
+  for (let at = scroll.parent; at; at = at.parent) {
+    const type = hostType(at);
+    if (type === undefined) continue;
+    const touchable = (type === 'Pressable' || type === 'TouchableOpacity') && at.props.disabled !== true;
+    const asks = typeof at.props.onStartShouldSetResponder === 'function' && at.props.onStartShouldSetResponder() === true;
+    if (touchable || asks) found.push(String(type));
+  }
+  return found;
+}
 /** Every frame that pads itself for the keyboard (the one view measured on its page). */
 const frames = (tree: Tree) => tree.root.findAll((n) => String(n.type) === 'View' && n.props.collapsable === false);
 const flat = (node: Node) => StyleSheet.flatten(node.props.style) as Record<string, unknown>;
@@ -201,11 +225,11 @@ async function paddingAcrossKeyboard(tree: Tree, device: Device): Promise<unknow
   return seen;
 }
 
-/** Presses Done, then empty space; returns how many times the keyboard went away. */
+/** Presses Done, then the pinned footer’s empty space; returns how many times the keyboard went away. */
 async function dismissBoth(tree: Tree): Promise<number> {
   const before = Keyboard.dismissed;
   await press(button(tree, COPY.keyboardDone));
-  await press(emptySpace(tree));
+  await tapOn(emptySpace(tree));
   return Keyboard.dismissed - before;
 }
 
@@ -503,7 +527,8 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
       await on(IOS, sheeted(page), async ({ tree }) => {
         const card = sheetCard(tree);
         const chain: Node[] = [];
-        const pageFrame = card.find((n) => String(n.type) === 'Pressable' && n.props.accessible === false);
+        // The page's frame: the view around the box that holds its scroll view and the header fade.
+        const pageFrame = hostParent(hostParent(scrollView(tree))!)!;
         for (let at: Node | null = pageFrame; at && at !== card; at = hostParent(at)) chain.push(at);
         h.ok(chain.length >= 2, `${name}: setup: the page's frame sits inside the card's body`);
         h.ok(chain.every((link) => Number(flat(link).flexGrow) >= 1), `${name}: the frame and the body around it grow to fill the card`);
@@ -656,25 +681,70 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('describe on iOS: Done, empty space and a drag put the keyboard away without continuing', async () => {
+  await h.test('describe on iOS: Done, the footer’s empty space and a drag put the keyboard away without continuing', async () => {
     const s = spies();
     await on(IOS, compose(s.fn('continue'), s.fn('change')), async ({ tree }) => {
       h.eq(field(tree).props.inputAccessoryViewID != null && doneBars(tree).some((bar) => bar.props.nativeID === field(tree).props.inputAccessoryViewID), true, 'the field has a Done bar');
       h.eq(scrollView(tree).props.keyboardDismissMode, 'interactive', 'dragging the content pulls the keyboard down');
       h.eq(scrollView(tree).props.keyboardShouldPersistTaps, 'handled', 'a tap a control handles reaches the control');
-      h.eq(await dismissBoth(tree), 2, 'Done and a tap on empty space each put the keyboard away');
+      h.eq(await dismissBoth(tree), 2, 'Done and a tap on the footer’s empty space each put the keyboard away');
       h.eq([s.count('continue'), s.count('change')], [0, 0], 'without continuing or changing the text');
     });
   });
 
-  await h.test('describe on Android: a drag dismisses, there is no Done bar, and empty space puts the keyboard away', async () => {
+  await h.test('describe on Android: a drag dismisses, there is no Done bar, and the footer’s empty space puts the keyboard away', async () => {
     const s = spies();
     await on(ANDROID_17, compose(s.fn('continue')), async ({ tree }) => {
       h.eq([scrollView(tree).props.keyboardDismissMode, doneBars(tree).length], ['on-drag', 0], 'a drag dismisses; no Done bar');
       const before = Keyboard.dismissed;
-      await press(emptySpace(tree));
-      h.eq([Keyboard.dismissed - before, s.count('continue')], [1, 0], 'a tap on empty space puts the keyboard away, without continuing');
+      await tapOn(emptySpace(tree));
+      h.eq([Keyboard.dismissed - before, s.count('continue')], [1, 0], 'a tap on the footer’s empty space puts the keyboard away, without continuing');
     });
+  });
+
+  await h.test('a drag that starts on plain content can scroll every keyboard frame on iOS, a screen’s or a sheet’s: no view around its scroll view answers the touch', async () => {
+    const surfaces: [string, React.ReactElement][] = [
+      ['Describe', compose()],
+      ['Plan', plan()],
+      ['Advanced', advanced()],
+      ['the report sheet', report()],
+      ['a page in a sheet', sheeted(compose())],
+    ];
+    for (const [name, element] of surfaces) {
+      await on(IOS, element, async ({ tree }) => {
+        await draftLoaded();
+        const scrolls = tree.root.findAll(isType('ScrollView'));
+        h.ok(scrolls.length > 0, `setup: ${name} scrolls`);
+        for (const scroll of scrolls) h.eq(answerersAround(scroll), [], `${name}: a touch nothing in the scroll view takes is left to the scroll view`);
+      });
+    }
+  });
+
+  await h.test('a tap on empty content inside every keyboard frame, a screen’s or a sheet’s, on iOS and Android, is the scroll view’s own to answer: it keeps taps “handled”, so with the keyboard up it takes the tap a control does not and puts the keyboard away, and no view around it takes the tap first', async () => {
+    // React Native's ScrollView does the putting away itself (`keyboardShouldPersistTaps="handled"`:
+    // it answers a touch no child answers while a field is focused and the keyboard is up, and blurs
+    // the field on release); this rig draws a ScrollView as a plain host view, so what is locked here
+    // is the arrangement that behaviour rests on. Seen on an iOS 27 simulator and an Android 17
+    // emulator in Advanced and in the report sheet.
+    const surfaces: [string, React.ReactElement][] = [
+      ['Describe', compose()],
+      ['Plan', plan()],
+      ['Advanced', advanced()],
+      ['the report sheet', report()],
+      ['a page in a sheet', sheeted(compose())],
+    ];
+    for (const device of [IOS, ANDROID_17]) {
+      for (const [name, element] of surfaces) {
+        await on(device, element, async ({ tree }) => {
+          await draftLoaded();
+          const scrolls = tree.root.findAll(isType('ScrollView'));
+          h.ok(scrolls.length > 0, `setup: ${device.name} ${name} scrolls`);
+          for (const scroll of scrolls) {
+            h.eq([scroll.props.keyboardShouldPersistTaps, answerersAround(scroll)], ['handled', []], `${device.name} ${name}: the scroll view keeps taps “handled”, with nothing around it to take them`);
+          }
+        });
+      }
+    }
   });
 
   await h.test('plan: editing the 4th row focuses it once mounted, and keeps the whole row (field, Save, Cancel) in view above Make it as the keyboard arrives and as the row grows', async () => {
@@ -703,7 +773,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
     await on(IOS, plan(s.fn('row'), s.fn('build')), async ({ tree }) => {
       await press(tree.root.find((n) => String(n.type) === 'Pressable' && n.props.accessibilityRole === 'button' && textOf(n).includes('A big dial')));
-      h.eq(await dismissBoth(tree), 2, 'Done and empty space put the keyboard away');
+      h.eq(await dismissBoth(tree), 2, 'Done and the footer’s empty space put the keyboard away');
       h.eq(field(tree).props.value, 'A big dial', 'leaving the row open');
       h.eq([s.count('row'), s.count('build')], [0, 0], 'saving and building nothing');
     });
@@ -820,7 +890,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
     await on(IOS, report(s.fn('close')), async ({ tree }) => {
       await draftLoaded();
-      h.eq(await dismissBoth(tree), 2, 'Done and empty space put the keyboard away');
+      h.eq(await dismissBoth(tree), 2, 'Done and the footer’s empty space put the keyboard away');
       h.eq(s.count('close'), 0, 'without closing the sheet');
     });
   });

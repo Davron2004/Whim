@@ -371,12 +371,10 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
     try {
       const scroll = () => tree.root.find((n) => hostType(n) === 'ScrollView');
       const strays = () => strayTouches(scroll());
-      /** The scroll view's own padding: a touch there lands on the scroll view itself. */
-      const ownPadding = () => Object.entries(StyleSheet.flatten(scroll().props.contentContainerStyle) as Record<string, unknown>).filter(([key, value]) => key.startsWith('padding') && value !== 0);
       const notNow = () => button(tree, LEGAL_COPY.fr.consentDecline);
       h.ok(within(button(tree, LEGAL_COPY.fr.firstRunTermsCheck), scroll()) && scroll().findAll((n) => hostType(n) === 'Text').length > 5, 'setup: the sheet’s words and its terms row are in the scroll view');
       h.eq(strays(), [], 'a touch on any view in the scroll view — a word, a row that does nothing, the space between groups — is answered inside it');
-      h.eq(ownPadding(), [], 'and the scroll view keeps no padding of its own around them, so the gutters are part of the content too');
+      h.ok(touchAnswerer(scroll()) === null, 'and a touch on the gutters, the scroll view’s own padding, is answered by no view around it');
       h.ok(!within(notNow(), scroll()), 'setup: the footer starts pinned under the scroll view');
       let measured: TestRenderer.ReactTestInstance | null = notNow();
       while (measured && !(hostType(measured) === 'View' && typeof measured.props.onLayout === 'function')) measured = measured.parent;

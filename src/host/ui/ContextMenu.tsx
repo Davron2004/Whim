@@ -31,8 +31,9 @@ import { COPY } from '../launcher/copy';
 import { Icon } from './Icon';
 import { timing } from './motion';
 import { OverlayModal, useOverlayTurn } from './OverlayModal';
+import { wrappingType } from './Text';
 import { useTokens } from './tokens';
-import { makeStyles, MAX_FONT_SCALE, springConfig, typeStyle } from './tokens-pure';
+import { makeStyles, MAX_FONT_SCALE, springConfig } from './tokens-pure';
 
 export interface MenuRow {
   /** Stable identity among its siblings. */
@@ -113,7 +114,7 @@ const styles = makeStyles((t) => ({
     overflow: 'hidden' as const,
   },
   heading: {
-    ...typeStyle('footnote', true),
+    ...wrappingType('footnote', true),
     color: t.colors['text-2'],
     paddingHorizontal: SPACE[4],
     paddingTop: SPACE[2],
@@ -127,7 +128,7 @@ const styles = makeStyles((t) => ({
     paddingHorizontal: SPACE[4],
     paddingVertical: SPACE[2],
   },
-  label: { ...typeStyle('body'), flexShrink: 1 },
+  label: { ...wrappingType('body'), flexShrink: 1 },
   separator: { height: StyleSheet.hairlineWidth, backgroundColor: t.colors.separator, marginVertical: SPACE[1] },
   // Laid out unseen until its size places it.
   unplaced: { left: 0, top: 0, opacity: 0 },

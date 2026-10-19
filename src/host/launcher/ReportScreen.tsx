@@ -174,6 +174,8 @@ function ReportForm({
   const [loadFailed, setLoadFailed] = useState(false);
   const [phase, setPhase] = useState<ReportPhase>('draft');
   const [notice, setNotice] = useState<ReportNotice | null>(null);
+  // Held here, above the form that is built again on a text-size change, so an open preview stays open.
+  const [preview, setPreview] = useState<PreviewState>(PREVIEW_CLOSED);
   // The note and the include switch under it: the block kept in view while the note is focused,
   // so the pinned Send never cuts the switch in half.
   const noteBlock = useRef<View>(null);
@@ -216,20 +218,25 @@ function ReportForm({
     else settle(result.outcome);
   };
 
+  // Each view below is keyed by the text size, as a sheet's frame is: iOS keeps every text measured at
+  // the size it was first laid out at, so a size changed while the report shows left its words cut in
+  // half. The draft, the phase and the preview are state above them and survive; the scroll position
+  // and the note's focus start again.
   if (loadFailed) {
     return (
-      <View style={s.done}>
+      <View key={t.fontScale} style={s.done}>
         <Notice message={COPY.reportDraftLoadFailed} tone="danger" />
         <Button label={COPY.reportDraftClose} variant="ink" onPress={onLeave} />
       </View>
     );
   }
   if (draft === null) return null;
-  if (phase === 'thanks') return <ReportThanks ownServer={ownServer} inSheet={host === 'sheet'} onDone={onLeave} />;
+  if (phase === 'thanks') return <ReportThanks key={t.fontScale} ownServer={ownServer} inSheet={host === 'sheet'} onDone={onLeave} />;
 
   const sendDisabled = computeSendDisabled(request, phase, gated);
   return (
     <KeyboardShell
+      key={t.fontScale}
       host={host}
       style={host === 'screen' ? s.bg : undefined}
       contentContainerStyle={[s.content, host === 'sheet' && s.sheetContent]}
@@ -289,7 +296,7 @@ function ReportForm({
         </Text>
       )}
 
-      {request && <ReportPreview request={request} />}
+      {request && <ReportPreview request={request} state={preview} onChange={setPreview} />}
 
       <Text type="footnote" color="text-2">
         {reportRecipientLine(ownServer)}
@@ -325,20 +332,27 @@ function ReportThanks({ ownServer, inSheet, onDone }: Readonly<{ ownServer?: str
   );
 }
 
+/** Whether "What gets sent" is open, and which of its long rows are expanded. */
+interface PreviewState {
+  open: boolean;
+  prompt: boolean;
+  source: boolean;
+}
+
+const PREVIEW_CLOSED: PreviewState = { open: false, prompt: false, source: false };
+
 /** "What gets sent", collapsed until asked: the rows of the exact body Send posts. */
-function ReportPreview({ request }: Readonly<{ request: ReportRequest }>) {
+function ReportPreview({ request, state, onChange }: Readonly<{ request: ReportRequest; state: PreviewState; onChange: (next: (was: PreviewState) => PreviewState) => void }>) {
   const t = useTokens();
   const s = styles(t);
-  const [open, setOpen] = useState(false);
-  const [promptExpanded, setPromptExpanded] = useState(false);
-  const [sourceExpanded, setSourceExpanded] = useState(false);
+  const { open } = state;
   return (
     <>
       <GroupedSection>
         <GroupedRow
           title={COPY.reportPreviewTitle}
           trailing={{ kind: 'chevron' }}
-          onPress={() => setOpen((was) => !was)}
+          onPress={() => onChange((was) => ({ ...was, open: !was.open }))}
           accessibilityHint={open ? COPY.reportShowLess : COPY.reportShowMore}
         />
       </GroupedSection>
@@ -352,7 +366,7 @@ function ReportPreview({ request }: Readonly<{ request: ReportRequest }>) {
               // value itself is only what is transmitted, never what the user reads.
               value={row.field === 'reason' ? REASON_LABEL[row.value as ReportReason] : row.value}
               collapsedToSize={row.field === 'source'}
-              expandable={expandableRow(row.field, promptExpanded, sourceExpanded, setPromptExpanded, setSourceExpanded)}
+              expandable={expandableRow(row.field, state, onChange)}
             />
           ))}
         </View>
@@ -364,13 +378,11 @@ function ReportPreview({ request }: Readonly<{ request: ReportRequest }>) {
 /** Only the `prompt` and `source` preview rows expand (design D14), each on its own. */
 function expandableRow(
   field: ReportPreviewRow['field'],
-  promptExpanded: boolean,
-  sourceExpanded: boolean,
-  setPromptExpanded: (fn: (e: boolean) => boolean) => void,
-  setSourceExpanded: (fn: (e: boolean) => boolean) => void,
+  state: PreviewState,
+  onChange: (next: (was: PreviewState) => PreviewState) => void,
 ): { expanded: boolean; onToggle: () => void } | undefined {
-  if (field === 'prompt') return { expanded: promptExpanded, onToggle: () => setPromptExpanded((e) => !e) };
-  if (field === 'source') return { expanded: sourceExpanded, onToggle: () => setSourceExpanded((e) => !e) };
+  if (field === 'prompt') return { expanded: state.prompt, onToggle: () => onChange((was) => ({ ...was, prompt: !was.prompt })) };
+  if (field === 'source') return { expanded: state.source, onToggle: () => onChange((was) => ({ ...was, source: !was.source })) };
   return undefined;
 }
 
