@@ -13,10 +13,10 @@ import LauncherRoot from '../LauncherRoot';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { JOURNAL_KEY, LAST_RUN_KEY, RunJournalStore } from '../run-journal';
 import { GENERIC_STREAM_ERROR } from '../error-reason';
-import type { InstalledApp } from '../app-index';
+import { AppIndex, type InstalledApp } from '../app-index';
 import { StoreAccess } from '../store-access';
 import { PendingPurgeStore } from '../pending-purge';
-import { renderRoot } from './home-rig';
+import { renderRoot, toastOf } from './home-rig';
 import { revokeConsent } from '../ai-consent';
 import { openLink } from './native-host';
 import { failNativeStorageRemovalsWhen, failNativeStorageWritesWhen } from './native-storage';
@@ -977,6 +977,65 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
         h.eq(new PendingBuildStore(kv).get(id)?.state, 'building', 'the superseded delivery does not delete the newer pending record');
         h.eq(kv.getString(JOURNAL_KEY(id)), '[]', 'the superseded delivery leaves the newer journal untouched');
         await TestRenderer.act(async () => homeActions.onCancelPending(new PendingBuildStore(kv).get(id)!));
+      });
+    } finally {
+      delayed.restore();
+    }
+  });
+
+  await h.test('stop: once delivery started, Stop on the Making page is gone and a tap already on its way changes nothing', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    const delayed = delayInstalls();
+    try {
+      await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+        await startBuild(tree, 'A tea timer');
+        const id = new PendingBuildStore(kv).list()[0]!.id;
+        const stop = tree.root.findByType(MakingPage).props.onStop;
+        streams[0].push(resultEvent('Tea Timer'));
+        streams[0].end();
+        await waitFor(delayed.started, 'the delivery to reach the real install boundary');
+        await waitFor(() => tree.root.findByType(MakingPage).props.delivering === true, 'the Making page to show the delivery');
+        const stopShown = tree.root.findAll((node) => node.props.accessibilityLabel === COPY.actionStop && typeof node.props.onPress === 'function');
+        h.eq(stopShown.length, 0, 'putting it on the home screen offers no Stop');
+
+        // A tap that left the finger in the frame before the page re-rendered still reaches the handler.
+        await TestRenderer.act(async () => stop());
+        delayed.release();
+        await waitFor(delayed.finished, 'the delivery to return from the real install boundary');
+        await settle();
+        h.eq(new AppIndex(kv).list().map((app) => [app.id, app.name]), [[id, 'Tea Timer']], 'exactly one app is installed, under the attempt id');
+        h.eq(new PendingBuildStore(kv).get(id), null, 'no pending or stopped record shares its id');
+        h.eq(ghosts(tree).length, 0, 'Home shows no stopped tile beside it');
+        h.ok(new RunJournalStore(kv).getLastRun(id) != null && kv.getString(JOURNAL_KEY(id)) == null, 'the journal became the app’s last-run report');
+        h.ok(on(tree, ReadyPage), 'the delivery lands on Ready, as if Stop had never been tapped');
+      });
+    } finally {
+      delayed.restore();
+    }
+  });
+
+  await h.test('stop: a tile’s Stop during delivery, after closing the sheet mid-delivery, changes nothing', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    const delayed = delayInstalls();
+    try {
+      await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+        await startBuild(tree, 'A tea timer');
+        const id = new PendingBuildStore(kv).list()[0]!.id;
+        streams[0].push(resultEvent('Tea Timer'));
+        streams[0].end();
+        await waitFor(delayed.started, 'the delivery to reach the real install boundary');
+        await leaveRunning(tree);
+        const tile = ghosts(tree).find((ghost) => ghost.id === id)!;
+        h.eq(tile.state, 'building', 'the tile is still being made while the install runs');
+        await TestRenderer.act(async () => home(tree).props.onCancelPending(tile));
+        delayed.release();
+        await waitFor(delayed.finished, 'the delivery to return from the real install boundary');
+        await settle();
+        h.eq(new AppIndex(kv).list().map((app) => [app.id, app.name]), [[id, 'Tea Timer']], 'exactly one app is installed, under the attempt id');
+        h.eq(new PendingBuildStore(kv).get(id), null, 'no pending or stopped record shares its id');
+        h.eq(ghosts(tree).length, 0, 'Home shows no stopped tile beside it');
+        h.ok(new RunJournalStore(kv).getLastRun(id) != null && kv.getString(JOURNAL_KEY(id)) == null, 'the journal became the app’s last-run report');
+        h.eq(toastOf(tree), { message: 'Tea Timer is ready', action: COPY.actionOpen }, 'Home says it is ready, as for any delivery with the sheet closed');
       });
     } finally {
       delayed.restore();

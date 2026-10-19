@@ -1811,8 +1811,13 @@ function LauncherShell({
    *  and leave a stopped tile"): the request is aborted at once and the attempt stays on Home as a
    *  stopped tile, with its journal, to try again or discard. A change has no tile of its own: its
    *  app simply stays as it was, so a stopped change leaves nothing behind. Never reached from back
-   *  or from closing the sheet, which leave the run going. */
-  const stopLiveAttempt = (live: LiveAttempt) => {
+   *  or from closing the sheet, which leave the run going.
+   *
+   *  Delivery wins: once the stream has ended with a result and the install is under way, Stop does
+   *  nothing (returns false). Stopping then would leave the installed app AND a stopped record under
+   *  the same id, and a Try again on that record would write into the delivered app. */
+  const stopLiveAttempt = (live: LiveAttempt): boolean => {
+    if (live.screen.delivering) return false;
     live.ctl.cancelled = true;
     live.ctl.controller.abort();
     releaseGenRef(live.ctl);
@@ -1830,6 +1835,7 @@ function LauncherShell({
       }
     }
     refresh();
+    return true;
   };
 
   /** The ONE settlement for a generation that ended without a deliverable result — a terminal
@@ -2514,20 +2520,30 @@ function LauncherShell({
     await runAttempt(makingStep(from), undefined, from);
   };
 
+  /** The Making page is left with its run going: the run stops taking over the screen. The page's
+   *  own run is detached as well as `genRef`'s, since once its stream ended it is no longer
+   *  `genRef`'s, and a delivery still under way must then say it is ready on Home rather than land
+   *  on a page that is gone. */
+  const detachSelectedRun = () => {
+    for (const ctl of [genRef.current, liveRef.current?.ctl]) {
+      if (ctl) ctl.detached = true;
+    }
+  };
+
   /** Closing the sheet on Making: back to the shell WITHOUT cancelling — the run finishes and its
    *  result is still delivered, it just no longer takes over the screen. Its record stays `building`, so
    *  the grid keeps showing the ghost for as long as the stream is in flight. */
   const onLeaveRunning = () => {
-    const ctl = genRef.current;
-    if (ctl) ctl.detached = true;
+    detachSelectedRun();
     goHome();
   };
 
   /** Stop on the Making page, in line or making: the run ends at once, its stopped tile stays on
-   *  Home, and the sheet closes onto it. */
+   *  Home, and the sheet closes onto it. Once delivery started the page shows no Stop, and a tap
+   *  that still arrives leaves the page as it is, so the delivery lands on Ready. */
   const onStopMaking = () => {
     const live = liveRef.current;
-    if (live) stopLiveAttempt(live);
+    if (live && !stopLiveAttempt(live)) return;
     goHome();
   };
 
@@ -2600,8 +2616,9 @@ function LauncherShell({
     setScreen(live.screen);
   };
 
-  /** Stop from a tile being made: `stopLiveAttempt`, without taking the person off the grid. A
-   *  `building` record with no run left in this process has nothing to stop and is dropped. */
+  /** Stop from a tile being made: `stopLiveAttempt`, without taking the person off the grid (and
+   *  nothing at all once its delivery started). A `building` record with no run left in this
+   *  process has nothing to stop and is dropped. */
   const onCancelPending = (rec: PendingBuildRecord) => {
     const current = pending.readCurrent(rec.id)?.record ?? rec;
     const live = liveAttemptsRef.get(current.id);
@@ -2662,10 +2679,7 @@ function LauncherShell({
   const leaveForLink = (exit: LinkExit) => {
     keepDraft(screen);
     aboutRef.current = null;
-    if (exit === 'leave-build') {
-      const ctl = genRef.current;
-      if (ctl) ctl.detached = true;
-    }
+    if (exit === 'leave-build') detachSelectedRun();
   };
 
   /** The one entry point every arriving app link resolves through (design D15): a link to the

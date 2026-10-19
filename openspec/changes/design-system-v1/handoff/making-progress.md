@@ -89,6 +89,9 @@ PendingBuildStore.stop(id: string): void           // building → interrupted, 
 ```
 Stop (Making page `onStopMaking`, tile menu `onCancelPending`) aborts at once; a new app keeps its record (stopped tile,
 journal kept) and lands on Home; a change (`editingAppId`) is dropped, its app untouched.
+Delivery wins: once `delivering` (stream ended with a result, install under way) the Making page renders no Stop and
+`stopLiveAttempt(live): boolean` returns false without touching anything (tile menu Stop included; it stays in the menu).
+Closing the sheet (or an app link) detaches the page's own run (`detachSelectedRun`), so a delivery under way toasts.
 
 ## Delivery and the toast
 

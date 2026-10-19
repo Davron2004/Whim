@@ -5,7 +5,7 @@
  * The 128 pt ember with its ambient light behind the header, following this run's stream; "Making
  * <name>" (or "Changing <name>"); the person's words; one line (the place in line, the stall, or the
  * time line); the four steps with the elapsed time on the current one and, after a repair, the
- * "Fixing a problem" row the marker moves down to; and Stop. Nothing here shows a token's text, a
+ * "Fixing a problem" row the marker moves down to; and Stop, until delivery starts. Nothing here shows a token's text, a
  * diagnostic, the transport or an output counter: the page reads only the run's own page state and
  * signals, through `making-progress.ts`. Leaving is the sheet's close (and Android back, which the
  * sheet delivers as its close); neither stops the run, so the page registers nothing with the sheet.
@@ -46,7 +46,8 @@ export interface MakingPageProps {
   now: number;
   /** This run's sampled stream activity, 0–1. */
   activity: number;
-  /** Ends the run at once; it stays on Home as a stopped tile. */
+  /** Ends the run at once; it stays on Home as a stopped tile. Not offered once `delivering`:
+   *  the stream has ended and the app is being put on the home screen, so delivery wins. */
   onStop: () => void;
 }
 
@@ -136,9 +137,11 @@ export default function MakingPage({
       host="sheet"
       contentContainerStyle={s.content}
       footer={
-        <View style={s.footer}>
-          <Button label={COPY.actionStop} variant="plain" onPress={onStop} />
-        </View>
+        delivering ? undefined : (
+          <View style={s.footer}>
+            <Button label={COPY.actionStop} variant="plain" onPress={onStop} />
+          </View>
+        )
       }
     >
       <View style={s.header}>
