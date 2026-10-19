@@ -338,3 +338,4 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   action: every room value fails past 16384 pt (32-bit float error outgrows it; ~20 screens of scroll content), stated
   in the comment; Android rounds lines up to whole pixels, nothing regresses there.
 - merged: `9887f859` (--no-ff). regate (fast): PASS. Worktree and branch removed. gate-full on the merged tip next.
+- gate-full on `e7154634` (16l merged): FULL GATE PASSED, synthetic-run 519 checks. Pushed.
