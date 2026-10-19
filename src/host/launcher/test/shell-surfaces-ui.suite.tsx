@@ -50,12 +50,13 @@ import { ContextMenu, placeMenu, MENU, type MenuAnchor, type MenuRow } from '../
 import { ToastHost, useToast, TOAST, type ToastApi } from '../../ui/Toast';
 import { TextArea, TextField } from '../../ui/TextField';
 import { GroupedRow, GroupedSection } from '../../ui/GroupedList';
+import { Text } from '../../ui/Text';
 import { Icon } from '../../ui/Icon';
 import SheetModal from '../SheetModal';
 import { gridLayout, TILE, TILE_SIDE } from '../../ui/AppTile-geometry';
 import KeyboardShell from '../KeyboardShell';
 import { COPY } from '../copy';
-import { COLORS, LAYOUT, SPRINGS, TIMINGS, TYPE_SCALE } from '../../../design/tokens';
+import { COLORS, LAYOUT, SPRINGS, TIMINGS, TYPE_SCALE, type TypeToken } from '../../../design/tokens';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -177,6 +178,12 @@ function textBox(lineHeight: number, lines: number, fontScale: number, topPixels
   const bottomPixels = topPixels + Math.ceil(needed * PIXELS - 1e-9);
   return { box: Math.fround(Math.fround(bottomPixels / PIXELS) - Math.fround(topPixels / PIXELS)), lines: needed };
 }
+/** The text-size multipliers iOS gives React Native (`RCTFontSizeMultiplier`), from Extra Small up to
+ *  200%, where `MAX_FONT_SCALE` stops every larger one. */
+const IOS_TEXT_SIZES = [0.823, 0.882, 0.941, 1, 1.118, 1.235, 1.353, 1.786, 2];
+/** How many device pixels a single line set at `lineHeight` takes: React Native rounds a text's
+ *  measured height up to a whole pixel. */
+const pixelsOfOneLine = (lineHeight: number, fontScale: number) => Math.ceil(lineHeight * fontScale * PIXELS - 1e-9);
 /** Every place a text set at `lineHeight` would get a box shorter than its lines: two to eight lines,
  *  lying across each power of two a sheet's content reaches, its top on a whole point and on each
  *  third of one. */
@@ -1332,6 +1339,33 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     await act(() => floating.unmount());
   });
 
+  await h.test('Toast: releasing a swipe reaches for no motion token — the release runs on the UI thread, where the helpers that read them cannot be called and a call ends the app', async () => {
+    const cases: [string, boolean, number[], number, boolean][] = [
+      ['a nudge', false, [12, 16], 0, false],
+      ['a swipe down', false, [12, 40, 60], 600, true],
+      ['under Reduce Motion, a nudge', true, [12, 16], 0, false],
+      ['under Reduce Motion, a swipe down', true, [12, 40, 60], 600, true],
+    ];
+    for (const [name, reduceMotion, moves, velocity, goes] of cases) {
+      await resetPhone();
+      accessibilitySettings.reduceMotion = reduceMotion;
+      let api!: ToastApi;
+      const Grab = () => { api = useToast(); return null; };
+      const tree = await render(<ToastHost><Grab /></ToastHost>);
+      await settle();
+      await act(() => api.show({ message: 'Copied' }));
+      const shown = () => tree.root.findAll((n) => hostType(n) === 'Animated.View' && n.props.accessibilityLiveRegion === 'polite').length;
+      let thrown: unknown = null;
+      await act(() => {
+        const restore = [hideTokens(SPRINGS), hideTokens(TIMINGS)];
+        try { pan(dragOf(tree), moves, velocity); } catch (e) { thrown = e; } finally { for (const put of restore) put(); }
+      });
+      h.ok(thrown === null, `${name}: the release ran to its end (${thrown === null ? 'yes' : String(thrown)})`);
+      h.eq(shown(), goes ? 0 : 1, `${name}: the toast ${goes ? 'went' : 'stayed'}`);
+    }
+    await resetPhone();
+  });
+
   await h.test('Toast: its action reaches the platform’s touch target — 44 on iOS, 48 on Android — through its hit slop, whatever the words measure', async () => {
     try {
       for (const os of ['ios', 'android'] as const) {
@@ -1493,6 +1527,40 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
       for (const text of texts) short.push(...shortTextBoxes(textOf(text), flat(text).lineHeight as number, scale));
     }
     h.eq(short, [], 'at 100% and 200% text, across every power of two a sheet reaches, at whole points and thirds of a point');
+    await resetPhone();
+  });
+
+  await h.test('wrapping text has room for its last line wherever it wraps — Text at every size, a toast’s words, a sheet’s title — and a line of it alone is exactly the token’s height at every iOS text size', async () => {
+    const tokens = Object.keys(TYPE_SCALE) as TypeToken[];
+    const short: string[] = [];
+    for (const scale of [1, 2]) {
+      await resetPhone();
+      windowMetrics.fontScale = scale;
+      let api!: ToastApi;
+      const Grab = () => { api = useToast(); return null; };
+      const tree = await render(
+        <ToastHost>
+          <Grab />
+          {tokens.map((token) => <Text key={token} type={token}>{`Ce que nous ne faisons jamais (${token})`}</Text>)}
+        </ToastHost>,
+      );
+      await act(() => api.show({ message: 'Phone ID copied' }));
+      const sheet = await render(<Sheet visible title="Report this app" onClose={() => {}}><Body /></Sheet>);
+      const texts = [...all(tree, 'Text'), ...all(sheet, 'Text').filter((n) => textOf(n) === 'Report this app')];
+      h.ok(texts.length >= tokens.length + 2, 'setup: every size, the toast’s words and the sheet’s title are drawn');
+      for (const text of texts) short.push(...shortTextBoxes(textOf(text), flat(text).lineHeight as number, scale));
+    }
+    h.eq(short, [], 'at 100% and 200% text, across every power of two a screen reaches, at whole points and thirds of a point');
+    await resetPhone();
+    const changed: string[] = [];
+    for (const token of tokens) {
+      const tree = await render(<Text type={token}>One line</Text>);
+      const set = flat(all(tree, 'Text')[0]).lineHeight as number;
+      for (const scale of IOS_TEXT_SIZES) {
+        if (pixelsOfOneLine(set, scale) !== pixelsOfOneLine(TYPE_SCALE[token].lineHeight, scale)) changed.push(`${token} at ${scale * 100}%`);
+      }
+    }
+    h.eq(changed, [], 'one line is as many pixels tall as the token’s own line height, at every iOS text size');
     await resetPhone();
   });
 

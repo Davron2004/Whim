@@ -18,7 +18,7 @@ import type { StoreAccess } from '../store-access';
 import { reportClientOptions } from '../transport-shared';
 import { testAppInfo } from './client-fixtures';
 import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen } from './react-screen';
-import { Linking } from './native-host';
+import { Linking, windowMetrics } from './native-host';
 import { log } from '../../logging';
 
 const noop = () => {};
@@ -174,6 +174,61 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
       await press(button(tree, COPY.settingsServerOwn));
       h.eq([chosen, tree.root.findAll(node => String(node.type) === 'Modal').length], [['own'], 0], 'acknowledged, the row just chooses your own server');
     } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('Advanced: a text size changed while it shows builds its rows and field again, and Advanced keeps what it holds — the address being typed and the question it is asking', async () => {
+    const clock = captureTimeouts();
+    const tree = await renderScreen(advanced());
+    const rowTitle = () => tree.root.find(node => String(node.type) === 'Text' && textOf(node) === COPY.settingsErrorDetailsTitle);
+    const asking = () => tree.root.findAll(node => String(node.type) === 'Modal').length === 1;
+    try {
+      await type(tree, 'https://typed.example');
+      await press(button(tree, COPY.settingsDeviceIdReset));
+      h.ok(asking(), 'setup: Advanced is asking whether to make a new phone ID');
+      const built = { row: rowTitle(), field: addressField(tree) };
+      await TestRenderer.act(async () => tree.update(advanced()));
+      h.ok(rowTitle() === built.row && addressField(tree) === built.field, 'setup: a render at the same text size keeps what is drawn');
+      windowMetrics.fontScale = 2;
+      await TestRenderer.act(async () => tree.update(advanced()));
+      h.ok(rowTitle() !== built.row && addressField(tree) !== built.field, 'the size changed: the rows and the field are built again, so iOS measures every text at the new size');
+      h.eq(addressField(tree).props.value, 'https://typed.example', 'the address being typed is still in the field');
+      h.ok(asking(), 'and the question is still open');
+      const rebuilt = rowTitle();
+      await TestRenderer.act(async () => tree.update(advanced()));
+      h.ok(rowTitle() === rebuilt, 'built again once per size, not on every render');
+    } finally {
+      windowMetrics.fontScale = 1;
+      await unmountScreen(tree);
+      clock.restore();
+    }
+  });
+
+  await h.test('Report: a text size changed while it shows builds the form again, and the report keeps what it holds — the reason, the note and the open preview', async () => {
+    const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
+    const access = { activeDescription: async () => 'A tea timer', activeSource: async () => 'export default {}' } as unknown as StoreAccess;
+    const options = reportClientOptions({ kind: 'absent' } as const, 'https://server.test', 'device', testAppInfo);
+    const screen = () => <ReportScreen app={app} access={access} options={options} onLeave={noop} onUpdateRequired={noop} legalLanguage="en" />;
+    const tree = await renderScreen(screen());
+    const eyebrow = () => tree.root.find(node => String(node.type) === 'Text' && textOf(node) === COPY.reportReasonEyebrow);
+    const note = () => tree.root.find(node => String(node.type) === 'TextInput');
+    try {
+      await TestRenderer.act(async () => { await new Promise(resolve => setImmediate(resolve)); });
+      await press(button(tree, COPY.reportReasonBroken));
+      await TestRenderer.act(async () => note().props.onChangeText('It stops at zero'));
+      await press(button(tree, COPY.reportPreviewTitle));
+      h.ok(textOf(tree.root).includes(COPY.reportFieldSource), 'setup: the preview of what gets sent is open');
+      const built = { words: eyebrow(), note: note() };
+      await TestRenderer.act(async () => tree.update(screen()));
+      h.ok(eyebrow() === built.words && note() === built.note, 'setup: a render at the same text size keeps what is drawn');
+      windowMetrics.fontScale = 2;
+      await TestRenderer.act(async () => tree.update(screen()));
+      h.ok(eyebrow() !== built.words && note() !== built.note, 'the size changed: the form is built again, so iOS measures every text at the new size');
+      h.eq([note().props.value, button(tree, COPY.reportSend).props.disabled], ['It stops at zero', false], 'the note is still written and the reason still chosen, so Send is still ready');
+      h.ok(textOf(tree.root).includes(COPY.reportFieldSource), 'and the preview is still open');
+    } finally {
+      windowMetrics.fontScale = 1;
+      await unmountScreen(tree);
+    }
   });
 
   await h.test('addressCheck: the session’s result only for the address in the field as it was saved; none for another or a refused one', () => {

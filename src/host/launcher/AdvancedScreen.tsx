@@ -149,7 +149,11 @@ export default function AdvancedScreen({
   const own = serverChoice === 'own';
   return (
     <>
-      <KeyboardShell style={s.root} contentContainerStyle={s.content}>
+      {/* Keyed by the text size, as a sheet's frame is: iOS keeps every text measured at the size it
+          was first laid out at, so a size changed while Advanced shows left rows at their old height
+          with the words cut in half. What Advanced holds (the address being typed, an open question)
+          is state above this and survives; the scroll position and the field's focus start again. */}
+      <KeyboardShell key={t.fontScale} style={s.root} contentContainerStyle={s.content}>
         <GroupedSection footer={COPY.settingsErrorDetailsHint}>
           <GroupedRow title={COPY.settingsErrorDetailsTitle} trailing={{ kind: 'switch', value: errorDetails, onValueChange: onErrorDetailsChange }} />
         </GroupedSection>

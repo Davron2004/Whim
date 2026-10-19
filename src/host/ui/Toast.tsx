@@ -26,6 +26,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { RADII, SPACE, TYPE_SCALE } from '../../design/tokens';
 import { COPY } from '../launcher/copy';
 import { timing } from './motion';
+import { wrappingType } from './Text';
 import { DRAG_SLOP, dragPosition, releaseCommits } from './Sheet';
 import { useTokens } from './tokens';
 import { hitSlopFor, makeStyles, MAX_FONT_SCALE, springConfig, typeStyle } from './tokens-pure';
@@ -161,9 +162,16 @@ const styles = makeStyles((t) => ({
     borderTopWidth: 1,
     borderColor: t.topHighlight,
   },
-  message: { ...typeStyle('callout'), color: t.colors.text, flexShrink: 1 },
+  message: { ...wrappingType('callout'), color: t.colors.text, flexShrink: 1 },
   action: { ...typeStyle('headline') },
 }));
+
+// What a released swipe animates with, worked out here on the JS thread. The release runs on the UI
+// thread, where `springConfig` and `timing` cannot be called: they are not worklets, a call to one
+// from a worklet throws, and that throw ends the app (every swipe of a toast did, on release).
+const FLING = springConfig('fling');
+const FADE_OUT = timing('fadeOut', true);
+const FADE_IN = timing('fadeIn', true);
 
 interface ToastViewProps {
   shown: Shown;
@@ -255,12 +263,12 @@ function ToastView({ shown, bottomOffset, onEnd, onGone }: Readonly<ToastViewPro
           'worklet';
           if (finished) scheduleOnRN(onGone, id);
         };
-        if (t.reduceMotion) fade.value = withTiming(0, timing('fadeOut', true), done);
-        else y.value = withSpring(gone, { ...springConfig('fling'), velocity: e.velocityY }, done);
+        if (t.reduceMotion) fade.value = withTiming(0, FADE_OUT, done);
+        else y.value = withSpring(gone, { ...FLING, velocity: e.velocityY }, done);
       } else if (t.reduceMotion) {
-        y.value = withTiming(0, timing('fadeIn', true));
+        y.value = withTiming(0, FADE_IN);
       } else {
-        y.value = withSpring(0, { ...springConfig('fling'), velocity: e.velocityY });
+        y.value = withSpring(0, { ...FLING, velocity: e.velocityY });
       }
     },
   });

@@ -24,7 +24,6 @@ import {
   InputAccessoryView,
   Keyboard,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -105,6 +104,7 @@ const KeyboardShellContext = createContext<RevealRegistry | null>(null);
 export const OverlayShownContext = createContext(true);
 
 const dismissKeyboard = () => Keyboard.dismiss();
+const takesTouch = () => true;
 
 /** The iOS keyboard toolbar's height — no SPACING counterpart. */
 const DONE_BAR_HEIGHT = 44;
@@ -458,15 +458,15 @@ export default function KeyboardShell({
       {joinsScroll ? footerView : null}
     </ScrollView>
   );
+  // No view around the scroll view answers a touch: iOS does not scroll while a view around the
+  // scroll view holds the touch (`RCTScrollViewComponentView` will not take a drag from an ancestor
+  // that is the JS responder), so a drag that started on plain content moved nothing. Inside the
+  // scroll view, a tap on empty space with the keyboard up is the scroll view's own
+  // (`keyboardShouldPersistTaps="handled"` blurs the field); only the pinned footer, outside it, takes
+  // a touch on its own empty space, and its actions, deeper, take theirs first.
   const frame = (
     <KeyboardShellContext.Provider value={registry}>
-      <Pressable
-        style={inSheet ? [styles.grow, style] : styles.fill}
-        onPress={dismissKeyboard}
-        accessible={false}
-        focusable={false}
-        android_disableSound
-      >
+      <View style={inSheet ? [styles.grow, style] : styles.fill}>
         {inSheet ? (
           <View style={styles.grow}>
             {scroller}
@@ -476,12 +476,12 @@ export default function KeyboardShell({
           scroller
         )}
         {pinned && !joinsScroll && (
-          <>
+          <View onStartShouldSetResponder={takesTouch} onResponderRelease={dismissKeyboard}>
             <EdgeLine shown={below} />
             {footerView}
-          </>
+          </View>
         )}
-      </Pressable>
+      </View>
     </KeyboardShellContext.Provider>
   );
   if (inSheet) return frame;

@@ -48,8 +48,9 @@ import type { IconName } from '../../design/icons/names';
 import { Icon } from './Icon';
 import { timing, usePressFeedback } from './motion';
 import { OverlayModal, useOverlayTurn } from './OverlayModal';
+import { wrappingType } from './Text';
 import { useTokens } from './tokens';
-import { hitSlopFor, ICON_BUTTON, makeStyles, MAX_FONT_SCALE, PRESS_RETENTION, springConfig, typeStyle } from './tokens-pure';
+import { hitSlopFor, ICON_BUTTON, makeStyles, MAX_FONT_SCALE, PRESS_RETENTION, springConfig } from './tokens-pure';
 
 // ── Drag physics (§4.3 rule 6), shared by every dragged surface ─────────────────
 
@@ -214,7 +215,7 @@ const styles = makeStyles((t) => ({
   // A back control sits where the close control does, so the row reads the same from both edges.
   titleRowBack: { paddingLeft: SPACE[2] },
   titleSlot: { flex: 1 },
-  title: { color: t.colors.text, ...typeStyle('title2') },
+  title: { color: t.colors.text, ...wrappingType('title2') },
   headerIcon: { width: ICON_BUTTON.size, height: ICON_BUTTON.size, alignItems: 'center' as const, justifyContent: 'center' as const },
   // Fills the card of a `large` sheet, which has a height of its own, so a page's footer sits at its
   // bottom; a `fit` sheet has none to fill and is as tall as its content, up to its cap.
