@@ -82,3 +82,19 @@ Wave 2 (base: the staging tip after wave 1, `476a1a30` plus the ledger commit)
   `AppTile.tsx`, `handoff/shell-surfaces.md`, `shell-surfaces-ui`, `terms-flow-ui` and `home-grid-ui` suites.
 - 16h, the offline edge (sonnet, no device). AND-M2.
   Files: `connectivity.ts`, `connectivity-ux.ts`, `LauncherRoot.tsx`, `connectivity` suites.
+
+Wave 4 (after the 2026-10-10 halt; base: `32428a03` plus the ledger commit). The 16j review's leftovers.
+- 16l, gesture worklet and touch/text-size leftovers (opus, iOS simulator; Android emulator on port 5560
+  for the Android half of each check). HIGH: swiping a toast ends the app on iOS (`Toast.tsx` 258–263 calls
+  `springConfig`/`timing` inside a gesture worklet, the bug 16j fixed in `Sheet.tsx`). MEDIUM: a drag that
+  starts on plain content inside `KeyboardShell` does not scroll on iOS, because its tap-to-dismiss
+  `Pressable` is an ancestor of the scroll view (16j fixed `FirstRunSheet` only; fix it in the shell for
+  every surface and drop the local workaround if the shell fix covers it). MEDIUM: Advanced, Report and
+  History do not re-lay out on a live text-size change (16j fixed Home, Settings and AI features). MEDIUM:
+  the 0.01 pt line-height room that stops a wrapped title losing its last line is applied to grouped rows
+  only; apply it wherever the same text-box rounding can clip.
+  Files: `src/host/ui/{Toast.tsx,GroupedList.tsx,Text.tsx,Sheet.tsx}`, `src/host/launcher/{KeyboardShell.tsx,
+  keyboard-shell.ts,FirstRunSheet.tsx,AdvancedScreen.tsx,ReportScreen.tsx,HistoryScreen.tsx}`, the
+  `shell-status-ui`, `shell-surfaces-ui`, `keyboard-shell-ui`, `terms-flow-ui`, `history-ui` and
+  `settings-screen` suites, `test/native-host.tsx` and `src/host/launcher/test/native-keyboard-controller.tsx`
+  (rig stubs; 16l owns the rig for its run).

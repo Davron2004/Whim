@@ -288,3 +288,12 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   because the git credential helper was Homebrew's `gh`. An empty worktree `design-system-v1-chain-16l` (meant for the
   toast crash) and the stalled `ios-ui-driver` worktree are left in place. Details at the top of
   `docs/handoff-2026-10-09.md`.
+- RESUME, 2026-10-19 (new top-level session; toolchain restored: Node 22.23.3, Homebrew, gh). gate-full on the local
+  tip `32428a03`: FAILED on synthetic-run only, one check (`sweep-reach.ts` "deferring a covered control does not spend
+  the per-screen cap": "Second" blocked after a backdrop dismissal, `actions:5, blocked:1` under a cap of 6). Nothing
+  since `ceabd1d8` touches what the suite loads; `npm run synthrun:test` alone then passed 3/3 (519 checks). Recorded as
+  a real race, not noise: #185 (the sweep hit-tests a covered control while the Modal's dismiss is still drawn). Every
+  other gate step passed. Pushed: `ceabd1d8..32428a03`.
+- planned: chain-16l (the 16j review's leftovers; scope in `visual-fixes.md` Wave 4). Stale worktrees removed, all four
+  branches already merged into the staging branch: `design-system-v1-chain-16l` (empty, old base), `ios-ui-driver`
+  (an untracked earlier draft of the merged driver, no README), `separate-shared-data`, `synthrun-reach`.
