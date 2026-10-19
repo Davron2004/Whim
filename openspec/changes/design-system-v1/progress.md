@@ -323,3 +323,13 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
 - revision 1/2 sent to the same implementer: all three MEDIUMs (scope widened to TextField, ContextMenu, Button), device
   proof of in-scroll tap-to-dismiss on iOS and Android ≥30 in a screen and a sheet. History's legacy text with no 200%
   cap filed as #186 (for chain-20).
+- report (revision 1): STATUS complete, fast gate PASS, knip clean, commit `94dd0270` (7 files, +121/−66). (1) Room
+  0.0006 pt, the middle of the widest safe band 0.00053–0.0007 from a sweep (no value is safe everywhere: subtracting
+  the room can itself land a height just under a whole pixel); multi-line tests now every iOS size × 2×/3× × 2–12
+  lines × positions 256–16384 pt; 0.001 fails exactly the reviewer's title1 cases. (2) In-scroll tap-to-dismiss proven
+  on device, no product change needed: iOS 27 sim and Android API 37 (`Whim_Verify`), Advanced (no footer) and the
+  Report sheet in a Modal, keyboard went away in all four; footer tests renamed; a new test locks
+  `keyboardShouldPersistTaps="handled"` + no ancestor handler ("always" fails 14). (3) `wrappingType` on TextField
+  helper/error, ContextMenu heading/labels, Button labels. LOW done: shell-controls check strictly under by < 0.001 pt.
+- integrity: exit 0 (scope widened to Button, TextField, ContextMenu by the orchestrator in revision 1). removal
+  ratchet: PASS. Focused re-review of `00e2a7e5..94dd0270` dispatched.
