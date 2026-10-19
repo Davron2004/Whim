@@ -14,6 +14,7 @@ import type { IconName } from '../../design/icons/names';
 import { haptics, type HapticMoment } from '../haptics';
 import { Icon } from './Icon';
 import { usePressFeedback } from './motion';
+import { wrappingType } from './Text';
 import { useTokens } from './tokens';
 import {
   buttonColors,
@@ -22,7 +23,6 @@ import {
   makeStyles,
   MAX_FONT_SCALE,
   PRESS_RETENTION,
-  typeStyle,
   type ButtonSize,
   type ButtonVariant,
 } from './tokens-pure';
@@ -81,7 +81,7 @@ export function Button({ label, onPress, variant, size = 'large', icon, tint, di
   const colors = buttonColors(t, variant, disabled, tint);
   const metrics = buttonMetrics(size);
   const text = busy ?? label;
-  const labelFace = size === 'small' ? { ...typeStyle(metrics.type), fontWeight: '600' as const } : typeStyle(metrics.type);
+  const labelFace = size === 'small' ? { ...wrappingType(metrics.type), fontWeight: '600' as const } : wrappingType(metrics.type);
 
   return (
     <Pressable

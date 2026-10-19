@@ -51,6 +51,7 @@ import { ToastHost, useToast, TOAST, type ToastApi } from '../../ui/Toast';
 import { TextArea, TextField } from '../../ui/TextField';
 import { GroupedRow, GroupedSection } from '../../ui/GroupedList';
 import { Text } from '../../ui/Text';
+import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
 import SheetModal from '../SheetModal';
 import { gridLayout, TILE, TILE_SIDE } from '../../ui/AppTile-geometry';
@@ -166,6 +167,8 @@ function hideTokens(table: object): () => void {
 
 /** Device pixels per point on the phones where a pixel is a third of a point. */
 const PIXELS = 3;
+/** Device pixels per point on every iPhone: a half (the smaller ones) or a third of a point. */
+const IPHONE_PIXELS = [2, 3];
 /**
  * The box a text of `lines` lines gets on an iPhone, and the height its lines need, in points. React
  * Native measures the lines and rounds that up to a whole pixel (`RCTTextLayoutManager`); Yoga then
@@ -173,28 +176,32 @@ const PIXELS = 3;
  * as 32-bit floats (`PixelGrid.cpp`), which is what the text is laid out and drawn in. `topPixels` is
  * the box's top edge from the top of its window, in pixels.
  */
-function textBox(lineHeight: number, lines: number, fontScale: number, topPixels: number): { box: number; lines: number } {
+function textBox(lineHeight: number, lines: number, fontScale: number, topPixels: number, pixels = PIXELS): { box: number; lines: number } {
   const needed = lines * lineHeight * fontScale;
-  const bottomPixels = topPixels + Math.ceil(needed * PIXELS - 1e-9);
-  return { box: Math.fround(Math.fround(bottomPixels / PIXELS) - Math.fround(topPixels / PIXELS)), lines: needed };
+  const bottomPixels = topPixels + Math.ceil(needed * pixels - 1e-9);
+  return { box: Math.fround(Math.fround(bottomPixels / pixels) - Math.fround(topPixels / pixels)), lines: needed };
 }
 /** The text-size multipliers iOS gives React Native (`RCTFontSizeMultiplier`), from Extra Small up to
  *  200%, where `MAX_FONT_SCALE` stops every larger one. */
 const IOS_TEXT_SIZES = [0.823, 0.882, 0.941, 1, 1.118, 1.235, 1.353, 1.786, 2];
 /** How many device pixels a single line set at `lineHeight` takes: React Native rounds a text's
  *  measured height up to a whole pixel. */
-const pixelsOfOneLine = (lineHeight: number, fontScale: number) => Math.ceil(lineHeight * fontScale * PIXELS - 1e-9);
-/** Every place a text set at `lineHeight` would get a box shorter than its lines: two to eight lines,
- *  lying across each power of two a sheet's content reaches, its top on a whole point and on each
- *  third of one. */
-function shortTextBoxes(words: string, lineHeight: number, fontScale: number): string[] {
+const pixelsOfOneLine = (lineHeight: number, fontScale: number, pixels: number) => Math.ceil(lineHeight * fontScale * pixels - 1e-9);
+/** Every place a text set at `lineHeight` would get a box shorter than its lines: at every iOS text
+ *  size, on screens of two and three pixels a point, two to twelve lines lying across each power of two
+ *  from 256 to 16384 pt down the window, its top on a whole point and on each pixel of one. */
+function shortTextBoxes(words: string, lineHeight: number): string[] {
+  return IOS_TEXT_SIZES.flatMap((fontScale) => IPHONE_PIXELS.flatMap((pixels) => shortTextBoxesOn(words, lineHeight, fontScale, pixels)));
+}
+/** `shortTextBoxes` at one text size on one screen. */
+function shortTextBoxesOn(words: string, lineHeight: number, fontScale: number, pixels: number): string[] {
   const short: string[] = [];
-  for (const boundary of [256, 512, 1024, 2048, 4096]) {
-    for (let lines = 2; lines <= 8; lines++) {
-      const middle = Math.round((boundary - (lines * lineHeight * fontScale) / 2) * PIXELS);
-      for (const top of [middle, middle + 1, middle + 2]) {
-        const fit = textBox(lineHeight, lines, fontScale, top);
-        if (fit.box < fit.lines) short.push(`“${words}” at ${fontScale * 100}%: ${lines} lines across ${boundary} pt get ${fit.box}, need ${fit.lines}`);
+  for (let boundary = 256; boundary <= 16384; boundary *= 2) {
+    for (let lines = 2; lines <= 12; lines++) {
+      const middle = Math.round((boundary - (lines * lineHeight * fontScale) / 2) * pixels);
+      for (let top = middle; top < middle + pixels; top++) {
+        const fit = textBox(lineHeight, lines, fontScale, top, pixels);
+        if (fit.box < fit.lines) short.push(`“${words}” at ${fontScale * 100}% @${pixels}x: ${lines} lines across ${boundary} pt get ${fit.box}, need ${fit.lines}`);
       }
     }
   }
@@ -1524,43 +1531,58 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
       );
       const texts = all(tree, 'Text');
       h.ok(texts.length >= 7, 'setup: the header, both titles, both subtitles, the value and the footer are drawn');
-      for (const text of texts) short.push(...shortTextBoxes(textOf(text), flat(text).lineHeight as number, scale));
+      for (const text of texts) short.push(...shortTextBoxes(textOf(text), flat(text).lineHeight as number));
     }
-    h.eq(short, [], 'at 100% and 200% text, across every power of two a sheet reaches, at whole points and thirds of a point');
+    h.eq(short, [], 'at every iOS text size, on 2x and 3x screens, two to twelve lines across every power of two to 16384 pt, at whole points and every pixel between');
     await resetPhone();
   });
 
-  await h.test('wrapping text has room for its last line wherever it wraps — Text at every size, a toast’s words, a sheet’s title — and a line of it alone is exactly the token’s height at every iOS text size', async () => {
+  await h.test('wrapping text has room for its last line wherever it wraps — Text at every size, a toast’s words, a sheet’s title, a field’s helper and error lines, a menu’s heading and rows, a button’s label — and a line of it alone is exactly the token’s height at every iOS text size', async () => {
     const tokens = Object.keys(TYPE_SCALE) as TypeToken[];
-    const short: string[] = [];
-    for (const scale of [1, 2]) {
-      await resetPhone();
-      windowMetrics.fontScale = scale;
-      let api!: ToastApi;
-      const Grab = () => { api = useToast(); return null; };
-      const tree = await render(
-        <ToastHost>
-          <Grab />
-          {tokens.map((token) => <Text key={token} type={token}>{`Ce que nous ne faisons jamais (${token})`}</Text>)}
-        </ToastHost>,
-      );
-      await act(() => api.show({ message: 'Phone ID copied' }));
-      const sheet = await render(<Sheet visible title="Report this app" onClose={() => {}}><Body /></Sheet>);
-      const texts = [...all(tree, 'Text'), ...all(sheet, 'Text').filter((n) => textOf(n) === 'Report this app')];
-      h.ok(texts.length >= tokens.length + 2, 'setup: every size, the toast’s words and the sheet’s title are drawn');
-      for (const text of texts) short.push(...shortTextBoxes(textOf(text), flat(text).lineHeight as number, scale));
-    }
-    h.eq(short, [], 'at 100% and 200% text, across every power of two a screen reaches, at whole points and thirds of a point');
+    await resetPhone();
+    let api!: ToastApi;
+    const Grab = () => { api = useToast(); return null; };
+    const tree = await render(
+      <ToastHost>
+        <Grab />
+        {tokens.map((token) => <Text key={token} type={token}>{`Ce que nous ne faisons jamais (${token})`}</Text>)}
+        <TextField label="Server address" value="" onChangeText={() => {}} helper="Where your apps are made" />
+        <TextField label="Server address" value="" onChangeText={() => {}} error="This address isn’t allowed" />
+        <Button label="Accepter d’envoyer mes descriptions" variant="ink" onPress={() => {}} />
+        <Button label="Show more" variant="plain" size="small" onPress={() => {}} />
+      </ToastHost>,
+    );
+    await act(() => api.show({ message: 'Phone ID copied' }));
+    const sheet = await render(<Sheet visible title="Report this app" onClose={() => {}}><Body /></Sheet>);
+    const sheetTitles = all(sheet, 'Text').filter((n) => textOf(n) === 'Report this app');
+    const short = sheetTitles.flatMap((text) => shortTextBoxes(textOf(text), flat(text).lineHeight as number));
+    // One overlay at a time: the menu takes its turn once the sheet has gone.
+    await act(() => sheet.unmount());
+    const menu = await render(<ContextMenu visible title="Water Counter, the long name" anchor={ANCHOR} rows={menuRows([])} onClose={() => {}} />);
+    const named = (words: string[]) => all(tree, 'Text').filter((n) => words.includes(textOf(n)));
+    const fieldAndButtons = named(['Where your apps are made', 'This address isn’t allowed', 'Accepter d’envoyer mes descriptions', 'Show more']);
+    const menuTexts = all(menu, 'Text');
+    h.ok(fieldAndButtons.length === 4 && menuTexts.length >= 3, `setup: the helper and error lines, both labels, the menu’s heading and rows are drawn (${fieldAndButtons.map(textOf).join(' | ')}; ${menuTexts.length} in the menu)`);
+    const texts = [
+      ...all(tree, 'Text').filter((n) => textOf(n).startsWith('Ce que nous') || textOf(n) === 'Phone ID copied'),
+      ...fieldAndButtons,
+      ...menuTexts,
+    ];
+    h.ok(texts.length >= tokens.length + 1 + 4 + 3 && sheetTitles.length === 1, 'setup: every size, the toast’s words and the sheet’s title are drawn too');
+    short.push(...texts.flatMap((text) => shortTextBoxes(textOf(text), flat(text).lineHeight as number)));
+    h.eq(short, [], 'at every iOS text size, on 2x and 3x screens, two to twelve lines across every power of two to 16384 pt, at whole points and every pixel between');
     await resetPhone();
     const changed: string[] = [];
     for (const token of tokens) {
-      const tree = await render(<Text type={token}>One line</Text>);
-      const set = flat(all(tree, 'Text')[0]).lineHeight as number;
+      const one = await render(<Text type={token}>One line</Text>);
+      const set = flat(all(one, 'Text')[0]).lineHeight as number;
       for (const scale of IOS_TEXT_SIZES) {
-        if (pixelsOfOneLine(set, scale) !== pixelsOfOneLine(TYPE_SCALE[token].lineHeight, scale)) changed.push(`${token} at ${scale * 100}%`);
+        for (const pixels of IPHONE_PIXELS) {
+          if (pixelsOfOneLine(set, scale, pixels) !== pixelsOfOneLine(TYPE_SCALE[token].lineHeight, scale, pixels)) changed.push(`${token} at ${scale * 100}% @${pixels}x`);
+        }
       }
     }
-    h.eq(changed, [], 'one line is as many pixels tall as the token’s own line height, at every iOS text size');
+    h.eq(changed, [], 'one line is as many pixels tall as the token’s own line height, at every iOS text size on 2x and 3x screens');
     await resetPhone();
   });
 

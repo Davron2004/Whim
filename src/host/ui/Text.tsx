@@ -11,19 +11,23 @@ import { useTokens } from './tokens';
 import { MAX_FONT_SCALE, TABULAR, typeStyle, type TypeStyle } from './tokens-pure';
 
 /** How far under the token's line height text that may wrap is set, in pt per line. */
-const LINE_ROOM = 0.001;
+const LINE_ROOM = 0.0006;
 
 /**
  * A type-scale size for text that may wrap: its lines a hair under the token's line height, so the
- * box the text is given always holds its last line. Where the token's line height lands on whole
- * pixels (100% and 200% text) the box is exactly as tall as the lines, and Yoga computes that height
- * as the difference of two 32-bit floats (`PixelGrid.cpp`): across a power of two from the top of the
- * window, at a position that is not a whole point (under a hairline separator), it comes out short by
- * about 0.0001 pt (95.999878 for two 48 pt lines, measured on iOS). iOS then lays the text out in a
- * box its last line does not fit: that line is dropped and the one before it runs on unwrapped and is
- * cut at the edge. A thousandth of a point per line is several times what that arithmetic can lose
- * anywhere a screen reaches, and small enough that a single line, which React Native rounds up to a
- * whole pixel, keeps exactly the token's height at every iOS text size.
+ * box the text is given holds its last line. Where the lines land on whole pixels the box is exactly
+ * as tall as they are, and Yoga computes that height as the difference of two 32-bit floats
+ * (`PixelGrid.cpp`): across a power of two from the top of the window, at a position that is not a
+ * whole point (under a hairline separator), it comes out short by about 0.0001 pt (95.999878 for two
+ * 48 pt lines, measured on iOS). iOS then lays the text out in a box its last line does not fit: that
+ * line is dropped and the one before it runs on unwrapped and is cut at the edge.
+ *
+ * The room can itself bring a height to just under a whole pixel, where the same arithmetic loses it
+ * again, so no amount is right everywhere; this one is chosen against that model
+ * (`shell-surfaces-ui`): two to twelve lines of every size, at every iOS text size, on screens of two
+ * and three pixels a point, anywhere from 256 to 16384 pt down the window, keep their last line, and
+ * a single line keeps exactly the token's height in pixels. 0.001 loses a line of `title1` at 178.6%;
+ * 0.002 and more shorten a single line by a pixel.
  */
 export function wrappingType(token: TypeToken, header = false): TypeStyle {
   const type = typeStyle(token, header);

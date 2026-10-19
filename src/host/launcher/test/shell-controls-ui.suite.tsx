@@ -95,7 +95,7 @@ export async function runShellControlsUiTests(h: Harness): Promise<void> {
       const face = style(one(tree, 'Text'));
       h.eq([face.fontSize, face.fontWeight], [doc.size, String(doc.weight)], `${token} size and weight`);
       const line = face.lineHeight as number;
-      h.ok(line <= doc.line && doc.line - line < 0.01, `${token} line: the documented ${doc.line}, set a hair under it so a wrapped last line always fits (got ${line})`);
+      h.ok(line < doc.line && doc.line - line < 0.001, `${token} line: the documented ${doc.line}, set under it by less than a thousandth of a point so a wrapped last line always fits (got ${line})`);
       h.ok(Math.abs((face.letterSpacing as number) - doc.tracking * doc.size) < 0.001, `${token} tracks ${doc.tracking} em (got ${face.letterSpacing} pt)`);
       await unmountScreen(tree);
     }
