@@ -17,6 +17,7 @@ import { gridLayout, TILE_SIDE } from '../../ui/AppTile-geometry';
 import { TilePlate } from '../../ui/AppTile';
 import { MENU } from '../../ui/ContextMenu';
 import { Ember, RESTING_ACTIVITY } from '../../ui/Ember';
+import { resolveTokens } from '../../ui/tokens-pure';
 import { HomeSkeleton } from '../HomeSkeleton';
 import { COLORS, LAYOUT, ON_PLATE, SHAPE, TILE_RIM, TINTS, TYPE_SCALE } from '../../../design/tokens';
 import { ICON_PATHS } from '../../../design/icons/paths';
@@ -757,6 +758,24 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     try {
       h.ok(paths(contrast.root).some((p) => p.props.stroke === COLORS.dark.border && p.props.strokeWidth === 1), 'Increase Contrast adds a 1 pt border outline');
     } finally { await unmountScreen(contrast); await resetPhone(); }
+  });
+
+  await h.test('tile plate: given captured tokens it draws with them whatever the phone does; without them it follows the phone', async () => {
+    await resetPhone();
+    const pinned = resolveTokens({ scheme: 'dark', fontScale: 1, platform: 'ios', reduceMotion: false, increaseContrast: true });
+    const rim = mixHex(TINTS.stone.dark, TINTS.stone.light, TILE_RIM.mix);
+    const tree = await plate(<>
+      <TilePlate size="grid" state="ready" tint="stone" glyph="coffee" tokens={pinned} />
+      <TilePlate size="menu" state="ready" tint="stone" glyph="coffee" />
+    </>);
+    const strokes = (side: number) => paths(svgs(tree.root).find((s) => s.props.width === side)!).map((p) => p.props.stroke).filter(Boolean);
+    try {
+      h.eq(strokes(TILE_SIDE.grid).filter((s) => s === rim || s === COLORS.dark.border).length, 2, 'on a light phone the captured plate has the dark rim and the contrast outline');
+      h.eq(strokes(TILE_SIDE.menu).filter((s) => s === rim).length, 0, 'the live plate has no rim in light');
+      await TestRenderer.act(async () => setColorScheme('dark'));
+      h.eq(strokes(TILE_SIDE.grid).filter((s) => s === rim || s === COLORS.dark.border).length, 2, 'the captured plate is unchanged');
+      h.eq(strokes(TILE_SIDE.menu).filter((s) => s === rim).length, 1, 'the live plate takes the dark rim');
+    } finally { await unmountScreen(tree); await resetPhone(); }
   });
 
   await h.test('tile plate: being made is an ember-soft plate with the ember and no glyph; a failure is a fill plate with the ember out and a badge; a change shows the ring on the app’s own tile', async () => {

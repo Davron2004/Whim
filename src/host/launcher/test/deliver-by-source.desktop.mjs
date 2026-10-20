@@ -17,7 +17,9 @@
 // pads the app's Screen without reaching the theme global, and a focused field is scrolled back
 // into view when the viewport shrinks. And what the page itself does (design-system-v1 D4,
 // sandbox-rendering): `paint` reaches RN stamped with the generation the host bound, the page, the
-// iframe and the realm's canvas paint the theme's `bg`, and the viewport allows zoom.
+// iframe and the realm's canvas paint the theme's `bg`, and the viewport allows zoom. And that the
+// launcher's own theme frame (design-system-v1 D3) reaches the realm whole, and that the shipped page
+// waiting warm (task 18.4) holds no app and hands the launch a recreated realm.
 //
 //   npm run build && node src/host/launcher/test/deliver-by-source.desktop.mjs
 import { chromium } from 'playwright';
@@ -183,6 +185,37 @@ async function bundleSource(contents) {
   return out.outputFiles[0].text;
 }
 
+/** The launcher's theme-frame builder and the token module, compiled from their TypeScript sources
+ *  (both pure, no React Native) so this check delivers exactly what the host builds. */
+const { themeFrame, resolveTokens, COLORS, TINTS } = await (async () => {
+  const out = await esbuild({
+    stdin: {
+      contents: `export { themeFrame } from './src/host/launcher/theme-frame';
+export { resolveTokens } from './src/host/ui/tokens-pure';
+export { COLORS, TINTS } from './src/design/tokens';`,
+      loader: 'ts', resolveDir: ROOT, sourcefile: 'host-theme.ts',
+    },
+    bundle: true, format: 'esm', platform: 'neutral', write: false, logLevel: 'warning',
+  });
+  return import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`);
+})();
+
+/** The page the product ships, the pool's warm probe and the host's delivery script builder, from
+ *  their sources: the warm check drives the real page with exactly what the host injects. */
+const { RUNTIME_HTML, WARM_PROBE_JS, WARM_ANSWER, deliverBySourceJs } = await (async () => {
+  const out = await esbuild({
+    stdin: {
+      contents: `export { RUNTIME_HTML } from './src/runtime/generated/runtime-html';
+export { WARM_PROBE_JS, WARM_ANSWER } from './src/host/launcher/webview-pool';
+export { deliverBySourceJs } from './src/host/launcher/deliver';`,
+      loader: 'ts', resolveDir: ROOT, sourcefile: 'host-pool.ts',
+    },
+    bundle: true, format: 'esm', platform: 'browser', write: false, logLevel: 'warning',
+  });
+  return import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`);
+})();
+const productPage = await writePage('product', RUNTIME_HTML);
+
 const LEDGER_ERROR = `class LedgerError extends Error {
   constructor(message: string) { super(message); this.name = 'LedgerError'; }
 }`;
@@ -215,14 +248,20 @@ const realmPage = await writePage('realm', buildOuterHtml({
 }));
 
 /** Deliver `source` (with `theme`) into a fresh realm and wait for its first paint. `relayed()`
- *  is every frame the outer page handed RN, as RN would parse it; `realm()` is the sandbox frame. */
+ *  is every frame the outer page handed RN, as RN would parse it; `realm()` is the sandbox frame.
+ *  `window.__realmPaints` (outer page) keeps every raw `paint` message a realm posted to it. */
 async function openRealm(browser, source, theme, viewport = { width: 400, height: 2000 }) {
   const page = await browser.newPage({ viewport });
   await page.addInitScript(() => {
     if (window.top !== window) return; // the outer page only: the realm keeps the loader's own stub
     const frames = [];
+    const paints = [];
     Object.defineProperty(window, '__relayed', { value: frames });
+    Object.defineProperty(window, '__realmPaints', { value: paints });
     window.ReactNativeWebView = { postMessage: (s) => frames.push(JSON.parse(s)) };
+    window.addEventListener('message', (ev) => {
+      if (typeof ev.data === 'string' && ev.data.includes('"kind":"paint"')) paints.push(ev.data);
+    });
   });
   await page.goto(pathToFileURL(realmPage).href, { waitUntil: 'load', timeout: 20000 });
   await page.evaluate(({ src, th }) => globalThis.__whimControl.reinject({
@@ -257,6 +296,8 @@ function screenAndReachableInset() {
     sdkInsetExports: Object.keys(window.__whimRequire('vc-sdk')).filter((k) => /inset|chrome/i.test(k)),
   };
 }
+
+const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
 
 async function realmChecks(browser) {
   const checks = {};
@@ -297,6 +338,22 @@ async function realmChecks(browser) {
     await page.close();
   }
 
+  // The launcher's own theme frame (design-system-v1 D3) for a dark phone at 135% text with Reduce
+  // Motion and Increase Contrast, for an `ocean` app, delivered as MiniAppView delivers it (with the
+  // orb inset): the realm installs every field but the inset, and its Screen paints from them.
+  {
+    const frame = themeFrame(resolveTokens({ scheme: 'dark', fontScale: 1.35, reduceMotion: true, increaseContrast: true, platform: 'ios' }), 'ocean');
+    const { page, realm } = await openRealm(browser, SRC, { ...frame, chromeInsetBottom: 106 });
+    const seen = await realm().evaluate(() => {
+      const screen = window.getComputedStyle(document.getElementById('whim-root').firstElementChild);
+      return { theme: window.__WHIM_THEME__, bg: screen.backgroundColor, color: screen.color, fontSize: screen.fontSize };
+    });
+    const want = { theme: frame, bg: rgb(COLORS.dark.bg), color: rgb(COLORS.dark.text), fontSize: '22.95px' /* body 17 × 1.35 */ };
+    checks['host theme frame'] = frame.colors.primary === TINTS.ocean.dark && isDeepStrictEqual(seen, want);
+    detail['host theme frame'] = `seen=${JSON.stringify(seen)} want=${JSON.stringify(want)}`;
+    await page.close();
+  }
+
   // The outer page stamps `paint` with the generation the host bound the realm at, as it does
   // nav-depth; the realm's own counter (1 for every fresh realm) never reaches the host.
   {
@@ -312,13 +369,22 @@ async function realmChecks(browser) {
       { trusted: true, generation: 5, ms: 'number', app: 'Tip Splitter' },
     ]);
     detail['paint stamped with the bound generation'] = `paints=${JSON.stringify(seen)}`;
+
+    // The reset recreated the iframe: the first realm's own authenticated paint, reaching the page
+    // after it, fails the rotated nonce, so it never reaches RN stamped with the new generation.
+    const [oldRealmPaint] = await page.evaluate(() => window.__realmPaints.slice());
+    await page.evaluate((raw) => window.postMessage(raw, '*'), oldRealmPaint);
+    const refused = async () => (await relayed()).filter((f) => f.kind === 'rejected-forgery' && f.forgedKind === 'paint');
+    await until(async () => (await refused()).length > 0, 3000);
+    const after = (await paints()).length;
+    checks['old realm paint after a reset'] = (await refused()).length === 1 && after === 2;
+    detail['old realm paint after a reset'] = `refused=${(await refused()).length} paints relayed=${after}`;
     await page.close();
   }
 
   // The outer page, the iframe and the realm's own canvas paint the delivered theme's `bg` (the
   // token module's light `bg` without one, or with one that is not a #rrggbb colour), and both
   // documents let native controls follow the phone's scheme.
-  const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
   for (const [name, theme, want] of [
     ['canvas without a theme', undefined, PAGE_BG],
     ['canvas in the theme bg', { colors: { bg: '#2A1B3C' } }, '#2A1B3C'],
@@ -369,6 +435,86 @@ async function realmChecks(browser) {
       after.viewport < before.top && inView(after);
     detail['focused field after a resize'] = `before=${JSON.stringify(before)} after=${JSON.stringify(after)}`;
     await page.close();
+  }
+
+  // The warm WebView (design-system-v1 task 18.4): the shipped page loaded with no app. It answers
+  // the warm probe and tells RN nothing else; its idle realm has no app in it. The launch the host
+  // then delivers gets a recreated iframe: nothing the idle realm held is in it, and a frame
+  // carrying the idle realm's nonce is refused as a forgery.
+  {
+    const page = await browser.newPage({ viewport: { width: 400, height: 800 } });
+    await page.addInitScript(() => {
+      if (window.top !== window) return;
+      const raw = [];
+      const fromRealm = [];
+      Object.defineProperty(window, '__raw', { value: raw });
+      Object.defineProperty(window, '__fromRealm', { value: fromRealm });
+      window.ReactNativeWebView = { postMessage: (s) => raw.push(s) };
+      window.addEventListener('message', (ev) => {
+        if (typeof ev.data === 'string' && ev.data.includes('"__whimHarness":true')) fromRealm.push(ev.data);
+      });
+    });
+    await page.goto(pathToFileURL(productPage).href, { waitUntil: 'load', timeout: 20000 });
+    const idleReady = async () => (await page.evaluate(() => window.__fromRealm.slice())).find((s) => JSON.parse(s).kind === 'ready');
+    await until(async () => (await idleReady()) !== undefined);
+    const idle = page.frames().find((f) => f !== page.mainFrame());
+    const idleRealm = await idle.evaluate(() => {
+      window.__heldByTheIdleRealm = true;
+      return {
+        app: Object.prototype.hasOwnProperty.call(window, '__WHIM_APP_MODULE__'),
+        rendered: document.getElementById('whim-root')?.childNodes.length ?? 0,
+        held: window.__heldByTheIdleRealm === true,
+      };
+    });
+    await page.evaluate(WARM_PROBE_JS);
+    const toRN = async () => (await page.evaluate(() => window.__raw.slice()));
+    const warm = await toRN();
+
+    await page.evaluate(deliverBySourceJs({ name: 'Tip Splitter', source: SRC, generation: 9, theme: { colors } }));
+    const relayed = async () => (await toRN()).slice(warm.length).map((s) => JSON.parse(s));
+    const paints = async () => (await relayed()).filter((f) => f.kind === 'paint');
+    await until(async () => (await paints()).length > 0);
+    const launch = page.frames().find((f) => f !== page.mainFrame());
+    const launchRealm = await launch.evaluate(() => ({
+      held: Object.prototype.hasOwnProperty.call(window, '__heldByTheIdleRealm'),
+      rendered: (document.getElementById('whim-root')?.childNodes.length ?? 0) > 0,
+    }));
+    const forged = JSON.stringify({ ...JSON.parse(await idleReady()), kind: 'paint', payload: { mountToFirstPaintMs: 1 } });
+    await page.evaluate((raw) => window.postMessage(raw, '*'), forged);
+    const refused = async () => (await relayed()).filter((f) => f.kind === 'rejected-forgery' && f.forgedKind === 'paint');
+    await until(async () => (await refused()).length > 0, 3000);
+    const seen = {
+      warm, idleRealm, launchRealm,
+      paints: (await paints()).map((f) => [f.trusted, f.payload?.generation]),
+      refused: (await refused()).length,
+    };
+    checks['warm page, then a launch'] = isDeepStrictEqual(seen, {
+      warm: [WARM_ANSWER],
+      idleRealm: { app: false, rendered: 0, held: true },
+      launchRealm: { held: false, rendered: true },
+      paints: [[true, 9]],
+      refused: 1,
+    });
+    detail['warm page, then a launch'] = JSON.stringify(seen);
+    await page.close();
+  }
+
+  // The same page loaded with its scripts off (as iOS starts a WebView while the network-deny rule
+  // list is not compiled, decision #74): the probe gets no warm answer, so the pool never hands it out.
+  {
+    const context = await browser.newContext({ javaScriptEnabled: false });
+    const page = await context.newPage();
+    await page.goto(pathToFileURL(productPage).href, { waitUntil: 'load', timeout: 20000 });
+    await page.evaluate(() => {
+      const posted = [];
+      Object.defineProperty(window, '__raw', { value: posted });
+      window.ReactNativeWebView = { postMessage: (s) => posted.push(s) };
+    });
+    await page.evaluate(WARM_PROBE_JS);
+    const answers = await page.evaluate(() => window.__raw.slice());
+    checks['warm probe with the page’s scripts off'] = answers.length === 1 && answers[0] !== WARM_ANSWER;
+    detail['warm probe with the page’s scripts off'] = `answers=${JSON.stringify(answers)}`;
+    await context.close();
   }
   return { checks, detail };
 }
@@ -498,3 +644,4 @@ console.log('✅ non-default source (water-counter) renders correctly over tip-s
 console.log('✅ navigation bootstrap stays loader-only and missing/invalid/undeletable states fail closed.');
 console.log('✅ a by-source realm reports an uncaught render error once, pads Screen by the sanitized orb inset without exposing it, and keeps a focused field in view.');
 console.log('✅ the page stamps paint with the bound generation, paints the theme bg (light bg by default) and allows zoom.');
+console.log('✅ the launcher’s theme frame reaches the realm whole, without the orb inset, and its Screen paints from it.');

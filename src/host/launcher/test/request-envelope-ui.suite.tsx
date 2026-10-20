@@ -69,7 +69,8 @@ async function opensAndRuns(tree: Tree, app: InstalledApp, bundle: string): Prom
   injectedScripts.length = 0;
   await TestRenderer.act(async () => home(tree).props.onOpen(app));
   await waitFor(() => on(tree, MiniAppView), `${app.name} to open`);
-  await TestRenderer.act(async () => tree.root.find((node) => hostType(node) === 'WebView').props.onLoadEnd());
+  // The app's own WebView, not the one waiting unseen beside it.
+  await TestRenderer.act(async () => tree.root.find((node) => hostType(node) === 'WebView' && node.props.pointerEvents !== 'none').props.onLoadEnd());
   return injectedScripts.length === 1 && injectedScripts[0].includes(JSON.stringify(bundle));
 }
 
