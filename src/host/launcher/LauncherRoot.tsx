@@ -56,7 +56,8 @@ import {
 } from './build-lifecycle';
 import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAppContext } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
-import { COPY, LEGAL_COPY, readyTitle } from './copy';
+import { COPY, LEGAL_COPY, changedTitle, readyTitle } from './copy';
+import { ORB_DISC, ORB_TARGET, ORB_TARGET_EDGE } from './orb-geometry';
 import HomeScreen from './HomeScreen';
 import { MiniAppStage, type MiniAppLaunch } from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
@@ -280,12 +281,58 @@ type Screen =
 
 type AppScreen = Extract<Screen, { kind: 'app' }>;
 
-/** The running app a change's Describe or Plan page sits over: the app the Whim sheet sent the change
- *  from (`under`), while the page is for that app. The app keeps running under the sheet, and the
- *  shell is laid out as over the app. `null` anywhere else, Making included. */
+/** The making sheet's pages a change can show over its running app: its Describe and Plan, and the
+ *  Failure page of a change that failed while the app ran. Making never does: a change made from the
+ *  running app collapses into the orb. */
+function overApp(screen: Screen): screen is Extract<Screen, { kind: 'describe' | 'plan' | 'failure' }> {
+  return screen.kind === 'describe' || screen.kind === 'plan' || screen.kind === 'failure';
+}
+
+/** The running app a change's page sits over (`overApp`): the app the Whim sheet sent the change from,
+ *  or whose failed change the toast's See why opened (`under`), while the page is for that app. The
+ *  app keeps running under the sheet, and the shell is laid out as over the app. `null` anywhere else. */
 function appUnder(screen: Screen, under: AppScreen | null): AppScreen | null {
-  if (under === null || (screen.kind !== 'describe' && screen.kind !== 'plan')) return null;
+  if (under === null || !overApp(screen)) return null;
   return screen.editing?.id === under.app.id ? under : null;
+}
+
+/** Where a change to the running app `on` stands, for this launch of it. */
+interface ChangeOver {
+  /** The change being made. */
+  changing?: PendingBuildRecord;
+  /** The change that failed while this launch ran, unless discarded. */
+  failed?: PendingBuildRecord;
+  /** A change landed while this launch ran (`landed`, the app and the launch's `tappedAt`). */
+  landed: boolean;
+}
+
+function changeOver(
+  on: AppScreen | null,
+  records: readonly PendingBuildView[],
+  discarded: (rec: PendingBuildRecord) => boolean,
+  landed: { appId: string; at: number } | null,
+): ChangeOver {
+  if (on === null) return { landed: false };
+  const changes = records.map((view) => view.record).filter((rec) => rec.editingAppId === on.app.id);
+  return {
+    changing: changes.find((rec) => rec.state === 'building'),
+    failed: changes.find((rec) => rec.state === 'failed' && rec.updatedAt >= on.tappedAt && !discarded(rec)),
+    landed: landed?.appId === on.app.id && landed.at === on.tappedAt,
+  };
+}
+
+/** What the orb shows (system.md §7.1 Orb, §9 Changing in use), most recent first: a change being
+ *  made (its stream's sampled activity), a change that failed, a change that landed, else rest. */
+function orbOver(change: ChangeOver, activity: Readonly<Record<string, number>>): MiniAppLaunch['orb'] {
+  if (change.changing !== undefined) return { state: 'changing', activity: activity[change.changing.id] ?? 0 };
+  if (change.failed !== undefined) return { state: 'failed', activity: 0 };
+  return { state: change.landed ? 'ready' : 'rest', activity: 0 };
+}
+
+/** How far above the bottom safe area a toast keeps clear: of the orb over a running app, of the
+ *  composer on Home. */
+function toastOffset(kind: Screen['kind']): number {
+  return kind === 'app' ? ORB_CLEARANCE : toastClearance(kind);
 }
 
 /** The screens the native stack shows (design-system-v1 D6): Home at its root, then Settings and
@@ -398,6 +445,10 @@ function updateMayInterrupt(screen: Screen): boolean {
 /** The developer affordance that opens the dev log overlay. A mechanism word, deliberately not in
  *  `copy.ts` — the same standing `DevProbeScreen`'s and the overlay's own labels have. */
 const DEV_LOG_LABEL = 'Logs';
+
+/** How far above the bottom safe area the orb's disc reaches: a toast over a running app sits its own
+ *  gap above that (system.md §7.1 Toast, "12 pt above whatever floats"). */
+const ORB_CLEARANCE = ORB_TARGET_EDGE + (ORB_TARGET + ORB_DISC) / 2;
 
 /**
  * The build-time flag that lets the seam DELIVER records to the dev server, in the `RUN_*_PROBE`
@@ -775,13 +826,19 @@ function LauncherShell({
   useEffect(() => {
     screenKindRef.current = screen.kind;
   }, [screen.kind]);
-  // The running app the Whim sheet sent a change from: it stays open under that change's Describe
-  // and Plan pages (`appUnder`), and closing them returns to it. Dropped once the screen leaves them.
+  // The running app a change's pages sit over: it stays open under them (`appUnder`), and closing them
+  // returns to it. Dropped once the screen leaves those pages.
   const [under, setUnder] = useState<AppScreen | null>(null);
   useEffect(() => {
-    if (screen.kind !== 'describe' && screen.kind !== 'plan') setUnder(null);
-  }, [screen.kind]);
+    if (!overApp(screen)) setUnder(null);
+  }, [screen]);
   const running = screen.kind === 'app' ? screen : appUnder(screen, under);
+  // The same, for a run or a toast that acts later than the render it was started from.
+  const runningRef = useRef(running);
+  runningRef.current = running;
+  // A change that landed while this launch of its app ran (`at`, the launch's `tappedAt`): the orb's dot
+  // and the Whim sheet's Reload row stay until the app opens again, by Reload or otherwise.
+  const [landed, setLanded] = useState<{ appId: string; at: number } | null>(null);
   // The words in the Whim sheet's send area, for the app they were typed over. Held here, above the
   // sheet's content, which a text-size change builds again.
   const [whimWords, setWhimWords] = useState<{ appId: string; text: string } | null>(null);
@@ -1070,9 +1127,14 @@ function LauncherShell({
   );
   useEffect(() => () => purgeWindows.dispose(), [purgeWindows]);
 
+  // A change to the running app: being made, or failed while this launch of it ran (a discarded one is
+  // gone as far as the person is concerned).
+  const runningChange = changeOver(running, pendingBuilds, (rec) => purges.hidesAttempt(rec), landed);
+
   // The view of the attempts running right now: which wait for a spot, how hard each stream works.
-  // Home's tiles read it, and so does the Making page's ember, for its own run only.
-  const liveView = useHomeLive(screen.kind === 'home' || screen.kind === 'making', () => [...liveAttemptsRef.values()]);
+  // Home's tiles read it, and so do the Making page's ember and the orb, each for its own run only.
+  const liveView = useHomeLive(screen.kind === 'home' || screen.kind === 'making' || runningChange.changing !== undefined, () => [...liveAttemptsRef.values()]);
+  const orb = orbOver(runningChange, liveView.activity);
 
   /** The installed apps and the attempts a person can reach: those whose purge is armed are gone as far
    *  as a link or a tile is concerned (an attempt only for the run its Discard named). */
@@ -1156,7 +1218,27 @@ function LauncherShell({
 
   /** The version the app opened at `tappedAt` runs, once read, kept on that launch's screen. */
   const noteRunningVersion = (tappedAt: number, versionId: string | null) => {
-    if (versionId !== null) setScreen((s) => (s.kind === 'app' && s.tappedAt === tappedAt ? { ...s, versionId } : s));
+    if (versionId === null) return;
+    setScreen((s) => (s.kind === 'app' && s.tappedAt === tappedAt ? { ...s, versionId } : s));
+    setUnder((u) => (u?.tappedAt === tappedAt ? { ...u, versionId } : u));
+  };
+
+  /** Reads `app`'s current bundle for the launch tapped at `tappedAt` and hands that launch to `show`;
+   *  the version it runs is read right behind the bundle, on the app's serial store queue (so no
+   *  write lands between the two), and after it, so neither the opening nor the busy tile waits for it. */
+  const launchApp = async (app: InstalledApp, tappedAt: number, show: (launch: AppScreen) => void) => {
+    const bundleRead = access.activeBundle(app);
+    const versionRead = access.activeId(app).catch(() => null);
+    const source = await bundleRead;
+    show({ kind: 'app', app, record: app.record, source, engineAppId: access.engineAppId(app), tappedAt });
+    versionRead.then((versionId) => noteRunningVersion(tappedAt, versionId));
+  };
+
+  /** An app that could not be opened: the user gets the alert; the class/message/stack of what
+   *  actually failed is only recoverable from the seam (host-observability "The alert paths now log"). */
+  const openFailed = (e: unknown) => {
+    log.error(CHANNELS.app, 'installed-app action failed', { operation: 'open', ...errorFields(e) });
+    Alert.alert('Could not open this app', (e as Error)?.message ?? String(e));
   };
 
   /** The tile's tap: busy from the tap until the mini-app screen replaces the grid or the open
@@ -1167,23 +1249,38 @@ function LauncherShell({
     const tappedAt = Date.now();
     return runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
       try {
-        // The version that bundle is: read right behind it on the app's serial store queue, so no
-        // write lands between the two, and after it, so neither the opening nor the busy tile waits
-        // for it.
-        const bundleRead = access.activeBundle(app);
-        const versionRead = access.activeId(app).catch(() => null);
-        const source = await bundleRead;
-        setScreen({ kind: 'app', app, record: app.record, source, engineAppId: access.engineAppId(app), tappedAt });
-        versionRead.then((versionId) => noteRunningVersion(tappedAt, versionId));
+        await launchApp(app, tappedAt, setScreen);
       } catch (e) {
-        // The user still gets the alert; the class/message/stack of what actually failed is only
-        // recoverable from the seam (host-observability "The alert paths now log").
-        log.error(CHANNELS.app, 'installed-app action failed', { operation: 'open', ...errorFields(e) });
-        Alert.alert('Could not open this app', (e as Error)?.message ?? String(e));
+        openFailed(e);
         onFailed?.();
       }
     });
   };
+
+  /** Reload (the toast's, or the Whim sheet's row): the running app opens again on the version that is
+   *  now current, in place — a new launch, so a fresh WebView and realm (`MiniAppStage`), with nothing
+   *  in between: no Home, no closed frame. A launch the person has left meanwhile is not reopened; one
+   *  whose bundle cannot be read keeps running as it was. */
+  const reloadRunning = async (): Promise<void> => {
+    if (running === null) return;
+    const from = running;
+    const app = index.get(from.app.id) ?? from.app;
+    const tappedAt = Date.now();
+    await runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
+      try {
+        await launchApp(app, tappedAt, replacing(from));
+      } catch (e) {
+        openFailed(e);
+      }
+    });
+  };
+  /** Puts a new launch in the place of `from`, wherever it still is: on screen, or under a sheet. */
+  const replacing = (from: AppScreen) => (next: AppScreen) => {
+    setScreen((s) => (s.kind === 'app' && s.tappedAt === from.tappedAt ? next : s));
+    setUnder((u) => (u?.tappedAt === from.tappedAt ? next : u));
+  };
+  const reloadRef = useRef(reloadRunning);
+  reloadRef.current = reloadRunning;
 
   /** Make a copy: busy for that app while it runs. Resolves the new entry, or `null` when a copy (or
    *  an open) of the app is already running; rejects when the copy could not be made, with nothing
@@ -2454,16 +2551,36 @@ function LauncherShell({
    * refused while still on the build screen can return to plan with every row exactly as it was
    * (design D9/D10); a Retry passes none, since a refused Retry never lands on plan.
    */
+  /** The running app a change to `editing` is made under: the app runs under the sheet the change was
+   *  sent from (the Whim sheet's plan, or its failed change's Try again). `null` for a new app, or a
+   *  change made from Home or History. */
+  const runningUnder = (editing: InstalledApp | undefined): AppScreen | null =>
+    running !== null && running.app.id === editing?.id ? running : null;
+
+  /** A started attempt takes over the screen with its Making page — unless it is a change made under
+   *  its running app (`over`): then the sheet collapses into the orb, which follows the run, and the
+   *  run never takes the screen (its ending is the orb's and a toast's; it starts detached). */
+  const showStartedAttempt = (live: LiveAttempt, over: AppScreen | null) => {
+    if (over !== null) {
+      setScreen({ ...over, sheet: undefined });
+      return;
+    }
+    liveRef.current = live;
+    signalsRef.current = live.signals;
+    setScreen(live.screen);
+  };
+
   const runAttempt = async (opening: MakingScreen, reuseId?: string, fromPlan?: PlanScreen) => {
     const options = resolveClientOptions();
     if (!options) return;
     const markOnline = onlineForRequest(options);
     const requestFailed = failureForRequest(options);
 
-    const controller = new AbortController();
-    const ctl = { controller, cancelled: false, detached: false };
-    genRef.current = ctl;
     const editing = opening.editing;
+    const over = runningUnder(editing);
+    const controller = new AbortController();
+    const ctl = { controller, cancelled: false, detached: over !== null };
+    genRef.current = ctl;
     // Declared outside the try so a throw mid-stream still knows what the device observed, and on
     // which request (the stream's `x-whim-request-id`, once it has opened).
     const counts: EventCounts = { stage: 0, token: 0, diagnostic: 0, repair: 0 };
@@ -2487,9 +2604,7 @@ function LauncherShell({
     };
     const live: LiveAttempt = { id: attemptId, lease, screen: building, signals, ctl, retrySnapshot };
     liveAttemptsRef.set(attemptId, live);
-    liveRef.current = live;
-    signalsRef.current = signals;
-    setScreen(building);
+    showStartedAttempt(live, over);
     // The keepalive comment frame (`: keepalive\n\n`, build-liveness B2) is transport noise, never
     // a `GenerationEvent` — it reaches here through `ClientOptions.onKeepalive`, not the stream
     // loop below, and moves ONLY the any-frame clock (`withKeepalive` never touches the journal).
@@ -2618,6 +2733,13 @@ function LauncherShell({
         refresh();
         if (selected && !ctl.detached) {
           setScreen((s) => (s.kind === 'making' ? readyStep(s, installed) : s));
+          return;
+        }
+        // A change that lands while its app runs reloads nothing: the toast, the orb's dot and the
+        // Whim sheet's row offer Reload.
+        const open = runningRef.current;
+        if (open?.app.id === installed.id) {
+          changeLanded(open, installed);
           return;
         }
         // Delivered with the sheet closed: Home says so, and opens it from the toast.
@@ -2775,9 +2897,10 @@ function LauncherShell({
     refresh();
   };
 
-  /** Discard on a Failure page: the page closes and the attempt goes the way Home's Discard sends
-   *  it (`soft-delete.ts`), hidden at once and purged, record and journal, when the "Discarded"
-   *  toast's 6 s Undo ends. A discard that cannot be armed changes nothing: the page stays. */
+  /** Discard on a Failure page: the page closes, onto Home or onto the running app it was over, and the
+   *  attempt goes the way Home's Discard sends it (`soft-delete.ts`), hidden at once and purged, record
+   *  and journal, when the "Discarded" toast's 6 s Undo ends. A discard that cannot be armed changes
+   *  nothing: the page stays. */
   const onDiscardFromFailure = (rec: PendingBuildRecord) => {
     try {
       onDiscard([rec]);
@@ -2785,7 +2908,8 @@ function LauncherShell({
       log.warn(CHANNELS.gen, 'discard could not be armed', { operation: 'discard-pending', ...errorFields(error) });
       return;
     }
-    goHome();
+    if (running === null) goHome();
+    else setScreen(running);
     haptics.play('warning');
     toastRef.current?.show({
       message: COPY.discardedToast,
@@ -2959,12 +3083,48 @@ function LauncherShell({
     onDescribeContinue(describeStep(editing, text)).catch((e: unknown) => logGenError('clarify continuation failed', e));
   };
 
-  /** "New version ready · Reload": the app opens again, on the version that is now current. */
+  // ── Changing an app while it runs (app-launcher "Changing an app keeps it running and offers Reload") ──
+
+  /** A change to the app `on` runs landed: the orb's dot and the Whim sheet's row for this launch, and
+   *  the toast whose Reload opens the new version in place. */
+  const changeLanded = (on: AppScreen, installed: InstalledApp) => {
+    setLanded({ appId: installed.id, at: on.tappedAt });
+    toastRef.current?.show({
+      message: changedTitle(installed.name),
+      action: {
+        label: COPY.actionReload,
+        onPress: () => {
+          if (runningRef.current?.app.id === installed.id) reloadRef.current().catch(() => undefined);
+        },
+      },
+    });
+  };
+
+  /** The failed-change toast's See why: the change's Failure page, in the sheet over the running app. */
+  const seeWhy = (id: string) => {
+    const rec = pending.readCurrent(id)?.record;
+    if (running === null || rec?.editingAppId !== running.app.id) return;
+    keepDraft(screen);
+    setUnder({ ...running, sheet: undefined });
+    setScreen(failureFromRecord(rec));
+  };
+  const seeWhyRef = useRef(seeWhy);
+  seeWhyRef.current = seeWhy;
+
+  // A change that fails while its app runs says so once, over the app.
+  const failedToast = useRef<string | null>(null);
+  const failedId = runningChange.failed?.id;
+  const failedAt = runningChange.failed?.updatedAt;
+  useEffect(() => {
+    const told = `${failedId}:${failedAt}`;
+    if (failedId === undefined || failedToast.current === told) return;
+    failedToast.current = told;
+    toastRef.current?.show({ message: COPY.changeFailedToast, action: { label: COPY.toastSeeWhy, onPress: () => seeWhyRef.current(failedId) } });
+  }, [failedId, failedAt]);
+
+  /** "New version ready · Reload": the app opens again in place, on the version that is now current. */
   const onWhimReload = () => {
-    if (screen.kind !== 'app') return;
-    const { app } = screen;
-    goHome();
-    onOpen(index.get(app.id) ?? app);
+    reloadRunning().catch(() => undefined);
   };
 
   /** The Whim sheet's page for `page` over the running app `on`: its menu, or Report a problem pushed
@@ -2995,7 +3155,7 @@ function LauncherShell({
         <WhimSheet
           app={app}
           version={read?.version ?? null}
-          newVersion={read?.newVersion ?? false}
+          newVersion={runningChange.landed || (read?.newVersion ?? false)}
           text={whimWords?.appId === app.id ? whimWords.text : ''}
           onChangeText={(text) => setWhimWords({ appId: app.id, text })}
           onSend={onWhimSend}
@@ -3272,6 +3432,7 @@ function LauncherShell({
       sheetOpen,
       onCloseSheet: closeSheet,
       installedApp: running.app,
+      orb,
     };
     return <MiniAppStage launch={launch} onFrame={setAppFrame} />;
   };
@@ -3315,7 +3476,7 @@ function LauncherShell({
     <HighlightingProvider enabled={highlighting}>
       <SafeAreaView edges={frameEdgesFor(base.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>
         <StatusBar barStyle={frame.barStyle} />
-        <ToastHost bottomOffset={toastClearance(base.kind)}>
+        <ToastHost bottomOffset={toastOffset(base.kind)}>
           <ToastBridge api={toastRef} />
           <ScreenBoundary
             screen={screen.kind}

@@ -160,6 +160,7 @@ function launchOf(
     sheetOpen: false,
     onCloseSheet: () => {},
     installedApp: { id: record.appId, name: record.name, createdAt: 1, lineageId: 'main', record, ...opts.tile },
+    orb: { state: 'rest', activity: 0 },
   };
 }
 

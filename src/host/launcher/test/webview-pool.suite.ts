@@ -93,6 +93,15 @@ export async function runWebViewPoolTests(h: Harness): Promise<void> {
     h.eq(launchSlot(unopened)?.handedOut, 'cold', 'an app left before it opened leaves none waiting: the next gets a cold one');
   });
 
+  await h.test('pool: the open app opened again in place (Reload) is a new launch: its WebView is destroyed and the new launch takes the one that waited beside it', () => {
+    const running = launchOpened(openApp(warmed(openApp(EMPTY_POOL, null)), 'tip@1'));
+    const reloaded = openApp(warmed(running), 'tip@2');
+    h.ok(reloaded.launch !== running.launch, 'a new launch');
+    h.ok(!reloaded.slots.some((s) => s.key === launchSlot(running)!.key), 'the running launch’s WebView is gone, never handed out again');
+    h.eq([launchSlot(reloaded)?.key, launchSlot(reloaded)?.handedOut, reloaded.slots.length], [waitingSlot(running)!.key, 'warm', 1],
+      'the new launch has the WebView that warmed while the app ran, and none other loads while it opens');
+  });
+
   await h.test('pool: a waiting WebView still loading is handed out as it is; one that loaded without answering is not', () => {
     const loading = openApp(openApp(EMPTY_POOL, null), 'a');
     h.eq(launchSlot(loading)?.handedOut, 'loading', 'a page still loading is handed over, to be delivered into once it loads');
@@ -154,7 +163,7 @@ export async function runWebViewPoolTests(h: Harness): Promise<void> {
       const bound = launchSlot(pool);
       if (bound !== undefined && pool.launch !== before.launch && bound.key === waitingSlot(before)?.key) {
         if (bound.handedOut === 'warm') warmHandOvers += 1;
-        if (before.appId !== null && before.appId !== pool.appId) appToApp += 1;
+        if (before.opening !== null && before.opening !== pool.opening) appToApp += 1;
       }
       broken += violations(pool, before, owner);
     }

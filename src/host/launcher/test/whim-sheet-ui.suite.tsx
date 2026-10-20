@@ -24,18 +24,25 @@ import { streamingServer } from './prompt-flow-ui.suite';
 
 type Node = TestRenderer.ReactTestInstance;
 
-const APP_NAME = 'Tip Splitter';
+export const APP_NAME = 'Tip Splitter';
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** The Reload row as a screen reader names it: its title, then its trailing word. */
-const RELOAD_ROW = `${COPY.whimSheetNewVersion}, ${COPY.whimSheetReload}`;
+export const RELOAD_ROW = `${COPY.whimSheetNewVersion}, ${COPY.actionReload}`;
 
-const home = (tree: Tree) => tree.root.findByType(HomeScreen);
-const showing = (tree: Tree, type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+export const home = (tree: Tree) => tree.root.findByType(HomeScreen);
+export const showing = (tree: Tree, type: React.ElementType) => tree.root.findAllByType(type).length === 1;
 const tipSplitter = (tree: Tree): InstalledApp => (home(tree).props.apps as InstalledApp[]).find((a) => a.name === APP_NAME)!;
-const runningApp = (tree: Tree) => tree.root.findByType(MiniAppView);
+export const runningApp = (tree: Tree) => tree.root.findByType(MiniAppView);
+
+/** The orb, whatever state it reads ("Whim menu", then its state after a comma). */
+export function orb(tree: Tree): Node {
+  const found = tree.root.findAll((n) => hostType(n) === 'Pressable' && String(n.props.accessibilityLabel).startsWith(COPY.orbMenuOpenLabel));
+  if (found.length !== 1) throw new Error(`expected one orb, got ${found.length}`);
+  return found[0];
+}
 
 /** The open sheet's card: the one view a screen reader is held inside. */
-function sheetCard(tree: Tree): Node {
+export function sheetCard(tree: Tree): Node {
   const cards = tree.root.findAll((n) => typeof n.type === 'string' && n.props.accessibilityViewIsModal === true);
   if (cards.length !== 1) throw new Error(`expected one open sheet, got ${cards.length}`);
   return cards[0];
@@ -43,22 +50,22 @@ function sheetCard(tree: Tree): Node {
 
 /** The controls in the open sheet, in the order they are drawn, by the name a screen reader reads,
  *  leaving out the sheet's own close control. */
-const controlsIn = (tree: Tree) =>
+export const controlsIn = (tree: Tree) =>
   sheetCard(tree)
     .findAll((n) => (hostType(n) === 'Pressable' || hostType(n) === 'TextInput') && n.props.accessibilityLabel !== COPY.sheetClose)
     .map((n) => String(n.props.accessibilityLabel));
 
 const field = (tree: Tree) => sheetCard(tree).find((n) => hostType(n) === 'TextInput' && n.props.accessibilityLabel === COPY.whimSheetAsk);
-const typeWords = (tree: Tree, words: string) => TestRenderer.act(async () => field(tree).props.onChangeText(words));
-const hasButton = (tree: Tree, label: string) =>
+export const typeWords = (tree: Tree, words: string) => TestRenderer.act(async () => field(tree).props.onChangeText(words));
+export const hasButton = (tree: Tree, label: string) =>
   tree.root.findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === label).length > 0;
 
 /** The running app's version line in the open sheet. */
-const versionLine = (tree: Tree) =>
+export const versionLine = (tree: Tree) =>
   sheetCard(tree).findAll(isHost('Text')).map(textOf).find((text) => text.startsWith('Version ')) ?? null;
 
 /** Home with the example apps, then Tip Splitter opened from it. */
-async function openTipSplitter(tree: Tree): Promise<InstalledApp> {
+export async function openTipSplitter(tree: Tree): Promise<InstalledApp> {
   await waitFor(() => showing(tree, HomeScreen) && home(tree).props.apps.length > 0, 'the example apps');
   const app = tipSplitter(tree);
   await tap(() => home(tree).props.onOpen(app));
@@ -67,8 +74,8 @@ async function openTipSplitter(tree: Tree): Promise<InstalledApp> {
 }
 
 /** The orb's tap, and the Whim sheet open over the app. */
-async function openSheet(tree: Tree): Promise<void> {
-  await press(button(tree, COPY.orbMenuOpenLabel));
+export async function openSheet(tree: Tree): Promise<void> {
+  await press(orb(tree));
   await waitFor(() => hasButton(tree, COPY.whimSheetBackToApps), 'the Whim sheet');
 }
 

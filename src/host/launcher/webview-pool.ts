@@ -37,8 +37,9 @@ export interface PoolSlot {
 }
 
 export interface WebViewPool {
-  /** The app the current launch opened; `null` when no app is open. */
-  readonly appId: string | null;
+  /** The opening of an app the current launch serves (which app, opened when); `null` when no app
+   *  is open. */
+  readonly opening: string | null;
   /** The current launch, a token never reused; `null` when no app is open. */
   readonly launch: number | null;
   /** The WebViews in the order they are drawn, bottom first: the waiting one under the launch's. */
@@ -47,7 +48,7 @@ export interface WebViewPool {
   readonly next: number;
 }
 
-export const EMPTY_POOL: WebViewPool = { appId: null, launch: null, slots: [], next: 1 };
+export const EMPTY_POOL: WebViewPool = { opening: null, launch: null, slots: [], next: 1 };
 
 /** Injected into a waiting page once it has loaded: posts `WARM_ANSWER` iff the page's own
  *  orchestration script ran. It reads nothing and leaves nothing behind. */
@@ -91,15 +92,16 @@ function dropLaunchSlot(pool: WebViewPool): WebViewPool {
 }
 
 /**
- * The pool for `appId` open (or no app, for `null`). A different app than the open one is a new
- * launch: the previous launch's WebView is destroyed, and the new one takes the waiting WebView or
- * a cold one. Closing leaves one WebView waiting. The same app id is no change.
+ * The pool for `opening` (or no app, for `null`): one opening of an app, which the caller names. A
+ * different opening than the current one, another app's or the same app's opened again (Reload), is
+ * a new launch: the previous launch's WebView is destroyed, and the new one takes the waiting
+ * WebView or a cold one. Closing leaves one WebView waiting. The same opening is no change.
  */
-export function openApp(pool: WebViewPool, appId: string | null): WebViewPool {
-  if (pool.appId === appId) return appId === null ? keepOneWaiting(pool) : pool;
-  const closed: WebViewPool = { ...dropLaunchSlot(pool), appId: null, launch: null };
-  if (appId === null) return keepOneWaiting(closed);
-  return bindLaunch({ ...closed, appId, launch: closed.next, next: closed.next + 1 }, closed.next);
+export function openApp(pool: WebViewPool, opening: string | null): WebViewPool {
+  if (pool.opening === opening) return opening === null ? keepOneWaiting(pool) : pool;
+  const closed: WebViewPool = { ...dropLaunchSlot(pool), opening: null, launch: null };
+  if (opening === null) return keepOneWaiting(closed);
+  return bindLaunch({ ...closed, opening, launch: closed.next, next: closed.next + 1 }, closed.next);
 }
 
 /** The launch has opened (its first accepted paint): a fresh WebView starts loading beside it, so

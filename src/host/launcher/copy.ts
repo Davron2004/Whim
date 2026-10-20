@@ -253,9 +253,15 @@ export const COPY = {
   orbMenuDismissLabel: 'Dismiss the app menu',
 
   // ── the Whim sheet, what the orb opens (system.md §9 Whim sheet) ─────────────
-  /** The row on top while a newer version than the running one waits, and its action. */
+  /** The row on top while a newer version than the running one waits. */
   whimSheetNewVersion: 'New version ready',
-  whimSheetReload: 'Reload',
+  /** Opens the running app again on its current version, in a fresh realm: the Whim sheet's row and
+   *  the toast when a change lands. */
+  actionReload: 'Reload',
+  /** A change made while its app ran failed (system.md §9 Changing in use); its action opens the
+   *  change's Failure page. The landed change's toast is `changedTitle`. */
+  changeFailedToast: 'The change didn’t work',
+  toastSeeWhy: 'See why',
   /** The send field's placeholder and screen-reader name, and its arrow button. */
   whimSheetAsk: 'What should change?',
   whimSheetSend: 'Send',
@@ -884,6 +890,11 @@ export function legalLanguageName(language: LegalLanguage): string {
 /** "<App name> is ready": the toast when a run delivers with the making sheet closed. */
 export function readyTitle(name: string): string {
   return `${name} is ready`;
+}
+
+/** "<App name> changed": the toast when a change lands while its app runs; it offers Reload. */
+export function changedTitle(name: string): string {
+  return `${name} changed`;
 }
 
 /** The person's words in quotes, as the Plan, Making and Ready pages show them: trimmed, every run

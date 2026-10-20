@@ -165,7 +165,7 @@ export function WhimSheet({ app, version, newVersion, text, onChangeText, onSend
       </View>
       {newVersion ? (
         <GroupedSection on="sheet">
-          <GroupedRow title={COPY.whimSheetNewVersion} trailing={{ kind: 'value', text: COPY.whimSheetReload }} onPress={onReload} />
+          <GroupedRow title={COPY.whimSheetNewVersion} trailing={{ kind: 'value', text: COPY.actionReload }} onPress={onReload} />
         </GroupedSection>
       ) : null}
       <SendArea text={text} onChangeText={onChangeText} onSend={onSend} />

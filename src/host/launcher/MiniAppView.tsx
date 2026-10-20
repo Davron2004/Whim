@@ -55,7 +55,7 @@ import {
   type PoolSlot,
   type WebViewPool,
 } from './webview-pool';
-import Orb from './Orb';
+import Orb, { type OrbProps } from './Orb';
 import { chromeInsetBottom } from './orb-geometry';
 import type { InstalledApp } from './app-index';
 
@@ -66,7 +66,8 @@ export interface MiniAppLaunch {
   /** The runtime engine appId (the launcher id, #5 D8) — a fork's own user data. */
   engineAppId: string;
   /** When the user tapped to open this app (`Date.now()`): the near end of the tap-to-first-paint
-   *  record this launch logs at its first accepted paint. */
+   *  record this launch logs at its first accepted paint. With the app's id it names the opening:
+   *  another tap (Reload included) is another launch, in a fresh WebView and realm. */
   tappedAt: number;
   onExit: () => void;
   /** The orb's tap: the launcher opens the Whim sheet over this app. */
@@ -77,8 +78,11 @@ export interface MiniAppLaunch {
   sheetOpen: boolean;
   onCloseSheet: () => void;
   /** The installed-apps entry for this running app: its tile, its name, the orb's remembered corner.
-   *  Its id is the launch's identity: another id is another launch. */
+   *  Another id is another launch. */
   installedApp: InstalledApp;
+  /** What the orb shows of a change to this app (`app-launcher` "Changing an app keeps it running
+   *  and offers Reload"): being made, with its stream's activity; landed; failed; or nothing. */
+  orb: Required<Pick<OrbProps, 'state' | 'activity'>>;
 }
 
 export interface MiniAppStageProps {
@@ -103,6 +107,11 @@ interface LaunchOutlet {
 const RUNTIME_PAGE = { html: RUNTIME_HTML };
 const ORIGINS = ['*'];
 
+/** Which opening of which app `launch` is: its app and the tap that opened it. */
+function openingOf(launch: MiniAppLaunch | null): string | null {
+  return launch === null ? null : `${launch.installedApp.id}@${launch.tappedAt}`;
+}
+
 /** The container: the pool's WebViews, and the open app's `MiniAppView` over its own. */
 export function MiniAppStage({ launch, onFrame }: Readonly<MiniAppStageProps>) {
   const tokens = useTokens();
@@ -115,11 +124,12 @@ export function MiniAppStage({ launch, onFrame }: Readonly<MiniAppStageProps>) {
     onFrame(next);
   }, [onFrame]);
   const bg = (pinned ?? tokens).colors.bg;
-  const appId = launch?.installedApp.id ?? null;
-  const [pool, setPool] = useState<WebViewPool>(() => openApp(EMPTY_POOL, appId));
-  // A different app open (or none) is a new launch: the pool moves before anything renders for it.
-  const switching = pool.appId !== appId;
-  if (switching) setPool((p) => openApp(p, appId));
+  const opening = openingOf(launch);
+  const [pool, setPool] = useState<WebViewPool>(() => openApp(EMPTY_POOL, opening));
+  // A different opening (another app, the same app opened again by Reload, or none) is a new launch:
+  // the pool moves before anything renders for it, so no frame shows the container closed between.
+  const switching = pool.opening !== opening;
+  if (switching) setPool((p) => openApp(p, opening));
   const poolRef = useRef(pool);
   poolRef.current = pool;
   const natives = useRef(new Map<number, WebView>());
@@ -253,7 +263,7 @@ interface MiniAppViewProps extends MiniAppLaunch {
 }
 
 export default function MiniAppView({
-  record, bundleSource, engineAppId, tappedAt, onExit, onOpenSheet, sheetOpen, onCloseSheet, installedApp,
+  record, bundleSource, engineAppId, tappedAt, onExit, onOpenSheet, sheetOpen, onCloseSheet, installedApp, orb,
   slot, outlet, natives, onFailed, onOpened, onRetry, onPinned,
 }: Readonly<MiniAppViewProps>) {
   const slotKey = slot?.key ?? null;
@@ -482,7 +492,7 @@ export default function MiniAppView({
           </View>
         ) : null}
       </Animated.View>
-      <Orb appId={installedApp.id} onOpen={onOpenSheet} />
+      <Orb appId={installedApp.id} state={orb.state} activity={orb.activity} onOpen={onOpenSheet} />
     </>
   );
 }
