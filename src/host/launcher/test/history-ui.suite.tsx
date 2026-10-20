@@ -18,6 +18,7 @@ import MiniAppView from '../MiniAppView';
 import WhimProse from '../../ui/whim-prose/WhimProse';
 import { SHELL_COLORS } from '../../../sdk/theme';
 import { Alert, hardwareBack, StyleSheet, windowMetrics } from './native-host';
+import { iosPop, stackUnmountsMidMove } from './native-screens';
 import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 import { chooseRow, longPress, renderHome } from './home-rig';
 import { buildIt, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
@@ -308,7 +309,7 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     }).finally(() => { Date.now = realNow; });
   });
 
-  await h.test('history screen: opened from a running app’s orb, Back and system back return to that app; opened from Home, to Home', async () => {
+  await h.test('history screen: opened from a running app’s orb, Back, system back and an iOS swipe return to that app, and the stack is never unmounted mid-pop; opened from Home, to Home', async () => {
     const never = () => new Promise<Response>(() => {});
     await withLauncher({ examples: true, server: never }, async ({ tree }) => {
       const home = () => tree.root.findByType(HomeScreen);
@@ -318,6 +319,7 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       const leaves: [string, () => Promise<void>][] = [
         ['Back', () => press(button(tree, COPY.backLabel))],
         ['system back', systemBack],
+        ['iOS swipe', () => iosPop(tree)],
       ];
       for (const [name, leave] of leaves) {
         await tap(() => home().props.onOpen(app));
@@ -325,11 +327,12 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
         await press(button(tree, COPY.orbMenuOpenLabel));
         await press(button(tree, COPY.actionHistory));
         await waitFor(() => showing(HistoryScreen), 'its history');
+        const midMove = stackUnmountsMidMove();
         await leave();
-        h.ok(showing(HomeScreen) && !showing(HistoryScreen), `${name}: History pops off the stack at once, onto Home under it`);
         await waitFor(() => showing(MiniAppView), `${name} to reopen the app`);
         h.ok(!showing(HistoryScreen), `${name} from the history opened over the app returns to the app`);
         h.eq(tree.root.findByType(MiniAppView).props.installedApp.id, app.id, `${name}: the same app`);
+        h.eq(stackUnmountsMidMove(), midMove, `${name}: the app replaces the stack only once no pop of it is running (else iOS shows a blank Home next)`);
         await TestRenderer.act(async () => tree.root.findByType(MiniAppView).props.onExit());
       }
       for (const [name, leave] of leaves) {

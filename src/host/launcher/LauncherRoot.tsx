@@ -1304,13 +1304,25 @@ function LauncherShell({
     setScreen({ kind: 'history', app, from });
   };
 
-  /** Leaving History: Home, and from there back into the app it was opened over, reopened at
-   *  whatever version is now current (a restore there may have moved it). Home at once: History is
-   *  on the native stack, whose pops must find the machine already off it (`NativeStack.tsx`), and
-   *  Home is where a failing open leaves the user, never stranded on History. */
+  /** A native pop of History (a swipe): Home, and from there back into the app it was opened over,
+   *  reopened at whatever version is now current (a restore there may have moved it). Home at once:
+   *  the platform has already popped it, and its pops must find the machine off it (`NativeStack.tsx`). */
   const leaveHistory = (app: InstalledApp, from: 'home' | 'app') => {
     goHome();
     if (from === 'app') onOpen(index.get(app.id) ?? app);
+  };
+
+  /** History's own Back and system back, when it was opened over an app: History stays until that app
+   *  has opened again and replaces it in one step; Home only when it cannot be opened, never stranded on
+   *  History. Never Home first: going Home pops the stack, which UIKit animates, and the app opening
+   *  would unmount the stack mid-pop. react-native-screens then keeps the unfinished pop in the stack it
+   *  recycles, and the next Home it shows is blank for good (iOS). */
+  const backFromHistoryToApp = (app: InstalledApp) => {
+    onOpen(index.get(app.id) ?? app, goHome)
+      .then((opened) => {
+        if (!opened) goHome();
+      })
+      .catch(() => undefined);
   };
 
   /** Delete and Discard hide at once and complete when their Undo toast ends (`soft-delete.ts`):
@@ -3360,7 +3372,8 @@ function LauncherShell({
   );
 
   /** Where leaving a stack screen lands: one handler, run by its header back, a swipe and system
-   *  back alike, and always off the screen at once (`NativeStack.tsx`). */
+   *  back alike, and always off the screen at once (`NativeStack.tsx`). History opened over an app
+   *  leaves by its own Back and system back through `backFromHistoryToApp` instead. */
   const leaveFor = (from: StackScreen): (() => void) => {
     switch (from.kind) {
       case 'home':
@@ -3436,7 +3449,7 @@ function LauncherShell({
           <HistoryScreen
             app={on.app}
             access={access}
-            onBack={leave}
+            onBack={on.from === 'app' ? () => backFromHistoryToApp(on.app) : leave}
             onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
             onReport={() => setScreen({ kind: 'report', app: on.app, from: on })}
           />

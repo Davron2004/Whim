@@ -10,7 +10,46 @@ import TestRenderer from 'react-test-renderer';
 
 type HostProps = { children?: React.ReactNode; [key: string]: unknown };
 
-export const ScreenStack = (props: HostProps) => React.createElement('ScreenStack', props, props.children);
+/** The stack's moves as iOS makes them. A top screen changed by the JS side (a push, or a pop asked
+ *  for by the shell) is animated by UIKit; one already popped by UIKit (`iosPop`) is not animated
+ *  again. A stack unmounted while such a move runs keeps it unfinished in the view react-native-screens
+ *  recycles, and the next stack mounted shows a blank screen for good (design-system-v1 19f3,
+ *  measured on the iOS 27 simulator). A move outlasts any bundle read, so here it runs until the
+ *  stack goes. */
+let nativePopped = false;
+let moving = false;
+let unmountsMidMove = 0;
+
+/** How many stacks have been unmounted while a move of theirs was running, since the module loaded. */
+export function stackUnmountsMidMove(): number {
+  return unmountsMidMove;
+}
+
+function topScreenId(children: React.ReactNode): unknown {
+  const items = React.Children.toArray(children);
+  const top = items.at(-1);
+  return React.isValidElement<{ screenId?: unknown }>(top) ? top.props.screenId : undefined;
+}
+
+export const ScreenStack = (props: HostProps) => {
+  const top = topScreenId(props.children);
+  const shown = React.useRef<unknown>(undefined);
+  React.useLayoutEffect(() => {
+    moving = false;
+    return () => {
+      if (moving) unmountsMidMove += 1;
+      moving = false;
+    };
+  }, []);
+  React.useLayoutEffect(() => {
+    if (shown.current !== undefined && shown.current !== top) {
+      moving = !nativePopped;
+      nativePopped = false;
+    }
+    shown.current = top;
+  });
+  return React.createElement('ScreenStack', props, props.children);
+};
 export const ScreenStackItem = (props: HostProps) => React.createElement('ScreenStackItem', props, props.children);
 export function enableScreens(): void {}
 
@@ -42,6 +81,7 @@ export function headerBackShown(tree: Tree): boolean {
 /** UIKit popped `count` screens off the top (a swipe, the header back, or its long-press menu). */
 export async function iosPop(tree: Tree, count = 1): Promise<void> {
   const top = topItem(tree);
+  nativePopped = true;
   await TestRenderer.act(async () => top.props.onDismissed({ nativeEvent: { dismissCount: count } }));
 }
 
