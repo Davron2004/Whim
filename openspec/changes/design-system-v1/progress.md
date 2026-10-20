@@ -499,3 +499,4 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
 - re-review of `6b27c2c9..1a8b81b2`: VERDICT approve (no field in FirstRunSheet; 40% footer leaves the legal layers reachable; knob contrast recomputed ≥ 3.19:1; SwitchCompat geometry sound; F3 worklet-safe, no double-pad, no leak). Low-to-medium race (late-mounted frame padded for a keyboard already gone) filed as an issue.
 - merged: `6740009d` (--no-ff). regate (fast): PASS. task 6.7 ticked. Worktree removed. gate-full on the merged tip (covers 16n-a + 16n-b) next.
 - gate-full on the 16n merges: FULL GATE PASSED. Pushed. Closed #189 #196 #201 #202 #203; #204 left open (Language row, owner call).
+- dispatched in parallel, BASE `c1f470e8`: 16n-c (#198 part 1 shared bound-WebView helper; #205 log lookups survive a wrapped ring; tests only; sonnet, effort high) and 16n-d (#200 SDK segmented control at 200% text; opus, effort high; Chromium SDK test + optional Android glance).
