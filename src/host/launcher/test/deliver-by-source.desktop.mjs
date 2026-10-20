@@ -17,7 +17,8 @@
 // pads the app's Screen without reaching the theme global, and a focused field is scrolled back
 // into view when the viewport shrinks. And what the page itself does (design-system-v1 D4,
 // sandbox-rendering): `paint` reaches RN stamped with the generation the host bound, the page, the
-// iframe and the realm's canvas paint the theme's `bg`, and the viewport allows zoom.
+// iframe and the realm's canvas paint the theme's `bg`, and the viewport allows zoom. And that the
+// launcher's own theme frame (design-system-v1 D3) reaches the realm whole.
 //
 //   npm run build && node src/host/launcher/test/deliver-by-source.desktop.mjs
 import { chromium } from 'playwright';
@@ -183,6 +184,21 @@ async function bundleSource(contents) {
   return out.outputFiles[0].text;
 }
 
+/** The launcher's theme-frame builder and the token module, compiled from their TypeScript sources
+ *  (both pure, no React Native) so this check delivers exactly what the host builds. */
+const { themeFrame, resolveTokens, COLORS, TINTS } = await (async () => {
+  const out = await esbuild({
+    stdin: {
+      contents: `export { themeFrame } from './src/host/launcher/theme-frame';
+export { resolveTokens } from './src/host/ui/tokens-pure';
+export { COLORS, TINTS } from './src/design/tokens';`,
+      loader: 'ts', resolveDir: ROOT, sourcefile: 'host-theme.ts',
+    },
+    bundle: true, format: 'esm', platform: 'neutral', write: false, logLevel: 'warning',
+  });
+  return import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`);
+})();
+
 const LEDGER_ERROR = `class LedgerError extends Error {
   constructor(message: string) { super(message); this.name = 'LedgerError'; }
 }`;
@@ -258,6 +274,8 @@ function screenAndReachableInset() {
   };
 }
 
+const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
+
 async function realmChecks(browser) {
   const checks = {};
   const detail = {};
@@ -297,6 +315,22 @@ async function realmChecks(browser) {
     await page.close();
   }
 
+  // The launcher's own theme frame (design-system-v1 D3) for a dark phone at 135% text with Reduce
+  // Motion and Increase Contrast, for an `ocean` app, delivered as MiniAppView delivers it (with the
+  // orb inset): the realm installs every field but the inset, and its Screen paints from them.
+  {
+    const frame = themeFrame(resolveTokens({ scheme: 'dark', fontScale: 1.35, reduceMotion: true, increaseContrast: true, platform: 'ios' }), 'ocean');
+    const { page, realm } = await openRealm(browser, SRC, { ...frame, chromeInsetBottom: 106 });
+    const seen = await realm().evaluate(() => {
+      const screen = window.getComputedStyle(document.getElementById('whim-root').firstElementChild);
+      return { theme: window.__WHIM_THEME__, bg: screen.backgroundColor, color: screen.color, fontSize: screen.fontSize };
+    });
+    const want = { theme: frame, bg: rgb(COLORS.dark.bg), color: rgb(COLORS.dark.text), fontSize: '22.95px' /* body 17 × 1.35 */ };
+    checks['host theme frame'] = frame.colors.primary === TINTS.ocean.dark && isDeepStrictEqual(seen, want);
+    detail['host theme frame'] = `seen=${JSON.stringify(seen)} want=${JSON.stringify(want)}`;
+    await page.close();
+  }
+
   // The outer page stamps `paint` with the generation the host bound the realm at, as it does
   // nav-depth; the realm's own counter (1 for every fresh realm) never reaches the host.
   {
@@ -318,7 +352,6 @@ async function realmChecks(browser) {
   // The outer page, the iframe and the realm's own canvas paint the delivered theme's `bg` (the
   // token module's light `bg` without one, or with one that is not a #rrggbb colour), and both
   // documents let native controls follow the phone's scheme.
-  const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
   for (const [name, theme, want] of [
     ['canvas without a theme', undefined, PAGE_BG],
     ['canvas in the theme bg', { colors: { bg: '#2A1B3C' } }, '#2A1B3C'],
@@ -498,3 +531,4 @@ console.log('✅ non-default source (water-counter) renders correctly over tip-s
 console.log('✅ navigation bootstrap stays loader-only and missing/invalid/undeletable states fail closed.');
 console.log('✅ a by-source realm reports an uncaught render error once, pads Screen by the sanitized orb inset without exposing it, and keeps a focused field in view.');
 console.log('✅ the page stamps paint with the bound generation, paints the theme bg (light bg by default) and allows zoom.');
+console.log('✅ the launcher’s theme frame reaches the realm whole, without the orb inset, and its Screen paints from it.');

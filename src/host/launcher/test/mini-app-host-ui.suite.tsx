@@ -12,12 +12,13 @@ import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
 import type { AppRecord } from '../../bridge';
 import { createStorageEngine } from '../../storage-engine';
-import { DEFAULT_THEME } from '../../../sdk/theme';
+import { DEFAULT_THEME, sanitizeTheme } from '../../../sdk/theme';
+import { COLORS, ON_TINT, TINTS } from '../../../design/tokens';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { DiagnosticsBatch } from '@whim/contract';
 import { log } from '../../logging';
-import { finishAnimations, injectedScripts, Platform, StyleSheet } from './native-host';
+import { accessibilitySettings, finishAnimations, injectedScripts, Platform, setColorScheme, StyleSheet, windowMetrics } from './native-host';
 import { keyboardWindow, moveKeyboard, resetKeyboard } from './native-keyboard-controller';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { closedDatabases, resetNativeStorage } from './native-storage';
@@ -59,19 +60,18 @@ function pageInset(tree: Tree): number {
   return pad + ((StyleSheet.flatten(web.props.style) as { marginBottom?: number }).marginBottom ?? 0);
 }
 
-/** Mount the container for `record`, run `body`, and unmount. */
-async function withMiniApp(record: AppRecord, body: (m: Mounted) => Promise<void>): Promise<void> {
+/** Mount the container for `record` (installed with `tile`, if given), run `body`, and unmount. */
+async function withMiniApp(record: AppRecord, body: (m: Mounted) => Promise<void>, tile?: Pick<InstalledApp, 'tint' | 'icon'>): Promise<void> {
   resetNativeStorage();
   injectedScripts.length = 0;
   const clock = captureTimeouts();
   let exits = 0;
-  const app: InstalledApp = { id: record.appId, name: record.name, createdAt: 1, lineageId: 'main', record };
+  const app: InstalledApp = { id: record.appId, name: record.name, createdAt: 1, lineageId: 'main', record, ...tile };
   const tree = await renderScreen(
     <MiniAppView
       record={record}
       bundleSource={APP_BUNDLES[record.appId]}
       engineAppId={record.appId}
-      theme={DEFAULT_THEME}
       onExit={() => { exits++; }}
       onVersions={() => {}}
       onChangeIt={() => {}}
@@ -116,10 +116,19 @@ const REJECTION_ERROR_FRAME = { kind: 'error', trusted: true, payload: { where: 
 
 /** The theme a delivery script hands the realm (`deliverBySourceJs` appends it last, just before
  *  the `reinject({...})` call closes). */
-function deliveredTheme(script: string | undefined): { colors?: unknown; chromeInsetBottom?: unknown } {
+function deliveredTheme(script: string | undefined): Record<string, unknown> & { colors?: Record<string, unknown>; chromeInsetBottom?: unknown } {
   const json = /,theme:(\{.*\})\}\)/.exec(script ?? '')?.[1];
   return json ? JSON.parse(json) : {};
 }
+
+/** A delivered theme without the orb inset, which the loader keeps out of the bundle-visible theme. */
+function withoutInset(theme: ReturnType<typeof deliveredTheme>): Record<string, unknown> {
+  const copy: Record<string, unknown> = { ...theme };
+  delete copy.chromeInsetBottom;
+  return copy;
+}
+
+const byName = (a: string, b: string) => a.localeCompare(b);
 
 interface ErrorRecordFields { where?: unknown; errorClass?: unknown; appId?: unknown }
 
@@ -322,12 +331,66 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       const orb = StyleSheet.flatten(button(tree, COPY.orbMenuOpenLabel).props.style) as { bottom: number; height: number };
       const first = deliveredTheme(injectedScripts[0]);
       h.eq(first.chromeInsetBottom, orb.bottom + orb.height, 'the footprint reaches exactly the top of the orb as drawn over the inset');
-      h.eq(first.colors, DEFAULT_THEME.colors, 'beside the theme’s colours, unchanged');
+      const theme = withoutInset(first);
+      h.eq(theme, sanitizeTheme(theme), 'beside a theme the SDK keeps exactly as delivered');
       await frame({ kind: 'error', trusted: true, payload: { where: 'bundle' } });
       await press(button(tree, COPY.appErrorRetry));
       await loadEnd();
       h.eq(deliveredTheme(injectedScripts[1]).chromeInsetBottom, orb.bottom + orb.height, 'the recreated realm is told again');
     });
+  });
+
+  await h.test('mini-app: a launch hands the realm the theme for the phone’s settings and the app’s tint: dark, 135% text, ocean', async () => {
+    const before = { OS: Platform.OS, fontScale: windowMetrics.fontScale, ...accessibilitySettings };
+    try {
+      Platform.OS = 'android';
+      windowMetrics.fontScale = 1.35;
+      accessibilitySettings.reduceMotion = true;
+      accessibilitySettings.increaseContrast = true;
+      setColorScheme('dark');
+      await withMiniApp(TIP, async ({ loadEnd }) => {
+        await loadEnd();
+        const { colors, ...settings } = withoutInset(deliveredTheme(injectedScripts[0])) as { colors?: Record<string, unknown> };
+        h.eq(settings, { scheme: 'dark', tint: 'ocean', fontScale: 1.35, reduceMotion: true, increaseContrast: true, platform: 'android' },
+          'the scheme, the app’s tint, the text scale, Reduce Motion, Increase Contrast and the platform');
+        h.eq(Object.keys(colors ?? {}).sort(byName), Object.keys(DEFAULT_THEME.colors).sort(byName),'every colour role the SDK reads');
+        h.eq(colors?.primary, TINTS.ocean.dark, 'primary is ocean’s dark value');
+        h.eq(colors?.['on-primary'], ON_TINT.dark, 'with the label colour that reads on it');
+        for (const role of ['bg', 'surface', 'sheet', 'sheet-group', 'thumb', 'text', 'border', 'danger', 'positive', 'warning'] as const) {
+          h.eq(colors?.[role], COLORS.dark[role], `${role} is the token module’s dark value`);
+        }
+        h.eq(colors?.['text-muted'], COLORS.dark.text, 'under Increase Contrast muted text is the full text colour, as in the shell');
+        const delivered = { colors, ...settings };
+        h.eq(delivered, sanitizeTheme(delivered), 'and the SDK keeps every field as delivered');
+      }, { tint: 'ocean', icon: 'receipt' });
+    } finally {
+      Object.assign(accessibilitySettings, { reduceMotion: before.reduceMotion, increaseContrast: before.increaseContrast });
+      windowMetrics.fontScale = before.fontScale;
+      Platform.OS = before.OS;
+      setColorScheme('light');
+    }
+  });
+
+  await h.test('mini-app: a running app keeps the theme it opened with; the phone’s new settings apply the next time it opens', async () => {
+    try {
+      setColorScheme('dark');
+      await withMiniApp(TIP, async ({ loadEnd }) => {
+        await loadEnd();
+        h.eq(deliveredTheme(injectedScripts[0]).scheme, 'dark', 'opened in dark');
+        await TestRenderer.act(async () => { setColorScheme('light'); });
+        windowMetrics.fontScale = 1.5;
+        h.eq(injectedScripts.length, 1, 'switching to light while it runs delivers nothing new');
+      }, { tint: 'rose', icon: 'receipt' });
+      await withMiniApp(TIP, async ({ loadEnd }) => {
+        await loadEnd();
+        const theme = deliveredTheme(injectedScripts[0]);
+        h.eq([theme.scheme, theme.fontScale, theme.colors?.bg, theme.colors?.primary], ['light', 1.5, COLORS.light.bg, TINTS.rose.light],
+          'the next open is light, at the new text size');
+      }, { tint: 'rose', icon: 'receipt' });
+    } finally {
+      windowMetrics.fontScale = 1;
+      setColorScheme('light');
+    }
   });
 
   await h.test('mini-app: an app’s errors are uploaded as their class and site only, so "Alice owes 40" never leaves the phone', async () => {

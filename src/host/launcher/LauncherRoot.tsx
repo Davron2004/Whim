@@ -20,7 +20,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
 import { APP_BUNDLES } from '../../runtime/generated/app-bundles';
-import { DEFAULT_THEME, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { hideLaunchScreen as nativeHideLaunchScreen } from '../launch-screen';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
@@ -2826,7 +2826,6 @@ function LauncherShell({
           record={screen.record}
           bundleSource={screen.source}
           engineAppId={screen.engineAppId}
-          theme={DEFAULT_THEME}
           onExit={goHome}
           onVersions={() => onHistory(screen.app, 'app')}
           onChangeIt={() => openWithConsent({ kind: 'compose', editing: screen.app })}

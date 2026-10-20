@@ -7,13 +7,15 @@
 // Android system back (D4) both exit to the launcher; the realm can reach neither. LauncherRoot
 // keys this component by
 // the launcher id, so switching apps remounts it (a fresh realm every launch).
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
-import type { WhimTheme } from '../../sdk/theme';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { useTokens } from '../ui/tokens';
+import { themeFrame } from './theme-frame';
+import { tileOf } from './tile-identity';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import { loadEndAction } from './realm-delivery';
@@ -38,8 +40,6 @@ export interface MiniAppViewProps {
   bundleSource: string;
   /** The runtime engine appId (the launcher id, #5 D8) — a fork's own user data. */
   engineAppId: string;
-  /** The resolved launcher theme, forwarded opaquely into delivery (design sdk-design-system D8). */
-  theme: WhimTheme;
   onExit: () => void;
   /** Orb "Versions" — opens the real History screen for this running app. */
   onVersions: () => void;
@@ -64,7 +64,6 @@ export default function MiniAppView({
   record,
   bundleSource,
   engineAppId,
-  theme,
   onExit,
   onVersions,
   onChangeIt,
@@ -97,10 +96,14 @@ export default function MiniAppView({
   // down the realm the user is already looking at. `deliveredKey` records the mount delivery
   // happened for, so the two legitimate deliveries still happen -- the component's first mount
   // (keyed by launcher id), and every Retry remount (a bumped webKey, i.e. a RECREATED realm,
-  // spike2 §5) -- while a repeat for the same key is dropped. Theme is re-captured at each real
-  // delivery, matching the "theme applies at delivery" model (design sdk-design-system Non-Goals):
-  // a running realm never re-themes live. The theme carries how much of the app's bottom edge the
-  // orb covers (beta-1 D5), computed from this delivery's bottom safe-area inset.
+  // spike2 §5) -- while a repeat for the same key is dropped. The theme is built at each real
+  // delivery from the phone's settings at that moment and the app's tint (design-system-v1 D3): a
+  // running realm never re-themes live, and a settings change applies at the next open or Retry.
+  // It carries how much of the app's bottom edge the orb covers (beta-1 D5), computed from this
+  // delivery's bottom safe-area inset; the loader keeps that out of the bundle-visible theme.
+  const tokens = useTokens();
+  const tint = tileOf(installedApp).tint;
+  const theme = useMemo(() => themeFrame(tokens, tint), [tokens, tint]);
   const bottomInset = useSafeAreaInsets().bottom;
   const deliveredKey = useRef<number | null>(null);
   const handleLoadEnd = useCallback(() => {
@@ -114,7 +117,7 @@ export default function MiniAppView({
     deliveredKey.current = webKey;
     host.deliverBySource(record, bundleSource, engineAppId, { ...theme, chromeInsetBottom: chromeInsetBottom(bottomInset) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [webKey, bottomInset]);
+  }, [webKey, bottomInset, theme]);
 
   // Which of the four container surfaces this render belongs to. The precedence (both failure
   // surfaces above the boot state) is decided by the pure `miniAppSurface` -- a launch that fails
