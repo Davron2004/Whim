@@ -394,3 +394,11 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
   totals: 8 implementer pieces (17, b, c, d, e, h, i + the first agent's 834k-token run), 2 device verifiers, 4 reviews.
   gate-full on the merged tip next.
 - gate-full on `4db59e0e` (chain-17 merged): FULL GATE PASSED. Pushed.
+- chain-18 planned as four sequential pieces on one branch (shared MiniAppView/useMiniAppHost): 18a = 18.1 theme frame
+  (no device) → 18b = 18.2 GEN-stamped opening signal (reads spike2 first: trust and realm rules) → 18c = 18.3 opening
+  state UI (devices) → 18d = 18.4 warm WebView pool + tap-to-first-paint (containment-sensitive: a reused WebView must
+  still get a fresh realm). Status file `c18-status.md`; contract `handoff/opening.md` grows per piece (≤120 lines).
+- dispatched in parallel (disjoint files), BASE `f29b97d3`: 18a (opus, medium; worktree `design-system-v1-chain-18`)
+  and chain-16m (Advanced server field hidden behind the keyboard on iOS; bisect vs 16l first; opus, medium; worktree
+  `design-system-v1-chain-16m`; the iOS simulator is 16m's, the Android emulator is reserved for chain-18). Briefs now
+  say: never `git stash`.
