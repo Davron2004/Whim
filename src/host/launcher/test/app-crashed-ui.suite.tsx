@@ -5,7 +5,9 @@
  *  attached as plain, capped text, and never a second change while one is being made, Back to your
  *  apps, and crash frames from a replaced realm or without the page's authentication changing nothing. */
 import TestRenderer from 'react-test-renderer';
+import { StyleSheet, type FlexStyle } from 'react-native';
 import { Harness } from './harness';
+import { chromeInsetBottom } from '../orb-geometry';
 import { COPY, appCrashedTitle } from '../copy';
 import HomeScreen from '../HomeScreen';
 import MiniAppView from '../MiniAppView';
@@ -13,7 +15,7 @@ import { AppCrashed } from '../AppCrashed';
 import { PlanPage } from '../PlanPage';
 import { CRASH_CLASS_MAX } from '../crash-report';
 import { PendingBuildStore } from '../pending-builds';
-import { button, hostType, press, textOf } from './react-screen';
+import { button, hostType, isHost, press, textOf } from './react-screen';
 import { planLoaded, settle, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { streamingServer } from './prompt-flow-ui.suite';
 import { APP_NAME, controlsIn, hasButton, openTipSplitter, orb, runningApp, sheetCard, showing } from './whim-sheet-ui.suite';
@@ -28,6 +30,12 @@ const crashShown = (tree: Tree) => tree.root.findAllByType(AppCrashed).length ==
 /** The crash screen's actions, in the order they are drawn, by the name a screen reader reads. */
 const crashActions = (tree: Tree) =>
   tree.root.findByType(AppCrashed).findAll((n) => hostType(n) === 'Pressable').map((n) => String(n.props.accessibilityLabel));
+
+/** The views `node` draws directly inside it: each child component stands for the first view it draws. */
+function drawnChildren(node: Node): Node[] {
+  const firstView = (n: Node): Node => (typeof n.type === 'string' ? n : firstView(n.children.find((c): c is Node => typeof c !== 'string')!));
+  return node.children.filter((c): c is Node => typeof c !== 'string').map(firstView);
+}
 
 /** The Whim sheet's field. */
 const field = (tree: Tree): Node => sheetCard(tree).find((n) => hostType(n) === 'TextInput' && n.props.accessibilityLabel === COPY.whimSheetAsk);
@@ -65,6 +73,29 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
       await press(orb(tree));
       await waitFor(() => hasButton(tree, COPY.whimSheetBackToApps), 'the Whim sheet');
       h.ok(crashShown(tree), 'the orb stays over it and opens the Whim sheet');
+    });
+  });
+
+  await h.test('app crashed: the mark, title and body are centred in the height the actions leave; the actions sit at the bottom, just above the orb', async () => {
+    await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+      await crashRunningApp(tree);
+      const screen = tree.root.findByType(AppCrashed);
+      const scroll = screen.find((n) => typeof n.type === 'string' && n.props.contentContainerStyle !== undefined);
+      const content = StyleSheet.flatten(scroll.props.contentContainerStyle) as FlexStyle;
+      h.ok((content.flexGrow ?? 0) >= 1, 'the content fills the screen’s height');
+      h.ok(content.paddingBottom === screen.props.bottomClearance && screen.props.bottomClearance >= chromeInsetBottom(0),
+        `and ends where the orb’s area begins (${String(content.paddingBottom)})`);
+      const blocks = drawnChildren(scroll);
+      h.eq(blocks.length, 2, 'two blocks: the message, then the actions');
+      const [message, actions] = blocks;
+      const m = StyleSheet.flatten(message.props.style) as FlexStyle;
+      h.ok((m.flexGrow ?? 0) >= 1 && m.justifyContent === 'center' && m.alignItems === 'center',
+        'the message takes the height the actions leave and is centred in it');
+      h.ok(textOf(message).includes(appCrashedTitle(APP_NAME)) && textOf(message).includes(COPY.appCrashedBody) && message.findAll(isHost('Pressable')).length === 0,
+        'it holds the title and body, and no action');
+      h.eq(actions.findAll(isHost('Pressable')).map((n) => String(n.props.accessibilityLabel)), [COPY.actionReload, COPY.appCrashedAskFix, COPY.launchFailedBack],
+        'the three actions come last, at the bottom');
+      h.ok(!((StyleSheet.flatten(actions.props.style) as FlexStyle).flexGrow ?? 0), 'and take only their own height');
     });
   });
 

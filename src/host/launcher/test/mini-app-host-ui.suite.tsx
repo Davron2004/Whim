@@ -548,6 +548,37 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     });
   });
 
+  // design-system-v1 19f: an app reopened right after Back sometimes never painted on Android. The
+  // device order for that reopen, as react-native-webview 13 reports it on Android: the WebView that
+  // started warming at the first paint is handed over still loading; its page finishes
+  // (`onPageFinished` → `onLoadEnd`, only after the main frame's load, so its scripts have run); the
+  // delivery's realm reset loads a new iframe, after which Android may report the page finished once
+  // more; then the realm paints.
+  await h.test('pool: closed and reopened before the next WebView finished loading, the app opens in it once its page loads — one delivery, a repeated load end ignored — and its paint opens it', async () => {
+    await withStage(async ({ tree, show, webViews, send }) => {
+      const [first] = webViews();
+      await TestRenderer.act(async () => first.props.onLoadEnd());
+      await send(first, WARM_ANSWER);
+      await show(launchOf(WATER));
+      await send(first, firstPaint(generationIn(first)));
+      const next = webViews().find((w) => w !== first)!;
+      await show(null);
+      log.buffer.clear();
+      await show(launchOf(WATER));
+      const [web] = webViews();
+      h.ok(web === next && webViews().length === 1, 'the reopen takes the WebView that was still loading, and the closed launch’s is gone');
+      h.eq(deliveriesInto(web), [], 'nothing is delivered before its page has loaded');
+      await TestRenderer.act(async () => web.props.onLoadEnd());
+      h.eq(deliveriesInto(web).length, 1, 'its load end delivers the app');
+      await TestRenderer.act(async () => web.props.onLoadEnd());
+      h.eq(deliveriesInto(web).length, 1, 'a second load end after the realm reset does not deliver again');
+      h.ok(isOpening(tree), 'the app is still opening until its realm paints');
+      await send(web, firstPaint(generationIn(web)));
+      h.ok(!isOpening(tree) && pageIsShown(tree), 'the realm’s paint opens it');
+      h.eq(timedRecords().map((f) => f.webView), ['loading'], 'and the timing record says the WebView was loading');
+    });
+  });
+
   await h.test('pool: app A then app B — B opens in a WebView A never had, at its own generation, and A’s late paint, syscall and storage never reach it', async () => {
     await withStage(async ({ tree, show, webViews, send, settle }) => {
       const [waiting] = webViews();

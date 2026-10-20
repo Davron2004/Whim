@@ -5,6 +5,7 @@
  * page and a page whose scripts did not run, is in `deliver-by-source.desktop.mjs`.
  */
 import { Harness } from './harness';
+import { mulberry32 } from './mulberry32';
 import {
   EMPTY_POOL,
   launchFailed,
@@ -42,20 +43,6 @@ function violations(pool: WebViewPool, before: WebViewPool, owner: Map<number, n
   const kept = (p: WebViewPool, q: WebViewPool) => p.slots.map((s) => s.key).filter((key) => q.slots.some((s) => s.key === key));
   if (kept(pool, before).join() !== kept(before, pool).join()) broken += 1;
   return broken;
-}
-
-/** mulberry32: a 32-bit PRNG whose every step stays an exact integer (`Math.imul`), so the sequence
- *  reaches every step kind evenly. */
-function mulberry32(seed: number): () => number {
-  /* eslint-disable no-bitwise -- 32-bit integer mixing is what this generator is, not a bitmask */
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
-  };
-  /* eslint-enable no-bitwise */
 }
 
 export async function runWebViewPoolTests(h: Harness): Promise<void> {

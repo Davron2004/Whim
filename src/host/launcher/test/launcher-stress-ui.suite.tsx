@@ -25,24 +25,16 @@ import { makingSheetOpen, settle, tap, waitFor, withLauncher, type Tree } from '
 import { hasButton, home, orb, showing } from './whim-sheet-ui.suite';
 import { opening, paint, send } from './changing-in-use-ui.suite';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
+import { mulberry32 } from './mulberry32';
 
 type Node = TestRenderer.ReactTestInstance;
-
-/** A 32-bit generator (mulberry32): the same seed, the same sequence, on every machine. */
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 const STEP_KINDS = ['open', 'sheet', 'backToApps', 'androidBack', 'swipeClose', 'reopen', 'fling', 'reload', 'report'] as const;
 type StepKind = (typeof STEP_KINDS)[number];
 const PAGE_EVENTS = ['load', 'answer', 'paint'] as const;
 type PageEvent = (typeof PAGE_EVENTS)[number];
+/** How often, over all runs, each step kind and page event must have run for the runs to count. */
+const MIN_EACH = 5;
 
 const isWebView = isHost('WebView');
 /** A WebView's own record of the scripts it was handed: the same array for its whole life. */
@@ -127,6 +119,93 @@ interface Ran {
   violations: string[];
 }
 
+/** What the test has made each page do, by the WebView's own scripts array. */
+interface PageLog {
+  loaded: WeakSet<string[]>;
+  answered: WeakSet<string[]>;
+  painted: WeakSet<string[]>;
+}
+
+const crashedIn = (tree: Tree) => tree.root.findAllByType(AppCrashed).length > 0;
+
+/** Where the launches break a promise: one launch shown at most, Home exactly when no app is, no
+ *  WebView bound on Home and exactly one under a running app. */
+function launchViolations(tree: Tree): string[] {
+  const found: string[] = [];
+  const shown = showing(tree, MiniAppView);
+  if (tree.root.findAllByType(MiniAppView).length > 1) found.push('two launches shown');
+  if (showing(tree, HomeScreen) === shown) found.push(shown ? 'Home drawn under the open app' : 'neither Home nor an app');
+  const bound = boundWebViews(tree);
+  if (!shown && bound.length > 0) found.push(`${bound.length} WebView(s) bound on Home`);
+  if (shown && !crashedIn(tree) && bound.length !== 1) found.push(`${bound.length} WebViews bound to the open app`);
+  return found;
+}
+
+/** Where the WebViews break a promise: none delivered into twice or kept after its launch, a loaded
+ *  page bound to a running app holding its delivery, a painted app uncovered. */
+function deliveryViolations(tree: Tree, pages: PageLog): string[] {
+  const found: string[] = [];
+  const bound = boundWebViews(tree);
+  for (const web of tree.root.findAll(isWebView)) {
+    const delivered = deliveriesInto(web).length;
+    if (delivered > 1) found.push('a WebView delivered into twice');
+    if (delivered > 0 && !bound.includes(web)) found.push('a delivered WebView kept after its launch');
+  }
+  if (!showing(tree, MiniAppView) || crashedIn(tree) || bound.length !== 1) return found;
+  const web = bound[0];
+  if (pages.loaded.has(scriptsOf(web)) && deliveriesInto(web).length !== 1) {
+    found.push('the bound page has loaded but holds no delivery: its paint can never come');
+  }
+  if (pages.painted.has(scriptsOf(web)) && (opening(tree) || covered(web))) found.push('a painted app is covered');
+  return found;
+}
+
+/** Where the overlays break a promise: a Modal mounted with no sheet wanted, the wanted sheet not the
+ *  one visible Modal, or a presentation refused since `refusedBefore`. */
+function overlayViolations(tree: Tree, refusedBefore: number): string[] {
+  const found: string[] = [];
+  const modals = tree.root.findAll(isHost('Modal'));
+  const wanted = makingSheetOpen(tree);
+  if (!wanted && modals.length > 0) found.push(`${modals.length} Modal(s) left mounted with no sheet wanted`);
+  if (wanted && !(modals.length === 1 && modals[0].props.visible === true)) found.push('the wanted sheet is not presented');
+  if (modalPresentations.refused !== refusedBefore) found.push('a presentation was refused');
+  return found;
+}
+
+/** One thing a page could do now, picked with `pick`: a WebView finishing its load, a probed one
+ *  answering, a delivered bound one painting; `null` when none can. */
+function pickPageEvent(tree: Tree, pages: PageLog, pick: <T>(list: readonly T[]) => T): [PageEvent, Node] | null {
+  const webs = tree.root.findAll(isWebView);
+  const choices: [PageEvent, Node][] = [
+    ...webs.filter((w) => !pages.loaded.has(scriptsOf(w))).map((w): [PageEvent, Node] => ['load', w]),
+    ...webs.filter((w) => scriptsOf(w).includes(WARM_PROBE_JS) && !pages.answered.has(scriptsOf(w))).map((w): [PageEvent, Node] => ['answer', w]),
+    ...boundWebViews(tree).filter((w) => deliveriesInto(w).length > 0 && !pages.painted.has(scriptsOf(w))).map((w): [PageEvent, Node] => ['paint', w]),
+  ];
+  return choices.length === 0 ? null : pick(choices);
+}
+
+/** `web`'s page does `event`; a bound launch's own paint must open it. */
+async function firePageEvent(tree: Tree, pages: PageLog, event: PageEvent, web: Node, fail: (what: string) => void): Promise<void> {
+  const scripts = scriptsOf(web);
+  if (event === 'load') {
+    pages.loaded.add(scripts);
+    await TestRenderer.act(async () => web.props.onLoadEnd());
+  } else if (event === 'answer') {
+    pages.answered.add(scripts);
+    await TestRenderer.act(async () => web.props.onMessage({ nativeEvent: { data: WARM_ANSWER } }));
+  } else {
+    pages.painted.add(scripts);
+    await send(web.props.onMessage, paint(generationIn(web)));
+    if (opening(tree)) fail('the bound launch’s own paint did not open it');
+  }
+}
+
+/** `kind count, …` for a pass or failure message. */
+const tally = (counts: Record<string, number>): string =>
+  Object.entries(counts)
+    .map(([kind, n]) => `${kind} ${n}`)
+    .join(', ');
+
 async function stress({ seed, platform, steps }: Run, ran: Ran): Promise<void> {
   const random = mulberry32(seed);
   const pick = <T,>(list: readonly T[]): T => list[Math.floor(random() * list.length)];
@@ -141,11 +220,7 @@ async function stress({ seed, platform, steps }: Run, ran: Ran): Promise<void> {
     await withLauncher({ examples: true, server: () => new Promise<Response>(() => {}) }, async ({ tree, clock }) => {
       await waitFor(() => showing(tree, HomeScreen) && home(tree).props.apps.length > 1, 'the example apps');
       const apps = home(tree).props.apps as InstalledApp[];
-      // Which pages the test has finished loading or had answer the probe (by the WebView's own scripts).
-      const loaded = new WeakSet<string[]>();
-      const answered = new WeakSet<string[]>();
-      // The launch whose paint the test has sent, by its WebView.
-      const painted = new WeakSet<string[]>();
+      const pages: PageLog = { loaded: new WeakSet(), answered: new WeakSet(), painted: new WeakSet() };
       let last: InstalledApp | null = null;
       const trail: string[] = [];
       const fail = (what: string) => {
@@ -153,32 +228,15 @@ async function stress({ seed, platform, steps }: Run, ran: Ran): Promise<void> {
       };
 
       const appShown = () => showing(tree, MiniAppView);
-      const crashed = () => tree.root.findAllByType(AppCrashed).length > 0;
+      const crashed = () => crashedIn(tree);
       const sheetUp = () => tree.root.findAll(isSheetCard).length > 0;
       const menuUp = () => sheetUp() && hasButton(tree, COPY.whimSheetBackToApps);
 
       const pageEvent = async (): Promise<boolean> => {
-        const webs = tree.root.findAll(isWebView);
-        const bound = boundWebViews(tree);
-        const choices: [PageEvent, Node][] = [
-          ...webs.filter((w) => !loaded.has(scriptsOf(w))).map((w): [PageEvent, Node] => ['load', w]),
-          ...webs.filter((w) => scriptsOf(w).includes(WARM_PROBE_JS) && !answered.has(scriptsOf(w))).map((w): [PageEvent, Node] => ['answer', w]),
-          ...bound.filter((w) => deliveriesInto(w).length > 0 && !painted.has(scriptsOf(w))).map((w): [PageEvent, Node] => ['paint', w]),
-        ];
-        if (choices.length === 0) return false;
-        const [event, web] = pick(choices);
-        const scripts = scriptsOf(web);
-        if (event === 'load') {
-          loaded.add(scripts);
-          await TestRenderer.act(async () => web.props.onLoadEnd());
-        } else if (event === 'answer') {
-          answered.add(scripts);
-          await TestRenderer.act(async () => web.props.onMessage({ nativeEvent: { data: WARM_ANSWER } }));
-        } else {
-          painted.add(scripts);
-          await send(web.props.onMessage, paint(generationIn(web)));
-          if (opening(tree)) fail('the bound launch’s own paint did not open it');
-        }
+        const choice = pickPageEvent(tree, pages, pick);
+        if (choice === null) return false;
+        const [event, web] = choice;
+        await firePageEvent(tree, pages, event, web, fail);
         ran.events[event] += 1;
         trail.push(event);
         return true;
@@ -248,26 +306,7 @@ async function stress({ seed, platform, steps }: Run, ran: Ran): Promise<void> {
       };
 
       const check = () => {
-        const shown = appShown();
-        if (tree.root.findAllByType(MiniAppView).length > 1) fail('two launches shown');
-        if (showing(tree, HomeScreen) === shown) fail(shown ? 'Home drawn under the open app' : 'neither Home nor an app');
-        const bound = boundWebViews(tree);
-        if (!shown && bound.length > 0) fail(`${bound.length} WebView(s) bound on Home`);
-        if (shown && !crashed() && bound.length !== 1) fail(`${bound.length} WebViews bound to the open app`);
-        for (const web of tree.root.findAll(isWebView)) {
-          const delivered = deliveriesInto(web).length;
-          if (delivered > 1) fail('a WebView delivered into twice');
-          if (delivered > 0 && !bound.includes(web)) fail('a delivered WebView kept after its launch');
-        }
-        if (shown && !crashed() && bound.length === 1) {
-          const web = bound[0];
-          if (loaded.has(scriptsOf(web)) && deliveriesInto(web).length !== 1) fail('the bound page has loaded but holds no delivery: its paint can never come');
-          if (painted.has(scriptsOf(web)) && (opening(tree) || covered(web))) fail('a painted app is covered');
-        }
-        const modals = tree.root.findAll(isHost('Modal'));
-        if (!makingSheetOpen(tree) && modals.length > 0) fail(`${modals.length} Modal(s) left mounted with no sheet wanted`);
-        if (makingSheetOpen(tree) && !(modals.length === 1 && modals[0].props.visible === true)) fail('the wanted sheet is not presented');
-        if (modalPresentations.refused !== refusedBefore) fail('a presentation was refused');
+        for (const what of [...launchViolations(tree), ...deliveryViolations(tree, pages),...overlayViolations(tree, refusedBefore)]) fail(what);
       };
 
       for (let i = 0; i < steps; i++) {
@@ -308,9 +347,11 @@ export async function runLauncherStressUiTests(h: Harness): Promise<void> {
       if (ran.violations.length > 0) break;
     }
     h.eq(ran.violations, [], 'no step left the shell in a state a person could get stuck in');
-    const idle = STEP_KINDS.filter((k) => ran.kinds[k] === 0);
-    h.eq(idle, [], `every step kind ran (${STEP_KINDS.map((k) => `${k} ${ran.kinds[k]}`).join(', ')})`);
-    const quiet = PAGE_EVENTS.filter((k) => ran.events[k] === 0);
-    h.eq(quiet, [], `every page event ran (${PAGE_EVENTS.map((k) => `${k} ${ran.events[k]}`).join(', ')})`);
+    // Coverage, printed with every run: a step kind or page event that ran only a few times tests little.
+    console.log(`  steps: ${tally(ran.kinds)}; page events: ${tally(ran.events)}`);
+    const rare = STEP_KINDS.filter((k) => ran.kinds[k] < MIN_EACH);
+    h.eq(rare, [], `every step kind ran at least ${MIN_EACH} times (${tally(ran.kinds)})`);
+    const quiet = PAGE_EVENTS.filter((k) => ran.events[k] < MIN_EACH);
+    h.eq(quiet, [], `every page event ran at least ${MIN_EACH} times (${tally(ran.events)})`);
   });
 }

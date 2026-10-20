@@ -204,6 +204,34 @@ export async function runChangingInUseUiTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('changing in use: the Whim sheet’s Reload row starts closing the sheet at the press, over the running app, before the new version’s bundle is read', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    let watching = false;
+    const frames: { sheet: boolean; launch: number | undefined }[] = [];
+    const onCommit = (tree: Tree) => {
+      if (watching) frames.push({ sheet: makingSheetOpen(tree), launch: tree.root.findAllByType(MiniAppView)[0]?.props.tappedAt });
+    };
+    await withLauncher({ examples: true, server: streamingServer(streams), onCommit }, async ({ tree, kv }) => {
+      await openTipSplitter(tree);
+      await paintRunningApp(tree);
+      const launch = runningApp(tree).props.tappedAt;
+      await makeChange(tree, streams);
+      streams[0].push(resultEvent(APP_NAME));
+      streams[0].end();
+      await waitFor(() => new PendingBuildStore(kv).list().length === 0, 'the change delivered');
+      await settle();
+      await dismissToast(tree);
+      await openSheet(tree);
+      await waitFor(() => hasButton(tree, RELOAD_ROW), 'the Reload row');
+      watching = true;
+      await press(button(tree, RELOAD_ROW));
+      await waitFor(() => runningApp(tree).props.tappedAt !== launch, 'the app to open again');
+      watching = false;
+      h.ok(frames.length > 0 && frames.every((f) => !f.sheet), `no frame from the press on wants the sheet (${frames.map((f) => f.sheet).join(', ')})`);
+      h.eq(frames[0]?.launch, launch, 'the first of them still shows the launch Reload was pressed in: the sheet goes before the new launch replaces it');
+    });
+  });
+
   await h.test('changing in use: a failed change leaves the running version untouched, sets the failed dot and offers See why, which opens its Failure page over the app', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv }) => {

@@ -1268,6 +1268,8 @@ function LauncherShell({
     const from = running;
     const app = index.get(from.app.id) ?? from.app;
     const tappedAt = Date.now();
+    // The Whim sheet Reload was pressed in starts closing at the press, not once the bundle is read.
+    setScreen((s) => (s.kind === 'app' && s.tappedAt === from.tappedAt && s.sheet !== undefined ? { ...s, sheet: undefined } : s));
     await runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
       try {
         await launchApp(app, tappedAt, replacing(from));

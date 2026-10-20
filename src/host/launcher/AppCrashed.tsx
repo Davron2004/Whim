@@ -71,6 +71,8 @@ function Action({ label, variant, labelColor, onPress, tokens }: Readonly<{
   );
 }
 
+/** The mark, title and body centred in the space above the actions; the actions at the bottom, just
+ *  above the orb (the mockups' `#app-error`). At large text sizes the whole screen scrolls. */
 export function AppCrashed({ name, tokens, bottomClearance, onReload, onAskFix, onExit }: Readonly<AppCrashedProps>) {
   const c = tokens.colors;
   return (
@@ -78,11 +80,13 @@ export function AppCrashed({ name, tokens, bottomClearance, onReload, onAskFix, 
       style={[StyleSheet.absoluteFill, { backgroundColor: c.bg }]}
       contentContainerStyle={[styles.content, { paddingBottom: bottomClearance }]}
     >
-      <View style={[styles.mark, { backgroundColor: c.fill }]}>
-        <Icon name="circle-alert" size={MARK.icon} color={c.text} />
+      <View style={styles.message}>
+        <View style={[styles.mark, { backgroundColor: c.fill }]}>
+          <Icon name="circle-alert" size={MARK.icon} color={c.text} />
+        </View>
+        <Text tokens={tokens} type="title2" style={styles.title}>{appCrashedTitle(name)}</Text>
+        <Text tokens={tokens} color="text-2" style={styles.centred}>{COPY.appCrashedBody}</Text>
       </View>
-      <Text tokens={tokens} type="title2" style={styles.title}>{appCrashedTitle(name)}</Text>
-      <Text tokens={tokens} color="text-2" style={styles.body}>{COPY.appCrashedBody}</Text>
       <View style={styles.actions}>
         <Action tokens={tokens} label={COPY.actionReload} variant="ink" labelColor="on-ink" onPress={onReload} />
         <Action tokens={tokens} label={COPY.appCrashedAskFix} variant="plain-ember" labelColor="ember-text" onPress={onAskFix} />
@@ -93,11 +97,12 @@ export function AppCrashed({ name, tokens, bottomClearance, onReload, onAskFix, 
 }
 
 const styles = StyleSheet.create({
-  content: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: LAYOUT.gutter, paddingTop: SPACE[8] },
+  content: { flexGrow: 1, paddingHorizontal: LAYOUT.gutter, paddingTop: SPACE[8] },
+  // Takes all the height the actions leave, and centres the mark, title and body in it.
+  message: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: LAYOUT.gapBetweenSections },
   mark: { width: MARK.circle, height: MARK.circle, borderRadius: MARK.circle / 2, alignItems: 'center', justifyContent: 'center', marginBottom: SPACE[5] },
   title: { textAlign: 'center', marginBottom: SPACE[2] },
-  body: { textAlign: 'center', marginBottom: LAYOUT.gapBetweenSections },
-  actions: { alignSelf: 'stretch', gap: SPACE[2] },
+  actions: { gap: SPACE[2] },
   action: { minHeight: LARGE.height, borderRadius: LARGE.height / 2, borderCurve: 'continuous', justifyContent: 'center', paddingHorizontal: LARGE.paddingHorizontal },
   actionInner: { alignItems: 'center', justifyContent: 'center', paddingVertical: SPACE[2] },
   centred: { textAlign: 'center' },
