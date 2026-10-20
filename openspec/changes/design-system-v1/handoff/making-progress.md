@@ -80,8 +80,8 @@ type PendingFailureCause = 'connection'; PendingBuildFailure += { cause? }      
 stillNeedsUpdate(rec, protocolLevel): boolean  // build-lifecycle.ts, replaces reopenedRecord
 openWhimUpdate(): Promise<void>                // UpdateRequiredScreen.tsx; the store link both pages open
 ```
-- Shell `failure` screen += `interrupted?`, `cause?`, `needsUpdate?: true`; repairs = live `counts.repair`, or
-  `repairAttemptsIn(journal)` (run-timeline-view.ts) when reopened from a tile with a readable journal.
+- Shell `failure` screen += `interrupted?`, `cause?`, `needsUpdate?: true`; repairs = live `counts.repair`, or reopened
+  `repairAttemptsIn(journal)`, 0 when its last terminal has no counts (a retry that journaled nothing: earlier run's).
 - A stream that ends without a terminal event, or a network error mid-run, settles with reason `COPY.failureConnection`,
   remedy `{ kind: 'retry' }`, `cause: 'connection'` (`settleFailed(…, { remedy, cause })`); Try again is disabled while
   `showOfflineIndicator`. Storage-degraded settlements (generic reason) store no cause.
@@ -89,13 +89,13 @@ openWhimUpdate(): Promise<void>                // UpdateRequiredScreen.tsx; the 
   under What happened). The LIVE fallback, the `update_required` refusal, the launch check and Report still open
   `UpdateRequiredScreen` (generation-contract fallback rule; service-refusals), which stays for them.
 - "What happened" rows: `runTimelineRows(journal, devMode, sentence, true)` + hints it lacks, each a `GroupedRow`.
-- Discard (`onDiscardFromFailure`, replaces `onDismissPending`) = Home's tile Discard: `purgeWindows.armAttempt(id)`, then
+- Discard (`onDiscardFromFailure`, replaces `onDismissPending`) = Home's tile Discard: `purgeWindows.armAttempt(rec)`, then
   `goHome()`, `warning` haptic, toast `COPY.discardedToast` + Undo, `onEnd` → `finish('attempt', id)` (6 s; the window is the
   toast's). Undo restores record, journal and Failure page untouched (arming deletes nothing); too late → `undoTooLateToast`.
   A marker that can't be written: nothing changes, the page stays. Whim closed mid-window: the launch sweep finishes it.
 - `completePurge` for an attempt: record + order, then journal, each tried regardless, then read back; anything left throws,
-  so the marker stays (tile hidden) and the next launch retries; once all reads back gone, `pending.forgetRetained(id)`
-  drops a volatile view. `PendingBuildStore.retainDiscardFailure` is gone (no in-process "retained generic" ghost).
+  so the marker stays (tile hidden) and the next launch retries; once all reads back gone, `pending.forgetRetained(id)`.
+  The marker names its run (`PurgeMarker.createdAt`; `hidesAttempt(rec)`): a later run of the id shows and is never purged.
 
 ## Stop and records — `pending-builds.ts`
 
@@ -104,7 +104,7 @@ PendingBuildRecord += { stopped?: true }            // only on 'interrupted'; ab
 PendingBuildStore.stop(id: string): void           // building → interrupted, stopped: true
 ```
 Stop (Making page `onStopMaking`, tile menu `onCancelPending`) aborts at once; a new app keeps its record (stopped tile,
-journal kept) and lands on Home; a change (`editingAppId`) is dropped, its app untouched.
+journal kept; a Try again that journaled nothing gets the earlier run's back) and lands on Home; a change is dropped, app untouched.
 Delivery wins: once `delivering` (stream ended with a result, install under way) the Making page renders no Stop and
 `stopLiveAttempt(live): boolean` returns false without touching anything (tile menu Stop included; it stays in the menu).
 Closing the sheet (or an app link) detaches the page's own run (`detachSelectedRun`), so a delivery under way toasts.

@@ -32,7 +32,7 @@ import { CHIP, makeStyles, PRESS_RETENTION } from '../ui/tokens-pure';
 import WhimProse from '../ui/whim-prose/WhimProse';
 import { TilePlate } from '../ui/AppTile';
 import type { InstalledApp } from './app-index';
-import { COPY, editingEyebrow, planHeadline, planMakeHeader, workingPlanPhrase } from './copy';
+import { COPY, editingEyebrow, planHeadline, planMakeHeader, quotedWords, workingPlanPhrase } from './copy';
 import { FlowNoticeBlock } from './FlowNoticeBlock';
 import KeyboardShell from './KeyboardShell';
 import { answerSummary, foldedAt, isAnswered, type BlockExtent } from './plan-questions';
@@ -419,7 +419,7 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
   const recordExtent = (id: string, extent: BlockExtent) => {
     extents.current[id] = extent;
   };
-  const quoted = <Text type="title2" italic>{`“${screen.text}”`}</Text>;
+  const quoted = <Text type="title2" italic>{quotedWords(screen.text)}</Text>;
 
   if (screen.limit) {
     return (

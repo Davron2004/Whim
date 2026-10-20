@@ -43,7 +43,7 @@ import { DataCopyJournal } from './data-copy-journal';
 import { PendingBuildStore } from './pending-builds';
 import type { PendingAttemptLease, PendingBuildFailure, PendingBuildRecord, PendingBuildView, PendingFailureCause, PendingFailureRemedy } from './pending-builds';
 import { JOURNAL_KEY, RunJournalStore } from './run-journal';
-import type { RunTerminalCounts } from './run-journal';
+import type { RunJournalEntry, RunTerminalCounts } from './run-journal';
 import {
   deliverAndSettleIfOwned,
   dropPendingBuild,
@@ -958,6 +958,8 @@ function LauncherShell({
     screen: MakingScreen;
     signals: RunSignals;
     ctl: GenerationControl;
+    /** A Try again's record and journal as they were before it: what a Stop brings back. */
+    retrySnapshot: AttemptSnapshot | undefined;
   };
   // Every active attempt keeps its own reattachment state. `liveRef` names the one selected by
   // the current build screen, so background frames can update their own journal without replacing
@@ -1014,10 +1016,10 @@ function LauncherShell({
   const liveView = useHomeLive(screen.kind === 'home' || screen.kind === 'making', () => [...liveAttemptsRef.values()]);
 
   /** The installed apps and the attempts a person can reach: those whose purge is armed are gone as far
-   *  as a link or a tile is concerned. */
+   *  as a link or a tile is concerned (an attempt only for the run its Discard named). */
   const reachableApps = () => index.list().filter((a) => !purges.has('app', a.id));
   const reachableAttempts = () =>
-    pending.listCurrent().map((view) => view.record).filter((r) => !purges.has('attempt', r.id));
+    pending.listCurrent().map((view) => view.record).filter((r) => !purges.hidesAttempt(r));
 
   // The sink's destination is the address the device ALREADY persists for `/v1/generate` (design
   // D4) — no second setting. It stays inert until both the flag and an address are set, so this
@@ -1145,7 +1147,7 @@ function LauncherShell({
   const onSettleDelete = (app: InstalledApp) => {
     purgeWindows.finish('app', app.id).catch(() => undefined);
   };
-  const onDiscard = (recs: readonly PendingBuildRecord[]) => recs.forEach((rec) => purgeWindows.armAttempt(rec.id));
+  const onDiscard = (recs: readonly PendingBuildRecord[]) => recs.forEach((rec) => purgeWindows.armAttempt(rec));
   const onUndoDiscard = (recs: readonly PendingBuildRecord[]) =>
     recs.map((rec) => purgeWindows.undo('attempt', rec.id)).every(Boolean);
   const onSettleDiscard = (recs: readonly PendingBuildRecord[]) => {
@@ -1799,7 +1801,8 @@ function LauncherShell({
     try {
       // A retry that ended before anything of it was journaled (the request never reached the
       // server, or was refused) erases nothing: the earlier run's journal comes back and the retry's
-      // ending is added to it, without counts of its own, so its timeline still reads.
+      // ending is added to it, without counts of its own, so its timeline still reads (and the
+      // missing counts tell `endingRepairAttempts` the earlier run's repairs are not this ending's).
       const keepsEarlierRun = keepEarlierRun(id, retrySnapshot);
       journal.appendTerminal(id, { failure: { reason, diagnostics }, ...(keepsEarlierRun ? {} : observed) });
       pending.setFailed(id, {
@@ -1852,9 +1855,22 @@ function LauncherShell({
         log.warn(CHANNELS.gen, 'stopped attempt did not persist', { operation: 'stop-attempt', ...errorFields(error) });
         dropAttempt(live.id);
       }
+      keepEarlierRunOnStop(live);
     }
     refresh();
     return true;
+  };
+
+  /** A Try again stopped before it journaled anything keeps the earlier run's "What happened", as a
+   *  retry that ended that way does (`keepEarlierRun`). One that cannot come back leaves the stopped
+   *  tile with its journal marked unavailable, never a borrowed one. */
+  const keepEarlierRunOnStop = (live: LiveAttempt) => {
+    if (pending.get(live.id)?.stopped !== true) return;
+    try {
+      if (keepEarlierRun(live.id, live.retrySnapshot)) pending.setJournalAvailability(live.id, 'verified');
+    } catch (error) {
+      log.warn(CHANNELS.gen, 'earlier run did not come back after a stop', { operation: 'keep-earlier-run', ...errorFields(error) });
+    }
   };
 
   /** The ONE settlement for a generation that ended without a deliverable result — a terminal
@@ -2393,7 +2409,7 @@ function LauncherShell({
       lastThinkingAt: null,
       lastFrameAt: startedAt,
     };
-    const live: LiveAttempt = { id: attemptId, lease, screen: building, signals, ctl };
+    const live: LiveAttempt = { id: attemptId, lease, screen: building, signals, ctl, retrySnapshot };
     liveAttemptsRef.set(attemptId, live);
     liveRef.current = live;
     signalsRef.current = signals;
@@ -2611,6 +2627,14 @@ function LauncherShell({
    *  live stream is involved, so the repair tries are the ones its verified journal recorded, never
    *  invented, and an `interrupted` record (which never carried a payload, because nothing failed)
    *  says whether Whim closed under it or the person stopped it. */
+  /** The repair tries of the ending a record shows. A retry that journaled nothing of its own ends the
+   *  earlier run's restored journal with a terminal that carries no counts (`keepEarlierRun`): that
+   *  ending tried no repairs, whatever the earlier run's were. */
+  const endingRepairAttempts = (entries: readonly RunJournalEntry[]): number => {
+    const ending = entries.filter((entry) => entry.kind === 'terminal').at(-1);
+    return ending != null && ending.aggregates == null ? 0 : repairAttemptsIn(entries);
+  };
+
   const failureFromRecord = (rec: PendingBuildRecord): Screen => {
     const view = pending.readCurrent(rec.id);
     const current = view?.record ?? rec;
@@ -2624,7 +2648,7 @@ function LauncherShell({
       prompt: current.prompt,
       reason: current.failure?.reason ?? COPY.interruptedBuildReason,
       diagnostics: hydratedDiagnostics(current.failure),
-      observedRepairAttempts: journalReadable ? repairAttemptsIn(journal.get(current.id) ?? []) : 0,
+      observedRepairAttempts: journalReadable ? endingRepairAttempts(journal.get(current.id) ?? []) : 0,
       hasWorkingVersion: edited != null,
       // A record that names a remedy is one rewording can't get past (`PendingFailureRemedy`), and
       // neither is an interruption (no failure payload, as `reason` reads it): the app closed, the

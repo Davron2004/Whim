@@ -14,7 +14,7 @@ import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
 import { makeStyles } from '../ui/tokens-pure';
 import type { InstalledApp } from './app-index';
-import { COPY } from './copy';
+import { COPY, quotedWords } from './copy';
 import KeyboardShell from './KeyboardShell';
 import { tileOf } from './tile-identity';
 
@@ -54,7 +54,7 @@ export default function ReadyPage({ app, words, onOpen, onDone }: Readonly<Ready
       <Text type="title1" style={s.name}>
         {app.name}
       </Text>
-      <Text type="title3" italic style={s.centered}>{`“${words}”`}</Text>
+      <Text type="title3" italic style={s.centered}>{quotedWords(words)}</Text>
       <Text type="callout" color="text-2" style={s.centered}>
         {COPY.readyOnHome}
       </Text>

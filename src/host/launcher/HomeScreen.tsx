@@ -50,8 +50,9 @@ export interface HomeScreenProps {
   /** Every in-flight, failed or stopped attempt, NEWEST FIRST, straight from `PendingBuildStore.list()`.
    *  A record with `editingAppId` is a change in flight on that app and decorates its tile. */
   pending?: readonly PendingBuildRecord[];
-  /** The armed purges: an app or an attempt with one is waiting out its Undo window and is not shown. */
-  purges?: Pick<PendingPurgeStore, 'has'>;
+  /** The armed purges: an app or an attempt with one is waiting out its Undo window and is not shown
+   *  (an attempt only the run its Discard named: a later run of the same id shows). */
+  purges?: Pick<PendingPurgeStore, 'has' | 'hidesAttempt'>;
   /** Which apps have an open or copy running right now (`app-busy.ts`), by app id. Such a tile reads
    *  busy and opens no menu. Omitted = nothing is in flight. */
   appBusy?: AppBusyMap;
@@ -169,7 +170,7 @@ export default function HomeScreen({
     now: Date.now(),
     queued,
     deletedApps: new Set(apps.filter((a) => purges?.has('app', a.id)).map((a) => a.id)),
-    discardedAttempts: new Set((pending ?? []).filter((r) => purges?.has('attempt', r.id)).map((r) => r.id)),
+    discardedAttempts: new Set((pending ?? []).filter((r) => purges?.hidesAttempt(r)).map((r) => r.id)),
   });
   const appCount = all.filter((c) => c.kind === 'app').length;
   const searching = appCount >= SEARCH_FROM_APPS;

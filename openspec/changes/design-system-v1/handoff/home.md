@@ -51,7 +51,7 @@ LONG_PRESS_MS = 350
 ## HomeScreen props (default export; callbacks keep their old names where they existed)
 
 ```ts
-{ apps; pending?; purges?: Pick<PendingPurgeStore,'has'>; appBusy?; offline?; queued?: ReadonlySet<string>;
+{ apps; pending?; purges?: Pick<PendingPurgeStore,'has'|'hidesAttempt'>; appBusy?; offline?; queued?: ReadonlySet<string>;
   activity?: Readonly<Record<string, number>>; canCopyData?: boolean /* false */; draft?: string;
   onOpen(app); onFork(app, opts: ForkOptions): Promise<InstalledApp | null>; onDelete(app);
   onUndoDelete(app): boolean; onSettleDelete(app); onDiscard(recs); onUndoDiscard(recs): boolean;
@@ -76,13 +76,13 @@ composer). `count` excludes apps with an armed purge. List rows take `listRowPad
 ## Delete, Discard, launch sweep (`soft-delete.ts`, `pending-purge.ts`)
 
 `LauncherShell` owns `PurgeWindows` (built over `PendingPurgeStore`, `completePurge`, `refresh`) and arms from Home's
-callbacks: `onDelete` -> `armApp(app)`; `onDiscard` -> `armAttempt(rec.id)` each; `onUndoDelete`/`onUndoDiscard` ->
+callbacks: `onDelete` -> `armApp(app)`; `onDiscard` -> `armAttempt(rec)` each (marker names the run: `createdAt`); `onUndoDelete`/`onUndoDiscard` ->
 `undo(kind, id)` (true = restored; false = Home says `COPY.undoTooLateToast`); `onSettleDelete`/`onSettleDiscard` ->
 `finish(kind, id)`. The window belongs to the Undo toast (no clock of its own): Home passes `onEnd` on the toast, which
 `Toast` runs once when it stops being offered (timeout 10 s / 6 s, swipe, dismiss, action, replaced), so under a screen
 reader Undo lasts as long as the toast does. Home shows the toast
 (`"<name> deleted"` `undo:true`; `"Discarded"` / `"N discarded"` with an Undo action) and plays the `warning` haptic.
-Arm hides (Home reads `purges.has`) and deletes nothing; `finish` runs `completePurge` then `refresh()`; a
+Arm hides (Home reads `has` / `hidesAttempt(rec)`) and deletes nothing; `finish` runs `completePurge` then `refresh()`; a
 failed purge keeps its marker (still hidden). Undo is refused once the purge is running. `completeInterruptedPurges` runs
 in the mount effect after the data-copy sweep and before seeding and `ready`. App links ignore armed entries
 (`reachableApps/Attempts`). Home's Discard and the Failure page's Discard both use this path; Stop leaves a stopped

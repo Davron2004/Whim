@@ -16,14 +16,16 @@ import { GENERIC_STREAM_ERROR } from '../error-reason';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { StoreAccess } from '../store-access';
 import { PendingPurgeStore } from '../pending-purge';
-import { pressToastAction, renderRoot, tileLabels, toastOf } from './home-rig';
+import { chooseRow, longPress, pressToastAction, renderRoot, tileLabels, toastOf } from './home-rig';
 import { revokeConsent } from '../ai-consent';
 import { openLink } from './native-host';
 import { failNativeStorageRemovalsWhen, failNativeStorageWritesWhen } from './native-storage';
 import AppLinkMissingScreen from '../AppLinkMissingScreen';
 import { appLinkFor } from '../app-link';
 import { androidBack, button, press, renderScreen, textOf, unmountScreen } from './react-screen';
-import { buildIt, composeAndContinue, failureTryAgain, hasInstalled, json, planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type Launcher, type LauncherSetup, type SentRequest, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, failureTryAgain, hasInstalled, json, onHome, planLoaded, resultEvent, settle, sseStream, tap, waitFor, withLauncher, type Launcher, type LauncherSetup, type SentRequest, type Tree } from './rendered-launcher';
+import { DescribePage } from '../DescribePage';
+import { stateLine, tileAccessibilityLabel } from '../../ui/AppTile-states';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 import { stubFutureFrame } from '../../../../server/src/stub-markers';
 import { serverBusyRefusal } from '../../../../server/src/admission/refusals';
@@ -32,7 +34,8 @@ import { testAppInfo, streamResponse } from './client-fixtures';
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
 const ghosts = (tree: Tree): PendingBuildRecord[] => home(tree).props.pending;
-const ghostTitled = (tree: Tree, title: string) => ghosts(tree).find((ghost) => ghost.prompt === title)!;
+const runOf = (rec: PendingBuildRecord) => [rec.id, rec.prompt, rec.state];
+const ghostTitled =(tree: Tree, title: string) => ghosts(tree).find((ghost) => ghost.prompt === title)!;
 
 function activeThrowingServer(setThrowStream: (throwStream: () => void) => void) {
   return (request: SentRequest) => {
@@ -148,6 +151,36 @@ async function runOutUndo(tree: Tree, clock: Launcher['clock']): Promise<void> {
   await TestRenderer.act(async () => { clock.fire(6_000); });
   await waitFor(() => toastOf(tree) === null, 'the Undo toast to leave');
   await settle();
+}
+
+/** Start a change of `app` from Home with `words`, through a zero-question plan, onto its Making page. */
+async function startChange(tree: Tree, app: InstalledApp, words: string): Promise<void> {
+  await TestRenderer.act(async () => home(tree).props.onPromptAgain(app));
+  await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText(words));
+  await tap(() => tree.root.findByType(DescribePage).props.onContinue());
+  await waitFor(() => planLoaded(tree), 'the change’s plan');
+  await buildIt(tree);
+  await waitFor(() => on(tree, MakingPage), 'the change’s making page');
+}
+
+/** A change of the example Tip Splitter that failed, discarded from its Failure page: the Undo toast
+ *  is still up and the discard armed when this resolves. */
+async function discardFailedChange(tree: Tree, streams: ReturnType<typeof sseStream>[], from: 'page' | 'home'): Promise<InstalledApp> {
+  await waitFor(() => onHome(tree) && hasInstalled(tree, 'Tip Splitter'), 'the example apps');
+  const app = (home(tree).props.apps as InstalledApp[]).find((a) => a.name === 'Tip Splitter')!;
+  await startChange(tree, app, 'Add a tip slider');
+  await waitFor(() => streams.length === 1, 'the change’s stream');
+  streams[0].push({ type: 'failure', reason: 'The change did not build.', attempts: 1, diagnostics: [] });
+  streams[0].end();
+  await waitFor(() => on(tree, FailurePage), 'the failed change’s page');
+  if (from === 'page') {
+    await press(button(tree, COPY.actionDiscard));
+  } else {
+    await press(button(tree, COPY.sheetClose));
+    await longPress(tree, 'Tip Splitter');
+    await chooseRow(tree, COPY.actionDiscardChange);
+  }
+  return app;
 }
 
 /** Whim launched again over the same storage, once Home is drawn. */
@@ -829,6 +862,46 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       await afterRelaunch(async (next) => {
         h.eq([home(next).props.pending, kv.getString('pending:order')], [[], '[]'], 'the next launch drops the dangling order entry');
         h.eq(new PendingPurgeStore(kv).list(), [], 'and clears the marker');
+      });
+    });
+  });
+
+  for (const from of ['page', 'home'] as const) {
+    await h.test(`discard: a change discarded (${from === 'page' ? 'Failure page' : 'Home’s Discard the change'}) and made again during its Undo window: the window’s end leaves the new run, which delivers with its last-run report`, async () => {
+      const streams: ReturnType<typeof sseStream>[] = [];
+      await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv, clock }) => {
+        const app = await discardFailedChange(tree, streams, from);
+        h.ok(new PendingPurgeStore(kv).has('attempt', app.id) && toastOf(tree)?.action === COPY.toastUndo, 'the discard is armed, its Undo offered');
+        await startChange(tree, app, 'Add a tip jar');
+        await waitFor(() => streams.length === 2, 'the new change’s stream');
+        streams[1].push({ type: 'stage', stage: 'generate', status: 'start' });
+        await leaveRunning(tree);
+        h.eq(tileLabels(tree).filter((label) => label.startsWith('Tip Splitter')), [tileAccessibilityLabel('Tip Splitter', stateLine('changing'))], 'Home shows the app being changed: the old discard hides nothing of the new run');
+        await runOutUndo(tree, clock);
+        h.eq(new PendingBuildStore(kv).get(app.id)?.prompt, 'Add a tip jar', 'the end of the old window leaves the new run’s record');
+        h.ok((new RunJournalStore(kv).get(app.id) ?? []).length > 0, 'and its journal');
+        h.eq(new PendingPurgeStore(kv).list(), [], 'the stale marker is cleared');
+        streams[1].push(resultEvent('Tip Splitter'));
+        streams[1].end();
+        await waitFor(() => kv.getString(`pending:${app.id}`) == null, 'the change to deliver');
+        h.ok((JSON.parse(kv.getString(LAST_RUN_KEY(app.id)) ?? '[]') as unknown[]).length > 0, 'with its last-run report');
+      });
+    });
+  }
+
+  await h.test('discard: a change made again during its discard’s Undo window survives Whim closing; the next launch keeps it and drops the stale marker', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv }) => {
+      const app = await discardFailedChange(tree, streams, 'page');
+      await startChange(tree, app, 'Add a tip jar');
+      await waitFor(() => streams.length === 2, 'the new change’s stream');
+      streams[1].push({ type: 'stage', stage: 'generate', status: 'start' });
+      await settle();
+      await unmountScreen(tree);
+      await afterRelaunch(async (next) => {
+        h.eq(ghosts(next).map(runOf), [[app.id, 'Add a tip jar', 'interrupted']], 'the new run comes back as interrupted, not purged');
+        h.ok((new RunJournalStore(kv).get(app.id) ?? []).length > 0, 'with its journal');
+        h.eq(new PendingPurgeStore(kv).list(), [], 'and the old discard’s marker is gone');
       });
     });
   });

@@ -19,7 +19,7 @@ import { Icon } from '../ui/Icon';
 import { Text, wrappingType } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
 import { makeStyles, MAX_FONT_SCALE } from '../ui/tokens-pure';
-import { COPY, makingTitle } from './copy';
+import { COPY, makingTitle, quotedWords } from './copy';
 import KeyboardShell from './KeyboardShell';
 import { makingProgress, type MakingRow } from './making-progress';
 import type { RunSignals, Stage } from './prompt-flow';
@@ -153,7 +153,7 @@ export default function MakingPage({
         <Text type="title1" style={s.title}>
           {makingTitle(name, changing)}
         </Text>
-        <Text type="title3" italic style={s.centered}>{`“${words}”`}</Text>
+        <Text type="title3" italic style={s.centered}>{quotedWords(words)}</Text>
         <Text type="callout" color="text-2" style={s.centered}>
           {progress.line}
         </Text>

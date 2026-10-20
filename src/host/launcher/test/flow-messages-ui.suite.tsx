@@ -26,7 +26,7 @@ import { contentPolicyRefusal, serverBusyRefusal, type ServiceRefusal } from '..
 import { STORE_LISTINGS } from '../release-config';
 import { Linking } from './native-host';
 import { button, press, textOf } from './react-screen';
-import { buildIt, composeAndContinue, hasInstalled, json, onHome, planLoaded, questionsLanded, resultEvent, settle, sseStream, tap, waitFor, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, failureTryAgain, hasInstalled, json, onHome, planLoaded, questionsLanded, resultEvent, settle, sseStream, tap, waitFor, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
 type Stream = ReturnType<typeof sseStream>;
@@ -361,6 +361,30 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => home(tree).props.onOpenPending(record));
       h.eq(tree.root.findByType(FailurePage).props.kind, 'couldnt-run', 'its tile reopens as couldn’t run, the tries read from its journal');
       h.ok(textOf(tree.root).includes(tried), 'saying it tried 3 times');
+    });
+  });
+
+  await h.test('couldn’t run: a refused Try again of a run that used three repair tries reopens as its own ending, not “I tried 3 times”', async () => {
+    const streams: Stream[] = [];
+    const refusal = serverBusyRefusal();
+    let generates = 0;
+    const server = (r: SentRequest) => (r.path === '/v1/generate' && ++generates === 2 ? refused(refusal) : streamingServer(streams)(r));
+    await withLauncher({ server }, async ({ tree, kv }) => {
+      await startBuild(tree, 'A tip splitter');
+      await waitFor(() => streams.length === 1, 'the stream');
+      streams[0].push({ type: 'stage', stage: 'check', status: 'start' });
+      for (const attempt of [1, 2, 3]) streams[0].push({ type: 'stage', stage: 'repair', status: 'start', attempt });
+      streams[0].push({ type: 'failure', reason: 'The app did not build.', attempts: 3, diagnostics: [] });
+      streams[0].end();
+      await waitFor(() => on(tree, FailurePage), 'the failure page');
+      await press(failureTryAgain(tree));
+      await waitFor(() => on(tree, FailurePage) && new PendingBuildStore(kv).list()[0]?.failure?.reason === refusal.body.hint, 'the refused retry’s page');
+      await press(button(tree, COPY.sheetClose));
+      const [record] = new PendingBuildStore(kv).list();
+      h.ok((new RunJournalStore(kv).get(record.id) ?? []).some((e) => e.kind === 'stage' && e.stage === 'repair'), 'precondition: the earlier run’s tries came back with its journal');
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(record));
+      h.ok(tree.root.findByType(FailurePage).props.kind !== 'couldnt-run', 'the tile reopens as the refusal’s ending');
+      h.ok(!textOf(tree.root).includes('I tried 3 times'), 'never counting the earlier run’s tries as this ending’s');
     });
   });
 

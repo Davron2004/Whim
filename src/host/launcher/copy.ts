@@ -871,6 +871,12 @@ export function readyTitle(name: string): string {
   return `${name} is ready`;
 }
 
+/** The person's words in quotes, as the Plan, Making and Ready pages show them: trimmed, every run
+ *  of whitespace one space (dictation leaves a leading space; a typed line break is not a quote's). */
+export function quotedWords(text: string): string {
+  return `“${text.trim().replace(/\s+/g, ' ')}”`;
+}
+
 /** The Making page's headline: "Making Pour timer", or "Changing Water Counter". */
 export function makingTitle(name: string, changing: boolean): string {
   return changing ? `Changing ${name}` : `Making ${name}`;

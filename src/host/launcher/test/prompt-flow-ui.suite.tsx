@@ -761,6 +761,42 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('flow: Stop on a Try again that has journaled nothing keeps the earlier run’s What happened on its stopped tile', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+      await startBuild(tree, 'A tea timer');
+      await waitFor(() => streams.length === 1, 'the stream');
+      streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
+      streams[0].push({ type: 'failure', reason: 'The app did not build.', attempts: 1, diagnostics: [] });
+      streams[0].end();
+      await waitFor(() => on(tree, FailurePage), 'the failure page');
+      await press(failureTryAgain(tree));
+      await waitFor(() => streams.length === 2 && on(tree, MakingPage), 'the retry under way');
+      await press(button(tree, COPY.actionStop));
+      const [stopped] = home(tree).props.pending as PendingBuildRecord[];
+      h.eq([stopped?.state, stopped?.stopped], ['interrupted', true], 'a stopped tile');
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get(stopped.id)));
+      h.eq(tree.root.findByType(FailurePage).props.kind, 'stopped', 'reopening as stopped');
+      await press(button(tree, COPY.timelineTitle));
+      h.ok(textOf(tree.root.findByType(FailurePage)).includes(COPY.timelineStageGenerate), 'whose What happened still holds the earlier run’s step');
+    });
+  });
+
+  await h.test('flow: the quoted words read as typed, without the stray spaces and line breaks dictation leaves', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
+      await composeToPlan(tree, ' A queue   one\n');
+      h.ok(textOf(tree.root.findByType(PlanPage)).includes('“A queue one”'), 'the plan page quotes them');
+      await buildIt(tree);
+      await waitFor(() => on(tree, MakingPage) && streams.length === 1, 'the making page');
+      h.ok(textOf(tree.root.findByType(MakingPage)).includes('“A queue one”'), 'so does the making page');
+      streams[0].push(resultEvent('Queue'));
+      streams[0].end();
+      await waitFor(() => on(tree, ReadyPage), 'the ready page');
+      h.ok(textOf(tree.root.findByType(ReadyPage)).includes('“A queue one”'), 'and the ready page');
+    });
+  });
+
   await h.test('flow: a run the network cut stores a lost connection as its cause', async () => {
     const net: { up: boolean; cut?: () => void } = { up: true };
     await withLauncher(cuttingServer(net), async ({ tree, kv }) => {
