@@ -105,6 +105,12 @@ export function resetKeyboard(): void {
   keyboardRequests.handler = null;
 }
 
+/** The keyboard setting off toward `height`, on the UI thread, ahead of any JS event: the handlers'
+ *  `onStart` only. */
+export function startKeyboard(height: number): void {
+  for (const ref of [...handlers]) ref.current.onStart?.({ height, progress: height > 0 ? 1 : 0, duration: 250, target: -1 });
+}
+
 /** One frame of a keyboard animation still running: the handlers' `onMove` only. */
 export function stepKeyboard(height: number): void {
   for (const ref of [...handlers]) ref.current.onMove?.({ height, progress: height > 0 ? 1 : 0, duration: 250, target: -1 });

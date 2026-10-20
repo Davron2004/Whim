@@ -11,7 +11,8 @@
  * While a field in the scroll view is focused, any change to what the scroll view shows (the
  * keyboard arriving or changing height, the field growing) scrolls the field, or the block it
  * names, back into view, `REVEAL_MARGIN` clear of the keyboard and the footer; while the keyboard
- * rises, it does so frame by frame, so the field rises with it, and a drag stops it.
+ * rises, it does so on the UI thread in each of the keyboard's frames, in step with the padding, so
+ * the field rises with the keyboard, and a drag stops it.
  * A hairline above the footer shows while content continues below. In a sheet the frame fills the
  * body it sits in, so the footer sits at the bottom of a large sheet whatever the content; a footer that has outgrown its share of the
  * window (`FOOTER_SHARE`, the largest text sizes) scrolls with the content instead; and content
@@ -40,7 +41,7 @@ import type {
   TextInputProps,
   ViewStyle,
 } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import Animated, { scrollTo, useAnimatedRef, useAnimatedStyle, useEvent, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import {
@@ -56,13 +57,17 @@ import { useTokens } from '../ui/tokens';
 import { COPY } from './copy';
 import {
   contentBelow,
+  followOffset,
   footerJoinsScroll,
+  hiddenAtRest,
   keyboardDismissMode,
   keyboardOverlap,
   pinsFooter,
   REVEAL_MARGIN,
   revealOffset,
+  riseProgress,
   selectionColors,
+  sheetBottomPadding,
   showsDoneBar,
   topFadeOpacity,
   type KeyboardShellHost,
@@ -87,10 +92,6 @@ export interface KeyboardShellProps {
   onScrollOffset?: (offset: number) => void;
   children: React.ReactNode;
 }
-
-/** How many frames the focused block follows a rising keyboard at most: a keyboard settles in well
- *  under a second, and `keyboardDidShow` ends it first; this only bounds one that never reports. */
-const FOLLOW_FRAMES = 90;
 
 /** A view the shell can measure inside its scroll view: a field, or the block a field names. */
 type RevealTarget = React.RefObject<View | TextInput | null>;
@@ -126,7 +127,8 @@ export interface KeyboardOverlap {
   readonly overlap: SharedValue<number>;
   /** Spread onto the measured view, whose bottom edge must not move with the padding this feeds. */
   readonly onLayout: () => void;
-  /** The overlap a keyboard `keyboardHeight` tall will have with the frame, for planning ahead. */
+  /** The overlap a keyboard `keyboardHeight` tall has with the frame; a worklet, so a keyboard frame
+   *  on the UI thread can ask it too. */
   readonly overlapFor: (keyboardHeight: number) => number;
 }
 
@@ -203,7 +205,10 @@ export function useKeyboardOverlap(frame: React.RefObject<View | null>, active: 
     return () => subscription.remove();
   }, [active, frameBottom, overlap, systemHeight, windowSize]);
   const overlapFor = useCallback(
-    (keyboardHeight: number) => (active ? keyboardOverlap(keyboardHeight, frameBottom.value, windowSize.value) : 0),
+    (keyboardHeight: number) => {
+      'worklet';
+      return active ? keyboardOverlap(keyboardHeight, frameBottom.value, windowSize.value) : 0;
+    },
     [active, frameBottom, windowSize],
   );
   return { overlap, onLayout, overlapFor };
@@ -246,16 +251,44 @@ function assignRef<T>(ref: React.Ref<T> | undefined, node: T | null): void {
   else if (ref) (ref as React.MutableRefObject<T | null>).current = node;
 }
 
-/** The scroll view's wiring: its metrics, whether content continues below, and revealing the focused block.
- *  `shrinkFor` says how much the scroll view will lose to a keyboard of a given height, when the
- *  frame knows (a screen does; a sheet's host pads outside it). */
+/** The focused block's place in the scroll content, for the UI thread. */
+interface BlockSpan {
+  readonly top: number;
+  readonly bottom: number;
+}
+
+/** A keyboard setting off: whether the focused block follows it; the scroll view's height, offset
+ *  and shrink (`shrinkAt`) as it set off, and the shrink it is heading to; and how far the block sat
+ *  below where it is kept as it set off (`hiddenAtRest`), -1 until the block is known. */
+interface Rise {
+  readonly following: boolean;
+  readonly viewport: number;
+  readonly offset: number;
+  readonly shrink: number;
+  readonly end: number;
+  readonly hidden: number;
+}
+
+/** What `useEvent` hands back, for a handler registered on a view by its tag: the scroll view is a
+ *  plain one, so its native events reach the UI thread this way rather than through a prop. */
+interface NativeEventHandler {
+  readonly workletEventHandler: {
+    registerForEvents: (tag: number) => void;
+    unregisterFromEvents: (tag: number) => void;
+  };
+}
+
+/** The scroll view's wiring: its metrics, whether content continues below, and revealing the focused
+ *  block. `shrinkAt` is a worklet: how much of its height the scroll view has lost to a keyboard of a
+ *  given height (on a screen, the frame's own padding; in a sheet, the card's growth). */
 function useRevealingScroll(
   scrollRef: React.Ref<ScrollView> | undefined,
   onContentSizeChange: ScrollViewProps['onContentSizeChange'],
   onScrollOffset: ((offset: number) => void) | undefined,
-  shrinkFor?: (keyboardHeight: number) => number,
+  shrinkAt: (keyboardHeight: number) => number,
 ) {
   const scroll = useRef<ScrollView | null>(null);
+  const scrollOnUI = useAnimatedRef<ScrollView>();
   const inner = useRef<View>(null);
   const metrics = useRef<ScrollMetrics>({ offset: 0, viewport: 0, content: 0 });
   const focusedTarget = useRef<RevealTarget | null>(null);
@@ -263,30 +296,46 @@ function useRevealingScroll(
   const pendingReveal = useRef<number | null>(null);
   const revealVersion = useRef(0);
   const keyboardMoving = useRef(false);
-  // While the keyboard rises: the frames left to follow it (0 when not following), and the height
-  // the scroll view is heading to, when the frame knows it.
-  const followFrames = useRef(0);
-  const heading = useRef<number | undefined>(undefined);
-  // The person dragged the content while the keyboard rose: nothing scrolls it back until it next
-  // sets off.
-  const dragged = useRef(false);
+  // The UI thread's copy: the scroll view's metrics as JS last heard them (its offset as its native
+  // scroll events report it), the focused block, the keyboard's height as its frames last put it,
+  // the rise in progress, and whether the person dragged the content while the keyboard rose.
+  const shown = useSharedValue<ScrollMetrics>({ offset: 0, viewport: 0, content: 0 });
+  const offset = useSharedValue(0);
+  const block = useSharedValue<BlockSpan | null>(null);
+  const keyboardHeight = useSharedValue(0);
+  const rise = useSharedValue<Rise>({ following: false, viewport: 0, offset: 0, shrink: 0, end: 0, hidden: -1 });
+  const dragged = useSharedValue(false);
 
   const cancelReveal = useCallback(() => {
     revealVersion.current += 1;
-    followFrames.current = 0;
     if (pendingReveal.current != null) cancelAnimationFrame(pendingReveal.current);
     pendingReveal.current = null;
   }, []);
 
   const settle = useCallback((next: Partial<ScrollMetrics>) => {
     metrics.current = { ...metrics.current, ...next };
+    shown.value = metrics.current;
     setBelow(contentBelow(metrics.current));
-  }, []);
+  }, [shown]);
 
-  /** On the next frame, scrolls the focused block into view: of the scroll view as it is, or as tall
-   *  as it will be (`viewport`). `animated` false jumps there, for a scroll that follows the
-   *  keyboard frame by frame. `then` runs once the frame's measurement is done. */
-  const reveal = useCallback((viewport?: number, animated = true, then?: () => void) => {
+  /** Measures the focused block in the content and hands it to the UI thread; `then` gets it. */
+  const place = useCallback((then?: (top: number, bottom: number) => void) => {
+    const target = focusedTarget.current?.current;
+    const content = inner.current;
+    if (!target || !content) return;
+    target.measureLayout(
+      content,
+      (_x, top, _width, height) => {
+        if (focusedTarget.current?.current !== target) return;
+        block.value = { top, bottom: top + height };
+        then?.(top, top + height);
+      },
+      () => {},
+    );
+  }, [block]);
+
+  /** On the next frame, scrolls the focused block into view of the scroll view as it is. */
+  const reveal = useCallback(() => {
     cancelReveal();
     if (!focusedTarget.current) return;
     const version = revealVersion.current;
@@ -294,51 +343,98 @@ function useRevealingScroll(
     // bounds. Measuring on the next frame lets that commit land before UIKit clamps scrollTo.
     pendingReveal.current = requestAnimationFrame(() => {
       pendingReveal.current = null;
-      const target = focusedTarget.current?.current;
-      const content = inner.current;
-      if (!target || !content) return;
-      target.measureLayout(
-        content,
-        (_x, top, _width, height) => {
-          if (version !== revealVersion.current || focusedTarget.current?.current !== target) return;
-          const shown = viewport === undefined ? metrics.current : { ...metrics.current, viewport };
-          const next = revealOffset(shown, top, top + height, REVEAL_MARGIN);
-          if (next != null) scroll.current?.scrollTo({ y: next, animated });
-          then?.();
-        },
-        () => {},
-      );
+      place((top, bottom) => {
+        if (version !== revealVersion.current) return;
+        const { content, viewport } = metrics.current;
+        const next = revealOffset(metrics.current, top, bottom, REVEAL_MARGIN);
+        // Never past the content's end, once its size is known: a screen's scroll view does not
+        // clamp it (below).
+        const end = content > 0 ? Math.max(0, content - viewport) : Infinity;
+        if (next != null) scroll.current?.scrollTo({ y: Math.min(next, end), animated: true });
+      });
     });
-  }, [cancelReveal]);
+  }, [cancelReveal, place]);
 
-  /** One frame of following the rising keyboard: a scroll if the block is still below where it is
-   *  kept, then the next frame, until the keyboard settles or the frames run out. */
-  const follow = useCallback(() => {
-    const left = followFrames.current;
-    if (left <= 0) return;
-    reveal(heading.current, false, () => {
-      followFrames.current = left - 1;
-      follow();
-    });
-    followFrames.current = left;
-  }, [reveal]);
+  // While the keyboard rises, the block follows it on the UI thread, in the keyboard's own frames:
+  // each frame pads the frame (or the sheet's card) for the keyboard, which shrinks the scroll view
+  // by `shrinkAt`, and in that same frame the block is scrolled up to where that shorter scroll view
+  // keeps it, so it is never under the keyboard on the way up. JS plays no part in it: on iOS the
+  // field's focus reaches JS only after the keyboard has set off. A drag stops it (`dragged`).
+  useGenericKeyboardHandler(
+    {
+      onStart: (event) => {
+        'worklet';
+        const rising = event.height > keyboardHeight.value;
+        rise.value = {
+          following: rising,
+          viewport: shown.value.viewport,
+          offset: offset.value,
+          shrink: shrinkAt(keyboardHeight.value),
+          end: shrinkAt(event.height),
+          hidden: -1,
+        };
+        if (rising) dragged.value = false;
+      },
+      onMove: (event) => {
+        'worklet';
+        keyboardHeight.value = event.height;
+        const set = rise.value;
+        const at = block.value;
+        if (!set.following || at == null) return;
+        let hidden = set.hidden;
+        if (hidden < 0) {
+          hidden = hiddenAtRest(set, at.top, at.bottom, REVEAL_MARGIN);
+          rise.value = { ...set, hidden };
+        }
+        const now = shrinkAt(event.height);
+        const frame = { offset: offset.value, viewport: set.viewport - (now - set.shrink), content: shown.value.content };
+        const left = hidden * (1 - riseProgress(set.shrink, set.end, now));
+        const next = followOffset(frame, at.top, at.bottom, REVEAL_MARGIN, left);
+        if (next != null) scrollTo(scrollOnUI, 0, next, false);
+      },
+      onInteractive: (event) => {
+        'worklet';
+        keyboardHeight.value = event.height;
+      },
+      onEnd: (event) => {
+        'worklet';
+        keyboardHeight.value = event.height;
+        rise.value = { ...rise.value, following: false };
+      },
+    },
+    [shrinkAt],
+  );
+
+  // The scroll view's native scroll events, on the UI thread as they happen: where it stands, and a
+  // drag while the keyboard rises, which is the person's own scroll: nothing scrolls it back.
+  const nativeScroll = useEvent<NativeScrollEvent>(
+    (event) => {
+      'worklet';
+      offset.value = event.contentOffset.y;
+      if (event.eventName.endsWith('onScrollBeginDrag') && rise.value.following) {
+        rise.value = { ...rise.value, following: false };
+        dragged.value = true;
+      }
+    },
+    ['onScroll', 'onScrollBeginDrag'],
+  ) as unknown as NativeEventHandler;
+  useEffect(
+    () =>
+      scrollOnUI.observe((tag) => {
+        if (tag == null) return undefined;
+        nativeScroll.workletEventHandler.registerForEvents(tag);
+        return () => nativeScroll.workletEventHandler.unregisterFromEvents(tag);
+      }),
+    [nativeScroll, scrollOnUI],
+  );
 
   useEffect(() => {
-    // The frame's padding follows the keyboard frame by frame, and the native scroll view shrinks
-    // with it: it cannot scroll further than its bounds allow at that moment. So from the moment the
-    // keyboard sets off until it has settled, the focused block is scrolled toward where it will be
-    // kept once a frame, and each frame the bounds have grown it gets that much further: it rises
-    // with the keyboard instead of waiting under it. On a screen the target is the height the
-    // scroll view is heading to; in a sheet, whose host pads outside it, the height it has now.
-    // A drag stops it, and `keyboardDidShow` (also sent for a new height while up) rechecks once.
+    // While the keyboard moves, the UI thread keeps the block in view (above); JS rechecks once it
+    // has settled: `keyboardDidShow`, also sent for a new height while up, unless a drag took over.
     const subscriptions = [
-      KeyboardEvents.addListener('keyboardWillShow', (event) => {
+      KeyboardEvents.addListener('keyboardWillShow', () => {
         keyboardMoving.current = true;
-        dragged.current = false;
-        const shrink = shrinkFor?.(event.height) ?? 0;
-        heading.current = shrink === 0 ? undefined : metrics.current.viewport - shrink;
-        followFrames.current = FOLLOW_FRAMES;
-        follow();
+        cancelReveal();
       }),
       KeyboardEvents.addListener('keyboardWillHide', () => {
         keyboardMoving.current = true;
@@ -346,8 +442,7 @@ function useRevealingScroll(
       }),
       KeyboardEvents.addListener('keyboardDidShow', () => {
         keyboardMoving.current = false;
-        if (dragged.current) cancelReveal();
-        else reveal();
+        if (!dragged.value) reveal();
       }),
       KeyboardEvents.addListener('keyboardDidHide', () => { keyboardMoving.current = false; }),
     ];
@@ -355,31 +450,41 @@ function useRevealingScroll(
       for (const subscription of subscriptions) subscription.remove();
       cancelReveal();
       focusedTarget.current = null;
+      block.value = null;
     };
-  }, [cancelReveal, follow, reveal, shrinkFor]);
+  }, [block, cancelReveal, dragged, reveal]);
+
+  /** The focused block is new, or changed place or size: the UI thread learns it at once, to follow
+   *  it while the keyboard rises; JS reveals it otherwise. */
+  const refresh = useCallback(() => {
+    place();
+    if (!keyboardMoving.current) reveal();
+  }, [place, reveal]);
 
   const registry = useMemo<RevealRegistry>(
     () => ({
       focused: (target) => {
         focusedTarget.current = target;
-        reveal();
+        refresh();
       },
       blurred: (target) => {
         if (focusedTarget.current === target) {
           focusedTarget.current = null;
+          block.value = null;
           cancelReveal();
         }
       },
     }),
-    [cancelReveal, reveal],
+    [block, cancelReveal, refresh],
   );
 
   const setScroll = useCallback(
     (node: ScrollView | null) => {
       scroll.current = node;
+      scrollOnUI(node);
       assignRef(scrollRef, node);
     },
-    [scrollRef],
+    [scrollOnUI, scrollRef],
   );
 
   const scrollProps = {
@@ -391,12 +496,6 @@ function useRevealingScroll(
       settle({ offset: event.nativeEvent.contentOffset.y });
       onScrollOffset?.(event.nativeEvent.contentOffset.y);
     },
-    // A drag while the keyboard rises is the person's own scroll: nothing scrolls it back.
-    onScrollBeginDrag: () => {
-      if (!keyboardMoving.current) return;
-      dragged.current = true;
-      cancelReveal();
-    },
     onLayout: (event: LayoutChangeEvent) => {
       const viewport = event.nativeEvent.layout.height;
       const resized = viewport !== metrics.current.viewport;
@@ -405,7 +504,7 @@ function useRevealingScroll(
     },
     onContentSizeChange: (width: number, height: number) => {
       settle({ content: height });
-      reveal();
+      refresh();
       onContentSizeChange?.(width, height);
     },
   };
@@ -470,7 +569,15 @@ export default function KeyboardShell({
   const { bottom: safeBottom } = useSafeAreaInsets();
   const { overlap, onLayout, overlapFor } = useKeyboardOverlap(frameRef, !inSheet, Platform.OS === 'ios' ? safeBottom : 0);
   const padding = useAnimatedStyle(() => ({ paddingBottom: overlap.value }));
-  const shrinkFor = useCallback((keyboardHeight: number) => overlapFor(keyboardHeight) - overlap.value, [overlap, overlapFor]);
+  // What a keyboard takes from the scroll view: on a screen, the frame's padding; in a sheet, the
+  // card's (`SheetModal`, `Sheet`), all of which a large sheet's body gives up.
+  const shrinkAt = useCallback(
+    (keyboardHeight: number) => {
+      'worklet';
+      return inSheet ? sheetBottomPadding(keyboardHeight, safeBottom) : overlapFor(keyboardHeight);
+    },
+    [inSheet, overlapFor, safeBottom],
+  );
   const topFade = useSharedValue(0);
   const trackOffset = useCallback(
     (offset: number) => {
@@ -479,7 +586,7 @@ export default function KeyboardShell({
     },
     [onScrollOffset, topFade],
   );
-  const { scrollProps, below, registry } = useRevealingScroll(scrollRef, onContentSizeChange, trackOffset, inSheet ? undefined : shrinkFor);
+  const { scrollProps, below, registry } = useRevealingScroll(scrollRef, onContentSizeChange, trackOffset, shrinkAt);
   // A sheet's footer that has grown past its share of the window (large text) scrolls with the
   // content, so the content keeps room of its own and the footer's actions stay reachable.
   const { height: windowHeight } = useKeyboardWindow();
@@ -492,9 +599,15 @@ export default function KeyboardShell({
       {footer}
     </View>
   ) : null;
+  // iOS clamps a scroll to the bounds the scroll view has when the scroll runs, and a keyboard frame's
+  // scroll runs before that frame's padding has shrunk it: the block would trail the keyboard by a
+  // frame's travel. A screen knows the height every frame leaves it, and every scroll it issues stops
+  // at the content's end itself, so its scroll view is told not to clamp. A sheet's card pads outside
+  // it, so it keeps the clamp.
   const scroller = (
     <ScrollView
       {...scrollProps}
+      scrollToOverflowEnabled={!inSheet}
       contentContainerStyle={contentContainerStyle}
       keyboardDismissMode={keyboardDismissMode(Platform.OS)}
       keyboardShouldPersistTaps="handled"

@@ -29,7 +29,8 @@ import { reportClientOptions } from '../transport-shared';
 import { button, freshApp, press, textOf, unmountScreen, hostType } from './react-screen';
 import { testAppInfo } from './client-fixtures';
 import { Keyboard, Platform, StyleSheet, changeKeyboardFrame, keyboardFrameListenerCount, refuseModalPresentations, setColorScheme, useSafeAreaInsets } from './native-host';
-import { dragKeyboard, emitKeyboardEvent, endKeyboard, keyboardRequests, keyboardState, keyboardSubscriptions, keyboardWindow, moveKeyboard, resetKeyboard, stepKeyboard } from './native-keyboard-controller';
+import { dragKeyboard, emitKeyboardEvent, endKeyboard, keyboardRequests, keyboardState, keyboardSubscriptions, keyboardWindow, moveKeyboard, resetKeyboard, startKeyboard, stepKeyboard } from './native-keyboard-controller';
+import { emitNativeEvent } from './native-reanimated';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -144,12 +145,15 @@ async function on(device: Device, element: React.ReactElement, body: (m: Mounted
     request: () => { if (ime.served && !keyboardState.visible) moveKeyboard(KEYBOARD_HEIGHT); },
   };
   keyboardRequests.handler = ime.request;
-  const createNodeMock = (node: React.ReactElement<{ collapsable?: boolean }>) => {
+  const createNodeMock = (node: React.ReactElement<{ collapsable?: boolean; scrollToOverflowEnabled?: boolean }>) => {
     const type = String(node.type);
+    // A scroll lands within the bounds the native scroll view has when it runs, as both platforms
+    // clamp it, unless iOS was told not to clamp (`scrollToOverflowEnabled`).
+    const clamps = !(device.os === 'ios' && node.props.scrollToOverflowEnabled === true);
     if (type === 'ScrollView') return { scrollTo: ({ y }: { y: number }) => {
       scrolls.push(y);
       const native = geometry.nativeScroll;
-      if (native) native.offset = Math.max(0, Math.min(y, native.content - native.viewport));
+      if (native) native.offset = clamps ? Math.max(0, Math.min(y, native.content - native.viewport)) : y;
     }, scrollToEnd: noop };
     if (type === 'TextInput') {
       return { focus: () => { focusCalls += 1; if (!ime.focused) { ime.focused = true; ime.request(); } }, measureLayout: (_to: unknown, ok: (x: number, y: number, w: number, h: number) => void) => ok(0, geometry.field[0], 350, geometry.field[1]) };
@@ -198,12 +202,19 @@ async function keyboardTo(top: number): Promise<void> {
   });
 }
 
-/** Plays the scroll view's own reports: the height it shows, its content's height, an offset. */
+/** Plays the scroll view's own reports: the height it shows, its content's height, an offset (to
+ *  JS, and to the UI thread's handlers, as both hear it). */
 const scrollReports = (tree: Tree) => ({
   viewport: (height: number) => TestRenderer.act(async () => { scrollView(tree).props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } }); flushRevealFrames(); }),
   content: (height: number) => TestRenderer.act(async () => { scrollView(tree).props.onContentSizeChange(390, height); flushRevealFrames(); }),
-  offset: (y: number) => TestRenderer.act(async () => scrollView(tree).props.onScroll({ nativeEvent: { contentOffset: { x: 0, y } } })),
+  offset: (y: number) => TestRenderer.act(async () => {
+    emitNativeEvent('onScroll', { contentOffset: { x: 0, y } });
+    scrollView(tree).props.onScroll({ nativeEvent: { contentOffset: { x: 0, y } } });
+  }),
 });
+
+/** The person puts a finger on the content and starts to drag it: the UI thread hears it at once. */
+const beginDrag = (y: number) => TestRenderer.act(async () => { emitNativeEvent('onScrollBeginDrag', { contentOffset: { x: 0, y } }); });
 
 /** Hands the scroll view its inner content view, which native mounting would attach. */
 function mountContent(tree: Tree): void {
@@ -214,6 +225,36 @@ function mountContent(tree: Tree): void {
 const padded = (frame: Node) => frame.find((n) => String(n.type) === 'Animated.View');
 /** The padding the (single) screen frame carries now. */
 const framePadding = (tree: Tree) => flat(padded(frames(tree)[0])).paddingBottom;
+
+/**
+ * Sets up a scroll view `native` describes, with its field focused, then sets the keyboard off as the
+ * platform does and returns its frames, six to the top. Android focuses the field before it asks for
+ * the keyboard; on iOS the field's focus reaches JS after the keyboard has set off and taken its first
+ * frame (measured on the iOS 27 simulator). Each frame is the library's `onMove` on the UI thread,
+ * whose scroll lands against the bounds the last frame left; then that frame's padding, read off the
+ * rendered frame or sheet card, shrinks the native scroll view; then the scroll view reports.
+ */
+async function riseThrough(tree: Tree, device: Device, native: { viewport: number; content: number; offset: number }): Promise<{ frame: (step: number) => Promise<void> }> {
+  const reports = scrollReports(tree);
+  const start = native.viewport;
+  await reports.viewport(start);
+  await reports.content(native.content);
+  mountContent(tree);
+  const focus = () => TestRenderer.act(async () => { field(tree).props.onFocus({}); flushRevealFrames(); });
+  if (device.os === 'android') await focus();
+  const padding = () => Number(flat(padded(frames(tree)[0])).paddingBottom);
+  const rest = padding();
+  await TestRenderer.act(async () => { startKeyboard(KEYBOARD_HEIGHT); emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
+  return {
+    frame: async (step) => {
+      await TestRenderer.act(async () => { stepKeyboard((KEYBOARD_HEIGHT * step) / 6); });
+      native.viewport = start - (padding() - rest);
+      if (step === 1 && device.os === 'ios') await focus();
+      await reports.viewport(native.viewport);
+      await reports.offset(native.offset);
+    },
+  };
+}
 
 /** The frame's padding with the keyboard down, up, then down again. */
 async function paddingAcrossKeyboard(tree: Tree, device: Device): Promise<unknown[]> {
@@ -437,10 +478,10 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('as the keyboard rises, the focused block rises with it on a screen and in a sheet: on every frame, through native bounds that only grow as fast as the keyboard, it sits above the keyboard, with at most one scroll a frame and none once it is where it is kept', async () => {
-    // Advanced at the default text size: everything fits, so the native scroll view can scroll only
-    // as far as each frame's shrinking bounds allow. The report sheet: its host pads, so the scroll
-    // view shrinks under a note that is in view when the keyboard sets off.
+  await h.test('as the keyboard rises, the focused block rises with it on a screen and in a sheet: in every keyboard frame, the frame that pads for it, it is kept clear of the scroll view’s end (where the scroll view clamps a scroll to its last bounds, within that frame’s travel), even though on iOS the field’s focus reaches JS after the keyboard has set off; at most one scroll a frame and none once it is where it is kept', async () => {
+    // Advanced at the default text size: everything fits, so the scroll view can scroll only as far
+    // as each frame's padding has shrunk it. The report sheet: its card pads, so the scroll view
+    // shrinks under a note that is in view when the keyboard sets off.
     for (const device of [IOS, ANDROID_17]) {
       const surfaces: [string, () => React.ReactElement, Geometry & { nativeScroll: { viewport: number; content: number; offset: number } }, Rect][] = [
         ['advanced', advanced, { frame: SCREEN_FRAME, field: [520, 60], block: [520, 100], nativeScroll: { viewport: 700, content: 640, offset: 0 } }, [520, 100]],
@@ -450,57 +491,72 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         await on(device, element(), async ({ tree, scrolls }) => {
           await draftLoaded();
           const native = geometry.nativeScroll;
-          const start = native.viewport;
-          const reports = scrollReports(tree);
-          await reports.viewport(start);
-          await reports.content(native.content);
-          mountContent(tree);
-          await TestRenderer.act(async () => { field(tree).props.onFocus({}); flushRevealFrames(); });
+          const rise = await riseThrough(tree, device, native);
+          const below = () => Math.max(0, top + height + SPACING.md - (native.offset + native.viewport));
+          const visible = () => below() < 0.01;
+          // A scroll view that clamps a scroll to the bounds it has when the scroll runs (Android's,
+          // and a sheet's, whose card pads outside it) lands each frame's scroll before that frame's
+          // padding has shrunk it: there the block may trail its place by that frame's travel, and
+          // no more. An iOS screen knows its every frame's height: there it is exact.
+          const clamps = device.os === 'android' || name !== 'advanced';
           h.eq(scrolls, [], `${device.name} ${name}: setup: the block is in view before the keyboard`);
-          await TestRenderer.act(async () => { emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT); });
-          const visible = () => top + height + SPACING.md <= native.offset + native.viewport;
           const hidden: number[] = [];
           for (let step = 1; step <= 6; step += 1) {
-            const keyboardHeight = (KEYBOARD_HEIGHT * step) / 6;
             const before = scrolls.length;
-            await TestRenderer.act(async () => { stepKeyboard(keyboardHeight); });
-            native.viewport = start - overlapOf(SCREEN_FRAME, keyboardWindow.height - keyboardHeight);
-            await reports.viewport(native.viewport);
-            await reports.offset(native.offset);
+            const was = native.viewport;
+            await rise.frame(step);
             h.ok(scrolls.length - before <= 1, `${device.name} ${name}: frame ${step}: at most one scroll`);
-            if (!visible()) hidden.push(step);
+            if (below() > (clamps ? was - native.viewport : 0) + 0.01) hidden.push(step);
           }
-          h.eq(hidden, [], `${device.name} ${name}: on no frame of the rise is the block under the keyboard`);
+          h.ok(scrolls.length > 0, `${device.name} ${name}: setup: the block had to be scrolled to stay in view`);
+          h.eq(hidden, [], `${device.name} ${name}: on no frame of the rise is the block under the keyboard or what pads for it`);
           const risen = scrolls.length;
           await playFrames(3);
           h.eq(scrolls.length, risen, `${device.name} ${name}: once the block is where it is kept, no more scrolls`);
           await TestRenderer.act(async () => { endKeyboard(KEYBOARD_HEIGHT); emitKeyboardEvent('keyboardDidShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
+          await scrollReports(tree).offset(native.offset);
           h.ok(visible(), `${device.name} ${name}: and it stays in view once the keyboard has settled`);
         }, geometry);
       }
     }
   });
 
-  await h.test('a drag while the keyboard rises is the person’s own scroll: the reveal stops at once, and nothing scrolls the content back when the keyboard settles', async () => {
+  await h.test('iOS: a block already partly out of view as the keyboard sets off with its focus comes into view over the rise, not all in one frame, and once JS has heard of the focus is never more out of view than it was', async () => {
+    // Android focuses the field, and JS scrolls it into view, before it asks for the keyboard.
+    const native = { viewport: 500, content: 900, offset: 0 };
+    const [top, height] = [420, 140];
+    await on(IOS, report(), async ({ tree }) => {
+      await draftLoaded();
+      const rise = await riseThrough(tree, IOS, native);
+      const below = () => Math.max(0, top + height + SPACING.md - (native.offset + native.viewport));
+      const atRest = below();
+      h.ok(atRest > 0, 'setup: the block is partly below the scroll view’s end at rest');
+      const seen: number[] = [];
+      for (let step = 1; step <= 6; step += 1) {
+        await rise.frame(step);
+        seen.push(below());
+      }
+      const known = seen.slice(1);
+      h.ok(known[0] > 0, `the first frame that knows the block leaves some of it to come (seen ${seen.join(', ')})`);
+      h.ok(known.every((left) => left <= atRest + 0.01), `no later frame shows less of it than at rest (seen ${seen.join(', ')}, at rest ${atRest})`);
+      h.ok(seen.at(-1)! < 0.01, `and it is all in view as the keyboard arrives (seen ${seen.join(', ')})`);
+    }, { frame: [0, 844], field: [420, 90], block: [top, height], nativeScroll: native });
+  });
+
+  await h.test('a drag while the keyboard rises is the person’s own scroll: the UI thread stops following at once, before JS hears of it, and nothing scrolls the content back when the keyboard settles', async () => {
     for (const device of [IOS, ANDROID_17]) {
       const native = { viewport: 700, content: 640, offset: 0 };
       await on(device, advanced(), async ({ tree, scrolls }) => {
-        const reports = scrollReports(tree);
-        await reports.viewport(native.viewport);
-        await reports.content(native.content);
-        mountContent(tree);
-        await TestRenderer.act(async () => { field(tree).props.onFocus({}); flushRevealFrames(); });
-        await TestRenderer.act(async () => { emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT); stepKeyboard(KEYBOARD_HEIGHT / 3); });
-        native.viewport = 700 - overlapOf(SCREEN_FRAME, keyboardWindow.height - KEYBOARD_HEIGHT / 3);
-        await reports.viewport(native.viewport);
+        const rise = await riseThrough(tree, device, native);
+        await rise.frame(1);
+        await rise.frame(2);
+        await rise.frame(3);
         h.ok(scrolls.length > 0, `${device.name}: setup: the block is rising with the keyboard`);
         const before = scrolls.length;
-        await TestRenderer.act(async () => scrollView(tree).props.onScrollBeginDrag({}));
-        await reports.offset(0);
-        for (const keyboardHeight of [(2 * KEYBOARD_HEIGHT) / 3, KEYBOARD_HEIGHT]) {
-          await TestRenderer.act(async () => { stepKeyboard(keyboardHeight); });
-          await reports.viewport(700 - overlapOf(SCREEN_FRAME, keyboardWindow.height - keyboardHeight));
-        }
+        await beginDrag(native.offset);
+        await rise.frame(4);
+        await rise.frame(5);
+        await rise.frame(6);
         await TestRenderer.act(async () => { endKeyboard(KEYBOARD_HEIGHT); emitKeyboardEvent('keyboardDidShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
         await playFrames(3);
         h.eq(scrolls.length, before, `${device.name}: after the drag, no scroll on the frames that follow or once the keyboard settles`);

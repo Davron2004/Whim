@@ -106,6 +106,69 @@ export const withRepeat = (animation: Animation, count = 2) => tag({ kind: 'repe
 export function cancelAnimation(): void { cancelled.count += 1; }
 export const Easing = { bezier: (...points: number[]) => ({ bezier: points }) };
 export const ReduceMotion = { System: 'system', Always: 'always', Never: 'never' } as const;
+/** An animated ref: a ref callback a worklet can scroll through, which tells its observers the
+ *  tag of the view it holds (a fresh tag per ref; null once it lets go). */
+type Observer = (tag: number | null) => (() => void) | undefined;
+interface AnimatedRef<T> {
+  (node: T | null): void;
+  current: T | null;
+  observe: (observer: Observer) => () => void;
+}
+let nextTag = 1;
+export function useAnimatedRef<T>(): AnimatedRef<T> {
+  const ref = React.useRef<AnimatedRef<T> | null>(null);
+  if (!ref.current) {
+    const viewTag = nextTag++;
+    const observers = new Map<Observer, (() => void) | undefined>();
+    const animatedRef = ((node: T | null) => {
+      animatedRef.current = node;
+      for (const [observer, cleanup] of [...observers]) {
+        cleanup?.();
+        observers.set(observer, observer(node ? viewTag : null));
+      }
+    }) as AnimatedRef<T>;
+    animatedRef.current = null;
+    animatedRef.observe = (observer) => {
+      observers.set(observer, observer(animatedRef.current ? viewTag : null));
+      return () => {
+        observers.get(observer)?.();
+        observers.delete(observer);
+      };
+    };
+    ref.current = animatedRef;
+  }
+  return ref.current;
+}
+/** Reanimated's UI-thread scroll: here, the held view's own `scrollTo`, at once. */
+export function scrollTo<T extends { scrollTo?: (to: { x: number; y: number; animated: boolean }) => void }>(ref: AnimatedRef<T>, x: number, y: number, animated: boolean): void {
+  ref.current?.scrollTo?.({ x, y, animated });
+}
+/** Native events handed to worklets by view tag (`useEvent` + `registerForEvents`); `emitNativeEvent`
+ *  plays one to every handler registered for its name, as the UI thread receives it. */
+type NativeHandler = (event: Record<string, unknown> & { eventName: string }) => void;
+const nativeHandlers = new Map<number, Set<{ handler: NativeHandler; names: readonly string[] }>>();
+export function useEvent(handler: NativeHandler, names: readonly string[] = []) {
+  const ref = React.useRef<{ workletEventHandler: { registerForEvents: (tag: number) => void; unregisterFromEvents: (tag: number) => void } } | null>(null);
+  if (!ref.current) {
+    const entry = { handler, names };
+    ref.current = {
+      workletEventHandler: {
+        registerForEvents: (viewTag) => {
+          const set = nativeHandlers.get(viewTag) ?? new Set();
+          nativeHandlers.set(viewTag, set);
+          set.add(entry);
+        },
+        unregisterFromEvents: (viewTag) => { nativeHandlers.get(viewTag)?.delete(entry); },
+      },
+    };
+  }
+  return ref.current;
+}
+export function emitNativeEvent(name: string, payload: Record<string, unknown>): void {
+  for (const [viewTag, set] of nativeHandlers) {
+    for (const { handler, names } of [...set]) if (names.includes(name)) handler({ ...payload, eventName: `${viewTag}${name}` });
+  }
+}
 /** react-native-worklets' hop back to the React Native thread: there is only one thread here. */
 export function scheduleOnRN<A extends unknown[]>(fn: (...args: A) => void, ...args: A): void { fn(...args); }
 

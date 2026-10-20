@@ -105,13 +105,13 @@ export function gridLayout(width: number, fontScale: number): GridLayout; // { k
 ## Keyboard — `src/host/launcher/KeyboardShell.tsx`, `keyboard-shell.ts`
 ```ts
 export function useKeyboardOverlap(frame: RefObject<View|null>, active: boolean): { overlap: SharedValue<number>;
-  onLayout: () => void /* on the measured view */; overlapFor: (keyboardHeight: number) => number };
+  onLayout: () => void /* on the measured view */; overlapFor: (keyboardHeight: number) => number /* worklet */ };
 export function useKeyboardInset(frame, active): number;  // settled, React state (MiniAppView's WebView)
 export function keyboardOverlap(keyboardHeight, frameBottom, windowHeight): number;  // worklet
 export function sheetBottomPadding(overlap, safeBottom): number;  // worklet; REVEAL_MARGIN = 16
 ```
 Source: react-native-keyboard-controller, plus iOS `Keyboard` `keyboardDidChangeFrame` in `useKeyboardOverlap`: the first keyboard
-of a process is reported without its Done bar, so the library's end report may not make a frame shorter than the system's. `KeyboardShell` has `footer`, no header slot. Padding follows the keyboard's frames only: the library reports it visible at its destination on `keyboardWillShow`, so nothing pads from that. Reveal: from `keyboardWillShow` to `keyboardDidShow`, at most one scroll a frame (unanimated, clamped by the native bounds, toward the destination height on a screen, the current one in a sheet), only while the block is below where it is kept, ≤90 frames; a drag during the rise stops it and the `keyboardDidShow` recheck.
+of a process is reported without its Done bar, so the library's end report may not make a frame shorter than the system's. `KeyboardShell` has `footer`, no header slot. Padding follows the keyboard's frames only: the library reports it visible at its destination on `keyboardWillShow`, so nothing pads from that. Reveal while the keyboard rises: on the UI thread, in each `onMove` (the frame that pads), at most one unanimated `scrollTo` keeping the block `REVEAL_MARGIN` clear of that frame's scroll view (`followOffset`; its height from the frame's padding on a screen, from `sheetBottomPadding` in a sheet), only upward, never past the content's end; a block partly hidden at set-off comes in over the rise (`hiddenAtRest`, `riseProgress`). JS only publishes the block (iOS delivers focus after `keyboardWillShow`). A screen's scroll view has `scrollToOverflowEnabled` (iOS clamps to last frame's bounds); a sheet's and Android's trail by ≤ a frame's travel. A UI-thread `onScrollBeginDrag` during the rise stops it and the `keyboardDidShow` recheck.
 
 ## Tests: `shell-surfaces-ui.suite.tsx`, `keyboard-shell-ui.suite.tsx`; `run.mjs` aliases gesture-handler →
 `native-gesture-handler.tsx` (`pan(config, ys, vy)`), keyboard-controller → `native-keyboard-controller.tsx`, worklets →
