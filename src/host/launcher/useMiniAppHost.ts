@@ -184,6 +184,9 @@ export interface MiniAppHost {
    *  a WebView remount (a fresh `key`) by the caller so Retry falls through the error branch into
    *  a normal render, whose `onLoadEnd` re-runs `deliverBySource` → `bind()` into a fresh realm. */
   clearLastError: () => void;
+  /** The WebView the realm lives in is gone (its page failed to load, or its web content process
+   *  died): the launch fails now, to the recovery screen, whose Retry binds a fresh WebView. */
+  webViewGone: () => void;
 }
 
 export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
@@ -376,6 +379,11 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     setS((p) => ({ ...p, lastError: null }));
   }, []);
 
+  const webViewGone = useCallback(() => {
+    startupDeadline.current.cancel();
+    setS((p) => (p.launchFailed || p.lastError ? p : { ...p, lastError: 'webview gone' }));
+  }, []);
+
   // ── Android system back (#5 D4 — the guaranteed-exit wiring) ────────────────
   // The pure policy decides; the host acts. `forward` posts a nav-back and arms the unhandled-
   // press window; `exit` leaves to the launcher; `ignore` (no realm) lets the OS handle back.
@@ -414,5 +422,6 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     control,
     exit,
     clearLastError,
+    webViewGone,
   };
 }

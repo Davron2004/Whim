@@ -51,11 +51,11 @@ interface Mounted {
   pageShown: () => boolean;
 }
 
-type Style = { backgroundColor?: string; opacity?: number; color?: string; top?: number; bottom?: number; left?: number; right?: number };
+type Style = { backgroundColor?: string; opacity?: number; color?: string; position?: string; top?: number; bottom?: number; left?: number; right?: number };
 const flat = (node: TestRenderer.ReactTestInstance): Style => StyleSheet.flatten(node.props.style) as Style;
 
-/** The view that holds the WebView: the container's own background. */
-const containerOf = (tree: Tree) => tree.root.findAll((n) => hostType(n) === 'View' && n.findAll(isWebView).length > 0).at(-1)!;
+/** The view that holds the WebViews: the container's own background (the outermost such view). */
+const containerOf = (tree: Tree) => tree.root.findAll((n) => hostType(n) === 'View' && n.findAll(isWebView).length > 0)[0];
 
 /** A layer laid over the whole container (all four insets 0). */
 function spansContainer(node: TestRenderer.ReactTestInstance): boolean {
@@ -63,18 +63,47 @@ function spansContainer(node: TestRenderer.ReactTestInstance): boolean {
   return s.top === 0 && s.bottom === 0 && s.left === 0 && s.right === 0;
 }
 
-/** Whether the page shows: no layer drawn after the WebView in its container spans the whole
- *  container with an opaque background at a visible opacity (the orb, a small control, does not). */
-function pageIsShown(tree: Tree): boolean {
-  const container = containerOf(tree);
-  // What the container draws, in order: a component that only groups views (no style of its own)
-  // stands for the views it renders.
+/** What `container` draws, bottom first: a component that only groups views (no style of its own)
+ *  stands for the views it renders. */
+function layersOf(container: TestRenderer.ReactTestInstance): TestRenderer.ReactTestInstance[] {
   const drawn = (node: TestRenderer.ReactTestInstance): TestRenderer.ReactTestInstance[] =>
     typeof node.type !== 'string' && node.props.style === undefined
       ? node.children.filter((c): c is TestRenderer.ReactTestInstance => typeof c !== 'string').flatMap(drawn)
       : [node];
-  const layers = container.children.filter((c): c is TestRenderer.ReactTestInstance => typeof c !== 'string').flatMap(drawn);
-  const after = layers.slice(layers.findIndex(isWebView) + 1);
+  return container.children.filter((c): c is TestRenderer.ReactTestInstance => typeof c !== 'string').flatMap(drawn);
+}
+
+/** The container's layers that hold a WebView (one per WebView), bottom first. */
+const slotsOf = (tree: Tree) => layersOf(containerOf(tree)).filter((layer) => layer.findAll(isWebView).length > 0);
+
+/** The native view a layer puts into the container: itself, or the first host view it renders. */
+const nativeOf = (layer: TestRenderer.ReactTestInstance) =>
+  typeof layer.type === 'string' ? layer : layer.findAll((n) => typeof n.type === 'string')[0];
+
+/** Whether a touch on the container can reach the WebView in `slot`, the way Android picks a touch
+ *  target: a React Native view with `pointerEvents` `none` takes no touch and passes none to what is
+ *  inside it, but the WebView's own `pointerEvents` is never read (react-native-webview's view
+ *  manager has no such prop, and `TouchTargetHelper` treats a view it cannot read as `auto`). */
+function takesTouches(slot: TestRenderer.ReactTestInstance): boolean {
+  const web = slot.findAll(isWebView)[0];
+  for (let n = web.parent; n !== null; n = n === slot ? null : n.parent) {
+    if (hostType(n) === 'View' && n.props.pointerEvents === 'none') return false;
+  }
+  return true;
+}
+
+/** The container's layer that holds `web`. */
+const slotOf = (tree: Tree, web: TestRenderer.ReactTestInstance) => slotsOf(tree).find((slot) => slot.findAll((n) => n === web).length > 0)!;
+
+/** The WebView a touch on the open app lands on: the top-most slot that takes touches. */
+const touchedWebView = (tree: Tree) => slotsOf(tree).filter(takesTouches).at(-1)?.findAll(isWebView)[0];
+
+/** Whether the page shows: no layer drawn after the WebView in its container spans the whole
+ *  container with an opaque background at a visible opacity (the orb, a small control, does not). */
+function pageIsShown(tree: Tree): boolean {
+  const layers = layersOf(containerOf(tree));
+  const web = touchedWebView(tree);
+  const after = layers.slice(layers.findIndex((layer) => web !== undefined && layer.findAll((n) => n === web).length > 0) + 1);
   return !after.some((layer) => {
     const s = flat(layer);
     return spansContainer(layer) && s.backgroundColor !== undefined && s.backgroundColor !== 'transparent' && s.opacity !== 0;
@@ -99,8 +128,8 @@ const isWebView = (n: TestRenderer.ReactTestInstance) => hostType(n) === 'WebVie
 
 /** How far above the container's bottom edge the page (the WebView) ends. */
 function pageInset(tree: Tree): number {
-  const container = tree.root.findAll((n) => hostType(n) === 'View' && n.findAll(isWebView).length > 0).at(-1)!;
-  const web = container.findAll(isWebView)[0];
+  const container = containerOf(tree);
+  const web = touchedWebView(tree)!;
   const pad = (StyleSheet.flatten(container.props.style) as { paddingBottom?: number }).paddingBottom ?? 0;
   return pad + ((StyleSheet.flatten(web.props.style) as { marginBottom?: number }).marginBottom ?? 0);
 }
@@ -142,8 +171,8 @@ async function withMiniApp(
     <MiniAppStage launch={launchOf(record, { tile, tappedAt, onExit: () => { exits++; } })} />,
     { createNodeMock: measuredAsContainer },
   );
-  // The launch's own WebView: not the one waiting unseen beside it.
-  const webView = () => tree.root.findAll((n) => isWebView(n) && n.props.pointerEvents !== 'none')[0];
+  // The launch's own WebView, the one a touch reaches: not the one waiting unseen beside it.
+  const webView = () => touchedWebView(tree);
   try {
     await body({
       tree,
@@ -463,10 +492,11 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       const gen = generationIn(web);
       await send(web, firstPaint(gen));
       h.ok(!isOpening(tree) && pageIsShown(tree), 'the app’s own paint opens it');
-      const next = webViews()[1];
+      const next = webViews().find((w) => w !== web)!;
       h.ok(next !== undefined && webViews().length === 2, 'and then a new WebView is there beside it');
-      h.eq([flat(next).opacity, spansContainer(next), next.props.pointerEvents, next.props.accessibilityElementsHidden, next.props.importantForAccessibility],
-        [0, true, 'none', true, 'no-hide-descendants'], 'unseen, untouchable and out of the accessibility tree');
+      const nextSlot = nativeOf(slotOf(tree, next));
+      h.eq([flat(nextSlot).opacity, spansContainer(nextSlot), flat(nextSlot).position, nextSlot.props.pointerEvents, nextSlot.props.accessibilityElementsHidden, nextSlot.props.importantForAccessibility],
+        [0, true, 'absolute', 'none', true, 'no-hide-descendants'], 'unseen, untouchable and out of the accessibility tree, out of the layout');
       h.ok(pageIsShown(tree), 'so the app’s page stays shown under it');
       h.eq(settingsOf(next), settingsOf(web), 'with exactly the settings of the app’s own');
       await TestRenderer.act(async () => next.props.onLoadEnd());
@@ -559,6 +589,85 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await show(launchOf(TIP));
       h.ok(!dead.includes(webViews()[0]), 'the app never gets one that died');
     });
+  });
+
+  await h.test('pool: a touch on the open app lands on its own WebView — the one warming beside it is drawn below it, in a slot that takes no touch and no space — and a hand-over only restyles that slot', async () => {
+    await withStage(async ({ tree, show, webViews, send }) => {
+      const [first] = webViews();
+      await TestRenderer.act(async () => first.props.onLoadEnd());
+      await send(first, WARM_ANSWER);
+      await show(launchOf(WATER));
+      const [web] = webViews();
+      await send(web, firstPaint(generationIn(web)));
+      const next = webViews().find((w) => w !== web)!;
+      h.ok(next !== undefined, 'a WebView warms beside the open app');
+      h.eq(slotsOf(tree).map((slot) => slot.findAll(isWebView)[0] === web), [false, true], 'the waiting WebView is drawn below the app’s');
+      h.ok(!takesTouches(slotOf(tree, next)), 'its slot takes no touch, so nothing reaches it even where it would be on top');
+      h.ok(touchedWebView(tree) === web, 'a touch on the app lands on the app’s own WebView');
+      h.eq(slotsOf(tree).filter((slot) => flat(nativeOf(slot)).position !== 'absolute').map((slot) => slot.findAll(isWebView)[0] === web), [true],
+        'and the app’s slot is the only one in the layout, so its page has the whole container');
+      const waiting = nativeOf(slotOf(tree, next));
+      h.ok(waiting.props.collapsable === false, 'the slot is a native view of its own, never flattened away');
+
+      await show(null);
+      await show(launchOf(TIP));
+      const [again] = webViews();
+      h.ok(again === next, 'the next launch takes the WebView that waited');
+      const bound = nativeOf(slotOf(tree, again));
+      h.ok(bound === waiting, 'in the very slot it waited in: the hand-over restyled it, nothing was remounted');
+      h.ok(touchedWebView(tree) === again && flat(bound).position !== 'absolute' && flat(bound).opacity !== 0, 'which now takes touches, space and is seen');
+      h.eq([bound.props.accessibilityElementsHidden, bound.props.importantForAccessibility], [false, 'auto'], 'and is back in the accessibility tree');
+    });
+  });
+
+  await h.test('pool: a launch whose WebView fails to load while it opens gets the recovery screen, not an endless opening; Retry opens it in a fresh WebView', async () => {
+    await withStage(async ({ tree, show, webViews, send }) => {
+      const [loading] = webViews();
+      await show(launchOf(TIP));
+      const [web] = webViews();
+      h.ok(web === loading, 'the app takes the waiting WebView while its page still loads');
+      // react-native-webview follows a load error with a load end for the same page, in the same
+      // event (`WebViewShared.tsx` `onLoadingError`).
+      const { onError, onLoadEnd, injected } = web.props as { onError: (e: unknown) => void; onLoadEnd: () => void; injected: string[] };
+      await TestRenderer.act(async () => {
+        onError({ nativeEvent: { code: -6, description: 'net::ERR_CONNECTION_REFUSED' } });
+        onLoadEnd();
+      });
+      h.ok(textOf(tree.root).includes(COPY.appErrorTitle) && !isOpening(tree), 'the recovery screen replaces the opening at once');
+      h.eq(injected, [], 'nothing is delivered into the failed page');
+      h.ok(!webViews().includes(web), 'and its WebView is gone');
+      await press(button(tree, COPY.appErrorRetry));
+      const fresh = touchedWebView(tree)!;
+      h.ok(fresh !== undefined && fresh !== web, 'Retry binds a fresh WebView');
+      await TestRenderer.act(async () => fresh.props.onLoadEnd());
+      h.eq(deliveriesInto(fresh).length, 1, 'delivered into once its page loads');
+      await send(fresh, firstPaint(generationIn(fresh)));
+      h.ok(!isOpening(tree) && pageIsShown(tree), 'and its own paint opens the app');
+    });
+  });
+
+  await h.test('pool: an app whose web content process dies after it painted gets the recovery screen instead of a dead page; Retry opens it in a fresh WebView', async () => {
+    for (const death of ['onRenderProcessGone', 'onContentProcessDidTerminate'] as const) {
+      await withStage(async ({ tree, show, webViews, send }) => {
+        const [first] = webViews();
+        await TestRenderer.act(async () => first.props.onLoadEnd());
+        await send(first, WARM_ANSWER);
+        await show(launchOf(WATER));
+        const [web] = webViews();
+        await send(web, firstPaint(generationIn(web)));
+        h.ok(!isOpening(tree) && pageIsShown(tree), `${death}: the app is open`);
+        await TestRenderer.act(async () => web.props[death]({ nativeEvent: { didCrash: true } }));
+        h.ok(textOf(tree.root).includes(COPY.appErrorTitle), `${death}: the recovery screen replaces the dead page`);
+        h.ok(!webViews().includes(web), `${death}: and its WebView is gone`);
+        await press(button(tree, COPY.appErrorRetry));
+        const fresh = touchedWebView(tree)!;
+        h.ok(fresh !== undefined && fresh !== web, `${death}: Retry binds a fresh WebView`);
+        await TestRenderer.act(async () => fresh.props.onLoadEnd());
+        h.eq(deliveriesInto(fresh).length, 1, `${death}: delivered into once`);
+        await send(fresh, firstPaint(generationIn(fresh)));
+        h.ok(!isOpening(tree) && pageIsShown(tree), `${death}: and its own paint opens the app`);
+      });
+    }
   });
 
   await h.test('mini-app: with no paint the page is shown at 600 ms anyway, the plate stays, and "Opening…" appears only after 1.5 s', async () => {

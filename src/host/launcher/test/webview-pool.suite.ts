@@ -25,11 +25,11 @@ function warmed(pool: WebViewPool): WebViewPool {
   return pageAnswered(pageLoaded(pool, key), key);
 }
 
-/** How `pool` breaks the pool's promises, given `owner` (every WebView's launch so far, updated):
- *  a WebView serving a second launch or waiting again after one, more than one waiting (or none
- *  with no app open), more than one WebView bound, or a WebView changing its place among the
- *  others (a native view moved under a running app). */
-function violations(pool: WebViewPool, owner: Map<number, number>): number {
+/** How `pool` breaks the pool's promises, given `owner` (every WebView's launch so far, updated) and
+ *  the pool before the step: a WebView serving a second launch or waiting again after one, more than
+ *  one waiting (or none with no app open), more than one WebView bound, the waiting one drawn over
+ *  the bound one, or two WebViews swapping places (a native view moved under a running app). */
+function violations(pool: WebViewPool, before: WebViewPool, owner: Map<number, number>): number {
   let broken = 0;
   for (const slot of pool.slots) {
     const was = owner.get(slot.key);
@@ -39,8 +39,24 @@ function violations(pool: WebViewPool, owner: Map<number, number>): number {
   const waiting = pool.slots.filter((s) => s.launch === null).length;
   if (waiting > 1 || (pool.launch === null && waiting !== 1)) broken += 1;
   if (pool.slots.filter((s) => s.launch !== null).length > 1) broken += 1;
-  if (pool.slots.some((s, i) => i > 0 && pool.slots[i - 1].key > s.key)) broken += 1;
+  if (pool.slots.some((s, i) => s.launch === null && pool.slots.slice(0, i).some((under) => under.launch !== null))) broken += 1;
+  const kept = (p: WebViewPool, q: WebViewPool) => p.slots.map((s) => s.key).filter((key) => q.slots.some((s) => s.key === key));
+  if (kept(pool, before).join() !== kept(before, pool).join()) broken += 1;
   return broken;
+}
+
+/** mulberry32: a 32-bit PRNG whose every step stays an exact integer (`Math.imul`), so the sequence
+ *  reaches every step kind evenly. */
+function mulberry32(seed: number): () => number {
+  /* eslint-disable no-bitwise -- 32-bit integer mixing is what this generator is, not a bitmask */
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
+  };
+  /* eslint-enable no-bitwise */
 }
 
 export async function runWebViewPoolTests(h: Harness): Promise<void> {
@@ -118,22 +134,34 @@ export async function runWebViewPoolTests(h: Harness): Promise<void> {
       if (waitingSlot(q) === undefined) notWaiting += 1;
       return q;
     };
-    const steps: ((p: WebViewPool) => WebViewPool)[] = [
-      (p) => openApp(p, 'a'), (p) => openApp(p, 'b'), (p) => openApp(p, null), (p) => openApp(p, 'a'),
-      launchFailed, retryLaunch, opened,
-      (p) => (waitingSlot(p) ? pageLoaded(p, waitingSlot(p)!.key) : p),
-      (p) => (waitingSlot(p) ? pageAnswered(p, waitingSlot(p)!.key) : p),
-      (p) => (waitingSlot(p) ? pageGone(p, waitingSlot(p)!.key) : p),
-    ];
-    let seed = 7;
+    const waitingKey = (p: WebViewPool, step: (p: WebViewPool, key: number) => WebViewPool) => (waitingSlot(p) ? step(p, waitingSlot(p)!.key) : p);
+    const steps: Record<string, (p: WebViewPool) => WebViewPool> = {
+      'open a': (p) => openApp(p, 'a'), 'open b': (p) => openApp(p, 'b'), close: (p) => openApp(p, null),
+      launchFailed, retryLaunch, launchOpened: opened,
+      pageLoaded: (p) => waitingKey(p, pageLoaded), pageAnswered: (p) => waitingKey(p, pageAnswered), pageGone: (p) => waitingKey(p, pageGone),
+    };
+    const kinds = Object.keys(steps);
+    const took = new Map<string, number>(kinds.map((kind) => [kind, 0]));
+    let warmHandOvers = 0;
+    let appToApp = 0;
+    const random = mulberry32(7);
     let broken = 0;
     for (let i = 0; i < 2_000; i++) {
-      seed = (seed * 1103515245 + 12345) % 2147483648;
-      pool = steps[seed % steps.length](pool);
-      broken += violations(pool, owner);
+      const kind = kinds[Math.floor(random() * kinds.length)];
+      const before = pool;
+      pool = steps[kind](pool);
+      if (pool !== before) took.set(kind, took.get(kind)! + 1);
+      const bound = launchSlot(pool);
+      if (bound !== undefined && pool.launch !== before.launch && bound.key === waitingSlot(before)?.key) {
+        if (bound.handedOut === 'warm') warmHandOvers += 1;
+        if (before.appId !== null && before.appId !== pool.appId) appToApp += 1;
+      }
+      broken += violations(pool, before, owner);
     }
-    h.eq(broken, 0, 'every WebView serves at most one launch and never waits after it; at most one waits, exactly one with no app open; none moves');
+    h.eq(broken, 0, 'every WebView serves at most one launch and never waits after it; at most one waits, exactly one with no app open, under the bound one; none moves');
     h.eq(notWaiting, 0, 'and once a launch has opened, one waits beside it');
+    h.eq(kinds.filter((kind) => took.get(kind)! < 25), [], `every kind of step changed the pool at least 25 times (${[...took].join(' ')})`);
+    h.ok(warmHandOvers >= 10 && appToApp >= 10,`with warm hand-overs (${warmHandOvers}) and one app straight to another taking the WebView that waited beside the first (${appToApp})`);
     h.ok(owner.size > 100, 'over many launches');
   });
 }

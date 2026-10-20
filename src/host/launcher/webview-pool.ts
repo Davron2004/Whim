@@ -41,6 +41,7 @@ export interface WebViewPool {
   readonly appId: string | null;
   /** The current launch, a token never reused; `null` when no app is open. */
   readonly launch: number | null;
+  /** The WebViews in the order they are drawn, bottom first: the waiting one under the launch's. */
   readonly slots: readonly PoolSlot[];
   /** The next key or launch token. */
   readonly next: number;
@@ -64,11 +65,12 @@ export function launchSlot(pool: WebViewPool): PoolSlot | undefined {
   return pool.launch === null ? undefined : pool.slots.find((s) => s.launch === pool.launch);
 }
 
-/** One WebView waits. New WebViews go last, so the slots stay in key order and no native view is
- *  ever moved among its siblings. */
+/** One WebView waits. A new waiting WebView goes first, under the launch's, so it is never the view
+ *  a touch on the app finds. A WebView is handed over only once the previous launch's is gone (it
+ *  is then the only one), so no native view ever changes its place among its siblings. */
 function keepOneWaiting(pool: WebViewPool): WebViewPool {
   if (waitingSlot(pool)) return pool;
-  return { ...pool, slots: [...pool.slots, { key: pool.next, page: 'loading', launch: null, handedOut: null }], next: pool.next + 1 };
+  return { ...pool, slots: [{ key: pool.next, page: 'loading', launch: null, handedOut: null }, ...pool.slots], next: pool.next + 1 };
 }
 
 /** Give the current launch a WebView: the waiting one if it may be handed out, else a cold one
@@ -134,7 +136,8 @@ export function pageAnswered(pool: WebViewPool, key: number): WebViewPool {
 }
 
 /** The waiting WebView failed to load or lost its web content process: it is never handed out,
- *  and a fresh one takes its place. A launch's own WebView is the launch's to fail. */
+ *  and a fresh one takes its place. A launch's own WebView is the launch's to fail (its failure
+ *  surface, then `launchFailed`). */
 export function pageGone(pool: WebViewPool, key: number): WebViewPool {
   const slot = pool.slots.find((s) => s.key === key);
   if (!slot || slot.launch !== null) return pool;

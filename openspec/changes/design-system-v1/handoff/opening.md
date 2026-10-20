@@ -87,28 +87,28 @@ export function openingLook(surface: MiniAppSurface, elapsed: { cap: boolean; la
   `mini-app-delivery` (closing → Home; "frame: over an open app the status-bar strip…").
 
 ## Pool (18.4) — `webview-pool.ts` (pure) + `MiniAppView.tsx` (`MiniAppStage`, `MiniAppView`)
-
 ```ts
 export function MiniAppStage(props: { launch: MiniAppLaunch | null }); // in LauncherRoot once ready; MiniAppView = one launch
 export function openApp(pool: WebViewPool, appId: string | null): WebViewPool; // + launchOpened, launchFailed,
 // retryLaunch, pageLoaded, pageAnswered, pageGone, launchSlot, waitingSlot; PoolSlot.handedOut: 'warm' | 'loading' | 'cold'
 ```
-
 - One WebView waits with no app open, and beside an open app from its first accepted paint
-  (`launchOpened`) or failure surface on (18e; not at bind: loading alongside the opening slowed it).
-  Unseen (absolute, opacity 0, `pointerEvents="none"`, out of the a11y tree), it holds `RUNTIME_HTML`
-  and its idle iframe; after `onLoadEnd` it gets `WARM_PROBE_JS` only, `warm` once it answers `WARM_ANSWER`.
-- A launch takes the waiting WebView if `loading` or `warm` (delivered at once when loaded), else a
-  cold one; a loaded-but-unanswered page (iOS JS off before the #74 rule list compiles) or one that
-  failed/lost its process (`onError`, `onContentProcessDidTerminate`, `onRenderProcessGone`) is dropped.
-- Every delivery is `reinject({ reset: true })`: new iframe, new nonce, the launch's process-wide
-  generation. A WebView that hosted a launch is destroyed on close, another app, a failure surface or
-  Retry, and never waits again (not a realm reset in place: nothing of its outer page survives).
-- Frames and load events reach a launch only from the WebView bound to it (by key): a stale frame of a
-  previous launch or a retried realm, or any from the waiting one — `paint`, `delivery {accepted}` (not
-  GEN-stamped by the page; 18b's LOW), `syscall`, `error` — is dropped. Slots stay in key order (no move).
-- Wire, `build/`, `src/runtime/web/` unchanged. Tests: `webview-pool.suite.ts`, `mini-app-host-ui` "pool: …",
-  "after Retry, an accepted delivery…"; desktop "warm page, then a launch", "warm probe with … scripts off".
+  (`launchOpened`) or failure surface on (18e; not at bind: it slowed the opening). It holds
+  `RUNTIME_HTML`; after `onLoadEnd` it gets `WARM_PROBE_JS` only, `warm` once it answers `WARM_ANSWER`.
+- Each WebView sits in a slot `View` (`collapsable={false}`, kept for its life) carrying layout, opacity,
+  `pointerEvents`, a11y; the WebView gets only `bg` (react-native-webview wraps it in a `flex: 1` View and
+  gives `style`/`pointerEvents` to the native view, ignored on Android: 18f). Waiting slot: absolute fill,
+  opacity 0, `none`, a11y-hidden; bound: `flex: 1`. `pool.slots` = draw order, waiting first (under).
+- A launch takes the waiting WebView if `loading` or `warm` (delivered at once when loaded), else a cold one;
+  loaded-but-unanswered (iOS JS off before the #74 rule list compiles), failed or process-gone ones are dropped.
+- Every delivery is `reinject({ reset: true })`: new iframe, nonce, process-wide generation. A WebView that hosted
+  a launch is destroyed on close, another app, a failure surface or Retry; a hand-over only restyles its slot.
+- Frames and load events reach a launch only from its bound WebView (by key): a stale frame of a previous
+  launch or retried realm, or any from the waiting one (`paint`, `delivery`, `syscall`, `error`), is dropped.
+  Bound WebView gone (`onError`, process death): its events are dropped at once (Android sends a load end
+  after an error), `host.webViewGone()` → `app-error`; Retry binds a fresh WebView.
+- Tests: `webview-pool.suite.ts`, `mini-app-host-ui` "pool: …", "after Retry, an accepted delivery…";
+  desktop "warm page, then a launch", "warm probe with … scripts off". Wire/`build/`/runtime unchanged.
 
 ## Measuring tap-to-first-paint (18.4)
 

@@ -104,6 +104,8 @@ interface LaunchOutlet {
   key: number | null;
   onMessage: (data: string) => void;
   onLoadEnd: () => void;
+  /** The WebView failed to load its page or lost its web content process. */
+  onGone: () => void;
 }
 
 const RUNTIME_PAGE = { html: RUNTIME_HTML };
@@ -163,7 +165,11 @@ export function MiniAppStage({ launch }: Readonly<MiniAppStageProps>) {
     if (bound !== null && bound.key === key) bound.onMessage(data);
     else if (data === WARM_ANSWER) setPool((p) => pageAnswered(p, key));
   };
-  const onSlotGone = (key: number) => setPool((p) => pageGone(p, key));
+  const onSlotGone = (key: number) => {
+    const bound = outlet.current;
+    if (bound !== null && bound.key === key) bound.onGone();
+    else setPool((p) => pageGone(p, key));
+  };
 
   const open = launch !== null && !switching && pool.launch !== null;
   return (
@@ -176,32 +182,43 @@ export function MiniAppStage({ launch }: Readonly<MiniAppStageProps>) {
       importantForAccessibility={open ? 'auto' : 'no-hide-descendants'}
     >
       {/* Every WebView, waiting or bound, is this one element: the same page, the same settings, the
-          same native view manager (whose network refusal, decision #74, every instance gets). The
-          waiting one, also there while an app runs, is laid over the whole container but unseen,
-          untouchable and out of the accessibility tree; a handover only changes its style. */}
-      {pool.slots.map((slot) => (
-        <WebView
-          key={slot.key}
-          ref={refFor(slot.key)}
-          style={[slot.launch === null ? styles.waitingWeb : styles.web, { backgroundColor: bg }]}
-          pointerEvents={slot.launch === null ? 'none' : 'auto'}
-          accessibilityElementsHidden={slot.launch === null}
-          importantForAccessibility={slot.launch === null ? 'no-hide-descendants' : 'auto'}
-          originWhitelist={ORIGINS}
-          source={RUNTIME_PAGE}
-          onMessage={(e) => onSlotMessage(slot.key, e.nativeEvent.data)}
-          onLoadEnd={() => onSlotLoadEnd(slot.key)}
-          javaScriptEnabled
-          domStorageEnabled={false}
-          setSupportMultipleWindows={false}
-          onError={(ev) => {
-            logWebViewError(log, ev.nativeEvent, slot.launch === null ? { surface: 'waiting' } : { appId: launch?.record.appId });
-            onSlotGone(slot.key);
-          }}
-          onContentProcessDidTerminate={() => onSlotGone(slot.key)}
-          onRenderProcessGone={() => onSlotGone(slot.key)}
-        />
-      ))}
+          same native view manager (whose network refusal, decision #74, every instance gets). Its
+          slot, a native view for the WebView's whole life, carries layout, visibility, touch and
+          accessibility: react-native-webview wraps the WebView in a `flex: 1` View of its own and
+          hands `style` and `pointerEvents` to the native view only, which ignores `pointerEvents` on
+          Android. The waiting slot is drawn under the launch's, out of the layout, unseen,
+          untouchable and out of the accessibility tree; a handover only restyles its slot. */}
+      {pool.slots.map((slot) => {
+        const waiting = slot.launch === null;
+        return (
+          <View
+            key={slot.key}
+            collapsable={false}
+            style={waiting ? styles.waitingSlot : styles.slot}
+            pointerEvents={waiting ? 'none' : 'auto'}
+            accessibilityElementsHidden={waiting}
+            importantForAccessibility={waiting ? 'no-hide-descendants' : 'auto'}
+          >
+            <WebView
+              ref={refFor(slot.key)}
+              style={{ backgroundColor: bg }}
+              originWhitelist={ORIGINS}
+              source={RUNTIME_PAGE}
+              onMessage={(e) => onSlotMessage(slot.key, e.nativeEvent.data)}
+              onLoadEnd={() => onSlotLoadEnd(slot.key)}
+              javaScriptEnabled
+              domStorageEnabled={false}
+              setSupportMultipleWindows={false}
+              onError={(ev) => {
+                logWebViewError(log, ev.nativeEvent, waiting ? { surface: 'waiting' } : { appId: launch?.record.appId });
+                onSlotGone(slot.key);
+              }}
+              onContentProcessDidTerminate={() => onSlotGone(slot.key)}
+              onRenderProcessGone={() => onSlotGone(slot.key)}
+            />
+          </View>
+        );
+      })}
       {open ? (
         <MiniAppView
           key={pool.launch}
@@ -292,7 +309,20 @@ export default function MiniAppView({
   const loadedWhenBound = slot !== undefined && slot.page !== 'loading';
   useLayoutEffect(() => {
     boundKey.current = slotKey;
-    outlet.current = { key: slotKey, onMessage: host.onMessage, onLoadEnd: () => { if (slotKey !== null) deliver.current(slotKey); } };
+    outlet.current = {
+      key: slotKey,
+      onMessage: host.onMessage,
+      onLoadEnd: () => { if (slotKey !== null) deliver.current(slotKey); },
+      // The realm went with its WebView: nothing it sends any more (Android follows a load error with
+      // a load end) reaches the launch, and the launch fails at once -- a page that failed while
+      // loading was never delivered into, so no startup deadline would ever fail it.
+      onGone: () => {
+        log.error(CHANNELS.app, 'mini-app webview gone', { appId: engineAppId, webKey: slotKey });
+        boundKey.current = null;
+        outlet.current = null;
+        host.webViewGone();
+      },
+    };
     if (slotKey !== null && loadedWhenBound) deliver.current(slotKey);
     return () => {
       boundKey.current = null;
@@ -300,7 +330,7 @@ export default function MiniAppView({
     };
     // `loadedWhenBound` is read for the WebView as it was handed over; it never changes after.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slotKey, host.onMessage, outlet]);
+  }, [slotKey, host.onMessage, host.webViewGone, outlet]);
 
   // Which of the four container surfaces this render belongs to. The precedence (both failure
   // surfaces above the boot state) is decided by the pure `miniAppSurface` -- a launch that fails
@@ -461,8 +491,8 @@ const styles = StyleSheet.create({
   // No app open: the container and its waiting WebView are out of layout, invisible, untouchable and
   // out of the accessibility tree, under whatever screen the launcher shows.
   waiting: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: 0 },
-  web: { flex: 1 },
-  waitingWeb: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: 0 },
+  slot: { flex: 1 },
+  waitingSlot: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: 0 },
   errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.lg },
   errorTitle: { textAlign: 'center', marginBottom: SPACING.sm },
   errorBody: { textAlign: 'center', marginBottom: SPACING.lg },
