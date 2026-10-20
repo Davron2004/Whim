@@ -36,7 +36,7 @@ Transitions (the shell, `LauncherRoot.tsx`, owns the requests; the pages never f
 
 | Page | Close, scrim, drag, Android back (Sheet `onClose`) |
 |---|---|
-| describe, plan | `goHome` -> `keepDraft`: aborts clarify (slot `'compose'`) and rewrite (slot `'plan'`), keeps the screen as the draft |
+| describe, plan | `keepDraft`: aborts clarify (slot `'compose'`) and rewrite (slot `'plan'`), keeps the screen as the draft; then `goHome`, or back to the app the change was sent from (`running`) |
 | making | `onLeaveRunning`: the run is detached, never stopped; the tile reopens it |
 | ready | Done (`goHome`); failure: `onLeaveFailure` (`goHome`) |
 
@@ -62,7 +62,9 @@ draft with it.
 ## Components (props verbatim)
 
 ```ts
-MakingSheet({ content: SheetContent | null /* null closes */; onClose })   // SheetContent { key: string; node }
+MakingSheet({ content: SheetContent | null /* null closes */; onClose })
+SheetContent { key: string; node; detent?: 'fit' | 'large' }   // default 'large'; a 'large' page after a 'fit' one grows the same sheet
+// The Whim sheet over a running app is pages of this sheet, both 'fit': keys `whim:<app id>`, `whim-report:<app id>`.
 DescribePage({ text; editing?: InstalledApp; serverUnreachable?; notice?: FlowNotice;
                onChangeText; onContinue })       // Android back = the sheet's close: no prop, no registration
 PlanPage({ screen: PlanScreen; editing?: InstalledApp; onBack; onAnswer(id, AnswerChange); onChangeRow(index, text);

@@ -13,7 +13,7 @@ import { COPY } from '../copy';
 import { DescribePage } from '../DescribePage';
 import { PlanPage } from '../PlanPage';
 import type { PlanScreen } from '../prompt-flow';
-import { ReportSheet } from '../ReportScreen';
+import { ReportPage } from '../ReportScreen';
 import { KeyboardTextInput } from '../KeyboardShell';
 import AdvancedScreen from '../AdvancedScreen';
 import { SHELL_PALETTE } from '../theme';
@@ -223,8 +223,13 @@ function mountContent(tree: Tree): void {
   scrollView(tree).props.innerViewRef.current = {};
 }
 
-/** The view inside a measured frame that carries its keyboard padding. */
-const padded = (frame: Node) => frame.find((n) => String(n.type) === 'Animated.View');
+/** The view inside a measured frame that carries its keyboard padding: a sheet's card (its scrim is
+ *  an Animated.View too), else the screen frame's only one. */
+const padded = (frame: Node) => {
+  const isAnimated = (n: Node) => String(n.type) === 'Animated.View';
+  const cards = frame.findAll((n) => isAnimated(n) && n.props.accessibilityViewIsModal === true);
+  return cards.length > 0 ? cards[0] : frame.find(isAnimated);
+};
 /** The padding the (single) screen frame carries now. */
 const framePadding = (tree: Tree) => flat(padded(frames(tree)[0])).paddingBottom;
 
@@ -377,15 +382,16 @@ const advanced = () => (
     />
   </ToastHost>
 );
-const report = (onClose = noop) => (
-  <ReportSheet
+/** The report as a page of the Whim sheet; `onClose` is what Cancel and the thanks page's Done run. */
+const report = (onClose = noop) => sheeted(
+  <ReportPage
     app={APP}
     access={ACCESS}
     options={reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo)}
-    onClose={onClose}
+    onLeave={onClose}
     onUpdateRequired={noop}
     legalLanguage="en"
-  />
+  />,
 );
 const editFourthRow = (tree: Tree) => press(tree.root.find((n) => String(n.type) === 'Pressable' && n.props.accessibilityRole === 'button' && textOf(n).includes('A soft chime')));
 
@@ -679,7 +685,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     // What each pads for the whole keyboard, Done bar included.
     const surfaces: [string, () => React.ReactElement, Geometry & { nativeScroll: { viewport: number; content: number; offset: number } }, number, number][] = [
       ['advanced', advanced, { frame: SCREEN_FRAME, field: [300, 60], block: [300, 60], nativeScroll: { viewport: 700, content: 1200, offset: 0 } }, 360, overlapOf(SCREEN_FRAME, KEYBOARD_TOP)],
-      ['the report sheet', report, { frame: [0, 844], field: [40, 60], block: [40, 60], nativeScroll: { viewport: 500, content: 900, offset: 0 } }, 100, sheetBottomPadding(KEYBOARD_HEIGHT, useSafeAreaInsets().bottom) + SPACING.md],
+      ['the report page in a sheet', report, { frame: [0, 844], field: [40, 60], block: [40, 60], nativeScroll: { viewport: 500, content: 900, offset: 0 } }, 100, sheetBottomPadding(KEYBOARD_HEIGHT, useSafeAreaInsets().bottom)],
     ];
     for (const [name, element, geometry, bottom, whole] of surfaces) {
       await on(IOS, element(), async ({ tree, scrolls }) => {
@@ -957,7 +963,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
       ['Describe', compose()],
       ['Plan', plan()],
       ['Advanced', advanced()],
-      ['the report sheet', report()],
+      ['the report page in a sheet', report()],
       ['a page in a sheet', sheeted(compose())],
     ];
     for (const [name, element] of surfaces) {
@@ -980,7 +986,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
       ['Describe', compose()],
       ['Plan', plan()],
       ['Advanced', advanced()],
-      ['the report sheet', report()],
+      ['the report page in a sheet', report()],
       ['a page in a sheet', sheeted(compose())],
     ];
     for (const device of [IOS, ANDROID_17]) {
@@ -1108,7 +1114,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('the report sheet: its dim covers the whole window, bars and keyboard included, its card continues behind the keyboard, and Send and Cancel ride above it', async () => {
+  await h.test('the report page in a sheet: the dim covers the whole window, bars and keyboard included, the card continues behind the keyboard, and Send and Cancel ride above it', async () => {
     const s = spies();
     const insets = useSafeAreaInsets();
     for (const device of [IOS, ANDROID_14, ANDROID_17]) {
@@ -1119,7 +1125,8 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         const frame = frames(tree);
         h.eq(frame.length, 1, `${device.name}: one padding frame, the sheet's; the shell inside it pads nothing`);
         h.ok(nearest(frame[0], 'SafeAreaProvider') != null && nearest(frame[0], 'Modal') != null, `${device.name}: the sheet keeps clear of the bars with its own window's insets`);
-        const scrim = tree.root.find((n) => String(n.type) === 'Pressable' && n.props.accessibilityRole === 'none');
+        const tap = tree.root.find((n) => String(n.type) === 'Pressable' && n.props.accessibilityRole === 'none');
+        const scrim = hostParent(tap)!;
         h.eq([hostParent(scrim) === frame[0], flat(scrim).position, flat(scrim).top, flat(scrim).bottom], [true, 'absolute', 0, 0],
           `${device.name}: the dim fills the whole window frame`);
         const card = padded(frame[0]);
@@ -1130,7 +1137,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         seen.push(cardPadding());
         await keyboard(device, false);
         seen.push(cardPadding());
-        h.eq(seen, [insets.bottom + SPACING.md, KEYBOARD_HEIGHT + SPACING.md, insets.bottom + SPACING.md],
+        h.eq(seen, [sheetBottomPadding(0, insets.bottom), sheetBottomPadding(KEYBOARD_HEIGHT, insets.bottom), sheetBottomPadding(0, insets.bottom)],
           `${device.name}: the card grows down behind the keyboard while it is up, on every Android version too, and drops back`);
         h.ok(nearest(button(tree, COPY.reportSend), 'ScrollView') == null && nearest(button(tree, COPY.cancel), 'ScrollView') == null, `${device.name}: Send and Cancel are pinned below the note`);
         const note = around(field(tree));
@@ -1165,7 +1172,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     for (const device of DEVICES) {
       const frameHosts: [string, React.ReactElement, () => Promise<void>][] = [
         ['advanced', advanced(), async () => {}],
-        ['report sheet', report(), draftLoaded],
+        ['report page in a sheet', report(), draftLoaded],
       ];
       for (const [name, element, open] of frameHosts) {
         const before = keyboardSubscriptions();

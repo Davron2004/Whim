@@ -39,7 +39,6 @@ import type { ServiceRefusal } from './service-refusal';
 import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } from './report-send';
 import type { ReportPhase, SendOutcome } from './report-send';
 import { useNoticeWindowClear, useRetryGate } from './ServiceNotice';
-import SheetModal from './SheetModal';
 import KeyboardShell from './KeyboardShell';
 import { COPY, reportCodeLine, reportCodeSizeLabel, reportRecipientLine, reportThanksLine } from './copy';
 import { RELEASE } from './release-config';
@@ -429,14 +428,4 @@ export default function ReportScreen(props: Readonly<ReportScreenProps>) {
  *  the keyboard: a new mount is a new draft. */
 export function ReportPage(props: Readonly<ReportScreenProps>) {
   return <ReportForm {...props} host="sheet" title={COPY.reportScreenTitle} />;
-}
-
-/** The report over a running app, in a sheet that keeps the app running underneath: `app == null`
- *  closes it, and each opening starts a fresh draft. */
-export function ReportSheet({ app, onClose, ...rest }: Readonly<Omit<ReportScreenProps, 'onLeave'> & { onClose: () => void }>) {
-  return (
-    <SheetModal visible={app != null} onClose={onClose}>
-      {app && <ReportForm key={app.id} {...rest} app={app} onLeave={onClose} host="sheet" title={COPY.reportSheetTitle} />}
-    </SheetModal>
-  );
 }

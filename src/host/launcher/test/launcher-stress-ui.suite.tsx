@@ -32,6 +32,7 @@ import { hasButton, home, orb, showing } from './whim-sheet-ui.suite';
 import { opening, paint, send } from './changing-in-use-ui.suite';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { mulberry32 } from './mulberry32';
+import { log } from '../../logging';
 
 type Node = TestRenderer.ReactTestInstance;
 
@@ -40,7 +41,10 @@ type StepKind = (typeof STEP_KINDS)[number];
 const PAGE_EVENTS = ['load', 'answer', 'paint'] as const;
 type PageEvent = (typeof PAGE_EVENTS)[number];
 /** How often, over all runs, each step kind and page event must have run for the runs to count. */
-const MIN_EACH = 5;
+const MIN_EACH = 15;
+/** Steps in one run: long enough that the kinds which need a particular state first (a report needs
+ *  the Whim sheet open, a double Back needs History) still reach `MIN_EACH` at the fixed seeds. */
+const STEPS_PER_RUN = 250;
 
 const isWebView = isHost('WebView');
 /** A WebView's own record of the scripts it was handed: the same array for its whole life. */
@@ -394,6 +398,9 @@ async function stress({ seed, platform, steps }: Run, ran: Ran): Promise<void> {
   } finally {
     Date.now = realNow;
     Platform.OS = previousOs;
+    // Hundreds of steps fill the log ring (500 records); a later suite that reads what it logged by the
+    // ring's size before it started would then miss its own records.
+    log.buffer.clear();
   }
 }
 
@@ -406,7 +413,7 @@ export async function runLauncherStressUiTests(h: Harness): Promise<void> {
     };
     for (const platform of ['ios', 'android'] as const) {
       for (const seed of [0x19f, 0xc0ffee, 7, 0x5eed]) {
-        await stress({ seed, platform, steps: 60 }, ran);
+        await stress({ seed, platform, steps: STEPS_PER_RUN }, ran);
         if (ran.violations.length > 0) break;
       }
       if (ran.violations.length > 0) break;
