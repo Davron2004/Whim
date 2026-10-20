@@ -38,7 +38,7 @@ import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
 import { runFork } from './fork-op';
 import type { AppBusyMap } from './app-busy';
-import { StoreAccess, type ForkOptions } from './store-access';
+import { StoreAccess, type ActiveEdit, type ForkOptions } from './store-access';
 import { DataCopyJournal } from './data-copy-journal';
 import { AttemptInFlight, PendingBuildStore } from './pending-builds';
 import type { PendingAttemptLease, PendingBuildFailure, PendingBuildRecord, PendingBuildView, PendingFailureCause, PendingFailureRemedy } from './pending-builds';
@@ -71,6 +71,7 @@ import { FirstRunSheet } from './FirstRunSheet';
 import { MakingSheet, type SheetContent } from './MakingSheet';
 import { runningVersion, WhimReportPage, WhimSheet, type RunningVersion } from './WhimSheet';
 import { listVersions } from './history-logic';
+import { VersionSwitches } from './version-switches';
 import MakingPage from './MakingPage';
 import ReadyPage from './ReadyPage';
 import FailurePage from './FailurePage';
@@ -1079,9 +1080,13 @@ function LauncherShell({
   // taps Continue before it lands must still get it on the request that follows (task: the "about"
   // race). Keyed by the editing app's id so a resolution that lands late for an app the user has
   // since left can never apply to the one now in the flow. Cleared when the flow leaves (`goHome`).
-  const aboutRef = useRef<{ id: string; about: string } | null>(null);
+  // `app` is the app as its active version runs, read with the description (`StoreAccess.activeEdit`),
+  // so the rewrite and clarify name that version's collections, not a stale copy's (`editedFor`).
+  const aboutRef = useRef<{ id: string; about?: string; app: InstalledApp } | null>(null);
   const aboutFor = (editing?: InstalledApp): string | undefined =>
     editing != null && aboutRef.current?.id === editing.id ? aboutRef.current.about : undefined;
+  const editedFor = (editing?: InstalledApp): InstalledApp | undefined =>
+    editing != null && aboutRef.current?.id === editing.id ? aboutRef.current.app : editing;
 
   // The prompt the update screen's `Not now` carried Home (`heldPrompt`), waiting for the next
   // compose opened for the same app — taken once, then gone.
@@ -1398,6 +1403,19 @@ function LauncherShell({
   const onHistory = (app: InstalledApp, from: 'home' | 'app') => {
     setScreen({ kind: 'history', app, from });
   };
+
+  // History's "Use this version" and its Undo, the shell's (`VersionSwitches`): the Undo's toast
+  // outlives History, and Home and a History on screen (`versionsMoved`) follow where it leaves the app.
+  const [versionsMoved, setVersionsMoved] = useState(0);
+  const movedRef = useRef(() => {});
+  movedRef.current = () => {
+    refresh();
+    setVersionsMoved((n) => n + 1);
+  };
+  const versionSwitches = useMemo(
+    () => new VersionSwitches({ access, toast: () => toastRef.current, moved: () => movedRef.current(), busyWith: (appId) => appOps.opFor(appId) }),
+    [access, appOps],
+  );
 
   /** A native pop of History (a swipe): Home, and from there back into the app it was opened over,
    *  reopened at whatever version is now current (a restore there may have moved it). Home at once:
@@ -1842,18 +1860,19 @@ function LauncherShell({
     if (editing) readAbout(editing, 'openCompose');
   };
 
-  /** Reads what `editing` currently is (its description) into `aboutRef`, in the background. */
+  /** Reads what `editing` currently is (its active version's record and description) into `aboutRef`,
+   *  in the background. */
   const readAbout = (editing: InstalledApp, operation: string) => {
     (async () => {
-      let about: string | undefined;
+      let read: ActiveEdit;
       try {
-        about = await access.activeDescription(editing);
+        read = await access.activeEdit(editing);
       } catch (e) {
         log.debug(CHANNELS.app, 'edit description unavailable', { operation, ...errorFields(e) });
         return;
       }
-      if (about == null) return;
-      aboutRef.current = { id: editing.id, about: about.trim().slice(0, APP_CONTEXT_DESCRIPTION_MAX_CHARS) };
+      const about = read.description?.trim().slice(0, APP_CONTEXT_DESCRIPTION_MAX_CHARS);
+      aboutRef.current = { id: editing.id, app: read.app, ...(about != null ? { about } : {}) };
     })();
   };
 
@@ -1918,7 +1937,7 @@ function LauncherShell({
         // The same context a rewrite would carry (name, collections, description) — so the
         // clarifier never re-asks what kind of app it is talking to. `aboutFor`, not a copy on the
         // screen — see `aboutRef`'s doc comment.
-        buildRewriteAppContext(plan.editing, aboutFor(plan.editing)),
+        buildRewriteAppContext(editedFor(plan.editing), aboutFor(plan.editing)),
         request.controller.signal,
       );
       questions = acceptClarifyQuestions(response.questions);
@@ -1973,7 +1992,7 @@ function LauncherShell({
         // A change tells the rewrite which app it is changing, and what it currently is; making a
         // new app sends neither. `aboutFor`, not a copy on the screen — the description can still
         // resolve after the person has already moved past Describe (the "about" race).
-        buildRewriteAppContext(plan.editing, aboutFor(plan.editing)),
+        buildRewriteAppContext(editedFor(plan.editing), aboutFor(plan.editing)),
         request.controller.signal,
       );
       markOnline();
@@ -3623,6 +3642,8 @@ function LauncherShell({
             canCopyData={access.canCopyData}
             onFork={(app, versionId, opts) => onFork(app, opts, versionId)}
             onOpen={onOpen}
+            onUseVersion={versionSwitches.use}
+            versionsMoved={versionsMoved}
           />
         );
       case 'report':

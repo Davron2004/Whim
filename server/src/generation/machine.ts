@@ -19,8 +19,8 @@ import type {
   Usage,
   WireAppRecord,
 } from '@whim/contract';
-import { scanStorageSurface } from '../../../checks/index';
-import type { StorageSurface } from '../../../checks/index';
+import { burnedSchema, scanStorageSurface } from '../../../checks/index';
+import type { DeclaredField, StorageSurface } from '../../../checks/index';
 import type { DiagnosticKind } from '../../../checks/contract';
 import { burnedIdFloor } from '../../../src/host/storage-engine/schema';
 import type { AppliedSchema } from '../../../src/host/storage-engine/schema';
@@ -90,6 +90,8 @@ export interface CheckReport {
 
 export interface CheckContext {
   appliedSchema?: Record<string, unknown>;
+  /** `GenerateRequest.app.declaredFields`: burned ids no column holds yet (decision #82). */
+  declaredFields?: readonly DeclaredField[];
   /** The storage surface of the source this candidate REPLACES — the drift baseline, and the same
    *  value the edit turn's location list was rendered from (design D3: one scanner, two consumers).
    *  Absent for a new app and for an edit with no pre-flighted source, which is how a caller says
@@ -395,9 +397,16 @@ function schemaContextFor(request: GenerateRequest): string {
   const appliedSchema = request.app?.appliedSchema;
   if (!appliedSchema || Object.keys(appliedSchema).length === 0) return '';
   const applied = asAppliedSchema(appliedSchema);
-  const floors = applied ? burnedIdFloor(applied) : {};
+  const declared = request.app?.declaredFields ?? [];
+  const burned = applied ? burnedSchema(applied, declared) : undefined;
+  const floors = burned ? burnedIdFloor(burned) : {};
   return [
     `Applied schema (the storage identities the user's existing data already lives under): ${JSON.stringify(appliedSchema)}`,
+    ...(declared.length > 0
+      ? [
+          `Field IDs saved versions declare that hold no data yet (burned: reuse one only for that same field, with its type and a default): ${JSON.stringify(declared)}`,
+        ]
+      : []),
     ...Object.entries(floors).map(
       ([collectionId, floor]) =>
         `- collection "${collectionId}": new field IDs start above ${floor} (the next free ID is "f${floor + 1}").`,
@@ -1135,7 +1144,7 @@ export class GenerationMachine {
     if (signal?.aborted) return { kind: 'aborted' };
     const checkReport = await this.deps.check.check(
       source,
-      { appliedSchema: request.app?.appliedSchema, previousSurface: edit.previousSurface },
+      { appliedSchema: request.app?.appliedSchema, declaredFields: request.app?.declaredFields, previousSurface: edit.previousSurface },
       signal,
     );
     if (signal?.aborted) return { kind: 'aborted' };

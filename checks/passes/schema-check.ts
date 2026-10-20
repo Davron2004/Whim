@@ -34,13 +34,22 @@
  * can go on naming exactly as before. A candidate that DOES declare a `schema` the extractor
  * could not resolve is left alone — `manifest_not_static` already fired, and the artifact might
  * well declare those collections.
+ *
+ * DECLARED FIELDS (`ctx.declaredFields`, decision #82): the fields a saved version declares that the
+ * applied schema does not hold — a version delivered and never opened, or one a rollback left
+ * behind. Their ids are burned and their types fixed, but no column exists. So they join the floor
+ * (`burnedSchema`), a candidate that reuses one with another type is a `type_change`, and the diff
+ * still runs against the applied schema alone: a candidate naming one is a new column there and
+ * needs a default, exactly as it will on the device. Identity continuity ignores them (no rows live
+ * under them). Folding them into the applied schema as retired columns would read a reuse as a
+ * rollback across a tombstone and skip that default — the version would then refuse to open.
  */
 
 import { Diagnostic, DiagnosticKind } from '../contract';
-import { CheckContext, Pass, lineOf } from '../internal/scope';
+import { CheckContext, Pass, lineOf, type DeclaredField } from '../internal/scope';
 import { getProperty, resolveSchemaNode } from '../internal/manifest';
 import { burnedIdFloor, diffSchemas, emptyApplied, validateArtifact } from '../../src/host/storage-engine/schema';
-import type { AppliedSchema } from '../../src/host/storage-engine/schema';
+import type { AppliedColumn, AppliedSchema } from '../../src/host/storage-engine/schema';
 import type { CollectionSpec, SchemaArtifact, StorageError } from '../../src/host/storage-engine/contract';
 
 function toDiagnostic(e: StorageError, anchor: { line: number; column: number }): Diagnostic {
@@ -199,6 +208,78 @@ function allocationFloorDiagnostics(
   return diagnostics;
 }
 
+/**
+ * The burned-id view of an edit: `applied` plus every declared field it does not hold, as a
+ * RETIRED column (a collection only declared fields name is added with them alone). Retired is
+ * the engine's word for "burned, type fixed, not required", so `burnedIdFloor` over this view is
+ * the floor the pass enforces and the prompt states. Never a diff baseline: no column exists for
+ * a declared field. `undefined` when there is no applied schema and nothing declared.
+ */
+export function burnedSchema(
+  applied: AppliedSchema | undefined,
+  declared: readonly DeclaredField[] | undefined,
+): AppliedSchema | undefined {
+  if (!declared || declared.length === 0) return applied;
+  const collections = (applied?.collections ?? []).map((c) => ({ id: c.id, active: [...c.active], retired: [...c.retired] }));
+  for (const field of declared) {
+    let into = collections.find((c) => c.id === field.collection);
+    if (!into) {
+      into = { id: field.collection, active: [], retired: [] };
+      collections.push(into);
+    }
+    if (into.active.some((c) => c.id === field.id) || into.retired.some((c) => c.id === field.id)) continue;
+    into.retired.push({ id: field.id, type: field.type as AppliedColumn['type'] });
+  }
+  return { collections };
+}
+
+/** A candidate field reusing a declared id with another type. Ids the applied schema holds are
+ *  left to `diffSchemas`, which judges them against their real column. */
+function declaredTypeDiagnostics(
+  applied: AppliedSchema | undefined,
+  declared: readonly DeclaredField[],
+  incoming: SchemaArtifact,
+  anchor: { line: number; column: number },
+): Diagnostic[] {
+  const held = new Set((applied?.collections ?? []).flatMap((c) => [...c.active, ...c.retired].map((f) => `${c.id}/${f.id}`)));
+  const declaredTypes = new Map<string, Set<string>>();
+  for (const d of declared) {
+    const key = `${d.collection}/${d.id}`;
+    declaredTypes.set(key, (declaredTypes.get(key) ?? new Set()).add(d.type));
+  }
+  const diagnostics: Diagnostic[] = [];
+  for (const [collName, coll] of Object.entries(incoming.collections)) {
+    for (const [fieldName, field] of Object.entries(coll.fields)) {
+      const key = `${coll.id}/${field.id}`;
+      const types = declaredTypes.get(key);
+      if (held.has(key) || !types || [...types].every((t) => t === field.type)) continue;
+      const declaredAs = [...types].filter((t) => t !== field.type).join('/');
+      const hint = `Field "${fieldName}" in "${collName}" reuses ID "${field.id}", which a saved version declares as ${declaredAs}; a burned field's type is fixed — keep ${declaredAs} or mint a fresh ID above the floor.`;
+      diagnostics.push({
+        kind: 'type_change',
+        severity: 'error',
+        line: anchor.line,
+        column: anchor.column,
+        symbol: fieldName,
+        message: `Schema type_change (${collName}.${fieldName}): ${hint}`,
+        hint,
+      });
+    }
+  }
+  return diagnostics;
+}
+
+/** The rules only an edit turn's inputs switch on: identity continuity against the applied schema,
+ *  the allocation floor over the burned-id view, and the declared fields' fixed types. */
+function editTurnDiagnostics(ctx: CheckContext, incoming: SchemaArtifact, anchor: { line: number; column: number }): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  if (ctx.appliedSchema) diagnostics.push(...identityContinuityDiagnostics(ctx.appliedSchema, incoming, anchor));
+  const burned = burnedSchema(ctx.appliedSchema, ctx.declaredFields);
+  if (burned) diagnostics.push(...allocationFloorDiagnostics(burned, incoming, anchor));
+  if (ctx.declaredFields) diagnostics.push(...declaredTypeDiagnostics(ctx.appliedSchema, ctx.declaredFields, incoming, anchor));
+  return diagnostics;
+}
+
 export const schemaCheckPass: Pass = (ctx: CheckContext) => {
   const manifest = ctx.manifest;
   const { sourceFile } = ctx;
@@ -218,11 +299,7 @@ export const schemaCheckPass: Pass = (ctx: CheckContext) => {
   }
 
   const incoming = manifest.schema as SchemaArtifact;
-
-  if (ctx.appliedSchema) {
-    for (const d of identityContinuityDiagnostics(ctx.appliedSchema, incoming, anchor)) ctx.report(d);
-    for (const d of allocationFloorDiagnostics(ctx.appliedSchema, incoming, anchor)) ctx.report(d);
-  }
+  for (const d of editTurnDiagnostics(ctx, incoming, anchor)) ctx.report(d);
 
   const applied = ctx.appliedSchema ?? emptyApplied();
   const diff = diffSchemas(applied, incoming);

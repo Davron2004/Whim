@@ -29,6 +29,7 @@ import { createNodeSqlExecutor } from '../../storage-engine/bindings/node-sqlite
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { createStubPipeline } from '../../../../server/src/pipeline';
+import { burnedSchema, runStaticChecks } from '../../../../checks/index';
 import { accessOver, disposeDeviceState, fileOf, newDeviceState, readApplied, type DeviceState } from './data-copy-rig';
 
 const WATER = 'water-counter';
@@ -385,21 +386,140 @@ export async function runVersionRecordTests(h: Harness): Promise<void> {
       const [v1] = await waterCounterChanged(state, access, index, [waterWithAmountDelivery()]);
       await access.rollback(index.get(WATER)!, v1);
       const request = await buildGenerateRequest(access, readApplied(state), index.get(WATER)!, 'add a note');
-      const applied = request.app!.appliedSchema as unknown as AppliedSchema;
       h.eq(readApplied(state)(WATER).collections[0].active.map((c) => c.id), ['f1'], 'setup: the store never created v2’s field');
-      h.eq(burnedIdFloor(applied).c1, 2, 'the floor counts the field v2 declares');
-      h.eq(diffSchemas(applied, drinksWith({ f2: 'text' })).kind, 'conflict', 'so reusing its id for another type is refused');
-      h.ok(diffSchemas(applied, APP_RECORDS[WATER].schemaArtifact!).kind !== 'conflict', 'while v1’s own schema, which never names it, is not');
+      h.eq(burnedIdFloor(burnedOf(request)).c1, 2, 'the floor the server states counts the field v2 declares');
+      h.eq(serverCheck(request, waterSource({ amount: { id: 'f2', type: 'text', default: "''" } })), ['type_change'], 'so the server refuses its id reused for another type');
+      h.eq(serverCheck(request, waterSource({ note: { id: 'f3', type: 'text', default: "''" } })), [], 'and takes a new field above it');
+      h.eq(serverCheck(request, fs.readFileSync(path.join(process.cwd(), 'fixtures/water-counter.app.tsx'), 'utf8')), [], 'while v1’s own schema, which never names it, is accepted');
 
       // That change lands behind the newest version: on a new line sharing the data.
       const continuation = await deliverResult({ access, appId: 'unused', editing: index.get(WATER)!, text: 'a bigger glass icon', wire: waterWith(drinksWith({})) });
       h.ok(continuation.id !== WATER && access.engineAppId(continuation) === WATER, 'setup: a new line on the same data');
       const next = await buildGenerateRequest(access, readApplied(state), continuation, 'add a mood');
-      h.eq(burnedIdFloor(next.app!.appliedSchema as unknown as AppliedSchema).c1, 2, 'its next change still counts v2’s field, on the line it shares the data with');
+      h.eq(burnedIdFloor(burnedOf(next)).c1, 2, 'its next change still counts v2’s field, on the line it shares the data with');
     } finally {
       disposeDeviceState(state);
     }
   });
+
+  await h.test('version record: a change from an older version that names a never-opened version’s field without a default is refused, as the store would refuse it', async () => {
+    const state = newDeviceState();
+    try {
+      const { access, index } = accessOver(state);
+      const [v1] = await waterCounterChanged(state, access, index, [waterWithAmountDelivery()]);
+      await access.rollback(index.get(WATER)!, v1);
+      const request = await buildGenerateRequest(access, readApplied(state), index.get(WATER)!, 'count the amount');
+      const candidate = waterSource({ amount: { id: 'f2', type: 'int' } }); // v2's own field, no default
+      const delivered = diffSchemas(readApplied(state)(WATER), drinksWithout({ f2: 'int' }));
+      h.ok(delivered.kind === 'conflict' && delivered.errors.some((e) => e.kind === 'missing_default'), 'setup: the store would refuse to open that version');
+      h.eq(serverCheck(request, candidate), ['missing_default'], 'the server refuses it before delivery, so a repair can add the default');
+      h.eq(request.app?.appliedSchema, readApplied(state)(WATER), 'the applied schema sent is the store’s own, so a server that predates declared fields refuses it too');
+      h.eq(serverCheck(request, waterSource({ amount: { id: 'f2', type: 'int', default: '0' } })), [], 'with a default, the same field is accepted');
+    } finally {
+      disposeDeviceState(state);
+    }
+  });
+
+  await h.test('version record: a change made after an Undo from Home describes the code it sends, with that version’s manifest and schema, never the copy Home holds', async () => {
+    const state = newDeviceState();
+    try {
+      const { access, index } = accessOver(state);
+      const [v1, , v3] = await waterCounterChanged(state, access, index, [await stubDelivery(), pourOverDelivery()]);
+      await access.rollback(index.get(WATER)!, v1); // Use this version, then Back to Home
+      const homeCopy = index.get(WATER)!;
+      await access.rollback(homeCopy, v3); // Undo on Home's toast; Home is not refreshed
+      const request = await buildGenerateRequest(access, readApplied(state), homeCopy, 'add laps'); // Change it on the tile
+      h.eq(request.app?.source, pourOverDelivery().source, 'the newest version’s code is sent');
+      h.eq(request.app?.manifest.capabilities, APP_RECORDS['pour-over-timer'].manifest.capabilities, 'with its own capabilities');
+      h.eq(request.app?.schema, {}, 'and no schema it never declared');
+    } finally {
+      disposeDeviceState(state);
+    }
+  });
+
+  await h.test('version record: Ask Whim to fix it on an app used at an older version, whose record write failed, describes that version with its own manifest and schema', async () => {
+    const state = newDeviceState();
+    try {
+      const kv = new FailingKv(state.kv);
+      const { access, index } = accessOver(state, { kv });
+      const [v1] = await waterCounterChanged(state, access, index, [await stubDelivery(), pourOverDelivery()]);
+      kv.failing = true;
+      await access.rollback(index.get(WATER)!, v1);
+      kv.failing = false;
+      h.eq(index.get(WATER)!.record.manifest.capabilities, ['cues'], 'setup: the app list still holds the newest version’s record');
+      const request = await buildGenerateRequest(access, readApplied(state), index.get(WATER)!, 'Fix the error that stops this app.');
+      h.eq(request.app?.source, undefined, 'v1, a seeded example, has no source to send');
+      h.eq(request.app?.manifest.capabilities, ['storage'], 'and is described with the storage it declares');
+      h.eq(request.app?.schema, APP_RECORDS[WATER].schemaArtifact, 'and its own schema');
+    } finally {
+      disposeDeviceState(state);
+    }
+  });
+
+  await h.test('version record: change requests read each saved version once, however many there are', async () => {
+    const state = newDeviceState();
+    try {
+      const { access, index } = accessOver(state);
+      const versions = 30;
+      await waterCounterChanged(state, access, index, Array.from({ length: versions - 1 }, () => waterWithAmountDelivery()));
+      const reads = countSnapshotReads(state);
+      const first = await buildGenerateRequest(access, readApplied(state), index.get(WATER)!, 'add a note');
+      h.ok(reads.count <= versions, `the first request reads each version at most once (${reads.count} reads, ${versions} versions)`);
+      h.eq(first.app?.declaredFields, [{ collection: 'c1', id: 'f2', type: 'int' }], 'and finds the field they declare');
+      reads.count = 0;
+      await deliverResult({ access, appId: 'unused', editing: index.get(WATER)!, text: 'one more', wire: waterWithAmountDelivery() });
+      const second = await buildGenerateRequest(access, readApplied(state), index.get(WATER)!, 'add a mood');
+      h.eq(reads.count, 1, 'the next reads only the version saved since');
+      h.eq(second.app?.declaredFields, first.app?.declaredFields, 'and sends the same fields');
+    } finally {
+      disposeDeviceState(state);
+    }
+  });
+}
+
+/** The burned-id view the server builds from `request` (the floor it states and enforces). */
+function burnedOf(request: GenerateRequest): AppliedSchema {
+  return burnedSchema(request.app?.appliedSchema as unknown as AppliedSchema, request.app?.declaredFields)!;
+}
+
+/** The schema diagnostics the server's checker reports for `source` as the change `request` asks for,
+ *  given what the server's check stage gives it (the request's applied schema and declared fields). */
+function serverCheck(request: GenerateRequest, source: string): string[] {
+  const report = runStaticChecks(source, { appliedSchema: request.app?.appliedSchema as unknown as AppliedSchema, declaredFields: request.app?.declaredFields });
+  return report.diagnostics.map((d) => d.kind).filter((kind) => SCHEMA_KINDS.has(kind));
+}
+
+const SCHEMA_KINDS = new Set(['type_change', 'tombstone_violation', 'missing_default', 'id_below_floor', 'schema_identity_drift']);
+
+/** The Water Counter's source with `extra` Drinks fields (name → id, type, default literal). */
+function waterSource(extra: Record<string, { id: string; type: string; default?: string }>): string {
+  const source = fs.readFileSync(path.join(process.cwd(), 'fixtures/water-counter.app.tsx'), 'utf8');
+  const at = "at: { id: 'f1', type: 'date' }";
+  if (!source.includes(at)) throw new Error('the water counter fixture no longer declares its Drinks field as expected');
+  const fields = Object.entries(extra).map(([name, f]) => {
+    const defaultPart = f.default === undefined ? '' : `, default: ${f.default}`;
+    return `${name}: { id: '${f.id}', type: '${f.type}'${defaultPart} }`;
+  });
+  return source.replace(at, [at, ...fields].join(', '));
+}
+
+/** The Water Counter's Drinks collection with `extra` fields (id → type), none with a default. */
+function drinksWithout(extra: Record<string, 'text' | 'int'>): SchemaArtifact {
+  const schema = drinksWith(extra);
+  const drinks = schema.collections.Drinks;
+  const fields = Object.fromEntries(Object.entries(drinks.fields).map(([name, f]) => [name, { id: f.id, type: f.type }]));
+  return { ...schema, collections: { Drinks: { ...drinks, fields } } };
+}
+
+/** Counts the store's whole-version reads from here on. */
+function countSnapshotReads(state: DeviceState): { count: number } {
+  const counter = { count: 0 };
+  const read = state.store.getSnapshot.bind(state.store);
+  state.store.getSnapshot = (appId, snapshotId) => {
+    counter.count += 1;
+    return read(appId, snapshotId);
+  };
+  return counter;
 }
 
 /** The Water Counter's Drinks collection with `extra` fields (id → type), each with a default. */

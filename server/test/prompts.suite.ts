@@ -474,6 +474,45 @@ async function testEditTurnThreading(): Promise<void> {
   check('machine: no avoid-these-IDs instruction survives', !/do not reuse/i.test(generateUser) && !/do not reuse/i.test(repairUser));
 }
 
+async function testDeclaredFieldsThreading(): Promise<void> {
+  section('Declared fields — the check stage gets them, and the floor the prompt states counts them');
+
+  const scripted = new ScriptedModelClient(EDIT_ROSTER, [
+    { role: 'plan', deltas: [EDIT_PLAN_JSON] },
+    { role: 'engineer', deltas: ['// candidate 1'] },
+  ]);
+  const seen: CheckContext[] = [];
+  const machine = new GenerationMachine({
+    model: scripted,
+    roster: EDIT_ROSTER,
+    promptInputs: FAKE_PROMPT_INPUTS,
+    check: {
+      check: (_source, ctx) => {
+        seen.push(ctx);
+        return { diagnostics: [{ kind: 'raw_timer', severity: 'error', message: 'raw setTimeout', hint: 'use delay/interval instead' }] };
+      },
+    },
+    build: { build: () => { throw new Error('build must not run: the candidate failed its check'); } },
+    run: { run: () => { throw new Error('run must not run: the candidate failed its check'); } },
+    clock: { now: () => 0 },
+    bounds: { repairAttempts: 0 },
+  });
+  const declaredFields = [{ collection: 'c1', id: 'f9', type: 'int' }];
+  const request: GenerateRequest = { ...EDIT_WITH_SOURCE, app: { ...EDIT_WITH_SOURCE.app!, declaredFields } };
+
+  const capture = captureLogs();
+  try {
+    await drainEvents(machine.run(request));
+  } finally {
+    capture.stop();
+  }
+
+  eq('machine: the check stage gets the declared fields', seen[0]?.declaredFields, declaredFields);
+  const generateUser = userContent((scripted.requests as CapturedRequest[])[1]?.request.messages ?? []);
+  check('machine: the stated floor counts a declared field above the applied schema’s', generateUser.includes('collection "c1": new field IDs start above 9'));
+  check('machine: the declared fields are named to the model', generateUser.includes('"id":"f9"'));
+}
+
 // ── §Tripwire 1: every vc-sdk runtime value export is documented ─────────────
 
 function hasExportModifier(node: ts.Node): boolean {
@@ -1124,6 +1163,7 @@ export async function runPromptsTests(): Promise<void> {
   await testMessageBuilders();
   await testEditTurnPrompt();
   await testEditTurnThreading();
+  await testDeclaredFieldsThreading();
   await testExportsDocumented();
   await testReferenceListsMatchTheirModules();
   await testSchemaArtifactDocumented();

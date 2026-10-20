@@ -250,7 +250,18 @@ export type ClarifyResponse = z.infer<typeof ClarifyResponse>;
  *  `schema` artifact above. It is the diff baseline the harness's schema checks run against and
  *  the source of the burned-ID allocation floor. When absent, the baseline is the empty applied
  *  schema. `schema` and `appliedSchema` are deliberately separate optional-vs-required fields
- *  that can legitimately differ. */
+ *  that can legitimately differ.
+ *
+ *  `app.declaredFields` is OPTIONAL: the fields a saved version of the app (or of an app sharing
+ *  its store) declares that `appliedSchema` does not hold — a version delivered and never opened,
+ *  or one a rollback left behind. Each id is burned and its type fixed, so it raises the floor and
+ *  a candidate may reuse it only with that type; the store has no column for it, so a candidate
+ *  that names it still needs a default, and nothing requires a candidate to keep it. Absent means
+ *  none. A server built before this field strips it (the object is not strict) and checks against
+ *  `appliedSchema` alone, which is why the device never folds these fields into `appliedSchema`. */
+const DeclaredField = z.object({ collection: z.string(), id: z.string(), type: z.string() });
+export type DeclaredField = z.infer<typeof DeclaredField>;
+
 export const GenerateRequest = z.object({
   prompt: z.string(),
   clarifications: z.array(Clarification).optional(),
@@ -260,6 +271,7 @@ export const GenerateRequest = z.object({
       manifest: ManifestShape,
       schema: SchemaShape,
       appliedSchema: SchemaShape.optional(),
+      declaredFields: z.array(DeclaredField).optional(),
     })
     .optional(),
 });

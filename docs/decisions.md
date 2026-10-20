@@ -1678,3 +1678,32 @@ grants: storage it never declared, cues it did declare refused.
   (each path is another chance to split); a new wire field for declared schemas (the checker would
   need a second baseline, and the retired column already means "burned, type fixed, not required").
 
+### 82. Declared fields travel beside the applied schema; a change is made from the active version `[DECIDED — openspec: design-system-v1 chain-20g; amends #81's floor bullet and its rejected wire field]`
+
+#81 folded the fields a saved version declares, and the store does not hold, into `appliedSchema` as
+retired columns. Retired also means "a column exists": `diffSchemas` reads a reuse of such an id as a
+rollback across a tombstone and asks no default. A change from an older version that names a
+never-opened version's `f2:int` without a default therefore passed the server, and the delivered
+version refused to open on the device (`missing_default` against the real `_meta`). #81's own
+rejected option was the right one.
+
+- **`app.declaredFields`, an optional wire list of `{ collection, id, type }`.** `appliedSchema` holds
+  only what the store holds. The checker builds its burned-id view from both (`burnedSchema`): the
+  floor counts declared ids (the prompt states the same floor), a reuse with another type is a
+  `type_change`, and the diff still runs against the store alone, so a reuse needs a default. Identity
+  continuity ignores them. Collections the store lacks are included, which narrows #81's collection
+  limitation to collection ids themselves.
+- **Backward compatible.** `GenerateRequest.app` is a non-strict zod object in every deployed build, so
+  an older server strips the field and checks against the true store: it keeps the missing-default
+  repair and lacks only the type rule for never-opened ids (the pre-#81 behaviour).
+- **A change is made from the active version, read with its record.** `StoreAccess.activeEdit` reads
+  the active version's source, words and the record it runs with in one per-repo section, as
+  `activeLaunch` does; the caller's copy of the record is never sent. Not the version a running realm
+  may still show: delivery builds on the active version, and a running app lags it only when a change
+  landed unreloaded, which editing the shown code would drop from the app's line.
+- **History's Undo is the shell's** (`VersionSwitches`, as `PurgeWindows` owns a delete's): it runs
+  after History is gone, Home and History follow it, it shows for the Undo window, and a newer switch of
+  the app drops an older switch's Undo.
+- **Each saved version's schema is read once per process** (versions are immutable). Reading only
+  `manifest.json`/`schema.json` needs a version-store read verb that does not exist yet.
+

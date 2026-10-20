@@ -157,8 +157,20 @@ Every version `StoreAccess` saves SHALL keep, beside its bundle, the app's host-
 - **THEN** it runs with the record the entry has now, and nothing errors; its own manifest is not known (accepted pre-release: no tester builds hold such versions)
 
 #### Scenario: A change from an older version never reuses a later version's field ids
-- **WHEN** a later version declared a field in a collection the saved data already has, was never opened, and the user changes the app from an older version
-- **THEN** the change request's burned-ID floor counts that field, and a new field reusing its id with another type is refused, while the older version's own schema, which never names it, is accepted
+- **WHEN** a later version declared a field the saved data does not hold yet (it was never opened), and the user changes the app from an older version
+- **THEN** the change request sends that field as a declared field beside the store's own applied schema; the burned-ID floor counts it, a field reusing its id with another type is refused, while the older version's own schema, which never names it, is accepted
+
+#### Scenario: Reusing a never-opened version's field still needs a default
+- **WHEN** that change names the later version's field with its declared type and no default
+- **THEN** the change is refused before delivery with `missing_default`, as the store would refuse to open it, and is accepted with a default
+
+#### Scenario: A change describes the code it sends
+- **WHEN** the user uses version 1, goes back to Home, taps Undo on Home's toast (Home not yet refreshed) and then Change it, or taps "Ask Whim to fix it" on an app whose saved record lags the version it runs
+- **THEN** the change request carries the active version's source with that version's own manifest and schema, read together, never the caller's copy of the record
+
+#### Scenario: A change follows the active version
+- **WHEN** a running app still shows an older version because a change landed and was not reloaded, and the user asks for another change (or "Ask Whim to fix it")
+- **THEN** the change is made from the active version, the one delivery builds on, so the landed change is kept
 
 ### Requirement: The shell follows the phone's appearance through one scheme hook
 

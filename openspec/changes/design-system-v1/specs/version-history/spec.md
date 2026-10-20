@@ -42,7 +42,7 @@ History SHALL order versions by their position in the version chain (newest firs
 - **THEN** the later one is listed first and the "Start" chip is on the true first version
 
 ### Requirement: Using an older version is immediate and undoable
-An expanded version that is not current SHALL offer "Use this version"; tapping it SHALL make that version active at once and show a toast with Undo: "Back on version N" when N is older than the version that was current, "Now on version N" when it is newer. Every Undo SHALL stay reachable from History after the toast ends. Later versions SHALL remain listed and usable. An Undo tapped while another of the row actions is still running SHALL be carried out once that action has finished, never dropped. The current version's expanded row SHALL offer "Change it".
+An expanded version that is not current SHALL offer "Use this version"; tapping it SHALL make that version active at once and show a toast with Undo for the Undo window (10 s): "Back on version N" when N is older than the version that was current, "Now on version N" when it is newer. Every Undo SHALL stay reachable from History after the toast ends. Later versions SHALL remain listed and usable. The Undo SHALL belong to the shell, not to History: it SHALL run whether or not History is still showing, and Home and History SHALL show the version it returns to. An Undo tapped while a copy of the app is being made SHALL be carried out once the copy is made, never dropped; an Undo from a switch that a newer switch of the same app has since replaced SHALL be dropped, so the app ends on the version the newest toast names. The current version's expanded row SHALL offer "Change it".
 
 #### Scenario: Undo returns to the newer version
 - **WHEN** the user uses version 3 of 4 and taps Undo
@@ -59,6 +59,14 @@ An expanded version that is not current SHALL offer "Use this version"; tapping 
 #### Scenario: An Undo tapped during a copy is not lost
 - **WHEN** the user uses version 3 of 4, then starts a copy, and taps the toast's Undo while the copy is being made
 - **THEN** once the copy is made, version 4 is active again
+
+#### Scenario: An Undo runs after History is left, and Home follows it
+- **WHEN** the user uses version 1 from History opened from Home, goes Back, and taps the toast's Undo on Home (or taps it while a copy is still being made, then goes Back)
+- **THEN** the app is on the version it left, and Home shows that version's app
+
+#### Scenario: A stale Undo never overrides a newer switch
+- **WHEN** the user uses version 3 of 4, then uses version 2, and taps the first toast's Undo while the second switch is still running
+- **THEN** that Undo is dropped, and the app is on version 2, as the toast showing says
 
 ### Requirement: Any version can be copied into its own app
 Every expanded version SHALL offer "Make a copy from here", which SHALL ask the same "Copy the data, or start fresh?" question as "Make a copy" (skipped when there is no saved data) and SHALL create a new launcher entry from that exact version with its own storage (#43b), and show the toast "Copy made" with Open. The original SHALL be unchanged.

@@ -24,7 +24,8 @@ import { tileOf } from '../tile-identity';
 import { TilePlate } from '../../ui/AppTile';
 import { TILE_SIDE } from '../../ui/AppTile-geometry';
 import { Icon } from '../../ui/Icon';
-import { ToastHost } from '../../ui/Toast';
+import { ToastHost, useToast } from '../../ui/Toast';
+import { VersionSwitches } from '../version-switches';
 import { COLORS, LAYOUT, SPACE, TINTS, TYPE_SCALE } from '../../../design/tokens';
 import type { SchemaArtifact } from '../../storage-engine/contract';
 import { appLinkFor } from '../app-link';
@@ -72,10 +73,21 @@ function held<T>(): Held<T> {
 /** What a test sets of History's props; the rest are no-ops, and a copy is the store's own. */
 type HistoryOver = Partial<Pick<HistoryScreenProps, 'onBack' | 'onReport' | 'canCopyData' | 'onFork' | 'onOpen'>>;
 
+/** History with the shell's version switches (`VersionSwitches`) over that toast host, as `LauncherRoot`
+ *  wires them: a switch or an Undo that lands has History read its rows again. */
+function SwitchingHistory({ access, app, over }: Readonly<{ access: StoreAccess; app: InstalledApp; over: HistoryOver }>) {
+  const toast = useToast();
+  const [moved, setMoved] = React.useState(0);
+  const [switches] = React.useState(() => new VersionSwitches({ access, toast: () => toast, moved: () => setMoved((n) => n + 1), busyWith: () => undefined }));
+  return (
+    <HistoryScreen app={app} access={access} onBack={noop} onChangeIt={noop} onReport={noop} onFork={(a, v, o) => access.fork(a, v, o)} onOpen={noop} onUseVersion={switches.use} versionsMoved={moved} {...over} />
+  );
+}
+
 /** History under the shell's one toast host, as `LauncherRoot` mounts it. */
 const historyScreen = (access: StoreAccess, app: InstalledApp, over: HistoryOver = {}) => (
   <ToastHost>
-    <HistoryScreen app={app} access={access} onBack={noop} onChangeIt={noop} onReport={noop} onFork={(a, v, o) => access.fork(a, v, o)} onOpen={noop} {...over} />
+    <SwitchingHistory access={access} app={app} over={over} />
   </ToastHost>
 );
 
@@ -188,7 +200,7 @@ async function fourKinds() {
   await store.snapshot(storeIdOf(app), { 'bundle.js': 'V2' }, summarised('add a chime', summaryOf('Plays a chime at the end of every step.', 'Added')));
   await store.snapshot(storeIdOf(app), { 'bundle.js': 'V3' }, summarised('let me pick V60 or Chemex', summaryOf('Adds a brewer choice.', 'Changed')));
   await store.snapshot(storeIdOf(app), { 'bundle.js': 'V4' }, summarised('the countdown stops early', summaryOf('The countdown runs to zero now.', 'Fixed')));
-  return { access, app };
+  return { access, app, store };
 }
 
 /** How many sheets are open. */
@@ -603,10 +615,11 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('history screen: an Undo tapped while a copy is being made is not lost: it goes back once the copy is made', async () => {
-    const { access, app } = await fourKinds();
+    const { access, app, store } = await fourKinds();
     const [v4, v3] = await access.timeline(app);
     const finish = held<void>();
-    const onFork: HistoryScreenProps['onFork'] = async (entry, id, opts) => { await finish.promise; return access.fork(entry, id, opts); };
+    const fork = store.fork.bind(store);
+    store.fork = async (appId, snapshotId) => { await finish.promise; return fork(appId, snapshotId); };
     await withHistory(access, app, async (tree) => {
       await waitFor(() => rows(tree).length === 4, 'the versions to load');
       await openAndPress(tree, 'let me pick V60 or Chemex', COPY.historyUseVersion);
@@ -615,11 +628,34 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       h.ok(textOf(tree.root).includes(COPY.historyMakeCopyBusy), 'setup: the copy is being made');
       await pressToastAction(tree);
       await settle();
-      h.eq(await access.activeId(app), v3.id, 'while the copy runs, the app stays where it is');
+      h.eq((await store.active(storeIdOf(app)))?.id, v3.id, 'while the copy runs, the app stays where it is');
       await TestRenderer.act(async () => { finish.resolve(); });
       await waitFor(() => textsSaying(row(tree, 'the countdown stops early'), 'Current').length === 1, 'the Undo to land');
       h.eq(await access.activeId(app), v4.id, 'then the Undo goes back to version 4');
-    }, { onFork });
+      h.ok((await access.timeline(app)).some((v) => v.id === v3.id), 'and version 3 stays listed');
+    });
+  });
+
+  await h.test('history screen: an Undo from an earlier toast tapped while a newer switch runs is dropped, so the app ends where the newest toast says', async () => {
+    const { access, app } = await fourKinds();
+    const [, , v2] = await access.timeline(app);
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => rows(tree).length === 4, 'the versions to load');
+      await openAndPress(tree, 'let me pick V60 or Chemex', COPY.historyUseVersion);
+      await waitFor(() => toastOf(tree)?.message === 'Back on version 3', 'the first switch’s toast, with Undo');
+      const second = held<void>();
+      const rollback = access.rollback.bind(access);
+      access.rollback = async (entry, id) => { access.rollback = rollback; await second.promise; return rollback(entry, id); };
+      await openAndPress(tree, 'add a chime', COPY.historyUseVersion);
+      h.ok(textOf(tree.root).includes(COPY.historyUseVersionBusy), 'setup: the second switch runs');
+      await pressToastAction(tree); // the first toast's Undo, still on screen
+      await TestRenderer.act(async () => { second.resolve(); });
+      await waitFor(() => toastOf(tree)?.message === 'Back on version 2', 'the second switch’s toast');
+      await settle();
+      h.eq(await access.activeId(app), v2.id, 'the app is on version 2');
+      h.eq(toastOf(tree)?.message, 'Back on version 2', 'as the toast showing says');
+      h.ok(textsSaying(row(tree, 'add a chime'), 'Current').length === 1, 'and the list says so');
+    });
   });
 
   await h.test('history screen: the first version can be used too, and a failed switch says so and keeps the version that was current', async () => {
@@ -1199,6 +1235,67 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       h.eq(view.bundleSource, codes[2], 'the newest version’s code runs');
       h.eq(view.record.manifest.capabilities, TIMER_CAPABILITIES, 'with the capabilities that version declares');
       h.eq(view.record.schemaArtifact, undefined, 'and no storage it never declared');
+    });
+  });
+
+  await h.test('history screen: in the launcher, an Undo tapped on Home brings Home up to date with the version it returns to', async () => {
+    const never = () => new Promise<Response>(() => {});
+    await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+      const home = () => tree.root.findByType(HomeScreen);
+      const showing = (type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+      const counter = () => waterCounterOn(tree);
+      await waitFor(() => showing(HomeScreen) && counter() !== undefined, 'the examples');
+      await counterWithLaterVersions(tree, counter);
+      await TestRenderer.act(async () => home().props.onHistory(counter()));
+      await waitFor(() => showing(HistoryScreen) && rows(tree).length === 3, 'its three versions');
+      await stackMoveEnds();
+      await openAndPress(tree, 'Example', COPY.historyUseVersion);
+      await waitFor(() => toastOf(tree)?.action === COPY.toastUndo, 'the toast with Undo');
+      await press(button(tree, COPY.backLabel));
+      await stackMoveEnds();
+      await waitFor(() => showing(HomeScreen), 'Home');
+      h.eq(counter().record.manifest.capabilities, ['storage'], 'setup: Home holds version 1’s record');
+      await pressToastAction(tree);
+      await waitFor(() => counter().record.manifest.capabilities.includes('cues'), 'Home to follow the Undo');
+      h.eq(counter().record.manifest.capabilities, TIMER_CAPABILITIES, 'Home holds the newest version’s record again');
+    });
+  });
+
+  await h.test('history screen: in the launcher, an Undo tapped while a copy is held, then Back to Home: once the copy is made the app is on the version it left, and Home shows it', async () => {
+    const never = () => new Promise<Response>(() => {});
+    await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+      const home = () => tree.root.findByType(HomeScreen);
+      const showing = (type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+      const counter = () => waterCounterOn(tree);
+      await waitFor(() => showing(HomeScreen) && counter() !== undefined, 'the examples');
+      const { access } = await counterWithLaterVersions(tree, counter);
+      const newest = await access.activeId(counter());
+      await TestRenderer.act(async () => home().props.onHistory(counter()));
+      await waitFor(() => showing(HistoryScreen) && rows(tree).length === 3, 'its three versions');
+      await stackMoveEnds();
+      await openAndPress(tree, 'Example', COPY.historyUseVersion);
+      await waitFor(() => toastOf(tree)?.action === COPY.toastUndo, 'the toast with Undo');
+      const copy = held<void>();
+      const { fork } = VersionStore.prototype;
+      VersionStore.prototype.fork = async function (this: VersionStore, ...args: Parameters<VersionStore['fork']>) {
+        await copy.promise;
+        return fork.apply(this, args);
+      };
+      try {
+        await openAndPress(tree, 'make it a pour-over timer', COPY.historyMakeCopyHere);
+        await TestRenderer.act(async () => { questionRow(tree, COPY.copyQuestionFresh)!.props.onPress(); });
+        await waitFor(() => textOf(tree.root).includes(COPY.historyMakeCopyBusy), 'setup: the copy is being made');
+        await pressToastAction(tree);
+        await press(button(tree, COPY.backLabel));
+        await stackMoveEnds();
+        await waitFor(() => showing(HomeScreen), 'Home');
+        await TestRenderer.act(async () => { copy.resolve(); });
+      } finally {
+        VersionStore.prototype.fork = fork;
+      }
+      await waitFor(() => counter().record.manifest.capabilities.includes('cues'), 'Home to follow the Undo');
+      h.eq(await access.activeId(counter()), newest, 'the app is on the version it left');
+      h.eq(counter().record.manifest.capabilities, TIMER_CAPABILITIES, 'and Home shows it');
     });
   });
 

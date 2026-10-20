@@ -30,7 +30,8 @@ import type { IconName } from '../../design/icons/names';
 import { InstalledApp } from './app-index';
 import { annotationBetween, buildHistoryRows, fieldsLeavingViewOnRestore, listVersions, type HistoryRow } from './history-logic';
 import type { ForkOptions, StoreAccess } from './store-access';
-import { addedFieldsLine, COPY, historyVersionCount, versionSwitchToast } from './copy';
+import type { SwitchWords } from './version-switches';
+import { addedFieldsLine, COPY, historyVersionCount } from './copy';
 import {
   HISTORY_LOADING,
   RESTORE_DIFF_NONE,
@@ -77,12 +78,18 @@ export interface HistoryScreenProps {
   onFork: (app: InstalledApp, versionId: string, opts: ForkOptions) => Promise<InstalledApp | null>;
   /** Opens an app: the copy the "Copy made" toast names. */
   onOpen: (app: InstalledApp) => void;
+  /** Makes `versionId` current, has History `reread` its rows, then offers its Undo back to
+   *  `previousId` in the shell's toast, worded from `words`; rejects when the switch failed. The shell
+   *  owns that Undo, so it outlives History (`VersionSwitches`). */
+  onUseVersion: (app: InstalledApp, versionId: string, words: SwitchWords, previousId: string | null, reread: () => Promise<void>) => Promise<void>;
+  /** Changes whenever the shell moved the app's version under History (an Undo): the rows are read again. */
+  versionsMoved?: number;
 }
 
 /** The row action in flight, which shows its busy words. */
 type RowBusy = { id: string; action: 'use-version' | 'make-copy' } | null;
 
-function historyOperationFailed(operation: 'list' | 'hidden-data' | 'annotation' | 'use-version' | 'undo' | 'copy', e?: unknown): void {
+function historyOperationFailed(operation: 'list' | 'hidden-data' | 'annotation' | 'use-version' | 'copy', e?: unknown): void {
   log.warn(CHANNELS.app, 'history operation failed', { operation, ...(e === undefined ? {} : { detail: e instanceof Error ? e.message : String(e) }) });
 }
 
@@ -218,7 +225,7 @@ function Prose({
   );
 }
 
-export default function HistoryScreen({ app, access, onBack, onChangeIt, onReport, canCopyData = false, onFork, onOpen }: Readonly<HistoryScreenProps>) {
+export default function HistoryScreen({ app, access, onBack, onChangeIt, onReport, canCopyData = false, onFork, onOpen, onUseVersion, versionsMoved = 0 }: Readonly<HistoryScreenProps>) {
   const t = useTokens();
   const s = styles(t);
   const toast = useToast();
@@ -240,8 +247,6 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
   // may already be made) answers nothing: a ref, for the same reason as `flight`.
   const [asking, setAsking] = useState(false);
   const asked = useRef<HistoryRow | null>(null);
-  // An Undo tapped while another row action ran: it runs once that one has settled, never dropped.
-  const queuedUndo = useRef<string | null>(null);
 
   const load = () =>
     runHistoryLoad(async () => {
@@ -256,7 +261,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [access, app]);
+  }, [access, app, versionsMoved]);
 
   useSystemBack(onBack);
 
@@ -265,51 +270,22 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
 
   const busyFor = (row: HistoryRow, action: 'use-version' | 'make-copy') => (on: boolean) => setBusy(on ? { id: row.id, action } : null);
 
-  /** Undo: back to the version that was current before "Use this version". It needs no toast: the
-   *  rows say where the app is. Once the toast has gone, the same version's own row does this. */
-  const undo = async (previousId: string) => {
-    try {
-      if (!(await runRowAction(flight, () => {}, () => access.rollback(app, previousId)))) {
-        // Another row action runs (a copy being made): this Undo goes once it has settled.
-        queuedUndo.current = previousId;
-        return;
-      }
-    } catch (e) {
-      historyOperationFailed('undo', e);
-      toast.show({ message: COPY.undoTooLateToast });
-    }
-    await reload();
-    runQueuedUndo();
-  };
-
-  /** A row action has settled: the Undo tapped meanwhile, if any, runs now. */
-  const runQueuedUndo = () => {
-    const previousId = queuedUndo.current;
-    queuedUndo.current = null;
-    if (previousId !== null) undo(previousId);
-  };
-
-  /** "Use this version": current at once, then the toast with Undo, saying which way the app went. */
+  /** "Use this version": current at once, then the shell's toast with Undo, saying which way the app
+   *  went (`onUseVersion`). The Undo is the shell's, so it runs whether or not History is still
+   *  showing; when it lands, `versionsMoved` brings these rows up to date. Once the toast has gone,
+   *  the version the app left keeps its own row, which does the same. */
   const switchVersion = async (row: HistoryRow) => {
-    const previousId = activeId;
-    const from = rows.find((r) => r.isCurrent)?.number ?? null;
+    const words = { to: row.number, from: rows.find((r) => r.isCurrent)?.number ?? null };
     try {
-      if (!(await runRowAction(flight, busyFor(row, 'use-version'), () => access.rollback(app, row.id)))) return;
+      if (!(await runRowAction(flight, busyFor(row, 'use-version'), () => onUseVersion(app, row.id, words, activeId, load)))) return;
     } catch (e) {
       historyOperationFailed('use-version', e);
       haptics.play('failure');
       toast.show({ message: COPY.historyUseVersionFailed });
       await reload();
-      runQueuedUndo();
       return;
     }
-    await reload();
     haptics.play('success');
-    toast.show({
-      message: versionSwitchToast(row.number, from),
-      ...(previousId == null ? {} : { action: { label: COPY.toastUndo, onPress: () => undo(previousId) } }),
-    });
-    runQueuedUndo();
   };
 
   /** Makes the copy from `row`'s version with the chosen data, then "Copy made" with Open. */
@@ -324,7 +300,6 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
       historyOperationFailed('copy', e);
       haptics.play('failure');
       toast.show({ message: COPY.copyFailedToast });
-      runQueuedUndo();
       return;
     }
     const { made } = result;
@@ -332,7 +307,6 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
       haptics.play('success');
       toast.show({ message: COPY.copyMadeToast, action: { label: COPY.actionOpen, onPress: () => onOpen(made) } });
     }
-    runQueuedUndo();
   };
 
   const askCopy = (row: HistoryRow) => {
