@@ -8,8 +8,13 @@ import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { COPY, changedTitle } from '../copy';
 import HomeScreen from '../HomeScreen';
+import HistoryScreen from '../HistoryScreen';
 import MiniAppView from '../MiniAppView';
 import FailurePage from '../FailurePage';
+import MakingPage from '../MakingPage';
+import { DescribePage } from '../DescribePage';
+import { PlanPage } from '../PlanPage';
+import { JOURNAL_KEY, RunJournalStore } from '../run-journal';
 import { Ember } from '../../ui/Ember';
 import { stateLine, tileAccessibilityLabel } from '../../ui/AppTile-states';
 import { PendingBuildStore } from '../pending-builds';
@@ -28,6 +33,7 @@ import {
   openTipSplitter,
   orb,
   runningApp,
+  sheetCard,
   showing,
   typeWords,
   versionLine,
@@ -242,6 +248,109 @@ export async function runChangingInUseUiTests(h: Harness): Promise<void> {
       await waitFor(() => new PendingBuildStore(kv).list().length === 0, 'the change delivered');
       await settle();
       h.eq(tile(tree, APP_NAME).props.accessibilityLabel, atRest, 'the change landed: the tile is as it was before');
+    });
+  });
+
+  await h.test('changing in use: while a change is being made the Whim sheet sends no second one: "Changing…" and Stop the change stand where the send area was, and the change runs on to land with its own record and report', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
+      await openTipSplitter(tree);
+      await paintRunningApp(tree);
+      await makeChange(tree, streams);
+      streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
+      await settle();
+      const id = new PendingBuildStore(kv).list()[0]!.id;
+      const kept = [kv.getString(`pending:${id}`), kv.getString(JOURNAL_KEY(id))];
+
+      await openSheet(tree);
+      h.eq(controlsIn(tree), [COPY.actionStopChange, COPY.actionHistory, COPY.reportScreenTitle, COPY.whimSheetBackToApps],
+        'Stop the change where the send area was: no field and no Send to start a second change with');
+      h.ok(textOf(sheetCard(tree)).includes(COPY.tileChanging), 'under "Changing…"');
+      await press(button(tree, COPY.sheetClose));
+      const generate = sent.filter((r) => r.path === '/v1/generate');
+      h.ok(generate.length === 1 && generate[0].signal?.aborted !== true, 'the change’s one request is still open');
+      h.eq([kv.getString(`pending:${id}`), kv.getString(JOURNAL_KEY(id))], kept, 'its record and journal are as they were');
+
+      streams[0].push(resultEvent(APP_NAME));
+      streams[0].end();
+      await waitFor(() => new PendingBuildStore(kv).list().length === 0, 'the change delivered');
+      await settle();
+      h.eq(orbState(tree), COPY.orbStateReady, 'it landed');
+      h.eq(new RunJournalStore(kv).getLastRun(id)?.filter((entry) => entry.kind === 'stage').map((entry) => entry.stage), ['generate'], 'its own run is the report it left');
+      await openSheet(tree);
+      h.ok(controlsIn(tree).includes(COPY.whimSheetAsk) && !hasButton(tree, COPY.actionStopChange), 'with nothing being made, the send area is back');
+    });
+  });
+
+  await h.test('changing in use: Stop the change in the Whim sheet ends the change at once, leaves nothing of it and the app running, and the send area takes its place', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
+      await openTipSplitter(tree);
+      const web = await paintRunningApp(tree);
+      const launch = runningApp(tree).props.tappedAt;
+      await makeChange(tree, streams);
+      const id = new PendingBuildStore(kv).list()[0]!.id;
+      await openSheet(tree);
+      await press(button(tree, COPY.actionStopChange));
+      h.eq(sent.filter((r) => r.path === '/v1/generate')[0]?.signal?.aborted, true, 'its request is aborted');
+      h.eq([new PendingBuildStore(kv).list(), kv.getString(JOURNAL_KEY(id)) ?? null], [[], null], 'a stopped change leaves no record and no journal');
+      h.ok(runningApp(tree).props.tappedAt === launch && boundWebView(tree) === web && deliveriesInto(web).length === 1, 'the app runs on as it was');
+      h.eq(orbState(tree), '', 'the orb is at rest');
+      await waitFor(() => controlsIn(tree).includes(COPY.whimSheetAsk), 'the send area in the open sheet');
+
+      await typeWords(tree, 'Make it purple');
+      await press(button(tree, COPY.whimSheetSend));
+      await waitFor(() => planLoaded(tree), 'the new change’s plan');
+      await press(button(tree, COPY.planBuildEdit));
+      await waitFor(() => streams.length === 2, 'the new change being made');
+      h.eq(new PendingBuildStore(kv).get(id)?.prompt, 'Make it purple', 'a new change can be sent');
+    });
+  });
+
+  await h.test('changing in use: History’s Change from here while a change is being made shows that change, and starts no second one', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
+      const app = await openTipSplitter(tree);
+      await paintRunningApp(tree);
+      await makeChange(tree, streams);
+      const id = new PendingBuildStore(kv).list()[0]!.id;
+      const kept = kv.getString(`pending:${id}`);
+      await openSheet(tree);
+      await press(button(tree, COPY.actionHistory));
+      await waitFor(() => showing(tree, HistoryScreen), 'History');
+      await TestRenderer.act(async () => tree.root.findByType(HistoryScreen).props.onChangeIt(app));
+      h.ok(!showing(tree, DescribePage) && !showing(tree, PlanPage), 'no page to describe a second change');
+      h.ok(showing(tree, MakingPage) && tree.root.findByType(MakingPage).props.words === WORDS, 'the change being made shows instead, its own words');
+      h.eq([sent.filter((r) => r.path === '/v1/generate').length, kv.getString(`pending:${id}`)], [1, kept], 'one request, one record, as they were');
+    });
+  });
+
+  await h.test('changing in use: a failed change’s See why, pressed after a new change of the app started, opens nothing that could start it again', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
+      await openTipSplitter(tree);
+      await paintRunningApp(tree);
+      await makeChange(tree, streams);
+      streams[0].push({ type: 'failure', reason: 'The change did not build.', attempts: 1, diagnostics: [] });
+      streams[0].end();
+      await waitFor(() => changeFailed(kv), 'the change to fail');
+      await settle();
+      h.eq(toastOf(tree)?.action, COPY.toastSeeWhy, 'its toast offers See why');
+
+      await openSheet(tree);
+      await typeWords(tree, 'Make it purple');
+      await press(button(tree, COPY.whimSheetSend));
+      await waitFor(() => planLoaded(tree), 'the new change’s plan');
+      await press(button(tree, COPY.planBuildEdit));
+      await waitFor(() => streams.length === 2 && !makingSheetOpen(tree), 'the new change being made');
+      const id = new PendingBuildStore(kv).list()[0]!.id;
+      const kept = [kv.getString(`pending:${id}`), kv.getString(JOURNAL_KEY(id))];
+
+      await pressToastAction(tree);
+      await settle();
+      h.ok(!showing(tree, FailurePage) && !makingSheetOpen(tree), 'no Failure page opens over the app');
+      h.eq([sent.filter((r) => r.path === '/v1/generate').length, kv.getString(`pending:${id}`), kv.getString(JOURNAL_KEY(id))], [2, ...kept], 'the new change runs on, its record and journal as they were');
+      h.eq(orbState(tree), COPY.orbStateChanging, 'and the orb follows it');
     });
   });
 }

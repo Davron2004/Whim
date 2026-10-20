@@ -5,7 +5,8 @@
  *
  * - the app's 40 pt tile, its name and "Version N · changed <when>" for the version that is running;
  * - "New version ready · Reload" on top while a newer version than the running one is current;
- * - the "What should change?" send area, with its 32 pt `ember` arrow inside its trailing edge;
+ * - the "What should change?" send area, with its 32 pt `ember` arrow inside its trailing edge, or,
+ *   while a change of the app is being made, "Changing…" and Stop the change in its place;
  * - History, Report a problem and Back to your apps.
  *
  * Every row is its own accessibility element (#103): nothing here wraps another control. Sending hands
@@ -52,6 +53,10 @@ export interface WhimSheetProps {
   version: RunningVersion | null;
   /** A newer version than the running one is current: the Reload row shows. */
   newVersion: boolean;
+  /** A change of this app is being made: the send area gives way to "Changing…" and Stop the change,
+   *  as the app's tile menu on Home offers, so a second change can't be sent over it. */
+  changing: boolean;
+  onStopChange: () => void;
   /** The send area's words, held by the shell. */
   text: string;
   onChangeText: (text: string) => void;
@@ -143,7 +148,20 @@ function SendArea({ text, onChangeText, onSend }: Readonly<Pick<WhimSheetProps, 
   );
 }
 
-export function WhimSheet({ app, version, newVersion, text, onChangeText, onSend, onReload, onHistory, onReport, onExit }: Readonly<WhimSheetProps>) {
+export function WhimSheet({
+  app,
+  version,
+  newVersion,
+  changing,
+  onStopChange,
+  text,
+  onChangeText,
+  onSend,
+  onReload,
+  onHistory,
+  onReport,
+  onExit,
+}: Readonly<WhimSheetProps>) {
   const t = useTokens();
   const s = styles(t);
   const { tint, icon } = tileOf(app);
@@ -168,7 +186,13 @@ export function WhimSheet({ app, version, newVersion, text, onChangeText, onSend
           <GroupedRow title={COPY.whimSheetNewVersion} trailing={{ kind: 'value', text: COPY.actionReload }} onPress={onReload} />
         </GroupedSection>
       ) : null}
-      <SendArea text={text} onChangeText={onChangeText} onSend={onSend} />
+      {changing ? (
+        <GroupedSection on="sheet" header={COPY.tileChanging}>
+          <GroupedRow title={COPY.actionStopChange} icon="x" onPress={onStopChange} />
+        </GroupedSection>
+      ) : (
+        <SendArea text={text} onChangeText={onChangeText} onSend={onSend} />
+      )}
       <GroupedSection on="sheet">
         <GroupedRow title={COPY.actionHistory} icon="clock" trailing={{ kind: 'chevron' }} onPress={onHistory} />
         <GroupedRow title={COPY.reportScreenTitle} icon="flag" trailing={{ kind: 'chevron' }} onPress={onReport} />

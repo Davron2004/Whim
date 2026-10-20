@@ -40,7 +40,7 @@ import { runFork } from './fork-op';
 import type { AppBusyMap } from './app-busy';
 import { StoreAccess, type ForkOptions } from './store-access';
 import { DataCopyJournal } from './data-copy-journal';
-import { PendingBuildStore } from './pending-builds';
+import { AttemptInFlight, PendingBuildStore } from './pending-builds';
 import type { PendingAttemptLease, PendingBuildFailure, PendingBuildRecord, PendingBuildView, PendingFailureCause, PendingFailureRemedy } from './pending-builds';
 import { JOURNAL_KEY, RunJournalStore } from './run-journal';
 import type { RunJournalEntry, RunTerminalCounts } from './run-journal';
@@ -1703,6 +1703,12 @@ function LauncherShell({
     // is the new-app one, as the composer opens it.
     const editing = reachableApps().find((app) => app.id === requested?.id);
     if (requested && !editing) drafts.clear(draftKey({ editing: requested }));
+    // A change of this app is already being made: that run shows, rather than a second change that
+    // would replace it.
+    if (editing && pending.hasLiveAttempt(editing.id)) {
+      showRunInFlight(editing.id, editing);
+      return;
+    }
     const kept = text === undefined ? drafts.reopen(editing, editing) : undefined;
     const opened = kept ?? describeStep(editing, text ?? takeHeldPrompt(editing) ?? '');
     setScreen(opened);
@@ -2528,6 +2534,11 @@ function LauncherShell({
       const lease = pending.activateAttempt(attemptId);
       return { id: attemptId, lease, ...(reuseId != null ? { retrySnapshot: previous } : {}) };
     } catch (setupError) {
+      if (setupError instanceof AttemptInFlight) {
+        releaseGenRef(ctl);
+        showRunInFlight(setupError.id, editing);
+        return undefined;
+      }
       log.warn(CHANNELS.gen, 'attempt setup failed', {
         operation: 'start-pending-build',
         thrown: setupError instanceof Error ? 'error' : 'non-error',
@@ -2568,6 +2579,17 @@ function LauncherShell({
     liveRef.current = live;
     signalsRef.current = live.signals;
     setScreen(live.screen);
+  };
+
+  /** An attempt asked for an id whose run is still being made (`AttemptInFlight`): it never replaces
+   *  that run, whose record, journal and stream stay its own. The run in progress shows instead, as
+   *  Details on its tile would: the app it changes, when it runs under the sheet, else its Making page. */
+  const showRunInFlight = (id: string, editing: InstalledApp | undefined) => {
+    const over = runningUnder(editing);
+    const live = liveAttemptsRef.get(id);
+    if (over !== null) setScreen({ ...over, sheet: undefined });
+    else if (live) reattach(live);
+    else goHome();
   };
 
   const runAttempt = async (opening: MakingScreen, reuseId?: string, fromPlan?: PlanScreen) => {
@@ -2876,6 +2898,11 @@ function LauncherShell({
       log.warn(CHANNELS.gen, 'building ghost has no live run to reattach to', { pendingId: current.id });
       return;
     }
+    reattach(live);
+  };
+
+  /** A live run's own Making page again, un-detached, so its ending lands as if it was never left. */
+  const reattach = (live: LiveAttempt) => {
     liveRef.current = live;
     genRef.current = live.ctl;
     live.ctl.detached = false;
@@ -3100,10 +3127,12 @@ function LauncherShell({
     });
   };
 
-  /** The failed-change toast's See why: the change's Failure page, in the sheet over the running app. */
+  /** The failed-change toast's See why: the change's Failure page, in the sheet over the running app.
+   *  Nothing once a new change of the app is running: the failure it told of is gone, and that
+   *  run's page would offer to start it again over itself. */
   const seeWhy = (id: string) => {
     const rec = pending.readCurrent(id)?.record;
-    if (running === null || rec?.editingAppId !== running.app.id) return;
+    if (running === null || rec?.editingAppId !== running.app.id || pending.hasLiveAttempt(id)) return;
     keepDraft(screen);
     setUnder({ ...running, sheet: undefined });
     setScreen(failureFromRecord(rec));
@@ -3156,6 +3185,10 @@ function LauncherShell({
           app={app}
           version={read?.version ?? null}
           newVersion={runningChange.landed || (read?.newVersion ?? false)}
+          changing={runningChange.changing !== undefined}
+          onStopChange={() => {
+            if (runningChange.changing) onCancelPending(runningChange.changing);
+          }}
           text={whimWords?.appId === app.id ? whimWords.text : ''}
           onChangeText={(text) => setWhimWords({ appId: app.id, text })}
           onSend={onWhimSend}

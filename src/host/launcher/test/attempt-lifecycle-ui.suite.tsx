@@ -129,6 +129,18 @@ async function leaveRunning(tree: Tree): Promise<void> {
   await press(button(tree, COPY.sheetClose));
 }
 
+/** Rewrites the record of a run still going as a failed one — a false claim — and presses Try again on
+ *  the Failure page its ghost opens. Returns the forged record's bytes. */
+async function tryAgainWhileRunning(tree: Tree, kv: Launcher['kv'], id: string): Promise<string> {
+  const started = new PendingBuildStore(kv).get(id)!;
+  const forged = JSON.stringify({ ...started, prompt: 'A dice roller', workingTitle: 'Dice roller', state: 'failed', failure: { reason: 'Retry this instead.' } });
+  kv.set(`pending:${id}`, forged);
+  await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
+  await press(failureTryAgain(tree));
+  await settle();
+  return forged;
+}
+
 async function openPending(tree: Tree, record: PendingBuildRecord): Promise<void> {
   await TestRenderer.act(async () => home(tree).props.onOpenPending(record));
 }
@@ -969,7 +981,7 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('ghosts: a stale same-id stream failure cannot borrow the newer volatile failure actions', async () => {
+  await h.test('ghosts: Try again on a ghost whose run is still going starts nothing; that run’s own failure later keeps its volatile actions', async () => {
     const throwStreams: (() => void)[] = [];
     let rejectTerminalWrites = false;
     await withLauncher({ server: activeThrowingStreamsServer(throwStreams) }, async ({ tree, kv }) => {
@@ -980,100 +992,59 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
         await settle();
         const id = new PendingBuildStore(kv).list()[0]!.id;
         await leaveRunning(tree);
-        const started = new PendingBuildStore(kv).get(id)!;
-        kv.set(`pending:${id}`, JSON.stringify({
-          ...started,
-          prompt: 'A dice roller',
-          workingTitle: 'Dice roller',
-          state: 'failed',
-          failure: { reason: 'Retry this instead.' },
-        }));
-        await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
-        await press(failureTryAgain(tree));
-        await settle();
-        h.eq(throwStreams.length, 2, 'the newer same-id retry has its own active stream');
+        const forged = await tryAgainWhileRunning(tree, kv, id);
+        h.eq(throwStreams.length, 1, 'the Try again sent no second request');
+        h.eq(kv.getString(`pending:${id}`), forged, 'and wrote nothing over the record');
+        h.ok(on(tree, MakingPage), 'the run still going shows instead');
 
         rejectTerminalWrites = true;
-        throwStreams[1]!();
-        await waitFor(() => on(tree, FailurePage), 'the newer volatile failure');
-        const newer = tree.root.findByType(FailurePage).props;
-        h.eq(newer.onDismiss != null, true, 'the completion that retained the current view remains discardable');
-
         throwStreams[0]!();
-        await settle();
+        await waitFor(() => on(tree, FailurePage), 'the run’s own volatile failure');
         const current = tree.root.findByType(FailurePage).props;
-        h.eq([current.onDismiss != null, current.onRetry != null, current.attemptStarted, current.journal], [true, true, false, null], 'the stale completion leaves the newer retained failure actions unchanged');
-        h.eq(current.onChange, newer.onChange, 'the stale completion does not replace the newer failure screen');
+        h.eq([current.onDismiss != null, current.onRetry != null, current.attemptStarted, current.journal], [true, true, false, null], 'its retained failure offers Retry and Discard without claiming a saved record or report');
         await press(button(tree, COPY.sheetClose));
-        h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.prompt, ghost.state]), [[id, 'A dice roller', 'failed']], 'the stale stream error leaves the newer volatile ghost unchanged');
+        h.eq(ghosts(tree).map(runOf), [[id, 'A tea timer', 'failed']], 'the one ghost is that run’s failure, in its own words');
       } finally {
         clearWriteFailure();
       }
     });
   });
 
-  await h.test('ghosts: a stale same-id stream failure keeps the active retry reattachable and cancellable', async () => {
+  await h.test('ghosts: a refused Try again leaves the run still going reattached and cancellable', async () => {
     const throwStreams: (() => void)[] = [];
     await withLauncher({ server: activeThrowingStreamsServer(throwStreams) }, async ({ tree, kv, sent }) => {
       await startBuild(tree, 'A tea timer');
       await settle();
       const id = new PendingBuildStore(kv).list()[0]!.id;
       await leaveRunning(tree);
-      const started = new PendingBuildStore(kv).get(id)!;
-      kv.set(`pending:${id}`, JSON.stringify({
-        ...started,
-        prompt: 'A dice roller',
-        workingTitle: 'Dice roller',
-        state: 'failed',
-        failure: { reason: 'Retry this instead.' },
-      }));
-      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
-      await press(failureTryAgain(tree));
-      await settle();
+      await tryAgainWhileRunning(tree, kv, id);
       const requests = sent.filter((request) => request.path === '/v1/generate');
-      h.eq(requests.length, 2, 'the same-id retry is active before the stale stream fails');
-      await leaveRunning(tree);
-
-      throwStreams[0]!();
-      await settle();
-      const retried = ghosts(tree)[0]!;
-      h.eq([retried.id, retried.prompt, retried.state], [id, 'A dice roller', 'building'], 'the newer retry remains the building ghost');
-      await TestRenderer.act(async () => home(tree).props.onOpenPending(retried));
-      h.ok(on(tree, MakingPage), 'the stale completion leaves the active retry reattachable');
+      h.eq(requests.length, 1, 'the Try again sent no second request');
+      h.ok(on(tree, MakingPage), 'the run still going is reattached instead');
+      h.eq(tree.root.findByType(MakingPage).props.words, 'A tea timer', 'its own page, its own words');
       await leaveRunning(tree);
       await TestRenderer.act(async () => home(tree).props.onCancelPending(ghosts(tree)[0]!));
-      h.eq(requests[1]?.signal?.aborted, true, 'stopping the reattached retry aborts its live request');
-      h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [[id, 'interrupted']], 'Stop leaves the one record, stopped, only after aborting the retry');
+      h.eq(requests[0]?.signal?.aborted, true, 'Stop aborts that run’s request');
+      h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [[id, 'interrupted']], 'Stop leaves the one record, stopped');
     });
   });
 
-  await h.test('ghosts: a stale same-id stage cannot replace or journal the active retry', async () => {
+  await h.test('ghosts: a refused Try again leaves the running attempt’s progress and journal its own', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
       await startBuild(tree, 'A tea timer');
       const id = new PendingBuildStore(kv).list()[0]!.id;
       await leaveRunning(tree);
-      const started = new PendingBuildStore(kv).get(id)!;
-      kv.set(`pending:${id}`, JSON.stringify({
-        ...started,
-        prompt: 'A dice roller',
-        workingTitle: 'Dice roller',
-        state: 'failed',
-        failure: { reason: 'Retry this instead.' },
-      }));
-      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
-      await press(failureTryAgain(tree));
-      streams[1].push({ type: 'stage', stage: 'check', status: 'start' });
-      await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'check', 'the active retry stage');
+      await tryAgainWhileRunning(tree, kv, id);
+      h.eq(streams.length, 1, 'the Try again opened no second stream');
+      streams[0].push({ type: 'stage', stage: 'check', status: 'start' });
+      await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'check', 'the run’s own stage');
+      h.eq(tree.root.findByType(MakingPage).props.words, 'A tea timer', 'on the run’s own page');
 
-      streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
-      await settle();
-      h.eq(tree.root.findByType(MakingPage).props.stage, 'check', 'the stale stage does not replace the active retry progress');
-
-      streams[1].push({ type: 'failure', reason: 'The retry did not build.', attempts: 0, diagnostics: [] });
-      streams[1].end();
-      await waitFor(() => on(tree, FailurePage), 'the active retry failure');
-      h.eq(new RunJournalStore(kv).get(id)?.filter((entry) => entry.kind === 'stage').map((entry) => entry.stage), ['check'], 'the verified retry journal excludes the stale stage');
+      streams[0].push({ type: 'failure', reason: 'The build did not complete.', attempts: 0, diagnostics: [] });
+      streams[0].end();
+      await waitFor(() => on(tree, FailurePage), 'the run’s failure');
+      h.eq(new RunJournalStore(kv).get(id)?.filter((entry) => entry.kind === 'stage').map((entry) => entry.stage), ['check'], 'its journal is the one it began, never reset by the Try again');
     });
   });
 
@@ -1133,7 +1104,7 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('ghosts: a superseded delivery cannot delete the newer same-id pending record', async () => {
+  await h.test('ghosts: a Try again while the run is delivering is refused; the delivery lands and settles its own record and report', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     const delayed = delayInstalls();
     try {
@@ -1159,14 +1130,15 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
         }));
         await TestRenderer.act(async () => homeActions.onOpenPending(new PendingBuildStore(kv).get(id)!));
         await press(failureTryAgain(tree));
-        await waitFor(() => streams.length === 2 && on(tree, MakingPage), 'the newer same-id retry to activate before the older delivery resumes');
+        await settle();
+        h.eq(streams.length, 1, 'the Try again sent no second request');
+        h.ok(on(tree, MakingPage) && tree.root.findByType(MakingPage).props.delivering != null, 'the delivering run shows instead');
 
         delayed.release();
-        await waitFor(delayed.finished, 'the superseded delivery to return from the real install boundary');
-        await settle();
-        h.eq(new PendingBuildStore(kv).get(id)?.state, 'building', 'the superseded delivery does not delete the newer pending record');
-        h.eq(kv.getString(JOURNAL_KEY(id)), '[]', 'the superseded delivery leaves the newer journal untouched');
-        await TestRenderer.act(async () => homeActions.onCancelPending(new PendingBuildStore(kv).get(id)!));
+        await waitFor(delayed.finished, 'the delivery to return from the real install boundary');
+        await waitFor(() => on(tree, ReadyPage), 'the delivered app’s Ready page');
+        h.eq(kv.getString(`pending:${id}`) ?? null, null, 'the delivery deleted its own record');
+        h.ok(hasInstalled(tree, 'Tea Timer') && new RunJournalStore(kv).getLastRun(id) != null && kv.getString(JOURNAL_KEY(id)) == null, 'the app is installed with its run as its report');
       });
     } finally {
       delayed.restore();
@@ -1232,34 +1204,22 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('ghosts: a stale same-id refusal keeps the active retry reattachable', async () => {
+  await h.test('ghosts: a refused Try again leaves the run still waiting on its request to settle its own refusal', async () => {
     const releaseRefusals: (() => void)[] = [];
-    await withLauncher({ server: delayedRefusalThenActiveStream(releaseRefusals) }, async ({ tree, kv }) => {
+    await withLauncher({ server: delayedRefusalThenActiveStream(releaseRefusals) }, async ({ tree, kv, sent }) => {
       await startBuild(tree, 'A tea timer');
       await settle();
       const id = new PendingBuildStore(kv).list()[0]!.id;
       await leaveRunning(tree);
-      const started = new PendingBuildStore(kv).get(id)!;
-      kv.set(`pending:${id}`, JSON.stringify({
-        ...started,
-        prompt: 'A dice roller',
-        workingTitle: 'Dice roller',
-        state: 'failed',
-        failure: { reason: 'Retry this instead.' },
-      }));
-      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
-      await press(failureTryAgain(tree));
-      await settle();
+      await tryAgainWhileRunning(tree, kv, id);
+      h.eq(sent.filter((request) => request.path === '/v1/generate').length, 1, 'the Try again sent no second request');
       await leaveRunning(tree);
 
       await TestRenderer.act(async () => {
         releaseRefusals[0]!();
         await settle();
       });
-      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]!));
-      h.ok(on(tree, MakingPage), 'the stale refusal leaves the active retry reattachable');
-      await leaveRunning(tree);
-      await TestRenderer.act(async () => home(tree).props.onCancelPending(ghosts(tree)[0]!));
+      h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state, ghost.failure?.reason]), [[id, 'failed', serverBusyRefusal().body.hint]], 'the run’s own refusal settles its one record');
     });
   });
 

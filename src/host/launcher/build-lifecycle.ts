@@ -109,7 +109,8 @@ export interface AttemptStart {
 /**
  * Decide the launcher id this attempt will write to and persist its `building` record — both
  * BEFORE any generation request is sent (`pending-builds` "A pending-build record is created at
- * generation start"). Returns the id, which delivery must reuse unchanged.
+ * generation start"). Returns the id, which delivery must reuse unchanged. An id whose attempt is
+ * still running is refused (`AttemptInFlight`, thrown by the store before anything is written).
  *
  * "Allocate the id for the attempt" means DECIDE the id this attempt writes to, not mint a fresh
  * one: a rebuild's id is the app it rebuilds, and a retry's is the record it retries. Only a
