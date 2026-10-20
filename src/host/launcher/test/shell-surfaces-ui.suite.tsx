@@ -1450,6 +1450,7 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
       const scroll = tree.root.find((n) => hostType(n) === 'ScrollView');
       scroll.props.innerViewRef.current = {};
       await act(() => scroll.props.onLayout({ nativeEvent: { layout: { height: 800 } } }));
+      await act(() => scroll.props.onContentSizeChange(390, 1000));
       await act(() => tree.root.find((n) => hostType(n) === 'TextInput').props.onFocus({}));
       await act(() => moveKeyboard(344));
       await act(() => scroll.props.onLayout({ nativeEvent: { layout: { height: 456 } } }));

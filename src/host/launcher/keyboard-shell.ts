@@ -18,7 +18,8 @@
  *   the pinned footer, and an inset as well would count the keyboard twice.
  * - When the visible part of the scroll view or its content changes while a field in it is focused,
  *   the shell scrolls that field (or the block it names, like a plan row with its Save and Cancel)
- *   fully into view, `REVEAL_MARGIN` clear of the keyboard and the footer.
+ *   fully into view, `REVEAL_MARGIN` clear of the keyboard and the footer; while the keyboard rises,
+ *   on the UI thread in each of its frames (`followOffset`).
  */
 
 import { SPACE } from '../../design/tokens';
@@ -84,7 +85,8 @@ export function contentBelow({ offset, viewport, content }: ScrollMetrics): bool
 /**
  * The offset that shows the block from `top` to `bottom` (content coordinates) whole, `margin` clear
  * of the viewport's edges, or `null` when it already shows. A block taller than the viewport shows
- * its bottom, where the caret and a row's Save and Cancel sit.
+ * its bottom, where the caret and a row's Save and Cancel sit. A worklet: a rising keyboard runs it
+ * on the UI thread every frame (`followOffset`).
  */
 export function revealOffset(
   { offset, viewport }: Pick<ScrollMetrics, 'offset' | 'viewport'>,
@@ -92,10 +94,57 @@ export function revealOffset(
   bottom: number,
   margin: number,
 ): number | null {
+  'worklet';
   const fits = bottom - top <= viewport - 2 * margin;
   if (bottom + margin > offset + viewport) return Math.max(0, bottom + margin - viewport);
   if (fits && top - margin < offset) return Math.max(0, top - margin);
   return null;
+}
+
+/** A keyboard rising from `start` to `end` (what it takes from a scroll view, `shrinkAt`), now at
+ *  `now`: how far along it is, 0 to 1. One that takes nothing is already there. A worklet. */
+export function riseProgress(start: number, end: number, now: number): number {
+  'worklet';
+  if (end <= start) return 1;
+  return Math.min(1, Math.max(0, (now - start) / (end - start)));
+}
+
+/**
+ * How far below where it is kept the focused block from `top` to `bottom` sat as the keyboard set
+ * off, with the scroll view at `offset` showing `viewport`: 0 when it was in view. A worklet.
+ */
+export function hiddenAtRest(
+  { offset, viewport }: Pick<ScrollMetrics, 'offset' | 'viewport'>,
+  top: number,
+  bottom: number,
+  margin: number,
+): number {
+  'worklet';
+  const next = revealOffset({ offset, viewport }, top, bottom, margin);
+  return next != null && next > offset ? next - offset : 0;
+}
+
+/**
+ * One frame of a rising keyboard, for the focused block from `top` to `bottom`: the offset that keeps
+ * it `margin` clear of the scroll view's end on this frame, where the scroll view shows `viewport`
+ * of its `content`, or `null` to leave the scroll alone. `hidden` is how much of it may still be
+ * below there: a block that was partly out of view as the keyboard set off (`hiddenAtRest`) comes
+ * into view over the rise rather than in its first frame. It only ever scrolls the content up, as a
+ * rising keyboard needs, and never past the content's end. A worklet, run once per keyboard frame on
+ * the UI thread, in the same frame as the padding that shrinks the scroll view.
+ */
+export function followOffset(
+  { offset, viewport, content }: ScrollMetrics,
+  top: number,
+  bottom: number,
+  margin: number,
+  hidden = 0,
+): number | null {
+  'worklet';
+  const next = revealOffset({ offset, viewport }, top, bottom, margin);
+  if (next == null) return null;
+  const kept = Math.min(next - hidden, Math.max(0, content - viewport));
+  return kept > offset ? kept : null;
 }
 
 /** The most of the window a sheet's pinned footer may take before it scrolls with the content
