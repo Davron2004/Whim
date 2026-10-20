@@ -20,7 +20,9 @@ import {
   storedSummary,
 } from '../history-logic';
 import { historyQuotedPrompt } from '../copy';
+import { deliverResult } from '../build-lifecycle';
 import type { AppRecord } from '../../bridge/contract';
+import type { WireAppRecord } from '@whim/contract';
 
 const REC = (id: string): AppRecord => ({ appId: id, name: id, manifest: { capabilities: ['storage'] } });
 
@@ -128,20 +130,42 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
     h.eq(rows.filter(r => r.isCurrent).map(r => r.id), [target], 'the current marker moved to the restored version, and only it');
   });
 
-  // ── At most two actions per row, never a third (E5/E9) ────────────────────
-  await h.test('history: no row ever exposes more than two actions', async () => {
+  // ── Each row's actions (version-history "Using an older version is immediate and undoable") ──
+  await h.test('history: the current version offers Change it; every other version, the first and a newer one after going back included, offers Use this version and Make a copy from here', async () => {
     const { store, access } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: envelope('install') });
     await store.snapshot('wc', { 'bundle.js': 'V2' }, envelope('p2'));
     await store.snapshot('wc', { 'bundle.js': 'V3' }, envelope('p3'));
     const list = await listVersions(access, orig); // [p3 (current), p2, install]
-    const rows = buildHistoryRows(list, await access.activeId(orig));
-    h.ok(rows.every(r => r.actions.length <= 2), 'no row ever carries more than two actions');
+    const [current, middle, install] = buildHistoryRows(list, await access.activeId(orig));
+    h.eq(current.actions, ['change-it'], 'the current version offers exactly one action');
+    h.eq(middle.actions, ['use-version', 'make-copy'], 'a past version offers exactly two');
+    h.eq(install.actions, ['use-version', 'make-copy'], 'the first version can be used too: there is no confirm to protect it any more');
+    h.eq([current.number, middle.number, install.number], [3, 2, 1], 'each row knows its place in the chain');
 
-    const [current, middle, install] = rows;
-    h.eq(current.actions, ['change-from-here'], 'the current version offers exactly one action');
-    h.eq(middle.actions, ['go-back', 'start-copy'], 'a past, non-install version offers exactly two');
-    h.eq(install.actions, ['start-copy'], 'the install row offers only "start a copy here" — no restore, there is no earlier state');
+    await access.rollback(orig, middle.id);
+    const after = buildHistoryRows(await listVersions(access, orig), await access.activeId(orig));
+    h.eq(after.map(r => [r.version, r.actions]), [['v3', ['use-version', 'make-copy']], ['v2', ['change-it']], ['v1', ['use-version', 'make-copy']]], 'after going back, the newer version is still listed and can be used again: the Undo that outlives the toast');
+  });
+
+  // ── Nothing is lost by changing an older version (prompt-flow D5 routing) ──
+  await h.test('history: using an older version and then changing it never drops the newer versions: the change lands on a new app that shares the data, and the original still lists and can use every version', async () => {
+    const { store, index, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: envelope('install') });
+    await store.snapshot('wc', { 'bundle.js': 'V2' }, envelope('p2'));
+    await store.snapshot('wc', { 'bundle.js': 'V3' }, envelope('p3'));
+    await store.snapshot('wc', { 'bundle.js': 'V4' }, envelope('p4'));
+    const [v4, v3] = await listVersions(access, orig);
+    await access.rollback(orig, v3.id);
+    const wire: WireAppRecord = { name: 'WC', source: 'export default () => null;', bundle: 'var __WHIM_APP_MODULE__ = (() => ({}))();', manifest: {}, schema: {} };
+    const landed = await deliverResult({ access, appId: 'unused', editing: index.get('wc')!, text: 'p5', wire });
+    h.ok(landed.id !== orig.id, 'the change made on version 3 landed on a new app, not on the original’s line');
+    h.eq(access.engineAppId(landed), access.engineAppId(orig), 'which keeps the original’s data (a rewind continuation, never a copy)');
+    const listed = await listVersions(access, orig);
+    h.eq(listed.map(s => s.id), [v4.id, v3.id, listed[2].id, listed[3].id], 'the original still lists version 4 above version 3');
+    h.eq(await access.activeId(orig), v3.id, 'and is still on version 3');
+    await access.rollback(orig, v4.id);
+    h.eq((await access.activeBundle(orig)), 'V4', 'and version 4 can be used again, unchanged');
   });
 
   // ── Data-shape annotation on a schema-adding row (D5, unchanged) ──────────

@@ -1,7 +1,7 @@
 /**
  * history-wait — the history screen's three wait states (`version-history`: "History's first load
- * shows a loading state, never fake-empty", "The confirm sheet's Restore and Copy actions disable
- * while in flight", "The restore-diff reassurance line shows a pending state while it loads").
+ * shows a loading state, never fake-empty", the row's actions "show their busy words and ignore
+ * taps while in flight", and the hidden-data line's pending state while it is computed).
  *
  * Pure, RN-free and therefore directly Node-testable: `HistoryScreen.tsx` imports `react-native`
  * and cannot be imported under the launcher's Node suite, so the parts that are actually easy to
@@ -9,9 +9,9 @@
  * than as ad-hoc booleans inside the component.
  *
  * The double-submit guard has to be synchronous and independent of React's render cycle: two taps
- * inside one frame both read the same `useState` value, so a `disabled` prop alone cannot refuse
- * the second. Hence a plain object the screen holds in a ref, with the refusal sitting in front of
- * the version-store call itself (`runConfirmOp`), not merely on the control that triggers it.
+ * inside one frame both read the same `useState` value, so a busy prop alone cannot refuse the
+ * second. Hence a plain object the screen holds in a ref, with the refusal sitting in front of the
+ * version-store call itself (`runRowAction`), not merely on the control that triggers it.
  */
 
 import type { Snapshot } from '../version-store';
@@ -19,8 +19,8 @@ import type { Snapshot } from '../version-store';
 // ── first load ───────────────────────────────────────────────────────────────────────────────
 
 /** What the screen renders the timeline from. `loading` is true only until the FIRST read of the
- *  snapshot list and active version settles — a reload after a restore keeps the rows on screen
- *  rather than flashing the skeleton back in. */
+ *  snapshot list and active version settles — a reload after using a version keeps the rows on
+ *  screen rather than flashing the skeleton back in. */
 export interface HistoryLoadState {
   loading: boolean;
   snapshots: Snapshot[];
@@ -43,8 +43,8 @@ export type PublishHistoryLoad = (
  * of stranding the screen in a permanent skeleton. The rejection itself still propagates, so this
  * changes no error semantics beyond clearing the wait.
  *
- * A rejection clears `loading` and NOTHING else: this same function runs the reload after a
- * restore, and publishing the default empty result there would wipe the rows already on screen —
+ * A rejection clears `loading` and NOTHING else: this same function runs the reload after using a
+ * version, and publishing the default empty result there would wipe the rows already on screen —
  * turning a failed reload into an apparently empty history.
  */
 export async function runHistoryLoad(
@@ -61,14 +61,14 @@ export async function runHistoryLoad(
   publish({ loading: false, snapshots: result.snapshots, activeId: result.activeId });
 }
 
-// ── confirm-sheet double-submit guard ────────────────────────────────────────────────────────
+// ── row-action double-submit guard ───────────────────────────────────────────────────────────
 
-/** At most one restore-or-fork may be in flight for the sheet. A ref-held mutable claim, so the
- *  refusal does not depend on a re-render having landed. */
-export class ConfirmFlight {
+/** At most one of History's actions — use a version, its Undo, make a copy — may be in flight. A
+ *  ref-held mutable claim, so the refusal does not depend on a re-render having landed. */
+export class RowActionFlight {
   private running = false;
 
-  /** Claim the sheet. Returns `false` — changing nothing — when an operation is already running. */
+  /** Claim the screen. Returns `false` — changing nothing — when an action is already running. */
   begin(): boolean {
     if (this.running) return false;
     this.running = true;
@@ -86,13 +86,13 @@ export class ConfirmFlight {
 }
 
 /**
- * Run one confirmed restore/fork under the guard: claim, publish the busy state, and release once
- * `work` settles — resolved, rejected or thrown alike, so a failed restore can never strand the
- * confirm button disabled. Returns `false` without running `work` at all when one is already in
- * flight; the caller then does nothing (no toast, no reload, no sheet close).
+ * Run one row action under the guard: claim, publish the busy state, and release once `work`
+ * settles — resolved, rejected or thrown alike, so a failed one can never strand the action busy.
+ * Returns `false` without running `work` at all when one is already in flight; the caller then
+ * does nothing (no toast, no reload).
  */
-export async function runConfirmOp(
-  flight: ConfirmFlight,
+export async function runRowAction(
+  flight: RowActionFlight,
   publish: (busy: boolean) => void,
   work: () => Promise<unknown>,
 ): Promise<boolean> {
@@ -107,17 +107,17 @@ export async function runConfirmOp(
   return true;
 }
 
-// ── restore-diff reassurance line ────────────────────────────────────────────────────────────
+// ── the hidden-data line ─────────────────────────────────────────────────────────────────────
 
-/** The reassurance line's data: still being computed, or settled on the fields that would leave
+/** The hidden-data line's data: still being computed, or settled on the fields that would leave
  *  view. `pending` exists so the line can reserve its space instead of popping in. */
 export type RestoreDiffState = { status: 'pending' } | { status: 'ready'; fields: string[] };
 
-/** The settled state carrying no fields — what a non-restore sheet shows, with nothing pending. */
+/** The settled state carrying no fields — what the current version's row shows, nothing pending. */
 export const RESTORE_DIFF_NONE: RestoreDiffState = { status: 'ready', fields: [] };
 
-/** What to draw where the reassurance line goes: the muted placeholder while it is computing, the
- *  reassurance sentence once fields are known to leave view, and nothing at all when none would. */
+/** What to draw where the hidden-data line goes: the muted placeholder while it is computing, the
+ *  sentence once fields are known to leave view, and nothing at all when none would. */
 export function restoreDiffLine(state: RestoreDiffState): 'pending' | 'reassurance' | 'none' {
   if (state.status === 'pending') return 'pending';
   return state.fields.length > 0 ? 'reassurance' : 'none';

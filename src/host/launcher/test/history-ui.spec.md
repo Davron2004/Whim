@@ -6,7 +6,7 @@ both `REMOVED` blocks) and `app-launcher/spec.md`'s tile-colour-resolution requi
 implemented per `design.md` D11. Node-testable pieces (`history-logic.suite.ts`) drive a real
 MemoryFs-backed `VersionStore` through `StoreAccess`, exactly like `store-access.suite.ts`; the
 screen itself is rendered over the same kind of store in `history-ui.suite.tsx` (loading state,
-expand-not-restore, confirm-gated restore and copy, reaching History from Home).
+expand-only taps, immediate use and copy with Undo and Open, reaching History from Home).
 
 ## History reads as the user's own prompts
 
@@ -24,20 +24,21 @@ expand-not-restore, confirm-gated restore and copy, reaching History from Home).
    (`historyVersionCount`). Every text follows the phone's scheme and stops at 200% (#186).
 3. The current version, derived live from `StoreAccess.activeId` — never persisted on the app
    record — carries the `Current` badge and the `ink` dot; no other row does.
-4. The install row (the list's last entry) renders install-appropriate copy and offers exactly one
-   action, `Start a copy here` — no restore action, since there is no earlier state.
+4. The install row (the list's last entry) renders install-appropriate copy and offers the same two
+   actions as any other version that is not current.
 
-## Tapping a row expands it; restoring is confirmed, never instant
+## Using an older version is immediate and undoable (design-system-v1)
 
-5. A tap toggles that row's expansion (`expandedId`); it never restores anything, and at most one
+5. A tap toggles that row's expansion (`expandedId`); it never changes the version, and at most one
    row is expanded at a time.
-6. Restoring is reachable only via `Go back to this` inside an expanded row, which opens a confirm
-   sheet. Only on confirmation does the screen call `StoreAccess.rollback(app, row.id)` — the
-   TAPPED row's own version, not a predecessor (the redesign's row IS the version, unlike the
-   retired instant-restore surface's "restores the state before this prompt"). Cancelling the
-   sheet calls no store method and shows no toast.
-7. The confirm sheet's safe option (`Cancel`) is the large, full-width button; the consequential
-   action (`Go back to it` / `Make the copy`) is plain text beneath it.
+6. `Use this version` in an expanded row calls `StoreAccess.rollback(app, row.id)` at once — the
+   TAPPED row's own version — with no sheet, and shows the toast "Back on version N" with `Undo`,
+   which returns to the version that was current. The version left stays listed with its own
+   `Use this version`, so the same Undo is reachable once the toast has gone. A failed switch says
+   so and leaves the current version as it was.
+7. Changing a version used this way never drops the newer ones: `deliverResult` lands that change
+   on a rewind continuation (a new entry sharing the data), and the original keeps listing, and can
+   use, every version (`history-logic.suite.ts`).
 
 ## An expanded row answers what happened, what it touched, and what to do next
 
@@ -45,31 +46,36 @@ expand-not-restore, confirm-gated restore and copy, reaching History from Home).
    diff), and the data-shape
    annotation (`addedFieldsLine`, when the row's `schema.json` changed since its predecessor)
    rendered with an explicit `hedge` mark spanning it.
-9. The current version's row offers exactly one action, `Change it from here`. Any past version's
-   row (including the install row, per #4) offers at most two: `Go back to this` and
-   `Start a copy here`. No row ever exposes a third action (`history-logic.suite.ts` asserts
-   `actions.length <= 2` across a mixed list).
+9. The current version's row offers exactly one action, `Change it`. Every other version's row
+   (the install row and, after going back, a newer one included) offers exactly two:
+   `Use this version` and `Make a copy from here`. Each shows its busy words while it runs, and
+   two taps never run two (`RowActionFlight`, shared with Undo).
 
 ## No filters
 
 10. Every version is listed; there are no filter pills (version-history REMOVED "Filter pills group
     the list by what changed"). The only controls are Back, `Report` and the rows.
 
-## Any version can become its own app
+## Any version can be copied into its own app
 
-11. `Start a copy here` opens a confirm sheet naming the version being copied; on confirmation the
-    screen calls `StoreAccess.fork(app, row.id)` (the exact version viewed) and shows the toast
-    `Copy made — it's on your home screen`. Cancelling creates nothing.
+11. `Make a copy from here` asks Home's `CopyQuestionSheet` ("Copy the data, or start fresh?") when
+    the launcher can copy data, else makes a fresh copy at once; leaving the question creates
+    nothing. The answer goes to `onFork(app, row.id, { data })` — `LauncherRoot`'s busy-gated
+    `StoreAccess.fork` of the exact version viewed — and the toast "Copy made" offers `Open`, which
+    opens the copy. The copy has its own storage-engine appId (#43b): with "Copy the data" a
+    one-time copy of the data, after which writes to either never show in the other; the original
+    is unchanged. A failed copy says so.
 
 ## Data-shape annotations + restore reassurance (D5, unchanged)
 
 12. A row whose `schema.json` changed since its predecessor carries `addedFieldsBetween(before,
     after)` — the newly added fields as `"<display name> (<type>)"`. A row whose `schema.json` did
     NOT change (`StoreAccess.diff` omits unchanged files) carries no annotation.
-13. Restoring to a target whose schema lacks fields the active version has gained shows the
-    `historyReassurance` line in the confirm sheet: `fieldsLeavingViewOnRestore(access, app,
-    targetId, activeId)` is non-empty. Restoring to a target with an identical or superset schema
-    shows no reassurance (empty).
+13. An opened version whose schema lacks fields the current version has gained shows the
+    hidden-data line (`historyHiddenData`) above its actions, before either is tapped:
+    `fieldsLeavingViewOnRestore(access, app, targetId, activeId)` is non-empty. A placeholder holds
+    its place while it is worked out; a version with an identical or superset schema, and the
+    current one, show nothing.
 
 ## F1 guard — roll-forward, unchanged
 
@@ -77,15 +83,15 @@ expand-not-restore, confirm-gated restore and copy, reaching History from Home).
     later-than-the-restore-target versions listed and restorable after a rollback. A fresh,
     undiverged fork's own listing never leaks a snapshot committed later on the original's line.
 
-## Removed: named pins, instant restore + undo
+## Removed: named pins, confirm sheets
 
 15. There is no pin action or pin label on any row (`version-history` REMOVED "Named pins") — the
     row's headline (the user's own words) is what labelling a version was standing in for. The
     store's pin verbs and `StoreAccess.pin`/`listPins` are untouched and remain covered by
     `store-access.suite.ts`; nothing here re-tests them.
-16. There is no toast Undo and no instant restore-on-tap (`version-history` REMOVED "Tap restores
-    the state before that prompt, instantly, with undo") — every restore goes through the confirm
-    sheet described in §6-7.
+16. History has no confirm sheet (design-system-v1 REMOVED "A confirm sheet makes the safe option
+    the large button"): a tap on a row still only expands it, and its actions act at once with
+    Undo (§6).
 
 ## Product verbs
 

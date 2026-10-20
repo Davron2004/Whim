@@ -31,8 +31,6 @@ import {
   addedFieldsLine,
   composerContinueLine,
   planMakeHeader,
-  copySheetBody,
-  copySheetTitle,
   copyQuestionDataSubtitle,
   deletedToast,
   discardedManyToast,
@@ -45,9 +43,7 @@ import {
   makingRepairLine,
   makingStallLine,
   makingTitle,
-  restoreSheetBody,
-  restoreSheetTitle,
-  restoredToast,
+  backOnVersionToast,
   tileOlderLine,
 } from '../copy';
 
@@ -91,12 +87,7 @@ function everyCopyString(): string[] {
     historyVersionCount(7),
     historyRowMeta('v6', 0, 3 * 86_400_000),
     historyQuotedPrompt('make the numbers bigger'),
-    copySheetTitle('v6'),
-    copySheetBody('Pour Timer'),
-    restoreSheetTitle('v6'),
-    restoreSheetBody('v6'),
-    restoreSheetBody('v6', 'the bigger numbers'),
-    restoredToast('v6'),
+    backOnVersionToast(6),
   ];
 }
 

@@ -2,15 +2,16 @@
  *  title, the app's tile, its name and how many versions it has; one timeline row per version, the
  *  person's words first, with Whim's summary, the version and when, a neutral kind chip and
  *  `Current`, on a rail that stops at v1; no filters; the phone's scheme and a text size capped at
- *  200%. The first load is a loading state, not an empty list; a row expands without restoring; Go
- *  back and Start a copy act on that row's own version, once each, however often the confirm is
- *  tapped. Home's sheet and a running app's orb reach it, and leaving returns there. */
+ *  200%. The first load is a loading state, not an empty list; a row expands without changing the
+ *  version; Use this version and Make a copy from here act at once on that row's own version, once
+ *  however often they are tapped, with no confirm sheet: Undo in the toast and on the row after it,
+ *  "Copy made · Open", the copy question, the hidden-data line, and a copy's own data. Home's sheet
+ *  and a running app's orb reach it, and leaving returns there. */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { COPY } from '../copy';
-import HistoryScreen from '../HistoryScreen';
-import ConfirmSheet from '../ConfirmSheet';
+import HistoryScreen, { type HistoryScreenProps } from '../HistoryScreen';
 import HomeScreen from '../HomeScreen';
 import SettingsScreen from '../SettingsScreen';
 import { AppIndex, type InstalledApp } from '../app-index';
@@ -23,12 +24,15 @@ import { tileOf } from '../tile-identity';
 import { TilePlate } from '../../ui/AppTile';
 import { TILE_SIDE } from '../../ui/AppTile-geometry';
 import { Icon } from '../../ui/Icon';
+import { ToastHost } from '../../ui/Toast';
 import { COLORS, LAYOUT, SPACE, TINTS, TYPE_SCALE } from '../../../design/tokens';
+import type { SchemaArtifact } from '../../storage-engine/contract';
 import { appLinkFor } from '../app-link';
 import { Alert, hardwareBack, openLink, setColorScheme, StyleSheet, windowMetrics } from './native-host';
 import { iosPop, stackItems, stackMoveEnds, stackUnmountsMidMove } from './native-screens';
-import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
-import { chooseRow, longPress, renderHome, tile } from './home-rig';
+import { button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
+import { chooseRow, dismissToast, longPress, pressToastAction, renderHome, sheetRows, tile, toastOf } from './home-rig';
+import { accessOver, disposeDeviceState, installApp, newDeviceState, withEngine } from './data-copy-rig';
 import { buildIt, planLoaded, resultEvent, settle, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
@@ -61,15 +65,23 @@ function held<T>(): Held<T> {
   return { promise, resolve, reject };
 }
 
-const historyScreen = (access: StoreAccess, app: InstalledApp) => <HistoryScreen app={app} access={access} onBack={noop} onChangeIt={noop} onReport={noop} />;
+/** What a test sets of History's props; the rest are no-ops, and a copy is the store's own. */
+type HistoryOver = Partial<Pick<HistoryScreenProps, 'onBack' | 'onReport' | 'canCopyData' | 'onFork' | 'onOpen'>>;
 
-async function withHistory(access: StoreAccess, app: InstalledApp, body: (tree: Tree) => Promise<void>): Promise<void> {
-  const tree = await renderScreen(historyScreen(access, app));
+/** History under the shell's one toast host, as `LauncherRoot` mounts it. */
+const historyScreen = (access: StoreAccess, app: InstalledApp, over: HistoryOver = {}) => (
+  <ToastHost>
+    <HistoryScreen app={app} access={access} onBack={noop} onChangeIt={noop} onReport={noop} onFork={(a, v, o) => access.fork(a, v, o)} onOpen={noop} {...over} />
+  </ToastHost>
+);
+
+async function withHistory(access: StoreAccess, app: InstalledApp, body: (tree: Tree) => Promise<void>, over: HistoryOver = {}): Promise<void> {
+  const tree = await renderScreen(historyScreen(access, app, over));
   try { await body(tree); } finally { await unmountScreen(tree); }
 }
 
-async function reloadHistory(tree: Tree, access: StoreAccess, app: InstalledApp): Promise<void> {
-  await TestRenderer.act(async () => { tree.update(historyScreen(access, app)); });
+async function reloadHistory(tree: Tree, access: StoreAccess, app: InstalledApp, over: HistoryOver = {}): Promise<void> {
+  await TestRenderer.act(async () => { tree.update(historyScreen(access, app, over)); });
 }
 
 async function rejectInAct<T>(pending: Held<T>, message: string): Promise<void> {
@@ -77,7 +89,29 @@ async function rejectInAct<T>(pending: Held<T>, message: string): Promise<void> 
 }
 
 async function waitForReassuranceToClear(tree: Tree): Promise<void> {
-  await waitFor(() => !hasPendingReassurance(tree), 'the failed restore reassurance to clear');
+  await waitFor(() => !hasPendingReassurance(tree), 'the failed hidden-data read to clear');
+}
+
+/** Opens the closed row saying `words`, waits for its hidden-data line to be worked out, and says
+ *  how many times the line shows. */
+async function openRowAndReadLine(tree: Tree, words: string): Promise<number> {
+  await press(row(tree, words));
+  await waitFor(() => !hasPendingReassurance(tree), `${words}: the line to be worked out`);
+  return textsSaying(tree.root, COPY.historyHiddenData).length;
+}
+
+/** The copy question's row whose label starts with `answer` (or is the sheet's close control). */
+const questionRow = (tree: Tree, answer: string) =>
+  sheetRows(tree, COPY.copyQuestionTitle).find((r) => String(r.props.accessibilityLabel).startsWith(answer));
+
+/** The titles in `appId`'s Notes, read through the real engine. */
+const notesIn = (state: ReturnType<typeof newDeviceState>, appId: string, schema: SchemaArtifact) =>
+  withEngine(state, appId, schema, (engine) => engine.records.list('Notes').map((r) => r.title));
+
+/** Opens the closed row saying `words` and presses its action `label`. */
+async function openAndPress(tree: Tree, words: string, label: string): Promise<void> {
+  await press(row(tree, words));
+  await press(button(tree, label));
 }
 
 /** How many loading placeholders the screen shows. */
@@ -174,7 +208,7 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
   await h.test('history screen: a header with Back and a Report text button, then “History”, the app’s 40 pt tile, its name in its tint and how many versions it has', async () => {
     const { access, app } = await fourKinds();
     const left: string[] = [];
-    const tree = await renderScreen(<HistoryScreen app={app} access={access} onBack={() => left.push('back')} onChangeIt={noop} onReport={() => left.push('report')} />);
+    const tree = await renderScreen(historyScreen(access, app, { onBack: () => left.push('back'), onReport: () => left.push('report') }));
     try {
       await waitFor(() => rows(tree).length === 4, 'the versions to load');
       await press(button(tree, COPY.backLabel));
@@ -384,17 +418,42 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('history screen: a rejected restore diff removes its pending reassurance', async () => {
+  await h.test('history screen: an opened older version holds the hidden-data line’s place while it is worked out, and a failed read clears it without inventing the line', async () => {
     const { access, app } = await threeVersions();
     const diff = held<Awaited<ReturnType<StoreAccess['diff']>>>();
     access.diff = async () => diff.promise;
     await withHistory(access, app, async (tree) => {
       await waitFor(() => hasRow(tree, 'add a chime'), 'the versions to load');
       await press(row(tree, 'add a chime'));
-      await press(button(tree, COPY.historyGoBackToThis));
+      h.ok(hasPendingReassurance(tree), 'opening the row holds the line’s place, before either action');
       await rejectInAct(diff, 'diff is unavailable');
       await waitForReassuranceToClear(tree);
-      h.ok(!textOf(tree.root).includes('Added:'), 'a failed restore diff does not invent a reassurance');
+      h.ok(!textOf(tree.root).includes(COPY.historyHiddenData), 'a failed read does not invent the line');
+    });
+  });
+
+  await h.test('history screen: an opened version that would hide saved data says so before either action; one that hides nothing, and the current one, say nothing', async () => {
+    const schema = (fields: Record<string, { id: string; type: 'int' | 'text'; default?: string }>) =>
+      JSON.stringify({ schemaVersion: 1, collections: { Entries: { id: 'c1', fields, tombstones: [] } } });
+    const amount = { amount: { id: 'f1', type: 'int' as const } };
+    const store = createMemoryStore({ autoCompact: false });
+    const access = new StoreAccess({ store, index: new AppIndex(new MapKVBackend()), now: () => Date.now() });
+    const app = await access.update(
+      await access.install({ id: 'log', name: 'Log', record: { appId: 'log', name: 'Log', manifest: { capabilities: ['storage'] } }, bundleSource: 'V1', prompt: envelope('a spending log'), schemaJson: schema(amount) }),
+      { record: { appId: 'log', name: 'Log', manifest: { capabilities: ['storage'] } }, bundleSource: 'V2', prompt: envelope('bigger numbers'), schemaJson: schema(amount) },
+    );
+    await access.update(app, { record: app.record, bundleSource: 'V3', prompt: envelope('add notes'), schemaJson: schema({ ...amount, notes: { id: 'f2', type: 'text', default: '' } }) });
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => rows(tree).length === 3, 'the versions to load');
+      h.eq(await openRowAndReadLine(tree, 'bigger numbers'), 1, 'v2 has no notes: going there hides them, and the open row says so');
+      const line = textSaying(tree.root, COPY.historyHiddenData);
+      h.ok(textOf(tree.root).indexOf(COPY.historyHiddenData) < textOf(tree.root).indexOf(COPY.historyUseVersion), 'above the actions, read before the tap');
+      h.eq([styleOf(line).fontSize, styleOf(line).color], [TYPE_SCALE.footnote.size, COLORS.light['text-2']], 'in footnote, secondary');
+      h.eq(await openRowAndReadLine(tree, 'add notes'), 0, 'the current version says nothing');
+      await TestRenderer.act(async () => { await access.rollback(app, (await access.timeline(app))[1].id); });
+      await reloadHistory(tree, access, { ...app });
+      await waitFor(() => textsSaying(row(tree, 'bigger numbers'), 'Current').length === 1, 'v2 to be current');
+      h.eq(await openRowAndReadLine(tree, 'a spending log'), 0, 'from v2, v1 has every field v2 has: nothing is hidden, nothing is said');
     });
   });
 
@@ -424,7 +483,7 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('history screen: tapping a row only expands it; Go back restores that version once, however often confirm is tapped', async () => {
+  await h.test('history screen: tapping a row only expands it; Use this version makes that version current at once, with no sheet, once for two taps, and says “Back on version 2” with Undo', async () => {
     const { access, app, middle } = await threeVersions();
     const rollbacks: string[] = [];
     const finish = held<void>();
@@ -433,92 +492,189 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     await withHistory(access, app, async (tree) => {
       await waitFor(() => hasRow(tree, 'add a chime'), 'the versions to load');
       await press(row(tree, 'add a chime'));
-      h.eq(rollbacks, [], 'expanding a row restores nothing');
-      await press(button(tree, COPY.historyGoBackToThis));
-      h.eq(rollbacks, [], 'Go back only asks first');
-      h.ok(tree.root.findByType(ConfirmSheet).props.confirm != null, 'in the launcher’s confirm sheet, the one Settings asks in too');
-      // Two taps inside one frame both see the enabled button: only the handler’s own guard can refuse the second.
-      await TestRenderer.act(async () => { const confirm = button(tree, COPY.historyRestoreConfirm); confirm.props.onPress(); confirm.props.onPress(); });
-      h.eq(rollbacks, [middle.id], "confirming restores that row’s own version, once for two taps in one frame");
-      await h.throws(() => press(button(tree, COPY.historyRestoreConfirmBusy)), 'Cannot press a disabled control', 'while it runs the confirm cannot be tapped again');
+      h.eq(rollbacks, [], 'expanding a row changes nothing');
+      h.eq(['make it louder', 'add a chime', 'a tea timer'].map((w) => textsSaying(row(tree, w), 'Current').length), [1, 0, 0], 'setup: v3 is current');
+      // Two taps inside one frame both see the same button: only the handler’s own guard can refuse the second.
+      await TestRenderer.act(async () => { const use = button(tree, COPY.historyUseVersion); use.props.onPress(); use.props.onPress(); });
+      h.eq(rollbacks, [middle.id], 'the first tap uses that row’s own version, at once; the second runs nothing');
+      h.eq(sheetsOpen(tree), 0, 'no sheet asks first');
+      h.ok(textOf(tree.root).includes(COPY.historyUseVersionBusy), 'the action shows its busy words while it runs');
+      await press(button(tree, COPY.historyUseVersionBusy));
+      h.eq(rollbacks, [middle.id], 'and ignores a tap meanwhile');
       await TestRenderer.act(async () => { finish.resolve(); });
-      await waitFor(() => !textOf(tree.root).includes(COPY.historyRestoreConfirmBusy), 'the restore to finish');
-      h.eq(rollbacks.length, 1, 'one restore in all');
-      h.eq(await access.activeId(app), middle.id, 'and the app now runs that version');
+      await waitFor(() => toastOf(tree) !== null, 'the toast');
+      h.eq(toastOf(tree), { message: 'Back on version 2', action: COPY.toastUndo }, '“Back on version 2 · Undo”');
+      h.eq(await access.activeId(app), middle.id, 'the app now runs that version');
+      await waitFor(() => textsSaying(row(tree, 'add a chime'), 'Current').length === 1, 'the rows to follow');
+      h.eq(['make it louder', 'add a chime', 'a tea timer'].map((w) => textsSaying(row(tree, w), 'Current').length), [0, 1, 0], 'and the list says so, every version still listed');
+      h.eq(rows(tree).map((r) => r.props.accessibilityState.expanded), [false, true, false], 'the row stays open');
+    });
+  });
+
+  await h.test('history screen: Undo in the toast goes back to the version that was current, and both stay listed (scenario: using version 3 of 4, then Undo)', async () => {
+    const { access, app } = await fourKinds();
+    const [v4, v3] = await access.timeline(app);
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => rows(tree).length === 4, 'the versions to load');
+      await openAndPress(tree, 'let me pick V60 or Chemex', COPY.historyUseVersion);
+      await waitFor(() => toastOf(tree) !== null, 'the toast');
+      h.eq(await access.activeId(app), v3.id, 'version 3 is in use');
+      await pressToastAction(tree);
+      await waitFor(() => textsSaying(row(tree, 'the countdown stops early'), 'Current').length === 1, 'version 4 to be current again');
+      h.eq(await access.activeId(app), v4.id, 'Undo returned the app to version 4');
+      h.eq(rows(tree).length, 4, 'and every version, 3 and 4 among them, is still listed');
+      h.eq(await access.activeBundle(app), 'V4', 'running version 4’s own code');
+    });
+  });
+
+  await h.test('history screen: once the toast has gone, the same Undo is a row away: the version left behind is listed with Use this version, and using it comes back', async () => {
+    const { access, app } = await fourKinds();
+    const [v4] = await access.timeline(app);
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => rows(tree).length === 4, 'the versions to load');
+      await openAndPress(tree, 'add a chime', COPY.historyUseVersion);
+      await waitFor(() => toastOf(tree) !== null, 'the toast');
+      await dismissToast(tree);
+      await waitFor(() => toastOf(tree) === null, 'the toast to go');
+      await openAndPress(tree, 'the countdown stops early', COPY.historyUseVersion);
+      await waitFor(() => textsSaying(row(tree, 'the countdown stops early'), 'Current').length === 1, 'version 4 to be current again');
+      h.eq(await access.activeId(app), v4.id, 'the newer version is used again from its row');
+      h.eq(toastOf(tree)?.message, 'Back on version 4', 'with its own toast');
+    });
+  });
+
+  await h.test('history screen: the first version can be used too, and a failed switch says so and keeps the version that was current', async () => {
+    const { access, app, current } = await threeVersions();
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => hasRow(tree, 'a tea timer'), 'the versions to load');
+      await openAndPress(tree, 'a tea timer', COPY.historyUseVersion);
+      await waitFor(() => toastOf(tree) !== null, 'the toast');
+      h.eq(toastOf(tree)?.message, 'Back on version 1', 'v1 is a version like any other');
+      h.eq(await access.activeBundle(app), 'V1', 'running its code');
+      await pressToastAction(tree);
+      await waitFor(() => textsSaying(row(tree, 'make it louder'), 'Current').length === 1, 'Undo to land');
+      access.rollback = async () => { throw new Error('the store is unwritable'); };
+      await openAndPress(tree, 'add a chime', COPY.historyUseVersion);
+      await waitFor(() => toastOf(tree)?.message === COPY.historyUseVersionFailed, 'the failure to be said');
+      h.eq(await access.activeId(app), current.id, 'the version that was current is still in use');
+      h.ok(textOf(row(tree, 'make it louder')).includes('Current') && textOf(tree.root).includes(COPY.historyUseVersion), 'the list still says so, and the action can be tried again');
     });
   });
 
   await h.test('history screen: a text size changed while it shows builds its title and rows again, and History keeps what it holds — the open row and the question it is asking', async () => {
     const { access, app } = await threeVersions();
+    const over = { canCopyData: true };
     await withHistory(access, app, async (tree) => {
       try {
         await waitFor(() => hasRow(tree, 'add a chime'), 'the versions to load');
-        await press(row(tree, 'add a chime'));
-        await press(button(tree, COPY.historyGoBackToThis));
-        const asking = () => tree.root.findByType(ConfirmSheet).props.confirm != null;
-        h.ok(asking(), 'setup: History is asking whether to go back to that version');
+        await openAndPress(tree, 'add a chime', COPY.historyMakeCopyHere);
+        const asking = () => sheetRows(tree, COPY.copyQuestionTitle).length > 0;
+        h.ok(asking(), 'setup: History is asking whether to copy the data');
         const title = () => titleOf(tree, app.name);
         const built = { title: title(), row: row(tree, 'add a chime') };
-        await reloadHistory(tree, access, app);
+        await reloadHistory(tree, access, app, over);
         h.ok(title() === built.title && row(tree, 'add a chime') === built.row, 'setup: a render at the same text size keeps what is drawn');
         windowMetrics.fontScale = 2;
-        await reloadHistory(tree, access, app);
+        await reloadHistory(tree, access, app, over);
         h.ok(title() !== built.title && row(tree, 'add a chime') !== built.row, 'the size changed: the title and the rows are built again, so iOS measures every text at the new size');
-        h.ok(button(tree, COPY.historyGoBackToThis) !== undefined, 'the row that was open is still open');
+        h.ok(button(tree, COPY.historyMakeCopyHere) !== undefined, 'the row that was open is still open');
         h.ok(asking(), 'and the question is still open');
         const rebuilt = title();
-        await reloadHistory(tree, access, app);
+        await reloadHistory(tree, access, app, over);
         h.ok(title() === rebuilt, 'built again once per size, not on every render');
       } finally {
         windowMetrics.fontScale = 1;
       }
-    });
+    }, over);
   });
 
-  await h.test('history screen: Start a copy forks from that row’s version, once', async () => {
+  await h.test('history screen: Make a copy from here asks “Copy the data, or start fresh?”, then copies that row’s version once however often it is tapped, says “Copy made” with Open, and Open opens the copy', async () => {
     const { access, app, middle } = await threeVersions();
-    const forks: (string | undefined)[] = [];
+    const forks: unknown[][] = [];
     const finish = held<void>();
-    const fork = access.fork.bind(access);
-    access.fork = async (entry, id, opts) => { forks.push(id); await finish.promise; return fork(entry, id, opts); };
+    const opened: InstalledApp[] = [];
+    const onFork: HistoryScreenProps['onFork'] = async (entry, id, opts) => { forks.push([entry.id, id, opts]); await finish.promise; return access.fork(entry, id, opts); };
     await withHistory(access, app, async (tree) => {
       await waitFor(() => hasRow(tree, 'add a chime'), 'the versions to load');
-      await press(row(tree, 'add a chime'));
-      await press(button(tree, COPY.historyStartCopyHere));
-      h.eq(forks, [], 'Start a copy only asks first');
-      await TestRenderer.act(async () => { const confirm = button(tree, COPY.historyCopyConfirm); confirm.props.onPress(); confirm.props.onPress(); });
-      await h.throws(() => press(button(tree, COPY.historyCopyConfirmBusy)), 'Cannot press a disabled control', 'while it runs the confirm cannot be tapped again');
+      await openAndPress(tree, 'add a chime', COPY.historyMakeCopyHere);
+      h.eq(forks, [], 'the copy question comes first: nothing is made yet');
+      h.ok(questionRow(tree, COPY.copyQuestionData) !== undefined && questionRow(tree, COPY.copyQuestionFresh) !== undefined, 'Home’s question, with its two answers');
+      const close = questionRow(tree, COPY.sheetClose)!;
+      await TestRenderer.act(async () => close.props.onPress());
+      await waitFor(() => sheetsOpen(tree) === 0, 'the question to close');
+      h.eq(forks, [], 'leaving the question makes nothing');
+      await press(button(tree, COPY.historyMakeCopyHere));
+      const fresh = questionRow(tree, COPY.copyQuestionFresh)!;
+      // Two taps inside one frame: only the handler’s own guard can refuse the second.
+      await TestRenderer.act(async () => { fresh.props.onPress(); fresh.props.onPress(); });
+      h.ok(textOf(tree.root).includes(COPY.historyMakeCopyBusy), 'the action shows its busy words while the copy is made');
+      await press(button(tree, COPY.historyMakeCopyBusy));
+      h.eq(sheetsOpen(tree), 0, 'and a tap meanwhile neither asks again nor copies');
       await TestRenderer.act(async () => { finish.resolve(); });
-      await waitFor(() => textOf(tree.root).includes(COPY.historyCopyToast), 'the copy to finish');
-      h.eq(forks, [middle.id], 'one copy, from that row’s version');
-    });
+      await waitFor(() => toastOf(tree) !== null, 'the copy to be made');
+      h.eq(forks, [[app.id, middle.id, { data: 'fresh' }]], 'one copy, of that row’s version, starting fresh');
+      h.eq(toastOf(tree), { message: COPY.copyMadeToast, action: COPY.actionOpen }, '“Copy made · Open”');
+      await pressToastAction(tree);
+      h.eq(opened.length, 1, 'Open opens one app');
+      h.ok(opened[0].id !== app.id && opened[0].forkedFrom?.id === app.id, 'the copy, not the original');
+      h.eq(await access.activeBundle(opened[0]), 'V2', 'which runs the copied version’s code');
+      h.eq(await access.activeId(app), (await access.timeline(app))[0].id, 'and the original is still on its own current version');
+      h.eq(await access.activeBundle(app), 'V3', 'running its own code');
+    }, { canCopyData: true, onFork, onOpen: (a) => { opened.push(a); } });
   });
 
-  await h.test('history screen: to VoiceOver each confirm is Cancel and the action as labelled buttons, and activating the action restores or copies rather than cancelling', async () => {
-    const asks = [
-      { action: COPY.historyGoBackToThis, confirm: COPY.historyRestoreConfirm, ran: 'restore' },
-      { action: COPY.historyStartCopyHere, confirm: COPY.historyCopyConfirm, ran: 'copy' },
-    ];
-    for (const ask of asks) {
-      const { access, app, middle } = await threeVersions();
-      const ran: string[] = [];
-      const [rollback, fork] = [access.rollback.bind(access), access.fork.bind(access)];
-      access.rollback = async (entry, id) => { ran.push(`restore ${id}`); return rollback(entry, id); };
-      access.fork = async (entry, id, opts) => { ran.push(`copy ${id}`); return fork(entry, id, opts); };
-      await withHistory(access, app, async (tree) => {
-        await waitFor(() => hasRow(tree, 'add a chime'), 'the versions to load');
-        await press(row(tree, 'add a chime'));
-        await press(button(tree, ask.action));
-        const sheet = tree.root.find((n) => String(n.type) === 'Modal');
-        for (const label of [COPY.cancel, ask.confirm]) {
-          const control = sheet.find((n) => ['Pressable', 'TouchableOpacity'].includes(String(n.type)) && textOf(n) === label);
-          h.ok(screenReaderElement(control) === control, `${ask.ran}: "${label}" is an element of its own, not read as part of one around it`);
-          h.eq([control.props.accessibilityRole, control.props.accessibilityLabel], ['button', label], `${ask.ran}: "${label}" is announced as a button, in its own words`);
-        }
-        await activate(button(tree, ask.confirm));
-        await waitFor(() => sheetsOpen(tree) === 0, `${ask.ran}: the sheet to close`);
-        h.eq(ran, [`${ask.ran} ${middle.id}`], `${ask.ran}: activating "${ask.confirm}" acts on that row’s version, and is not Cancel`);
-      });
+  await h.test('history screen: without the data copy, Make a copy from here makes a fresh copy at once, with no question; a failed copy says so and makes nothing', async () => {
+    const { access, app, middle } = await threeVersions();
+    const forks: unknown[][] = [];
+    let fail = false;
+    const onFork: HistoryScreenProps['onFork'] = async (entry, id, opts) => {
+      forks.push([id, opts]);
+      if (fail) throw new Error('no room left');
+      return access.fork(entry, id, opts);
+    };
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => hasRow(tree, 'add a chime'), 'the versions to load');
+      await openAndPress(tree, 'add a chime', COPY.historyMakeCopyHere);
+      await waitFor(() => toastOf(tree) !== null, 'the copy to be made');
+      h.eq([sheetsOpen(tree), forks], [0, [[middle.id, { data: 'fresh' }]]], 'no question: a fresh copy of that version');
+      h.eq(toastOf(tree)?.message, COPY.copyMadeToast, 'and “Copy made”');
+      fail = true;
+      await press(button(tree, COPY.historyMakeCopyHere));
+      await waitFor(() => toastOf(tree)?.message === COPY.copyFailedToast, 'the failure to be said');
+      h.ok(textOf(tree.root).includes(COPY.historyMakeCopyHere), 'and the action can be tried again');
+    }, { onFork });
+  });
+
+  await h.test('history screen: a copy made from History with “Copy the data” has its own storage, separate from the original’s: writes to either never show in the other', async () => {
+    const SCHEMA: SchemaArtifact = { schemaVersion: 1, collections: { Notes: { id: 'c1', tombstones: [], fields: { title: { id: 'f1', type: 'text' } } } } };
+    const state = newDeviceState();
+    try {
+      const { access } = accessOver(state);
+      const orig = await installApp(access, 'notes', SCHEMA, 'V1');
+      await access.update(orig, { record: orig.record, bundleSource: 'V2', prompt: envelope('bigger titles'), schemaJson: JSON.stringify(SCHEMA) });
+      withEngine(state, access.engineAppId(orig), SCHEMA, (engine) => { engine.records.append('Notes', { title: 'written before the copy' }); });
+      const opened: InstalledApp[] = [];
+      await withHistory(access, orig, async (tree) => {
+        await waitFor(() => rows(tree).length === 2, 'the versions to load');
+        await openAndPress(tree, 'notes V1', COPY.historyMakeCopyHere);
+        const data = questionRow(tree, COPY.copyQuestionData)!;
+        await TestRenderer.act(async () => { data.props.onPress(); });
+        await waitFor(() => toastOf(tree) !== null, 'the copy to be made');
+        await pressToastAction(tree);
+      }, { canCopyData: true, onOpen: (a) => { opened.push(a); } });
+      const [copy] = opened;
+      h.ok(copy !== undefined && copy.id !== orig.id, 'the copy was made and opened');
+      h.ok(access.engineAppId(copy) !== access.engineAppId(orig), 'it has its own storage-engine appId, never the original’s');
+      const titles = (appId: string) => notesIn(state, appId, SCHEMA);
+      h.eq(titles(access.engineAppId(copy)), ['written before the copy'], 'it starts with a copy of the data');
+      withEngine(state, access.engineAppId(copy), SCHEMA, (engine) => { engine.records.append('Notes', { title: 'only in the copy' }); });
+      withEngine(state, access.engineAppId(orig), SCHEMA, (engine) => { engine.records.append('Notes', { title: 'only in the original' }); });
+      h.eq(titles(access.engineAppId(orig)), ['written before the copy', 'only in the original'], 'the original never sees the copy’s writes');
+      h.eq(titles(access.engineAppId(copy)), ['written before the copy', 'only in the copy'], 'and the copy never sees the original’s');
+      h.eq(await access.activeBundle(copy), 'V1', 'the copy runs the version it was made from');
+      h.eq(await access.activeBundle(orig), 'V2', 'and the original is unchanged');
+    } finally {
+      disposeDeviceState(state);
     }
   });
 
@@ -808,5 +964,39 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     } finally {
       await unmountScreen(tree);
     }
+  });
+
+  await h.test('history screen: in the launcher, Make a copy from here puts a new app on Home with its own storage, from that version, and the toast’s Open opens it', async () => {
+    const never = () => new Promise<Response>(() => {});
+    await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+      const home = () => tree.root.findByType(HomeScreen);
+      const showing = (type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+      await waitFor(() => showing(HomeScreen) && home().props.apps.length > 0, 'the example apps');
+      const app: InstalledApp = home().props.apps[0];
+      const before = home().props.apps.length;
+      await TestRenderer.act(async () => home().props.onHistory(app));
+      await waitFor(() => showing(HistoryScreen) && rows(tree).length === 1, 'its history');
+      await stackMoveEnds();
+      const access: StoreAccess = tree.root.findByType(HistoryScreen).props.access;
+      const firstCode = await access.activeBundle(app);
+      const changed = await access.update(app, { record: app.record, bundleSource: `${firstCode}\n// v2`, prompt: envelope('a second version') });
+      await TestRenderer.act(async () => home().props.onHistory(changed));
+      await waitFor(() => rows(tree).length === 2, 'both versions');
+      await press(rows(tree)[1]);
+      await press(button(tree, COPY.historyMakeCopyHere));
+      const fresh = questionRow(tree, COPY.copyQuestionFresh);
+      h.ok(fresh !== undefined, 'the launcher can copy data, so it asks');
+      await TestRenderer.act(async () => { fresh!.props.onPress(); });
+      await waitFor(() => toastOf(tree)?.message === COPY.copyMadeToast, '“Copy made”');
+      const copy: InstalledApp | undefined = home().props.apps.find((a: InstalledApp) => a.forkedFrom?.id === app.id);
+      h.eq(home().props.apps.length, before + 1, 'one new app on Home');
+      h.ok(copy !== undefined && access.engineAppId(copy) === copy.id && copy.id !== access.engineAppId(app), 'with its own storage-engine appId, never the original’s');
+      h.eq(await access.activeBundle(copy!), firstCode, 'running the version it was made from');
+      h.eq(await access.activeBundle(changed), `${firstCode}\n// v2`, 'while the original keeps its current version');
+      await pressToastAction(tree);
+      await waitFor(() => showing(MiniAppView), 'the copy to open');
+      const view = tree.root.findByType(MiniAppView).props;
+      h.eq([view.installedApp.id, view.engineAppId, view.bundleSource], [copy!.id, copy!.id, firstCode], 'Open opens the copy, on its own storage and its own code');
+    });
   });
 }

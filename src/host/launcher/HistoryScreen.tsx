@@ -14,10 +14,14 @@
 // with its icon and `Current` on the active version. No filters. All store access goes through
 // `StoreAccess`; the row model lives in `history-logic.ts`, Node-testable without this component.
 //
-// Tapping a row EXPANDS it (never restores); at most one row is open. Restoring and forking are
-// explicit actions inside the open row, each behind a confirm sheet whose safe option is the large
-// button. The summary and the expanded result are agent prose and render through the one shared
-// `WhimProse` renderer; everything else is product copy and is never marked (Whim Syntax rule 7).
+// Tapping a row EXPANDS it (never changes the version); at most one row is open. Its actions act at
+// once, with Undo instead of a question (decision #75, "undo over are you sure"): "Use this version"
+// makes it current and offers Undo in the toast, and the version it left stays listed, so the same
+// Undo is a row away once the toast has gone; "Make a copy from here" asks only "Copy the data, or
+// start fresh?" (`CopyQuestionSheet`, the one Home asks) and offers Open. Before either, the open row
+// says when going there would hide saved data. The summary and the expanded result are agent prose
+// and render through the one shared `WhimProse` renderer; everything else is product copy and is
+// never marked (Whim Syntax rule 7).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, Text as RNText, View } from 'react-native';
 import type { SummaryKind, SummaryMark } from '@whim/contract';
@@ -25,19 +29,19 @@ import { LAYOUT, RADII, SPACE, TINTS, TYPE_SCALE, type ColorRole, type TypeToken
 import type { IconName } from '../../design/icons/names';
 import { InstalledApp } from './app-index';
 import { annotationBetween, buildHistoryRows, fieldsLeavingViewOnRestore, listVersions, type HistoryRow } from './history-logic';
-import { StoreAccess } from './store-access';
-import { addedFieldsLine, COPY, copySheetBody, copySheetTitle, historyVersionCount, restoreSheetBody, restoreSheetTitle, restoredToast } from './copy';
+import type { ForkOptions, StoreAccess } from './store-access';
+import { addedFieldsLine, backOnVersionToast, COPY, historyVersionCount } from './copy';
 import {
-  ConfirmFlight,
   HISTORY_LOADING,
   RESTORE_DIFF_NONE,
   restoreDiffLine,
-  runConfirmOp,
+  RowActionFlight,
   runHistoryLoad,
+  runRowAction,
   type HistoryLoadState,
   type RestoreDiffState,
 } from './history-wait';
-import ConfirmSheet, { type ConfirmSheetContent } from './ConfirmSheet';
+import { CopyQuestionSheet } from './CopyQuestionSheet';
 import { tileOf } from './tile-identity';
 import { useSystemBack } from './use-system-back';
 import WhimProse from '../ui/whim-prose/WhimProse';
@@ -47,8 +51,10 @@ import { Icon } from '../ui/Icon';
 import { BackButton } from '../ui/IconButton';
 import { Skeleton, SkeletonBlock } from '../ui/Skeleton';
 import { Text, wrappingType } from '../ui/Text';
+import { useToast } from '../ui/Toast';
 import { useTokens } from '../ui/tokens';
 import { ICON_BUTTON, makeStyles, MAX_FONT_SCALE, type ShellTokens } from '../ui/tokens-pure';
+import { haptics } from '../haptics';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 
@@ -62,17 +68,22 @@ export interface HistoryScreenProps {
   /** Opens the report screen for the version the user is currently on (content-reporting
    *  "Reporting from history"): the header's text button; no row gains one. */
   onReport: () => void;
+  /** Whether "Make a copy from here" can copy the data (`StoreAccess.canCopyData`). When false the
+   *  copy starts fresh at once, with no question. */
+  canCopyData?: boolean;
+  /** Makes a copy of `app` from `versionId` with its own storage (`StoreAccess.fork`): the new entry,
+   *  or `null` when that app is busy with something else and nothing started; rejects when nothing
+   *  was made. */
+  onFork: (app: InstalledApp, versionId: string, opts: ForkOptions) => Promise<InstalledApp | null>;
+  /** Opens an app: the copy the "Copy made" toast names. */
+  onOpen: (app: InstalledApp) => void;
 }
 
-interface ConfirmState {
-  kind: 'restore' | 'copy';
-  row: HistoryRow;
-}
+/** The row action in flight, which shows its busy words. */
+type RowBusy = { id: string; action: 'use-version' | 'make-copy' } | null;
 
-const TOAST_TIMEOUT_MS = 2200;
-
-function historyOperationFailed(operation: 'list' | 'restore-diff' | 'annotation'): void {
-  log.warn(CHANNELS.app, 'history operation failed', { operation });
+function historyOperationFailed(operation: 'list' | 'hidden-data' | 'annotation' | 'use-version' | 'undo' | 'copy', e?: unknown): void {
+  log.warn(CHANNELS.app, 'history operation failed', { operation, ...(e === undefined ? {} : { detail: e instanceof Error ? e.message : String(e) }) });
 }
 
 /** §7.1 Timeline row: the rail's centre line (x = 27 from the screen's edge), its 2 pt width, the
@@ -167,23 +178,13 @@ const styles = makeStyles((t) => {
     expanded: { marginTop: SPACE[3] },
     touched: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: SPACE[2], marginTop: SPACE[1] },
     actions: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: SPACE[2], marginTop: SPACE[3] },
-    reassurance: { marginTop: SPACE[1] },
-    reassurancePending: {
+    hiddenData: { marginTop: SPACE[3] },
+    hiddenDataPending: {
       height: TYPE_SCALE.footnote.lineHeight,
       width: '76%' as const,
       borderRadius: RADII.xs.radius,
-      marginTop: SPACE[1],
+      marginTop: SPACE[3],
       backgroundColor: t.colors['fill-strong'],
-    },
-    toast: {
-      position: 'absolute' as const,
-      left: LAYOUT.gutter,
-      right: LAYOUT.gutter,
-      bottom: SPACE[8],
-      borderRadius: RADII.full.radius,
-      paddingVertical: SPACE[3],
-      paddingHorizontal: SPACE[4],
-      backgroundColor: t.colors.ink,
     },
     skeletonRow: { paddingLeft: RAIL.content, paddingRight: LAYOUT.gutter, paddingBottom: ROW_GAP, paddingTop: ROW_TOP, gap: SPACE[1] },
   };
@@ -208,9 +209,10 @@ function Prose({
   );
 }
 
-export default function HistoryScreen({ app, access, onBack, onChangeIt, onReport }: Readonly<HistoryScreenProps>) {
+export default function HistoryScreen({ app, access, onBack, onChangeIt, onReport, canCopyData = false, onFork, onOpen }: Readonly<HistoryScreenProps>) {
   const t = useTokens();
   const s = styles(t);
+  const toast = useToast();
   const { tint, icon } = tileOf(app);
   const nameColor = TINTS[tint][t.scheme];
 
@@ -219,88 +221,98 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
   // `loading` already false is exactly the fake-empty flash this screen had).
   const [{ loading, snapshots, activeId }, setLoad] = useState<HistoryLoadState>(HISTORY_LOADING);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
-  const [restoreDiff, setRestoreDiff] = useState<RestoreDiffState>(RESTORE_DIFF_NONE);
-  // The confirm sheet's double-submit guard. A ref, not state: two taps inside one frame both read
-  // the same rendered `disabled` value, so only a synchronous claim can refuse the second.
-  const confirmFlight = useRef(new ConfirmFlight()).current;
-  const [confirmBusy, setConfirmBusy] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The row actions' double-submit guard, shared by Use this version, its Undo and Make a copy. A
+  // ref, not state: two taps inside one frame both read the same rendered busy value, so only a
+  // synchronous claim can refuse the second.
+  const flight = useRef(new RowActionFlight()).current;
+  const [busy, setBusy] = useState<RowBusy>(null);
+  // The copy question, open over the row it was asked for; kept (closed) while the sheet leaves.
+  const [copying, setCopying] = useState<{ row: HistoryRow; open: boolean } | null>(null);
 
   const load = () =>
     runHistoryLoad(async () => {
       const [list, active] = await Promise.all([listVersions(access, app), access.activeId(app)]);
       return { snapshots: list, activeId: active };
     }, setLoad);
+  const reload = () =>
+    load().catch((e) => {
+      historyOperationFailed('list', e);
+    });
 
   useEffect(() => {
-    load().catch(() => {
-      historyOperationFailed('list');
-    });
+    reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [access, app]);
 
   useSystemBack(onBack);
 
-  useEffect(() => {
-    return () => {
-      if (toastTimer.current) clearTimeout(toastTimer.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (confirm?.kind !== 'restore' || activeId == null) {
-      setRestoreDiff(RESTORE_DIFF_NONE);
-      return;
-    }
-    setRestoreDiff({ status: 'pending' });
-    let cancelled = false;
-    fieldsLeavingViewOnRestore(access, app, confirm.row.id, activeId)
-      .then(fields => {
-        if (!cancelled) setRestoreDiff({ status: 'ready', fields });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setRestoreDiff(RESTORE_DIFF_NONE);
-          historyOperationFailed('restore-diff');
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [confirm, access, app, activeId]);
-
   const rows = useMemo(() => buildHistoryRows(snapshots, activeId), [snapshots, activeId]);
   const proseApps = useMemo(() => [{ name: app.name, color: nameColor }], [app.name, nameColor]);
 
-  const showToast = (text: string) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast(text);
-    toastTimer.current = setTimeout(() => setToast(null), TOAST_TIMEOUT_MS);
+  const busyFor = (row: HistoryRow, action: 'use-version' | 'make-copy') => (on: boolean) => setBusy(on ? { id: row.id, action } : null);
+
+  /** Undo: back to the version that was current before "Use this version". It needs no toast: the
+   *  rows say where the app is. Once the toast has gone, the same version's own row does this. */
+  const undo = async (previousId: string) => {
+    try {
+      if (!(await runRowAction(flight, () => {}, () => access.rollback(app, previousId)))) return;
+    } catch (e) {
+      historyOperationFailed('undo', e);
+      toast.show({ message: COPY.undoTooLateToast });
+    }
+    await reload();
   };
 
-  const confirmRestore = async () => {
-    if (!confirm) return;
-    const { row } = confirm;
-    const ran = await runConfirmOp(confirmFlight, setConfirmBusy, () => access.rollback(app, row.id));
-    if (!ran) return;
-    setConfirm(null);
-    await load().catch(() => {
-      historyOperationFailed('list');
+  /** "Use this version": current at once, then the toast with Undo. */
+  const switchVersion = async (row: HistoryRow) => {
+    const previousId = activeId;
+    try {
+      if (!(await runRowAction(flight, busyFor(row, 'use-version'), () => access.rollback(app, row.id)))) return;
+    } catch (e) {
+      historyOperationFailed('use-version', e);
+      haptics.play('failure');
+      toast.show({ message: COPY.historyUseVersionFailed });
+      await reload();
+      return;
+    }
+    await reload();
+    haptics.play('success');
+    toast.show({
+      message: backOnVersionToast(row.number),
+      ...(previousId == null ? {} : { action: { label: COPY.toastUndo, onPress: () => undo(previousId) } }),
     });
-    showToast(restoredToast(row.version));
   };
 
-  // The sheet stays open for the duration of the fork: the confirmed control itself shows the busy
-  // state until the fork completes, which a dismissed sheet cannot do.
-  const confirmCopy = async () => {
-    if (!confirm) return;
-    const { row } = confirm;
-    const ran = await runConfirmOp(confirmFlight, setConfirmBusy, () => access.fork(app, row.id));
-    if (!ran) return;
-    setConfirm(null);
-    showToast(COPY.historyCopyToast);
+  /** Makes the copy from `row`'s version with the chosen data, then "Copy made" with Open. */
+  const makeCopy = async (row: HistoryRow, data: ForkOptions['data']) => {
+    const result: { made: InstalledApp | null } = { made: null };
+    try {
+      const ran = await runRowAction(flight, busyFor(row, 'make-copy'), async () => {
+        result.made = await onFork(app, row.id, { data });
+      });
+      if (!ran) return;
+    } catch (e) {
+      historyOperationFailed('copy', e);
+      haptics.play('failure');
+      toast.show({ message: COPY.copyFailedToast });
+      return;
+    }
+    const { made } = result;
+    if (!made) return;
+    haptics.play('success');
+    toast.show({ message: COPY.copyMadeToast, action: { label: COPY.actionOpen, onPress: () => onOpen(made) } });
+  };
+
+  const askCopy = (row: HistoryRow) => {
+    if (flight.inFlight) return;
+    if (canCopyData) setCopying({ row, open: true });
+    else makeCopy(row, 'fresh');
+  };
+
+  const answerCopy = (data: ForkOptions['data']) => {
+    const row = copying?.row;
+    setCopying((c) => (c ? { ...c, open: false } : c));
+    if (row) makeCopy(row, data);
   };
 
   const titleBlock = (
@@ -330,13 +342,15 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
       access={access}
       proseApps={proseApps}
       predecessorId={snapshots[item.index + 1]?.id}
+      activeId={activeId}
       expanded={item.id === expandedId}
+      busy={busy?.id === item.id ? busy.action : null}
       isFirst={index === 0}
       isLast={index === rows.length - 1}
       onToggle={() => setExpandedId(prev => (prev === item.id ? null : item.id))}
       onChangeIt={() => onChangeIt?.(app)}
-      onGoBack={() => setConfirm({ kind: 'restore', row: item })}
-      onStartCopy={() => setConfirm({ kind: 'copy', row: item })}
+      onUseVersion={() => switchVersion(item)}
+      onMakeCopy={() => askCopy(item)}
     />
   );
 
@@ -366,26 +380,15 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
             contentContainerStyle={s.list}
           />
         )}
-
-        {toast && (
-          <View style={s.toast}>
-            <Text type="callout" color="on-ink">
-              {toast}
-            </Text>
-          </View>
-        )}
       </React.Fragment>
 
-      {/* The confirm sheet (E7/D11): the SAFE option (`Cancel`) is the large, full-width button; the
-          consequential action is demoted to plain text beneath it — never the other way around. */}
-      <ConfirmSheet
-        confirm={confirm && confirmContent(confirm, app.name)}
-        busy={confirmBusy}
-        onCancel={() => setConfirm(null)}
-        onConfirm={confirm?.kind === 'restore' ? confirmRestore : confirmCopy}
-      >
-        {confirm?.kind === 'restore' && <RestoreReassurance diff={restoreDiff} />}
-      </ConfirmSheet>
+      <CopyQuestionSheet
+        visible={copying?.open === true}
+        appName={app.name}
+        onCopyData={() => answerCopy('copy')}
+        onStartFresh={() => answerCopy('fresh')}
+        onClose={() => setCopying((c) => (c ? { ...c, open: false } : c))}
+      />
     </View>
   );
 }
@@ -396,15 +399,19 @@ interface HistoryRowViewProps {
   access: StoreAccess;
   proseApps: { name: string; color: string }[];
   predecessorId: string | undefined;
+  /** The current version, which the hidden-data line compares this row's version with. */
+  activeId: string | null;
   expanded: boolean;
+  /** This row's action in flight, which shows its busy words. */
+  busy: 'use-version' | 'make-copy' | null;
   /** Rail terminators: the newest row's segment starts at its dot, v1's ends there, and a lone row
    *  draws no rail at all. */
   isFirst: boolean;
   isLast: boolean;
   onToggle: () => void;
   onChangeIt: () => void;
-  onGoBack: () => void;
-  onStartCopy: () => void;
+  onUseVersion: () => void;
+  onMakeCopy: () => void;
 }
 
 function HistoryRowView({
@@ -413,18 +420,45 @@ function HistoryRowView({
   access,
   proseApps,
   predecessorId,
+  activeId,
   expanded,
+  busy,
   isFirst,
   isLast,
   onToggle,
   onChangeIt,
-  onGoBack,
-  onStartCopy,
+  onUseVersion,
+  onMakeCopy,
 }: Readonly<HistoryRowViewProps>) {
   const t = useTokens();
   const s = styles(t);
   const [annotationFields, setAnnotationFields] = useState<string[]>([]);
+  const [hiddenData, setHiddenData] = useState<RestoreDiffState>(RESTORE_DIFF_NONE);
   const chip = row.kind ? KIND_CHIP[row.kind] : null;
+
+  // Whether going to this version would hide saved data, asked when the row opens: said before
+  // either action is tapped, since both act at once.
+  useEffect(() => {
+    if (!expanded || row.isCurrent || activeId == null) {
+      setHiddenData(RESTORE_DIFF_NONE);
+      return;
+    }
+    let cancelled = false;
+    setHiddenData({ status: 'pending' });
+    fieldsLeavingViewOnRestore(access, app, row.id, activeId)
+      .then(fields => {
+        if (!cancelled) setHiddenData({ status: 'ready', fields });
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setHiddenData(RESTORE_DIFF_NONE);
+          historyOperationFailed('hidden-data', e);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, row.isCurrent, activeId, access, app, row.id]);
 
   useEffect(() => {
     if (!expanded || predecessorId == null) {
@@ -529,10 +563,27 @@ function HistoryRowView({
                 color="text-2"
               />
             )}
+            <HiddenDataLine diff={hiddenData} />
             <View style={s.actions}>
-              {row.actions.includes('change-from-here') && <Button label={COPY.historyChangeFromHere} variant="ember" size="medium" onPress={onChangeIt} />}
-              {row.actions.includes('go-back') && <Button label={COPY.historyGoBackToThis} variant="secondary" size="medium" onPress={onGoBack} />}
-              {row.actions.includes('start-copy') && <Button label={COPY.historyStartCopyHere} variant="plain" size="medium" onPress={onStartCopy} />}
+              {row.actions.includes('change-it') && <Button label={COPY.actionChangeIt} variant="ember" size="medium" onPress={onChangeIt} />}
+              {row.actions.includes('use-version') && (
+                <Button
+                  label={COPY.historyUseVersion}
+                  variant="secondary"
+                  size="medium"
+                  busy={busy === 'use-version' ? COPY.historyUseVersionBusy : undefined}
+                  onPress={onUseVersion}
+                />
+              )}
+              {row.actions.includes('make-copy') && (
+                <Button
+                  label={COPY.historyMakeCopyHere}
+                  variant="plain"
+                  size="medium"
+                  busy={busy === 'make-copy' ? COPY.historyMakeCopyBusy : undefined}
+                  onPress={onMakeCopy}
+                />
+              )}
             </View>
           </View>
         )}
@@ -541,30 +592,22 @@ function HistoryRowView({
   );
 }
 
-/** What the restore or copy confirm says about `confirm`'s row. */
-function confirmContent(confirm: ConfirmState, appName: string): ConfirmSheetContent {
-  const version = confirm.row.version;
-  return confirm.kind === 'restore'
-    ? { title: restoreSheetTitle(version), body: restoreSheetBody(version), confirmLabel: COPY.historyRestoreConfirm, busyLabel: COPY.historyRestoreConfirmBusy }
-    : { title: copySheetTitle(version), body: copySheetBody(appName), confirmLabel: COPY.historyCopyConfirm, busyLabel: COPY.historyCopyConfirmBusy };
-}
-
 /**
- * The restore confirm's reassurance line, which resolves IN PLACE: while the diff is being computed
- * a placeholder holds its space, so the sheet does not reflow when the sentence arrives (D6 — a
- * placeholder, deliberately not a skeleton: one sentence has no row shape to mimic).
+ * An open row's hidden-data line, which resolves IN PLACE: while the diff is being computed a
+ * placeholder holds its space, so the actions under it do not move when the sentence arrives (D6 —
+ * a placeholder, deliberately not a skeleton: one sentence has no row shape to mimic).
  */
-function RestoreReassurance({ diff }: Readonly<{ diff: RestoreDiffState }>) {
+function HiddenDataLine({ diff }: Readonly<{ diff: RestoreDiffState }>) {
   const t = useTokens();
   const s = styles(t);
   const line = restoreDiffLine(diff);
   if (line === 'pending') {
-    return <View accessibilityRole="progressbar" accessibilityLabel={COPY.historyReassurancePending} style={s.reassurancePending} />;
+    return <View accessibilityRole="progressbar" accessibilityLabel={COPY.historyReassurancePending} style={s.hiddenDataPending} />;
   }
   if (line === 'reassurance') {
     return (
-      <Text type="footnote" color="text-2" style={s.reassurance}>
-        {COPY.historyReassurance}
+      <Text type="footnote" color="text-2" style={s.hiddenData}>
+        {COPY.historyHiddenData}
       </Text>
     );
   }

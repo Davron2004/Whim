@@ -1,8 +1,8 @@
 /**
  * history-logic — the RN-free decision logic behind HistoryScreen (version-history spec,
  * design-system-v1 chain-20). Row derivation for the timeline (the user's quoted prompt as the
- * headline and Whim's summary under it, the version and when, the kind chip, at-most-two next
- * actions per row) plus the schema-diff annotation helpers D5's restore-reassurance path reads.
+ * headline and Whim's summary under it, the version and when, the kind chip, each row's actions)
+ * plus the schema-diff annotation helpers the hidden-data line reads.
  *
  * `RunSummary`/`SummaryKind`/`SummaryMark` are `@whim/contract` TYPE-ONLY imports (erased at
  * compile — zod itself never enters the RN bundle). `storedSummary` below mirrors
@@ -119,9 +119,9 @@ export async function annotationBetween(
 }
 
 /**
- * D5 restore reassurance: fields that would leave view by restoring to `targetId` — present in
- * the currently active version's schema, absent from the target's. Empty means nothing would
- * leave view (no reassurance needed).
+ * The hidden-data line (D5): fields that would leave view by using `targetId` — present in the
+ * currently active version's schema, absent from the target's. Empty means nothing would leave
+ * view (no line).
  */
 export function fieldsLeavingViewOnRestore(
   access: StoreAccess,
@@ -179,11 +179,13 @@ export function storedSummary(raw: string): RunSummary | undefined {
   return undefined;
 }
 
-export type HistoryActionKind = 'change-from-here' | 'go-back' | 'start-copy';
+export type HistoryActionKind = 'change-it' | 'use-version' | 'make-copy';
 
 export interface HistoryRow {
   id: string;
   index: number;
+  /** The version's place in the chain, oldest = 1: "Back on version 3". */
+  number: number;
   /** A display ordinal, oldest = "v1" — never a git ref (product-verbs guard). */
   version: string;
   /** "v4 · 2 days ago". */
@@ -205,7 +207,8 @@ export interface HistoryRow {
   /** The true first version: the end of the chain, where the app began. The only row whose kind
    *  is `Start`. */
   isInstall: boolean;
-  /** At most two, never three (E5/E9). */
+  /** The current version's `change-it`; every other version's `use-version` and `make-copy` (the
+   *  first version's too, and a newer one after going back: that is how Undo stays reachable). */
   actions: HistoryActionKind[];
 }
 
@@ -240,14 +243,13 @@ export function buildHistoryRows(rows: readonly Snapshot[], activeId: string | n
     const promptText = parsePromptEnvelope(snapshot.prompt).text;
     const isCurrent = snapshot.id === activeId;
     const isInstall = index === total - 1;
-    let actions: HistoryActionKind[];
-    if (isCurrent) actions = ['change-from-here'];
-    else if (isInstall) actions = ['start-copy'];
-    else actions = ['go-back', 'start-copy'];
-    const version = `v${total - index}`;
+    const actions: HistoryActionKind[] = isCurrent ? ['change-it'] : ['use-version', 'make-copy'];
+    const number = total - index;
+    const version = `v${number}`;
     return {
       id: snapshot.id,
       index,
+      number,
       version,
       meta: historyRowMeta(version, snapshot.createdAt, now),
       kind: rowKind(summary, isInstall),

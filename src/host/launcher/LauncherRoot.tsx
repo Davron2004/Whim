@@ -1380,14 +1380,15 @@ function LauncherShell({
   const reloadRef = useRef(reloadRunning);
   reloadRef.current = reloadRunning;
 
-  /** Make a copy: busy for that app while it runs. Resolves the new entry, or `null` when a copy (or
-   *  an open) of the app is already running; rejects when the copy could not be made, with nothing
-   *  created (`StoreAccess.fork`'s error surface), for Home to say so in a toast. */
-  const onFork = (app: InstalledApp, opts: ForkOptions): Promise<InstalledApp | null> =>
+  /** Make a copy, from the current version or History's `versionId`: busy for that app while it runs.
+   *  Resolves the new entry, or `null` when a copy (or an open) of the app is already running; rejects
+   *  when the copy could not be made, with nothing created (`StoreAccess.fork`'s error surface), for
+   *  Home or History to say so in a toast. */
+  const onFork = (app: InstalledApp, opts: ForkOptions, versionId?: string): Promise<InstalledApp | null> =>
     runFork(
       (work) => runAppOp(appOps, setAppBusy, app.id, 'fork', work),
       async () => {
-        const made = await access.fork(app, undefined, opts);
+        const made = await access.fork(app, versionId, opts);
         refresh();
         return made;
       },
@@ -1580,7 +1581,7 @@ function LauncherShell({
 
   // ── The legal flow: terms, then AI-data consent (design D1/D2/D5; legal-surface-v2 D5) ─────
   // Every data-sending entry point — the composer row, "Prompt again", the orb's change action,
-  // history's "Change it from here", and Retry — calls `openWithConsent` instead of acting
+  // History’s "Change it", and Retry — calls `openWithConsent` instead of acting
   // directly. `onRetryPending` (defined below, among the ghost-tile handlers) is referenced here
   // only inside a closure that never runs before this render completes, so its declaration order
   // doesn't matter — the same pattern `onLeaveRunningRef.current = onLeaveRunning` already relies
@@ -3612,6 +3613,9 @@ function LauncherShell({
             onBack={on.from === 'app' ? () => backFromHistoryToApp(on.app) : backFromHistoryToHome}
             onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
             onReport={() => setScreen({ kind: 'report', app: on.app, from: on })}
+            canCopyData={access.canCopyData}
+            onFork={(app, versionId, opts) => onFork(app, opts, versionId)}
+            onOpen={onOpen}
           />
         );
       case 'report':

@@ -1,11 +1,11 @@
 /**
  * history-wait — the history screen's three wait states (`version-history`: "History's first load
- * shows a loading state, never fake-empty", "The confirm sheet's Restore and Copy actions disable
- * while in flight", "The restore-diff reassurance line shows a pending state while it loads").
+ * shows a loading state, never fake-empty", the row's actions ignore taps while in flight, and the
+ * hidden-data line's pending state while it loads).
  *
- * Behavioural against the real `runHistoryLoad` / `runConfirmOp` the screen runs: the loading flag
+ * Behavioural against the real `runHistoryLoad` / `runRowAction` the screen runs: the loading flag
  * is true until the first read resolves and false afterwards (empty result included), a second
- * confirm tap while one is in flight never reaches `rollback`/`fork` at all, and the in-flight flag
+ * tap while an action is in flight never reaches `rollback`/`fork` at all, and the in-flight flag
  * clears when the operation fails. The rendered screen is in `history-ui.suite.tsx`.
  *
  * Every `await` here is on a deferred this file resolves itself — a bare unresolved `await` would
@@ -14,11 +14,11 @@
 
 import { Harness } from './harness';
 import {
-  ConfirmFlight,
+  RowActionFlight,
   HISTORY_LOADING,
   RESTORE_DIFF_NONE,
   restoreDiffLine,
-  runConfirmOp,
+  runRowAction,
   runHistoryLoad,
   type HistoryLoadState,
   type PublishHistoryLoad,
@@ -61,7 +61,7 @@ function within<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
 }
 
 export async function runHistoryWaitTests(h: Harness): Promise<void> {
-  console.log('\n— history-wait: first-load skeleton, confirm double-submit guard, diff pending —');
+  console.log('\n— history-wait: first-load skeleton, row-action double-submit guard, diff pending —');
 
   // ── first load ─────────────────────────────────────────────────────────────────────────────
 
@@ -110,7 +110,7 @@ export async function runHistoryWaitTests(h: Harness): Promise<void> {
     h.eq(pub.latest().loading, false, 'and the screen is not left loading forever');
   });
 
-  // Scenario: the reload `confirmRestore` runs after a restore fails. The rows on screen are still
+  // Scenario: the reload that follows using a version fails. The rows on screen are still
   // the truth about this app's history — a failed READ must not present as an emptied history.
   await h.test('load: a failed RELOAD keeps the rows already on screen', async () => {
     const pub = publisher();
@@ -130,15 +130,15 @@ export async function runHistoryWaitTests(h: Harness): Promise<void> {
     h.eq(pub.latest().loading, false, 'with the wait cleared, not a permanent skeleton');
   });
 
-  // ── confirm-sheet double submit ────────────────────────────────────────────────────────────
+  // ── row-action double submit ──────────────────────────────────────────────────────────────
 
-  await h.test('confirm: a second tap while the first is in flight runs the version-store call exactly once (restore and copy share this guard)', async () => {
-    const flight = new ConfirmFlight();
+  await h.test('row action: a second tap while the first is in flight runs the version-store call exactly once (use, Undo and copy share this guard)', async () => {
+    const flight = new RowActionFlight();
     const gate = deferred<void>();
     const busy: boolean[] = [];
     let calls = 0;
 
-    const first = runConfirmOp(flight, b => busy.push(b), async () => {
+    const first = runRowAction(flight, b => busy.push(b), async () => {
       calls++;
       await gate.promise;
     });
@@ -146,22 +146,22 @@ export async function runHistoryWaitTests(h: Harness): Promise<void> {
 
     // Deliberately invoking the HANDLER, not the disabled control: a guard that lived only in the
     // `disabled` prop would let this second call through and queue a second call.
-    const second = await within(runConfirmOp(flight, b => busy.push(b), async () => { calls++; }), 1000, 'the second confirm');
+    const second = await within(runRowAction(flight, b => busy.push(b), async () => { calls++; }), 1000, 'the second confirm');
     h.eq(second, false, 'the second confirm is refused outright');
     h.eq(calls, 1, 'exactly one call reached the version store');
 
     gate.resolve();
     h.eq(await within(first, 1000, 'the first confirm'), true, 'the first one ran');
     h.eq(busy, [true, false], 'and the busy state clears when it settles');
-    h.eq(await within(runConfirmOp(flight, () => {}, async () => { calls++; }), 1000, 'a later confirm'), true, 'a later confirm is allowed again');
+    h.eq(await within(runRowAction(flight, () => {}, async () => { calls++; }), 1000, 'a later confirm'), true, 'a later confirm is allowed again');
     h.eq(calls, 2, 'and runs');
   });
 
-  await h.test('confirm: a failed restore releases the button instead of leaving it disabled', async () => {
-    const flight = new ConfirmFlight();
+  await h.test('row action: a failed one releases the action instead of leaving it busy', async () => {
+    const flight = new RowActionFlight();
     const busy: boolean[] = [];
     await h.throws(
-      () => within(runConfirmOp(flight, b => busy.push(b), async () => { throw new Error('rollback failed'); }), 1000, 'the failing restore'),
+      () => within(runRowAction(flight, b => busy.push(b), async () => { throw new Error('rollback failed'); }), 1000, 'the failing restore'),
       'rollback failed',
       'the failure propagates',
     );
@@ -169,13 +169,13 @@ export async function runHistoryWaitTests(h: Harness): Promise<void> {
     h.ok(!flight.inFlight, 'so the user can try again rather than facing a permanently disabled button');
   });
 
-  // ── restore-diff pending line ──────────────────────────────────────────────────────────────
+  // ── hidden-data pending line ───────────────────────────────────────────────────────────────
 
   await h.test('diff: the reassurance line shows a pending placeholder until the diff resolves', () => {
     h.eq(restoreDiffLine({ status: 'pending' }), 'pending', 'while the fields are being computed the line reserves its space');
     h.eq(restoreDiffLine({ status: 'ready', fields: ['Notes (text)'] }), 'reassurance', 'fields leaving view resolve into the reassurance sentence');
     h.eq(restoreDiffLine({ status: 'ready', fields: [] }), 'none', 'and nothing at all when no field would leave view');
-    h.eq(restoreDiffLine(RESTORE_DIFF_NONE), 'none', 'a non-restore sheet has nothing pending');
+    h.eq(restoreDiffLine(RESTORE_DIFF_NONE), 'none', 'the current version’s row has nothing pending');
   });
 
 
