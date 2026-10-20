@@ -328,7 +328,7 @@ function changeOver(
   if (on === null) return { finished: false };
   const changes = records.map((view) => view.record).filter((rec) => rec.editingAppId === on.app.id);
   return {
-    changing: changes.find((rec) => rec.state === 'building'),
+    changing: changes.find((rec) => rec.state === 'building' && !discarded(rec)),
     failed: changes.find((rec) => rec.state === 'failed' && rec.updatedAt >= on.tappedAt && !discarded(rec)),
     ...(landed !== null && marksLaunch(landed, on) ? { landed: landed.entry } : {}),
     finished: marksLaunch(finished, on),
@@ -2116,7 +2116,7 @@ function LauncherShell({
     releaseLiveRef(live.lease);
     const record = pending.get(live.id);
     if (record?.editingAppId != null) {
-      dropAttempt(live.id);
+      dropStoppedChange(live, record);
     } else {
       try {
         pending.stop(live.id);
@@ -2128,6 +2128,38 @@ function LauncherShell({
       keepEarlierRunOnStop(live);
     }
     refresh();
+    return true;
+  };
+
+  /** A stopped change leaves nothing behind. When storage keeps its record or journal anyway, the run
+   *  still ends: its lease goes (the next change of the app starts), its record is settled stopped (so
+   *  nothing shows it being made) and its leftovers are purged as a Discard's are. */
+  const dropStoppedChange = (live: LiveAttempt, record: PendingBuildRecord) => {
+    try {
+      dropAttempt(live.id);
+    } catch (error) {
+      log.warn(CHANNELS.gen, 'stopped change could not be removed', { operation: 'stop-change', ...errorFields(error) });
+    }
+    pending.releaseAttempt(live.lease);
+    if (!purgeLeftover(record)) return;
+    try {
+      pending.stop(live.id);
+    } catch (error) {
+      log.warn(CHANNELS.gen, 'stopped change could not be settled', { operation: 'stop-change', ...errorFields(error) });
+    }
+  };
+
+  /** A run storage would not fully remove (a removal that threw, or said it removed and did not): its
+   *  purge is armed as a Discard arms one, so nothing shows the run from now on and the next launch
+   *  removes what is left (`completeInterruptedPurges`, which spares a later run of the same id).
+   *  Whether anything was left. */
+  const purgeLeftover = (run: PendingBuildRecord): boolean => {
+    if (pending.get(run.id) == null && journal.get(run.id) == null) return false;
+    try {
+      purges.armAttempt(run);
+    } catch (error) {
+      log.warn(CHANNELS.gen, 'leftover attempt purge could not be armed', { operation: 'purge-leftover', ...errorFields(error) });
+    }
     return true;
   };
 
@@ -2827,6 +2859,7 @@ function LauncherShell({
       }
       // Store first, index second, pending record deleted LAST (design D5) — a process death
       // anywhere inside this await leaves the record behind to surface as `interrupted`.
+      const run = pending.get(attemptId);
       const delivered = await deliverAndSettleIfOwned(pending, {
         access,
         appId: attemptId,
@@ -2839,10 +2872,16 @@ function LauncherShell({
       // report, under the id the app NOW has (a behind-tip rebuild delivers onto a fork, whose id
       // is not the attempt's). After the delivery, never before it — a death in between loses the
       // report and nothing else (design D5).
+      // The delivery stands even when storage keeps the run's record or journal: those are purged.
       whenDeliverySettles(lease, delivered, (installed, selected) => {
-        journal.moveToLastRun(attemptId, installed.id);
+        try {
+          journal.moveToLastRun(attemptId, installed.id);
+        } catch (error) {
+          log.warn(CHANNELS.gen, 'delivered run journal could not be moved', { operation: 'move-last-run', ...errorFields(error) });
+        }
         pending.releaseAttempt(lease);
         releaseLiveRef(lease);
+        if (run !== null) purgeLeftover(run);
         refresh();
         if (selected && !ctl.detached) {
           setScreen((s) => (s.kind === 'making' ? readyStep(s, installed) : s));

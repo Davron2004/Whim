@@ -23,8 +23,11 @@ import { Ember } from '../../ui/Ember';
 import { stateLine, tileAccessibilityLabel } from '../../ui/AppTile-states';
 import { PendingBuildStore } from '../pending-builds';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
+import { PendingPurgeStore } from '../pending-purge';
+import { failNativeStorageRemovalsWhen } from './native-storage';
+import { afterRelaunch } from './attempt-lifecycle-ui.suite';
 import { button, hostType, press, textOf } from './react-screen';
-import { dismissToast, pressToastAction, tile, toastOf } from './home-rig';
+import { dismissToast, pressToastAction, tile, tileLabels, toastOf } from './home-rig';
 import { makingSheetOpen, planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 import {
@@ -494,4 +497,124 @@ export async function runChangingInUseUiTests(h: Harness): Promise<void> {
       h.eq(orbState(tree), '', 'opened again, the orb is at rest');
     });
   });
+
+  // The phone's storage refusing to remove a change's record or journal: the removal throws, or says it
+  // did and did not.
+  for (const fault of ['return-false', 'throw'] as const) {
+    const refusing = (on: () => boolean) => failNativeStorageRemovalsWhen(({ id, key }) =>
+      (on() && id === 'whim.launcher' && (key.startsWith('pending:') || key.startsWith('journal:')) ? fault : undefined));
+
+    await h.test(`changing in use: Stop the change whose record cannot be removed (${fault}) still ends it: the orb, the sheet and Home stop showing it, and a new change of the app starts`, async () => {
+      const streams: ReturnType<typeof sseStream>[] = [];
+      let refuse = false;
+      await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
+        const clear = refusing(() => refuse);
+        try {
+          await waitFor(() => showing(tree, HomeScreen) && home(tree).props.apps.length > 0, 'the example apps');
+          const atRest = tile(tree, APP_NAME).props.accessibilityLabel;
+          await openTipSplitter(tree);
+          await paintRunningApp(tree);
+          await makeChange(tree, streams);
+          const id = new PendingBuildStore(kv).list()[0]!.id;
+          refuse = true;
+          await openSheet(tree);
+          await press(button(tree, COPY.actionStopChange));
+          await settle();
+          h.ok(kv.getString(`pending:${id}`) != null, 'its record is still in storage');
+          h.eq(sent.filter((r) => r.path === '/v1/generate')[0]?.signal?.aborted, true, 'its request is aborted');
+          h.eq(orbState(tree), '', 'the orb is at rest');
+          await waitFor(() => controlsIn(tree).includes(COPY.whimSheetAsk), 'the send area in the open sheet');
+
+          await typeWords(tree, 'Make it purple');
+          await press(button(tree, COPY.whimSheetSend));
+          await waitFor(() => planLoaded(tree), 'the new change’s plan');
+          await press(button(tree, COPY.planBuildEdit));
+          await waitFor(() => streams.length === 2, 'the new change being made');
+          h.eq([new PendingBuildStore(kv).get(id)?.prompt, orbState(tree)], ['Make it purple', COPY.orbStateChanging], 'a new change of the app starts, and the orb follows it');
+          streams[1].push(resultEvent(APP_NAME));
+          streams[1].end();
+          await waitFor(() => toastOf(tree)?.message === changedTitle(APP_NAME), 'the new change to land');
+          await openSheet(tree);
+          await press(button(tree, COPY.whimSheetBackToApps));
+          h.eq(tile(tree, APP_NAME).props.accessibilityLabel, atRest, 'Home shows the app at rest, nothing being made');
+        } finally {
+          clear();
+        }
+      });
+    });
+
+    await h.test(`changing in use: what a stopped change left in storage (${fault}) stays out of sight and the next launch removes it`, async () => {
+      const streams: ReturnType<typeof sseStream>[] = [];
+      let refuse = false;
+      await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv }) => {
+        const clear = refusing(() => refuse);
+        let id = '';
+        try {
+          await waitFor(() => showing(tree, HomeScreen) && home(tree).props.apps.length > 0, 'the example apps');
+          const atRest = tile(tree, APP_NAME).props.accessibilityLabel;
+          const tilesBefore = tileLabels(tree);
+          await openTipSplitter(tree);
+          await paintRunningApp(tree);
+          await makeChange(tree, streams);
+          id = new PendingBuildStore(kv).list()[0]!.id;
+          refuse = true;
+          await openSheet(tree);
+          await press(button(tree, COPY.actionStopChange));
+          await settle();
+          h.ok(kv.getString(`pending:${id}`) != null, 'its record is still in storage');
+          await press(button(tree, COPY.whimSheetBackToApps));
+          h.ok(showing(tree, HomeScreen) && tile(tree, APP_NAME).props.accessibilityLabel === atRest, 'Home shows the app at rest');
+          h.eq(tileLabels(tree), tilesBefore, 'and no tile for the stopped change');
+        } finally {
+          clear();
+        }
+        await afterRelaunch(async (next) => {
+          h.eq([kv.getString(`pending:${id}`) ?? null, kv.getString(JOURNAL_KEY(id)) ?? null], [null, null], 'the next launch removed its record and journal');
+          h.eq(new PendingBuildStore(kv).list(), [], 'and left no order entry');
+          h.eq(new PendingPurgeStore(kv).list(), [], 'and nothing armed');
+          h.eq(next.root.findByType(HomeScreen).props.pending, [], 'Home shows nothing of it');
+        });
+      });
+    });
+
+    await h.test(`changing in use: a change delivered whose record cannot be removed (${fault}) lands as delivered: its toast, the dot, never a failure; the next change starts and the next launch removes what was left`, async () => {
+      const streams: ReturnType<typeof sseStream>[] = [];
+      let refuse = false;
+      await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
+        const clear = refusing(() => refuse);
+        let id = '';
+        try {
+          await openTipSplitter(tree);
+          await paintRunningApp(tree);
+          await makeChange(tree, streams);
+          id = new PendingBuildStore(kv).list()[0]!.id;
+          refuse = true;
+          streams[0].push(resultEvent(APP_NAME));
+          streams[0].end();
+          await waitFor(() => toastOf(tree) !== null, 'the change to end');
+          await settle();
+          h.ok(kv.getString(`pending:${id}`) != null, 'its record is still in storage');
+          h.eq(toastOf(tree), { message: changedTitle(APP_NAME), action: COPY.actionReload }, '"Tip Splitter changed", with Reload');
+          h.eq(orbState(tree), COPY.orbStateReady, 'the orb carries the new-version dot');
+          h.ok(new PendingBuildStore(kv).list().every((rec) => rec.state !== 'failed'), 'no failure recorded');
+          await openSheet(tree);
+          h.ok(hasButton(tree, RELOAD_ROW) && controlsIn(tree).includes(COPY.whimSheetAsk), 'the sheet offers Reload and takes a new change');
+          await press(button(tree, COPY.sheetClose));
+
+          refuse = false;
+          await makeChange(tree, streams);
+          h.eq(sent.filter((r) => r.path === '/v1/generate').length, 2, 'a new change of the app starts');
+          await openSheet(tree);
+          await press(button(tree, COPY.actionStopChange));
+        } finally {
+          clear();
+        }
+        await afterRelaunch(async (next) => {
+          h.eq([kv.getString(`pending:${id}`) ?? null, kv.getString(JOURNAL_KEY(id)) ?? null], [null, null], 'the next launch removed its record and journal');
+          h.eq(new PendingPurgeStore(kv).list(), [], 'and nothing armed');
+          h.eq(next.root.findByType(HomeScreen).props.pending, [], 'Home shows nothing of it');
+        });
+      });
+    });
+  }
 }

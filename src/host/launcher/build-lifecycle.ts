@@ -283,7 +283,9 @@ export async function deliverAndSettle(pending: PendingBuildStore, spec: Deliver
 }
 
 /** Delivery can outlive the attempt that started it. Keep the pending mutation at this awaited
- * boundary so a same-ID retry can supersede an older delivery without losing its own record. */
+ * boundary so a same-ID retry can supersede an older delivery without losing its own record.
+ * The delivery stands even when storage refuses to remove the record: a delivered app is never
+ * turned into a failed attempt, and the caller purges what is left. */
 export async function deliverAndSettleIfOwned(
   pending: PendingBuildStore,
   spec: DeliverSpec,
@@ -291,7 +293,13 @@ export async function deliverAndSettleIfOwned(
 ): Promise<InstalledApp | undefined> {
   const delivered = await deliverResult(spec);
   if (!ownsAttempt()) return undefined;
-  pending.delete(spec.appId);
+  try {
+    pending.delete(spec.appId);
+  } catch (error) {
+    log.warn(CHANNELS.gen, 'delivered attempt record could not be removed', {
+      thrown: error instanceof Error ? 'error' : 'non-error',
+    });
+  }
   return delivered;
 }
 

@@ -196,7 +196,7 @@ async function discardFailedChange(tree: Tree, streams: ReturnType<typeof sseStr
 }
 
 /** Whim launched again over the same storage, once Home is drawn. */
-async function afterRelaunch(body: (tree: Tree) => Promise<void>): Promise<void> {
+export async function afterRelaunch(body: (tree: Tree) => Promise<void>): Promise<void> {
   const next = await renderRoot(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
   try {
     await waitFor(() => on(next, HomeScreen), 'the relaunched Home');
