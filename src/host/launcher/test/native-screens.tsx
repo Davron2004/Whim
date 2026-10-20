@@ -25,10 +25,15 @@ export function stackUnmountsMidMove(): number {
   return unmountsMidMove;
 }
 
-/** The platform finished the move the stack was making. UIKit takes no touch while a push or pop
- *  runs, so a person's next tap only comes after this. */
-export function stackMoveEnds(): void {
+/** The mounted stack's `onFinishTransitioning`, which react-native-screens calls when a move ends. */
+let finishTransitioning: (() => void) | undefined;
+
+/** The platform finished the move the stack was making, and tells the stack so. UIKit takes no touch
+ *  while a push or pop runs, so a person's next tap only comes after this. */
+export async function stackMoveEnds(): Promise<void> {
+  if (!moving) return;
   moving = false;
+  await TestRenderer.act(async () => finishTransitioning?.());
 }
 
 function topScreenId(children: React.ReactNode): unknown {
@@ -45,9 +50,11 @@ export const ScreenStack = (props: HostProps) => {
     return () => {
       if (moving) unmountsMidMove += 1;
       moving = false;
+      finishTransitioning = undefined;
     };
   }, []);
   React.useLayoutEffect(() => {
+    finishTransitioning = props.onFinishTransitioning as (() => void) | undefined;
     if (shown.current !== undefined && shown.current !== top) {
       moving = !nativePopped;
       nativePopped = false;

@@ -3,7 +3,8 @@
  *  sequences, from a fixed 32-bit generator, of what a person does — open an app, the orb's Whim sheet,
  *  Back to your apps, Android back, a swipe that closes the sheet, reopening the same app or another, a
  *  flung orb, Reload from the crash screen, Report a problem and back, History from the app or from
- *  Home and leaving it (Back, system back, an iOS swipe, or a quick double tap) — interleaved with what
+ *  Home and leaving it (Back, system back, an iOS swipe, a quick double tap, or Back with an app link
+ *  arriving during the pop) — interleaved with what
  *  the WebViews do meanwhile (a page finishing its load, answering the warm probe, a realm's first
  *  paint). After every step: one launch bound while an app shows and none on Home, a loaded page bound
  *  to the launch holds that launch's delivery so its paint can open it, a painted app is not covered,
@@ -20,7 +21,8 @@ import { AppCrashed } from '../AppCrashed';
 import type { InstalledApp } from '../app-index';
 import { WARM_ANSWER, WARM_PROBE_JS } from '../webview-pool';
 import { DISMISS_REPORT_MS } from '../../ui/OverlayModal';
-import { hardwareBack, modalPresentations, Platform } from './native-host';
+import { appLinkFor } from '../app-link';
+import { hardwareBack, modalPresentations, openLink, Platform } from './native-host';
 import type { PanConfig } from './native-gesture-handler';
 import { pan } from './native-gesture-handler';
 import { iosPop, stackMoveEnds, stackUnmountsMidMove } from './native-screens';
@@ -33,7 +35,7 @@ import { mulberry32 } from './mulberry32';
 
 type Node = TestRenderer.ReactTestInstance;
 
-const STEP_KINDS = ['open', 'sheet', 'backToApps', 'androidBack', 'swipeClose', 'reopen', 'fling', 'reload', 'report', 'history', 'historyBack', 'historyDoubleBack'] as const;
+const STEP_KINDS = ['open', 'sheet', 'backToApps', 'androidBack', 'swipeClose', 'reopen', 'fling', 'reload', 'report', 'history', 'historyBack', 'historyDoubleBack', 'linkDuringHistoryPop'] as const;
 type StepKind = (typeof STEP_KINDS)[number];
 const PAGE_EVENTS = ['load', 'answer', 'paint'] as const;
 type PageEvent = (typeof PAGE_EVENTS)[number];
@@ -350,6 +352,18 @@ async function stress({ seed, platform, steps }: Run, ran: Ran): Promise<void> {
             await historyLeft('a double Back');
           },
         },
+        linkDuringHistoryPop: {
+          can: () => historyUp() && historyOver === 'home',
+          run: async () => {
+            const app = pick(apps);
+            last = app;
+            await tapsInOneAct(pick(historyTaps()), () => openLink(appLinkFor(app.id)));
+            await settle(4);
+            // The platform finishes the pop; the link lands after it.
+            await stackMoveEnds();
+            await waitFor(() => appShown(), `the link to ${app.name} to open after the pop`);
+          },
+        },
       };
 
       const check = () => {
@@ -374,7 +388,7 @@ async function stress({ seed, platform, steps }: Run, ran: Ran): Promise<void> {
         if (stackUnmountsMidMove() !== midMove) fail('the native stack was unmounted while a push or pop of it ran (iOS shows a blank Home next)');
         if (ran.violations.length > 0) return;
         // The person's next tap comes once the platform's push or pop has ended.
-        stackMoveEnds();
+        await stackMoveEnds();
       }
     });
   } finally {

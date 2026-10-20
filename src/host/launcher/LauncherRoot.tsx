@@ -784,6 +784,10 @@ function FirstRunHost({ ask, language, onLanguageChange, outdatedFrom, consentDu
   );
 }
 
+/** How long an open waits on History's pop to Home when the stack never says the pop finished: past
+ *  any push or pop UIKit or Android draws (19f3 measured them well under 0.5 s). */
+const POP_FALLBACK_MS = 1000;
+
 function LauncherShell({
   index,
   access,
@@ -1243,11 +1247,52 @@ function LauncherShell({
     Alert.alert('Could not open this app', (e as Error)?.message ?? String(e));
   };
 
+  /** The pop History's own Back starts when History was opened from Home: the shell asks for it, so
+   *  UIKit animates it, and an app opening meanwhile would unmount the stack mid-pop (react-native-screens
+   *  then keeps the unfinished pop in the stack it recycles, and the next Home it shows is blank for good,
+   *  iOS). It ends when the stack says its move finished (`NativeStack`'s `onSettled`), or after
+   *  `POP_FALLBACK_MS` should that never come. `latest` numbers what waits on it: only the last one goes. */
+  const stackPop = useRef<{ settled: Promise<void>; end: () => void; latest: number } | null>(null);
+  const startStackPop = () => {
+    if (stackPop.current !== null) return;
+    let release!: () => void;
+    const settled = new Promise<void>((resolve) => { release = resolve; });
+    const end = () => {
+      clearTimeout(timer);
+      if (stackPop.current === pop) stackPop.current = null;
+      release();
+    };
+    const timer = setTimeout(end, POP_FALLBACK_MS);
+    const pop = { settled, end, latest: 0 };
+    stackPop.current = pop;
+  };
+  useEffect(() => () => {
+    // The shell is gone: nothing that waits on the pop may run.
+    const pop = stackPop.current;
+    if (pop === null) return;
+    pop.latest = -1;
+    pop.end();
+  }, []);
+  /** Waits out that pop, if one runs: whether what waited may still go once it has finished — `false`
+   *  when something else arrived after it, which goes instead (two opens never both land). */
+  const stackPopOver = (): Promise<boolean> => {
+    const pop = stackPop.current;
+    if (pop === null) return Promise.resolve(true);
+    pop.latest += 1;
+    const turn = pop.latest;
+    return pop.settled.then(() => pop.latest === turn);
+  };
+
   /** The tile's tap: busy from the tap until the mini-app screen replaces the grid or the open
    *  fails (`app-launcher` "Opening an app shows an immediate busy affordance" — a tap MUST NOT
    *  read as unregistered while the active bundle is being read). `onFailed` runs after a failed
-   *  open's alert, for a caller that must not stay where it is. */
-  const onOpen = (app: InstalledApp, onFailed?: () => void) => {
+   *  open's alert, for a caller that must not stay where it is. An open arriving while History's
+   *  pop to Home runs (an app link, the "is ready" toast) waits for the pop to finish. */
+  const onOpen = (app: InstalledApp, onFailed?: () => void): Promise<boolean> => {
+    if (stackPop.current === null) return openNow(app, onFailed);
+    return stackPopOver().then((go) => (go ? openNow(app, onFailed) : false));
+  };
+  const openNow = (app: InstalledApp, onFailed?: () => void) => {
     const tappedAt = Date.now();
     return runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
       try {
@@ -1326,6 +1371,14 @@ function LauncherShell({
         if (!opened) goHome();
       })
       .catch(() => undefined);
+  };
+
+  /** History's own Back and system back, when it was opened from Home: a pop the shell asks for, which
+   *  an open arriving meanwhile waits out (`stackPop`). A swipe has already popped and leaves through
+   *  `leaveHistory`. */
+  const backFromHistoryToHome = () => {
+    startStackPop();
+    goHome();
   };
 
   /** Delete and Discard hide at once and complete when their Undo toast ends (`soft-delete.ts`):
@@ -3007,6 +3060,15 @@ function LauncherShell({
    *  React state, which can still be mount-time-stale the ONE time this fires before first render
    *  settles (the "waits" release, above). */
   const openAppLink = (id: string) => {
+    if (stackPop.current !== null) {
+      // History's pop to Home runs: the link lands once it has finished, from wherever the shell is then.
+      stackPopOver()
+        .then((go) => {
+          if (go) openAppLinkRef.current(id);
+        })
+        .catch(() => undefined);
+      return;
+    }
     if (screen.kind === 'app' && screen.app.id === id) return;
     const resolution = resolveAppLink(id, reachableApps(), reachableAttempts());
     leaveForLink(linkExitFor(screen.kind));
@@ -3452,7 +3514,7 @@ function LauncherShell({
           <HistoryScreen
             app={on.app}
             access={access}
-            onBack={on.from === 'app' ? () => backFromHistoryToApp(on.app) : leave}
+            onBack={on.from === 'app' ? () => backFromHistoryToApp(on.app) : backFromHistoryToHome}
             onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
             onReport={() => setScreen({ kind: 'report', app: on.app, from: on })}
           />
@@ -3510,7 +3572,7 @@ function LauncherShell({
   if (!ready) {
     content = <HomeSkeleton count={knownAppCount} />;
   } else if (stack !== null) {
-    content = <NativeStack entries={stack.map(stackEntry)} />;
+    content = <NativeStack entries={stack.map(stackEntry)} onSettled={() => stackPop.current?.end()} />;
   } else {
     content = renderScreenContent();
   }

@@ -17,11 +17,12 @@ import ReadyPage from '../ReadyPage';
 import MiniAppView from '../MiniAppView';
 import WhimProse from '../../ui/whim-prose/WhimProse';
 import { SHELL_COLORS } from '../../../sdk/theme';
-import { Alert, hardwareBack, StyleSheet, windowMetrics } from './native-host';
-import { iosPop, stackUnmountsMidMove } from './native-screens';
+import { appLinkFor } from '../app-link';
+import { Alert, hardwareBack, openLink, StyleSheet, windowMetrics } from './native-host';
+import { iosPop, stackMoveEnds, stackUnmountsMidMove } from './native-screens';
 import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 import { chooseRow, longPress, renderHome } from './home-rig';
-import { buildIt, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
+import { buildIt, planLoaded, resultEvent, settle, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
 type Tree = TestRenderer.ReactTestRenderer;
@@ -91,6 +92,19 @@ const sheetsOpen = (tree: Tree) => tree.root.findAll((n) => String(n.type) === '
 
 /** The system back gesture, delivered as Android delivers it. */
 const systemBack = () => TestRenderer.act(async () => { hardwareBack(); });
+
+/** History opened from Home for `app`, its push finished, then its own Back with `links` arriving in the
+ *  same moment, while the pop runs. */
+async function backFromHistoryWithLinks(tree: Tree, app: InstalledApp, links: readonly InstalledApp[]): Promise<void> {
+  await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onHistory(app));
+  await waitFor(() => tree.root.findAllByType(HistoryScreen).length === 1, 'History');
+  await stackMoveEnds();
+  await TestRenderer.act(async () => {
+    button(tree, COPY.backLabel).props.onPress();
+    for (const link of links) openLink(appLinkFor(link.id));
+  });
+  await settle();
+}
 
 export async function runHistoryUiTests(h: Harness): Promise<void> {
   await h.test('history screen: the first load shows a loading state, never an empty list, until the versions arrive', async () => {
@@ -372,6 +386,57 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
         await TestRenderer.act(async () => tree.root.findByType(MiniAppView).props.onExit());
       }
     });
+  });
+
+  await h.test('history screen: opened from Home and left by its own Back, an app link arriving during that pop waits for it to finish; of two, only the last opens; with no word from the stack, a fallback lets it through', async () => {
+    const never = () => new Promise<Response>(() => {});
+    const { activeBundle } = StoreAccess.prototype;
+    const read: string[] = [];
+    StoreAccess.prototype.activeBundle = function (this: StoreAccess, entry: InstalledApp) {
+      read.push(entry.id);
+      return activeBundle.call(this, entry);
+    };
+    try {
+      await withLauncher({ examples: true, server: never }, async ({ tree, clock }) => {
+        const home = () => tree.root.findByType(HomeScreen);
+        const showing = (type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+        await waitFor(() => showing(HomeScreen) && home().props.apps.length > 1, 'the example apps');
+        const [first, second]: InstalledApp[] = home().props.apps;
+        const backWithLinks = async (...links: InstalledApp[]) => {
+          read.length = 0;
+          await backFromHistoryWithLinks(tree, first, links);
+        };
+
+        let midMove = stackUnmountsMidMove();
+        await backWithLinks(second);
+        h.ok(showing(HomeScreen) && !showing(MiniAppView), 'while the pop runs the link waits, on Home');
+        h.eq(read, [], 'and nothing is read yet');
+        await stackMoveEnds();
+        await waitFor(() => showing(MiniAppView), 'the link to open once the pop finished');
+        h.eq(tree.root.findByType(MiniAppView).props.installedApp.id, second.id, 'the linked app opens');
+        h.eq(stackUnmountsMidMove(), midMove, 'and the stack was not unmounted mid-pop (else iOS shows a blank Home next)');
+        await TestRenderer.act(async () => tree.root.findByType(MiniAppView).props.onExit());
+
+        midMove = stackUnmountsMidMove();
+        await backWithLinks(first, second);
+        await stackMoveEnds();
+        await waitFor(() => showing(MiniAppView), 'the later link to open');
+        await settle();
+        h.eq(read, [second.id], 'two links during the pop: only the later one opens, the earlier never fires');
+        h.eq(tree.root.findByType(MiniAppView).props.installedApp.id, second.id, 'and it is what shows');
+        h.eq(stackUnmountsMidMove(), midMove, 'with no stack unmounted mid-pop');
+        await TestRenderer.act(async () => tree.root.findByType(MiniAppView).props.onExit());
+
+        await backWithLinks(second);
+        h.ok(!showing(MiniAppView), 'a stack that never says its pop finished still holds the link a moment');
+        await TestRenderer.act(async () => { clock.fireWithin(1000); });
+        await waitFor(() => showing(MiniAppView), 'the fallback to let the link through');
+        await settle();
+        h.eq(read, [second.id], 'once');
+      });
+    } finally {
+      StoreAccess.prototype.activeBundle = activeBundle;
+    }
   });
 
   await h.test('history screen: opened from a running app’s orb, when the store cannot read that app back, Back and system back land on Home with the alert instead of staying on History', async () => {

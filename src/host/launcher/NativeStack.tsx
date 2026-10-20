@@ -65,9 +65,16 @@ function headerFor(entry: StackEntry, root: boolean): ScreenStackHeaderConfigPro
   };
 }
 
-export default function NativeStack({ entries }: Readonly<{ entries: readonly StackEntry[] }>) {
+interface NativeStackProps {
+  readonly entries: readonly StackEntry[];
+  /** A push or pop the platform was drawing has finished (react-native-screens' `onFinishTransitioning`:
+   *  UIKit's `didShowViewController` on iOS, the fragment animation's end on Android). */
+  readonly onSettled?: () => void;
+}
+
+export default function NativeStack({ entries, onSettled }: Readonly<NativeStackProps>) {
   return (
-    <ScreenStack style={styles.fill}>
+    <ScreenStack style={styles.fill} onFinishTransitioning={onSettled}>
       {entries.map((entry, index) => {
         const root = index === 0;
         const ownHeader = root || entry.title === undefined;
