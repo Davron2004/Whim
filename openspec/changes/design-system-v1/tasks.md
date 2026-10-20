@@ -139,11 +139,11 @@
 
 ## 17. Making flow: making, ready, failure
 
-- [ ] 17.1 Making page: 128 ember with ambient light, title, quoted words, step list with elapsed time on the current step and the repair row, time lines from one measured constant (flowbench 53/144/225 s), stall and queue lines, Stop; no transport wording or output counter; never shows another run's progress (#131)
-- [ ] 17.2 Ready page (96 tile, name, words, "It's on your home screen.", Open it in the tint, Done) and the closed-sheet toast "… is ready · Open"
-- [ ] 17.3 Failure page by kind (`system.md` §8 table) including "I lost the connection to the server partway through." with Try again on reconnect (#151, copy half), untouched/current-version line, collapsed "What happened" with rows as separate accessibility elements (#136), Discard in the body
-- [ ] 17.4 Pre-run connection problems stay on the page as a notice with Try again
-- [ ] 17.5 Update build-screen, failure and pending-build suites
+- [x] 17.1 Making page: 128 ember with ambient light, title, quoted words, step list with elapsed time on the current step and the repair row, time lines from one measured constant (flowbench 53/144/225 s), stall and queue lines, Stop; no transport wording or output counter; never shows another run's progress (#131)
+- [x] 17.2 Ready page (96 tile, name, words, "It's on your home screen.", Open it in the tint, Done) and the closed-sheet toast "… is ready · Open"
+- [x] 17.3 Failure page by kind (`system.md` §8 table) including "I lost the connection to the server partway through." with Try again on reconnect (#151, copy half), untouched/current-version line, collapsed "What happened" with rows as separate accessibility elements (#136), Discard in the body
+- [x] 17.4 Pre-run connection problems stay on the page as a notice with Try again
+- [x] 17.5 Update build-screen, failure and pending-build suites
 
 ## 18. Opening and the app container
 
