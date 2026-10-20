@@ -15,7 +15,8 @@ MakingPage({ name: string /* attemptName(rec) or the app's name */; changing: bo
 ReadyPage({ app: InstalledApp; words: string; onOpen(): void; onDone(): void })   // TilePlate size 'hero', Button 'tint'
 FailurePage({ kind: FailureKind; reason: string; diagnostics: readonly { hint: string }[]; rephraseHelps: boolean;
   changing: boolean; journal?: readonly RunJournalEntry[] | null; attemptStarted?: boolean; notice?: FlowNotice;
-  offline?: boolean; devMode?: boolean; onChange(): void; onRetry?(): void /* absent: no attempt */; onDismiss?(): void })
+  offline?: boolean; devMode?: boolean; onChange(): void; onRetry?(): void /* absent: no attempt */; onDismiss?(): void;
+  onNotNow?(): void /* needs-update's Not now; the shell passes goHome */ })
 ```
 Android back on all three is the sheet's close (`closeSheet`): none registers `useSheetBack` or `BackHandler`.
 Making: close = leave running; Ready: close = Done; Failure: close = leave (tile and journal kept).
@@ -68,17 +69,26 @@ useHomeLive(active: boolean, attempts: () => readonly { id; signals }[]): LiveVi
 ## Failure — `failure-kind.ts`
 
 ```ts
-type FailureKind = 'couldnt-run' | 'refused' | 'closed' | 'stopped' | 'connection' | 'other'
-FailureFacts { reason; rephraseHelps: boolean; repairs: number; interrupted?: 'closed' | 'stopped'; refused: boolean }
-failureKindOf(facts): FailureKind     // refused > interrupted > reason === COPY.failureConnection > repairs >= 3
+type FailureKind = 'couldnt-run' | 'refused' | 'needs-update' | 'closed' | 'stopped' | 'connection' | 'other'
+FailureFacts { reason; rephraseHelps: boolean; repairs: number; interrupted?: 'closed' | 'stopped'; refused: boolean;
+  cause?: PendingFailureCause; needsUpdate?: boolean }
+failureKindOf(facts): FailureKind     // refused > interrupted > needsUpdate > cause 'connection' > repairs >= 3; never the reason text
+failureCauseOf(failure?): PendingFailureCause | undefined  // stored cause; a cause-less old record: frozen legacy sentence
 failureSentence(kind, { reason, rephraseHelps }): string | null    // null for 'refused' (its notice speaks)
-FailureAction { move: 'change' | 'retry'; label; variant: 'ember' | 'ink' | 'plain' }
-failureActions(kind, rephraseHelps, canRetry): readonly FailureAction[]
+FailureAction { move: 'change' | 'retry' | 'update' | 'not-now'; label; variant: 'ember' | 'ink' | 'plain' }
+failureActions(kind, rephraseHelps, canRetry): readonly FailureAction[]  // needs-update: Update Whim (ink), Not now (plain)
+type PendingFailureCause = 'connection'; PendingBuildFailure += { cause? }            // pending-builds.ts
+stillNeedsUpdate(rec, protocolLevel): boolean  // build-lifecycle.ts, replaces reopenedRecord
+openWhimUpdate(): Promise<void>                // UpdateRequiredScreen.tsx; the store link both pages open
 ```
-- Shell `failure` screen += `interrupted?: 'closed' | 'stopped'`; repairs = live `counts.repair`, or
+- Shell `failure` screen += `interrupted?`, `cause?`, `needsUpdate?: true`; repairs = live `counts.repair`, or
   `repairAttemptsIn(journal)` (run-timeline-view.ts) when reopened from a tile with a readable journal.
-- A stream that ends without a terminal event, or a network error mid-run, settles with reason
-  `COPY.failureConnection` and remedy `{ kind: 'retry' }`; Try again is disabled while `showOfflineIndicator`.
+- A stream that ends without a terminal event, or a network error mid-run, settles with reason `COPY.failureConnection`,
+  remedy `{ kind: 'retry' }`, `cause: 'connection'` (`settleFailed(…, { remedy, cause })`); Try again is disabled while
+  `showOfflineIndicator`. Storage-degraded settlements (generic reason) store no cause.
+- A record an `update` fallback ended reopens from its tile as kind `needs-update` while `stillNeedsUpdate` (its notice
+  under What happened). The LIVE fallback, the `update_required` refusal, the launch check and Report still open
+  `UpdateRequiredScreen` (generation-contract fallback rule; service-refusals), which stays for them.
 - "What happened" rows: `runTimelineRows(journal, devMode, sentence, true)` + hints it lacks, each a `GroupedRow`.
 - Discard (`onDiscardFromFailure`, replaces `onDismissPending`) = Home's tile Discard: `purgeWindows.armAttempt(id)`, then
   `goHome()`, `warning` haptic, toast `COPY.discardedToast` + Undo, `onEnd` → `finish('attempt', id)` (6 s; the window is the

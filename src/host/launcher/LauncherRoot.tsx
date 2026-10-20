@@ -41,7 +41,7 @@ import type { AppBusyMap } from './app-busy';
 import { StoreAccess, type ForkOptions } from './store-access';
 import { DataCopyJournal } from './data-copy-journal';
 import { PendingBuildStore } from './pending-builds';
-import type { PendingAttemptLease, PendingBuildRecord, PendingBuildView, PendingFailureRemedy } from './pending-builds';
+import type { PendingAttemptLease, PendingBuildFailure, PendingBuildRecord, PendingBuildView, PendingFailureCause, PendingFailureRemedy } from './pending-builds';
 import { JOURNAL_KEY, RunJournalStore } from './run-journal';
 import type { RunTerminalCounts } from './run-journal';
 import {
@@ -50,9 +50,9 @@ import {
   hydratedDiagnostics,
   journalStreamEvent,
   refusedGenerateOutcome,
-  reopenedRecord,
   retryBuildScreen,
   startPendingBuild,
+  stillNeedsUpdate,
 } from './build-lifecycle';
 import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAppContext } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
@@ -71,7 +71,7 @@ import { MakingSheet, type SheetContent } from './MakingSheet';
 import MakingPage from './MakingPage';
 import ReadyPage from './ReadyPage';
 import FailurePage from './FailurePage';
-import { failureKindOf } from './failure-kind';
+import { failureCauseOf, failureKindOf } from './failure-kind';
 import { attemptName } from './grid-composition';
 import ConsentScreen from './ConsentScreen';
 import AgeScreen from './AgeScreen';
@@ -256,6 +256,10 @@ type Screen =
       notice?: FlowNotice;
       /** An `interrupted` record's page: Whim closed under the run, or the person stopped it. */
       interrupted?: 'closed' | 'stopped';
+      /** What ended the run, as its record stores it (`PendingBuildFailure.cause`). */
+      cause?: PendingFailureCause;
+      /** A record an `update` fallback ended, while this build still needs that update. */
+      needsUpdate?: true;
     };
 
 /** The screens the native stack shows (design-system-v1 D6): Home at its root, then Settings and
@@ -503,6 +507,13 @@ function attemptRephraseHelps(err: unknown): boolean {
 function attemptRemedy(err: unknown): PendingFailureRemedy | undefined {
   return isNetworkFailure(err) ? { kind: 'retry' } : errorRemedy(err);
 }
+
+function attemptCause(err: unknown): { cause?: PendingFailureCause } {
+  return isNetworkFailure(err) ? { cause: 'connection' } : {};
+}
+
+/** What a failed record keeps beside its reason: what gets past it, and what ended the run. */
+type FailureTerms = Pick<PendingBuildFailure, 'remedy' | 'cause'>;
 
 /** `appInfo` reads the installed app's platform, version and build for the request envelope;
  *  `deviceLocale` reads the phone's preferred
@@ -1478,6 +1489,7 @@ function LauncherShell({
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: editing != null,
       rephraseHelps: attemptRephraseHelps(err),
+      ...attemptCause(err),
     };
   };
 
@@ -1774,12 +1786,13 @@ function LauncherShell({
     reason: string,
     diagnostics: readonly { hint: string }[],
     observed: RunTerminalCounts,
-    remedy?: PendingFailureRemedy,
+    terms: FailureTerms = {},
     retrySnapshot?: AttemptSnapshot,
     lease?: PendingAttemptLease,
   ): TerminalSettlement => {
     if (lease && !pending.isCurrentAttempt(lease)) return 'unresolved';
     if (lease) releaseLiveRef(lease);
+    const { remedy, cause } = terms;
     // `observed` is the end-of-stream flush: the final cumulative counts (closing the last throttle
     // window, which no aggregate entry can) and how many `diagnostic` events went past. Only the
     // loop that watched the stream can supply them, so they are threaded in rather than re-derived.
@@ -1789,6 +1802,7 @@ function LauncherShell({
         reason,
         ...(diagnostics.length > 0 ? { diagnostics: diagnostics.map((diagnostic) => diagnostic.hint).join('\n') } : {}),
         ...(remedy ? { remedy } : {}),
+        ...(cause ? { cause } : {}),
       }, 'verified');
       const saved = pending.get(id);
       if (saved?.state !== 'failed' || saved.failure?.reason !== reason || saved.journalUnavailable === true) {
@@ -1855,6 +1869,8 @@ function LauncherShell({
     lease: PendingAttemptLease;
     /** Set when rewording can't get past the ending: a stream cut partway. */
     remedy?: PendingFailureRemedy;
+    /** Set for a stream cut partway. */
+    cause?: PendingFailureCause;
   }) => {
     const selected = isSelectedLiveAttempt(input.lease);
     const settlement = settleFailed(
@@ -1862,7 +1878,7 @@ function LauncherShell({
       input.reason,
       input.hints,
       input.counts,
-      input.remedy,
+      { remedy: input.remedy, cause: input.cause },
       input.retrySnapshot,
       input.lease,
     );
@@ -1890,6 +1906,7 @@ function LauncherShell({
       // A terminal `failure` offers rephrasing; a stream cut partway never does (prompt-flow "A
       // dropped connection SHALL never suggest rewording").
       rephraseHelps: input.remedy == null,
+      ...(terminalPersisted && input.cause ? { cause: input.cause } : {}),
     });
   };
 
@@ -1978,7 +1995,7 @@ function LauncherShell({
       refusalText(refusal),
       [],
       counts,
-      refusalRemedy(refusal),
+      { remedy: refusalRemedy(refusal) },
       retrySnapshot,
       lease,
     );
@@ -2027,8 +2044,7 @@ function LauncherShell({
       const notice = fallbackNotice(fallback);
       const detached = ctl.detached;
       const settlement = settleFailed(attempt.attemptId, notice ?? COPY.updateRequiredLine, [], attempt.counts, {
-        kind: 'update',
-        protocolLevel: PROTOCOL_LEVEL,
+        remedy: { kind: 'update', protocolLevel: PROTOCOL_LEVEL },
       }, attempt.retrySnapshot, attempt.lease);
       const ids = genericSettlementIds(settlement, attempt.attemptId);
       const genericFailure = settlement === 'persisted' ? undefined : genericAttemptFailure(
@@ -2093,7 +2109,7 @@ function LauncherShell({
       reasoned.reason,
       reasoned.diagnostics,
       input.terminalCounts(),
-      attemptRemedy(input.error),
+      { remedy: attemptRemedy(input.error), ...attemptCause(input.error) },
       input.retrySnapshot,
       input.lease,
     );
@@ -2420,6 +2436,7 @@ function LauncherShell({
           prompt: building.text,
           reason: COPY.failureConnection,
           remedy: { kind: 'retry' },
+          cause: 'connection',
           hints: [],
           observed: counts.repair,
           counts: terminalCounts(),
@@ -2575,6 +2592,7 @@ function LauncherShell({
     const edited = current.editingAppId ? index.get(current.editingAppId) : null;
     const journalReadable = view?.durability !== 'volatile' && current.journalUnavailable !== true;
     const interrupted = current.state === 'interrupted' ? { interrupted: current.stopped ? 'stopped' as const : 'closed' as const } : {};
+    const cause = failureCauseOf(current.failure);
     return {
       kind: 'failure',
       ...(edited ? { editing: edited } : {}),
@@ -2589,6 +2607,8 @@ function LauncherShell({
       rephraseHelps: current.failure != null && current.failure.remedy == null,
       pendingId: current.id,
       ...interrupted,
+      ...(cause ? { cause } : {}),
+      ...(stillNeedsUpdate(current, PROTOCOL_LEVEL) ? { needsUpdate: true as const } : {}),
       ...(journalReadable ? { journalId: current.id } : {}),
     };
   };
@@ -2596,13 +2616,12 @@ function LauncherShell({
   /** Tap a ghost. `building` reattaches to the run's own build-progress screen — the stream is
    *  still in this shell's closure, so this is a screen-state change and no new request is sent;
    *  reattaching also un-detaches it, so its done step lands as if the user had never left.
-   *  `failed`/`interrupted` opens the hydrated failure screen instead — or, for a record an `update`
-   *  fallback ended while this build still needs that update, the update screen with its notice. */
+   *  `failed`/`interrupted` opens the hydrated failure screen instead, a record an `update` fallback
+   *  ended among them: while this build still needs that update, its page reads "needs a newer Whim". */
   const onOpenPending = (rec: PendingBuildRecord) => {
     const current = pending.readCurrent(rec.id)?.record ?? rec;
     if (current.state !== 'building') {
-      const reopened = reopenedRecord(current, PROTOCOL_LEVEL);
-      setScreen(reopened.kind === 'update' ? updateScreenFrom(screen, reopened.notice) : failureFromRecord(current));
+      setScreen(failureFromRecord(current));
       return;
     }
     const live = liveAttemptsRef.get(current.id);
@@ -2874,6 +2893,8 @@ function LauncherShell({
           repairs: from.observedRepairAttempts,
           interrupted: from.interrupted,
           refused: from.notice != null,
+          cause: from.cause,
+          needsUpdate: from.needsUpdate,
         })}
         reason={from.reason}
         diagnostics={from.diagnostics}
@@ -2884,6 +2905,7 @@ function LauncherShell({
         journal={failureJournal}
         attemptStarted={from.journalId != null}
         devMode={timelineDevMode}
+        onNotNow={goHome}
         {...failureActions(from)}
       />
     );

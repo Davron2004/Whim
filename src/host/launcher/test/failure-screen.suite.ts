@@ -9,7 +9,10 @@
 import React from 'react';
 import { Harness } from './harness';
 import { COPY, REPAIR_ATTEMPT_LIMIT } from '../copy';
-import { failureActions, failureKindOf, failureSentence, type FailureFacts } from '../failure-kind';
+import { failureActions, failureCauseOf, failureKindOf, failureSentence, type FailureFacts } from '../failure-kind';
+import { STORE_LISTINGS } from '../release-config';
+import { Linking } from './native-host';
+import { settle } from './rendered-launcher';
 import FailurePage, { type FailurePageProps } from '../FailurePage';
 import { Ember } from '../../ui/Ember';
 import { runTimelineRows } from '../run-timeline-view';
@@ -74,8 +77,18 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     h.eq(failureSentence('refused', FACTS), null, 'whose notice carries the reason');
     h.eq([failureKindOf({ ...FACTS, interrupted: 'closed' }), failureSentence('closed', FACTS)], ['closed', 'Making stopped when Whim closed.'], 'Whim closed under it');
     h.eq([failureKindOf({ ...FACTS, interrupted: 'stopped' }), failureSentence('stopped', FACTS)], ['stopped', COPY.failureStopped], 'the person stopped it');
-    h.eq(failureKindOf({ ...FACTS, reason: COPY.failureConnection }), 'connection', 'the stream dropped');
+    h.eq(failureKindOf({ ...FACTS, cause: 'connection' }), 'connection', 'the stream dropped');
     h.eq(failureSentence('connection', FACTS), 'I lost the connection to the server partway through.', '#151: said as what happened');
+    h.eq([failureKindOf({ ...FACTS, needsUpdate: true }), failureSentence('needs-update', FACTS)], ['needs-update', 'Finishing this needs the latest Whim.'], 'a run only a newer Whim can finish');
+  });
+
+  await h.test('kind: a lost connection is read from the cause the record stores, not from how its sentence is worded', () => {
+    h.eq(failureKindOf({ ...FACTS, reason: 'The line to the server went quiet.', cause: failureCauseOf({ reason: 'The line to the server went quiet.', cause: 'connection' }) }), 'connection', 'a stored cause holds whatever the reason says');
+    h.eq(failureKindOf({ ...FACTS, reason: COPY.failureConnection }), 'other', 'the sentence alone, on a live page, decides nothing');
+    const legacy = { reason: 'I lost the connection to the server partway through.' };
+    h.eq(failureKindOf({ ...FACTS, ...legacy, cause: failureCauseOf(legacy) }), 'connection', 'a record written before causes were stored still reads as a lost connection');
+    h.eq(failureCauseOf({ reason: 'It did not build.' }), undefined, 'and any other old record names no cause');
+    h.eq(failureCauseOf(undefined), undefined, 'nor does an interruption, which has no failure');
   });
 
   await h.test('actions: rewording is offered only where it can help, and a dropped connection never suggests it', () => {
@@ -90,6 +103,8 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     }
     h.eq(shape('stopped', true), [[COPY.actionTryAgain, 'ember'], [COPY.failureChangeDescription, 'plain']], 'a stopped run: try it again, or describe it again');
     h.eq(shape('couldnt-run', true, false), [[COPY.failureChangeDescription, 'ink']], 'with no attempt left to run again, describing it again is the way on');
+    h.eq(shape('needs-update', true), [['Update Whim', 'ink'], ['Not now', 'plain']], 'needing a newer Whim: Update Whim, or Not now (system.md §8)');
+    h.eq(shape('needs-update', false, false), [['Update Whim', 'ink'], ['Not now', 'plain']], 'whether or not there is an attempt to run again');
   });
 
   // ── the page ────────────────────────────────────────────────────────────────
@@ -125,6 +140,22 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
       h.ok(!shown().includes(COPY.failureOfflineNotice), 'back online, the notice goes');
       await press(button(tree, COPY.actionTryAgain));
       h.eq(calls.retry, 1, 'and Try again runs it again');
+    });
+  });
+
+  await h.test('page: needing a newer Whim says so, keeps what is safe and Discard, and Update Whim opens Whim’s own store listing', async () => {
+    let notNow = 0;
+    const opened = Linking.opened.length;
+    await withFailurePage({ kind: 'needs-update', reason: 'This app uses something only a newer Whim has.', rephraseHelps: false, changing: true, onNotNow: () => { notNow++; }, onDismiss: () => {} }, async (shown, calls, tree) => {
+      h.eq([tree.root.findByType(Ember).props.state, shown().includes(COPY.failureTitle)], ['out', true], 'the ember out and "Couldn’t make this"');
+      h.ok(shown().includes('Finishing this needs the latest Whim.'), 'the sentence system.md §8 gives it');
+      h.ok(shown().includes(COPY.failureCurrentVersionWorks) && shown().includes(COPY.actionDiscard), 'what is safe, and Discard');
+      h.ok(!shown().includes(COPY.actionTryAgain) && !shown().includes(COPY.failureChangeDescription), 'no Try again and no rewording: neither gets past it');
+      await press(button(tree, 'Update Whim'));
+      await settle();
+      h.eq(Linking.opened.slice(opened), [STORE_LISTINGS.ios.store], 'Update Whim opens the store app’s listing, as the update screen does');
+      await press(button(tree, 'Not now'));
+      h.eq([notNow, calls.retry, calls.change], [1, 0, 0], 'Not now leaves, and runs nothing');
     });
   });
 

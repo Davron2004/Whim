@@ -32,6 +32,7 @@ import type { FlowNotice } from './prompt-flow';
 import type { RunJournalEntry } from './run-journal';
 import { runTimelineRows } from './run-timeline-view';
 import { useRetryGate } from './ServiceNotice';
+import { openWhimUpdate } from './UpdateRequiredScreen';
 
 export interface FailurePageProps {
   kind: FailureKind;
@@ -59,6 +60,8 @@ export interface FailurePageProps {
   onRetry?: () => void;
   /** Discard the attempt; absent when there is none to discard. */
   onDismiss?: () => void;
+  /** "Not now" on a run only a newer Whim can finish: leave the page, the attempt kept. */
+  onNotNow?: () => void;
 }
 
 const styles = makeStyles(() => ({
@@ -82,7 +85,7 @@ function whatHappened(props: Readonly<FailurePageProps>, shown: string | null): 
 }
 
 export default function FailurePage(props: Readonly<FailurePageProps>) {
-  const { kind, reason, rephraseHelps, changing, journal = null, attemptStarted = false, notice, offline = false, onChange, onRetry, onDismiss } = props;
+  const { kind, reason, rephraseHelps, changing, journal = null, attemptStarted = false, notice, offline = false, onChange, onRetry, onDismiss, onNotNow } = props;
   const s = styles(useTokens());
   const [open, setOpen] = useState(false);
   const gated = useRetryGate(notice?.retryAt);
@@ -92,7 +95,7 @@ export default function FailurePage(props: Readonly<FailurePageProps>) {
   // attempt there is no run to speak of.
   const timelineAddsNothing = journal != null && journal.length > 0 && rows.length === 1 && rows[0].key === 'empty';
   const showWhatHappened = (journal != null || attemptStarted || props.diagnostics.length > 0) && !timelineAddsNothing;
-  const moves: Readonly<Record<FailureMove, (() => void) | undefined>> = { change: onChange, retry: onRetry };
+  const moves: Readonly<Record<FailureMove, (() => unknown) | undefined>> = { change: onChange, retry: onRetry, update: openWhimUpdate, 'not-now': onNotNow };
   const waiting = kind === 'connection' && offline;
   return (
     <KeyboardShell

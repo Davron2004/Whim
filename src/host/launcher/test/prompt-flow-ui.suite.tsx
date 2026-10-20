@@ -12,7 +12,7 @@ import ReadyPage from '../ReadyPage';
 import FailurePage from '../FailurePage';
 import MiniAppView from '../MiniAppView';
 import { MakingSheet } from '../MakingSheet';
-import type { PendingBuildRecord } from '../pending-builds';
+import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { TextArea } from '../../ui/TextField';
 import { COPY } from '../copy';
 import { StoreAccess } from '../store-access';
@@ -725,6 +725,17 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       h.ok(!textOf(page()).includes(COPY.failureOfflineNotice), 'the notice goes');
       await press(button(tree, COPY.actionTryAgain));
       h.ok(!on(tree, FailurePage), 'and Try again runs it again');
+    });
+  });
+
+  await h.test('flow: a run the network cut stores a lost connection as its cause', async () => {
+    const net: { up: boolean; cut?: () => void } = { up: true };
+    await withLauncher(cuttingServer(net), async ({ tree, kv }) => {
+      await startBuild(tree, 'A tea timer');
+      await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'generate' && net.cut != null, 'the run under way');
+      net.cut!();
+      await waitFor(() => on(tree, FailurePage), 'the failure page');
+      h.eq(new PendingBuildStore(kv).list().map((r) => r.failure?.cause), ['connection'], 'the record says the connection was lost, not only its sentence');
     });
   });
 

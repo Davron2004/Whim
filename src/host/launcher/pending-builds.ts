@@ -32,12 +32,19 @@ export type PendingBuildState = 'building' | 'failed' | 'interrupted';
  *  level when the attempt ended, so a build above it knows the update has happened. */
 export type PendingFailureRemedy = { kind: 'retry' } | { kind: 'update'; protocolLevel: number };
 
+/** What ended the run, where the Failure page tells it apart by more than its sentence. `connection`:
+ *  the stream was cut partway, or no server answered. */
+export type PendingFailureCause = 'connection';
+
 export interface PendingBuildFailure {
   reason: string;
   diagnostics?: string;
   /** Absent when rewording may help (a failed generation), which is also what every record written
    *  before this field means. */
   remedy?: PendingFailureRemedy;
+  /** Absent for any other ending, and on records written before this field (`failure-kind.ts#failureCauseOf`
+   *  reads those). */
+  cause?: PendingFailureCause;
 }
 
 /** The persisted record (design D2, additive-only discipline). */

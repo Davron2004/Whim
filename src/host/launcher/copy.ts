@@ -171,6 +171,8 @@ export const COPY = {
   failureTryAgainAsIs: 'Try again as it is',
   /** The person stopped the run (Stop on the Making page or the tile's menu). */
   failureStopped: 'You stopped making this.',
+  /** A run only a newer Whim can finish (system.md §8). */
+  failureNeedsUpdate: 'Finishing this needs the latest Whim.',
   /** The stream dropped before its end (#151): never a suggestion to reword. */
   failureConnection: 'I lost the connection to the server partway through.',
   failureOfflineNotice: 'Offline. Try again turns on when you’re back online.',

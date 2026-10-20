@@ -23,8 +23,10 @@ import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { PROTOCOL_LEVEL } from '../wire-headers';
 import { STUB_LIMIT, stubFutureFrame } from '../../../../server/src/stub-markers';
 import { contentPolicyRefusal, serverBusyRefusal, type ServiceRefusal } from '../../../../server/src/admission/refusals';
+import { STORE_LISTINGS } from '../release-config';
+import { Linking } from './native-host';
 import { button, press, textOf } from './react-screen';
-import { buildIt, composeAndContinue, hasInstalled, json, onHome, planLoaded, questionsLanded, resultEvent, sseStream, tap, waitFor, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, hasInstalled, json, onHome, planLoaded, questionsLanded, resultEvent, settle, sseStream, tap, waitFor, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
 type Stream = ReturnType<typeof sseStream>;
@@ -293,7 +295,7 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
     });
   }
 
-  await h.test('fallback: an update fallback’s ghost reopens to the update screen with its notice, never the failure screen', async () => {
+  await h.test('fallback: an update fallback’s ghost reopens to the Failure page as needing a newer Whim, its notice under What happened', async () => {
     const streams: Stream[] = [];
     const notice = stubFutureFrame('update').compat?.notice ?? '';
     await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
@@ -303,14 +305,61 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       await waitFor(() => on(tree, UpdateRequiredScreen), 'the update screen');
       await press(button(tree, COPY.updateNotNow));
       await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
-      h.ok(on(tree, UpdateRequiredScreen) && !on(tree, FailurePage), 'the ghost reopens the update screen');
-      h.ok(notice.length > 0 && textOf(tree.root).includes(notice), 'showing the notice');
-      h.ok(!textOf(tree.root).includes(COPY.updateBody), 'in place of the standard body, as it did live');
+      h.ok(on(tree, FailurePage) && !on(tree, UpdateRequiredScreen), 'the ghost reopens the Failure page, not the update screen');
+      h.eq(tree.root.findByType(FailurePage).props.kind, 'needs-update', 'as a run only a newer Whim can finish');
+      h.ok(textOf(tree.root).includes('Finishing this needs the latest Whim.') && textOf(tree.root).includes(COPY.failureOtherAppsUntouched), 'saying so, and what is safe');
+      h.eq(rephraseAdvice(tree), [], 'with no rephrasing advice');
+      await press(button(tree, COPY.timelineTitle));
+      h.ok(notice.length > 0 && occurrences(textOf(tree.root), notice) === 1, 'the notice reads once, under What happened');
+      const opened = Linking.opened.length;
+      await press(button(tree, COPY.updateAction));
+      await settle();
+      h.eq(Linking.opened.slice(opened), [STORE_LISTINGS.ios.store], 'Update Whim opens Whim’s store listing');
       await press(button(tree, COPY.updateNotNow));
-      h.eq(ghosts(tree).map((g) => g.state), ['failed'], 'and Not now leaves the ghost where it was');
+      h.ok(onHome(tree) && !on(tree, FailurePage), 'Not now goes Home');
+      h.eq(ghosts(tree).map((g) => g.state), ['failed'], 'and leaves the ghost where it was');
       streams[0].end();
     });
   });
+
+  await h.test('connection: a stream that ends with no terminal stores a lost connection as its cause, and its tile reads it so whatever its sentence says', async () => {
+    const streams: Stream[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+      await startBuild(tree, 'A tip splitter');
+      streams[0].push(STAGE);
+      streams[0].end();
+      await waitFor(() => on(tree, FailurePage), 'the failure page');
+      h.eq(tree.root.findByType(FailurePage).props.kind, 'connection', 'live, a lost connection');
+      const [written] = new PendingBuildStore(kv).list();
+      h.eq(written.failure?.cause, 'connection', 'the record stores the cause');
+      // The same record after the copy was reworded: its reason is no longer today's sentence.
+      kv.set(`pending:${written.id}`, JSON.stringify({ ...written, failure: { ...written.failure, reason: 'The server went quiet partway.' } }));
+      await press(button(tree, COPY.sheetClose));
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get(written.id)));
+      h.eq(tree.root.findByType(FailurePage).props.kind, 'connection', 'its tile still reopens as a lost connection');
+      h.eq(rephraseAdvice(tree), [], 'never suggesting rewording');
+    });
+  });
+
+  for (const [name, failure, kind] of [
+    ['lost connection', { reason: 'I lost the connection to the server partway through.', remedy: { kind: 'retry' as const } }, 'connection'],
+    ['failed build', { reason: 'The app did not build.' }, 'other'],
+  ] as const) {
+    await h.test(`connection: a ${name} recorded before causes were stored reopens as it did (${kind})`, async () => {
+      await withLauncher({
+        prepare: (kv) => {
+          const pending = new PendingBuildStore(kv);
+          pending.create({ id: 'old', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+          pending.setFailed('old', failure);
+        },
+        server: streamingServer([]),
+      }, async ({ tree, kv }) => {
+        h.eq(new PendingBuildStore(kv).get('old')?.failure?.cause, undefined, 'the record names no cause');
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get('old')));
+        h.eq(tree.root.findByType(FailurePage).props.kind, kind, `it reopens as ${kind}`);
+      });
+    });
+  }
 
   await h.test('fallback: once this build is past the level an update fallback ended on, its ghost reopens to the failure screen with Retry', async () => {
     const streams: Stream[] = [];
