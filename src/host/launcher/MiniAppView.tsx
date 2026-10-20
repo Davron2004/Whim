@@ -10,7 +10,8 @@
 // hold one WebView warm (design-system-v1 task 18.4, `webview-pool.ts`): the runtime page loaded and
 // nothing else. Each launch is a `MiniAppView` of its own (keyed by the launch, so a fresh host,
 // realm and opening state every time); it takes the waiting WebView, or a cold one, and that WebView
-// is destroyed when the launch ends, fails or retries. No WebView ever hosts a second launch.
+// is destroyed when the launch ends, fails or retries. No WebView ever hosts a second launch. A
+// fresh WebView starts waiting, unseen, once the launch has painted, so the next is warm too.
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
@@ -40,6 +41,7 @@ import { miniAppSurface, OPENING_LABEL_AFTER_MS, OPENING_REVEAL_CAP_MS, openingL
 import {
   EMPTY_POOL,
   launchFailed,
+  launchOpened,
   launchSlot,
   openApp,
   pageAnswered,
@@ -143,6 +145,7 @@ export function MiniAppStage({ launch }: Readonly<MiniAppStageProps>) {
   const frame = useRef<View>(null);
   const keyboard = useKeyboardInset(frame, launch !== null && padsWebViewForKeyboard(Platform.OS));
   const onFailed = useCallback(() => setPool(launchFailed), []);
+  const onOpened = useCallback(() => setPool(launchOpened), []);
   const onRetry = useCallback(() => setPool(retryLaunch), []);
 
   const onSlotLoadEnd = (key: number) => {
@@ -173,12 +176,17 @@ export function MiniAppStage({ launch }: Readonly<MiniAppStageProps>) {
       importantForAccessibility={open ? 'auto' : 'no-hide-descendants'}
     >
       {/* Every WebView, waiting or bound, is this one element: the same page, the same settings, the
-          same native view manager (whose network refusal, decision #74, every instance gets). */}
+          same native view manager (whose network refusal, decision #74, every instance gets). The
+          waiting one, also there while an app runs, is laid over the whole container but unseen,
+          untouchable and out of the accessibility tree; a handover only changes its style. */}
       {pool.slots.map((slot) => (
         <WebView
           key={slot.key}
           ref={refFor(slot.key)}
-          style={[styles.web, { backgroundColor: bg }]}
+          style={[slot.launch === null ? styles.waitingWeb : styles.web, { backgroundColor: bg }]}
+          pointerEvents={slot.launch === null ? 'none' : 'auto'}
+          accessibilityElementsHidden={slot.launch === null}
+          importantForAccessibility={slot.launch === null ? 'no-hide-descendants' : 'auto'}
           originWhitelist={ORIGINS}
           source={RUNTIME_PAGE}
           onMessage={(e) => onSlotMessage(slot.key, e.nativeEvent.data)}
@@ -202,6 +210,7 @@ export function MiniAppStage({ launch }: Readonly<MiniAppStageProps>) {
           outlet={outlet}
           natives={natives}
           onFailed={onFailed}
+          onOpened={onOpened}
           onRetry={onRetry}
         />
       ) : null}
@@ -217,13 +226,15 @@ interface MiniAppViewProps extends MiniAppLaunch {
   natives: React.MutableRefObject<Map<number, WebView>>;
   /** The launch reached a failure surface: its WebView goes. */
   onFailed: () => void;
+  /** The launch painted: the next WebView may start warming beside it. */
+  onOpened: () => void;
   /** Retry: a fresh WebView for a fresh realm. */
   onRetry: () => void;
 }
 
 export default function MiniAppView({
   record, bundleSource, engineAppId, tappedAt, onExit, onVersions, onChangeIt, installedApp, access, reportOptions,
-  onUpdateRequired, legalLanguage, slot, outlet, natives, onFailed, onRetry,
+  onUpdateRequired, legalLanguage, slot, outlet, natives, onFailed, onOpened, onRetry,
 }: Readonly<MiniAppViewProps>) {
   const slotKey = slot?.key ?? null;
   // The WebView this launch's host controls is looked up when used: the one bound to the launch
@@ -262,6 +273,8 @@ export default function MiniAppView({
   const theme = useMemo(() => themeFrame(tokens, tint), [tokens, tint]);
   const bottomInset = useSafeAreaInsets().bottom;
   const deliveredKey = useRef<number | null>(null);
+  // The WebView the theme was delivered into, for the opening cap below.
+  const [deliveredFor, setDeliveredFor] = useState<number | null>(null);
   const deliverInto = (key: number) => {
     if (loadEndAction(deliveredKey.current, key) === 'duplicate') {
       log.debug(CHANNELS.app, 'duplicate onLoadEnd for a delivered realm, not delivering again', {
@@ -271,6 +284,7 @@ export default function MiniAppView({
       return;
     }
     deliveredKey.current = key;
+    setDeliveredFor(key);
     host.deliverBySource(record, bundleSource, engineAppId, { ...theme, chromeInsetBottom: chromeInsetBottom(bottomInset) });
   };
   const deliver = useRef(deliverInto);
@@ -304,19 +318,22 @@ export default function MiniAppView({
   // throttled by a hidden view; the cover fades out over `fade-in` once this launch's signal
   // (`paintMs`, generation-fenced) arrives or the 600 ms cap passes. Above it the app's tile-sized
   // plate holds until the paint, with "Opening…" under it after 1.5 s. Both timers are keyed by the
-  // bound WebView, so Retry's recreated realm opens from the start again. Under Reduce Motion the
-  // fade is itself the replacement (§4.5), so it is played, not skipped.
+  // bound WebView, so Retry's recreated realm opens from the start again. The label counts from the
+  // bind; the cap from the delivery, because a page still loading paints the default light canvas
+  // until the delivered theme reaches it (a light frame in dark mode, measured on iOS). Under Reduce
+  // Motion the fade is itself the replacement (§4.5), so it is played, not skipped.
   const [capFor, setCapFor] = useState<number | null>(null);
   const [labelFor, setLabelFor] = useState<number | null>(null);
   useEffect(() => {
     if (slotKey === null) return undefined;
-    const cap = setTimeout(() => setCapFor(slotKey), OPENING_REVEAL_CAP_MS);
     const label = setTimeout(() => setLabelFor(slotKey), OPENING_LABEL_AFTER_MS);
-    return () => {
-      clearTimeout(cap);
-      clearTimeout(label);
-    };
+    return () => clearTimeout(label);
   }, [slotKey]);
+  useEffect(() => {
+    if (slotKey === null || deliveredFor !== slotKey) return undefined;
+    const cap = setTimeout(() => setCapFor(slotKey), OPENING_REVEAL_CAP_MS);
+    return () => clearTimeout(cap);
+  }, [slotKey, deliveredFor]);
   const look = openingLook(surface, { cap: slotKey !== null && capFor === slotKey, label: slotKey !== null && labelFor === slotKey });
   const reduceMotion = tokens.reduceMotion;
   const cover = useSharedValue(1);
@@ -343,6 +360,9 @@ export default function MiniAppView({
     if (slotKey !== openedIn) return;
     log.info(CHANNELS.app, 'tap to first paint', { tapToPaintMs: paintedAt - tappedAt, paintMs, webView: handedOut });
   }, [paintedAt, paintMs, tappedAt, slotKey, openedIn, handedOut]);
+  useEffect(() => {
+    if (paintedAt !== null) onOpened();
+  }, [paintedAt, onOpened]);
   const primary = buttonColors(tokens, 'ink', false);
 
   // A launch refused pre-delivery (#41 D7, structured `launchApp` failure) never delivers a
@@ -442,6 +462,7 @@ const styles = StyleSheet.create({
   // out of the accessibility tree, under whatever screen the launcher shows.
   waiting: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: 0 },
   web: { flex: 1 },
+  waitingWeb: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: 0 },
   errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.lg },
   errorTitle: { textAlign: 'center', marginBottom: SPACING.sm },
   errorBody: { textAlign: 'center', marginBottom: SPACING.lg },

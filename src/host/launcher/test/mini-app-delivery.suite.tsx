@@ -10,9 +10,10 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { SEED_VERSION } from '../seed';
 import { log } from '../../logging';
 import { resetNativeStorage } from './native-storage';
-import { finishAnimations, injectedScripts } from './native-host';
+import { finishAnimations, injectedScripts, setColorScheme, StyleSheet } from './native-host';
 import { button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 import { COPY } from '../copy';
+import { COLORS } from '../../../design/tokens';
 
 const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
@@ -34,12 +35,15 @@ async function withLauncher(activeBundle: () => Promise<string>, body: (tree: Te
   }
 }
 
-const webView = (tree: TestRenderer.ReactTestRenderer) => tree.root.find((node) => hostType(node) === 'WebView');
+const webViews = (tree: TestRenderer.ReactTestRenderer) => tree.root.findAll((node) => hostType(node) === 'WebView');
+/** The WebView the open app runs in: not the one waiting, untouchable, beside it. */
+const webView = (tree: TestRenderer.ReactTestRenderer) => tree.root.find((node) => hostType(node) === 'WebView' && node.props.pointerEvents !== 'none');
 
 export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
   await h.test('delivery: opening an installed app injects its stored bundle once the page has loaded', async () => {
     await withLauncher(async () => 'window.__WHIM_APP_MODULE__ = { marker: "timer-bundle-7f3a" };', async (tree) => {
-      const waiting = webView(tree);
+      h.eq(webViews(tree).length, 1, 'one WebView waits on Home');
+      const [waiting] = webViews(tree);
       await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
       h.ok(webView(tree) === waiting, 'the app opens in the WebView that was waiting on Home');
       h.eq(injectedScripts.length, 0, 'nothing is injected before the page reports it has loaded');
@@ -49,7 +53,7 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
       await press(button(tree, COPY.orbMenuOpenLabel));
       await TestRenderer.act(async () => { finishAnimations(); });
       await press(tree.root.find((node) => hostType(node) === 'Pressable' && textOf(node).endsWith(COPY.orbActionHome)));
-      h.ok(!tree.root.findAll((node) => hostType(node) === 'WebView').includes(waiting), 'closing it through the orb ends its realm with its WebView');
+      h.ok(!webViews(tree).includes(waiting), 'closing it through the orb ends its realm with its WebView');
       h.eq(tree.root.findAllByType(HomeScreen).length, 1, 'and returns to Home');
       h.eq(injectedScripts.length, 1, 'over a fresh WebView waiting, which nothing was injected into');
     });
@@ -78,6 +82,24 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
       });
     } finally {
       Date.now = realNow;
+    }
+  });
+
+  await h.test('frame: over an open app the status-bar strip is the app’s own bg and the status bar reads on it, light and dark', async () => {
+    try {
+      for (const scheme of ['light', 'dark'] as const) {
+        setColorScheme(scheme);
+        await withLauncher(async () => 'window.__WHIM_APP_MODULE__ = {};', async (tree) => {
+          await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
+          const frame = tree.root.findAll((node) => hostType(node) === 'SafeAreaView')[0];
+          h.eq((StyleSheet.flatten(frame.props.style) as { backgroundColor?: string }).backgroundColor, COLORS[scheme].bg,
+            `${scheme}: the strip above the app is the bg the app’s container and page paint, with no edge between them`);
+          h.eq(tree.root.find((node) => hostType(node) === 'StatusBar').props.barStyle, scheme === 'dark' ? 'light-content' : 'dark-content',
+            `${scheme}: and the status bar’s content contrasts with it`);
+        });
+      }
+    } finally {
+      setColorScheme('light');
     }
   });
 }

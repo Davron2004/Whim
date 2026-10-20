@@ -333,6 +333,16 @@ function schemeFollowing(on: StackScreen): boolean {
   return on.kind === 'home' || on.kind === 'settings' || on.kind === 'advanced' || on.kind === 'report';
 }
 
+/** Whether the shell's frame (the status-bar strip above a screen drawn without the native stack)
+ *  and the status bar's content follow the phone's scheme: they take the colours of the screen they
+ *  frame — the token `bg` over a running app, the Home skeleton (`ready` false) and a scheme-following
+ *  stack screen on `top`; the light v2 palette over a screen still drawn in it (the dev probe, the
+ *  age hold, the missing link, the update screen). */
+function frameFollowsScheme(screen: Screen, top: StackScreen | undefined, ready: boolean): boolean {
+  if (top !== undefined) return schemeFollowing(top);
+  return screen.kind === 'app' || !ready;
+}
+
 /** The update screen in place of `from`, holding the prompt typed there when `from` is a flow step
  *  that has one, and showing `notice` when a fallback opened it. Pure, so it can run inside a
  *  `setScreen` updater. */
@@ -3133,12 +3143,14 @@ function LauncherShell({
   // failing-screen identifier in the log record and the reset key, so navigating away and back
   // re-attempts a screen that failed once.
   const exit = SCREEN_EXITS[screen.kind];
-  const top = stack?.at(-1);
+  const frame = frameFollowsScheme(screen, stack?.at(-1), ready)
+    ? { background: tokens.colors.bg, barStyle: tokens.barStyle }
+    : { background: palette.bg, barStyle: 'dark-content' as const };
 
   return (
     <HighlightingProvider enabled={highlighting}>
-      <SafeAreaView edges={frameEdgesFor(screen.kind, stack !== null)} style={[styles.root, { backgroundColor: palette.bg }]}>
-        <StatusBar barStyle={top !== undefined && schemeFollowing(top) ? tokens.barStyle : 'dark-content'} />
+      <SafeAreaView edges={frameEdgesFor(screen.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>
+        <StatusBar barStyle={frame.barStyle} />
         <ToastHost bottomOffset={toastClearance(screen.kind)}>
           <ToastBridge api={toastRef} />
           <ScreenBoundary

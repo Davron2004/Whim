@@ -142,7 +142,8 @@ async function withMiniApp(
     <MiniAppStage launch={launchOf(record, { tile, tappedAt, onExit: () => { exits++; } })} />,
     { createNodeMock: measuredAsContainer },
   );
-  const webView = () => tree.root.findAll((n) => hostType(n) === 'WebView')[0];
+  // The launch's own WebView: not the one waiting unseen beside it.
+  const webView = () => tree.root.findAll((n) => isWebView(n) && n.props.pointerEvents !== 'none')[0];
   try {
     await body({
       tree,
@@ -440,7 +441,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       log.buffer.clear();
       await show(launchOf(TIP));
       const [web] = webViews();
-      h.ok(web === waiting && webViews().length === 1, 'the app takes the waiting WebView, and none other waits');
+      h.ok(web === waiting, 'the app takes the waiting WebView');
       h.eq(deliveriesInto(web).length, 1, 'it is delivered into at once, with no load event to wait for');
       h.ok(isOpening(tree) && !pageIsShown(tree), 'under the opening state');
       await TestRenderer.act(async () => web.props.onLoadEnd());
@@ -448,6 +449,44 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await send(web, firstPaint(generationIn(web)));
       h.ok(!isOpening(tree) && pageIsShown(tree), 'its own paint opens it');
       h.eq(timedRecords().map((f) => f.webView), ['warm'], 'and the timing record says the WebView was warm');
+    });
+  });
+
+  await h.test('pool: once an app has opened a fresh WebView warms beside it — unseen, untouchable, handed only the probe, deaf to the launch — so opening again after a close is warm', async () => {
+    await withStage(async ({ tree, show, webViews, send, settle }) => {
+      const [first] = webViews();
+      await TestRenderer.act(async () => first.props.onLoadEnd());
+      await send(first, WARM_ANSWER);
+      await show(launchOf(WATER));
+      const [web] = webViews();
+      h.ok(web === first && webViews().length === 1, 'the app has the warm WebView, and no other page loads while it opens');
+      const gen = generationIn(web);
+      await send(web, firstPaint(gen));
+      h.ok(!isOpening(tree) && pageIsShown(tree), 'the app’s own paint opens it');
+      const next = webViews()[1];
+      h.ok(next !== undefined && webViews().length === 2, 'and then a new WebView is there beside it');
+      h.eq([flat(next).opacity, spansContainer(next), next.props.pointerEvents, next.props.accessibilityElementsHidden, next.props.importantForAccessibility],
+        [0, true, 'none', true, 'no-hide-descendants'], 'unseen, untouchable and out of the accessibility tree');
+      h.ok(pageIsShown(tree), 'so the app’s page stays shown under it');
+      h.eq(settingsOf(next), settingsOf(web), 'with exactly the settings of the app’s own');
+      await TestRenderer.act(async () => next.props.onLoadEnd());
+      await send(next, { kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
+      await send(next, syscall(gen, 1, 'storage.kv.get', { key: 'note' }));
+      await settle();
+      h.ok(!textOf(tree.root).includes(COPY.appErrorTitle), 'a fatal error frame from the waiting WebView does not reach the running app');
+      h.eq([...repliesIn(next), ...repliesIn(web)], [], 'and a syscall from it, stamped with the app’s generation, is answered nowhere');
+      await send(next, WARM_ANSWER);
+      h.eq(next.props.injected, [WARM_PROBE_JS], 'it is handed the probe and nothing else: no bundle, no theme, no generation');
+
+      log.buffer.clear();
+      await show(null);
+      await show(launchOf(TIP));
+      const [again] = webViews();
+      h.ok(again === next && !webViews().includes(web), 'opening again takes the WebView that warmed while the app ran; the app’s own is gone');
+      h.eq(deliveriesInto(again).length, 1, 'delivered into at once');
+      await send(again, firstPaint(generationIn(again)));
+      h.ok(generationIn(again) !== gen, 'at a generation of its own');
+      h.eq(timedRecords().map((f) => f.webView), ['warm'], 'and the timing record says warm');
     });
   });
 
@@ -469,7 +508,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await show(null);
       await show(launchOf(LATENCY));
       const [b] = webViews();
-      h.ok(b !== a && webViews().length === 1, 'B gets a new WebView; A’s is gone');
+      h.ok(b !== a && !webViews().includes(a), 'B gets a new WebView; A’s is gone');
       await TestRenderer.act(async () => b.props.onLoadEnd());
       const genB = generationIn(b);
       h.ok(Number.isFinite(genB) && genB !== genA, 'B’s realm is bound at a generation of its own');
@@ -504,7 +543,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => silent.props.onLoadEnd());
       await show(launchOf(TIP));
       const [web] = webViews();
-      h.ok(web !== silent && webViews().length === 1, 'a page whose scripts never answered the probe is dropped; the app gets a cold WebView');
+      h.ok(web !== silent && !webViews().includes(silent), 'a page whose scripts never answered the probe is dropped; the app gets a cold WebView');
       h.eq(intoSilent, [WARM_PROBE_JS], 'the dropped one got nothing but the probe');
       await TestRenderer.act(async () => web.props.onLoadEnd());
       h.eq(deliveriesInto(web).length, 1, 'the cold one is delivered into once its page has loaded');
@@ -536,6 +575,20 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       h.ok(shown().includes(COPY.appBootLabel), '"Opening…" appears at 1.5 s');
       await frame(firstPaint());
       h.ok(!opening() && !shown().includes(COPY.appBootLabel), 'the paint ends the opening state, words and all');
+    });
+  });
+
+  await h.test('mini-app: a page still loading is never shown before it has the theme: the 600 ms cap counts from the delivery, "Opening…" from the tap', async () => {
+    await withMiniApp(TIP, async ({ loadEnd, shown, opening, pageShown, clock }) => {
+      await TestRenderer.act(async () => { clock.fireWithin(1_500); });
+      h.ok(!pageShown(), 'a WebView still loading its page 1.5 s after the tap stays covered: its page would paint the default light canvas first');
+      h.ok(opening() && shown().includes(COPY.appBootLabel), 'while the plate says "Opening…" on time');
+      await loadEnd();
+      h.eq(injectedScripts.length, 1, 'the page loads and gets the bundle and the theme');
+      await TestRenderer.act(async () => { clock.fireWithin(599); });
+      h.ok(!pageShown(), 'still covered until 600 ms after that delivery');
+      await TestRenderer.act(async () => clock.fire(600));
+      h.ok(pageShown(), 'then shown, paint or not');
     });
   });
 

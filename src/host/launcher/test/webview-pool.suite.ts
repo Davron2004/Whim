@@ -8,6 +8,7 @@ import { Harness } from './harness';
 import {
   EMPTY_POOL,
   launchFailed,
+  launchOpened,
   launchSlot,
   openApp,
   pageAnswered,
@@ -25,8 +26,9 @@ function warmed(pool: WebViewPool): WebViewPool {
 }
 
 /** How `pool` breaks the pool's promises, given `owner` (every WebView's launch so far, updated):
- *  a WebView serving a second launch or waiting again after one, more than one waiting, or one
- *  waiting while an app is open. */
+ *  a WebView serving a second launch or waiting again after one, more than one waiting (or none
+ *  with no app open), more than one WebView bound, or a WebView changing its place among the
+ *  others (a native view moved under a running app). */
 function violations(pool: WebViewPool, owner: Map<number, number>): number {
   let broken = 0;
   for (const slot of pool.slots) {
@@ -35,7 +37,9 @@ function violations(pool: WebViewPool, owner: Map<number, number>): number {
     if (slot.launch !== null) owner.set(slot.key, slot.launch);
   }
   const waiting = pool.slots.filter((s) => s.launch === null).length;
-  if (waiting > 1 || (pool.launch !== null && waiting > 0)) broken += 1;
+  if (waiting > 1 || (pool.launch === null && waiting !== 1)) broken += 1;
+  if (pool.slots.filter((s) => s.launch !== null).length > 1) broken += 1;
+  if (pool.slots.some((s, i) => i > 0 && pool.slots[i - 1].key > s.key)) broken += 1;
   return broken;
 }
 
@@ -47,20 +51,30 @@ export async function runWebViewPoolTests(h: Harness): Promise<void> {
     const ready = warmed(idle);
     const open = openApp(ready, 'tip');
     h.eq([launchSlot(open)?.key, launchSlot(open)?.handedOut, waitingSlot(open)], [waiting.key, 'warm', undefined],
-      'the launch takes the waiting WebView, warm, and no other waits while the app is open');
-    h.eq(openApp(open, 'tip'), open, 'the same app open is no new launch');
-    const closed = openApp(open, null);
+      'the launch takes the waiting WebView, warm, and none other loads while it opens');
+    const opened = launchOpened(open);
+    const replacement = waitingSlot(opened);
+    h.ok(replacement !== undefined && replacement.key !== waiting.key && replacement.page === 'loading',
+      'once it has opened, a fresh one starts loading beside it, while the app runs');
+    h.eq(launchOpened(opened), opened, 'and only one');
+    h.eq(openApp(opened, 'tip'), opened, 'the same app open is no new launch');
+    const closed = openApp(warmed(opened), null);
     h.ok(!closed.slots.some((s) => s.key === waiting.key), 'closing the app destroys its WebView');
-    h.ok(waitingSlot(closed) !== undefined && waitingSlot(closed)!.key !== waiting.key, 'and a fresh one waits');
+    h.eq([closed.slots.length, waitingSlot(closed)?.key, waitingSlot(closed)?.page], [1, replacement!.key, 'warm'],
+      'and the one that warmed while it ran waits, already warm');
     const next = openApp(closed, 'tip');
-    h.ok(launchSlot(next)!.key !== waiting.key && next.launch !== open.launch, 'opening the same app again is a new launch in a WebView it never had');
+    h.ok(launchSlot(next)!.key === replacement!.key && launchSlot(next)!.handedOut === 'warm' && next.launch !== open.launch,
+      'opening the same app again is a new launch, warm, in a WebView it never had');
   });
 
-  await h.test('pool: one app straight after another destroys the first app’s WebView; the second gets a cold one', () => {
-    const a = openApp(warmed(openApp(EMPTY_POOL, null)), 'a');
+  await h.test('pool: one app straight after another destroys the first app’s WebView; the second takes the one that waited beside it', () => {
+    const a = launchOpened(openApp(warmed(openApp(EMPTY_POOL, null)), 'a'));
     const b = openApp(a, 'b');
     h.ok(!b.slots.some((s) => s.key === launchSlot(a)!.key), 'the first app’s WebView is gone');
-    h.eq([b.slots.length, launchSlot(b)?.handedOut], [1, 'cold'], 'the second app’s is a new one');
+    h.eq([launchSlot(b)?.key, launchSlot(b)?.handedOut, b.slots.length], [waitingSlot(a)!.key, 'loading', 1],
+      'the second app’s is the one A never had, still loading, and none other loads while it opens');
+    const unopened = openApp(openApp(warmed(openApp(EMPTY_POOL, null)), 'a'), 'b');
+    h.eq(launchSlot(unopened)?.handedOut, 'cold', 'an app left before it opened leaves none waiting: the next gets a cold one');
   });
 
   await h.test('pool: a waiting WebView still loading is handed out as it is; one that loaded without answering is not', () => {
@@ -88,19 +102,25 @@ export async function runWebViewPoolTests(h: Harness): Promise<void> {
     const open = openApp(warmed(openApp(EMPTY_POOL, null)), 'a');
     const first = launchSlot(open)!.key;
     const failed = launchFailed(open);
-    h.eq([launchSlot(failed), failed.slots.length, failed.launch], [undefined, 0, open.launch], 'no WebView while the recovery screen shows, and no other waits');
-    const retried = retryLaunch(failed);
-    h.ok(launchSlot(retried)!.key !== first && launchSlot(retried)!.handedOut === 'cold' && retried.launch === open.launch,
-      'Retry gives the same launch a new WebView');
+    h.eq([launchSlot(failed), failed.slots.length, failed.launch], [undefined, 1, open.launch], 'no WebView of its own while the recovery screen shows; one starts waiting');
+    const retried = retryLaunch(warmed(failed));
+    h.ok(launchSlot(retried)!.key !== first && launchSlot(retried)!.handedOut === 'warm' && retried.launch === open.launch,
+      'Retry gives the same launch a new WebView: the one that warmed meanwhile');
     h.ok(launchSlot(retryLaunch(retried))!.key !== launchSlot(retried)!.key, 'and Retry without a failure screen replaces the WebView too');
   });
 
   await h.test('pool: over any sequence of opens, closes, failures, retries and page events, no WebView ever serves two launches or waits again', () => {
     let pool = openApp(EMPTY_POOL, null);
     const owner = new Map<number, number>();
+    let notWaiting = 0;
+    const opened = (p: WebViewPool) => {
+      const q = launchOpened(p);
+      if (waitingSlot(q) === undefined) notWaiting += 1;
+      return q;
+    };
     const steps: ((p: WebViewPool) => WebViewPool)[] = [
       (p) => openApp(p, 'a'), (p) => openApp(p, 'b'), (p) => openApp(p, null), (p) => openApp(p, 'a'),
-      launchFailed, retryLaunch,
+      launchFailed, retryLaunch, opened,
       (p) => (waitingSlot(p) ? pageLoaded(p, waitingSlot(p)!.key) : p),
       (p) => (waitingSlot(p) ? pageAnswered(p, waitingSlot(p)!.key) : p),
       (p) => (waitingSlot(p) ? pageGone(p, waitingSlot(p)!.key) : p),
@@ -112,7 +132,8 @@ export async function runWebViewPoolTests(h: Harness): Promise<void> {
       pool = steps[seed % steps.length](pool);
       broken += violations(pool, owner);
     }
-    h.eq(broken, 0, 'every WebView serves at most one launch, never waits after it, and at most one waits, only with no app open');
+    h.eq(broken, 0, 'every WebView serves at most one launch and never waits after it; at most one waits, exactly one with no app open; none moves');
+    h.eq(notWaiting, 0, 'and once a launch has opened, one waits beside it');
     h.ok(owner.size > 100, 'over many launches');
   });
 }

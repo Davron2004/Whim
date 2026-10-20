@@ -4,9 +4,10 @@
  *
  * Pure and RN-free, so the launcher's Node suite drives it directly (the `boot-state.ts` precedent).
  *
- * While no app is open, ONE WebView waits with the runtime page loaded: the page and its idle,
- * empty sandbox iframe, nothing else. Opening an app hands that WebView to the launch, whose
- * delivery is a `reinject({ reset: true })` — the page recreates the iframe with a new nonce and
+ * ONE WebView waits with the runtime page loaded: the page and its idle, empty sandbox iframe,
+ * nothing else. Opening an app hands that WebView to the launch, and a fresh one starts loading
+ * beside it once the launch has opened, so the next launch finds it warm too. The delivery is a
+ * `reinject({ reset: true })` — the page recreates the iframe with a new nonce and
  * the launch's own generation (spike2 §5: a realm reset is a recreate). A WebView that has hosted a
  * launch is NEVER handed out again: closing the app, a failure surface and Retry all destroy it,
  * and the next launch gets a WebView no app has ever touched (the waiting one, or a cold one).
@@ -63,19 +64,22 @@ export function launchSlot(pool: WebViewPool): PoolSlot | undefined {
   return pool.launch === null ? undefined : pool.slots.find((s) => s.launch === pool.launch);
 }
 
-/** With no app open, one WebView waits. */
+/** One WebView waits. New WebViews go last, so the slots stay in key order and no native view is
+ *  ever moved among its siblings. */
 function keepOneWaiting(pool: WebViewPool): WebViewPool {
-  if (pool.launch !== null || waitingSlot(pool)) return pool;
+  if (waitingSlot(pool)) return pool;
   return { ...pool, slots: [...pool.slots, { key: pool.next, page: 'loading', launch: null, handedOut: null }], next: pool.next + 1 };
 }
 
-/** Give the current launch a WebView: the waiting one if it may be handed out, else a cold one. */
+/** Give the current launch a WebView: the waiting one if it may be handed out, else a cold one
+ *  (and the waiting one that may not is destroyed). None waits until the launch has opened. */
 function bindLaunch(pool: WebViewPool, launch: number): WebViewPool {
   const waiting = waitingSlot(pool);
-  const others = pool.slots.filter((s) => s !== waiting);
   if (waiting && waiting.page !== 'loaded') {
-    return { ...pool, slots: [...others, { ...waiting, launch, handedOut: waiting.page }] };
+    const bound: PoolSlot = { ...waiting, launch, handedOut: waiting.page };
+    return { ...pool, slots: pool.slots.map((s) => (s === waiting ? bound : s)) };
   }
+  const others = pool.slots.filter((s) => s !== waiting);
   return { ...pool, slots: [...others, { key: pool.next, page: 'loading', launch, handedOut: 'cold' }], next: pool.next + 1 };
 }
 
@@ -90,15 +94,22 @@ function dropLaunchSlot(pool: WebViewPool): WebViewPool {
  * a cold one. Closing leaves one WebView waiting. The same app id is no change.
  */
 export function openApp(pool: WebViewPool, appId: string | null): WebViewPool {
-  if (pool.appId === appId) return keepOneWaiting(pool);
+  if (pool.appId === appId) return appId === null ? keepOneWaiting(pool) : pool;
   const closed: WebViewPool = { ...dropLaunchSlot(pool), appId: null, launch: null };
   if (appId === null) return keepOneWaiting(closed);
   return bindLaunch({ ...closed, appId, launch: closed.next, next: closed.next + 1 }, closed.next);
 }
 
-/** The launch reached a failure surface: its WebView is destroyed. */
+/** The launch has opened (its first accepted paint): a fresh WebView starts loading beside it, so
+ *  the next launch (after a close, another app, a failure or Retry) finds one warm. Not earlier:
+ *  loading a page alongside the opening slowed the opening itself (18e, measured on Android). */
+export function launchOpened(pool: WebViewPool): WebViewPool {
+  return pool.launch === null ? pool : keepOneWaiting(pool);
+}
+
+/** The launch reached a failure surface: its WebView is destroyed, and one waits for Retry. */
 export function launchFailed(pool: WebViewPool): WebViewPool {
-  return dropLaunchSlot(pool);
+  return keepOneWaiting(dropLaunchSlot(pool));
 }
 
 /** Retry: the launch's WebView, if it still has one, is destroyed and a fresh one is bound. */
