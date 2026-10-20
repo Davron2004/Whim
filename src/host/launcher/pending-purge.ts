@@ -112,10 +112,40 @@ export async function completePurge(deps: PurgeDeps, marker: PurgeMarker): Promi
     if (entry) await deps.access.remove(entry);
     deps.journal.deleteLastRun(marker.id);
   } else {
-    dropPendingBuild(deps.pending, marker.id);
-    deps.journal.delete(marker.id);
+    removeAttempt(deps, marker.id);
   }
   deps.purges.cancel(marker.kind, marker.id);
+}
+
+/**
+ * Remove a discarded attempt: its record and order entry, then its journal, each tried whatever
+ * the other did, then read back. Anything still there (a removal that threw, or one the store
+ * reported and did not do) throws, so the marker stays armed, the attempt stays hidden, and a later
+ * launch finishes it. Once everything reads back gone, the store's in-memory view of the attempt (a
+ * failure this process could not persist) goes too, so nothing brings the tile back.
+ */
+function removeAttempt({ pending, journal }: PurgeDeps, id: string): void {
+  const errors: string[] = [];
+  try {
+    dropPendingBuild(pending, id);
+  } catch (e) {
+    errors.push(e instanceof Error ? e.message : String(e));
+  }
+  try {
+    journal.delete(id);
+  } catch (e) {
+    errors.push(e instanceof Error ? e.message : String(e));
+  }
+  const left = [
+    ...(pending.get(id) == null ? [] : ['record']),
+    ...(pending.isOrderExcluded(id) ? [] : ['order entry']),
+    ...(journal.get(id) == null ? [] : ['journal']),
+  ];
+  if (left.length > 0) {
+    const why = errors.length > 0 ? ` (${errors.join('; ')})` : '';
+    throw new Error(`the discarded attempt still has its ${left.join(', ')}${why}`);
+  }
+  pending.forgetRetained(id);
 }
 
 /** At launch, before the first grid render: finish every purge a closed process left armed. One

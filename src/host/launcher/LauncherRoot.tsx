@@ -32,6 +32,7 @@ import type { KVBackend } from '../version-store/fs/kv-fs';
 import { copyStorage, deleteStorage, peekAppliedSchema } from '../storage-engine';
 import { HighlightingProvider } from '../ui/whim-prose/WhimProse';
 import { ToastHost, useToast, type ToastApi } from '../ui/Toast';
+import { haptics } from '../haptics';
 import { useTokens } from '../ui/tokens';
 import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
@@ -2630,27 +2631,28 @@ function LauncherShell({
     refresh();
   };
 
-  /** Dismiss a `failed`/`interrupted` record, from its quick actions or its failure screen: the
-   *  record is deleted and its ghost stops rendering. */
-  const onDismissPending = (rec: PendingBuildRecord) => {
-    const current = pending.readCurrent(rec.id)?.record ?? rec;
+  /** Discard on a Failure page: the page closes and the attempt goes the way Home's Discard sends
+   *  it (`soft-delete.ts`), hidden at once and purged, record and journal, when the "Discarded"
+   *  toast's 6 s Undo ends. A discard that cannot be armed changes nothing: the page stays. */
+  const onDiscardFromFailure = (rec: PendingBuildRecord) => {
     try {
-      pending.delete(current.id);
+      onDiscard([rec]);
     } catch (error) {
-      log.warn(CHANNELS.gen, 'pending discard did not persist', { operation: 'discard-pending', ...errorFields(error) });
+      log.warn(CHANNELS.gen, 'discard could not be armed', { operation: 'discard-pending', ...errorFields(error) });
+      return;
     }
-    try {
-      journal.delete(current.id);
-    } catch (error) {
-      log.warn(CHANNELS.gen, 'journal discard did not persist', { operation: 'discard-journal', ...errorFields(error) });
-    }
-    const removed = pending.get(current.id) == null
-      && pending.isOrderExcluded(current.id)
-      && kv.getString(JOURNAL_KEY(current.id)) == null;
-    if (removed) pending.forgetRetained(current.id);
-    else pending.retainDiscardFailure(current, { reason: GENERIC_STREAM_ERROR });
-    refresh();
-    if (removed) goHome();
+    goHome();
+    haptics.play('warning');
+    toastRef.current?.show({
+      message: COPY.discardedToast,
+      action: {
+        label: COPY.toastUndo,
+        onPress: () => {
+          if (!onUndoDiscard([rec])) toastRef.current?.show({ message: COPY.undoTooLateToast });
+        },
+      },
+      onEnd: () => onSettleDiscard([rec]),
+    });
   };
 
   /** Retry from a hydrated failure screen: a NEW generation from the record's stored prompt,
@@ -2723,8 +2725,8 @@ function LauncherShell({
    * record existed). Try again is a data-sending action (spec ai-data-consent "The first action that
    * would send data asks for consent at that moment"), gated like the other entry points through
    * `openWithConsent`. Discard is offered ONLY when there is an attempt to discard, and goes through
-   * `onDismissPending`, so record and journal die together in the shell's single deletion path. A
-   * record discarded elsewhere in the meantime drops both, instead of acting on one that is gone.
+   * `onDiscardFromFailure`, the purge window Home's Discard uses, so record and journal die together
+   * in the shell's single deletion path (`completePurge`).
    * Leaving is the sheet's close, which leaves the attempt as it is.
    */
   const failureActions = (s: Extract<Screen, { kind: 'failure' }>) => {
@@ -2734,7 +2736,7 @@ function LauncherShell({
     return {
       onChange: () => openCompose(s.editing, s.prompt),
       ...(attempt != null
-        ? { onRetry: () => openWithConsent({ kind: 'retry', record: attempt }), onDismiss: () => onDismissPending(attempt) }
+        ? { onRetry: () => openWithConsent({ kind: 'retry', record: attempt }), onDismiss: () => onDiscardFromFailure(attempt) }
         : {}),
     };
   };

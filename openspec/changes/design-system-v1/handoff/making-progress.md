@@ -2,7 +2,8 @@
 
 Interface only. Rules: spec prompt-flow (Making, Ready, Failure, Details), system.md §7.1 Step list, §8, §9.
 Pure logic is Node-importable: `making-progress.ts`, `failure-kind.ts`, `prompt-flow.ts`, `home-live.ts`.
-Supersedes `handoff/making-sheet.md` "Where chain-17 plugs in" and `handoff/home.md` "Stop ... does not leave a Stopped tile".
+Supersedes `handoff/making-sheet.md` "Where chain-17 plugs in", `handoff/home.md` "Stop ... does not leave a Stopped tile"
+and its "the failure screen's Discard still calls `onDismissPending`".
 
 ## Pages (props verbatim; each is a `KeyboardShell host="sheet"` body; `HostedPage` is gone)
 
@@ -79,7 +80,13 @@ failureActions(kind, rephraseHelps, canRetry): readonly FailureAction[]
 - A stream that ends without a terminal event, or a network error mid-run, settles with reason
   `COPY.failureConnection` and remedy `{ kind: 'retry' }`; Try again is disabled while `showOfflineIndicator`.
 - "What happened" rows: `runTimelineRows(journal, devMode, sentence, true)` + hints it lacks, each a `GroupedRow`.
-- Discard deletes at once through `onDismissPending` (no Undo window yet, see the chain-17 report).
+- Discard (`onDiscardFromFailure`, replaces `onDismissPending`) = Home's tile Discard: `purgeWindows.armAttempt(id)`, then
+  `goHome()`, `warning` haptic, toast `COPY.discardedToast` + Undo, `onEnd` → `finish('attempt', id)` (6 s; the window is the
+  toast's). Undo restores record, journal and Failure page untouched (arming deletes nothing); too late → `undoTooLateToast`.
+  A marker that can't be written: nothing changes, the page stays. Whim closed mid-window: the launch sweep finishes it.
+- `completePurge` for an attempt: record + order, then journal, each tried regardless, then read back; anything left throws,
+  so the marker stays (tile hidden) and the next launch retries; once all reads back gone, `pending.forgetRetained(id)`
+  drops a volatile view. `PendingBuildStore.retainDiscardFailure` is gone (no in-process "retained generic" ghost).
 
 ## Stop and records — `pending-builds.ts`
 

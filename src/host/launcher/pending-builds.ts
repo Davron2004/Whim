@@ -228,16 +228,9 @@ export class PendingBuildStore {
     this.started.delete(lease.token);
   }
 
+  /** Drop this process's volatile view of `id` (a discard read every persisted trace of it back gone). */
   forgetRetained(id: string): void {
     if (this.current.get(id)?.durability === 'volatile') this.current.delete(id);
-  }
-
-  /** A partial Discard has no durable record to read, but remains actionable for this process. */
-  retainDiscardFailure(record: PendingBuildRecord, failure: PendingBuildFailure): void {
-    this.current.set(record.id, {
-      durability: 'volatile',
-      record: { ...record, state: 'failed', failure, updatedAt: Date.now(), journalUnavailable: true },
-    });
   }
 
   setJournalAvailability(id: string, availability: PendingJournalAvailability): void {

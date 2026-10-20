@@ -16,14 +16,14 @@ import { GENERIC_STREAM_ERROR } from '../error-reason';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { StoreAccess } from '../store-access';
 import { PendingPurgeStore } from '../pending-purge';
-import { renderRoot, toastOf } from './home-rig';
+import { pressToastAction, renderRoot, tileLabels, toastOf } from './home-rig';
 import { revokeConsent } from '../ai-consent';
 import { openLink } from './native-host';
 import { failNativeStorageRemovalsWhen, failNativeStorageWritesWhen } from './native-storage';
 import AppLinkMissingScreen from '../AppLinkMissingScreen';
 import { appLinkFor } from '../app-link';
 import { androidBack, button, press, renderScreen, textOf, unmountScreen } from './react-screen';
-import { buildIt, composeAndContinue, failureTryAgain, hasInstalled, json, planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, failureTryAgain, hasInstalled, json, planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type Launcher, type LauncherSetup, type SentRequest, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 import { stubFutureFrame } from '../../../../server/src/stub-markers';
 import { serverBusyRefusal } from '../../../../server/src/admission/refusals';
@@ -130,6 +130,37 @@ async function openPending(tree: Tree, record: PendingBuildRecord): Promise<void
   await TestRenderer.act(async () => home(tree).props.onOpenPending(record));
 }
 
+/** A failed attempt an earlier launch saved, written through the stores in the order a run writes
+ *  it: the record, its journal (then marked readable), a stage, the failure. */
+const savedFailure: NonNullable<LauncherSetup['prepare']> = (kv) => {
+  const pending = new PendingBuildStore(kv);
+  pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+  const journal = new RunJournalStore(kv);
+  journal.create('failed');
+  pending.setJournalAvailability('failed', 'verified');
+  journal.appendStage('failed', 'generate');
+  journal.appendTerminal('failed', { failure: { reason: 'The earlier build stopped.' } });
+  pending.setFailed('failed', { reason: 'The earlier build stopped.' });
+};
+
+/** The Discard toast's 6 s run out: its window ends and the purge runs, to the end or to a failure. */
+async function runOutUndo(tree: Tree, clock: Launcher['clock']): Promise<void> {
+  await TestRenderer.act(async () => { clock.fire(6_000); });
+  await waitFor(() => toastOf(tree) === null, 'the Undo toast to leave');
+  await settle();
+}
+
+/** Whim launched again over the same storage, once Home is drawn. */
+async function afterRelaunch(body: (tree: Tree) => Promise<void>): Promise<void> {
+  const next = await renderRoot(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
+  try {
+    await waitFor(() => on(next, HomeScreen), 'the relaunched Home');
+    await body(next);
+  } finally {
+    await unmountScreen(next);
+  }
+}
+
 export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
   await h.test('ghosts: a build still marked building from a previous launch shows as interrupted', async () => {
     await withLauncher({
@@ -232,7 +263,7 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
 
   await h.test('ghosts: a failed build’s Back keeps its record and journal; its ghost reopens the saved failure, and Discard deletes both', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
-    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv, clock }) => {
       await startBuild(tree, 'A tea timer');
       streams[0].push({ type: 'failure', reason: 'The app did not build.', attempts: 2, diagnostics: [{ kind: 'type', symbol: 'x', message: 'm', hint: 'Try fewer screens.' }] });
       streams[0].end();
@@ -254,8 +285,10 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       h.eq(ghosts(tree).length, 1, 'and is the close: nothing is deleted');
       await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
       await press(button(tree, COPY.actionDiscard));
-      h.ok(on(tree, HomeScreen), 'Discard returns to Home');
-      h.eq(ghosts(tree), [], 'the ghost is gone');
+      h.ok(on(tree, HomeScreen) && !on(tree, FailurePage), 'Discard closes the page onto Home');
+      h.eq(tileLabels(tree), [], 'the ghost is gone at once');
+      await runOutUndo(tree, clock);
+      h.eq(ghosts(tree), [], 'and stays gone once its Undo window ends');
       h.eq([kv.getString(`pending:${id}`) ?? null, kv.getString(JOURNAL_KEY(id)) ?? null], [null, null], 'record and journal are both deleted');
     });
   });
@@ -615,104 +648,188 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
 
   await h.test('ghosts: Discard on the live failure screen deletes the attempt it just saved', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
-    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv, clock }) => {
       await startBuild(tree, 'A tea timer');
       streams[0].end();
       await waitFor(() => on(tree, FailurePage), 'the failure screen for a stream that ended with no result');
       const id = new PendingBuildStore(kv).list()[0]?.id;
       h.ok(id != null, 'the attempt was saved as failed');
       await press(button(tree, COPY.actionDiscard));
+      await runOutUndo(tree, clock);
       h.eq(ghosts(tree), [], 'Discard leaves no ghost');
       h.eq(kv.getString(JOURNAL_KEY(id!)) ?? null, null, 'and no journal');
     });
   });
 
-  await h.test('ghosts: a native false-return pending removal keeps the failed ghost actionable through Back and reopen', async () => {
-    await withLauncher({
-      prepare: (kv) => {
-        const pending = new PendingBuildStore(kv);
-        pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
-        pending.setJournalAvailability('failed', 'verified');
-        pending.setFailed('failed', { reason: 'The earlier build stopped.' });
-        new RunJournalStore(kv).create('failed');
-      },
-      server: () => json({}),
-    }, async ({ tree, kv }) => {
-      const clearRemovalFailure = failNativeStorageRemovalsWhen(({ id, key }) =>
-        id === 'whim.launcher' && key === 'pending:failed' ? 'return-false' : undefined);
-      try {
-        const failed = home(tree).props.pending[0];
-        await TestRenderer.act(async () => home(tree).props.onOpenPending(failed));
-        await press(button(tree, COPY.actionDiscard));
-        h.ok(on(tree, FailurePage), 'a failed removal leaves the failure screen available for Back');
-        await press(button(tree, COPY.sheetClose));
-        h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [['failed', 'failed']], 'Home retains exactly one actionable ghost');
-        await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
-        h.eq(tree.root.findByType(FailurePage).props.reason, GENERIC_STREAM_ERROR, 'reopening reaches the retained generic failure');
-        h.ok(kv.getString('pending:failed') != null, 'the false-returning native removal retained the pending key');
-      } finally {
-        clearRemovalFailure();
-      }
-    });
-  });
-
-  await h.test('ghosts: a thrown journal removal retains a partial Discard until a later verified retry clears it', async () => {
-    await withLauncher({
-      prepare: (kv) => {
-        const pending = new PendingBuildStore(kv);
-        pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
-        pending.setJournalAvailability('failed', 'verified');
-        pending.setFailed('failed', { reason: 'The earlier build stopped.' });
-        new RunJournalStore(kv).create('failed');
-      },
-      server: () => json({}),
-    }, async ({ tree, kv }) => {
-      const clearRemovalFailure = failNativeStorageRemovalsWhen(({ id, key }) =>
-        id === 'whim.launcher' && key === JOURNAL_KEY('failed') ? 'throw' : undefined);
-      try {
-        await TestRenderer.act(async () => home(tree).props.onOpenPending(home(tree).props.pending[0]));
-        await press(button(tree, COPY.actionDiscard));
-        await press(button(tree, COPY.sheetClose));
-        h.eq(ghosts(tree).map((ghost) => ghost.id), ['failed'], 'a partial sibling removal retains one ghost');
-        h.eq([kv.getString('pending:failed') ?? null, kv.getString(JOURNAL_KEY('failed')) ?? null], [null, '[]'], 'the successful sibling stays removed while the thrown journal remains');
-      } finally {
-        clearRemovalFailure();
-      }
-      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
-      await press(button(tree, COPY.actionDiscard));
-      h.eq(ghosts(tree), [], 'a recovered Discard clears the retained entry after every readback succeeds');
-      h.eq(kv.getString(JOURNAL_KEY('failed')) ?? null, null, 'the remaining journal is deleted on the recovered attempt');
-    });
-  });
-
-  await h.test('ghosts: Retry after a partial Discard keeps one same-id building ghost', async () => {
+  await h.test('discard: the Failure page closes with 6 s to Undo; Undo brings back the tile, its record, its journal and its Failure page', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
-    await withLauncher({
-      prepare: (kv) => {
-        const pending = new PendingBuildStore(kv);
-        pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
-        pending.setJournalAvailability('failed', 'verified');
-        pending.setFailed('failed', { reason: 'The earlier build stopped.' });
-        new RunJournalStore(kv).create('failed');
-      },
-      server: streamingServer(streams),
-    }, async ({ tree, kv, sent }) => {
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv, clock }) => {
+      await startBuild(tree, 'A tea timer');
+      streams[0].push({ type: 'failure', reason: 'The app did not build.', attempts: 1, diagnostics: [{ kind: 'type', symbol: 'x', message: 'm', hint: 'Try fewer screens.' }] });
+      streams[0].end();
+      await waitFor(() => on(tree, FailurePage), 'the failure page');
+      const id = new PendingBuildStore(kv).list()[0]!.id;
+      await press(button(tree, COPY.sheetClose));
+      const tilesBefore = tileLabels(tree);
+      h.eq(tilesBefore.length, 1, 'the failed attempt has its tile');
+      await openPending(tree, ghosts(tree)[0]);
+      const shownBefore = tree.root.findByType(FailurePage).props;
+      const stored = [kv.getString(`pending:${id}`), kv.getString(JOURNAL_KEY(id))];
+      await press(button(tree, COPY.actionDiscard));
+      h.ok(!on(tree, FailurePage) && on(tree, HomeScreen), 'Discard closes the page onto Home');
+      h.eq(tileLabels(tree), [], 'the tile leaves at once');
+      h.eq(toastOf(tree), { message: COPY.discardedToast, action: COPY.toastUndo }, 'a toast offers Undo');
+      h.ok(clock.count(6_000) >= 1, 'for 6 s');
+      h.eq([kv.getString(`pending:${id}`), kv.getString(JOURNAL_KEY(id))], stored, 'nothing is deleted while Undo is offered');
+      h.ok(new PendingPurgeStore(kv).has('attempt', id), 'the discard is armed on its marker');
+      await pressToastAction(tree);
+      h.eq(tileLabels(tree), tilesBefore, 'Undo brings the tile back');
+      h.eq([kv.getString(`pending:${id}`), kv.getString(JOURNAL_KEY(id))], stored, 'with its record and journal exactly as they were');
+      h.eq(new PendingPurgeStore(kv).list(), [], 'and no discard left armed');
+      await openPending(tree, ghosts(tree)[0]);
+      const shown = tree.root.findByType(FailurePage).props;
+      h.eq([shown.kind, shown.reason, shown.diagnostics, shown.journal], [shownBefore.kind, shownBefore.reason, shownBefore.diagnostics, shownBefore.journal], 'its Failure page reopens as it was, journal included');
+      h.ok(Array.isArray(shown.journal) && shown.journal.length > 0, 'with the run’s journal readable');
+    });
+  });
+
+  await h.test('discard: when the Failure page’s 6 s Undo runs out the record, its journal and the marker are gone, and the tile with them', async () => {
+    await withLauncher({ prepare: savedFailure, server: () => json({}) }, async ({ tree, kv, clock }) => {
+      await openPending(tree, ghosts(tree)[0]);
+      await press(button(tree, COPY.actionDiscard));
+      h.ok(kv.getString('pending:failed') != null && kv.getString(JOURNAL_KEY('failed')) != null, 'nothing is deleted while Undo is offered');
+      await runOutUndo(tree, clock);
+      await waitFor(() => kv.getString('pending:failed') == null, 'the discard to finish');
+      h.eq(kv.getString(JOURNAL_KEY('failed')) ?? null, null, 'its journal goes with it');
+      h.eq(new PendingPurgeStore(kv).list(), [], 'and its marker');
+      h.eq([tileLabels(tree), ghosts(tree)], [[], []], 'the tile stays gone');
+      h.eq(toastOf(tree), null, 'and the toast has left');
+    });
+  });
+
+  await h.test('discard: closing Whim during the Failure page’s Undo window still completes the discard at the next launch, before the grid is drawn', async () => {
+    await withLauncher({ prepare: savedFailure, server: () => json({}) }, async ({ tree, kv }) => {
+      await openPending(tree, ghosts(tree)[0]);
+      await press(button(tree, COPY.actionDiscard));
+      await unmountScreen(tree);
+      h.ok(kv.getString('pending:failed') != null, 'the closed process had not finished it');
+      h.ok(new PendingPurgeStore(kv).has('attempt', 'failed'), 'closing the toast’s host did not end the window: the marker waits for the next launch');
+      await afterRelaunch(async (next) => {
+        h.eq([tileLabels(next), home(next).props.pending], [[], []], 'the attempt does not reappear');
+        h.eq([kv.getString('pending:failed') ?? null, kv.getString(JOURNAL_KEY('failed')) ?? null], [null, null], 'its record and journal are gone');
+        h.eq(new PendingPurgeStore(kv).list(), [], 'and its marker with them');
+      });
+    });
+  });
+
+  await h.test('discard: a failure this process could not save goes through the same 6 s Undo, and its end leaves nothing of it', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    let rejectTerminalWrites = false;
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv, clock }) => {
       const clearWriteFailure = failNativeStorageWritesWhen(({ id, key }) =>
-        id === 'whim.launcher' && key === 'pending:order');
+        rejectTerminalWrites && id === 'whim.launcher' && (key.startsWith('pending:') || key.startsWith('journal:')));
       try {
-        await TestRenderer.act(async () => home(tree).props.onOpenPending(home(tree).props.pending[0]));
-        await press(button(tree, COPY.actionDiscard));
-        await press(button(tree, COPY.sheetClose));
-        h.eq(ghosts(tree).map((ghost) => ghost.id), ['failed'], 'the dangling raw order does not erase the retained ghost');
-        h.eq([kv.getString('pending:failed') ?? null, kv.getString('pending:order'), kv.getString(JOURNAL_KEY('failed')) ?? null], [null, JSON.stringify(['failed']), null], 'independent siblings leave the raw order for recovery');
+        await startBuild(tree, 'A tea timer');
+        rejectTerminalWrites = true;
+        streams[0].end();
+        await waitFor(() => on(tree, FailurePage), 'the volatile live failure');
+        h.eq(new PendingBuildStore(kv).list()[0]?.state, 'building', 'the failure lives only in this process: the saved record still says building');
       } finally {
         clearWriteFailure();
       }
-      await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
-      await press(failureTryAgain(tree));
-      await waitFor(() => streams.length === 1 && on(tree, MakingPage), 'the same-id Retry to activate before a recovered Discard');
-      h.eq(sent.filter((request) => request.path === '/v1/generate').length, 1, 'Retry sends exactly one new generation request');
-      h.eq(new PendingBuildStore(kv).listCurrent().map((view) => [view.record.id, view.record.state]), [['failed', 'building']], 'the raw dangling order and retained view produce one current building ghost');
+      await press(button(tree, COPY.actionDiscard));
+      h.eq([tileLabels(tree), toastOf(tree)?.action], [[], COPY.toastUndo], 'it leaves at once, with Undo offered');
+      await pressToastAction(tree);
+      h.eq(ghosts(tree).map((ghost) => ghost.state), ['failed'], 'Undo brings back the failed tile, not the stale saved one');
+      await openPending(tree, ghosts(tree)[0]);
+      await press(button(tree, COPY.actionDiscard));
+      await runOutUndo(tree, clock);
+      h.eq([tileLabels(tree), ghosts(tree), new PendingBuildStore(kv).list(), new PendingPurgeStore(kv).list()], [[], [], [], []], 'the end of the window removes the in-memory failure and the saved record behind it, then the marker');
+    });
+  });
+
+  await h.test('discard: a Discard whose marker cannot be written leaves the Failure page and the attempt as they were', async () => {
+    await withLauncher({ prepare: savedFailure, server: () => json({}) }, async ({ tree, kv }) => {
+      await openPending(tree, ghosts(tree)[0]);
+      const clearWriteFailure = failNativeStorageWritesWhen(({ id, key }) => id === 'whim.launcher' && key.startsWith('purge:'));
+      try {
+        await press(button(tree, COPY.actionDiscard));
+        h.ok(on(tree, FailurePage), 'the page stays');
+        h.eq(toastOf(tree), null, 'no Undo is offered for a discard that was never armed');
+        h.eq(new PendingPurgeStore(kv).list(), [], 'nothing is armed');
+      } finally {
+        clearWriteFailure();
+      }
+      await press(button(tree, COPY.sheetClose));
+      h.eq(ghosts(tree).map((ghost) => [ghost.id, ghost.state]), [['failed', 'failed']], 'its tile is still there');
+      h.ok(kv.getString('pending:failed') != null && kv.getString(JOURNAL_KEY('failed')) != null, 'with its record and journal');
+    });
+  });
+
+  await h.test('discard: a native false-return pending removal keeps the discarded tile hidden on its marker, and the next launch finishes it', async () => {
+    await withLauncher({ prepare: savedFailure, server: () => json({}) }, async ({ tree, kv, clock }) => {
+      const clearRemovalFailure = failNativeStorageRemovalsWhen(({ id, key }) =>
+        id === 'whim.launcher' && key === 'pending:failed' ? 'return-false' : undefined);
+      try {
+        await openPending(tree, ghosts(tree)[0]);
+        await press(button(tree, COPY.actionDiscard));
+        await runOutUndo(tree, clock);
+        h.ok(kv.getString('pending:failed') != null, 'the false-returning native removal retained the pending key');
+        h.ok(new PendingPurgeStore(kv).has('attempt', 'failed'), 'so the purge did not finish, and its marker stays armed');
+        h.eq(tileLabels(tree), [], 'the discarded tile does not come back');
+      } finally {
+        clearRemovalFailure();
+      }
+      await unmountScreen(tree);
+      await afterRelaunch(async (next) => {
+        h.eq([tileLabels(next), home(next).props.pending], [[], []], 'the next launch finishes the discard before the grid is drawn');
+        h.eq([kv.getString('pending:failed') ?? null, kv.getString(JOURNAL_KEY('failed')) ?? null], [null, null], 'record and journal gone');
+        h.eq(new PendingPurgeStore(kv).list(), [], 'and the marker cleared last');
+      });
+    });
+  });
+
+  await h.test('discard: a thrown journal removal keeps the partial discard armed until the next launch finishes it', async () => {
+    await withLauncher({ prepare: savedFailure, server: () => json({}) }, async ({ tree, kv, clock }) => {
+      const clearRemovalFailure = failNativeStorageRemovalsWhen(({ id, key }) =>
+        id === 'whim.launcher' && key === JOURNAL_KEY('failed') ? 'throw' : undefined);
+      try {
+        await openPending(tree, ghosts(tree)[0]);
+        await press(button(tree, COPY.actionDiscard));
+        await runOutUndo(tree, clock);
+        h.eq([kv.getString('pending:failed') ?? null, kv.getString(JOURNAL_KEY('failed')) != null], [null, true], 'the record went; the thrown journal removal left the journal');
+        h.ok(new PendingPurgeStore(kv).has('attempt', 'failed'), 'the marker stays armed for what remains');
+        h.eq(tileLabels(tree), [], 'and the tile stays gone');
+      } finally {
+        clearRemovalFailure();
+      }
+      await unmountScreen(tree);
+      await afterRelaunch(async (next) => {
+        h.eq(home(next).props.pending, [], 'the next launch leaves no ghost');
+        h.eq(kv.getString(JOURNAL_KEY('failed')) ?? null, null, 'the remaining journal is deleted');
+        h.eq(new PendingPurgeStore(kv).list(), [], 'and the marker cleared');
+      });
+    });
+  });
+
+  await h.test('discard: an unwritable pending order keeps the discard armed, and the next launch leaves one clean order', async () => {
+    await withLauncher({ prepare: savedFailure, server: () => json({}) }, async ({ tree, kv, clock }) => {
+      const clearWriteFailure = failNativeStorageWritesWhen(({ id, key }) => id === 'whim.launcher' && key === 'pending:order');
+      try {
+        await openPending(tree, ghosts(tree)[0]);
+        await press(button(tree, COPY.actionDiscard));
+        await runOutUndo(tree, clock);
+        h.eq([kv.getString('pending:failed') ?? null, kv.getString('pending:order'), kv.getString(JOURNAL_KEY('failed')) ?? null], [null, JSON.stringify(['failed']), null], 'independent siblings leave the raw order behind');
+        h.ok(new PendingPurgeStore(kv).has('attempt', 'failed'), 'the dangling order keeps the marker armed');
+        h.eq(tileLabels(tree), [], 'and the tile hidden');
+      } finally {
+        clearWriteFailure();
+      }
+      await unmountScreen(tree);
+      await afterRelaunch(async (next) => {
+        h.eq([home(next).props.pending, kv.getString('pending:order')], [[], '[]'], 'the next launch drops the dangling order entry');
+        h.eq(new PendingPurgeStore(kv).list(), [], 'and clears the marker');
+      });
     });
   });
 
