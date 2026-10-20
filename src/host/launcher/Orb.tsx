@@ -32,20 +32,21 @@ import { loadOrbCorner, saveOrbCorner, type OrbCorner } from './orb-corner';
 import { ORB_DISC, ORB_TARGET, ORB_TARGET_EDGE, orbBounds, orbDragLift, orbDragX, orbReleaseX, orbSettleVelocity } from './orb-geometry';
 
 /** What the orb shows: at rest; a change being made (the ember follows the stream); a new version
- *  ready or an app finished (an `ember` dot, after one flare); a change that failed (a `danger` dot). */
-type OrbState = 'rest' | 'changing' | 'ready' | 'failed';
+ *  ready, or another app finished (an `ember` dot, after one flare); a change that failed (a `danger` dot). */
+type OrbState = 'rest' | 'changing' | 'ready' | 'finished' | 'failed';
 
 /** The words a screen reader hears after "Whim menu" for each state. */
 const STATE_WORDS: Readonly<Record<OrbState, string | null>> = {
   rest: null,
   changing: COPY.orbStateChanging,
   ready: COPY.orbStateReady,
+  finished: COPY.orbStateFinished,
   failed: COPY.orbStateFailed,
 };
 
 /** The state dot's side, and its colour role in each state. */
 const DOT = 8;
-const DOT_ROLE: Readonly<Record<OrbState, 'ember' | 'danger' | null>> = { rest: null, changing: null, ready: 'ember', failed: 'danger' };
+const DOT_ROLE: Readonly<Record<OrbState, 'ember' | 'danger' | null>> = { rest: null, changing: null, ready: 'ember', finished: 'ember', failed: 'danger' };
 
 /** The orb's one custom accessibility action. */
 const MOVE_ACTION = 'move-corner';
@@ -198,9 +199,9 @@ export default function Orb({ appId, state = 'rest', activity = 0, onOpen }: Rea
     transform: [{ translateX: x.value }, { translateY: -lift.value }],
   }));
 
-  // The flare plays each time a new version becomes ready (the ember's `spark` changes).
+  // The flare plays each time the ember dot comes (the ember's `spark` changes).
   const [flare, setFlare] = useState({ state, count: 0 });
-  if (flare.state !== state) setFlare({ state, count: flare.count + (state === 'ready' ? 1 : 0) });
+  if (flare.state !== state) setFlare({ state, count: flare.count + (DOT_ROLE[state] === 'ember' ? 1 : 0) });
 
   const words = STATE_WORDS[state];
   const label = words === null ? COPY.orbMenuOpenLabel : `${COPY.orbMenuOpenLabel}, ${words}`;

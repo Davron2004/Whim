@@ -303,31 +303,46 @@ interface ChangeOver {
   changing?: PendingBuildRecord;
   /** The change that failed while this launch ran, unless discarded. */
   failed?: PendingBuildRecord;
-  /** A change landed while this launch ran (`landed`, the app and the launch's `tappedAt`). */
-  landed: boolean;
+  /** The entry a change landed on while this launch ran: the app itself, or the continuation a change
+   *  sent from behind its tip forks onto. Reload opens it. */
+  landed?: InstalledApp;
+  /** Another app finished while this launch ran. */
+  finished: boolean;
 }
+
+/** Something that happened while one launch ran: `appId` and `at` (its `tappedAt`) name the launch. */
+interface LaunchMark {
+  appId: string;
+  at: number;
+}
+
+const marksLaunch = (mark: LaunchMark | null, on: AppScreen): boolean => mark?.appId === on.app.id && mark.at === on.tappedAt;
 
 function changeOver(
   on: AppScreen | null,
   records: readonly PendingBuildView[],
   discarded: (rec: PendingBuildRecord) => boolean,
-  landed: { appId: string; at: number } | null,
+  landed: (LaunchMark & { entry: InstalledApp }) | null,
+  finished: LaunchMark | null,
 ): ChangeOver {
-  if (on === null) return { landed: false };
+  if (on === null) return { finished: false };
   const changes = records.map((view) => view.record).filter((rec) => rec.editingAppId === on.app.id);
   return {
     changing: changes.find((rec) => rec.state === 'building'),
     failed: changes.find((rec) => rec.state === 'failed' && rec.updatedAt >= on.tappedAt && !discarded(rec)),
-    landed: landed?.appId === on.app.id && landed.at === on.tappedAt,
+    ...(landed !== null && marksLaunch(landed, on) ? { landed: landed.entry } : {}),
+    finished: marksLaunch(finished, on),
   };
 }
 
 /** What the orb shows (system.md §7.1 Orb, §9 Changing in use), most recent first: a change being
- *  made (its stream's sampled activity), a change that failed, a change that landed, else rest. */
+ *  made (its stream's sampled activity), a change that failed, a change that landed, another app
+ *  that finished, else rest. */
 function orbOver(change: ChangeOver, activity: Readonly<Record<string, number>>): MiniAppLaunch['orb'] {
   if (change.changing !== undefined) return { state: 'changing', activity: activity[change.changing.id] ?? 0 };
   if (change.failed !== undefined) return { state: 'failed', activity: 0 };
-  return { state: change.landed ? 'ready' : 'rest', activity: 0 };
+  if (change.landed !== undefined) return { state: 'ready', activity: 0 };
+  return { state: change.finished ? 'finished' : 'rest', activity: 0 };
 }
 
 /** How far above the bottom safe area a toast keeps clear: of the orb over a running app, of the
@@ -842,9 +857,11 @@ function LauncherShell({
   // The same, for a run or a toast that acts later than the render it was started from.
   const runningRef = useRef(running);
   runningRef.current = running;
-  // A change that landed while this launch of its app ran (`at`, the launch's `tappedAt`): the orb's dot
-  // and the Whim sheet's Reload row stay until the app opens again, by Reload or otherwise.
-  const [landed, setLanded] = useState<{ appId: string; at: number } | null>(null);
+  // A change that landed while this launch of its app ran, and the entry it landed on: the orb's dot and
+  // the Whim sheet's Reload row stay until the app opens again, by Reload or otherwise.
+  const [landed, setLanded] = useState<(LaunchMark & { entry: InstalledApp }) | null>(null);
+  // Another app that finished while this launch ran: the orb's dot, until the app opens again.
+  const [finished, setFinished] = useState<LaunchMark | null>(null);
   // The words in the Whim sheet's send area, for the app they were typed over. Held here, above the
   // sheet's content, which a text-size change builds again.
   const [whimWords, setWhimWords] = useState<{ appId: string; text: string } | null>(null);
@@ -1135,7 +1152,7 @@ function LauncherShell({
 
   // A change to the running app: being made, or failed while this launch of it ran (a discarded one is
   // gone as far as the person is concerned).
-  const runningChange = changeOver(running, pendingBuilds, (rec) => purges.hidesAttempt(rec), landed);
+  const runningChange = changeOver(running, pendingBuilds, (rec) => purges.hidesAttempt(rec), landed, finished);
 
   // The view of the attempts running right now: which wait for a spot, how hard each stream works.
   // Home's tiles read it, and so do the Making page's ember and the orb, each for its own run only.
@@ -1306,12 +1323,14 @@ function LauncherShell({
 
   /** Reload (the toast's, or the Whim sheet's row): the running app opens again on the version that is
    *  now current, in place — a new launch, so a fresh WebView and realm (`MiniAppStage`), with nothing
-   *  in between: no Home, no closed frame. A launch the person has left meanwhile is not reopened; one
-   *  whose bundle cannot be read keeps running as it was. */
+   *  in between: no Home, no closed frame. A change that landed on a continuation opens that entry
+   *  instead. A launch the person has left meanwhile is not reopened; one whose bundle cannot be read
+   *  keeps running as it was. */
   const reloadRunning = async (): Promise<void> => {
     if (running === null) return;
     const from = running;
-    const app = index.get(from.app.id) ?? from.app;
+    const target = runningChange.landed ?? from.app;
+    const app = index.get(target.id) ?? target;
     const tappedAt = Date.now();
     // The Whim sheet Reload was pressed in starts closing at the press, not once the bundle is read.
     setScreen((s) => (s.kind === 'app' && s.tappedAt === from.tappedAt && s.sheet !== undefined ? { ...s, sheet: undefined } : s));
@@ -2830,10 +2849,16 @@ function LauncherShell({
           return;
         }
         // A change that lands while its app runs reloads nothing: the toast, the orb's dot and the
-        // Whim sheet's row offer Reload.
+        // Whim sheet's row offer Reload. The app is the one the change was sent for (`editing`): sent
+        // from behind its tip, the change lands on a continuation (`installed`), which Reload opens.
+        // Another app finishing over it marks the orb with the same dot.
         const open = runningRef.current;
-        if (open?.app.id === installed.id) {
+        if (open !== null && (open.app.id === installed.id || open.app.id === editing?.id)) {
           changeLanded(open, installed);
+          return;
+        }
+        if (open !== null) {
+          setFinished({ appId: open.app.id, at: open.tappedAt });
           return;
         }
         // Delivered with the sheet closed: Home says so, and opens it from the toast.
@@ -3193,16 +3218,16 @@ function LauncherShell({
 
   // ── Changing an app while it runs (app-launcher "Changing an app keeps it running and offers Reload") ──
 
-  /** A change to the app `on` runs landed: the orb's dot and the Whim sheet's row for this launch, and
-   *  the toast whose Reload opens the new version in place. */
+  /** A change to the app `on` runs landed on `installed` (that app, or its continuation): the orb's dot
+   *  and the Whim sheet's row for this launch, and the toast whose Reload opens `installed` in place. */
   const changeLanded = (on: AppScreen, installed: InstalledApp) => {
-    setLanded({ appId: installed.id, at: on.tappedAt });
+    setLanded({ appId: on.app.id, at: on.tappedAt, entry: installed });
     toastRef.current?.show({
       message: changedTitle(installed.name),
       action: {
         label: COPY.actionReload,
         onPress: () => {
-          if (runningRef.current?.app.id === installed.id) reloadRef.current().catch(() => undefined);
+          if (runningRef.current?.app.id === on.app.id) reloadRef.current().catch(() => undefined);
         },
       },
     });
@@ -3275,7 +3300,7 @@ function LauncherShell({
         <WhimSheet
           app={app}
           version={read?.version ?? null}
-          newVersion={runningChange.landed || (read?.newVersion ?? false)}
+          newVersion={runningChange.landed !== undefined || (read?.newVersion ?? false)}
           changing={runningChange.changing !== undefined}
           onStopChange={() => {
             if (runningChange.changing) onCancelPending(runningChange.changing);

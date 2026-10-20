@@ -240,6 +240,7 @@ export const COPY = {
   orbMenuOpenLabel: 'Whim menu',
   orbStateChanging: 'making a change',
   orbStateReady: 'new version ready',
+  orbStateFinished: 'an app finished',
   orbStateFailed: 'change failed',
   orbMoveCorner: 'Move to the other corner',
 

@@ -9,6 +9,7 @@ import { Harness } from './harness';
 import Orb, { type OrbProps } from '../Orb';
 import { chromeInsetBottom, orbBounds, orbReleaseX, orbSettleVelocity } from '../orb-geometry';
 import { projectRelease } from '../../ui/Sheet';
+import { Ember } from '../../ui/Ember';
 import { loadOrbCorner } from '../orb-corner';
 import { AppIndex } from '../app-index';
 import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
@@ -288,12 +289,13 @@ export async function runOrbUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('orb: an ember dot when a new version is ready, a danger dot when a change failed, none at rest or while changing; the label names the state', async () => {
+  await h.test('orb: an ember dot when a new version is ready or an app finished, a danger dot when a change failed, none at rest or while changing; the label names the state', async () => {
     resetNativeStorage();
     const cases = [
       { state: 'rest', dot: null, label: 'Whim menu' },
       { state: 'changing', dot: null, label: 'Whim menu, making a change' },
       { state: 'ready', dot: COLORS.light.ember, label: 'Whim menu, new version ready' },
+      { state: 'finished', dot: COLORS.light.ember, label: 'Whim menu, an app finished' },
       { state: 'failed', dot: COLORS.light.danger, label: 'Whim menu, change failed' },
     ] as const;
     for (const c of cases) {
@@ -303,6 +305,18 @@ export async function runOrbUiTests(h: Harness): Promise<void> {
         h.eq(orbOf(tree).props.accessibilityLabel, c.label, `${c.state}: read as "${c.label}"`);
       });
     }
+  });
+
+  await h.test('orb: the ember flares once each time the ember dot comes, for a new version or an app finished, and never for the danger dot', async () => {
+    resetNativeStorage();
+    await withOrb({ state: 'rest' }, async (tree) => {
+      const sparks: number[] = [];
+      for (const state of ['ready', 'rest', 'finished', 'failed', 'changing', 'finished'] as const) {
+        await TestRenderer.act(async () => tree.update(<Orb appId="app-a" onOpen={noop} state={state} />));
+        sparks.push(tree.root.findByType(Ember).props.spark);
+      }
+      h.eq(sparks, [1, 1, 2, 2, 2, 3], 'one flare on each coming of the ember dot, none otherwise');
+    });
   });
 
   await h.test('orb: a screen reader reads "Whim menu" with the one action "Move to the other corner", which moves it and is remembered', async () => {

@@ -3,7 +3,9 @@
  *  and a scripted server: the change made from the Whim sheet runs while the same launch stays open
  *  and takes touches, the orb's ember follows the stream, a landed change waits behind a toast, an
  *  orb dot and the sheet's row until Reload recreates the realm in place, a failed change says so
- *  without touching the running version, and closing the app leaves the change going. */
+ *  without touching the running version, and closing the app leaves the change going. A change sent
+ *  from behind the app's tip lands on its continuation, which Reload opens; another app finishing
+ *  marks the orb. */
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { COPY, changedTitle } from '../copy';
@@ -15,6 +17,8 @@ import MakingPage from '../MakingPage';
 import { DescribePage } from '../DescribePage';
 import { PlanPage } from '../PlanPage';
 import { JOURNAL_KEY, RunJournalStore } from '../run-journal';
+import { AppIndex, type InstalledApp } from '../app-index';
+import type { StoreAccess } from '../store-access';
 import { Ember } from '../../ui/Ember';
 import { stateLine, tileAccessibilityLabel } from '../../ui/AppTile-states';
 import { PendingBuildStore } from '../pending-builds';
@@ -22,7 +26,7 @@ import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { button, hostType, press, textOf } from './react-screen';
 import { dismissToast, pressToastAction, tile, toastOf } from './home-rig';
 import { makingSheetOpen, planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
-import { streamingServer } from './prompt-flow-ui.suite';
+import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 import {
   APP_NAME,
   RELOAD_ROW,
@@ -89,12 +93,42 @@ const orbActivity = (tree: Tree): number => orb(tree).findByType(Ember).props.ac
 
 /** From the running app: orb → type → Send → Make the change, the change's stream open. */
 export async function makeChange(tree: Tree, streams: readonly unknown[]): Promise<void> {
+  const before = streams.length;
   await openSheet(tree);
   await typeWords(tree, WORDS);
   await press(button(tree, COPY.whimSheetSend));
   await waitFor(() => planLoaded(tree), 'the change’s plan');
   await press(button(tree, COPY.planBuildEdit));
-  await waitFor(() => streams.length === 1, 'the change being made');
+  await waitFor(() => streams.length === before + 1, 'the change being made');
+}
+
+/** The change on `streams[at]` lands: its result, its stream's end, its record gone. */
+async function landChange(tree: Tree, kv: KVBackend, streams: readonly ReturnType<typeof sseStream>[], at: number): Promise<void> {
+  streams[at].push(resultEvent(APP_NAME));
+  streams[at].end();
+  await waitFor(() => new PendingBuildStore(kv).list().length === 0, 'the change delivered');
+  await settle();
+}
+
+/** From the running app: orb → History → the version before the current one (not the install, which
+ *  has no Go back) → Go back → History's Back. The app opens again, now behind its own tip, and paints. */
+async function runBehindTip(tree: Tree, app: InstalledApp): Promise<void> {
+  await openSheet(tree);
+  await press(button(tree, COPY.actionHistory));
+  await waitFor(() => showing(tree, HistoryScreen), 'History');
+  const access: StoreAccess = tree.root.findByType(HistoryScreen).props.access;
+  const [tip, older] = await access.timeline(app);
+  const rowOf = (id: string) => tree.root.find((n) => typeof n.type === 'function' && typeof n.props.onGoBack === 'function' && n.props.row?.id === id);
+  await waitFor(() => tree.root.findAll((n) => typeof n.type === 'function' && n.props.row?.id === older.id).length > 0, 'the older version’s row');
+  await TestRenderer.act(async () => rowOf(older.id).props.onToggle());
+  await press(button(tree, COPY.historyGoBackToThis));
+  await press(button(tree, COPY.historyRestoreConfirm));
+  await settle();
+  const active = await access.activeId(app);
+  if (active !== older.id || active === tip.id) throw new Error('the older version was not restored');
+  await press(button(tree, COPY.backLabel));
+  await waitFor(() => showing(tree, MiniAppView) && !showing(tree, HistoryScreen), 'the app to open again');
+  await paintRunningApp(tree);
 }
 
 export async function runChangingInUseUiTests(h: Harness): Promise<void> {
@@ -379,6 +413,85 @@ export async function runChangingInUseUiTests(h: Harness): Promise<void> {
       h.ok(!showing(tree, FailurePage) && !makingSheetOpen(tree), 'no Failure page opens over the app');
       h.eq([sent.filter((r) => r.path === '/v1/generate').length, kv.getString(`pending:${id}`), kv.getString(JOURNAL_KEY(id))], [2, ...kept], 'the new change runs on, its record and journal as they were');
       h.eq(orbState(tree), COPY.orbStateChanging, 'and the orb follows it');
+    });
+  });
+
+  for (const via of ['toast', 'row'] as const) {
+    await h.test(`changing in use: a change sent from an app running behind its own tip lands on its continuation with "<name> changed", the dot and the sheet’s row, and the ${via}’s Reload opens that continuation in place`, async () => {
+      const streams: ReturnType<typeof sseStream>[] = [];
+      let watching = false;
+      const homeFrames: boolean[] = [];
+      const onCommit = (tree: Tree) => {
+        if (watching) homeFrames.push(tree.root.findAllByType(HomeScreen).length > 0);
+      };
+      const realNow = Date.now;
+      try {
+        await withLauncher({ examples: true, server: streamingServer(streams), onCommit }, async ({ tree, kv }) => {
+          const app = await openTipSplitter(tree);
+          await paintRunningApp(tree);
+          // Two changes land, each a minute after the last: a version's time is its commit's, to the second.
+          for (const at of [0, 1]) {
+            await makeChange(tree, streams);
+            Date.now = () => realNow() + 60_000 * (at + 1);
+            await landChange(tree, kv, streams, at);
+            await dismissToast(tree);
+          }
+          await runBehindTip(tree, app);
+          const launch = runningApp(tree).props.tappedAt;
+          await makeChange(tree, streams);
+          Date.now = () => realNow() + 180_000;
+          await landChange(tree, kv, streams, 2);
+
+          const continuation = new AppIndex(kv).list().find((entry) => entry.name === APP_NAME && entry.id !== app.id);
+          h.ok(continuation !== undefined, 'the change landed on a new entry continuing the restored version');
+          h.ok(runningApp(tree).props.tappedAt === launch && runningApp(tree).props.installedApp.id === app.id, 'the app runs on as it was');
+          h.eq(toastOf(tree), { message: changedTitle(APP_NAME), action: COPY.actionReload }, '"Tip Splitter changed", with Reload');
+          h.eq(orbState(tree), COPY.orbStateReady, 'the orb carries the new-version dot');
+          if (via === 'row') {
+            await dismissToast(tree);
+            await openSheet(tree);
+            await waitFor(() => hasButton(tree, RELOAD_ROW), 'the Reload row');
+          }
+
+          watching = true;
+          await (via === 'toast' ? pressToastAction(tree) : press(button(tree, RELOAD_ROW)));
+          await waitFor(() => showing(tree, MiniAppView) && runningApp(tree).props.tappedAt !== launch, 'the continuation to open');
+          await settle();
+          watching = false;
+          h.eq(runningApp(tree).props.installedApp.id, continuation?.id, 'Reload opens the entry the change landed on');
+          h.ok(homeFrames.length > 0 && homeFrames.every((shown) => !shown), `in place: no frame shows Home (${homeFrames.length} frames)`);
+          h.eq(orbState(tree), '', 'on the new version the orb is at rest');
+        });
+      } finally {
+        Date.now = realNow;
+      }
+    });
+  }
+
+  await h.test('changing in use: another app finishing while one runs puts the ember dot on the orb, reloads nothing and covers nothing; the dot goes with that launch', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv }) => {
+      await waitFor(() => showing(tree, HomeScreen) && home(tree).props.apps.length > 0, 'the example apps');
+      await startBuild(tree, 'A tea timer');
+      await press(button(tree, COPY.sheetClose));
+      await openTipSplitter(tree);
+      const web = await paintRunningApp(tree);
+      const launch = runningApp(tree).props.tappedAt;
+      h.eq(orbState(tree), '', 'at rest while the other app is being made');
+
+      streams[0].push(resultEvent('Tea Timer'));
+      streams[0].end();
+      await waitFor(() => new PendingBuildStore(kv).list().length === 0, 'the other app delivered');
+      await settle();
+      h.ok(new AppIndex(kv).list().some((entry) => entry.name === 'Tea Timer'), 'it is installed');
+      h.eq(orbState(tree), COPY.orbStateFinished, 'the orb says an app finished');
+      h.ok(runningApp(tree).props.tappedAt === launch && boundWebView(tree) === web && deliveriesInto(web).length === 1, 'the running app runs on as it was');
+      h.ok(!makingSheetOpen(tree), 'nothing opens over it');
+
+      await openSheet(tree);
+      await press(button(tree, COPY.whimSheetBackToApps));
+      await openTipSplitter(tree);
+      h.eq(orbState(tree), '', 'opened again, the orb is at rest');
     });
   });
 }
