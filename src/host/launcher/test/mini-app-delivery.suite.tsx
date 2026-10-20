@@ -9,8 +9,9 @@ import { AppIndex, type InstalledApp } from '../app-index';
 import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { SEED_VERSION } from '../seed';
 import { resetNativeStorage } from './native-storage';
-import { injectedScripts } from './native-host';
-import { renderScreen, unmountScreen, hostType } from './react-screen';
+import { finishAnimations, injectedScripts } from './native-host';
+import { button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
+import { COPY } from '../copy';
 
 const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
@@ -30,6 +31,11 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => tree.root.find((node) => hostType(node) === 'WebView').props.onLoadEnd());
       h.eq(injectedScripts.length, 1, 'one script is injected on load');
       h.ok(injectedScripts[0]?.includes('timer-bundle-7f3a') ?? false, 'the injected script carries the stored bundle');
+      await press(button(tree, COPY.orbMenuOpenLabel));
+      await TestRenderer.act(async () => { finishAnimations(); });
+      await press(tree.root.find((node) => hostType(node) === 'Pressable' && textOf(node).endsWith(COPY.orbActionHome)));
+      h.ok(tree.root.findAll((node) => hostType(node) === 'WebView').length === 0, 'closing it through the orb ends its realm');
+      h.eq(tree.root.findAllByType(HomeScreen).length, 1, 'and returns to Home');
     } finally {
       await unmountScreen(tree);
       StoreAccess.prototype.activeBundle = originalActiveBundle;

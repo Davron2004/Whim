@@ -24,6 +24,9 @@ import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { closedDatabases, resetNativeStorage } from './native-storage';
 import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 import { grantedOptions } from './client-fixtures';
+import { animations, isStep } from './native-reanimated';
+import { TilePlate } from '../../ui/AppTile';
+import { SHELL_PALETTE } from '../theme';
 
 type Tree = TestRenderer.ReactTestRenderer;
 
@@ -38,7 +41,39 @@ interface Mounted {
   loadEnd: () => Promise<void>;
   frame: (frame: unknown) => Promise<void>;
   shown: () => string;
+  /** The opening state is up: the progress element that announces the app is opening. */
+  opening: () => boolean;
+  /** Nothing opaque is drawn over the app's page. */
+  pageShown: () => boolean;
 }
+
+type Style = { backgroundColor?: string; opacity?: number; color?: string; top?: number; bottom?: number; left?: number; right?: number };
+const flat = (node: TestRenderer.ReactTestInstance): Style => StyleSheet.flatten(node.props.style) as Style;
+
+/** The view that holds the WebView: the container's own background. */
+const containerOf = (tree: Tree) => tree.root.findAll((n) => hostType(n) === 'View' && n.findAll(isWebView).length > 0).at(-1)!;
+
+/** A layer laid over the whole container (all four insets 0). */
+function spansContainer(node: TestRenderer.ReactTestInstance): boolean {
+  const s = flat(node);
+  return s.top === 0 && s.bottom === 0 && s.left === 0 && s.right === 0;
+}
+
+/** Whether the page shows: no layer drawn after the WebView in its container spans the whole
+ *  container with an opaque background at a visible opacity (the orb, a small control, does not). */
+function pageIsShown(tree: Tree): boolean {
+  const container = containerOf(tree);
+  const layers = container.children.filter((c): c is TestRenderer.ReactTestInstance => typeof c !== 'string');
+  const after = layers.slice(layers.findIndex(isWebView) + 1);
+  return !after.some((layer) => {
+    const s = flat(layer);
+    return spansContainer(layer) && s.backgroundColor !== undefined && s.backgroundColor !== 'transparent' && s.opacity !== 0;
+  });
+}
+
+const isOpening = (tree: Tree) =>
+  tree.root.findAll((n) => typeof n.type === 'string' && n.props.accessibilityRole === 'progressbar' && n.props.accessibilityLabel === COPY.appBootA11yLabel).length > 0;
+
 
 /** The container's place on its root's page, which fills an 844-high window: below the status
  *  bar, down to the window's bottom edge. */
@@ -95,6 +130,8 @@ async function withMiniApp(record: AppRecord, body: (m: Mounted) => Promise<void
         await TestRenderer.act(async () => webView()!.props.onMessage({ nativeEvent: { data: JSON.stringify(frame) } }));
       },
       shown: () => textOf(tree.root),
+      opening: () => isOpening(tree),
+      pageShown: () => pageIsShown(tree),
     });
   } finally {
     await unmountScreen(tree);
@@ -179,30 +216,30 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('mini-app: the boot surface covers a WebView that is already mounted, until a trusted first paint', async () => {
-    await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown, clock }) => {
+  await h.test('mini-app: the opening state covers a WebView that is already mounted, until a trusted first paint', async () => {
+    await withMiniApp(TIP, async ({ webView, loadEnd, frame, opening, pageShown, clock }) => {
       h.ok(webView() != null, 'the WebView is mounted from the start, so the page keeps loading');
-      h.ok(shown().includes(COPY.appBootLabel), 'under the boot surface');
+      h.ok(opening() && !pageShown(), 'hidden under the opening state');
       await loadEnd();
       h.eq(injectedScripts.length, 1, 'the bundle is delivered once the page has loaded');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'and the startup deadline is running');
       await frame({ ...firstPaint(), trusted: false });
-      h.ok(shown().includes(COPY.appBootLabel), 'a paint frame that is not authenticated leaves the boot surface up');
+      h.ok(opening() && !pageShown(), 'a paint frame that is not authenticated leaves the page hidden');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'and does not disarm the deadline');
       await frame(firstPaint());
-      h.ok(!shown().includes(COPY.appBootLabel), 'the authenticated first paint stamped with this launch’s generation ends the boot surface');
+      h.ok(!opening() && pageShown(), 'the authenticated first paint stamped with this launch’s generation shows the page and ends the opening');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'and completes startup');
     });
   });
 
-  await h.test('mini-app: a trusted paint stamped for another launch leaves the boot surface up, and the startup deadline still fails it', async () => {
-    await withMiniApp(TIP, async ({ loadEnd, frame, shown, clock }) => {
+  await h.test('mini-app: a trusted paint stamped for another launch leaves the page hidden, and the startup deadline still fails it', async () => {
+    await withMiniApp(TIP, async ({ loadEnd, frame, shown, opening, pageShown, clock }) => {
       await loadEnd();
       const bound = boundGeneration();
       await frame(firstPaint(bound - 1));
-      h.ok(shown().includes(COPY.appBootLabel), 'a paint from the launch before this one does not end the boot surface');
+      h.ok(opening() && !pageShown(), 'a paint from the launch before this one does not show the page');
       await frame(firstPaint(bound + 1));
-      h.ok(shown().includes(COPY.appBootLabel), 'nor does one claiming a launch that has not happened');
+      h.ok(opening() && !pageShown(), 'nor does one claiming a launch that has not happened');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'the startup deadline stays armed');
       await TestRenderer.act(async () => clock.fire(STARTUP_DEADLINE_MS));
       h.ok(shown().includes(COPY.appErrorTitle), 'and, with no paint of its own, the launch reaches the recovery screen');
@@ -210,20 +247,98 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('mini-app: after Retry recreates the realm, the old realm’s late paint cannot open the new one', async () => {
-    await withMiniApp(TIP, async ({ loadEnd, frame, shown, clock, tree }) => {
+    await withMiniApp(TIP, async ({ loadEnd, frame, opening, pageShown, clock, tree }) => {
       await loadEnd();
       const old = boundGeneration();
+      await TestRenderer.act(async () => clock.fire(600));
+      h.ok(pageShown(), 'the first realm’s page was shown at the cap');
       await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
       await press(button(tree, COPY.appErrorRetry));
       await loadEnd();
       h.ok(boundGeneration() !== old, 'the recreated realm is bound at a new generation');
       await frame(firstPaint(old));
-      h.ok(shown().includes(COPY.appBootLabel), 'the old realm’s paint, arriving late, leaves the new launch booting');
+      h.ok(opening() && !pageShown(), 'the old realm’s paint, arriving late, leaves the new launch hidden, its cap restarted');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'with its startup deadline armed');
       await frame(firstPaint());
-      h.ok(!shown().includes(COPY.appBootLabel), 'the new realm’s own paint opens it');
+      h.ok(!opening() && pageShown(), 'the new realm’s own paint opens it');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'and completes startup');
     });
+  });
+
+  await h.test('mini-app: with no paint the page is shown at 600 ms anyway, the plate stays, and "Opening…" appears only after 1.5 s', async () => {
+    await withMiniApp(TIP, async ({ loadEnd, frame, shown, opening, pageShown, clock }) => {
+      await loadEnd();
+      await TestRenderer.act(async () => { clock.fireWithin(599); });
+      h.ok(!pageShown() && !shown().includes(COPY.appBootLabel), 'before 600 ms the page is hidden and nothing is said');
+      await TestRenderer.act(async () => clock.fire(600));
+      h.ok(pageShown(), 'at 600 ms the page is shown without a signal');
+      h.ok(opening() && !shown().includes(COPY.appBootLabel), 'the plate stays, still without words');
+      await TestRenderer.act(async () => { clock.fireWithin(1_499); });
+      h.ok(!shown().includes(COPY.appBootLabel), 'no words before 1.5 s');
+      await TestRenderer.act(async () => clock.fire(1_500));
+      h.ok(shown().includes(COPY.appBootLabel), '"Opening…" appears at 1.5 s');
+      await frame(firstPaint());
+      h.ok(!opening() && !shown().includes(COPY.appBootLabel), 'the paint ends the opening state, words and all');
+    });
+  });
+
+  await h.test('mini-app: the page fades in over 160 ms on its paint or at the cap; under Reduce Motion that fade is the replacement and is not skipped', async () => {
+    const fadesOut = () => animations.filter(isStep).filter((a) => a.kind === 'timing' && a.to === 0).map((a) => a.config);
+    try {
+      for (const reduceMotion of [false, true]) {
+        accessibilitySettings.reduceMotion = reduceMotion;
+        const expected = reduceMotion ? 'never' : undefined;
+        await withMiniApp(TIP, async ({ loadEnd, frame }) => {
+          await loadEnd();
+          animations.splice(0);
+          await frame(firstPaint(boundGeneration() + 1));
+          h.eq(fadesOut(), [], `reduceMotion ${reduceMotion}: nothing fades before this launch’s signal`);
+          await frame(firstPaint());
+          const fades = fadesOut();
+          h.ok(fades.length > 0 && fades.every((c) => c?.duration === 160 && c.reduceMotion === expected),
+            `reduceMotion ${reduceMotion}: the paint fades the page in over 160 ms${reduceMotion ? ', played even though the OS reduces motion' : ''}`);
+        });
+        await withMiniApp(TIP, async ({ loadEnd, clock }) => {
+          await loadEnd();
+          animations.splice(0);
+          await TestRenderer.act(async () => clock.fire(600));
+          const fades = fadesOut();
+          h.ok(fades.length > 0 && fades.every((c) => c?.duration === 160 && c.reduceMotion === expected), `reduceMotion ${reduceMotion}: so does the cap`);
+        });
+      }
+    } finally {
+      accessibilitySettings.reduceMotion = false;
+    }
+  });
+
+  await h.test('mini-app: the opening is the app’s tile-sized plate with its glyph on bg; in dark mode nothing behind or over the page is light or tinted full-screen', async () => {
+    try {
+      setColorScheme('dark');
+      await withMiniApp(TIP, async ({ tree, webView, loadEnd, frame }) => {
+        const plate = tree.root.findByType(TilePlate);
+        h.eq([plate.props.size, plate.props.state, plate.props.tint, plate.props.glyph], ['grid', 'ready', 'ocean', 'glass-water'],
+          'the Home grid’s ready plate, with the app’s tint and glyph');
+        h.eq(plate.findAll((n) => hostType(n) === 'Path' && n.props.fill === TINTS.ocean.light).length, 1, 'drawn in the app’s tint');
+        const container = containerOf(tree);
+        h.eq(flat(container).backgroundColor, COLORS.dark.bg, 'the container behind the page is the dark bg');
+        h.eq(flat(webView()!).backgroundColor, COLORS.dark.bg, 'so is the WebView’s own background');
+        const layers = container.findAll((n) => typeof n.type === 'string' && spansContainer(n) && flat(n).backgroundColor !== undefined);
+        h.ok(layers.length > 0 && layers.every((n) => flat(n).backgroundColor === COLORS.dark.bg), 'what covers the page while it opens is the dark bg');
+        h.ok(!container.findAll((n) => typeof n.type === 'string').some((n) => [TINTS.ocean.light, TINTS.ocean.dark].includes(flat(n).backgroundColor ?? '')),
+          'and no view is filled with the tint');
+        const light = new Set<string | undefined>(Object.values(SHELL_PALETTE));
+        await loadEnd();
+        await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
+        const screen = tree.root.findAll((n) => hostType(n) === 'View' && textOf(n).includes(COPY.appErrorTitle))[0];
+        h.eq(flat(screen).backgroundColor, COLORS.dark.bg, 'the recovery screen is on the dark bg');
+        const title = tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n) === COPY.appErrorTitle).at(-1)!;
+        h.eq(flat(title).color, COLORS.dark.text, 'with the dark text colour');
+        const colours = screen.findAll((n) => typeof n.type === 'string').flatMap((n) => [flat(n).backgroundColor, flat(n).color, (flat(n) as { borderColor?: string }).borderColor]);
+        h.ok(!colours.some((c) => light.has(c)), 'and none of its colours is the light shell palette');
+      }, { tint: 'ocean', icon: 'glass-water' });
+    } finally {
+      setColorScheme('light');
+    }
   });
 
   await h.test('mini-app: a second load event for the same WebView does not deliver the bundle again', async () => {
@@ -235,7 +350,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('mini-app: a bundle that fails shows the recovery screen; Retry mounts a fresh WebView and delivers again', async () => {
-    await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown, clock, tree }) => {
+    await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown, opening, pageShown, clock, tree }) => {
       await loadEnd();
       await frame(firstPaint());
       const first = webView();
@@ -249,7 +364,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       h.ok(webView() != null && webView() !== first, 'Retry mounts a new WebView');
       h.ok(!shown().includes(COPY.appErrorTitle), 'the recovery screen is gone');
       await loadEnd();
-      h.ok(shown().includes(COPY.appBootLabel), 'the new realm starts from the boot surface, not the old realm’s paint');
+      h.ok(opening() && !pageShown(), 'the new realm starts from the opening state, not the old realm’s paint');
       h.eq(injectedScripts.length, 2, 'the new WebView gets its own delivery');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'with its own startup deadline');
     });
@@ -340,11 +455,11 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('mini-app: a render error before the first paint is one failure, not a boot surface that later times out', async () => {
-    await withMiniApp(TIP, async ({ loadEnd, frame, shown, clock }) => {
+    await withMiniApp(TIP, async ({ loadEnd, frame, shown, opening, clock }) => {
       await loadEnd();
       log.buffer.clear();
       await frame(RENDER_ERROR_FRAME);
-      h.ok(shown().includes(COPY.appErrorTitle) && !shown().includes(COPY.appBootLabel), 'the recovery screen shows at once');
+      h.ok(shown().includes(COPY.appErrorTitle) && !opening(), 'the recovery screen replaces the opening state at once');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'the startup deadline is disarmed, so it cannot report the same failure again');
       h.eq(miniAppErrorRecords().map((r) => r.fields.where), ['render'], 'one error record');
     });
@@ -522,13 +637,15 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     // engine refuses to reinterpret existing data, so the launch is refused before delivery.
     const conflicting: AppRecord = JSON.parse(JSON.stringify(WATER));
     conflicting.schemaArtifact!.collections.Drinks.fields.at.type = 'text';
-    await withMiniApp(conflicting, async ({ loadEnd, shown, tree, exits }) => {
+    await withMiniApp(conflicting, async ({ loadEnd, shown, opening, clock, tree, exits }) => {
       const earlier = createStorageEngine({ appId: WATER.appId, mode: "persistent" });
       earlier.open(WATER.schemaArtifact!);
       earlier.close();
       log.buffer.clear();
       await loadEnd();
-      h.ok(shown().includes(COPY.launchFailedTitle), 'the launch-failed screen shows');
+      h.ok(shown().includes(COPY.launchFailedTitle) && !opening(), 'the launch-failed screen replaces the opening state');
+      await TestRenderer.act(async () => { clock.fireWithin(1_500); });
+      h.ok(!opening() && !shown().includes(COPY.appBootLabel), 'and no opening state or "Opening…" comes back over it');
       h.eq(
         miniAppErrorRecords(),
         [{ message: 'mini-app failed', fields: { where: 'launch', errorClass: 'type_change', appId: WATER.appId } }],

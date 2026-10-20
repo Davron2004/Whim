@@ -46,6 +46,32 @@ export function miniAppSurface(s: Readonly<MiniAppSurfaceInput>): MiniAppSurface
   return hasPainted(s.paintMs) ? 'running' : 'boot';
 }
 
+/** M2 (system.md §4): with no opening signal by then, the WebView is shown anyway. */
+export const OPENING_REVEAL_CAP_MS = 600;
+/** M2: "Opening…" appears under the plate only once the opening has taken this long. */
+export const OPENING_LABEL_AFTER_MS = 1_500;
+
+/** What the opening state draws for one launch. */
+export interface OpeningLook {
+  /** The WebView is shown (fading in over `fade-in`): the launch's signal arrived, or the cap passed. */
+  revealed: boolean;
+  /** The tile-sized tint plate with its glyph: until the launch paints. */
+  plate: boolean;
+  /** "Opening…" under the plate. */
+  label: boolean;
+}
+
+/**
+ * The opening state for `surface`, given which of the launch's two timers have run out. Only the
+ * `boot` surface opens; a failure surface replaces the opening state entirely, and `running` (the
+ * accepted `paint`, the opening signal) reveals the page and ends the plate. The cap reveals the
+ * page without a signal but keeps the plate, so a slow first paint still reads as opening.
+ */
+export function openingLook(surface: MiniAppSurface, elapsed: Readonly<{ cap: boolean; label: boolean }>): OpeningLook {
+  const opening = surface === 'boot';
+  return { revealed: !opening || elapsed.cap, plate: opening, label: opening && elapsed.label };
+}
+
 /** The shape of a `paint` bridge frame as it arrives from the outer page — untrusted data, so
  *  every field is optional and unknown until checked. */
 export interface PaintFrame {

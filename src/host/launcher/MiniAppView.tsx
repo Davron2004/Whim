@@ -7,13 +7,20 @@
 // Android system back (D4) both exit to the launcher; the realm can reach neither. LauncherRoot
 // keys this component by
 // the launcher id, so switching apps remounts it (a fresh realm every launch).
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Platform, Pressable, StyleSheet, View } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
-import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { RADIUS, SPACING } from '../../sdk/theme';
+import { SPACE } from '../../design/tokens';
+import { TilePlate } from '../ui/AppTile';
+import { TILE_SIDE } from '../ui/AppTile-geometry';
+import { timing } from '../ui/motion';
+import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
+import { buttonColors } from '../ui/tokens-pure';
 import { themeFrame } from './theme-frame';
 import { tileOf } from './tile-identity';
 import { log } from '../logging';
@@ -23,10 +30,8 @@ import { logWebViewError } from './webview-error';
 import { useMiniAppHost } from './useMiniAppHost';
 import { useKeyboardInset } from './KeyboardShell';
 import { padsWebViewForKeyboard } from './keyboard-shell';
-import { primaryButtonColors, SHELL_PALETTE } from './theme';
 import { COPY } from './copy';
-import { miniAppSurface } from './boot-state';
-import { BreathingView } from './flow-skeletons';
+import { miniAppSurface, OPENING_LABEL_AFTER_MS, OPENING_REVEAL_CAP_MS, openingLook } from './boot-state';
 import Orb from './Orb';
 import { chromeInsetBottom } from './orb-geometry';
 import { ReportSheet } from './ReportScreen';
@@ -78,8 +83,6 @@ export default function MiniAppView({
   // app or exiting (mini-app-back-navigation delta "A host sheet takes back first").
   const [reportOpen, setReportOpen] = useState(false);
   const host = useMiniAppHost({ onExit, overlayOpen: reportOpen, onCloseOverlay: () => setReportOpen(false) });
-  const p = SHELL_PALETTE;
-  const bg = p.bg;
   // Bumped on Retry to force a fresh <WebView> mount -- a realm reset is a RECREATE, never a
   // re-inject (spike2 §5, #35/#37), so this is the only supported way to recover a live app.
   const [webKey, setWebKey] = useState(0);
@@ -102,7 +105,12 @@ export default function MiniAppView({
   // It carries how much of the app's bottom edge the orb covers (beta-1 D5), computed from this
   // delivery's bottom safe-area inset; the loader keeps that out of the bundle-visible theme.
   const tokens = useTokens();
-  const tint = tileOf(installedApp).tint;
+  // The container's own chrome paints the token `bg` of the phone's scheme, as the page does: a dark
+  // page never sits on a light container (system.md §2: the runtime page, the iframe and the opening
+  // container all paint `bg`).
+  const c = tokens.colors;
+  const bg = c.bg;
+  const { tint, icon } = tileOf(installedApp);
   const theme = useMemo(() => themeFrame(tokens, tint), [tokens, tint]);
   const bottomInset = useSafeAreaInsets().bottom;
   const deliveredKey = useRef<number | null>(null);
@@ -125,19 +133,50 @@ export default function MiniAppView({
   // user in a permanent opening screen instead of the honest failure copy.
   const surface = miniAppSurface(host.state);
 
+  // The opening state (M2, design-system-v1 task 18.3). The WebView stays mounted and drawn from the
+  // start, under an opaque `bg` cover, so the page keeps loading and its double-rAF `paint` is never
+  // throttled by a hidden view; the cover fades out over `fade-in` once this launch's signal
+  // (`paintMs`, generation-fenced) arrives or the 600 ms cap passes. Above it the app's tile-sized
+  // plate holds until the paint, with "Opening…" under it after 1.5 s. Both timers are keyed by the
+  // WebView mount, so Retry's recreated realm opens from the start again. Under Reduce Motion the
+  // fade is itself the replacement (§4.5), so it is played, not skipped.
+  const [capFor, setCapFor] = useState<number | null>(null);
+  const [labelFor, setLabelFor] = useState<number | null>(null);
+  useEffect(() => {
+    const cap = setTimeout(() => setCapFor(webKey), OPENING_REVEAL_CAP_MS);
+    const label = setTimeout(() => setLabelFor(webKey), OPENING_LABEL_AFTER_MS);
+    return () => {
+      clearTimeout(cap);
+      clearTimeout(label);
+    };
+  }, [webKey]);
+  const look = openingLook(surface, { cap: capFor === webKey, label: labelFor === webKey });
+  const reduceMotion = tokens.reduceMotion;
+  const cover = useSharedValue(1);
+  const plate = useSharedValue(1);
+  useEffect(() => {
+    cover.value = look.revealed ? withTiming(0, timing('fadeIn', reduceMotion)) : 1;
+  }, [cover, look.revealed, reduceMotion]);
+  useEffect(() => {
+    plate.value = look.plate ? 1 : withTiming(0, timing('fadeIn', reduceMotion));
+  }, [plate, look.plate, reduceMotion]);
+  const coverStyle = useAnimatedStyle(() => ({ opacity: cover.value }));
+  const plateStyle = useAnimatedStyle(() => ({ opacity: plate.value }));
+  const primary = buttonColors(tokens, 'ink', false);
+
   // A launch refused pre-delivery (#41 D7, structured `launchApp` failure) never delivers a
   // bundle -- show honest product copy instead of a blank realm, with a way back to Home.
   if (surface === 'launch-failed') {
     return (
-      <View style={[styles.root, styles.errorRoot, { backgroundColor: p.bg }]}>
-        <Text style={[TYPE_SCALE.screenTitle, styles.errorTitle, { color: p.text }]}>{COPY.launchFailedTitle}</Text>
-        <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.launchFailedBody}</Text>
+      <View style={[styles.root, styles.errorRoot, { backgroundColor: bg }]}>
+        <Text type="title2" style={styles.errorTitle}>{COPY.launchFailedTitle}</Text>
+        <Text color="text-2" style={styles.errorBody}>{COPY.launchFailedBody}</Text>
         <Pressable
           accessibilityRole="button"
-          style={[styles.errorAction, primaryButtonColors(true)]}
+          style={[styles.errorAction, { backgroundColor: primary.fill, borderColor: primary.fill }]}
           onPress={onExit}
         >
-          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.launchFailedBack}</Text>
+          <Text type="headline" color="on-ink">{COPY.launchFailedBack}</Text>
         </Pressable>
       </View>
     );
@@ -155,22 +194,22 @@ export default function MiniAppView({
       setWebKey((k) => k + 1);
     };
     return (
-      <View style={[styles.root, styles.errorRoot, { backgroundColor: p.bg }]}>
-        <Text style={[TYPE_SCALE.screenTitle, styles.errorTitle, { color: p.text }]}>{COPY.appErrorTitle}</Text>
-        <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.appErrorBody}</Text>
+      <View style={[styles.root, styles.errorRoot, { backgroundColor: bg }]}>
+        <Text type="title2" style={styles.errorTitle}>{COPY.appErrorTitle}</Text>
+        <Text color="text-2" style={styles.errorBody}>{COPY.appErrorBody}</Text>
         <Pressable
           accessibilityRole="button"
-          style={[styles.errorAction, primaryButtonColors(true)]}
+          style={[styles.errorAction, { backgroundColor: primary.fill, borderColor: primary.fill }]}
           onPress={retry}
         >
-          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.appErrorRetry}</Text>
+          <Text type="headline" color="on-ink">{COPY.appErrorRetry}</Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
-          style={[styles.errorAction, styles.errorSecondary, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
+          style={[styles.errorAction, styles.errorSecondary, { backgroundColor: bg, borderColor: c.border }]}
           onPress={onExit}
         >
-          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{COPY.launchFailedBack}</Text>
+          <Text type="headline" color="text-2">{COPY.launchFailedBack}</Text>
         </Pressable>
       </View>
     );
@@ -191,24 +230,27 @@ export default function MiniAppView({
         setSupportMultipleWindows={false}
         onError={(ev) => logWebViewError(log, ev.nativeEvent, { appId: record.appId })}
       />
-      {/* The boot state: branded and minimal, drawn OVER a WebView that stays mounted and keeps
-          loading -- a realm reset is a recreate, never a re-inject (spike2 §5), so the overlay must
-          never gate the mount. It defines all four insets, so it spans the root's full border-box.
-          The root already sits below the status bar (the launcher's top SafeAreaView is the one
-          place the top inset is applied), so the overlay adds no inset of its own.
-          `pointerEvents="none"` keeps the orb's guaranteed exit reachable throughout the wait. */}
-      {surface === 'boot' && (
-        <View
-          style={[styles.boot, { backgroundColor: bg }]}
-          pointerEvents="none"
-          accessibilityRole="progressbar"
-          accessibilityLabel={COPY.appBootA11yLabel}
-        >
-          <Text style={[TYPE_SCALE.screenTitle, styles.bootTitle, { color: p.text }]}>{record.name}</Text>
-          <BreathingView style={[styles.bootMark, { backgroundColor: p.accent }]} />
-          <Text style={[TYPE_SCALE.bodyEmphatic, styles.bootLabel, { color: p.textMuted }]}>{COPY.appBootLabel}</Text>
-        </View>
-      )}
+      {/* The opening state, drawn OVER a WebView that stays mounted and keeps loading -- a realm
+          reset is a recreate, never a re-inject (spike2 §5), so it must never gate the mount. Both
+          layers define all four insets, so they span the root's full border-box (the root already
+          sits below the status bar). `pointerEvents="none"` keeps the orb's guaranteed exit
+          reachable throughout the wait. */}
+      <Animated.View style={[styles.layer, { backgroundColor: bg }, coverStyle]} pointerEvents="none" />
+      <Animated.View
+        style={[styles.layer, styles.opening, plateStyle]}
+        pointerEvents="none"
+        accessibilityRole={look.plate ? 'progressbar' : undefined}
+        accessibilityLabel={look.plate ? COPY.appBootA11yLabel : undefined}
+        accessibilityElementsHidden={!look.plate}
+        importantForAccessibility={look.plate ? 'auto' : 'no-hide-descendants'}
+      >
+        <TilePlate size="grid" state="ready" tint={tint} glyph={icon} />
+        {look.label ? (
+          <View style={styles.openingLabel}>
+            <Text type="callout" color="text-2" style={styles.centred}>{COPY.appBootLabel}</Text>
+          </View>
+        ) : null}
+      </Animated.View>
       <Orb onExit={host.exit} onVersions={onVersions} onChangeIt={onChangeIt} onReport={() => setReportOpen(true)} />
       <ReportSheet
         app={reportOpen ? installedApp : null}
@@ -242,8 +284,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   errorSecondary: { marginTop: SPACING.sm },
-  boot: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.xl },
-  bootTitle: { textAlign: 'center', marginBottom: SPACING.md },
-  bootMark: { width: SPACING.xl, height: SPACING.xs, borderRadius: RADIUS.chip, marginBottom: SPACING.md },
-  bootLabel: { textAlign: 'center' },
+  layer: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
+  opening: { alignItems: 'center', justifyContent: 'center' },
+  // Under the centred plate without moving it: the words appear late, and the plate must not jump.
+  openingLabel: { position: 'absolute', top: '50%', left: SPACE[6], right: SPACE[6], marginTop: TILE_SIDE.grid / 2 + SPACE[3] },
+  centred: { textAlign: 'center' },
 });

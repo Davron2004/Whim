@@ -53,3 +53,34 @@ interface StartupDeadline {
   stamped for another launch…", "after Retry recreates the realm, the old realm's late paint…";
   fixture `firstPaint()` stamps the generation parsed from the delivery script); desktop
   `deliver-by-source.desktop.mjs` check `old realm paint after a reset`.
+
+## Opening state (18.3) — `boot-state.ts` (pure) + `MiniAppView.tsx`
+
+```ts
+export const OPENING_REVEAL_CAP_MS = 600;
+export const OPENING_LABEL_AFTER_MS = 1_500;
+export interface OpeningLook { revealed: boolean; plate: boolean; label: boolean }
+export function openingLook(surface: MiniAppSurface, elapsed: { cap: boolean; label: boolean }): OpeningLook;
+  // only 'boot' opens: revealed = !boot || cap; plate = boot; label = boot && label
+```
+
+- Layers in `MiniAppView`'s root (`bg`), in order: WebView (`bg`), cover (`bg`, all four insets 0,
+  opacity 1 → 0), plate layer (transparent; `TilePlate size="grid" state="ready"` with
+  `tileOf(installedApp)`'s tint and glyph, centred; "Opening…" `callout` `text-2` absolutely under it
+  so the plate never moves), Orb, ReportSheet. Both overlay layers are `pointerEvents="none"`.
+- The WebView is never hidden itself (no opacity/visibility on it): the opaque cover hides it, so the
+  page keeps drawing and its double-rAF `paint` is not throttled. "Hidden" = the cover is up.
+- Cover fades out (`withTiming(0, timing('fadeIn', reduceMotion))`, 160 ms) when `revealed`; the
+  plate fades the same way when the launch paints (`surface` leaves `boot`). Under Reduce Motion the
+  fade is kept and marked `ReduceMotion.Never` (system.md §4.5: M2 becomes a 160 ms cross-fade).
+- Both timers start at each WebView mount and are keyed by `webKey`: Retry restarts the opening.
+- A failure surface (`launch-failed`, `app-error`) replaces the whole opening state at once.
+- All container chrome (root, WebView, cover, both error screens) reads `useTokens()`; no
+  `SHELL_PALETTE`. Error screens: `Text` title2/body `text-2`, primary = `buttonColors(t,'ink')`,
+  secondary outlined `border` on `bg`. Copy unchanged (the crash-screen copy is a later chain).
+- Closing: unchanged, `onExit` → `goHome` in `LauncherRoot`. The tile→screen container morph and
+  the reverse are chain 22: it replaces the centred plate's position, not these timings or signals.
+- Tests: `mini-app-host-ui.suite.tsx` (helpers `pageShown`, `isOpening`, `spansContainer`): "with no
+  paint the page is shown at 600 ms anyway…", "the page fades in over 160 ms…", "the opening is the
+  app's tile-sized plate…" (dark chrome), stale-paint/Retry/launch-failed cases; closing → Home in
+  `mini-app-delivery.suite.tsx`.
