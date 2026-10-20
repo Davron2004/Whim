@@ -24,7 +24,7 @@ import { PendingBuildStore } from '../pending-builds';
 import { appInfoFrom, appInfoReader } from '../app-info';
 import type { InstalledApp } from '../app-index';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
-import { button, press, textOf, hostType } from './react-screen';
+import { boundWebView, button, press, textOf } from './react-screen';
 import { buildIt, composeAndContinue, failureTryAgain, json, onHome, planLoaded, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 import { TEST_APP_INFO, streamResponse } from './client-fixtures';
@@ -69,7 +69,7 @@ async function opensAndRuns(tree: Tree, app: InstalledApp, bundle: string): Prom
   await TestRenderer.act(async () => home(tree).props.onOpen(app));
   await waitFor(() => on(tree, MiniAppView), `${app.name} to open`);
   // The app's own WebView, not the one waiting unseen beside it.
-  await TestRenderer.act(async () => tree.root.find((node) => hostType(node) === 'WebView' && node.props.pointerEvents !== 'none').props.onLoadEnd());
+  await TestRenderer.act(async () => boundWebView(tree).props.onLoadEnd());
   return injectedScripts.length === 1 && injectedScripts[0].includes(JSON.stringify(bundle));
 }
 

@@ -26,6 +26,7 @@ import type { GenerationEvent } from '@whim/contract';
 import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER, REQUEST_ID_HEADER } from '@whim/contract';
 import { log } from '../../logging';
 import { CHANNELS } from '../../logging/channels';
+import { fillRing, recordsSince } from './log-ring';
 
 function sseFrame(event: GenerationEvent, id: number): string {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\nid: ${id}\n\n`;
@@ -457,16 +458,14 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
     'openXhrGenerateStream: a transport failure records a structured breadcrumb on the generation channel',
     async () => {
       const fakeXhr = new FakeXMLHttpRequest();
-      const before = log.buffer.snapshot().length;
+      fillRing();
+      const newRecords = recordsSince();
       const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next();
       fakeXhr.respondError(); // no respondHeaders() call first -- status stays 0, reader never handed back
       const caught = await expectThrow(first);
       h.ok(caught instanceof GenerationClientError, 'still throws GenerationClientError');
 
-      const logged = log.buffer
-        .snapshot()
-        .slice(before)
-        .find((r) => r.channel === CHANNELS.gen && r.fields.route === '/v1/generate');
+      const logged = newRecords().find((r) => r.channel === CHANNELS.gen && r.fields.route === '/v1/generate');
       h.ok(logged !== undefined, 'records a breadcrumb at the transport-error mapping site');
       if (logged) {
         h.eq(logged.fields.kind, 'network', 'the mapped error kind is a named field');

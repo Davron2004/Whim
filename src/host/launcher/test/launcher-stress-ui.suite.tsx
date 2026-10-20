@@ -32,7 +32,6 @@ import { hasButton, home, orb, showing } from './whim-sheet-ui.suite';
 import { opening, paint, send } from './changing-in-use-ui.suite';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { mulberry32 } from './mulberry32';
-import { log } from '../../logging';
 
 type Node = TestRenderer.ReactTestInstance;
 
@@ -398,9 +397,6 @@ async function stress({ seed, platform, steps }: Run, ran: Ran): Promise<void> {
   } finally {
     Date.now = realNow;
     Platform.OS = previousOs;
-    // Hundreds of steps fill the log ring (500 records); a later suite that reads what it logged by the
-    // ring's size before it started would then miss its own records.
-    log.buffer.clear();
   }
 }
 

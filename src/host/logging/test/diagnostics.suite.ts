@@ -20,6 +20,7 @@ import { DiagnosticRecord as DiagnosticRecordSchema, DiagnosticsBatch as Diagnos
 import type { DevLogRecord, DiagnosticRecord, DiagnosticsBatch } from '@whim/contract';
 import type { Harness } from '../../launcher/test/harness';
 import { MapKVBackend } from '../../version-store/fs/kv-fs';
+import { fillRing, recordsSince } from '../../launcher/test/log-ring';
 import { acceptTerms } from '../../launcher/terms-acceptance';
 import { grantConsent, revokeConsent } from '../../launcher/ai-consent';
 import { setErrorDetails } from '../../launcher/error-details';
@@ -35,7 +36,7 @@ import type { DiagnosticsOptions, DiagnosticsTarget, PostDiagnostics } from '../
 import { installCrashCapture, renderCrashRecorder } from '../crash-capture';
 import type { GlobalErrorHandler, RejectionTracking } from '../crash-capture';
 import { keepFatalRecord, readFatalRecord, sendFatalRecord } from '../fatal-slot';
-import { createSeam, log } from '../index';
+import { createSeam } from '../index';
 import type { Seam } from '../index';
 
 interface Upload {
@@ -185,10 +186,11 @@ export async function runDiagnosticsTests(h: Harness): Promise<void> {
   });
 
   await h.test('projection: a transport error breadcrumb carries its route and request id, never the host', async () => {
-    const before = log.buffer.size;
+    fillRing();
+    const newRecords = recordsSince();
     const response = new Response(JSON.stringify({ error: 'server_busy', hint: 'Try again soon' }), { status: 429, headers: { [REQUEST_ID_HEADER]: 'req-42' } });
     await httpErrorFrom(response, '/v1/generate', 'https://api.example');
-    const record = log.buffer.snapshot().slice(before).find(r => r.message === 'transport failed');
+    const record = newRecords().find(r => r.message === 'transport failed');
     h.ok(record !== undefined, 'the mapping site logged its breadcrumb');
     if (!record) return;
     const projected = toDiagnostic(record);
