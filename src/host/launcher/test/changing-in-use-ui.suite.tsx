@@ -21,14 +21,14 @@ import { AppIndex, type InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
 import { Ember } from '../../ui/Ember';
 import { stateLine, tileAccessibilityLabel } from '../../ui/AppTile-states';
-import { PendingBuildStore } from '../pending-builds';
+import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { PendingPurgeStore } from '../pending-purge';
 import { failNativeStorageRemovalsWhen } from './native-storage';
 import { afterRelaunch } from './attempt-lifecycle-ui.suite';
-import { button, hostType, press, textOf } from './react-screen';
+import { button, hostType, press, textOf, unmountScreen } from './react-screen';
 import { dismissToast, pressToastAction, tile, tileLabels, toastOf } from './home-rig';
-import { makingSheetOpen, planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
+import { makingSheetOpen, planLoaded, resultEvent, settle, sseStream, tap, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 import {
   APP_NAME,
@@ -84,6 +84,9 @@ export async function paintRunningApp(tree: Tree): Promise<Node> {
   await waitFor(() => !opening(tree), 'the app to show');
   return web;
 }
+
+/** A run as Home lists it: its id, its words, its state. */
+const runOf = (rec: PendingBuildRecord) => [rec.id, rec.prompt, rec.state];
 
 /** The change's record says it failed. */
 const changeFailed = (kv: KVBackend) => new PendingBuildStore(kv).list().some((r) => r.state === 'failed');
@@ -471,6 +474,45 @@ export async function runChangingInUseUiTests(h: Harness): Promise<void> {
     });
   }
 
+  await h.test('changing in use: the "<name> changed" toast’s Reload, pressed after the app was opened again behind its tip, opens the continuation the toast told of', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    const realNow = Date.now;
+    try {
+      await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv }) => {
+        const app = await openTipSplitter(tree);
+        await paintRunningApp(tree);
+        for (const at of [0, 1]) {
+          await makeChange(tree, streams);
+          Date.now = () => realNow() + 60_000 * (at + 1);
+          await landChange(tree, kv, streams, at);
+          await dismissToast(tree);
+        }
+        await runBehindTip(tree, app);
+        await makeChange(tree, streams);
+        Date.now = () => realNow() + 180_000;
+        await landChange(tree, kv, streams, 2);
+        const continuation = new AppIndex(kv).list().find((entry) => entry.name === APP_NAME && entry.id !== app.id);
+        h.ok(continuation !== undefined, 'the change landed on a new entry continuing the restored version');
+
+        await openSheet(tree);
+        await press(button(tree, COPY.whimSheetBackToApps));
+        await tap(() => home(tree).props.onOpen(app));
+        await waitFor(() => showing(tree, MiniAppView), 'the app to open again');
+        await paintRunningApp(tree);
+        const reopened = runningApp(tree).props.tappedAt;
+        h.eq(runningApp(tree).props.installedApp.id, app.id, 'the app opened again, still behind its tip');
+        h.eq(toastOf(tree), { message: changedTitle(APP_NAME), action: COPY.actionReload }, 'the toast still offers Reload');
+
+        await pressToastAction(tree);
+        await waitFor(() => showing(tree, MiniAppView) && runningApp(tree).props.tappedAt !== reopened, 'Reload to open');
+        await settle();
+        h.eq(runningApp(tree).props.installedApp.id, continuation?.id, 'Reload opens the entry the change landed on');
+      });
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   await h.test('changing in use: another app finishing while one runs puts the ember dot on the orb, reloads nothing and covers nothing; the dot goes with that launch', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv }) => {
@@ -573,6 +615,41 @@ export async function runChangingInUseUiTests(h: Harness): Promise<void> {
           h.eq(new PendingBuildStore(kv).list(), [], 'and left no order entry');
           h.eq(new PendingPurgeStore(kv).list(), [], 'and nothing armed');
           h.eq(next.root.findByType(HomeScreen).props.pending, [], 'Home shows nothing of it');
+        });
+      });
+    });
+
+    await h.test(`changing in use: a new change made after a stopped one left its record (${fault}) is spared by the next launch: it comes back interrupted, with its journal`, async () => {
+      const streams: ReturnType<typeof sseStream>[] = [];
+      let refuse = false;
+      await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv }) => {
+        const clear = refusing(() => refuse);
+        let id = '';
+        try {
+          await openTipSplitter(tree);
+          await paintRunningApp(tree);
+          await makeChange(tree, streams);
+          id = new PendingBuildStore(kv).list()[0]!.id;
+          refuse = true;
+          await openSheet(tree);
+          await press(button(tree, COPY.actionStopChange));
+          await settle();
+          h.ok(kv.getString(`pending:${id}`) != null && new PendingPurgeStore(kv).has('attempt', id), 'its record is still in storage, its purge armed');
+          refuse = false;
+          await waitFor(() => controlsIn(tree).includes(COPY.whimSheetAsk), 'the send area in the open sheet');
+          await press(button(tree, COPY.sheetClose));
+          await makeChange(tree, streams);
+          streams[1].push({ type: 'stage', stage: 'generate', status: 'start' });
+          await settle();
+          h.eq(new PendingBuildStore(kv).get(id)?.state, 'building', 'a new change of the app is being made');
+        } finally {
+          clear();
+        }
+        await unmountScreen(tree);
+        await afterRelaunch(async (next) => {
+          h.eq(next.root.findByType(HomeScreen).props.pending.map(runOf), [[id, WORDS, 'interrupted']], 'the new change comes back interrupted, not purged');
+          h.ok((new RunJournalStore(kv).get(id) ?? []).length > 0, 'with its journal');
+          h.eq(new PendingPurgeStore(kv).list(), [], 'and the stopped change’s marker is gone');
         });
       });
     });

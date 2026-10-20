@@ -57,7 +57,7 @@ export class PurgeWindows {
     const window = this.open.get(key);
     if (!window || window.settling) return false;
     this.open.delete(key);
-    this.deps.purges.cancel(kind, id);
+    this.deps.purges.cancel(kind, id, window.marker.createdAt);
     this.deps.changed();
     return true;
   }

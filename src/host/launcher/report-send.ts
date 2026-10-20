@@ -1,9 +1,9 @@
 /**
- * report-send — `ReportSheet`'s send-button state machine and log outcome, pulled out RN-free so
- * the draft/sending/thanks transitions and the disabled-send predicate are watchable under Node
- * (design D13/D14; spec `content-reporting`).
+ * report-send — the report form's (`ReportScreen.tsx`) send-button state machine and log outcome,
+ * pulled out RN-free so the draft/sending/thanks transitions and the disabled-send predicate are
+ * watchable under Node (design D13/D14; spec `content-reporting`).
  *
- * `ReportSheet.tsx` owns the notice VALUE (`ReportNotice`, and the refusal → notice mapping) —
+ * `ReportScreen.tsx` owns the notice VALUE (`ReportNotice`, and the refusal → notice mapping) —
  * this module only sequences phases around whatever notice the caller already built, and decides
  * the log outcome class for a non-refusal failure.
  */

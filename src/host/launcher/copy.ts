@@ -262,8 +262,6 @@ export const COPY = {
   // ── the report screen (content-reporting; design D13/D14) ───────────────────
   /** The Report screen's header title on the native stack, from History and Settings. */
   reportScreenTitle: 'Report a problem',
-  /** The report sheet's title over a running app. */
-  reportSheetTitle: 'Report this app',
   /** The history header's entry point — reports the version the user is currently on. */
   historyReportAction: 'Report',
   reportReasonEyebrow: 'What went wrong?',
@@ -309,6 +307,8 @@ export const COPY = {
   launchFailedBody:
     'Something about this app doesn’t match what’s already saved here, so it can’t open right now.',
   launchFailedBack: 'Back to your apps',
+  /** The alert's message when reading an app back to open it never finished. */
+  appOpenTimedOut: 'It took too long to open. Try again.',
   // The crash screen (`app-launcher` "A crashed app keeps the orb and offers a way forward"; system.md
   // §9 App crashed): its title is `appCrashedTitle`, its Reload `actionReload`, its last action
   // `launchFailedBack`.

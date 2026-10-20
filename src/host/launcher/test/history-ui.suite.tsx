@@ -9,6 +9,7 @@ import { COPY } from '../copy';
 import HistoryScreen from '../HistoryScreen';
 import ConfirmSheet from '../ConfirmSheet';
 import HomeScreen from '../HomeScreen';
+import SettingsScreen from '../SettingsScreen';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { StoreAccess, storeIdOf } from '../store-access';
 import { createMemoryStore, MapKVBackend } from '../../version-store';
@@ -21,7 +22,7 @@ import { appLinkFor } from '../app-link';
 import { Alert, hardwareBack, openLink, StyleSheet, windowMetrics } from './native-host';
 import { iosPop, stackMoveEnds, stackUnmountsMidMove } from './native-screens';
 import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
-import { chooseRow, longPress, renderHome } from './home-rig';
+import { chooseRow, longPress, renderHome, tile } from './home-rig';
 import { buildIt, planLoaded, resultEvent, settle, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
@@ -92,6 +93,9 @@ const sheetsOpen = (tree: Tree) => tree.root.findAll((n) => String(n.type) === '
 
 /** The system back gesture, delivered as Android delivers it. */
 const systemBack = () => TestRenderer.act(async () => { hardwareBack(); });
+
+/** A tap on the Home tile named `name`. */
+const tapTile = (tree: Tree, name: string) => TestRenderer.act(async () => tile(tree, name).props.onPress());
 
 /** History opened from Home for `app`, its push finished, then its own Back with `links` arriving in the
  *  same moment, while the pop runs. */
@@ -439,6 +443,53 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('history screen: opened from Home and left by its own Back, a tile tapped during that pop reads busy from the tap and opens once the pop finished; when the person went elsewhere meanwhile it opens nothing', async () => {
+    const never = () => new Promise<Response>(() => {});
+    const { activeBundle } = StoreAccess.prototype;
+    const read: string[] = [];
+    StoreAccess.prototype.activeBundle = function (this: StoreAccess, entry: InstalledApp) {
+      read.push(entry.id);
+      return activeBundle.call(this, entry);
+    };
+    try {
+      await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+        const home = () => tree.root.findByType(HomeScreen);
+        const showing = (type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+        await waitFor(() => showing(HomeScreen) && home().props.apps.length > 1, 'the example apps');
+        const [first, second]: InstalledApp[] = home().props.apps;
+        const backThenTap = async () => {
+          read.length = 0;
+          await backFromHistoryWithLinks(tree, first, []);
+          await tapTile(tree, second.name);
+        };
+
+        const midMove = stackUnmountsMidMove();
+        await backThenTap();
+        h.eq(tile(tree, second.name).props.accessibilityState, { busy: true }, 'the tapped tile reads busy at once, while the pop runs');
+        h.ok(!showing(MiniAppView) && read.length === 0, 'and waits: nothing is read yet');
+        await stackMoveEnds();
+        await waitFor(() => showing(MiniAppView), 'the tapped app to open once the pop finished');
+        h.eq(tree.root.findByType(MiniAppView).props.installedApp.id, second.id, 'the tapped app opens');
+        h.eq(stackUnmountsMidMove(), midMove, 'with no stack unmounted mid-pop');
+        await TestRenderer.act(async () => tree.root.findByType(MiniAppView).props.onExit());
+        await stackMoveEnds();
+
+        await backThenTap();
+        await TestRenderer.act(async () => home().props.onSettings());
+        h.ok(showing(SettingsScreen), 'the person went on to Settings before the pop finished');
+        await stackMoveEnds();
+        await settle();
+        h.ok(showing(SettingsScreen) && !showing(MiniAppView) && read.length === 0, 'the held open is dropped: nothing opens over Settings');
+        await TestRenderer.act(async () => tree.root.findByType(SettingsScreen).props.onBack());
+        await stackMoveEnds();
+        await waitFor(() => !showing(SettingsScreen), 'Home again');
+        h.eq(tile(tree, second.name).props.accessibilityState?.busy ?? false, false, 'and the tile no longer reads busy');
+      });
+    } finally {
+      StoreAccess.prototype.activeBundle = activeBundle;
+    }
+  });
+
   await h.test('history screen: opened from a running app’s orb, when the store cannot read that app back, Back and system back land on Home with the alert instead of staying on History', async () => {
     const never = () => new Promise<Response>(() => {});
     const { activeBundle } = StoreAccess.prototype;
@@ -466,6 +517,49 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
           h.eq(Alert.shown.at(-1)?.message, 'bundle read failed', `${name}: the failed read is still told to the user`);
           h.ok(showing(HomeScreen) && !showing(HistoryScreen), `${name}: and the user lands on Home, not back on History`);
         }
+      });
+    } finally {
+      StoreAccess.prototype.activeBundle = activeBundle;
+    }
+  });
+
+  await h.test('history screen: opened from a running app’s orb, when reading that app back never settles, a second Back is ignored only for a bounded time: then the alert and Home, and a read that settles late opens nothing', async () => {
+    const never = () => new Promise<Response>(() => {});
+    const { activeBundle } = StoreAccess.prototype;
+    try {
+      await withLauncher({ examples: true, server: never }, async ({ tree, clock }) => {
+        const home = () => tree.root.findByType(HomeScreen);
+        const showing = (type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+        await waitFor(() => showing(HomeScreen) && home().props.apps.length > 0, 'the example apps');
+        const app: InstalledApp = home().props.apps[0];
+        await tap(() => home().props.onOpen(app));
+        await waitFor(() => showing(MiniAppView), `${app.name} to open`);
+        await press(button(tree, COPY.orbMenuOpenLabel));
+        await press(button(tree, COPY.actionHistory));
+        await waitFor(() => showing(HistoryScreen), 'its history');
+        await stackMoveEnds();
+        const late = held<string>();
+        StoreAccess.prototype.activeBundle = () => late.promise;
+        const alerts = Alert.shown.length;
+        const midMove = stackUnmountsMidMove();
+        await TestRenderer.act(async () => {
+          button(tree, COPY.backLabel).props.onPress();
+          hardwareBack();
+        });
+        await settle();
+        h.ok(showing(HistoryScreen) && Alert.shown.length === alerts, 'while the read runs, History stays and the second Back is ignored');
+        await TestRenderer.act(async () => { clock.fireWithin(10_000); });
+        await waitFor(() => Alert.shown.length > alerts, 'the open to give up');
+        h.eq(Alert.shown.at(-1)?.message, COPY.appOpenTimedOut, 'the user is told the app took too long to open');
+        h.ok(showing(HomeScreen) && !showing(HistoryScreen), 'and lands on Home, not stranded on History');
+        await TestRenderer.act(async () => { late.resolve('late bundle'); });
+        await settle();
+        h.ok(showing(HomeScreen) && !showing(MiniAppView), 'the read that settles late opens nothing');
+        h.eq(stackUnmountsMidMove(), midMove, 'and no stack is unmounted mid-pop');
+        await stackMoveEnds();
+        StoreAccess.prototype.activeBundle = activeBundle;
+        await tap(() => home().props.onOpen(app));
+        await waitFor(() => showing(MiniAppView), 'the app to open again from its tile');
       });
     } finally {
       StoreAccess.prototype.activeBundle = activeBundle;

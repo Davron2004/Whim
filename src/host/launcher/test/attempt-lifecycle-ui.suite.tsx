@@ -918,6 +918,50 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
     });
   });
 
+  // The change made again delivers while the old Discard's window is open, and storage keeps its record
+  // and journal: their purge is armed for the new run, over the old marker. Neither the old window's
+  // end nor its Undo may take that marker away.
+  for (const ending of ['end', 'Undo'] as const) {
+    await h.test(`discard: a change made again during its discard’s Undo window, delivered while storage keeps its record: the old window’s ${ending} leaves the new run’s leftover hidden, and the next launch removes it`, async () => {
+      const streams: ReturnType<typeof sseStream>[] = [];
+      await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv, clock }) => {
+        const app = await discardFailedChange(tree, streams, 'page');
+        const discarded = new PendingBuildStore(kv).get(app.id)!.createdAt;
+        const atRest = tileLabels(tree).filter((label) => label.startsWith('Tip Splitter'));
+        await startChange(tree, app, 'Add a tip jar');
+        await waitFor(() => streams.length === 2, 'the new change’s stream');
+        const run = new PendingBuildStore(kv).get(app.id)!;
+        h.ok(run.createdAt !== discarded, 'the new run is not the discarded one');
+        const clearRemovalFailure = failNativeStorageRemovalsWhen(({ id, key }) =>
+          id === 'whim.launcher' && (key === `pending:${app.id}` || key === JOURNAL_KEY(app.id)) ? 'return-false' : undefined);
+        try {
+          streams[1].push(resultEvent('Tip Splitter'));
+          streams[1].end();
+          await waitFor(() => on(tree, ReadyPage), 'the change to deliver');
+          await settle();
+          h.eq(new PendingBuildStore(kv).get(app.id)?.prompt, 'Add a tip jar', 'storage kept the delivered run’s record');
+          h.eq(new PendingPurgeStore(kv).list(), [{ kind: 'attempt', id: app.id, createdAt: run.createdAt }], 'its leftover’s purge is armed for the new run');
+          h.eq(toastOf(tree)?.action, COPY.toastUndo, 'the old discard’s Undo is still offered');
+          if (ending === 'end') await runOutUndo(tree, clock);
+          else await pressToastAction(tree);
+          await settle();
+          h.eq(new PendingPurgeStore(kv).list(), [{ kind: 'attempt', id: app.id, createdAt: run.createdAt }], `the old window’s ${ending} leaves the new run’s marker armed`);
+          await press(button(tree, COPY.sheetClose));
+          await waitFor(() => onHome(tree), 'Home');
+          h.eq(tileLabels(tree).filter((label) => label.startsWith('Tip Splitter')), atRest, 'Home shows the app at rest, nothing of the leftover');
+        } finally {
+          clearRemovalFailure();
+        }
+        await unmountScreen(tree);
+        await afterRelaunch(async (next) => {
+          h.eq(ghosts(next), [], 'the next launch shows no interrupted tile');
+          h.eq([kv.getString(`pending:${app.id}`) ?? null, kv.getString(JOURNAL_KEY(app.id)) ?? null], [null, null], 'it removed the leftover record and journal');
+          h.eq(new PendingPurgeStore(kv).list(), [], 'and cleared the marker');
+        });
+      });
+    });
+  }
+
   await h.test('ghosts: a fully unwritable terminal settlement keeps a volatile live failure actionable', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     let rejectTerminalWrites = false;

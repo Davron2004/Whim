@@ -43,13 +43,6 @@ function withAlpha(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-/** `SHELL_COLORS.ink` at `alpha`, e.g. `inkAlpha(0.58)` -> `'rgba(23,23,26,0.58)'` — derived from
- *  the hex literal rather than a hand-typed rgb triple, so a caller that wants ink at some
- *  translucency (the orb's resting fill) can never drift from `ink` itself. */
-export function inkAlpha(alpha: number): string {
-  return withAlpha(SHELL_COLORS.ink, alpha);
-}
-
 /** Selected text's highlight where the platform paints it in exactly the colour it is given (an
  *  Android field): the accent at 30%, so the text under it stays readable — the solid accent put
  *  it at about 2:1. The app's Android theme already selects in ink (`whim_selection`,

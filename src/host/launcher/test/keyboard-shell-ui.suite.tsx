@@ -13,7 +13,7 @@ import { COPY } from '../copy';
 import { DescribePage } from '../DescribePage';
 import { PlanPage } from '../PlanPage';
 import type { PlanScreen } from '../prompt-flow';
-import { ReportPage } from '../ReportScreen';
+import { WhimReportPage } from '../WhimSheet';
 import { KeyboardTextInput } from '../KeyboardShell';
 import AdvancedScreen from '../AdvancedScreen';
 import { SHELL_PALETTE } from '../theme';
@@ -382,16 +382,19 @@ const advanced = () => (
     />
   </ToastHost>
 );
-/** The report as a page of the Whim sheet; `onClose` is what Cancel and the thanks page's Done run. */
-const report = (onClose = noop) => sheeted(
-  <ReportPage
-    app={APP}
-    access={ACCESS}
-    options={reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo)}
-    onLeave={onClose}
-    onUpdateRequired={noop}
-    legalLanguage="en"
-  />,
+/** The report as the Whim sheet shows it (`LauncherRoot`'s `whimSheetPage`): its report page, the
+ *  sheet fitting it; `onClose` is what its back control, Cancel and the thanks page's Done run. */
+const report = (onClose = noop) => (
+  <Sheet visible detent="fit" onClose={noop}>
+    <WhimReportPage
+      app={APP}
+      access={ACCESS}
+      options={reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo)}
+      onBack={onClose}
+      onUpdateRequired={noop}
+      legalLanguage="en"
+    />
+  </Sheet>
 );
 const editFourthRow = (tree: Tree) => press(tree.root.find((n) => String(n.type) === 'Pressable' && n.props.accessibilityRole === 'button' && textOf(n).includes('A soft chime')));
 

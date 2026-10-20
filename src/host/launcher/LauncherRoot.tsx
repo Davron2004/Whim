@@ -803,6 +803,20 @@ function FirstRunHost({ ask, language, onLanguageChange, outdatedFrom, consentDu
  *  any push or pop UIKit or Android draws (19f3 measured them well under 0.5 s). */
 const POP_FALLBACK_MS = 1000;
 
+/** How long an open waits on reading the app back before it fails as an unreadable app does (the
+ *  alert, then wherever that open's caller goes on a failure): a read that never settles must not hold
+ *  a tile busy, or History over the app (whose second Back waits on that open), for good. */
+const OPEN_READ_TIMEOUT_MS = 10_000;
+
+/** `read`, or a rejection once `ms` have passed without it. A read that settles later is dropped. */
+function readWithin<T>(read: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(COPY.appOpenTimedOut)), ms);
+  });
+  return Promise.race([read, late]).finally(() => clearTimeout(timer));
+}
+
 function LauncherShell({
   index,
   access,
@@ -1248,11 +1262,12 @@ function LauncherShell({
 
   /** Reads `app`'s current bundle for the launch tapped at `tappedAt` and hands that launch to `show`;
    *  the version it runs is read right behind the bundle, on the app's serial store queue (so no
-   *  write lands between the two), and after it, so neither the opening nor the busy tile waits for it. */
+   *  write lands between the two), and after it, so neither the opening nor the busy tile waits for it.
+   *  A bundle read past `OPEN_READ_TIMEOUT_MS` rejects, and nothing shows when it settles. */
   const launchApp = async (app: InstalledApp, tappedAt: number, show: (launch: AppScreen) => void) => {
     const bundleRead = access.activeBundle(app);
     const versionRead = access.activeId(app).catch(() => null);
-    const source = await bundleRead;
+    const source = await readWithin(bundleRead, OPEN_READ_TIMEOUT_MS);
     show({ kind: 'app', app, record: app.record, source, engineAppId: access.engineAppId(app), tappedAt });
     versionRead.then((versionId) => noteRunningVersion(tappedAt, versionId));
   };
@@ -1304,14 +1319,13 @@ function LauncherShell({
    *  fails (`app-launcher` "Opening an app shows an immediate busy affordance" — a tap MUST NOT
    *  read as unregistered while the active bundle is being read). `onFailed` runs after a failed
    *  open's alert, for a caller that must not stay where it is. An open arriving while History's
-   *  pop to Home runs (an app link, the "is ready" toast) waits for the pop to finish. */
+   *  pop to Home runs (a tile, the "is ready" toast) is busy from the tap and waits for the pop to
+   *  finish; it is dropped when something else arrived after it, or the person left Home meanwhile. */
   const onOpen = (app: InstalledApp, onFailed?: () => void): Promise<boolean> => {
-    if (stackPop.current === null) return openNow(app, onFailed);
-    return stackPopOver().then((go) => (go ? openNow(app, onFailed) : false));
-  };
-  const openNow = (app: InstalledApp, onFailed?: () => void) => {
     const tappedAt = Date.now();
+    const holding = stackPop.current !== null;
     return runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
+      if (holding && !((await stackPopOver()) && screenKindRef.current === 'home')) return;
       try {
         await launchApp(app, tappedAt, setScreen);
       } catch (e) {
@@ -1324,12 +1338,13 @@ function LauncherShell({
   /** Reload (the toast's, or the Whim sheet's row): the running app opens again on the version that is
    *  now current, in place — a new launch, so a fresh WebView and realm (`MiniAppStage`), with nothing
    *  in between: no Home, no closed frame. A change that landed on a continuation opens that entry
-   *  instead. A launch the person has left meanwhile is not reopened; one whose bundle cannot be read
-   *  keeps running as it was. */
-  const reloadRunning = async (): Promise<void> => {
+   *  instead, and so does `landedOn`, the entry a toast named (the app opened again since, it runs
+   *  behind that entry). A launch the person has left meanwhile is not reopened; one whose bundle
+   *  cannot be read keeps running as it was. */
+  const reloadRunning = async (landedOn?: InstalledApp): Promise<void> => {
     if (running === null) return;
     const from = running;
-    const target = runningChange.landed ?? from.app;
+    const target = landedOn ?? runningChange.landed ?? from.app;
     const app = index.get(target.id) ?? target;
     const tappedAt = Date.now();
     // The Whim sheet Reload was pressed in starts closing at the press, not once the bundle is read.
@@ -1381,8 +1396,9 @@ function LauncherShell({
    *  History. Never Home first: going Home pops the stack, which UIKit animates, and the app opening
    *  would unmount the stack mid-pop. react-native-screens then keeps the unfinished pop in the stack it
    *  recycles, and the next Home it shows is blank for good (iOS). So a second Back while that app is
-   *  already opening does nothing: the open in flight replaces History. Home only when the app is busy
-   *  with something else (a copy). */
+   *  already opening does nothing: the open in flight replaces History, or fails to Home with its alert
+   *  (a read past `OPEN_READ_TIMEOUT_MS` among them). Home only when the app is busy with something
+   *  else (a copy). */
   const backFromHistoryToApp = (app: InstalledApp) => {
     if (appOps.opFor(app.id) === 'open') return;
     onOpen(index.get(app.id) ?? app, goHome)
@@ -3266,7 +3282,7 @@ function LauncherShell({
       action: {
         label: COPY.actionReload,
         onPress: () => {
-          if (runningRef.current?.app.id === on.app.id) reloadRef.current().catch(() => undefined);
+          if (runningRef.current?.app.id === on.app.id) reloadRef.current(installed).catch(() => undefined);
         },
       },
     });
