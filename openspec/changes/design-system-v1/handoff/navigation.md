@@ -47,13 +47,13 @@ function stackFor(screen: Screen): readonly StackScreen[] | null;  // root first
 | settings | `home, settings` | "Settings", large | `goHome` |
 | advanced | `home, settings, advanced` | "Advanced" | settings |
 | consent review (AI features) | `home, settings, consent` | "AI features" | settings |
-| history | `home, history` | hidden (History draws its own until 20.1) | a swipe: `leaveHistory`; its Back and system back: see "History's leave" |
+| history | `home, history` | hidden, for good: History draws its own (Back + `Report`) | a swipe: `leaveHistory`; its Back and system back: see "History's leave" |
 | report | `stackFor(from)` + `report` | "Report a problem" | `from` |
 
 - Push = `setScreen(next)`; pop = the entry's `onLeave`. To add a pushed screen: a Screen member, a branch
   in `stackFor`, `stackTitle`, `leaveFor`, `renderStackScreen`, and `schemeFollowing` if it draws tokens.
-- `schemeFollowing(top)`: home/settings/advanced/report draw `useTokens()` (header + `StatusBar` = `t.barStyle`);
-  history/consent still draw `SHELL_PALETTE` and `dark-content`. Flip a kind when its screen moves.
+- `schemeFollowing(top)`: home/settings/advanced/report/history draw `useTokens()` (header + `StatusBar` =
+  `t.barStyle`); consent still draws `SHELL_PALETTE` and `dark-content`. Flip a kind when its screen moves.
 - AI features row always opens review mode. Review's "Turn on AI features" runs the legal flow with
   continuation `{ kind: 'settings' }`; its consent step grants directly (`reviewedConsent`, #104).
 - Root `SafeAreaView` edges: `frameEdgesFor(kind, onNativeStack)` → `[]` on the stack.
@@ -66,10 +66,12 @@ History's `onLeave` (a swipe: `onDismissed`) is `leaveHistory(app, from)`: `goHo
 then `onOpen(app)` when `from === 'app'`, at the version now current. Its own Back and system back are bound apart:
 - Opened over an app: `backFromHistoryToApp(app)`. Never Home first; History stays until `onOpen` has replaced it with
   the app in one step. Failed open: alert, then Home. Refused open (the app is busy with a copy): Home. A second Back
-  or system back while THAT app's `open` is in flight (`appOps.opFor(app.id) === 'open'`) is ignored.
+  or system back while THAT app's `open` is in flight (`appOps.opFor(app.id) === 'open'`) is ignored. Android back
+  while the Whim sheet still slides away reaches its `Modal`, not `BackHandler`: `closeSheet` on `history` = its Back.
 - Opened from Home: `backFromHistoryToHome` = `startStackPop()`, then `goHome()` (a JS pop UIKit animates). An `onOpen`
-  or app link arriving meanwhile waits for `NativeStack`'s `onSettled` or `POP_FALLBACK_MS` (1000 ms); only the latest
-  waiter then runs, earlier ones resolve `false`. A swipe pop starts no hold.
+  or app link arriving meanwhile waits for `POP_FALLBACK_MS` (1000 ms) or the pop's own `onSettled`: `onStackSettled`
+  first ends the oldest push still drawing (`stackPushes`: a deeper stack on a non-empty one is a push; a stack mounted
+  afresh is none), so it waits `1 + pushes drawing`. Only the latest waiter runs (earlier: `false`). Swipes: no hold.
 - **Never pop the stack and then replace or unmount it (an app opening) within the pop's animation**: react-native-screens
   recycles the stack with the pop unfinished and the next Home is blank for good (iOS).
 

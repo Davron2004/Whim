@@ -70,6 +70,7 @@ import { PlanPage } from './PlanPage';
 import { FirstRunSheet } from './FirstRunSheet';
 import { MakingSheet, type SheetContent } from './MakingSheet';
 import { runningVersion, WhimReportPage, WhimSheet, type RunningVersion } from './WhimSheet';
+import { listVersions } from './history-logic';
 import MakingPage from './MakingPage';
 import ReadyPage from './ReadyPage';
 import FailurePage from './FailurePage';
@@ -1431,6 +1432,9 @@ function LauncherShell({
     startStackPop();
     goHome();
   };
+
+  /** History's own Back and system back, for where it was opened from. */
+  const historyBack = (on: HistoryScreenState) => (on.from === 'app' ? () => backFromHistoryToApp(on.app) : backFromHistoryToHome);
 
   /** Delete and Discard hide at once and complete when their Undo toast ends (`soft-delete.ts`):
    *  Home calls the `Settle` pair then. An Undo answers whether it restored everything. */
@@ -3249,7 +3253,7 @@ function LauncherShell({
   /** Reads, for the Whim sheet opened over `on`, the version it runs and whether a newer one is current.
    *  Until the running version's id is known, the current one is taken as running. */
   const readWhimVersions = (on: AppScreen) => {
-    Promise.all([access.timeline(on.app), access.activeId(on.app)]).then(
+    Promise.all([listVersions(access, on.app), access.activeId(on.app)]).then(
       ([timeline, active]) => {
         const runningId = on.versionId ?? active;
         setWhimVersions({ at: on.tappedAt, version: runningVersion(timeline, runningId), newVersion: active !== null && runningId !== active });
@@ -3392,9 +3396,14 @@ function LauncherShell({
    *  run keeps going and the sheet collapses into its tile; on Describe and Plan the in-flight
    *  clarify or rewrite is aborted and the draft kept (`goHome` → `keepDraft`), or, over the app the
    *  Whim sheet sent the change from, the app shows again; on Ready it is Done; on Failure it leaves
-   *  the attempt as it is, its tile and journal kept. The Whim sheet closes onto its running app. */
+   *  the attempt as it is, its tile and journal kept. The Whim sheet closes onto its running app.
+   *  History has no sheet: a close there is Android back reaching the Whim sheet's window while it still
+   *  slides away after its History row (the window takes the press, not History's back listener), and
+   *  it means History's own Back. */
   const closeSheet = () => {
-    if (screen.kind === 'making') {
+    if (screen.kind === 'history') {
+      historyBack(screen)();
+    } else if (screen.kind === 'making') {
       onLeaveRunning();
     } else if (screen.kind === 'app') {
       setScreen({ ...screen, sheet: undefined });
@@ -3610,7 +3619,7 @@ function LauncherShell({
           <HistoryScreen
             app={on.app}
             access={access}
-            onBack={on.from === 'app' ? () => backFromHistoryToApp(on.app) : backFromHistoryToHome}
+            onBack={historyBack(on)}
             onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
             onReport={() => setScreen({ kind: 'report', app: on.app, from: on })}
             canCopyData={access.canCopyData}

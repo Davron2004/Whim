@@ -219,9 +219,10 @@ export const COPY = {
   historyKindFixed: 'Fixed',
   historyKindStart: 'Start',
   historyInstallLabel: 'Where this app began',
-  /** An opened version's hidden-data line, read before either action: going to it would hide fields
-   *  the current version has data in. */
-  historyHiddenData: 'Some saved data won’t show in this version. It isn’t deleted and comes back when you return.',
+  /** An opened version's hidden-data line, read before either action: using it would hide fields the
+   *  current version has. It speaks of using the version only: a fresh copy has no data to hide, and
+   *  data a copy carries never "comes back" to it. */
+  historyHiddenData: 'If you use this version, some saved data won’t show. It isn’t deleted and comes back when you return.',
   /** The three history wait states (`version-history`, flow-wait-hygiene): the first-load
    *  skeleton's screen-reader name, the two row actions' in-flight words, and the name of the
    *  muted placeholder standing in for the hidden-data line while it is computed. */
@@ -1074,9 +1075,11 @@ export function historyQuotedPrompt(prompt: string): string {
  *  wire does not carry. The repair row's "of 3" and the "I tried 3 times" failure read from it. */
 export const REPAIR_ATTEMPT_LIMIT = 3;
 
-/** The toast after "Use this version", offered with Undo: "Back on version 3". */
-export function backOnVersionToast(version: number): string {
-  return `Back on version ${version}`;
+/** The toast after "Use this version", offered with Undo: "Back on version 3" when the app goes to
+ *  an older version than `from`, the one that was current; "Now on version 4" when it goes to a newer
+ *  one. */
+export function versionSwitchToast(version: number, from: number | null): string {
+  return from !== null && version > from ? `Now on version ${version}` : `Back on version ${version}`;
 }
 
 /** The report sheet's collapsed code row (content-reporting "the app's code (its size, with the

@@ -28,9 +28,13 @@ import { ToastHost } from '../../ui/Toast';
 import { COLORS, LAYOUT, SPACE, TINTS, TYPE_SCALE } from '../../../design/tokens';
 import type { SchemaArtifact } from '../../storage-engine/contract';
 import { appLinkFor } from '../app-link';
+import { contrastRatio } from '../../../design/tints';
+import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
+import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { Alert, hardwareBack, openLink, setColorScheme, StyleSheet, windowMetrics } from './native-host';
 import { iosPop, stackItems, stackMoveEnds, stackUnmountsMidMove } from './native-screens';
-import { button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
+import { holdAnimations } from './native-reanimated';
+import { androidBack, button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 import { chooseRow, dismissToast, longPress, pressToastAction, renderHome, sheetRows, tile, toastOf } from './home-rig';
 import { accessOver, disposeDeviceState, installApp, newDeviceState, withEngine } from './data-copy-rig';
 import { buildIt, planLoaded, resultEvent, settle, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
@@ -162,6 +166,11 @@ const wordsFit = (n: Node, fontScale: number, width: number) => {
   const size = Number(styleOf(n).fontSize) * Math.min(fontScale, n.props.maxFontSizeMultiplier ?? Infinity);
   return Math.max(...textOf(n).split(' ').map((w) => w.length)) * 0.7 * size <= width;
 };
+
+/** The texts saying `words` with no text inside them: the runs a renderer actually draws. */
+const innermostTexts = (tree: Tree, words: string) =>
+  tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n).includes(words) && !n.findAll(isInnerText(n)).length);
+const isInnerText = (outer: Node) => (m: Node) => m !== outer && hostType(m) === 'Text';
 
 /** The words naming the app under the screen's title. */
 const titleOf = (tree: Tree, name: string) => textSaying(tree.root, name);
@@ -457,6 +466,53 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('history screen: an opened row keeps its words where they were, and its added-fields line reads at least as clearly as secondary text, in light and dark', async () => {
+    const record = (fields: SchemaArtifact['collections'][string]['fields']) =>
+      ({ appId: 'log', name: 'Log', manifest: { capabilities: ['storage'] }, schemaArtifact: { schemaVersion: 1 as const, collections: { Entries: { id: 'c1', fields, tombstones: [] } } } });
+    const amount = { amount: { id: 'f1', type: 'int' as const } };
+    const store = createMemoryStore({ autoCompact: false });
+    const access = new StoreAccess({ store, index: new AppIndex(new MapKVBackend()), now: () => Date.now() });
+    const app = await access.install({ id: 'log', name: 'Log', record: record(amount), bundleSource: 'V1', prompt: envelope('a spending log') });
+    await access.update(app, { record: record({ ...amount, notes: { id: 'f2', type: 'text', default: '' } }), bundleSource: 'V2', prompt: envelope('add notes') });
+    const words = (tree: Tree) => textSaying(row(tree, 'add notes'), '“add notes”');
+    /** Where the words sit: every margin and padding between them and the screen's top-left corner. */
+    const place = (n: Node) => {
+      let left = 0;
+      let top = 0;
+      for (let at: Node | null = n; at; at = at.parent) {
+        const s = typeof at.type === 'string' ? (styleOf(at) ?? {}) : {};
+        left += Number(s.marginLeft ?? s.marginHorizontal ?? s.margin ?? 0) + Number(s.paddingLeft ?? s.paddingHorizontal ?? s.padding ?? 0);
+        top += Number(s.marginTop ?? s.marginVertical ?? s.margin ?? 0) + Number(s.paddingTop ?? s.paddingVertical ?? s.padding ?? 0);
+      }
+      return { left, top };
+    };
+    /** The colour a text is drawn in: its own, else the nearest text around it that sets one. */
+    const drawnIn = (n: Node) => {
+      for (let at: Node | null = n; at; at = at.parent) {
+        if (hostType(at) === 'Text' && styleOf(at)?.color !== undefined) return String(styleOf(at).color);
+      }
+      throw new Error('no colour');
+    };
+    try {
+      for (const scheme of ['light', 'dark'] as const) {
+        await TestRenderer.act(async () => setColorScheme(scheme));
+        await withHistory(access, app, async (tree) => {
+          await waitFor(() => rows(tree).length === 2, 'the versions to load');
+          const closed = place(words(tree));
+          await press(row(tree, 'add notes'));
+          await waitFor(() => textOf(tree.root).includes('Added: notes (text)'), 'the added-fields line');
+          h.eq(place(words(tree)), closed, `${scheme}: opening the row moves its words neither across nor down`);
+          const leaves = innermostTexts(tree, 'notes (text)');
+          const floor = contrastRatio(COLORS[scheme]['text-2'], COLORS[scheme].surface);
+          h.ok(leaves.length > 0 && leaves.every((n) => contrastRatio(drawnIn(n), COLORS[scheme].surface) >= floor),
+            `${scheme}: every part of “Added: notes (text)” stands off the card at least as much as secondary text (${leaves.map((n) => drawnIn(n)).join(', ')})`);
+        });
+      }
+    } finally {
+      await TestRenderer.act(async () => setColorScheme('light'));
+    }
+  });
+
   await h.test('history screen: a rejected expanded-row annotation clears without showing an annotation', async () => {
     const { access, app } = await threeVersions();
     const diff = held<Awaited<ReturnType<StoreAccess['diff']>>>();
@@ -539,8 +595,31 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       await openAndPress(tree, 'the countdown stops early', COPY.historyUseVersion);
       await waitFor(() => textsSaying(row(tree, 'the countdown stops early'), 'Current').length === 1, 'version 4 to be current again');
       h.eq(await access.activeId(app), v4.id, 'the newer version is used again from its row');
-      h.eq(toastOf(tree)?.message, 'Back on version 4', 'with its own toast');
+      h.eq(toastOf(tree)?.message, 'Now on version 4', 'with its own toast, saying the app moved forward, not back');
+      await openAndPress(tree, 'let me pick V60 or Chemex', COPY.historyUseVersion);
+      await waitFor(() => toastOf(tree)?.message !== 'Now on version 4', 'the next toast');
+      h.eq(toastOf(tree)?.message, 'Back on version 3', 'and back again, back');
     });
+  });
+
+  await h.test('history screen: an Undo tapped while a copy is being made is not lost: it goes back once the copy is made', async () => {
+    const { access, app } = await fourKinds();
+    const [v4, v3] = await access.timeline(app);
+    const finish = held<void>();
+    const onFork: HistoryScreenProps['onFork'] = async (entry, id, opts) => { await finish.promise; return access.fork(entry, id, opts); };
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => rows(tree).length === 4, 'the versions to load');
+      await openAndPress(tree, 'let me pick V60 or Chemex', COPY.historyUseVersion);
+      await waitFor(() => toastOf(tree)?.action === COPY.toastUndo, 'the toast with Undo');
+      await openAndPress(tree, 'add a chime', COPY.historyMakeCopyHere);
+      h.ok(textOf(tree.root).includes(COPY.historyMakeCopyBusy), 'setup: the copy is being made');
+      await pressToastAction(tree);
+      await settle();
+      h.eq(await access.activeId(app), v3.id, 'while the copy runs, the app stays where it is');
+      await TestRenderer.act(async () => { finish.resolve(); });
+      await waitFor(() => textsSaying(row(tree, 'the countdown stops early'), 'Current').length === 1, 'the Undo to land');
+      h.eq(await access.activeId(app), v4.id, 'then the Undo goes back to version 4');
+    }, { onFork });
   });
 
   await h.test('history screen: the first version can be used too, and a failed switch says so and keeps the version that was current', async () => {
@@ -621,6 +700,29 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       h.eq(await access.activeId(app), (await access.timeline(app))[0].id, 'and the original is still on its own current version');
       h.eq(await access.activeBundle(app), 'V3', 'running its own code');
     }, { canCopyData: true, onFork, onOpen: (a) => { opened.push(a); } });
+  });
+
+  await h.test('history screen: the copy question takes one answer: a second tap on it, after the first copy is already made, makes no second copy', async () => {
+    const { access, app } = await threeVersions();
+    const forks: string[] = [];
+    const onFork: HistoryScreenProps['onFork'] = async (entry, id, opts) => { forks.push(id); return access.fork(entry, id, opts); };
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => hasRow(tree, 'add a chime'), 'the versions to load');
+      const release = holdAnimations();
+      try {
+        await openAndPress(tree, 'add a chime', COPY.historyMakeCopyHere);
+        const fresh = questionRow(tree, COPY.copyQuestionFresh)!;
+        await TestRenderer.act(async () => { fresh.props.onPress(); });
+        await waitFor(() => toastOf(tree)?.message === COPY.copyMadeToast, 'the first copy to be made');
+        h.ok(questionRow(tree, COPY.copyQuestionFresh) !== undefined, 'setup: the question is still on screen, sliding away');
+        // The second tap of a quick double tap, landing on the answer the sheet still shows.
+        await TestRenderer.act(async () => { questionRow(tree, COPY.copyQuestionFresh)!.props.onPress(); });
+        await settle();
+        h.eq(forks.length, 1, 'one copy');
+      } finally {
+        release();
+      }
+    }, { canCopyData: true, onFork });
   });
 
   await h.test('history screen: without the data copy, Make a copy from here makes a fresh copy at once, with no question; a failed copy says so and makes nothing', async () => {
@@ -714,6 +816,46 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('history screen: a seeded example changed with the same data shape raises no hidden-data line and no added fields; a change that adds a collection does', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    const record = APP_RECORDS['water-counter'];
+    const seeded = record.schemaArtifact!;
+    const withNotes: SchemaArtifact = { ...seeded, collections: { ...seeded.collections, Notes: { id: 'c2', tombstones: [], fields: { body: { id: 'f2', type: 'text' } } } } };
+    const home = (tree: Tree) => tree.root.findByType(HomeScreen);
+    const counter = (tree: Tree): InstalledApp => home(tree).props.apps.find((a: InstalledApp) => a.name === record.name);
+    /** Changes the Water Counter example through the real flow; the server answers with its own build and `schema`. */
+    const change = async (tree: Tree, words: string, schema: SchemaArtifact) => {
+      await TestRenderer.act(async () => home(tree).props.onPromptAgain(counter(tree)));
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText(words));
+      await tap(() => tree.root.findByType(DescribePage).props.onContinue());
+      await waitFor(() => planLoaded(tree), `the plan for “${words}”`);
+      const before = streams.length;
+      await buildIt(tree);
+      await waitFor(() => streams.length === before + 1, `the generation of “${words}”`);
+      streams[before].push({ type: 'result', app: { name: record.name, source: 'export default {}', bundle: APP_BUNDLES['water-counter'], manifest: record.manifest, schema } });
+      streams[before].end();
+      await waitFor(() => tree.root.findAllByType(ReadyPage).length === 1, `“${words}” to land`);
+      await press(button(tree, COPY.readyDone));
+    };
+    const openHistory = async (tree: Tree, count: number) => {
+      await TestRenderer.act(async () => home(tree).props.onHistory(counter(tree)));
+      await waitFor(() => rows(tree).length === count, `${count} versions`);
+    };
+    await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree }) => {
+      await waitFor(() => tree.root.findAllByType(HomeScreen).length === 1 && counter(tree) !== undefined, 'the examples');
+      await change(tree, 'Add a reset button', seeded);
+      await openHistory(tree, 2);
+      await press(row(tree, 'Add a reset button'));
+      await settle();
+      h.ok(!textOf(tree.root).includes('Added:'), 'the change kept the example’s data shape: it added no fields');
+      h.eq(await openRowAndReadLine(tree, 'Example'), 0,'and using the example’s own first version hides nothing');
+      await iosPop(tree);
+      await change(tree, 'Add notes to each glass', withNotes);
+      await openHistory(tree, 3);
+      h.eq(await openRowAndReadLine(tree, 'Example'), 1, 'once a version adds a collection, the first version says using it would hide that');
+    });
+  });
+
   await h.test('history screen: opened from a running app’s orb, Back, system back and an iOS swipe return to that app, and the stack is never unmounted mid-pop; opened from Home, to Home', async () => {
     const never = () => new Promise<Response>(() => {});
     await withLauncher({ examples: true, server: never }, async ({ tree }) => {
@@ -744,6 +886,34 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
         await TestRenderer.act(async () => home().props.onHistory(app));
         await leave();
         h.ok(showing(HomeScreen), `${name} from the history opened from Home returns Home`);
+      }
+    });
+  });
+
+  await h.test('history screen: opened from a running app’s Whim sheet, Android back while that sheet is still leaving goes back to the app, never Home', async () => {
+    const never = () => new Promise<Response>(() => {});
+    await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+      const home = () => tree.root.findByType(HomeScreen);
+      const showing = (type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+      await waitFor(() => showing(HomeScreen) && home().props.apps.length > 0, 'the example apps');
+      const app: InstalledApp = home().props.apps[0];
+      await tap(() => home().props.onOpen(app));
+      await waitFor(() => showing(MiniAppView), `${app.name} to open`);
+      await press(button(tree, COPY.orbMenuOpenLabel));
+      const release = holdAnimations();
+      try {
+        await press(button(tree, COPY.actionHistory));
+        await waitFor(() => showing(HistoryScreen), 'its history');
+        h.eq(sheetsOpen(tree), 1, 'setup: the Whim sheet is still sliding away, its window up and taking Android back');
+        const midMove = stackUnmountsMidMove();
+        // Android hands the press to the leaving sheet's window, not to History's back listener.
+        await androidBack(tree);
+        await waitFor(() => !showing(HistoryScreen), 'Back to leave History');
+        h.ok(showing(MiniAppView) && !showing(HomeScreen), 'the press means History’s Back: the app it was opened over opens again');
+        h.eq(tree.root.findByType(MiniAppView).props.installedApp.id, app.id, 'the same app');
+        h.eq(stackUnmountsMidMove(), midMove, 'and the stack is never popped to Home under it');
+      } finally {
+        release();
       }
     });
   });

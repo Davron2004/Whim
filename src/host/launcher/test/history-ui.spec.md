@@ -32,10 +32,11 @@ expand-only taps, immediate use and copy with Undo and Open, reaching History fr
 5. A tap toggles that row's expansion (`expandedId`); it never changes the version, and at most one
    row is expanded at a time.
 6. `Use this version` in an expanded row calls `StoreAccess.rollback(app, row.id)` at once — the
-   TAPPED row's own version — with no sheet, and shows the toast "Back on version N" with `Undo`,
-   which returns to the version that was current. The version left stays listed with its own
-   `Use this version`, so the same Undo is reachable once the toast has gone. A failed switch says
-   so and leaves the current version as it was.
+   TAPPED row's own version — with no sheet, and shows the toast "Back on version N" (older than
+   the version that was current) or "Now on version N" (newer) with `Undo`, which returns to the
+   version that was current. The version left stays listed with its own `Use this version`, so the
+   same Undo is reachable once the toast has gone. An Undo tapped while another row action runs
+   goes once that one has settled. A failed switch says so and leaves the current version as it was.
 7. Changing a version used this way never drops the newer ones: `deliverResult` lands that change
    on a rewind continuation (a new entry sharing the data), and the original keeps listing, and can
    use, every version (`history-logic.suite.ts`).
@@ -44,8 +45,8 @@ expand-only taps, immediate use and copy with Undo and Open, reaching History fr
 
 8. The expanded body shows the `What it touched` chips (`summary.touched`, area names — never a
    diff), and the data-shape
-   annotation (`addedFieldsLine`, when the row's `schema.json` changed since its predecessor)
-   rendered with an explicit `hedge` mark spanning it.
+   annotation (`addedFieldsLine`, when the row's `schema.json` changed since its predecessor),
+   product copy at no less contrast than `text-2`. Opening a row never moves its words.
 9. The current version's row offers exactly one action, `Change it`. Every other version's row
    (the install row and, after going back, a newer one included) offers exactly two:
    `Use this version` and `Make a copy from here`. Each shows its busy words while it runs, and
@@ -64,7 +65,8 @@ expand-only taps, immediate use and copy with Undo and Open, reaching History fr
     `StoreAccess.fork` of the exact version viewed — and the toast "Copy made" offers `Open`, which
     opens the copy. The copy has its own storage-engine appId (#43b): with "Copy the data" a
     one-time copy of the data, after which writes to either never show in the other; the original
-    is unchanged. A failed copy says so.
+    is unchanged. A failed copy says so. The question takes one answer: a second tap on it, even
+    after the first copy is made, makes no second copy.
 
 ## Data-shape annotations + restore reassurance (D5, unchanged)
 
@@ -72,7 +74,8 @@ expand-only taps, immediate use and copy with Undo and Open, reaching History fr
     after)` — the newly added fields as `"<display name> (<type>)"`. A row whose `schema.json` did
     NOT change (`StoreAccess.diff` omits unchanged files) carries no annotation.
 13. An opened version whose schema lacks fields the current version has gained shows the
-    hidden-data line (`historyHiddenData`) above its actions, before either is tapped:
+    hidden-data line (`historyHiddenData`, worded for using the version) above its actions, before
+    either is tapped:
     `fieldsLeavingViewOnRestore(access, app, targetId, activeId)` is non-empty. A placeholder holds
     its place while it is worked out; a version with an identical or superset schema, and the
     current one, show nothing.

@@ -39,8 +39,9 @@ export interface RunningVersion {
   readonly changedAt: number;
 }
 
-/** The version `id` among `timeline` (newest first, as History lists it), or `null` when it isn't one
- *  of them. */
+/** The version `id` among `timeline`, the app's whole version chain newest first as `listVersions`
+ *  reads it for History (a capped list would number the versions differently, or miss this one), or
+ *  `null` when it isn't one of them. */
 export function runningVersion(timeline: readonly Snapshot[], id: string | null): RunningVersion | null {
   const index = timeline.findIndex((snapshot) => snapshot.id === id);
   if (index < 0) return null;

@@ -43,7 +43,7 @@ import {
   makingRepairLine,
   makingStallLine,
   makingTitle,
-  backOnVersionToast,
+  versionSwitchToast,
   tileOlderLine,
 } from '../copy';
 
@@ -87,7 +87,8 @@ function everyCopyString(): string[] {
     historyVersionCount(7),
     historyRowMeta('v6', 0, 3 * 86_400_000),
     historyQuotedPrompt('make the numbers bigger'),
-    backOnVersionToast(6),
+    versionSwitchToast(6, 7),
+    versionSwitchToast(6, 3),
   ];
 }
 

@@ -137,6 +137,25 @@ The launcher SHALL offer "Make a copy" on every installed app (tile menu, and Hi
 
 ## ADDED Requirements
 
+### Requirement: Each version keeps its own manifest and schema
+Every version `StoreAccess` saves SHALL keep, beside its bundle, the app's host-held manifest and, when declared, its schema artifact. Using an older version, copying from a version, and a change landing on an older version (a rewind continuation) SHALL run the entry with that version's own manifest and schema, keeping the host's fields (app id, name, tile). The schema applied to saved data SHALL stay the accumulated union (additive-only evolution).
+
+#### Scenario: An older version runs with its own capabilities
+- **WHEN** version 1 of an app declares storage, version 2 declares none, and the user uses version 1
+- **THEN** version 1 runs with storage granted and reads the data saved before version 2
+
+#### Scenario: Going back runs no migration
+- **WHEN** the user uses a version whose schema lacks fields a newer one added
+- **THEN** no migration runs and nothing is deleted: those fields stay stored, unread, until a version that names them runs again
+
+#### Scenario: A copy runs the manifest of the version it was made from
+- **WHEN** the user makes a copy from version 1 while version 2 is current
+- **THEN** the copy runs with version 1's manifest and schema, and the original keeps version 2's
+
+#### Scenario: A version saved before manifests were kept
+- **WHEN** the user uses a version saved before versions kept their manifest
+- **THEN** it runs with the record the entry has now, and nothing errors
+
 ### Requirement: The shell follows the phone's appearance through one scheme hook
 
 The shell SHALL render in light or dark following the phone's appearance setting, with no in-app picker. Launcher components SHALL read colours only through one hook that returns the token module's light or dark roles for the current scheme; no component SHALL accept a palette or theme as a prop or define its own colour literal, and styles SHALL be built per scheme so a change of appearance re-renders the shell without a restart. The status bar and system bars SHALL follow the scheme.

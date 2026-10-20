@@ -30,7 +30,7 @@ import type { IconName } from '../../design/icons/names';
 import { InstalledApp } from './app-index';
 import { annotationBetween, buildHistoryRows, fieldsLeavingViewOnRestore, listVersions, type HistoryRow } from './history-logic';
 import type { ForkOptions, StoreAccess } from './store-access';
-import { addedFieldsLine, backOnVersionToast, COPY, historyVersionCount } from './copy';
+import { addedFieldsLine, COPY, historyVersionCount, versionSwitchToast } from './copy';
 import {
   HISTORY_LOADING,
   RESTORE_DIFF_NONE,
@@ -155,9 +155,12 @@ const styles = makeStyles((t) => {
     },
     dot: { width: RAIL.dot, height: RAIL.dot, borderRadius: RAIL.dot / 2, backgroundColor: t.colors.border },
     dotCurrent: { backgroundColor: t.colors.ink },
-    flat: { paddingTop: ROW_TOP },
+    // A row's words sit in the same place open or closed: a closed row keeps the open card's side
+    // padding, and the card reaches up by its top padding, so it grows around the words instead of
+    // pushing them in.
+    flat: { paddingTop: ROW_TOP, paddingHorizontal: CARD_PADDING.horizontal },
     card: {
-      marginTop: ROW_TOP,
+      marginTop: ROW_TOP - CARD_PADDING.vertical,
       borderRadius: RADII.lg.radius,
       backgroundColor: t.colors.surface,
       paddingVertical: CARD_PADDING.vertical,
@@ -186,7 +189,13 @@ const styles = makeStyles((t) => {
       marginTop: SPACE[3],
       backgroundColor: t.colors['fill-strong'],
     },
-    skeletonRow: { paddingLeft: RAIL.content, paddingRight: LAYOUT.gutter, paddingBottom: ROW_GAP, paddingTop: ROW_TOP, gap: SPACE[1] },
+    skeletonRow: {
+      paddingLeft: RAIL.content + CARD_PADDING.horizontal,
+      paddingRight: LAYOUT.gutter + CARD_PADDING.horizontal,
+      paddingBottom: ROW_GAP,
+      paddingTop: ROW_TOP,
+      gap: SPACE[1],
+    },
   };
 });
 
@@ -226,8 +235,13 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
   // synchronous claim can refuse the second.
   const flight = useRef(new RowActionFlight()).current;
   const [busy, setBusy] = useState<RowBusy>(null);
-  // The copy question, open over the row it was asked for; kept (closed) while the sheet leaves.
-  const [copying, setCopying] = useState<{ row: HistoryRow; open: boolean } | null>(null);
+  // Whether the copy question is open, and the row it was asked for. The first answer takes the row,
+  // so a second tap on an answer (the sheet is still on screen as it slides away, and the first copy
+  // may already be made) answers nothing: a ref, for the same reason as `flight`.
+  const [asking, setAsking] = useState(false);
+  const asked = useRef<HistoryRow | null>(null);
+  // An Undo tapped while another row action ran: it runs once that one has settled, never dropped.
+  const queuedUndo = useRef<string | null>(null);
 
   const load = () =>
     runHistoryLoad(async () => {
@@ -255,17 +269,30 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
    *  rows say where the app is. Once the toast has gone, the same version's own row does this. */
   const undo = async (previousId: string) => {
     try {
-      if (!(await runRowAction(flight, () => {}, () => access.rollback(app, previousId)))) return;
+      if (!(await runRowAction(flight, () => {}, () => access.rollback(app, previousId)))) {
+        // Another row action runs (a copy being made): this Undo goes once it has settled.
+        queuedUndo.current = previousId;
+        return;
+      }
     } catch (e) {
       historyOperationFailed('undo', e);
       toast.show({ message: COPY.undoTooLateToast });
     }
     await reload();
+    runQueuedUndo();
   };
 
-  /** "Use this version": current at once, then the toast with Undo. */
+  /** A row action has settled: the Undo tapped meanwhile, if any, runs now. */
+  const runQueuedUndo = () => {
+    const previousId = queuedUndo.current;
+    queuedUndo.current = null;
+    if (previousId !== null) undo(previousId);
+  };
+
+  /** "Use this version": current at once, then the toast with Undo, saying which way the app went. */
   const switchVersion = async (row: HistoryRow) => {
     const previousId = activeId;
+    const from = rows.find((r) => r.isCurrent)?.number ?? null;
     try {
       if (!(await runRowAction(flight, busyFor(row, 'use-version'), () => access.rollback(app, row.id)))) return;
     } catch (e) {
@@ -273,14 +300,16 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
       haptics.play('failure');
       toast.show({ message: COPY.historyUseVersionFailed });
       await reload();
+      runQueuedUndo();
       return;
     }
     await reload();
     haptics.play('success');
     toast.show({
-      message: backOnVersionToast(row.number),
+      message: versionSwitchToast(row.number, from),
       ...(previousId == null ? {} : { action: { label: COPY.toastUndo, onPress: () => undo(previousId) } }),
     });
+    runQueuedUndo();
   };
 
   /** Makes the copy from `row`'s version with the chosen data, then "Copy made" with Open. */
@@ -295,24 +324,38 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
       historyOperationFailed('copy', e);
       haptics.play('failure');
       toast.show({ message: COPY.copyFailedToast });
+      runQueuedUndo();
       return;
     }
     const { made } = result;
-    if (!made) return;
-    haptics.play('success');
-    toast.show({ message: COPY.copyMadeToast, action: { label: COPY.actionOpen, onPress: () => onOpen(made) } });
+    if (made) {
+      haptics.play('success');
+      toast.show({ message: COPY.copyMadeToast, action: { label: COPY.actionOpen, onPress: () => onOpen(made) } });
+    }
+    runQueuedUndo();
   };
 
   const askCopy = (row: HistoryRow) => {
     if (flight.inFlight) return;
-    if (canCopyData) setCopying({ row, open: true });
-    else makeCopy(row, 'fresh');
+    if (canCopyData) {
+      asked.current = row;
+      setAsking(true);
+    } else {
+      makeCopy(row, 'fresh');
+    }
   };
 
+  /** The copy question's answer, taken once per question. */
   const answerCopy = (data: ForkOptions['data']) => {
-    const row = copying?.row;
-    setCopying((c) => (c ? { ...c, open: false } : c));
+    const row = asked.current;
+    asked.current = null;
+    setAsking(false);
     if (row) makeCopy(row, data);
+  };
+
+  const leaveQuestion = () => {
+    asked.current = null;
+    setAsking(false);
   };
 
   const titleBlock = (
@@ -383,11 +426,11 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
       </React.Fragment>
 
       <CopyQuestionSheet
-        visible={copying?.open === true}
+        visible={asking}
         appName={app.name}
         onCopyData={() => answerCopy('copy')}
         onStartFresh={() => answerCopy('fresh')}
-        onClose={() => setCopying((c) => (c ? { ...c, open: false } : c))}
+        onClose={leaveQuestion}
       />
     </View>
   );
@@ -553,15 +596,11 @@ function HistoryRowView({
                 </View>
               </>
             )}
+            {/* Product copy, not agent prose: no mark, and never fainter than `text-2`. */}
             {annotationFields.length > 0 && (
-              <Prose
-                text={addedFieldsLine(annotationFields)}
-                marks={[{ cls: 'hedge', start: 0, end: addedFieldsLine(annotationFields).length }]}
-                storedPrompt={row.promptText}
-                apps={proseApps}
-                type="footnote"
-                color="text-2"
-              />
+              <Text type="footnote" color="text-2">
+                {addedFieldsLine(annotationFields)}
+              </Text>
             )}
             <HiddenDataLine diff={hiddenData} />
             <View style={s.actions}>
