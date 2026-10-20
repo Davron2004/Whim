@@ -355,7 +355,7 @@ export async function runShellControlsUiTests(h: Harness): Promise<void> {
     await unmountScreen(suggestion);
   });
 
-  await h.test('a switch row: its track holds 3:1 on the group it sits in and its knob 3:1 on the track, on and off, on the canvas and in a sheet, in both schemes, on both platforms', async () => {
+  await h.test('a switch row: its track holds 3:1 on the group it sits in and its knob 3:1 on the track and, where Android’s overhangs it, on the group, on and off, on the canvas and in a sheet, in both schemes, on both platforms', async () => {
     const short: string[] = [];
     for (const os of ['ios', 'android'] as const) {
       for (const scheme of ['light', 'dark'] as const) {
@@ -423,11 +423,19 @@ async function switchShortfalls({ os, scheme, on, value }: Readonly<{ os: 'ios' 
   await unmountScreen(tree);
   const where = `${os} ${scheme} on the ${on}, ${value ? 'on' : 'off'}`;
   const pairs: [string, string, string][] = [['track on the group', look.track, look.group], ['knob on the track', look.knob, look.track]];
+  // A knob taller than its track overhangs it onto the group: there it sits on the group too.
+  const { knob, track } = SWITCH_GEOMETRY[os];
+  if (knob > track) pairs.push(['knob where it overhangs the track, on the group', look.knob, look.group]);
   return pairs.flatMap(([what, fg, bg]) => {
     const ratio = contrastRatio(fg, bg);
     return ratio < 3 ? [`${where}: ${what} ${fg} on ${bg} is ${ratio.toFixed(2)}:1`] : [];
   });
 }
+
+/** The platform switch's knob diameter and track height, in pt/dp. Android's (AppCompat `SwitchCompat`,
+ *  which React Native's Switch is) measured on the Android 17 emulator: a 20 dp knob over a 14 dp track,
+ *  3 dp proud of it above and below. iOS's knob sits inside its track. */
+const SWITCH_GEOMETRY = { android: { knob: 20, track: 14 }, ios: { knob: 27, track: 31 } } as const;
 
 /** What a switch draws, as the platform draws it: the track for `value` (iOS paints the off track
  *  from `ios_backgroundColor`), the knob (white unless told otherwise), and the group under it. */

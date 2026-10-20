@@ -36,6 +36,7 @@ import { makeStyles, PRESS_RETENTION } from '../ui/tokens-pure';
 import { consentWhatsNewText, firstRunSentText, LEGAL_COPY } from './copy';
 import { disclosureOf } from './consent-disclosure';
 import KeyboardShell from './KeyboardShell';
+import { FIELDLESS_FOOTER_SHARE } from './keyboard-shell';
 import { otherLegalLanguage, privacyPolicyUrl, termsUrl, type LegalLanguage } from './legal-language';
 
 export interface FirstRunSheetProps {
@@ -195,10 +196,12 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
   return (
     <KeyboardShell
       host="sheet"
+      footerShare={FIELDLESS_FOOTER_SHARE}
       contentContainerStyle={s.content}
       footer={
         // The terms row sits with the action it unlocks: in reach whenever Agree is, never below the fold
-        // of a disabled button.
+        // of a disabled button. With no field, the footer may take more of the window than a form's, so
+        // the three stay pinned on a small phone in every language at default size.
         <View style={s.footer}>
           {termsDue ? <TermsRow language={language} accepted={accepted} onToggle={() => setAccepted((on) => !on)} /> : null}
           <Button label={consentDue ? copy.consentAgree : copy.firstRunContinue} variant="ink" disabled={termsDue && !accepted} onPress={onAgree} />

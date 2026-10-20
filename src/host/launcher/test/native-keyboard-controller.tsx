@@ -97,12 +97,13 @@ export function keyboardSubscriptions(): ReadonlySet<unknown> {
   return new Set<unknown>([...handlers, ...[...listeners.values()].flatMap((set) => [...set])]);
 }
 
-/** Puts the keyboard back down with no events, between tests. */
+/** Puts the keyboard back down between tests, with no frames: JS hears it down (`keyboardDidHide`), so
+ *  whatever a module keeps of the last keyboard (KeyboardShell's settled-up flag) starts the next test
+ *  down too. */
 export function resetKeyboard(): void {
-  keyboardState.height = 0;
-  keyboardState.visible = false;
   keyboardRequests.asked = 0;
   keyboardRequests.handler = null;
+  emit('keyboardDidHide', 0);
 }
 
 /** The keyboard setting off toward `height`, on the UI thread, ahead of any JS event: the handlers'

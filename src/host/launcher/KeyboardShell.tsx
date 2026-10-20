@@ -15,7 +15,7 @@
  * the field rises with the keyboard, and a drag stops it.
  * A hairline above the footer shows while content continues below. In a sheet the frame fills the
  * body it sits in, so the footer sits at the bottom of a large sheet whatever the content; a footer that has outgrown its share of the
- * window (`FOOTER_SHARE`, the largest text sizes) scrolls with the content instead; and content
+ * window (`footerShare`: the largest text sizes) scrolls with the content instead; and content
  * scrolling under the sheet's header fades out over 16 pt. A drag puts the keyboard away, a tap a control handles reaches the
  * control, and a tap on empty space anywhere in the frame puts the keyboard away.
  */
@@ -59,6 +59,7 @@ import { COPY } from './copy';
 import {
   contentBelow,
   followOffset,
+  FOOTER_SHARE,
   footerJoinsScroll,
   hiddenAtRest,
   keyboardDismissMode,
@@ -79,6 +80,9 @@ export interface KeyboardShellProps {
   /** Pinned below the scrolling content and kept above the keyboard: the primary action and what
    *  sits with it. Leave it out on a screen with no primary action. */
   footer?: React.ReactNode;
+  /** In a sheet, the most of the window the footer may take before it scrolls with the content:
+   *  `FOOTER_SHARE`, or `FIELDLESS_FOOTER_SHARE` for a sheet with no field. */
+  footerShare?: number;
   /** `sheet` inside a `Sheet`, which pads for the keyboard itself. */
   host?: KeyboardShellHost;
   /** The frame's own style (its background). */
@@ -126,8 +130,11 @@ function measureBottom(frame: React.RefObject<View | null>, done: (bottom: numbe
  *  reaches JS, which is after the UI thread has already ended the hide at 0, and its `state()` keeps
  *  the last show's height: a frame mounted in between would pad for a keyboard that has gone. */
 let settledUp = false;
+/** Called as the keyboard settles up, once `settledUp` says so: frames that saw nothing of it. */
+const settleListeners = new Set<() => void>();
 KeyboardEvents.addListener('keyboardDidShow', () => {
   settledUp = true;
+  for (const listener of [...settleListeners]) listener();
 });
 for (const gone of ['keyboardWillHide', 'keyboardDidHide'] as const) {
   KeyboardEvents.addListener(gone, () => {
@@ -215,6 +222,21 @@ export function useKeyboardOverlap(frame: React.RefObject<View | null>, active: 
     const settled = settledKeyboardHeight();
     if (settled > 0) height.value = Math.max(settled, systemHeight.value);
   }, [height, systemHeight]);
+  // A frame that mounts after the show has ended on the UI thread, before JS hears `keyboardDidShow`,
+  // saw none of its frames and found it not yet settled: it is padded for it as JS hears it settle.
+  // Android has nothing later to correct it (iOS has its frame notification, below).
+  useEffect(() => {
+    const missed = () => {
+      const settled = settledKeyboardHeight();
+      if (height.value > 0 || settled === 0) return;
+      height.value = Math.max(settled, systemHeight.value);
+      measure(true);
+    };
+    settleListeners.add(missed);
+    return () => {
+      settleListeners.delete(missed);
+    };
+  }, [height, measure, systemHeight]);
   useEffect(() => {
     if (!active) {
       overlap.value = 0;
@@ -598,6 +620,7 @@ function footerStyleFor(joinsScroll: boolean, inSheet: boolean, contentContainer
 
 export default function KeyboardShell({
   footer,
+  footerShare = FOOTER_SHARE,
   host = 'screen',
   style,
   contentContainerStyle,
@@ -636,7 +659,7 @@ export default function KeyboardShell({
   // content, so the content keeps room of its own and the footer's actions stay reachable.
   const { height: windowHeight } = useKeyboardWindow();
   const [footerHeight, setFooterHeight] = useState(0);
-  const joinsScroll = inSheet && footerJoinsScroll(footerHeight, windowHeight);
+  const joinsScroll = inSheet && footerJoinsScroll(footerHeight, windowHeight, footerShare);
   const pinned = pinsFooter(footer);
   const footerStyle = footerStyleFor(joinsScroll, inSheet, contentContainerStyle);
   const footerView = pinned ? (
