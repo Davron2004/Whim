@@ -498,3 +498,4 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
 - focused re-review of `6b27c2c9..1a8b81b2` dispatched.
 - re-review of `6b27c2c9..1a8b81b2`: VERDICT approve (no field in FirstRunSheet; 40% footer leaves the legal layers reachable; knob contrast recomputed ≥ 3.19:1; SwitchCompat geometry sound; F3 worklet-safe, no double-pad, no leak). Low-to-medium race (late-mounted frame padded for a keyboard already gone) filed as an issue.
 - merged: `6740009d` (--no-ff). regate (fast): PASS. task 6.7 ticked. Worktree removed. gate-full on the merged tip (covers 16n-a + 16n-b) next.
+- gate-full on the 16n merges: FULL GATE PASSED. Pushed. Closed #189 #196 #201 #202 #203; #204 left open (Language row, owner call).
