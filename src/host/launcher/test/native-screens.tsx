@@ -15,7 +15,7 @@ type HostProps = { children?: React.ReactNode; [key: string]: unknown };
  *  again. A stack unmounted while such a move runs keeps it unfinished in the view react-native-screens
  *  recycles, and the next stack mounted shows a blank screen for good (design-system-v1 19f3,
  *  measured on the iOS 27 simulator). A move outlasts any bundle read, so here it runs until the
- *  stack goes. */
+ *  test ends it (`stackMoveEnds`) or the stack goes. */
 let nativePopped = false;
 let moving = false;
 let unmountsMidMove = 0;
@@ -23,6 +23,12 @@ let unmountsMidMove = 0;
 /** How many stacks have been unmounted while a move of theirs was running, since the module loaded. */
 export function stackUnmountsMidMove(): number {
   return unmountsMidMove;
+}
+
+/** The platform finished the move the stack was making. UIKit takes no touch while a push or pop
+ *  runs, so a person's next tap only comes after this. */
+export function stackMoveEnds(): void {
+  moving = false;
 }
 
 function topScreenId(children: React.ReactNode): unknown {

@@ -343,6 +343,37 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('history screen: opened from a running app’s orb, a second Back or system back while the app is reopening is ignored: the app replaces History, never Home mid-pop', async () => {
+    const never = () => new Promise<Response>(() => {});
+    await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+      const home = () => tree.root.findByType(HomeScreen);
+      const showing = (type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+      await waitFor(() => showing(HomeScreen) && home().props.apps.length > 0, 'the example apps');
+      const app: InstalledApp = home().props.apps[0];
+      const seconds: [string, () => void][] = [
+        ['Back', () => button(tree, COPY.backLabel).props.onPress()],
+        ['system back', () => { hardwareBack(); }],
+      ];
+      for (const [name, second] of seconds) {
+        await tap(() => home().props.onOpen(app));
+        await waitFor(() => showing(MiniAppView), `${app.name} to open`);
+        await press(button(tree, COPY.orbMenuOpenLabel));
+        await press(button(tree, COPY.actionHistory));
+        await waitFor(() => showing(HistoryScreen), 'its history');
+        const midMove = stackUnmountsMidMove();
+        // A fast double tap: the second lands before the first one's bundle read.
+        await TestRenderer.act(async () => {
+          button(tree, COPY.backLabel).props.onPress();
+          second();
+        });
+        await waitFor(() => showing(MiniAppView), `Back then ${name} to reopen the app`);
+        h.eq(tree.root.findByType(MiniAppView).props.installedApp.id, app.id, `Back then ${name}: the same app`);
+        h.eq(stackUnmountsMidMove(), midMove, `Back then ${name}: the stack is not popped to Home under the reopening app (else iOS shows a blank Home next)`);
+        await TestRenderer.act(async () => tree.root.findByType(MiniAppView).props.onExit());
+      }
+    });
+  });
+
   await h.test('history screen: opened from a running app’s orb, when the store cannot read that app back, Back and system back land on Home with the alert instead of staying on History', async () => {
     const never = () => new Promise<Response>(() => {});
     const { activeBundle } = StoreAccess.prototype;

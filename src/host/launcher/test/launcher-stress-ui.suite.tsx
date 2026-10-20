@@ -2,16 +2,19 @@
  *  seen stuck on its opening plate after a quick close and reopen, once on each platform). Random
  *  sequences, from a fixed 32-bit generator, of what a person does — open an app, the orb's Whim sheet,
  *  Back to your apps, Android back, a swipe that closes the sheet, reopening the same app or another, a
- *  flung orb, Reload from the crash screen, Report a problem and back — interleaved with what the
- *  WebViews do meanwhile (a page finishing its load, answering the warm probe, a realm's first paint).
- *  After every step: one launch bound while an app shows and none on Home, a loaded page bound to the
- *  launch holds that launch's delivery so its paint can open it, a painted app is not covered, and no
- *  overlay is left on screen or holding the screen once nothing wants it. */
+ *  flung orb, Reload from the crash screen, Report a problem and back, History from the app or from
+ *  Home and leaving it (Back, system back, an iOS swipe, or a quick double tap) — interleaved with what
+ *  the WebViews do meanwhile (a page finishing its load, answering the warm probe, a realm's first
+ *  paint). After every step: one launch bound while an app shows and none on Home, a loaded page bound
+ *  to the launch holds that launch's delivery so its paint can open it, a painted app is not covered,
+ *  no overlay is left on screen or holding the screen once nothing wants it, and the native stack was
+ *  not unmounted while a push or pop of it ran (iOS shows a blank Home next, design-system-v1 19f3). */
 import TestRenderer from 'react-test-renderer';
 import { StyleSheet } from 'react-native';
 import { Harness } from './harness';
 import { COPY } from '../copy';
 import HomeScreen from '../HomeScreen';
+import HistoryScreen from '../HistoryScreen';
 import MiniAppView from '../MiniAppView';
 import { AppCrashed } from '../AppCrashed';
 import type { InstalledApp } from '../app-index';
@@ -20,6 +23,7 @@ import { DISMISS_REPORT_MS } from '../../ui/OverlayModal';
 import { hardwareBack, modalPresentations, Platform } from './native-host';
 import type { PanConfig } from './native-gesture-handler';
 import { pan } from './native-gesture-handler';
+import { iosPop, stackMoveEnds, stackUnmountsMidMove } from './native-screens';
 import { androidBack, button, hostType, isHost, press } from './react-screen';
 import { makingSheetOpen, settle, tap, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { hasButton, home, orb, showing } from './whim-sheet-ui.suite';
@@ -29,7 +33,7 @@ import { mulberry32 } from './mulberry32';
 
 type Node = TestRenderer.ReactTestInstance;
 
-const STEP_KINDS = ['open', 'sheet', 'backToApps', 'androidBack', 'swipeClose', 'reopen', 'fling', 'reload', 'report'] as const;
+const STEP_KINDS = ['open', 'sheet', 'backToApps', 'androidBack', 'swipeClose', 'reopen', 'fling', 'reload', 'report', 'history', 'historyBack', 'historyDoubleBack'] as const;
 type StepKind = (typeof STEP_KINDS)[number];
 const PAGE_EVENTS = ['load', 'answer', 'paint'] as const;
 type PageEvent = (typeof PAGE_EVENTS)[number];
@@ -200,6 +204,12 @@ async function firePageEvent(tree: Tree, pages: PageLog, event: PageEvent, web: 
   }
 }
 
+/** `taps` in one act: a second tap lands before anything the first started has finished. */
+const tapsInOneAct = (...taps: (() => void)[]): Promise<void> =>
+  TestRenderer.act(async () => {
+    for (const tapOnce of taps) tapOnce();
+  });
+
 /** `kind count, …` for a pass or failure message. */
 const tally = (counts: Record<string, number>): string =>
   Object.entries(counts)
@@ -231,6 +241,16 @@ async function stress({ seed, platform, steps }: Run, ran: Ran): Promise<void> {
       const crashed = () => crashedIn(tree);
       const sheetUp = () => tree.root.findAll(isSheetCard).length > 0;
       const menuUp = () => sheetUp() && hasButton(tree, COPY.whimSheetBackToApps);
+      const historyUp = () => showing(tree, HistoryScreen);
+      // Where History was opened from, so where leaving it lands: the app it was opened over, or Home.
+      let historyOver: 'app' | 'home' = 'home';
+      const historyLeft = (how: string) =>
+        waitFor(() => !historyUp() && (historyOver === 'app' ? appShown() : showing(tree, HomeScreen)), `${how} to leave History for ${historyOver}`);
+      // History's own Back and system back, as a person's single tap on each delivers it.
+      const historyTaps = (): (() => void)[] => {
+        const back = button(tree, COPY.backLabel);
+        return [() => back.props.onPress(), () => { hardwareBack(); }];
+      };
 
       const pageEvent = async (): Promise<boolean> => {
         const choice = pickPageEvent(tree, pages, pick);
@@ -252,11 +272,11 @@ async function stress({ seed, platform, steps }: Run, ran: Ran): Promise<void> {
 
       const steps_: Record<StepKind, { can: () => boolean; run: () => Promise<void> }> = {
         open: {
-          can: () => !appShown(),
+          can: () => !appShown() && !historyUp(),
           run: () => openFromHome(pick(apps.filter((a) => a.id !== last?.id))),
         },
         reopen: {
-          can: () => !appShown() && last !== null,
+          can: () => !appShown() && !historyUp() && last !== null,
           run: () => openFromHome(random() < 0.6 && last ? last : pick(apps)),
         },
         sheet: {
@@ -303,6 +323,33 @@ async function stress({ seed, platform, steps }: Run, ran: Ran): Promise<void> {
             await press(button(tree, COPY.backLabel));
           },
         },
+        history: {
+          can: () => menuUp() || (!appShown() && !historyUp()),
+          run: async () => {
+            historyOver = menuUp() ? 'app' : 'home';
+            if (historyOver === 'app') await press(button(tree, COPY.actionHistory));
+            else await TestRenderer.act(async () => home(tree).props.onHistory(pick(apps)));
+            await waitFor(() => historyUp(), 'History');
+          },
+        },
+        historyBack: {
+          can: () => historyUp(),
+          run: async () => {
+            const [back, system] = historyTaps();
+            const leaves = [() => tapsInOneAct(back), () => tapsInOneAct(system)];
+            if (platform === 'ios') leaves.push(() => iosPop(tree));
+            await pick(leaves)();
+            await historyLeft('a Back');
+          },
+        },
+        historyDoubleBack: {
+          can: () => historyUp(),
+          run: async () => {
+            const taps = historyTaps();
+            await tapsInOneAct(pick(taps), pick(taps));
+            await historyLeft('a double Back');
+          },
+        },
       };
 
       const check = () => {
@@ -317,13 +364,17 @@ async function stress({ seed, platform, steps }: Run, ran: Ran): Promise<void> {
         const possible = STEP_KINDS.filter((k) => steps_[k].can());
         const kind = pick(possible);
         trail.push(kind);
+        const midMove = stackUnmountsMidMove();
         await steps_[kind].run();
         ran.kinds[kind] += 1;
         await settle(4);
         // Time a dismissal may take to be reported passes (iOS).
         await TestRenderer.act(async () => { clock.fireWithin(DISMISS_REPORT_MS); });
         check();
+        if (stackUnmountsMidMove() !== midMove) fail('the native stack was unmounted while a push or pop of it ran (iOS shows a blank Home next)');
         if (ran.violations.length > 0) return;
+        // The person's next tap comes once the platform's push or pop has ended.
+        stackMoveEnds();
       }
     });
   } finally {
@@ -333,7 +384,7 @@ async function stress({ seed, platform, steps }: Run, ran: Ran): Promise<void> {
 }
 
 export async function runLauncherStressUiTests(h: Harness): Promise<void> {
-  await h.test('launcher stress: random fast sequences of opening, closing and reopening apps, the Whim sheet, back, swipe, fling, Reload and Report keep one launch bound, its paint able to open it, nothing over a painted app and no overlay left behind', async () => {
+  await h.test('launcher stress: random fast sequences of opening, closing and reopening apps, the Whim sheet, back, swipe, fling, Reload, Report and History keep one launch bound, its paint able to open it, nothing over a painted app, no overlay left behind and no native stack unmounted mid-move', async () => {
     const ran: Ran = {
       kinds: Object.fromEntries(STEP_KINDS.map((k) => [k, 0])) as Record<StepKind, number>,
       events: Object.fromEntries(PAGE_EVENTS.map((k) => [k, 0])) as Record<PageEvent, number>,

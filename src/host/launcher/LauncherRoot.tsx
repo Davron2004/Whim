@@ -1316,8 +1316,11 @@ function LauncherShell({
    *  has opened again and replaces it in one step; Home only when it cannot be opened, never stranded on
    *  History. Never Home first: going Home pops the stack, which UIKit animates, and the app opening
    *  would unmount the stack mid-pop. react-native-screens then keeps the unfinished pop in the stack it
-   *  recycles, and the next Home it shows is blank for good (iOS). */
+   *  recycles, and the next Home it shows is blank for good (iOS). So a second Back while that app is
+   *  already opening does nothing: the open in flight replaces History. Home only when the app is busy
+   *  with something else (a copy). */
   const backFromHistoryToApp = (app: InstalledApp) => {
+    if (appOps.opFor(app.id) === 'open') return;
     onOpen(index.get(app.id) ?? app, goHome)
       .then((opened) => {
         if (!opened) goHome();
