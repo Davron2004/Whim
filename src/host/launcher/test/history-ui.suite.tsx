@@ -433,16 +433,16 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('history screen: an opened version that would hide saved data says so before either action; one that hides nothing, and the current one, say nothing', async () => {
-    const schema = (fields: Record<string, { id: string; type: 'int' | 'text'; default?: string }>) =>
-      JSON.stringify({ schemaVersion: 1, collections: { Entries: { id: 'c1', fields, tombstones: [] } } });
+    const record = (fields: SchemaArtifact['collections'][string]['fields']) =>
+      ({ appId: 'log', name: 'Log', manifest: { capabilities: ['storage'] }, schemaArtifact: { schemaVersion: 1 as const, collections: { Entries: { id: 'c1', fields, tombstones: [] } } } });
     const amount = { amount: { id: 'f1', type: 'int' as const } };
     const store = createMemoryStore({ autoCompact: false });
     const access = new StoreAccess({ store, index: new AppIndex(new MapKVBackend()), now: () => Date.now() });
     const app = await access.update(
-      await access.install({ id: 'log', name: 'Log', record: { appId: 'log', name: 'Log', manifest: { capabilities: ['storage'] } }, bundleSource: 'V1', prompt: envelope('a spending log'), schemaJson: schema(amount) }),
-      { record: { appId: 'log', name: 'Log', manifest: { capabilities: ['storage'] } }, bundleSource: 'V2', prompt: envelope('bigger numbers'), schemaJson: schema(amount) },
+      await access.install({ id: 'log', name: 'Log', record: record(amount), bundleSource: 'V1', prompt: envelope('a spending log') }),
+      { record: record(amount), bundleSource: 'V2', prompt: envelope('bigger numbers') },
     );
-    await access.update(app, { record: app.record, bundleSource: 'V3', prompt: envelope('add notes'), schemaJson: schema({ ...amount, notes: { id: 'f2', type: 'text', default: '' } }) });
+    await access.update(app, { record: record({ ...amount, notes: { id: 'f2', type: 'text', default: '' } }), bundleSource: 'V3', prompt: envelope('add notes') });
     await withHistory(access, app, async (tree) => {
       await waitFor(() => rows(tree).length === 3, 'the versions to load');
       h.eq(await openRowAndReadLine(tree, 'bigger numbers'), 1, 'v2 has no notes: going there hides them, and the open row says so');
@@ -651,7 +651,7 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     try {
       const { access } = accessOver(state);
       const orig = await installApp(access, 'notes', SCHEMA, 'V1');
-      await access.update(orig, { record: orig.record, bundleSource: 'V2', prompt: envelope('bigger titles'), schemaJson: JSON.stringify(SCHEMA) });
+      await access.update(orig, { record: orig.record, bundleSource: 'V2', prompt: envelope('bigger titles') });
       withEngine(state, access.engineAppId(orig), SCHEMA, (engine) => { engine.records.append('Notes', { title: 'written before the copy' }); });
       const opened: InstalledApp[] = [];
       await withHistory(access, orig, async (tree) => {

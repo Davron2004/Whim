@@ -118,7 +118,6 @@ export function installApp(access: StoreAccess, id: string, schema: SchemaArtifa
     record: { appId: id, name: id, manifest: { capabilities: ['storage'] }, schemaArtifact: schema },
     bundleSource,
     prompt: `${id} ${bundleSource}`,
-    schemaJson: JSON.stringify(schema),
   });
 }
 

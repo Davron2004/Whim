@@ -425,26 +425,28 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     h.eq((await access.history(orig)).map(s => s.prompt), ['p2', 'p1'], 'update snapshots onto the same lineage (history grows)');
   });
 
-  // §35 install/update write schema.json only when supplied
-  await h.test('store-access §35 install writes schema.json only when supplied', async () => {
+  // §35 install/update write schema.json exactly when the record declares a schema (the file the
+  // history annotation diffs, `history-logic.ts#annotationBetween`)
+  const EMPTY_SCHEMA = { schemaVersion: 1 as const, collections: {} };
+  await h.test('store-access §35 install writes schema.json only when the record declares a schema', async () => {
     const { store, access } = harnessAccess();
-    const withSchema = await access.install({ id: 'a', name: 'A', record: REC('a'), bundleSource: 'V1', prompt: 'p', schemaJson: '{"schemaVersion":1,"collections":{}}' });
+    const withSchema = await access.install({ id: 'a', name: 'A', record: { ...REC('a'), schemaArtifact: EMPTY_SCHEMA }, bundleSource: 'V1', prompt: 'p' });
     const withoutSchema = await access.install({ id: 'b', name: 'B', record: REC('b'), bundleSource: 'V1', prompt: 'p' });
     const activeA = await store.active(storeIdOf(withSchema));
     const activeB = await store.active(storeIdOf(withoutSchema));
-    h.eq(activeA?.artifacts['schema.json'], '{"schemaVersion":1,"collections":{}}', 'schema.json written when supplied to install');
-    h.eq(activeB?.artifacts['schema.json'], undefined, 'schema.json absent when omitted from install');
+    h.eq(activeA?.artifacts['schema.json'], '{"schemaVersion":1,"collections":{}}', 'schema.json written when the installed record declares one');
+    h.eq(activeB?.artifacts['schema.json'], undefined, 'schema.json absent when the installed record declares none');
   });
 
-  await h.test('store-access §35b update writes schema.json only when supplied', async () => {
+  await h.test('store-access §35b update writes schema.json only when the record declares a schema', async () => {
     const { store, access } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
-    const updated = await access.update(orig, { record: orig.record, bundleSource: 'V2', prompt: 'p2', schemaJson: '{"schemaVersion":1,"collections":{}}' });
+    const updated = await access.update(orig, { record: { ...orig.record, schemaArtifact: EMPTY_SCHEMA }, bundleSource: 'V2', prompt: 'p2' });
     const active = await store.active(storeIdOf(updated));
-    h.eq(active?.artifacts['schema.json'], '{"schemaVersion":1,"collections":{}}', 'schema.json written when supplied to update');
+    h.eq(active?.artifacts['schema.json'], '{"schemaVersion":1,"collections":{}}', 'schema.json written when the delivered record declares one');
     const updated2 = await access.update(updated, { record: orig.record, bundleSource: 'V3', prompt: 'p3' });
     const active2 = await store.active(storeIdOf(updated2));
-    h.eq(active2?.artifacts['schema.json'], undefined, 'schema.json absent from a later update that omits it');
+    h.eq(active2?.artifacts['schema.json'], undefined, 'schema.json absent from a later update whose record declares none');
   });
 
   // §36 activeSource reads the genuine source.ts artifact (#52-D5 / D14), never bundle.js
