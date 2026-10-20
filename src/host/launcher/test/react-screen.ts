@@ -31,6 +31,18 @@ export function hostType(node: TestRenderer.ReactTestInstance): string | undefin
 }
 /** A `find`/`findAll` predicate for the host component named `name`. */
 export const isHost = (name: string) => (node: TestRenderer.ReactTestInstance): boolean => hostType(node) === name;
+/** The WebView the open app runs in. A WebView slot's `pointerEvents` lives on the wrapper `View`
+ *  around the WebView, never on the WebView (react-native-webview ignores it), so the waiting
+ *  WebView beside the app's is the one with a `pointerEvents="none"` ancestor. Throws unless exactly
+ *  one WebView takes touches. */
+export function boundWebView(tree: TestRenderer.ReactTestRenderer): TestRenderer.ReactTestInstance {
+  const touchable = tree.root.findAll(isHost('WebView')).filter((web) => {
+    for (let up = web.parent; up; up = up.parent) if (hostType(up) === 'View' && up.props.pointerEvents === 'none') return false;
+    return true;
+  });
+  if (touchable.length !== 1) throw new Error(`Expected one WebView that takes touches, got ${touchable.length}`);
+  return touchable[0];
+}
 export function textOf(node: TestRenderer.ReactTestInstance): string {
   return node.children.map(child => typeof child === 'string' ? child : textOf(child)).join('');
 }

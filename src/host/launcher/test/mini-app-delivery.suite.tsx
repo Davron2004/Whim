@@ -11,7 +11,7 @@ import { SEED_VERSION } from '../seed';
 import { log } from '../../logging';
 import { resetNativeStorage } from './native-storage';
 import { injectedScripts, setColorScheme, StyleSheet } from './native-host';
-import { button, press, renderScreen, unmountScreen, hostType } from './react-screen';
+import { boundWebView, button, press, renderScreen, unmountScreen, hostType } from './react-screen';
 import { COPY } from '../copy';
 import { COLORS } from '../../../design/tokens';
 
@@ -36,8 +36,6 @@ async function withLauncher(activeBundle: () => Promise<string>, body: (tree: Te
 }
 
 const webViews = (tree: TestRenderer.ReactTestRenderer) => tree.root.findAll((node) => hostType(node) === 'WebView');
-/** The WebView the open app runs in: not the one waiting, untouchable, beside it. */
-const webView = (tree: TestRenderer.ReactTestRenderer) => tree.root.find((node) => hostType(node) === 'WebView' && node.props.pointerEvents !== 'none');
 
 const bg = (node: TestRenderer.ReactTestInstance) => (StyleSheet.flatten(node.props.style) as { backgroundColor?: string }).backgroundColor;
 const strip = (tree: TestRenderer.ReactTestRenderer) => bg(tree.root.findAll((node) => hostType(node) === 'SafeAreaView')[0]);
@@ -45,7 +43,7 @@ const barStyle = (tree: TestRenderer.ReactTestRenderer) => tree.root.find((node)
 const webViewsIn = (node: TestRenderer.ReactTestInstance) => node.findAll((n) => hostType(n) === 'WebView');
 const holdsWebView = (node: TestRenderer.ReactTestInstance) => hostType(node) === 'View' && webViewsIn(node).length > 0 && bg(node) !== undefined;
 /** Everything painted behind the open app's page: the container and the WebView's own background. */
-const behindPage = (tree: TestRenderer.ReactTestRenderer) => [...tree.root.findAll(holdsWebView), webView(tree)].map(bg);
+const behindPage = (tree: TestRenderer.ReactTestRenderer) => [...tree.root.findAll(holdsWebView), boundWebView(tree)].map(bg);
 
 export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
   await h.test('delivery: opening an installed app injects its stored bundle once the page has loaded', async () => {
@@ -53,9 +51,9 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
       h.eq(webViews(tree).length, 1, 'one WebView waits on Home');
       const [waiting] = webViews(tree);
       await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
-      h.ok(webView(tree) === waiting, 'the app opens in the WebView that was waiting on Home');
+      h.ok(boundWebView(tree) === waiting, 'the app opens in the WebView that was waiting on Home');
       h.eq(injectedScripts.length, 0, 'nothing is injected before the page reports it has loaded');
-      await TestRenderer.act(async () => webView(tree).props.onLoadEnd());
+      await TestRenderer.act(async () => boundWebView(tree).props.onLoadEnd());
       h.eq(injectedScripts.length, 1, 'one script is injected on load');
       h.ok(injectedScripts[0]?.includes('timer-bundle-7f3a') ?? false, 'the injected script carries the stored bundle');
       await press(button(tree, COPY.orbMenuOpenLabel));
@@ -78,11 +76,11 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
         log.buffer.clear();
         await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
         now += 30;
-        await TestRenderer.act(async () => webView(tree).props.onLoadEnd());
+        await TestRenderer.act(async () => boundWebView(tree).props.onLoadEnd());
         const generation = Number(/,generation:(\d+)/.exec(injectedScripts[0] ?? '')?.[1]);
         now += 50;
         const paint = { kind: 'paint', trusted: true, payload: { generation, mountToFirstPaintMs: 18, appName: 'Timer' } };
-        await TestRenderer.act(async () => webView(tree).props.onMessage({ nativeEvent: { data: JSON.stringify(paint) } }));
+        await TestRenderer.act(async () => boundWebView(tree).props.onMessage({ nativeEvent: { data: JSON.stringify(paint) } }));
         const timed = log.buffer.snapshot().filter((r) => r.message === 'tap to first paint').map((r) => r.fields);
         h.eq(timed, [{ tapToPaintMs: 200, paintMs: 18, webView: 'loading' }],
           'the 120 ms bundle read, the page load and the paint, from the tap, in the WebView that was still loading on Home');
@@ -90,6 +88,19 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
     } finally {
       Date.now = realNow;
     }
+  });
+
+  await h.test('delivery: once the open app has painted and a second WebView waits beside it, the bound WebView is still the one that takes touches', async () => {
+    await withLauncher(async () => 'window.__WHIM_APP_MODULE__ = {};', async (tree) => {
+      await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
+      const [opened] = webViews(tree);
+      await TestRenderer.act(async () => boundWebView(tree).props.onLoadEnd());
+      const generation = Number(/,generation:(\d+)/.exec(injectedScripts[0] ?? '')?.[1]);
+      const paint = { kind: 'paint', trusted: true, payload: { generation, mountToFirstPaintMs: 18, appName: 'Timer' } };
+      await TestRenderer.act(async () => opened.props.onMessage({ nativeEvent: { data: JSON.stringify(paint) } }));
+      h.eq(webViews(tree).length, 2, 'a replacement WebView waits beside the open app');
+      h.ok(boundWebView(tree) === opened, 'the helper picks the app’s own WebView, not the one waiting');
+    });
   });
 
   await h.test('frame: over an open app the status-bar strip is the app’s own bg and the status bar reads on it, light and dark', async () => {
@@ -113,7 +124,7 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
   await h.test('frame: an app opened in dark keeps its dark strip, status bar, container and page background when the phone turns light; Home and the next open are light', async () => {
     const open = async (tree: TestRenderer.ReactTestRenderer) => {
       await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
-      await TestRenderer.act(async () => webView(tree).props.onLoadEnd());
+      await TestRenderer.act(async () => boundWebView(tree).props.onLoadEnd());
     };
     try {
       setColorScheme('dark');

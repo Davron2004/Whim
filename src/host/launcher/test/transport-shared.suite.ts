@@ -13,7 +13,7 @@ import type { ConsentStatus } from '../ai-consent';
 import { acceptTerms, termsStatus } from '../terms-acceptance';
 import type { TermsStatus } from '../terms-acceptance';
 import { appInfoFrom, appInfoReader } from '../app-info';
-import { log } from '../../logging';
+import { fillRing, recordsSince } from './log-ring';
 import { CHANNELS } from '../../logging/channels';
 import { testAppInfo } from './client-fixtures';
 
@@ -169,7 +169,8 @@ export async function runTransportSharedTests(h: Harness): Promise<void> {
     const opts = consentedClientOptions(acceptedTerms(), consentStatus(kv), 'https://example.invalid', 'device-1', missingModule);
     h.ok(opts !== null, 'making the options does not read the installed app, so it cannot fail there');
     if (!opts) return;
-    const before = log.buffer.snapshot().length;
+    fillRing();
+    const newRecords = recordsSince();
     let caught: unknown;
     try {
       requestHeaders(opts, '/v1/clarify');
@@ -179,7 +180,7 @@ export async function runTransportSharedTests(h: Harness): Promise<void> {
     h.ok(caught instanceof GenerationClientError, 'building the request throws a GenerationClientError, not a crash');
     h.eq((caught as GenerationClientError | undefined)?.kind, 'client', 'classified client: nothing was sent');
     h.eq((caught as GenerationClientError | undefined)?.hint, 'WhimAppInfo: the native module is missing from this build', 'carrying the reader’s own message');
-    const logged = log.buffer.snapshot().slice(before).find((r) => r.channel === CHANNELS.gen && r.fields.route === '/v1/clarify');
+    const logged = newRecords().find((r) => r.channel === CHANNELS.gen && r.fields.route === '/v1/clarify');
     h.eq(logged?.fields.kind, 'client', 'and it is recorded on the generation channel');
   });
 
