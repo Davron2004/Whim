@@ -49,7 +49,7 @@ export const NEUTRAL_ROLES = {
     material: { light: '+ `shadow-raised`', dark: '' },
   },
   separator: { light: '#E2DFDB', dark: '#34312F', use: 'Hairlines between rows (holds no edge: 1.21:1)' },
-  border: { light: '#908B86', dark: '#6E6862', use: 'Input and outlined-control edges; the off switch track and the slider track' },
+  border: { light: '#908B86', dark: '#756F69', use: 'Input and outlined-control edges; the off switch track and the slider track' },
   text: { light: '#1A1614', dark: '#F2F0EC', use: 'Primary text' },
   'text-2': { light: '#6D6660', dark: '#ADA8A3', use: 'Secondary text, placeholders, waiting steps' },
   'text-3': { light: '#908B86', dark: '#78746E', use: '**Disabled only**' },
@@ -200,9 +200,10 @@ export interface ContrastRule {
 const TEXT_SURFACES: readonly ColorRole[] = ['bg', 'surface', 'sheet', 'sheet-group', 'fill'];
 
 /** Every pair §2 specifies a contrast floor for (text 4.5:1, non-text edges 3:1). `text-3` is
- *  disabled-only and exempt. */
+ *  disabled-only and exempt. `border` is also the off switch track and the slider track, which sit on
+ *  every surface a control does, a Modal's `sheet-group` included (design-system-v1 task 6.7). */
 export const CONTRAST_RULES: readonly ContrastRule[] = [
-  { fg: 'border', on: ['surface'], floor: 3 },
+  { fg: 'border', on: ['bg', 'surface', 'sheet', 'sheet-group'], floor: 3 },
   { fg: 'text', on: TEXT_SURFACES, floor: 4.5 },
   { fg: 'text-2', on: TEXT_SURFACES, floor: 4.5 },
   { fg: 'on-ink', on: ['ink'], floor: 4.5 },

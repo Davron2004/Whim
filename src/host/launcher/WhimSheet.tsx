@@ -73,8 +73,10 @@ export interface WhimSheetProps {
 const SEND = 32;
 
 const styles = makeStyles((t) => ({
-  // A grouped section keeps `gapBetweenGroups` under itself; the head and the send area match it.
-  content: { paddingHorizontal: LAYOUT.gutter, paddingBottom: LAYOUT.actionAreaBottom },
+  // A grouped section keeps `gapBetweenGroups` under itself; the head and the send area match it. The
+  // last section's is the space under the content, so nothing pads it again: with the keyboard up it
+  // is what separates the last row from the Done bar.
+  content: { paddingHorizontal: LAYOUT.gutter },
   head: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], marginBottom: LAYOUT.gapBetweenGroups },
   names: { flex: 1 },
   area: {

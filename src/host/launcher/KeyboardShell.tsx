@@ -52,7 +52,8 @@ import {
   type NativeEvent,
 } from 'react-native-keyboard-controller';
 import { SPACE } from '../../design/tokens';
-import { SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { SPACING } from '../../sdk/theme';
+import { wrappingType } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
 import { COPY } from './copy';
 import {
@@ -73,7 +74,6 @@ import {
   type KeyboardShellHost,
   type ScrollMetrics,
 } from './keyboard-shell';
-import { SHELL_PALETTE } from './theme';
 
 export interface KeyboardShellProps {
   /** Pinned below the scrolling content and kept above the keyboard: the primary action and what
@@ -121,6 +121,26 @@ function measureBottom(frame: React.RefObject<View | null>, done: (bottom: numbe
   frame.current?.measure((_x, _y, _width, height, _pageX, pageY) => done(pageY + height));
 }
 
+/** Whether the keyboard has settled up, as JS last heard: since its `keyboardDidShow`, until it sets
+ *  off to hide (`keyboardWillHide`). The library's `isVisible()` stays true until `keyboardDidHide`
+ *  reaches JS, which is after the UI thread has already ended the hide at 0, and its `state()` keeps
+ *  the last show's height: a frame mounted in between would pad for a keyboard that has gone. */
+let settledUp = false;
+KeyboardEvents.addListener('keyboardDidShow', () => {
+  settledUp = true;
+});
+for (const gone of ['keyboardWillHide', 'keyboardDidHide'] as const) {
+  KeyboardEvents.addListener(gone, () => {
+    settledUp = false;
+  });
+}
+
+/** The height of the keyboard as it rests up, or 0: what a frame that mounts or lays out now pads
+ *  for. A keyboard still rising is 0 here, as its own frames pad for it. */
+function settledKeyboardHeight(): number {
+  return settledUp && KeyboardController.isVisible() ? KeyboardController.state().height : 0;
+}
+
 /** What a frame that pads for the keyboard spreads onto the view it measures, and the padding. */
 export interface KeyboardOverlap {
   /** The keyboard's overlap with the frame, on the UI thread; 0 when it is down or the frame is inactive. */
@@ -162,8 +182,9 @@ export function useKeyboardOverlap(frame: React.RefObject<View | null>, active: 
     measureBottom(frame, (measured) => {
       const bottom = Math.min(measured, windowSize.value - clearBelow);
       frameBottom.value = bottom;
-      if (place && active && KeyboardController.isVisible()) {
-        overlap.value = keyboardOverlap(Math.max(KeyboardController.state().height, systemHeight.value), bottom, windowSize.value);
+      const settled = settledKeyboardHeight();
+      if (place && active && settled > 0) {
+        overlap.value = keyboardOverlap(Math.max(settled, systemHeight.value), bottom, windowSize.value);
       }
     });
   }, [active, clearBelow, frame, frameBottom, overlap, systemHeight, windowSize]);
@@ -180,14 +201,19 @@ export function useKeyboardOverlap(frame: React.RefObject<View | null>, active: 
     height.value = resting;
     overlap.value = active ? keyboardOverlap(resting, frameBottom.value, windowSize.value) : 0;
   };
-  const setOff = () => {
+  // A keyboard that changes height at once (iOS's emoji keyboard: a start with no duration, then no
+  // frames before its end, which comes some frames later) pads for its new height in the start's own
+  // frame. Its padded-for `height` waits for the end, so the reveal still sees where it set off from.
+  const setOff = (event: NativeEvent) => {
     'worklet';
     systemHeight.value = 0;
+    if (event.duration === 0) overlap.value = active ? keyboardOverlap(event.height, frameBottom.value, windowSize.value) : 0;
   };
   useGenericKeyboardHandler({ onStart: setOff, onMove: follow, onInteractive: follow, onEnd: rest }, [active]);
-  // A keyboard already up as the frame mounts is padded for (`onLayout`) before any frame of it.
+  // A keyboard already resting up as the frame mounts is padded for (`onLayout`) before any frame of it.
   useEffect(() => {
-    if (KeyboardController.isVisible()) height.value = Math.max(KeyboardController.state().height, systemHeight.value);
+    const settled = settledKeyboardHeight();
+    if (settled > 0) height.value = Math.max(settled, systemHeight.value);
   }, [height, systemHeight]);
   useEffect(() => {
     if (!active) {
@@ -379,7 +405,7 @@ function useRevealingScroll(
       onStart: (event) => {
         'worklet';
         const rising = event.height > keyboardHeight.value;
-        rise.value = {
+        const set = {
           following: rising,
           viewport: shown.value.viewport,
           offset: offset.value,
@@ -387,7 +413,16 @@ function useRevealingScroll(
           end: shrinkAt(event.height),
           hidden: -1,
         };
+        rise.value = set;
         if (rising) dragged.value = false;
+        // A keyboard that grows at once (no duration: no frames will come) leaves the scroll view its
+        // end's height in this very frame, as its padding does: the block is kept clear of that now.
+        const at = block.value;
+        if (!rising || event.duration !== 0 || at == null) return;
+        const frame = { offset: offset.value, viewport: set.viewport - (set.end - set.shrink), content: shown.value.content };
+        const next = followOffset(frame, at.top, at.bottom, REVEAL_MARGIN);
+        if (next != null) scrollTo(scrollOnUI, 0, next, false);
+        rise.value = { ...set, following: false };
       },
       onMove: (event) => {
         'worklet';
@@ -522,7 +557,8 @@ function useRevealingScroll(
 /** The hairline above the footer, drawn only while content continues below it; always laid out, so
  *  showing it never shifts anything. */
 function EdgeLine({ shown }: Readonly<{ shown: boolean }>) {
-  return <View style={[styles.edge, shown && { backgroundColor: SHELL_PALETTE.cardBorder }]} />;
+  const t = useTokens();
+  return <View style={[styles.edge, shown && { backgroundColor: t.colors.separator }]} />;
 }
 
 /** Content scrolling under a sheet's header fades out over this much, from the sheet's own colour
@@ -765,14 +801,29 @@ export function KeyboardTextInput({
   return (
     <>
       {field}
-      <InputAccessoryView nativeID={doneBarId} backgroundColor={SHELL_PALETTE.card}>
-        <View style={[styles.doneBar, { borderTopColor: SHELL_PALETTE.cardBorder }]}>
-          <TouchableOpacity onPress={dismissKeyboard} accessibilityRole="button" hitSlop={10}>
-            <Text style={[TYPE_SCALE.controlLabel, { color: SHELL_PALETTE.accent }]}>{COPY.keyboardDone}</Text>
-          </TouchableOpacity>
-        </View>
-      </InputAccessoryView>
+      <DoneBar nativeID={doneBarId} />
     </>
+  );
+}
+
+/** How far the Done bar's label grows with the text size: the bar is the keyboard's, whose own keys
+ *  don't grow with it, and a label at 200% outgrew the bar. */
+const DONE_LABEL_MAX_SCALE = 1.3;
+
+/** The iOS keyboard's Done bar: a `surface` strip over the keyboard, in the scheme the shell is in,
+ *  with a `separator` hairline and Done in `text`. */
+function DoneBar({ nativeID }: Readonly<{ nativeID: string }>) {
+  const t = useTokens();
+  return (
+    <InputAccessoryView nativeID={nativeID} backgroundColor={t.colors.surface}>
+      <View style={[styles.doneBar, { borderTopColor: t.colors.separator }]}>
+        <TouchableOpacity onPress={dismissKeyboard} accessibilityRole="button" hitSlop={10}>
+          <Text style={[styles.doneLabel, { color: t.colors.text }]} maxFontSizeMultiplier={DONE_LABEL_MAX_SCALE}>
+            {COPY.keyboardDone}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </InputAccessoryView>
   );
 }
 
@@ -796,4 +847,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.md,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
+  doneLabel: wrappingType('headline'),
 });

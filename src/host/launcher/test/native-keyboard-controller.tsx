@@ -106,9 +106,9 @@ export function resetKeyboard(): void {
 }
 
 /** The keyboard setting off toward `height`, on the UI thread, ahead of any JS event: the handlers'
- *  `onStart` only. */
-export function startKeyboard(height: number): void {
-  for (const ref of [...handlers]) ref.current.onStart?.({ height, progress: height > 0 ? 1 : 0, duration: 250, target: -1 });
+ *  `onStart` only. `duration` 0 is a change iOS makes at once (the emoji keyboard): no frames follow. */
+export function startKeyboard(height: number, duration = 250): void {
+  for (const ref of [...handlers]) ref.current.onStart?.({ height, progress: height > 0 ? 1 : 0, duration, target: -1 });
 }
 
 /** One frame of a keyboard animation still running: the handlers' `onMove` only. */

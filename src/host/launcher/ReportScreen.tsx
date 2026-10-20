@@ -20,7 +20,7 @@ import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import { Button } from '../ui/Button';
 import { Chip } from '../ui/Chip';
-import { GroupedRow, GroupedSection } from '../ui/GroupedList';
+import { GroupedRow, GroupedSection, type GroupedSurface } from '../ui/GroupedList';
 import { Icon } from '../ui/Icon';
 import { Notice } from '../ui/Notice';
 import { Text } from '../ui/Text';
@@ -233,6 +233,9 @@ function ReportForm({
   if (phase === 'thanks') return <ReportThanks key={t.fontScale} ownServer={ownServer} inSheet={host === 'sheet'} onDone={onLeave} />;
 
   const sendDisabled = computeSendDisabled(request, phase, gated);
+  // In a sheet the groups paint `sheet-group`: a canvas group is `surface`, which in dark is the
+  // sheet's own colour, and would show no fill there.
+  const groupsOn = host === 'sheet' ? 'sheet' : 'canvas';
   return (
     <KeyboardShell
       key={t.fontScale}
@@ -281,7 +284,7 @@ function ReportForm({
           maxLength={1000}
         />
         {draft.prompt !== undefined && (
-          <GroupedSection>
+          <GroupedSection on={groupsOn}>
             <GroupedRow
               title={COPY.reportIncludePrompt}
               trailing={{ kind: 'switch', value: draft.promptIncluded, onValueChange: (on) => setDraft({ ...draft, promptIncluded: on }) }}
@@ -295,7 +298,7 @@ function ReportForm({
         </Text>
       )}
 
-      {request && <ReportPreview request={request} state={preview} onChange={setPreview} />}
+      {request && <ReportPreview request={request} state={preview} onChange={setPreview} on={groupsOn} />}
 
       <Text type="footnote" color="text-2">
         {reportRecipientLine(ownServer)}
@@ -341,13 +344,13 @@ interface PreviewState {
 const PREVIEW_CLOSED: PreviewState = { open: false, prompt: false, source: false };
 
 /** "What gets sent", collapsed until asked: the rows of the exact body Send posts. */
-function ReportPreview({ request, state, onChange }: Readonly<{ request: ReportRequest; state: PreviewState; onChange: (next: (was: PreviewState) => PreviewState) => void }>) {
+function ReportPreview({ request, state, onChange, on }: Readonly<{ request: ReportRequest; state: PreviewState; onChange: (next: (was: PreviewState) => PreviewState) => void; on: GroupedSurface }>) {
   const t = useTokens();
   const s = styles(t);
   const { open } = state;
   return (
     <>
-      <GroupedSection>
+      <GroupedSection on={on}>
         <GroupedRow
           title={COPY.reportPreviewTitle}
           trailing={{ kind: 'chevron' }}

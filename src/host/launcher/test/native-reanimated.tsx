@@ -3,7 +3,8 @@
  *  where the animation ends, so a test reads what motion a control asked for — the target, the
  *  spring or timing config, delays, sequences and repeats — and the style it settles in.
  *  `useAnimatedStyle` evaluates its updater at render and re-renders when a shared value it read
- *  changes, as the UI thread would repaint. An animation's end callback runs as it is assigned. */
+ *  changes, as the UI thread would repaint. An animation's end callback runs as it is assigned, unless
+ *  the test holds animations (`holdAnimations`) to look at a frame while one is still running. */
 import React from 'react';
 
 type HostProps = { children?: React.ReactNode; [key: string]: unknown };
@@ -51,8 +52,25 @@ function settle(a: Animation): unknown {
 /** The shared values an updater reads while `useAnimatedStyle` runs it. */
 let reading: Set<SharedValue<unknown>> | null = null;
 
+/** While a test holds them, the ends of the animations assigned since: each is still running, as on
+ *  the UI thread, until the test lets them end. */
+let held: (() => void)[] | null = null;
+
+/** From now on an assigned animation keeps running: its value stays where it was and its end callback
+ *  waits. The returned release ends every one of them, oldest first, as they would have. */
+export function holdAnimations(): () => void {
+  held = [];
+  return () => {
+    const ends = held ?? [];
+    held = null;
+    for (const end of ends) end();
+  };
+}
+
 class SharedValue<T> {
   private current: T;
+  /** The held animation running on this value, if any. */
+  private running: { animation: Tagged; end: () => void } | null = null;
   /** Bumped on every assignment, so a style can tell it missed one. */
   version = 0;
   private readonly listeners = new Set<() => void>();
@@ -62,13 +80,40 @@ class SharedValue<T> {
     return this.current;
   }
   set value(next: T) {
+    this.interrupt();
     if (isAnimation(next)) {
       animations.push(next);
-      this.current = settle(next) as T;
-      if (isStep(next)) next.callback?.(true);
-    } else {
-      this.current = next;
+      if (held) {
+        const end = () => {
+          this.running = null;
+          this.land(next);
+        };
+        this.running = { animation: next, end };
+        held.push(end);
+        return;
+      }
+      this.land(next);
+      return;
     }
+    this.current = next;
+    this.changed();
+  }
+  /** A held animation still running here is cancelled by the new assignment: it never ends, and its
+   *  callback hears it did not finish. */
+  private interrupt(): void {
+    const was = this.running;
+    if (!was) return;
+    this.running = null;
+    held = held?.filter((end) => end !== was.end) ?? null;
+    if (isStep(was.animation)) was.animation.callback?.(false);
+  }
+  /** An animation reaches its end: the value rests there and its end callback runs. */
+  private land(animation: Tagged): void {
+    this.current = settle(animation) as T;
+    if (isStep(animation)) animation.callback?.(true);
+    this.changed();
+  }
+  private changed(): void {
     this.version += 1;
     for (const listener of [...this.listeners]) listener();
   }

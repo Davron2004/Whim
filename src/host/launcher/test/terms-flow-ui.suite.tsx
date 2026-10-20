@@ -373,7 +373,7 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
       const scroll = () => tree.root.find((n) => hostType(n) === 'ScrollView');
       const strays = () => strayTouches(scroll());
       const notNow = () => button(tree, LEGAL_COPY.fr.consentDecline);
-      h.ok(within(button(tree, LEGAL_COPY.fr.firstRunTermsCheck), scroll()) && scroll().findAll((n) => hostType(n) === 'Text').length > 5, 'setup: the sheet’s words and its terms row are in the scroll view');
+      h.ok(within(button(tree, LEGAL_COPY.fr.firstRunLanguage + ', ' + LEGAL_COPY.fr.legalLanguageSwitch), scroll()) && scroll().findAll((n) => hostType(n) === 'Text').length > 5, 'setup: the sheet’s words and its rows are in the scroll view');
       h.eq(strays(), [], 'a touch on any view in the scroll view — a word, a row that does nothing, the space between groups — is answered inside it');
       h.ok(touchAnswerer(scroll()) === null, 'and a touch on the gutters, the scroll view’s own padding, is answered by no view around it');
       h.ok(!within(notNow(), scroll()), 'setup: the footer starts pinned under the scroll view');
