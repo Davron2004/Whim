@@ -1648,3 +1648,33 @@ listed in `RunReport.screens.coldMounted` with no diagnostic, so it never costs 
   routing alone (screens gated by chained state would still cost a turn that cannot fix them).
 - **Unchanged.** The machine's warnings policy; a gated screen that throws on render is still an error.
 
+### 81. A launch takes its record from the version it runs `[DECIDED — openspec: design-system-v1 chain-20e/20f; supersedes #53 D7's schemaJson]`
+
+Since History can use any version, Undo it, and copy from it, the app list's record and the code
+the store makes active could disagree: an Undo after leaving History, an Undo still running when
+History was left, or a record write that failed after the store moved. The bridge gates by the
+record the realm is launched with (#41), so such a split ran one version's code with another's
+grants: storage it never declared, cues it did declare refused.
+
+- **Each version keeps its own manifest and schema.** `StoreAccess` saves `manifest.json` (without
+  the host's tile colour) and, when declared, `schema.json` beside every bundle, derived from the
+  record the version was built with and nothing else. #53 D7's caller-supplied `schemaJson` is gone.
+- **The launch derives the record.** `StoreAccess.activeLaunch` reads the active version's code and
+  its manifest and schema in one per-repo section; the host's fields (app id, name, tile) come from
+  the app list. The app list's record is a copy: a launch that finds it different writes the
+  derived one back, and a failed copy write never fails a switch that has happened.
+- **A version is parsed before anything moves.** Use this version, Undo and Make a copy read the
+  target version first, so a damaged one is refused with the app where it was.
+- **Storage stays the accumulated union** (#38/#40). An older version opens its store as an older
+  subset; the fields a later one added stay, unused, until a version that names them runs again.
+- **The burned-ID floor counts every saved version.** A change request's `appliedSchema` adds, as
+  retired columns, the fields any saved version of the apps sharing that store declares in a
+  collection the store already holds. The floor, the checker's type rule and identity continuity
+  then treat a never-opened later version's ids as burned but not required. No wire change.
+- **Known limitations (pre-release, accepted).** A version saved before versions kept their
+  manifest runs with the record the app holds now. A collection only a never-opened version
+  declares adds no floor (collection ids have none), so a later change can reuse its id.
+- **Rejected.** Keeping the app list's record authoritative and repairing it on every write path
+  (each path is another chance to split); a new wire field for declared schemas (the checker would
+  need a second baseline, and the retired column already means "burned, type fixed, not required").
+

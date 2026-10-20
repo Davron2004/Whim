@@ -15,8 +15,8 @@ import HistoryScreen, { type HistoryScreenProps } from '../HistoryScreen';
 import HomeScreen from '../HomeScreen';
 import SettingsScreen from '../SettingsScreen';
 import { AppIndex, type InstalledApp } from '../app-index';
-import { StoreAccess, storeIdOf } from '../store-access';
-import { createMemoryStore, MapKVBackend } from '../../version-store';
+import { StoreAccess, storeIdOf, type ActiveLaunch } from '../store-access';
+import { createMemoryStore, MapKVBackend, VersionStore } from '../../version-store';
 import { DescribePage } from '../DescribePage';
 import ReadyPage from '../ReadyPage';
 import MiniAppView from '../MiniAppView';
@@ -951,11 +951,11 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
 
   await h.test('history screen: opened from Home and left by its own Back, an app link arriving during that pop waits for it to finish; of two, only the last opens; with no word from the stack, a fallback lets it through', async () => {
     const never = () => new Promise<Response>(() => {});
-    const { activeBundle } = StoreAccess.prototype;
+    const { activeLaunch } = StoreAccess.prototype;
     const read: string[] = [];
-    StoreAccess.prototype.activeBundle = function (this: StoreAccess, entry: InstalledApp) {
+    StoreAccess.prototype.activeLaunch = function (this: StoreAccess, entry: InstalledApp) {
       read.push(entry.id);
-      return activeBundle.call(this, entry);
+      return activeLaunch.call(this, entry);
     };
     try {
       await withLauncher({ examples: true, server: never }, async ({ tree, clock }) => {
@@ -996,17 +996,17 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
         h.eq(read, [second.id], 'once');
       });
     } finally {
-      StoreAccess.prototype.activeBundle = activeBundle;
+      StoreAccess.prototype.activeLaunch = activeLaunch;
     }
   });
 
   await h.test('history screen: opened from Home and left by its own Back, a tile tapped during that pop reads busy from the tap and opens once the pop finished; when the person went elsewhere meanwhile it opens nothing', async () => {
     const never = () => new Promise<Response>(() => {});
-    const { activeBundle } = StoreAccess.prototype;
+    const { activeLaunch } = StoreAccess.prototype;
     const read: string[] = [];
-    StoreAccess.prototype.activeBundle = function (this: StoreAccess, entry: InstalledApp) {
+    StoreAccess.prototype.activeLaunch = function (this: StoreAccess, entry: InstalledApp) {
       read.push(entry.id);
-      return activeBundle.call(this, entry);
+      return activeLaunch.call(this, entry);
     };
     try {
       await withLauncher({ examples: true, server: never }, async ({ tree }) => {
@@ -1043,13 +1043,13 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
         h.eq(tile(tree, second.name).props.accessibilityState?.busy ?? false, false, 'and the tile no longer reads busy');
       });
     } finally {
-      StoreAccess.prototype.activeBundle = activeBundle;
+      StoreAccess.prototype.activeLaunch = activeLaunch;
     }
   });
 
   await h.test('history screen: opened from a running app’s orb, when the store cannot read that app back, Back and system back land on Home with the alert instead of staying on History', async () => {
     const never = () => new Promise<Response>(() => {});
-    const { activeBundle } = StoreAccess.prototype;
+    const { activeLaunch } = StoreAccess.prototype;
     try {
       await withLauncher({ examples: true, server: never }, async ({ tree }) => {
         const home = () => tree.root.findByType(HomeScreen);
@@ -1061,13 +1061,13 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
           ['system back', systemBack],
         ];
         for (const [name, leave] of leaves) {
-          StoreAccess.prototype.activeBundle = activeBundle;
+          StoreAccess.prototype.activeLaunch = activeLaunch;
           await tap(() => home().props.onOpen(app));
           await waitFor(() => showing(MiniAppView), `${app.name} to open`);
           await press(button(tree, COPY.orbMenuOpenLabel));
           await press(button(tree, COPY.actionHistory));
           await waitFor(() => showing(HistoryScreen), 'its history');
-          StoreAccess.prototype.activeBundle = async () => { throw new Error('bundle read failed'); };
+          StoreAccess.prototype.activeLaunch = async () => { throw new Error('bundle read failed'); };
           const alerts = Alert.shown.length;
           await leave();
           await waitFor(() => Alert.shown.length > alerts, `${name}: the reopen to fail`);
@@ -1076,13 +1076,13 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
         }
       });
     } finally {
-      StoreAccess.prototype.activeBundle = activeBundle;
+      StoreAccess.prototype.activeLaunch = activeLaunch;
     }
   });
 
   await h.test('history screen: opened from a running app’s orb, when reading that app back never settles, a second Back is ignored only for a bounded time: then the alert and Home, and a read that settles late opens nothing', async () => {
     const never = () => new Promise<Response>(() => {});
-    const { activeBundle } = StoreAccess.prototype;
+    const { activeLaunch } = StoreAccess.prototype;
     try {
       await withLauncher({ examples: true, server: never }, async ({ tree, clock }) => {
         const home = () => tree.root.findByType(HomeScreen);
@@ -1095,8 +1095,8 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
         await press(button(tree, COPY.actionHistory));
         await waitFor(() => showing(HistoryScreen), 'its history');
         await stackMoveEnds();
-        const late = held<string>();
-        StoreAccess.prototype.activeBundle = () => late.promise;
+        const late = held<ActiveLaunch>();
+        StoreAccess.prototype.activeLaunch = () => late.promise;
         const alerts = Alert.shown.length;
         const midMove = stackUnmountsMidMove();
         await TestRenderer.act(async () => {
@@ -1109,17 +1109,17 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
         await waitFor(() => Alert.shown.length > alerts, 'the open to give up');
         h.eq(Alert.shown.at(-1)?.message, COPY.appOpenTimedOut, 'the user is told the app took too long to open');
         h.ok(showing(HomeScreen) && !showing(HistoryScreen), 'and lands on Home, not stranded on History');
-        await TestRenderer.act(async () => { late.resolve('late bundle'); });
+        await TestRenderer.act(async () => { late.resolve({ app, source: 'late bundle', versionId: 'g1' }); });
         await settle();
         h.ok(showing(HomeScreen) && !showing(MiniAppView), 'the read that settles late opens nothing');
         h.eq(stackUnmountsMidMove(), midMove, 'and no stack is unmounted mid-pop');
         await stackMoveEnds();
-        StoreAccess.prototype.activeBundle = activeBundle;
+        StoreAccess.prototype.activeLaunch = activeLaunch;
         await tap(() => home().props.onOpen(app));
         await waitFor(() => showing(MiniAppView), 'the app to open again from its tile');
       });
     } finally {
-      StoreAccess.prototype.activeBundle = activeBundle;
+      StoreAccess.prototype.activeLaunch = activeLaunch;
     }
   });
 
@@ -1169,4 +1169,105 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       h.eq([view.installedApp.id, view.engineAppId, view.bundleSource], [copy!.id, copy!.id, firstCode], 'Open opens the copy, on its own storage and its own code');
     });
   });
+
+  await h.test('history screen: in the launcher, Use v1 from History over Home, Back, then Undo on the toast: the app opened from Home runs the newest version’s code with that version’s capabilities', async () => {
+    const never = () => new Promise<Response>(() => {});
+    await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+      const home = () => tree.root.findByType(HomeScreen);
+      const showing = (type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+      const counter = () => waterCounterOn(tree);
+      await waitFor(() => showing(HomeScreen) && counter() !== undefined, 'the examples');
+      const { access, codes } = await counterWithLaterVersions(tree, counter);
+      const newest = await access.activeId(counter());
+
+      await TestRenderer.act(async () => home().props.onHistory(counter()));
+      await waitFor(() => showing(HistoryScreen) && rows(tree).length === 3, 'its three versions');
+      await stackMoveEnds();
+      await openAndPress(tree, 'Example', COPY.historyUseVersion);
+      await waitFor(() => toastOf(tree)?.action === COPY.toastUndo, 'the toast with Undo');
+      await press(button(tree, COPY.backLabel));
+      await stackMoveEnds();
+      await waitFor(() => showing(HomeScreen), 'Home');
+      h.eq(counter().record.manifest.capabilities, ['storage'], 'setup: Home came back holding version 1’s record');
+      await pressToastAction(tree);
+      await settle();
+      h.eq(await access.activeId(counter()), newest, 'setup: the Undo returned the app to its newest version');
+
+      await tap(() => home().props.onOpen(counter()));
+      await waitFor(() => showing(MiniAppView), 'the app to open from Home');
+      const view = tree.root.findByType(MiniAppView).props;
+      h.eq(view.bundleSource, codes[2], 'the newest version’s code runs');
+      h.eq(view.record.manifest.capabilities, TIMER_CAPABILITIES, 'with the capabilities that version declares');
+      h.eq(view.record.schemaArtifact, undefined, 'and no storage it never declared');
+    });
+  });
+
+  await h.test('history screen: opened from a running app’s orb, an Undo still running when History is left by Back or a swipe: the app reopens on the version the Undo returns to, with that version’s capabilities', async () => {
+    const never = () => new Promise<Response>(() => {});
+    await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+      const home = () => tree.root.findByType(HomeScreen);
+      const showing = (type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+      const counter = () => waterCounterOn(tree);
+      await waitFor(() => showing(HomeScreen) && counter() !== undefined, 'the examples');
+      const { codes } = await counterWithLaterVersions(tree, counter);
+      const leaves: [string, () => Promise<void>][] = [
+        ['Back', () => press(button(tree, COPY.backLabel))],
+        ['iOS swipe', () => iosPop(tree)],
+      ];
+      for (const [name, leave] of leaves) {
+        await tap(() => home().props.onOpen(counter()));
+        await waitFor(() => showing(MiniAppView), `${name}: the app to open`);
+        await press(button(tree, COPY.orbMenuOpenLabel));
+        await press(button(tree, COPY.actionHistory));
+        await waitFor(() => showing(HistoryScreen) && rows(tree).length === 3, `${name}: its history`);
+        await stackMoveEnds();
+        await openAndPress(tree, 'Example', COPY.historyUseVersion);
+        await waitFor(() => toastOf(tree)?.action === COPY.toastUndo, `${name}: the toast with Undo`);
+        const undo = held<void>();
+        const { rollback } = VersionStore.prototype;
+        VersionStore.prototype.rollback = async function (this: VersionStore, ...args: Parameters<VersionStore['rollback']>) {
+          await undo.promise;
+          return rollback.apply(this, args);
+        };
+        try {
+          await pressToastAction(tree);
+          await leave();
+          await settle();
+          await TestRenderer.act(async () => { undo.resolve(); });
+        } finally {
+          VersionStore.prototype.rollback = rollback;
+        }
+        await waitFor(() => !showing(HistoryScreen) && showing(MiniAppView) && tree.root.findByType(MiniAppView).props.bundleSource === codes[2], `${name}: the app to reopen on its newest version`);
+        h.eq(tree.root.findByType(MiniAppView).props.record.manifest.capabilities, TIMER_CAPABILITIES, `${name}: with the capabilities that version declares`);
+        h.eq(tree.root.findByType(MiniAppView).props.record.schemaArtifact, undefined, `${name}: and no storage it never declared`);
+        await TestRenderer.act(async () => tree.root.findByType(MiniAppView).props.onExit());
+        await stackMoveEnds();
+      }
+    });
+  });
+}
+
+const WATER = 'water-counter';
+const TIMER_CAPABILITIES = APP_RECORDS['pour-over-timer'].manifest.capabilities;
+const isWaterCounter = (a: InstalledApp) => a.id === WATER;
+/** The Water Counter example as Home holds it. */
+const waterCounterOn = (tree: Tree): InstalledApp => tree.root.findByType(HomeScreen).props.apps.find(isWaterCounter);
+
+/** The Water Counter example given two later versions through its store: one that saves nothing,
+ *  then the newest, which declares the build's Pour-Over Timer manifest (cues, no storage). Ends back
+ *  on Home, which holds the newest record. Returns the code each version runs, oldest first. */
+async function counterWithLaterVersions(tree: Tree, counter: () => InstalledApp): Promise<{ access: StoreAccess; codes: string[] }> {
+  await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onHistory(counter()));
+  await waitFor(() => tree.root.findAllByType(HistoryScreen).length === 1 && rows(tree).length === 1, 'its history');
+  await stackMoveEnds();
+  const access: StoreAccess = tree.root.findByType(HistoryScreen).props.access;
+  const first = await access.activeBundle(counter());
+  const codes = [first, `${first}\n// v2`, `${first}\n// v3`];
+  const base = { appId: counter().record.appId, name: counter().record.name };
+  const second = await access.update(counter(), { record: { ...base, manifest: { capabilities: [] } }, bundleSource: codes[1], prompt: envelope('stop saving my glasses') });
+  await access.update(second, { record: { ...base, manifest: APP_RECORDS['pour-over-timer'].manifest }, bundleSource: codes[2], prompt: envelope('make it a pour-over timer') });
+  await press(button(tree, COPY.backLabel));
+  await stackMoveEnds();
+  await waitFor(() => tree.root.findAllByType(HomeScreen).length === 1, 'Home');
+  return { access, codes };
 }

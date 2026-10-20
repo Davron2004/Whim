@@ -9,8 +9,11 @@
  */
 import type { Clarification, GenerateRequest, RewriteRequest } from '@whim/contract';
 import type { AppliedSchema } from '../storage-engine/schema';
+import type { SchemaArtifact } from '../storage-engine/contract';
 import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 
 /**
  * Reads a storage group's LIVE, accumulated applied-schema union for `appId` (always called
@@ -33,6 +36,9 @@ export type AppliedSchemaReader = (appId: string) => AppliedSchema;
  * `entry.record.schemaArtifact` (the entry's own declared schema, which `schema` below still
  * carries unchanged; the two fields can legitimately differ for a grouped entry).
  *
+ * That union also carries, as retired columns, the fields saved versions declare that the store has
+ * not created yet (`withDeclaredFields`), so the floor the server states and checks counts them.
+ *
  * `clarifications` carries the clarify exchange's answers by value (the server holds no state
  * between that exchange and the request that follows it). An empty list is sent as no field at
  * all: absent and empty both mean "the user answered nothing", which is the common case.
@@ -47,7 +53,11 @@ export async function buildGenerateRequest(
   const answers = clarifications.length > 0 ? { clarifications: [...clarifications] } : {};
   if (!editing) return { prompt, ...answers };
   const source = await access.activeSource(editing);
-  const appliedSchema = readApplied(access.engineAppId(editing));
+  const declared = await access.declaredSchemas(editing).catch((e: unknown) => {
+    log.warn(CHANNELS.gen, 'saved versions could not be read for the burned-ID floor', { detail: e instanceof Error ? e.message : String(e) });
+    return [];
+  });
+  const appliedSchema = withDeclaredFields(readApplied(access.engineAppId(editing)), declared);
   return {
     prompt,
     ...answers,
@@ -58,6 +68,35 @@ export async function buildGenerateRequest(
       appliedSchema: appliedSchema as unknown as Record<string, unknown>,
     },
   };
+}
+
+/**
+ * `applied` with every field a saved version declares in one of its collections that it does not
+ * hold yet — a version delivered and never opened, or one a rollback left behind — added as a
+ * RETIRED column of the declared type. Retired is the engine's own word for exactly this: the id is
+ * burned and its type fixed (the floor counts it, and `diffSchemas` refuses it for another type),
+ * but nothing has to keep it, so a change made from an older version that never names it is still
+ * whole. The engine itself never sees this union; only the request carries it.
+ *
+ * A collection the store does not hold yet is not added: the applied schema says which collections
+ * the user's data lives in, and a change is held to keep each of them. Collection ids have no floor
+ * either way.
+ */
+function withDeclaredFields(applied: AppliedSchema, declared: readonly SchemaArtifact[]): AppliedSchema {
+  const collections = applied.collections.map((c) => ({ id: c.id, active: [...c.active], retired: [...c.retired] }));
+  const byId = new Map(collections.map((c) => [c.id, c]));
+  for (const schema of declared) {
+    for (const collection of Object.values(schema.collections)) {
+      const into = byId.get(collection.id);
+      if (into == null) continue;
+      for (const field of Object.values(collection.fields)) {
+        if (!into.active.some((c) => c.id === field.id) && !into.retired.some((c) => c.id === field.id)) {
+          into.retired.push({ id: field.id, type: field.type });
+        }
+      }
+    }
+  }
+  return { collections };
 }
 
 /** The rewrite turn's view of the app a re-prompt is changing: `RewriteRequest.app`, named so

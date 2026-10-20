@@ -156,6 +156,10 @@ Every version `StoreAccess` saves SHALL keep, beside its bundle, the app's host-
 - **WHEN** the user uses a version saved before versions kept their manifest
 - **THEN** it runs with the record the entry has now, and nothing errors; its own manifest is not known (accepted pre-release: no tester builds hold such versions)
 
+#### Scenario: A change from an older version never reuses a later version's field ids
+- **WHEN** a later version declared a field in a collection the saved data already has, was never opened, and the user changes the app from an older version
+- **THEN** the change request's burned-ID floor counts that field, and a new field reusing its id with another type is refused, while the older version's own schema, which never names it, is accepted
+
 ### Requirement: The shell follows the phone's appearance through one scheme hook
 
 The shell SHALL render in light or dark following the phone's appearance setting, with no in-app picker. Launcher components SHALL read colours only through one hook that returns the token module's light or dark roles for the current scheme; no component SHALL accept a palette or theme as a prop or define its own colour literal, and styles SHALL be built per scheme so a change of appearance re-renders the shell without a restart. The status bar and system bars SHALL follow the scheme.

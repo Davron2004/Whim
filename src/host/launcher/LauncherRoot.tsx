@@ -192,8 +192,8 @@ type WhimSheetPage = 'menu' | 'report';
 type Screen =
   | { kind: 'home' }
   // `tappedAt`: when the tile was tapped (`Date.now()`), for the tap-to-first-paint record.
-  // `versionId`: the version the running bundle is, once read. `sheet`: the Whim sheet's page, while
-  // it is open over the app.
+  // `versionId`: the version the running bundle is, read with it. `sheet`: the Whim sheet's page,
+  // while it is open over the app.
   | {
       kind: 'app';
       app: InstalledApp;
@@ -201,7 +201,7 @@ type Screen =
       source: string;
       engineAppId: string;
       tappedAt: number;
-      versionId?: string;
+      versionId: string;
       sheet?: WhimSheetPage;
     }
   | { kind: 'dev' }
@@ -1255,23 +1255,22 @@ function LauncherShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** The version the app opened at `tappedAt` runs, once read, kept on that launch's screen. */
-  const noteRunningVersion = (tappedAt: number, versionId: string | null) => {
-    if (versionId === null) return;
-    setScreen((s) => (s.kind === 'app' && s.tappedAt === tappedAt ? { ...s, versionId } : s));
-    setUnder((u) => (u?.tappedAt === tappedAt ? { ...u, versionId } : u));
-  };
-
-  /** Reads `app`'s current bundle for the launch tapped at `tappedAt` and hands that launch to `show`;
-   *  the version it runs is read right behind the bundle, on the app's serial store queue (so no
-   *  write lands between the two), and after it, so neither the opening nor the busy tile waits for it.
-   *  A bundle read past `OPEN_READ_TIMEOUT_MS` rejects, and nothing shows when it settles. */
+  /** Reads what `app` runs for the launch tapped at `tappedAt` and hands that launch to `show`: its
+   *  active version's code, that version's id and the record it runs with, read together
+   *  (`StoreAccess.activeLaunch`, decision #81) — never the caller's `app.record`, which can be a copy
+   *  older than an Undo that landed since, or than one still running. A read past
+   *  `OPEN_READ_TIMEOUT_MS` rejects, and nothing shows when it settles. */
   const launchApp = async (app: InstalledApp, tappedAt: number, show: (launch: AppScreen) => void) => {
-    const bundleRead = access.activeBundle(app);
-    const versionRead = access.activeId(app).catch(() => null);
-    const source = await readWithin(bundleRead, OPEN_READ_TIMEOUT_MS);
-    show({ kind: 'app', app, record: app.record, source, engineAppId: access.engineAppId(app), tappedAt });
-    versionRead.then((versionId) => noteRunningVersion(tappedAt, versionId));
+    const launch = await readWithin(access.activeLaunch(app), OPEN_READ_TIMEOUT_MS);
+    show({
+      kind: 'app',
+      app: launch.app,
+      record: launch.app.record,
+      source: launch.source,
+      engineAppId: access.engineAppId(launch.app),
+      tappedAt,
+      versionId: launch.versionId,
+    });
   };
 
   /** An app that could not be opened: the user gets the alert; the class/message/stack of what
@@ -3250,12 +3249,11 @@ function LauncherShell({
 
   // ── The Whim sheet over a running app (app-launcher "The Whim sheet is a running app's one menu") ──
 
-  /** Reads, for the Whim sheet opened over `on`, the version it runs and whether a newer one is current.
-   *  Until the running version's id is known, the current one is taken as running. */
+  /** Reads, for the Whim sheet opened over `on`, the version it runs and whether a newer one is current. */
   const readWhimVersions = (on: AppScreen) => {
     Promise.all([listVersions(access, on.app), access.activeId(on.app)]).then(
       ([timeline, active]) => {
-        const runningId = on.versionId ?? active;
+        const runningId = on.versionId;
         setWhimVersions({ at: on.tappedAt, version: runningVersion(timeline, runningId), newVersion: active !== null && runningId !== active });
       },
       (e: unknown) => log.debug(CHANNELS.app, 'whim sheet versions unavailable', errorFields(e)),

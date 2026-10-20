@@ -17,21 +17,22 @@ import { COLORS } from '../../../design/tokens';
 
 const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
-/** Render the launcher with `app` installed, its stored bundle read by `activeBundle`; run `body`. */
-async function withLauncher(activeBundle: () => Promise<string>, body: (tree: TestRenderer.ReactTestRenderer) => Promise<void>): Promise<void> {
+/** Render the launcher with `app` installed, its stored bundle read by `readBundle` as the launch
+ *  reads it; run `body`. */
+async function withLauncher(readBundle: () => Promise<string>, body: (tree: TestRenderer.ReactTestRenderer) => Promise<void>): Promise<void> {
   resetNativeStorage();
   injectedScripts.length = 0;
   const index = new AppIndex(createMmkvBackend('whim.launcher'));
   index.markSeeded(SEED_VERSION);
   index.put(app);
-  const originalActiveBundle = StoreAccess.prototype.activeBundle;
-  StoreAccess.prototype.activeBundle = activeBundle;
+  const originalActiveLaunch = StoreAccess.prototype.activeLaunch;
+  StoreAccess.prototype.activeLaunch = async (target) => ({ app: target, source: await readBundle(), versionId: 'g1' });
   const tree = await renderScreen(<LauncherRoot deviceLocale={() => 'en-US'} />);
   try {
     await body(tree);
   } finally {
     await unmountScreen(tree);
-    StoreAccess.prototype.activeBundle = originalActiveBundle;
+    StoreAccess.prototype.activeLaunch = originalActiveLaunch;
   }
 }
 

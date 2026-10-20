@@ -58,9 +58,9 @@ export async function runAppLinkUiTests(h: Harness): Promise<void> {
     const index = new AppIndex(createMmkvBackend('whim.launcher'));
     index.markSeeded(SEED_VERSION);
     index.put(app);
-    const originalActiveBundle = StoreAccess.prototype.activeBundle;
+    const originalActiveLaunch = StoreAccess.prototype.activeLaunch;
     const opened: string[] = [];
-    StoreAccess.prototype.activeBundle = async target => { opened.push(target.id); return 'window.__WHIM_APP_MODULE__ = {};'; };
+    StoreAccess.prototype.activeLaunch = async target => { opened.push(target.id); return { app: target, source: 'window.__WHIM_APP_MODULE__ = {};', versionId: 'g1' }; };
     const tree = await renderScreen(<LauncherRoot deviceLocale={() => 'en-US'} />);
     try {
       await TestRenderer.act(async () => openLink(appLinkFor(app.id)));
@@ -69,7 +69,7 @@ export async function runAppLinkUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => openLink(appLinkFor(app.id)));
       h.ok(tree.root.findByType(MiniAppView) === running, 'same-app link preserves the mounted instance');
       h.eq(opened, [app.id], 'same-app link does not reload the stored bundle');
-    } finally { await unmountScreen(tree); StoreAccess.prototype.activeBundle = originalActiveBundle; }
+    } finally { await unmountScreen(tree); StoreAccess.prototype.activeLaunch = originalActiveLaunch; }
   });
   await h.test('App link: leaving clarify aborts its request and its late response cannot navigate', async () => {
     resetNativeStorage();

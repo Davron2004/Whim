@@ -22,6 +22,9 @@ import { seedFirstRun } from '../seed';
 import { tileOf } from '../tile-identity';
 import { createDefaultRegistry, Dispatcher, launchApp, type SysretFrame } from '../../bridge';
 import { createEngine } from '../../storage-engine/engine';
+import { burnedIdFloor, diffSchemas, type AppliedSchema } from '../../storage-engine/schema';
+import type { SchemaArtifact } from '../../storage-engine/contract';
+import type { KVBackend } from '../../version-store';
 import { createNodeSqlExecutor } from '../../storage-engine/bindings/node-sqlite';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
@@ -30,16 +33,19 @@ import { accessOver, disposeDeviceState, fileOf, newDeviceState, readApplied, ty
 
 const WATER = 'water-counter';
 
-/** One launch of an app: its syscalls, the cues its realm fired, and closing its store. */
+/** One launch of an app: the code it runs, its syscalls, the cues its realm fired, and closing its store. */
 interface Session {
+  source: string;
   call(method: string, params: Record<string, unknown>): Promise<SysretFrame | null>;
   cues: string[];
   close(): void;
 }
 
-/** Launch `entry` as the shell does: its record, under its engine appId, behind the host's table. */
-function open(state: DeviceState, access: StoreAccess, entry: InstalledApp): Session {
-  const launched = launchApp({ ...entry.record, appId: access.engineAppId(entry) }, (appId) =>
+/** Launch `entry` as the shell does: the active version's code and the record it runs with, read
+ *  together (`StoreAccess#activeLaunch`), under its engine appId, behind the host's table. */
+async function open(state: DeviceState, access: StoreAccess, entry: InstalledApp): Promise<Session> {
+  const { app, source } = await access.activeLaunch(entry);
+  const launched = launchApp({ ...app.record, appId: access.engineAppId(app) }, (appId) =>
     createEngine(createNodeSqlExecutor(fileOf(state, appId))),
   );
   if (!launched.ok) throw new Error(`launch refused: ${launched.error.kind}`);
@@ -51,6 +57,7 @@ function open(state: DeviceState, access: StoreAccess, entry: InstalledApp): Ses
     call: (method, params) => dispatcher.handle({ whim: 'syscall', v: 1, id: ++id, gen: launched.realm.generation, method, params }),
     cues,
     close: () => launched.realm.engine?.close(),
+    source,
   };
 }
 
@@ -110,7 +117,7 @@ async function waterCounterChanged(state: DeviceState, access: StoreAccess, inde
   await seedFirstRun(index, access, [
     { id: WATER, name: 'Water Counter', prompt: 'count my glasses of water', record: APP_RECORDS[WATER], bundleSource: APP_BUNDLES[WATER] },
   ]);
-  const first = open(state, access, index.get(WATER)!);
+  const first = await open(state, access, index.get(WATER)!);
   try {
     await first.call('storage.records.append', { collection: 'Drinks', record: { at: 1 } });
     await first.call('storage.records.append', { collection: 'Drinks', record: { at: 2 } });
@@ -126,7 +133,7 @@ async function waterCounterChanged(state: DeviceState, access: StoreAccess, inde
 
 /** Run `body` with the session `entry` launches into, closing its store after. */
 async function within<T>(state: DeviceState, access: StoreAccess, entry: InstalledApp, body: (s: Session) => Promise<T>): Promise<T> {
-  const session = open(state, access, entry);
+  const session = await open(state, access, entry);
   try {
     return await body(session);
   } finally {
@@ -241,7 +248,7 @@ export async function runVersionRecordTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('version record: a version saved before versions kept their manifest runs with the record the app has', async () => {
+  await h.test('version record (pins a known pre-release limitation, not correct behaviour): a version saved before versions kept their manifest runs with the record the app has now', async () => {
     const state = newDeviceState();
     try {
       const { access, index } = accessOver(state);
@@ -252,9 +259,191 @@ export async function runVersionRecordTests(h: Harness): Promise<void> {
       const recordBefore = index.get(WATER)!.record;
       await access.rollback(index.get(WATER)!, v1);
       h.eq(index.get(WATER)!.record, recordBefore, 'the record is left as it was');
-      h.eq(await access.activeBundle(index.get(WATER)!), APP_BUNDLES[WATER], "and the version's code runs");
+      const launch = await access.activeLaunch(index.get(WATER)!);
+      h.eq([launch.source, launch.app.record], [APP_BUNDLES[WATER], recordBefore], "the version's code runs, with the record the app had (the limitation)");
     } finally {
       disposeDeviceState(state);
     }
   });
+
+  await h.test('version record: a launch read through a copy of the app taken before an Undo runs the newest version with its own record, never the copy’s', async () => {
+    const state = newDeviceState();
+    try {
+      const { access, index } = accessOver(state);
+      const [v1, , v3] = await waterCounterChanged(state, access, index, [await stubDelivery(), pourOverDelivery()]);
+      await access.rollback(index.get(WATER)!, v1);
+      const homeCopy = index.get(WATER)!; // what Home holds once it comes back from History
+      h.eq(homeCopy.record.manifest.capabilities, ['storage'], "setup: the copy holds v1's record");
+      await access.rollback(homeCopy, v3); // Undo on the toast; Home is not refreshed
+      await within(state, access, homeCopy, async (s) => {
+        h.eq(s.source, APP_BUNDLES['pour-over-timer'], 'the newest code runs');
+        h.eq(await outcome(s, 'storage.kv.get', { key: 'total' }), 'undeclared_capability', 'without the storage only v1 declared');
+        h.eq(await outcome(s, 'cues.haptic', { kind: 'tap' }), {}, 'with the cues it declares');
+      });
+    } finally {
+      disposeDeviceState(state);
+    }
+  });
+
+  await h.test('version record: a launch read while an Undo is still running waits for it and runs the version it returns to, code and record together', async () => {
+    const state = newDeviceState();
+    try {
+      const { access, index } = accessOver(state);
+      const [v1, , v3] = await waterCounterChanged(state, access, index, [await stubDelivery(), pourOverDelivery()]);
+      await access.rollback(index.get(WATER)!, v1);
+      const release = holdNextRollback(state);
+      const undo = access.rollback(index.get(WATER)!, v3);
+      const launch = access.activeLaunch(index.get(WATER)!); // read before the Undo has written anything
+      release();
+      await undo;
+      const { app, source } = await launch;
+      h.eq(source, APP_BUNDLES['pour-over-timer'], 'the version the Undo returns to runs');
+      h.eq(app.record.manifest.capabilities, APP_RECORDS['pour-over-timer'].manifest.capabilities, 'with its own capabilities');
+      h.eq(app.record.schemaArtifact, undefined, 'and no schema it never declared');
+    } finally {
+      disposeDeviceState(state);
+    }
+  });
+
+  await h.test('version record: a rollback whose index write fails still moves the app, and the next launch runs that version with its own record and writes it down', async () => {
+    const state = newDeviceState();
+    try {
+      const kv = new FailingKv(state.kv);
+      const { access, index } = accessOver(state, { kv });
+      const [v1] = await waterCounterChanged(state, access, index, [await stubDelivery(), pourOverDelivery()]);
+      kv.failing = true;
+      const moved = await access.rollback(index.get(WATER)!, v1);
+      kv.failing = false;
+      h.eq(moved.activeId, v1, 'the switch is reported, since the app did move');
+      h.eq(index.get(WATER)!.record.manifest.capabilities, ['cues'], 'setup: the index still holds the newest record');
+      await within(state, access, index.get(WATER)!, async (s) => {
+        h.eq(s.source, APP_BUNDLES[WATER], "v1's code runs");
+        h.eq(await saved(s), { total: { found: true, value: 2 }, glasses: 2 }, 'with the storage v1 declares, its data loaded');
+        h.eq(await outcome(s, 'cues.haptic', { kind: 'tap' }), 'undeclared_capability', 'and none of the newest version’s cues');
+      });
+      h.eq(index.get(WATER)!.record.manifest.capabilities, ['storage'], 'the launch wrote the record down, so every other reader agrees again');
+    } finally {
+      disposeDeviceState(state);
+    }
+  });
+
+  await h.test('version record: a version whose saved manifest cannot be read is refused before the app moves', async () => {
+    const state = newDeviceState();
+    try {
+      const { access, index } = accessOver(state);
+      const [good] = await waterCounterChanged(state, access, index, []);
+      const { id: broken } = await state.store.snapshot(WATER, { 'bundle.js': 'BROKEN', 'manifest.json': '{"capabilities": [' }, 'a damaged save');
+      await access.rollback(index.get(WATER)!, good);
+      const refused = await access.rollback(index.get(WATER)!, broken).then(() => null, (e: unknown) => e);
+      h.ok(refused instanceof Error, 'the switch is refused');
+      h.eq(await access.activeId(index.get(WATER)!), good, 'and the app stays on the version it was on');
+      await within(state, access, index.get(WATER)!, async (s) => {
+        h.eq(s.source, APP_BUNDLES[WATER], 'which still runs');
+      });
+    } finally {
+      disposeDeviceState(state);
+    }
+  });
+
+  await h.test('version record: a change landing behind the newest version, interrupted between its new line and its delivery, leaves an app that runs the version it started from with that version’s record', async () => {
+    const state = newDeviceState();
+    try {
+      const { access, index } = accessOver(state);
+      const [v1] = await waterCounterChanged(state, access, index, [await stubDelivery(), pourOverDelivery()]);
+      await access.rollback(index.get(WATER)!, v1);
+      const continuation = await access.continueSharingData(index.get(WATER)!); // the process dies here
+      const relaunched = new AppIndex(state.kv).get(continuation.id)!;
+      h.eq(relaunched.record.manifest.capabilities, ['storage'], "the new entry holds v1's record");
+      await within(state, access, relaunched, async (s) => {
+        h.eq(s.source, APP_BUNDLES[WATER], "and runs v1's code");
+        h.eq(await saved(s), { total: { found: true, value: 2 }, glasses: 2 }, 'on the shared data, which loads');
+        h.eq(await outcome(s, 'storage.records.append', { collection: 'Drinks', record: { at: 3 } }), { id: 3 }, 'and saves');
+      });
+    } finally {
+      disposeDeviceState(state);
+    }
+  });
+
+  await h.test('version record: a saved manifest holds what the version declares, not the tile colour the host keeps, which stays the app’s', async () => {
+    const state = newDeviceState();
+    try {
+      const { access, index } = accessOver(state);
+      await waterCounterChanged(state, access, index, []);
+      const manifestFile = JSON.parse((await state.store.active(WATER))!.artifacts['manifest.json']) as Record<string, unknown>;
+      h.eq(manifestFile, { capabilities: APP_RECORDS[WATER].manifest.capabilities }, 'the saved manifest is the declaration alone');
+      const { app } = await access.activeLaunch(index.get(WATER)!);
+      h.eq(app.record.manifest.tileColor, APP_RECORDS[WATER].manifest.tileColor, 'the launch keeps the colour the app has');
+    } finally {
+      disposeDeviceState(state);
+    }
+  });
+
+  await h.test('version record: a change made from an older version allocates field ids above every id a saved version declares, even one never opened', async () => {
+    const state = newDeviceState();
+    try {
+      const { access, index } = accessOver(state);
+      const [v1] = await waterCounterChanged(state, access, index, [waterWithAmountDelivery()]);
+      await access.rollback(index.get(WATER)!, v1);
+      const request = await buildGenerateRequest(access, readApplied(state), index.get(WATER)!, 'add a note');
+      const applied = request.app!.appliedSchema as unknown as AppliedSchema;
+      h.eq(readApplied(state)(WATER).collections[0].active.map((c) => c.id), ['f1'], 'setup: the store never created v2’s field');
+      h.eq(burnedIdFloor(applied).c1, 2, 'the floor counts the field v2 declares');
+      h.eq(diffSchemas(applied, drinksWith({ f2: 'text' })).kind, 'conflict', 'so reusing its id for another type is refused');
+      h.ok(diffSchemas(applied, APP_RECORDS[WATER].schemaArtifact!).kind !== 'conflict', 'while v1’s own schema, which never names it, is not');
+
+      // That change lands behind the newest version: on a new line sharing the data.
+      const continuation = await deliverResult({ access, appId: 'unused', editing: index.get(WATER)!, text: 'a bigger glass icon', wire: waterWith(drinksWith({})) });
+      h.ok(continuation.id !== WATER && access.engineAppId(continuation) === WATER, 'setup: a new line on the same data');
+      const next = await buildGenerateRequest(access, readApplied(state), continuation, 'add a mood');
+      h.eq(burnedIdFloor(next.app!.appliedSchema as unknown as AppliedSchema).c1, 2, 'its next change still counts v2’s field, on the line it shares the data with');
+    } finally {
+      disposeDeviceState(state);
+    }
+  });
+}
+
+/** The Water Counter's Drinks collection with `extra` fields (id → type), each with a default. */
+function drinksWith(extra: Record<string, 'text' | 'int'>): SchemaArtifact {
+  const schema = APP_RECORDS[WATER].schemaArtifact!;
+  const drinks = schema.collections.Drinks;
+  const fields = { ...drinks.fields };
+  for (const [id, type] of Object.entries(extra)) fields[`field_${id}`] = { id, type, default: type === 'text' ? '' : 0 };
+  return { ...schema, collections: { Drinks: { ...drinks, fields } } };
+}
+
+/** A delivery of the Water Counter declaring `schema`. */
+function waterWith(schema: SchemaArtifact): WireAppRecord {
+  return { ...waterWithNotesDelivery(), schema: schema as unknown as WireAppRecord['schema'] };
+}
+
+/** A delivery of the Water Counter that adds an amount (a whole number) to each glass. */
+function waterWithAmountDelivery(): WireAppRecord {
+  return waterWith(drinksWith({ f2: 'int' }));
+}
+
+/** Holds the store's next rollback until the returned release is called. */
+function holdNextRollback(state: DeviceState): () => void {
+  const store = state.store;
+  const rollback = store.rollback.bind(store);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  store.rollback = async (appId, snapshotId) => {
+    store.rollback = rollback;
+    await gate;
+    return rollback(appId, snapshotId);
+  };
+  return release;
+}
+
+/** The launcher KV, whose writes fail while `failing` is set. */
+class FailingKv implements KVBackend {
+  failing = false;
+  constructor(private readonly inner: KVBackend) {}
+  getString(key: string) { return this.inner.getString(key); }
+  set(key: string, value: string) {
+    if (this.failing) throw new Error('the launcher store is unwritable');
+    this.inner.set(key, value);
+  }
+  delete(key: string) { this.inner.delete(key); }
+  getAllKeys() { return this.inner.getAllKeys(); }
 }
