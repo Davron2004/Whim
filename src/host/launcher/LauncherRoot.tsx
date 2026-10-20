@@ -184,7 +184,8 @@ type HistoryScreenState = { kind: 'history'; app: InstalledApp; from: 'home' | '
 
 type Screen =
   | { kind: 'home' }
-  | { kind: 'app'; app: InstalledApp; record: AppRecord; source: string; engineAppId: string }
+  // `tappedAt`: when the tile was tapped (`Date.now()`), for the tap-to-first-paint record.
+  | { kind: 'app'; app: InstalledApp; record: AppRecord; source: string; engineAppId: string; tappedAt: number }
   | { kind: 'dev' }
   | { kind: 'settings' }
   // Pushed over Settings on the native stack.
@@ -1099,11 +1100,12 @@ function LauncherShell({
    *  fails (`app-launcher` "Opening an app shows an immediate busy affordance" — a tap MUST NOT
    *  read as unregistered while the active bundle is being read). `onFailed` runs after a failed
    *  open's alert, for a caller that must not stay where it is. */
-  const onOpen = (app: InstalledApp, onFailed?: () => void) =>
-    runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
+  const onOpen = (app: InstalledApp, onFailed?: () => void) => {
+    const tappedAt = Date.now();
+    return runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
       try {
         const source = await access.activeBundle(app);
-        setScreen({ kind: 'app', app, record: app.record, source, engineAppId: access.engineAppId(app) });
+        setScreen({ kind: 'app', app, record: app.record, source, engineAppId: access.engineAppId(app), tappedAt });
       } catch (e) {
         // The user still gets the alert; the class/message/stack of what actually failed is only
         // recoverable from the seam (host-observability "The alert paths now log").
@@ -1112,6 +1114,7 @@ function LauncherShell({
         onFailed?.();
       }
     });
+  };
 
   /** Make a copy: busy for that app while it runs. Resolves the new entry, or `null` when a copy (or
    *  an open) of the app is already running; rejects when the copy could not be made, with nothing
@@ -2826,6 +2829,7 @@ function LauncherShell({
           record={screen.record}
           bundleSource={screen.source}
           engineAppId={screen.engineAppId}
+          tappedAt={screen.tappedAt}
           onExit={goHome}
           onVersions={() => onHistory(screen.app, 'app')}
           onChangeIt={() => openWithConsent({ kind: 'compose', editing: screen.app })}

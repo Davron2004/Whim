@@ -95,8 +95,14 @@ function pageInset(tree: Tree): number {
   return pad + ((StyleSheet.flatten(web.props.style) as { marginBottom?: number }).marginBottom ?? 0);
 }
 
-/** Mount the container for `record` (installed with `tile`, if given), run `body`, and unmount. */
-async function withMiniApp(record: AppRecord, body: (m: Mounted) => Promise<void>, tile?: Pick<InstalledApp, 'tint' | 'icon'>): Promise<void> {
+/** Mount the container for `record` (installed with `tile`, if given, and tapped at `tappedAt`), run
+ *  `body`, and unmount. */
+async function withMiniApp(
+  record: AppRecord,
+  body: (m: Mounted) => Promise<void>,
+  tile?: Pick<InstalledApp, 'tint' | 'icon'>,
+  tappedAt = Date.now(),
+): Promise<void> {
   resetNativeStorage();
   injectedScripts.length = 0;
   const clock = captureTimeouts();
@@ -107,6 +113,7 @@ async function withMiniApp(record: AppRecord, body: (m: Mounted) => Promise<void
       record={record}
       bundleSource={APP_BUNDLES[record.appId]}
       engineAppId={record.appId}
+      tappedAt={tappedAt}
       onExit={() => { exits++; }}
       onVersions={() => {}}
       onChangeIt={() => {}}
@@ -230,6 +237,36 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       h.ok(!opening() && pageShown(), 'the authenticated first paint stamped with this launch’s generation shows the page and ends the opening');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'and completes startup');
     });
+  });
+
+  await h.test('mini-app: the launch logs tap to first paint once, from the tap to its own accepted paint, beside the realm’s mount-to-paint time', async () => {
+    const realNow = Date.now;
+    let now = 1_000_000;
+    Date.now = () => now;
+    const timed = () => log.buffer.snapshot().filter((r) => r.message === 'tap to first paint').map((r) => [r.channel, r.level, r.fields]);
+    try {
+      await withMiniApp(TIP, async ({ loadEnd, frame, tree }) => {
+        log.buffer.clear();
+        now += 40;
+        await loadEnd();
+        now += 200;
+        await frame({ ...firstPaint(), trusted: false });
+        await frame(firstPaint(boundGeneration() - 1));
+        h.eq(timed(), [], 'a paint the launch refuses is not its first paint');
+        now += 97;
+        await frame(firstPaint());
+        h.eq(timed(), [['whim', 'info', { tapToPaintMs: 337, paintMs: 42 }]], 'the accepted paint is logged with the time since the tap');
+        now += 500;
+        await frame(firstPaint());
+        await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
+        await press(button(tree, COPY.appErrorRetry));
+        await loadEnd();
+        await frame(firstPaint());
+        h.eq(timed().length, 1, 'a later paint, even a recreated realm’s after Retry, is not logged again');
+      }, undefined, now);
+    } finally {
+      Date.now = realNow;
+    }
   });
 
   await h.test('mini-app: a trusted paint stamped for another launch leaves the page hidden, and the startup deadline still fails it', async () => {

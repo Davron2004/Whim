@@ -45,6 +45,9 @@ export interface MiniAppViewProps {
   bundleSource: string;
   /** The runtime engine appId (the launcher id, #5 D8) — a fork's own user data. */
   engineAppId: string;
+  /** When the user tapped to open this app (`Date.now()`): the near end of the tap-to-first-paint
+   *  record this launch logs at its first accepted paint. */
+  tappedAt: number;
   onExit: () => void;
   /** Orb "Versions" — opens the real History screen for this running app. */
   onVersions: () => void;
@@ -69,6 +72,7 @@ export default function MiniAppView({
   record,
   bundleSource,
   engineAppId,
+  tappedAt,
   onExit,
   onVersions,
   onChangeIt,
@@ -162,6 +166,16 @@ export default function MiniAppView({
   }, [plate, look.plate, reduceMotion]);
   const coverStyle = useAnimatedStyle(() => ({ opacity: cover.value }));
   const plateStyle = useAnimatedStyle(() => ({ opacity: plate.value }));
+
+  // Tap to first paint (task 18.4): logged once per launch, at its first accepted paint, beside the
+  // realm's own mount-to-paint time. A paint after Retry is not an opening, so it is not logged.
+  const timed = useRef(false);
+  const { paintedAt, paintMs } = host.state;
+  useEffect(() => {
+    if (timed.current || paintedAt === null) return;
+    timed.current = true;
+    log.info(CHANNELS.app, 'tap to first paint', { tapToPaintMs: paintedAt - tappedAt, paintMs });
+  }, [paintedAt, paintMs, tappedAt]);
   const primary = buttonColors(tokens, 'ink', false);
 
   // A launch refused pre-delivery (#41 D7, structured `launchApp` failure) never delivers a

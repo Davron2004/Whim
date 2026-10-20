@@ -75,7 +75,8 @@ function handlePaintFrame(
   setS: (fn: (p: HostState) => HostState) => void,
 ): void {
   if (!startupDeadline.acceptPaint(frame, boundGeneration)) return;
-  setS((p) => ({ ...p, paintMs: frame.payload?.mountToFirstPaintMs ?? null }));
+  const paintedAt = Date.now();
+  setS((p) => ({ ...p, paintMs: frame.payload?.mountToFirstPaintMs ?? null, paintedAt }));
 }
 
 /** An `error` frame only escalates to the recoverable-error surface for fatal `where`s -- a
@@ -116,6 +117,9 @@ export interface HostState {
    *  (`bind()` resets it). Non-null is the "has painted" signal `boot-state.ts` derives from — the
    *  container's boot state needs no bridge message of its own. */
   paintMs: number | null;
+  /** When (`Date.now()`) the host accepted that paint; null with `paintMs`. The far end of the
+   *  tap-to-first-paint record. */
+  paintedAt: number | null;
   generation: number | null;
   lastTap: string | null;
   rejectedForgeries: number;
@@ -132,7 +136,7 @@ export interface HostState {
 }
 
 const INITIAL: HostState = {
-  contained: null, probesFrac: '—', paintMs: null, generation: null,
+  contained: null, probesFrac: '—', paintMs: null, paintedAt: null, generation: null,
   lastTap: null, rejectedForgeries: 0, t7AnyPoison: null, lastError: null, launchFailed: false,
   currentApp: '—', syscalls: 0, lastSyscall: null, navDepth: 0,
 };
@@ -234,7 +238,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
       // paintMs is reset with the rest: it is the "has painted" signal the container's boot state
       // reads (`boot-state.ts`), so a PREVIOUS realm's paint must never make the next launch look
       // already-up and skip the boot state.
-      setS((p) => ({ ...p, currentApp: displayName, lastError: null, launchFailed: false, navDepth: 0, paintMs: null }));
+      setS((p) => ({ ...p, currentApp: displayName, lastError: null, launchFailed: false, navDepth: 0, paintMs: null, paintedAt: null }));
 
       // ALWAYS bind a realm + dispatcher — even for a zero-capability app — so a bundle that
       // syscalls anyway (the cap-intruder) is DENIED with a structured error, not dropped into a
