@@ -92,7 +92,6 @@ async function evolvedOriginal(state: DeviceState, access: StoreAccess): Promise
     record: { ...installed.record, schemaArtifact: V2 },
     bundleSource: 'V2',
     prompt: 'a V2',
-    schemaJson: JSON.stringify(V2),
   });
   withEngine(state, 'a', V2, (engine) => engine.records.update('Notes', 7, { mood: 'great' }));
   return { a, v1: v1.id };

@@ -15,9 +15,11 @@ type HostProps = { children?: React.ReactNode; [key: string]: unknown };
  *  again. A stack unmounted while such a move runs keeps it unfinished in the view react-native-screens
  *  recycles, and the next stack mounted shows a blank screen for good (design-system-v1 19f3,
  *  measured on the iOS 27 simulator). A move outlasts any bundle read, so here it runs until the
- *  test ends it (`stackMoveEnds`) or the stack goes. */
+ *  test ends it (`stackMoveEnds`) or the stack goes. A top changed again while a move runs (Android
+ *  back during a push) queues a second move behind it: the platform finishes them one at a time and
+ *  says so once for each. */
 let nativePopped = false;
-let moving = false;
+let moves = 0;
 let unmountsMidMove = 0;
 
 /** How many stacks have been unmounted while a move of theirs was running, since the module loaded. */
@@ -28,11 +30,11 @@ export function stackUnmountsMidMove(): number {
 /** The mounted stack's `onFinishTransitioning`, which react-native-screens calls when a move ends. */
 let finishTransitioning: (() => void) | undefined;
 
-/** The platform finished the move the stack was making, and tells the stack so. UIKit takes no touch
- *  while a push or pop runs, so a person's next tap only comes after this. */
+/** The platform finished the oldest move the stack was making, and tells the stack so. UIKit takes
+ *  no touch while a push or pop runs, so a person's next tap only comes after this. */
 export async function stackMoveEnds(): Promise<void> {
-  if (!moving) return;
-  moving = false;
+  if (moves === 0) return;
+  moves -= 1;
   await TestRenderer.act(async () => finishTransitioning?.());
 }
 
@@ -46,17 +48,18 @@ export const ScreenStack = (props: HostProps) => {
   const top = topScreenId(props.children);
   const shown = React.useRef<unknown>(undefined);
   React.useLayoutEffect(() => {
-    moving = false;
+    moves = 0;
     return () => {
-      if (moving) unmountsMidMove += 1;
-      moving = false;
+      if (moves > 0) unmountsMidMove += 1;
+      moves = 0;
       finishTransitioning = undefined;
     };
   }, []);
   React.useLayoutEffect(() => {
     finishTransitioning = props.onFinishTransitioning as (() => void) | undefined;
     if (shown.current !== undefined && shown.current !== top) {
-      moving = !nativePopped;
+      // UIKit starts a swipe only once no move runs, so a native pop leaves none running.
+      moves = nativePopped ? 0 : moves + 1;
       nativePopped = false;
     }
     shown.current = top;

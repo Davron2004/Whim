@@ -189,6 +189,15 @@ function ToastView({ shown, bottomOffset, onEnd, onGone }: Readonly<ToastViewPro
   const screenReader = useScreenReader();
   const { toast, id } = shown;
   const [touched, setTouched] = useState(false);
+  // Where the toast sat when the finger came down: the chrome under it can change while it is pressed
+  // (system back takes History to Home, whose composer it clears), and a capsule that moves under the
+  // finger cancels the press. It follows the chrome again once released.
+  const [heldOffset, setHeldOffset] = useState<number | null>(null);
+  const offset = heldOffset ?? bottomOffset;
+  const press = (down: boolean) => {
+    setTouched(down);
+    setHeldOffset(down ? offset : null);
+  };
   // The toast that is leaving; a replacement arrives not leaving.
   const [leftId, setLeftId] = useState<number | null>(null);
   const leaving = leftId === id;
@@ -258,7 +267,7 @@ function ToastView({ shown, bottomOffset, onEnd, onGone }: Readonly<ToastViewPro
     onDeactivate: (e) => {
       'worklet';
       if (releaseCommits(y.value, e.velocityY, height.value)) {
-        const gone = height.value + bottomOffset + insets.bottom + TOAST.above;
+        const gone = height.value + offset + insets.bottom + TOAST.above;
         const done = (finished?: boolean) => {
           'worklet';
           if (finished) scheduleOnRN(onGone, id);
@@ -283,13 +292,13 @@ function ToastView({ shown, bottomOffset, onEnd, onGone }: Readonly<ToastViewPro
   };
 
   return (
-    <View style={[s.slot, { bottom: insets.bottom + bottomOffset + TOAST.above }]} pointerEvents="box-none">
+    <View style={[s.slot, { bottom: insets.bottom + offset + TOAST.above }]} pointerEvents="box-none">
       <GestureDetector gesture={swipe}>
         <Animated.View
           onLayout={onLayout}
-          onTouchStart={() => setTouched(true)}
-          onTouchEnd={() => setTouched(false)}
-          onTouchCancel={() => setTouched(false)}
+          onTouchStart={() => press(true)}
+          onTouchEnd={() => press(false)}
+          onTouchCancel={() => press(false)}
           style={[s.capsule, motion]}
           accessibilityLiveRegion="polite"
           accessibilityActions={[{ name: 'dismiss', label: COPY.toastDismiss }, { name: 'escape' }]}

@@ -7,10 +7,13 @@
  * `@whim/contract` is a TYPE-ONLY import — importing the zod schema VALUES here would pull zod
  * into the Metro bundle graph (the same discipline `generation-client.ts` documents).
  */
-import type { Clarification, GenerateRequest, RewriteRequest } from '@whim/contract';
+import type { Clarification, DeclaredField, GenerateRequest, RewriteRequest } from '@whim/contract';
 import type { AppliedSchema } from '../storage-engine/schema';
+import type { SchemaArtifact } from '../storage-engine/contract';
 import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 
 /**
  * Reads a storage group's LIVE, accumulated applied-schema union for `appId` (always called
@@ -26,12 +29,20 @@ export type AppliedSchemaReader = (appId: string) => AppliedSchema;
  * `GenerateRequest.app` for the edit flow (design D5/D13). `undefined` for the new-app flow
  * (`editing` absent), which sends no `app` at all — unchanged from before this change.
  *
- * For an edit: `source` is included ONLY when the active snapshot has a genuine `source.ts`
- * artifact (`StoreAccess.activeSource`) — omitted entirely for a legacy snapshot, never
- * substituted with compiled bundle text. `appliedSchema` is ALWAYS sourced from `readApplied`
- * for `access.engineAppId(entry)` — the storage group's live accumulated union — NEVER from
- * `entry.record.schemaArtifact` (the entry's own declared schema, which `schema` below still
- * carries unchanged; the two fields can legitimately differ for a grouped entry).
+ * For an edit, the change is made from the app's ACTIVE version (`StoreAccess.activeEdit`, which
+ * says why it is not the version a running realm may still show): its code and the manifest and
+ * schema it runs with are read together, never the code from the store and the record from the
+ * caller's `editing`, which can be a copy older than an Undo. `source` is included ONLY when that
+ * version has a genuine `source.ts` artifact — omitted entirely for a legacy snapshot, never
+ * substituted with compiled bundle text. `appliedSchema` is ALWAYS sourced from `readApplied` for
+ * `access.engineAppId(entry)` — the storage group's live accumulated union — NEVER from the
+ * version's declared schema (`schema`; the two can legitimately differ for a grouped entry).
+ *
+ * `declaredFields` carries the fields saved versions declare that the store has not created yet
+ * (`fieldsNotHeld`, decision #82): burned ids the server counts in the floor and keeps the type of,
+ * while still asking a default of a change that names one — the store has no column for it. They
+ * are never folded into `appliedSchema`, where a reuse would read as a rollback across a tombstone
+ * and need no default, and a server that predates the field (it strips it) checks the true store.
  *
  * `clarifications` carries the clarify exchange's answers by value (the server holds no state
  * between that exchange and the request that follows it). An empty list is sent as no field at
@@ -46,18 +57,46 @@ export async function buildGenerateRequest(
 ): Promise<GenerateRequest> {
   const answers = clarifications.length > 0 ? { clarifications: [...clarifications] } : {};
   if (!editing) return { prompt, ...answers };
-  const source = await access.activeSource(editing);
-  const appliedSchema = readApplied(access.engineAppId(editing));
+  const { app, source } = await access.activeEdit(editing);
+  const declared = await access.declaredSchemas(app).catch((e: unknown) => {
+    log.warn(CHANNELS.gen, 'saved versions could not be read for the burned-ID floor', { detail: e instanceof Error ? e.message : String(e) });
+    return [];
+  });
+  const appliedSchema = readApplied(access.engineAppId(app));
+  const declaredFields = fieldsNotHeld(appliedSchema, declared);
   return {
     prompt,
     ...answers,
     app: {
       ...(source != null ? { source } : {}),
-      manifest: editing.record.manifest as unknown as Record<string, unknown>,
-      schema: (editing.record.schemaArtifact ?? {}) as unknown as Record<string, unknown>,
+      manifest: app.record.manifest as unknown as Record<string, unknown>,
+      schema: (app.record.schemaArtifact ?? {}) as unknown as Record<string, unknown>,
       appliedSchema: appliedSchema as unknown as Record<string, unknown>,
+      ...(declaredFields.length > 0 ? { declaredFields } : {}),
     },
   };
+}
+
+/**
+ * Every field a saved version declares that `applied` does not hold — a version delivered and never
+ * opened, or one a rollback left behind — once per collection and id, the first declaration's type
+ * kept (a burned id's type never changes, so later ones agree). Collections the store does not hold
+ * yet are included: their ids are burned the same way.
+ */
+function fieldsNotHeld(applied: AppliedSchema, declared: readonly SchemaArtifact[]): DeclaredField[] {
+  const held = new Set(applied.collections.flatMap((c) => [...c.active, ...c.retired].map((f) => `${c.id}/${f.id}`)));
+  const fields: DeclaredField[] = [];
+  for (const schema of declared) {
+    for (const collection of Object.values(schema.collections)) {
+      for (const field of Object.values(collection.fields)) {
+        const key = `${collection.id}/${field.id}`;
+        if (held.has(key)) continue;
+        held.add(key);
+        fields.push({ collection: collection.id, id: field.id, type: field.type });
+      }
+    }
+  }
+  return fields;
 }
 
 /** The rewrite turn's view of the app a re-prompt is changing: `RewriteRequest.app`, named so
@@ -80,7 +119,9 @@ export const APP_CONTEXT_DESCRIPTION_MAX_CHARS = 1200;
  *
  * DISPLAY NAMES ONLY, by construction: the name the grid shows for this app, the collection/field
  * names its schema artifact is KEYED by, and an optional plain-words `description` of what the app
- * currently does (the prompt that produced its current version, `StoreAccess#activeDescription`).
+ * currently does (the prompt that produced its current version). The shell passes the app and the
+ * words `StoreAccess#activeEdit` read together, so the schema names are the active version's, and
+ * the caller's own copy only until that read lands.
  * The burned ids those keys map to (`CollectionSpec.id`, `FieldSpec.id`), the source, the bundle
  * and the user's rows are never read here — the rewrite/clarify turns write and read a product
  * description, not code, so they get the vocabulary the user would use and nothing else. A

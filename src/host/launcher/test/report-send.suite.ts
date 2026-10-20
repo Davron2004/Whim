@@ -26,7 +26,7 @@ import { Linking } from './native-host';
 import { RELEASE } from '../release-config';
 
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
-const ACCESS = { activeDescription: async () => 'A tea timer', activeSource: async () => 'export default {}' } as unknown as StoreAccess;
+const ACCESS = { activeWords: async () => ({ prompt: 'A tea timer', source: 'export default {}' }) } as unknown as StoreAccess;
 
 /** The include switch: one element, the row, announced as a switch by what it includes. */
 const includeRow = (tree: TestRenderer.ReactTestRenderer) =>

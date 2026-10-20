@@ -289,6 +289,68 @@ await test('§timeline: round-trip stability — rollback -> timeline -> roll-fo
   eq(second, first, 'timeline is stable across a rollback -> roll-forward round trip');
 });
 
+// --- timeline order follows the version chain, never the clock (#126) -------
+//     Commit times are whole seconds and a device clock can step backwards, so
+//     each case below gives the store a clock that lies about the order.
+
+/** A clock that hands out `stamps` (ms) in turn, then repeats the last one. */
+function scriptedClock(stamps: number[]): () => number {
+  let i = 0;
+  return () => stamps[Math.min(i++, stamps.length - 1)];
+}
+
+const SECOND = 1_700_000_000_000;
+
+await test('§timeline order: versions saved within one second list newest first', async () => {
+  const s = freshStore({ now: () => SECOND + 250 });
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(3) }, 'p3');
+  const timeline = await s.timeline('app');
+  eq(timeline.map(t => t.prompt), ['p3', 'p2', 'p1'], 'three versions in one second keep the order they were made in');
+  eq(new Set(timeline.map(t => t.createdAt)).size, 1, 'and they really do share one timestamp');
+});
+
+await test('§timeline order: a clock that steps backwards does not reorder the chain', async () => {
+  const s = freshStore({ now: scriptedClock([SECOND + 60_000, SECOND + 30_000, SECOND]) });
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(3) }, 'p3');
+  const timeline = await s.timeline('app');
+  eq(timeline.map(t => t.prompt), ['p3', 'p2', 'p1'], 'the newest version leads even though its timestamp is the oldest');
+  eq(timeline[timeline.length - 1].prompt, 'p1', 'the first version stays last although it carries the latest time');
+});
+
+await test('§timeline order: a version made from an older one sits on top of its own chain, not where its time puts it', async () => {
+  const s = freshStore({ now: scriptedClock([SECOND + 60_000, SECOND + 60_000, SECOND + 60_000, SECOND]) });
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // g1
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2'); // g2
+  await s.snapshot('app', { 'bundle.js': BUNDLE(3) }, 'p3'); // g3
+  await s.rollback('app', 'g1');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(4) }, 'from p1'); // g4, made from g1, stamped earlier than all
+  eq((await s.timeline('app')).map(t => t.prompt), ['from p1', 'p1'], 'the new version is listed above the version it was made from');
+
+  await s.rollback('app', 'g1');
+  eq(
+    (await s.timeline('app')).map(t => t.prompt),
+    ['from p1', 'p3', 'p2', 'p1'],
+    'back on the first version, every later version is listed newest-made first, the first version last',
+  );
+});
+
+await test('§timeline order: a fork keeps its own chain in order within one second', async () => {
+  const s = freshStore({ now: () => SECOND });
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // main
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2'); // main
+  await s.fork('app', 'g1');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(3) }, 'fork a');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(4) }, 'fork b');
+  eq((await s.timeline('app')).map(t => t.prompt), ['fork b', 'fork a', 'p1'], "the fork lists its own versions newest first, then the version it came from");
+  await s.switchLineage('app', 'main');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(5) }, 'p3');
+  eq((await s.timeline('app')).map(t => t.prompt), ['p3', 'p2', 'p1'], "the original keeps its own chain, with none of the fork's versions");
+});
+
 // --- lineage identity (ADDED requirement: "Version enumeration and restore are
 //     lineage-correct") — spec.md scenarios, in English:
 //       * a non-diverged fork (checked out at the fork point, no snapshot of its own

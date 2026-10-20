@@ -18,7 +18,10 @@ import MakingPage from '../MakingPage';
 import { Sheet } from '../../ui/Sheet';
 import { PendingBuildStore } from '../pending-builds';
 import type { InstalledApp } from '../app-index';
+import type { StoreAccess } from '../store-access';
+import { listVersions } from '../history-logic';
 import { setColorScheme, windowMetrics } from './native-host';
+import { iosPop } from './native-screens';
 import { androidBack, button, hostType, isHost, press, screenReaderElement, textOf } from './react-screen';
 import { buildIt, makingSheetOpen, planLoaded, resultEvent, settle, sseStream, tap, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { streamingServer } from './prompt-flow-ui.suite';
@@ -178,6 +181,27 @@ export async function runWhimSheetUiTests(h: Harness): Promise<void> {
     } finally {
       Date.now = realNow;
     }
+  });
+
+  await h.test('whim sheet: past a hundred versions the version line still counts the whole chain, as History does', async () => {
+    await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+      await waitFor(() => showing(tree, HomeScreen) && home(tree).props.apps.length > 0, 'the example apps');
+      const app = tipSplitter(tree);
+      await TestRenderer.act(async () => home(tree).props.onHistory(app));
+      await waitFor(() => showing(tree, HistoryScreen), 'History, for the store it reads');
+      const access: StoreAccess = tree.root.findByType(HistoryScreen).props.access;
+      await TestRenderer.act(async () => {
+        for (let i = 2; i <= 102; i++) await access.update(app, { record: app.record, bundleSource: `V${i}`, prompt: `change ${i}` });
+      });
+      const chain = await listVersions(access, app);
+      h.eq(chain.length, 102, 'setup: 102 versions, more than the store lists by default');
+      await TestRenderer.act(async () => { await access.rollback(app, chain[chain.length - 2].id); });
+      await iosPop(tree);
+      await openTipSplitter(tree);
+      await openSheet(tree);
+      await waitFor(() => versionLine(tree) !== null, 'the version line');
+      h.ok(versionLine(tree)!.startsWith('Version 2 · '), `the app runs its second version, and the sheet says so (${versionLine(tree)})`);
+    });
   });
 
   await h.test('whim sheet: a change that lands while the app runs shows "New version ready · Reload" on top; the app keeps its version until Reload opens the new one', async () => {

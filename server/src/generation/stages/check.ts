@@ -63,7 +63,7 @@ export function createCheckStage(): CheckStage {
       const appliedSchema = ctx.appliedSchema as unknown as AppliedSchema | undefined;
       // Both edit-turn inputs are opt-in by input: `undefined` means "unconstrained" (a new app),
       // never a bug — passing them through untouched is this stage's whole job here.
-      const report = runStaticChecks(source, { appliedSchema, previousSurface: ctx.previousSurface });
+      const report = runStaticChecks(source, { appliedSchema, declaredFields: ctx.declaredFields, previousSurface: ctx.previousSurface });
       // A tint or icon name is never an error and never costs a repair turn (generation-pipeline
       // "The delivered app record is harness-validated"): its warnings are recorded here, by kind,
       // and kept out of the diagnostics the machine's repair policy reads.

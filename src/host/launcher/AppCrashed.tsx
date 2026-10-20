@@ -5,6 +5,10 @@
  * Ask Whim to fix it (`plain-ember`) and Back to your apps (`plain`). The orb stays over it
  * (`MiniAppView`).
  *
+ * A launch behind its app's current version (a change landed, an Undo moved the app, since it opened)
+ * says so instead and offers Reload and Back only: the error is from code no longer current, and a
+ * change is made from the current version, so a fix is offered once Reload runs that one.
+ *
  * It sits in the app's area, so it is drawn in the tokens the launch was delivered with (design-system-v1
  * 18g), not the phone's live ones. Nothing of the realm's error is shown here: the error goes, as plain
  * text, only into the request "Ask Whim to fix it" prefills (`crash-report.ts`).
@@ -26,6 +30,8 @@ export interface AppCrashedProps {
   tokens: ShellTokens;
   /** Below this the orb sits: the actions end above it. */
   bottomClearance: number;
+  /** A newer version of the app than this launch runs is current: no "Ask Whim to fix it". */
+  behind: boolean;
   onReload: () => void;
   onAskFix: () => void;
   onExit: () => void;
@@ -73,7 +79,7 @@ function Action({ label, variant, labelColor, onPress, tokens }: Readonly<{
 
 /** The mark, title and body centred in the space above the actions; the actions at the bottom, just
  *  above the orb (the mockups' `#app-error`). At large text sizes the whole screen scrolls. */
-export function AppCrashed({ name, tokens, bottomClearance, onReload, onAskFix, onExit }: Readonly<AppCrashedProps>) {
+export function AppCrashed({ name, tokens, bottomClearance, behind, onReload, onAskFix, onExit }: Readonly<AppCrashedProps>) {
   const c = tokens.colors;
   return (
     <ScrollView
@@ -85,11 +91,13 @@ export function AppCrashed({ name, tokens, bottomClearance, onReload, onAskFix, 
           <Icon name="circle-alert" size={MARK.icon} color={c.text} />
         </View>
         <Text tokens={tokens} type="title2" style={styles.title}>{appCrashedTitle(name)}</Text>
-        <Text tokens={tokens} color="text-2" style={styles.centred}>{COPY.appCrashedBody}</Text>
+        <Text tokens={tokens} color="text-2" style={styles.centred}>{behind ? COPY.appCrashedBehindBody : COPY.appCrashedBody}</Text>
       </View>
       <View style={styles.actions}>
         <Action tokens={tokens} label={COPY.actionReload} variant="ink" labelColor="on-ink" onPress={onReload} />
-        <Action tokens={tokens} label={COPY.appCrashedAskFix} variant="plain-ember" labelColor="ember-text" onPress={onAskFix} />
+        {behind ? null : (
+          <Action tokens={tokens} label={COPY.appCrashedAskFix} variant="plain-ember" labelColor="ember-text" onPress={onAskFix} />
+        )}
         <Action tokens={tokens} label={COPY.launchFailedBack} variant="plain" labelColor="text" onPress={onExit} />
       </View>
     </ScrollView>

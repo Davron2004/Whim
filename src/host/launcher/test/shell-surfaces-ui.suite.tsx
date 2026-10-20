@@ -1334,6 +1334,24 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     await act(() => floating.unmount());
   });
 
+  await h.test('Toast: the chrome under it changing while it is pressed (History to Home) does not move it from under the finger; let go, it moves', async () => {
+    await resetPhone();
+    let api!: ToastApi;
+    const Grab = () => { api = useToast(); return null; };
+    const tree = await render(<ToastHost bottomOffset={0}><Grab /></ToastHost>);
+    await act(() => api.show({ message: 'Back on version 1', undo: true, action: { label: 'Undo', onPress: () => {} } }));
+    const bottom = () => flat(tree.root.find((n) => hostType(n) === 'View' && n.props.pointerEvents === 'box-none')).bottom;
+    const capsule = () => tree.root.find((n) => hostType(n) === 'Animated.View' && n.props.accessibilityLiveRegion === 'polite');
+    const insetBottom = useSafeAreaInsets().bottom;
+    const above = (offset: number) => insetBottom + offset + TOAST.above;
+    await act(() => capsule().props.onTouchStart());
+    await act(() => tree.update(<ToastHost bottomOffset={64}><Grab /></ToastHost>));
+    h.eq(bottom(), above(0), 'pressed: it stays where the finger came down');
+    await act(() => capsule().props.onTouchEnd());
+    h.eq(bottom(), above(64), 'let go: it sits above what floats now');
+    await act(() => tree.unmount());
+  });
+
   await h.test('Toast: releasing a swipe reaches for no motion token — the release runs on the UI thread, where the helpers that read them cannot be called and a call ends the app', async () => {
     const cases: [string, boolean, number[], number, boolean][] = [
       ['a nudge', false, [12, 16], 0, false],

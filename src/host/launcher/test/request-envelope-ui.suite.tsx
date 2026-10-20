@@ -145,12 +145,11 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
   await h.test('envelope: a report sent without a grant says so with none, and still names the installed app', async () => {
     // The test app has no version-store repo; stub the reads the history screen and the report
     // draft make (class methods are not enumerable, so they are saved by name).
-    const { timeline, activeId, activeDescription, activeSource } = StoreAccess.prototype;
-    const original = { timeline, activeId, activeDescription, activeSource };
+    const { timeline, activeId, activeWords } = StoreAccess.prototype;
+    const original = { timeline, activeId, activeWords };
     StoreAccess.prototype.timeline = async () => [];
     StoreAccess.prototype.activeId = async () => null;
-    StoreAccess.prototype.activeDescription = async () => 'A tea timer';
-    StoreAccess.prototype.activeSource = async () => 'export default {}';
+    StoreAccess.prototype.activeWords = async () => ({ prompt: 'A tea timer', source: 'export default {}' });
     try {
       await withLauncher({ consent: false, apps: [APP], server: () => json({ reportId: 'r-1' }, 202) }, async ({ tree, sent }) => {
         await TestRenderer.act(async () => home(tree).props.onHistory(APP));

@@ -296,12 +296,11 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('own server: confirming shows the field; a LAN http:// address typed there gets clarify, rewrite, generate and report, under the responsibility caption', async () => {
-    const { timeline, activeId, activeDescription, activeSource } = StoreAccess.prototype;
-    const original = { timeline, activeId, activeDescription, activeSource };
+    const { timeline, activeId, activeWords } = StoreAccess.prototype;
+    const original = { timeline, activeId, activeWords };
     StoreAccess.prototype.timeline = async () => [];
     StoreAccess.prototype.activeId = async () => null;
-    StoreAccess.prototype.activeDescription = async () => 'A tea timer';
-    StoreAccess.prototype.activeSource = async () => 'export default {}';
+    StoreAccess.prototype.activeWords = async () => ({ prompt: 'A tea timer', source: 'export default {}' });
     try {
       await withLauncher({ apps: [APP], server: ownServer }, async ({ tree, sent }) => {
         await openAdvanced(tree);

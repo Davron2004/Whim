@@ -116,19 +116,18 @@ async function landChange(tree: Tree, kv: KVBackend, streams: readonly ReturnTyp
   await settle();
 }
 
-/** From the running app: orb → History → the version before the current one (not the install, which
- *  has no Go back) → Go back → History's Back. The app opens again, now behind its own tip, and paints. */
+/** From the running app: orb → History → the version before the current one → Use this version →
+ *  History's Back. The app opens again, now behind its own tip, and paints. */
 async function runBehindTip(tree: Tree, app: InstalledApp): Promise<void> {
   await openSheet(tree);
   await press(button(tree, COPY.actionHistory));
   await waitFor(() => showing(tree, HistoryScreen), 'History');
   const access: StoreAccess = tree.root.findByType(HistoryScreen).props.access;
   const [tip, older] = await access.timeline(app);
-  const rowOf = (id: string) => tree.root.find((n) => typeof n.type === 'function' && typeof n.props.onGoBack === 'function' && n.props.row?.id === id);
+  const rowOf = (id: string) => tree.root.find((n) => typeof n.type === 'function' && typeof n.props.onUseVersion === 'function' && n.props.row?.id === id);
   await waitFor(() => tree.root.findAll((n) => typeof n.type === 'function' && n.props.row?.id === older.id).length > 0, 'the older version’s row');
   await TestRenderer.act(async () => rowOf(older.id).props.onToggle());
-  await press(button(tree, COPY.historyGoBackToThis));
-  await press(button(tree, COPY.historyRestoreConfirm));
+  await press(button(tree, COPY.historyUseVersion));
   await settle();
   const active = await access.activeId(app);
   if (active !== older.id || active === tip.id) throw new Error('the older version was not restored');

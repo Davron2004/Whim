@@ -18,6 +18,9 @@ export interface CheckContext {
   source: string;
   sourceFile: ts.SourceFile;
   appliedSchema?: AppliedSchema;
+  /** Fields a saved version declares that `appliedSchema` does not hold (an edit turn): burned ids
+   *  with a fixed type and no column. Absent means none. */
+  declaredFields?: readonly DeclaredField[];
   /** The storage surface of the source this candidate REPLACES, when the caller has one (an
    *  edit turn). Absent for a first generation — continuity is then unconstrained. */
   previousSurface?: StorageSurface;
@@ -29,6 +32,13 @@ export interface CheckContext {
    *  found, even if some fields failed to extract — lets later passes locate manifest
    *  sub-nodes (e.g. the `schema` property) for line-accurate diagnostics. */
   manifestArgumentNode?: ts.ObjectLiteralExpression;
+}
+
+/** One field a saved version declares: its collection id, field id and type. */
+export interface DeclaredField {
+  collection: string;
+  id: string;
+  type: string;
 }
 
 /** Every pass is a pure function over the shared context; it emits via `ctx.report`. */
@@ -390,6 +400,7 @@ export function buildContext(
   report: (d: Diagnostic) => void,
   appliedSchema: AppliedSchema | undefined,
   previousSurface?: StorageSurface,
+  declaredFields?: readonly DeclaredField[],
 ): CheckContext {
-  return { source, sourceFile, appliedSchema, previousSurface, report };
+  return { source, sourceFile, appliedSchema, declaredFields, previousSurface, report };
 }

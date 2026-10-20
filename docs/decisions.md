@@ -1648,3 +1648,79 @@ listed in `RunReport.screens.coldMounted` with no diagnostic, so it never costs 
   routing alone (screens gated by chained state would still cost a turn that cannot fix them).
 - **Unchanged.** The machine's warnings policy; a gated screen that throws on render is still an error.
 
+### 81. A launch takes its record from the version it runs `[DECIDED — openspec: design-system-v1 chain-20e/20f; supersedes #53 D7's schemaJson]`
+
+Since History can use any version, Undo it, and copy from it, the app list's record and the code
+the store makes active could disagree: an Undo after leaving History, an Undo still running when
+History was left, or a record write that failed after the store moved. The bridge gates by the
+record the realm is launched with (#41), so such a split ran one version's code with another's
+grants: storage it never declared, cues it did declare refused.
+
+- **Each version keeps its own manifest and schema.** `StoreAccess` saves `manifest.json` (without
+  the host's tile colour) and, when declared, `schema.json` beside every bundle, derived from the
+  record the version was built with and nothing else. #53 D7's caller-supplied `schemaJson` is gone.
+- **The launch derives the record.** `StoreAccess.activeLaunch` reads the active version's code and
+  its manifest and schema in one per-repo section; the host's fields (app id, name, tile) come from
+  the app list. The app list's record is a copy: a launch that finds it different writes the
+  derived one back, and a failed copy write never fails a switch that has happened.
+- **A version is parsed before anything moves.** Use this version, Undo and Make a copy read the
+  target version first, so a damaged one is refused with the app where it was.
+- **Storage stays the accumulated union** (#38/#40). An older version opens its store as an older
+  subset; the fields a later one added stay, unused, until a version that names them runs again.
+- **The burned-ID floor counts every saved version.** A change request's `appliedSchema` adds, as
+  retired columns, the fields any saved version of the apps sharing that store declares in a
+  collection the store already holds. The floor, the checker's type rule and identity continuity
+  then treat a never-opened later version's ids as burned but not required. No wire change.
+- **Known limitations (pre-release, accepted).** A version saved before versions kept their
+  manifest runs with the record the app holds now. A collection only a never-opened version
+  declares adds no floor (collection ids have none), so a later change can reuse its id.
+- **Rejected.** Keeping the app list's record authoritative and repairing it on every write path
+  (each path is another chance to split); a new wire field for declared schemas (the checker would
+  need a second baseline, and the retired column already means "burned, type fixed, not required").
+
+### 82. Declared fields travel beside the applied schema; a change is made from the active version `[DECIDED — openspec: design-system-v1 chain-20g; amends #81's floor bullet and its rejected wire field]`
+
+#81 folded the fields a saved version declares, and the store does not hold, into `appliedSchema` as
+retired columns. Retired also means "a column exists": `diffSchemas` reads a reuse of such an id as a
+rollback across a tombstone and asks no default. A change from an older version that names a
+never-opened version's `f2:int` without a default therefore passed the server, and the delivered
+version refused to open on the device (`missing_default` against the real `_meta`). #81's own
+rejected option was the right one.
+
+- **`app.declaredFields`, an optional wire list of `{ collection, id, type }`.** `appliedSchema` holds
+  only what the store holds. The checker builds its burned-id view from both (`burnedSchema`): the
+  floor counts declared ids (the prompt states the same floor), a reuse with another type is a
+  `type_change`, and the diff still runs against the store alone, so a reuse needs a default. Identity
+  continuity ignores them. Collections the store lacks are included, which narrows #81's collection
+  limitation to collection ids themselves.
+- **Backward compatible.** `GenerateRequest.app` is a non-strict zod object in every deployed build, so
+  an older server strips the field and checks against the true store: it keeps the missing-default
+  repair and lacks only the type rule for never-opened ids (the pre-#81 behaviour).
+- **A change is made from the active version, read with its record.** `StoreAccess.activeEdit` reads
+  the active version's source, words and the record it runs with in one per-repo section, as
+  `activeLaunch` does; the caller's copy of the record is never sent. Not the version a running realm
+  may still show: delivery builds on the active version, and a running app lags it only when a change
+  landed unreloaded, which editing the shown code would drop from the app's line.
+- **History's Undo is the shell's** (`VersionSwitches`, as `PurgeWindows` owns a delete's): it runs
+  after History is gone, Home and History follow it, it shows for the Undo window, and a newer switch of
+  the app drops an older switch's Undo.
+- **Each saved version's schema is read once per process** (versions are immutable). Reading only
+  `manifest.json`/`schema.json` needs a version-store read verb that does not exist yet.
+
+**Amendment (chain-20h, 2026-10-20).**
+
+- **`declaredFields` is validated at the wire.** Each `collection`/`id` matches the engine's
+  `BURNED_ID_RE` and each `type` is one of its `FIELD_TYPES`, both imported by the contract from the
+  engine's dependency-free `contract.ts` (no engine code reaches the server bundle, no zod reaches
+  Metro). The list is capped at 512: it holds only never-created fields of unopened or rolled-back
+  versions, deduplicated, so a real history stays far below it. Anything else is one `400
+  invalid_request` before admission. `burnedSchema` uses keyed lookups, linear in the request.
+- **A crash behind the current version leads with Reload.** A change is made from the active version,
+  so a fix request from a launch behind it would send the active code with the older code's error. Such
+  a launch (a change landed unreloaded, or an Undo moved the app after it opened) shows "a newer
+  version is ready" with Reload and Back only; the fix is offered once Reload runs the current version.
+  *Rejected:* sending the request without the error (it describes nothing the person saw), or with it
+  (it blames the active code for an error it never raised).
+- **A failed switch does not cost an older Undo.** An Undo whose newer switch is still running waits
+  for it; it is dropped only if that switch lands.
+

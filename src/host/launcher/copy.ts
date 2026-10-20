@@ -202,19 +202,16 @@ export const COPY = {
 
   // ── history (4a) ────────────────────────────────────────────────────────────
   actionHistory: 'History',
-  /** The header reads "<app name, in its own hue> history" — the name is a coloured span the
-   *  screen composes, so only the trailing word lives here. */
-  historyTitleSuffix: 'history',
-  historyOriginYouSaid: 'You said',
-  historyOriginUnprompted: 'Whim, on its own',
-  historyCurrentMarker: '↑ you’re on this one',
+  /** The History screen's title (system.md §9); the app's name and version count sit under it. */
+  historyTitle: 'History',
+  /** The badge on the version the app runs now. */
+  historyCurrent: 'Current',
   historyTouchedEyebrow: 'What it touched',
-  historyChangeFromHere: 'Change it from here',
-  historyGoBackToThis: 'Go back to this',
-  historyStartCopyHere: 'Start a copy here',
-  historyFilterWhatItDoes: 'What it does',
-  historyFilterLook: 'Look',
-  historyFilterFixes: 'Fixes',
+  /** An older (or, after going back, a newer) version's two actions; the current one offers
+   *  `actionChangeIt`. Both act at once: Undo, not a question (system.md §7.1 Timeline row). */
+  historyUseVersion: 'Use this version',
+  historyMakeCopyHere: 'Make a copy from here',
+  historyUseVersionFailed: 'Couldn’t switch to that version.',
   historyKindAdded: 'Added',
   historyKindChanged: 'Changed',
   historyKindRemoved: 'Removed',
@@ -222,16 +219,16 @@ export const COPY = {
   historyKindFixed: 'Fixed',
   historyKindStart: 'Start',
   historyInstallLabel: 'Where this app began',
-  historyReassurance: 'Nothing is deleted — this data returns when you move to a newer version.',
-  historyRestoreConfirm: 'Go back to it',
-  historyCopyConfirm: 'Make the copy',
-  historyCopyToast: 'Copy made — it’s on your home screen',
+  /** An opened version's hidden-data line, read before either action: using it would hide fields the
+   *  current version has. It speaks of using the version only: a fresh copy has no data to hide, and
+   *  data a copy carries never "comes back" to it. */
+  historyHiddenData: 'If you use this version, some saved data won’t show. It isn’t deleted and comes back when you return.',
   /** The three history wait states (`version-history`, flow-wait-hygiene): the first-load
-   *  skeleton's screen-reader name, the two confirm buttons' in-flight labels, and the name of
-   *  the muted placeholder standing in for the reassurance line while it is computed. */
+   *  skeleton's screen-reader name, the two row actions' in-flight words, and the name of the
+   *  muted placeholder standing in for the hidden-data line while it is computed. */
   historyLoadingLabel: 'Looking up this app’s history',
-  historyRestoreConfirmBusy: 'Going back…',
-  historyCopyConfirmBusy: 'Making the copy…',
+  historyUseVersionBusy: 'Switching…',
+  historyMakeCopyBusy: 'Making the copy…',
   historyReassurancePending: 'Checking what this changes',
 
   // ── inside a running app: the orb ───────────────────────────────────────────
@@ -313,6 +310,8 @@ export const COPY = {
   // §9 App crashed): its title is `appCrashedTitle`, its Reload `actionReload`, its last action
   // `launchFailedBack`.
   appCrashedBody: 'It stopped and can’t carry on right now. Your saved data is safe.',
+  /** The body while the crashed launch is behind its app's current version: Reload opens that one. */
+  appCrashedBehindBody: 'It stopped, and a newer version is ready. Reload to open it. Your saved data is safe.',
   appCrashedAskFix: 'Ask Whim to fix it',
   /** The request "Ask Whim to fix it" puts in the Whim sheet's field, the error attached under it. */
   appCrashedFixRequest: 'Fix the error that stops this app.',
@@ -1058,10 +1057,14 @@ export function whimSheetVersionLine(version: number, changedAt: number, now: nu
   return `Version ${version} · changed ${agoWords(changedAt, now)}`;
 }
 
-/** The history header's subtitle: "7 versions · started 3 days ago". */
-export function historySubtitle(versionCount: number, startedWhen: string): string {
-  const versions = versionCount === 1 ? '1 version' : `${versionCount} versions`;
-  return `${versions} · started ${startedWhen}`;
+/** How many versions History lists, under the app's name: "4 versions". */
+export function historyVersionCount(versionCount: number): string {
+  return versionCount === 1 ? '1 version' : `${versionCount} versions`;
+}
+
+/** A History row's meta line: "v4 · 2 days ago". */
+export function historyRowMeta(version: string, createdAt: number, now: number): string {
+  return `${version} · ${agoWords(createdAt, now)}`;
 }
 
 /** A history row's headline under `You said` (design 4a, "the prompt is the headline"): the
@@ -1070,42 +1073,15 @@ export function historyQuotedPrompt(prompt: string): string {
   return `“${prompt}”`;
 }
 
-/** The all-versions filter pill, whose count is live: "All 7". */
-export function historyFilterAll(versionCount: number): string {
-  return `All ${versionCount}`;
-}
-
-/** The copy-this-version confirm sheet's title. */
-export function copySheetTitle(version: string): string {
-  return `Start a second app from ${version}?`;
-}
-
-/** The copy-this-version confirm sheet's body: two apps, and the one in use is untouched. */
-export function copySheetBody(name: string): string {
-  return `You’ll have two ${name}s. The one you’re using now stays exactly as it is.`;
-}
-
-/** The go-back-to-this confirm sheet's title. */
-export function restoreSheetTitle(version: string): string {
-  return `Go back to ${version}?`;
-}
-
-/**
- * The go-back-to-this confirm sheet's body: what comes off, what is kept, and that the user can
- * come forward again from this list. `losing` names the specific thing when the screen knows it
- * (e.g. "the bigger numbers") and otherwise stays generic.
- */
-export function restoreSheetBody(version: string, losing = 'the last few changes'): string {
-  return `Everything after ${version} comes off — including ${losing}. Your saved data stays. You can come forward again from this list.`;
-}
-
 /** How many repair tries a run is permitted: the server's own bound (`repairAttempts`), which the
  *  wire does not carry. The repair row's "of 3" and the "I tried 3 times" failure read from it. */
 export const REPAIR_ATTEMPT_LIMIT = 3;
 
-/** The toast after a restore: "You're on v4 now". */
-export function restoredToast(version: string): string {
-  return `You’re on ${version} now`;
+/** The toast after "Use this version", offered with Undo: "Back on version 3" when the app goes to
+ *  an older version than `from`, the one that was current; "Now on version 4" when it goes to a newer
+ *  one. */
+export function versionSwitchToast(version: number, from: number | null): string {
+  return from !== null && version > from ? `Now on version ${version}` : `Back on version ${version}`;
 }
 
 /** The report sheet's collapsed code row (content-reporting "the app's code (its size, with the
