@@ -1,6 +1,6 @@
 /**
  * Checks the Android project's identity-independent shape: the app-link intent filter,
- * `singleTask` + portrait on `MainActivity`, and the one network security config every build type
+ * `singleTask` + portrait + the handled config changes on `MainActivity`, and the one network security config every build type
  * uses (specs/app-links/spec.md "The Android app verifies and delivers app links";
  * specs/native-release-config/spec.md "Store builds carry no cleartext exception" as beta-1 D20
  * amends it, "The iOS app declares its export, device and permission surface" Android portrait
@@ -52,6 +52,27 @@ function findViewIntentFilter(activityBody: string): { attrs: string; body: stri
   return undefined;
 }
 
+/** `MainActivity` handles a font-size change and a light/dark switch in place (MainActivity.kt
+ *  re-reads both), and leaves a display-size change to Android's default, recreating it. */
+function configChangesProblems(activityAttrs: string): string[] {
+  const configChanges = (/android:configChanges="([^"]*)"/.exec(activityAttrs)?.[1] ?? '').split('|');
+  const problems: string[] = [];
+  for (const [change, why] of [
+    ['fontScale', 'recreating the activity on a font-size change closes a running app and loses its state (issue #201)'],
+    ['uiMode', 'recreating the activity on a light/dark switch closes a running app and loses its state'],
+  ] as const) {
+    if (!configChanges.includes(change)) {
+      problems.push(`MainActivity's android:configChanges must include ${change}: ${why}`);
+    }
+  }
+  if (configChanges.includes('density')) {
+    problems.push(
+      "MainActivity's android:configChanges must not include density: a display-size change keeps Android's default and recreates the activity, since React Native's Fabric pins the pixel density when it starts (FabricUIManagerBinding.setPixelDensity) and nothing re-lays the views out at a new density in place",
+    );
+  }
+  return problems;
+}
+
 function checkManifest(repoRoot: string): AndroidProjectFinding[] {
   const text = readXml(repoRoot, ANDROID_MANIFEST_PATH);
   if (text === undefined) {
@@ -69,6 +90,7 @@ function checkManifest(repoRoot: string): AndroidProjectFinding[] {
   if (!/android:screenOrientation="portrait"/.test(activity.attrs)) {
     problems.push('MainActivity must declare android:screenOrientation="portrait"');
   }
+  problems.push(...configChangesProblems(activity.attrs));
 
   const filter = findViewIntentFilter(activity.body);
   if (filter === undefined) {
