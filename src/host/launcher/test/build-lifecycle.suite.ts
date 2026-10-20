@@ -13,7 +13,7 @@
 
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
-import { PendingBuildStore } from '../pending-builds';
+import { AttemptInFlight, PendingBuildStore } from '../pending-builds';
 import type { InstalledApp } from '../app-index';
 import { StoreAccess, type InstallSpec, type UpdateSpec } from '../store-access';
 import {
@@ -136,6 +136,35 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     const second = startPendingBuild(store, { text: 'a water counter' });
     h.ok(first !== second, 'each brand-new attempt gets its own launcher id');
     h.eq(store.list().length, 2, 'and both records stand on the grid');
+  });
+
+  await h.test('start: a second change of an app whose change is still running is refused and writes nothing; once that run settles, the app takes the next one', async () => {
+    const kv = new MapKVBackend();
+    const store = new PendingBuildStore(kv);
+    const id = startPendingBuild(store, { editing: APP, text: 'add a dark mode' });
+    const lease = store.activateAttempt(id);
+    const before = [kv.getString(`pending:${id}`), kv.getString('pending:order')];
+    let refused: unknown;
+    try {
+      startPendingBuild(store, { editing: APP, text: 'make it purple' });
+    } catch (error) {
+      refused = error;
+    }
+    h.ok(refused instanceof AttemptInFlight && refused.id === APP.id, 'the second change is refused, naming the app’s id');
+    h.eq([kv.getString(`pending:${id}`), kv.getString('pending:order')], before, 'the running change’s record and the order are as they were');
+    h.ok(store.isCurrentAttempt(lease), 'the first change still owns the id');
+    let retry: unknown;
+    try {
+      startPendingBuild(store, { editing: APP, text: 'add a dark mode', reuseId: id });
+    } catch (error) {
+      retry = error;
+    }
+    h.ok(retry instanceof AttemptInFlight, 'a Try again under the same id is refused while it runs too');
+    h.ok(startPendingBuild(store, { text: 'a dice roller' }) !== id, 'a new app is not held up');
+
+    store.setFailed(id, { reason: 'The change did not build.' });
+    store.releaseAttempt(lease);
+    h.eq(store.get(startPendingBuild(store, { editing: APP, text: 'make it purple' }))?.prompt, 'make it purple', 'a settled change leaves the app free for the next one');
   });
 
   await h.test('delivery: the installed app keeps the id allocated at generation start', async () => {

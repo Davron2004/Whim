@@ -53,7 +53,6 @@ import { GroupedRow, GroupedSection } from '../../ui/GroupedList';
 import { Text } from '../../ui/Text';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
-import SheetModal from '../SheetModal';
 import { gridLayout, TILE, TILE_SIDE } from '../../ui/AppTile-geometry';
 import KeyboardShell from '../KeyboardShell';
 import { COPY } from '../copy';
@@ -900,57 +899,6 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     await act(() => tree.unmount());
   });
 
-  const reportHeader = React.createElement('Text', { accessibilityRole: 'header' }, 'Report');
-
-  await h.test('SheetModal: it takes its turn with a sheet like any overlay: shown as a sheet is leaving it waits, and the system refuses nothing', async () => {
-    await resetPhone();
-    const refused = modalPresentations.refused;
-    const pair = (sheet: boolean, report: boolean) => (
-      <>
-        <Sheet visible={sheet} title="Making" onClose={() => {}}><Body /></Sheet>
-        <SheetModal visible={report} onClose={() => {}}>{reportHeader}</SheetModal>
-      </>
-    );
-    const tree = await render(pair(true, false));
-    const release = holdModalDismissals();
-    try {
-      await act(() => tree.update(pair(false, true)));
-      h.eq([overlayTitles(tree), modalPresentations.refused - refused], [[], 0], 'the sheet has left but its dismissal is not reported: the report form is not presented into it');
-      await act(() => release());
-      h.eq([overlayTitles(tree), modalPresentations.refused - refused], [['Report'], 0], 'once it is, the report form is presented');
-      await act(() => tree.update(pair(false, false)));
-      h.eq(modalHosts(tree).length, 0, 'and closing it leaves no window behind');
-    } finally {
-      release();
-      await act(() => tree.unmount());
-    }
-  });
-
-  await h.test('SheetModal: its close ends its turn at once on Android, and on iOS when the system reports the dismissal', async () => {
-    try {
-      for (const os of ['android', 'ios'] as const) {
-        await resetPhone();
-        Platform.OS = os;
-        const timers = captureTimeouts();
-        const release = holdModalDismissals();
-        try {
-          const element = (visible: boolean) => <SheetModal visible={visible} onClose={() => {}}>{reportHeader}</SheetModal>;
-          const tree = await render(element(true));
-          await act(() => tree.update(element(false)));
-          h.eq([modalHosts(tree).length, timers.count(EXIT_CEILING_MS)], [os === 'android' ? 0 : 1, 0], `${os}: closing has no exit to wait for: ${os === 'android' ? 'its window is gone' : 'its window waits for the system'}, and no ceiling runs`);
-          await act(() => release());
-          h.eq(modalHosts(tree).length, 0, `${os}: gone`);
-          await act(() => tree.unmount());
-        } finally {
-          release();
-          timers.restore();
-        }
-      }
-    } finally {
-      Platform.OS = 'ios';
-    }
-  });
-
   await h.test('Overlays: a text-size change while a sheet holds another overlay builds the content again without presenting into the dismissal under way, and the inner overlay comes back', async () => {
     await resetPhone();
     const timers = captureTimeouts();
@@ -959,7 +907,7 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
       const refused = modalPresentations.refused;
       const element = () => (
         <Sheet visible title="Making" onClose={() => {}}>
-          <SheetModal visible onClose={() => {}}>{reportHeader}</SheetModal>
+          <Probe name="Report" wanted />
         </Sheet>
       );
       const tree = await render(element());

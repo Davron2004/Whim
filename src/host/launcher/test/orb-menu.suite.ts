@@ -1,87 +1,110 @@
 /**
- * orb-menu acceptance (shell-redesign-v2 chain-G, `app-launcher` §"The orb is a tapped menu
- * whose actions are instrumented"; design D12).
- *
- * The action set and its persisted tap counts are pure and exercised directly; the rendered `Orb`
- * is driven at the end, for which callback each action reaches, what gets counted, and that its
- * rows take taps only once the menu has risen into place.
+ * orb-menu acceptance: what the orb is once its tapped menu is gone (design-system-v1 task 19.5,
+ * `app-launcher` "The orb is an opaque, draggable disc that opens the Whim sheet"; the menu and its
+ * tap counters are REMOVED). A tap opens the Whim sheet and nothing of the orb's own; the counters the
+ * old menu stored are removed from the phone at launch, once; the footprint the realm is told.
+ * Dragging, corners and the keyboard are in `orb-ui.suite.tsx`; the sheet itself in
+ * `whim-sheet-ui.suite.tsx`.
  */
 
 import React from 'react';
-import TestRenderer from 'react-test-renderer';
 import { StyleSheet } from 'react-native';
 import { Harness } from './harness';
-import { MapKVBackend } from '../../version-store/fs/kv-fs';
-import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
+import { MapKVBackend, type KVBackend } from '../../version-store/fs/kv-fs';
+import HomeScreen from '../HomeScreen';
 import { COPY } from '../copy';
 import Orb from '../Orb';
-import {
-  ORB_ACTIONS,
-  recordOrbAction,
-  loadOrbActionCounts,
-  type OrbActionId,
-} from '../orb-actions';
 import { chromeInsetBottom } from '../orb-geometry';
+import { sweepRetiredKeys } from '../retired-keys';
 import { resetNativeStorage } from './native-storage';
-import { finishAnimations } from './native-host';
 import { button, press, renderScreen, unmountScreen, hostType } from './react-screen';
+import { waitFor, withLauncher } from './rendered-launcher';
 
-/** The menu's rise runs its course. */
-const risen = () => TestRenderer.act(async () => { finishAnimations(); });
+/** The keys the retired menu wrote: `orb-action-count:` and the action, one per action tapped
+ *  (`orb-actions.ts#recordOrbAction`, removed in task 19.5), each holding its count. */
+const OLD_COUNTERS: Readonly<Record<string, string>> = {
+  'orb-action-count:change': '4',
+  'orb-action-count:home': '12',
+  'orb-action-count:versions': '1',
+  'orb-action-count:report': '2',
+};
+
+/** A KVBackend over `inner` that counts what is done to it. */
+function counted(inner: KVBackend) {
+  const ops = { reads: 0, writes: 0, deletes: 0 };
+  const kv: KVBackend = {
+    getString: (key) => { ops.reads++; return inner.getString(key); },
+    set: (key, value) => { ops.writes++; inner.set(key, value); },
+    delete: (key) => { ops.deletes++; inner.delete(key); },
+    getAllKeys: () => inner.getAllKeys(),
+  };
+  return { kv, ops };
+}
+
+const entries = (kv: KVBackend) => Object.fromEntries(kv.getAllKeys().map((key) => [key, kv.getString(key)]));
 
 export async function runOrbMenuTests(h: Harness): Promise<void> {
-  // ── the action set ─────────────────────────────────────────────────────────
-  await h.test('orb-menu: the action set contains nothing destructive', async () => {
-    const ids = ORB_ACTIONS.map((a) => a.id);
-    const destructive = ['delete', 'rename', 'restore'];
-    for (const bad of destructive) {
-      h.ok(!ids.includes(bad as OrbActionId), `"${bad}" must never be an orb menu action`);
-      h.ok(
-        !ORB_ACTIONS.some((a) => a.label.toLowerCase().includes(bad)),
-        `no action label mentions "${bad}"`,
-      );
-    }
-  });
-
-  // ── instrumentation persists, cross-session, off-screen ───────────────────
-  await h.test('orb-menu: tap counts accumulate across two launches for the same action', async () => {
-    const kv = new MapKVBackend();
-    recordOrbAction(kv, 'versions'); // "launch" 1
-    const restarted = new MapKVBackend(kv.raw()); // simulate an app restart over the same store
-    recordOrbAction(restarted, 'versions'); // "launch" 2
-    h.eq(loadOrbActionCounts(restarted).versions, 2, 'the same action fired twice across two launches counts as two');
-  });
-
-  await h.test('orb-menu: counts are per-action and start at zero', async () => {
-    const kv = new MapKVBackend();
-    recordOrbAction(kv, 'change');
-    recordOrbAction(kv, 'change');
-    recordOrbAction(kv, 'home');
-    const counts = loadOrbActionCounts(kv);
-    h.eq(counts.change, 2, 'change counted twice');
-    h.eq(counts.home, 1, 'home counted once');
-    h.eq(counts.versions, 0, 'versions never fired, still readable as zero');
-  });
-
-  await h.test('orb-menu: instrumentation keys are namespaced, not the bare action id', async () => {
-    const kv = new MapKVBackend();
-    recordOrbAction(kv, 'versions');
-    const keys = kv.getAllKeys();
-    h.ok(keys.some((k) => k.includes('versions') && k !== 'versions'), 'the persisted key is not the literal action id "versions"');
-  });
-
-  await h.test('orb-menu: a tolerant, corrupt prior value is treated as zero, never throws', async () => {
-    const kv = new MapKVBackend();
-    kv.set('orb-action-count:home', 'not-a-number');
-    let threw = false;
+  // ── a tap opens the Whim sheet ─────────────────────────────────────────────
+  await h.test('orb-menu: a tap on the orb opens the Whim sheet, each time, and draws nothing of its own', async () => {
+    resetNativeStorage();
+    let opened = 0;
+    const tree = await renderScreen(React.createElement(Orb, { appId: 'app-a', onOpen: () => { opened++; } }));
     try {
-      recordOrbAction(kv, 'home');
-      // eslint-disable-next-line no-restricted-syntax -- intentional: the assertion IS "did it throw"; the thrown value is deliberately discarded and h.ok below reports the outcome
-    } catch {
-      threw = true;
+      await press(button(tree, COPY.orbMenuOpenLabel));
+      await press(button(tree, COPY.orbMenuOpenLabel));
+      h.eq(opened, 2, 'each tap opens the sheet once, and the orb keeps its name ("Whim menu") after a tap');
+      h.eq(tree.root.findAll((n) => hostType(n) === 'Modal').length, 0, 'no menu or scrim of the orb’s own');
+      h.eq(tree.root.findAll((n) => hostType(n) === 'Pressable').length, 1, 'the orb is its one control');
+    } finally {
+      await unmountScreen(tree);
     }
-    h.ok(!threw, 'recordOrbAction never throws on a corrupt prior value');
-    h.eq(loadOrbActionCounts(kv).home, 1, 'a corrupt prior value resets the effective count to zero before the bump');
+  });
+
+  await h.test('orb-menu: the orb button carries no elevation (the Android grey-disc regression)', async () => {
+    resetNativeStorage();
+    const tree = await renderScreen(React.createElement(Orb, { appId: 'app-a', onOpen: () => {} }));
+    try {
+      const styles = button(tree, COPY.orbMenuOpenLabel).findAll((n) => typeof n.type === 'string').map((n) => StyleSheet.flatten(n.props.style) as Record<string, unknown>);
+      h.ok(styles.every((s) => !('elevation' in s)), 'no elevation style anywhere in the orb: it drew a solid grey disc on Android, not a shadow');
+      h.ok(styles.some((s) => typeof s.boxShadow === 'string' && s.boxShadow.length > 0), 'its shadow is a boxShadow, which both platforms draw');
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
+  // ── the retired menu's stored counters leave the phone ─────────────────────
+  await h.test('orb-menu: launching Whim removes the retired menu’s tap counters and keeps every other stored setting', async () => {
+    let kept: Record<string, string | null | undefined> = {};
+    await withLauncher({
+      server: () => new Response(null, { status: 404 }),
+      prepare: (kv) => {
+        for (const [key, value] of Object.entries(OLD_COUNTERS)) kv.set(key, value);
+        kv.set('orb-corner:app-a', 'leading');
+        kept = Object.fromEntries(kv.getAllKeys().filter((key) => !(key in OLD_COUNTERS)).map((key) => [key, kv.getString(key)]));
+      },
+    }, async ({ tree, kv }) => {
+      await waitFor(() => tree.root.findAllByType(HomeScreen).length === 1, 'Home');
+      h.eq(kv.getAllKeys().filter((key) => key.startsWith('orb-action-count:')), [], 'no tap counter is left on the phone');
+      const now = entries(kv);
+      h.eq(Object.keys(kept).filter((key) => now[key] !== kept[key]), [], 'every other key the phone had is still there, unchanged (the orb’s corner, terms, consent, the index)');
+    });
+  });
+
+  await h.test('orb-menu: the counter sweep runs once: a fresh install loses nothing, and every later launch only reads its marker', () => {
+    const fresh = new MapKVBackend(new Map([['orb-corner:app-a', 'leading'], ['device-id', 'd-1']]));
+    const before = entries(fresh);
+    sweepRetiredKeys(fresh);
+    const after = entries(fresh);
+    h.eq(Object.keys(before).filter((key) => after[key] !== before[key]), [], 'a fresh install keeps everything it had');
+    h.eq(fresh.getAllKeys().length, 3, 'and gains only the sweep’s marker');
+    const later = counted(fresh);
+    sweepRetiredKeys(later.kv);
+    h.eq(later.ops, { reads: 1, writes: 0, deletes: 0 }, 'a second launch reads one key and changes nothing');
+    const upgraded = new MapKVBackend(new Map(Object.entries(OLD_COUNTERS)));
+    sweepRetiredKeys(upgraded);
+    upgraded.set('orb-action-count:home', '1');
+    sweepRetiredKeys(upgraded);
+    h.eq(upgraded.getString('orb-action-count:home'), '1', 'once swept, a launch never sweeps again (what it removes is only ever written by an older build)');
   });
 
   // ── the footprint the realm is told (beta-1 D5) ─────────────────────────────
@@ -101,117 +124,5 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     h.eq(chromeInsetBottom(Number.NaN), 0, 'NaN is 0');
     h.eq(chromeInsetBottom(Number.POSITIVE_INFINITY), 0, 'Infinity is 0, not the cap');
     h.eq(chromeInsetBottom(Number.NEGATIVE_INFINITY), 0, '-Infinity is 0');
-  });
-
-  // ── the rendered orb: each action reaches its own callback, and only an action is counted ──
-  await h.test('orb-menu: each action calls its own callback once and is counted; dismissing or toggling counts nothing', async () => {
-    const callbackOf: Record<OrbActionId, string> = { change: 'onChangeIt', home: 'onExit', versions: 'onVersions', report: 'onReport' };
-    for (const action of ORB_ACTIONS) {
-      resetNativeStorage();
-      const calls: Record<string, number> = { onChangeIt: 0, onExit: 0, onVersions: 0, onReport: 0 };
-      const spy = (name: string) => () => { calls[name]++; };
-      const tree = await renderScreen(React.createElement(Orb, {
-        onExit: spy('onExit'), onVersions: spy('onVersions'), onChangeIt: spy('onChangeIt'), onReport: spy('onReport'),
-      }));
-      try {
-        const counts = () => loadOrbActionCounts(createMmkvBackend('whim.launcher'));
-        const dismiss = () => tree.root.findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === COPY.orbMenuDismissLabel);
-        await press(button(tree, COPY.orbMenuOpenLabel));
-        await press(button(tree, COPY.orbMenuCloseLabel));
-        await press(button(tree, COPY.orbMenuOpenLabel));
-        await press(dismiss()[0]);
-        h.eq(Object.values(counts()).reduce((a, b) => a + b, 0), 0, 'opening, closing and dismissing the menu count nothing');
-        await press(button(tree, COPY.orbMenuOpenLabel));
-        await risen();
-        await press(button(tree, action.label));
-        const expected = Object.fromEntries(Object.keys(calls).map((name) => [name, name === callbackOf[action.id] ? 1 : 0]));
-        h.eq(calls, expected, `"${action.label}" calls ${callbackOf[action.id]} once and nothing else`);
-        h.eq(counts()[action.id], 1, 'and is counted once in storage');
-        h.eq(dismiss().length, 0, 'and the menu closes');
-      } finally {
-        await unmountScreen(tree);
-      }
-    }
-  });
-
-  await h.test('orb-menu: while the menu is still rising its actions refuse a tap; once it has risen, a tap acts', async () => {
-    resetNativeStorage();
-    const calls = { versions: 0, report: 0 };
-    const tree = await renderScreen(React.createElement(Orb, {
-      onExit: () => {}, onVersions: () => { calls.versions++; }, onChangeIt: () => {}, onReport: () => { calls.report++; },
-    }));
-    try {
-      const counted = () => Object.values(loadOrbActionCounts(createMmkvBackend('whim.launcher'))).reduce((a, b) => a + b, 0);
-      await press(button(tree, COPY.orbMenuOpenLabel));
-      for (const action of ORB_ACTIONS) {
-        await h.throws(() => press(button(tree, action.label)), 'Cannot press a disabled control', `"${action.label}" refuses a tap while the menu rises`);
-      }
-      h.eq([calls, counted()], [{ versions: 0, report: 0 }, 0], 'nothing acts and nothing is counted during the rise');
-      await risen();
-      await press(button(tree, COPY.orbActionVersions));
-      h.eq(calls, { versions: 1, report: 0 }, 'once risen, a tap on Versions opens Versions, and only that');
-      await press(button(tree, COPY.orbMenuOpenLabel));
-      await h.throws(() => press(button(tree, COPY.orbActionReport)), 'Cannot press a disabled control', 'reopened, the menu refuses taps again until its new rise completes');
-    } finally {
-      await unmountScreen(tree);
-    }
-  });
-
-  // ── accessibility: a screen reader can reach every action ──────────────────────────────────
-  await h.test('orb-menu: every action is its own labelled button, never inside the dismiss layer', async () => {
-    // A touchable is ONE accessibility element: iOS and Android read everything inside it as that
-    // element, so an action nested in the full-screen dismiss layer was only ever announced as
-    // "Dismiss the app menu" (the iOS acceptance hierarchy dump showed nothing else).
-    resetNativeStorage();
-    const tree = await renderScreen(React.createElement(Orb, { onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
-    try {
-      await press(button(tree, COPY.orbMenuOpenLabel));
-      const touchable = (n: TestRenderer.ReactTestInstance) => hostType(n) === 'Pressable' || hostType(n) === 'TouchableOpacity';
-      for (const action of ORB_ACTIONS) {
-        const node = tree.root.findAll((n) => touchable(n) && n.props.accessibilityLabel === action.label);
-        h.eq(node.length, 1, `"${action.label}" is one element labelled with its own words`);
-        h.eq(node[0]?.props.accessibilityRole, 'button', `"${action.label}" is announced as a button`);
-        const enclosing: string[] = [];
-        for (let up = node[0]?.parent ?? null; up; up = up.parent) if (touchable(up)) enclosing.push(String(up.props.accessibilityLabel));
-        h.eq(enclosing, [], `"${action.label}" sits inside no other touchable`);
-      }
-      const dismiss = tree.root.findAll((n) => touchable(n) && n.props.accessibilityLabel === COPY.orbMenuDismissLabel);
-      h.eq(dismiss.length, 1, 'the dismiss layer is still there, behind the actions');
-      await press(dismiss[0]);
-      h.eq(tree.root.findAll((n) => String(n.type) === 'Modal').length, 0, 'and still closes the menu');
-    } finally {
-      await unmountScreen(tree);
-    }
-  });
-
-  // ── polish: the orb draws no extra shape and its menu reaches the status bar (#105) ────────
-  await h.test('orb-menu: the orb button carries no elevation (the Android grey-disc regression)', async () => {
-    resetNativeStorage();
-    const tree = await renderScreen(React.createElement(Orb, { onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
-    try {
-      const flat = StyleSheet.flatten(button(tree, COPY.orbMenuOpenLabel).props.style) as Record<string, unknown>;
-      h.ok(!('elevation' in flat), 'no elevation style on the orb button: it drew a solid grey disc on Android, not a shadow');
-      h.ok(typeof flat.shadowOpacity === 'number', 'the iOS shadow is still declared');
-    } finally {
-      await unmountScreen(tree);
-    }
-  });
-
-  await h.test('orb-menu: opening the menu shows a transparent Modal translucent under both system bars, so the dim layer covers the status bar and the navigation bar', async () => {
-    resetNativeStorage();
-    const tree = await renderScreen(React.createElement(Orb, { onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
-    try {
-      h.eq(tree.root.findAll((n) => hostType(n) === 'Modal').length, 0, 'no Modal before the menu opens');
-      await press(button(tree, COPY.orbMenuOpenLabel));
-      const modals = tree.root.findAll((n) => hostType(n) === 'Modal');
-      h.eq(modals.length, 1, 'the open menu renders inside exactly one Modal');
-      h.eq(
-        [modals[0].props.transparent, modals[0].props.statusBarTranslucent, modals[0].props.navigationBarTranslucent],
-        [true, true, true],
-        'transparent (the running app stays visible), and translucent under the status bar and the navigation bar (Android draws the window behind both instead of stopping short of them)',
-      );
-    } finally {
-      await unmountScreen(tree);
-    }
   });
 }

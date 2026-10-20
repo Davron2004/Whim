@@ -94,6 +94,15 @@ export interface CreatePendingBuildInput {
   editingAppId?: string;
 }
 
+/** A new attempt was asked to write to an id whose attempt is still running in this process. Nothing
+ *  was written: the record, its journal and its stream stay the running attempt's. */
+export class AttemptInFlight extends Error {
+  constructor(readonly id: string) {
+    super('an attempt for this id is still running');
+    this.name = 'AttemptInFlight';
+  }
+}
+
 export class PendingBuildStore {
   private readonly current = new Map<string, PendingBuildView>();
   private readonly attempts = new Map<string, PendingAttemptLease>();
@@ -140,8 +149,11 @@ export class PendingBuildStore {
 
   /** Create a fresh `building` record and return it. Appends `id` to the order (newest-first: new
   *  ids are unshifted, so `list()` needs no separate sort). Re-creating an id that already
-  *  exists overwrites the record in place without duplicating the order entry. */
+  *  exists overwrites the record in place without duplicating the order entry — unless that id's
+  *  attempt is still running (`hasLiveAttempt`): a second attempt never replaces a running one, so
+  *  this throws `AttemptInFlight` and writes nothing. */
   create(input: CreatePendingBuildInput): PendingBuildRecord {
+    if (this.hasLiveAttempt(input.id)) throw new AttemptInFlight(input.id);
     const order = this.readOrder();
     const now = Date.now();
     const record: PendingBuildRecord = {
@@ -211,6 +223,12 @@ export class PendingBuildStore {
     this.started.set(lease.token, record);
     this.current.set(id, { record, durability: 'persisted' });
     return lease;
+  }
+
+  /** An attempt for `id` was activated in this process and has not been released or deleted: it is
+   *  still running. */
+  hasLiveAttempt(id: string): boolean {
+    return this.attempts.has(id);
   }
 
   isCurrentAttempt(lease: PendingAttemptLease): boolean {

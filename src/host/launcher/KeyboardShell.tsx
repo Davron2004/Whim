@@ -7,7 +7,7 @@
  * The scrolling content, and a pinned `footer` for the primary action. On a
  * screen the frame pads its bottom by the keyboard's overlap with it, frame by frame on the UI
  * thread as the keyboard moves, so the footer rides above the keyboard on its own curve and the
- * scroll view ends above the footer; inside a sheet the host (`SheetModal`, `Sheet`) pads.
+ * scroll view ends above the footer; inside a sheet the host (`Sheet`) pads.
  * While a field in the scroll view is focused, any change to what the scroll view shows (the
  * keyboard arriving or changing height, the field growing) scrolls the field, or the block it
  * names, back into view, `REVEAL_MARGIN` clear of the keyboard and the footer; while the keyboard
@@ -79,7 +79,7 @@ export interface KeyboardShellProps {
   /** Pinned below the scrolling content and kept above the keyboard: the primary action and what
    *  sits with it. Leave it out on a screen with no primary action. */
   footer?: React.ReactNode;
-  /** `sheet` inside `SheetModal` or `Sheet`, which pads for the keyboard itself. */
+  /** `sheet` inside a `Sheet`, which pads for the keyboard itself. */
   host?: KeyboardShellHost;
   /** The frame's own style (its background). */
   style?: StyleProp<ViewStyle>;
@@ -578,7 +578,7 @@ export default function KeyboardShell({
   const { overlap, height: paddedFor, onLayout, overlapFor } = useKeyboardOverlap(frameRef, !inSheet, Platform.OS === 'ios' ? safeBottom : 0);
   const padding = useAnimatedStyle(() => ({ paddingBottom: overlap.value }));
   // What a keyboard takes from the scroll view: on a screen, the frame's padding; in a sheet, the
-  // card's (`SheetModal`, `Sheet`), all of which a large sheet's body gives up. In a sheet this
+  // card's (`Sheet`), all of which a large sheet's body gives up. In a sheet this
   // frame pads nothing, yet `paddedFor` tracks the keyboard as the card's padding does.
   const shrinkAt = useCallback(
     (keyboardHeight: number) => {
@@ -785,7 +785,7 @@ const styles = StyleSheet.create({
   edge: { height: StyleSheet.hairlineWidth },
   // A screen's gap between the scrolling content's cut edge and its pinned action: the design's
   // footer is `padding:16px 22px 24px` (`Whim Mobile.dc.html:427,459,487`), whose sides and bottom
-  // `PrimaryAction` carries. A sheet spaces its own actions (`ReportSheet`'s Send keeps its margin).
+  // `PrimaryAction` carries. A sheet spaces its own actions (`ReportPage`'s actions pad themselves).
   footer: { paddingTop: SPACING.md },
   naturalLineHeight: { lineHeight: undefined },
   doneBar: {

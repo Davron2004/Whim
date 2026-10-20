@@ -9,7 +9,7 @@
  * beside it once the launch has opened, so the next launch finds it warm too. The delivery is a
  * `reinject({ reset: true })` — the page recreates the iframe with a new nonce and
  * the launch's own generation (spike2 §5: a realm reset is a recreate). A WebView that has hosted a
- * launch is NEVER handed out again: closing the app, a failure surface and Retry all destroy it,
+ * launch is NEVER handed out again: closing the app, a failure surface and Reload all destroy it,
  * and the next launch gets a WebView no app has ever touched (the waiting one, or a cold one).
  * Destroying it is the safer of the two options spike2 §5 allows: a realm reset alone would leave
  * the outer page, its nonce history and whatever native state the previous app reached in place.
@@ -37,8 +37,9 @@ export interface PoolSlot {
 }
 
 export interface WebViewPool {
-  /** The app the current launch opened; `null` when no app is open. */
-  readonly appId: string | null;
+  /** The opening of an app the current launch serves (which app, opened when); `null` when no app
+   *  is open. */
+  readonly opening: string | null;
   /** The current launch, a token never reused; `null` when no app is open. */
   readonly launch: number | null;
   /** The WebViews in the order they are drawn, bottom first: the waiting one under the launch's. */
@@ -47,7 +48,7 @@ export interface WebViewPool {
   readonly next: number;
 }
 
-export const EMPTY_POOL: WebViewPool = { appId: null, launch: null, slots: [], next: 1 };
+export const EMPTY_POOL: WebViewPool = { opening: null, launch: null, slots: [], next: 1 };
 
 /** Injected into a waiting page once it has loaded: posts `WARM_ANSWER` iff the page's own
  *  orchestration script ran. It reads nothing and leaves nothing behind. */
@@ -91,32 +92,28 @@ function dropLaunchSlot(pool: WebViewPool): WebViewPool {
 }
 
 /**
- * The pool for `appId` open (or no app, for `null`). A different app than the open one is a new
- * launch: the previous launch's WebView is destroyed, and the new one takes the waiting WebView or
- * a cold one. Closing leaves one WebView waiting. The same app id is no change.
+ * The pool for `opening` (or no app, for `null`): one opening of an app, which the caller names. A
+ * different opening than the current one, another app's or the same app's opened again (Reload), is
+ * a new launch: the previous launch's WebView is destroyed, and the new one takes the waiting
+ * WebView or a cold one. Closing leaves one WebView waiting. The same opening is no change.
  */
-export function openApp(pool: WebViewPool, appId: string | null): WebViewPool {
-  if (pool.appId === appId) return appId === null ? keepOneWaiting(pool) : pool;
-  const closed: WebViewPool = { ...dropLaunchSlot(pool), appId: null, launch: null };
-  if (appId === null) return keepOneWaiting(closed);
-  return bindLaunch({ ...closed, appId, launch: closed.next, next: closed.next + 1 }, closed.next);
+export function openApp(pool: WebViewPool, opening: string | null): WebViewPool {
+  if (pool.opening === opening) return opening === null ? keepOneWaiting(pool) : pool;
+  const closed: WebViewPool = { ...dropLaunchSlot(pool), opening: null, launch: null };
+  if (opening === null) return keepOneWaiting(closed);
+  return bindLaunch({ ...closed, opening, launch: closed.next, next: closed.next + 1 }, closed.next);
 }
 
 /** The launch has opened (its first accepted paint): a fresh WebView starts loading beside it, so
- *  the next launch (after a close, another app, a failure or Retry) finds one warm. Not earlier:
+ *  the next launch (after a close, another app, a failure or Reload) finds one warm. Not earlier:
  *  loading a page alongside the opening slowed the opening itself (18e, measured on Android). */
 export function launchOpened(pool: WebViewPool): WebViewPool {
   return pool.launch === null ? pool : keepOneWaiting(pool);
 }
 
-/** The launch reached a failure surface: its WebView is destroyed, and one waits for Retry. */
+/** The launch reached a failure surface: its WebView is destroyed, and one waits for Reload. */
 export function launchFailed(pool: WebViewPool): WebViewPool {
   return keepOneWaiting(dropLaunchSlot(pool));
-}
-
-/** Retry: the launch's WebView, if it still has one, is destroyed and a fresh one is bound. */
-export function retryLaunch(pool: WebViewPool): WebViewPool {
-  return pool.launch === null ? pool : bindLaunch(dropLaunchSlot(pool), pool.launch);
 }
 
 function updateWaiting(pool: WebViewPool, key: number, from: PageState, to: PageState): WebViewPool {

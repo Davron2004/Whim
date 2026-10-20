@@ -7,7 +7,8 @@
  * The page shown is the shell's flow screen (`prompt-flow.ts`), so the sheet is open exactly while
  * the machine is on one of them. `LauncherRoot.renderSheetPage` draws the page for a screen. Every
  * page is a `KeyboardShell host="sheet"` body, which fills the large sheet and keeps its actions at
- * the sheet's bottom.
+ * the sheet's bottom. Over a running app the same sheet first shows the Whim sheet's `fit` pages
+ * (`WhimSheet.tsx`), so sending a change grows it into the plan page instead of opening a second sheet.
  *
  * The page is keyed by the run it belongs to (`prompt-flow.ts#pageKeyOf`), so a page never shows
  * another run's progress, and a close animates out the page the sheet was showing rather than
@@ -16,12 +17,15 @@
  * so the headlines start at the same height.
  */
 import React, { Fragment, useRef } from 'react';
-import { Sheet } from '../ui/Sheet';
+import { Sheet, type SheetDetent } from '../ui/Sheet';
 
-/** A page to show: what it is shown under, and the page itself. */
+/** A page to show: what it is shown under, the page itself, and the height it takes: `large` (the
+ *  making flow) unless it asks to `fit` its content (the Whim sheet's own pages). A page that asks for
+ *  `large` after a `fit` one grows the same sheet. */
 export interface SheetContent {
   readonly key: string;
   readonly node: React.ReactNode;
+  readonly detent?: SheetDetent;
 }
 
 export interface MakingSheetProps {
@@ -37,7 +41,7 @@ export function MakingSheet({ content, onClose }: Readonly<MakingSheetProps>) {
   if (content !== null) last.current = content;
   const shown = last.current;
   return (
-    <Sheet visible={content !== null} onClose={onClose} detent="large">
+    <Sheet visible={content !== null} onClose={onClose} detent={shown?.detent ?? 'large'}>
       {shown ? <Fragment key={shown.key}>{shown.node}</Fragment> : null}
     </Sheet>
   );

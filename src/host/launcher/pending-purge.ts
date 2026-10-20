@@ -61,9 +61,16 @@ export class PendingPurgeStore {
     this.kv.set(PURGE_KEY('attempt', run.id), JSON.stringify({ createdAt: run.createdAt }));
   }
 
-  /** Undo: the purge will not happen. A no-op when none is armed. */
-  cancel(kind: PurgeKind, id: string): void {
-    this.kv.delete(PURGE_KEY(kind, id));
+  /** Undo: the purge will not happen. A no-op when none is armed. For an attempt, `createdAt` names
+   *  the run being cancelled: a marker since armed for another run of the id stays (a marker naming
+   *  no run goes, and so does any marker when no run is named). */
+  cancel(kind: PurgeKind, id: string, createdAt?: number): void {
+    const key = PURGE_KEY(kind, id);
+    if (kind === 'attempt' && createdAt !== undefined) {
+      const armedFor = this.armedRun(key, id);
+      if (armedFor !== undefined && armedFor !== createdAt) return;
+    }
+    this.kv.delete(key);
   }
 
   has(kind: PurgeKind, id: string): boolean {
@@ -142,7 +149,8 @@ export interface PurgeDeps {
  * Carry out one armed purge, then clear its marker. An app goes through `StoreAccess.remove` (the
  * index entry, then its user data and history when nothing else shares them) along with its
  * retained last-run report; an attempt goes the way a dismiss goes (record and journal), unless a
- * later run now holds its id: that run's record and journal are its own, and the marker just goes.
+ * later run now holds its id: that run's record and journal are its own, and the marker just goes —
+ * unless it now names that later run (its own leftovers armed since), which keeps it.
  */
 export async function completePurge(deps: PurgeDeps, marker: PurgeMarker): Promise<void> {
   if (marker.kind === 'app') {
@@ -152,7 +160,7 @@ export async function completePurge(deps: PurgeDeps, marker: PurgeMarker): Promi
   } else if (!heldByLaterRun(deps.pending, marker)) {
     removeAttempt(deps, marker.id);
   }
-  deps.purges.cancel(marker.kind, marker.id);
+  deps.purges.cancel(marker.kind, marker.id, marker.createdAt);
 }
 
 /** A run other than the one the marker was armed for holds its id (a change made again while the

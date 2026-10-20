@@ -13,7 +13,6 @@ import { RELEASE } from '../release-config';
 import LauncherRoot from '../LauncherRoot';
 import HomeScreen from '../HomeScreen';
 import HistoryScreen from '../HistoryScreen';
-import MiniAppView from '../MiniAppView';
 import FailurePage from '../FailurePage';
 import { DescribePage } from '../DescribePage';
 import ConsentScreen from '../ConsentScreen';
@@ -73,12 +72,20 @@ const ENTRIES: Entry[] = [
     continued: composeFor(app),
   },
   {
-    name: 'running app: change it',
+    name: 'running app: the Whim sheet’s send',
     trigger: async (tree) => {
       await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
-      await TestRenderer.act(async () => tree.root.findByType(MiniAppView).props.onChangeIt());
+      await press(button(tree, COPY.orbMenuOpenLabel));
+      const field = tree.root.find((n) => hostType(n) === 'TextInput' && n.props.accessibilityLabel === COPY.whimSheetAsk);
+      await TestRenderer.act(async () => field.props.onChangeText('Add a lap button'));
+      await press(button(tree, COPY.whimSheetSend));
     },
-    continued: composeFor(app),
+    continued: (tree) => {
+      const scoped = composeFor(app)(tree);
+      if (scoped !== null) return scoped;
+      const words = tree.root.findByType(DescribePage).props.text;
+      return words === 'Add a lap button' ? null : `the words sent were lost (describe shows "${words}")`;
+    },
   },
   {
     name: 'failed build: retry',

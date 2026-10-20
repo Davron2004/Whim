@@ -16,7 +16,6 @@ import FailurePage from '../FailurePage';
 import { FirstRunSheet } from '../FirstRunSheet';
 import HistoryScreen from '../HistoryScreen';
 import MiniAppView from '../MiniAppView';
-import Orb from '../Orb';
 import UpdateRequiredScreen from '../UpdateRequiredScreen';
 import { STORE_LISTINGS } from '../release-config';
 import { COPY } from '../copy';
@@ -410,13 +409,14 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       },
     },
     {
-      name: 'a running app’s orb',
+      name: 'a running app’s Whim sheet',
       examples: true,
       open: async (tree) => {
         const example = await exampleApp(tree);
         await TestRenderer.act(async () => home(tree).props.onOpen(example));
         await waitFor(() => on(tree, MiniAppView), 'the example to open');
-        await TestRenderer.act(async () => tree.root.findByType(Orb).props.onReport());
+        await press(button(tree, COPY.orbMenuOpenLabel));
+        await press(button(tree, COPY.reportScreenTitle));
       },
     },
   ];
@@ -432,7 +432,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
         await sendReportFromSheet(tree);
         await waitFor(() => updateShown(tree), 'the update screen');
         h.ok(wasSent(sent, '/v1/report'), 'after the server refused the report');
-        h.ok(!textOf(tree.root).includes(COPY.reportSheetTitle), 'the sheet is gone');
+        h.ok(!textOf(tree.root).includes(COPY.reportReasonEyebrow), 'the report is gone');
         await press(button(tree, COPY.updateNotNow));
         h.ok(onHome(tree), 'Not now goes Home');
       });
