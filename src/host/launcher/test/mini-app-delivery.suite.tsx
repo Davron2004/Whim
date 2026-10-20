@@ -39,6 +39,14 @@ const webViews = (tree: TestRenderer.ReactTestRenderer) => tree.root.findAll((no
 /** The WebView the open app runs in: not the one waiting, untouchable, beside it. */
 const webView = (tree: TestRenderer.ReactTestRenderer) => tree.root.find((node) => hostType(node) === 'WebView' && node.props.pointerEvents !== 'none');
 
+const bg = (node: TestRenderer.ReactTestInstance) => (StyleSheet.flatten(node.props.style) as { backgroundColor?: string }).backgroundColor;
+const strip = (tree: TestRenderer.ReactTestRenderer) => bg(tree.root.findAll((node) => hostType(node) === 'SafeAreaView')[0]);
+const barStyle = (tree: TestRenderer.ReactTestRenderer) => tree.root.find((node) => hostType(node) === 'StatusBar').props.barStyle;
+const webViewsIn = (node: TestRenderer.ReactTestInstance) => node.findAll((n) => hostType(n) === 'WebView');
+const holdsWebView = (node: TestRenderer.ReactTestInstance) => hostType(node) === 'View' && webViewsIn(node).length > 0 && bg(node) !== undefined;
+/** Everything painted behind the open app's page: the container and the WebView's own background. */
+const behindPage = (tree: TestRenderer.ReactTestRenderer) => [...tree.root.findAll(holdsWebView), webView(tree)].map(bg);
+
 export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
   await h.test('delivery: opening an installed app injects its stored bundle once the page has loaded', async () => {
     await withLauncher(async () => 'window.__WHIM_APP_MODULE__ = { marker: "timer-bundle-7f3a" };', async (tree) => {
@@ -98,6 +106,37 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
             `${scheme}: and the status bar’s content contrasts with it`);
         });
       }
+    } finally {
+      setColorScheme('light');
+    }
+  });
+
+  await h.test('frame: an app opened in dark keeps its dark strip, status bar, container and page background when the phone turns light; Home and the next open are light', async () => {
+    const open = async (tree: TestRenderer.ReactTestRenderer) => {
+      await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
+      await TestRenderer.act(async () => webView(tree).props.onLoadEnd());
+    };
+    try {
+      setColorScheme('dark');
+      await withLauncher(async () => 'window.__WHIM_APP_MODULE__ = {};', async (tree) => {
+        await open(tree);
+        await TestRenderer.act(async () => { setColorScheme('light'); });
+        h.eq([strip(tree), barStyle(tree)], [COLORS.dark.bg, 'light-content'], 'the strip and the status bar stay as the app opened');
+        const behind = behindPage(tree);
+        h.ok(behind.length >= 2 && behind.every((c) => c === COLORS.dark.bg), `the container and the page background stay dark (${behind.join(', ')})`);
+
+        await press(button(tree, COPY.orbMenuOpenLabel));
+        await TestRenderer.act(async () => { finishAnimations(); });
+        await press(tree.root.find((node) => hostType(node) === 'Pressable' && textOf(node).endsWith(COPY.orbActionHome)));
+        h.eq(tree.root.findAllByType(HomeScreen).length, 1, 'closed to Home');
+        h.eq([strip(tree), barStyle(tree)], [COLORS.light.bg, 'dark-content'], 'Home follows the phone: light');
+
+        injectedScripts.length = 0;
+        await open(tree);
+        h.ok(injectedScripts.at(-1)?.includes('"scheme":"light"') ?? false, 'the next open is delivered light');
+        h.eq([strip(tree), barStyle(tree)], [COLORS.light.bg, 'dark-content'], 'and framed light');
+        h.ok(behindPage(tree).every((c) => c === COLORS.light.bg), 'over a light container and page background');
+      });
     } finally {
       setColorScheme('light');
     }

@@ -13,12 +13,13 @@ import type { StoreAccess } from '../store-access';
 import type { AppRecord } from '../../bridge';
 import { createStorageEngine } from '../../storage-engine';
 import { DEFAULT_THEME, sanitizeTheme } from '../../../sdk/theme';
-import { COLORS, ON_TINT, TINTS } from '../../../design/tokens';
+import { COLORS, ON_TINT, TILE_RIM, TINTS } from '../../../design/tokens';
+import { buttonColors, resolveTokens } from '../../ui/tokens-pure';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { DiagnosticsBatch } from '@whim/contract';
 import { log } from '../../logging';
-import { accessibilitySettings, finishAnimations, injectedScripts, Platform, setColorScheme, StyleSheet, windowMetrics } from './native-host';
+import { accessibilitySettings, emitAccessibility, finishAnimations, injectedScripts, Platform, setColorScheme, StyleSheet, windowMetrics } from './native-host';
 import { keyboardWindow, moveKeyboard, resetKeyboard } from './native-keyboard-controller';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { closedDatabases, resetNativeStorage } from './native-storage';
@@ -155,6 +156,9 @@ function launchOf(
   };
 }
 
+/** The launcher's end of the container's frame, where a test does not read it. */
+const ignoreFrame = () => {};
+
 /** Mount the container for `record` (installed with `tile`, if given, and tapped at `tappedAt`), run
  *  `body`, and unmount. */
 async function withMiniApp(
@@ -168,7 +172,7 @@ async function withMiniApp(
   const clock = captureTimeouts();
   let exits = 0;
   const tree = await renderScreen(
-    <MiniAppStage launch={launchOf(record, { tile, tappedAt, onExit: () => { exits++; } })} />,
+    <MiniAppStage launch={launchOf(record, { tile, tappedAt, onExit: () => { exits++; } })} onFrame={ignoreFrame} />,
     { createNodeMock: measuredAsContainer },
   );
   // The launch's own WebView, the one a touch reaches: not the one waiting unseen beside it.
@@ -277,11 +281,11 @@ async function withStage(body: (s: Stage) => Promise<void>): Promise<void> {
   resetNativeStorage();
   injectedScripts.length = 0;
   const clock = captureTimeouts();
-  const tree = await renderScreen(<MiniAppStage launch={null} />, { createNodeMock: measuredAsContainer });
+  const tree = await renderScreen(<MiniAppStage launch={null} onFrame={ignoreFrame} />, { createNodeMock: measuredAsContainer });
   try {
     await body({
       tree,
-      show: async (launch) => { await TestRenderer.act(async () => { tree.update(<MiniAppStage launch={launch} />); }); },
+      show: async (launch) => { await TestRenderer.act(async () => { tree.update(<MiniAppStage launch={launch} onFrame={ignoreFrame} />); }); },
       webViews: () => tree.root.findAll(isWebView),
       send: async (web, frame) => {
         const data = typeof frame === 'string' ? frame : JSON.stringify(frame);
@@ -964,6 +968,88 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       }, { tint: 'rose', icon: 'receipt' });
     } finally {
       windowMetrics.fontScale = 1;
+      setColorScheme('light');
+    }
+  });
+
+  await h.test('mini-app: an app opened in dark keeps a dark container, page background, cover, plate, "Opening…" and recovery screen when the phone turns light; Retry’s fresh realm takes the new scheme', async () => {
+    const dark = resolveTokens({ scheme: 'dark', fontScale: 1, platform: Platform.OS, reduceMotion: false, increaseContrast: false });
+    try {
+      setColorScheme('dark');
+      await withMiniApp(TIP, async ({ tree, webView, loadEnd, frame, clock }) => {
+        await loadEnd();
+        await TestRenderer.act(async () => { setColorScheme('light'); });
+        await TestRenderer.act(async () => { clock.fireWithin(1_500); });
+        const container = containerOf(tree);
+        h.eq([flat(container).backgroundColor, flat(webView()!).backgroundColor], [COLORS.dark.bg, COLORS.dark.bg], 'the container and the page background stay dark');
+        const covers = container.findAll((n) => typeof n.type === 'string' && spansContainer(n) && flat(n).backgroundColor !== undefined);
+        h.ok(covers.length > 0 && covers.every((n) => flat(n).backgroundColor === COLORS.dark.bg), 'the cover stays dark');
+        h.ok(tree.root.findByType(TilePlate).findAll((n) => hostType(n) === 'Path' && n.props.strokeWidth === TILE_RIM.width).length === 1, 'the plate keeps its dark-mode rim');
+        const label = tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n) === COPY.appBootLabel).at(-1)!;
+        h.eq(flat(label).color, COLORS.dark['text-2'], '"Opening…" stays dark-mode text');
+
+        await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
+        const screen = tree.root.findAll((n) => hostType(n) === 'View' && textOf(n).includes(COPY.appErrorTitle))[0];
+        const title = tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n) === COPY.appErrorTitle).at(-1)!;
+        const retry = flat(button(tree, COPY.appErrorRetry)) as Style & { borderColor?: string };
+        h.eq([flat(screen).backgroundColor, flat(title).color, retry.backgroundColor], [COLORS.dark.bg, COLORS.dark.text, buttonColors(dark, 'ink', false).fill],
+          'the recovery screen that replaces it is still the dark one: bg, text and its primary button');
+
+        await press(button(tree, COPY.appErrorRetry));
+        h.eq(flat(containerOf(tree)).backgroundColor, COLORS.light.bg, 'Retry’s fresh realm opens on the phone’s light bg');
+        await loadEnd();
+        h.eq(deliveredTheme(injectedScripts.at(-1)).scheme, 'light', 'and is delivered light');
+        h.eq([flat(containerOf(tree)).backgroundColor, flat(webView()!).backgroundColor], [COLORS.light.bg, COLORS.light.bg], 'then held to light');
+      }, { tint: 'ocean', icon: 'receipt' });
+    } finally {
+      setColorScheme('light');
+    }
+  });
+
+  await h.test('pool: a warm hand-over delivers the theme for the phone’s settings at the open, not those it warmed under: dark, 135% text, ocean', async () => {
+    const before = { OS: Platform.OS, fontScale: windowMetrics.fontScale, ...accessibilitySettings };
+    const phone = async () => {
+      windowMetrics.fontScale = 1.35;
+      accessibilitySettings.reduceMotion = true;
+      accessibilitySettings.increaseContrast = true;
+      await TestRenderer.act(async () => {
+        emitAccessibility('reduceMotionChanged', true);
+        emitAccessibility('highTextContrastChanged', true);
+        setColorScheme('dark');
+      });
+    };
+    const ocean = { tint: 'ocean', icon: 'receipt' } as const;
+    try {
+      Platform.OS = 'android';
+      await phone();
+      let cold: Record<string, unknown> = {};
+      await withMiniApp(TIP, async ({ loadEnd }) => {
+        await loadEnd();
+        cold = withoutInset(deliveredTheme(injectedScripts[0]));
+      }, ocean);
+      Object.assign(accessibilitySettings, { reduceMotion: false, increaseContrast: false });
+      windowMetrics.fontScale = 1;
+      setColorScheme('light');
+
+      await withStage(async ({ show, webViews, send }) => {
+        const [waiting] = webViews();
+        await TestRenderer.act(async () => waiting.props.onLoadEnd());
+        await send(waiting, WARM_ANSWER);
+        await phone();
+        await show(launchOf(TIP, { tile: ocean }));
+        const [web] = webViews();
+        h.ok(web === waiting, 'the app takes the WebView that warmed while the phone was light');
+        const warm = withoutInset(deliveredTheme(deliveriesInto(web)[0])) as { colors?: Record<string, unknown> };
+        const { colors, ...settings } = warm;
+        h.eq(settings, { scheme: 'dark', tint: 'ocean', fontScale: 1.35, reduceMotion: true, increaseContrast: true, platform: 'android' },
+          'the scheme, the app’s tint, the text scale, Reduce Motion, Increase Contrast and the platform at the open');
+        h.eq([colors?.bg, colors?.primary], [COLORS.dark.bg, TINTS.ocean.dark], 'in the dark colours and ocean’s dark value');
+        h.eq(warm, cold, 'exactly the theme a cold open under the same settings delivers');
+      });
+    } finally {
+      Object.assign(accessibilitySettings, { reduceMotion: before.reduceMotion, increaseContrast: before.increaseContrast });
+      windowMetrics.fontScale = before.fontScale;
+      Platform.OS = before.OS;
       setColorScheme('light');
     }
   });

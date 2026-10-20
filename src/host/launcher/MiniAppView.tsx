@@ -26,7 +26,7 @@ import { TILE_SIDE } from '../ui/AppTile-geometry';
 import { timing } from '../ui/motion';
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
-import { buttonColors } from '../ui/tokens-pure';
+import { buttonColors, type ShellTokens } from '../ui/tokens-pure';
 import { themeFrame } from './theme-frame';
 import { tileOf } from './tile-identity';
 import { log } from '../logging';
@@ -95,6 +95,9 @@ export interface MiniAppLaunch {
 export interface MiniAppStageProps {
   /** The open app, or `null` while none is: the container is then hidden, one WebView waiting. */
   launch: MiniAppLaunch | null;
+  /** The tokens the open app's frame is held to (those captured at its delivery), or `null` while
+   *  nothing is delivered: the shell's status-bar strip and status bar follow them over the app. */
+  onFrame: (pinned: ShellTokens | null) => void;
 }
 
 /** The current launch's end of its WebView's events. Frames and load events reach a launch only
@@ -112,9 +115,17 @@ const RUNTIME_PAGE = { html: RUNTIME_HTML };
 const ORIGINS = ['*'];
 
 /** The container: the pool's WebViews, and the open app's `MiniAppView` over its own. */
-export function MiniAppStage({ launch }: Readonly<MiniAppStageProps>) {
+export function MiniAppStage({ launch, onFrame }: Readonly<MiniAppStageProps>) {
   const tokens = useTokens();
-  const bg = tokens.colors.bg;
+  // An open app's area keeps the settings it was delivered with (app-launcher "Settings changed
+  // while an app runs apply next time"; system.md: no live theme frame); before its delivery, and
+  // with no app open, the container follows the phone.
+  const [pinned, setPinned] = useState<ShellTokens | null>(null);
+  const onPinned = useCallback((next: ShellTokens | null) => {
+    setPinned(next);
+    onFrame(next);
+  }, [onFrame]);
+  const bg = (pinned ?? tokens).colors.bg;
   const appId = launch?.installedApp.id ?? null;
   const [pool, setPool] = useState<WebViewPool>(() => openApp(EMPTY_POOL, appId));
   // A different app open (or none) is a new launch: the pool moves before anything renders for it.
@@ -229,6 +240,7 @@ export function MiniAppStage({ launch }: Readonly<MiniAppStageProps>) {
           onFailed={onFailed}
           onOpened={onOpened}
           onRetry={onRetry}
+          onPinned={onPinned}
         />
       ) : null}
     </View>
@@ -247,11 +259,13 @@ interface MiniAppViewProps extends MiniAppLaunch {
   onOpened: () => void;
   /** Retry: a fresh WebView for a fresh realm. */
   onRetry: () => void;
+  /** The tokens this launch's frame is held to now, `null` while it follows the phone. */
+  onPinned: (pinned: ShellTokens | null) => void;
 }
 
 export default function MiniAppView({
   record, bundleSource, engineAppId, tappedAt, onExit, onVersions, onChangeIt, installedApp, access, reportOptions,
-  onUpdateRequired, legalLanguage, slot, outlet, natives, onFailed, onOpened, onRetry,
+  onUpdateRequired, legalLanguage, slot, outlet, natives, onFailed, onOpened, onRetry, onPinned,
 }: Readonly<MiniAppViewProps>) {
   const slotKey = slot?.key ?? null;
   // The WebView this launch's host controls is looked up when used: the one bound to the launch
@@ -281,17 +295,13 @@ export default function MiniAppView({
   // (beta-1 D5), computed from this delivery's bottom safe-area inset; the loader keeps that out
   // of the bundle-visible theme.
   const tokens = useTokens();
-  // The container's own chrome paints the token `bg` of the phone's scheme, as the page does: a dark
-  // page never sits on a light container (system.md §2: the runtime page, the iframe and the opening
-  // container all paint `bg`).
-  const c = tokens.colors;
-  const bg = c.bg;
   const { tint, icon } = tileOf(installedApp);
   const theme = useMemo(() => themeFrame(tokens, tint), [tokens, tint]);
   const bottomInset = useSafeAreaInsets().bottom;
   const deliveredKey = useRef<number | null>(null);
-  // The WebView the theme was delivered into, for the opening cap below.
-  const [deliveredFor, setDeliveredFor] = useState<number | null>(null);
+  // The WebView the theme was delivered into, and the phone's settings it was built from.
+  const [delivered, setDelivered] = useState<{ key: number; tokens: ShellTokens } | null>(null);
+  const deliveredFor = delivered?.key ?? null;
   const deliverInto = (key: number) => {
     if (loadEndAction(deliveredKey.current, key) === 'duplicate') {
       log.debug(CHANNELS.app, 'duplicate onLoadEnd for a delivered realm, not delivering again', {
@@ -301,7 +311,7 @@ export default function MiniAppView({
       return;
     }
     deliveredKey.current = key;
-    setDeliveredFor(key);
+    setDelivered({ key, tokens });
     host.deliverBySource(record, bundleSource, engineAppId, { ...theme, chromeInsetBottom: chromeInsetBottom(bottomInset) });
   };
   const deliver = useRef(deliverInto);
@@ -331,6 +341,20 @@ export default function MiniAppView({
     // `loadedWhenBound` is read for the WebView as it was handed over; it never changes after.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slotKey, host.onMessage, host.webViewGone, outlet]);
+
+  // The frame (design-system-v1 18g): everything drawn in the app's area -- container, cover, plate,
+  // "Opening…", the failure screens -- and the shell's status-bar strip keep the settings the realm
+  // was delivered with, as the page does (app-launcher "Settings changed while an app runs apply next
+  // time"; system.md: one `bg`, no live theme frame). Before the delivery they follow the phone. A
+  // failure surface keeps the frame its realm had; Retry's fresh WebView follows the phone again
+  // until its own delivery captures anew. The host overlays above the app (orb, report sheet) follow
+  // the phone.
+  const pinned = delivered !== null && (delivered.key === slotKey || slotKey === null) ? delivered.tokens : null;
+  const frameTokens = pinned ?? tokens;
+  const c = frameTokens.colors;
+  const bg = c.bg;
+  useLayoutEffect(() => onPinned(pinned), [pinned, onPinned]);
+  useLayoutEffect(() => () => onPinned(null), [onPinned]);
 
   // Which of the four container surfaces this render belongs to. The precedence (both failure
   // surfaces above the boot state) is decided by the pure `miniAppSurface` -- a launch that fails
@@ -365,7 +389,7 @@ export default function MiniAppView({
     return () => clearTimeout(cap);
   }, [slotKey, deliveredFor]);
   const look = openingLook(surface, { cap: slotKey !== null && capFor === slotKey, label: slotKey !== null && labelFor === slotKey });
-  const reduceMotion = tokens.reduceMotion;
+  const reduceMotion = frameTokens.reduceMotion;
   const cover = useSharedValue(1);
   const plate = useSharedValue(1);
   useEffect(() => {
@@ -393,21 +417,21 @@ export default function MiniAppView({
   useEffect(() => {
     if (paintedAt !== null) onOpened();
   }, [paintedAt, onOpened]);
-  const primary = buttonColors(tokens, 'ink', false);
+  const primary = buttonColors(frameTokens, 'ink', false);
 
   // A launch refused pre-delivery (#41 D7, structured `launchApp` failure) never delivers a
   // bundle -- show honest product copy instead of a blank realm, with a way back to Home.
   if (surface === 'launch-failed') {
     return (
       <View style={[styles.layer, styles.errorRoot, { backgroundColor: bg }]}>
-        <Text type="title2" style={styles.errorTitle}>{COPY.launchFailedTitle}</Text>
-        <Text color="text-2" style={styles.errorBody}>{COPY.launchFailedBody}</Text>
+        <Text tokens={frameTokens} type="title2" style={styles.errorTitle}>{COPY.launchFailedTitle}</Text>
+        <Text tokens={frameTokens} color="text-2" style={styles.errorBody}>{COPY.launchFailedBody}</Text>
         <Pressable
           accessibilityRole="button"
           style={[styles.errorAction, { backgroundColor: primary.fill, borderColor: primary.fill }]}
           onPress={onExit}
         >
-          <Text type="headline" color="on-ink">{COPY.launchFailedBack}</Text>
+          <Text tokens={frameTokens} type="headline" color="on-ink">{COPY.launchFailedBack}</Text>
         </Pressable>
       </View>
     );
@@ -427,21 +451,21 @@ export default function MiniAppView({
     };
     return (
       <View style={[styles.layer, styles.errorRoot, { backgroundColor: bg }]}>
-        <Text type="title2" style={styles.errorTitle}>{COPY.appErrorTitle}</Text>
-        <Text color="text-2" style={styles.errorBody}>{COPY.appErrorBody}</Text>
+        <Text tokens={frameTokens} type="title2" style={styles.errorTitle}>{COPY.appErrorTitle}</Text>
+        <Text tokens={frameTokens} color="text-2" style={styles.errorBody}>{COPY.appErrorBody}</Text>
         <Pressable
           accessibilityRole="button"
           style={[styles.errorAction, { backgroundColor: primary.fill, borderColor: primary.fill }]}
           onPress={retry}
         >
-          <Text type="headline" color="on-ink">{COPY.appErrorRetry}</Text>
+          <Text tokens={frameTokens} type="headline" color="on-ink">{COPY.appErrorRetry}</Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
           style={[styles.errorAction, styles.errorSecondary, { backgroundColor: bg, borderColor: c.border }]}
           onPress={onExit}
         >
-          <Text type="headline" color="text-2">{COPY.launchFailedBack}</Text>
+          <Text tokens={frameTokens} type="headline" color="text-2">{COPY.launchFailedBack}</Text>
         </Pressable>
       </View>
     );
@@ -463,10 +487,10 @@ export default function MiniAppView({
         accessibilityElementsHidden={!look.plate}
         importantForAccessibility={look.plate ? 'auto' : 'no-hide-descendants'}
       >
-        <TilePlate size="grid" state="ready" tint={tint} glyph={icon} />
+        <TilePlate size="grid" state="ready" tint={tint} glyph={icon} tokens={frameTokens} />
         {look.label ? (
           <View style={styles.openingLabel}>
-            <Text type="callout" color="text-2" style={styles.centred}>{COPY.appBootLabel}</Text>
+            <Text tokens={frameTokens} type="callout" color="text-2" style={styles.centred}>{COPY.appBootLabel}</Text>
           </View>
         ) : null}
       </Animated.View>

@@ -33,7 +33,7 @@ import { copyStorage, deleteStorage, peekAppliedSchema } from '../storage-engine
 import { HighlightingProvider } from '../ui/whim-prose/WhimProse';
 import { ToastHost, useToast, type ToastApi } from '../ui/Toast';
 import { haptics } from '../haptics';
-import { useTokens } from '../ui/tokens';
+import { useTokens, type ShellTokens } from '../ui/tokens';
 import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
 import { runFork } from './fork-op';
@@ -341,6 +341,14 @@ function schemeFollowing(on: StackScreen): boolean {
 function frameFollowsScheme(screen: Screen, top: StackScreen | undefined, ready: boolean): boolean {
   if (top !== undefined) return schemeFollowing(top);
   return screen.kind === 'app' || !ready;
+}
+
+/** The frame's colours: over an open app those of the settings its realm was delivered with
+ *  (`appFrame`, `null` before the delivery), else the phone's `live` tokens or the light v2 palette. */
+function shellFrame(screen: Screen, top: StackScreen | undefined, ready: boolean, live: ShellTokens, appFrame: ShellTokens | null) {
+  if (!frameFollowsScheme(screen, top, ready)) return { background: SHELL_PALETTE.bg, barStyle: 'dark-content' as const };
+  const t = screen.kind === 'app' && appFrame !== null ? appFrame : live;
+  return { background: t.colors.bg, barStyle: t.barStyle };
 }
 
 /** The update screen in place of `from`, holding the prompt typed there when `from` is a flow step
@@ -725,6 +733,8 @@ function LauncherShell({
 }>) {
   const palette = SHELL_PALETTE;
   const tokens = useTokens();
+  // The settings an open app's frame is held to from its delivery (`MiniAppStage`), `null` before it.
+  const [appFrame, setAppFrame] = useState<ShellTokens | null>(null);
   // The language every legal screen and link uses (legal-surface-v2 D6): resolved once at launch
   // from the stored choice or the phone's language, and replaced when the user taps a switch.
   const [phoneLocale] = useState(deviceLocale);
@@ -3095,7 +3105,7 @@ function LauncherShell({
    *  Both branches render it at the same place, so opening and closing never remount it. */
   const renderMiniApp = (): React.ReactNode => {
     if (!ready) return null;
-    if (screen.kind !== 'app') return <MiniAppStage launch={null} />;
+    if (screen.kind !== 'app') return <MiniAppStage launch={null} onFrame={setAppFrame} />;
     const launch: MiniAppLaunch = {
       record: screen.record,
       bundleSource: screen.source,
@@ -3110,7 +3120,7 @@ function LauncherShell({
       onUpdateRequired: onReportUpdateRequired,
       legalLanguage,
     };
-    return <MiniAppStage launch={launch} />;
+    return <MiniAppStage launch={launch} onFrame={setAppFrame} />;
   };
 
   const stack = ready ? stackFor(screen) : null;
@@ -3143,9 +3153,7 @@ function LauncherShell({
   // failing-screen identifier in the log record and the reset key, so navigating away and back
   // re-attempts a screen that failed once.
   const exit = SCREEN_EXITS[screen.kind];
-  const frame = frameFollowsScheme(screen, stack?.at(-1), ready)
-    ? { background: tokens.colors.bg, barStyle: tokens.barStyle }
-    : { background: palette.bg, barStyle: 'dark-content' as const };
+  const frame = shellFrame(screen, stack?.at(-1), ready, tokens, appFrame);
 
   return (
     <HighlightingProvider enabled={highlighting}>

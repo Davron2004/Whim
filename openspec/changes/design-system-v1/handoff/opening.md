@@ -20,8 +20,8 @@ export function themeFrame(t: ThemeFrameSettings, tint: TintName): WhimTheme;
   a running realm never re-themes; a settings change applies at the next open or Retry remount.
 - Wire: unchanged — `deliverBySourceJs({ …, theme })` → `reinject({ theme })` → `__whimHostInit`;
   the loader strips `chromeInsetBottom`, installs the rest as `__WHIM_THEME__`.
-- Tests: `mini-app-host-ui.suite.tsx` ("a launch hands the realm the theme…", "a running app keeps
-  the theme it opened with…"); desktop `deliver-by-source.desktop.mjs` check `host theme frame`
+- Tests: `mini-app-host-ui.suite.tsx` ("a launch hands the realm the theme…", "pool: a warm hand-over
+  delivers the theme…", "a running app keeps the theme it opened with…"); desktop `deliver-by-source.desktop.mjs` check `host theme frame`
   (esbuild-compiles `theme-frame.ts` + `tokens-pure.ts` and delivers the real frame).
 
 ## Opening signal (18.2) — `src/host/launcher/boot-state.ts` (pure) + `useMiniAppHost.ts`
@@ -76,19 +76,19 @@ export function openingLook(surface: MiniAppSurface, elapsed: { cap: boolean; la
 - Timers keyed by the bound pool key (Retry restarts them): label from the bind, cap from the delivery —
   a loading page paints the light default canvas until the theme reaches it (18e, iOS dark flash).
 - A failure surface (`launch-failed`, `app-error`) replaces the whole opening state at once.
-- All container chrome (root, WebView, cover, both error screens) reads `useTokens()`; no
-  `SHELL_PALETTE`. Error screens: `Text` title2/body `text-2`, primary = `buttonColors(t,'ink')`,
-  secondary outlined `border` on `bg`. Copy unchanged (the crash-screen copy is a later chain).
-- `LauncherRoot`'s frame (status-bar strip) + `StatusBar`: token `bg`/`barStyle` over an open app, the
-  skeleton, a scheme-following stack top; else `SHELL_PALETTE.bg`/`dark-content` (dev, age, link, update).
+- Frame boundary (18g): the app's area (stage root, WebView bg, cover, plate, "Opening…", error screens) + strip + `StatusBar` read the tokens captured at delivery (live `useTokens()` before it; Retry's WebView recaptures); orb and sheets stay live. `Text`/`TilePlate` take `tokens?: ShellTokens` (omitted = live).
+- Error screens: `Text` title2/body `text-2`, primary = `buttonColors(t,'ink')`, secondary outlined `border` on
+  `bg`; no `SHELL_PALETTE`. Copy unchanged (the crash-screen copy is a later chain).
+- `LauncherRoot`'s frame (status-bar strip) + `StatusBar`: `bg`/`barStyle` of `MiniAppStage`'s `onFrame(pinned)` over an
+  open app, else live tokens; skeleton, scheme-following stack top live; else `SHELL_PALETTE`/`dark-content`.
 - Closing: `onExit` → `goHome`. The tile→screen morph (chain 22) replaces the plate's position only.
 - Tests: `mini-app-host-ui` ("…shown at 600 ms anyway…", "a page still loading is never shown before
   it has the theme…", "fades in over 160 ms…", "…tile-sized plate…", stale-paint/Retry cases);
-  `mini-app-delivery` (closing → Home; "frame: over an open app the status-bar strip…").
+  `mini-app-delivery` (closing → Home; "frame: over an open app…", "frame: an app opened in dark keeps…").
 
 ## Pool (18.4) — `webview-pool.ts` (pure) + `MiniAppView.tsx` (`MiniAppStage`, `MiniAppView`)
 ```ts
-export function MiniAppStage(props: { launch: MiniAppLaunch | null }); // in LauncherRoot once ready; MiniAppView = one launch
+export function MiniAppStage(props: { launch: MiniAppLaunch | null; onFrame: (pinned: ShellTokens | null) => void }); // MiniAppView = one launch
 export function openApp(pool: WebViewPool, appId: string | null): WebViewPool; // + launchOpened, launchFailed,
 // retryLaunch, pageLoaded, pageAnswered, pageGone, launchSlot, waitingSlot; PoolSlot.handedOut: 'warm' | 'loading' | 'cold'
 ```
