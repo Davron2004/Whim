@@ -494,7 +494,7 @@ export default function MiniAppView({
           </View>
         ) : null}
       </Animated.View>
-      <Orb onExit={host.exit} onVersions={onVersions} onChangeIt={onChangeIt} onReport={() => setReportOpen(true)} />
+      <Orb appId={installedApp.id} onExit={host.exit} onVersions={onVersions} onChangeIt={onChangeIt} onReport={() => setReportOpen(true)} />
       <ReportSheet
         app={reportOpen ? installedApp : null}
         access={access}

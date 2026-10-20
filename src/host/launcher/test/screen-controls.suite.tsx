@@ -136,7 +136,7 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
   });
   await h.test('mini-app orb: Home remains an enabled host control', async () => {
     let leaves = 0;
-    const tree = await renderScreen(<Orb onExit={() => { leaves++; }} onVersions={noop} onChangeIt={noop} onReport={noop} />);
+    const tree = await renderScreen(<Orb appId="app-a" onExit={() => { leaves++; }} onVersions={noop} onChangeIt={noop} onReport={noop} />);
     try {
       const orb = tree.root.findAll(node => hostType(node) === 'Pressable' && typeof node.props.onPress === 'function')[0];
       await press(orb);

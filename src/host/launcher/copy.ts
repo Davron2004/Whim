@@ -242,7 +242,13 @@ export const COPY = {
   orbActionHome: 'Home',
   orbActionVersions: 'Versions',
   orbActionReport: 'Report this app',
-  orbMenuOpenLabel: 'Open the app menu',
+  // The orb itself (system.md §6, §7.1): "Whim menu", then its state after a comma, and the one
+  // custom action a screen reader offers on it.
+  orbMenuOpenLabel: 'Whim menu',
+  orbStateChanging: 'making a change',
+  orbStateReady: 'new version ready',
+  orbStateFailed: 'change failed',
+  orbMoveCorner: 'Move to the other corner',
   orbMenuCloseLabel: 'Close the app menu',
   orbMenuDismissLabel: 'Dismiss the app menu',
 

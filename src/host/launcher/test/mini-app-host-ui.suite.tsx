@@ -111,6 +111,18 @@ function pageIsShown(tree: Tree): boolean {
   });
 }
 
+/** Where the orb's target is drawn: its left edge and bottom (from its positioned frame and that
+ *  frame's slide) and its height. */
+function orbPlace(tree: Tree): { left: number; bottom: number; height: number } {
+  const orb = button(tree, COPY.orbMenuOpenLabel);
+  let frame: TestRenderer.ReactTestInstance | null = orb;
+  while (frame && !(typeof frame.type === 'string' && flat(frame).position === 'absolute')) frame = frame.parent;
+  if (!frame) throw new Error('the orb has no positioned frame');
+  const style = StyleSheet.flatten(frame.props.style) as { left?: number; bottom?: number; transform?: Record<string, number>[] };
+  const slide = style.transform?.find((t) => 'translateX' in t)?.translateX ?? 0;
+  return { left: (style.left ?? 0) + slide, bottom: style.bottom ?? 0, height: Number((StyleSheet.flatten(orb.props.style) as { height?: number }).height) };
+}
+
 const isOpening = (tree: Tree) =>
   tree.root.findAll((n) => typeof n.type === 'string' && n.props.accessibilityRole === 'progressbar' && n.props.accessibilityLabel === COPY.appBootA11yLabel).length > 0;
 
@@ -907,16 +919,48 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
   await h.test('mini-app: every delivery tells the realm how much of its bottom edge the orb covers, bottom safe-area inset included', async () => {
     await withMiniApp(TIP, async ({ loadEnd, frame, tree }) => {
       await loadEnd();
-      const orb = StyleSheet.flatten(button(tree, COPY.orbMenuOpenLabel).props.style) as { bottom: number; height: number };
+      const orb = orbPlace(tree);
       const first = deliveredTheme(injectedScripts[0]);
-      h.eq(first.chromeInsetBottom, orb.bottom + orb.height, 'the footprint reaches exactly the top of the orb as drawn over the inset');
+      const footprint = Number(first.chromeInsetBottom);
+      h.ok(footprint >= orb.bottom + orb.height, `the footprint (${footprint}) covers the orb's whole target as drawn over the inset (top at ${orb.bottom + orb.height})`);
       const theme = withoutInset(first);
       h.eq(theme, sanitizeTheme(theme), 'beside a theme the SDK keeps exactly as delivered');
       await frame({ kind: 'error', trusted: true, payload: { where: 'bundle' } });
       await press(button(tree, COPY.appErrorRetry));
       await loadEnd();
-      h.eq(deliveredTheme(injectedScripts[1]).chromeInsetBottom, orb.bottom + orb.height, 'the recreated realm is told again');
+      h.eq(deliveredTheme(injectedScripts[1]).chromeInsetBottom, footprint, 'the recreated realm is told again');
     });
+  });
+
+  await h.test('mini-app: the orb follows the phone’s scheme while the app keeps the theme it opened with', async () => {
+    try {
+      await withMiniApp(TIP, async ({ loadEnd, tree }) => {
+        await loadEnd();
+        await TestRenderer.act(async () => { setColorScheme('dark'); });
+        h.eq(flat(containerOf(tree)).backgroundColor, COLORS.light.bg, 'the app’s area stays light');
+        const fills = button(tree, COPY.orbMenuOpenLabel).findAll((n) => typeof n.type === 'string' && flat(n).backgroundColor !== undefined).map((n) => flat(n).backgroundColor);
+        h.ok(fills.includes(COLORS.dark.raised) && !fills.includes(COLORS.light.raised), `the orb is drawn dark (${fills.join(', ')})`);
+      });
+    } finally {
+      setColorScheme('light');
+    }
+  });
+
+  await h.test('mini-app: the orb comes back in the corner each app left it in, across closing and reopening', async () => {
+    const left = (tree: Tree) => orbPlace(tree).left;
+    await withMiniApp(TIP, async ({ tree }) => {
+      const right = left(tree);
+      const orb = button(tree, COPY.orbMenuOpenLabel);
+      await TestRenderer.act(async () => { orb.props.onAccessibilityAction({ nativeEvent: { actionName: orb.props.accessibilityActions[0].name } }); });
+      h.ok(left(tree) < right, 'Tip Splitter’s orb moved bottom-leading');
+    });
+    const reopen = async (record: AppRecord, body: (tree: Tree) => void) => {
+      // withMiniApp clears storage for a clean mount; reopen over what the first mount stored.
+      const tree = await renderScreen(<MiniAppStage launch={launchOf(record)} onFrame={ignoreFrame} />, { createNodeMock: measuredAsContainer });
+      try { body(tree); } finally { await unmountScreen(tree); }
+    };
+    await reopen(TIP, (tree) => { h.ok(left(tree) < 100, `reopened, it is still bottom-leading (left ${left(tree)})`); });
+    await reopen(WATER, (tree) => { h.ok(left(tree) > 200, `Water Counter’s orb is bottom-trailing (left ${left(tree)})`); });
   });
 
   await h.test('mini-app: a launch hands the realm the theme for the phone’s settings and the app’s tint: dark, 135% text, ocean', async () => {

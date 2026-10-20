@@ -110,7 +110,7 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
       resetNativeStorage();
       const calls: Record<string, number> = { onChangeIt: 0, onExit: 0, onVersions: 0, onReport: 0 };
       const spy = (name: string) => () => { calls[name]++; };
-      const tree = await renderScreen(React.createElement(Orb, {
+      const tree = await renderScreen(React.createElement(Orb, { appId: 'app-a',
         onExit: spy('onExit'), onVersions: spy('onVersions'), onChangeIt: spy('onChangeIt'), onReport: spy('onReport'),
       }));
       try {
@@ -137,7 +137,7 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
   await h.test('orb-menu: while the menu is still rising its actions refuse a tap; once it has risen, a tap acts', async () => {
     resetNativeStorage();
     const calls = { versions: 0, report: 0 };
-    const tree = await renderScreen(React.createElement(Orb, {
+    const tree = await renderScreen(React.createElement(Orb, { appId: 'app-a',
       onExit: () => {}, onVersions: () => { calls.versions++; }, onChangeIt: () => {}, onReport: () => { calls.report++; },
     }));
     try {
@@ -163,7 +163,7 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     // element, so an action nested in the full-screen dismiss layer was only ever announced as
     // "Dismiss the app menu" (the iOS acceptance hierarchy dump showed nothing else).
     resetNativeStorage();
-    const tree = await renderScreen(React.createElement(Orb, { onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
+    const tree = await renderScreen(React.createElement(Orb, { appId: 'app-a', onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
     try {
       await press(button(tree, COPY.orbMenuOpenLabel));
       const touchable = (n: TestRenderer.ReactTestInstance) => hostType(n) === 'Pressable' || hostType(n) === 'TouchableOpacity';
@@ -187,11 +187,11 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
   // ── polish: the orb draws no extra shape and its menu reaches the status bar (#105) ────────
   await h.test('orb-menu: the orb button carries no elevation (the Android grey-disc regression)', async () => {
     resetNativeStorage();
-    const tree = await renderScreen(React.createElement(Orb, { onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
+    const tree = await renderScreen(React.createElement(Orb, { appId: 'app-a', onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
     try {
-      const flat = StyleSheet.flatten(button(tree, COPY.orbMenuOpenLabel).props.style) as Record<string, unknown>;
-      h.ok(!('elevation' in flat), 'no elevation style on the orb button: it drew a solid grey disc on Android, not a shadow');
-      h.ok(typeof flat.shadowOpacity === 'number', 'the iOS shadow is still declared');
+      const styles = button(tree, COPY.orbMenuOpenLabel).findAll((n) => typeof n.type === 'string').map((n) => StyleSheet.flatten(n.props.style) as Record<string, unknown>);
+      h.ok(styles.every((s) => !('elevation' in s)), 'no elevation style anywhere in the orb: it drew a solid grey disc on Android, not a shadow');
+      h.ok(styles.some((s) => typeof s.boxShadow === 'string' && s.boxShadow.length > 0), 'its shadow is a boxShadow, which both platforms draw');
     } finally {
       await unmountScreen(tree);
     }
@@ -199,7 +199,7 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
 
   await h.test('orb-menu: opening the menu shows a transparent Modal translucent under both system bars, so the dim layer covers the status bar and the navigation bar', async () => {
     resetNativeStorage();
-    const tree = await renderScreen(React.createElement(Orb, { onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
+    const tree = await renderScreen(React.createElement(Orb, { appId: 'app-a', onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
     try {
       h.eq(tree.root.findAll((n) => hostType(n) === 'Modal').length, 0, 'no Modal before the menu opens');
       await press(button(tree, COPY.orbMenuOpenLabel));
