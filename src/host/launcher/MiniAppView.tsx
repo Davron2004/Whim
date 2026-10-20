@@ -3,8 +3,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // One WebView == one realm == one app (#41 D2). The bundle is delivered BY SOURCE from the
 // installed record's active version-store snapshot (#5 D3) — the iframe-side contract is
-// byte-identical to the baked path. The orb menu's Home action (D5, shell-redesign-v2 D12) and
-// Android system back (D4) both exit to the launcher; the realm can reach neither.
+// byte-identical to the baked path. The orb opens the Whim sheet, whose Back to your apps (drawn by
+// the launcher, `WhimSheet.tsx`) and Android system back (D4) both exit to the launcher; the realm
+// can reach neither.
 //
 // LauncherRoot keeps the container, `MiniAppStage`, mounted, hidden while no app is open, so it can
 // hold one WebView warm (design-system-v1 task 18.4, `webview-pool.ts`): the runtime page loaded and
@@ -56,11 +57,7 @@ import {
 } from './webview-pool';
 import Orb from './Orb';
 import { chromeInsetBottom } from './orb-geometry';
-import { ReportSheet } from './ReportScreen';
 import type { InstalledApp } from './app-index';
-import type { StoreAccess } from './store-access';
-import type { ClientOptions } from './generation-client';
-import type { LegalLanguage } from './legal-language';
 
 /** One open of one app: what the launcher hands the container while the app is open. */
 export interface MiniAppLaunch {
@@ -72,24 +69,16 @@ export interface MiniAppLaunch {
    *  record this launch logs at its first accepted paint. */
   tappedAt: number;
   onExit: () => void;
-  /** Orb "Versions" — opens the real History screen for this running app. */
-  onVersions: () => void;
-  /** Orb "Change it" — opens the compose step prefilled for this running app (same path
-   *  History's own "Change it from here" row action uses). */
-  onChangeIt: () => void;
-  /** The installed-apps entry for this running app (design D13) — `ReportSheet`'s
-   *  `reportDraftFor(entry, access)` input for the orb's "Report this app" action. Its id is the
-   *  launch's identity: another id is another launch. */
+  /** The orb's tap: the launcher opens the Whim sheet over this app. */
+  onOpenSheet: () => void;
+  /** A launcher sheet (the Whim sheet, or a change's pages grown from it) is over this app: Android
+   *  back closes it (`onCloseSheet`) before it reaches the app (mini-app-back-navigation "A host
+   *  sheet takes back first"). */
+  sheetOpen: boolean;
+  onCloseSheet: () => void;
+  /** The installed-apps entry for this running app: its tile, its name, the orb's remembered corner.
+   *  Its id is the launch's identity: another id is another launch. */
   installedApp: InstalledApp;
-  access: StoreAccess;
-  /** Plain `ClientOptions` for the report sheet's `sendReport` call — no AI-data consent required
-   *  (design D3). */
-  reportOptions: ClientOptions;
-  /** The orb's report was refused `update_required`: the host opens the update screen in place of
-   *  this running app (request-envelope D5). */
-  onUpdateRequired: () => void;
-  /** The active legal language, for the report sheet's privacy link. */
-  legalLanguage: LegalLanguage;
 }
 
 export interface MiniAppStageProps {
@@ -264,8 +253,8 @@ interface MiniAppViewProps extends MiniAppLaunch {
 }
 
 export default function MiniAppView({
-  record, bundleSource, engineAppId, tappedAt, onExit, onVersions, onChangeIt, installedApp, access, reportOptions,
-  onUpdateRequired, legalLanguage, slot, outlet, natives, onFailed, onOpened, onRetry, onPinned,
+  record, bundleSource, engineAppId, tappedAt, onExit, onOpenSheet, sheetOpen, onCloseSheet, installedApp,
+  slot, outlet, natives, onFailed, onOpened, onRetry, onPinned,
 }: Readonly<MiniAppViewProps>) {
   const slotKey = slot?.key ?? null;
   // The WebView this launch's host controls is looked up when used: the one bound to the launch
@@ -276,11 +265,10 @@ export default function MiniAppView({
       return boundKey.current === null ? null : natives.current.get(boundKey.current) ?? null;
     },
   }));
-  // The report sheet is a host-layer overlay over the running realm (design D14): while it is
-  // open, back-policy's `overlayOpen` input closes it instead of forwarding the press into the
-  // app or exiting (mini-app-back-navigation delta "A host sheet takes back first").
-  const [reportOpen, setReportOpen] = useState(false);
-  const host = useMiniAppHost({ onExit, overlayOpen: reportOpen, onCloseOverlay: () => setReportOpen(false), webRef });
+  // The launcher's sheet over the running realm (the Whim sheet, design D14): while it is open,
+  // back-policy's `overlayOpen` input closes it instead of forwarding the press into the app or
+  // exiting (mini-app-back-navigation delta "A host sheet takes back first").
+  const host = useMiniAppHost({ onExit, overlayOpen: sheetOpen, onCloseOverlay: onCloseSheet, webRef });
 
   // Deliver once the bound WebView's page has loaded, so injectJavaScript is not silently dropped
   // (#5 B1): at once for a WebView handed over already loaded, else at its `onLoadEnd` -- exactly
@@ -347,7 +335,7 @@ export default function MiniAppView({
   // was delivered with, as the page does (app-launcher "Settings changed while an app runs apply next
   // time"; system.md: one `bg`, no live theme frame). Before the delivery they follow the phone. A
   // failure surface keeps the frame its realm had; Retry's fresh WebView follows the phone again
-  // until its own delivery captures anew. The host overlays above the app (orb, report sheet) follow
+  // until its own delivery captures anew. The host overlays above the app (orb, Whim sheet) follow
   // the phone.
   const pinned = delivered !== null && (delivered.key === slotKey || slotKey === null) ? delivered.tokens : null;
   const frameTokens = pinned ?? tokens;
@@ -494,18 +482,7 @@ export default function MiniAppView({
           </View>
         ) : null}
       </Animated.View>
-      <Orb appId={installedApp.id} onExit={host.exit} onVersions={onVersions} onChangeIt={onChangeIt} onReport={() => setReportOpen(true)} />
-      <ReportSheet
-        app={reportOpen ? installedApp : null}
-        access={access}
-        options={reportOptions}
-        legalLanguage={legalLanguage}
-        onClose={() => setReportOpen(false)}
-        onUpdateRequired={() => {
-          setReportOpen(false);
-          onUpdateRequired();
-        }}
-      />
+      <Orb appId={installedApp.id} onOpen={onOpenSheet} />
     </>
   );
 }

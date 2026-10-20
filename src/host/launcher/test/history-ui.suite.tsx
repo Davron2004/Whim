@@ -17,7 +17,7 @@ import ReadyPage from '../ReadyPage';
 import MiniAppView from '../MiniAppView';
 import WhimProse from '../../ui/whim-prose/WhimProse';
 import { SHELL_COLORS } from '../../../sdk/theme';
-import { Alert, finishAnimations, hardwareBack, StyleSheet, windowMetrics } from './native-host';
+import { Alert, hardwareBack, StyleSheet, windowMetrics } from './native-host';
 import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 import { chooseRow, longPress, renderHome } from './home-rig';
 import { buildIt, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
@@ -323,8 +323,7 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
         await tap(() => home().props.onOpen(app));
         await waitFor(() => showing(MiniAppView), `${app.name} to open`);
         await press(button(tree, COPY.orbMenuOpenLabel));
-        await TestRenderer.act(async () => { finishAnimations(); });
-        await press(button(tree, COPY.orbActionVersions));
+        await press(button(tree, COPY.actionHistory));
         await waitFor(() => showing(HistoryScreen), 'its history');
         await leave();
         h.ok(showing(HomeScreen) && !showing(HistoryScreen), `${name}: History pops off the stack at once, onto Home under it`);
@@ -359,8 +358,7 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
           await tap(() => home().props.onOpen(app));
           await waitFor(() => showing(MiniAppView), `${app.name} to open`);
           await press(button(tree, COPY.orbMenuOpenLabel));
-          await TestRenderer.act(async () => { finishAnimations(); });
-          await press(button(tree, COPY.orbActionVersions));
+          await press(button(tree, COPY.actionHistory));
           await waitFor(() => showing(HistoryScreen), 'its history');
           StoreAccess.prototype.activeBundle = async () => { throw new Error('bundle read failed'); };
           const alerts = Alert.shown.length;

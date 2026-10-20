@@ -11,8 +11,9 @@
 // theme: the edge is the `border` role, which stands 3:1 off `bg` and off a card in both schemes, so
 // the dark disc never sinks into a dark app.
 //
-// A tap still opens the tapped menu below (shell-redesign-v2 chain-G, design D12), whose actions are
-// counted (orb-actions.ts), until the Whim sheet replaces it.
+// A tap opens the Whim sheet (`onOpen`, `WhimSheet.tsx`). The tapped menu below (shell-redesign-v2
+// chain-G, design D12), whose actions are counted (orb-actions.ts), answers a tap only where no
+// `onOpen` is given, until task 19.5 retires it.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated as RNAnimated, Easing, Modal, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated';
@@ -101,17 +102,20 @@ export interface OrbProps {
   state?: OrbState;
   /** The stream's activity (0–1) while a change is being made. */
   activity?: number;
-  onExit: () => void;
+  /** A tap opens the Whim sheet. Without it a tap toggles the tapped menu below, until task 19.5
+   *  retires that menu and the callbacks after this one. */
+  onOpen?: () => void;
+  onExit?: () => void;
   /** Opens the real History screen for the running app ("Versions"). */
-  onVersions: () => void;
+  onVersions?: () => void;
   /** Opens the compose step prefilled for the running app ("Change it") — the same path
    *  History's own "Change it from here" row action uses. */
-  onChangeIt: () => void;
+  onChangeIt?: () => void;
   /** Opens the report sheet for the running app (design D13) — sends nothing on its own. */
-  onReport: () => void;
+  onReport?: () => void;
 }
 
-export default function Orb({ appId, state = 'rest', activity = 0, onExit, onVersions, onChangeIt, onReport }: Readonly<OrbProps>) {
+export default function Orb({ appId, state = 'rest', activity = 0, onOpen, onExit, onVersions, onChangeIt, onReport }: Readonly<OrbProps>) {
   // Same `whim.launcher` KVBackend id every other launcher setting persists through (see
   // highlighting.ts) — a second MMKV instance opened with the same id shares the same storage.
   const kv = useRef(createMmkvBackend('whim.launcher')).current;
@@ -252,6 +256,10 @@ export default function Orb({ appId, state = 'rest', activity = 0, onExit, onVer
   };
 
   const onOrbPress = () => {
+    if (onOpen) {
+      onOpen();
+      return;
+    }
     setMenuOpen((open) => !open);
     setMenuSettled(false);
   };
@@ -259,10 +267,10 @@ export default function Orb({ appId, state = 'rest', activity = 0, onExit, onVer
   const onAction = (id: OrbActionId) => {
     recordOrbAction(kv, id);
     closeAll();
-    if (id === 'home') onExit();
-    else if (id === 'versions') onVersions();
-    else if (id === 'report') onReport();
-    else onChangeIt();
+    if (id === 'home') onExit?.();
+    else if (id === 'versions') onVersions?.();
+    else if (id === 'report') onReport?.();
+    else onChangeIt?.();
   };
 
   const words = STATE_WORDS[state];

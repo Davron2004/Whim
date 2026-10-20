@@ -68,6 +68,7 @@ import { DescribePage } from './DescribePage';
 import { PlanPage } from './PlanPage';
 import { FirstRunSheet } from './FirstRunSheet';
 import { MakingSheet, type SheetContent } from './MakingSheet';
+import { runningVersion, WhimReportPage, WhimSheet, type RunningVersion } from './WhimSheet';
 import MakingPage from './MakingPage';
 import ReadyPage from './ReadyPage';
 import FailurePage from './FailurePage';
@@ -182,10 +183,24 @@ interface HeldPrompt {
  *  so where leaving it returns. */
 type HistoryScreenState = { kind: 'history'; app: InstalledApp; from: 'home' | 'app' };
 
+/** The Whim sheet's pages over a running app: its menu, and Report a problem pushed inside it. */
+type WhimSheetPage = 'menu' | 'report';
+
 type Screen =
   | { kind: 'home' }
   // `tappedAt`: when the tile was tapped (`Date.now()`), for the tap-to-first-paint record.
-  | { kind: 'app'; app: InstalledApp; record: AppRecord; source: string; engineAppId: string; tappedAt: number }
+  // `versionId`: the version the running bundle is, once read. `sheet`: the Whim sheet's page, while
+  // it is open over the app.
+  | {
+      kind: 'app';
+      app: InstalledApp;
+      record: AppRecord;
+      source: string;
+      engineAppId: string;
+      tappedAt: number;
+      versionId?: string;
+      sheet?: WhimSheetPage;
+    }
   | { kind: 'dev' }
   | { kind: 'settings' }
   // Pushed over Settings on the native stack.
@@ -262,6 +277,16 @@ type Screen =
       /** A record an `update` fallback ended, while this build still needs that update. */
       needsUpdate?: true;
     };
+
+type AppScreen = Extract<Screen, { kind: 'app' }>;
+
+/** The running app a change's Describe or Plan page sits over: the app the Whim sheet sent the change
+ *  from (`under`), while the page is for that app. The app keeps running under the sheet, and the
+ *  shell is laid out as over the app. `null` anywhere else, Making included. */
+function appUnder(screen: Screen, under: AppScreen | null): AppScreen | null {
+  if (under === null || (screen.kind !== 'describe' && screen.kind !== 'plan')) return null;
+  return screen.editing?.id === under.app.id ? under : null;
+}
 
 /** The screens the native stack shows (design-system-v1 D6): Home at its root, then Settings and
  *  what it pushes (Advanced, AI features — the consent screen in review mode — and Report), and
@@ -750,6 +775,19 @@ function LauncherShell({
   useEffect(() => {
     screenKindRef.current = screen.kind;
   }, [screen.kind]);
+  // The running app the Whim sheet sent a change from: it stays open under that change's Describe
+  // and Plan pages (`appUnder`), and closing them returns to it. Dropped once the screen leaves them.
+  const [under, setUnder] = useState<AppScreen | null>(null);
+  useEffect(() => {
+    if (screen.kind !== 'describe' && screen.kind !== 'plan') setUnder(null);
+  }, [screen.kind]);
+  const running = screen.kind === 'app' ? screen : appUnder(screen, under);
+  // The words in the Whim sheet's send area, for the app they were typed over. Held here, above the
+  // sheet's content, which a text-size change builds again.
+  const [whimWords, setWhimWords] = useState<{ appId: string; text: string } | null>(null);
+  // The Whim sheet's reading of the running app's versions, for the opening it was read in (`at`, the
+  // launch's `tappedAt`): the running version, and whether a newer one is current.
+  const [whimVersions, setWhimVersions] = useState<{ at: number; version: RunningVersion | null; newVersion: boolean } | null>(null);
   // A sender-landing (`neutral`-tone) notice on whichever step currently carries one clears the
   // instant its retry window ends (design D12: "A sender refusal clears when its window ends").
   // Leaving the step already clears it for free — the step's own constructor never carries a
@@ -1116,6 +1154,11 @@ function LauncherShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** The version the app opened at `tappedAt` runs, once read, kept on that launch's screen. */
+  const noteRunningVersion = (tappedAt: number, versionId: string | null) => {
+    if (versionId !== null) setScreen((s) => (s.kind === 'app' && s.tappedAt === tappedAt ? { ...s, versionId } : s));
+  };
+
   /** The tile's tap: busy from the tap until the mini-app screen replaces the grid or the open
    *  fails (`app-launcher` "Opening an app shows an immediate busy affordance" — a tap MUST NOT
    *  read as unregistered while the active bundle is being read). `onFailed` runs after a failed
@@ -1124,8 +1167,14 @@ function LauncherShell({
     const tappedAt = Date.now();
     return runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
       try {
-        const source = await access.activeBundle(app);
+        // The version that bundle is: read right behind it on the app's serial store queue, so no
+        // write lands between the two, and after it, so neither the opening nor the busy tile waits
+        // for it.
+        const bundleRead = access.activeBundle(app);
+        const versionRead = access.activeId(app).catch(() => null);
+        const source = await bundleRead;
         setScreen({ kind: 'app', app, record: app.record, source, engineAppId: access.engineAppId(app), tappedAt });
+        versionRead.then((versionId) => noteRunningVersion(tappedAt, versionId));
       } catch (e) {
         // The user still gets the alert; the class/message/stack of what actually failed is only
         // recoverable from the seam (host-observability "The alert paths now log").
@@ -1561,13 +1610,17 @@ function LauncherShell({
     const opened = kept ?? describeStep(editing, text ?? takeHeldPrompt(editing) ?? '');
     setScreen(opened);
     if (opened.kind === 'plan') resumePlan(opened);
-    if (!editing) return;
+    if (editing) readAbout(editing, 'openCompose');
+  };
+
+  /** Reads what `editing` currently is (its description) into `aboutRef`, in the background. */
+  const readAbout = (editing: InstalledApp, operation: string) => {
     (async () => {
       let about: string | undefined;
       try {
         about = await access.activeDescription(editing);
       } catch (e) {
-        log.debug(CHANNELS.app, 'edit description unavailable', { operation: 'openCompose', ...errorFields(e) });
+        log.debug(CHANNELS.app, 'edit description unavailable', { operation, ...errorFields(e) });
         return;
       }
       if (about == null) return;
@@ -2863,18 +2916,120 @@ function LauncherShell({
     return null;
   };
 
+  // ── The Whim sheet over a running app (app-launcher "The Whim sheet is a running app's one menu") ──
+
+  /** Reads, for the Whim sheet opened over `on`, the version it runs and whether a newer one is current.
+   *  Until the running version's id is known, the current one is taken as running. */
+  const readWhimVersions = (on: AppScreen) => {
+    Promise.all([access.timeline(on.app), access.activeId(on.app)]).then(
+      ([timeline, active]) => {
+        const runningId = on.versionId ?? active;
+        setWhimVersions({ at: on.tappedAt, version: runningVersion(timeline, runningId), newVersion: active !== null && runningId !== active });
+      },
+      (e: unknown) => log.debug(CHANNELS.app, 'whim sheet versions unavailable', errorFields(e)),
+    );
+  };
+
+  /** The orb's tap: the Whim sheet opens over the running app. */
+  const openWhimSheet = () => {
+    if (screen.kind !== 'app') return;
+    readWhimVersions(screen);
+    setScreen((s) => (s.kind === 'app' ? { ...s, sheet: 'menu' } : s));
+  };
+
+  /** The Whim sheet's send: the same sheet grows into the plan page for a change of the running app,
+   *  which keeps running under it (`under`). Where the terms or consent are due, the first-run ask
+   *  comes first, as for every action that sends, and continues on Describe with the words. */
+  const onWhimSend = () => {
+    if (screen.kind !== 'app') return;
+    const from: AppScreen = { ...screen, sheet: undefined };
+    const text = whimWords?.appId === from.app.id ? whimWords.text : '';
+    const editing = reachableApps().find((app) => app.id === from.app.id);
+    if (text.trim() === '' || !editing) return;
+    const flow: LegalFlow<Screen> = { continuation: { kind: 'compose', editing, text }, returnTo: from, refused: false };
+    if (legalScreen(flow) !== undefined) {
+      setWhimWords(null);
+      advanceLegalFlow(flow);
+      return;
+    }
+    if (!resolveClientOptions()) return;
+    setWhimWords(null);
+    setUnder(from);
+    readAbout(editing, 'whimSheetSend');
+    onDescribeContinue(describeStep(editing, text)).catch((e: unknown) => logGenError('clarify continuation failed', e));
+  };
+
+  /** "New version ready · Reload": the app opens again, on the version that is now current. */
+  const onWhimReload = () => {
+    if (screen.kind !== 'app') return;
+    const { app } = screen;
+    goHome();
+    onOpen(index.get(app.id) ?? app);
+  };
+
+  /** The Whim sheet's page for `page` over the running app `on`: its menu, or Report a problem pushed
+   *  inside it. Both fit their content. */
+  const whimSheetPage = (on: AppScreen, page: WhimSheetPage): SheetContent => {
+    const { app } = on;
+    if (page === 'report') {
+      return {
+        key: `whim-report:${app.id}`,
+        detent: 'fit',
+        node: (
+          <WhimReportPage
+            app={app}
+            access={access}
+            options={reportOptions}
+            legalLanguage={legalLanguage}
+            onUpdateRequired={onReportUpdateRequired}
+            onBack={() => setScreen((s) => (s.kind === 'app' && s.sheet === 'report' ? { ...s, sheet: 'menu' } : s))}
+          />
+        ),
+      };
+    }
+    const read = whimVersions?.at === on.tappedAt ? whimVersions : null;
+    return {
+      key: `whim:${app.id}`,
+      detent: 'fit',
+      node: (
+        <WhimSheet
+          app={app}
+          version={read?.version ?? null}
+          newVersion={read?.newVersion ?? false}
+          text={whimWords?.appId === app.id ? whimWords.text : ''}
+          onChangeText={(text) => setWhimWords({ appId: app.id, text })}
+          onSend={onWhimSend}
+          onReload={onWhimReload}
+          onHistory={() => onHistory(app, 'app')}
+          onReport={() => setScreen((s) => (s.kind === 'app' ? { ...s, sheet: 'report' } : s))}
+          onExit={goHome}
+        />
+      ),
+    };
+  };
+
   /** Closing the sheet by any route (the close control, the scrim, a drag, Android back): on Making the
    *  run keeps going and the sheet collapses into its tile; on Describe and Plan the in-flight
-   *  clarify or rewrite is aborted and the draft kept (`goHome` → `keepDraft`); on Ready it is Done;
-   *  on Failure it leaves the attempt as it is, its tile and journal kept. */
+   *  clarify or rewrite is aborted and the draft kept (`goHome` → `keepDraft`), or, over the app the
+   *  Whim sheet sent the change from, the app shows again; on Ready it is Done; on Failure it leaves
+   *  the attempt as it is, its tile and journal kept. The Whim sheet closes onto its running app. */
   const closeSheet = () => {
-    if (screen.kind === 'making') onLeaveRunning();
-    else goHome();
+    if (screen.kind === 'making') {
+      onLeaveRunning();
+    } else if (screen.kind === 'app') {
+      setScreen({ ...screen, sheet: undefined });
+    } else if (running !== null) {
+      keepDraft(screen);
+      setScreen(running);
+    } else {
+      goHome();
+    }
   };
 
   /** The page the making sheet shows for the current screen, with the key it is shown under; `null`
    *  closes the sheet. */
   const renderSheetPage = (): SheetContent | null => {
+    if (screen.kind === 'app') return screen.sheet === undefined ? null : whimSheetPage(screen, screen.sheet);
     if (screen.kind === 'describe') {
       const from = screen;
       return {
@@ -3102,28 +3257,29 @@ function LauncherShell({
 
   /** The mini-app container, mounted under every screen once the shell is ready (design-system-v1
    *  task 18.4): hidden, with one WebView waiting, while no app is open; the open app when one is.
-   *  Both branches render it at the same place, so opening and closing never remount it. */
-  const renderMiniApp = (): React.ReactNode => {
+   *  Both branches render it at the same place, so opening and closing never remount it. The app stays
+   *  open under a change's pages the Whim sheet grew into (`running`). */
+  const renderMiniApp = (sheetOpen: boolean): React.ReactNode => {
     if (!ready) return null;
-    if (screen.kind !== 'app') return <MiniAppStage launch={null} onFrame={setAppFrame} />;
+    if (running === null) return <MiniAppStage launch={null} onFrame={setAppFrame} />;
     const launch: MiniAppLaunch = {
-      record: screen.record,
-      bundleSource: screen.source,
-      engineAppId: screen.engineAppId,
-      tappedAt: screen.tappedAt,
+      record: running.record,
+      bundleSource: running.source,
+      engineAppId: running.engineAppId,
+      tappedAt: running.tappedAt,
       onExit: goHome,
-      onVersions: () => onHistory(screen.app, 'app'),
-      onChangeIt: () => openWithConsent({ kind: 'compose', editing: screen.app }),
-      installedApp: screen.app,
-      access,
-      reportOptions,
-      onUpdateRequired: onReportUpdateRequired,
-      legalLanguage,
+      onOpenSheet: openWhimSheet,
+      sheetOpen,
+      onCloseSheet: closeSheet,
+      installedApp: running.app,
     };
     return <MiniAppStage launch={launch} onFrame={setAppFrame} />;
   };
 
-  const stack = ready ? stackFor(screen) : null;
+  // What the shell is laid out around: the running app while a change's pages sit over it, else the screen.
+  const base: Screen = running ?? screen;
+  const sheetPage = renderSheetPage();
+  const stack = ready ? stackFor(base) : null;
   let content: React.ReactNode;
   if (!ready) {
     content = <HomeSkeleton count={knownAppCount} />;
@@ -3153,22 +3309,22 @@ function LauncherShell({
   // failing-screen identifier in the log record and the reset key, so navigating away and back
   // re-attempts a screen that failed once.
   const exit = SCREEN_EXITS[screen.kind];
-  const frame = shellFrame(screen, stack?.at(-1), ready, tokens, appFrame);
+  const frame = shellFrame(base, stack?.at(-1), ready, tokens, appFrame);
 
   return (
     <HighlightingProvider enabled={highlighting}>
-      <SafeAreaView edges={frameEdgesFor(screen.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>
+      <SafeAreaView edges={frameEdgesFor(base.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>
         <StatusBar barStyle={frame.barStyle} />
-        <ToastHost bottomOffset={toastClearance(screen.kind)}>
+        <ToastHost bottomOffset={toastClearance(base.kind)}>
           <ToastBridge api={toastRef} />
           <ScreenBoundary
             screen={screen.kind}
             FallbackComponent={ScreenErrorFallback}
             onLeave={exit.back === 'root' ? undefined : goHome}
           >
-            {renderMiniApp()}
+            {renderMiniApp(sheetPage !== null)}
             {content}
-            <MakingSheet content={renderSheetPage()} onClose={closeSheet} />
+            <MakingSheet content={sheetPage} onClose={closeSheet} />
             {checkingAge !== undefined && <AgeCheckBack onLeave={() => onLegalDecline(checkingAge.returnTo)} />}
             <FirstRunHost
               ask={firstRunAskOf(screen)}

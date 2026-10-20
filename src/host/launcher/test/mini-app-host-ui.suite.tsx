@@ -9,7 +9,6 @@ import { COPY } from '../copy';
 import { MiniAppStage, type MiniAppLaunch } from '../MiniAppView';
 import { STARTUP_DEADLINE_MS } from '../boot-state';
 import type { InstalledApp } from '../app-index';
-import type { StoreAccess } from '../store-access';
 import type { AppRecord } from '../../bridge';
 import { createStorageEngine } from '../../storage-engine';
 import { DEFAULT_THEME, sanitizeTheme } from '../../../sdk/theme';
@@ -19,12 +18,11 @@ import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { DiagnosticsBatch } from '@whim/contract';
 import { log } from '../../logging';
-import { accessibilitySettings, emitAccessibility, finishAnimations, injectedScripts, Platform, setColorScheme, StyleSheet, windowMetrics } from './native-host';
+import { accessibilitySettings, emitAccessibility, hardwareBack, injectedScripts, Platform, setColorScheme, StyleSheet, windowMetrics } from './native-host';
 import { keyboardWindow, moveKeyboard, resetKeyboard } from './native-keyboard-controller';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { closedDatabases, resetNativeStorage } from './native-storage';
 import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
-import { grantedOptions } from './client-fixtures';
 import { animations, isStep } from './native-reanimated';
 import { TilePlate } from '../../ui/AppTile';
 import { SHELL_PALETTE } from '../theme';
@@ -158,13 +156,10 @@ function launchOf(
     engineAppId: record.appId,
     tappedAt: opts.tappedAt ?? Date.now(),
     onExit: opts.onExit ?? (() => {}),
-    onVersions: () => {},
-    onChangeIt: () => {},
+    onOpenSheet: () => {},
+    sheetOpen: false,
+    onCloseSheet: () => {},
     installedApp: { id: record.appId, name: record.name, createdAt: 1, lineageId: 'main', record, ...opts.tile },
-    access: {} as StoreAccess,
-    reportOptions: grantedOptions('https://server.test', 'device'),
-    onUpdateRequired: () => {},
-    legalLanguage: 'en',
   };
 }
 
@@ -1152,14 +1147,11 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('mini-app: leaving through the orb, or unmounting, disarms the startup deadline', async () => {
-    await withMiniApp(TIP, async ({ loadEnd, clock, tree, exits }) => {
+  await h.test('mini-app: leaving through Android back at the app’s root, or unmounting, disarms the startup deadline', async () => {
+    await withMiniApp(TIP, async ({ loadEnd, clock, exits }) => {
       await loadEnd();
-      await press(button(tree, COPY.orbMenuOpenLabel));
-      await TestRenderer.act(async () => { finishAnimations(); });
-      const home = tree.root.findAll((n) => hostType(n) === 'Pressable' && textOf(n).endsWith(COPY.orbActionHome));
-      await press(home[0]);
-      h.eq(exits(), 1, 'Home leaves the app');
+      await TestRenderer.act(async () => { hardwareBack(); });
+      h.eq(exits(), 1, 'back at the root leaves the app');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'and no deadline outlives it');
     });
     await withMiniApp(TIP, async ({ loadEnd, clock, tree }) => {

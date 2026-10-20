@@ -1,8 +1,8 @@
 /**
  * ReportScreen — reporting a problem (design D13/D14; spec content-reporting; system.md §9 Report a
  * problem). Pushed on the native stack from History (the version the user is on) and from Settings
- * (no particular app); over a running app the same form sits in `ReportSheet` until the Whim sheet
- * pushes it on its own small stack.
+ * (no particular app); over a running app the Whim sheet pushes the same form as a page of its own
+ * (`ReportPage`).
  *
  * "What went wrong?" chips, a note, the "Include what I asked for" switch, the code line, "What gets
  * sent" collapsed (a preview rendered from the SAME `ReportRequest` value Send posts), and the line
@@ -423,6 +423,12 @@ function PreviewRow({
 export default function ReportScreen(props: Readonly<ReportScreenProps>) {
   useSystemBack(props.onLeave);
   return <ReportForm {...props} host="screen" />;
+}
+
+/** The report as a page inside a sheet that already holds the shell (the Whim sheet), which pads for
+ *  the keyboard: a new mount is a new draft. */
+export function ReportPage(props: Readonly<ReportScreenProps>) {
+  return <ReportForm {...props} host="sheet" title={COPY.reportScreenTitle} />;
 }
 
 /** The report over a running app, in a sheet that keeps the app running underneath: `app == null`

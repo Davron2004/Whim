@@ -252,6 +252,15 @@ export const COPY = {
   orbMenuCloseLabel: 'Close the app menu',
   orbMenuDismissLabel: 'Dismiss the app menu',
 
+  // ── the Whim sheet, what the orb opens (system.md §9 Whim sheet) ─────────────
+  /** The row on top while a newer version than the running one waits, and its action. */
+  whimSheetNewVersion: 'New version ready',
+  whimSheetReload: 'Reload',
+  /** The send field's placeholder and screen-reader name, and its arrow button. */
+  whimSheetAsk: 'What should change?',
+  whimSheetSend: 'Send',
+  whimSheetBackToApps: 'Back to your apps',
+
   // ── the report screen (content-reporting; design D13/D14) ───────────────────
   /** The Report screen's header title on the native stack, from History and Settings. */
   reportScreenTitle: 'Report a problem',
@@ -1008,6 +1017,27 @@ export function composerContinueLine(preview: string): string {
  *  Plan headlines while `editing` is present. */
 export function editingEyebrow(name: string): string {
   return `Changing ${name}`;
+}
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+/** How long ago `at` was, in words: "just now", "5 min ago", "3 h ago", "1 day ago", "2 days ago",
+ *  and from a week on the date ("Oct 3"), in English like the rest of the copy. */
+function agoWords(at: number, now: number): string {
+  const diff = Math.max(0, now - at);
+  if (diff < MINUTE_MS) return 'just now';
+  if (diff < HOUR_MS) return `${Math.floor(diff / MINUTE_MS)} min ago`;
+  if (diff < DAY_MS) return `${Math.floor(diff / HOUR_MS)} h ago`;
+  const days = Math.floor(diff / DAY_MS);
+  if (days < 7) return days === 1 ? '1 day ago' : `${days} days ago`;
+  return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(new Date(at));
+}
+
+/** The Whim sheet's version line for the running version: "Version 4 · changed 2 days ago". */
+export function whimSheetVersionLine(version: number, changedAt: number, now: number): string {
+  return `Version ${version} · changed ${agoWords(changedAt, now)}`;
 }
 
 /** The history header's subtitle: "7 versions · started 3 days ago". */
