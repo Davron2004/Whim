@@ -148,6 +148,7 @@ import { isNetworkFailure, showOfflineIndicator, showServerUnreachableNotice } f
 import { appIsForeground, useAppForeground } from './use-app-foreground';
 import { FlowDrafts, draftKey } from './flow-draft';
 import { loadHighlighting } from './highlighting';
+import { sweepRetiredKeys } from './retired-keys';
 import { getDeviceId, resetDeviceId } from './device-id';
 import { errorDetailsEnabled, setErrorDetails } from './error-details';
 import { GenerationClientError, clarifyPrompt, consentedClientOptions, generateApp, rewritePrompt } from './generation-client';
@@ -636,6 +637,7 @@ export default function LauncherRoot({
   // KVBackend instance the installed-apps index uses (one MMKV instance, several consumers).
   const { index, access, pending, journal, kv, purges } = useMemo(() => {
     const launcherKv: KVBackend = createMmkvBackend('whim.launcher');
+    sweepRetiredKeys(launcherKv);
     const idx = new AppIndex(launcherKv);
     const store = createPersistentStore(createMmkvBackend('whim-version-store'));
     const acc = new StoreAccess({

@@ -6,6 +6,7 @@
  *  Android back, and typed words surviving a text-size rebuild. */
 import type React from 'react';
 import TestRenderer from 'react-test-renderer';
+import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 import { Harness } from './harness';
 import { COPY } from '../copy';
 import HomeScreen from '../HomeScreen';
@@ -80,6 +81,29 @@ export async function openSheet(tree: Tree): Promise<void> {
 }
 
 const never = () => new Promise<Response>(() => {});
+
+type Spacing = { gap?: number; marginTop?: number; marginBottom?: number };
+const spacing = (style: unknown) => (StyleSheet.flatten(style as StyleProp<ViewStyle>) ?? {}) as Spacing;
+
+/** The first host views under `node`, looking through components. */
+function hostChildren(node: Node): Node[] {
+  return node.children.flatMap((child) => {
+    if (typeof child === 'string') return [];
+    return typeof child.type === 'string' ? [child] : hostChildren(child);
+  });
+}
+
+/** The space between each block of the sheet's content and the next one (its margin, the content's
+ *  gap and the next one's margin), from the block holding `inside` up to the content itself. */
+function blockGaps(inside: Node): number[] {
+  let content: Node | null = inside.parent;
+  while (content && !(typeof content.type === 'string' && hostChildren(content).length >= 3)) content = content.parent;
+  if (!content) throw new Error('no content holds that control');
+  const blocks = hostChildren(content);
+  // A scroll view lays its children out in its content container.
+  const gap = spacing(content.props.contentContainerStyle ?? content.props.style).gap ?? 0;
+  return blocks.slice(1).map((next, i) => (spacing(blocks[i].props.style).marginBottom ?? 0) + gap + (spacing(next.props.style).marginTop ?? 0));
+}
 
 export async function runWhimSheetUiTests(h: Harness): Promise<void> {
   await h.test('whim sheet: the orb opens it over the running app: tile, name and version line, then the send area, History, Report a problem and Back to your apps, in that order', async () => {
@@ -168,6 +192,9 @@ export async function runWhimSheetUiTests(h: Harness): Promise<void> {
         await waitFor(() => hasButton(tree, RELOAD_ROW), 'the Reload row');
         h.eq(controlsIn(tree)[0], RELOAD_ROW, 'on top of the sheet');
         h.eq(versionLine(tree), 'Version 1 · changed 1 min ago', 'the line still names the version that runs');
+        const gaps = blockGaps(button(tree, RELOAD_ROW));
+        h.ok(gaps.length === 3 && gaps.every((gap) => gap === gaps[0]) && gaps[0] > 0,
+          `the same space under each block: the name, the Reload row, the send area (${gaps.join(', ')})`);
 
         await press(button(tree, RELOAD_ROW));
         await waitFor(() => showing(tree, MiniAppView) && runningApp(tree).props.tappedAt !== opened, 'the app to open again');

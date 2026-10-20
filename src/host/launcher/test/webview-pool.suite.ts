@@ -14,7 +14,6 @@ import {
   pageAnswered,
   pageGone,
   pageLoaded,
-  retryLaunch,
   waitingSlot,
   type WebViewPool,
 } from '../webview-pool';
@@ -123,18 +122,18 @@ export async function runWebViewPoolTests(h: Harness): Promise<void> {
     h.eq(pageGone(open, launchSlot(open)!.key), open, 'the open app’s own WebView is the launch’s to fail, not the pool’s');
   });
 
-  await h.test('pool: a failure surface destroys the launch’s WebView, and Retry binds one it never had', () => {
-    const open = openApp(warmed(openApp(EMPTY_POOL, null)), 'a');
+  await h.test('pool: a failure surface destroys the launch’s WebView, and Reload (a new opening) takes the one that waited meanwhile', () => {
+    const open = openApp(warmed(openApp(EMPTY_POOL, null)), 'a@1');
     const first = launchSlot(open)!.key;
     const failed = launchFailed(open);
     h.eq([launchSlot(failed), failed.slots.length, failed.launch], [undefined, 1, open.launch], 'no WebView of its own while the recovery screen shows; one starts waiting');
-    const retried = retryLaunch(warmed(failed));
-    h.ok(launchSlot(retried)!.key !== first && launchSlot(retried)!.handedOut === 'warm' && retried.launch === open.launch,
-      'Retry gives the same launch a new WebView: the one that warmed meanwhile');
-    h.ok(launchSlot(retryLaunch(retried))!.key !== launchSlot(retried)!.key, 'and Retry without a failure screen replaces the WebView too');
+    const reloaded = openApp(warmed(failed), 'a@2');
+    h.ok(launchSlot(reloaded)!.key !== first && launchSlot(reloaded)!.key === waitingSlot(failed)!.key && launchSlot(reloaded)!.handedOut === 'warm',
+      'Reload binds the WebView that warmed while the crash screen showed');
+    h.ok(reloaded.launch !== open.launch && reloaded.slots.length === 1, 'as a new launch, with none other loading while it opens');
   });
 
-  await h.test('pool: over any sequence of opens, closes, failures, retries and page events, no WebView ever serves two launches or waits again', () => {
+  await h.test('pool: over any sequence of opens, closes, failures and page events, no WebView ever serves two launches or waits again', () => {
     let pool = openApp(EMPTY_POOL, null);
     const owner = new Map<number, number>();
     let notWaiting = 0;
@@ -146,7 +145,7 @@ export async function runWebViewPoolTests(h: Harness): Promise<void> {
     const waitingKey = (p: WebViewPool, step: (p: WebViewPool, key: number) => WebViewPool) => (waitingSlot(p) ? step(p, waitingSlot(p)!.key) : p);
     const steps: Record<string, (p: WebViewPool) => WebViewPool> = {
       'open a': (p) => openApp(p, 'a'), 'open b': (p) => openApp(p, 'b'), close: (p) => openApp(p, null),
-      launchFailed, retryLaunch, launchOpened: opened,
+      launchFailed, launchOpened: opened,
       pageLoaded: (p) => waitingKey(p, pageLoaded), pageAnswered: (p) => waitingKey(p, pageAnswered), pageGone: (p) => waitingKey(p, pageGone),
     };
     const kinds = Object.keys(steps);

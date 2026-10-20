@@ -103,7 +103,7 @@ async function drag(tree: Tree, xs: readonly number[], velocityX: number, veloci
 const springs = (from: number): Animation[] => animations.slice(from).filter((a) => a.kind === 'spring');
 
 const render = (props: Partial<OrbProps> = {}) =>
-  renderScreen(<Orb appId="app-a" onExit={noop} onVersions={noop} onChangeIt={noop} onReport={noop} {...props} />);
+  renderScreen(<Orb appId="app-a" onOpen={noop} {...props} />);
 
 async function withOrb(props: Partial<OrbProps>, body: (tree: Tree) => Promise<void>): Promise<void> {
   const tree = await render(props);

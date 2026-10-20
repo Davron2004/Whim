@@ -73,8 +73,9 @@ export interface WhimSheetProps {
 const SEND = 32;
 
 const styles = makeStyles((t) => ({
-  content: { paddingHorizontal: LAYOUT.gutter, paddingBottom: LAYOUT.actionAreaBottom, gap: LAYOUT.gapBetweenGroups },
-  head: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3] },
+  // A grouped section keeps `gapBetweenGroups` under itself; the head and the send area match it.
+  content: { paddingHorizontal: LAYOUT.gutter, paddingBottom: LAYOUT.actionAreaBottom },
+  head: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], marginBottom: LAYOUT.gapBetweenGroups },
   names: { flex: 1 },
   area: {
     flexDirection: 'row' as const,
@@ -83,6 +84,7 @@ const styles = makeStyles((t) => ({
     backgroundColor: t.colors.surface,
     borderRadius: FIELD.field.vertical + SEND / 2,
     borderCurve: 'continuous' as const,
+    marginBottom: LAYOUT.gapBetweenGroups,
   },
   input: {
     ...typeStyle('body'),

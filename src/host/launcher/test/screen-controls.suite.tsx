@@ -1,8 +1,8 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { androidBack, button, press, renderScreen, unmountScreen, textOf, hostType } from './react-screen';
-import { finishAnimations, hardwareBack, backListenerCount } from './native-host';
+import { androidBack, button, press, renderScreen, unmountScreen, hostType } from './react-screen';
+import { hardwareBack, backListenerCount } from './native-host';
 import { androidHeaderBack, headerBackShown, iosPop } from './native-screens';
 import { COPY } from '../copy';
 import type { ScreenKind } from '../screen-exits';
@@ -30,7 +30,6 @@ import MakingPage from '../MakingPage';
 import ReadyPage from '../ReadyPage';
 import FailurePage from '../FailurePage';
 import ScreenErrorFallback from '../ScreenErrorFallback';
-import Orb from '../Orb';
 
 export const SCREEN_APP: InstalledApp = {
   id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main',
@@ -132,17 +131,6 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
       h.eq(tree.root.findAll(node => hostType(node) === 'Text' && node.children.includes(COPY.screenErrorBack)).length, 0, 'home fallback hides leave');
       await press(button(tree, COPY.screenErrorRetry));
       h.eq(retries, 1, 'home fallback can retry');
-    } finally { await unmountScreen(tree); }
-  });
-  await h.test('mini-app orb: Home remains an enabled host control', async () => {
-    let leaves = 0;
-    const tree = await renderScreen(<Orb appId="app-a" onExit={() => { leaves++; }} onVersions={noop} onChangeIt={noop} onReport={noop} />);
-    try {
-      const orb = tree.root.findAll(node => hostType(node) === 'Pressable' && typeof node.props.onPress === 'function')[0];
-      await press(orb);
-      await TestRenderer.act(async () => { finishAnimations(); });
-      await press(tree.root.find(node => hostType(node) === 'Pressable' && textOf(node).endsWith(COPY.orbActionHome)));
-      h.eq(leaves, 1, 'orb Home invokes the exit callback');
     } finally { await unmountScreen(tree); }
   });
 }

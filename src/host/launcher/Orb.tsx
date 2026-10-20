@@ -11,18 +11,15 @@
 // theme: the edge is the `border` role, which stands 3:1 off `bg` and off a card in both schemes, so
 // the dark disc never sinks into a dark app.
 //
-// A tap opens the Whim sheet (`onOpen`, `WhimSheet.tsx`). The tapped menu below (shell-redesign-v2
-// chain-G, design D12), whose actions are counted (orb-actions.ts), answers a tap only where no
-// `onOpen` is given, until task 19.5 retires it.
+// A tap opens the Whim sheet (`onOpen`, `WhimSheet.tsx`).
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated as RNAnimated, Easing, Modal, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, useWindowDimensions, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { KeyboardController, KeyboardEvents } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 import { SPACE } from '../../design/tokens';
-import { FONT_FAMILY, MOTION, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { haptics } from '../haptics';
 import { Ember, RESTING_ACTIVITY } from '../ui/Ember';
 import { timing, usePressFeedback } from '../ui/motion';
@@ -31,20 +28,8 @@ import { useTokens } from '../ui/tokens';
 import { makeStyles, springConfig } from '../ui/tokens-pure';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import { COPY } from './copy';
-import {
-  ORB_ACTIONS,
-  ORB_ROW_GLYPH,
-  ORB_ROW_TINT,
-  orbRowGlyphColor,
-  recordOrbAction,
-  type OrbActionId,
-} from './orb-actions';
 import { loadOrbCorner, saveOrbCorner, type OrbCorner } from './orb-corner';
 import { ORB_DISC, ORB_TARGET, ORB_TARGET_EDGE, orbBounds, orbDragLift, orbDragX, orbReleaseX, orbSettleVelocity } from './orb-geometry';
-
-// The menu rises from the bottom edge — the edge it collapses back to on close/dismiss (design
-// doc "Sheet rise": "Sheets enter from the edge they will return to").
-const MENU_RISE_DISTANCE = 24;
 
 /** What the orb shows: at rest; a change being made (the ember follows the stream); a new version
  *  ready or an app finished (an `ember` dot, after one flare); a change that failed (a `danger` dot). */
@@ -102,22 +87,13 @@ export interface OrbProps {
   state?: OrbState;
   /** The stream's activity (0–1) while a change is being made. */
   activity?: number;
-  /** A tap opens the Whim sheet. Without it a tap toggles the tapped menu below, until task 19.5
-   *  retires that menu and the callbacks after this one. */
-  onOpen?: () => void;
-  onExit?: () => void;
-  /** Opens the real History screen for the running app ("Versions"). */
-  onVersions?: () => void;
-  /** Opens the compose step prefilled for the running app ("Change it") — the same path
-   *  History's own "Change it from here" row action uses. */
-  onChangeIt?: () => void;
-  /** Opens the report sheet for the running app (design D13) — sends nothing on its own. */
-  onReport?: () => void;
+  /** A tap opens the Whim sheet. */
+  onOpen: () => void;
 }
 
-export default function Orb({ appId, state = 'rest', activity = 0, onOpen, onExit, onVersions, onChangeIt, onReport }: Readonly<OrbProps>) {
-  // Same `whim.launcher` KVBackend id every other launcher setting persists through (see
-  // highlighting.ts) — a second MMKV instance opened with the same id shares the same storage.
+export default function Orb({ appId, state = 'rest', activity = 0, onOpen }: Readonly<OrbProps>) {
+  // The corner persists through the same `whim.launcher` KVBackend id every other launcher setting
+  // uses — a second MMKV instance opened with the same id shares the same storage.
   const kv = useRef(createMmkvBackend('whim.launcher')).current;
   const t = useTokens();
   const s = styles(t);
@@ -226,53 +202,6 @@ export default function Orb({ appId, state = 'rest', activity = 0, onOpen, onExi
   const [flare, setFlare] = useState({ state, count: 0 });
   if (flare.state !== state) setFlare({ state, count: flare.count + (state === 'ready' ? 1 : 0) });
 
-  const [menuOpen, setMenuOpen] = useState(false);
-  // The rows take taps only once the menu has risen into place. While it rises, a row is drawn
-  // somewhere other than where its touch target is, so a quick tap could land on its neighbour
-  // (a tap on Versions opened Report on device). A press that begins during the rise is refused,
-  // and so never fires on release either.
-  const [menuSettled, setMenuSettled] = useState(false);
-  const riseAnim = useRef(new RNAnimated.Value(0)).current;
-
-  useEffect(() => {
-    if (!menuOpen) {
-      riseAnim.setValue(0);
-      return;
-    }
-    RNAnimated.timing(riseAnim, {
-      toValue: 1,
-      duration: MOTION.sheetRise.durationMs,
-      easing: Easing.bezier(0.2, 0.8, 0.2, 1),
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) setMenuSettled(true);
-    });
-  }, [menuOpen, riseAnim]);
-
-  // Opening or closing, the menu is not settled until a rise completes.
-  const closeAll = () => {
-    setMenuOpen(false);
-    setMenuSettled(false);
-  };
-
-  const onOrbPress = () => {
-    if (onOpen) {
-      onOpen();
-      return;
-    }
-    setMenuOpen((open) => !open);
-    setMenuSettled(false);
-  };
-
-  const onAction = (id: OrbActionId) => {
-    recordOrbAction(kv, id);
-    closeAll();
-    if (id === 'home') onExit?.();
-    else if (id === 'versions') onVersions?.();
-    else if (id === 'report') onReport?.();
-    else onChangeIt?.();
-  };
-
   const words = STATE_WORDS[state];
   const label = words === null ? COPY.orbMenuOpenLabel : `${COPY.orbMenuOpenLabel}, ${words}`;
   const dotRole = DOT_ROLE[state];
@@ -280,99 +209,32 @@ export default function Orb({ appId, state = 'rest', activity = 0, onOpen, onExi
   const hidden = keyboardUp;
 
   return (
-    <>
-      <Animated.View
-        style={[s.frame, { bottom: insets.bottom + ORB_TARGET_EDGE }, frameStyle]}
-        pointerEvents={hidden ? 'none' : 'box-none'}
-        accessibilityElementsHidden={hidden}
-        importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
-      >
-        <GestureDetector gesture={drag}>
-          <Pressable
-            onPress={onOrbPress}
-            onPressIn={press.pressIn}
-            onPressOut={press.pressOut}
-            style={s.target}
-            accessibilityRole="button"
-            accessibilityLabel={menuOpen ? COPY.orbMenuCloseLabel : label}
-            accessibilityActions={ACCESSIBILITY_ACTIONS}
-            onAccessibilityAction={(e) => {
-              if (e.nativeEvent.actionName === MOVE_ACTION) moveToOtherCorner();
-            }}
-          >
-            <Animated.View style={[s.disc, press.style]}>
-              <Ember size={20} state="working" activity={state === 'changing' ? activity : RESTING_ACTIVITY} spark={flare.count} />
-              {dot === null ? null : <View style={[s.dot, { backgroundColor: dot }]} />}
-            </Animated.View>
-          </Pressable>
-        </GestureDetector>
-      </Animated.View>
-
-      {menuOpen && (
-        // A genuine Modal (SheetModal.tsx's rationale applies here too), not an absolutely-
-        // positioned sibling View: it mounts into its own native window, so the dim layer covers
-        // the WHOLE window including both system bars. `statusBarTranslucent` and
-        // `navigationBarTranslucent` are what make Android draw that window behind the status bar
-        // and the navigation bar rather than between them — without them the scrim stops short of
-        // the top of the screen (#105) and leaves the navigation bar undimmed, as SheetModal,
-        // ConfirmSheet and HomeScreen's sheet already ask.
-        //
-        // The dismiss layer is a SIBLING behind the actions, never their parent: a touchable is one
-        // accessibility element, and a screen reader reads everything inside it as that element —
-        // with the actions nested in it, VoiceOver and TalkBack could reach only "Dismiss".
-        <Modal visible transparent animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={closeAll}>
-          <View
-            style={[
-              menuStyles.overlay,
-              corner === 'leading' ? menuStyles.overlayLeading : menuStyles.overlayTrailing,
-              { paddingBottom: insets.bottom + ORB_TARGET_EDGE + ORB_TARGET + SPACING.sm },
-            ]}
-          >
-            <Pressable
-              style={menuStyles.scrim}
-              onPress={closeAll}
-              accessibilityRole="button"
-              accessibilityLabel={COPY.orbMenuDismissLabel}
-            />
-            <RNAnimated.View
-              style={[
-                menuStyles.menu,
-                {
-                  opacity: riseAnim,
-                  transform: [
-                    {
-                      translateY: riseAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [MENU_RISE_DISTANCE, 0],
-                      }),
-                    },
-                  ],
-                },
-              ]}
-              onStartShouldSetResponder={() => true}
-            >
-              {ORB_ACTIONS.map((action) => (
-                <Pressable
-                  key={action.id}
-                  style={menuStyles.row}
-                  disabled={!menuSettled}
-                  onPress={() => onAction(action.id)}
-                  accessibilityRole="button"
-                  accessibilityLabel={action.label}
-                >
-                  <View style={[menuStyles.rowIcon, { backgroundColor: ORB_ROW_TINT[action.id] }]}>
-                    <Text style={[menuStyles.rowIconGlyph, { color: orbRowGlyphColor(action.id) }]}>
-                      {ORB_ROW_GLYPH[action.id]}
-                    </Text>
-                  </View>
-                  <Text style={menuStyles.rowLabel}>{action.label}</Text>
-                </Pressable>
-              ))}
-            </RNAnimated.View>
-          </View>
-        </Modal>
-      )}
-    </>
+    <Animated.View
+      style={[s.frame, { bottom: insets.bottom + ORB_TARGET_EDGE }, frameStyle]}
+      pointerEvents={hidden ? 'none' : 'box-none'}
+      accessibilityElementsHidden={hidden}
+      importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+    >
+      <GestureDetector gesture={drag}>
+        <Pressable
+          onPress={onOpen}
+          onPressIn={press.pressIn}
+          onPressOut={press.pressOut}
+          style={s.target}
+          accessibilityRole="button"
+          accessibilityLabel={label}
+          accessibilityActions={ACCESSIBILITY_ACTIONS}
+          onAccessibilityAction={(e) => {
+            if (e.nativeEvent.actionName === MOVE_ACTION) moveToOtherCorner();
+          }}
+        >
+          <Animated.View style={[s.disc, press.style]}>
+            <Ember size={20} state="working" activity={state === 'changing' ? activity : RESTING_ACTIVITY} spark={flare.count} />
+            {dot === null ? null : <View style={[s.dot, { backgroundColor: dot }]} />}
+          </Animated.View>
+        </Pressable>
+      </GestureDetector>
+    </Animated.View>
   );
 }
 
@@ -393,41 +255,3 @@ const styles = makeStyles((t) => ({
   },
   dot: { position: 'absolute' as const, top: SPACE[1], end: SPACE[1], width: DOT, height: DOT, borderRadius: DOT / 2 },
 }));
-
-const menuStyles = StyleSheet.create({
-  overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'flex-end',
-  },
-  overlayTrailing: { alignItems: 'flex-end', paddingRight: SPACING.lg },
-  overlayLeading: { alignItems: 'flex-start', paddingLeft: SPACING.lg },
-  scrim: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(24,22,20,0.5)',
-  },
-  menu: { gap: SPACING.xs, alignItems: 'stretch', minWidth: 212 },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    // design html:220 `gap:13px` — no SPACING step equals 13, so it stays a literal (R9).
-    gap: 13,
-    backgroundColor: SHELL_COLORS.paper,
-    borderWidth: 1,
-    borderColor: SHELL_COLORS.border,
-    borderRadius: RADIUS.card,
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.md,
-  },
-  // design html:221 `border-radius:10px` on a 30×30 box — a rounded SQUARE, not a full circle.
-  rowIcon: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  rowIconGlyph: { fontFamily: FONT_FAMILY.sansMedium, fontSize: 15, lineHeight: 15 },
-  rowLabel: { ...TYPE_SCALE.bodyEmphatic, color: SHELL_COLORS.text },
-});

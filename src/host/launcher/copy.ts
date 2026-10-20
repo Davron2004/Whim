@@ -234,14 +234,7 @@ export const COPY = {
   historyCopyConfirmBusy: 'Making the copy…',
   historyReassurancePending: 'Checking what this changes',
 
-  // ── inside a running app: the orb menu (3a) ─────────────────────────────────
-  // `versions` opens the real History screen and `change` opens the real compose step (review
-  // fix-pass, shell-redesign-v2) — there is no orb-local sheet left to title, so those two keys
-  // and the placeholder `copy` action's label are gone with it.
-  orbActionChangeIt: 'Change it',
-  orbActionHome: 'Home',
-  orbActionVersions: 'Versions',
-  orbActionReport: 'Report this app',
+  // ── inside a running app: the orb ───────────────────────────────────────────
   // The orb itself (system.md §6, §7.1): "Whim menu", then its state after a comma, and the one
   // custom action a screen reader offers on it.
   orbMenuOpenLabel: 'Whim menu',
@@ -249,8 +242,6 @@ export const COPY = {
   orbStateReady: 'new version ready',
   orbStateFailed: 'change failed',
   orbMoveCorner: 'Move to the other corner',
-  orbMenuCloseLabel: 'Close the app menu',
-  orbMenuDismissLabel: 'Dismiss the app menu',
 
   // ── the Whim sheet, what the orb opens (system.md §9 Whim sheet) ─────────────
   /** The row on top while a newer version than the running one waits. */

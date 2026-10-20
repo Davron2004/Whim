@@ -9,7 +9,7 @@
  * beside it once the launch has opened, so the next launch finds it warm too. The delivery is a
  * `reinject({ reset: true })` — the page recreates the iframe with a new nonce and
  * the launch's own generation (spike2 §5: a realm reset is a recreate). A WebView that has hosted a
- * launch is NEVER handed out again: closing the app, a failure surface and Retry all destroy it,
+ * launch is NEVER handed out again: closing the app, a failure surface and Reload all destroy it,
  * and the next launch gets a WebView no app has ever touched (the waiting one, or a cold one).
  * Destroying it is the safer of the two options spike2 §5 allows: a realm reset alone would leave
  * the outer page, its nonce history and whatever native state the previous app reached in place.
@@ -105,20 +105,15 @@ export function openApp(pool: WebViewPool, opening: string | null): WebViewPool 
 }
 
 /** The launch has opened (its first accepted paint): a fresh WebView starts loading beside it, so
- *  the next launch (after a close, another app, a failure or Retry) finds one warm. Not earlier:
+ *  the next launch (after a close, another app, a failure or Reload) finds one warm. Not earlier:
  *  loading a page alongside the opening slowed the opening itself (18e, measured on Android). */
 export function launchOpened(pool: WebViewPool): WebViewPool {
   return pool.launch === null ? pool : keepOneWaiting(pool);
 }
 
-/** The launch reached a failure surface: its WebView is destroyed, and one waits for Retry. */
+/** The launch reached a failure surface: its WebView is destroyed, and one waits for Reload. */
 export function launchFailed(pool: WebViewPool): WebViewPool {
   return keepOneWaiting(dropLaunchSlot(pool));
-}
-
-/** Retry: the launch's WebView, if it still has one, is destroyed and a fresh one is bound. */
-export function retryLaunch(pool: WebViewPool): WebViewPool {
-  return pool.launch === null ? pool : bindLaunch(dropLaunchSlot(pool), pool.launch);
 }
 
 function updateWaiting(pool: WebViewPool, key: number, from: PageState, to: PageState): WebViewPool {

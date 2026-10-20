@@ -152,7 +152,7 @@ function pageInset(tree: Tree): number {
 /** The launch of `record` as the launcher hands it over (installed with `tile`, tapped at `tappedAt`). */
 function launchOf(
   record: AppRecord,
-  opts: { tile?: Pick<InstalledApp, 'tint' | 'icon'>; tappedAt?: number; onExit?: () => void; onReload?: () => void } = {},
+  opts: { tile?: Pick<InstalledApp, 'tint' | 'icon'>; tappedAt?: number; onExit?: () => void; onReload?: () => void; onOpenSheet?: () => void } = {},
 ): MiniAppLaunch {
   return {
     record,
@@ -160,7 +160,7 @@ function launchOf(
     engineAppId: record.appId,
     tappedAt: opts.tappedAt ?? Date.now(),
     onExit: opts.onExit ?? (() => {}),
-    onOpenSheet: () => {},
+    onOpenSheet: opts.onOpenSheet ?? (() => {}),
     sheetOpen: false,
     onCloseSheet: () => {},
     installedApp: { id: record.appId, name: record.name, createdAt: 1, lineageId: 'main', record, ...opts.tile },
@@ -962,6 +962,20 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       });
     } finally {
       setColorScheme('light');
+    }
+  });
+
+  await h.test('mini-app: a tap on the orb over the running app asks the launcher for the Whim sheet, and the orb opens no menu of its own', async () => {
+    resetNativeStorage();
+    let asked = 0;
+    const tree = await renderScreen(<MiniAppStage launch={launchOf(TIP, { onOpenSheet: () => { asked++; } })} onFrame={ignoreFrame} />, { createNodeMock: measuredAsContainer });
+    try {
+      await press(button(tree, COPY.orbMenuOpenLabel));
+      h.eq(asked, 1, 'the launcher is asked once');
+      h.eq(tree.root.findAll((n) => hostType(n) === 'Modal').length, 0, 'and nothing opens over the app from the orb itself');
+      h.ok(orbShown(tree), 'the orb stays, under its own name');
+    } finally {
+      await unmountScreen(tree);
     }
   });
 
