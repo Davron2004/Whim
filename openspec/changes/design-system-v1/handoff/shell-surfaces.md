@@ -111,7 +111,7 @@ export function keyboardOverlap(keyboardHeight, frameBottom, windowHeight): numb
 export function sheetBottomPadding(overlap, safeBottom): number;  // worklet; REVEAL_MARGIN = 16
 ```
 Source: react-native-keyboard-controller, plus iOS `Keyboard` `keyboardDidChangeFrame` in `useKeyboardOverlap`: the first keyboard
-of a process is reported without its Done bar, so the library's end report may not make a frame shorter than the system's. `KeyboardShell` has `footer`, no header slot. Reveal: once at `keyboardWillShow`, rechecked at `keyboardDidShow`.
+of a process is reported without its Done bar, so the library's end report may not make a frame shorter than the system's. `KeyboardShell` has `footer`, no header slot. Padding follows the keyboard's frames only: the library reports it visible at its destination on `keyboardWillShow`, so nothing pads from that. Reveal: from `keyboardWillShow` to `keyboardDidShow`, at most one scroll a frame (unanimated, clamped by the native bounds, toward the destination height on a screen, the current one in a sheet), only while the block is below where it is kept, ≤90 frames; a drag during the rise stops it and the `keyboardDidShow` recheck.
 
 ## Tests: `shell-surfaces-ui.suite.tsx`, `keyboard-shell-ui.suite.tsx`; `run.mjs` aliases gesture-handler →
 `native-gesture-handler.tsx` (`pan(config, ys, vy)`), keyboard-controller → `native-keyboard-controller.tsx`, worklets →

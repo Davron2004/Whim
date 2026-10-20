@@ -417,47 +417,94 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('as the keyboard sets off, the focused field scrolls once to where the keyboard is heading, not on every frame in between, and stays put once it settles', async () => {
+  await h.test('as the keyboard sets off, no frame or sheet jumps to where it is heading: the library already reports it visible at its destination, yet the padding starts where the keyboard is and reaches the destination only through its frames', async () => {
+    const third = KEYBOARD_HEIGHT / 3;
     for (const device of DEVICES) {
-      await on(device, advanced(), async ({ tree, scrolls }) => {
-        const reports = scrollReports(tree);
-        await reports.viewport(700);
-        await reports.content(1200);
-        mountContent(tree);
-        await TestRenderer.act(async () => { field(tree).props.onFocus({}); flushRevealFrames(); });
-        await TestRenderer.act(async () => { emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
-        const settledViewport = 700 - overlapOf(SCREEN_FRAME, KEYBOARD_TOP);
-        const target = 500 + 60 + SPACING.md - settledViewport;
-        h.eq(scrolls, [target], `${device.name}: one scroll as it sets off, putting the field 16 pt above where the keyboard will stop`);
-        await reports.offset(target);
-        await TestRenderer.act(async () => { stepKeyboard(KEYBOARD_HEIGHT / 2); });
-        await reports.viewport(550);
-        await TestRenderer.act(async () => { stepKeyboard(KEYBOARD_HEIGHT); });
-        await reports.viewport(settledViewport);
-        h.eq(scrolls, [target], `${device.name}: none on the frames in between`);
-        await TestRenderer.act(async () => { emitKeyboardEvent('keyboardDidShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
-        h.eq(scrolls, [target], `${device.name}: settled where it was heading: no second scroll`);
-      }, { frame: SCREEN_FRAME, field: [500, 60], block: [500, 60] });
+      const surfaces: [string, React.ReactElement, (tree: Tree) => unknown, (overlap: number) => unknown][] = [
+        ['advanced', advanced(), framePadding, (overlap) => overlap],
+        ['a page in a sheet', sheeted(compose()), (tree) => flat(sheetCard(tree)).paddingBottom, (overlap) => sheetBottomPadding(overlap, useSafeAreaInsets().bottom)],
+      ];
+      for (const [name, element, padding, expected] of surfaces) {
+        await on(device, element, async ({ tree }) => {
+          await TestRenderer.act(async () => { emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
+          h.eq(padding(tree), expected(0), `${device.name} ${name}: the keyboard has set off but not moved, so nothing is cut away yet`);
+          await TestRenderer.act(async () => { stepKeyboard(third); });
+          h.eq(padding(tree), expected(overlapOf(SCREEN_FRAME, keyboardWindow.height - third)), `${device.name} ${name}: a third of the way up, the padding is a third of the way`);
+          await TestRenderer.act(async () => { stepKeyboard(KEYBOARD_HEIGHT); endKeyboard(KEYBOARD_HEIGHT); emitKeyboardEvent('keyboardDidShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
+          h.eq(padding(tree), expected(overlapOf(SCREEN_FRAME, KEYBOARD_TOP)), `${device.name} ${name}: and at the keyboard's top edge once it is up`);
+        });
+      }
     }
   });
 
-  await h.test('in a sheet, whose host pads outside the scroll view, the focused note waits for the keyboard to settle and then scrolls once, not on every frame', async () => {
+  await h.test('as the keyboard rises, the focused block rises with it on a screen and in a sheet: on every frame, through native bounds that only grow as fast as the keyboard, it sits above the keyboard, with at most one scroll a frame and none once it is where it is kept', async () => {
+    // Advanced at the default text size: everything fits, so the native scroll view can scroll only
+    // as far as each frame's shrinking bounds allow. The report sheet: its host pads, so the scroll
+    // view shrinks under a note that is in view when the keyboard sets off.
     for (const device of [IOS, ANDROID_17]) {
-      await on(device, report(), async ({ tree, scrolls }) => {
-        await draftLoaded();
+      const surfaces: [string, () => React.ReactElement, Geometry & { nativeScroll: { viewport: number; content: number; offset: number } }, Rect][] = [
+        ['advanced', advanced, { frame: SCREEN_FRAME, field: [520, 60], block: [520, 100], nativeScroll: { viewport: 700, content: 640, offset: 0 } }, [520, 100]],
+        ['the report sheet', report, { frame: [0, 844], field: [300, 90], block: [300, 140], nativeScroll: { viewport: 500, content: 900, offset: 0 } }, [300, 140]],
+      ];
+      for (const [name, element, geometry, [top, height]] of surfaces) {
+        await on(device, element(), async ({ tree, scrolls }) => {
+          await draftLoaded();
+          const native = geometry.nativeScroll;
+          const start = native.viewport;
+          const reports = scrollReports(tree);
+          await reports.viewport(start);
+          await reports.content(native.content);
+          mountContent(tree);
+          await TestRenderer.act(async () => { field(tree).props.onFocus({}); flushRevealFrames(); });
+          h.eq(scrolls, [], `${device.name} ${name}: setup: the block is in view before the keyboard`);
+          await TestRenderer.act(async () => { emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT); });
+          const visible = () => top + height + SPACING.md <= native.offset + native.viewport;
+          const hidden: number[] = [];
+          for (let step = 1; step <= 6; step += 1) {
+            const keyboardHeight = (KEYBOARD_HEIGHT * step) / 6;
+            const before = scrolls.length;
+            await TestRenderer.act(async () => { stepKeyboard(keyboardHeight); });
+            native.viewport = start - overlapOf(SCREEN_FRAME, keyboardWindow.height - keyboardHeight);
+            await reports.viewport(native.viewport);
+            await reports.offset(native.offset);
+            h.ok(scrolls.length - before <= 1, `${device.name} ${name}: frame ${step}: at most one scroll`);
+            if (!visible()) hidden.push(step);
+          }
+          h.eq(hidden, [], `${device.name} ${name}: on no frame of the rise is the block under the keyboard`);
+          const risen = scrolls.length;
+          await playFrames(3);
+          h.eq(scrolls.length, risen, `${device.name} ${name}: once the block is where it is kept, no more scrolls`);
+          await TestRenderer.act(async () => { endKeyboard(KEYBOARD_HEIGHT); emitKeyboardEvent('keyboardDidShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
+          h.ok(visible(), `${device.name} ${name}: and it stays in view once the keyboard has settled`);
+        }, geometry);
+      }
+    }
+  });
+
+  await h.test('a drag while the keyboard rises is the person’s own scroll: the reveal stops at once, and nothing scrolls the content back when the keyboard settles', async () => {
+    for (const device of [IOS, ANDROID_17]) {
+      const native = { viewport: 700, content: 640, offset: 0 };
+      await on(device, advanced(), async ({ tree, scrolls }) => {
         const reports = scrollReports(tree);
-        await reports.viewport(500);
-        await reports.content(900);
+        await reports.viewport(native.viewport);
+        await reports.content(native.content);
         mountContent(tree);
         await TestRenderer.act(async () => { field(tree).props.onFocus({}); flushRevealFrames(); });
-        await TestRenderer.act(async () => { emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT); stepKeyboard(KEYBOARD_HEIGHT / 2); });
-        await reports.viewport(350);
-        await TestRenderer.act(async () => { stepKeyboard(KEYBOARD_HEIGHT); });
-        await reports.viewport(200);
-        h.eq(scrolls, [], `${device.name}: no scroll while the keyboard moves`);
-        await TestRenderer.act(async () => { emitKeyboardEvent('keyboardDidShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
-        h.eq(scrolls, [300 + 140 + SPACING.md - 200], `${device.name}: once settled, one scroll that puts the note and its switch 16 pt above the sheet’s actions`);
-      }, { frame: [0, 844], field: [300, 90], block: [300, 140] });
+        await TestRenderer.act(async () => { emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT); stepKeyboard(KEYBOARD_HEIGHT / 3); });
+        native.viewport = 700 - overlapOf(SCREEN_FRAME, keyboardWindow.height - KEYBOARD_HEIGHT / 3);
+        await reports.viewport(native.viewport);
+        h.ok(scrolls.length > 0, `${device.name}: setup: the block is rising with the keyboard`);
+        const before = scrolls.length;
+        await TestRenderer.act(async () => scrollView(tree).props.onScrollBeginDrag({}));
+        await reports.offset(0);
+        for (const keyboardHeight of [(2 * KEYBOARD_HEIGHT) / 3, KEYBOARD_HEIGHT]) {
+          await TestRenderer.act(async () => { stepKeyboard(keyboardHeight); });
+          await reports.viewport(700 - overlapOf(SCREEN_FRAME, keyboardWindow.height - keyboardHeight));
+        }
+        await TestRenderer.act(async () => { endKeyboard(KEYBOARD_HEIGHT); emitKeyboardEvent('keyboardDidShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
+        await playFrames(3);
+        h.eq(scrolls.length, before, `${device.name}: after the drag, no scroll on the frames that follow or once the keyboard settles`);
+      }, { frame: SCREEN_FRAME, field: [520, 60], block: [520, 100], nativeScroll: native });
     }
   });
 

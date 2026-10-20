@@ -21,7 +21,12 @@ export const keyboardState = { height: 0, visible: false, dismissed: 0 };
 
 const data = (height: number): EventData => ({ height, duration: 250, timestamp: 0, target: -1, type: 'default', appearance: 'light' });
 
+/** As the library's own module does, ahead of every other listener: `keyboardWillShow` makes the
+ *  keyboard visible at its destination height before a single frame has moved, `keyboardDidHide`
+ *  puts it away. */
 function emit(name: EventName, height: number): void {
+  if (name === 'keyboardWillShow') Object.assign(keyboardState, { height, visible: true });
+  if (name === 'keyboardDidHide') Object.assign(keyboardState, { height, visible: false });
   for (const listener of [...(listeners.get(name) ?? [])]) listener(data(height));
 }
 
