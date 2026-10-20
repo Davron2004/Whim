@@ -34,8 +34,8 @@ function storeClock(): () => number {
   return () => (t += 1000);
 }
 
-function harnessAccess() {
-  const store = createMemoryStore({ autoCompact: false, now: storeClock() });
+function harnessAccess(now: () => number = storeClock(), historyLimit?: number) {
+  const store = createMemoryStore({ autoCompact: false, now, ...(historyLimit != null ? { historyLimit } : {}) });
   const index = new AppIndex(new MapKVBackend());
   const access = new StoreAccess({ store, index, now: () => Date.now() });
   return { store, index, access };
@@ -59,7 +59,7 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
     const rows = buildHistoryRows(list, await access.activeId(orig));
     h.eq(rows.map(r => r.headline), [historyQuotedPrompt('Example: track water'), historyQuotedPrompt('make a tip splitter')], 'each headline quotes the resolved prompt text');
     h.eq(rows.map(r => r.origin), ['you-said', 'you-said'], 'under “You said”');
-    h.eq(rows.map(r => r.kind), [null, null], 'no summary: no kind either');
+    h.eq(rows.map(r => r.kind), [null, 'Start'], 'no summary: no kind, except the first version, which is the Start');
     h.eq(rows.map(r => r.result), [null, null], 'and nothing of Whim’s for the opened row');
     h.ok(rows.every(r => typeof r.when === 'string' && r.when.length > 0), 'every row carries a formatted timestamp');
   });
@@ -100,15 +100,15 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
     await store.snapshot('wc', { 'bundle.js': 'V5' }, 'raw legacy, no envelope at all'); // unclassified
     const list = await listVersions(access, orig);
     const rows = buildHistoryRows(list, await access.activeId(orig));
-    h.eq(rows.map(r => r.group), [null, 'fixes', 'look', 'features', null], 'each row groups by its summariser kind; the raw-string and install rows are unclassified');
+    h.eq(rows.map(r => r.group), [null, 'fixes', 'look', 'features', 'features'], 'each row groups by its summariser kind; the raw-string row is unclassified; the first version is the Start');
 
     const counts = groupCounts(rows);
-    h.eq(counts, { features: 1, look: 1, fixes: 1 }, 'live per-group counts');
+    h.eq(counts, { features: 2, look: 1, fixes: 1 }, 'live per-group counts');
 
     const all = filterRows(rows, 'all');
     h.eq(all.length, rows.length, 'the all-versions pill never hides a row, unclassified included');
     const features = filterRows(rows, 'features');
-    h.eq(features.map(r => r.id), [rows[3].id], 'the features pill narrows to only that group');
+    h.eq(features.map(r => r.id), [rows[3].id, rows[4].id], 'the features pill narrows to only that group');
   });
 
   // ── Live count (E6) ────────────────────────────────────────────────────────
@@ -245,6 +245,97 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
     await access.rollback(orig, oldest.id);
     const afterRollback = await listVersions(access, orig);
     h.eq(afterRollback.map(s => s.prompt), ['p3', 'p2', 'p1'], 'later versions stay listed and restorable after rolling backward');
+  });
+
+  // ── Order by the version chain, Start on the true first version (#126) ───
+  const ONE_SECOND = () => 1_700_000_000_250;
+  /** A store clock that hands out `stamps` (ms) in turn, then repeats the last one. */
+  const scripted = (stamps: number[]) => {
+    let i = 0;
+    return () => stamps[Math.min(i++, stamps.length - 1)];
+  };
+  const startRows = (rows: readonly { kind: string | null; isInstall: boolean; promptText: string }[]) => ({
+    start: rows.filter(r => r.kind === 'Start').map(r => r.promptText),
+    first: rows.filter(r => r.isInstall).map(r => r.promptText),
+  });
+
+  await h.test('history: two versions saved in one second — the later is listed first and Start is on the true first version', async () => {
+    const { access } = harnessAccess(ONE_SECOND);
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: envelope('a tip splitter') });
+    const edited = await access.update(orig, { record: orig.record, bundleSource: 'V2', prompt: envelope('round up the tip') });
+    const list = await listVersions(access, edited);
+    h.eq(new Set(list.map(s => s.createdAt)).size, 1, 'both versions carry the same timestamp');
+    const rows = buildHistoryRows(list, await access.activeId(edited));
+    h.eq(rows.map(r => r.promptText), ['round up the tip', 'a tip splitter'], 'the later version is listed first');
+    h.eq(rows.map(r => r.version), ['v2', 'v1'], 'and numbered after it');
+    h.eq(startRows(rows), { start: ['a tip splitter'], first: ['a tip splitter'] }, 'Start and the first-version label are on the version the app began with');
+    h.eq(rows.map(r => r.isCurrent), [true, false], 'the later version is the current one');
+  });
+
+  await h.test('history: Start is the version the chain begins with, even when its timestamp is the newest', async () => {
+    const { store, access } = harnessAccess(scripted([1_700_000_120_000, 1_700_000_060_000, 1_700_000_000_000]));
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: envelope('p1') });
+    await store.snapshot('wc', { 'bundle.js': 'V2' }, envelope('p2'));
+    await store.snapshot('wc', { 'bundle.js': 'V3' }, envelope('p3'));
+    const rows = buildHistoryRows(await listVersions(access, orig), await access.activeId(orig));
+    h.eq(rows.map(r => r.promptText), ['p3', 'p2', 'p1'], 'newest made first, though the clock ran backwards');
+    h.eq(startRows(rows), { start: ['p1'], first: ['p1'] }, 'Start is on the first version, not on the oldest timestamp');
+  });
+
+  await h.test('history: an app with more versions than the store lists by default still ends at its true first version', async () => {
+    const { store, access } = harnessAccess(storeClock(), 3);
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: envelope('p1') });
+    for (let v = 2; v <= 5; v++) await store.snapshot('wc', { 'bundle.js': `V${v}` }, envelope(`p${v}`));
+    const rows = buildHistoryRows(await listVersions(access, orig), await access.activeId(orig));
+    h.eq(rows.map(r => r.promptText), ['p5', 'p4', 'p3', 'p2', 'p1'], 'every version on the chain is listed');
+    h.eq(rows[rows.length - 1].version, 'v1', 'the last row is v1');
+    h.eq(startRows(rows), { start: ['p1'], first: ['p1'] }, 'and Start is the version the app began with, not the oldest one shown');
+  });
+
+  await h.test('history: a later version whose summary says Start is not labelled Start — only the chain decides', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: envelope('p1') });
+    await store.snapshot('wc', { 'bundle.js': 'V2' }, envelope('start over', { text: 'A fresh tip splitter.', kind: 'Start', touched: [], marks: [] }));
+    const rows = buildHistoryRows(await listVersions(access, orig), await access.activeId(orig));
+    h.eq(rows.map(r => r.kind), [null, 'Start'], 'one Start, on the first version');
+    h.eq(rows[0].result?.text, 'A fresh tip splitter.', 'the later version still opens with its summary');
+  });
+
+  await h.test('history: a version made from an older one is placed by its chain, not by its time', async () => {
+    const { store, access } = harnessAccess(scripted([1_700_000_060_000, 1_700_000_060_000, 1_700_000_060_000, 1_700_000_000_000]));
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: envelope('p1') });
+    await store.snapshot('wc', { 'bundle.js': 'V2' }, envelope('p2'));
+    await store.snapshot('wc', { 'bundle.js': 'V3' }, envelope('p3'));
+    const first = (await listVersions(access, orig))[2];
+    await access.rollback(orig, first.id);
+    const edited = await access.update(orig, { record: orig.record, bundleSource: 'V4', prompt: envelope('from p1') });
+    let rows = buildHistoryRows(await listVersions(access, edited), await access.activeId(edited));
+    h.eq(rows.map(r => r.promptText), ['from p1', 'p1'], 'the version made from p1 sits above it, though it is stamped a minute earlier');
+    h.eq(rows.map(r => r.isCurrent), [true, false], 'and is the current one');
+    h.eq(startRows(rows), { start: ['p1'], first: ['p1'] }, 'Start stays on p1');
+
+    await access.rollback(edited, first.id);
+    rows = buildHistoryRows(await listVersions(access, edited), await access.activeId(edited));
+    h.eq(rows.map(r => r.promptText), ['from p1', 'p3', 'p2', 'p1'], 'back on p1, the later versions list newest made first');
+    h.eq(startRows(rows), { start: ['p1'], first: ['p1'] }, 'with Start still on p1');
+  });
+
+  await h.test('history: a copy and its original each keep their own chain, ordered within one second', async () => {
+    const { access } = harnessAccess(ONE_SECOND);
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: envelope('p1') });
+    const v2 = await access.update(orig, { record: orig.record, bundleSource: 'V2', prompt: envelope('p2') });
+    const [, firstVersion] = await listVersions(access, v2);
+    const copy = await access.fork(v2, firstVersion.id);
+    const copyEdited = await access.update(copy, { record: copy.record, bundleSource: 'C1', prompt: envelope('copy a') });
+    await access.update(copyEdited, { record: copy.record, bundleSource: 'C2', prompt: envelope('copy b') });
+    await access.update(v2, { record: orig.record, bundleSource: 'V3', prompt: envelope('p3') });
+
+    const copyRows = buildHistoryRows(await listVersions(access, copy), await access.activeId(copy));
+    h.eq(copyRows.map(r => r.promptText), ['copy b', 'copy a', 'p1'], "the copy lists its own versions newest first, then the version it was made from");
+    h.eq(startRows(copyRows), { start: ['p1'], first: ['p1'] }, "the copy's Start is the first version of its chain");
+    const origRows = buildHistoryRows(await listVersions(access, orig), await access.activeId(orig));
+    h.eq(origRows.map(r => r.promptText), ['p3', 'p2', 'p1'], "the original keeps its own order, with none of the copy's versions");
+    h.eq(startRows(origRows), { start: ['p1'], first: ['p1'] }, "the original's Start is unchanged");
   });
 
   // ── isAtTip (design D6, unchanged — LauncherRoot's delivery path depends on it) ──

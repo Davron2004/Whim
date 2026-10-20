@@ -37,9 +37,13 @@ import { CHANNELS } from '../logging/channels';
  * fork's `timeline()` no longer surfaces the original's later snapshots (and a rolled-back original
  * no longer surfaces a fork's). Every entry, fork or original, lists via `timeline()` for full
  * roll-forward — the interim `history()`-for-forks guard this function used to apply is retired.
+ *
+ * Newest first by the version chain, never the clock (#126), and the WHOLE chain: the store's
+ * default cap would cut the oldest versions off, and then the last row would not be the version
+ * the app began with. Uncapping costs nothing — `timeline()` reads every version before it caps.
  */
 export async function listVersions(access: StoreAccess, app: InstalledApp): Promise<Snapshot[]> {
-  return access.timeline(app);
+  return access.timeline(app, { limit: Number.POSITIVE_INFINITY });
 }
 
 /**
@@ -232,6 +236,8 @@ export interface HistoryRow {
   touched: string[];
   origin: HistoryOrigin;
   isCurrent: boolean;
+  /** The true first version: the end of the chain, where the app began. The only row whose kind
+   *  is `Start`. */
   isInstall: boolean;
   /** At most two, never three (E5/E9). */
   actions: HistoryActionKind[];
@@ -248,9 +254,18 @@ function rowWords(promptText: string, summary: RunSummary | undefined): Pick<His
   };
 }
 
+/** A row's kind chip. `Start` is a place in the chain, not something a summary can claim (#126):
+ *  the first version is the Start whatever its summary says, and a later version's `Start` claim
+ *  is dropped, leaving it unclassified. */
+function rowKind(summary: RunSummary | undefined, isInstall: boolean): SummaryKind | null {
+  if (isInstall) return 'Start';
+  return summary && summary.kind !== 'Start' ? summary.kind : null;
+}
+
 /**
- * The `4a` row model. `rows` newest-first (as `listVersions` returns); `activeId` the live
- * current marker (E3 — derived from the store, never persisted on the app record).
+ * The `4a` row model. `rows` is the whole chain, newest first, as `listVersions` returns it — so
+ * the last row is the true first version; `activeId` the live current marker (E3 — derived from
+ * the store, never persisted on the app record).
  */
 export function buildHistoryRows(rows: readonly Snapshot[], activeId: string | null): HistoryRow[] {
   const total = rows.length;
@@ -263,13 +278,14 @@ export function buildHistoryRows(rows: readonly Snapshot[], activeId: string | n
     if (isCurrent) actions = ['change-from-here'];
     else if (isInstall) actions = ['start-copy'];
     else actions = ['go-back', 'start-copy'];
+    const kind = rowKind(summary, isInstall);
     return {
       id: snapshot.id,
       index,
       version: `v${total - index}`,
       when: formatRelativeTimestamp(snapshot.createdAt),
-      kind: summary?.kind ?? null,
-      group: summary ? KIND_GROUP[summary.kind] : null,
+      kind,
+      group: kind ? KIND_GROUP[kind] : null,
       ...rowWords(promptText, summary),
       promptText,
       touched: summary?.touched ?? [],

@@ -96,6 +96,14 @@ function splitLineageTrailer(message: string): { prompt: string; lineage: string
   };
 }
 
+/** A snapshot id's place in the order snapshots were made (`g7` → 7). `nextSnapId` hands
+ *  out one more than the largest id in the repo, and a version can only be made after the
+ *  version it builds on exists, so every version's number is above every version on its
+ *  chain before it: sorting by this number follows the chain, whatever the clock said. */
+function snapSequence(id: string): number {
+  return Number(id.slice(1));
+}
+
 /** Classifies a diff() entry from its before/after oids. Missing-before wins over
  *  missing-after (matches the prior nested-ternary precedence exactly). */
 function changeStatusOf(aOid: string | undefined, bOid: string | undefined): ChangeStatus {
@@ -293,9 +301,10 @@ export class VersionStore {
    * timeline(appId, {limit}) → same-line enumeration that survives rollback (design D2),
    * now lineage-correct (design D3, see isLineageCorrect): a sibling fork's commits, or
    * the original's commits made after this lineage forked away, are never enumerated
-   * even though they are DAG descendants of a shared ancestor. Newest-first by commit
-   * timestamp, capped like history(). Same Snapshot shape; no git vocabulary or lineage
-   * id crosses.
+   * even though they are DAG descendants of a shared ancestor. Newest-first by the
+   * version chain (`snapSequence`), never by commit time: commit times are whole
+   * seconds and a device clock can step backwards (#126). Capped like history(). Same
+   * Snapshot shape; no git vocabulary or lineage id crosses.
    */
   async timeline(appId: string, opts?: { limit?: number }): Promise<Snapshot[]> {
     const { gitdir } = this.paths(appId);
@@ -320,7 +329,7 @@ export class VersionStore {
       const { message, timestamp } = await this.readCommitCached(gitdir, oid, cache);
       snaps.push({ id, prompt: splitLineageTrailer(message).prompt, createdAt: timestamp * 1000 });
     }
-    snaps.sort((a, b) => b.createdAt - a.createdAt);
+    snaps.sort((a, b) => snapSequence(b.id) - snapSequence(a.id));
     return snaps.slice(0, limit);
   }
 
