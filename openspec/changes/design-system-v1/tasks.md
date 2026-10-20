@@ -162,10 +162,10 @@
 
 ## 20. History
 
-- [ ] 20.1 History on the native stack: header back and `Report`, title, 40 tile, name in tint, version count; timeline rows (quoted words, summary, tabular meta, neutral kind chips with icons, `Current`), rail stopping at v1; no filters
-- [ ] 20.2 Order by the version chain, not commit time; "Start" on the true first version (#126)
-- [ ] 20.3 Expanded rows: Use this version (immediate, "Back on version N · Undo", Undo reachable after the toast), Make a copy from here (immediate, fresh data, "Copy made · Open"), Change it on the current version, the hidden-data line; remove the confirm sheets
-- [ ] 20.4 Update `history-ui`, history-logic and version-history suites (including two versions in one second)
+- [x] 20.1 History on the native stack: header back and `Report`, title, 40 tile, name in tint, version count; timeline rows (quoted words, summary, tabular meta, neutral kind chips with icons, `Current`), rail stopping at v1; no filters
+- [x] 20.2 Order by the version chain, not commit time; "Start" on the true first version (#126)
+- [x] 20.3 Expanded rows: Use this version (immediate, "Back on version N · Undo", Undo reachable after the toast), Make a copy from here (immediate, fresh data, "Copy made · Open"), Change it on the current version, the hidden-data line; remove the confirm sheets
+- [x] 20.4 Update `history-ui`, history-logic and version-history suites (including two versions in one second)
 
 ## 21. Copy, Whim Syntax and cleanup
 
