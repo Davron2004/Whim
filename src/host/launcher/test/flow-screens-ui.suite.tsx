@@ -3,6 +3,7 @@
  *  "Decide for me" exclusive, plan rows edit in place, the can't-make-as-asked state offers its two
  *  actions, and each exit on the running pages calls its own callback. */
 import React, { useState } from 'react';
+import { StyleSheet } from 'react-native';
 import TestRenderer from 'react-test-renderer';
 import { ClarifyQuestion } from '@whim/contract';
 import { STUB_LIMIT } from '../../../../server/src/stub-markers';
@@ -11,13 +12,16 @@ import { COPY } from '../copy';
 import { describeStep, planStep, updatePlanRow, withPlan, withProblem, withQuestions, type FlowNotice, type FlowQuestion, type PlanScreen } from '../prompt-flow';
 import { DescribePage } from '../DescribePage';
 import { OptionMark, PlanPage } from '../PlanPage';
-import BuildStep from '../BuildStep';
-import DoneStep from '../DoneStep';
+import MakingPage from '../MakingPage';
+import ReadyPage from '../ReadyPage';
 import WhimProse from '../../ui/whim-prose/WhimProse';
 import { Sheet } from '../../ui/Sheet';
 import { TilePlate } from '../../ui/AppTile';
 import { TILE_SIDE } from '../../ui/AppTile-geometry';
 import { Icon } from '../../ui/Icon';
+import { AmbientLight, Ember } from '../../ui/Ember';
+import { Button } from '../../ui/Button';
+import { tileOf } from '../tile-identity';
 import { COLORS } from '../../../design/tokens';
 import type { InstalledApp } from '../app-index';
 import { androidBack, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
@@ -478,23 +482,108 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('making: Details and Leave it running each call their own callback', async () => {
+  await h.test('making: the run’s name and words, its steps with the time on the current one, the time line, and Stop', async () => {
     const s = spies();
-    await rendered(<BuildStep stage="generate" delivering={false} signals={null} now={0} onBack={s.fn('back')} onShowDetails={s.fn('details')} />, async (tree) => {
-      await press(button(tree, COPY.buildDetails));
-      h.eq([s.count('details'), s.count('back')], [1, 0], 'Details opens the details');
-      await press(button(tree, COPY.buildLeaveRunning));
-      h.eq([s.count('details'), s.count('back')], [1, 1], 'Leave it running leaves');
+    const signals = { startedAt: 0, aggregates: { chars: 1204, tokens: 300 }, lastTokenAt: 41_000, lastThinkingAt: null, lastFrameAt: 41_000 };
+    await rendered(<MakingPage name="Tea timer" changing={false} words="A tea timer" stage="generate" delivering={false} stepSince={1_000} signals={signals} now={42_000} activity={0.6} onStop={s.fn('stop')} />, async (tree) => {
+      const shown = textOf(tree.root);
+      h.ok(shown.includes('Making Tea timer') && shown.includes('“A tea timer”'), 'the headline names the app, over the person’s words');
+      h.ok(shown.includes(COPY.makingTimeUsual), 'at 42 s the time line is the usual one');
+      h.eq(stepLabels(tree), [`${COPY.buildStepReading}, ${COPY.makingStepDone}`, `${COPY.buildStepWriting}, ${COPY.makingStepCurrent}, 0:41`, `${COPY.buildStepChecking}, ${COPY.makingStepWaiting}`, `${COPY.buildStepInstalling}, ${COPY.makingStepWaiting}`], 'one element per step: done, current with the time since it began, waiting');
+      h.eq([tree.root.findByType(Ember).props.state, tree.root.findByType(Ember).props.activity], ['working', 0.6], 'the ember follows this run’s stream');
+      h.ok(!/1,?204|characters|Details|Leave it running/.test(shown), 'no output counter, and no Details or leave control: the sheet’s close is the way out');
+      await press(button(tree, COPY.actionStop));
+      h.eq(s.count('stop'), 1, 'Stop stops');
+    });
+    await rendered(<MakingPage name="Water Counter" changing words="Count glasses" stage={null} delivering={false} signals={null} now={0} activity={0} onStop={noop} />, async (tree) => {
+      h.ok(textOf(tree.root).includes('Changing Water Counter'), 'a change says so');
     });
   });
 
-  await h.test('ready: Open it and Back to your apps go to different places', async () => {
-    const s = spies();
-    await rendered(<DoneStep app={APP} onOpen={s.fn('open')} onBackToApps={s.fn('apps')} onReport={s.fn('report')} />, async (tree) => {
-      await press(button(tree, COPY.doneOpen));
-      h.eq([s.count('open'), s.count('apps')], [1, 0], 'Open it opens the app');
-      await press(button(tree, COPY.doneBackToApps));
-      h.eq([s.count('open'), s.count('apps')], [1, 1], 'Back to your apps goes back');
+  await h.test('making: in line the page says how many are ahead, nothing has started, and the ember is still and dim', async () => {
+    const signals = { startedAt: 0, aggregates: { chars: 0, tokens: 0 }, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: 0, inLine: true };
+    await rendered(<MakingPage name="Tea timer" changing={false} words="A tea timer" stage={null} delivering={false} queuedPosition={3} stepSince={0} signals={signals} now={5_000} activity={0.9} onStop={noop} />, async (tree) => {
+      h.ok(textOf(tree.root).includes('2 ahead of you.'), 'position 3 is two ahead');
+      h.ok(stepLabels(tree).every((label) => label.endsWith(COPY.makingStepWaiting)), 'no step has started');
+      const ember = tree.root.findByType(Ember).props;
+      h.eq(ember.activity, 0, 'the ember is still, whatever the sample says');
+      await rendered(<TilePlate size="grid" state="queued" tint="rose" glyph="coffee" />, async (tile) => {
+        h.eq(ember.state, tile.root.findByType(Ember).props.state, 'and dim as the waiting tile’s ember');
+      });
+      await rendered(<TilePlate size="grid" state="making" tint="rose" glyph="coffee" />, async (tile) => {
+        h.ok(ember.state !== tile.root.findByType(Ember).props.state, 'not burning like a tile being made');
+      });
+      h.ok(button(tree, COPY.actionStop) != null, 'and Stop is there');
     });
   });
+
+  await h.test('making: 40 s with no frame at all is a stall, said with the ember stuck', async () => {
+    const signals = { startedAt: 0, aggregates: { chars: 10, tokens: 3 }, lastTokenAt: 5_000, lastThinkingAt: null, lastFrameAt: 5_000 };
+    await rendered(<MakingPage name="Tea timer" changing={false} words="A tea timer" stage="generate" delivering={false} stepSince={0} signals={signals} now={46_000} activity={0.4} onStop={noop} />, async (tree) => {
+      h.ok(textOf(tree.root).includes('No word from the server for 40 s. Still waiting.'), 'the stall line replaces the time line');
+      h.eq(tree.root.findByType(Ember).props.state, 'stuck', 'and the ember is stuck');
+    });
+  });
+
+  await h.test('making: the ambient light fades into the sheet where the page’s top cuts it off and is whole by the ember, so the cut shows no edge', async () => {
+    await rendered(<MakingPage name="Tea timer" changing={false} words="A tea timer" stage="generate" delivering={false} stepSince={0} signals={null} now={0} activity={1} onStop={noop} />, async (tree) => {
+      const light = tree.root.findByType(AmbientLight);
+      // The light hangs above the page's first row by its wrapper's negative top; the page's own
+      // top edge (where the scroll view clips) is that far down the light's box.
+      const cut = -Number(StyleSheet.flatten(light.parent!.props.style).top);
+      const height = Number(light.props.height);
+      const rects = light.findAll((n) => hostType(n) === 'Rect');
+      const glowAt = rects.findIndex((r) => !String(r.props.fill).includes('fade'));
+      const veil = rects.find((r, i) => i > glowAt && String(r.props.fill).includes('fade'));
+      h.ok(veil !== undefined, 'something is drawn over the glow');
+      const fade = light.find((n) => hostType(n) === 'LinearGradient' && veil!.props.fill === `url(#${String(n.props.id)})`);
+      const stops = fade.findAll((n) => hostType(n) === 'Stop');
+      h.eq(stops.map((s) => s.props.stopColor), [COLORS.light.sheet, COLORS.light.sheet], 'in the sheet’s own colour');
+      const [from, to] = stops.map((s) => Number(s.props.stopOpacity));
+      const covered = (y: number) => {
+        if (y < Number(veil!.props.y) || y > Number(veil!.props.y) + Number(veil!.props.height)) return 0;
+        const along = Math.min(1, Math.max(0, (y - Number(fade.props.y1)) / (Number(fade.props.y2) - Number(fade.props.y1))));
+        return from + (to - from) * along;
+      };
+      h.ok(cut > 0, `the light reaches above the page (${cut} pt)`);
+      h.eq([covered(0), covered(cut)], [1, 1], 'the sheet covers it wholly at and above the page’s top edge');
+      h.eq(covered(height / 2), 0, 'and not at all at its centre, behind the ember');
+    });
+  });
+
+  await h.test('making: a repair adds its row under the check, and the marker is on it', async () => {
+    await rendered(<MakingPage name="Tea timer" changing={false} words="A tea timer" stage="check" delivering={false} repairAttempt={2} stepSince={60_000} signals={null} now={75_000} activity={0} onStop={noop} />, async (tree) => {
+      h.eq(stepLabels(tree), [
+        `${COPY.buildStepReading}, ${COPY.makingStepDone}`,
+        `${COPY.buildStepWriting}, ${COPY.makingStepDone}`,
+        `${COPY.buildStepChecking}, ${COPY.makingStepDone}`,
+        `Fixing a problem · try 2 of 3, ${COPY.makingStepCurrent}, 0:15`,
+        `${COPY.buildStepInstalling}, ${COPY.makingStepWaiting}`,
+      ], 'the check found the problem, the fix is current, and the marker never goes back up to the check');
+    });
+  });
+
+  await h.test('ready: the app’s tile, its name and the words; Open it in the app’s tint opens it, Done goes home', async () => {
+    const s = spies();
+    await rendered(<ReadyPage app={APP} words="A tea timer" onOpen={s.fn('open')} onDone={s.fn('done')} />, async (tree) => {
+      const shown = textOf(tree.root);
+      h.ok(shown.includes('Timer') && shown.includes('“A tea timer”') && shown.includes(COPY.readyOnHome), 'the name, the words and where it is');
+      h.eq(tree.root.findByType(TilePlate).props.size, 'hero', 'the 96 pt tile');
+      const open = tree.root.findAllByType(Button).find((b) => b.props.label === COPY.readyOpen);
+      h.eq([open?.props.variant, open?.props.tint], ['tint', tileOf(APP).tint], 'Open it is in the app’s own tint');
+      h.ok(!shown.includes(COPY.reportSheetTitle), 'and the page carries no report action');
+      await press(button(tree, COPY.readyOpen));
+      h.eq([s.count('open'), s.count('done')], [1, 0], 'Open it opens the app');
+      await press(button(tree, COPY.readyDone));
+      h.eq([s.count('open'), s.count('done')], [1, 1], 'Done goes home');
+    });
+  });
+}
+
+/** The Making page's step rows as a screen reader hears them, one element each. */
+function stepLabels(tree: Tree): string[] {
+  return tree.root
+    .findAll((n) => hostType(n) === 'View' && n.props.accessible === true && typeof n.props.accessibilityLabel === 'string')
+    .map((n) => String(n.props.accessibilityLabel))
+    .filter((label) => [COPY.makingStepDone, COPY.makingStepCurrent, COPY.makingStepWaiting].some((state) => label.includes(`, ${state}`)));
 }

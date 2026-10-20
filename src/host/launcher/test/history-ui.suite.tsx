@@ -13,7 +13,7 @@ import { AppIndex, type InstalledApp } from '../app-index';
 import { StoreAccess, storeIdOf } from '../store-access';
 import { createMemoryStore, MapKVBackend } from '../../version-store';
 import { DescribePage } from '../DescribePage';
-import DoneStep from '../DoneStep';
+import ReadyPage from '../ReadyPage';
 import MiniAppView from '../MiniAppView';
 import WhimProse from '../../ui/whim-prose/WhimProse';
 import { SHELL_COLORS } from '../../../sdk/theme';
@@ -281,8 +281,8 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       await startBuild(tree, 'A water tracker');
       streams[0].push({ ...resultEvent('Water Tracker'), summary: summary(FIRST_SUMMARY, 'Start') });
       streams[0].end();
-      await waitFor(() => tree.root.findAllByType(DoneStep).length === 1, 'the first version');
-      await press(button(tree, COPY.doneBackToApps));
+      await waitFor(() => tree.root.findAllByType(ReadyPage).length === 1, 'the first version');
+      await press(button(tree, COPY.readyDone));
       // The edit comes a minute later, as it would on a phone: a version's time is its commit's,
       // to the second, and two versions stamped in the same second have no order between them.
       Date.now = () => realNow() + 60_000;
@@ -294,8 +294,8 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       await waitFor(() => streams.length === 2, 'the edit’s generation');
       streams[1].push({ ...resultEvent('Water Tracker'), summary: summary(EDIT_SUMMARY, 'Added') });
       streams[1].end();
-      await waitFor(() => tree.root.findAllByType(DoneStep).length === 1, 'the second version');
-      await press(button(tree, COPY.doneBackToApps));
+      await waitFor(() => tree.root.findAllByType(ReadyPage).length === 1, 'the second version');
+      await press(button(tree, COPY.readyDone));
       await TestRenderer.act(async () => home(tree).props.onHistory(tracker(tree)));
       await waitFor(() => tree.root.findAllByType(WhimProse).length === 2, 'both versions on the timeline');
       h.eq(tree.root.findAllByType(WhimProse).map((n) => n.props.storedPrompt), ['Let me set my own daily goal', 'A water tracker'], 'newest first: the edit never rewrites v1');

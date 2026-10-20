@@ -721,9 +721,9 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     const r = purgeRig();
     await r.access.install({ id: 'app-1', name: 'Timer', record: REC('app-1'), bundleSource: 'V1', prompt: 'p1' });
     // A failed change to app-1: its attempt record shares the app's launcher id.
-    r.pending.create({ id: 'app-1', prompt: 'add a lap button', workingTitle: 'add a lap button', editingAppId: 'app-1' });
+    const attempt = r.pending.create({ id: 'app-1', prompt: 'add a lap button', workingTitle: 'add a lap button', editingAppId: 'app-1' });
     r.journal.create('app-1');
-    r.purges.armAttempt('app-1');
+    r.purges.armAttempt(attempt);
     await completeInterruptedPurges({ ...r.deps, purges: new PendingPurgeStore(r.kv) });
     h.eq(r.pending.get('app-1'), null, 'the attempt record is gone');
     h.eq(r.journal.get('app-1'), null, 'its journal is gone');

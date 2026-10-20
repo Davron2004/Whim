@@ -1,8 +1,7 @@
 /**
  * SheetModal — the one bottom-rising sheet primitive (design D14), used by `ReportScreen.tsx`.
  *
- * A genuine RN `Modal` — not an absolutely-positioned sibling `View` like `RunDetailsSheet.tsx`
- * uses — because a `Modal` mounts into its own native window and so reliably layers above a
+ * A genuine RN `Modal` — not an absolutely-positioned sibling `View` — because a `Modal` mounts into its own native window and so reliably layers above a
  * WebView and the orb; a plain sibling view's stacking order over a hardware-accelerated WebView
  * is not guaranteed on Android. `transparent` keeps the screen underneath visible (a running
  * mini-app, or whatever screen opened the sheet) rather than painting over it. The `Modal` is the
@@ -17,9 +16,8 @@
  * button at all, so a caller must ALWAYS give the sheet its own visible close control (a Cancel/
  * Done action) — `onRequestClose` firing is never the only way out.
  *
- * Rises on open with `MOTION.sheetRise` (the same entrance `Orb.tsx`'s menu and
- * `RunDetailsSheet.tsx` use); closing is instant, with no exit tween to race an unmount against —
- * the same idiom both of those already keep.
+ * Rises on open with `MOTION.sheetRise`; closing is instant, with no exit tween to race an unmount
+ * against.
  *
  * The dim covers the whole window, status bar, navigation bar and keyboard included (#105's class,
  * which the orb menu fixed the same way): the Modal's window draws under both bars on every Android
@@ -42,13 +40,13 @@ import { OverlayModal, useOverlayTurn } from '../ui/OverlayModal';
 import { inkAlpha } from './theme';
 import { SHELL_PALETTE } from './theme';
 
-/** The distance the sheet rises from — the same `Orb.tsx`/`RunDetailsSheet.tsx` constant. */
+/** The distance the sheet rises from. */
 const RISE_DISTANCE_PX = 24;
 
 export interface SheetModalProps {
   /** Whether the sheet is showing. Toggling this drives the rise animation open and an instant
    *  close — the caller keeps this component mounted across opens (its `Animated.Value` and any
-   *  loaded content survive a close), the same contract `RunDetailsSheet.tsx` keeps. */
+   *  loaded content survive a close). */
   visible: boolean;
   /** Fires on a scrim tap AND on `onRequestClose` (Android hardware back while visible). Never
    *  the only way to close on iOS — see the module doc comment. */

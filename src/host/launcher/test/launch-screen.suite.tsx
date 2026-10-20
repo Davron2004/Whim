@@ -10,7 +10,7 @@ import { COPY } from '../copy';
 import LauncherRoot from '../LauncherRoot';
 import HomeScreen from '../HomeScreen';
 import AppLinkMissingScreen from '../AppLinkMissingScreen';
-import FailureScreen from '../FailureScreen';
+import FailurePage from '../FailurePage';
 import { AppIndex } from '../app-index';
 import { appLinkFor } from '../app-link';
 import { PendingBuildStore } from '../pending-builds';
@@ -50,7 +50,7 @@ async function coldStart(body: (s: { tree: Tree; hides: string[][]; frame: () =>
   const mounted = (): string[] => {
     const root = tree?.root;
     if (!root) return ['nothing'];
-    return ([['home', HomeScreen], ['link-missing', AppLinkMissingScreen], ['failure', FailureScreen]] as const)
+    return ([['home', HomeScreen], ['link-missing', AppLinkMissingScreen], ['failure', FailurePage]] as const)
       .filter(([, type]) => root.findAllByType(type).length > 0)
       .map(([name]) => name);
   };

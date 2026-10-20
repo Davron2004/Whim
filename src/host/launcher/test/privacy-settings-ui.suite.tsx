@@ -14,7 +14,7 @@ import { FirstRunSheet } from '../FirstRunSheet';
 import AgeScreen from '../AgeScreen';
 import LauncherRoot from '../LauncherRoot';
 import HistoryScreen from '../HistoryScreen';
-import BuildStep from '../BuildStep';
+import MakingPage from '../MakingPage';
 import { Button } from '../../ui/Button';
 import { Sheet } from '../../ui/Sheet';
 import { AppIndex, type InstalledApp } from '../app-index';
@@ -315,7 +315,8 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
         await composeToPlan(tree);
         await buildIt(tree);
         await waitFor(() => wasSent(sent, '/v1/generate'), 'the generate request');
-        await TestRenderer.act(async () => tree.root.findByType(BuildStep).props.onBack());
+        h.ok(tree.root.findAllByType(MakingPage).length === 1, 'the making page is up');
+        await press(button(tree, COPY.sheetClose));
         await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onHistory(APP));
         await TestRenderer.act(async () => tree.root.findByType(HistoryScreen).props.onReport());
         await waitFor(() => textOf(tree.root).includes(COPY.reportReasonBroken), 'the report draft');

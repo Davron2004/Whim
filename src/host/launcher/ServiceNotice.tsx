@@ -1,64 +1,11 @@
 /**
- * ServiceNotice — the one refusal notice every gated step and the failure screen render
- * (design D12; spec `service-refusals` "The notice shows the server's hint and nothing
- * technical").
- *
- * Plain `Text`, never `WhimProse`: the hint is neither COPY nor user/agent prose, so the shared
- * renderer never gets a chance to mark it up. Tokens only — `SHELL_PALETTE` and the SDK type
- * scale/spacing/radius — no hex literal, no numeric font-size or radius literal.
+ * ServiceNotice — the live timing of a service refusal's notice (design D11/D12; spec
+ * `service-refusals`): the gate that holds a refused action until its window ends, and the clear
+ * that drops a sender notice when it does. The notice itself is drawn by `FlowNoticeBlock` (the
+ * shell's `Notice`).
  */
-import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { useEffect, useRef, useState } from 'react';
 import { noticeExpiredAt, retryWindowState } from './refusal-landing';
-import { retryLine } from './service-refusal';
-import { SHELL_PALETTE } from './theme';
-
-export interface ServiceNoticeProps {
-  /** The refusal's own `hint`, verbatim — never a status code, error identifier, `Retry-After`
-   *  value, or transport message. */
-  hint: string;
-  /** The re-enable moment (epoch ms), or absent when the refusal carried no `Retry-After`. The
-   *  retry-window line is derived from this FRESH on every render (`retryLine`, below) — never a
-   *  caption computed once and passed in, which would go stale the moment the window ends. */
-  retryAt?: number;
-  /** `danger` for a refusal about the user's own text (content/size); `neutral` for an
-   *  availability or limit refusal — `service-refusal.ts#REFUSAL_RULES` decides which. */
-  tone: 'danger' | 'neutral';
-}
-
-/** Alpha suffixes composing the danger tone out of `SHELL_PALETTE.danger` alone (RN 8-digit hex),
- *  the same idiom `FailureScreen.tsx`'s tinted panel already uses — never a second hex literal. */
-const DANGER_FILL_ALPHA = '14';
-const DANGER_BORDER_ALPHA = '3d';
-
-/** The one place this component builds a local-time formatter — `retryLine`'s same-day/tomorrow
- *  phrasing (design D11) reads through it. */
-function formatLocalTime(date: Date): string {
-  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
-}
-
-export default function ServiceNotice({ hint, retryAt, tone }: Readonly<ServiceNoticeProps>) {
-  const p = SHELL_PALETTE;
-  const danger = tone === 'danger';
-  // Read fresh at render time, never cached on the notice: the same render that `useRetryGate`'s
-  // one-shot re-render fires once the window ends picks this back up too, so "shortly" replaces a
-  // stale "in about N minutes" instead of the caption sitting there unchanged.
-  const line = retryAt !== undefined ? retryLine(retryAt, Date.now(), formatLocalTime) : undefined;
-  return (
-    <View
-      style={[
-        styles.notice,
-        danger
-          ? { backgroundColor: p.danger + DANGER_FILL_ALPHA, borderColor: p.danger + DANGER_BORDER_ALPHA }
-          : { backgroundColor: p.card, borderColor: p.cardBorder },
-      ]}
-    >
-      <Text style={[TYPE_SCALE.body, { color: danger ? p.danger : p.text }]}>{hint}</Text>
-      {line != null && <Text style={[TYPE_SCALE.caption, styles.retryLine, { color: p.textMuted }]}>{line}</Text>}
-    </View>
-  );
-}
 
 /**
  * The retry-window's live gate (design D11: "the primary action is disabled with its label kept,
@@ -110,11 +57,3 @@ export function useNoticeWindowClear(
     return () => clearTimeout(timer);
   }, [tone, retryAt]);
 }
-
-const styles = StyleSheet.create({
-  // `marginHorizontal` matches `flow-chrome.tsx#PrimaryAction`'s own inset — this notice sits
-  // directly above that action, outside the step's own scroll content, so it needs the same
-  // horizontal margin rather than inheriting one from a scroll container's padding.
-  notice: { borderWidth: 1, borderRadius: RADIUS.card, padding: SPACING.md, marginHorizontal: SPACING.lg, marginTop: SPACING.md },
-  retryLine: { marginTop: SPACING.xs },
-});

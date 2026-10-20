@@ -24,11 +24,16 @@ export interface UpdateRequiredScreenProps {
   onNotNow: () => void;
 }
 
+/** "Update Whim", wherever it is offered (this screen, and the Failure page of a run only a newer
+ *  Whim can finish): Whim's own listing in the store on the phone in hand, the App Store on iOS,
+ *  Google Play on Android, with its https fallback. */
+export function openWhimUpdate(): Promise<void> {
+  return openStoreListing(STORE_LISTINGS[Platform.OS === 'android' ? 'android' : 'ios'], (url) => Linking.openURL(url));
+}
+
 export default function UpdateRequiredScreen({ notice, onNotNow }: Readonly<UpdateRequiredScreenProps>) {
   const p = SHELL_PALETTE;
   useSystemBack(onNotNow);
-  // The store on the phone in hand: the App Store on iOS, Google Play on Android.
-  const listing = STORE_LISTINGS[Platform.OS === 'android' ? 'android' : 'ios'];
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
@@ -38,7 +43,7 @@ export default function UpdateRequiredScreen({ notice, onNotNow }: Readonly<Upda
       </View>
       <View>
         <TouchableOpacity
-          onPress={() => openStoreListing(listing, (url) => Linking.openURL(url))}
+          onPress={() => openWhimUpdate()}
           accessibilityRole="button"
           style={[styles.primary, { backgroundColor: p.accent }]}
         >
