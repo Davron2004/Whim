@@ -154,11 +154,11 @@
 
 ## 19. Running app: orb, Whim sheet, changes, crashes
 
-- [ ] 19.1 Orb: 44 pt opaque disc, 52 pt target, two corners inside `chromeInsetBottom` with projection snap and per-app memory, hide on the host keyboard signal, dots, accessibility label and action; no dim layer or stray shape (#82, #105)
-- [ ] 19.2 Whim sheet: tile, name, version line, "New version ready · Reload" row, send field, History, Report a problem (pushed inside the sheet), Back to your apps; each row its own accessibility element (#103); sending grows into the change's plan page
-- [ ] 19.3 Changing while in use: the app keeps running, the orb glows, toast with Reload, dot and row until reloaded, failed-change dot and toast with See why
-- [ ] 19.4 Crash screen: message, Reload, "Ask Whim to fix it" (prefilled request with the error attached), Back to your apps; the orb stays
-- [ ] 19.5 Retire `Orb.tsx`'s `Animated` menu and `orb-actions` tap counters (delete the stored counters); update `orb-menu`, `mini-app-host-ui` suites
+- [x] 19.1 Orb: 44 pt opaque disc, 52 pt target, two corners inside `chromeInsetBottom` with projection snap and per-app memory, hide on the host keyboard signal, dots, accessibility label and action; no dim layer or stray shape (#82, #105)
+- [x] 19.2 Whim sheet: tile, name, version line, "New version ready · Reload" row, send field, History, Report a problem (pushed inside the sheet), Back to your apps; each row its own accessibility element (#103); sending grows into the change's plan page
+- [x] 19.3 Changing while in use: the app keeps running, the orb glows, toast with Reload, dot and row until reloaded, failed-change dot and toast with See why
+- [x] 19.4 Crash screen: message, Reload, "Ask Whim to fix it" (prefilled request with the error attached), Back to your apps; the orb stays
+- [x] 19.5 Retire `Orb.tsx`'s `Animated` menu and `orb-actions` tap counters (delete the stored counters); update `orb-menu`, `mini-app-host-ui` suites
 
 ## 20. History
 
