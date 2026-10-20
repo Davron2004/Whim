@@ -56,7 +56,7 @@ import {
 } from './build-lifecycle';
 import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAppContext } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
-import { COPY, LEGAL_COPY, changedTitle, readyTitle } from './copy';
+import { COPY, LEGAL_COPY, changedTitle, crashFixWords, readyTitle } from './copy';
 import { ORB_DISC, ORB_TARGET, ORB_TARGET_EDGE } from './orb-geometry';
 import HomeScreen from './HomeScreen';
 import { MiniAppStage, type MiniAppLaunch } from './MiniAppView';
@@ -3151,9 +3151,19 @@ function LauncherShell({
     toastRef.current?.show({ message: COPY.changeFailedToast, action: { label: COPY.toastSeeWhy, onPress: () => seeWhyRef.current(failedId) } });
   }, [failedId, failedAt]);
 
-  /** "New version ready · Reload": the app opens again in place, on the version that is now current. */
+  /** "New version ready · Reload", and the crash screen's Reload: the app opens again in place, on the
+   *  version that is now current. */
   const onWhimReload = () => {
     reloadRunning().catch(() => undefined);
+  };
+
+  /** The crash screen's "Ask Whim to fix it": the Whim sheet over the crashed app, its field holding the
+   *  request with the error attached. It sends through the sheet's own send, so it starts nothing
+   *  itself, and while a change of the app is being made the sheet shows that change instead. */
+  const askWhimToFix = (attachment: string) => {
+    if (screen.kind !== 'app') return;
+    setWhimWords({ appId: screen.app.id, text: crashFixWords(attachment) });
+    openWhimSheet();
   };
 
   /** The Whim sheet's page for `page` over the running app `on`: its menu, or Report a problem pushed
@@ -3466,6 +3476,8 @@ function LauncherShell({
       onCloseSheet: closeSheet,
       installedApp: running.app,
       orb,
+      onReload: onWhimReload,
+      onAskFix: askWhimToFix,
     };
     return <MiniAppStage launch={launch} onFrame={setAppFrame} />;
   };

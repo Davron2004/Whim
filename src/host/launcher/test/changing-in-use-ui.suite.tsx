@@ -45,7 +45,7 @@ const WORDS = 'Add a tip slider';
 const isWebView = (n: Node) => hostType(n) === 'WebView';
 
 /** The running launch's WebView: the one no untouchable (waiting) slot holds, so a touch reaches it. */
-function boundWebView(tree: Tree): Node {
+export function boundWebView(tree: Tree): Node {
   const found = tree.root.findAll(isWebView).filter((web) => {
     for (let n: Node | null = web.parent; n !== null; n = n.parent) {
       if (hostType(n) === 'View' && n.props.pointerEvents === 'none') return false;
@@ -58,19 +58,19 @@ function boundWebView(tree: Tree): Node {
 
 /** The delivery scripts a WebView was handed, and the generation the latest bound its realm at. */
 const deliveriesInto = (web: Node): string[] => (web.props.injected as string[]).filter((s) => s.includes('__whimControl.reinject('));
-const generationIn = (web: Node): number => Number(/,generation:(\d+)/.exec(deliveriesInto(web).at(-1) ?? '')?.[1]);
+export const generationIn = (web: Node): number => Number(/,generation:(\d+)/.exec(deliveriesInto(web).at(-1) ?? '')?.[1]);
 
 /** A realm's first paint as the outer page forwards it, stamped with `generation`. */
-const paint = (generation: number) => ({ kind: 'paint', trusted: true, payload: { generation, mountToFirstPaintMs: 42, appName: APP_NAME } });
-const send = (onMessage: (e: { nativeEvent: { data: string } }) => void, frame: unknown) =>
+export const paint = (generation: number) => ({ kind: 'paint', trusted: true, payload: { generation, mountToFirstPaintMs: 42, appName: APP_NAME } });
+export const send = (onMessage: (e: { nativeEvent: { data: string } }) => void, frame: unknown) =>
   TestRenderer.act(async () => onMessage({ nativeEvent: { data: JSON.stringify(frame) } }));
 
 /** The opening state is up over the app (its page hidden under the cover). */
-const opening = (tree: Tree) =>
+export const opening = (tree: Tree) =>
   tree.root.findAll((n) => typeof n.type === 'string' && n.props.accessibilityRole === 'progressbar' && n.props.accessibilityLabel === COPY.appBootA11yLabel).length > 0;
 
 /** The bound WebView's page loads, the realm is delivered and paints: the app is open and in use. */
-async function paintRunningApp(tree: Tree): Promise<Node> {
+export async function paintRunningApp(tree: Tree): Promise<Node> {
   const web = boundWebView(tree);
   await TestRenderer.act(async () => web.props.onLoadEnd());
   await send(web.props.onMessage, paint(generationIn(web)));
@@ -82,13 +82,13 @@ async function paintRunningApp(tree: Tree): Promise<Node> {
 const changeFailed = (kv: KVBackend) => new PendingBuildStore(kv).list().some((r) => r.state === 'failed');
 
 /** What the orb reads after "Whim menu": its state, or '' at rest. */
-const orbState = (tree: Tree) => String(orb(tree).props.accessibilityLabel).slice(COPY.orbMenuOpenLabel.length).replace(/^, /, '');
+export const orbState = (tree: Tree) => String(orb(tree).props.accessibilityLabel).slice(COPY.orbMenuOpenLabel.length).replace(/^, /, '');
 
 /** The activity the orb's ember is drawn at. */
 const orbActivity = (tree: Tree): number => orb(tree).findByType(Ember).props.activity;
 
 /** From the running app: orb → type → Send → Make the change, the change's stream open. */
-async function makeChange(tree: Tree, streams: readonly unknown[]): Promise<void> {
+export async function makeChange(tree: Tree, streams: readonly unknown[]): Promise<void> {
   await openSheet(tree);
   await typeWords(tree, WORDS);
   await press(button(tree, COPY.whimSheetSend));

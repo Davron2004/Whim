@@ -317,9 +317,13 @@ export const COPY = {
   launchFailedBody:
     'Something about this app doesn’t match what’s already saved here, so it can’t open right now.',
   launchFailedBack: 'Back to your apps',
-  appErrorTitle: 'This app ran into a problem',
-  appErrorBody: 'It stopped and can’t carry on right now. Try again, or go back to your apps.',
-  appErrorRetry: 'Try again',
+  // The crash screen (`app-launcher` "A crashed app keeps the orb and offers a way forward"; system.md
+  // §9 App crashed): its title is `appCrashedTitle`, its Reload `actionReload`, its last action
+  // `launchFailedBack`.
+  appCrashedBody: 'It stopped and can’t carry on right now. Your saved data is safe.',
+  appCrashedAskFix: 'Ask Whim to fix it',
+  /** The request "Ask Whim to fix it" puts in the Whim sheet's field, the error attached under it. */
+  appCrashedFixRequest: 'Fix the error that stops this app.',
   // What a delivered bundle that defines no app reads as (bundle-validity guard): the generation
   // came back with nothing usable, so it is refused at delivery rather than stored and only
   // discovered broken the next time the app is opened.
@@ -895,6 +899,17 @@ export function readyTitle(name: string): string {
 /** "<App name> changed": the toast when a change lands while its app runs; it offers Reload. */
 export function changedTitle(name: string): string {
   return `${name} changed`;
+}
+
+/** "<App name> ran into a problem": the crash screen's title. */
+export function appCrashedTitle(name: string): string {
+  return `${name} ran into a problem`;
+}
+
+/** What "Ask Whim to fix it" puts in the Whim sheet's field: the request, then the error attached
+ *  (`crash-report.ts#crashAttachment`) as its own paragraph. */
+export function crashFixWords(attachment: string): string {
+  return attachment === '' ? COPY.appCrashedFixRequest : `${COPY.appCrashedFixRequest}\n\n${attachment}`;
 }
 
 /** The person's words in quotes, as the Plan, Making and Ready pages show them: trimmed, every run

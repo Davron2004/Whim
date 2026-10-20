@@ -11,7 +11,7 @@
 // hold one WebView warm (design-system-v1 task 18.4, `webview-pool.ts`): the runtime page loaded and
 // nothing else. Each launch is a `MiniAppView` of its own (keyed by the launch, so a fresh host,
 // realm and opening state every time); it takes the waiting WebView, or a cold one, and that WebView
-// is destroyed when the launch ends, fails or retries. No WebView ever hosts a second launch. A
+// is destroyed when the launch ends or fails. No WebView ever hosts a second launch. A
 // fresh WebView starts waiting, unseen, once the launch has painted, so the next is warm too.
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
@@ -48,7 +48,6 @@ import {
   pageAnswered,
   pageGone,
   pageLoaded,
-  retryLaunch,
   waitingSlot,
   WARM_ANSWER,
   WARM_PROBE_JS,
@@ -58,6 +57,8 @@ import {
 import Orb, { type OrbProps } from './Orb';
 import { chromeInsetBottom } from './orb-geometry';
 import type { InstalledApp } from './app-index';
+import { AppCrashed } from './AppCrashed';
+import { crashAttachment } from './crash-report';
 
 /** One open of one app: what the launcher hands the container while the app is open. */
 export interface MiniAppLaunch {
@@ -83,6 +84,11 @@ export interface MiniAppLaunch {
   /** What the orb shows of a change to this app (`app-launcher` "Changing an app keeps it running
    *  and offers Reload"): being made, with its stream's activity; landed; failed; or nothing. */
   orb: Required<Pick<OrbProps, 'state' | 'activity'>>;
+  /** The crash screen's Reload: the launcher opens the app again in place, a new launch. */
+  onReload: () => void;
+  /** The crash screen's "Ask Whim to fix it", with the error to attach (`crashAttachment`, plain
+   *  text): the launcher opens the Whim sheet over the app with the request prefilled. */
+  onAskFix: (attachment: string) => void;
 }
 
 export interface MiniAppStageProps {
@@ -95,7 +101,7 @@ export interface MiniAppStageProps {
 
 /** The current launch's end of its WebView's events. Frames and load events reach a launch only
  *  from the WebView bound to it, by key: never from the waiting one, nor from a WebView a previous
- *  launch or a retried realm had, whatever is still queued on the bridge for it. */
+ *  launch had, whatever is still queued on the bridge for it. */
 interface LaunchOutlet {
   key: number | null;
   onMessage: (data: string) => void;
@@ -158,7 +164,6 @@ export function MiniAppStage({ launch, onFrame }: Readonly<MiniAppStageProps>) {
   const keyboard = useKeyboardInset(frame, launch !== null && padsWebViewForKeyboard(Platform.OS));
   const onFailed = useCallback(() => setPool(launchFailed), []);
   const onOpened = useCallback(() => setPool(launchOpened), []);
-  const onRetry = useCallback(() => setPool(retryLaunch), []);
 
   const onSlotLoadEnd = (key: number) => {
     const bound = outlet.current;
@@ -238,7 +243,6 @@ export function MiniAppStage({ launch, onFrame }: Readonly<MiniAppStageProps>) {
           natives={natives}
           onFailed={onFailed}
           onOpened={onOpened}
-          onRetry={onRetry}
           onPinned={onPinned}
         />
       ) : null}
@@ -256,15 +260,13 @@ interface MiniAppViewProps extends MiniAppLaunch {
   onFailed: () => void;
   /** The launch painted: the next WebView may start warming beside it. */
   onOpened: () => void;
-  /** Retry: a fresh WebView for a fresh realm. */
-  onRetry: () => void;
   /** The tokens this launch's frame is held to now, `null` while it follows the phone. */
   onPinned: (pinned: ShellTokens | null) => void;
 }
 
 export default function MiniAppView({
   record, bundleSource, engineAppId, tappedAt, onExit, onOpenSheet, sheetOpen, onCloseSheet, installedApp, orb,
-  slot, outlet, natives, onFailed, onOpened, onRetry, onPinned,
+  onReload, onAskFix, slot, outlet, natives, onFailed, onOpened, onPinned,
 }: Readonly<MiniAppViewProps>) {
   const slotKey = slot?.key ?? null;
   // The WebView this launch's host controls is looked up when used: the one bound to the launch
@@ -289,7 +291,7 @@ export default function MiniAppView({
   // iframe is replaced by a fresh one with a new nonce and this launch's generation (spike2 §5).
   // The theme is built at each real delivery from the phone's settings at that moment and the
   // app's tint (design-system-v1 D3): a running realm never re-themes live, and a settings change
-  // applies at the next open or Retry. It carries how much of the app's bottom edge the orb covers
+  // applies at the next open or Reload. It carries how much of the app's bottom edge the orb covers
   // (beta-1 D5), computed from this delivery's bottom safe-area inset; the loader keeps that out
   // of the bundle-visible theme.
   const tokens = useTokens();
@@ -344,7 +346,7 @@ export default function MiniAppView({
   // "Opening…", the failure screens -- and the shell's status-bar strip keep the settings the realm
   // was delivered with, as the page does (app-launcher "Settings changed while an app runs apply next
   // time"; system.md: one `bg`, no live theme frame). Before the delivery they follow the phone. A
-  // failure surface keeps the frame its realm had; Retry's fresh WebView follows the phone again
+  // failure surface keeps the frame its realm had; a Reload is a new launch, which follows the phone
   // until its own delivery captures anew. The host overlays above the app (orb, Whim sheet) follow
   // the phone.
   const pinned = delivered !== null && (delivered.key === slotKey || slotKey === null) ? delivered.tokens : null;
@@ -358,7 +360,7 @@ export default function MiniAppView({
   // surfaces above the boot state) is decided by the pure `miniAppSurface` -- a launch that fails
   // before any paint is unpainted too, so an implicit "unpainted means booting" would park the
   // user in a permanent opening screen instead of the honest failure copy. A failure surface
-  // destroys the launch's WebView; Retry binds a fresh one.
+  // destroys the launch's WebView; Reload is a new launch in a fresh one.
   const surface = miniAppSurface(host.state);
   const failed = surface === 'launch-failed' || surface === 'app-error';
   useEffect(() => {
@@ -370,10 +372,10 @@ export default function MiniAppView({
   // throttled by a hidden view; the cover fades out over `fade-in` once this launch's signal
   // (`paintMs`, generation-fenced) arrives or the 600 ms cap passes. Above it the app's tile-sized
   // plate holds until the paint, with "Opening…" under it after 1.5 s. Both timers are keyed by the
-  // bound WebView, so Retry's recreated realm opens from the start again. The label counts from the
-  // bind; the cap from the delivery, because a page still loading paints the default light canvas
-  // until the delivered theme reaches it (a light frame in dark mode, measured on iOS). Under Reduce
-  // Motion the fade is itself the replacement (§4.5), so it is played, not skipped.
+  // bound WebView. The label counts from the bind; the cap from the delivery, because a page still
+  // loading paints the default light canvas until the delivered theme reaches it (a light frame in
+  // dark mode, measured on iOS). Under Reduce Motion the fade is itself the replacement (§4.5), so it
+  // is played, not skipped.
   const [capFor, setCapFor] = useState<number | null>(null);
   const [labelFor, setLabelFor] = useState<number | null>(null);
   useEffect(() => {
@@ -399,19 +401,17 @@ export default function MiniAppView({
   const coverStyle = useAnimatedStyle(() => ({ opacity: cover.value }));
   const plateStyle = useAnimatedStyle(() => ({ opacity: plate.value }));
 
-  // Tap to first paint (task 18.4): logged once per launch, at the first accepted paint of the
-  // realm the tap opened, beside that realm's own mount-to-paint time and how the launch got its
-  // WebView. A Retry's realm is not an opening, so its paint is never logged.
-  const [openedIn] = useState(slotKey);
+  // Tap to first paint (task 18.4): logged once per launch, at the first accepted paint of its realm
+  // (a launch has one: Reload is a launch of its own), beside that realm's own mount-to-paint time and
+  // how the launch got its WebView.
   const handedOut = slot?.handedOut ?? null;
   const timed = useRef(false);
   const { paintedAt, paintMs } = host.state;
   useEffect(() => {
     if (timed.current || paintedAt === null) return;
     timed.current = true;
-    if (slotKey !== openedIn) return;
     log.info(CHANNELS.app, 'tap to first paint', { tapToPaintMs: paintedAt - tappedAt, paintMs, webView: handedOut });
-  }, [paintedAt, paintMs, tappedAt, slotKey, openedIn, handedOut]);
+  }, [paintedAt, paintMs, tappedAt, handedOut]);
   useEffect(() => {
     if (paintedAt !== null) onOpened();
   }, [paintedAt, onOpened]);
@@ -435,37 +435,27 @@ export default function MiniAppView({
     );
   }
 
-  // A post-delivery failure (a fatal bundle-error frame, or a delivered app that never paints --
-  // the watchdog in useMiniAppHost) leaves the realm dark otherwise -- show honest product copy
-  // instead of a blank screen, with a way to retry the same app or leave to Home. Retry clears
-  // lastError AND binds a fresh WebView together: clearing alone can't remount (the failure
-  // destroyed the WebView), and a fresh WebView alone can't reset lastError (only bind() does
-  // that) -- both are needed to fall through into a fresh realm. A realm reset is a RECREATE,
-  // never a re-inject (spike2 §5, #35/#37), so this is the only supported way to recover a live app.
+  // A running app that failed after its delivery -- a fatal error frame (a render error no boundary in
+  // the app caught, a mount or bundle failure), a delivered app that never paints (the watchdog in
+  // useMiniAppHost), or its WebView gone (a page that failed to load, a web content process that died)
+  // -- is the crash screen (`app-launcher` "A crashed app keeps the orb and offers a way forward"), in
+  // the app's place, with the orb over it. Its Reload is a new launch of the app in place: a fresh
+  // WebView and realm (a realm reset is a RECREATE, never a re-inject, spike2 §5). "Ask Whim to fix
+  // it" hands the launcher the error as plain, capped text for the request it prefills.
   if (surface === 'app-error') {
-    const retry = () => {
-      host.clearLastError();
-      onRetry();
-    };
+    const crash = host.state.crash;
     return (
-      <View style={[styles.layer, styles.errorRoot, { backgroundColor: bg }]}>
-        <Text tokens={frameTokens} type="title2" style={styles.errorTitle}>{COPY.appErrorTitle}</Text>
-        <Text tokens={frameTokens} color="text-2" style={styles.errorBody}>{COPY.appErrorBody}</Text>
-        <Pressable
-          accessibilityRole="button"
-          style={[styles.errorAction, { backgroundColor: primary.fill, borderColor: primary.fill }]}
-          onPress={retry}
-        >
-          <Text tokens={frameTokens} type="headline" color="on-ink">{COPY.appErrorRetry}</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          style={[styles.errorAction, styles.errorSecondary, { backgroundColor: bg, borderColor: c.border }]}
-          onPress={onExit}
-        >
-          <Text tokens={frameTokens} type="headline" color="text-2">{COPY.launchFailedBack}</Text>
-        </Pressable>
-      </View>
+      <>
+        <AppCrashed
+          name={installedApp.name}
+          tokens={frameTokens}
+          bottomClearance={chromeInsetBottom(bottomInset)}
+          onReload={onReload}
+          onAskFix={() => onAskFix(crash === null ? '' : crashAttachment(crash))}
+          onExit={onExit}
+        />
+        <Orb appId={installedApp.id} state={orb.state} activity={orb.activity} onOpen={onOpenSheet} />
+      </>
     );
   }
 
@@ -507,8 +497,7 @@ const styles = StyleSheet.create({
   errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.lg },
   errorTitle: { textAlign: 'center', marginBottom: SPACING.sm },
   errorBody: { textAlign: 'center', marginBottom: SPACING.lg },
-  // The app's standard pair (DoneStep): a filled primary and an outlined secondary, each the full
-  // width and one height, with a gap so the two never read as one shape.
+  // A filled primary the full width.
   errorAction: {
     alignSelf: 'stretch',
     height: 52,
@@ -517,7 +506,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  errorSecondary: { marginTop: SPACING.sm },
   layer: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   opening: { alignItems: 'center', justifyContent: 'center' },
   // Under the centred plate without moving it: the words appear late, and the plate must not jump.
