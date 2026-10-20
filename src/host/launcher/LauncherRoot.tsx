@@ -58,7 +58,7 @@ import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAp
 import { seedFirstRun, SeedSpec } from './seed';
 import { COPY, LEGAL_COPY, readyTitle } from './copy';
 import HomeScreen from './HomeScreen';
-import MiniAppView from './MiniAppView';
+import { MiniAppStage, type MiniAppLaunch } from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
 import SettingsScreen from './SettingsScreen';
 import AdvancedScreen from './AdvancedScreen';
@@ -2822,25 +2822,7 @@ function LauncherShell({
    *  own control flow for the same budget — adding a `Screen` member costs this function one
    *  branch, never the other. */
   const renderScreenContent = (): React.ReactNode => {
-    if (screen.kind === 'app') {
-      return (
-        <MiniAppView
-          key={screen.app.id}
-          record={screen.record}
-          bundleSource={screen.source}
-          engineAppId={screen.engineAppId}
-          tappedAt={screen.tappedAt}
-          onExit={goHome}
-          onVersions={() => onHistory(screen.app, 'app')}
-          onChangeIt={() => openWithConsent({ kind: 'compose', editing: screen.app })}
-          installedApp={screen.app}
-          access={access}
-          reportOptions={reportOptions}
-          onUpdateRequired={onReportUpdateRequired}
-          legalLanguage={legalLanguage}
-        />
-      );
-    } else if (screen.kind === 'dev') {
+    if (screen.kind === 'dev') {
       return <DevProbeScreen onExit={goHome} />;
     } else if (screen.kind === 'age' && screen.held !== undefined) {
       const { returnTo } = screen;
@@ -3098,6 +3080,29 @@ function LauncherShell({
     return { key: on.kind, title: stackTitle(on), largeTitle: on.kind === 'settings', onLeave: leave, ...look, children: renderStackScreen(on, leave) };
   };
 
+  /** The mini-app container, mounted under every screen once the shell is ready (design-system-v1
+   *  task 18.4): hidden, with one WebView waiting, while no app is open; the open app when one is.
+   *  Both branches render it at the same place, so opening and closing never remount it. */
+  const renderMiniApp = (): React.ReactNode => {
+    if (!ready) return null;
+    if (screen.kind !== 'app') return <MiniAppStage launch={null} />;
+    const launch: MiniAppLaunch = {
+      record: screen.record,
+      bundleSource: screen.source,
+      engineAppId: screen.engineAppId,
+      tappedAt: screen.tappedAt,
+      onExit: goHome,
+      onVersions: () => onHistory(screen.app, 'app'),
+      onChangeIt: () => openWithConsent({ kind: 'compose', editing: screen.app }),
+      installedApp: screen.app,
+      access,
+      reportOptions,
+      onUpdateRequired: onReportUpdateRequired,
+      legalLanguage,
+    };
+    return <MiniAppStage launch={launch} />;
+  };
+
   const stack = ready ? stackFor(screen) : null;
   let content: React.ReactNode;
   if (!ready) {
@@ -3141,6 +3146,7 @@ function LauncherShell({
             FallbackComponent={ScreenErrorFallback}
             onLeave={exit.back === 'root' ? undefined : goHome}
           >
+            {renderMiniApp()}
             {content}
             <MakingSheet content={renderSheetPage()} onClose={closeSheet} />
             {checkingAge !== undefined && <AgeCheckBack onLeave={() => onLegalDecline(checkingAge.returnTo)} />}

@@ -4,15 +4,20 @@
 // One WebView == one realm == one app (#41 D2). The bundle is delivered BY SOURCE from the
 // installed record's active version-store snapshot (#5 D3) — the iframe-side contract is
 // byte-identical to the baked path. The orb menu's Home action (D5, shell-redesign-v2 D12) and
-// Android system back (D4) both exit to the launcher; the realm can reach neither. LauncherRoot
-// keys this component by
-// the launcher id, so switching apps remounts it (a fresh realm every launch).
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// Android system back (D4) both exit to the launcher; the realm can reach neither.
+//
+// LauncherRoot keeps the container, `MiniAppStage`, mounted, hidden while no app is open, so it can
+// hold one WebView warm (design-system-v1 task 18.4, `webview-pool.ts`): the runtime page loaded and
+// nothing else. Each launch is a `MiniAppView` of its own (keyed by the launch, so a fresh host,
+// realm and opening state every time); it takes the waiting WebView, or a cold one, and that WebView
+// is destroyed when the launch ends, fails or retries. No WebView ever hosts a second launch.
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
+import { RUNTIME_HTML } from '../../runtime/generated/runtime-html';
 import { RADIUS, SPACING } from '../../sdk/theme';
 import { SPACE } from '../../design/tokens';
 import { TilePlate } from '../ui/AppTile';
@@ -32,6 +37,21 @@ import { useKeyboardInset } from './KeyboardShell';
 import { padsWebViewForKeyboard } from './keyboard-shell';
 import { COPY } from './copy';
 import { miniAppSurface, OPENING_LABEL_AFTER_MS, OPENING_REVEAL_CAP_MS, openingLook } from './boot-state';
+import {
+  EMPTY_POOL,
+  launchFailed,
+  launchSlot,
+  openApp,
+  pageAnswered,
+  pageGone,
+  pageLoaded,
+  retryLaunch,
+  waitingSlot,
+  WARM_ANSWER,
+  WARM_PROBE_JS,
+  type PoolSlot,
+  type WebViewPool,
+} from './webview-pool';
 import Orb from './Orb';
 import { chromeInsetBottom } from './orb-geometry';
 import { ReportSheet } from './ReportScreen';
@@ -40,7 +60,8 @@ import type { StoreAccess } from './store-access';
 import type { ClientOptions } from './generation-client';
 import type { LegalLanguage } from './legal-language';
 
-export interface MiniAppViewProps {
+/** One open of one app: what the launcher hands the container while the app is open. */
+export interface MiniAppLaunch {
   record: AppRecord;
   bundleSource: string;
   /** The runtime engine appId (the launcher id, #5 D8) — a fork's own user data. */
@@ -55,7 +76,8 @@ export interface MiniAppViewProps {
    *  History's own "Change it from here" row action uses). */
   onChangeIt: () => void;
   /** The installed-apps entry for this running app (design D13) — `ReportSheet`'s
-   *  `reportDraftFor(entry, access)` input for the orb's "Report this app" action. */
+   *  `reportDraftFor(entry, access)` input for the orb's "Report this app" action. Its id is the
+   *  launch's identity: another id is another launch. */
   installedApp: InstalledApp;
   access: StoreAccess;
   /** Plain `ClientOptions` for the report sheet's `sendReport` call — no AI-data consent required
@@ -68,46 +90,168 @@ export interface MiniAppViewProps {
   legalLanguage: LegalLanguage;
 }
 
-export default function MiniAppView({
-  record,
-  bundleSource,
-  engineAppId,
-  tappedAt,
-  onExit,
-  onVersions,
-  onChangeIt,
-  installedApp,
-  access,
-  reportOptions,
-  onUpdateRequired,
-  legalLanguage,
-}: Readonly<MiniAppViewProps>) {
-  // The report sheet is a host-layer overlay over the running realm (design D14): while it is
-  // open, back-policy's `overlayOpen` input closes it instead of forwarding the press into the
-  // app or exiting (mini-app-back-navigation delta "A host sheet takes back first").
-  const [reportOpen, setReportOpen] = useState(false);
-  const host = useMiniAppHost({ onExit, overlayOpen: reportOpen, onCloseOverlay: () => setReportOpen(false) });
-  // Bumped on Retry to force a fresh <WebView> mount -- a realm reset is a RECREATE, never a
-  // re-inject (spike2 §5, #35/#37), so this is the only supported way to recover a live app.
-  const [webKey, setWebKey] = useState(0);
+export interface MiniAppStageProps {
+  /** The open app, or `null` while none is: the container is then hidden, one WebView waiting. */
+  launch: MiniAppLaunch | null;
+}
+
+/** The current launch's end of its WebView's events. Frames and load events reach a launch only
+ *  from the WebView bound to it, by key: never from the waiting one, nor from a WebView a previous
+ *  launch or a retried realm had, whatever is still queued on the bridge for it. */
+interface LaunchOutlet {
+  key: number | null;
+  onMessage: (data: string) => void;
+  onLoadEnd: () => void;
+}
+
+const RUNTIME_PAGE = { html: RUNTIME_HTML };
+const ORIGINS = ['*'];
+
+/** The container: the pool's WebViews, and the open app's `MiniAppView` over its own. */
+export function MiniAppStage({ launch }: Readonly<MiniAppStageProps>) {
+  const tokens = useTokens();
+  const bg = tokens.colors.bg;
+  const appId = launch?.installedApp.id ?? null;
+  const [pool, setPool] = useState<WebViewPool>(() => openApp(EMPTY_POOL, appId));
+  // A different app open (or none) is a new launch: the pool moves before anything renders for it.
+  const switching = pool.appId !== appId;
+  if (switching) setPool((p) => openApp(p, appId));
+  const poolRef = useRef(pool);
+  poolRef.current = pool;
+  const natives = useRef(new Map<number, WebView>());
+  // One ref callback per WebView, kept for its life, so a re-render never detaches it.
+  const attach = useRef(new Map<number, (web: WebView | null) => void>());
+  const refFor = (key: number) => {
+    let ref = attach.current.get(key);
+    if (!ref) {
+      ref = (web: WebView | null) => {
+        if (web) {
+          natives.current.set(key, web);
+        } else {
+          natives.current.delete(key);
+          attach.current.delete(key);
+        }
+      };
+      attach.current.set(key, ref);
+    }
+    return ref;
+  };
+  const outlet = useRef<LaunchOutlet | null>(null);
   // The keyboard (beta-1 D3): the page ends at its top edge on Android, where no window resizes for
   // it, so the page's viewport shrinks and the runtime scrolls the focused field into view
   // (`loader.js`). iOS's WebView avoids the keyboard itself (`padsWebViewForKeyboard`).
   const frame = useRef<View>(null);
-  const keyboard = useKeyboardInset(frame, padsWebViewForKeyboard(Platform.OS));
+  const keyboard = useKeyboardInset(frame, launch !== null && padsWebViewForKeyboard(Platform.OS));
+  const onFailed = useCallback(() => setPool(launchFailed), []);
+  const onRetry = useCallback(() => setPool(retryLaunch), []);
 
-  // Deliver after the host page has loaded so injectJavaScript is not silently dropped (#5 B1) --
-  // exactly ONCE per <WebView> instance. Android's WebView does NOT promise one onPageFinished
-  // (RN's onLoadEnd) per page load: it fires more than once on some devices/WebView versions, and
-  // a second delivery would bind a new host generation and reinject into the live page, tearing
-  // down the realm the user is already looking at. `deliveredKey` records the mount delivery
-  // happened for, so the two legitimate deliveries still happen -- the component's first mount
-  // (keyed by launcher id), and every Retry remount (a bumped webKey, i.e. a RECREATED realm,
-  // spike2 §5) -- while a repeat for the same key is dropped. The theme is built at each real
-  // delivery from the phone's settings at that moment and the app's tint (design-system-v1 D3): a
-  // running realm never re-themes live, and a settings change applies at the next open or Retry.
-  // It carries how much of the app's bottom edge the orb covers (beta-1 D5), computed from this
-  // delivery's bottom safe-area inset; the loader keeps that out of the bundle-visible theme.
+  const onSlotLoadEnd = (key: number) => {
+    const bound = outlet.current;
+    if (bound !== null && bound.key === key) {
+      bound.onLoadEnd();
+      return;
+    }
+    if (waitingSlot(poolRef.current)?.key !== key) return;
+    setPool((p) => pageLoaded(p, key));
+    natives.current.get(key)?.injectJavaScript(WARM_PROBE_JS);
+  };
+  const onSlotMessage = (key: number, data: string) => {
+    const bound = outlet.current;
+    if (bound !== null && bound.key === key) bound.onMessage(data);
+    else if (data === WARM_ANSWER) setPool((p) => pageAnswered(p, key));
+  };
+  const onSlotGone = (key: number) => setPool((p) => pageGone(p, key));
+
+  const open = launch !== null && !switching && pool.launch !== null;
+  return (
+    <View
+      ref={frame}
+      collapsable={false}
+      style={open ? [styles.root, { backgroundColor: bg, paddingBottom: keyboard }] : styles.waiting}
+      pointerEvents={open ? 'auto' : 'none'}
+      accessibilityElementsHidden={!open}
+      importantForAccessibility={open ? 'auto' : 'no-hide-descendants'}
+    >
+      {/* Every WebView, waiting or bound, is this one element: the same page, the same settings, the
+          same native view manager (whose network refusal, decision #74, every instance gets). */}
+      {pool.slots.map((slot) => (
+        <WebView
+          key={slot.key}
+          ref={refFor(slot.key)}
+          style={[styles.web, { backgroundColor: bg }]}
+          originWhitelist={ORIGINS}
+          source={RUNTIME_PAGE}
+          onMessage={(e) => onSlotMessage(slot.key, e.nativeEvent.data)}
+          onLoadEnd={() => onSlotLoadEnd(slot.key)}
+          javaScriptEnabled
+          domStorageEnabled={false}
+          setSupportMultipleWindows={false}
+          onError={(ev) => {
+            logWebViewError(log, ev.nativeEvent, slot.launch === null ? { surface: 'waiting' } : { appId: launch?.record.appId });
+            onSlotGone(slot.key);
+          }}
+          onContentProcessDidTerminate={() => onSlotGone(slot.key)}
+          onRenderProcessGone={() => onSlotGone(slot.key)}
+        />
+      ))}
+      {open ? (
+        <MiniAppView
+          key={pool.launch}
+          {...launch}
+          slot={launchSlot(pool)}
+          outlet={outlet}
+          natives={natives}
+          onFailed={onFailed}
+          onRetry={onRetry}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+/** One launch's view, over the WebView `MiniAppStage` bound to it. */
+interface MiniAppViewProps extends MiniAppLaunch {
+  /** The WebView bound to this launch; none on a failure surface. */
+  slot: PoolSlot | undefined;
+  outlet: React.MutableRefObject<LaunchOutlet | null>;
+  natives: React.MutableRefObject<Map<number, WebView>>;
+  /** The launch reached a failure surface: its WebView goes. */
+  onFailed: () => void;
+  /** Retry: a fresh WebView for a fresh realm. */
+  onRetry: () => void;
+}
+
+export default function MiniAppView({
+  record, bundleSource, engineAppId, tappedAt, onExit, onVersions, onChangeIt, installedApp, access, reportOptions,
+  onUpdateRequired, legalLanguage, slot, outlet, natives, onFailed, onRetry,
+}: Readonly<MiniAppViewProps>) {
+  const slotKey = slot?.key ?? null;
+  // The WebView this launch's host controls is looked up when used: the one bound to the launch
+  // now, and none once it is gone, so a late result of this launch never reaches another WebView.
+  const boundKey = useRef<number | null>(null);
+  const [webRef] = useState(() => ({
+    get current(): WebView | null {
+      return boundKey.current === null ? null : natives.current.get(boundKey.current) ?? null;
+    },
+  }));
+  // The report sheet is a host-layer overlay over the running realm (design D14): while it is
+  // open, back-policy's `overlayOpen` input closes it instead of forwarding the press into the
+  // app or exiting (mini-app-back-navigation delta "A host sheet takes back first").
+  const [reportOpen, setReportOpen] = useState(false);
+  const host = useMiniAppHost({ onExit, overlayOpen: reportOpen, onCloseOverlay: () => setReportOpen(false), webRef });
+
+  // Deliver once the bound WebView's page has loaded, so injectJavaScript is not silently dropped
+  // (#5 B1): at once for a WebView handed over already loaded, else at its `onLoadEnd` -- exactly
+  // ONCE per WebView. Android's WebView does NOT promise one onPageFinished (RN's onLoadEnd) per
+  // page load, and a second delivery would bind a new host generation and reinject into the live
+  // page, tearing down the realm the user is already looking at; `deliveredKey` drops the repeat.
+  // The delivery resets the page's realm (`reinject({ reset: true })`): the waiting page's idle
+  // iframe is replaced by a fresh one with a new nonce and this launch's generation (spike2 §5).
+  // The theme is built at each real delivery from the phone's settings at that moment and the
+  // app's tint (design-system-v1 D3): a running realm never re-themes live, and a settings change
+  // applies at the next open or Retry. It carries how much of the app's bottom edge the orb covers
+  // (beta-1 D5), computed from this delivery's bottom safe-area inset; the loader keeps that out
+  // of the bundle-visible theme.
   const tokens = useTokens();
   // The container's own chrome paints the token `bg` of the phone's scheme, as the page does: a dark
   // page never sits on a light container (system.md §2: the runtime page, the iframe and the opening
@@ -118,43 +262,62 @@ export default function MiniAppView({
   const theme = useMemo(() => themeFrame(tokens, tint), [tokens, tint]);
   const bottomInset = useSafeAreaInsets().bottom;
   const deliveredKey = useRef<number | null>(null);
-  const handleLoadEnd = useCallback(() => {
-    if (loadEndAction(deliveredKey.current, webKey) === 'duplicate') {
+  const deliverInto = (key: number) => {
+    if (loadEndAction(deliveredKey.current, key) === 'duplicate') {
       log.debug(CHANNELS.app, 'duplicate onLoadEnd for a delivered realm, not delivering again', {
         appId: record.appId,
-        webKey,
+        webKey: key,
       });
       return;
     }
-    deliveredKey.current = webKey;
+    deliveredKey.current = key;
     host.deliverBySource(record, bundleSource, engineAppId, { ...theme, chromeInsetBottom: chromeInsetBottom(bottomInset) });
+  };
+  const deliver = useRef(deliverInto);
+  deliver.current = deliverInto;
+  const loadedWhenBound = slot !== undefined && slot.page !== 'loading';
+  useLayoutEffect(() => {
+    boundKey.current = slotKey;
+    outlet.current = { key: slotKey, onMessage: host.onMessage, onLoadEnd: () => { if (slotKey !== null) deliver.current(slotKey); } };
+    if (slotKey !== null && loadedWhenBound) deliver.current(slotKey);
+    return () => {
+      boundKey.current = null;
+      outlet.current = null;
+    };
+    // `loadedWhenBound` is read for the WebView as it was handed over; it never changes after.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [webKey, bottomInset, theme]);
+  }, [slotKey, host.onMessage, outlet]);
 
   // Which of the four container surfaces this render belongs to. The precedence (both failure
   // surfaces above the boot state) is decided by the pure `miniAppSurface` -- a launch that fails
   // before any paint is unpainted too, so an implicit "unpainted means booting" would park the
-  // user in a permanent opening screen instead of the honest failure copy.
+  // user in a permanent opening screen instead of the honest failure copy. A failure surface
+  // destroys the launch's WebView; Retry binds a fresh one.
   const surface = miniAppSurface(host.state);
+  const failed = surface === 'launch-failed' || surface === 'app-error';
+  useEffect(() => {
+    if (failed) onFailed();
+  }, [failed, onFailed]);
 
   // The opening state (M2, design-system-v1 task 18.3). The WebView stays mounted and drawn from the
   // start, under an opaque `bg` cover, so the page keeps loading and its double-rAF `paint` is never
   // throttled by a hidden view; the cover fades out over `fade-in` once this launch's signal
   // (`paintMs`, generation-fenced) arrives or the 600 ms cap passes. Above it the app's tile-sized
   // plate holds until the paint, with "Opening…" under it after 1.5 s. Both timers are keyed by the
-  // WebView mount, so Retry's recreated realm opens from the start again. Under Reduce Motion the
+  // bound WebView, so Retry's recreated realm opens from the start again. Under Reduce Motion the
   // fade is itself the replacement (§4.5), so it is played, not skipped.
   const [capFor, setCapFor] = useState<number | null>(null);
   const [labelFor, setLabelFor] = useState<number | null>(null);
   useEffect(() => {
-    const cap = setTimeout(() => setCapFor(webKey), OPENING_REVEAL_CAP_MS);
-    const label = setTimeout(() => setLabelFor(webKey), OPENING_LABEL_AFTER_MS);
+    if (slotKey === null) return undefined;
+    const cap = setTimeout(() => setCapFor(slotKey), OPENING_REVEAL_CAP_MS);
+    const label = setTimeout(() => setLabelFor(slotKey), OPENING_LABEL_AFTER_MS);
     return () => {
       clearTimeout(cap);
       clearTimeout(label);
     };
-  }, [webKey]);
-  const look = openingLook(surface, { cap: capFor === webKey, label: labelFor === webKey });
+  }, [slotKey]);
+  const look = openingLook(surface, { cap: slotKey !== null && capFor === slotKey, label: slotKey !== null && labelFor === slotKey });
   const reduceMotion = tokens.reduceMotion;
   const cover = useSharedValue(1);
   const plate = useSharedValue(1);
@@ -167,22 +330,26 @@ export default function MiniAppView({
   const coverStyle = useAnimatedStyle(() => ({ opacity: cover.value }));
   const plateStyle = useAnimatedStyle(() => ({ opacity: plate.value }));
 
-  // Tap to first paint (task 18.4): logged once per launch, at its first accepted paint, beside the
-  // realm's own mount-to-paint time. A paint after Retry is not an opening, so it is not logged.
+  // Tap to first paint (task 18.4): logged once per launch, at the first accepted paint of the
+  // realm the tap opened, beside that realm's own mount-to-paint time and how the launch got its
+  // WebView. A Retry's realm is not an opening, so its paint is never logged.
+  const [openedIn] = useState(slotKey);
+  const handedOut = slot?.handedOut ?? null;
   const timed = useRef(false);
   const { paintedAt, paintMs } = host.state;
   useEffect(() => {
     if (timed.current || paintedAt === null) return;
     timed.current = true;
-    log.info(CHANNELS.app, 'tap to first paint', { tapToPaintMs: paintedAt - tappedAt, paintMs });
-  }, [paintedAt, paintMs, tappedAt]);
+    if (slotKey !== openedIn) return;
+    log.info(CHANNELS.app, 'tap to first paint', { tapToPaintMs: paintedAt - tappedAt, paintMs, webView: handedOut });
+  }, [paintedAt, paintMs, tappedAt, slotKey, openedIn, handedOut]);
   const primary = buttonColors(tokens, 'ink', false);
 
   // A launch refused pre-delivery (#41 D7, structured `launchApp` failure) never delivers a
   // bundle -- show honest product copy instead of a blank realm, with a way back to Home.
   if (surface === 'launch-failed') {
     return (
-      <View style={[styles.root, styles.errorRoot, { backgroundColor: bg }]}>
+      <View style={[styles.layer, styles.errorRoot, { backgroundColor: bg }]}>
         <Text type="title2" style={styles.errorTitle}>{COPY.launchFailedTitle}</Text>
         <Text color="text-2" style={styles.errorBody}>{COPY.launchFailedBody}</Text>
         <Pressable
@@ -199,16 +366,17 @@ export default function MiniAppView({
   // A post-delivery failure (a fatal bundle-error frame, or a delivered app that never paints --
   // the watchdog in useMiniAppHost) leaves the realm dark otherwise -- show honest product copy
   // instead of a blank screen, with a way to retry the same app or leave to Home. Retry clears
-  // lastError AND bumps webKey together: clearing alone can't remount (the branch below never
-  // renders while lastError is set), and bumping the key alone can't reset lastError (only bind()
-  // does that) -- both are needed to fall through into a fresh <WebView> mount.
+  // lastError AND binds a fresh WebView together: clearing alone can't remount (the failure
+  // destroyed the WebView), and a fresh WebView alone can't reset lastError (only bind() does
+  // that) -- both are needed to fall through into a fresh realm. A realm reset is a RECREATE,
+  // never a re-inject (spike2 §5, #35/#37), so this is the only supported way to recover a live app.
   if (surface === 'app-error') {
     const retry = () => {
       host.clearLastError();
-      setWebKey((k) => k + 1);
+      onRetry();
     };
     return (
-      <View style={[styles.root, styles.errorRoot, { backgroundColor: bg }]}>
+      <View style={[styles.layer, styles.errorRoot, { backgroundColor: bg }]}>
         <Text type="title2" style={styles.errorTitle}>{COPY.appErrorTitle}</Text>
         <Text color="text-2" style={styles.errorBody}>{COPY.appErrorBody}</Text>
         <Pressable
@@ -230,20 +398,7 @@ export default function MiniAppView({
   }
 
   return (
-    <View ref={frame} collapsable={false} style={[styles.root, { backgroundColor: bg, paddingBottom: keyboard }]}>
-      <WebView
-        key={webKey}
-        ref={host.webRef}
-        style={[styles.web, { backgroundColor: bg }]}
-        originWhitelist={['*']}
-        source={{ html: host.runtimeHtml }}
-        onMessage={(e) => host.onMessage(e.nativeEvent.data)}
-        onLoadEnd={handleLoadEnd}
-        javaScriptEnabled
-        domStorageEnabled={false}
-        setSupportMultipleWindows={false}
-        onError={(ev) => logWebViewError(log, ev.nativeEvent, { appId: record.appId })}
-      />
+    <>
       {/* The opening state, drawn OVER a WebView that stays mounted and keeps loading -- a realm
           reset is a recreate, never a re-inject (spike2 §5), so it must never gate the mount. Both
           layers define all four insets, so they span the root's full border-box (the root already
@@ -277,12 +432,15 @@ export default function MiniAppView({
           onUpdateRequired();
         }}
       />
-    </View>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  // No app open: the container and its waiting WebView are out of layout, invisible, untouchable and
+  // out of the accessibility tree, under whatever screen the launcher shows.
+  waiting: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: 0 },
   web: { flex: 1 },
   errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.lg },
   errorTitle: { textAlign: 'center', marginBottom: SPACING.sm },

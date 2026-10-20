@@ -6,7 +6,7 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { COPY } from '../copy';
-import MiniAppView from '../MiniAppView';
+import { MiniAppStage, type MiniAppLaunch } from '../MiniAppView';
 import { STARTUP_DEADLINE_MS } from '../boot-state';
 import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
@@ -27,11 +27,15 @@ import { grantedOptions } from './client-fixtures';
 import { animations, isStep } from './native-reanimated';
 import { TilePlate } from '../../ui/AppTile';
 import { SHELL_PALETTE } from '../theme';
+import { WARM_ANSWER, WARM_PROBE_JS } from '../webview-pool';
+import { RUNTIME_HTML } from '../../../runtime/generated/runtime-html';
+import { SYSCALL_VERSION } from '../../bridge/contract';
 
 type Tree = TestRenderer.ReactTestRenderer;
 
 const TIP: AppRecord = APP_RECORDS['tip-splitter'];
 const WATER: AppRecord = APP_RECORDS['water-counter'];
+const LATENCY: AppRecord = APP_RECORDS['latency-probe'];
 
 interface Mounted {
   tree: Tree;
@@ -63,7 +67,13 @@ function spansContainer(node: TestRenderer.ReactTestInstance): boolean {
  *  container with an opaque background at a visible opacity (the orb, a small control, does not). */
 function pageIsShown(tree: Tree): boolean {
   const container = containerOf(tree);
-  const layers = container.children.filter((c): c is TestRenderer.ReactTestInstance => typeof c !== 'string');
+  // What the container draws, in order: a component that only groups views (no style of its own)
+  // stands for the views it renders.
+  const drawn = (node: TestRenderer.ReactTestInstance): TestRenderer.ReactTestInstance[] =>
+    typeof node.type !== 'string' && node.props.style === undefined
+      ? node.children.filter((c): c is TestRenderer.ReactTestInstance => typeof c !== 'string').flatMap(drawn)
+      : [node];
+  const layers = container.children.filter((c): c is TestRenderer.ReactTestInstance => typeof c !== 'string').flatMap(drawn);
   const after = layers.slice(layers.findIndex(isWebView) + 1);
   return !after.some((layer) => {
     const s = flat(layer);
@@ -95,6 +105,27 @@ function pageInset(tree: Tree): number {
   return pad + ((StyleSheet.flatten(web.props.style) as { marginBottom?: number }).marginBottom ?? 0);
 }
 
+/** The launch of `record` as the launcher hands it over (installed with `tile`, tapped at `tappedAt`). */
+function launchOf(
+  record: AppRecord,
+  opts: { tile?: Pick<InstalledApp, 'tint' | 'icon'>; tappedAt?: number; onExit?: () => void } = {},
+): MiniAppLaunch {
+  return {
+    record,
+    bundleSource: APP_BUNDLES[record.appId],
+    engineAppId: record.appId,
+    tappedAt: opts.tappedAt ?? Date.now(),
+    onExit: opts.onExit ?? (() => {}),
+    onVersions: () => {},
+    onChangeIt: () => {},
+    installedApp: { id: record.appId, name: record.name, createdAt: 1, lineageId: 'main', record, ...opts.tile },
+    access: {} as StoreAccess,
+    reportOptions: grantedOptions('https://server.test', 'device'),
+    onUpdateRequired: () => {},
+    legalLanguage: 'en',
+  };
+}
+
 /** Mount the container for `record` (installed with `tile`, if given, and tapped at `tappedAt`), run
  *  `body`, and unmount. */
 async function withMiniApp(
@@ -107,22 +138,8 @@ async function withMiniApp(
   injectedScripts.length = 0;
   const clock = captureTimeouts();
   let exits = 0;
-  const app: InstalledApp = { id: record.appId, name: record.name, createdAt: 1, lineageId: 'main', record, ...tile };
   const tree = await renderScreen(
-    <MiniAppView
-      record={record}
-      bundleSource={APP_BUNDLES[record.appId]}
-      engineAppId={record.appId}
-      tappedAt={tappedAt}
-      onExit={() => { exits++; }}
-      onVersions={() => {}}
-      onChangeIt={() => {}}
-      installedApp={app}
-      access={{} as StoreAccess}
-      reportOptions={grantedOptions('https://server.test', 'device')}
-      onUpdateRequired={() => {}}
-      legalLanguage="en"
-    />,
+    <MiniAppStage launch={launchOf(record, { tile, tappedAt, onExit: () => { exits++; } })} />,
     { createNodeMock: measuredAsContainer },
   );
   const webView = () => tree.root.findAll((n) => hostType(n) === 'WebView')[0];
@@ -194,6 +211,78 @@ function miniAppErrorRecords(): { message: string; fields: ErrorRecordFields }[]
     .map((r) => ({ message: r.message, fields: (r.fields ?? {}) as ErrorRecordFields }));
 }
 
+/** Counts the startup deadlines armed from now on: every `setTimeout` of `STARTUP_DEADLINE_MS`. */
+function countArmedDeadlines(): { armed: () => number; restore: () => void } {
+  const set = globalThis.setTimeout;
+  let armed = 0;
+  const counting = (callback: () => void, ms: number) => {
+    if (ms === STARTUP_DEADLINE_MS) armed += 1;
+    return set(callback, ms);
+  };
+  globalThis.setTimeout = counting as typeof setTimeout;
+  return { armed: () => armed, restore: () => { globalThis.setTimeout = set; } };
+}
+
+type Instance = TestRenderer.ReactTestInstance;
+type OnMessage = (e: { nativeEvent: { data: string } }) => void;
+
+/** A frame through a WebView's `onMessage` handler as RN holds it, even after the WebView is gone. */
+const frameThrough = (onMessage: OnMessage, frame: unknown) =>
+  TestRenderer.act(async () => onMessage({ nativeEvent: { data: JSON.stringify(frame) } }));
+
+interface Stage {
+  tree: Tree;
+  /** What the launcher shows: an app's launch, or none (Home). */
+  show: (launch: MiniAppLaunch | null) => Promise<void>;
+  /** Every WebView the container holds, waiting or bound. */
+  webViews: () => Instance[];
+  /** A frame (or a raw string) from `web`'s page, through the handler the WebView was rendered with. */
+  send: (web: Instance, frame: unknown) => Promise<void>;
+  /** Lets a dispatched syscall's reply come back. */
+  settle: () => Promise<void>;
+}
+
+/** Mount the container with no app open (as the launcher keeps it under Home), run `body`, unmount. */
+async function withStage(body: (s: Stage) => Promise<void>): Promise<void> {
+  resetNativeStorage();
+  injectedScripts.length = 0;
+  const clock = captureTimeouts();
+  const tree = await renderScreen(<MiniAppStage launch={null} />, { createNodeMock: measuredAsContainer });
+  try {
+    await body({
+      tree,
+      show: async (launch) => { await TestRenderer.act(async () => { tree.update(<MiniAppStage launch={launch} />); }); },
+      webViews: () => tree.root.findAll(isWebView),
+      send: async (web, frame) => {
+        const data = typeof frame === 'string' ? frame : JSON.stringify(frame);
+        await TestRenderer.act(async () => web.props.onMessage({ nativeEvent: { data } }));
+      },
+      settle: async () => { await TestRenderer.act(async () => { await new Promise((resolve) => setImmediate(resolve)); }); },
+    });
+  } finally {
+    await unmountScreen(tree);
+    clock.restore();
+  }
+}
+
+/** The delivery scripts `web` was handed (the mock records each WebView's own in `injected`). */
+const deliveriesInto = (web: Instance): string[] => (web.props.injected as string[]).filter((s) => s.includes('__whimControl.reinject('));
+/** The generation `web`'s realm was bound at. */
+const generationIn = (web: Instance): number => Number(/,generation:(\d+)/.exec(deliveriesInto(web).at(-1) ?? '')?.[1]);
+/** The syscall replies relayed into `web`, as the realm would receive them. */
+const repliesIn = (web: Instance) => (web.props.injected as string[])
+  .filter((s) => s.includes('__whimRelaySysret('))
+  .map((s) => JSON.parse(JSON.parse(/__whimRelaySysret\(("(?:[^"\\]|\\.)*")\)/.exec(s)![1])) as { ok: boolean; result?: unknown });
+/** A syscall as the outer page relays it: the realm's marshaller stamps its generation. */
+const syscall = (gen: number, id: number, method: string, params: Record<string, unknown>) =>
+  ({ kind: 'syscall', trusted: false, payload: { whim: 'syscall', v: SYSCALL_VERSION, id, gen, method, params } });
+const timedRecords = () => log.buffer.snapshot().filter((r) => r.message === 'tap to first paint').map((r) => r.fields as { webView?: unknown });
+/** The WebView settings that make it the sandbox host: page, origins, JavaScript, storage, windows. */
+const settingsOf = (web: Instance) => {
+  const { source, originWhitelist, javaScriptEnabled, domStorageEnabled, setSupportMultipleWindows } = web.props;
+  return { source, originWhitelist, javaScriptEnabled, domStorageEnabled, setSupportMultipleWindows };
+};
+
 export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
   await h.test('mini-app: on Android the app’s page ends above the keyboard, so the field it keeps in view is not under it; iOS’s WebView avoids the keyboard itself', async () => {
     const before = { OS: Platform.OS, Version: Platform.Version };
@@ -255,7 +344,8 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
         h.eq(timed(), [], 'a paint the launch refuses is not its first paint');
         now += 97;
         await frame(firstPaint());
-        h.eq(timed(), [['whim', 'info', { tapToPaintMs: 337, paintMs: 42 }]], 'the accepted paint is logged with the time since the tap');
+        h.eq(timed(), [['whim', 'info', { tapToPaintMs: 337, paintMs: 42, webView: 'cold' }]],
+          'the accepted paint is logged with the time since the tap, and a launch with no WebView waiting got a cold one');
         now += 500;
         await frame(firstPaint());
         await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
@@ -299,6 +389,136 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await frame(firstPaint());
       h.ok(!opening() && pageShown(), 'the new realm’s own paint opens it');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'and completes startup');
+    });
+  });
+
+  await h.test('mini-app: after Retry, an accepted delivery still queued from the failed realm’s WebView does not restart the new realm’s startup deadline', async () => {
+    await withMiniApp(TIP, async ({ webView, loadEnd, frame, tree }) => {
+      await loadEnd();
+      const failedRealm = webView()!.props.onMessage as (e: { nativeEvent: { data: string } }) => void;
+      await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
+      await press(button(tree, COPY.appErrorRetry));
+      await loadEnd();
+      // The loader's own acknowledgement, as the page forwards it: its generation is the realm's
+      // own counter (1 in every fresh realm), so it cannot tell the two realms apart.
+      const accepted = JSON.stringify({ kind: 'delivery', trusted: true, payload: { accepted: true, generation: 1 } });
+      const deadlines = countArmedDeadlines();
+      try {
+        await TestRenderer.act(async () => failedRealm({ nativeEvent: { data: accepted } }));
+        h.eq(deadlines.armed(), 0, 'the failed realm’s acknowledgement does not arm the deadline again');
+        await frame(JSON.parse(accepted));
+        h.eq(deadlines.armed(), 1, 'the new realm’s own does, for its full allowance');
+      } finally {
+        deadlines.restore();
+      }
+    });
+  });
+
+  await h.test('pool: with no app open one WebView waits, unseen and untouchable, holding the runtime page and only the warm probe', async () => {
+    let cold: ReturnType<typeof settingsOf> | null = null;
+    await withMiniApp(TIP, async ({ webView }) => { cold = settingsOf(webView()!); });
+    await withStage(async ({ tree, webViews, send }) => {
+      h.eq(webViews().length, 1, 'one WebView waits');
+      const [waiting] = webViews();
+      const container = containerOf(tree);
+      h.eq([flat(container).opacity, container.props.pointerEvents, container.props.accessibilityElementsHidden, container.props.importantForAccessibility],
+        [0, 'none', true, 'no-hide-descendants'], 'unseen, untouchable and out of the accessibility tree');
+      h.eq(waiting.props.source, { html: RUNTIME_HTML }, 'it loads the runtime page');
+      h.eq(settingsOf(waiting), cold, 'with exactly the settings of a WebView a launch creates cold');
+      await TestRenderer.act(async () => waiting.props.onLoadEnd());
+      await send(waiting, WARM_ANSWER);
+      h.eq(waiting.props.injected, [WARM_PROBE_JS], 'the probe is all it is handed: no bundle, no theme, no generation');
+      h.eq(injectedScripts.length, 1, 'and nothing else was injected anywhere');
+    });
+  });
+
+  await h.test('pool: a warm WebView opens the app at once — delivered as it is handed over, under the opening state — and the timing says warm', async () => {
+    await withStage(async ({ tree, show, webViews, send }) => {
+      const [waiting] = webViews();
+      await TestRenderer.act(async () => waiting.props.onLoadEnd());
+      await send(waiting, WARM_ANSWER);
+      log.buffer.clear();
+      await show(launchOf(TIP));
+      const [web] = webViews();
+      h.ok(web === waiting && webViews().length === 1, 'the app takes the waiting WebView, and none other waits');
+      h.eq(deliveriesInto(web).length, 1, 'it is delivered into at once, with no load event to wait for');
+      h.ok(isOpening(tree) && !pageIsShown(tree), 'under the opening state');
+      await TestRenderer.act(async () => web.props.onLoadEnd());
+      h.eq(deliveriesInto(web).length, 1, 'a late load event from its page does not deliver again');
+      await send(web, firstPaint(generationIn(web)));
+      h.ok(!isOpening(tree) && pageIsShown(tree), 'its own paint opens it');
+      h.eq(timedRecords().map((f) => f.webView), ['warm'], 'and the timing record says the WebView was warm');
+    });
+  });
+
+  await h.test('pool: app A then app B — B opens in a WebView A never had, at its own generation, and A’s late paint, syscall and storage never reach it', async () => {
+    await withStage(async ({ tree, show, webViews, send, settle }) => {
+      const [waiting] = webViews();
+      await TestRenderer.act(async () => waiting.props.onLoadEnd());
+      await send(waiting, WARM_ANSWER);
+      await show(launchOf(WATER));
+      const [a] = webViews();
+      const genA = generationIn(a);
+      await send(a, firstPaint(genA));
+      await send(a, syscall(genA, 1, 'storage.kv.set', { key: 'note', value: 'A-secret' }));
+      await settle();
+      h.eq(repliesIn(a).map((r) => r.ok), [true], 'A writes a note to its own storage');
+      // A's WebView's own handler, as RN still holds it for frames queued before A closed.
+      const fromA = a.props.onMessage as OnMessage;
+
+      await show(null);
+      await show(launchOf(LATENCY));
+      const [b] = webViews();
+      h.ok(b !== a && webViews().length === 1, 'B gets a new WebView; A’s is gone');
+      await TestRenderer.act(async () => b.props.onLoadEnd());
+      const genB = generationIn(b);
+      h.ok(Number.isFinite(genB) && genB !== genA, 'B’s realm is bound at a generation of its own');
+      h.eq([deliveriesInto(b).length, (b.props.injected as string[]).length], [1, 1], 'its WebView has received B’s delivery and nothing else');
+      h.ok(!deliveriesInto(b)[0].includes(JSON.stringify(APP_BUNDLES[WATER.appId])), 'none of A’s code');
+
+      await frameThrough(fromA, firstPaint(genA));
+      await frameThrough(fromA, firstPaint(genB));
+      await frameThrough(fromA, syscall(genB, 9, 'storage.kv.get', { key: 'note' }));
+      await settle();
+      h.ok(isOpening(tree) && !pageIsShown(tree), 'a paint still queued from A’s WebView opens nothing, even one claiming B’s generation');
+      h.eq(repliesIn(b), [], 'and a syscall still queued from it is answered nowhere');
+
+      await send(b, firstPaint(genA));
+      await send(b, syscall(genA, 2, 'storage.kv.get', { key: 'note' }));
+      await settle();
+      h.ok(isOpening(tree), 'a paint stamped with A’s generation is refused even on B’s own channel');
+      h.eq(repliesIn(b), [], 'so is a syscall stamped with it');
+
+      await send(b, syscall(genB, 1, 'storage.kv.get', { key: 'note' }));
+      await settle();
+      h.eq(repliesIn(b).map((r) => [r.ok, r.result]), [[true, { found: false, value: null }]], 'B’s own read is answered, and A’s note is not in B’s storage');
+      await send(b, firstPaint(genB));
+      h.ok(!isOpening(tree), 'B’s own paint opens it');
+    });
+  });
+
+  await h.test('pool: a waiting WebView that loaded but never answered, or whose page or web process died, is never handed out', async () => {
+    await withStage(async ({ show, webViews }) => {
+      const [silent] = webViews();
+      const intoSilent = silent.props.injected as string[];
+      await TestRenderer.act(async () => silent.props.onLoadEnd());
+      await show(launchOf(TIP));
+      const [web] = webViews();
+      h.ok(web !== silent && webViews().length === 1, 'a page whose scripts never answered the probe is dropped; the app gets a cold WebView');
+      h.eq(intoSilent, [WARM_PROBE_JS], 'the dropped one got nothing but the probe');
+      await TestRenderer.act(async () => web.props.onLoadEnd());
+      h.eq(deliveriesInto(web).length, 1, 'the cold one is delivered into once its page has loaded');
+    });
+    await withStage(async ({ show, webViews }) => {
+      const dead: Instance[] = [];
+      for (const failure of ['onContentProcessDidTerminate', 'onRenderProcessGone', 'onError'] as const) {
+        const [waiting] = webViews();
+        dead.push(waiting);
+        await TestRenderer.act(async () => waiting.props[failure]({ nativeEvent: { description: 'gone' } }));
+        h.ok(webViews().length === 1 && !dead.includes(webViews()[0]), `${failure}: a fresh WebView waits in its place`);
+      }
+      await show(launchOf(TIP));
+      h.ok(!dead.includes(webViews()[0]), 'the app never gets one that died');
     });
   });
 

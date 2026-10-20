@@ -39,7 +39,9 @@ const webView = (tree: TestRenderer.ReactTestRenderer) => tree.root.find((node) 
 export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
   await h.test('delivery: opening an installed app injects its stored bundle once the page has loaded', async () => {
     await withLauncher(async () => 'window.__WHIM_APP_MODULE__ = { marker: "timer-bundle-7f3a" };', async (tree) => {
+      const waiting = webView(tree);
       await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
+      h.ok(webView(tree) === waiting, 'the app opens in the WebView that was waiting on Home');
       h.eq(injectedScripts.length, 0, 'nothing is injected before the page reports it has loaded');
       await TestRenderer.act(async () => webView(tree).props.onLoadEnd());
       h.eq(injectedScripts.length, 1, 'one script is injected on load');
@@ -47,8 +49,9 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
       await press(button(tree, COPY.orbMenuOpenLabel));
       await TestRenderer.act(async () => { finishAnimations(); });
       await press(tree.root.find((node) => hostType(node) === 'Pressable' && textOf(node).endsWith(COPY.orbActionHome)));
-      h.ok(tree.root.findAll((node) => hostType(node) === 'WebView').length === 0, 'closing it through the orb ends its realm');
+      h.ok(!tree.root.findAll((node) => hostType(node) === 'WebView').includes(waiting), 'closing it through the orb ends its realm with its WebView');
       h.eq(tree.root.findAllByType(HomeScreen).length, 1, 'and returns to Home');
+      h.eq(injectedScripts.length, 1, 'over a fresh WebView waiting, which nothing was injected into');
     });
   });
 
@@ -70,7 +73,8 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
         const paint = { kind: 'paint', trusted: true, payload: { generation, mountToFirstPaintMs: 18, appName: 'Timer' } };
         await TestRenderer.act(async () => webView(tree).props.onMessage({ nativeEvent: { data: JSON.stringify(paint) } }));
         const timed = log.buffer.snapshot().filter((r) => r.message === 'tap to first paint').map((r) => r.fields);
-        h.eq(timed, [{ tapToPaintMs: 200, paintMs: 18 }], 'the 120 ms bundle read, the page load and the paint, from the tap');
+        h.eq(timed, [{ tapToPaintMs: 200, paintMs: 18, webView: 'loading' }],
+          'the 120 ms bundle read, the page load and the paint, from the tap, in the WebView that was still loading on Home');
       });
     } finally {
       Date.now = realNow;

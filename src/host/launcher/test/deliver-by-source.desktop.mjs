@@ -18,7 +18,8 @@
 // into view when the viewport shrinks. And what the page itself does (design-system-v1 D4,
 // sandbox-rendering): `paint` reaches RN stamped with the generation the host bound, the page, the
 // iframe and the realm's canvas paint the theme's `bg`, and the viewport allows zoom. And that the
-// launcher's own theme frame (design-system-v1 D3) reaches the realm whole.
+// launcher's own theme frame (design-system-v1 D3) reaches the realm whole, and that the shipped page
+// waiting warm (task 18.4) holds no app and hands the launch a recreated realm.
 //
 //   npm run build && node src/host/launcher/test/deliver-by-source.desktop.mjs
 import { chromium } from 'playwright';
@@ -198,6 +199,22 @@ export { COLORS, TINTS } from './src/design/tokens';`,
   });
   return import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`);
 })();
+
+/** The page the product ships, the pool's warm probe and the host's delivery script builder, from
+ *  their sources: the warm check drives the real page with exactly what the host injects. */
+const { RUNTIME_HTML, WARM_PROBE_JS, WARM_ANSWER, deliverBySourceJs } = await (async () => {
+  const out = await esbuild({
+    stdin: {
+      contents: `export { RUNTIME_HTML } from './src/runtime/generated/runtime-html';
+export { WARM_PROBE_JS, WARM_ANSWER } from './src/host/launcher/webview-pool';
+export { deliverBySourceJs } from './src/host/launcher/deliver';`,
+      loader: 'ts', resolveDir: ROOT, sourcefile: 'host-pool.ts',
+    },
+    bundle: true, format: 'esm', platform: 'browser', write: false, logLevel: 'warning',
+  });
+  return import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`);
+})();
+const productPage = await writePage('product', RUNTIME_HTML);
 
 const LEDGER_ERROR = `class LedgerError extends Error {
   constructor(message: string) { super(message); this.name = 'LedgerError'; }
@@ -418,6 +435,86 @@ async function realmChecks(browser) {
       after.viewport < before.top && inView(after);
     detail['focused field after a resize'] = `before=${JSON.stringify(before)} after=${JSON.stringify(after)}`;
     await page.close();
+  }
+
+  // The warm WebView (design-system-v1 task 18.4): the shipped page loaded with no app. It answers
+  // the warm probe and tells RN nothing else; its idle realm has no app in it. The launch the host
+  // then delivers gets a recreated iframe: nothing the idle realm held is in it, and a frame
+  // carrying the idle realm's nonce is refused as a forgery.
+  {
+    const page = await browser.newPage({ viewport: { width: 400, height: 800 } });
+    await page.addInitScript(() => {
+      if (window.top !== window) return;
+      const raw = [];
+      const fromRealm = [];
+      Object.defineProperty(window, '__raw', { value: raw });
+      Object.defineProperty(window, '__fromRealm', { value: fromRealm });
+      window.ReactNativeWebView = { postMessage: (s) => raw.push(s) };
+      window.addEventListener('message', (ev) => {
+        if (typeof ev.data === 'string' && ev.data.includes('"__whimHarness":true')) fromRealm.push(ev.data);
+      });
+    });
+    await page.goto(pathToFileURL(productPage).href, { waitUntil: 'load', timeout: 20000 });
+    const idleReady = async () => (await page.evaluate(() => window.__fromRealm.slice())).find((s) => JSON.parse(s).kind === 'ready');
+    await until(async () => (await idleReady()) !== undefined);
+    const idle = page.frames().find((f) => f !== page.mainFrame());
+    const idleRealm = await idle.evaluate(() => {
+      window.__heldByTheIdleRealm = true;
+      return {
+        app: Object.prototype.hasOwnProperty.call(window, '__WHIM_APP_MODULE__'),
+        rendered: document.getElementById('whim-root')?.childNodes.length ?? 0,
+        held: window.__heldByTheIdleRealm === true,
+      };
+    });
+    await page.evaluate(WARM_PROBE_JS);
+    const toRN = async () => (await page.evaluate(() => window.__raw.slice()));
+    const warm = await toRN();
+
+    await page.evaluate(deliverBySourceJs({ name: 'Tip Splitter', source: SRC, generation: 9, theme: { colors } }));
+    const relayed = async () => (await toRN()).slice(warm.length).map((s) => JSON.parse(s));
+    const paints = async () => (await relayed()).filter((f) => f.kind === 'paint');
+    await until(async () => (await paints()).length > 0);
+    const launch = page.frames().find((f) => f !== page.mainFrame());
+    const launchRealm = await launch.evaluate(() => ({
+      held: Object.prototype.hasOwnProperty.call(window, '__heldByTheIdleRealm'),
+      rendered: (document.getElementById('whim-root')?.childNodes.length ?? 0) > 0,
+    }));
+    const forged = JSON.stringify({ ...JSON.parse(await idleReady()), kind: 'paint', payload: { mountToFirstPaintMs: 1 } });
+    await page.evaluate((raw) => window.postMessage(raw, '*'), forged);
+    const refused = async () => (await relayed()).filter((f) => f.kind === 'rejected-forgery' && f.forgedKind === 'paint');
+    await until(async () => (await refused()).length > 0, 3000);
+    const seen = {
+      warm, idleRealm, launchRealm,
+      paints: (await paints()).map((f) => [f.trusted, f.payload?.generation]),
+      refused: (await refused()).length,
+    };
+    checks['warm page, then a launch'] = isDeepStrictEqual(seen, {
+      warm: [WARM_ANSWER],
+      idleRealm: { app: false, rendered: 0, held: true },
+      launchRealm: { held: false, rendered: true },
+      paints: [[true, 9]],
+      refused: 1,
+    });
+    detail['warm page, then a launch'] = JSON.stringify(seen);
+    await page.close();
+  }
+
+  // The same page loaded with its scripts off (as iOS starts a WebView while the network-deny rule
+  // list is not compiled, decision #74): the probe gets no warm answer, so the pool never hands it out.
+  {
+    const context = await browser.newContext({ javaScriptEnabled: false });
+    const page = await context.newPage();
+    await page.goto(pathToFileURL(productPage).href, { waitUntil: 'load', timeout: 20000 });
+    await page.evaluate(() => {
+      const posted = [];
+      Object.defineProperty(window, '__raw', { value: posted });
+      window.ReactNativeWebView = { postMessage: (s) => posted.push(s) };
+    });
+    await page.evaluate(WARM_PROBE_JS);
+    const answers = await page.evaluate(() => window.__raw.slice());
+    checks['warm probe with the page’s scripts off'] = answers.length === 1 && answers[0] !== WARM_ANSWER;
+    detail['warm probe with the page’s scripts off'] = `answers=${JSON.stringify(answers)}`;
+    await context.close();
   }
   return { checks, detail };
 }

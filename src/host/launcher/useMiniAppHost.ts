@@ -37,6 +37,11 @@ import { tearDownLiveRealm } from './teardown';
 // place RN cue APIs meet the bridge; the rows themselves stay RN-free (effects-and-cues D5).
 const REGISTRY = createDefaultRegistry({ cueBackend: createCueBackend() });
 
+// The last realm generation bound, for the whole process rather than per host: each launch mounts
+// a host of its own, and a generation that restarted with it would let a frame from an earlier
+// launch's realm (a paint, a syscall) carry the very stamp the next launch is fenced on.
+let lastGeneration = 1;
+
 // The `error` frame's `where` values a bundle can never recover a paint from (loader.js: no
 // AppSpec export, a mount throw, the delivery wrapper itself throwing before any script even
 // runs, or a render error no boundary in the app caught, which unmounts the app before or after
@@ -157,6 +162,9 @@ export interface UseMiniAppHostOptions {
   overlayOpen?: boolean;
   /** Called when a back press resolves to `close-overlay` — the caller closes its own sheet. */
   onCloseOverlay?: () => void;
+  /** The WebView this host controls, when the caller renders it elsewhere (`MiniAppView`'s pool);
+   *  it must keep its identity across renders. Absent: the host's own ref, for the caller to attach. */
+  webRef?: React.RefObject<WebView | null>;
 }
 
 export interface MiniAppHost {
@@ -179,11 +187,11 @@ export interface MiniAppHost {
 }
 
 export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
-  const webRef = useRef<WebView | null>(null);
+  const ownWebRef = useRef<WebView | null>(null);
+  const webRef = opts.webRef ?? ownWebRef;
   const [s, setS] = useState<HostState>(INITIAL);
   // Refs (not state) so onMessage / the back handler always see the current values w/o re-binding.
   const live = useRef<LiveRealm | null>(null);
-  const genCounter = useRef(1);
   const policy = useRef(new BackPolicy());
   const popTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The runtime engine appId for the live realm (the launcher id, #5 D8 — a fork's own data).
@@ -209,7 +217,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   // injectJavaScript runs in the OUTER page only; it cannot reach into the cross-origin iframe.
   const control = useCallback((js: string) => {
     webRef.current?.injectJavaScript(`try{${js}}catch(e){};true;`);
-  }, []);
+  }, [webRef]);
 
   // Bind a fresh realm + dispatcher at a NEW generation, then reset the iframe and deliver. The
   // engine appId is the LAUNCHER id (#5 D8) so a fork gets its own user data even when it shares
@@ -233,7 +241,8 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
       live.current = null;
       if (popTimer.current) { clearTimeout(popTimer.current); popTimer.current = null; }
       startupDeadline.current.cancel();
-      const generation = ++genCounter.current;
+      lastGeneration += 1;
+      const generation = lastGeneration;
       engineId.current = engineAppId;
       // paintMs is reset with the rest: it is the "has painted" signal the container's boot state
       // reads (`boot-state.ts`), so a PREVIOUS realm's paint must never make the next launch look
