@@ -147,10 +147,10 @@
 
 ## 18. Opening and the app container
 
-- [ ] 18.1 Host theme frame: build it from `useTokens()` state and the app's tint (`scheme`, `tint`, `fontScale`, `reduceMotion`, `increaseContrast`, `platform`, all roles) in `MiniAppView`; update `mini-app-host-ui` and the desktop delivery suite
-- [ ] 18.2 Opening signal: accept a GEN-stamped `paint` only for the current bind; keep the boot watchdog; test that a stale paint does not release the opening
-- [ ] 18.3 Opening state: WebView hidden until the signal or 600 ms, then a 160 ms fade; tile-sized tint plate with glyph on `bg`; "Opening…" after 1.5 s; launch failure replaces it; closing returns to Home (container motion lands in chain 22)
-- [ ] 18.4 One warm WebView in a pool; measure tap-to-first-paint before and after and record it in the chain contract
+- [x] 18.1 Host theme frame: build it from `useTokens()` state and the app's tint (`scheme`, `tint`, `fontScale`, `reduceMotion`, `increaseContrast`, `platform`, all roles) in `MiniAppView`; update `mini-app-host-ui` and the desktop delivery suite
+- [x] 18.2 Opening signal: accept a GEN-stamped `paint` only for the current bind; keep the boot watchdog; test that a stale paint does not release the opening
+- [x] 18.3 Opening state: WebView hidden until the signal or 600 ms, then a 160 ms fade; tile-sized tint plate with glyph on `bg`; "Opening…" after 1.5 s; launch failure replaces it; closing returns to Home (container motion lands in chain 22)
+- [x] 18.4 One warm WebView in a pool; measure tap-to-first-paint before and after and record it in the chain contract
 
 ## 19. Running app: orb, Whim sheet, changes, crashes
 
