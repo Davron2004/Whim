@@ -393,3 +393,4 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
 - merged: `daf11aae` (--no-ff). regate (fast): PASS. tasks 17.1–17.5 ticked. Worktree and branch removed. Chain-17
   totals: 8 implementer pieces (17, b, c, d, e, h, i + the first agent's 834k-token run), 2 device verifiers, 4 reviews.
   gate-full on the merged tip next.
+- gate-full on `4db59e0e` (chain-17 merged): FULL GATE PASSED. Pushed.
