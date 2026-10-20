@@ -25,7 +25,7 @@ import {
   useSafeAreaInsets,
   windowMetrics,
 } from './native-host';
-import { animations, isStep, type Animation, type Step } from './native-reanimated';
+import { animations, holdAnimations, isStep, type Animation, type Step } from './native-reanimated';
 import { pan, type PanConfig } from './native-gesture-handler';
 import { keyboardWindow, moveKeyboard, resetKeyboard } from './native-keyboard-controller';
 import { captureTimeouts, freshApp, hostType, press, screenReaderElement, textOf } from './react-screen';
@@ -135,6 +135,17 @@ function HeldSheet({ detent, onCloseCount }: Readonly<{ detent?: 'fit' | 'large'
   );
 }
 const Body = () => React.createElement('Text', null, 'Body');
+/** A held sheet whose body is one row, as the Whim sheet's "Back to your apps". */
+function RowSheet({ onRow }: Readonly<{ onRow: () => void }>) {
+  const [visible, setVisible] = useState(true);
+  return (
+    <Sheet visible={visible} title="Whim" onClose={() => setVisible(false)}>
+      <GroupedSection on="sheet">
+        <GroupedRow title="Back to your apps" onPress={onRow} />
+      </GroupedSection>
+    </Sheet>
+  );
+}
 
 /** Whether `node` sits inside `ancestor`. */
 function inside(node: Node, ancestor: Node): boolean {
@@ -479,6 +490,35 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     await act(() => pan(dragOf(tree), [100, 220, 330], 600));
     h.eq(modalHosts(tree).length, 0, 'no window');
     await act(() => tree.unmount());
+  });
+
+  await h.test('Sheet: from the moment it starts closing it takes no touch: a row tapped during its exit, or the scrim, does nothing, however it was closed', async () => {
+    const ways: [string, (tree: Tree) => Promise<void>][] = [
+      ['the close control', (tree) => press(rowButtons(tree).find((n) => n.props.accessibilityLabel === COPY.sheetClose)!)],
+      ['a drag', (tree) => act(() => pan(dragOf(tree), [100, 220, 330], 600))],
+    ];
+    for (const [way, close] of ways) {
+      await resetPhone();
+      const taps: string[] = [];
+      const tree = await render(<RowSheet onRow={() => taps.push('row')} />);
+      await layoutCard(tree);
+      const release = holdAnimations();
+      try {
+        await close(tree);
+        h.ok(modalShown(tree) && cardY(tree) < SHEET_HEIGHT, `${way}: the sheet is still on screen, leaving`);
+        const row = tree.root.find((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === 'Back to your apps');
+        const scrim = tree.root.find((n) => hostType(n) === 'Pressable' && n.props.accessible === false);
+        for (const [what, node] of [['its row', row], ['its scrim', scrim]] as const) {
+          const refused = await press(node).then(() => false, (e: unknown) => String(e).includes('Cannot press'));
+          h.ok(refused, `${way}: ${what} takes no touch while the sheet leaves`);
+        }
+        h.eq(taps, [], `${way}: nothing the closing sheet holds ran`);
+      } finally {
+        await act(() => release());
+      }
+      h.ok(!modalShown(tree), `${way}: and its window goes once the exit ends`);
+      await act(() => tree.unmount());
+    }
   });
 
   await h.test('Sheet: a release closes it only when its projected end passes half its height and it isn’t flicked back; it springs back otherwise; position alone never decides', async () => {

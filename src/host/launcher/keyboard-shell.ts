@@ -149,16 +149,24 @@ export function followOffset(
 
 /** The most of the window a sheet's pinned footer may take before it scrolls with the content
  *  instead. Pinned, the footer is always in reach; but a footer that grows with the text size (two
- *  buttons, one of them on three lines at 200%) would leave the content a sliver to scroll in and put
- *  some of it out of reach. Three tenths of the window: a first-run footer at default size is about a
- *  sixth of an iPhone 17 and a fifth of a small phone, and the largest text size is what crosses it. */
+ *  buttons, one of them on three lines at 200%) would leave the content a sliver to scroll in, less
+ *  still once a keyboard takes its part of the window, and put some of it out of reach. Three tenths
+ *  of the window: a two-button footer at default size is about a sixth of an iPhone 17 and a fifth of
+ *  a small phone, and the largest text sizes are what cross it. */
 export const FOOTER_SHARE = 0.3;
 
+/** The share a sheet with no text field may give its footer, as no keyboard ever takes from its
+ *  content: two fifths. The first-run footer (the terms row, Agree, Not now) at default size measured
+ *  0.32 (English) and 0.36 (French: the checkbox label and Agree each on two lines) of a 360 × 640 dp
+ *  Android phone, past `FOOTER_SHARE`, which put Agree below the fold; the largest text sizes still
+ *  cross two fifths. */
+export const FIELDLESS_FOOTER_SHARE = 0.4;
+
 /** Whether a sheet's footer, `footerHeight` tall, scrolls with the content in a window `windowHeight`
- *  tall. Measured against the window, not the sheet: the sheet's own height changes with the keyboard,
- *  which would move the footer in and out of the scroll as it rises. */
-export function footerJoinsScroll(footerHeight: number, windowHeight: number): boolean {
-  return windowHeight > 0 && footerHeight > windowHeight * FOOTER_SHARE;
+ *  tall, when it may take `share` of it. Measured against the window, not the sheet: the sheet's own
+ *  height changes with the keyboard, which would move the footer in and out of the scroll as it rises. */
+export function footerJoinsScroll(footerHeight: number, windowHeight: number, share = FOOTER_SHARE): boolean {
+  return windowHeight > 0 && footerHeight > windowHeight * share;
 }
 
 /** How far the content's edge fade under a sheet's header shows at scroll offset `offset`: nothing at

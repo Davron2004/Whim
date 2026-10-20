@@ -16,7 +16,8 @@ import type { PlanScreen } from '../prompt-flow';
 import { WhimReportPage } from '../WhimSheet';
 import { KeyboardTextInput } from '../KeyboardShell';
 import AdvancedScreen from '../AdvancedScreen';
-import { SHELL_PALETTE } from '../theme';
+import { FirstRunSheet } from '../FirstRunSheet';
+import { LEGAL_COPY } from '../copy';
 import { TextArea, TextField } from '../../ui/TextField';
 import { Sheet } from '../../ui/Sheet';
 import { followOffset, hiddenAtRest, revealOffset, riseProgress, sheetBottomPadding } from '../keyboard-shell';
@@ -138,7 +139,11 @@ async function on(device: Device, element: React.ReactElement, body: (m: Mounted
   Platform.OS = device.os;
   Platform.Version = device.version;
   resetKeyboard();
-  if (geometry.keyboard) Object.assign(keyboardState, { height: geometry.keyboard, visible: true });
+  // A keyboard already up came up before: its show ended (`keyboardDidShow`) before the element mounts.
+  if (geometry.keyboard) {
+    Object.assign(keyboardState, { height: geometry.keyboard, visible: true });
+    emitKeyboardEvent('keyboardDidShow', geometry.keyboard);
+  }
   const scrolls: number[] = [];
   let focusCalls = 0;
   const ime: Ime = {
@@ -321,6 +326,16 @@ function luminance([r, g, b]: readonly number[]): number {
   const lin = (c: number) => (c / 255 <= 0.03928 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4);
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
+
+/** The contrast between two opaque colours. */
+function contrastOf(a: string, b: string): number {
+  const [light, dark] = [luminance(rgba(a)), luminance(rgba(b))].sort((x, y) => y - x);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+/** The largest text-size multiplier iOS gives React Native (`RCTFontSizeMultiplier`, the largest
+ *  accessibility size). */
+const IOS_LARGEST_TEXT = 3.571;
 
 /** The contrast of `text` on a highlight painted over the field's `background`, as Android paints a
  *  selection. */
@@ -708,6 +723,76 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('iOS: a keyboard that changes height at once (the emoji keyboard: a start with no duration, its end some frames later, no frames between) pads for its new height and keeps the field in view in the start’s own frame, on a screen and in a sheet', async () => {
+    const grown = KEYBOARD_HEIGHT + 100;
+    const instantly = (to: number) => TestRenderer.act(async () => { startKeyboard(to, 0); emitKeyboardEvent('keyboardWillShow', to); });
+    const settle = (to: number) => TestRenderer.act(async () => { endKeyboard(to); emitKeyboardEvent('keyboardDidShow', to); flushRevealFrames(); });
+    const native = { viewport: 700 - overlapOf(SCREEN_FRAME, KEYBOARD_TOP), content: 1200, offset: 0 };
+    await on(IOS, advanced(), async ({ tree, scrolls }) => {
+      await TestRenderer.act(async () => { frames(tree)[0].props.onLayout(); });
+      const reports = scrollReports(tree);
+      await reports.viewport(native.viewport);
+      await reports.content(native.content);
+      mountContent(tree);
+      await TestRenderer.act(async () => { field(tree).props.onFocus({}); flushRevealFrames(); });
+      h.eq(scrolls, [], 'setup: the field is in view above the keyboard');
+      await instantly(grown);
+      const kept = 360 + SPACING.md - (native.viewport - (grown - KEYBOARD_HEIGHT));
+      h.eq([framePadding(tree), native.offset], [overlapOf(SCREEN_FRAME, keyboardWindow.height - grown), kept], 'a screen: in the start’s own frame the frame ends at the new keyboard and the field sits its margin above it');
+      await settle(grown);
+      h.eq([framePadding(tree), native.offset], [overlapOf(SCREEN_FRAME, keyboardWindow.height - grown), kept], 'a screen: the end, frames later, moves nothing');
+    }, { frame: SCREEN_FRAME, field: [300, 60], block: [300, 60], keyboard: KEYBOARD_HEIGHT, nativeScroll: native });
+    const safe = useSafeAreaInsets().bottom;
+    await on(IOS, report(), async ({ tree }) => {
+      await draftLoaded();
+      await keyboard(IOS, true);
+      const card = () => flat(padded(frames(tree)[0])).paddingBottom;
+      h.eq(card(), sheetBottomPadding(KEYBOARD_HEIGHT, safe), 'setup: the sheet’s card is padded for the keyboard');
+      await instantly(grown);
+      h.eq(card(), sheetBottomPadding(grown, safe), 'a sheet: in the start’s own frame its card is padded for the new keyboard');
+      await settle(grown);
+      h.eq(card(), sheetBottomPadding(grown, safe), 'a sheet: the end moves nothing');
+    }, { frame: [0, 844], field: [300, 90] });
+  });
+
+  await h.test('a frame mounted after a hide has ended on the UI thread, before JS hears keyboardDidHide, pads for no keyboard; and the next show of that height still rises with the keyboard frame by frame', async () => {
+    const gate = mountsLater(advanced());
+    const native = { viewport: 700, content: 1200, offset: 0 };
+    await on(IOS, gate.element, async ({ tree, scrolls }) => {
+      await TestRenderer.act(async () => moveKeyboard(KEYBOARD_HEIGHT));
+      // The hide sets off and ends on the UI thread; JS has not yet heard keyboardDidHide.
+      await TestRenderer.act(async () => { emitKeyboardEvent('keyboardWillHide', 0); startKeyboard(0); stepKeyboard(KEYBOARD_HEIGHT / 2); endKeyboard(0); });
+      await TestRenderer.act(async () => gate.open());
+      await TestRenderer.act(async () => { frames(tree)[0].props.onLayout(); });
+      h.eq(framePadding(tree), 0, 'mounted in that window, the screen pads for no keyboard');
+      await TestRenderer.act(async () => emitKeyboardEvent('keyboardDidHide', 0));
+      h.eq(framePadding(tree), 0, 'nor once JS hears the hide');
+      const rise = await riseThrough(tree, IOS, native);
+      await rise.frame(1);
+      await rise.frame(2);
+      await rise.frame(3);
+      h.ok(scrolls.length > 0, `the next show of the same height is a rise: the field follows it in its frames, before it settles (${scrolls.length} scrolls by the third frame)`);
+    }, { frame: SCREEN_FRAME, field: [600, 60], block: [600, 60], nativeScroll: native });
+  });
+
+  await h.test('Android: a frame mounted after a show has ended on the UI thread, before JS hears keyboardDidShow, is padded for the keyboard as JS hears it settle; and the hide after it lowers it frame by frame', async () => {
+    const gate = mountsLater(advanced());
+    await on(ANDROID_15, gate.element, async ({ tree }) => {
+      // The show sets off and ends on the UI thread; JS has heard keyboardWillShow, not yet keyboardDidShow.
+      await TestRenderer.act(async () => { emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT); startKeyboard(KEYBOARD_HEIGHT); stepKeyboard(KEYBOARD_HEIGHT / 2); endKeyboard(KEYBOARD_HEIGHT); });
+      await TestRenderer.act(async () => gate.open());
+      await TestRenderer.act(async () => { frames(tree)[0].props.onLayout(); });
+      h.eq(framePadding(tree), 0, 'mounted in that window, the screen does not yet know the keyboard has settled');
+      await TestRenderer.act(async () => emitKeyboardEvent('keyboardDidShow', KEYBOARD_HEIGHT));
+      h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, KEYBOARD_TOP), 'once JS hears it settle, the screen ends at the keyboard');
+      const half = KEYBOARD_HEIGHT / 2;
+      await TestRenderer.act(async () => { emitKeyboardEvent('keyboardWillHide', 0); startKeyboard(0); stepKeyboard(half); });
+      h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, keyboardWindow.height - half), 'the hide lowers it in its frames');
+      await TestRenderer.act(async () => { endKeyboard(0); emitKeyboardEvent('keyboardDidHide', 0); });
+      h.eq(framePadding(tree), 0, 'and ends it at no keyboard');
+    });
+  });
+
   await h.test('iOS: a field focused before its scroll view has reported its content waits for it, so a screen’s reveal, which iOS does not clamp, never runs past the content’s end', async () => {
     await on(IOS, advanced(), async ({ tree, scrolls }) => {
       const reports = scrollReports(tree);
@@ -889,6 +974,48 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('the first-run sheet: the terms checkbox is pinned with the action it unlocks, never below the fold of a disabled Agree; its blocks are spaced once, a group gap apart and a group gap from the footer', async () => {
+    const firstRun = <FirstRunSheet visible language="en" onLanguageChange={noop} termsDue consentDue onAgree={noop} onClose={noop} />;
+    await on(IOS, firstRun, async ({ tree }) => {
+      const box = () => tree.root.find(isCheckbox);
+      const agree = () => button(tree, LEGAL_COPY.en.consentAgree);
+      await measureFooter(measuredFooterAround(agree()), 200);
+      h.ok(nearest(box(), 'ScrollView') == null && measuredFooterAround(box()) === measuredFooterAround(agree()), 'at default size the checkbox is in the pinned footer, with Agree');
+      const blocks = hostChildrenOf(scrollView(tree));
+      const space = (node: Node, side: 'marginTop' | 'marginBottom' | 'paddingBottom') => Number(flat(node)[side] ?? 0);
+      const content = StyleSheet.flatten(scrollView(tree).props.contentContainerStyle) as Record<string, unknown>;
+      const gaps = blocks.slice(1).map((next, i) => space(blocks[i], 'marginBottom') + Number(content.gap ?? 0) + space(next, 'marginTop'));
+      h.eq(gaps, gaps.map(() => LAYOUT.gapBetweenGroups), 'every block one group gap from the next');
+      h.eq(space(blocks.at(-1)!, 'marginBottom') + Number(content.paddingBottom ?? 0), LAYOUT.gapBetweenGroups, 'and the last one a group gap from the footer, no band of more');
+    });
+  });
+
+  await h.test('the first-run sheet on a small phone (360 × 640 dp): at default size the checkbox, Agree and Not now stay pinned in English and in French; at the largest text size the footer, checkbox and all, scrolls with the content', async () => {
+    // The footer's height as the Android emulator laid it out (uiautomator bounds, Whim_Verify at
+    // 1080 × 1920 px, 480 dpi), from its top padding to its bottom one.
+    const measured: [string, 'en' | 'fr', number, boolean][] = [
+      ['English at default size', 'en', 204, true],
+      ['French at default size (checkbox label and Agree on two lines)', 'fr', 232, true],
+      ['English at 200%', 'en', 282, false],
+      ['French at 200%', 'fr', 318, false],
+    ];
+    const window = keyboardWindow.height;
+    keyboardWindow.height = 640;
+    try {
+      for (const [what, language, footer, pinned] of measured) {
+        const firstRun = <FirstRunSheet visible language={language} onLanguageChange={noop} termsDue consentDue onAgree={noop} onClose={noop} />;
+        await on(ANDROID_15, firstRun, async ({ tree }) => {
+          const agree = () => button(tree, LEGAL_COPY[language].consentAgree);
+          await measureFooter(measuredFooterAround(agree()), footer);
+          const scrolled = [tree.root.find(isCheckbox), agree(), button(tree, LEGAL_COPY[language].consentDecline)].map((node) => nearest(node, 'ScrollView') != null);
+          h.eq(scrolled, [!pinned, !pinned, !pinned], `${what}: a ${footer} dp footer ${pinned ? 'stays pinned, in reach without a scroll' : 'scrolls with the content'}`);
+        });
+      }
+    } finally {
+      keyboardWindow.height = window;
+    }
+  });
+
   await h.test('a sheet’s content fades out under the header in proportion to how far it has scrolled, over 16 pt, and is not faded at rest', async () => {
     await on(IOS, sheeted(compose()), async ({ tree }) => {
       const fade = () => flat(topFadeOf(tree)).opacity;
@@ -934,6 +1061,32 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
             });
           }
         }
+      } finally {
+        await TestRenderer.act(async () => setColorScheme('light'));
+      }
+    }
+  });
+
+  await h.test('iOS: the keyboard’s Done bar is drawn in the scheme the shell is in, Done readable on it, and its label never outgrows the bar, at any text size', async () => {
+    for (const scheme of ['light', 'dark'] as const) {
+      await TestRenderer.act(async () => setColorScheme(scheme));
+      try {
+        await on(IOS, report(), async ({ tree }) => {
+          await draftLoaded();
+          const bar = doneBars(tree)[0];
+          const strip = bar.find((n) => String(n.type) === 'View' && flat(n).borderTopWidth === StyleSheet.hairlineWidth);
+          const label = bar.find((n) => String(n.type) === 'Text' && textOf(n) === COPY.keyboardDone);
+          const fill = String(bar.props.backgroundColor);
+          const ink = String(flat(label).color);
+          const readable = contrastOf(fill, ink);
+          h.ok(readable >= 4.5, `${scheme}: Done stands ${readable.toFixed(2)}:1 on its bar (at least 4.5:1)`);
+          // The bar sits between the sheet and the keyboard: it is nearer this scheme's sheet than the other's.
+          const own = contrastOf(fill, COLORS[scheme].sheet);
+          const other = contrastOf(fill, COLORS[scheme === 'light' ? 'dark' : 'light'].sheet);
+          h.ok(own < other, `${scheme}: the bar is a ${scheme} strip (${own.toFixed(2)}:1 from this scheme's sheet, ${other.toFixed(2)}:1 from the other's)`);
+          const largest = Number(flat(label).lineHeight) * Math.min(IOS_LARGEST_TEXT, Number(label.props.maxFontSizeMultiplier ?? Infinity));
+          h.ok(largest <= Number(flat(strip).height), `${scheme}: at iOS's largest text size Done's line (${largest.toFixed(1)}) fits the ${String(flat(strip).height)} pt bar`);
+        }, { frame: [0, 844], field: [300, 90] });
       } finally {
         await TestRenderer.act(async () => setColorScheme('light'));
       }
@@ -1212,7 +1365,29 @@ const topFadeOf = (tree: Tree) => tree.root.find((n) => String(n.type) === 'Anim
 const isEdgeLine = (n: Node) => String(n.type) === 'View' && flat(n).height === StyleSheet.hairlineWidth && nearest(n, 'ScrollView') == null;
 const edgeLines = (tree: Tree) => sheetCard(tree).findAll(isEdgeLine);
 /** Whether a hairline is drawn (it is always laid out). */
-const drawn = (line: Node) => flat(line).backgroundColor === SHELL_PALETTE.cardBorder;
+const drawn = (line: Node) => flat(line).backgroundColor !== undefined;
+
+/** `child`, held back until the test calls `open`: a frame that mounts at a moment the test picks. */
+function mountsLater(child: React.ReactElement): { element: React.ReactElement; open: () => void } {
+  const gate = { element: <></>, open: noop };
+  function Later() {
+    const [shown, setShown] = React.useState(false);
+    gate.open = () => setShown(true);
+    return shown ? child : null;
+  }
+  gate.element = <Later />;
+  return gate;
+}
+
+const isCheckbox = (n: Node) => String(n.type) === 'Pressable' && n.props.accessibilityRole === 'checkbox';
+
+/** The first host views under `node`, looking through components. */
+function hostChildrenOf(node: Node): Node[] {
+  return node.children.flatMap((child) => {
+    if (typeof child === 'string') return [];
+    return typeof child.type === 'string' ? [child] : hostChildrenOf(child);
+  });
+}
 
 /** The host view `node` sits in. */
 function hostParent(node: Node): Node | null {

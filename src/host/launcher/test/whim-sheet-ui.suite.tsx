@@ -82,7 +82,7 @@ export async function openSheet(tree: Tree): Promise<void> {
 
 const never = () => new Promise<Response>(() => {});
 
-type Spacing = { gap?: number; marginTop?: number; marginBottom?: number };
+type Spacing = { gap?: number; marginTop?: number; marginBottom?: number; paddingBottom?: number };
 const spacing = (style: unknown) => (StyleSheet.flatten(style as StyleProp<ViewStyle>) ?? {}) as Spacing;
 
 /** The first host views under `node`, looking through components. */
@@ -105,7 +105,28 @@ function blockGaps(inside: Node): number[] {
   return blocks.slice(1).map((next, i) => (spacing(blocks[i].props.style).marginBottom ?? 0) + gap + (spacing(next.props.style).marginTop ?? 0));
 }
 
+/** The space under the last block of the content holding `inside`: its margin and the content's own
+ *  bottom padding. With the keyboard up it is all that separates the last row from the Done bar. */
+function trailingSpace(inside: Node): number {
+  let content: Node | null = inside.parent;
+  while (content && !(typeof content.type === 'string' && hostChildren(content).length >= 3)) content = content.parent;
+  if (!content) throw new Error('no content holds that control');
+  const last = hostChildren(content).at(-1)!;
+  return (spacing(last.props.style).marginBottom ?? 0) + (spacing(content.props.contentContainerStyle ?? content.props.style).paddingBottom ?? 0);
+}
+
 export async function runWhimSheetUiTests(h: Harness): Promise<void> {
+  await h.test('whim sheet: the last row ends the same space above the sheet’s bottom (and, with the keyboard up, the Done bar) as lies under every block above it, not that space and more', async () => {
+    await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+      await openTipSplitter(tree);
+      await openSheet(tree);
+      const name = sheetCard(tree).findAll(isHost('Text')).find((n) => textOf(n) === APP_NAME)!;
+      const gaps = blockGaps(name);
+      h.ok(gaps.length === 2 && gaps.every((gap) => gap === gaps[0]) && gaps[0] > 0, `the blocks are evenly spaced (${gaps.join(', ')})`);
+      h.eq(trailingSpace(name), gaps[0], 'and the last one ends that far from the bottom');
+    });
+  });
+
   await h.test('whim sheet: the orb opens it over the running app: tile, name and version line, then the send area, History, Report a problem and Back to your apps, in that order', async () => {
     await withLauncher({ examples: true, server: never }, async ({ tree }) => {
       await openTipSplitter(tree);

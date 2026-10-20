@@ -15,7 +15,7 @@
  * the field rises with the keyboard, and a drag stops it.
  * A hairline above the footer shows while content continues below. In a sheet the frame fills the
  * body it sits in, so the footer sits at the bottom of a large sheet whatever the content; a footer that has outgrown its share of the
- * window (`FOOTER_SHARE`, the largest text sizes) scrolls with the content instead; and content
+ * window (`footerShare`: the largest text sizes) scrolls with the content instead; and content
  * scrolling under the sheet's header fades out over 16 pt. A drag puts the keyboard away, a tap a control handles reaches the
  * control, and a tap on empty space anywhere in the frame puts the keyboard away.
  */
@@ -52,12 +52,14 @@ import {
   type NativeEvent,
 } from 'react-native-keyboard-controller';
 import { SPACE } from '../../design/tokens';
-import { SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { SPACING } from '../../sdk/theme';
+import { wrappingType } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
 import { COPY } from './copy';
 import {
   contentBelow,
   followOffset,
+  FOOTER_SHARE,
   footerJoinsScroll,
   hiddenAtRest,
   keyboardDismissMode,
@@ -73,12 +75,14 @@ import {
   type KeyboardShellHost,
   type ScrollMetrics,
 } from './keyboard-shell';
-import { SHELL_PALETTE } from './theme';
 
 export interface KeyboardShellProps {
   /** Pinned below the scrolling content and kept above the keyboard: the primary action and what
    *  sits with it. Leave it out on a screen with no primary action. */
   footer?: React.ReactNode;
+  /** In a sheet, the most of the window the footer may take before it scrolls with the content:
+   *  `FOOTER_SHARE`, or `FIELDLESS_FOOTER_SHARE` for a sheet with no field. */
+  footerShare?: number;
   /** `sheet` inside a `Sheet`, which pads for the keyboard itself. */
   host?: KeyboardShellHost;
   /** The frame's own style (its background). */
@@ -119,6 +123,29 @@ const DONE_BAR_HEIGHT = 44;
  *  window's bottom. `measureInWindow` would not do on Android, which measures from below the status bar. */
 function measureBottom(frame: React.RefObject<View | null>, done: (bottom: number) => void): void {
   frame.current?.measure((_x, _y, _width, height, _pageX, pageY) => done(pageY + height));
+}
+
+/** Whether the keyboard has settled up, as JS last heard: since its `keyboardDidShow`, until it sets
+ *  off to hide (`keyboardWillHide`). The library's `isVisible()` stays true until `keyboardDidHide`
+ *  reaches JS, which is after the UI thread has already ended the hide at 0, and its `state()` keeps
+ *  the last show's height: a frame mounted in between would pad for a keyboard that has gone. */
+let settledUp = false;
+/** Called as the keyboard settles up, once `settledUp` says so: frames that saw nothing of it. */
+const settleListeners = new Set<() => void>();
+KeyboardEvents.addListener('keyboardDidShow', () => {
+  settledUp = true;
+  for (const listener of [...settleListeners]) listener();
+});
+for (const gone of ['keyboardWillHide', 'keyboardDidHide'] as const) {
+  KeyboardEvents.addListener(gone, () => {
+    settledUp = false;
+  });
+}
+
+/** The height of the keyboard as it rests up, or 0: what a frame that mounts or lays out now pads
+ *  for. A keyboard still rising is 0 here, as its own frames pad for it. */
+function settledKeyboardHeight(): number {
+  return settledUp && KeyboardController.isVisible() ? KeyboardController.state().height : 0;
 }
 
 /** What a frame that pads for the keyboard spreads onto the view it measures, and the padding. */
@@ -162,8 +189,9 @@ export function useKeyboardOverlap(frame: React.RefObject<View | null>, active: 
     measureBottom(frame, (measured) => {
       const bottom = Math.min(measured, windowSize.value - clearBelow);
       frameBottom.value = bottom;
-      if (place && active && KeyboardController.isVisible()) {
-        overlap.value = keyboardOverlap(Math.max(KeyboardController.state().height, systemHeight.value), bottom, windowSize.value);
+      const settled = settledKeyboardHeight();
+      if (place && active && settled > 0) {
+        overlap.value = keyboardOverlap(Math.max(settled, systemHeight.value), bottom, windowSize.value);
       }
     });
   }, [active, clearBelow, frame, frameBottom, overlap, systemHeight, windowSize]);
@@ -180,15 +208,35 @@ export function useKeyboardOverlap(frame: React.RefObject<View | null>, active: 
     height.value = resting;
     overlap.value = active ? keyboardOverlap(resting, frameBottom.value, windowSize.value) : 0;
   };
-  const setOff = () => {
+  // A keyboard that changes height at once (iOS's emoji keyboard: a start with no duration, then no
+  // frames before its end, which comes some frames later) pads for its new height in the start's own
+  // frame. Its padded-for `height` waits for the end, so the reveal still sees where it set off from.
+  const setOff = (event: NativeEvent) => {
     'worklet';
     systemHeight.value = 0;
+    if (event.duration === 0) overlap.value = active ? keyboardOverlap(event.height, frameBottom.value, windowSize.value) : 0;
   };
   useGenericKeyboardHandler({ onStart: setOff, onMove: follow, onInteractive: follow, onEnd: rest }, [active]);
-  // A keyboard already up as the frame mounts is padded for (`onLayout`) before any frame of it.
+  // A keyboard already resting up as the frame mounts is padded for (`onLayout`) before any frame of it.
   useEffect(() => {
-    if (KeyboardController.isVisible()) height.value = Math.max(KeyboardController.state().height, systemHeight.value);
+    const settled = settledKeyboardHeight();
+    if (settled > 0) height.value = Math.max(settled, systemHeight.value);
   }, [height, systemHeight]);
+  // A frame that mounts after the show has ended on the UI thread, before JS hears `keyboardDidShow`,
+  // saw none of its frames and found it not yet settled: it is padded for it as JS hears it settle.
+  // Android has nothing later to correct it (iOS has its frame notification, below).
+  useEffect(() => {
+    const missed = () => {
+      const settled = settledKeyboardHeight();
+      if (height.value > 0 || settled === 0) return;
+      height.value = Math.max(settled, systemHeight.value);
+      measure(true);
+    };
+    settleListeners.add(missed);
+    return () => {
+      settleListeners.delete(missed);
+    };
+  }, [height, measure, systemHeight]);
   useEffect(() => {
     if (!active) {
       overlap.value = 0;
@@ -379,7 +427,7 @@ function useRevealingScroll(
       onStart: (event) => {
         'worklet';
         const rising = event.height > keyboardHeight.value;
-        rise.value = {
+        const set = {
           following: rising,
           viewport: shown.value.viewport,
           offset: offset.value,
@@ -387,7 +435,16 @@ function useRevealingScroll(
           end: shrinkAt(event.height),
           hidden: -1,
         };
+        rise.value = set;
         if (rising) dragged.value = false;
+        // A keyboard that grows at once (no duration: no frames will come) leaves the scroll view its
+        // end's height in this very frame, as its padding does: the block is kept clear of that now.
+        const at = block.value;
+        if (!rising || event.duration !== 0 || at == null) return;
+        const frame = { offset: offset.value, viewport: set.viewport - (set.end - set.shrink), content: shown.value.content };
+        const next = followOffset(frame, at.top, at.bottom, REVEAL_MARGIN);
+        if (next != null) scrollTo(scrollOnUI, 0, next, false);
+        rise.value = { ...set, following: false };
       },
       onMove: (event) => {
         'worklet';
@@ -522,7 +579,8 @@ function useRevealingScroll(
 /** The hairline above the footer, drawn only while content continues below it; always laid out, so
  *  showing it never shifts anything. */
 function EdgeLine({ shown }: Readonly<{ shown: boolean }>) {
-  return <View style={[styles.edge, shown && { backgroundColor: SHELL_PALETTE.cardBorder }]} />;
+  const t = useTokens();
+  return <View style={[styles.edge, shown && { backgroundColor: t.colors.separator }]} />;
 }
 
 /** Content scrolling under a sheet's header fades out over this much, from the sheet's own colour
@@ -562,6 +620,7 @@ function footerStyleFor(joinsScroll: boolean, inSheet: boolean, contentContainer
 
 export default function KeyboardShell({
   footer,
+  footerShare = FOOTER_SHARE,
   host = 'screen',
   style,
   contentContainerStyle,
@@ -600,7 +659,7 @@ export default function KeyboardShell({
   // content, so the content keeps room of its own and the footer's actions stay reachable.
   const { height: windowHeight } = useKeyboardWindow();
   const [footerHeight, setFooterHeight] = useState(0);
-  const joinsScroll = inSheet && footerJoinsScroll(footerHeight, windowHeight);
+  const joinsScroll = inSheet && footerJoinsScroll(footerHeight, windowHeight, footerShare);
   const pinned = pinsFooter(footer);
   const footerStyle = footerStyleFor(joinsScroll, inSheet, contentContainerStyle);
   const footerView = pinned ? (
@@ -765,14 +824,29 @@ export function KeyboardTextInput({
   return (
     <>
       {field}
-      <InputAccessoryView nativeID={doneBarId} backgroundColor={SHELL_PALETTE.card}>
-        <View style={[styles.doneBar, { borderTopColor: SHELL_PALETTE.cardBorder }]}>
-          <TouchableOpacity onPress={dismissKeyboard} accessibilityRole="button" hitSlop={10}>
-            <Text style={[TYPE_SCALE.controlLabel, { color: SHELL_PALETTE.accent }]}>{COPY.keyboardDone}</Text>
-          </TouchableOpacity>
-        </View>
-      </InputAccessoryView>
+      <DoneBar nativeID={doneBarId} />
     </>
+  );
+}
+
+/** How far the Done bar's label grows with the text size: the bar is the keyboard's, whose own keys
+ *  don't grow with it, and a label at 200% outgrew the bar. */
+const DONE_LABEL_MAX_SCALE = 1.3;
+
+/** The iOS keyboard's Done bar: a `surface` strip over the keyboard, in the scheme the shell is in,
+ *  with a `separator` hairline and Done in `text`. */
+function DoneBar({ nativeID }: Readonly<{ nativeID: string }>) {
+  const t = useTokens();
+  return (
+    <InputAccessoryView nativeID={nativeID} backgroundColor={t.colors.surface}>
+      <View style={[styles.doneBar, { borderTopColor: t.colors.separator }]}>
+        <TouchableOpacity onPress={dismissKeyboard} accessibilityRole="button" hitSlop={10}>
+          <Text style={[styles.doneLabel, { color: t.colors.text }]} maxFontSizeMultiplier={DONE_LABEL_MAX_SCALE}>
+            {COPY.keyboardDone}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </InputAccessoryView>
   );
 }
 
@@ -796,4 +870,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.md,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
+  doneLabel: wrappingType('headline'),
 });

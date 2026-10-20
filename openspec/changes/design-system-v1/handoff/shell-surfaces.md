@@ -89,8 +89,8 @@ export type RowTrailing = { kind: 'value'; text: string } | { kind: 'chevron'; e
 // GroupedRowProps { title; subtitle?; icon?: IconName; trailing?: RowTrailing; onPress?; destructive?; disabled?; accessibilityHint? }
 // GroupedSectionProps { header?; footer?; on?: 'canvas' | 'sheet'; children }
 ```
-Switch row = one element role `switch` (press flips, toggle haptic); copy = its own button. `expanded` turns the
-chevron down and sets `accessibilityState.expanded`. From 135% text a `value` trailing goes under the title.
+Switch row = one element role `switch` (press flips, toggle haptic; knob `on-ink` on iOS; Android's overhangs its track: `border`
+on, `ink` off); copy = own button. `expanded` turns the chevron down, sets `accessibilityState.expanded`. From 135% a `value` goes under the title.
 
 ## AppTile geometry — `src/host/ui/AppTile-geometry.ts` (no RN import)
 ```ts
@@ -109,12 +109,12 @@ export function useKeyboardOverlap(frame: RefObject<View|null>, active: boolean)
 export function useKeyboardInset(frame, active): number;  // settled, React state (MiniAppView's WebView)
 export function keyboardOverlap(keyboardHeight, frameBottom, windowHeight): number;  // worklet
 export function sheetBottomPadding(overlap, safeBottom): number;  // worklet; REVEAL_MARGIN = 16
+// KeyboardShell `footerShare?` (sheet; FOOTER_SHARE 0.3, FIELDLESS_FOOTER_SHARE 0.4 for a field-less sheet): past it the footer scrolls
 ```
 Source: react-native-keyboard-controller, plus iOS `Keyboard` `keyboardDidChangeFrame` in `useKeyboardOverlap`: the first keyboard
-of a process is reported without its Done bar, so the library's end report may not make a frame shorter than the system's. `KeyboardShell` has `footer`, no header slot. Padding follows the keyboard's frames only: the library reports it visible at its destination on `keyboardWillShow`, so nothing pads from that. Reveal while the keyboard rises: on the UI thread, in each `onMove` (the frame that pads), at most one unanimated `scrollTo` keeping the block `REVEAL_MARGIN` clear of that frame's scroll view (`followOffset`; its height from the frame's padding on a screen, from `sheetBottomPadding` in a sheet), only upward, never past the content's end; a block partly hidden at set-off comes in over the rise (`hiddenAtRest`, `riseProgress`); a rise starts from the padded-for height (`height`: Done bar, keyboard up at mount). JS only publishes the block (iOS delivers focus after `keyboardWillShow`). A screen's scroll view has `scrollToOverflowEnabled` (iOS clamps to last frame's bounds); a sheet's and Android's trail by ≤ a frame's travel. JS reveals wait for the content size, stop at its end and pull back past it. A UI-thread `onScrollBeginDrag` during the rise stops it and the `keyboardDidShow` recheck.
+of a process is reported without its Done bar, so the library's end report may not make a frame shorter than the system's. `KeyboardShell` has `footer`, no header slot. Padding follows the keyboard's frames only: the library reports it visible at its destination on `keyboardWillShow`, so nothing pads from that. Reveal while the keyboard rises: on the UI thread, in each `onMove` (the frame that pads), at most one unanimated `scrollTo` keeping the block `REVEAL_MARGIN` clear of that frame's scroll view (`followOffset`; its height from the frame's padding on a screen, from `sheetBottomPadding` in a sheet), only upward, never past the content's end; a block partly hidden at set-off comes in over the rise (`hiddenAtRest`, `riseProgress`); a rise starts from the padded-for height (`height`: Done bar, keyboard up at mount; a frame mounted after the show's UI-thread end is padded once JS hears `keyboardDidShow`). JS only publishes the block (iOS delivers focus after `keyboardWillShow`). A screen's scroll view has `scrollToOverflowEnabled` (iOS clamps to last frame's bounds); a sheet's and Android's trail by ≤ a frame's travel. JS reveals wait for the content size, stop at its end and pull back past it. A UI-thread `onScrollBeginDrag` during the rise stops it and the `keyboardDidShow` recheck.
 
-## Tests: `shell-surfaces-ui.suite.tsx`, `keyboard-shell-ui.suite.tsx`; `run.mjs` aliases gesture-handler →
-`native-gesture-handler.tsx` (`pan(config, ys, vy)`), keyboard-controller → `native-keyboard-controller.tsx`, worklets →
-`native-reanimated.tsx` (`scheduleOnRN` inline; end callbacks run on assignment). `native-host.tsx` models the Modal
-system (`holdModalDismissals`, `refuseModalPresentations`, `holdUnmountedModalDismissals`), `AppState` and `Keyboard`
-(`changeKeyboardFrame`); a render helper calls `freshApp()` (react-screen.ts) before creating a tree.
+## Tests: `shell-surfaces-ui.suite.tsx`, `keyboard-shell-ui.suite.tsx`; `run.mjs` aliases gesture-handler → `native-gesture-handler.tsx`
+(`pan(config, ys, vy)`), keyboard-controller → `native-keyboard-controller.tsx` (`resetKeyboard` emits `keyboardDidHide`), worklets →
+`native-reanimated.tsx` (`scheduleOnRN` inline; end callbacks run on assignment). `native-host.tsx` models the Modal system (`holdModalDismissals`,
+`refuseModalPresentations`, `holdUnmountedModalDismissals`), `AppState`, `Keyboard` (`changeKeyboardFrame`); render helpers call `freshApp()` first.
