@@ -674,32 +674,40 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
 
   await h.test('sheet: the Making page keeps one key from Make it to the run’s end, and a second run’s page starts at its own beginning', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
-    await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
-      const keys: string[] = [];
+    // Every key the sheet committed, one entry per change: a page that flashed under another key
+    // and was replaced before the test could look still shows here.
+    const shown: string[] = [];
+    let recording = false;
+    const onCommit = (tree: Tree) => {
+      if (!recording) return;
+      const key = String(sheetPageKey(tree));
+      if (shown.at(-1) !== key) shown.push(key);
+    };
+    await withLauncher({ server: streamingServer(streams), onCommit }, async ({ tree }) => {
       await composeToPlan(tree, 'A tea timer');
+      recording = true;
+      shown.push(String(sheetPageKey(tree)));
       await buildIt(tree);
-      keys.push(String(sheetPageKey(tree)));
       await waitFor(() => on(tree, MakingPage), 'the making page');
-      keys.push(String(sheetPageKey(tree)));
+      const firstKey = String(sheetPageKey(tree));
       streams[0].push({ type: 'stage', stage: 'check', status: 'start' });
       await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'check', 'the first run’s stage');
-      keys.push(String(sheetPageKey(tree)));
       // #131: a second run started while the first is still checking.
       await press(button(tree, COPY.sheetClose));
       await startBuild(tree, 'A coffee timer');
       const second = tree.root.findByType(MakingPage).props;
-      h.ok(String(sheetPageKey(tree)) !== keys[0], 'the second run has its own key');
+      const secondKey = String(sheetPageKey(tree));
+      h.ok(secondKey !== firstKey, 'the second run has its own key');
       h.eq([second.stage, second.words, second.repairAttempt], [null, 'A coffee timer', undefined], 'and its page shows its own start, not the first run’s check');
       await press(button(tree, COPY.sheetClose));
       const first = (home(tree).props.pending as PendingBuildRecord[]).find((p) => p.prompt === 'A tea timer')!;
       await TestRenderer.act(async () => home(tree).props.onOpenPending(first));
-      keys.push(String(sheetPageKey(tree)));
       streams[0].push(resultEvent('Tea Timer'));
       streams[0].end();
       await waitFor(() => on(tree, ReadyPage), 'the first run’s Ready page');
-      keys.push(String(sheetPageKey(tree)));
-      h.eq(new Set(keys).size, 1, `the first run’s pages share one key from the first frame to Ready (got ${keys.join(', ')})`);
-      h.ok(keys[0].startsWith('run:') && keys[0] !== 'run:starting', 'and it is the run’s own id');
+      h.ok(firstKey === `run:${first.id}`, 'the first run’s page is keyed by its own id');
+      h.eq(shown, ['draft:new', firstKey, 'null', 'draft:new', secondKey, 'null', firstKey],
+        'every frame from Make it to Ready showed each run under its one key, with no other key in between');
       streams[1].end();
     });
   });

@@ -65,6 +65,9 @@ export interface LauncherSetup {
   olderServer?: boolean;
   /** Answers every request except the health routes. */
   server: (request: SentRequest) => Response | Promise<Response>;
+  /** Called on every commit of the shell, so a test can see each frame React showed, including
+   *  one replaced before the test could look. */
+  onCommit?: (tree: Tree) => void;
 }
 
 export interface Launcher {
@@ -170,15 +173,19 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
   try {
     const locale = setup.locale ?? 'en-US';
     const ageSignal = setup.ageSignal ?? (() => Promise.resolve('unavailable'));
-    tree = await renderScreen(
+    const root = (
       <LauncherRoot
         appInfo={setup.appInfo ?? testAppInfo}
         deviceLocale={() => locale}
         ageSignal={ageSignal}
         significantUpdate={setup.significantUpdate}
-      />,
-      { createNodeMock: tileNodeMock },
+      />
     );
+    const { onCommit } = setup;
+    const committed = onCommit
+      ? <React.Profiler id="launcher" onRender={() => { if (tree) onCommit(tree); }}>{root}</React.Profiler>
+      : root;
+    tree = await renderScreen(committed, { createNodeMock: tileNodeMock });
     await body({ tree, kv, sent, probes, probeUrls, paths: () => sent.map((r) => r.path), clock });
   } finally {
     if (tree) await unmountScreen(tree);

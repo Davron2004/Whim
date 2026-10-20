@@ -3124,8 +3124,6 @@ function ToastBridge({ api }: Readonly<{ api: React.MutableRefObject<ToastApi | 
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  // The details view is `RunDetailsSheet` (build-liveness B5) — a bottom sheet anchored to its
-  // own edge, not an absolutely-positioned overlay sized off this component's styles.
   devLogBtn: {
     position: 'absolute',
     right: SPACING.md,

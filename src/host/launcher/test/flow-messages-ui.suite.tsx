@@ -330,14 +330,37 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       streams[0].end();
       await waitFor(() => on(tree, FailurePage), 'the failure page');
       h.eq(tree.root.findByType(FailurePage).props.kind, 'connection', 'live, a lost connection');
+      h.eq(rephraseAdvice(tree), [], 'which never suggests rewording');
       const [written] = new PendingBuildStore(kv).list();
       h.eq(written.failure?.cause, 'connection', 'the record stores the cause');
+      h.eq([written.failure?.reason, written.failure?.remedy], [COPY.failureConnection, { kind: 'retry' }], 'with the lost-connection sentence and Try again as its remedy');
       // The same record after the copy was reworded: its reason is no longer today's sentence.
       kv.set(`pending:${written.id}`, JSON.stringify({ ...written, failure: { ...written.failure, reason: 'The server went quiet partway.' } }));
       await press(button(tree, COPY.sheetClose));
       await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get(written.id)));
       h.eq(tree.root.findByType(FailurePage).props.kind, 'connection', 'its tile still reopens as a lost connection');
       h.eq(rephraseAdvice(tree), [], 'never suggesting rewording');
+    });
+  });
+
+  await h.test('couldn’t run: a run that used all three repair tries says so live, and its tile reopens saying it tried 3 times', async () => {
+    const streams: Stream[] = [];
+    const tried = 'I tried 3 times and couldn’t get it to run.';
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+      await startBuild(tree, 'A tip splitter');
+      streams[0].push({ type: 'stage', stage: 'check', status: 'start' });
+      for (const attempt of [1, 2, 3]) streams[0].push({ type: 'stage', stage: 'repair', status: 'start', attempt });
+      streams[0].push({ type: 'failure', reason: 'The app did not build.', attempts: 3, diagnostics: [] });
+      streams[0].end();
+      await waitFor(() => on(tree, FailurePage), 'the failure page');
+      h.eq(tree.root.findByType(FailurePage).props.kind, 'couldnt-run', 'live, it couldn’t run');
+      h.ok(textOf(tree.root).includes(tried), 'and says it tried 3 times');
+      await press(button(tree, COPY.sheetClose));
+      const [record] = new PendingBuildStore(kv).list();
+      h.eq(record.failure?.reason, 'The app did not build.', 'the record keeps the server’s own reason, not a count');
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(record));
+      h.eq(tree.root.findByType(FailurePage).props.kind, 'couldnt-run', 'its tile reopens as couldn’t run, the tries read from its journal');
+      h.ok(textOf(tree.root).includes(tried), 'saying it tried 3 times');
     });
   });
 

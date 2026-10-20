@@ -389,7 +389,7 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       const captureRejection = (reason: unknown) => { unhandled.push(reason); };
       process.on('unhandledRejection', captureRejection);
       const clearFailure = failNativeStorageWritesWhen(({ id, key, value }) =>
-        rejectTerminalWrite && id === 'whim.launcher' && key === JOURNAL_KEY('failed') && (value.includes(GENERIC_STREAM_ERROR) || value.includes(COPY.failureConnection)));
+        rejectTerminalWrite && id === 'whim.launcher' && key === JOURNAL_KEY('failed') && value.includes(COPY.failureConnection));
       try {
         const failed = new PendingBuildStore(kv).get('failed');
         await TestRenderer.act(async () => home(tree).props.onOpenPending(failed));
@@ -440,7 +440,7 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       process.on('unhandledRejection', captureRejection);
       const clearFailure = failNativeStorageWritesWhen(({ id, key, value }) =>
         rejectTerminalWrite && id === 'whim.launcher' && (
-          key === JOURNAL_KEY('failed') && (value.includes(GENERIC_STREAM_ERROR) || value.includes(COPY.failureConnection))
+          key === JOURNAL_KEY('failed') && value.includes(COPY.failureConnection)
           || key === 'pending:failed' && value === pendingBefore
         ));
       try {
@@ -492,7 +492,7 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       const oldPending = kv.getString('pending:failed')!;
       const clearFailure = failNativeStorageWritesWhen(({ id, key, value }) =>
         rejectTerminalWrite && id === 'whim.launcher' && (
-          key === JOURNAL_KEY('failed') && (value.includes(GENERIC_STREAM_ERROR) || value.includes(COPY.failureConnection))
+          key === JOURNAL_KEY('failed') && value.includes(COPY.failureConnection)
           || key === 'pending:failed' && value === oldPending
         ));
       let fresh: Tree | undefined;

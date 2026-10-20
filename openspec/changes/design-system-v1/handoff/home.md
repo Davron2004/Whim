@@ -46,7 +46,7 @@ LONG_PRESS_MS = 350
 ```
 
 `onLongPress` plays the `long-press` haptic and measures the cell (`measureInWindow`); `lifted` (menu open) scales it
-1.06. The done step's `launcher/app-tile.tsx` is unchanged in behaviour (done variant only) until chain-17.
+1.06. The Ready page shows its app with `TilePlate size 'hero'` (`handoff/making-progress.md`).
 
 ## HomeScreen props (default export; callbacks keep their old names where they existed)
 
@@ -85,8 +85,8 @@ reader Undo lasts as long as the toast does. Home shows the toast
 Arm hides (Home reads `purges.has`) and deletes nothing; `finish` runs `completePurge` then `refresh()`; a
 failed purge keeps its marker (still hidden). Undo is refused once the purge is running. `completeInterruptedPurges` runs
 in the mount effect after the data-copy sweep and before seeding and `ready`. App links ignore armed entries
-(`reachableApps/Attempts`). Home's Discard uses this path; the failure screen's Discard still calls `onDismissPending`.
-Stop (`onCancelPending`) is unchanged: it ends the record, it does not leave a "Stopped" tile.
+(`reachableApps/Attempts`). Home's Discard and the Failure page's Discard both use this path; Stop leaves a stopped
+tile. Both: `handoff/making-progress.md`.
 
 ## Copy question — `CopyQuestionSheet.tsx` (History, chain-20, and `copy-app-data` chain-3 reuse this component)
 

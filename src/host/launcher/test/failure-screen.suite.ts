@@ -168,6 +168,20 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('what happened: a refused Try again’s notice reads once, even when the run’s journal ends in that same reason', async () => {
+    const hint = 'Whim is busy right now. Please try again in a few minutes.';
+    const journal: RunJournalEntry[] = [
+      { t: 1_000, kind: 'stage', stage: 'generate' },
+      { t: 2_000, kind: 'terminal', failure: { reason: hint, diagnostics: [] } },
+    ];
+    await withFailurePage({ kind: 'refused', reason: hint, rephraseHelps: false, diagnostics: [], journal, attemptStarted: true, notice: { hint, tone: 'neutral' } }, async (shown, _calls, tree) => {
+      await press(button(tree, COPY.timelineTitle));
+      h.ok(runTimelineRows(journal, false, undefined, true).some((row) => row.text === hint), 'the journal on its own would show the reason as a row');
+      h.ok(shown().includes(runTimelineRows(journal, false, hint, true)[0].text), 'What happened is open, with the run’s steps');
+      h.eq(shown().split(hint).length - 1, 1, 'and the reason reads once: the notice says it, the timeline does not repeat it');
+    });
+  });
+
   await h.test('discard: in the body when there is an attempt to discard, and nowhere when there is not', async () => {
     let dismissed = 0;
     await withFailurePage({ onDismiss: () => { dismissed++; } }, async (_shown, calls, tree) => {

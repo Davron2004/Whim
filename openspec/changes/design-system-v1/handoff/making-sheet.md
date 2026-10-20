@@ -63,7 +63,6 @@ draft with it.
 
 ```ts
 MakingSheet({ content: SheetContent | null /* null closes */; onClose })   // SheetContent { key: string; node }
-  HostedPage({ children })                        // gives a `flex:1` full-screen page the sheet body's height
 DescribePage({ text; editing?: InstalledApp; serverUnreachable?; notice?: FlowNotice;
                onChangeText; onContinue })       // Android back = the sheet's close: no prop, no registration
 PlanPage({ screen: PlanScreen; editing?: InstalledApp; onBack; onAnswer(id, AnswerChange); onChangeRow(index, text);
@@ -93,18 +92,9 @@ sends the current answers as generate's `clarifications`. Plan rows must not res
 on that path when a row is reverted (`edited` is never cleared). One-string plan = one unlabelled row.
 `showsChips(q)`: every option <= 20 chars (`CHIP_OPTION_MAX_CHARS`) = chips, else full-width radio/checkbox rows.
 
-## Where chain-17 plugs in (`LauncherRoot.renderSheetPage`)
+## The run pages (`LauncherRoot.renderSheetPage`)
 
-Each branch returns `{ key: pageKeyOf(screen), node }`. Replace the node, keep the key:
-- `screen.kind === 'making'` (`MakingScreen`): now `<HostedPage><BuildStep stage delivering queuedPosition onCancel signals
-  now editing editingName onBack onShowDetails/><RunDetailsSheet .../></HostedPage>`. `signalsRef.current` is this run's
-  signals (set by `onOpenPending`); Stop = `abortLiveAttempt` + drop (today `onCancelBuild`, in line only).
-- `screen.kind === 'ready'` (`ReadyScreen`): `<HostedPage><DoneStep app onOpen onBackToApps onReport/><ReportSheet/></HostedPage>`.
-- `screen.kind === 'failure'`: `<HostedPage><FailureScreen ...failureActions(screen)/></HostedPage>`; its state carries `journalId`.
-- A page that sizes itself (a `KeyboardShell host="sheet"` body) drops `HostedPage`.
-- The sheet closes via `closeSheet` for all of them. Android back reaches a page through the Sheet's Modal, never `BackHandler`:
-  a page that steps back before it closes calls `useSheetBack(step)` (`ui/Sheet.tsx`; Plan does); every other page's back is
-  `closeSheet`. Making/Ready/Failure keep their own `useSystemBack`, which a Modal starves on a device (back = `closeSheet`).
+Making, Ready and Failure, their props and page state: see `handoff/making-progress.md` (chain-17).
 
 ## Gone
 

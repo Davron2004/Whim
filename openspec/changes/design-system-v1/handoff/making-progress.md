@@ -2,8 +2,7 @@
 
 Interface only. Rules: spec prompt-flow (Making, Ready, Failure, Details), system.md §7.1 Step list, §8, §9.
 Pure logic is Node-importable: `making-progress.ts`, `failure-kind.ts`, `prompt-flow.ts`, `home-live.ts`.
-Supersedes `handoff/making-sheet.md` "Where chain-17 plugs in", `handoff/home.md` "Stop ... does not leave a Stopped tile"
-and its "the failure screen's Discard still calls `onDismissPending`".
+`handoff/making-sheet.md` and `handoff/home.md` point here for the run pages, Stop and the Failure page's Discard.
 
 ## Pages (props verbatim; each is a `KeyboardShell host="sheet"` body; `HostedPage` is gone)
 

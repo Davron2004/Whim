@@ -74,7 +74,6 @@ export async function runLinkRoutingTests(h: Harness): Promise<void> {
 
   await h.test('linkExitFor: each screen leaves through its own safe exit', () => {
     const cases: Array<[string, string, string]> = [
-      ['sheet', 'close-overlay', 'an open sheet takes precedence over the screen behind it'],
       ['app', 'exit-app', 'a running mini-app exits'],
       ['making', 'leave-build', 'the making page behaves as leaving the run running'],
       ['failure', 'leave-failure', 'the failure screen takes its own non-destructive Back'],

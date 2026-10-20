@@ -489,6 +489,16 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(at(270_000).line, makingStallLine(STALL_MS / 1000), 'while 41 s with no frame at all is a stall, whatever the time');
   });
 
+  await h.test('the Making page’s line: a run in line says its place, not a stall, however long no frame has come', () => {
+    const queued = makingRun();
+    queued.fold({ type: 'queued', position: 2 }, 1_000);
+    const silent = 1_000 + STALL_MS + 20_000;
+    h.eq([queued.at(silent).line, queued.at(silent).ember.state], ['1 ahead of you.', 'working'], 'the place in line, the ember resting');
+    const started = makingRun();
+    started.fold({ type: 'stage', stage: 'plan', status: 'start' }, 1_000);
+    h.eq([started.at(silent).line, started.at(silent).ember.state], [makingStallLine(STALL_MS / 1000), 'stuck'], 'where the same silence out of line is a stall');
+  });
+
   await h.test('the Making page’s steps: the current step’s time starts when the marker reaches it, and a check after a repair keeps the marker on the repair', () => {
     const { fold, at } = makingRun();
     fold({ type: 'stage', stage: 'generate', status: 'start' }, 10_000);
