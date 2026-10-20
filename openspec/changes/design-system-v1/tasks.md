@@ -53,7 +53,7 @@
 - [x] 6.5 Reduce Motion pairs: a desktop Chromium suite in `src/sdk/test/` proving each moment runs animations with `reduceMotion: false` and only the reduced form with `true` (via `getAnimations()`); draft the owner-authored invariant for `invariants/` as a proposal file in the change folder, not in `invariants/`
 - [x] 6.6 Update `fixtures/style-gallery.app.tsx` to show every motion preset (keyed add/remove, modal, toast, push)
 
-- [ ] 6.7 (product-owner ruling 2026-10-09, extends 6.0) The Switch off track and empty Slider track must clear ≥ 3:1 on EVERY surface they render on in both schemes — including `sheet-group` inside a Modal (dark: `border` on `sheet-group` measured 2.88:1). Pick a role that clears all surfaces (or a per-surface track role), update system.md §7.2, and extend the restyle suites' contrast assertion to the Modal case.
+- [x] 6.7 (product-owner ruling 2026-10-09, extends 6.0) The Switch off track and empty Slider track must clear ≥ 3:1 on EVERY surface they render on in both schemes — including `sheet-group` inside a Modal (dark: `border` on `sheet-group` measured 2.88:1). Pick a role that clears all surfaces (or a per-surface track role), update system.md §7.2, and extend the restyle suites' contrast assertion to the Modal case.
 
 ## 7. Native dependencies (HUMAN-BOOTSTRAP: `package.json`, lockfile, `babel.config.js`, Podfile)
 
