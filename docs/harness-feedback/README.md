@@ -111,3 +111,12 @@ Beta-1 reinforced T1, T4, T7 and T10, and added:
   - ENV: fixed Firestore emulator ports collided across parallel gates — fixed (per-run ports).
   - HELPED: path-partitioned history rewrite (499 → 32 commits, 0 evidence blobs) with a tree-identity gate; independent reviewer per change; live smoke on first real deploy caught a `gcloud` track bug fakes couldn't.
   - Proposals: run knip at each serial merge; implementer briefs must say whether `.claude/**`/package.json are still "protected" (stale CLAUDE.md made agents over-defer); a removal ratchet for verification code (#159).
+- **2026-10-19/20 — design-system-v1 16j–20 + fix chain 16n (one top-level session, ~120 subagents, ≤3 in parallel).**
+  - CAUGHT-REAL-MISTAKE: reviewers and device verifiers found every serious bug; the fast gate found none (same-id record clobbering ×4, iOS blank Home via native-stack pop/unmount, Android WebView text ~4×, manifest not following the version → storage denial + a capability over-grant, the floor disabling missing_default, O(n²) unvalidated server input).
+  - HELPED: splitting big chains into small sequential pieces with token budgets + WIP-commit hand-over + a status file (834k-token single agent → 100–400k pieces); reproduce-first briefs refuted 4 wrong suspects; git-only reviews run beside a working implementer; device verifiers with their own varied stubs.
+  - DRAWBACK: agents ran gate.sh in the primary tree 3× (shell cwd resets between Bash calls) — tripwire candidate: gate.sh refuses when run from the primary tree while a chain worktree is the caller's, or briefs give the absolute path (done).
+  - DRAWBACK: removal-ratchet --base <staging> reports false removals once another chain merged (#197, runbooks fixed to merge-base).
+  - DRAWBACK: `git stash` used once by an implementer (shared stack across worktrees); briefs now forbid it.
+  - DRAWBACK: one device verifier spent ~4 real production generations (fresh install defaults to prod); briefs now set the own server first.
+  - ENV: XCUITest's doubleTap reaches RN as one press — race bugs needing two fast taps can't be proven on the iOS simulator.
+  - Proposals: gate.sh guard against the primary tree as cwd from an agent; ratchet resolves a non-ancestor base to the merge-base itself; a shared device-verifier stub with storage/cue/storage-less variants in the repo (not scratch).
