@@ -1,7 +1,10 @@
-/** The rendered History screen over a real version store: the first load is a loading state, not
- *  an empty list; a row quotes the user's words and opens to Whim's summary; a row expands without
- *  restoring; Go back and Start a copy act on that row's own version, once each, however often the
- *  confirm is tapped. Home's sheet and a running app's orb reach it, and leaving returns there. */
+/** The rendered History screen over a real version store: a header with Back and Report over the
+ *  title, the app's tile, its name and how many versions it has; one timeline row per version, the
+ *  person's words first, with Whim's summary, the version and when, a neutral kind chip and
+ *  `Current`, on a rail that stops at v1; no filters; the phone's scheme and a text size capped at
+ *  200%. The first load is a loading state, not an empty list; a row expands without restoring; Go
+ *  back and Start a copy act on that row's own version, once each, however often the confirm is
+ *  tapped. Home's sheet and a running app's orb reach it, and leaving returns there. */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
@@ -16,11 +19,14 @@ import { createMemoryStore, MapKVBackend } from '../../version-store';
 import { DescribePage } from '../DescribePage';
 import ReadyPage from '../ReadyPage';
 import MiniAppView from '../MiniAppView';
-import WhimProse from '../../ui/whim-prose/WhimProse';
-import { SHELL_COLORS } from '../../../sdk/theme';
+import { tileOf } from '../tile-identity';
+import { TilePlate } from '../../ui/AppTile';
+import { TILE_SIDE } from '../../ui/AppTile-geometry';
+import { Icon } from '../../ui/Icon';
+import { COLORS, LAYOUT, SPACE, TINTS, TYPE_SCALE } from '../../../design/tokens';
 import { appLinkFor } from '../app-link';
-import { Alert, hardwareBack, openLink, StyleSheet, windowMetrics } from './native-host';
-import { iosPop, stackMoveEnds, stackUnmountsMidMove } from './native-screens';
+import { Alert, hardwareBack, openLink, setColorScheme, StyleSheet, windowMetrics } from './native-host';
+import { iosPop, stackItems, stackMoveEnds, stackUnmountsMidMove } from './native-screens';
 import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 import { chooseRow, longPress, renderHome, tile } from './home-rig';
 import { buildIt, planLoaded, resultEvent, settle, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
@@ -75,18 +81,72 @@ async function waitForReassuranceToClear(tree: Tree): Promise<void> {
 }
 
 /** How many loading placeholders the screen shows. */
-const loadingRows = (tree: Tree) => tree.root.findAll((n) => hostType(n) === 'View' && n.props.accessibilityLabel === COPY.historyLoadingLabel).length;
+const loadingRows = (tree: Tree) => tree.root.findAll((n) => hostType(n) !== undefined && n.props.accessibilityLabel === COPY.historyLoadingLabel).length;
 const hasPendingReassurance = (tree: Tree) => tree.root.findAll((n) => n.props.accessibilityLabel === COPY.historyReassurancePending).length > 0;
 
-/** The row card whose headline is `text`. */
-const row = (tree: Tree, text: string) => tree.root.find((n) => hostType(n) === 'TouchableOpacity' && typeof n.props.onPress === 'function' && textOf(n).includes(text) && textOf(n).includes(COPY.historyOriginYouSaid));
-const hasRow = (tree: Tree, text: string) => tree.root.findAll((n) => hostType(n) === 'TouchableOpacity' && typeof n.props.onPress === 'function' && textOf(n).includes(text) && textOf(n).includes(COPY.historyOriginYouSaid)).length === 1;
-/** The words a rendered prose line attributes to the user (its `yours` spans). */
-const yoursIn = (prose: TestRenderer.ReactTestInstance) =>
-  prose.findAll((n) => hostType(n) === 'Text' && StyleSheet.flatten(n.props.style).color === SHELL_COLORS.yours).map(textOf);
+type Node = TestRenderer.ReactTestInstance;
+const DAY_MS = 86_400_000;
 
-/** The words naming the app in the screen's title. */
-const titleOf = (tree: Tree, name: string) => tree.root.find((n) => hostType(n) === 'Text' && textOf(n) === name);
+/** Every control a finger can press. */
+const pressables = (tree: Tree) => tree.root.findAll((n) => ['TouchableOpacity', 'Pressable'].includes(String(hostType(n))) && typeof n.props.onPress === 'function');
+/** The rows: the controls that open and close a version, newest first. */
+const rows = (tree: Tree) => pressables(tree).filter((n) => n.props.accessibilityState?.expanded !== undefined);
+/** The row whose words include `text`. */
+const row = (tree: Tree, text: string) => {
+  const found = rows(tree).filter((n) => textOf(n).includes(text));
+  if (found.length !== 1) throw new Error(`Expected one row saying "${text}", found ${found.length}`);
+  return found[0];
+};
+const hasRow = (tree: Tree, text: string) => rows(tree).filter((n) => textOf(n).includes(text)).length === 1;
+const styleOf = (n: Node) => StyleSheet.flatten(n.props.style);
+/** The host texts under `n` that say exactly `text`. */
+const textsSaying = (n: Node, text: string) => n.findAll((m) => hostType(m) === 'Text' && textOf(m) === text);
+const textSaying = (n: Node, text: string) => {
+  const found = textsSaying(n, text);
+  if (found.length === 0) throw new Error(`No text says "${text}"`);
+  return found[found.length - 1];
+};
+/** A kind chip in `n`: the innermost view holding exactly one icon and the kind's word. */
+const chipIn = (n: Node, word: string) => {
+  const found = n.findAll((m) => hostType(m) === 'View' && textOf(m) === word && m.findAllByType(Icon).length === 1);
+  if (found.length === 0) throw new Error(`No chip says "${word}"`);
+  return found[found.length - 1];
+};
+/** The timeline's rail: the 2 pt absolute segments drawn between the rows' dots, top first. */
+const railOf = (tree: Tree, colour: string) => tree.root.findAll((n) => hostType(n) === 'View' && styleOf(n).position === 'absolute' && styleOf(n).backgroundColor === colour && styleOf(n).width === 2);
+/** Whether `n`, or a text it sits in, caps its size at 200% (a nested text takes its parent's cap). */
+const capped = (n: Node): boolean => {
+  for (let at: Node | null = n; at; at = at.parent) {
+    if (hostType(at) === 'Text' && typeof at.props.maxFontSizeMultiplier === 'number') return at.props.maxFontSizeMultiplier <= 2;
+  }
+  return false;
+};
+
+/** Whether the longest word of text `n` fits `width` at text size `fontScale`, as far as its cap lets
+ *  it grow: a system font's widest capitals and bold run under 0.7 em a letter. */
+const wordsFit = (n: Node, fontScale: number, width: number) => {
+  const size = Number(styleOf(n).fontSize) * Math.min(fontScale, n.props.maxFontSizeMultiplier ?? Infinity);
+  return Math.max(...textOf(n).split(' ').map((w) => w.length)) * 0.7 * size <= width;
+};
+
+/** The words naming the app under the screen's title. */
+const titleOf = (tree: Tree, name: string) => textSaying(tree.root, name);
+
+const summaryOf = (text: string, kind: string) => ({ text, kind, touched: [], marks: [] });
+const summarised = (text: string, summary: object) => JSON.stringify({ v: 2, text, summary });
+
+/** A real store holding four versions of Pour Timer, two days old: the install (no summary of its
+ *  own), then an Added, a Changed and a Fixed version; the last is current. */
+async function fourKinds() {
+  let t = Date.now() - 2 * DAY_MS - 60_000;
+  const store = createMemoryStore({ autoCompact: false, now: () => (t += 1000) });
+  const access = new StoreAccess({ store, index: new AppIndex(new MapKVBackend()), now: () => Date.now() });
+  const app = await access.install({ id: 'pour', name: 'Pour Timer', record: { appId: 'pour', name: 'Pour Timer', manifest: { capabilities: [] } }, bundleSource: 'V1', prompt: envelope('a timer for my pour-over') });
+  await store.snapshot(storeIdOf(app), { 'bundle.js': 'V2' }, summarised('add a chime', summaryOf('Plays a chime at the end of every step.', 'Added')));
+  await store.snapshot(storeIdOf(app), { 'bundle.js': 'V3' }, summarised('let me pick V60 or Chemex', summaryOf('Adds a brewer choice.', 'Changed')));
+  await store.snapshot(storeIdOf(app), { 'bundle.js': 'V4' }, summarised('the countdown stops early', summaryOf('The countdown runs to zero now.', 'Fixed')));
+  return { access, app };
+}
 
 /** How many sheets are open. */
 const sheetsOpen = (tree: Tree) => tree.root.findAll((n) => String(n.type) === 'Modal').length;
@@ -111,6 +171,180 @@ async function backFromHistoryWithLinks(tree: Tree, app: InstalledApp, links: re
 }
 
 export async function runHistoryUiTests(h: Harness): Promise<void> {
+  await h.test('history screen: a header with Back and a Report text button, then “History”, the app’s 40 pt tile, its name in its tint and how many versions it has', async () => {
+    const { access, app } = await fourKinds();
+    const left: string[] = [];
+    const tree = await renderScreen(<HistoryScreen app={app} access={access} onBack={() => left.push('back')} onChangeIt={noop} onReport={() => left.push('report')} />);
+    try {
+      await waitFor(() => rows(tree).length === 4, 'the versions to load');
+      await press(button(tree, COPY.backLabel));
+      await press(button(tree, 'Report'));
+      h.eq(left, ['back', 'report'], 'Back leaves, and the Report text button reports');
+      h.eq(textOf(button(tree, 'Report')), 'Report', 'Report is a text button, in words');
+      const title = textSaying(tree.root, 'History');
+      h.eq([title.props.accessibilityRole, styleOf(title).fontSize], ['header', TYPE_SCALE.title1.size], '“History” is the title, a heading in title1');
+      const { tint, icon } = tileOf(app);
+      const plates = tree.root.findAllByType(TilePlate);
+      h.eq(plates.map((p) => [p.props.size, TILE_SIDE[p.props.size as keyof typeof TILE_SIDE], p.props.tint, p.props.glyph]), [['menu', 40, tint, icon]], 'the app’s own tile, at 40 pt');
+      h.eq(styleOf(titleOf(tree, app.name)).color, TINTS[tint].light, 'its name in its tint');
+      h.ok(textsSaying(tree.root, '4 versions').length === 1, 'and how many versions it has');
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
+  await h.test('history screen: each row leads with the person’s words, quoted, then Whim’s summary, “vN · when” in tabular figures, a neutral kind chip with its icon, and `Current` on the active version', async () => {
+    const { access, app } = await fourKinds();
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => rows(tree).length === 4, 'the versions to load');
+      const expected = [
+        { said: 'the countdown stops early', summary: 'The countdown runs to zero now.', meta: 'v4 · 2 days ago', kind: 'Fixed', icon: 'wrench', current: true },
+        { said: 'let me pick V60 or Chemex', summary: 'Adds a brewer choice.', meta: 'v3 · 2 days ago', kind: 'Changed', icon: 'pencil', current: false },
+        { said: 'add a chime', summary: 'Plays a chime at the end of every step.', meta: 'v2 · 2 days ago', kind: 'Added', icon: 'plus', current: false },
+        { said: 'a timer for my pour-over', summary: COPY.historyInstallLabel, meta: 'v1 · 2 days ago', kind: 'Start', icon: 'flag', current: false },
+      ];
+      h.eq(rows(tree).map((r) => textOf(r).startsWith(`“`)), [true, true, true, true], 'every row starts with the person’s words');
+      const chips: { fill: unknown; label: unknown }[] = [];
+      for (const want of expected) {
+        const r = row(tree, want.said);
+        const words = textSaying(r, `“${want.said}”`);
+        h.eq([styleOf(words).fontStyle, styleOf(words).fontSize, styleOf(words).color], ['italic', TYPE_SCALE.title3.size, COLORS.light.text], `v${want.meta[1]}: the words, quoted, in italic title3`);
+        h.ok(textOf(r).indexOf(want.said) < textOf(r).indexOf(want.summary), `v${want.meta[1]}: Whim’s summary follows the words`);
+        h.eq([styleOf(textSaying(r, want.summary)).fontSize, styleOf(textSaying(r, want.summary)).color], [TYPE_SCALE.callout.size, COLORS.light['text-2']], `v${want.meta[1]}: the summary in callout, secondary`);
+        const meta = textSaying(r, want.meta);
+        h.ok((styleOf(meta).fontVariant as string[] | undefined)?.includes('tabular-nums') === true, `v${want.meta[1]}: “${want.meta}” in tabular figures`);
+        const chip = chipIn(r, want.kind);
+        h.eq(chip.findByType(Icon).props.name, want.icon, `v${want.meta[1]}: the ${want.kind} chip carries its icon`);
+        chips.push({ fill: styleOf(chip).backgroundColor, label: styleOf(textSaying(chip, want.kind)).color });
+        h.eq(textsSaying(r, 'Current').length, want.current ? 1 : 0, `v${want.meta[1]}: ${want.current ? '`Current` on the active version' : 'no `Current`'}`);
+      }
+      h.eq(chips, expected.map(() => ({ fill: COLORS.light.fill, label: COLORS.light['text-2'] })), 'every kind chip has the same neutral colours: only the icon and the word differ');
+    });
+  });
+
+  await h.test('history screen: the rail runs from the newest version’s dot and stops at v1’s; one version draws none', async () => {
+    const { access, app } = await fourKinds();
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => rows(tree).length === 4, 'the versions to load');
+      const rail = railOf(tree, COLORS.light.separator);
+      h.eq(rail.length, 4, 'a 2 pt separator segment beside each row');
+      const [newest, ...rest] = rail.map(styleOf);
+      const v1 = rest[rest.length - 1];
+      h.ok(Number(newest.top) > 0 && newest.bottom === 0, 'the newest row’s segment starts at its dot and runs on down');
+      h.ok(rest.slice(0, -1).every((s) => s.top === 0 && s.bottom === 0), 'the rows between carry it the whole way');
+      h.ok(v1.top === 0 && v1.bottom === undefined && Number(v1.height) === Number(newest.top), 'v1’s comes down to its dot and stops there');
+    });
+    const loneAccess = new StoreAccess({ store: createMemoryStore({ autoCompact: false }), index: new AppIndex(new MapKVBackend()), now: () => Date.now() });
+    const lone = await loneAccess.install({ id: 'lone', name: 'Lone', record: { appId: 'lone', name: 'Lone', manifest: { capabilities: [] } }, bundleSource: 'V1', prompt: envelope('one and only') });
+    await withHistory(loneAccess, lone, async (tree) => {
+      await waitFor(() => rows(tree).length === 1, 'the one version to load');
+      h.eq(railOf(tree, COLORS.light.separator).length, 0, 'a single version has no rail');
+    });
+  });
+
+  await h.test('history screen: no filters: every version is listed, and the only controls are Back, Report and the rows', async () => {
+    const { access, app } = await fourKinds();
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => rows(tree).length === 4, 'the versions to load');
+      const labels = pressables(tree).map((n) => n.props.accessibilityLabel ?? textOf(n));
+      h.eq(labels.slice(0, 2), [COPY.backLabel, 'Report'], 'Back and Report');
+      h.eq(labels.length, 2 + 4, 'and one row per version, nothing else');
+      for (const word of ['All 4', 'What it does', 'Look', 'Fixes']) h.eq(textsSaying(tree.root, word).length, 0, `no “${word}” filter`);
+    });
+  });
+
+  await h.test('history screen: at the largest text size every text stops at 200%, so the title and a two-word name break between words, never inside one (#186)', async () => {
+    const { access, app } = await fourKinds();
+    const named = { ...app, name: 'Water Counter' };
+    windowMetrics.fontScale = 3.12;
+    try {
+      await withHistory(access, named, async (tree) => {
+        await waitFor(() => rows(tree).length === 4, 'the versions to load');
+        const texts = tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n).trim().length > 0);
+        h.eq(texts.filter((n) => !capped(n)).map(textOf), [], 'no text grows past 200%');
+        // At 200% each word must fit the width it is given, on a 390 pt phone: the title the screen
+        // inside its gutters, the name what the 40 pt tile beside it leaves.
+        const inside = 390 - 2 * LAYOUT.gutter;
+        h.ok(wordsFit(textSaying(tree.root, 'History'), 3.12, inside), '“History” fits on one line');
+        h.ok(wordsFit(titleOf(tree, 'Water Counter'), 3.12, inside - TILE_SIDE.menu - SPACE[3]), '“Counter” fits beside the tile');
+      });
+    } finally {
+      windowMetrics.fontScale = 1;
+    }
+  });
+
+  await h.test('history screen: in dark mode it draws the dark roles, its name in the tint’s dark value', async () => {
+    const { access, app } = await fourKinds();
+    await TestRenderer.act(async () => setColorScheme('dark'));
+    try {
+      await withHistory(access, app, async (tree) => {
+        await waitFor(() => rows(tree).length === 4, 'the versions to load');
+        const [root] = tree.root.findAll((n) => hostType(n) === 'View');
+        h.eq(styleOf(root).backgroundColor, COLORS.dark.bg, 'the canvas is the dark `bg`');
+        h.eq(styleOf(textSaying(tree.root, 'History')).color, COLORS.dark.text, 'the title in the dark `text`');
+        h.eq(styleOf(titleOf(tree, app.name)).color, TINTS[tileOf(app).tint].dark, 'the name in the tint’s dark value');
+        const r = row(tree, 'add a chime');
+        h.eq(styleOf(textSaying(r, '“add a chime”')).color, COLORS.dark.text, 'the words in the dark `text`');
+        h.eq(styleOf(textSaying(r, 'Plays a chime at the end of every step.')).color, COLORS.dark['text-2'], 'the summary in the dark `text-2`');
+        h.eq(styleOf(chipIn(r, 'Added')).backgroundColor, COLORS.dark.fill, 'the chip on the dark `fill`');
+        h.eq(railOf(tree, COLORS.dark.separator).length, 4, 'the rail in the dark `separator`');
+      });
+    } finally {
+      await TestRenderer.act(async () => setColorScheme('light'));
+    }
+  });
+
+  await h.test('history screen: in dark mode, opened from Home or from a running app’s Whim sheet, its stack entry and the status bar follow the scheme', async () => {
+    const never = () => new Promise<Response>(() => {});
+    const statusBar = (tree: Tree) => tree.root.find((n) => hostType(n) === 'StatusBar').props.barStyle;
+    const entry = (tree: Tree) => stackItems(tree).find((item) => item.props.screenId === 'history')?.props.contentStyle.backgroundColor;
+    try {
+      await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+        const home = () => tree.root.findByType(HomeScreen);
+        const showing = (type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+        await waitFor(() => showing(HomeScreen) && home().props.apps.length > 0, 'the example apps');
+        await TestRenderer.act(async () => setColorScheme('dark'));
+        const app: InstalledApp = home().props.apps[0];
+        await TestRenderer.act(async () => home().props.onHistory(app));
+        await waitFor(() => showing(HistoryScreen), 'its history, from Home');
+        h.eq([entry(tree), statusBar(tree)], [COLORS.dark.bg, 'light-content'], 'from Home: the dark canvas, light status-bar content');
+        await iosPop(tree);
+        await tap(() => home().props.onOpen(app));
+        await waitFor(() => showing(MiniAppView), `${app.name} to open`);
+        await press(button(tree, COPY.orbMenuOpenLabel));
+        await press(button(tree, COPY.actionHistory));
+        await waitFor(() => showing(HistoryScreen), 'its history, from the Whim sheet');
+        h.eq([entry(tree), statusBar(tree)], [COLORS.dark.bg, 'light-content'], 'from the Whim sheet: a host screen in the phone’s scheme, not the app’s frame');
+      });
+    } finally {
+      await TestRenderer.act(async () => setColorScheme('light'));
+    }
+  });
+
+  await h.test('history screen: Android back during History’s push from Home holds an app link until the pop has finished, not just the push (stack never unmounted mid-move)', async () => {
+    const never = () => new Promise<Response>(() => {});
+    await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+      const home = () => tree.root.findByType(HomeScreen);
+      const showing = (type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+      await waitFor(() => showing(HomeScreen) && home().props.apps.length > 1, 'the example apps');
+      const [first, second]: InstalledApp[] = home().props.apps;
+      const midMove = stackUnmountsMidMove();
+      await TestRenderer.act(async () => home().props.onHistory(first));
+      await waitFor(() => showing(HistoryScreen), 'History, its push still running');
+      await systemBack();
+      h.ok(showing(HomeScreen) && !showing(HistoryScreen), 'Android back during the push asks for the pop to Home');
+      await stackMoveEnds();
+      await TestRenderer.act(async () => { openLink(appLinkFor(second.id)); });
+      await settle();
+      h.ok(!showing(MiniAppView), 'the push’s finish is not the pop’s: the link still waits');
+      h.eq(stackUnmountsMidMove(), midMove, 'and the stack is not unmounted while the pop runs');
+      await stackMoveEnds();
+      await waitFor(() => showing(MiniAppView), 'the link to open once the pop finished');
+      h.eq(tree.root.findByType(MiniAppView).props.installedApp.id, second.id, 'the linked app opens');
+      h.eq(stackUnmountsMidMove(), midMove, 'with no stack unmounted mid-move');
+    });
+  });
+
   await h.test('history screen: the first load shows a loading state, never an empty list, until the versions arrive', async () => {
     const { access, app } = await threeVersions();
     const read = held<void>();
@@ -288,23 +522,19 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('history screen: after a build and an edit made through the app, each row quotes the words that made it under “You said”, and Whim’s summary opens with the row', async () => {
+  await h.test('history screen: after a build and an edit made through the app, within the same second, each row quotes the words that made it, newest first, with Whim’s summary under them', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     const summary = (text: string, kind: 'Start' | 'Added') => ({ text, kind, touched: [], marks: [] });
     const FIRST_SUMMARY = 'Counts the glasses you drink';
     const EDIT_SUMMARY = 'You can now set your own daily water goal';
     const home = (tree: Tree) => tree.root.findByType(HomeScreen);
     const tracker = (tree: Tree): InstalledApp => home(tree).props.apps.find((a: InstalledApp) => a.name === 'Water Tracker');
-    const realNow = Date.now;
     await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
       await startBuild(tree, 'A water tracker');
       streams[0].push({ ...resultEvent('Water Tracker'), summary: summary(FIRST_SUMMARY, 'Start') });
       streams[0].end();
       await waitFor(() => tree.root.findAllByType(ReadyPage).length === 1, 'the first version');
       await press(button(tree, COPY.readyDone));
-      // The edit comes a minute later, as it would on a phone: a version's time is its commit's,
-      // to the second, and two versions stamped in the same second have no order between them.
-      Date.now = () => realNow() + 60_000;
       await TestRenderer.act(async () => home(tree).props.onPromptAgain(tracker(tree)));
       await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('Let me set my own daily goal'));
       await tap(() => tree.root.findByType(DescribePage).props.onContinue());
@@ -316,15 +546,16 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       await waitFor(() => tree.root.findAllByType(ReadyPage).length === 1, 'the second version');
       await press(button(tree, COPY.readyDone));
       await TestRenderer.act(async () => home(tree).props.onHistory(tracker(tree)));
-      await waitFor(() => tree.root.findAllByType(WhimProse).length === 2, 'both versions on the timeline');
-      h.eq(tree.root.findAllByType(WhimProse).map((n) => n.props.storedPrompt), ['Let me set my own daily goal', 'A water tracker'], 'newest first: the edit never rewrites v1');
-      h.eq(tree.root.findAllByType(WhimProse).map(yoursIn), [['Let me set my own daily goal'], ['A water tracker']], 'each headline quotes the user’s own words, rendered as theirs');
-      h.ok(hasRow(tree, 'Let me set my own daily goal') && hasRow(tree, 'A water tracker'), 'each under “You said”');
-      h.ok(!textOf(tree.root).includes(EDIT_SUMMARY) && !textOf(tree.root).includes(FIRST_SUMMARY), 'a collapsed row does not show Whim’s summary');
+      await waitFor(() => rows(tree).length === 2, 'both versions on the timeline');
+      const [edit, first] = rows(tree);
+      h.ok(textOf(edit).startsWith('“Let me set my own daily goal”') && textOf(first).startsWith('“A water tracker”'), 'newest first: the edit never rewrites v1');
+      h.eq([edit, first].map((r) => styleOf(textSaying(r, textOf(r).slice(0, textOf(r).indexOf('”') + 1))).fontStyle), ['italic', 'italic'], 'each row leads with the user’s own words, quoted, in the italic that marks them as theirs');
+      h.ok(textOf(edit).includes(EDIT_SUMMARY) && textOf(first).includes(FIRST_SUMMARY), 'each with what Whim did for it, without opening it');
+      h.ok(!textOf(edit).includes(FIRST_SUMMARY) && !textOf(first).includes(EDIT_SUMMARY), 'and only its own');
+      h.eq([textsSaying(edit, 'Current').length, chipIn(first, 'Start') !== undefined], [1, true], 'the edit is current; the build it began with is the Start');
       await press(row(tree, 'Let me set my own daily goal'));
-      h.ok(textOf(row(tree, 'Let me set my own daily goal')).includes(EDIT_SUMMARY), 'opening the edit’s row shows what Whim did for it');
-      h.ok(!textOf(tree.root).includes(FIRST_SUMMARY), 'and only for it: the other row stays closed');
-    }).finally(() => { Date.now = realNow; });
+      h.eq(rows(tree).map((r) => r.props.accessibilityState.expanded), [true, false], 'tapping the edit’s row opens it alone');
+    });
   });
 
   await h.test('history screen: opened from a running app’s orb, Back, system back and an iOS swipe return to that app, and the stack is never unmounted mid-pop; opened from Home, to Home', async () => {

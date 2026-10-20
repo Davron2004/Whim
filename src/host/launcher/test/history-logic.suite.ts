@@ -15,9 +15,6 @@ import {
   annotationBetween,
   buildHistoryRows,
   fieldsLeavingViewOnRestore,
-  filterRows,
-  formatRelativeTimestamp,
-  groupCounts,
   isAtTip,
   listVersions,
   storedSummary,
@@ -58,10 +55,10 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
     const list = await listVersions(access, orig);
     const rows = buildHistoryRows(list, await access.activeId(orig));
     h.eq(rows.map(r => r.headline), [historyQuotedPrompt('Example: track water'), historyQuotedPrompt('make a tip splitter')], 'each headline quotes the resolved prompt text');
-    h.eq(rows.map(r => r.origin), ['you-said', 'you-said'], 'under “You said”');
+    h.eq(rows.map(r => r.promptText), ['Example: track water', 'make a tip splitter'], 'each keeps the words it quotes');
     h.eq(rows.map(r => r.kind), [null, 'Start'], 'no summary: no kind, except the first version, which is the Start');
-    h.eq(rows.map(r => r.result), [null, null], 'and nothing of Whim’s for the opened row');
-    h.ok(rows.every(r => typeof r.when === 'string' && r.when.length > 0), 'every row carries a formatted timestamp');
+    h.eq(rows.map(r => r.result), [null, null], 'and no summary of Whim’s under the words');
+    h.eq(rows.map(r => r.meta.split(' · ')[0]), ['v2', 'v1'], 'every row’s meta line names its version');
   });
 
   await h.test('history: a summarised row still headlines with the user’s words; the summary, with its marks, is what the opened row says', async () => {
@@ -78,20 +75,20 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
     h.eq(rows[1].headline, historyQuotedPrompt('a tip splitter'), 'the install row (no summary) quotes its prompt too');
   });
 
-  await h.test('history: a version with no prompt reads “Whim, on its own” and headlines with its summary, once', async () => {
+  await h.test('history: a version with no prompt headlines with its summary, once', async () => {
     const { store, access } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: envelope('a tip splitter') });
     const fixed = { text: 'The timer kept counting past zero.', kind: 'Fixed', touched: ['The timer screen'], marks: [{ cls: 'chg', start: 4, end: 9 }] };
     await store.snapshot('wc', { 'bundle.js': 'V2' }, envelope('', fixed));
     const [unprompted] = buildHistoryRows(await listVersions(access, orig), await access.activeId(orig));
-    h.eq(unprompted.origin, 'whim-on-its-own', 'no words of the user’s: Whim acted on its own');
+    h.eq(unprompted.promptText, '', 'no words of the user’s to quote');
     h.eq(unprompted.headline, fixed.text, 'so the summary is the headline');
     h.eq(unprompted.marks, fixed.marks, 'with the summary’s own marks');
-    h.eq(unprompted.result, null, 'and the opened row does not say it a second time');
+    h.eq(unprompted.result, null, 'and the row does not say it a second time');
   });
 
-  // ── Kind grouping + unclassified rows (E6) ────────────────────────────────
-  await h.test('history: kind groups into the three filter pills; a version with no kind is unclassified', async () => {
+  // ── Kinds + unclassified rows ─────────────────────────────────────────────
+  await h.test('history: each row’s kind comes from its summary; a version with no kind is unclassified, and none is hidden', async () => {
     const { store, access } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: envelope('install it') });
     await store.snapshot('wc', { 'bundle.js': 'V2' }, envelope('add a chime', SUMMARY_ADDED)); // features
@@ -100,15 +97,8 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
     await store.snapshot('wc', { 'bundle.js': 'V5' }, 'raw legacy, no envelope at all'); // unclassified
     const list = await listVersions(access, orig);
     const rows = buildHistoryRows(list, await access.activeId(orig));
-    h.eq(rows.map(r => r.group), [null, 'fixes', 'look', 'features', 'features'], 'each row groups by its summariser kind; the raw-string row is unclassified; the first version is the Start');
-
-    const counts = groupCounts(rows);
-    h.eq(counts, { features: 2, look: 1, fixes: 1 }, 'live per-group counts');
-
-    const all = filterRows(rows, 'all');
-    h.eq(all.length, rows.length, 'the all-versions pill never hides a row, unclassified included');
-    const features = filterRows(rows, 'features');
-    h.eq(features.map(r => r.id), [rows[3].id, rows[4].id], 'the features pill narrows to only that group');
+    h.eq(rows.map(r => r.kind), [null, 'Fixed', 'Look', 'Added', 'Start'], 'each row takes its summariser kind; the raw-string row is unclassified; the first version is the Start');
+    h.eq(rows.length, list.length, 'every version is a row, unclassified included');
   });
 
   // ── Live count (E6) ────────────────────────────────────────────────────────
@@ -357,13 +347,19 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
     h.eq(await isAtTip(access, orig), false, 'not at tip after rolling back to an older snapshot');
   });
 
-  // ── formatRelativeTimestamp (unchanged) ────────────────────────────────────
-  await h.test('history: formatRelativeTimestamp renders short relative labels', () => {
-    const now = 1_700_000_000_000;
-    h.eq(formatRelativeTimestamp(now - 30_000, now), 'Just now', 'under a minute');
-    h.eq(formatRelativeTimestamp(now - 5 * 60_000, now), '5m ago', 'minutes');
-    h.eq(formatRelativeTimestamp(now - 3 * 3_600_000, now), '3h ago', 'hours');
-    h.eq(formatRelativeTimestamp(now - 2 * 86_400_000, now), '2d ago', 'days');
+  // ── the meta line ─────────────────────────────────────────────────────────
+  await h.test('history: a row’s meta line says its version and how long ago it was made, in words', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: envelope('p1') });
+    await store.snapshot('wc', { 'bundle.js': 'V2' }, envelope('p2'));
+    const list = await listVersions(access, orig);
+    const made = list[0].createdAt;
+    const metaAt = (later: number) => buildHistoryRows(list, list[0].id, made + later)[0].meta;
+    h.eq(metaAt(30_000), 'v2 · just now', 'under a minute');
+    h.eq(metaAt(5 * 60_000), 'v2 · 5 min ago', 'minutes');
+    h.eq(metaAt(3 * 3_600_000), 'v2 · 3 h ago', 'hours');
+    h.eq(metaAt(2 * 86_400_000), 'v2 · 2 days ago', 'days');
+    h.eq(buildHistoryRows(list, list[0].id, made + 30_000)[1].meta, 'v1 · just now', 'the first version is v1');
   });
 
 }

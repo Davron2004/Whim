@@ -10,19 +10,20 @@ expand-not-restore, confirm-gated restore and copy, reaching History from Home).
 
 ## History reads as the user's own prompts
 
-1. Under `You said`, each row's headline quotes the user's own words (design `4a`, "the prompt is
-   the headline"): `historyQuotedPrompt(parsePromptEnvelope(snapshot.prompt).text)` — a v1 envelope
-   renders its `text`, a raw legacy string (not envelope JSON) renders unchanged inside the quotes,
-   neither ever throws — and the stored summary (`storedSummary`) is never the headline. A version
-   with no prompt reads `Whim, on its own` and headlines with its summary's `text`. Each row also
-   carries `formatRelativeTimestamp(snapshot.createdAt)`, a kind badge (or none, when
-   unclassified), a version identifier (`v<n>`, a display ordinal, never a git ref), and an origin
-   line.
-2. The header names the app in its own hue (resolved through `tiles.ts#tileColor` — the one path
-   every surface resolves an app's colour through) followed by "history", over a subtitle counting
-   versions and naming when the app started.
-3. The current version is marked `↑ you're on this one`, derived live from `StoreAccess.activeId`
-   — never persisted on the app record — and appears beneath no other row.
+1. Each row leads with the user's own words, quoted, in italic `title3` (system.md §7.1 Timeline
+   row): `historyQuotedPrompt(parsePromptEnvelope(snapshot.prompt).text)` — a v1 envelope renders
+   its `text`, a raw legacy string (not envelope JSON) renders unchanged inside the quotes, neither
+   ever throws — and the stored summary (`storedSummary`) is never the headline. A version with no
+   prompt headlines with its summary's `text`. Under the words: Whim's summary (`callout`
+   `text-2`; the first version without one says `Where this app began`), then "v4 · 2 days ago" in
+   tabular figures (`historyRowMeta`), a neutral kind chip with its icon (or none, when
+   unclassified) — every kind on the same `fill`/`text-2` — and `Current` on the active version.
+   The rail runs from the newest row's dot and stops at v1's.
+2. Under a header row with Back and the `Report` text button: "History" in `title1`, the app's
+   40 pt tile (`tileOf`), its name in its tint's value for the scheme and the version count
+   (`historyVersionCount`). Every text follows the phone's scheme and stops at 200% (#186).
+3. The current version, derived live from `StoreAccess.activeId` — never persisted on the app
+   record — carries the `Current` badge and the `ink` dot; no other row does.
 4. The install row (the list's last entry) renders install-appropriate copy and offers exactly one
    action, `Start a copy here` — no restore action, since there is no earlier state.
 
@@ -40,9 +41,8 @@ expand-not-restore, confirm-gated restore and copy, reaching History from Home).
 
 ## An expanded row answers what happened, what it touched, and what to do next
 
-8. The expanded body shows, first, Whim's summary of the version (`row.result`, with its producer
-   marks; absent when the version has none or the summary is already the headline), then the
-   `What it touched` chips (`summary.touched`, area names — never a diff), and the data-shape
+8. The expanded body shows the `What it touched` chips (`summary.touched`, area names — never a
+   diff), and the data-shape
    annotation (`addedFieldsLine`, when the row's `schema.json` changed since its predecessor)
    rendered with an explicit `hedge` mark spanning it.
 9. The current version's row offers exactly one action, `Change it from here`. Any past version's
@@ -50,13 +50,10 @@ expand-not-restore, confirm-gated restore and copy, reaching History from Home).
    `Start a copy here`. No row ever exposes a third action (`history-logic.suite.ts` asserts
    `actions.length <= 2` across a mixed list).
 
-## Filter pills group the list by what changed
+## No filters
 
-10. The all-versions pill's label carries the live count (`historyFilterAll(rows.length)`) and is
-    selected by default; a group pill (`features` / `look` / `fixes`, from `KIND_GROUP`) is shown
-    only when at least one row belongs to it. A version with no summariser kind is `null`-grouped
-    and stays reachable only under the all-versions pill (`filterRows(rows, 'all')` never narrows
-    it out; `filterRows(rows, <group>)` does).
+10. Every version is listed; there are no filter pills (version-history REMOVED "Filter pills group
+    the list by what changed"). The only controls are Back, `Report` and the rows.
 
 ## Any version can become its own app
 

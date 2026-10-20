@@ -202,19 +202,14 @@ export const COPY = {
 
   // ── history (4a) ────────────────────────────────────────────────────────────
   actionHistory: 'History',
-  /** The header reads "<app name, in its own hue> history" — the name is a coloured span the
-   *  screen composes, so only the trailing word lives here. */
-  historyTitleSuffix: 'history',
-  historyOriginYouSaid: 'You said',
-  historyOriginUnprompted: 'Whim, on its own',
-  historyCurrentMarker: '↑ you’re on this one',
+  /** The History screen's title (system.md §9); the app's name and version count sit under it. */
+  historyTitle: 'History',
+  /** The badge on the version the app runs now. */
+  historyCurrent: 'Current',
   historyTouchedEyebrow: 'What it touched',
   historyChangeFromHere: 'Change it from here',
   historyGoBackToThis: 'Go back to this',
   historyStartCopyHere: 'Start a copy here',
-  historyFilterWhatItDoes: 'What it does',
-  historyFilterLook: 'Look',
-  historyFilterFixes: 'Fixes',
   historyKindAdded: 'Added',
   historyKindChanged: 'Changed',
   historyKindRemoved: 'Removed',
@@ -1058,21 +1053,20 @@ export function whimSheetVersionLine(version: number, changedAt: number, now: nu
   return `Version ${version} · changed ${agoWords(changedAt, now)}`;
 }
 
-/** The history header's subtitle: "7 versions · started 3 days ago". */
-export function historySubtitle(versionCount: number, startedWhen: string): string {
-  const versions = versionCount === 1 ? '1 version' : `${versionCount} versions`;
-  return `${versions} · started ${startedWhen}`;
+/** How many versions History lists, under the app's name: "4 versions". */
+export function historyVersionCount(versionCount: number): string {
+  return versionCount === 1 ? '1 version' : `${versionCount} versions`;
+}
+
+/** A History row's meta line: "v4 · 2 days ago". */
+export function historyRowMeta(version: string, createdAt: number, now: number): string {
+  return `${version} · ${agoWords(createdAt, now)}`;
 }
 
 /** A history row's headline under `You said` (design 4a, "the prompt is the headline"): the
  *  user's own words, verbatim, in quotation marks. */
 export function historyQuotedPrompt(prompt: string): string {
   return `“${prompt}”`;
-}
-
-/** The all-versions filter pill, whose count is live: "All 7". */
-export function historyFilterAll(versionCount: number): string {
-  return `All ${versionCount}`;
 }
 
 /** The copy-this-version confirm sheet's title. */

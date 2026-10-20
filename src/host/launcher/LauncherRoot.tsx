@@ -14,7 +14,7 @@
 // the same `whim.launcher` KVBackend the installed-apps index uses. One WebView == one realm ==
 // one app: launching reads the active bundle source from the record and hands it to MiniAppView
 // (keyed by launcher id, so each launch is a fresh realm).
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Linking, StatusBar, StyleSheet, Text, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
@@ -414,11 +414,12 @@ function stackTitle(on: StackScreen): string | undefined {
   }
 }
 
-/** Whether a stack screen draws from the token module, following the phone's appearance; History
- *  and the consent screen still draw the fixed light v2 palette (`theme.ts`). Their header and the
- *  status bar follow whichever the screen on top draws. */
+/** Whether a stack screen draws from the token module, following the phone's appearance; the
+ *  consent screen still draws the fixed light v2 palette (`theme.ts`). Its header and the status bar
+ *  follow whichever the screen on top draws. History follows the phone wherever it was opened from:
+ *  it is a host screen, never the frame of the app it was opened over. */
 function schemeFollowing(on: StackScreen): boolean {
-  return on.kind === 'home' || on.kind === 'settings' || on.kind === 'advanced' || on.kind === 'report';
+  return on.kind === 'home' || on.kind === 'settings' || on.kind === 'advanced' || on.kind === 'report' || on.kind === 'history';
 }
 
 /** Whether the shell's frame (the status-bar strip above a screen drawn without the native stack)
@@ -1283,8 +1284,13 @@ function LauncherShell({
    *  UIKit animates it, and an app opening meanwhile would unmount the stack mid-pop (react-native-screens
    *  then keeps the unfinished pop in the stack it recycles, and the next Home it shows is blank for good,
    *  iOS). It ends when the stack says its move finished (`NativeStack`'s `onSettled`), or after
-   *  `POP_FALLBACK_MS` should that never come. `latest` numbers what waits on it: only the last one goes. */
-  const stackPop = useRef<{ settled: Promise<void>; end: () => void; latest: number } | null>(null);
+   *  `POP_FALLBACK_MS` should that never come. A push the platform is still drawing finishes first and
+   *  says so too (Android back during History's push): that word is the push's, not the pop's, so the
+   *  hold waits for one more per push in flight (`waits`). `latest` numbers what waits on it: only the
+   *  last one goes. */
+  const stackPop = useRef<{ settled: Promise<void>; end: () => void; waits: number; latest: number } | null>(null);
+  /** Pushes the platform is drawing and has not yet said it finished. */
+  const stackPushes = useRef({ depth: 0, drawing: 0 });
   const startStackPop = () => {
     if (stackPop.current !== null) return;
     let release!: () => void;
@@ -1295,8 +1301,17 @@ function LauncherShell({
       release();
     };
     const timer = setTimeout(end, POP_FALLBACK_MS);
-    const pop = { settled, end, latest: 0 };
+    const pop = { settled, end, waits: 1 + stackPushes.current.drawing, latest: 0 };
     stackPop.current = pop;
+  };
+  /** The stack finished a move it was drawing: the oldest push in flight, else the pop. */
+  const onStackSettled = () => {
+    const pushes = stackPushes.current;
+    pushes.drawing = Math.max(0, pushes.drawing - 1);
+    const pop = stackPop.current;
+    if (pop === null) return;
+    pop.waits -= 1;
+    if (pop.waits <= 0) pop.end();
   };
   useEffect(() => () => {
     // The shell is gone: nothing that waits on the pop may run.
@@ -3648,11 +3663,20 @@ function LauncherShell({
   const base: Screen = running ?? screen;
   const sheetPage = renderSheetPage();
   const stack = ready ? stackFor(base) : null;
+  // A deeper stack is a push the platform now draws; a stack mounted afresh (History over an app)
+  // is not drawn as a move, and one gone will never say a move finished.
+  const stackDepth = stack?.length ?? 0;
+  useLayoutEffect(() => {
+    const pushes = stackPushes.current;
+    if (stackDepth === 0) pushes.drawing = 0;
+    else if (pushes.depth > 0 && stackDepth > pushes.depth) pushes.drawing += 1;
+    pushes.depth = stackDepth;
+  }, [stackDepth]);
   let content: React.ReactNode;
   if (!ready) {
     content = <HomeSkeleton count={knownAppCount} />;
   } else if (stack !== null) {
-    content = <NativeStack entries={stack.map(stackEntry)} onSettled={() => stackPop.current?.end()} />;
+    content = <NativeStack entries={stack.map(stackEntry)} onSettled={onStackSettled} />;
   } else {
     content = renderScreenContent();
   }

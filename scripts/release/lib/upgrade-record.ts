@@ -88,9 +88,10 @@ function showsName(text: string, name: string): boolean {
   return text === name || text.endsWith(`, ${name}`) || text.endsWith(` ${name}`) || text.startsWith(`${name}, `) || text.includes(`, ${name}, `);
 }
 
-const VERSIONS_LINE = /^(\d+) versions? · /;
+const VERSIONS_LINE = /^(\d+) versions?(?: · |$)/;
 
-/** The version count on a History screen ("2 versions · started 1d ago", copy.ts#historySubtitle). */
+/** The version count on a History screen: "2 versions" (copy.ts#historyVersionCount), or "2 versions ·
+ *  started 1d ago" on builds from before design-system-v1. */
 export function versionsFromHistory(texts: readonly string[]): number | null {
   for (const text of texts) {
     const match = VERSIONS_LINE.exec(text);
