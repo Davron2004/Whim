@@ -224,6 +224,10 @@ export function MiniAppStage({ launch, onFrame }: Readonly<MiniAppStageProps>) {
               javaScriptEnabled
               domStorageEnabled={false}
               setSupportMultipleWindows={false}
+              // Android's WebView zooms text by the system font scale on its own; the SDK already
+              // sizes text by the theme's `fontScale` (system.md §6), so text is scaled once. iOS
+              // has no such zoom and ignores the prop.
+              textZoom={100}
               onError={(ev) => {
                 logWebViewError(log, ev.nativeEvent, waiting ? { surface: 'waiting' } : { appId: launch?.record.appId });
                 onSlotGone(slot.key);
