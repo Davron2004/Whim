@@ -43,7 +43,7 @@ export interface MakingRow {
   readonly elapsed?: string;
 }
 
-/** How the page's ember burns: following the stream, held still and dim in line, stuck at 35%. */
+/** How the page's ember burns: following the stream, or still and dim (35%) in line or stalled, as a waiting tile's. */
 export interface MakingEmber {
   readonly state: Extract<EmberState, 'working' | 'stuck'>;
   /** Stream activity 0–1 (system.md §4.6); 0 while in line or stuck. */
@@ -99,7 +99,7 @@ export function makingProgress(state: MakingState, signals: RunSignals | null, n
   const elapsed = current !== null && state.stepSince !== undefined ? elapsedLabel(state.stepSince, now) : undefined;
   const rows = stepRows(state, current, elapsed);
   if (state.queuedPosition !== undefined) {
-    return { rows, line: makingQueueLine(state.queuedPosition), ember: { state: 'working', activity: 0 } };
+    return { rows, line: makingQueueLine(state.queuedPosition), ember: { state: 'stuck', activity: 0 } };
   }
   if (signals !== null && livenessOf(signals, now) === 'stalled') {
     return { rows, line: makingStallLine(STALL_MS / 1000), ember: { state: 'stuck', activity: 0 } };

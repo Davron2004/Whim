@@ -3,6 +3,7 @@
  *  "Decide for me" exclusive, plan rows edit in place, the can't-make-as-asked state offers its two
  *  actions, and each exit on the running pages calls its own callback. */
 import React, { useState } from 'react';
+import { StyleSheet } from 'react-native';
 import TestRenderer from 'react-test-renderer';
 import { ClarifyQuestion } from '@whim/contract';
 import { STUB_LIMIT } from '../../../../server/src/stub-markers';
@@ -18,7 +19,7 @@ import { Sheet } from '../../ui/Sheet';
 import { TilePlate } from '../../ui/AppTile';
 import { TILE_SIDE } from '../../ui/AppTile-geometry';
 import { Icon } from '../../ui/Icon';
-import { Ember } from '../../ui/Ember';
+import { AmbientLight, Ember } from '../../ui/Ember';
 import { Button } from '../../ui/Button';
 import { tileOf } from '../tile-identity';
 import { COLORS } from '../../../design/tokens';
@@ -504,7 +505,14 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
     await rendered(<MakingPage name="Tea timer" changing={false} words="A tea timer" stage={null} delivering={false} queuedPosition={3} stepSince={0} signals={signals} now={5_000} activity={0.9} onStop={noop} />, async (tree) => {
       h.ok(textOf(tree.root).includes('2 ahead of you.'), 'position 3 is two ahead');
       h.ok(stepLabels(tree).every((label) => label.endsWith(COPY.makingStepWaiting)), 'no step has started');
-      h.eq([tree.root.findByType(Ember).props.state, tree.root.findByType(Ember).props.activity], ['working', 0], 'the ember is lit at rest, whatever the sample says');
+      const ember = tree.root.findByType(Ember).props;
+      h.eq(ember.activity, 0, 'the ember is still, whatever the sample says');
+      await rendered(<TilePlate size="grid" state="queued" tint="rose" glyph="coffee" />, async (tile) => {
+        h.eq(ember.state, tile.root.findByType(Ember).props.state, 'and dim as the waiting tile’s ember');
+      });
+      await rendered(<TilePlate size="grid" state="making" tint="rose" glyph="coffee" />, async (tile) => {
+        h.ok(ember.state !== tile.root.findByType(Ember).props.state, 'not burning like a tile being made');
+      });
       h.ok(button(tree, COPY.actionStop) != null, 'and Stop is there');
     });
   });
@@ -514,6 +522,32 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
     await rendered(<MakingPage name="Tea timer" changing={false} words="A tea timer" stage="generate" delivering={false} stepSince={0} signals={signals} now={46_000} activity={0.4} onStop={noop} />, async (tree) => {
       h.ok(textOf(tree.root).includes('No word from the server for 40 s. Still waiting.'), 'the stall line replaces the time line');
       h.eq(tree.root.findByType(Ember).props.state, 'stuck', 'and the ember is stuck');
+    });
+  });
+
+  await h.test('making: the ambient light fades into the sheet where the page’s top cuts it off and is whole by the ember, so the cut shows no edge', async () => {
+    await rendered(<MakingPage name="Tea timer" changing={false} words="A tea timer" stage="generate" delivering={false} stepSince={0} signals={null} now={0} activity={1} onStop={noop} />, async (tree) => {
+      const light = tree.root.findByType(AmbientLight);
+      // The light hangs above the page's first row by its wrapper's negative top; the page's own
+      // top edge (where the scroll view clips) is that far down the light's box.
+      const cut = -Number(StyleSheet.flatten(light.parent!.props.style).top);
+      const height = Number(light.props.height);
+      const rects = light.findAll((n) => hostType(n) === 'Rect');
+      const glowAt = rects.findIndex((r) => !String(r.props.fill).includes('fade'));
+      const veil = rects.find((r, i) => i > glowAt && String(r.props.fill).includes('fade'));
+      h.ok(veil !== undefined, 'something is drawn over the glow');
+      const fade = light.find((n) => hostType(n) === 'LinearGradient' && veil!.props.fill === `url(#${String(n.props.id)})`);
+      const stops = fade.findAll((n) => hostType(n) === 'Stop');
+      h.eq(stops.map((s) => s.props.stopColor), [COLORS.light.sheet, COLORS.light.sheet], 'in the sheet’s own colour');
+      const [from, to] = stops.map((s) => Number(s.props.stopOpacity));
+      const covered = (y: number) => {
+        if (y < Number(veil!.props.y) || y > Number(veil!.props.y) + Number(veil!.props.height)) return 0;
+        const along = Math.min(1, Math.max(0, (y - Number(fade.props.y1)) / (Number(fade.props.y2) - Number(fade.props.y1))));
+        return from + (to - from) * along;
+      };
+      h.ok(cut > 0, `the light reaches above the page (${cut} pt)`);
+      h.eq([covered(0), covered(cut)], [1, 1], 'the sheet covers it wholly at and above the page’s top edge');
+      h.eq(covered(height / 2), 0, 'and not at all at its centre, behind the ember');
     });
   });
 

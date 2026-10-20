@@ -60,10 +60,10 @@ useHomeLive(active: boolean, attempts: () => readonly { id; signals }[]): LiveVi
 - `LauncherRoot.liveView` is active while the screen is `home` OR `making`; Home tiles read `activity[rec.id]`, the
   Making page reads `activity[screen.runId] ?? 0` and passes it through `makingProgress(...).ember`.
 - Tokens per second count `token` events plus reasoning (`thinkingChars / 4`); first sample of a run is 0.
-- In line: ember `working` at activity 0 (still, dim). Stuck: `livenessOf(signals, now) === 'stalled'` (no frame,
+- In line: ember `stuck` at activity 0 (still and dim, as the queued tile's). Stuck: `livenessOf(signals, now) === 'stalled'` (no frame,
   keepalives included, for `STALL_MS` 40 s) → `Ember state 'stuck'`, AmbientLight activity 0.
 - Not provided yet: §4.6 flicker (token arrival in the last 500 ms) — derive from `RunSignals.lastTokenAt`.
-- `Ember({ size: 20|24|48|96|128; state: 'working'|'stuck'|'out'; activity?; spark? })`, `AmbientLight({ width; height; activity })`.
+- `Ember({ size: 20|24|48|96|128; state: 'working'|'stuck'|'out'; activity?; spark? })`, `AmbientLight({ width; height; activity; cut?: { at; backdrop } })`.
 
 ## Failure — `failure-kind.ts`
 

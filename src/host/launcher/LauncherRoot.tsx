@@ -1797,7 +1797,11 @@ function LauncherShell({
     // window, which no aggregate entry can) and how many `diagnostic` events went past. Only the
     // loop that watched the stream can supply them, so they are threaded in rather than re-derived.
     try {
-      journal.appendTerminal(id, { failure: { reason, diagnostics }, ...observed });
+      // A retry that ended before anything of it was journaled (the request never reached the
+      // server, or was refused) erases nothing: the earlier run's journal comes back and the retry's
+      // ending is added to it, without counts of its own, so its timeline still reads.
+      const keepsEarlierRun = keepEarlierRun(id, retrySnapshot);
+      journal.appendTerminal(id, { failure: { reason, diagnostics }, ...(keepsEarlierRun ? {} : observed) });
       pending.setFailed(id, {
         reason,
         ...(diagnostics.length > 0 ? { diagnostics: diagnostics.map((diagnostic) => diagnostic.hint).join('\n') } : {}),
@@ -2190,6 +2194,27 @@ function LauncherShell({
       });
       return false;
     }
+  };
+
+  /** The retry journaled nothing of its own, and the record it reused had a journal that was its
+   *  verified report: one marked unavailable stays so, never borrowed back. */
+  const retryLeftNoTrace = (id: string, previous: AttemptSnapshot): boolean => {
+    if (previous.journal == null || previous.journal === '[]' || previous.pending == null) return false;
+    try {
+      const record = JSON.parse(previous.pending) as { journalUnavailable?: unknown };
+      return record.journalUnavailable !== true && kv.getString(JOURNAL_KEY(id)) === '[]';
+    } catch (error) {
+      log.warn(CHANNELS.gen, 'earlier attempt record is unreadable', { operation: 'keep-earlier-run', ...errorFields(error) });
+      return false;
+    }
+  };
+
+  /** Whether the earlier run's journal is back under the attempt's id, under the association guard
+   *  the settlement's verified write then clears; throws when it should be and is not. */
+  const keepEarlierRun = (id: string, previous: AttemptSnapshot | undefined): boolean => {
+    if (previous == null || !retryLeftNoTrace(id, previous)) return false;
+    if (!(guardJournalAssociation(id) && writeRaw(JOURNAL_KEY(id), previous.journal))) throw new Error('earlier journal did not restore');
+    return true;
   };
 
   /** A best-effort terminal fallback uses the established generic stream error, which is all a

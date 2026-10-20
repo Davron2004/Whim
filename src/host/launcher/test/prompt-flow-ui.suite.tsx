@@ -23,7 +23,7 @@ import { Share, holdModalDismissals, modalPresentations } from './native-host';
 import { chooseRow, longPress, pressToastAction, toastOf } from './home-rig';
 import { streamResponse } from './client-fixtures';
 import { androidBack, button, isHost, press, textOf } from './react-screen';
-import { buildIt, composeAndContinue, hasInstalled, json, makingSheetOpen, onHome, planLoaded, questionsLanded, resultEvent, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, failureTryAgain, hasInstalled, json, makingSheetOpen, onHome, planLoaded, questionsLanded, resultEvent, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 
 const QUESTION = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'], select: 'one', other: false };
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
@@ -736,6 +736,31 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('flow: a Try again that never reaches the server keeps the earlier run’s What happened, on the page and on its tile', async () => {
+    const net: { up: boolean; reach?: boolean; tries?: number; cut?: () => void } = { up: true };
+    await withLauncher(cuttingServer(net), async ({ tree, kv }) => {
+      await startBuild(tree, 'A tea timer');
+      await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'generate' && net.cut != null, 'the run under way');
+      net.cut!();
+      await waitFor(() => on(tree, FailurePage), 'the failure page');
+      const whatHappened = async () => {
+        const row = button(tree, COPY.timelineTitle);
+        if (row.props.accessibilityState?.expanded !== true) await press(row);
+        return textOf(tree.root.findByType(FailurePage));
+      };
+      h.ok((await whatHappened()).includes(COPY.timelineStageGenerate), 'What happened holds the run’s step');
+      net.reach = false;
+      await press(failureTryAgain(tree));
+      await waitFor(() => net.tries === 2 && on(tree, FailurePage), 'the retry’s failure page');
+      h.eq(tree.root.findByType(FailurePage).props.kind, 'connection', 'the retry could not reach the server');
+      h.ok((await whatHappened()).includes(COPY.timelineStageGenerate), 'and What happened still holds the earlier run’s step');
+      net.reach = true;
+      await press(button(tree, COPY.sheetClose));
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).list()[0]));
+      h.ok((await whatHappened()).includes(COPY.timelineStageGenerate), 'as it does reopened from its tile, once back online');
+    });
+  });
+
   await h.test('flow: a run the network cut stores a lost connection as its cause', async () => {
     const net: { up: boolean; cut?: () => void } = { up: true };
     await withLauncher(cuttingServer(net), async ({ tree, kv }) => {
@@ -762,8 +787,9 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
 }
 
 /** A server whose generate stream sends one stage and is then cut by the network, as a phone
- *  going offline mid-run sees it; `net.up` also answers the connectivity probe. */
-function cuttingServer(net: { up: boolean; cut?: () => void }) {
+ *  going offline mid-run sees it; `net.up` also answers the connectivity probe. With `net.reach`
+ *  false a generate request never reaches it; `net.tries` counts generate requests. */
+function cuttingServer(net: { up: boolean; reach?: boolean; tries?: number; cut?: () => void }) {
   const encoder = new TextEncoder();
   return {
     health: () => {
@@ -773,6 +799,8 @@ function cuttingServer(net: { up: boolean; cut?: () => void }) {
     server: (r: SentRequest) => {
       if (r.path === '/v1/clarify') return json({ questions: [] });
       if (r.path === '/v1/rewrite') return json({ rewrittenPrompt: String(r.body?.prompt), plan: [] });
+      net.tries = (net.tries ?? 0) + 1;
+      if (net.reach === false) return Promise.reject(new TypeError('Network request failed'));
       const body = new ReadableStream<Uint8Array>({
         start: (controller) => {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'stage', stage: 'generate', status: 'start' })}\n\n`));

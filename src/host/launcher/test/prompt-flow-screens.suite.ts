@@ -489,7 +489,7 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     const view = makingProgress(waiting, null, 2, 0.8);
     h.eq(view.line, '2 ahead of you.', 'two ahead');
     h.ok(view.rows.every((row) => row.state === 'waiting' && row.elapsed === undefined), 'nothing has started, so no step is live or timed');
-    h.eq(view.ember, { state: 'working', activity: 0 }, 'the ember rests, whatever the stream sample says');
+    h.eq(view.ember, { state: 'stuck', activity: 0 }, 'the ember is still and dim, whatever the stream sample says');
     h.eq(makingProgress(withStreamEvent(waiting, { type: 'queued', position: 1 }, 3), null, 3, 0).line, COPY.makingQueuedNext, 'at the front it is next');
   });
 

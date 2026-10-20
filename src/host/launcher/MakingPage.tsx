@@ -26,7 +26,8 @@ import type { RunSignals, Stage } from './prompt-flow';
 
 /** A step's mark: the 20 pt ring, the 8 pt dot inside it while current. */
 const STEP_MARK = { ring: 20, dot: 8, border: 1.5 } as const;
-/** The ambient light reaches past the sheet's sides and above the ember. */
+/** The ambient light reaches past the sheet's sides and above the ember, up past the page's top edge,
+ *  where it fades into the sheet (`cut`) rather than being clipped flat. */
 const AMBIENT = { overhang: 60, height: 340, lift: 110 } as const;
 
 export interface MakingPageProps {
@@ -146,7 +147,7 @@ export default function MakingPage({
     >
       <View style={s.header}>
         <View style={[s.ambient, { width: ambientWidth }]} pointerEvents="none">
-          <AmbientLight width={ambientWidth} height={AMBIENT.height} activity={progress.ember.state === 'stuck' ? 0 : progress.ember.activity} />
+          <AmbientLight width={ambientWidth} height={AMBIENT.height} cut={{ at: AMBIENT.lift, backdrop: t.colors.sheet }} activity={progress.ember.state === 'stuck' ? 0 : progress.ember.activity} />
         </View>
         <Ember size={128} state={progress.ember.state} activity={progress.ember.activity} />
         <Text type="title1" style={s.title}>
