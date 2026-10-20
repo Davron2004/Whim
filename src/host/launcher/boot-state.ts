@@ -57,22 +57,25 @@ export interface PaintFrame {
 }
 
 /**
- * Whether a `paint` frame may move the boot state to `running`. The frame must be
- * nonce-authenticated (`trusted`, stamped by the outer page — the same check the `probes` branch
- * applies), so a bundle cannot post a `paint` for itself to skip its own boot state. Its timing
- * must also be a finite, nonnegative number: `paintMs !== null` is the host's only painted-state
- * signal, so accepting a frame that cannot populate it would cancel the deadline while leaving
- * the UI on `Opening…` forever.
+ * Whether a `paint` frame is the opening signal of the current launch, moving the boot state to
+ * `running`. The frame must be nonce-authenticated (`trusted`, stamped by the outer page — the same
+ * check the `probes` branch applies), so a bundle cannot post a `paint` for itself to skip its own
+ * boot state. Its timing must also be a finite, nonnegative number: `paintMs !== null` is the
+ * host's only painted-state signal, so accepting a frame that cannot populate it would cancel the
+ * deadline while leaving the UI on `Opening…` forever.
  *
- * Deliberately NOT generation-fenced, unlike `nav-depth`: a stale-realm paint cannot reach the boot
- * state, because a realm reset RECREATES the iframe (spike2 §5), which tears down the old realm's
- * window before the new one exists. The outer page does stamp `payload.generation` with the
- * host-bound `GEN`, as it does `nav-depth`; the iframe-local `window.__whimGeneration` (0, then 1 on
- * the first delivery) never reaches the host, and must never be compared with the host's counter.
+ * And it must belong to the current bind (design-system-v1 D4): `payload.generation` must equal
+ * `boundGeneration`, the generation the host bound the live realm at, which the outer page stamps
+ * onto every `paint` it forwards (as it does `nav-depth`). A reset recreates the iframe and rotates
+ * the nonce (spike2 §5), but a frame already forwarded to RN can still be delivered after the next
+ * bind; its older stamp keeps it from opening the new launch. `null` (no realm bound) accepts
+ * nothing. The iframe-local `window.__whimGeneration` never reaches the host and is never compared.
  */
-export function paintAccepted(frame: PaintFrame | null | undefined): boolean {
+export function paintAccepted(frame: PaintFrame | null | undefined, boundGeneration: number | null): boolean {
   const paintMs = frame?.payload?.mountToFirstPaintMs;
   return frame?.trusted === true
+    && boundGeneration !== null
+    && frame.payload?.generation === boundGeneration
     && typeof paintMs === 'number'
     && Number.isFinite(paintMs)
     && paintMs >= 0;
@@ -91,8 +94,8 @@ export interface StartupDeadlineScheduler {
 export interface StartupDeadline {
   /** Start, or restart, the allowance for the current attempt. */
   begin(): void;
-  /** Complete startup only for authenticated paint carrying finite, nonnegative timing. */
-  acceptPaint(frame: PaintFrame | null | undefined): boolean;
+  /** Complete startup only for the current bind's authenticated paint (`paintAccepted`). */
+  acceptPaint(frame: PaintFrame | null | undefined, boundGeneration: number | null): boolean;
   /** Cancel the current attempt and invalidate a callback already queued by the platform. */
   cancel(): void;
 }
@@ -137,8 +140,8 @@ export function createStartupDeadline(
         onTimeout();
       }, STARTUP_DEADLINE_MS);
     },
-    acceptPaint(frame) {
-      if (!paintAccepted(frame)) return false;
+    acceptPaint(frame, boundGeneration) {
+      if (!paintAccepted(frame, boundGeneration)) return false;
       cancel();
       return true;
     },

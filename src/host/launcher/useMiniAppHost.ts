@@ -65,11 +65,16 @@ function handleDeliveryFrame(payload: any, startupDeadline: StartupDeadline): vo
 }
 
 /** A `paint` frame ends the container's boot state (`boot-state.ts`) and disarms the watchdog --
- *  but only when it is nonce-authenticated (`paintAccepted`), the same trust check `probes`
- *  applies. It is NOT generation-fenced like `nav-depth` (`boot-state.ts` carries the reasoning).
+ *  but only when it is nonce-authenticated, the same trust check `probes` applies, AND stamped with
+ *  the live realm's bind generation (`paintAccepted`): a previous launch's late paint opens nothing.
  *  `generation` on HostState is owned by the `probes` branch alone. */
-function handlePaintFrame(frame: any, startupDeadline: StartupDeadline, setS: (fn: (p: HostState) => HostState) => void): void {
-  if (!startupDeadline.acceptPaint(frame)) return;
+function handlePaintFrame(
+  frame: any,
+  boundGeneration: number | null,
+  startupDeadline: StartupDeadline,
+  setS: (fn: (p: HostState) => HostState) => void,
+): void {
+  if (!startupDeadline.acceptPaint(frame, boundGeneration)) return;
   setS((p) => ({ ...p, paintMs: frame.payload?.mountToFirstPaintMs ?? null }));
 }
 
@@ -315,7 +320,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         setS((p) => ({ ...p, lastTap: `${m.payload?.type ?? '?'} "${m.payload?.label ?? ''}"` }));
         return;
       case 'paint':
-        handlePaintFrame(m, startupDeadline.current, setS);
+        handlePaintFrame(m, live.current?.realm.generation ?? null, startupDeadline.current, setS);
         return;
       case 'probes': {
         const r = m.payload || {};

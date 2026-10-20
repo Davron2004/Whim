@@ -102,9 +102,19 @@ async function withMiniApp(record: AppRecord, body: (m: Mounted) => Promise<void
   }
 }
 
-/** The first paint of a freshly delivered realm: the iframe's own generation counter reads 1 on
- *  its first delivery, whatever generation the host bound the realm under. */
-const FIRST_PAINT = { kind: 'paint', trusted: true, payload: { generation: 1, mountToFirstPaintMs: 42, appName: 'Tip Splitter' } };
+/** The generation the latest delivery script bound its realm at (`deliverBySourceJs` writes it into
+ *  `reinject({…, generation: N})`); the outer page stamps exactly that onto the realm's `paint`. */
+function boundGeneration(): number {
+  const delivery = injectedScripts.filter((s) => s.includes('__whimControl.reinject(')).at(-1);
+  return Number(/,generation:(\d+)/.exec(delivery ?? '')?.[1]);
+}
+
+/** A realm's first paint as the outer page forwards it: nonce-authenticated, stamped with the
+ *  generation of the delivery that bound it (the latest one unless given) — the stamp
+ *  `npm run launcher:deliver-verify` checks the real page applies. */
+function firstPaint(generation = boundGeneration()) {
+  return { kind: 'paint', trusted: true, payload: { generation, mountToFirstPaintMs: 42, appName: 'Tip Splitter' } };
+}
 
 /** Uncaught realm errors exactly as the outer page forwards them to RN, copied from the frames
  *  `npm run bridge:invariants` (INV-ERRFRAME) records for the error-raiser fixture. */
@@ -176,11 +186,42 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await loadEnd();
       h.eq(injectedScripts.length, 1, 'the bundle is delivered once the page has loaded');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'and the startup deadline is running');
-      await frame({ ...FIRST_PAINT, trusted: false });
+      await frame({ ...firstPaint(), trusted: false });
       h.ok(shown().includes(COPY.appBootLabel), 'a paint frame that is not authenticated leaves the boot surface up');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'and does not disarm the deadline');
-      await frame(FIRST_PAINT);
-      h.ok(!shown().includes(COPY.appBootLabel), 'the authenticated first paint (realm generation 1, host generation 2) ends the boot surface');
+      await frame(firstPaint());
+      h.ok(!shown().includes(COPY.appBootLabel), 'the authenticated first paint stamped with this launch’s generation ends the boot surface');
+      h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'and completes startup');
+    });
+  });
+
+  await h.test('mini-app: a trusted paint stamped for another launch leaves the boot surface up, and the startup deadline still fails it', async () => {
+    await withMiniApp(TIP, async ({ loadEnd, frame, shown, clock }) => {
+      await loadEnd();
+      const bound = boundGeneration();
+      await frame(firstPaint(bound - 1));
+      h.ok(shown().includes(COPY.appBootLabel), 'a paint from the launch before this one does not end the boot surface');
+      await frame(firstPaint(bound + 1));
+      h.ok(shown().includes(COPY.appBootLabel), 'nor does one claiming a launch that has not happened');
+      h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'the startup deadline stays armed');
+      await TestRenderer.act(async () => clock.fire(STARTUP_DEADLINE_MS));
+      h.ok(shown().includes(COPY.appErrorTitle), 'and, with no paint of its own, the launch reaches the recovery screen');
+    });
+  });
+
+  await h.test('mini-app: after Retry recreates the realm, the old realm’s late paint cannot open the new one', async () => {
+    await withMiniApp(TIP, async ({ loadEnd, frame, shown, clock, tree }) => {
+      await loadEnd();
+      const old = boundGeneration();
+      await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
+      await press(button(tree, COPY.appErrorRetry));
+      await loadEnd();
+      h.ok(boundGeneration() !== old, 'the recreated realm is bound at a new generation');
+      await frame(firstPaint(old));
+      h.ok(shown().includes(COPY.appBootLabel), 'the old realm’s paint, arriving late, leaves the new launch booting');
+      h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'with its startup deadline armed');
+      await frame(firstPaint());
+      h.ok(!shown().includes(COPY.appBootLabel), 'the new realm’s own paint opens it');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'and completes startup');
     });
   });
@@ -196,7 +237,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
   await h.test('mini-app: a bundle that fails shows the recovery screen; Retry mounts a fresh WebView and delivers again', async () => {
     await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown, clock, tree }) => {
       await loadEnd();
-      await frame(FIRST_PAINT);
+      await frame(firstPaint());
       const first = webView();
       await frame({ kind: 'error', trusted: true, payload: { where: 'bundle', message: 'SENTINEL_TypeError: x is undefined' } });
       h.ok(shown().includes(COPY.appErrorTitle), 'the recovery screen replaces the app');
@@ -226,7 +267,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
   await h.test('mini-app: an error the app survives is logged, not shown', async () => {
     await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown }) => {
       await loadEnd();
-      await frame(FIRST_PAINT);
+      await frame(firstPaint());
       await frame({ kind: 'error', trusted: true, payload: { where: 'probes', message: 'probe hiccup' } });
       h.ok(webView() != null && !shown().includes(COPY.appErrorTitle), 'the app keeps running');
       h.ok(log.buffer.snapshot().some((r) => r.message === 'non-fatal error frame from the realm' && (r.fields as { detail?: unknown } | undefined)?.detail === 'probe hiccup'), 'and the error is recorded');
@@ -236,7 +277,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
   await h.test('mini-app: a handler throw and an unhandled rejection after paint are error records, and the app keeps running', async () => {
     await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown }) => {
       await loadEnd();
-      await frame(FIRST_PAINT);
+      await frame(firstPaint());
       log.buffer.clear();
       await frame(RUNTIME_ERROR_FRAME);
       await frame(REJECTION_ERROR_FRAME);
@@ -271,7 +312,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
   await h.test('mini-app: an unauthenticated error frame is neither a failure screen nor an error record', async () => {
     await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown }) => {
       await loadEnd();
-      await frame(FIRST_PAINT);
+      await frame(firstPaint());
       log.buffer.clear();
       // The outer page's forward of a bundle-posted frame that failed the nonce check.
       await frame({ kind: 'rejected-forgery', trusted: false, forgedKind: 'error', payload: { where: 'runtime', name: 'ForgedError' } });
@@ -285,7 +326,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
   await h.test('mini-app: a render error after the first paint shows the recovery screen instead of a blank app', async () => {
     await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown }) => {
       await loadEnd();
-      await frame(FIRST_PAINT);
+      await frame(firstPaint());
       log.buffer.clear();
       await frame(RENDER_ERROR_FRAME);
       h.ok(shown().includes(COPY.appErrorTitle), 'the recovery screen replaces the unmounted app');
@@ -312,7 +353,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
   await h.test('mini-app: a render error frame the page did not authenticate is ignored', async () => {
     await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown }) => {
       await loadEnd();
-      await frame(FIRST_PAINT);
+      await frame(firstPaint());
       log.buffer.clear();
       // The outer page's forward of a bundle-posted render frame that failed the nonce check.
       await frame({ kind: 'rejected-forgery', trusted: false, forgedKind: 'error', payload: RENDER_ERROR_FRAME.payload });
@@ -406,7 +447,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     try {
       await withMiniApp(TIP, async ({ loadEnd, frame }) => {
         await loadEnd();
-        await frame(FIRST_PAINT);
+        await frame(firstPaint());
         // A handler throws `new Error("Alice owes 40")`: loader.js reports the class, never the message.
         await frame({ kind: 'error', trusted: true, payload: { where: 'runtime', name: 'Error' } });
         // It throws `Object.assign(new Error("x"), { name: "Alice owes 40" })`: the name is the app's own.
@@ -467,7 +508,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
   await h.test('mini-app: unmounting a running storage app closes its database without calling exit', async () => {
     await withMiniApp(WATER, async ({ loadEnd, frame, tree, exits, shown }) => {
       await loadEnd();
-      await frame(FIRST_PAINT);
+      await frame(firstPaint());
       h.ok(!shown().includes(COPY.launchFailedTitle), 'the storage app launched');
       h.eq(closedDatabases.get(`${WATER.appId}.db`) ?? 0, 0, 'its database is open while it runs');
       await unmountScreen(tree);

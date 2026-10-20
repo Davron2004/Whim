@@ -231,14 +231,20 @@ const realmPage = await writePage('realm', buildOuterHtml({
 }));
 
 /** Deliver `source` (with `theme`) into a fresh realm and wait for its first paint. `relayed()`
- *  is every frame the outer page handed RN, as RN would parse it; `realm()` is the sandbox frame. */
+ *  is every frame the outer page handed RN, as RN would parse it; `realm()` is the sandbox frame.
+ *  `window.__realmPaints` (outer page) keeps every raw `paint` message a realm posted to it. */
 async function openRealm(browser, source, theme, viewport = { width: 400, height: 2000 }) {
   const page = await browser.newPage({ viewport });
   await page.addInitScript(() => {
     if (window.top !== window) return; // the outer page only: the realm keeps the loader's own stub
     const frames = [];
+    const paints = [];
     Object.defineProperty(window, '__relayed', { value: frames });
+    Object.defineProperty(window, '__realmPaints', { value: paints });
     window.ReactNativeWebView = { postMessage: (s) => frames.push(JSON.parse(s)) };
+    window.addEventListener('message', (ev) => {
+      if (typeof ev.data === 'string' && ev.data.includes('"kind":"paint"')) paints.push(ev.data);
+    });
   });
   await page.goto(pathToFileURL(realmPage).href, { waitUntil: 'load', timeout: 20000 });
   await page.evaluate(({ src, th }) => globalThis.__whimControl.reinject({
@@ -346,6 +352,16 @@ async function realmChecks(browser) {
       { trusted: true, generation: 5, ms: 'number', app: 'Tip Splitter' },
     ]);
     detail['paint stamped with the bound generation'] = `paints=${JSON.stringify(seen)}`;
+
+    // The reset recreated the iframe: the first realm's own authenticated paint, reaching the page
+    // after it, fails the rotated nonce, so it never reaches RN stamped with the new generation.
+    const [oldRealmPaint] = await page.evaluate(() => window.__realmPaints.slice());
+    await page.evaluate((raw) => window.postMessage(raw, '*'), oldRealmPaint);
+    const refused = async () => (await relayed()).filter((f) => f.kind === 'rejected-forgery' && f.forgedKind === 'paint');
+    await until(async () => (await refused()).length > 0, 3000);
+    const after = (await paints()).length;
+    checks['old realm paint after a reset'] = (await refused()).length === 1 && after === 2;
+    detail['old realm paint after a reset'] = `refused=${(await refused()).length} paints relayed=${after}`;
     await page.close();
   }
 
