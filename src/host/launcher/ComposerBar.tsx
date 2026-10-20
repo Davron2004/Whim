@@ -1,7 +1,7 @@
 /**
  * ComposerBar — Home's way into making an app (system.md §9 Your apps; app-launcher "The home grid
  * orders and lays out apps for every text size"): a raised capsule at the bottom, the 24 pt ember leading, that reads
- * "Describe an app…", or `Continue "A timer for my…"` when a description waits (`draft`, the start
+ * "Make an app…", or `Continue "A timer for my…"` when a description waits (`draft`, the start
  * of the words, `flow-draft.ts#draftPreview`). Tapping it opens the making sheet at the page the
  * draft was left on. One line.
  */

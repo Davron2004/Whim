@@ -1,9 +1,9 @@
 HOW TO TRY WHIM
 No login or account. Home has example apps.
-1. Tap "Describe an app..." on Home.
+1. Tap "Make an app..." on Home.
 2. Expected on a fresh install: "Terms of use" ("Accept"), then the AI-data consent screen ("Agree and continue"); "Not now" on either returns Home, nothing sent.
 3. Type a one-line description, tap "Continue"; answer or skip up to three questions, tap "Continue".
-4. Review the plan, tap "Build it" (~1 min), then "Open it".
+4. Review the plan, tap "Make it" (~1 min), then "Open it".
 5. In the app, the floating orb's menu has "Report this app".
 6. Long-press a tile, choose "App link" to see its universal link.
 

@@ -8,7 +8,9 @@
  *    and its distance from the reserved hues;
  *  - no colour hex literal or spring config lives in `src/host/**` or `src/sdk/**` outside the
  *    module, apart from the exemptions listed below;
- *  - every component `vc-sdk` exports appears in the style gallery (system.md §7.2).
+ *  - every component `vc-sdk` exports appears in the style gallery (system.md §7.2);
+ *  - the shell's copy uses one name per concept and its controls never speak in Whim's "I"
+ *    (system.md §8), and no number in `src/host` is formatted in the phone's locale (#89).
  *
  * Later design checks are added here, never as new registrations in `checks/test/acceptance.ts`.
  */
@@ -22,6 +24,7 @@ import { SAMPLED_SPRINGS } from '../../../src/design/generated/springs';
 import { contrastRatio, deltaE } from '../../../src/design/tints';
 import * as vcSdk from '../../../src/sdk/index';
 import { checkOutputs, formatDrift, reservedColors, tileRim, tintSoft, SYSTEM_MD, MOCKUP_HTML, PALETTE_JSON } from '../../../scripts/lib/design-tokens';
+import { COPY, COPY_KINDS, formatCount, reportCodeSizeLabel, timelineGrowthLine } from '../../../src/host/launcher/copy';
 
 const ROOT = process.cwd();
 
@@ -191,6 +194,62 @@ function galleryGaps(components: readonly string[], source: string): string[] {
   return components.filter((name) => !(name in GALLERY_EXEMPT) && !rendered.has(name));
 }
 
+// ── Copy ─────────────────────────────────────────────────────────────────────
+
+type CopyKind = (typeof COPY_KINDS)[keyof typeof COPY_KINDS];
+
+/** The retired words of system.md §8 and the requirement "Shell copy has one name per concept". */
+const RETIRED_WORDS: readonly (readonly [string, RegExp])[] = [
+  ['mini-app', /\bmini[- ]?apps?\b/i],
+  ['build', /\bbuil(?:d|ds|ding|t)\b/i],
+  ['generate', /\bgenerat\w*/i],
+  ['fork', /\bfork\w*/i],
+  ['snapshot', /\bsnapshots?\b/i],
+  ['restore', /\brestor\w*/i],
+  ['revert', /\brevert\w*/i],
+  ['Prompt again', /\bprompt again\b/i],
+];
+
+/** Whim's first person: any "I" on a control, and on a person's control the maker's contractions. */
+const FIRST_PERSON = /\bI\b/;
+const MAKER_CONTRACTION = /\bI[’'](?:ll|m|ve|d)\b/;
+
+/** Keys that keep a retired word, each with the reason. An entry whose string no longer carries one
+ *  fails the lint. */
+const RETIRED_WORD_EXEMPT: Readonly<Record<string, string>> = {
+  consentLead: 'legal copy: its exact words are disclosed, quoted by the privacy page and versioned with consent',
+  consentWhy: 'legal copy: its exact words are disclosed, quoted by the privacy page and versioned with consent',
+  firstRunLead: 'legal copy: the first-run sheet states what the consent spec has it state, word for word',
+};
+
+/** One finding per key of `table` with no kind, a retired word, or Whim's "I" on a control. */
+function copyFindings(table: Readonly<Record<string, string>>, kinds: Readonly<Record<string, CopyKind>>): string[] {
+  const findings: string[] = [];
+  for (const [key, text] of Object.entries(table)) {
+    const kind = kinds[key] as CopyKind | undefined;
+    if (kind === undefined) findings.push(`${key}: has no kind in COPY_KINDS`);
+    const retired = RETIRED_WORDS.filter(([, word]) => word.test(text)).map(([name]) => name);
+    if (key in RETIRED_WORD_EXEMPT) {
+      if (retired.length === 0) findings.push(`${key}: no longer carries a retired word; remove it from RETIRED_WORD_EXEMPT`);
+    } else {
+      findings.push(...retired.map((name) => `${key}: retired word "${name}" in "${text}"`));
+    }
+    if (kind === 'control' && FIRST_PERSON.test(text)) findings.push(`${key}: Whim's "I" on a control: "${text}"`);
+    if (kind === 'person' && MAKER_CONTRACTION.test(text)) findings.push(`${key}: Whim's "I" on a control: "${text}"`);
+  }
+  return findings;
+}
+
+/** A number written in the phone's locale: `toLocaleString()` or `Intl.NumberFormat` with no locale. */
+const MACHINE_LOCALE_NUMBER = /\.toLocaleString\(\s*\)|\.toLocaleString\(\s*undefined\b|\bIntl\.NumberFormat\(\s*(?:\)|undefined\b)/;
+
+/** Each line of `source` formatting a number in the phone's locale, as `line`. */
+function machineLocaleNumbers(source: string): number[] {
+  return withoutComments(source)
+    .split('\n')
+    .flatMap((line, i) => (MACHINE_LOCALE_NUMBER.test(line) ? [i + 1] : []));
+}
+
 const parseNumbers = (css: string, fn: string) => (new RegExp(`^${fn}\\((.*)\\)$`).exec(css)?.[1] ?? '').split(',').map(Number);
 
 export async function run(): Promise<void> {
@@ -323,5 +382,45 @@ export async function run(): Promise<void> {
     assert(galleryGaps(components, withoutStepper).join() === 'Stepper', 'removing a component from the gallery names it');
     assert(galleryGaps(['Stepper'], '// <Stepper />\nconst x = 1;').join() === 'Stepper', 'a component mentioned only in a comment is not shown');
     assert(componentExports({ toast: () => {}, Card: () => null, ListProps: undefined }).join() === 'Card', 'only PascalCase function values are components');
+  });
+
+  await test('copy lint: every COPY key has a kind, and the shell copy uses the glossary with no Whim "I" on a control', () => {
+    const findings = copyFindings(COPY, COPY_KINDS);
+    assert(findings.length === 0, findings.join('; '));
+    const stale = Object.keys(COPY_KINDS).filter((key) => !(key in COPY));
+    assert(stale.length === 0, `COPY_KINDS tags keys COPY no longer has: ${stale.join(', ')}`);
+    assert(FIRST_PERSON.test(COPY.composeHelper) && COPY_KINDS.composeHelper === 'prose', 'the maker says "I" in prose, and the lint lets it');
+  });
+
+  await test('copy lint: a control saying "I’ll decide" or "I", a retired word, and an untagged key each fail, naming the key', () => {
+    const decide = copyFindings({ ...COPY, clarifyIllDecide: 'I’ll decide' }, { ...COPY_KINDS, clarifyIllDecide: 'control' });
+    assert(decide.length === 1 && decide[0].startsWith('clarifyIllDecide: Whim\'s "I" on a control'), `"I’ll decide": ${decide.join('; ')}`);
+    const bareI = copyFindings({ ...COPY, readyOpen: 'I can open it' }, COPY_KINDS);
+    assert(bareI.length === 1 && bareI[0].startsWith('readyOpen: Whim\'s "I"'), `a bare "I": ${bareI.join('; ')}`);
+    const person = copyFindings({ ...COPY, reportIncludePrompt: 'I’ll include what you asked for' }, COPY_KINDS);
+    assert(person.length === 1 && person[0].startsWith('reportIncludePrompt:'), `the maker's "I’ll" on a person's control: ${person.join('; ')}`);
+    const restore = copyFindings({ ...COPY, historyUseVersion: 'Restore this version' }, COPY_KINDS);
+    assert(restore.length === 1 && restore[0].startsWith('historyUseVersion: retired word "restore"'), `a retired word: ${restore.join('; ')}`);
+    const prose = copyFindings({ ...COPY, failureTitle: 'Couldn’t generate this' }, COPY_KINDS);
+    assert(prose.length === 1 && prose[0].startsWith('failureTitle: retired word "generate"'), `a retired word in prose: ${prose.join('; ')}`);
+    const untagged = copyFindings({ ...COPY, homeNewLine: 'Something new' }, COPY_KINDS);
+    assert(untagged.length === 1 && untagged[0].startsWith('homeNewLine: has no kind'), `an untagged key: ${untagged.join('; ')}`);
+    const reworded = copyFindings({ ...COPY, consentWhy: 'To make your apps and run Whim.' }, COPY_KINDS);
+    assert(reworded.length === 1 && reworded[0].startsWith('consentWhy: no longer carries a retired word'), `a stale exemption: ${reworded.join('; ')}`);
+  });
+
+  await test('copy numbers: written in the copy table’s language, English and French alike (#89)', () => {
+    assert(formatCount(1204, 'en') === '1,204', `English groups with a comma: ${formatCount(1204, 'en')}`);
+    assert(formatCount(1204, 'fr') === '1 204', `French groups with a narrow no-break space: ${JSON.stringify(formatCount(1204, 'fr'))}`);
+    assert(timelineGrowthLine(1204) === 'Wrote 1,204 characters', `the English table writes English numbers: ${timelineGrowthLine(1204)}`);
+    assert(reportCodeSizeLabel(12043) === '12,043 characters', `the report's code size: ${reportCodeSizeLabel(12043)}`);
+  });
+
+  await test('copy numbers: no number in src/host is formatted in the phone’s locale', () => {
+    const hits = productFiles('src/host').flatMap((file) => machineLocaleNumbers(fs.readFileSync(path.join(ROOT, file), 'utf8')).map((line) => `${file}:${line}`));
+    assert(hits.length === 0, `pass the copy table's language (copy.ts#formatCount): ${hits.join(', ')}`);
+    assert(machineLocaleNumbers('const s = `${n.toLocaleString()} characters`;').join() === '1', 'toLocaleString() with no locale is a hit');
+    assert(machineLocaleNumbers('new Intl.NumberFormat(undefined).format(n);\nnew Intl.NumberFormat().format(n);').join() === '1,2', 'Intl.NumberFormat with no locale is a hit');
+    assert(machineLocaleNumbers("n.toLocaleString('en');\n// n.toLocaleString()").length === 0, 'an explicit locale, or a comment, is not');
   });
 }

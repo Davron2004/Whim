@@ -82,8 +82,9 @@ env:
 # 3. A generated app: the legal steps and consent, then describe → plan → make. The previous release
 #    asks in two full screens ("Accept", then "Agree and continue") and shows the questions as a
 #    step of their own; this build asks in one sheet (a terms checkbox, then "Agree to send
-#    descriptions") and shows the questions with the plan, so each word is accepted in both.
-- tapOn: "Describe an app…"
+#    descriptions") and shows the questions with the plan, so each word is accepted in both. The
+#    composer reads "Describe an app…" up to beta-1 and "Make an app…" from design-system-v1.
+- tapOn: "Describe an app…|Make an app…"
 - extendedWaitUntil:
     visible: "Accept|I accept the Terms of use|Agree and continue|Agree to send descriptions|What should it do\\?"
     timeout: 60000

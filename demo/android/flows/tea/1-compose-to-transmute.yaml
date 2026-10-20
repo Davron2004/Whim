@@ -25,7 +25,7 @@ appId: com.anycognition.whim
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
 
 # Beat 2 — into the composer.
-- tapOn: ".*Describe an app.*"
+- tapOn: ".*Make an app.*"
 - waitForAnimationToEnd
 - extendedWaitUntil:
     visible: "What should it do\\?"

@@ -318,7 +318,7 @@ if ((MANUAL_SEED)); then
 Seed $DEVICE by hand (Maestro is skipped for this step):
   1. Settings > Advanced > Server address: $SERVER_URL
   2. Open Water Counter, tap "+2 glasses", wait for "saved", then the orb > Home.
-  3. Describe an app... > agree > any prompt > Continue (skip the questions) > Build it > Back to your apps.
+  3. Describe an app... (Make an app... on later builds) > agree > any prompt > Continue (skip the questions) > Build it > Back to your apps.
   4. Long-press the new app > Prompt again > any change > Continue > Make the change > Back to your apps.
 Press Enter once the grid shows the new app.
 EOF

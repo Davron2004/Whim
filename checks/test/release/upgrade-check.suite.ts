@@ -483,6 +483,15 @@ async function runCases(): Promise<void> {
     nodeAssert.deepStrictEqual(misses, []);
   });
 
+  await test("flows: the seed's composer selector finds the earlier releases' composer on their real grids and matches this build's", () => {
+    const seed = flowSelectors(fs.readFileSync(path.join(FLOWS, 'seed.yaml'), 'utf8'));
+    const composer = seed.find((selector) => new RegExp(`^(?:${selector})$`).test(COPY.homeComposerPlaceholder));
+    nodeAssert.ok(composer, `no seed selector matches this build's composer "${COPY.homeComposerPlaceholder}": ${seed.join(' / ')}`);
+    for (const [label, dir] of [['android', CAPTURE], ['ios 382511', IOS_BEFORE], ['ios beta-1', IOS_AFTER]]) {
+      nodeAssert.ok(selectorFinds(readCapture(dir).grid, composer), `${label}: "${composer}" finds the composer`);
+    }
+  });
+
   await test('flows: the tile selectors find every installed app on real home grids of both platforms, before and after the upgrade', () => {
     const history = commandSelector('read-history.yaml', 'longPressOn');
     const generated = commandSelector('seed.yaml', 'longPressOn');

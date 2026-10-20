@@ -17,7 +17,7 @@ no email address, phone number or person's name goes in it.
 No login, no account, nothing to sign in with. The home screen already has a few example apps on
 it.
 
-1. Tap `Describe an app…` (the composer row on Home).
+1. Tap `Make an app…` (the composer bar on Home).
 2. The first time this happens on a fresh install, it opens two steps instead of the composer —
    that's expected, not a bug. First `Terms of use`: tap `Accept`. Then the AI-data consent screen
    (`Before Whim builds apps for you`): tap `Agree and continue`. `Not now` on either step, or
@@ -26,7 +26,7 @@ it.
    share an age range with Whim; anywhere else nothing shows.
 3. Type a one-line description and tap `Continue`.
 4. Answer (or skip) the one to three clarifying questions Whim asks, and tap `Continue`.
-5. Review the plan and tap `Build it`. This takes about a minute; you can leave the screen and come
+5. Review the plan and tap `Make it`. This takes about a minute; you can leave the screen and come
    back.
 6. Tap `Open it` to run the app it made.
 7. Inside the running app, the floating orb opens a menu with `Report this app` — the in-app
