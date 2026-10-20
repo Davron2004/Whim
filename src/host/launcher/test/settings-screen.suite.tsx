@@ -205,7 +205,7 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
 
   await h.test('Report: a text size changed while it shows builds the form again, and the report keeps what it holds — the reason, the note and the open preview', async () => {
     const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
-    const access = { activeDescription: async () => 'A tea timer', activeSource: async () => 'export default {}' } as unknown as StoreAccess;
+    const access = { activeWords: async () => ({ prompt: 'A tea timer', source: 'export default {}' }) } as unknown as StoreAccess;
     const options = reportClientOptions({ kind: 'absent' } as const, 'https://server.test', 'device', testAppInfo);
     const screen = () => <ReportScreen app={app} access={access} options={options} onLeave={noop} onUpdateRequired={noop} legalLanguage="en" />;
     const tree = await renderScreen(screen());
@@ -267,63 +267,59 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
     } finally { await unmountScreen(tree); }
   });
 
-  for (const failedRead of ['activeDescription', 'activeSource'] as const) {
-    await h.test(`Report: rejected ${failedRead} offers content-free recovery and reopening reads a complete draft`, async () => {
-      const secret = 'private-report-content';
-      const app: InstalledApp = { id: 'timer', name: `${secret}-app`, createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: `${secret}-app`, manifest: { capabilities: [] } } };
-      let rejectRead!: (error: Error) => void;
-      const pending = new Promise<string>((_resolve, reject) => { rejectRead = reject; });
-      const reads: string[] = [];
-      let retry = false;
-      const read = (operation: string, value: string) => {
-        reads.push(operation);
-        return !retry && operation === failedRead ? pending : Promise.resolve(value);
-      };
-      const access = {
-        activeDescription: () => read('activeDescription', `${secret}-prompt`),
-        activeSource: () => read('activeSource', `${secret}-source`),
-      } as unknown as StoreAccess;
-      const unhandled: unknown[] = [];
-      const captureRejection = (reason: unknown) => { unhandled.push(reason); };
-      process.on('unhandledRejection', captureRejection);
-      const before = new Set(log.buffer.snapshot());
-      let left = 0;
-      const screenProps = { app, access, options: reportClientOptions({ kind: 'absent' } as const, 'https://server.test', `${secret}-device`, testAppInfo), onLeave: () => { left++; }, onUpdateRequired: noop, legalLanguage: 'en' as const };
-      let screen = await renderScreen(<ReportScreen {...screenProps} />);
-      try {
-        await TestRenderer.act(async () => {
-          rejectRead(new Error(`${secret}-raw-error`));
-          await new Promise(resolve => setImmediate(resolve));
-        });
-        h.eq(unhandled, [], 'the rejected mandatory read is handled after promise settlement');
-        h.ok(textOf(screen.root).includes(COPY.reportDraftLoadFailed), 'the screen explains that loading failed');
-        h.eq(screen.root.findAll(node => String(node.type) === 'TextInput').length, 0, 'no partial report editor is offered');
-        h.eq(screen.root.findAll(node => String(node.type) === 'Pressable' && node.props.accessibilityLabel === COPY.reportSend).length, 0, 'and no Send');
-        h.ok(!textOf(screen.root).includes(secret), 'failure UI exposes no report content or raw error');
-        const records = log.buffer.snapshot().filter(record => !before.has(record));
-        h.eq(records.map(record => [record.message, record.fields]), [['report draft load failed', { outcome: 'failed' }]], 'only the failed operation and outcome are logged');
-        h.ok(!JSON.stringify(records).includes(secret), 'logs exclude the app, prompt, source, device ID and raw error');
-        await press(button(screen, COPY.reportDraftClose));
-        h.eq(left, 1, 'the recovery action leaves the screen');
-        await unmountScreen(screen);
-        retry = true;
-        screen = await renderScreen(<ReportScreen {...screenProps} />);
-        await TestRenderer.act(async () => { await new Promise(resolve => setImmediate(resolve)); });
-        h.eq(reads, ['activeDescription', 'activeSource', 'activeDescription', 'activeSource'], 'reopening retries both mandatory reads');
-        h.ok(!textOf(screen.root).includes(COPY.reportDraftLoadFailed), 'a successful fresh read clears the failure');
-        h.eq(button(screen, COPY.reportSend).props.disabled, true, 'the fresh complete draft still requires a reason');
-        await press(button(screen, COPY.reportReasonBroken));
-        h.eq(button(screen, COPY.reportSend).props.disabled, false, 'a complete draft with a reason can be sent');
-        await press(button(screen, COPY.reportPreviewTitle));
-        const codeLabel = screen.root.find(node => String(node.type) === 'Text' && node.children.includes(COPY.reportFieldSource));
-        let header = codeLabel.parent;
-        while (header && !header.findAll(node => String(node.type) === 'Pressable').length) header = header.parent;
-        await press(header!.find(node => String(node.type) === 'Pressable' && node.props.accessibilityLabel === COPY.reportShowMore));
-        h.ok(textOf(screen.root).includes(`${secret}-source`), 'the recovered draft includes the mandatory original source');
-      } finally {
-        await unmountScreen(screen);
-        process.off('unhandledRejection', captureRejection);
-      }
-    });
-  }
+  await h.test('Report: a rejected read of the app’s words and code offers content-free recovery and reopening reads a complete draft', async () => {
+    const secret = 'private-report-content';
+    const app: InstalledApp = { id: 'timer', name: `${secret}-app`, createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: `${secret}-app`, manifest: { capabilities: [] } } };
+    let rejectRead!: (error: Error) => void;
+    const pending = new Promise<{ prompt?: string; source?: string }>((_resolve, reject) => { rejectRead = reject; });
+    const reads: string[] = [];
+    let retry = false;
+    const access = {
+      activeWords: () => {
+        reads.push('activeWords');
+        return retry ? Promise.resolve({ prompt: `${secret}-prompt`, source: `${secret}-source` }) : pending;
+      },
+    } as unknown as StoreAccess;
+    const unhandled: unknown[] = [];
+    const captureRejection = (reason: unknown) => { unhandled.push(reason); };
+    process.on('unhandledRejection', captureRejection);
+    const before = new Set(log.buffer.snapshot());
+    let left = 0;
+    const screenProps = { app, access, options: reportClientOptions({ kind: 'absent' } as const, 'https://server.test', `${secret}-device`, testAppInfo), onLeave: () => { left++; }, onUpdateRequired: noop, legalLanguage: 'en' as const };
+    let screen = await renderScreen(<ReportScreen {...screenProps} />);
+    try {
+      await TestRenderer.act(async () => {
+        rejectRead(new Error(`${secret}-raw-error`));
+        await new Promise(resolve => setImmediate(resolve));
+      });
+      h.eq(unhandled, [], 'the rejected mandatory read is handled after promise settlement');
+      h.ok(textOf(screen.root).includes(COPY.reportDraftLoadFailed), 'the screen explains that loading failed');
+      h.eq(screen.root.findAll(node => String(node.type) === 'TextInput').length, 0, 'no partial report editor is offered');
+      h.eq(screen.root.findAll(node => String(node.type) === 'Pressable' && node.props.accessibilityLabel === COPY.reportSend).length, 0, 'and no Send');
+      h.ok(!textOf(screen.root).includes(secret), 'failure UI exposes no report content or raw error');
+      const records = log.buffer.snapshot().filter(record => !before.has(record));
+      h.eq(records.map(record => [record.message, record.fields]), [['report draft load failed', { outcome: 'failed' }]], 'only the failed operation and outcome are logged');
+      h.ok(!JSON.stringify(records).includes(secret), 'logs exclude the app, prompt, source, device ID and raw error');
+      await press(button(screen, COPY.reportDraftClose));
+      h.eq(left, 1, 'the recovery action leaves the screen');
+      await unmountScreen(screen);
+      retry = true;
+      screen = await renderScreen(<ReportScreen {...screenProps} />);
+      await TestRenderer.act(async () => { await new Promise(resolve => setImmediate(resolve)); });
+      h.eq(reads, ['activeWords', 'activeWords'], 'reopening retries the mandatory read');
+      h.ok(!textOf(screen.root).includes(COPY.reportDraftLoadFailed), 'a successful fresh read clears the failure');
+      h.eq(button(screen, COPY.reportSend).props.disabled, true, 'the fresh complete draft still requires a reason');
+      await press(button(screen, COPY.reportReasonBroken));
+      h.eq(button(screen, COPY.reportSend).props.disabled, false, 'a complete draft with a reason can be sent');
+      await press(button(screen, COPY.reportPreviewTitle));
+      const codeLabel = screen.root.find(node => String(node.type) === 'Text' && node.children.includes(COPY.reportFieldSource));
+      let header = codeLabel.parent;
+      while (header && !header.findAll(node => String(node.type) === 'Pressable').length) header = header.parent;
+      await press(header!.find(node => String(node.type) === 'Pressable' && node.props.accessibilityLabel === COPY.reportShowMore));
+      h.ok(textOf(screen.root).includes(`${secret}-source`), 'the recovered draft includes the mandatory original source');
+    } finally {
+      await unmountScreen(screen);
+      process.off('unhandledRejection', captureRejection);
+    }
+  });
 }

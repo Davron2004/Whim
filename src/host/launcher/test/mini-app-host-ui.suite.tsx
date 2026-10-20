@@ -167,6 +167,7 @@ function launchOf(
     orb: { state: 'rest', activity: 0 },
     onReload: opts.onReload ?? (() => {}),
     onAskFix: () => {},
+    behind: false,
   };
 }
 

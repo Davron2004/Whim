@@ -50,6 +50,10 @@ and never opened, or one a rollback left behind (decision #82). Each is a burned
 allocation floor counts it and a candidate reusing it with another type is refused, while a candidate that
 names it still needs a default (the database has no column for it) and none is required to keep it. A
 server built before the field strips it, since `app` is not strict, and checks against `appliedSchema` alone.
+Each `collection` and `id` SHALL be a burned id in the storage engine's alphabet (one lowercase letter, then
+digits) and each `type` one of the engine's closed field types, both taken from the engine's own contract,
+and the list SHALL hold at most 512 entries; a request outside these bounds is refused as `invalid_request`
+before admission, with no stream opened.
 
 #### Scenario: Edit flow carries full source
 - **WHEN** a client builds a `GenerateRequest` for editing an existing app whose original source it holds
@@ -67,6 +71,10 @@ server built before the field strips it, since `app` is not strict, and checks a
 #### Scenario: Declared fields ride beside the applied schema
 - **WHEN** a client builds a `GenerateRequest` for an app a saved version of which declares a field its database does not hold
 - **THEN** the request carries that field in `app.declaredFields` and not in `app.appliedSchema`, and a request carrying a field a server does not know still validates there, the field stripped
+
+#### Scenario: Declared fields outside the engine's vocabulary are refused
+- **WHEN** a `GenerateRequest` carries more than 512 declared fields, a declared id or collection outside the burned-id alphabet, or a declared type outside the closed field-type set
+- **THEN** the server answers one `400` `invalid_request` before admission, opens no stream and spends no generation
 
 #### Scenario: A generation carries the answers the user gave
 - **WHEN** a client builds a `GenerateRequest` after a clarify exchange the user answered

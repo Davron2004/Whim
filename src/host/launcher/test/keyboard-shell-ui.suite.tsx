@@ -362,7 +362,7 @@ function paintedBackground(input: Node): string | undefined {
 const draftLoaded = () => TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });
 
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
-const ACCESS = { activeDescription: async () => 'A tea timer', activeSource: async () => 'export default {}' } as unknown as StoreAccess;
+const ACCESS = { activeWords: async () => ({ prompt: 'A tea timer', source: 'export default {}' }) } as unknown as StoreAccess;
 /** Four rows: the fourth sits lowest, where the keyboard and the pinned footer meet. */
 const ROWS = [
   { label: 'Timer', text: 'Counts down' },

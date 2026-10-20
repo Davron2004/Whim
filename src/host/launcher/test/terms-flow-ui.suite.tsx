@@ -285,12 +285,11 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('terms gate: a report sent with neither record sends exactly that report, and no first-run sheet appears', async () => {
-    const { timeline, activeId, activeDescription, activeSource } = StoreAccess.prototype;
-    const original = { timeline, activeId, activeDescription, activeSource };
+    const { timeline, activeId, activeWords } = StoreAccess.prototype;
+    const original = { timeline, activeId, activeWords };
     StoreAccess.prototype.timeline = async () => [];
     StoreAccess.prototype.activeId = async () => null;
-    StoreAccess.prototype.activeDescription = async () => 'A tea timer';
-    StoreAccess.prototype.activeSource = async () => 'export default {}';
+    StoreAccess.prototype.activeWords = async () => ({ prompt: 'A tea timer', source: 'export default {}' });
     try {
       await withLauncher({ terms: false, consent: false, apps: [APP], server: () => json({ reportId: 'r-1' }, 202) }, async ({ tree, sent, probes }) => {
         await TestRenderer.act(async () => home(tree).props.onHistory(APP));

@@ -658,6 +658,26 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('history screen: an Undo from an earlier toast tapped while a newer switch runs is kept when that switch fails, so the app goes back as the Undo said', async () => {
+    const { access, app } = await fourKinds();
+    const before = await access.activeId(app);
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => rows(tree).length === 4, 'the versions to load');
+      await openAndPress(tree, 'let me pick V60 or Chemex', COPY.historyUseVersion);
+      await waitFor(() => toastOf(tree)?.message === 'Back on version 3', 'the first switch’s toast, with Undo');
+      const second = held<void>();
+      const rollback = access.rollback.bind(access);
+      access.rollback = async () => { access.rollback = rollback; await second.promise; throw new Error('the store is unwritable'); };
+      await openAndPress(tree, 'add a chime', COPY.historyUseVersion);
+      h.ok(textOf(tree.root).includes(COPY.historyUseVersionBusy), 'setup: the second switch runs');
+      await pressToastAction(tree); // the first toast's Undo, still on screen
+      await TestRenderer.act(async () => { second.resolve(); });
+      await waitFor(() => toastOf(tree)?.message === COPY.historyUseVersionFailed, 'the second switch’s failure to be said');
+      await waitFor(() => textsSaying(row(tree, 'the countdown stops early'), 'Current').length === 1, 'the Undo to land');
+      h.eq(await access.activeId(app), before, 'the Undo ran: the app is back on the version that was current');
+    });
+  });
+
   await h.test('history screen: the first version can be used too, and a failed switch says so and keeps the version that was current', async () => {
     const { access, app, current } = await threeVersions();
     await withHistory(access, app, async (tree) => {

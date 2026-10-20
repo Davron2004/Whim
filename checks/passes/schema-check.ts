@@ -220,15 +220,23 @@ export function burnedSchema(
   declared: readonly DeclaredField[] | undefined,
 ): AppliedSchema | undefined {
   if (!declared || declared.length === 0) return applied;
+  // Keyed lookups keep this linear in the request: it runs for the prompt and once per check
+  // attempt, on the server's one event loop.
   const collections = (applied?.collections ?? []).map((c) => ({ id: c.id, active: [...c.active], retired: [...c.retired] }));
+  const byId = new Map<string, { into: (typeof collections)[number]; held: Set<string> }>();
+  for (const into of collections) {
+    if (!byId.has(into.id)) byId.set(into.id, { into, held: new Set([...into.active, ...into.retired].map((c) => c.id)) });
+  }
   for (const field of declared) {
-    let into = collections.find((c) => c.id === field.collection);
-    if (!into) {
-      into = { id: field.collection, active: [], retired: [] };
-      collections.push(into);
+    let target = byId.get(field.collection);
+    if (!target) {
+      target = { into: { id: field.collection, active: [], retired: [] }, held: new Set() };
+      collections.push(target.into);
+      byId.set(field.collection, target);
     }
-    if (into.active.some((c) => c.id === field.id) || into.retired.some((c) => c.id === field.id)) continue;
-    into.retired.push({ id: field.id, type: field.type as AppliedColumn['type'] });
+    if (target.held.has(field.id)) continue;
+    target.held.add(field.id);
+    target.into.retired.push({ id: field.id, type: field.type as AppliedColumn['type'] });
   }
   return { collections };
 }

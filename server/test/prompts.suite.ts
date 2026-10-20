@@ -497,7 +497,7 @@ async function testDeclaredFieldsThreading(): Promise<void> {
     clock: { now: () => 0 },
     bounds: { repairAttempts: 0 },
   });
-  const declaredFields = [{ collection: 'c1', id: 'f9', type: 'int' }];
+  const declaredFields = [{ collection: 'c1', id: 'f9', type: 'int' as const }];
   const request: GenerateRequest = { ...EDIT_WITH_SOURCE, app: { ...EDIT_WITH_SOURCE.app!, declaredFields } };
 
   const capture = captureLogs();

@@ -1707,3 +1707,20 @@ rejected option was the right one.
 - **Each saved version's schema is read once per process** (versions are immutable). Reading only
   `manifest.json`/`schema.json` needs a version-store read verb that does not exist yet.
 
+**Amendment (chain-20h, 2026-10-20).**
+
+- **`declaredFields` is validated at the wire.** Each `collection`/`id` matches the engine's
+  `BURNED_ID_RE` and each `type` is one of its `FIELD_TYPES`, both imported by the contract from the
+  engine's dependency-free `contract.ts` (no engine code reaches the server bundle, no zod reaches
+  Metro). The list is capped at 512: it holds only never-created fields of unopened or rolled-back
+  versions, deduplicated, so a real history stays far below it. Anything else is one `400
+  invalid_request` before admission. `burnedSchema` uses keyed lookups, linear in the request.
+- **A crash behind the current version leads with Reload.** A change is made from the active version,
+  so a fix request from a launch behind it would send the active code with the older code's error. Such
+  a launch (a change landed unreloaded, or an Undo moved the app after it opened) shows "a newer
+  version is ready" with Reload and Back only; the fix is offered once Reload runs the current version.
+  *Rejected:* sending the request without the error (it describes nothing the person saw), or with it
+  (it blames the active code for an error it never raised).
+- **A failed switch does not cost an older Undo.** An Undo whose newer switch is still running waits
+  for it; it is dropped only if that switch lands.
+

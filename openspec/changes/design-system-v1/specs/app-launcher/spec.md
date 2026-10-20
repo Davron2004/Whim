@@ -169,8 +169,8 @@ Every version `StoreAccess` saves SHALL keep, beside its bundle, the app's host-
 - **THEN** the change request carries the active version's source with that version's own manifest and schema, read together, never the caller's copy of the record
 
 #### Scenario: A change follows the active version
-- **WHEN** a running app still shows an older version because a change landed and was not reloaded, and the user asks for another change (or "Ask Whim to fix it")
-- **THEN** the change is made from the active version, the one delivery builds on, so the landed change is kept
+- **WHEN** a running app still shows an older version because a change landed and was not reloaded, and the user asks for another change
+- **THEN** the change is made from the active version, the one delivery builds on, so the landed change is kept (a crash of that older version offers Reload instead of "Ask Whim to fix it", since its error is not the active version's)
 
 ### Requirement: The shell follows the phone's appearance through one scheme hook
 
@@ -350,12 +350,17 @@ Opening a ready tile SHALL grow a `bg` container from the tile to the screen whi
 
 ### Requirement: A crashed app keeps the orb and offers a way forward
 
-When a running app fails, the container SHALL show "<name> ran into a problem", "It stopped and can't carry on right now. Your saved data is safe.", Reload, "Ask Whim to fix it" (opening the change field prefilled with "Fix the error that stops this app." and the error text attached) and Back to your apps, and the orb SHALL stay.
+When a running app fails, the container SHALL show "<name> ran into a problem", "It stopped and can't carry on right now. Your saved data is safe.", Reload, "Ask Whim to fix it" (opening the change field prefilled with "Fix the error that stops this app." and the error text attached) and Back to your apps, and the orb SHALL stay. When the crashed launch is behind its app's current version (a change landed and was not reloaded, or an Undo moved the app after it opened), the body SHALL say a newer version is ready and the screen SHALL offer only Reload and Back to your apps: the error belongs to code that is no longer current, and a change is made from the current version, so the fix is offered once Reload runs that version (decision #82).
 
 #### Scenario: A crash is a change request
 
 - **WHEN** the user taps "Ask Whim to fix it"
 - **THEN** the Whim sheet opens with the prefilled request and the error attached, and the app is not closed
+
+#### Scenario: A crash behind the current version leads with Reload
+
+- **WHEN** a change of the app landed while it ran, was not reloaded, and the app then crashes
+- **THEN** the crash screen says a newer version is ready and offers Reload and Back to your apps, without "Ask Whim to fix it", and after Reload a crash of the new version offers "Ask Whim to fix it" again
 
 ### Requirement: The shell plays haptics from a fixed map
 

@@ -396,7 +396,7 @@ const REPORTED_APP: InstalledApp = {
   id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main',
   record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } },
 };
-const reportAccess = { activeDescription: async () => 'A timer for my tea', activeSource: async () => 'export default 1;' } as unknown as StoreAccess;
+const reportAccess = { activeWords: async () => ({ prompt: 'A timer for my tea', source: 'export default 1;' }) } as unknown as StoreAccess;
 
 /** The fill of the group `node` sits in: the nearest view around it that paints one. */
 function groupFillOf(node: Node): string | undefined {

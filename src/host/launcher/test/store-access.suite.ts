@@ -449,22 +449,22 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     h.eq(active2?.artifacts['schema.json'], undefined, 'schema.json absent from a later update whose record declares none');
   });
 
-  // §36 activeSource reads the genuine source.ts artifact (#52-D5 / D14), never bundle.js
-  await h.test('store-access §36 activeSource reads source.ts, never aliases the bundle', async () => {
+  // §36 activeWords’ source reads the genuine source.ts artifact (#52-D5 / D14), never bundle.js
+  await h.test('store-access §36 activeWords’ source reads source.ts, never aliases the bundle', async () => {
     const { store, access } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'BUNDLE_V1', source: 'ORIGINAL_TS_V1', prompt: 'p1' });
-    h.eq(await access.activeSource(orig), 'ORIGINAL_TS_V1', 'activeSource reads the distinct source.ts artifact, not bundle.js');
+    h.eq((await access.activeWords(orig)).source, 'ORIGINAL_TS_V1', 'activeWords’ source reads the distinct source.ts artifact, not bundle.js');
     h.ok((await store.active(storeIdOf(orig)))?.artifacts['source.ts'] === 'ORIGINAL_TS_V1', 'source.ts is tracked as its own snapshot file');
     const updated = await access.update(orig, { record: orig.record, bundleSource: 'BUNDLE_V2', source: 'ORIGINAL_TS_V2', prompt: 'p2' });
-    h.eq(await access.activeSource(updated), 'ORIGINAL_TS_V2', 'activeSource reflects the latest update\'s source.ts');
+    h.eq((await access.activeWords(updated)).source, 'ORIGINAL_TS_V2', 'activeWords’ source reflects the latest update\'s source.ts');
   });
 
-  await h.test('store-access §36b activeSource reports absence honestly for a legacy install (no source supplied)', async () => {
+  await h.test('store-access §36b activeWords’ source reports absence honestly for a legacy install (no source supplied)', async () => {
     const { access } = harnessAccess();
     const legacy = await access.install({ id: 'legacy', name: 'Legacy', record: REC('legacy'), bundleSource: 'BUNDLE_V1', prompt: 'p1' });
-    h.eq(await access.activeSource(legacy), undefined, 'no source.ts written -> activeSource reports absence, not the bundle');
+    h.eq((await access.activeWords(legacy)).source, undefined, 'no source.ts written -> activeWords’ source reports absence, not the bundle');
     const updatedNoSource = await access.update(legacy, { record: legacy.record, bundleSource: 'BUNDLE_V2', prompt: 'p2' });
-    h.eq(await access.activeSource(updatedNoSource), undefined, 'an update that omits source stays a legacy snapshot too');
+    h.eq((await access.activeWords(updatedNoSource)).source, undefined, 'an update that omits source stays a legacy snapshot too');
   });
 
   // §diff smoke: diff wrapper ensures lineage and delegates through
@@ -480,30 +480,30 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     h.ok(!!bundle && bundle.status === 'modified' && bundle.after === 'V2', 'diff wrapper delegates through and reports the bundle change');
   });
 
-  // ── activeDescription — the edit flow's re-prompt context (`AppContext.description`) ─────────
+  // ── activeWords’ prompt — the words a report offers of the current version ─────────
 
-  await h.test('store-access: activeDescription resolves the CURRENT version\'s prompt, envelope or raw', async () => {
+  await h.test('store-access: activeWords’ prompt resolves the CURRENT version\'s prompt, envelope or raw', async () => {
     const { access } = harnessAccess();
     const orig = await access.install({
       id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: promptEnvelope('a timer for my pour-over recipe'),
     });
-    h.eq(await access.activeDescription(orig), 'a timer for my pour-over recipe', 'reads the v2 envelope\'s text');
+    h.eq((await access.activeWords(orig)).prompt, 'a timer for my pour-over recipe', 'reads the v2 envelope\'s text');
 
     const legacy = await access.install({ id: 'legacy', name: 'Legacy', record: REC('legacy'), bundleSource: 'V1', prompt: 'a raw legacy prompt' });
-    h.eq(await access.activeDescription(legacy), 'a raw legacy prompt', 'a raw string reads as its own text, same as history-logic');
+    h.eq((await access.activeWords(legacy)).prompt, 'a raw legacy prompt', 'a raw string reads as its own text, same as history-logic');
   });
 
-  await h.test('store-access: activeDescription tracks the CURRENT version, not the first one', async () => {
+  await h.test('store-access: activeWords’ prompt tracks the CURRENT version, not the first one', async () => {
     const { access } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: promptEnvelope('add a timer') });
     const updated = await access.update(orig, { record: orig.record, bundleSource: 'V2', prompt: promptEnvelope('add a fruit tea section') });
-    h.eq(await access.activeDescription(updated), 'add a fruit tea section', 'the latest delivered prompt, not the install one');
+    h.eq((await access.activeWords(updated)).prompt, 'add a fruit tea section', 'the latest delivered prompt, not the install one');
   });
 
   // ── per-repo serialization: a fork and its original are ONE repo ────────────────────────────
   // A repo's HEAD is a single shared mutable cursor and `ensureLineage` is a check-then-act across
   // an await, while the launcher's busy gate (app-busy.ts) is keyed by LAUNCHER id — which a fork
-  // and its original do not share. So "Prompt again" on a fork (an un-awaited `activeDescription`)
+  // and its original do not share. So "Prompt again" on a fork (an un-awaited read on the fork)
   // racing "Open" on the original used to leave the loser reading the other lineage's snapshot:
   // wrong data, silently. `StoreAccess.serial` makes switch-then-read atomic per repo.
 
@@ -521,7 +521,7 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     let aRead: string | undefined;
     let bRead: string | undefined;
     // A: "Prompt again" on the FORK — fired without awaiting, exactly as the prompt flow does.
-    const pA = access.activeDescription(fork).then(v => { aRead = v; });
+    const pA = access.activeWords(fork).then(v => { aRead = v.prompt; });
     // Wait for A's checkout to have actually moved the repo HEAD onto the fork lineage. That is
     // the window the bug lives in: A has switched but not yet read, and B's own lineage check is
     // about to consult a cache that still says 'main'.
@@ -534,7 +534,7 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     h.eq(bRead, undefined, "B's read has not landed while A holds the repo");
 
     held.release();
-    await within(pA, 5000, 'A (activeDescription on the fork)');
+    await within(pA, 5000, 'A (activeWords’ prompt on the fork)');
     await within(pB, 5000, 'B (activeBundle on the original)');
 
     h.eq(

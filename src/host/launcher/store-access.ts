@@ -221,7 +221,7 @@ export class StoreAccess {
    * per-repo lineage cache, `switchLineage`s the repo HEAD, then reads/writes through that HEAD —
    * and one repo is shared by an original and all of its forks, which are DIFFERENT launcher ids.
    * The launcher's per-app busy gate (`app-busy.ts`) is keyed by launcher id, so it does not
-   * serialize them: an un-awaited call on a fork (the prompt flow's `activeDescription`) can
+   * serialize them: an un-awaited call on a fork (the prompt flow's `activeEdit`) can
    * interleave with an "Open" on the original, and the loser's read lands on the other lineage's
    * snapshot — wrong data, silently. Chaining each operation onto the previous one for the same
    * repo makes switch + read atomic against every other operation on that repo. Different repos
@@ -388,34 +388,23 @@ export class StoreAccess {
     return { active, app: { ...app, record } };
   }
 
-  /** The active snapshot's ORIGINAL TypeScript source for an entry (#52-D5 / D14) — the genuine
-   *  `source.ts` artifact, never `activeBundle`'s compiled `bundle.js`. Returns `undefined` when
-   *  this snapshot predates source tracking: absence is a legitimate legacy state, reported
-   *  honestly, never silently substituted with the bundle. */
-  async activeSource(entry: InstalledApp): Promise<string | undefined> {
-    return this.serial(storeIdOf(entry), async () => {
-      await this.ensureLineage(entry);
-      const active = await this.store.active(storeIdOf(entry));
-      return active?.artifacts['source.ts'];
-    });
-  }
-
   /**
-   * The prompt that produced this entry's CURRENT version, as the user's own words — read-only,
-   * best-effort context for a re-prompt (`generation-request.ts#buildRewriteAppContext`'s
-   * `description`, sent to both the clarify and rewrite calls). Resolved through
-   * `parsePromptEnvelope` the same way `history-logic.ts#buildHistoryRows` reads a snapshot's
-   * prompt, so a v1 envelope or a raw legacy string reads exactly as honestly here as there.
-   * `undefined` when the entry has never snapshotted — a legitimate state, never an error; callers
-   * decide what "no description" means for their own request (`buildRewriteAppContext` omits the
-   * field entirely).
+   * What a report on `entry` offers of its CURRENT version (`report-payload.ts#reportDraftFor`): the
+   * prompt that produced it, as the user's own words (through `parsePromptEnvelope`, as
+   * `history-logic.ts#buildHistoryRows` reads a snapshot's prompt, so a v1 envelope or a raw legacy
+   * string reads as honestly here as there), and its ORIGINAL TypeScript (#52-D5 / D14: the genuine
+   * `source.ts` artifact, never `activeBundle`'s compiled `bundle.js`). Read from one version in one
+   * `serial` section, so a report never pairs one version's words with another's code. `source` is
+   * absent when the version predates source tracking, and both when the entry never snapshotted:
+   * legitimate states, reported honestly, never an error or a substitute.
    */
-  async activeDescription(entry: InstalledApp): Promise<string | undefined> {
+  async activeWords(entry: InstalledApp): Promise<{ prompt?: string; source?: string }> {
     return this.serial(storeIdOf(entry), async () => {
       await this.ensureLineage(entry);
       const active = await this.store.active(storeIdOf(entry));
-      if (active == null) return undefined;
-      return parsePromptEnvelope(active.prompt).text;
+      if (active == null) return {};
+      const source = active.artifacts['source.ts'];
+      return { prompt: parsePromptEnvelope(active.prompt).text, ...(source != null ? { source } : {}) };
     });
   }
 

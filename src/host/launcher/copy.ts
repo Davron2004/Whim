@@ -310,6 +310,8 @@ export const COPY = {
   // §9 App crashed): its title is `appCrashedTitle`, its Reload `actionReload`, its last action
   // `launchFailedBack`.
   appCrashedBody: 'It stopped and can’t carry on right now. Your saved data is safe.',
+  /** The body while the crashed launch is behind its app's current version: Reload opens that one. */
+  appCrashedBehindBody: 'It stopped, and a newer version is ready. Reload to open it. Your saved data is safe.',
   appCrashedAskFix: 'Ask Whim to fix it',
   /** The request "Ask Whim to fix it" puts in the Whim sheet's field, the error attached under it. */
   appCrashedFixRequest: 'Fix the error that stops this app.',
