@@ -152,9 +152,9 @@ Every version `StoreAccess` saves SHALL keep, beside its bundle, the app's host-
 - **WHEN** the user makes a copy from version 1 while version 2 is current
 - **THEN** the copy runs with version 1's manifest and schema, and the original keeps version 2's
 
-#### Scenario: A version saved before manifests were kept
+#### Scenario: A version saved before manifests were kept (known limitation)
 - **WHEN** the user uses a version saved before versions kept their manifest
-- **THEN** it runs with the record the entry has now, and nothing errors
+- **THEN** it runs with the record the entry has now, and nothing errors; its own manifest is not known (accepted pre-release: no tester builds hold such versions)
 
 ### Requirement: The shell follows the phone's appearance through one scheme hook
 

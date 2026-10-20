@@ -48,6 +48,10 @@ An expanded version that is not current SHALL offer "Use this version"; tapping 
 - **WHEN** the user uses version 3 of 4 and taps Undo
 - **THEN** version 4 is active again and both remain listed
 
+#### Scenario: A used version runs with its own manifest and schema
+- **WHEN** the user uses a version whose manifest or schema differs from the current one's, then taps Undo
+- **THEN** the app runs that version with its own manifest and schema, and after Undo with the newer version's again
+
 #### Scenario: Moving to a newer version says so
 - **WHEN** the app is on version 2 of 4 and the user uses version 4
 - **THEN** the toast reads "Now on version 4", not "Back on version 4"
