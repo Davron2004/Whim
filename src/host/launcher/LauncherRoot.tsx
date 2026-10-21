@@ -1383,24 +1383,28 @@ function LauncherShell({
     setScreen({ kind: 'history', app, from });
   };
 
+  // Whether the running launch is behind its app's current version (a change landed unreloaded, an
+  // Undo moved the app after it opened), read when it opens and whenever a change lands, and taken
+  // from a switch or an Undo of the app the moment it lands (below), so no read of the store can leave
+  // it a step behind. The crash screen then leads with Reload and offers no fix of the error: that
+  // error belongs to code no longer current, and a change is made from the current version.
+  const [activeRead, setActiveRead] = useState<{ appId: string; at: number; behind: boolean } | null>(null);
+
   // History's "Use this version" and its Undo, the shell's (`VersionSwitches`): the Undo's toast
   // outlives History, and Home and a History on screen (`versionsMoved`) follow where it leaves the app.
   const [versionsMoved, setVersionsMoved] = useState(0);
-  const movedRef = useRef(() => {});
-  movedRef.current = () => {
+  const movedRef = useRef<(app: InstalledApp, activeId: string) => void>(() => {});
+  movedRef.current = (app, activeId) => {
+    const on = runningRef.current;
+    if (on?.app.id === app.id) setActiveRead({ appId: app.id, at: on.tappedAt, behind: activeId !== on.versionId });
     refresh();
     setVersionsMoved((n) => n + 1);
   };
   const versionSwitches = useMemo(
-    () => new VersionSwitches({ access, toast: () => toastRef.current, moved: () => movedRef.current(), busyWith: (appId) => appOps.opFor(appId) }),
+    () => new VersionSwitches({ access, toast: () => toastRef.current, moved: (app, activeId) => movedRef.current(app, activeId), busyWith: (appId) => appOps.opFor(appId) }),
     [access, appOps],
   );
 
-  // Whether the running launch is behind its app's current version (a change landed unreloaded, an
-  // Undo moved the app after it opened), read when it opens and whenever a change lands or a switch
-  // moves an app. The crash screen then leads with Reload and offers no fix of the error: that error
-  // belongs to code no longer current, and a change is made from the current version.
-  const [activeRead, setActiveRead] = useState<{ appId: string; at: number; behind: boolean } | null>(null);
   const runningAppId = running?.app.id;
   const runningAt = running?.tappedAt;
   const runningVersionId = running?.versionId;
@@ -1417,7 +1421,7 @@ function LauncherShell({
     return () => {
       live = false;
     };
-  }, [access, runningAppId, runningAt, runningVersionId, landed, versionsMoved]);
+  }, [access, runningAppId, runningAt, runningVersionId, landed]);
   const runningBehind =
     running !== null &&
     (runningChange.landed !== undefined || (activeRead?.appId === running.app.id && activeRead.at === running.tappedAt && activeRead.behind));

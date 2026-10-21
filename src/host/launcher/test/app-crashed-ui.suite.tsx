@@ -63,6 +63,12 @@ async function crashRunningApp(tree: Tree, frame: unknown = RENDER_ERROR_FRAME):
 
 const never = () => new Promise<Response>(() => {});
 
+/** `read`, slowed: each call reads in its turn, and its answer waits in `answers` until the test lets it through. */
+function slowed<A extends unknown[], T>(read: (...args: A) => Promise<T>, answers: (() => void)[]): (...args: A) => Promise<T> {
+  const held = (value: T) => new Promise<T>((resolve) => { answers.push(() => resolve(value)); });
+  return (...args) => read(...args).then(held);
+}
+
 /** History's components drawing the version `id`'s row. */
 const versionRows = (tree: Tree, id: string): Node[] => tree.root.findAll((n) => typeof n.type === 'function' && n.props.row?.id === id);
 
@@ -272,16 +278,25 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
         await press(button(tree, COPY.backLabel));
         await waitFor(() => showing(tree, MiniAppView) && !showing(tree, HistoryScreen), 'the app to open again');
         const web = await paintRunningApp(tree);
-        h.eq(await access.activeId(app), older.id, 'setup: the app runs the older version, current');
-        // The switch's Undo, after the app opened again on the version it left.
-        h.eq(toastOf(tree)?.action, COPY.toastUndo, 'setup: the switch’s Undo is still offered');
+        const readActive = access.activeId.bind(access);
+        h.eq(await readActive(app), older.id, 'setup: the app runs the older version, current');
+        // The switch's Undo, after the app opened again on the version it left. Its toast follows
+        // History's own read of the versions, which the app opening again may come before.
+        await waitFor(() => toastOf(tree)?.action === COPY.toastUndo, 'the switch’s toast, with Undo');
+        // From here on the shell's reads of the app's current version are slow: each reads the store
+        // in its turn, and its answer reaches the shell only once the test lets it.
+        const slowReads: (() => void)[] = [];
+        access.activeId = slowed(readActive, slowReads);
         await pressToastAction(tree);
-        await settle();
-        h.eq(await access.activeId(app), tip.id, 'setup: the Undo made the newer version current again');
+        // Read after the Undo's move in the store's order, so it has landed once this answers.
+        h.eq(await readActive(app), tip.id, 'setup: the Undo made the newer version current again');
         await send(web.props.onMessage, RENDER_ERROR_FRAME);
         await waitFor(() => crashShown(tree), 'the crash screen');
         h.ok(textOf(tree.root.findByType(AppCrashed)).includes(COPY.appCrashedBehindBody), 'it says a newer version is ready');
         h.eq(crashActions(tree), [COPY.actionReload, COPY.launchFailedBack], 'Reload first, then Back to your apps; no Ask Whim to fix it');
+        await TestRenderer.act(async () => { for (const answer of slowReads.splice(0)) answer(); });
+        await settle();
+        h.eq(crashActions(tree), [COPY.actionReload, COPY.launchFailedBack], 'and still once the shell’s slow reads answer');
       });
     } finally {
       Date.now = realNow;
