@@ -1,18 +1,19 @@
 /**
  * The shell copy's glossary lint (system.md §8; app-launcher "Shell copy has one name per
  * concept"), one source for the `COPY` table's lint by key (`design-system.suite.ts`) and the
- * lines `copy.ts` composes, by function (`src/host/launcher/test/product-verbs.suite.ts`).
+ * lines `copy.ts` composes, by function (`src/host/launcher/test/product-verbs.suite.ts`), and for
+ * the server's text the device shows word for word (`server/test/device-text.suite.ts`).
  */
 import type { COPY_KINDS } from '../../../src/host/launcher/copy';
 
 /** Who speaks in a line: `copy.ts#COPY_KINDS`'s kinds. */
 export type CopyKind = (typeof COPY_KINDS)[keyof typeof COPY_KINDS];
 
-/** The retired words, each with the pattern that finds it, prefixed forms too ("Rebuild it",
- *  "Regenerate"). */
+/** The retired words, each with the pattern that finds it, prefixed and suffixed forms too
+ *  ("Rebuild it", "Regenerate", "buildable"). */
 export const RETIRED_WORDS: readonly (readonly [string, RegExp])[] = [
   ['mini-app', /\bmini[- ]?apps?\b/i],
-  ['build', /buil(?:d|ds|ding|t)\b/i],
+  ['build', /buil(?:d|ds|ding|dable|t)\b/i],
   ['generate', /generat/i],
   ['fork', /fork/i],
   ['snapshot', /snapshots?\b/i],

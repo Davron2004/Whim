@@ -39,12 +39,12 @@ import { consentPractice } from '../consent-practices';
 import type { ServerLogger } from '../logger';
 import { carriesStubPipelineMarker } from '../stub-markers';
 
-const NOT_CONFIGURED: ApiError = {
+export const NOT_CONFIGURED: ApiError = {
   error: 'rewrite_not_configured',
   hint: 'The server was started without a model client for /v1/rewrite — set OPENROUTER_API_KEY and the model roster.',
 };
 
-const MODEL_FAILURE: ApiError = {
+export const MODEL_FAILURE: ApiError = {
   error: 'model_failure',
   hint: 'The rewrite model call failed. Try again in a moment.',
 };

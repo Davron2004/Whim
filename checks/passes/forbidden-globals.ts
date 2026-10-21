@@ -18,13 +18,13 @@ const GLOBAL_ROOT_NAMES: ReadonlySet<string> = new Set(GLOBAL_ROOTS);
 
 function hintFor(name: string): string {
   if (name === 'eval' || name === 'Function' || name === 'constructor') {
-    return 'Dynamic code generation is blocked by the sandbox CSP and has no vc-sdk equivalent — remove this call.';
+    return 'Running code from a string is blocked by the sandbox CSP and has no vc-sdk equivalent — remove this call.';
   }
   if (name === 'document' || GLOBAL_ROOT_NAMES.has(name)) {
-    return 'Mini-apps render only through vc-sdk components (Screen/Stack/Text/...) — direct DOM/global access is not available.';
+    return 'Apps render only through vc-sdk components (Screen/Stack/Text/...) — direct DOM/global access is not available.';
   }
   if (name === 'fetch' || name === 'XMLHttpRequest' || name === 'WebSocket' || name === 'EventSource' || name === 'RTCPeerConnection' || name === 'sendBeacon') {
-    return "Network access is not exposed to mini-apps; persist data with vc-sdk's `storage` capability instead.";
+    return "Network access is not exposed to apps; persist data with vc-sdk's `storage` capability instead.";
   }
   if (name === 'localStorage' || name === 'sessionStorage' || name === 'indexedDB' || name === 'caches') {
     return "Ambient persistence is blocked; use vc-sdk's `storage` capability instead.";
@@ -32,7 +32,7 @@ function hintFor(name: string): string {
   if (name === 'Worker' || name === 'SharedWorker') {
     return "Background threads are not available; use vc-sdk's `delay`/`interval` for async work instead.";
   }
-  return "This global is not reachable from a vc-sdk mini-app; use the equivalent vc-sdk capability instead.";
+  return "This global is not reachable from a vc-sdk app; use the equivalent vc-sdk capability instead.";
 }
 
 function report(

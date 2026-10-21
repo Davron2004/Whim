@@ -58,12 +58,12 @@ import { STUB_LIMIT, STUB_LIMIT_MARKER } from '../stub-markers';
  *  spend is bounded by one number an operator can reason about. */
 const UNARY_KINDS: readonly RequestKind[] = ['clarify', 'rewrite'];
 
-const NOT_CONFIGURED: ApiError = {
+export const NOT_CONFIGURED: ApiError = {
   error: 'clarify_not_configured',
   hint: 'The server was started without a model client for /v1/clarify — set OPENROUTER_API_KEY and the model roster, or start it with WHIM_PIPELINE=stub.',
 };
 
-const MODEL_FAILURE: ApiError = {
+export const MODEL_FAILURE: ApiError = {
   error: 'model_failure',
   hint: 'The clarify model call failed. Try again in a moment.',
 };
