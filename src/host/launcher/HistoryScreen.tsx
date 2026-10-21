@@ -56,7 +56,7 @@ import { Skeleton, SkeletonBlock } from '../ui/Skeleton';
 import { Text, wrappingType } from '../ui/Text';
 import { useToast } from '../ui/Toast';
 import { useTokens } from '../ui/tokens';
-import { ICON_BUTTON, makeStyles, MAX_FONT_SCALE, timingOf, type ShellTokens } from '../ui/tokens-pure';
+import { ICON_BUTTON, makeStyles, MAX_FONT_SCALE, springReachMs, timingOf, type ShellTokens } from '../ui/tokens-pure';
 import { haptics } from '../haptics';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
@@ -110,32 +110,63 @@ const HISTORY_SKELETON_ROWS = 3;
 /** M26: an opened row's actions fade in on `fade-in`, in place. */
 const FADE_IN = timingOf('fadeIn');
 const ACTIONS_IN = FadeIn.duration(FADE_IN.duration).easing(Easing.bezier(...FADE_IN.bezier));
-/** Frames the list's layout holds still, once it is drawn, before a row's change of size moves. */
-const LIST_SETTLE_FRAMES = 3;
+/** How long a move on `smooth` takes to come to rest. */
+const SMOOTH_SETTLE_MS = springReachMs('smooth', 0.99);
 
-/** M26: how a row opening or closing moves: the row changes size and the rows below it move on
- *  `smooth` (`REFLOW`, a layout transition, which retargets one still running), or, undefined, at
- *  once. Undefined under Reduce Motion, and until the list has been drawn and held still for
- *  `LIST_SETTLE_FRAMES` frames: the list's own first layout, and any correction of it as its texts
- *  measure, is never played as a move. */
+/** M26: how the rows move as one changes size: on `smooth` (`REFLOW`, a layout transition, which
+ *  retargets one still running), or, undefined, at once. Only what the person's own action causes
+ *  moves (`usePersonsMove`); under Reduce Motion nothing does. */
 const RowsMove = React.createContext<typeof REFLOW | undefined>(undefined);
 
-/** Whether History's list has been drawn and held still, at this text size (a new size lays it out
- *  afresh). */
-function useListSettled(shown: boolean, fontScale: number): boolean {
-  const [settledAt, setSettledAt] = useState<number | null>(null);
-  const settled = settledAt === fontScale;
+/** The window in which the rows move: opened by the person's own action (a row opened or closed,
+ *  "Use this version", its Undo) and closed once what it changed has come to rest. Outside it, what
+ *  arrives or measures on its own (an open row's added-fields or hidden-data line, a late text
+ *  measure, a re-read) lands at once. Reanimated registers a view's transition only after the commit
+ *  that sets it, so a change of size committed together with it would jump, and one committed
+ *  together with its removal would still move: `act`'s change waits for the commit that opened the
+ *  window, and the window closes only after its change. `hold` keeps it open until an action's
+ *  re-read has landed. */
+function usePersonsMove() {
+  const [open, setOpen] = useState(false);
+  const committed = useRef(false);
+  const pending = useRef<(() => void)[]>([]);
+  const holds = useRef(0);
+  const closing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const settle = () => {
+    clearTimeout(closing.current);
+    if (holds.current === 0) closing.current = setTimeout(() => setOpen(false), SMOOTH_SETTLE_MS);
+  };
   useEffect(() => {
-    if (!shown || settled) return undefined;
-    let frames = 0;
-    let frame = requestAnimationFrame(function tick() {
-      frames += 1;
-      if (frames >= LIST_SETTLE_FRAMES) setSettledAt(fontScale);
-      else frame = requestAnimationFrame(tick);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [shown, settled, fontScale]);
-  return shown && settled;
+    committed.current = open;
+    if (!open) return;
+    const due = pending.current.splice(0);
+    for (const change of due) change();
+    if (due.length > 0) settle();
+  });
+  useEffect(() => () => clearTimeout(closing.current), []);
+  const act = (change?: () => void) => {
+    clearTimeout(closing.current);
+    if (committed.current) {
+      change?.();
+      settle();
+    } else if (change) {
+      pending.current.push(change);
+    }
+    setOpen(true);
+  };
+  const hold = async <T,>(work: () => Promise<T>): Promise<T> => {
+    act();
+    holds.current += 1;
+    try {
+      return await work();
+    } finally {
+      holds.current -= 1;
+      settle();
+    }
+  };
+  /** Opens the window with the render under way, for a `hold` its effects start. */
+  const opens = () => setOpen(true);
+  return { open, act, hold, opens };
 }
 
 /** A row's cell in the list, a view of its own on the native side: it moves with `RowsMove` when a
@@ -280,7 +311,14 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
   // `loading` already false is exactly the fake-empty flash this screen had).
   const [{ loading, snapshots, activeId }, setLoad] = useState<HistoryLoadState>(HISTORY_LOADING);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const settled = useListSettled(!loading, t.fontScale);
+  const moves = usePersonsMove();
+  // An Undo (or a switch) landing moves the version, from the shell: the person's action, so the
+  // window opens with the render that brings it, before the re-read below (held) can land.
+  const [movedSeen, setMovedSeen] = useState(versionsMoved);
+  if (movedSeen !== versionsMoved) {
+    setMovedSeen(versionsMoved);
+    moves.opens();
+  }
   // The row actions' double-submit guard, shared by Use this version, its Undo and Make a copy. A
   // ref, not state: two taps inside one frame both read the same rendered busy value, so only a
   // synchronous claim can refuse the second.
@@ -302,8 +340,14 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
       historyOperationFailed('list', e);
     });
 
+  const movedLoaded = useRef(versionsMoved);
   useEffect(() => {
-    reload();
+    if (movedLoaded.current === versionsMoved) {
+      reload();
+    } else {
+      movedLoaded.current = versionsMoved;
+      moves.hold(reload);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [access, app, versionsMoved]);
 
@@ -321,7 +365,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
   const switchVersion = async (row: HistoryRow) => {
     const words = { to: row.number, from: rows.find((r) => r.isCurrent)?.number ?? null };
     try {
-      if (!(await runRowAction(flight, busyFor(row, 'use-version'), () => onUseVersion(app, row.id, words, activeId, load)))) return;
+      if (!(await moves.hold(() => runRowAction(flight, busyFor(row, 'use-version'), () => onUseVersion(app, row.id, words, activeId, load))))) return;
     } catch (e) {
       historyOperationFailed('use-version', e);
       haptics.play('failure');
@@ -396,6 +440,12 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
     </View>
   );
 
+  /** Opens the row `id`, or closes it when it is the open one: the person's own action, so it moves. */
+  const toggle = (id: string) => {
+    const opens = (prev: string | null) => (prev === id ? null : id);
+    moves.act(() => setExpandedId(opens));
+  };
+
   const renderRow = ({ item, index }: { item: HistoryRow; index: number }) => (
     <HistoryRowView
       row={item}
@@ -408,7 +458,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
       busy={busy?.id === item.id ? busy.action : null}
       isFirst={index === 0}
       isLast={index === rows.length - 1}
-      onToggle={() => setExpandedId(prev => (prev === item.id ? null : item.id))}
+      onToggle={() => toggle(item.id)}
       onChangeIt={() => onChangeIt?.(app)}
       onUseVersion={() => switchVersion(item)}
       onMakeCopy={() => askCopy(item)}
@@ -433,7 +483,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
             <HistoryLoadingRows />
           </View>
         ) : (
-          <RowsMove.Provider value={settled && !t.reduceMotion ? REFLOW : undefined}>
+          <RowsMove.Provider value={moves.open && !t.reduceMotion ? REFLOW : undefined}>
             <FlatList
               data={rows}
               keyExtractor={row => row.id}

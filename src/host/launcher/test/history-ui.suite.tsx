@@ -10,7 +10,7 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { COPY } from '../copy';
+import { addedFieldsLine, COPY } from '../copy';
 import HistoryScreen, { type HistoryScreenProps } from '../HistoryScreen';
 import HomeScreen from '../HomeScreen';
 import SettingsScreen from '../SettingsScreen';
@@ -34,8 +34,8 @@ import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { accessibilitySettings, Alert, emitAccessibility, hardwareBack, openLink, setColorScheme, StyleSheet, windowMetrics } from './native-host';
 import { iosPop, stackItems, stackMoveEnds, stackUnmountsMidMove } from './native-screens';
-import { holdAnimations, layoutAnimations, playedUnder, viewTagOf, type LayoutAnimation } from './native-reanimated';
-import { springConfig, timingOf } from '../../ui/tokens-pure';
+import { holdAnimations, layoutAnimations, layoutCommits, playedUnder, viewTagOf, type LayoutAnimation } from './native-reanimated';
+import { springConfig, springReachMs, timingOf } from '../../ui/tokens-pure';
 import { androidBack, button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 import { chooseRow, dismissToast, longPress, pressToastAction, renderHome, sheetRows, tile, toastOf } from './home-rig';
 import { accessOver, disposeDeviceState, installApp, newDeviceState, withEngine } from './data-copy-rig';
@@ -56,6 +56,21 @@ async function threeVersions() {
   await store.snapshot(storeIdOf(app), { 'bundle.js': 'V3' }, envelope('make it louder'));
   const [current, middle] = await access.timeline(app);
   return { access, app, current, middle };
+}
+
+/** A real store holding three versions of a log app whose newest, "add notes", adds a field. */
+async function loggedVersions() {
+  const record = (fields: SchemaArtifact['collections'][string]['fields']) =>
+    ({ appId: 'log', name: 'Log', manifest: { capabilities: ['storage'] }, schemaArtifact: { schemaVersion: 1 as const, collections: { Entries: { id: 'c1', fields, tombstones: [] } } } });
+  const amount = { amount: { id: 'f1', type: 'int' as const } };
+  const store = createMemoryStore({ autoCompact: false });
+  const access = new StoreAccess({ store, index: new AppIndex(new MapKVBackend()), now: () => Date.now() });
+  const app = await access.update(
+    await access.install({ id: 'log', name: 'Log', record: record(amount), bundleSource: 'V1', prompt: envelope('a spending log') }),
+    { record: record(amount), bundleSource: 'V2', prompt: envelope('bigger numbers') },
+  );
+  await access.update(app, { record: record({ ...amount, notes: { id: 'f2', type: 'text', default: '' } }), bundleSource: 'V3', prompt: envelope('add notes') });
+  return { access, app };
 }
 
 interface Held<T> {
@@ -1435,36 +1450,109 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('M26: History drawn moves nothing — while its first frames lay it out (and correct it as its texts measure) no row or cell carries a move; once it has held still, they do', async () => {
+  await h.test('M26: History drawn moves nothing — while it lays itself out, and long after it has held still, no row or cell carries a move; a tap then moves them', async () => {
     const { access, app } = await threeVersions();
-    // Frames drawn one at a time, by the test.
-    const frames = new Map<number, (time: number) => void>();
-    let nextId = 1;
-    const real = { request: globalThis.requestAnimationFrame, cancel: globalThis.cancelAnimationFrame };
-    globalThis.requestAnimationFrame = (callback) => {
-      frames.set(nextId, callback);
-      return nextId++;
-    };
-    globalThis.cancelAnimationFrame = (id) => { if (id != null) frames.delete(id); };
-    const nextFrame = () => TestRenderer.act(async () => {
-      const due = [...frames.values()];
-      frames.clear();
-      for (const callback of due) callback(Date.now());
+    await withHistory(access, app, async (tree) => {
+      await waitFor(() => rows(tree).length === 3, 'the versions to load');
+      h.ok(movesOf(tree).every((m) => m === undefined), 'drawn, nothing moves');
+      await restFor(MOVE_SETTLED_MS);
+      h.ok(movesOf(tree).every((m) => m === undefined), 'nor once it has held still: nothing the person did moves it');
+      await press(row(tree, 'add a chime'));
+      h.ok(movesOf(tree).every(isSmoothMove), 'a tap moves the rows on smooth');
     });
-    try {
-      await withHistory(access, app, async (tree) => {
-        await waitFor(() => rows(tree).length === 3, 'the versions to load');
-        h.ok(movesOf(tree).every((m) => m === undefined), 'drawn, nothing moves');
-        await nextFrame();
-        await nextFrame();
-        h.ok(movesOf(tree).every((m) => m === undefined), 'nor over its first two frames');
-        await nextFrame();
-        h.ok(movesOf(tree).every(isSmoothMove), 'held still for three, the rows take their move on smooth');
-      });
-    } finally {
-      globalThis.requestAnimationFrame = real.request;
-      globalThis.cancelAnimationFrame = real.cancel;
-    }
+  });
+
+  await h.test('M26: a row opened or closed moves on smooth — the transition is in place on the card and every cell below before the commit that changes the card’s size — and only until that move is at rest', async () => {
+    const { access, app } = await threeVersions();
+    await withHistory(access, app, async (tree) => {
+      await settledList(tree);
+      for (const opens of [true, false]) {
+        const label = opens ? 'opening' : 'closing';
+        const from = layoutCommits.length;
+        await press(row(tree, 'add a chime'));
+        h.eq(row(tree, 'add a chime').props.accessibilityState.expanded, opens, `${label}: the tap ${label === 'opening' ? 'opens' : 'closes'} the row`);
+        const resized = resizeCommit(cardOf(tree, 'add a chime'), from);
+        h.ok(resized !== null, `${label}: the card changes size in a commit of its own`);
+        const views = [cardOf(tree, 'add a chime'), cellOf(tree, 'add a chime'), cellOf(tree, 'a tea timer')];
+        h.ok(resized !== null && views.every((v) => isSmoothMove(heldAt(viewTagOf(v), resized))), `${label}: the card and the rows from it down move with smooth, registered before that commit`);
+        await restAfterMove(tree);
+      }
+    });
+  });
+
+  await h.test('M26: an open row’s added-fields line arriving after its move has come to rest is simply there — no card or cell moves', async () => {
+    const { access, app } = await loggedVersions();
+    const read = held<void>();
+    const diff = access.diff.bind(access);
+    access.diff = async (...args) => { await read.promise; return diff(...args); };
+    await withHistory(access, app, async (tree) => {
+      await settledList(tree);
+      await press(row(tree, 'add notes'));
+      h.ok(movesOf(tree).every(isSmoothMove), 'setup: the row opens on smooth');
+      await restFor(MOVE_SETTLED_MS);
+      const from = layoutCommits.length;
+      await TestRenderer.act(async () => { read.resolve(); });
+      await waitFor(() => textOf(tree.root).includes(addedFieldsLine(['notes'])), 'the added-fields line');
+      const resized = resizeCommit(cardOf(tree, 'add notes'), from, true);
+      h.ok(resized !== null, 'the card re-renders as the line lands');
+      const views = rows(tree).flatMap((r) => [animatedAround(r), animatedAround(animatedAround(r))]);
+      h.ok(resized !== null && views.every((v) => heldAt(viewTagOf(v), resized) === undefined), 'nothing moves as it lands: the line is there at once');
+    });
+  });
+
+  await h.test('M26: a re-read nobody asked for, which adds a row and moves the current one, lands at once — no card or cell moves', async () => {
+    const { access, app } = await threeVersions();
+    await withHistory(access, app, async (tree) => {
+      await settledList(tree);
+      await press(row(tree, 'add a chime'));
+      await restFor(MOVE_SETTLED_MS);
+      const from = layoutCommits.length;
+      const base = { appId: app.record.appId, name: app.record.name, manifest: { capabilities: [] } };
+      const newer = await access.update(app, { record: base, bundleSource: 'V4', prompt: envelope('make it quieter') });
+      await reloadHistory(tree, access, newer);
+      await waitFor(() => rows(tree).length === 4, 'the new version to be read');
+      const views = rows(tree).flatMap((r) => [animatedAround(r), animatedAround(animatedAround(r))]);
+      const tags = new Set(views.map(viewTagOf));
+      const since = layoutCommits.slice(from).filter((c) => tags.has(c.viewTag));
+      h.ok(since.length > 0 && since.every((c) => c.held === undefined), 'no commit since the re-read began moved a card or a cell');
+      h.ok(views.every((v) => v.props.layout === undefined), 'and none carries a move');
+    });
+  });
+
+  await h.test('M26: Use this version and its Undo each move the rows on smooth as the re-read lands — the transition already in place before it — and the window closes once they are at rest', async () => {
+    const { access, app } = await threeVersions();
+    let gate: Held<void> | null = null;
+    const timeline = access.timeline.bind(access);
+    access.timeline = async (...args) => {
+      if (gate) await gate.promise;
+      return timeline(...args);
+    };
+    const currentIn = (tree: Tree) => WORDS.find((w) => textsSaying(row(tree, w), COPY.historyCurrent).length === 1);
+    await withHistory(access, app, async (tree) => {
+      await settledList(tree);
+      await press(row(tree, 'add a chime'));
+      await restAfterMove(tree);
+      for (const step of ['use', 'undo'] as const) {
+        const reread = held<void>();
+        gate = reread;
+        const tags = new Set(rows(tree).flatMap((r) => [viewTagOf(animatedAround(r)), viewTagOf(animatedAround(animatedAround(r)))]));
+        const acted = layoutCommits.length;
+        if (step === 'use') await press(button(tree, COPY.historyUseVersion));
+        else await pressToastAction(tree);
+        const was = currentIn(tree);
+        await waitFor(() => movesOf(tree).every(isSmoothMove), `${step}: the rows to take their move before the re-read lands`);
+        h.eq(currentIn(tree), was, `${step}: the re-read has not landed yet`);
+        const first = layoutCommits.slice(acted).find((c) => tags.has(c.viewTag));
+        h.ok(first !== undefined && isSmoothMove(first.layout), `${step}: the first render the action makes already sets the rows’ move, so no read can land before it`);
+        const from = layoutCommits.length;
+        gate = null;
+        await TestRenderer.act(async () => { reread.resolve(); });
+        await waitFor(() => currentIn(tree) === (step === 'use' ? 'add a chime' : 'make it louder'), `${step}: the re-read to land`);
+        const since = layoutCommits.slice(from).filter((c) => tags.has(c.viewTag));
+        h.ok(since.length > 0 && since.every((c) => isSmoothMove(c.held)), `${step}: every commit the re-read made moved its cards and cells on smooth`);
+        await restAfterMove(tree);
+      }
+    });
   });
 
   await h.test('M26 under Reduce Motion: a row opens and closes at once, the rows below with it, and its actions are simply there; with motion, the same taps move', async () => {
@@ -1514,7 +1602,32 @@ const cardOf = (tree: Tree, words: string) => animatedAround(row(tree, words));
 /** A row's cell in the list: the view that moves when a row above it opens or closes. */
 const cellOf = (tree: Tree, words: string) => animatedAround(cardOf(tree, words));
 /** The move every row's card and cell carries. */
-const movesOf = (tree: Tree): unknown[] => [...WORDS.map((w) => cardOf(tree, w).props.layout), ...WORDS.map((w) => cellOf(tree, w).props.layout)];
+const movesOf = (tree: Tree): unknown[] => rows(tree).flatMap((r) => [animatedAround(r).props.layout, animatedAround(animatedAround(r)).props.layout]);
+/** Long enough for a move on `smooth` to come to rest. */
+const MOVE_SETTLED_MS = springReachMs('smooth', 0.99) + 100;
+/** Lets `ms` of real time pass. */
+const restFor = (ms: number) => TestRenderer.act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+/** A move the person made, come to rest: no card or cell carries one any more. */
+const restAfterMove = (tree: Tree) => waitFor(() => movesOf(tree).every((m) => m === undefined), 'the move to come to rest');
+/** The layout transition registered for view `viewTag` as commit `commit` was drawn (`layoutCommits`). */
+function heldAt(viewTag: number, commit: number): unknown {
+  const entries = layoutCommits.filter((c) => c.viewTag === viewTag && c.commit <= commit);
+  const last = entries.at(-1);
+  if (last === undefined) return undefined;
+  return last.commit === commit ? last.held : last.layout;
+}
+/** The first commit since entry `from` of `layoutCommits` in which `card` was drawn with another
+ *  style than before it (or, with `anyRender`, was drawn at all), or null. */
+function resizeCommit(card: Node, from: number, anyRender = false): number | null {
+  const tag = viewTagOf(card);
+  let style = layoutCommits.slice(0, from).filter((c) => c.viewTag === tag).at(-1)?.style;
+  for (const c of layoutCommits.slice(from)) {
+    if (c.viewTag !== tag) continue;
+    if (anyRender || c.style !== style) return c.commit;
+    style = c.style;
+  }
+  return null;
+}
 /** History loaded, and its list drawn for long enough to have held still (a frame is a timeout here). */
 async function settledList(tree: Tree): Promise<void> {
   await waitFor(() => rows(tree).length === 3, 'the versions to load');

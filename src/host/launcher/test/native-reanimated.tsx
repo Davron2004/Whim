@@ -478,6 +478,34 @@ export interface LayoutEvent {
 }
 export const layoutAnimations: LayoutEvent[] = [];
 
+/** Each commit an Animated view was rendered in, oldest first: the `layout` transition registered for
+ *  it as that commit was drawn (`held`: what a change of its size or place in that commit moved
+ *  with), the one it set, and its style. A view not rendered in a commit holds the `layout` of its
+ *  last entry before it. Splice to reset. */
+export interface LayoutCommit {
+  commit: number;
+  viewTag: number;
+  held: unknown;
+  layout: unknown;
+  style: string;
+}
+export const layoutCommits: LayoutCommit[] = [];
+let commits = 0;
+let inCommit = false;
+const inThisCommit = new Set<number>();
+/** The number of the commit whose layout effects are running: a commit runs them all in one go, each
+ *  view's once, so a view already in it starts the next. */
+function commitNumber(viewTag: number): number {
+  if (!inCommit || inThisCommit.has(viewTag)) {
+    inCommit = true;
+    inThisCommit.clear();
+    commits += 1;
+    queueMicrotask(() => { inCommit = false; });
+  }
+  inThisCommit.add(viewTag);
+  return commits;
+}
+
 /** Every style in a (nested) style prop, in order. */
 const stylesIn = (style: unknown): unknown[] => (Array.isArray(style) ? style.flatMap(stylesIn) : [style]);
 
@@ -509,6 +537,13 @@ function animatedComponent(name: string) {
         if (isLayoutAnimation(exiting.current)) layoutAnimations.push({ phase: 'exiting', component: name, animation: exiting.current });
       };
     }, []);
+    // Reanimated registers a view's `layout` transition after the commit that sets it: a change of
+    // size committed with this render moves with the one registered before it (`layoutCommits`).
+    const registered = React.useRef<unknown>(undefined);
+    React.useLayoutEffect(() => {
+      layoutCommits.push({ commit: commitNumber(viewTag.current), viewTag: viewTag.current, held: registered.current, layout: props.layout, style: JSON.stringify(props.style) });
+      registered.current = props.layout;
+    });
     return React.createElement(name, { ...props, style, viewTag: viewTag.current }, props.children);
   };
   Component.displayName = name;
