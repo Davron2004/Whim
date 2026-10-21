@@ -13,7 +13,7 @@ import { PlanPage } from '../PlanPage';
 import { springConfig, staggerDelay, timingOf } from '../../ui/tokens-pure';
 import { StyleSheet, accessibilitySettings, emitAccessibility } from './native-host';
 import { animations, holdAnimations, isStep, layoutAnimations, playedUnder, ReduceMotion, viewTagOf, type Animation, type LayoutAnimation } from './native-reanimated';
-import { button, hostType, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { button, captureTimeouts, hostType, press, renderScreen, textOf, unmountScreen } from './react-screen';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -126,18 +126,32 @@ async function arrive(tree: Tree, screen = landed()): Promise<() => void> {
 export async function runPlanMotionUiTests(h: Harness): Promise<void> {
   // ── M8 plan arrives ────────────────────────────────────────────────────────
 
-  await h.test('M8: questions landing over their skeleton fade in on the fade-in token, and the plan below them moves on smooth', async () => {
-    const tree = await renderScreen(page(opened()));
+  await h.test('M8: questions landing over their skeleton fade in on the fade-in token, in place: the plan section they push down jumps with them — rows landing meanwhile too — and moves on smooth once they have faded in', async () => {
+    let tree: Tree | null = null;
+    const section = () => frameOf(tree!.root.find((n) => hostType(n) === 'Text' && textOf(n) === planMakeHeader(false)));
+    const atCommit: unknown[] = [];
+    // Each commit's section transition, read as the commit lands, before the page's effects run.
+    function Commits() {
+      React.useLayoutEffect(() => { if (tree) atCommit.push(section().props.layout); });
+      return null;
+    }
+    const at = (screen: PlanScreen) => <>{page(screen)}<Commits /></>;
+    tree = await renderScreen(at(opened()));
+    const timers = captureTimeouts();
     try {
       h.eq(skeletons(tree, COPY.workingClarify), 1, 'the questions start as their skeleton');
       layoutAnimations.splice(0);
-      await show(tree, asked());
+      await TestRenderer.act(async () => tree!.update(at(asked())));
       h.eq(skeletons(tree, COPY.workingClarify), 0, 'the skeleton has gone');
       for (const q of [ALERT, EXTRAS]) h.ok(isFadeInEntering(questionFrame(tree, q).props.entering), `"${q.question}" fades in on fade-in`);
       h.eq(layoutAnimations.filter((e) => e.phase === 'entering' && isFadeInEntering(e.animation)).length, 2, 'and both played as they mounted');
-      const header = tree.root.find((n) => hostType(n) === 'Text' && textOf(n) === planMakeHeader(false));
-      h.ok(isSmoothReflow(frameOf(header).props.layout), 'the plan section the questions push down moves on smooth, a layout transition');
+      h.eq(atCommit[0], undefined, 'the commit the questions land in moves the plan section with no transition: it would glide across them');
+      await TestRenderer.act(async () => tree!.update(at(landed())));
+      h.eq(section().props.layout, undefined, 'nor do rows landing before the questions have faded in: the phone may draw both commits in one frame');
+      await TestRenderer.act(async () => { timers.fireWithin(FADE_IN.duration); });
+      h.ok(isSmoothReflow(section().props.layout), 'once they have faded in it moves on smooth, a layout transition');
     } finally {
+      timers.restore();
       await unmountScreen(tree);
     }
   });

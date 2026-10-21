@@ -17,7 +17,7 @@
  * `Change my idea`.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { Keyboard, Pressable, View } from 'react-native';
 import Animated, { Easing, FadeIn, ReduceMotion, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
 import { LAYOUT, RADII, SPACE } from '../../design/tokens';
 import { Button } from '../ui/Button';
@@ -377,7 +377,9 @@ function PlanRowView({ row, editing, rise, onStart, onSave, onCancel }: Readonly
   );
 }
 
-/** A row being edited: its label, a field holding its words, and Save and Cancel. */
+/** A row being edited: its label, a field holding its words, and Save and Cancel. Either puts the
+ *  keyboard away as the field goes: Android otherwise hands the focus, and the keyboard, to the
+ *  page's next field. */
 function RowEditor({ row, onSave, onCancel }: Readonly<Pick<PlanRowViewProps, 'row' | 'onSave' | 'onCancel'>>) {
   const t = useTokens();
   const s = styles(t);
@@ -392,8 +394,25 @@ function RowEditor({ row, onSave, onCancel }: Readonly<Pick<PlanRowViewProps, 'r
       ) : null}
       <TextArea value={draft} onChangeText={setDraft} accessibilityLabel={row.label.length > 0 ? row.label : COPY.planRowFieldLabel} revealTarget={block} autoFocus />
       <Animated.View style={s.rowActions} entering={t.reduceMotion ? undefined : FADES_IN}>
-        <Button label={COPY.cancel} variant="plain" size="medium" onPress={onCancel} />
-        <Button label={COPY.planRowSave} variant="ink" size="medium" disabled={draft.trim().length === 0} onPress={() => onSave(draft)} />
+        <Button
+          label={COPY.cancel}
+          variant="plain"
+          size="medium"
+          onPress={() => {
+            Keyboard.dismiss();
+            onCancel();
+          }}
+        />
+        <Button
+          label={COPY.planRowSave}
+          variant="ink"
+          size="medium"
+          disabled={draft.trim().length === 0}
+          onPress={() => {
+            Keyboard.dismiss();
+            onSave(draft);
+          }}
+        />
       </Animated.View>
     </View>
   );
@@ -438,6 +457,8 @@ interface PlanRowsProps {
   arriving: boolean;
   changing: boolean;
   editingRow: number | null;
+  /** The section moves on `smooth` when its place changes: false while the questions above it land. */
+  reflows: boolean;
   onEditing: (index: number | null) => void;
   onChangeRow: (index: number, text: string) => void;
 }
@@ -446,13 +467,13 @@ interface PlanRowsProps {
  *  is drawn: it would head an empty gap. M8: rows that land while the page is up rise in, staggered
  *  (`PlanRowViewProps.rise`); the section moves on `smooth` as the questions above it land or fold,
  *  and at once under Reduce Motion, where a row's edit is instant too. */
-function PlanRows({ rows, arriving, changing, editingRow, onEditing, onChangeRow }: Readonly<PlanRowsProps>) {
+function PlanRows({ rows, arriving, changing, editingRow, reflows, onEditing, onChangeRow }: Readonly<PlanRowsProps>) {
   const t = useTokens();
   const s = styles(t);
   const [openedOnPlan] = useState(rows.length > 0);
   if (!arriving && rows.length === 0) return null;
   return (
-    <Animated.View style={s.planSection} layout={t.reduceMotion ? undefined : REFLOW}>
+    <Animated.View style={s.planSection} layout={reflows && !t.reduceMotion ? REFLOW : undefined}>
       <Text type="footnote" header color="text-2">
         {planMakeHeader(changing)}
       </Text>
@@ -485,6 +506,18 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
   const [editingRow, setEditingRow] = useState<number | null>(null);
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
   const [openedOnQuestions] = useState(screen.questions.length > 0);
+  // M8: questions landing fade in where they are, so the plan section they push down jumps with
+  // them: a section gliding down would cross them. Only once they have faded in does it move on
+  // `smooth`, as one above it folds or reopens — not from the next render, which the phone may draw
+  // in the same frame as the jump. Before they land it has no transition to drop: Reanimated takes a
+  // dropped one up after the frame it was dropped in.
+  const questionCount = screen.questions.length;
+  const [placedFor, setPlacedFor] = useState(questionCount);
+  useEffect(() => {
+    if (placedFor === questionCount) return;
+    const placed = setTimeout(() => setPlacedFor(questionCount), FADE_IN.duration);
+    return () => clearTimeout(placed);
+  }, [placedFor, questionCount]);
   const extents = useRef<Record<string, BlockExtent>>({});
   const handleBack = () => {
     if (planBackAction(editingRow !== null) === 'cancel-edit') setEditingRow(null);
@@ -579,6 +612,7 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
         arriving={planArriving}
         changing={changing}
         editingRow={editingRow}
+        reflows={questionCount > 0 && placedFor === questionCount}
         onEditing={setEditingRow}
         onChangeRow={onChangeRow}
       />
