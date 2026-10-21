@@ -5,7 +5,7 @@
  */
 
 import React from 'react';
-import { Text as RNText, type AccessibilityRole, type StyleProp, type TextStyle } from 'react-native';
+import { Text as RNText, type AccessibilityRole, type NativeSyntheticEvent, type StyleProp, type TextLayoutEventData, type TextStyle } from 'react-native';
 import type { ColorRole, TypeToken } from '../../design/tokens';
 import { useTokens } from './tokens';
 import { MAX_FONT_SCALE, TABULAR, typeStyle, type ShellTokens, type TypeStyle } from './tokens-pure';
@@ -59,9 +59,11 @@ export interface TextProps {
    *  settings it opened with (app-launcher "Settings changed while an app runs apply next time").
    *  Omitted, the text follows the phone. */
   tokens?: ShellTokens;
+  /** The lines the text was laid out in, after each layout. */
+  onTextLayout?: (event: NativeSyntheticEvent<TextLayoutEventData>) => void;
 }
 
-export function Text({ children, type = 'body', color = 'text', header = false, tabular = false, italic = false, numberOfLines, accessibilityRole, style, tokens }: Readonly<TextProps>) {
+export function Text({ children, type = 'body', color = 'text', header = false, tabular = false, italic = false, numberOfLines, accessibilityRole, style, tokens, onTextLayout }: Readonly<TextProps>) {
   const live = useTokens();
   const t = tokens ?? live;
   const face: TextStyle = {
@@ -74,6 +76,7 @@ export function Text({ children, type = 'body', color = 'text', header = false, 
     <RNText
       style={[style, face]}
       numberOfLines={numberOfLines}
+      onTextLayout={onTextLayout}
       maxFontSizeMultiplier={MAX_FONT_SCALE}
       accessibilityRole={accessibilityRole ?? (HEADER_TYPES.has(type) ? 'header' : 'text')}
     >

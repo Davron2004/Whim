@@ -8,7 +8,8 @@
  * `LauncherRoot`'s machine stays the one source of truth: the entries are rendered from its state,
  * and every native pop writes back to it through the popped entry's `onLeave`, the same handler the
  * screen binds to system back. So `onLeave` must move the machine off its entry synchronously: an
- * entry still rendered after the platform popped it would be pushed again.
+ * entry still rendered after the platform popped it would be pushed again. Only the top entry's
+ * screen answers system back (`SystemBackOnTop`), whatever order the screens' listeners were bound in.
  *
  * A running app is never on this stack (#67): it is a full-screen layer of its own, so there is no
  * edge swipe over it and its Android back keeps its own seam.
@@ -21,6 +22,7 @@ import type { ScreenStackHeaderConfigProps } from 'react-native-screens';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTokens } from '../ui/tokens';
 import { typeStyle } from '../ui/tokens-pure';
+import { SystemBackOnTop } from './use-system-back-with';
 
 export interface StackEntry {
   /** Stable while the entry stays on the stack, so a push or a pop never remounts what is under it. */
@@ -98,7 +100,7 @@ export default function NativeStack({ entries, onSettled }: Readonly<NativeStack
             onHeaderBackButtonClicked={entry.onLeave}
           >
             <SafeAreaView edges={ownHeader ? ['top', 'bottom'] : ['bottom']} style={styles.fill}>
-              {entry.children}
+              <SystemBackOnTop.Provider value={index === entries.length - 1}>{entry.children}</SystemBackOnTop.Provider>
             </SafeAreaView>
           </ScreenStackItem>
         );

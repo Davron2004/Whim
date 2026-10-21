@@ -17,7 +17,7 @@ import ConsentScreen from '../ConsentScreen';
 import { COLORS } from '../../../design/tokens';
 import type { InstalledApp } from '../app-index';
 import { button, hostType, press, textOf } from './react-screen';
-import { backListenerCount, hardwareBack, setColorScheme, StyleSheet, windowMetrics } from './native-host';
+import { backListenerCount, hardwareBack, setColorScheme, setFontScale, StyleSheet, windowMetrics } from './native-host';
 import { LARGE_TEXT_FROM } from '../../ui/tokens-pure';
 import { androidHeaderBack, iosPop, stackIds, stackItems } from './native-screens';
 import { json, tap, waitFor, withLauncher, type Tree } from './rendered-launcher';
@@ -52,6 +52,24 @@ export async function runNativeStackUiTests(h: Harness): Promise<void> {
         await pop(tree);
         h.eq([stackIds(tree), showing(tree, SettingsScreen)], [['home'], false], `${way}: the next leaves Settings for Home`);
       });
+    }
+  });
+
+  await h.test('native stack: a text size changed while Advanced shows leaves every way back one screen down, to Settings (#218)', async () => {
+    for (const [way, pop] of POPS) {
+      try {
+        await withLauncher({ server: nothing }, async ({ tree }) => {
+          await openSettings(tree);
+          await press(button(tree, COPY.settingsAdvancedSectionTitle));
+          await TestRenderer.act(async () => setFontScale(1.3));
+          h.eq(stackIds(tree), ['home', 'settings', 'advanced'], `${way}: the text size changes nothing on the stack`);
+          await pop(tree);
+          h.eq([stackIds(tree), showing(tree, SettingsScreen), showing(tree, AdvancedScreen)], [['home', 'settings'], true, false], `${way}: back from Advanced lands on Settings`);
+          await TestRenderer.act(async () => setFontScale(1));
+          await pop(tree);
+          h.eq(stackIds(tree), ['home'], `${way}: and the next back on Home`);
+        });
+      } finally { windowMetrics.fontScale = 1; }
     }
   });
 

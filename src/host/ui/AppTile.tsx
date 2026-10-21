@@ -11,8 +11,9 @@
  * when it did not work, plus the alert badge on a failure and the glowing ring around an app that is
  * being changed. The glyph and the ember are hidden from screen readers.
  *
- * `AppTile` is the whole cell: plate, name under it (two lines, then ellipsis), the line that states
- * the state, and the touch area (at least 64 × 84). Its label is the name plus the state ("Pour
+ * `AppTile` is the whole cell: plate, name under it (two lines, then ellipsis, in a block as many
+ * lines tall as the longest name of its row, which the caller works out from `onLabelLines`), the
+ * line that states the state, and the touch area (at least 64 × 84). Its label is the name plus the state ("Pour
  * Timer, making") with a hint for what a double tap does. A long-press of 350 ms plays the haptic
  * and reports the cell's rect (from the top-left of the app's root), which the context menu anchors to; the caller
  * owns the menu and passes `lifted` while it is open.
@@ -159,6 +160,11 @@ export interface AppTileProps {
   busy?: boolean;
   /** Its menu is open: the tile is lifted. */
   lifted?: boolean;
+  /** On the grid, how many lines tall the name block is: the most any name in the row took
+   *  (`rowLabelLines`), so the state lines of a row sit level. Default one. */
+  labelLines?: number;
+  /** On the grid, after each layout of the name, the lines it took. */
+  onLabelLines?: (lines: number) => void;
   onPress: () => void;
   /** After the 350 ms hold, with the cell's rect from the top-left of the app's root (`MenuAnchor`). */
   onLongPress: (anchor: MenuAnchor) => void;
@@ -187,6 +193,8 @@ export function AppTile({
   activity,
   busy = false,
   lifted = false,
+  labelLines = 1,
+  onLabelLines,
   onPress,
   onLongPress,
 }: Readonly<AppTileProps>) {
@@ -264,7 +272,12 @@ export function AppTile({
             <View style={s.column}>
               {plate}
               {name === '' ? null : (
-                <Text type="caption" numberOfLines={GRID.labelLines} style={[s.label, { minHeight: layout.labelHeight }]}>
+                <Text
+                  type="caption"
+                  numberOfLines={GRID.labelLines}
+                  style={[s.label, { minHeight: labelLines * layout.labelLine }]}
+                  onTextLayout={(event) => onLabelLines?.(event.nativeEvent.lines.length)}
+                >
                   {name}
                 </Text>
               )}

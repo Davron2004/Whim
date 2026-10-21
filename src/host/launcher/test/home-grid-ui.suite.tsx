@@ -169,24 +169,118 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     h.eq(seen['200%'].plainCell.minHeight, seen['200%'].statedCell.minHeight, 'and the row without one is as tall, so the list keeps its rhythm');
   });
 
-  await h.test('home layout: a grid label is a two-line box at every grid text size, so a one-line name’s state line sits level with a two-line neighbour’s (#218)', async () => {
+  // The name block of a grid row (#218): the names of a row take the lines of its longest name, as
+  // the platform lays them out (`onTextLayout`, played here as the platform reports it).
+  const nameOf = (tree: Tree, name: string) => {
+    const label = tile(tree, name).findAll((n) => hostType(n) === 'Text' && textOf(n) === name)[0];
+    if (!label) throw new Error(`no name under "${name}"`);
+    return label;
+  };
+  const stateLineOf = (tree: Tree, name: string) => tile(tree, name).findAll((n) => hostType(n) === 'Text' && textOf(n) === COPY.exampleBadge)[0];
+  const layOut = (tree: Tree, lines: Record<string, number>) => TestRenderer.act(async () => {
+    for (const [name, count] of Object.entries(lines)) {
+      nameOf(tree, name).props.onTextLayout({ nativeEvent: { lines: Array.from({ length: count }, (_, i) => ({ text: `${name} ${i}` })) } });
+    }
+  });
+  const nameBlock = (tree: Tree, name: string) => flat(nameOf(tree, name)).minHeight as number;
+  const gridShown = (tree: Tree) => {
+    const grid = tree.root.findAll((n) => hostType(n) === 'View' && flat(n).flexWrap === 'wrap')[0];
+    return flat(grid).opacity !== 0;
+  };
+  const line = (scale: number) => TYPE_SCALE.caption.lineHeight * scale;
+  /** Seeded apps the grid shows in the order given (newest first). */
+  const examples = (names: string[]) => names.map((n, i) => app(n, names.length - i, { example: true }));
+
+  await h.test('home layout: a grid row whose names all fit one line has no empty line under them, at every grid text size (#218)', async () => {
     for (const scale of [1, 1.35]) {
       await resetPhone();
       windowMetrics.fontScale = scale;
-      const tree = await renderHome({ apps: [app('Water Counter', 1, { example: true }), app('Dice', 2, { example: true })] });
+      const tree = await renderHome({ apps: examples(['Dice', 'Timer', 'Plants']) });
       try {
-        const twoLines = 2 * TYPE_SCALE.caption.lineHeight * scale;
-        for (const name of ['Water Counter', 'Dice']) {
+        await layOut(tree, { Dice: 1, Timer: 1, Plants: 1 });
+        for (const name of ['Dice', 'Timer', 'Plants']) {
+          h.eq([nameOf(tree, name).props.numberOfLines, nameBlock(tree, name), flat(nameOf(tree, name)).height], [2, line(scale), undefined],
+            `${name} at ${scale * 100}%: a one-line name block (minHeight, never height), still cut at two lines`);
           const texts = tile(tree, name).findAll((n) => hostType(n) === 'Text');
-          const label = texts.find((n) => textOf(n) === name);
-          const stateLine = texts.find((n) => textOf(n) === COPY.exampleBadge);
-          h.ok(label !== undefined && stateLine !== undefined, `${name}: a label and its state line`);
-          h.eq([label?.props.numberOfLines, flat(label!).minHeight, flat(label!).height], [2, twoLines, undefined],
-            `${name} at ${scale * 100}%: two lines, a box of two caption lines (minHeight, never height)`);
-          h.ok(texts.indexOf(stateLine!) > texts.indexOf(label!), `${name}: the state line follows the label box`);
+          h.ok(texts.indexOf(stateLineOf(tree, name)) === texts.indexOf(nameOf(tree, name)) + 1, `${name}: its state line follows the name`);
         }
       } finally { await unmountScreen(tree); windowMetrics.fontScale = 1; }
     }
+  });
+
+  await h.test('home layout: a name that wraps gives every name of its row a two-line block, so the state lines sit level (#218)', async () => {
+    await resetPhone();
+    const tree = await renderHome({ apps: examples(['Water Counter', 'Dice', 'Timer', 'Plants']) });
+    try {
+      await layOut(tree, { 'Water Counter': 2, Dice: 1, Timer: 1, Plants: 1 });
+      h.eq(['Water Counter', 'Dice', 'Timer', 'Plants'].map((n) => nameBlock(tree, n)), [2, 2, 2, 2].map((n) => n * line(1)), 'all four names of the row take two lines');
+      await layOut(tree, { 'Water Counter': 5 });
+      h.eq(nameBlock(tree, 'Dice'), 2 * line(1), 'a platform reporting every line of a cut name still gives two, the label’s most');
+    } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('home layout: each grid row takes its own longest name, a wrap in one row leaves the next alone (#218)', async () => {
+    await resetPhone();
+    const names = ['Water Counter', 'Dice', 'Timer', 'Plants', 'Tea', 'Coin', 'Mood', 'Notes', 'Pour-Over Timer Deluxe'];
+    const tree = await renderHome({ apps: examples(names) });
+    try {
+      const order = tileLabels(tree).map((l) => l.split(',')[0]);
+      const lines = Object.fromEntries(order.map((n) => [n, n.length > 12 ? 2 : 1]));
+      await layOut(tree, lines);
+      const rows = [order.slice(0, 4), order.slice(4, 8), order.slice(8)];
+      for (const row of rows) {
+        const want = row.some((n) => lines[n] === 2) ? 2 : 1;
+        h.eq(row.map((n) => nameBlock(tree, n)), row.map(() => want * line(1)), `row ${row.join(' · ')}: every name a ${want}-line block`);
+      }
+      h.eq(rows.map((row) => row.some((n) => lines[n] === 2)), [true, false, true], 'the case under test: a row with no wrapped name between two with one');
+    } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('home layout: a text size that changes the column count measures the names again and regroups the rows (#218)', async () => {
+    await resetPhone();
+    // Four columns: Water Counter and Dice share the first row; at 135% three columns put Plants
+    // in the second row, alone with Tea, and Water Counter's wrap no longer reaches it.
+    const names = ['Water Counter', 'Dice', 'Timer', 'Plants', 'Tea'];
+    const tree = await renderHome({ apps: examples(names) });
+    try {
+      const order = tileLabels(tree).map((l) => l.split(',')[0]);
+      h.eq(order, names, 'the grid holds them in this order');
+      await layOut(tree, { 'Water Counter': 2, Dice: 1, Timer: 1, Plants: 1, Tea: 1 });
+      h.eq(nameBlock(tree, 'Plants'), 2 * line(1), 'at 100% Plants shares the wrapped row');
+      await TestRenderer.act(async () => { windowMetrics.fontScale = 1.35; });
+      await updateHome(tree, { apps: examples(names) });
+      h.ok(!gridShown(tree), 'at the new size the grid is not shown before its names are measured again');
+      await layOut(tree, { 'Water Counter': 2, Dice: 2, Timer: 1, Plants: 1, Tea: 1 });
+      h.ok(gridShown(tree), 'and is once they are');
+      h.eq(['Water Counter', 'Dice', 'Timer'].map((n) => nameBlock(tree, n)), [2, 2, 2].map((n) => n * line(1.35)), 'the first row of three takes two lines at 135%');
+      h.eq(['Plants', 'Tea'].map((n) => nameBlock(tree, n)), [1, 1].map((n) => n * line(1.35)), 'Plants, now in the second row, takes one');
+    } finally { await unmountScreen(tree); windowMetrics.fontScale = 1; }
+  });
+
+  await h.test('home layout: the grid shows once every name has been laid out, and a tile that arrives later does not hide it again (#218)', async () => {
+    await resetPhone();
+    const tree = await renderHome({ apps: examples(['Water Counter', 'Dice']) });
+    try {
+      h.ok(!gridShown(tree), 'before the names are laid out the grid is not shown');
+      await layOut(tree, { 'Water Counter': 2 });
+      h.ok(!gridShown(tree), 'nor with one name still to come');
+      await layOut(tree, { Dice: 1 });
+      h.ok(gridShown(tree), 'with both, it shows');
+      await updateHome(tree, { apps: examples(['Water Counter', 'Dice', 'Timer']) });
+      h.ok(gridShown(tree), 'a new tile settles its row as it appears, the grid stays');
+      h.eq(nameBlock(tree, 'Timer'), 2 * line(1), 'the new tile takes its row’s block from the names already measured');
+    } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('home layout: a grid label’s side padding and the list at 200% are untouched by the name block (no measuring in the list)', async () => {
+    await resetPhone();
+    windowMetrics.fontScale = 2;
+    const tree = await renderHome({ apps: examples(['Water Counter', 'Dice']) });
+    try {
+      h.eq([nameOf(tree, 'Water Counter').props.onTextLayout, flat(nameOf(tree, 'Water Counter')).minHeight], [undefined, undefined], 'a list row’s name is not measured and has no block');
+      const list = tree.root.findAll((n) => hostType(n) === 'View' && flat(n).flexDirection === 'column' && flat(n).opacity === 0);
+      h.eq(list.length, 0, 'and nothing in the list waits for one');
+    } finally { await unmountScreen(tree); windowMetrics.fontScale = 1; }
   });
 
   await h.test('home layout: a grid label keeps the side padding system.md §3.2 gives it at every text size, large text included', async () => {
