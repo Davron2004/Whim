@@ -396,6 +396,12 @@ export function emberOutlineWidth(size: number): number {
 /** M10: the done flare peaks at 1.18. */
 export const SPARK_PEAK = 1.18;
 
+/** M10: the Ready page's 96 tile rises from this scale as the ember settles into it. */
+export const READY_RISE_FROM = 0.6;
+
+/** M10: the Ready page's name, words and buttons fade in this many ms apart. */
+export const READY_STAGGER_MS = 80;
+
 /** The ambient light at activity `a` (the mockup's `ambient`): its gradient is drawn once at full
  *  strength (centre `glow-mid` at 0.40, `glow-core` at 0.16 by 55%), and the layer's opacity carries
  *  the signal, so the centre lands where the mockup puts it: (0.5 + 0.5·a) × (0.14 + 0.26·a). */

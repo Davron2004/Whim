@@ -5,15 +5,28 @@
  * there, "It opens with your change."), `Open it` in the app's own tint and `Done`.
  * The app does not run until it is opened: there is no preview. Android back is the sheet's close,
  * which is `Done`, so the page registers nothing with the sheet.
+ *
+ * M10 (system.md §4.4): the page mounts as the delivery lands, in place of the Making page, so it
+ * carries the moment itself. An ember drawn over the tile's place flares (1 → 1.18 → 1, `spark`);
+ * once the flare has reached its peak it settles into the tile, which rises from 0.6 to 1 on
+ * `spark` as the ember fades out over it. The name, the words and the buttons fade in 80 ms apart
+ * from then; text only fades, it never moves (§4.3 rule 8). Done or Open it mid-way shows the end
+ * at once and still acts. Under Reduce Motion, read as the delivery lands, the ember cross-fades
+ * into the whole tile over `fade-in`, with no flare and no rise, and everything else fades in with it.
  */
-import React from 'react';
-import { View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
+import Animated, { useAnimatedReaction, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 import { LAYOUT, SPACE } from '../../design/tokens';
 import { TilePlate } from '../ui/AppTile';
+import { TILE_SIDE } from '../ui/AppTile-geometry';
 import { Button } from '../ui/Button';
+import { Ember, RESTING_ACTIVITY } from '../ui/Ember';
+import { timing } from '../ui/motion';
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
-import { makeStyles } from '../ui/tokens-pure';
+import { makeStyles, READY_RISE_FROM, READY_STAGGER_MS, springConfig, springReachMs } from '../ui/tokens-pure';
 import type { InstalledApp } from './app-index';
 import { COPY, quotedWords } from './copy';
 import KeyboardShell from './KeyboardShell';
@@ -32,35 +45,130 @@ export interface ReadyPageProps {
   onDone: () => void;
 }
 
+// A spring config as a module constant: a worklet never calls `springConfig` (motion.ts).
+const SPARK = springConfig('spark');
+/** M10: the ember settles into the tile once its flare has covered 95% of its way to the peak. */
+const SETTLE_AFTER = springReachMs('spark', 0.95);
+
 const styles = makeStyles(() => ({
   content: { paddingHorizontal: LAYOUT.gutter, paddingTop: SPACE[8], paddingBottom: SPACE[4], alignItems: 'center' as const, gap: SPACE[2] },
-  name: { textAlign: 'center' as const, marginTop: SPACE[5] },
+  hero: { width: TILE_SIDE.hero, height: TILE_SIDE.hero },
+  name: { marginTop: SPACE[5] },
+  words: { alignItems: 'center' as const, gap: SPACE[2] },
   centered: { textAlign: 'center' as const },
   footer: { paddingHorizontal: LAYOUT.gutter, paddingTop: LAYOUT.actionAreaTop, paddingBottom: LAYOUT.actionAreaBottom, gap: SPACE[3] },
 }));
 
+interface ReadyMotion {
+  /** 0 → 1 as the ember settles into the tile (past 1 while `spark` overshoots). */
+  arrived: SharedValue<number>;
+  /** The name, the words and the buttons: each 0 → 1 as it fades in. */
+  shown: readonly [SharedValue<number>, SharedValue<number>, SharedValue<number>];
+  /** Reduce Motion as the delivery landed. */
+  reduced: boolean;
+  /** Changes once, to play the ember's flare. */
+  spark: number;
+  /** The tile is wholly there: the ember has gone. */
+  settled: boolean;
+  /** Shows the end at once (Done, Open it). */
+  finish: () => void;
+}
+
+/** M10's timeline, started as the page mounts (the delivery landing). */
+function useReadyMotion(reduceMotion: boolean): ReadyMotion {
+  const [reduced] = useState(reduceMotion);
+  const [spark, setSpark] = useState(0);
+  const [settled, setSettled] = useState(false);
+  const arrived = useSharedValue(0);
+  const shown = [useSharedValue(0), useSharedValue(0), useSharedValue(0)] as const;
+  // Once the tile is wholly there the ember is wholly gone, so it leaves: overshoot or not.
+  useAnimatedReaction(
+    () => arrived.value >= 1,
+    (whole, before) => {
+      if (whole && !before) scheduleOnRN(setSettled, true);
+    },
+  );
+  useEffect(() => {
+    if (reduced) {
+      arrived.value = withTiming(1, timing('fadeIn', true));
+      for (const value of shown) value.value = withTiming(1, timing('fadeIn', true));
+      return;
+    }
+    setSpark(1);
+    arrived.value = withDelay(SETTLE_AFTER, withSpring(1, SPARK));
+    shown.forEach((value, i) => {
+      value.value = withDelay(SETTLE_AFTER + i * READY_STAGGER_MS, withTiming(1, timing('fadeIn')));
+    });
+    // Played once, as the delivery lands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const finish = () => {
+    arrived.value = 1;
+    for (const value of shown) value.value = 1;
+  };
+  return { arrived, shown, reduced, spark, settled, finish };
+}
+
 export default function ReadyPage({ app, words, changed, onOpen, onDone }: Readonly<ReadyPageProps>) {
-  const s = styles(useTokens());
+  const t = useTokens();
+  const s = styles(t);
   const tile = tileOf(app);
+  const { arrived, shown, reduced, spark, settled, finish } = useReadyMotion(t.reduceMotion);
+  const tileIn = useAnimatedStyle(() => ({
+    opacity: Math.min(1, arrived.value),
+    transform: [{ scale: reduced ? 1 : READY_RISE_FROM + (1 - READY_RISE_FROM) * arrived.value }],
+  }));
+  const emberOut = useAnimatedStyle(() => ({ opacity: 1 - Math.min(1, arrived.value) }));
+  const nameIn = useAnimatedStyle(() => ({ opacity: shown[0].value }));
+  const wordsIn = useAnimatedStyle(() => ({ opacity: shown[1].value }));
+  const actionsIn = useAnimatedStyle(() => ({ opacity: shown[2].value }));
   return (
     <KeyboardShell
       host="sheet"
       contentContainerStyle={s.content}
       footer={
-        <View style={s.footer}>
-          <Button label={COPY.readyOpen} variant="tint" tint={tile.tint} onPress={onOpen} />
-          <Button label={COPY.readyDone} variant="plain" onPress={onDone} />
-        </View>
+        <Animated.View style={[s.footer, actionsIn]}>
+          <Button
+            label={COPY.readyOpen}
+            variant="tint"
+            tint={tile.tint}
+            onPress={() => {
+              finish();
+              onOpen();
+            }}
+          />
+          <Button
+            label={COPY.readyDone}
+            variant="plain"
+            onPress={() => {
+              finish();
+              onDone();
+            }}
+          />
+        </Animated.View>
       }
     >
-      <TilePlate size="hero" state="ready" tint={tile.tint} glyph={tile.icon} />
-      <Text type="title1" style={s.name}>
-        {app.name}
-      </Text>
-      <Text type="title3" italic style={s.centered}>{quotedWords(words)}</Text>
-      <Text type="callout" color="text-2" style={s.centered}>
-        {changed ? COPY.readyChanged : COPY.readyOnHome}
-      </Text>
+      <View style={s.hero}>
+        <Animated.View style={tileIn}>
+          <TilePlate size="hero" state="ready" tint={tile.tint} glyph={tile.icon} />
+        </Animated.View>
+        {settled ? null : (
+          <Animated.View style={[StyleSheet.absoluteFill, emberOut]} pointerEvents="none">
+            <Ember size={96} state="working" activity={RESTING_ACTIVITY} spark={spark} />
+          </Animated.View>
+        )}
+      </View>
+      <Animated.View style={[s.name, nameIn]}>
+        <Text type="title1" style={s.centered}>
+          {app.name}
+        </Text>
+      </Animated.View>
+      <Animated.View style={[s.words, wordsIn]}>
+        <Text type="title3" italic style={s.centered}>{quotedWords(words)}</Text>
+        <Text type="callout" color="text-2" style={s.centered}>
+          {changed ? COPY.readyChanged : COPY.readyOnHome}
+        </Text>
+      </Animated.View>
     </KeyboardShell>
   );
 }

@@ -217,7 +217,8 @@ interface QuestionRowProps {
  *  options as wrapping chips (every option ≤ 20 characters) or as full-width rows, "Decide for me"
  *  last, then "Other" when allowed. Answered and scrolled past, it is one line that reopens. M8: its
  *  block collapses and reopens as a `smooth` layout transition, retargeting one still running, and
- *  cross-fades in place under Reduce Motion. */
+ *  cross-fades in place under Reduce Motion. Collapsing above the view, it leaves what is in view
+ *  where it is: the page's scroll view keeps its visible content (`keepsVisibleContent`). */
 function QuestionRow({ question, answer, folded, fadesIn, onAnswer, onReopen, onExtent }: Readonly<QuestionRowProps>) {
   const t = useTokens();
   return (
@@ -567,6 +568,7 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
       host="sheet"
       contentContainerStyle={s.content}
       onScrollOffset={onScrollOffset}
+      keepsVisibleContent
       footer={
         <View style={s.footer}>
           {screen.problem ? <ProblemNotice problem={screen.problem} /> : null}

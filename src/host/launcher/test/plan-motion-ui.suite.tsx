@@ -248,6 +248,27 @@ export async function runPlanMotionUiTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('M8: a question collapsing above the view leaves what is in view where it is — the page’s scroll view keeps its visible content, and can hold on to the block just below the question', async () => {
+    const answered = { ...landed(), answers: { ...landed().answers, alert: { choices: ['Buzz'], other: '', decide: false } } };
+    const tree = await renderScreen(page(answered));
+    try {
+      await TestRenderer.act(async () => questionFrame(tree, ALERT).props.onLayout({ nativeEvent: { layout: { x: 0, y: 100, width: 350, height: 90 } } }));
+      const scroll = tree.root.find((n) => hostType(n) === 'ScrollView');
+      await TestRenderer.act(async () => scroll.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 200 } } }));
+      h.ok(!textOf(tree.root).includes(ALERT.question), 'scrolled past, the answered question has collapsed');
+      // The platform holds in place the first block in view at or after `minIndexForVisible`, so the
+      // block under the collapsing question must be one it may hold.
+      const blocks = scroll.children.filter((c): c is Node => typeof c !== 'string');
+      const folded = questionFrame(tree, ALERT);
+      const below = blocks.findIndex((b) => b.findAll((n) => n === folded).length === 1) + 1;
+      h.ok(below > 0 && below < blocks.length, 'a block follows the question in the scroll view');
+      const anchor = scroll.props.maintainVisibleContentPosition as { minIndexForVisible?: number } | undefined;
+      h.ok(anchor !== undefined && typeof anchor.minIndexForVisible === 'number' && anchor.minIndexForVisible <= below, `the scroll view keeps its visible content from a block at or before the one below the question (index ${below}): ${JSON.stringify(anchor)}`);
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
   await h.test('M8 under Reduce Motion: a question collapsing cross-fades in place over fade-in', async () => {
     const tree = await renderScreen(page(landed()));
     try {
