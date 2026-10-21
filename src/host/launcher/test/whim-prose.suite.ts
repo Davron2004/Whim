@@ -203,6 +203,16 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
     h.eq(textOf(renderProse('I added “Ticks Off” to each row.', { storedPrompt: prompt }), 'yours'), ['Ticks Off'], 'a quote of two words or more matches whatever its case');
   });
 
+  await h.test('lexer: the prompt is the person’s words only as whole words, and a one-word prompt only in its own case', () => {
+    h.eq(countOf(renderProse('Timer is ready.', { storedPrompt: 'timer' }), 'yours'), 0, 'a one-word prompt capitalised elsewhere is not the person’s word');
+    h.eq(countOf(renderProse('It keeps two timers.', { storedPrompt: 'timer' }), 'yours'), 0, 'a one-word prompt inside a longer word is not the person’s word');
+    h.eq(textOf(renderProse('It keeps one timer.', { storedPrompt: 'timer' }), 'yours'), ['timer'], 'a one-word prompt as a whole word in its own case is the person’s word');
+    h.eq(countOf(renderProse('I made a “do” button.', { storedPrompt: 'add a todo' }), 'yours'), 0, 'a one-word quote found only inside a word of the prompt is not the person’s word');
+    h.eq(textOf(renderProse('Built: Add A Timer, with a bell.', { storedPrompt: 'add a timer' }), 'yours'), ['Add A Timer'], 'a multi-word prompt matches whatever its case at word boundaries');
+    h.eq(countOf(renderProse('It can add a timers list.', { storedPrompt: 'add a timer' }), 'yours'), 0, 'a multi-word prompt ending inside a longer word is not the person’s words');
+    h.eq(countOf(renderProse('Let me readd a timer.', { storedPrompt: 'add a timer' }), 'yours'), 0, 'a multi-word prompt starting inside a longer word is not the person’s words');
+  });
+
   await h.test('lexer: `chg` and `hedge` are never inferred on device', () => {
     const text = 'The countdown changed, and it may be about 2 seconds off.';
     const spans = lexProse(text, [POUR_TIMER], text);

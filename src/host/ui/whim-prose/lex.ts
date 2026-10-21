@@ -73,6 +73,23 @@ function findAll(text: string, needle: string, caseInsensitive: boolean): number
   }
 }
 
+/** Every start of `needle` in `text` that sits on word boundaries at both ends, exact case. */
+function findWholeWords(text: string, needle: string): number[] {
+  if (needle.length === 0) return [];
+  const hits: number[] = [];
+  let from = 0;
+  for (;;) {
+    const at = text.indexOf(needle, from);
+    if (at < 0) return hits;
+    if (isWholeWord(text, at, at + needle.length)) {
+      hits.push(at);
+      from = at + needle.length;
+    } else {
+      from = at + 1;
+    }
+  }
+}
+
 // ── app ───────────────────────────────────────────────────────────────────────
 
 function lexApps(text: string, apps: readonly ProseApp[]): Span[] {
@@ -204,14 +221,15 @@ function foldCase(text: string): string {
 
 /**
  * `yours` is MATCHED, never reconstructed. Two exact rules:
- *   1. the stored prompt appearing verbatim in the text, in any case (a history row whose
- *      headline IS the user's prompt; a keyboard capitalises the prompt's first letter, a
- *      headline may not), and
+ *   1. the stored prompt appearing verbatim in the text as whole words (a history row whose
+ *      headline IS the user's prompt): in any case when it is two words or more (a keyboard
+ *      capitalises the prompt's first letter, a headline may not), in its own case when it is one
+ *      word, as a one-word quote is, so a prompt "timer" doesn't claim a "Timer" label or "timers";
  *   2. a quoted run whose contents are an exact substring of the stored prompt: in any case when
  *      the run is two words or more (a summary quoting the prompt mid-sentence lowercases it), in
- *      the prompt's own case when it is one word — a capitalised one-word quote is far more often
- *      a label of the app ("Done", "Add") than the person's word, and a prompt holding that word
- *      in lowercase doesn't make it theirs.
+ *      the prompt's own case and as a whole word of it when it is one word — a capitalised one-word
+ *      quote is far more often a label of the app ("Done", "Add") than the person's word, a prompt
+ *      holding that word in lowercase doesn't make it theirs, and “do” is not a word of "undo".
  *
  * A paraphrase matches neither and therefore carries no mark — the deliberate failure direction,
  * because the class is attribution and attributing a paraphrase to the user is a lie. The spans
@@ -224,7 +242,8 @@ function lexYours(text: string, storedPrompt: string | null | undefined): Span[]
   const folded = foldCase(text);
 
   const spans: Span[] = [];
-  for (const start of findAll(folded, prompt, false)) {
+  const oneWord = !/\s/.test(asTyped);
+  for (const start of findWholeWords(oneWord ? text : folded, oneWord ? asTyped : prompt)) {
     spans.push({ cls: 'yours', start, end: start + prompt.length });
   }
 
@@ -232,7 +251,7 @@ function lexYours(text: string, storedPrompt: string | null | undefined): Span[]
     const [start, end] = tightenedRange(text, innerStart, innerEnd);
     if (end <= start) continue;
     const quote = text.slice(start, end);
-    const theirs = /\s/.test(quote) ? prompt.includes(folded.slice(start, end)) : asTyped.includes(quote);
+    const theirs = /\s/.test(quote) ? prompt.includes(folded.slice(start, end)) : findWholeWords(asTyped, quote).length > 0;
     if (theirs) spans.push({ cls: 'yours', start, end });
   }
   return spans;
