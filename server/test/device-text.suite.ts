@@ -9,8 +9,13 @@
  * refusal notice (an `invalid_request` hint is the first zod issue's `message`); `compat.notice` on
  * a message the app can't use; the clarify `limit` (`reason`, `alternative`), questions and
  * options; and the rewrite's plan rows. Each is read here from the source that writes it, or from
- * the stub server's own answers, never copied into this file: the source is read as syntax, so a
- * sentence is found by the field it is written into, not by the name of a constant holding it.
+ * the stub server's own answers, never copied into this file. The source is read as syntax, with no
+ * type checker: a sentence is found where it is written into one of the fields, held by a name or
+ * parameter named for one (`DEVICE_TEXT_NAME`), returned by a producer so named or called to fill
+ * one, or reached from a field's value through a same-file name (`hint: message` reads the
+ * arguments the same file's calls pass as `message`), up to `NAME_HOPS` names deep. Text reaching a
+ * field only through an import under another name, an object's property (`x.reason`) or a callback
+ * is not followed: only the stub, checker and gate runs below see such text, for the inputs they make.
  */
 import {
   APP_VERSION_HEADER,
@@ -199,10 +204,62 @@ function nameOf(node: ts.Node | undefined): string | undefined {
 
 type FunctionLike = ts.FunctionDeclaration | ts.MethodDeclaration | ts.ArrowFunction | ts.FunctionExpression;
 
+/** How many names deep a device-shown field's value is followed (`hint: message` → `message`'s
+ *  argument → a constant it reads). */
+const NAME_HOPS = 2;
+
+/** `file:line` of `node`. */
+function locationOf(node: ts.Node): string {
+  const source = node.getSourceFile();
+  return `${source.fileName}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}`;
+}
+
+/** True when `id` is itself the value read: not a property's or member's name, not the object a
+ *  property is read from (`unit.reason` reads a field of `unit`, not what `unit` was made from),
+ *  not a callee, not a type. */
+function isValueReference(id: ts.Identifier): boolean {
+  const parent = id.parent;
+  if (ts.isPropertyAccessExpression(parent)) return false;
+  if ((ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent) || ts.isPropertyDeclaration(parent)) && parent.name === id) return false;
+  if (ts.isCallExpression(parent) && parent.expression === id) return false;
+  return !ts.isTypeReferenceNode(parent) && !ts.isQualifiedName(parent);
+}
+
+/** The parameter of `scope` or the variable declared directly in it that is called `name`. */
+function declaredIn(scope: ts.Node, name: string): ts.ParameterDeclaration | ts.VariableDeclaration | undefined {
+  if (ts.isFunctionLike(scope)) return scope.parameters.find((p) => ts.isIdentifier(p.name) && p.name.text === name);
+  if (!ts.isBlock(scope) && !ts.isSourceFile(scope) && !ts.isModuleBlock(scope)) return undefined;
+  for (const statement of scope.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    const found = statement.declarationList.declarations.find((d) => ts.isIdentifier(d.name) && d.name.text === name);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/** What `id` names in its own file, by lexical scope: a parameter of an enclosing function, or a
+ *  variable declared in an enclosing block or at the top of the file. */
+function declarationOf(id: ts.Identifier): ts.ParameterDeclaration | ts.VariableDeclaration | undefined {
+  for (let scope: ts.Node | undefined = id.parent; scope !== undefined; scope = scope.parent) {
+    const found = declaredIn(scope, id.text);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/** The name a function is called by: its own, or the variable it is assigned to. */
+function calledName(fn: ts.SignatureDeclaration): string | undefined {
+  if (ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn)) return nameOf(fn.name);
+  if ((ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) && ts.isVariableDeclaration(fn.parent)) return nameOf(fn.parent.name);
+  return undefined;
+}
+
 /** Every string a device-shown field can be written from, found in the source as syntax: the
  *  literal (or a template's text, its holes read as `<x>`) written into one of the fields, held by a
  *  name that says it is such text, passed as a parameter so named, or returned by a function so
- *  named or called to fill one. */
+ *  named or called to fill one. A name read on the way is followed to what it names in its file: a
+ *  variable to its initialiser, a parameter to the argument each call in that file passes it
+ *  (`hint: message` reads each `message` its callers there write). */
 function scannedSourceLines(): Line[] {
   const files = SCANNED.flatMap(({ dir, fields }) =>
     sourceFiles(dir).map((rel) => ({ rel, fields, source: ts.createSourceFile(rel, fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'), ts.ScriptTarget.Latest, true) })),
@@ -211,12 +268,15 @@ function scannedSourceLines(): Line[] {
   const declare = (name: string | undefined, fn: FunctionLike): void => {
     if (name !== undefined) functions.set(name, [...(functions.get(name) ?? []), fn]);
   };
+  const calls = new Map<string, ts.CallExpression[]>();
   for (const { source } of files) {
     const visit = (node: ts.Node): void => {
       if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.body) declare(nameOf(node.name), node);
       if (ts.isVariableDeclaration(node) && node.initializer && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) {
         declare(nameOf(node.name), node.initializer);
       }
+      const callee = ts.isCallExpression(node) ? nameOf(node.expression) : undefined;
+      if (callee !== undefined) calls.set(callee, [...(calls.get(callee) ?? []), node as ts.CallExpression]);
       ts.forEachChild(node, visit);
     };
     visit(source);
@@ -224,8 +284,27 @@ function scannedSourceLines(): Line[] {
 
   const lines: Line[] = [];
   /** The literals in `expr`; a function it calls by name has its own literals read too, one call
-   *  deep (a producer such as `hintFor`), so an unrelated body further down never counts. */
-  const collect = (where: string, expr: ts.Node, follow = true): void => {
+   *  deep (a producer such as `hintFor`), so an unrelated body further down never counts. A name
+   *  it reads is followed to what it names in the same file, at most `NAME_HOPS` names deep, each
+   *  declaration once per field: further, every hint would read the whole server. */
+  const collect = (where: string, expr: ts.Node, follow = true, hops = 0, resolved = new Set<ts.Node>()): void => {
+    const resolve = (id: ts.Identifier): void => {
+      const declaration = declarationOf(id);
+      if (hops >= NAME_HOPS || declaration === undefined || resolved.has(declaration)) return;
+      resolved.add(declaration);
+      const via = `${where} via ${locationOf(declaration)}`;
+      if (declaration.initializer && !ts.isArrowFunction(declaration.initializer) && !ts.isFunctionExpression(declaration.initializer)) {
+        collect(via, declaration.initializer, follow, hops + 1, resolved);
+      }
+      if (!ts.isParameter(declaration)) return;
+      const index = declaration.parent.parameters.indexOf(declaration);
+      const name = calledName(declaration.parent);
+      const file = declaration.getSourceFile();
+      for (const call of name === undefined ? [] : (calls.get(name) ?? [])) {
+        const arg = call.arguments.at(index);
+        if (arg !== undefined && call.getSourceFile() === file) collect(`${via} from ${locationOf(arg)}`, arg, follow, hops + 1, resolved);
+      }
+    };
     const visit = (node: ts.Node): void => {
       if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
         lines.push([where, node.text]);
@@ -233,24 +312,25 @@ function scannedSourceLines(): Line[] {
       }
       if (ts.isTemplateExpression(node)) lines.push([where, node.head.text + node.templateSpans.map((span) => `<x>${span.literal.text}`).join('')]);
       if (follow && ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-        for (const fn of functions.get(node.expression.text) ?? []) if (fn.body) collect(where, fn.body, false);
+        for (const fn of functions.get(node.expression.text) ?? []) if (fn.body) collect(where, fn.body, false, hops, resolved);
       }
+      if (ts.isIdentifier(node) && isValueReference(node)) resolve(node);
       ts.forEachChild(node, visit);
     };
     visit(expr);
   };
 
-  for (const { rel, fields, source } of files) {
-    const at = (node: ts.Node): string => `${rel}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}`;
+  for (const { fields, source } of files) {
     const visit = (node: ts.Node): void => {
-      if (ts.isPropertyAssignment(node) && fields.has(nameOf(node.name) ?? '')) collect(at(node), node.initializer);
-      if (ts.isVariableDeclaration(node) && node.initializer && DEVICE_TEXT_NAME.test(nameOf(node.name) ?? '')) collect(at(node), node.initializer);
-      if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.body && DEVICE_TEXT_NAME.test(nameOf(node.name) ?? '')) collect(at(node), node.body);
+      if (ts.isPropertyAssignment(node) && fields.has(nameOf(node.name) ?? '')) collect(locationOf(node), node.initializer);
+      if (ts.isShorthandPropertyAssignment(node) && fields.has(node.name.text)) collect(locationOf(node), node.name);
+      if (ts.isVariableDeclaration(node) && node.initializer && DEVICE_TEXT_NAME.test(nameOf(node.name) ?? '')) collect(locationOf(node), node.initializer);
+      if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.body && DEVICE_TEXT_NAME.test(nameOf(node.name) ?? '')) collect(locationOf(node), node.body);
       if (ts.isCallExpression(node)) {
         for (const fn of functions.get(nameOf(node.expression) ?? '') ?? []) {
           fn.parameters.forEach((param, i) => {
             const arg = node.arguments.at(i);
-            if (arg !== undefined && fields.has(nameOf(param.name) ?? '')) collect(at(arg), arg);
+            if (arg !== undefined && fields.has(nameOf(param.name) ?? '')) collect(locationOf(arg), arg);
           });
         }
       }
