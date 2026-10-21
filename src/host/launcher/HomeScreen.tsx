@@ -35,7 +35,7 @@ import type { FlickerPulse } from './home-live';
 import { isAppBusy, type AppBusyMap } from './app-busy';
 import { appLinkFor } from './app-link';
 import { ComposerBar } from './ComposerBar';
-import { tileAnchor } from '../ui/SheetAnchor';
+import { appAnchor, tileAnchor } from '../ui/SheetAnchor';
 import { COPY, deletedToast, discardedManyToast, tileOlderLine } from './copy';
 import { CopyQuestionSheet } from './CopyQuestionSheet';
 import { CustomizeTileSheet } from './CustomizeTileSheet';
@@ -75,7 +75,9 @@ export interface HomeScreenProps {
   canCopyData?: boolean;
   /** The description typed so far in the describe sheet, shown in the composer bar. */
   draft?: string;
-  onOpen: (app: InstalledApp) => void;
+  /** Opens the app; `fromTile` when its tile was tapped (or its menu's Open chosen), which it grows
+   *  out of (M2). */
+  onOpen: (app: InstalledApp, fromTile?: boolean) => void;
   /** Makes the copy. Resolves the new entry; resolves `null` when a copy of this app is already
    *  running; rejects when the copy could not be made (nothing was created). */
   onFork: (app: InstalledApp, opts: ForkOptions) => Promise<InstalledApp | null>;
@@ -158,6 +160,13 @@ const tileName = (cell: GridCell) => (cell.kind === 'older' ? '' : cellName(cell
 function attemptOf(cell: GridCell): PendingBuildRecord | undefined {
   if (cell.kind === 'attempt') return cell.rec;
   return cell.kind === 'app' ? cell.rebuild : undefined;
+}
+
+/** The places a cell's tile is registered as (`SheetAnchor`): its app's, which the app grows out of
+ *  and goes back into (M2, M3), and the run in flight's, whose making sheet does (M5). */
+function placesOf(cell: GridCell, live: PendingBuildRecord | undefined): readonly string[] {
+  const places = cell.kind === 'app' ? [appAnchor(cell.app.id)] : [];
+  return live ? [...places, tileAnchor(live.id)] : places;
 }
 
 /**
@@ -383,7 +392,7 @@ export default function HomeScreen({
     const rec = attemptOf(cell);
     const app = cell.kind === 'app' ? cell.app : undefined;
     const actions: Record<MenuAction, () => void> = {
-      open: () => app && onOpen(app),
+      open: () => app && onOpen(app, true),
       change: () => app && onPromptAgain(app),
       history: () => app && onHistory(app),
       copy: () => app && askCopy(app),
@@ -405,7 +414,7 @@ export default function HomeScreen({
 
   const press = (cell: GridCell) => {
     if (cell.kind === 'older') setOlderOpen(true);
-    else if (cell.kind === 'app') onOpen(cell.app);
+    else if (cell.kind === 'app') onOpen(cell.app, true);
     else onOpenPending?.(cell.rec);
   };
 
@@ -456,7 +465,7 @@ export default function HomeScreen({
         onRisen={() => entrance.risen(key)}
         presence={departures.presenceOf(cell)}
         onPresenceSettled={() => departures.settled(cell)}
-        anchor={live ? tileAnchor(live.id) : undefined}
+        anchor={placesOf(cell, live)}
       />
     );
   };

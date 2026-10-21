@@ -394,9 +394,10 @@ export interface AppTileProps {
    *  both happen at once. */
   presence?: TilePresence;
   onPresenceSettled?: () => void;
-  /** The name its plate is registered under as a sheet's anchor (`SheetAnchor`): the run's making
-   *  sheet shrinks into it as it closes and grows out of it as it opens (M5). */
-  anchor?: string;
+  /** The names its plate is registered under as a place (`SheetAnchor`): a run's, whose making sheet
+   *  shrinks into it as it closes and grows out of it as it opens (M5); an app's, which grows out of
+   *  it as it opens and goes back into it as it closes (M2, M3). */
+  anchor?: string | readonly string[];
 }
 
 export type TileEntrance = 'hold' | number | 'done';

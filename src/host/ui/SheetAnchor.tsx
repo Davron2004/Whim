@@ -13,12 +13,16 @@
  */
 import React, { createContext, useContext, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import type { LayoutChangeEvent, View } from 'react-native';
-import { useAnimatedRef } from 'react-native-reanimated';
+import { measure, useAnimatedRef } from 'react-native-reanimated';
 
 export type PlaceRef = ReturnType<typeof useAnimatedRef<View>>;
 
 /** The name a run's tile is registered under as a sheet's anchor: its making sheet goes back into it. */
 export const tileAnchor = (runId: string): string => `tile:${runId}`;
+
+/** The name an installed app's tile is registered under: the app grows out of it as it opens and
+ *  shrinks back into it as it closes (system.md §4.4 M2, M3; `MiniAppView`). */
+export const appAnchor = (appId: string): string => `app:${appId}`;
 
 /** How a place looks, for the sheet that grows out of it or shrinks into it. */
 export interface SheetAnchorLook {
@@ -73,21 +77,28 @@ export function SheetAnchors({ children }: Readonly<{ children: React.ReactNode 
 
 const NO_SIZE = { width: 0, height: 0 } as const;
 
-/** Registers the caller's view as the place `name` (none while `name` is undefined). Put `ref` and
- *  `onLayout` on the view whose shape the sheet grows from, and `ember` on its ember's view, if any. */
-export function useSheetAnchor(name: string | undefined, look: SheetAnchorLook) {
+/** Registers the caller's view as the place `names` (one name, or several: an app's tile is its
+ *  app's place and its change's; none while undefined). Put `ref` and `onLayout` on the view whose
+ *  shape the sheet grows from, and `ember` on its ember's view, if any. */
+export function useSheetAnchor(names: string | readonly string[] | undefined, look: SheetAnchorLook) {
   const anchors = useContext(AnchorsContext);
   const ref = useAnimatedRef<View>();
   const ember = useAnimatedRef<View>();
   const [size, setSize] = useState<SheetAnchorEntry['size']>(NO_SIZE);
+  // One key for the effect below, whatever array the caller builds each render.
+  const listed = names === undefined ? [] : ([] as string[]).concat(names);
+  const key = listed.length === 0 ? undefined : listed.join('\n');
   // Every render, so the face drawn in the sheet is what the place shows now.
   useLayoutEffect(() => {
-    if (anchors !== null && name !== undefined) anchors.set(name, { ref, ember, look, size });
+    if (anchors === null || key === undefined) return;
+    for (const name of key.split('\n')) anchors.set(name, { ref, ember, look, size });
   });
   useEffect(() => {
-    if (anchors === null || name === undefined) return undefined;
-    return () => anchors.delete(name, ref);
-  }, [anchors, name, ref]);
+    if (anchors === null || key === undefined) return undefined;
+    return () => {
+      for (const name of key.split('\n')) anchors.delete(name, ref);
+    };
+  }, [anchors, key, ref]);
   const onLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     setSize((was) => (was.width === width && was.height === height ? was : { width, height }));
@@ -102,4 +113,22 @@ const nothing = () => undefined;
 export function useAnchorEntry(name: string | undefined): SheetAnchorEntry | undefined {
   const anchors = useContext(AnchorsContext);
   return useSyncExternalStore(anchors?.subscribe ?? none, anchors && name !== undefined ? () => anchors.get(name) : nothing);
+}
+
+/** What `ref` measures, or `null`. On the UI thread an animated ref answers null until it is put on a
+ *  view, and Reanimated's `measure` hands that null to the native side, which ends the app: the
+ *  composer has no ember place, and a tile whose state has no ember draws none. */
+export function measured(ref: PlaceRef) {
+  'worklet';
+  const held: unknown = ref();
+  return held === null ? null : measure(ref);
+}
+
+/** Where `ref` is drawn, from the frame's top-left, or `null` on a frame either cannot be measured. */
+export function placeIn(frame: PlaceRef, ref: PlaceRef) {
+  'worklet';
+  const origin = measured(frame);
+  const at = measured(ref);
+  if (origin === null || at === null || at.width === 0) return null;
+  return { x: at.pageX - origin.pageX, y: at.pageY - origin.pageY, width: at.width, height: at.height, frameWidth: origin.width, frameHeight: origin.height };
 }

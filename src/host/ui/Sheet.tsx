@@ -48,7 +48,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, Keyboard, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
 import type { LayoutChangeEvent } from 'react-native';
-import Animated, { measure, useAnimatedReaction, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
+import Animated, { useAnimatedReaction, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
@@ -62,7 +62,7 @@ import type { EmberLight, EmberLightRef } from './Ember';
 import { Icon } from './Icon';
 import { timing, usePressFeedback } from './motion';
 import { OverlayModal, useOverlayTurn, useScrimCount } from './OverlayModal';
-import { useAnchorEntry, type PlaceRef, type SheetAnchorEntry } from './SheetAnchor';
+import { placeIn, useAnchorEntry, type PlaceRef, type SheetAnchorEntry } from './SheetAnchor';
 import { TopHighlight } from './TopHighlight';
 import { TravelLayer } from './TravelLayer';
 import { wrappingType } from './Text';
@@ -141,24 +141,6 @@ const lerp = (a: number, b: number, p: number) => {
 function plateCovers(k: number): boolean {
   'worklet';
   return k >= 1;
-}
-
-/** What `ref` measures, or `null`. On the UI thread an animated ref answers null until it is put on a
- *  view, and Reanimated's `measure` hands that null to the native side, which ends the app: the
- *  composer has no ember place, and a tile whose state has no ember draws none. */
-function measured(ref: PlaceRef) {
-  'worklet';
-  const held: unknown = ref();
-  return held === null ? null : measure(ref);
-}
-
-/** Where `ref` is drawn, from the frame's top-left, or `null` on a frame either cannot be measured. */
-function placeIn(frame: PlaceRef, ref: PlaceRef) {
-  'worklet';
-  const origin = measured(frame);
-  const at = measured(ref);
-  if (origin === null || at === null || at.width === 0) return null;
-  return { x: at.pageX - origin.pageX, y: at.pageY - origin.pageY, width: at.width, height: at.height, frameWidth: origin.width, frameHeight: origin.height };
 }
 
 /** Where the page's ember (`from`) and the anchor's ember place (`to`) are, or `null` when either

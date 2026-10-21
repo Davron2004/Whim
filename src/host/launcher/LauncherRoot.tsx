@@ -208,6 +208,8 @@ type Screen =
       tappedAt: number;
       versionId: string;
       sheet?: WhimSheetPage;
+      // Opened by a tap on its tile: it grows out of it (M2).
+      fromTile?: boolean;
     }
   | { kind: 'dev' }
   | { kind: 'settings' }
@@ -405,6 +407,28 @@ function stackFor(screen: Screen): readonly StackScreen[] | null {
   }
   if (screen.kind === 'report') return [...(stackFor(screen.from) ?? []), screen];
   return null;
+}
+
+const HOME: Screen = { kind: 'home' };
+
+/** An app coming out of its tile or going back into it (`AppMorph`), named by its launch's `tappedAt`. */
+interface StageMorph {
+  readonly at: number;
+  readonly homeUnder: boolean;
+  readonly leaving: boolean;
+}
+
+/** The morph of the launch on screen, or `null`: one recorded for a launch no longer shown is stale. */
+function morphOf(morph: StageMorph | null, screen: Screen): StageMorph | null {
+  return morph !== null && screen.kind === 'app' && screen.tappedAt === morph.at ? morph : null;
+}
+
+/** The native stack the shell draws (Home's under an app coming out of it or going back into it), and
+ *  whether `base` itself is on the stack, which lays the frame out (`frameEdgesFor`). */
+function stacksOf(ready: boolean, base: Screen, homeUnder: boolean) {
+  if (!ready) return { stack: null, baseOnStack: false };
+  const own = stackFor(base);
+  return { stack: homeUnder ? stackFor(HOME) : own, baseOnStack: own !== null };
 }
 
 /** The native header's title; none on Home and History, which draw their own header. */
@@ -867,6 +891,11 @@ function LauncherShell({
     if (!overApp(screen)) setUnder(null);
   }, [screen]);
   const running = screen.kind === 'app' ? screen : appUnder(screen, under);
+  // The running app coming out of its tile or going back into it (M2, M3, `AppMorph`), by its launch's
+  // `tappedAt`: whether Home is drawn under it, and whether the person is leaving it. It ends with the
+  // launch: a stale one names a launch no longer running.
+  const [stageMorph, setStageMorph] = useState<StageMorph | null>(null);
+  const morphNow = morphOf(stageMorph, screen);
   // The same, for a run or a toast that acts later than the render it was started from.
   const runningRef = useRef(running);
   runningRef.current = running;
@@ -1346,13 +1375,18 @@ function LauncherShell({
    *  open's alert, for a caller that must not stay where it is. An open arriving while History's
    *  pop to Home runs (a tile, the "is ready" toast) is busy from the tap and waits for the pop to
    *  finish; it is dropped when something else arrived after it, or the person left Home meanwhile. */
-  const onOpen = (app: InstalledApp, onFailed?: () => void): Promise<boolean> => {
+  const onOpen = (app: InstalledApp, onFailed?: () => void, fromTile = false): Promise<boolean> => {
     const tappedAt = Date.now();
     const holding = stackPop.current !== null;
+    // From its tile, Home stays under the app until it has grown over the screen.
+    const show = (launch: AppScreen) => {
+      setScreen({ ...launch, fromTile: true });
+      setStageMorph({ at: tappedAt, homeUnder: true, leaving: false });
+    };
     return runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
       if (holding && !((await stackPopOver()) && screenKindRef.current === 'home')) return;
       try {
-        await launchApp(app, tappedAt, setScreen);
+        await launchApp(app, tappedAt, fromTile ? show : setScreen);
       } catch (e) {
         openFailed(e);
         onFailed?.();
@@ -1546,6 +1580,27 @@ function LauncherShell({
     aboutRef.current = null;
     refresh();
     setScreen({ kind: 'home' });
+  };
+
+  /** Leaving the running app (the Whim sheet's Back to your apps, Android back at its depth 0, its
+   *  failure screens): it goes back into its tile on Home (M3), which ends the launch (`AppMorph`). */
+  const leaveApp = () => {
+    if (screen.kind !== 'app') {
+      goHome();
+      return;
+    }
+    const { tappedAt } = screen;
+    if (screen.sheet !== undefined) setScreen({ ...screen, sheet: undefined });
+    setStageMorph((m) => ({ at: tappedAt, homeUnder: m?.at === tappedAt && m.homeUnder, leaving: true }));
+  };
+  /** A tile on Home: the app it opens, out of the tile. Its own app's tile, while that app is going
+   *  back into it, turns it back out (M3 "Reopening retargets"); while it is coming out, nothing. */
+  const openFromHome = (app: InstalledApp, fromTile?: boolean) => {
+    if (screen.kind === 'app' && screen.app.id === app.id) {
+      if (morphNow?.leaving) setStageMorph({ ...morphNow, leaving: false });
+      return;
+    }
+    onOpen(app, undefined, fromTile === true).catch(() => undefined);
   };
 
   /** The update screen's `Not now`, and system back: Home, carrying the prompt the screen held for
@@ -3448,7 +3503,7 @@ function LauncherShell({
           onReload={onWhimReload}
           onHistory={() => onHistory(app, 'app')}
           onReport={() => setScreen((s) => (s.kind === 'app' ? { ...s, sheet: 'report' } : s))}
-          onExit={goHome}
+          onExit={leaveApp}
         />
       ),
     };
@@ -3592,7 +3647,7 @@ function LauncherShell({
       apps={apps}
       pending={pendingBuilds.map((view) => view.record)}
       purges={purges}
-      onOpen={onOpen}
+      onOpen={openFromHome}
       onFork={onFork}
       onDelete={onDelete}
       onUndoDelete={onUndoDelete}
@@ -3743,15 +3798,16 @@ function LauncherShell({
    *  task 18.4): hidden, with one WebView waiting, while no app is open; the open app when one is.
    *  Both branches render it at the same place, so opening and closing never remount it. The app stays
    *  open under a change's pages the Whim sheet grew into (`running`). */
-  const renderMiniApp = (sheetOpen: boolean): React.ReactNode => {
-    if (!ready) return null;
-    if (running === null) return <MiniAppStage launch={null} onFrame={setAppFrame} />;
+  const renderMiniApp = (sheetOpen: boolean, screenContent: React.ReactNode): React.ReactNode => {
+    if (!ready) return screenContent;
+    if (running === null) return <MiniAppStage launch={null} onFrame={setAppFrame}>{screenContent}</MiniAppStage>;
+    const { tappedAt } = running;
     const launch: MiniAppLaunch = {
       record: running.record,
       bundleSource: running.source,
       engineAppId: running.engineAppId,
-      tappedAt: running.tappedAt,
-      onExit: goHome,
+      tappedAt,
+      onExit: leaveApp,
       onOpenSheet: openWhimSheet,
       sheetOpen,
       onCloseSheet: closeSheet,
@@ -3760,14 +3816,26 @@ function LauncherShell({
       onReload: onWhimReload,
       onAskFix: askWhimToFix,
       behind: runningBehind,
+      morph: {
+        fromTile: running.fromTile === true,
+        homeUnder: morphNow?.homeUnder === true,
+        leaving: morphNow?.leaving === true,
+        onCovered: () => setStageMorph((m) => (m?.at === tappedAt && !m.leaving ? { ...m, homeUnder: false } : m)),
+        onVeiled: () => setStageMorph((m) => (m?.at === tappedAt && m.leaving ? { ...m, homeUnder: true } : m)),
+        onClosed: () => {
+          if (morphNow?.leaving !== true) return;
+          setStageMorph(null);
+          goHome();
+        },
+      },
     };
-    return <MiniAppStage launch={launch} onFrame={setAppFrame} />;
+    return <MiniAppStage launch={launch} onFrame={setAppFrame}>{screenContent}</MiniAppStage>;
   };
 
   // What the shell is laid out around: the running app while a change's pages sit over it, else the screen.
   const base: Screen = running ?? screen;
   const sheetPage = renderSheetPage();
-  const stack = ready ? stackFor(base) : null;
+  const { stack, baseOnStack } = stacksOf(ready, base, morphNow?.homeUnder === true);
   // A deeper stack is a push the platform now draws; a stack mounted afresh (History over an app)
   // is not drawn as a move, and one gone will never say a move finished.
   const stackDepth = stack?.length ?? 0;
@@ -3815,7 +3883,7 @@ function LauncherShell({
   const frame = shellFrame(base, tokens, appFrame, scrimsUp);
 
   return (
-    <SafeAreaView edges={frameEdgesFor(base.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>
+    <SafeAreaView edges={frameEdgesFor(base.kind, baseOnStack)} style={[styles.root, { backgroundColor: frame.background }]}>
       <StatusBar barStyle={frame.barStyle} />
       <ToastHost bottomOffset={toastOffset(base.kind)}>
         <ToastBridge api={toastRef} />
@@ -3825,8 +3893,7 @@ function LauncherShell({
           FallbackComponent={ScreenErrorFallback}
           onLeave={exit.back === 'root' ? undefined : goHome}
         >
-          {renderMiniApp(sheetPage !== null)}
-          {content}
+          {renderMiniApp(sheetPage !== null, content)}
           <MakingSheet content={sheetPage} onClose={closeSheet} anchor={sheetAnchor()} />
           {checkingAge !== undefined && <AgeCheckBack onLeave={() => onLegalDecline(checkingAge.returnTo)} />}
           <FirstRunHost

@@ -366,9 +366,11 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     }
   }, [control]);
 
+  // Leaving asks the launcher, which takes the app back into its tile first (M3) and unmounts it
+  // there, where the realm is torn down: until then the app can still be turned back out, its realm
+  // alive.
   const exit = useCallback(() => {
     startupDeadline.current.cancel();
-    tearDownLiveRealm(live, popTimer);
     onExitRef.current?.();
   }, []);
 
