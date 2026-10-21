@@ -213,14 +213,6 @@ const RETIRED_WORDS: readonly (readonly [string, RegExp])[] = [
 const FIRST_PERSON = /\bI\b/;
 const MAKER_CONTRACTION = /\bI[’'](?:ll|m|ve|d)\b/;
 
-/** Keys that keep a retired word, each with the reason. An entry whose string no longer carries one
- *  fails the lint. */
-const RETIRED_WORD_EXEMPT: Readonly<Record<string, string>> = {
-  consentLead: 'legal copy: its exact words are disclosed, quoted by the privacy page and versioned with consent',
-  consentWhy: 'legal copy: its exact words are disclosed, quoted by the privacy page and versioned with consent',
-  firstRunLead: 'legal copy: the first-run sheet states what the consent spec has it state, word for word',
-};
-
 /** One finding per key of `table` with no kind, a retired word, or Whim's "I" on a control. */
 function copyFindings(table: Readonly<Record<string, string>>, kinds: Readonly<Record<string, CopyKind>>): string[] {
   const findings: string[] = [];
@@ -228,11 +220,7 @@ function copyFindings(table: Readonly<Record<string, string>>, kinds: Readonly<R
     const kind = kinds[key] as CopyKind | undefined;
     if (kind === undefined) findings.push(`${key}: has no kind in COPY_KINDS`);
     const retired = RETIRED_WORDS.filter(([, word]) => word.test(text)).map(([name]) => name);
-    if (key in RETIRED_WORD_EXEMPT) {
-      if (retired.length === 0) findings.push(`${key}: no longer carries a retired word; remove it from RETIRED_WORD_EXEMPT`);
-    } else {
-      findings.push(...retired.map((name) => `${key}: retired word "${name}" in "${text}"`));
-    }
+    findings.push(...retired.map((name) => `${key}: retired word "${name}" in "${text}"`));
     if (kind === 'control' && FIRST_PERSON.test(text)) findings.push(`${key}: Whim's "I" on a control: "${text}"`);
     if (kind === 'person' && MAKER_CONTRACTION.test(text)) findings.push(`${key}: Whim's "I" on a control: "${text}"`);
   }
@@ -404,8 +392,8 @@ export async function run(): Promise<void> {
     assert(prose.length === 1 && prose[0].startsWith('failureTitle: retired word "generate"'), `a retired word in prose: ${prose.join('; ')}`);
     const untagged = copyFindings({ ...COPY, homeNewLine: 'Something new' }, COPY_KINDS);
     assert(untagged.length === 1 && untagged[0].startsWith('homeNewLine: has no kind'), `an untagged key: ${untagged.join('; ')}`);
-    const reworded = copyFindings({ ...COPY, consentWhy: 'To make your apps and run Whim.' }, COPY_KINDS);
-    assert(reworded.length === 1 && reworded[0].startsWith('consentWhy: no longer carries a retired word'), `a stale exemption: ${reworded.join('; ')}`);
+    const legal = copyFindings({ ...COPY, consentWhy: 'To build your apps and run Whim.' }, COPY_KINDS);
+    assert(legal.length === 1 && legal[0].startsWith('consentWhy: retired word "build"'), `legal copy has no carve-out: ${legal.join('; ')}`);
   });
 
   await test('copy numbers: written in the copy table’s language, English and French alike (#89)', () => {

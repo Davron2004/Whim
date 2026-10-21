@@ -338,14 +338,14 @@ export const COPY = {
   // carries each manifest category and recipient role is `CONSENT_SCREEN_COVERAGE` below.
   consentTitle: 'Before Whim makes apps for you',
   consentLead:
-    'To build or change an app, Whim sends what you ask for to our server. AI companies that work for us write the code.',
+    'To make or change an app, Whim sends what you ask for to our server. AI companies that work for us write the code.',
   consentSentTitle: 'What gets sent',
   consentSentRequest: 'What you ask for: your description, your answers and the plan you approve',
   consentSentEdit: 'When you change an app: its name, code and description, and the layout of its data, never the data itself',
   consentSentDevice: 'An ID Whim makes for this phone, used for daily limits and usage totals.',
   consentSentErrors: 'Error details when something goes wrong. They’re technical only, not what you typed or saved.',
   consentWhyTitle: 'Why',
-  consentWhy: 'To build your apps and run Whim: daily limits, stopping abuse, keeping costs in check, and finding and fixing problems.',
+  consentWhy: 'To make your apps and run Whim: daily limits, stopping abuse, keeping costs in check, and finding and fixing problems.',
   consentWhoTitle: 'Who gets it',
   // "Who gets it" is one paragraph on screen, kept as one key per screen-named recipient role so
   // the coverage check can tell a dropped role from a reworded one.
@@ -377,7 +377,7 @@ export const COPY = {
   // names what. The lead says what the spec has it say (what you ask for goes to our server, AI
   // companies write the code); the row's AI sentence says which things they receive, so no sentence
   // is on the sheet twice.
-  firstRunLead: 'To build or change an app, Whim sends what you ask for to our server, and AI companies that work for us write the code.',
+  firstRunLead: 'To make or change an app, Whim sends what you ask for to our server, and AI companies that work for us write the code.',
   firstRunSentTitle: 'What’s sent, and who gets it',
   firstRunSentRequest: 'What you ask for, your answers and the plan you approve.',
   firstRunSentDevice: 'An ID Whim makes for this phone.',
