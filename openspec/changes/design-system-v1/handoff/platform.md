@@ -46,7 +46,7 @@ export default TurboModuleRegistry.get<Spec>('WhimLaunchScreen');   // null on a
   30%; `android:textColorHighlight`) in `colors.xml`. `whim_accent`/`whim_accent_highlight` no longer exist.
 - `MainActivity.onConfigurationChanged` (uiMode is a handled config change, no recreation) re-sets the
   navigation-bar icon appearance (`!night` → dark icons) and the window background from the new scheme.
-  The status bar's icons stay the JS `<StatusBar barStyle>`'s (chain-14: `t.barStyle`).
+  The status bar's icons stay the JS `<StatusBar barStyle>`'s (`statusBarStyleOver`, #218).
 - Launch: below 12 `Theme.Whim.Launch` draws `drawable/launch_screen.xml` (`launch_background` + 256 dp
   `launch_mark`); 12+ `values-v31` sets `windowSplashScreenBackground` = `launch_background` and
   `windowSplashScreenAnimatedIcon` = `@mipmap/ic_launcher_foreground`.

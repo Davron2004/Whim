@@ -19,7 +19,6 @@ export interface ShellTokens {
   readonly largeText: boolean;               // fontScale >= LARGE_TEXT_FROM (1.35)
   readonly platform: 'ios' | 'android';
   readonly touchTarget: number;              // LAYOUT.touchTarget[platform]: 44 / 48
-  readonly barStyle: 'dark-content' | 'light-content';  // StatusBar content for bg
 }
 export function makeStyles<T>(factory: (t: ShellTokens) => T): (t: ShellTokens) => T;  // memoised per t.key
 export function resolveTokens(env: ShellEnvironment): ShellTokens;  // pure; what useTokens calls
@@ -100,7 +99,7 @@ outline; flare `withSequence` 1.18 → 1 on `spark`; Reduce Motion = still inten
 `MainApplication.kt` pins `AppCompatDelegate.MODE_NIGHT_NO` (so edge-to-edge nav-bar icons stay dark on the
 light-only shell). While it stands, `useColorScheme()` reports `'light'` on Android and the shell never goes
 dark there. chain-9 must drop the pin when the shell follows the scheme; RN then sets nav-bar icon colour
-from the night mode, which equals `t.scheme`. Status bar: `<StatusBar barStyle={t.barStyle} />` (chain-14).
+from the night mode, which equals `t.scheme`. Status bar: `<StatusBar barStyle={statusBarStyleOver(bg, scrims)} />` (`status-bar-style.ts`, #218).
 
 ## Tests (launcher suite, `npm run launcher:test`)
 

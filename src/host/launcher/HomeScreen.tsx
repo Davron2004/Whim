@@ -11,7 +11,7 @@
  * asks `CopyQuestionSheet` only when the copy can copy data. Share link opens the platform share sheet
  * with the app's link. No native alert anywhere.
  */
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ScrollView, Share, useWindowDimensions, View } from 'react-native';
 import { LAYOUT, SPACE } from '../../design/tokens';
 import { haptics } from '../haptics';
@@ -19,7 +19,7 @@ import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import { ContextMenu, type MenuAnchor, type MenuRow } from '../ui/ContextMenu';
 import { AppTile } from '../ui/AppTile';
-import { gridLayout } from '../ui/AppTile-geometry';
+import { drawsName, gridLayout, LABEL_MEASURE_BUDGET_MS, labelsMeasured, rowLabelLines, type GridLayout, type LabelCell, type MeasuredLabels } from '../ui/AppTile-geometry';
 import { Chip } from '../ui/Chip';
 import { Ember, RESTING_ACTIVITY } from '../ui/Ember';
 import { Notice } from '../ui/Notice';
@@ -112,7 +112,16 @@ const styles = makeStyles((t) => ({
   empty: { flexGrow: 1, alignItems: 'center' as const, justifyContent: 'center' as const, paddingHorizontal: LAYOUT.gutter, gap: SPACE[3] },
   chips: { alignItems: 'center' as const, gap: SPACE[2], marginTop: SPACE[2] },
   centred: { textAlign: 'center' as const },
+  unmeasured: { opacity: 0 },
 }));
+
+/** The lines each grid name took at one text size, and whether every name the grid first held has
+ *  reported, after which the grid shows. */
+interface LabelLines {
+  fontScale: number;
+  lines: MeasuredLabels;
+  shown: boolean;
+}
 
 interface OpenMenu {
   cell: GridCell;
@@ -120,10 +129,45 @@ interface OpenMenu {
   open: boolean;
 }
 
+/** The name a cell's tile draws: the older cell has none of its own. */
+const tileName = (cell: GridCell) => (cell.kind === 'older' ? '' : cellName(cell));
+
 /** The attempt a menu action acts on: the cell's own, or the change in flight on an app. */
 function attemptOf(cell: GridCell): PendingBuildRecord | undefined {
   if (cell.kind === 'attempt') return cell.rec;
   return cell.kind === 'app' ? cell.rebuild : undefined;
+}
+
+/**
+ * The name block under each plate is as many lines as the longest name of its row (#218): a row with
+ * no wrapped name has no empty line, and one that has gives every name the same block, so the state
+ * lines sit level. The lines are measured, so a text size starts again with none; until every name
+ * has reported once the grid is laid out but not `shown`, so no row's state lines, nor the rows
+ * under it, move in view. A cell that arrives later settles its row as it appears. A name that never
+ * reports holds the grid back for `LABEL_MEASURE_BUDGET_MS` at most, then it shows anyway.
+ */
+function useRowLabels(cells: readonly GridCell[], layout: GridLayout, fontScale: number) {
+  const [labels, setLabels] = useState<LabelLines>({ fontScale, lines: {}, shown: false });
+  const labelCells: LabelCell[] = cells.map((cell) => ({ key: cellKey(cell), named: drawsName(tileName(cell)) }));
+  const measured = labels.fontScale === fontScale ? labels.lines : {};
+  const measure = (key: string, lines: number) =>
+    setLabels((was) => {
+      const current = was.fontScale === fontScale ? was : { fontScale, lines: {}, shown: false };
+      if (current.lines[key] === lines) return current;
+      const next = { ...current.lines, [key]: lines };
+      return { fontScale, lines: next, shown: current.shown || labelsMeasured(labelCells, next) };
+    });
+  const shown = layout.kind === 'list' || (labels.fontScale === fontScale && labels.shown) || labelsMeasured(labelCells, measured);
+  useEffect(() => {
+    if (shown) return undefined;
+    const budget = setTimeout(
+      () => setLabels((was) => ({ ...(was.fontScale === fontScale ? was : { fontScale, lines: {} }), shown: true })),
+      LABEL_MEASURE_BUDGET_MS,
+    );
+    return () => clearTimeout(budget);
+  }, [shown, fontScale]);
+  if (layout.kind === 'list') return { lineCounts: [], shown, measure };
+  return { lineCounts: rowLabelLines(labelCells, layout.columns, measured), shown, measure };
 }
 
 export default function HomeScreen({
@@ -177,6 +221,8 @@ export default function HomeScreen({
   const cells = searching ? searchCells(all, query) : all;
   const olderRecs = all.flatMap((c) => (c.kind === 'older' ? c.recs : []));
   const customized = customizing ? (apps.find((a) => a.id === customizing.id) ?? null) : null;
+
+  const labels = useRowLabels(cells, layout, fontScale);
 
   const closeMenu = () => setMenu((m) => (m ? { ...m, open: false } : m));
 
@@ -280,7 +326,7 @@ export default function HomeScreen({
     return { tint: 'slate' as const, icon: 'circle' as const };
   };
 
-  const renderCell = (cell: GridCell) => {
+  const renderCell = (cell: GridCell, index: number) => {
     const { tint, icon } = tileOfCell(cell);
     const live = cell.kind === 'attempt' ? cell.rec : attemptOf(cell);
     const busy = cell.kind === 'app' && isAppBusy(appBusy, cell.app.id);
@@ -288,7 +334,7 @@ export default function HomeScreen({
       <AppTile
         key={cellKey(cell)}
         layout={layout}
-        name={cell.kind === 'older' ? '' : cellName(cell)}
+        name={tileName(cell)}
         state={cell.kind === 'older' ? 'older' : cell.state}
         tint={tint}
         glyph={icon}
@@ -298,6 +344,8 @@ export default function HomeScreen({
         activity={live ? activity?.[live.id] : undefined}
         busy={busy}
         lifted={menu?.open === true && cellKey(menu.cell) === cellKey(cell)}
+        labelLines={labels.lineCounts[index]}
+        onLabelLines={(lines) => labels.measure(cellKey(cell), lines)}
         onPress={() => press(cell)}
         onLongPress={(anchor) => {
           if (!busy) setMenu({ cell, anchor, open: true });
@@ -348,7 +396,7 @@ export default function HomeScreen({
                 </View>
               </>
             ) : (
-              <View style={[layout.kind === 'grid' ? s.grid : s.list, s.gridEnd, gridFrame]}>
+              <View style={[layout.kind === 'grid' ? s.grid : s.list, s.gridEnd, gridFrame, labels.shown ? null : s.unmeasured]}>
                 {cells.map(renderCell)}
                 {cells.length === 0 ? (
                   <Text type="callout" color="text-2">

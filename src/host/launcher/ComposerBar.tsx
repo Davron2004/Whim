@@ -12,6 +12,7 @@ import { LAYOUT, RADII, SPACE } from '../../design/tokens';
 import { Ember, RESTING_ACTIVITY } from '../ui/Ember';
 import { usePressFeedback } from '../ui/motion';
 import { Text } from '../ui/Text';
+import { TopHighlight } from '../ui/TopHighlight';
 import { useTokens } from '../ui/tokens';
 import { makeStyles, PRESS_RETENTION } from '../ui/tokens-pure';
 import { COPY, composerContinueLine } from './copy';
@@ -43,8 +44,8 @@ const styles = makeStyles((t) => ({
     borderCurve: 'continuous' as const,
     backgroundColor: t.colors.raised,
     boxShadow: t.shadows.raised,
-    borderTopWidth: 1,
-    borderColor: t.topHighlight,
+    // 1 px of room for the top highlight (`TopHighlight`), which is not a border on the capsule.
+    paddingTop: 1,
   },
   words: { flex: 1 },
 }));
@@ -66,6 +67,7 @@ export function ComposerBar({ draft, onPress }: Readonly<ComposerBarProps>) {
         accessibilityHint={COPY.homeComposerHint}
       >
         <Animated.View style={[s.capsule, press.style]}>
+          <TopHighlight radius={RADII.full.radius} continuous />
           <Ember size={24} state="working" activity={RESTING_ACTIVITY} />
           <View style={s.words}>
             <Text type="body" color={drafting ? 'text' : 'text-2'} numberOfLines={1}>
