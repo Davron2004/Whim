@@ -20,6 +20,8 @@ import { makeStyles, resolveTokens, springConfig, type ShellTokens } from '../..
 import { Text } from '../../ui/Text';
 import { COLORS, LAYOUT, SPRINGS, type SpringName } from '../../../design/tokens';
 import { SAMPLED_SPRINGS } from '../../../design/generated/springs';
+import { contrastRatio } from '../../../design/tints';
+import { backdropOf, statusBarStyleOver } from '../../ui/status-bar-style';
 
 /** Renders what `useTokens()` returns, so a test reads the hook's live value. */
 function Probe() {
@@ -140,6 +142,31 @@ export async function runShellTokensTests(h: Harness): Promise<void> {
     h.eq([at(1.34, 'ios').largeText, at(1.35, 'ios').largeText, at(2, 'ios').largeText], [false, true, true], 'stacking from 135%');
     h.eq([at(1, 'ios').touchTarget, at(1, 'android').touchTarget], [LAYOUT.touchTarget.ios, LAYOUT.touchTarget.android], '44 pt on iOS, 48 dp on Android');
     h.eq([at(1, 'ios').barStyle, resolveTokens({ scheme: 'dark', fontScale: 1, platform: 'ios', reduceMotion: false, increaseContrast: false }).barStyle], ['dark-content', 'light-content'], 'status-bar content reads on each scheme\'s canvas');
+  });
+
+  await h.test('status bar over a scrim: the content reads on the dimmed backdrop, not on either scheme alone (#218)', async () => {
+    const tokensOf = (scheme: 'light' | 'dark') => resolveTokens({ scheme, fontScale: 1, platform: 'ios', reduceMotion: false, increaseContrast: false });
+    const contrasts = (backdrop: string) => ({ dark: contrastRatio('#000000', backdrop), light: contrastRatio('#FFFFFF', backdrop) });
+    for (const scheme of ['light', 'dark'] as const) {
+      h.eq(statusBarStyleOver(COLORS[scheme].bg), tokensOf(scheme).barStyle, `${scheme}, no sheet: the content the scheme's canvas takes`);
+    }
+    const lightAppDarkPhone = backdropOf(COLORS.light.bg, [COLORS.dark.scrim]);
+    const darkReads = contrasts(lightAppDarkPhone);
+    h.ok(darkReads.dark < 4.5 && darkReads.light > darkReads.dark,
+      `a light app under the dark phone's scrim is ${lightAppDarkPhone}: dark content ${darkReads.dark.toFixed(2)}:1, light ${darkReads.light.toFixed(2)}:1`);
+    h.eq(statusBarStyleOver(COLORS.light.bg, [COLORS.dark.scrim]), 'light-content', 'light app, dark phone, sheet up: light content');
+    h.eq(statusBarStyleOver(COLORS.dark.bg, [COLORS.light.scrim]), 'light-content', 'dark app, light phone, sheet up: light content');
+    h.eq(statusBarStyleOver(COLORS.light.bg, [COLORS.light.scrim]), 'dark-content', 'light app, light phone, sheet up: still dark content on the light-grey scrim');
+    h.eq(statusBarStyleOver(COLORS.dark.bg, [COLORS.dark.scrim]), 'light-content', 'dark app, dark phone, sheet up: light content');
+    h.ok(contrastRatio('#000000', backdropOf(COLORS.light.bg, [COLORS.light.scrim, COLORS.light.scrim])) < contrastRatio('#000000', backdropOf(COLORS.light.bg, [COLORS.light.scrim])),
+      'a sheet over a sheet dims the backdrop once more');
+    for (const behind of [COLORS.light.bg, COLORS.dark.bg, '#808080', '#FFD400', '#1E50C8']) {
+      for (const scrims of [[], [COLORS.light.scrim], [COLORS.dark.scrim], [COLORS.dark.scrim, COLORS.dark.scrim]]) {
+        const read = contrasts(backdropOf(behind, scrims));
+        const picked = statusBarStyleOver(behind, scrims) === 'light-content' ? read.light : read.dark;
+        h.ok(picked >= Math.max(read.light, read.dark), `${behind} under ${scrims.length} scrim(s): the picked content has the higher contrast`);
+      }
+    }
   });
 
   await h.test('makeStyles builds once per combination of settings and shares the result across components', async () => {

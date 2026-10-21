@@ -32,6 +32,7 @@ import { Icon } from './Icon';
 import { timing } from './motion';
 import { OverlayModal, useOverlayTurn } from './OverlayModal';
 import { wrappingType } from './Text';
+import { TopHighlight } from './TopHighlight';
 import { useTokens } from './tokens';
 import { makeStyles, MAX_FONT_SCALE, springConfig } from './tokens-pure';
 
@@ -108,9 +109,9 @@ const styles = makeStyles((t) => ({
     borderRadius: RADII.lg.radius,
     borderCurve: 'continuous' as const,
     boxShadow: t.shadows.raised,
-    borderTopWidth: 1,
-    borderColor: t.topHighlight,
-    paddingVertical: SPACE[1],
+    // 1 px of room for the top highlight (`TopHighlight`), which is not a border on the card.
+    paddingTop: SPACE[1] + 1,
+    paddingBottom: SPACE[1],
     overflow: 'hidden' as const,
   },
   heading: {
@@ -305,6 +306,7 @@ function MenuCard({ title, anchor, rows, open, onClose, onChoose, appear, scale 
         accessibilityViewIsModal
         onAccessibilityEscape={onClose}
       >
+        <TopHighlight radius={RADII.lg.radius} continuous />
         <RNText style={s.heading} numberOfLines={2} maxFontSizeMultiplier={MAX_FONT_SCALE} accessibilityRole="header">
           {title}
         </RNText>

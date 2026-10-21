@@ -122,6 +122,24 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('frame: with a sheet up the status bar reads on the page dimmed by the scrim: a light app on a dark phone takes light content until the sheet closes (#218)', async () => {
+    try {
+      setColorScheme('light');
+      await withLauncher(async () => 'window.__WHIM_APP_MODULE__ = {};', async (tree) => {
+        await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
+        await TestRenderer.act(async () => boundWebView(tree).props.onLoadEnd());
+        await TestRenderer.act(async () => { setColorScheme('dark'); });
+        h.eq([strip(tree), barStyle(tree)], [COLORS.light.bg, 'dark-content'], 'no sheet: the light app’s own strip, dark content');
+        await press(button(tree, COPY.orbMenuOpenLabel));
+        h.eq(barStyle(tree), 'light-content', 'the Whim sheet’s dark scrim dims the light app: light content');
+        await press(button(tree, COPY.sheetClose));
+        h.eq(barStyle(tree), 'dark-content', 'the sheet closed: dark content on the light app again');
+      });
+    } finally {
+      setColorScheme('light');
+    }
+  });
+
   await h.test('frame: an app opened in dark keeps its dark strip, status bar, container and page background when the phone turns light; Home and the next open are light', async () => {
     const open = async (tree: TestRenderer.ReactTestRenderer) => {
       await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));

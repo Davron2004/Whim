@@ -92,7 +92,8 @@ function strictChannels(hex: string): Rgb {
 
 const linearize = (c: number): number => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
 
-function luminance(hex: string): number {
+/** WCAG 2.2 relative luminance of a hex colour (0 black – 1 white). */
+export function luminance(hex: string): number {
   const [r, g, b] = strictChannels(hex).map(linearize);
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }

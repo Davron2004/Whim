@@ -99,35 +99,61 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
 /// nothing while the app did not adopt view-controller-based appearance.
 ///
 /// So the app adopts it (Info.plist `UIViewControllerBasedStatusBarAppearance`), the module's
-/// `setStyle` records the style here and has every controller on screen ask again, and the root and
-/// every `Modal` answer with it.
+/// `setStyle` and `setHidden` record what the shell asked for here and have every controller on screen
+/// ask again, and the root and every `Modal` answer with it. The module's own two methods would log an
+/// error under view-controller-based appearance on every call (the StatusBar component calls both on
+/// its first update), so neither is left in place.
 enum WhimStatusBar {
-  /// What the shell asked for last; `.default` (the phone's appearance) before it has.
+  /// What the shell asked for last; `.default` (the phone's appearance) and shown before it has.
   private(set) static var style: UIStatusBarStyle = .default
-  private static var installed = false
+  private(set) static var hidden = false
+
+  /// Runs once whoever calls `install`, from whichever thread (a `static let` is initialised once).
+  private static let installed: Void = {
+    let setStyle: @convention(block) (AnyObject, NSString?, Bool) -> Void = { _, name, animated in
+      DispatchQueue.main.async {
+        style = styleNamed(name as String? ?? "")
+        refresh(animated: animated)
+      }
+    }
+    let setHidden: @convention(block) (AnyObject, Bool, NSString?) -> Void = { _, isHidden, animation in
+      DispatchQueue.main.async {
+        hidden = isHidden
+        refresh(animated: (animation as String? ?? "none") != "none")
+      }
+    }
+    let answerStyle: @convention(block) (AnyObject) -> Int = { _ in style.rawValue }
+    let answerHidden: @convention(block) (AnyObject) -> Bool = { _ in hidden }
+    // Every method is replaced on React Native's class alone.
+    replace("RCTStatusBarManager", NSSelectorFromString("setStyle:animated:"), setStyle, "v@:@B")
+    replace("RCTStatusBarManager", NSSelectorFromString("setHidden:withAnimation:"), setHidden, "v@:B@")
+    replace("RCTFabricModalHostViewController", #selector(getter: UIViewController.preferredStatusBarStyle), answerStyle, "q@:")
+    replace("RCTFabricModalHostViewController", #selector(getter: UIViewController.prefersStatusBarHidden), answerHidden, "B@:")
+  }()
 
   static func install() {
-    guard !installed else { return }
-    installed = true
-    // Both classes are React Native's; each method is replaced on that class alone.
-    if let manager = NSClassFromString("RCTStatusBarManager") {
-      let record: @convention(block) (AnyObject, NSString?, Bool) -> Void = { _, name, animated in
-        DispatchQueue.main.async {
-          style = styleNamed(name as String? ?? "")
-          refresh(animated: animated)
-        }
-      }
-      class_replaceMethod(manager, NSSelectorFromString("setStyle:animated:"), imp_implementationWithBlock(record), "v@:@B")
+    _ = installed
+  }
+
+  /// Replaces `selector` on the class named `className` with `block`. A class or method React Native
+  /// no longer has (after an upgrade) is reported, never passed over in silence.
+  private static func replace(_ className: String, _ selector: Selector, _ block: Any, _ types: String) {
+    guard let target = NSClassFromString(className) else {
+      missing("React Native has no class \(className)")
+      return
     }
-    if let modal = NSClassFromString("RCTFabricModalHostViewController") {
-      let answer: @convention(block) (AnyObject) -> Int = { _ in style.rawValue }
-      class_replaceMethod(
-        modal,
-        #selector(getter: UIViewController.preferredStatusBarStyle),
-        imp_implementationWithBlock(answer),
-        "q@:"
-      )
+    guard class_getInstanceMethod(target, selector) != nil else {
+      missing("\(className) has no method \(NSStringFromSelector(selector))")
+      return
     }
+    class_replaceMethod(target, selector, imp_implementationWithBlock(block), types)
+  }
+
+  private static func missing(_ what: String) {
+    NSLog("Whim status bar: %@, so the shell's status bar is not applied there. Re-check WhimStatusBar after a React Native upgrade.", what)
+#if DEBUG
+    assertionFailure("Whim status bar: \(what)")
+#endif
   }
 
   /// React Native's `barStyle` names.
@@ -165,5 +191,7 @@ enum WhimStatusBar {
 /// react-native-screens screen's.
 final class WhimRootViewController: UIViewController {
   override var preferredStatusBarStyle: UIStatusBarStyle { WhimStatusBar.style }
+  override var prefersStatusBarHidden: Bool { WhimStatusBar.hidden }
   override var childForStatusBarStyle: UIViewController? { nil }
+  override var childForStatusBarHidden: UIViewController? { nil }
 }

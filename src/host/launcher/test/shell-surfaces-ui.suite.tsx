@@ -56,8 +56,9 @@ import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
 import { gridLayout, TILE, TILE_SIDE } from '../../ui/AppTile-geometry';
 import KeyboardShell from '../KeyboardShell';
+import { ComposerBar } from '../ComposerBar';
 import { COPY } from '../copy';
-import { COLORS, LAYOUT, SPRINGS, TIMINGS, TOP_HIGHLIGHT, TYPE_SCALE, type TypeToken } from '../../../design/tokens';
+import { COLORS, LAYOUT, RADII, SPRINGS, TIMINGS, TOP_HIGHLIGHT, TYPE_SCALE, type TypeToken } from '../../../design/tokens';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -415,6 +416,36 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
       'one top highlight inside the card, across its rounded top, taking no touch',
     );
     await act(() => tree.unmount());
+    await act(() => setColorScheme('light'));
+  });
+
+  await h.test('Raised surfaces: the context menu, the toast and the composer paint `raised` with no border width (Android’s 0.8 px background inset left a line of the canvas between each and its shadow, #218), and the dark top highlight is its own line across each', async () => {
+    await resetPhone();
+    await act(() => setColorScheme('dark'));
+    let api!: ToastApi;
+    const Grab = () => { api = useToast(); return null; };
+    const menu = await render(<ContextMenu visible title="Timer" anchor={ANCHOR} rows={menuRows([])} onClose={() => {}} />);
+    const toast = await render(<ToastHost bottomOffset={64}><Grab /></ToastHost>);
+    await act(() => api.show({ message: 'Copied' }));
+    await settle();
+    const composer = await render(<ComposerBar draft={undefined} onPress={() => {}} />);
+    const surfaces: [string, Node, number][] = [
+      ['menu', menu.root.find((n) => hostType(n) === 'Animated.View' && n.props.accessibilityRole === 'menu'), RADII.lg.radius],
+      ['toast', toast.root.find((n) => hostType(n) === 'Animated.View' && n.props.accessibilityLiveRegion === 'polite'), RADII.full.radius],
+      ['composer', composer.root.find((n) => hostType(n) === 'Animated.View' && flat(n).backgroundColor === COLORS.dark.raised), RADII.full.radius],
+    ];
+    for (const [name, surface, radius] of surfaces) {
+      const style = flat(surface);
+      const borders = Object.entries(style).filter(([key, value]) => /^border\w*Width$/.test(key) && typeof value === 'number' && value > 0);
+      h.eq([style.backgroundColor, style.borderRadius, borders], [COLORS.dark.raised, radius, []], `${name}: a raised surface with no border width on any side`);
+      const highlight = surface.findAll((n) => hostType(n) === 'View' && flat(n).borderTopWidth === 1);
+      h.eq(
+        highlight.map((n) => [flat(n).position, flat(n).top, flat(n).right, flat(n).bottom, flat(n).left, flat(n).borderColor, flat(n).borderRadius, n.props.pointerEvents]),
+        [['absolute', 0, 0, 0, 0, TOP_HIGHLIGHT.dark, radius, 'none']],
+        `${name}: one top highlight over it, in its shape, taking no touch`,
+      );
+    }
+    for (const tree of [menu, toast, composer]) await act(() => tree.unmount());
     await act(() => setColorScheme('light'));
   });
 

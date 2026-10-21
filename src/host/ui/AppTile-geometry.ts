@@ -42,7 +42,7 @@ export const GRID = {
 } as const;
 
 export type GridLayout =
-  | { kind: 'grid'; columns: number; columnWidth: number; tile: number; cellHeight: number; rowGap: number; gutter: number }
+  | { kind: 'grid'; columns: number; columnWidth: number; tile: number; cellHeight: number; labelHeight: number; rowGap: number; gutter: number }
   | { kind: 'list'; tile: number; rowHeight: number; gutter: number };
 
 /** The row padding of a list-mode cell, on each side; the loading skeleton draws the same. */
@@ -55,7 +55,8 @@ export function listRowPadding(largeText: boolean): number {
  *  cannot drop to its own row; a width that leaves no room, or is not a number, gets the 64 pt touch
  *  minimum rather than a zero or NaN cell) with the 64 tile
  *  and a two-line `caption` label; three from 135%; a list of rows with the 40 tile from 200%.
- *  Heights grow with the label's text size. */
+ *  Heights grow with the label's text size. A grid label's box is two lines tall (`labelHeight`)
+ *  whatever the name's length, so the state lines under the labels of a row line up. */
 export function gridLayout(width: number, fontScale: number): GridLayout {
   const scale = Math.max(1, fontScale);
   if (scale >= GRID.listFrom) {
@@ -74,6 +75,7 @@ export function gridLayout(width: number, fontScale: number): GridLayout {
     columnWidth: Number.isFinite(fitted) && fitted > 0 ? fitted : GRID.minTouch.width,
     tile: TILE_SIDE.grid,
     cellHeight,
+    labelHeight: label,
     rowGap: GRID.rowGap,
     gutter: LAYOUT.gutter,
   };

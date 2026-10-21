@@ -169,6 +169,26 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     h.eq(seen['200%'].plainCell.minHeight, seen['200%'].statedCell.minHeight, 'and the row without one is as tall, so the list keeps its rhythm');
   });
 
+  await h.test('home layout: a grid label is a two-line box at every grid text size, so a one-line name’s state line sits level with a two-line neighbour’s (#218)', async () => {
+    for (const scale of [1, 1.35]) {
+      await resetPhone();
+      windowMetrics.fontScale = scale;
+      const tree = await renderHome({ apps: [app('Water Counter', 1, { example: true }), app('Dice', 2, { example: true })] });
+      try {
+        const twoLines = 2 * TYPE_SCALE.caption.lineHeight * scale;
+        for (const name of ['Water Counter', 'Dice']) {
+          const texts = tile(tree, name).findAll((n) => hostType(n) === 'Text');
+          const label = texts.find((n) => textOf(n) === name);
+          const stateLine = texts.find((n) => textOf(n) === COPY.exampleBadge);
+          h.ok(label !== undefined && stateLine !== undefined, `${name}: a label and its state line`);
+          h.eq([label?.props.numberOfLines, flat(label!).minHeight, flat(label!).height], [2, twoLines, undefined],
+            `${name} at ${scale * 100}%: two lines, a box of two caption lines (minHeight, never height)`);
+          h.ok(texts.indexOf(stateLine!) > texts.indexOf(label!), `${name}: the state line follows the label box`);
+        }
+      } finally { await unmountScreen(tree); windowMetrics.fontScale = 1; }
+    }
+  });
+
   await h.test('home layout: a grid label keeps the side padding system.md §3.2 gives it at every text size, large text included', async () => {
     const documented = Number(/(\d{1,2}) pt side padding, then ellipsis/.exec(fs.readFileSync(path.join(process.cwd(), 'docs/design/system.md'), 'utf8'))?.[1]);
     h.ok(Number.isFinite(documented), 'the doc states a side padding for the label');

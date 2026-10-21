@@ -364,6 +364,7 @@ const PBXPROJ_PATH = 'ios/Whim.xcodeproj/project.pbxproj';
 const INFO_PLIST_PATH = `${IOS_DIR}/Info.plist`;
 const ENTITLEMENTS_PATH = `${IOS_DIR}/Whim.entitlements`;
 const PRIVACY_MANIFEST_PATH = `${IOS_DIR}/PrivacyInfo.xcprivacy`;
+const APP_DELEGATE_PATH = `${IOS_DIR}/AppDelegate.swift`;
 const CODE_SIGN_ENTITLEMENTS_VALUE = 'Whim/Whim.entitlements';
 const WHIM_RELEASE_XCCONFIG_SUFFIX = 'release/whim-release.xcconfig';
 const SCENE_DELEGATE_PROJECT_PATH = 'Whim/SceneDelegate.swift';
@@ -539,8 +540,36 @@ function checkInfoPlist(repoRoot: string): IosProjectFinding[] {
     });
   }
 
+  // design-system-v1 (#218): a scene-based app on iOS 27 ignores the app-wide status-bar setter, so
+  // the bar follows the shell only through view-controller-based appearance (`WhimStatusBar`).
+  if (plist.UIViewControllerBasedStatusBarAppearance !== true) {
+    findings.push({
+      file: INFO_PLIST_PATH,
+      message: `"UIViewControllerBasedStatusBarAppearance" must be true (the shell's status bar is answered by its view controllers), got ${JSON.stringify(plist.UIViewControllerBasedStatusBarAppearance)}`,
+    });
+  }
+
   findings.push(...checkSceneManifest(plist));
   return findings;
+}
+
+/** What `AppDelegate.swift`'s `WhimStatusBar` must do under view-controller-based appearance: take
+ *  over both of React Native's status-bar setters (each logs an error there otherwise) and have the
+ *  `Modal`'s controller answer both questions, installed at launch. */
+const STATUS_BAR_WIRING: readonly (readonly [RegExp, string])[] = [
+  [/replace\("RCTStatusBarManager",\s*NSSelectorFromString\("setStyle:animated:"\)/, 'replace RCTStatusBarManager setStyle:animated:'],
+  [/replace\("RCTStatusBarManager",\s*NSSelectorFromString\("setHidden:withAnimation:"\)/, 'replace RCTStatusBarManager setHidden:withAnimation:'],
+  [/replace\("RCTFabricModalHostViewController",\s*#selector\(getter: UIViewController\.preferredStatusBarStyle\)/, "replace the Modal controller's preferredStatusBarStyle"],
+  [/replace\("RCTFabricModalHostViewController",\s*#selector\(getter: UIViewController\.prefersStatusBarHidden\)/, "replace the Modal controller's prefersStatusBarHidden"],
+  [/WhimStatusBar\.install\(\)/, 'call WhimStatusBar.install()'],
+];
+
+function checkStatusBarWiring(repoRoot: string): IosProjectFinding[] {
+  const source = readRepoFile(repoRoot, APP_DELEGATE_PATH);
+  return STATUS_BAR_WIRING.filter(([pattern]) => !pattern.test(source)).map(([, what]) => ({
+    file: APP_DELEGATE_PATH,
+    message: `must ${what} (the shell's status bar under view-controller-based appearance)`,
+  }));
 }
 
 function checkEntitlements(repoRoot: string, config: NativeReleaseConfig): IosProjectFinding[] {
@@ -604,5 +633,6 @@ export function checkIosProject(repoRoot: string, config: NativeReleaseConfig): 
     ...checkInfoPlist(repoRoot),
     ...checkEntitlements(repoRoot, config),
     ...checkPrivacyManifest(repoRoot),
+    ...checkStatusBarWiring(repoRoot),
   ];
 }

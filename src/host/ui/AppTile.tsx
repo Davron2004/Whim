@@ -264,7 +264,7 @@ export function AppTile({
             <View style={s.column}>
               {plate}
               {name === '' ? null : (
-                <Text type="caption" numberOfLines={GRID.labelLines} style={s.label}>
+                <Text type="caption" numberOfLines={GRID.labelLines} style={[s.label, { minHeight: layout.labelHeight }]}>
                   {name}
                 </Text>
               )}

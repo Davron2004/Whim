@@ -148,6 +148,8 @@ interface InfoPlistFixtureOpts {
   localNetworkUsage?: string | null;
   /** `NSAppTransportSecurity`'s `NSAllowsArbitraryLoads`. */
   allowsArbitraryLoads?: boolean;
+  /** `null` leaves the key out. */
+  viewControllerStatusBar?: boolean | null;
 }
 
 function infoPlistFixture(opts: InfoPlistFixtureOpts = {}): string {
@@ -159,6 +161,10 @@ function infoPlistFixture(opts: InfoPlistFixtureOpts = {}): string {
   const sceneConfigurationCount = opts.sceneConfigurationCount ?? 1;
   const localNetworkUsage = opts.localNetworkUsage === undefined ? 'Whim connects to a server on your local network.' : opts.localNetworkUsage;
   const allowsArbitraryLoads = opts.allowsArbitraryLoads ?? false;
+  const viewControllerStatusBar = opts.viewControllerStatusBar === undefined ? true : opts.viewControllerStatusBar;
+  const statusBarXml = viewControllerStatusBar === null
+    ? ''
+    : `\n\t<key>UIViewControllerBasedStatusBarAppearance</key>\n\t<${viewControllerStatusBar}/>`;
   const atsXml = `
 \t<key>NSAppTransportSecurity</key>
 \t<dict>
@@ -199,7 +205,7 @@ function infoPlistFixture(opts: InfoPlistFixtureOpts = {}): string {
 <plist version="1.0">
 <dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
-	<${its}/>${atsXml}${localNetworkXml}${usageKeyXml}${sceneManifest}
+	<${its}/>${atsXml}${localNetworkXml}${usageKeyXml}${statusBarXml}${sceneManifest}
 </dict>
 </plist>
 `;
@@ -259,6 +265,18 @@ interface FixtureOverrides {
   infoPlist?: string;
   entitlements?: string;
   privacyManifest?: string;
+  appDelegate?: string;
+}
+
+/** The real `AppDelegate.swift`, the fixture every case starts from. */
+const REAL_APP_DELEGATE = fs.readFileSync(path.join(REPO_ROOT, 'ios/Whim/AppDelegate.swift'), 'utf8');
+
+/** The real `AppDelegate.swift` without its lines matching `line`, which must exist. */
+function appDelegateWithout(line: RegExp): string {
+  const lines = REAL_APP_DELEGATE.split('\n');
+  const kept = lines.filter((l) => !line.test(l));
+  if (kept.length === lines.length) throw new Error(`AppDelegate.swift has no line matching ${line}`);
+  return kept.join('\n');
 }
 
 /** Writes a minimal-but-complete fixture project under a fresh temp dir and runs `fn` against it, cleaning up after. */
@@ -273,6 +291,7 @@ function withFixtureRepo(overrides: FixtureOverrides, fn: (dir: string) => void)
     fs.writeFileSync(path.join(whimDir, 'Info.plist'), overrides.infoPlist ?? infoPlistFixture(), 'utf8');
     fs.writeFileSync(path.join(whimDir, 'Whim.entitlements'), overrides.entitlements ?? entitlementsFixture(), 'utf8');
     fs.writeFileSync(path.join(whimDir, 'PrivacyInfo.xcprivacy'), overrides.privacyManifest ?? privacyManifestFixture(), 'utf8');
+    fs.writeFileSync(path.join(whimDir, 'AppDelegate.swift'), overrides.appDelegate ?? REAL_APP_DELEGATE, 'utf8');
     fn(dir);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -401,6 +420,27 @@ const MUTATION_CASES: readonly MutationCase[] = [
     overrides: { privacyManifest: privacyManifestFixture({ tracking: true }) },
     expect: ['PrivacyInfo.xcprivacy', 'NSPrivacyTracking'],
   },
+  {
+    name: 'an Info.plist without view-controller-based status-bar appearance fails',
+    overrides: { infoPlist: infoPlistFixture({ viewControllerStatusBar: null }) },
+    expect: ['ios/Whim/Info.plist', 'UIViewControllerBasedStatusBarAppearance'],
+  },
+  {
+    name: 'view-controller-based status-bar appearance set to false fails (discriminating: a presence-only check would pass this)',
+    overrides: { infoPlist: infoPlistFixture({ viewControllerStatusBar: false }) },
+    expect: ['ios/Whim/Info.plist', 'UIViewControllerBasedStatusBarAppearance'],
+  },
+  ...([
+    ['setStyle:animated:', /NSSelectorFromString\("setStyle:animated:"\)/],
+    ['setHidden:withAnimation:', /NSSelectorFromString\("setHidden:withAnimation:"\)/],
+    ['preferredStatusBarStyle', /getter: UIViewController\.preferredStatusBarStyle\)/],
+    ['prefersStatusBarHidden', /getter: UIViewController\.prefersStatusBarHidden\)/],
+    ['WhimStatusBar.install()', /WhimStatusBar\.install\(\)/],
+  ] as const).map(([what, line]) => ({
+    name: `an AppDelegate.swift that no longer wires ${what} fails`,
+    overrides: { appDelegate: appDelegateWithout(line) },
+    expect: ['ios/Whim/AppDelegate.swift', what],
+  })),
 ];
 
 export async function run(): Promise<void> {

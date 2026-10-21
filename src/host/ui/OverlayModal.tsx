@@ -36,7 +36,7 @@
  * siblings there, not with the overlays under it.
  */
 
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { AppState, Modal, Platform } from 'react-native';
 
 /** How long iOS may take to report a dismissal before the `Modal` is unmounted and counted gone. */
@@ -112,6 +112,26 @@ export function resetOverlayHolds(): void {
 const isActive = (state: string | null | undefined) => state !== 'background' && state !== 'inactive';
 
 const TurnsContext = createContext(rootTurns);
+
+/** How many overlays are open, each over its own `scrim`: an overlay inside another's content dims
+ *  the screen once more. The shell's status bar reads on the dimmed page (`statusBarStyleOver`). */
+let scrimsUp = 0;
+const scrimListeners = new Set<() => void>();
+
+function coverBy(delta: number): void {
+  scrimsUp += delta;
+  for (const listener of scrimListeners) listener();
+}
+
+function onScrims(listener: () => void): () => void {
+  scrimListeners.add(listener);
+  return () => scrimListeners.delete(listener);
+}
+
+/** The number of overlay scrims over the screen now. */
+export function useScrimsUp(): number {
+  return useSyncExternalStore(onScrims, () => scrimsUp);
+}
 
 /** `away`: no turn asked for. `waiting`: in line, or between two tries at presenting. `up`: its
  *  `Modal` is presented. `hiding`: hidden, until the system reports the dismissal. */
@@ -326,16 +346,22 @@ export function useOverlayTurn(wanted: boolean, options: OverlayTurnOptions): Ov
     return () => subscription.remove();
   }, [presence]);
   useEffect(() => () => presence.drop(), [presence]);
+  const open = phase === 'up' && wanted;
+  useEffect(() => {
+    if (!open) return undefined;
+    coverBy(1);
+    return () => coverBy(-1);
+  }, [open]);
   return useMemo(
     () => ({
-      open: phase === 'up' && wanted,
+      open,
       up: phase === 'up',
       mounted: phase === 'up' || phase === 'hiding',
       exited: presence.exited,
       shown: presence.shown,
       dismissed: presence.dismissed,
     }),
-    [phase, wanted, presence],
+    [open, phase, presence],
   );
 }
 
