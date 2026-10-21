@@ -132,7 +132,23 @@ const DIALOG_WALK_CALLS = /^ *clearDialogNavigationBarScrims\(\)\n/gm;
 /** The dialog walk clearing a dialog's window. */
 const DIALOG_CLEAR_CALLS = /^ *clearNavigationBarScrim\(dialogWindow\)\n/gm;
 /** The window listing handing over to the walk. */
-const WALK_FROM_LISTING = /^ *if \(unwatched\) watchDialogScrims\(window\.decorView\)\n/m;
+const WALK_FROM_LISTING = /^ *if \(unlisted\) watchDialogScrims\(window\.decorView\)\n/m;
+/** The dialog's pre-draw listener starting the walk again after clearing its window (the nested-sheet fix). */
+const DIALOG_LISTENER_WALK = /(\n *clearNavigationBarScrim\(dialogWindow\)\n) *clearDialogNavigationBarScrims\(\)\n/;
+/** The dialog's pre-draw listener clearing its window again (React Native turns the scrim back on). */
+const DIALOG_LISTENER_CLEAR = /(addOnPreDrawListener \{\n) *clearNavigationBarScrim\(dialogWindow\)\n/;
+/** The walk following a host into its dialog, where nested hosts live. */
+const WALK_INTO_DIALOG = /^ *watchDialogScrims\(decor\)\n/m;
+/** The activity's pre-draw listener starting the walk, and the end of that listener. */
+const ACTIVITY_LISTENER_WALK = /(mirrorBarAppearance\(\)\n) *clearDialogNavigationBarScrims\(\)\n( *true\n *\}\n)/;
+
+/** `REAL_MAIN_ACTIVITY` with `pattern` replaced; throws when the pattern no longer matches, so a
+ *  case can't pass vacuously after `MainActivity.kt` is reworded. */
+function mainActivityWith(pattern: RegExp, replacement: string): string {
+  const changed = REAL_MAIN_ACTIVITY.replace(pattern, replacement);
+  if (changed === REAL_MAIN_ACTIVITY) throw new Error(`${pattern} no longer matches ${ANDROID_MAIN_ACTIVITY_PATH}`);
+  return changed;
+}
 
 function writeValidFixture(root: string): void {
   writeFile(root, ANDROID_MANIFEST_PATH, VALID_MANIFEST);
@@ -253,21 +269,21 @@ export async function run(): Promise<void> {
       file: ANDROID_MAIN_ACTIVITY_PATH,
       content: () => REAL_MAIN_ACTIVITY.replace(DIALOG_WALK_CALLS, ''),
       expectFile: ANDROID_MAIN_ACTIVITY_PATH,
-      matches: /onCreate must call clearDialogNavigationBarScrims/,
+      matches: /onCreate must add a pre-draw listener to the activity's window that calls clearDialogNavigationBarScrims/,
     },
     {
       name: 'a MainActivity whose dialog walk start is block-commented fails',
       file: ANDROID_MAIN_ACTIVITY_PATH,
       content: () => REAL_MAIN_ACTIVITY.replace(DIALOG_WALK_CALLS, (line) => `/* ${line.trimEnd()} */\n`),
       expectFile: ANDROID_MAIN_ACTIVITY_PATH,
-      matches: /onCreate must call clearDialogNavigationBarScrims/,
+      matches: /onCreate must add a pre-draw listener to the activity's window that calls clearDialogNavigationBarScrims/,
     },
     {
       name: 'a MainActivity whose dialog walk clears no dialog window fails',
       file: ANDROID_MAIN_ACTIVITY_PATH,
       content: () => REAL_MAIN_ACTIVITY.replace(DIALOG_CLEAR_CALLS, ''),
       expectFile: ANDROID_MAIN_ACTIVITY_PATH,
-      matches: /watchDialogScrims, calling clearNavigationBarScrim/,
+      matches: /watchDialogScrims must add a pre-draw listener to each dialog that calls clearNavigationBarScrim/,
     },
     {
       name: 'a MainActivity whose window listing never walks to the dialogs fails',
@@ -275,6 +291,34 @@ export async function run(): Promise<void> {
       content: () => REAL_MAIN_ACTIVITY.replace(WALK_FROM_LISTING, ''),
       expectFile: ANDROID_MAIN_ACTIVITY_PATH,
       matches: /clearDialogNavigationBarScrims, listing/,
+    },
+    {
+      name: 'a MainActivity whose dialog listener no longer walks fails (the activity\'s listener still does: a sheet opened from a sheet keeps its band)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(DIALOG_LISTENER_WALK, '$1'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /watchDialogScrims must add a pre-draw listener to each dialog that calls clearDialogNavigationBarScrims/,
+    },
+    {
+      name: 'a MainActivity whose walk no longer follows a host into its dialog fails (it still recurses into children)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_INTO_DIALOG, ''),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /watchDialogScrims must walk on into each dialog's decor view/,
+    },
+    {
+      name: 'a MainActivity whose dialog listener no longer clears the dialog fails (the first-show clear stays: React Native turns the scrim back on)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(DIALOG_LISTENER_CLEAR, '$1'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /watchDialogScrims must add a pre-draw listener to each dialog that calls clearNavigationBarScrim/,
+    },
+    {
+      name: 'a MainActivity that walks once in onCreate instead of before each frame fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(ACTIVITY_LISTENER_WALK, '$1$2    clearDialogNavigationBarScrims()\n'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /onCreate must add a pre-draw listener to the activity's window that calls clearDialogNavigationBarScrims/,
     },
     {
       name: 'a main config that refuses cleartext at the base fails',

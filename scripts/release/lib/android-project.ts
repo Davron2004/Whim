@@ -182,7 +182,9 @@ function literalEnd(text: string, start: number): number {
 
 /** Kotlin source with its comments removed (line and block, nested as Kotlin nests them) and its
  *  string and character literals emptied, so a commented-out call doesn't count and a brace inside
- *  a string can't unbalance a body. A plain scan, no backtracking regexes. */
+ *  a string can't unbalance a body. A plain scan, no backtracking regexes. String templates aren't
+ *  parsed: a string nested in a template (`"${f("/*")}"`) ends the outer literal early, so what
+ *  follows reads as code or a comment; that can only drop code, so the check fails closed. */
 function kotlinCode(text: string): string {
   let out = '';
   let i = 0;
@@ -235,12 +237,33 @@ function kotlinFunction(code: string, name: string): { body: string } | undefine
   return undefined;
 }
 
+/** The bodies of the `addOnPreDrawListener { … }` lambdas in `body`, and `body` with them blanked. */
+function preDrawListeners(body: string): { lambdas: string[]; rest: string } {
+  const lambdas: string[] = [];
+  let rest = '';
+  let from = 0;
+  const opener = /\.addOnPreDrawListener\s*\{/g;
+  for (let found = opener.exec(body); found !== null; found = opener.exec(body)) {
+    const open = found.index + found[0].length - 1;
+    const close = closingBracket(body, open);
+    if (close === undefined) break;
+    lambdas.push(body.slice(open, close + 1));
+    rest += body.slice(from, open);
+    from = close + 1;
+    opener.lastIndex = from;
+  }
+  return { lambdas, rest: rest + body.slice(from) };
+}
+
 /** `MainActivity` turns off the contrast scrim Android draws under a transparent 3-button
  *  navigation bar, which React Native's edge to edge turns on for the activity and for every
  *  Modal's dialog: without it a lighter band (darker in dark) sits under every page's `bg` and every
  *  sheet. So the clearing function must exist, the activity must clear its own window as it is
- *  created, and the dialog walk must clear each dialog's window and be reached from the activity's
- *  frames. Comments are dropped, so a commented-out call fails. */
+ *  created, and the dialog walk must run before each of the activity's frames (its pre-draw
+ *  listener), follow each host into its dialog (where nested hosts live), and give each dialog a
+ *  pre-draw listener that clears the dialog's window and runs the walk again (a sheet opened from a
+ *  sheet). Each call is looked for where it must sit, not anywhere in the function. Comments are
+ *  dropped, so a commented-out call fails. */
 function checkNavigationBarScrim(repoRoot: string): AndroidProjectFinding[] {
   let text: string;
   try {
@@ -259,16 +282,28 @@ function checkNavigationBarScrim(repoRoot: string): AndroidProjectFinding[] {
   if (onCreate === undefined || !/\bclearNavigationBarScrim\(window\)/.test(onCreate.body)) {
     problems.push('MainActivity.onCreate must call clearNavigationBarScrim(window): React Native turns the activity\'s scrim on as it starts');
   }
+  const activityListeners = onCreate === undefined ? [] : preDrawListeners(onCreate.body).lambdas;
+  if (!activityListeners.some((lambda) => /\bclearDialogNavigationBarScrims\(/.test(lambda))) {
+    problems.push('MainActivity.onCreate must add a pre-draw listener to the activity\'s window that calls clearDialogNavigationBarScrims, or a dialog shown after the first frame keeps its scrim');
+  }
   const watch = kotlinFunction(code, 'watchDialogScrims');
-  if (watch === undefined || !/\bclearNavigationBarScrim\(/.test(watch.body)) {
-    problems.push('MainActivity must define watchDialogScrims, calling clearNavigationBarScrim on each Modal dialog\'s window: React Native turns a dialog\'s scrim on each time it applies the Modal\'s props');
+  const dialogListeners = watch === undefined ? { lambdas: [], rest: '' } : preDrawListeners(watch.body);
+  if (!dialogListeners.lambdas.some((lambda) => /\bclearNavigationBarScrim\(/.test(lambda))) {
+    problems.push('MainActivity.watchDialogScrims must add a pre-draw listener to each dialog that calls clearNavigationBarScrim on the dialog\'s window: React Native turns a dialog\'s scrim on each time it applies the Modal\'s props');
+  }
+  if (!dialogListeners.lambdas.some((lambda) => /\bclearDialogNavigationBarScrims\(/.test(lambda))) {
+    problems.push('MainActivity.watchDialogScrims must add a pre-draw listener to each dialog that calls clearDialogNavigationBarScrims: a sheet opened from a sheet shows over the first, never before an activity frame');
+  }
+  const decorNames = [...dialogListeners.rest.matchAll(/\bval (\w+)\s*=\s*[\w.?]*\.decorView\b/g)].map((m) => m[1]);
+  const intoDialog = [...dialogListeners.rest.matchAll(/\bwatchDialogScrims\(([\w.?]+)\)/g)].some(
+    ([, arg]) => decorNames.includes(arg) || /\.decorView$/.test(arg),
+  );
+  if (!intoDialog) {
+    problems.push('MainActivity.watchDialogScrims must walk on into each dialog\'s decor view: a Modal inside another\'s content has its host there');
   }
   const dialogs = kotlinFunction(code, 'clearDialogNavigationBarScrims');
   if (dialogs === undefined || !/\bwatchDialogScrims\(/.test(dialogs.body)) {
-    problems.push('MainActivity must define clearDialogNavigationBarScrims, listing the activity\'s windows and calling watchDialogScrims while one is unwatched');
-  }
-  if (onCreate === undefined || !/\bclearDialogNavigationBarScrims\(/.test(onCreate.body)) {
-    problems.push('MainActivity.onCreate must call clearDialogNavigationBarScrims before the activity\'s frames, or no dialog\'s scrim is ever cleared');
+    problems.push('MainActivity must define clearDialogNavigationBarScrims, listing the activity\'s windows and calling watchDialogScrims while one is unlisted');
   }
   return problems.map((message) => ({ file: ANDROID_MAIN_ACTIVITY_PATH, message }));
 }

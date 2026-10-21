@@ -98,14 +98,17 @@ class MainActivity : ReactActivity() {
   // so the activity opts out once its delegate has run, and every dialog before each of its frames.
   // A dialog is found from the window it is presented from: a Modal's host view sits in the
   // activity's view tree or, for an overlay inside another's content, in that overlay's dialog, so
-  // the walk follows each host into its dialog. It runs before a frame of the activity or of any
-  // dialog, only while this activity has a window it doesn't watch yet (a dialog that just showed,
-  // or a window that is no Modal's, such as a text-selection popup), so a dialog is found in the
-  // frame it shows, nested or shown over another, with no wait on a focus change (a dialog shown
-  // over another takes that one's focus, never the activity's). Windows are listed from API 29,
-  // the first that has the scrim. The bar's icons stay legible on their own: they follow the scheme
-  // (`onConfigurationChanged`, `mirrorBarAppearance`).
+  // the walk follows each host into its dialog. A check runs before every frame of the activity
+  // and of each dialog, and walks only when this activity has a window it hasn't listed yet: a
+  // dialog that just showed, or a window that is no Modal's, such as an AlertDialog, a date picker
+  // or Chromium's select dialog (a popup, the text-selection toolbar or WebView autofill carries
+  // its anchor's window token, not the activity's, so it is never listed). So each new window costs
+  // one walk, and a dialog is found in the frame it shows, nested or shown over another, with no
+  // wait on a focus change (a dialog shown over another takes that one's focus, never the
+  // activity's). Windows are listed from API 29, the first that has the scrim. The bar's icons stay
+  // legible on their own: they follow the scheme (`onConfigurationChanged`, `mirrorBarAppearance`).
   private val scrimWatched = WeakHashMap<View, Unit>()
+  private val scrimListed = WeakHashMap<View, Unit>()
 
   private fun clearNavigationBarScrim(target: Window) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
@@ -115,13 +118,13 @@ class MainActivity : ReactActivity() {
   private fun clearDialogNavigationBarScrims() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
     val token = window.attributes.token
-    val unwatched =
-        WindowInspector.getGlobalWindowViews().any { root ->
-          root !== window.decorView &&
-              root !in scrimWatched &&
-              (root.layoutParams as? WindowManager.LayoutParams)?.token === token
-        }
-    if (unwatched) watchDialogScrims(window.decorView)
+    var unlisted = false
+    for (root in WindowInspector.getGlobalWindowViews()) {
+      if (root === window.decorView) continue
+      if ((root.layoutParams as? WindowManager.LayoutParams)?.token !== token) continue
+      if (scrimListed.put(root, Unit) == null) unlisted = true
+    }
+    if (unlisted) watchDialogScrims(window.decorView)
   }
 
   private fun watchDialogScrims(view: View) {
