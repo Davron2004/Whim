@@ -49,14 +49,26 @@ export function sortSpans(spans: readonly Span[]): Span[] {
   );
 }
 
+/** A letter, digit or combining mark in any script: "caf" is inside "café" (precomposed or with a
+ *  combining accent), "таймер" inside "таймеры". The `u` flag's property escapes don't reach the
+ *  device as such: the React Native Babel preset (`@babel/plugin-transform-unicode-regex`) expands
+ *  them into plain ranges at bundle time. */
+const WORD_CHAR = /^[\p{L}\p{N}\p{M}]$/u;
+
 function isWordChar(ch: string | undefined): boolean {
-  return ch !== undefined && /[A-Za-z0-9]/.test(ch);
+  return ch !== undefined && WORD_CHAR.test(ch);
 }
 
 /** True when `[start, end)` is bounded by non-word characters — so "Pour Timer" matches in
- *  "open Pour Timer now" but not inside "Pour Timerish". */
+ *  "open Pour Timer now" but not inside "Pour Timerish". The characters either side are read
+ *  whole, so a letter outside the BMP (a surrogate pair) counts as one. A language that joins
+ *  words without a space has no boundary to find: a Korean particle ("타이머를") or Japanese
+ *  ("タイマーを") makes the prompt part of a longer word, so it isn't matched there — a known limit,
+ *  in the safe direction. */
 function isWholeWord(text: string, start: number, end: number): boolean {
-  return !isWordChar(text[start - 1]) && !isWordChar(text[end]);
+  const before = Array.from(text.slice(Math.max(0, start - 2), start)).at(-1);
+  const after = Array.from(text.slice(end, end + 2))[0];
+  return !isWordChar(before) && !isWordChar(after);
 }
 
 function findAll(text: string, needle: string, caseInsensitive: boolean): number[] {

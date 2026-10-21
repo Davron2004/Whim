@@ -213,6 +213,15 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
     h.eq(countOf(renderProse('Let me readd a timer.', { storedPrompt: 'add a timer' }), 'yours'), 0, 'a multi-word prompt starting inside a longer word is not the person’s words');
   });
 
+  await h.test('lexer: a word boundary is one in every script, not only in ASCII', () => {
+    h.eq(countOf(renderProse('Ouvre le café.', { storedPrompt: 'caf' }), 'yours'), 0, 'a prompt ending before an accented letter is inside a word');
+    h.eq(countOf(renderProse('Запусти таймеры.', { storedPrompt: 'таймер' }), 'yours'), 0, 'a Cyrillic prompt inside a longer Cyrillic word is not the person’s word');
+    h.eq(textOf(renderProse('Запусти таймер.', { storedPrompt: 'таймер' }), 'yours'), ['таймер'], 'a Cyrillic prompt as a whole word is the person’s word');
+    h.eq(countOf(renderProse('Ouvre le cafe\u0301.', { storedPrompt: 'cafe' }), 'yours'), 0, 'a combining mark after the prompt belongs to its last letter’s word');
+    h.eq(countOf(renderProse('It keeps one timer\u{20B9F}.', { storedPrompt: 'timer' }), 'yours'), 0, 'a letter outside the BMP after the prompt is part of its word');
+    h.eq(countOf(renderProse('Open Café Notes.', { apps: [{ name: 'Caf', color: TINTS.blue.light }] }), 'app'), 0, 'an app name ending before an accented letter is not a mention');
+  });
+
   await h.test('lexer: `chg` and `hedge` are never inferred on device', () => {
     const text = 'The countdown changed, and it may be about 2 seconds off.';
     const spans = lexProse(text, [POUR_TIMER], text);
