@@ -13,9 +13,12 @@
  * type checker: a sentence is found where it is written into one of the fields, held by a name or
  * parameter named for one (`DEVICE_TEXT_NAME`), returned by a producer so named or called to fill
  * one, or reached from a field's value through a same-file name (`hint: message` reads the
- * arguments the same file's calls pass as `message`), up to `NAME_HOPS` names deep. Text reaching a
- * field only through an import under another name, an object's property (`x.reason`) or a callback
- * is not followed: only the stub, checker and gate runs below see such text, for the inputs they make.
+ * arguments the same file's calls pass as `message`, by the function's plain name or as a method on
+ * `this`; a `for (const word of list)` variable reads `list`), up to `NAME_HOPS` names deep. Text
+ * reaching a field only through an import under another name, an object's property (`x.reason`), a
+ * call on another receiver (`other.fail(…)`), a destructured name (`const { hint } = x`), a
+ * `for … in` key or a callback is not followed: only the stub, checker and gate runs below see such
+ * text, for the inputs they make.
  */
 import {
   APP_VERSION_HEADER,
@@ -225,9 +228,13 @@ function isValueReference(id: ts.Identifier): boolean {
   return !ts.isTypeReferenceNode(parent) && !ts.isQualifiedName(parent);
 }
 
-/** The parameter of `scope` or the variable declared directly in it that is called `name`. */
+/** The parameter of `scope`, the variable declared directly in it or the `for (const … of …)`
+ *  variable it binds that is called `name`. */
 function declaredIn(scope: ts.Node, name: string): ts.ParameterDeclaration | ts.VariableDeclaration | undefined {
   if (ts.isFunctionLike(scope)) return scope.parameters.find((p) => ts.isIdentifier(p.name) && p.name.text === name);
+  if (ts.isForOfStatement(scope) && ts.isVariableDeclarationList(scope.initializer)) {
+    return scope.initializer.declarations.find((d) => ts.isIdentifier(d.name) && d.name.text === name);
+  }
   if (!ts.isBlock(scope) && !ts.isSourceFile(scope) && !ts.isModuleBlock(scope)) return undefined;
   for (const statement of scope.statements) {
     if (!ts.isVariableStatement(statement)) continue;
@@ -254,16 +261,31 @@ function calledName(fn: ts.SignatureDeclaration): string | undefined {
   return undefined;
 }
 
+/** The name `call` calls a same-file function by: a plain name (`hintFor(…)`), or a method's name
+ *  on `this` (`this.fail(…)`). A call on any other receiver (`other.fail(…)`) may reach another
+ *  object's function of that name, so it has none. */
+function callName(call: ts.CallExpression): string | undefined {
+  if (ts.isIdentifier(call.expression)) return call.expression.text;
+  if (ts.isPropertyAccessExpression(call.expression) && call.expression.expression.kind === ts.SyntaxKind.ThisKeyword) return call.expression.name.text;
+  return undefined;
+}
+
+/** True when `call`, found under `fn`'s name, calls `fn`: from `fn`'s own file, by its plain name,
+ *  or for a method, on `this` inside the method's class. */
+function callsFunction(call: ts.CallExpression, fn: ts.SignatureDeclaration): boolean {
+  if (call.getSourceFile() !== fn.getSourceFile()) return false;
+  if (!ts.isMethodDeclaration(fn)) return ts.isIdentifier(call.expression);
+  return !ts.isIdentifier(call.expression) && ts.findAncestor(call.parent, ts.isClassLike) === fn.parent;
+}
+
 /** Every string a device-shown field can be written from, found in the source as syntax: the
  *  literal (or a template's text, its holes read as `<x>`) written into one of the fields, held by a
  *  name that says it is such text, passed as a parameter so named, or returned by a function so
  *  named or called to fill one. A name read on the way is followed to what it names in its file: a
- *  variable to its initialiser, a parameter to the argument each call in that file passes it
- *  (`hint: message` reads each `message` its callers there write). */
-function scannedSourceLines(): Line[] {
-  const files = SCANNED.flatMap(({ dir, fields }) =>
-    sourceFiles(dir).map((rel) => ({ rel, fields, source: ts.createSourceFile(rel, fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'), ts.ScriptTarget.Latest, true) })),
-  );
+ *  variable to its initialiser, a `for … of` variable to what it loops over, a parameter to the
+ *  argument each call of its function in that file passes it (`hint: message` reads each `message`
+ *  its callers there write). */
+function scannedLines(files: readonly { fields: ReadonlySet<string>; source: ts.SourceFile }[]): Line[] {
   const functions = new Map<string, FunctionLike[]>();
   const declare = (name: string | undefined, fn: FunctionLike): void => {
     if (name !== undefined) functions.set(name, [...(functions.get(name) ?? []), fn]);
@@ -275,7 +297,7 @@ function scannedSourceLines(): Line[] {
       if (ts.isVariableDeclaration(node) && node.initializer && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) {
         declare(nameOf(node.name), node.initializer);
       }
-      const callee = ts.isCallExpression(node) ? nameOf(node.expression) : undefined;
+      const callee = ts.isCallExpression(node) ? callName(node) : undefined;
       if (callee !== undefined) calls.set(callee, [...(calls.get(callee) ?? []), node as ts.CallExpression]);
       ts.forEachChild(node, visit);
     };
@@ -296,13 +318,15 @@ function scannedSourceLines(): Line[] {
       if (declaration.initializer && !ts.isArrowFunction(declaration.initializer) && !ts.isFunctionExpression(declaration.initializer)) {
         collect(via, declaration.initializer, follow, hops + 1, resolved);
       }
+      const loop = declaration.parent.parent;
+      if (ts.isForOfStatement(loop)) collect(via, loop.expression, follow, hops + 1, resolved);
       if (!ts.isParameter(declaration)) return;
-      const index = declaration.parent.parameters.indexOf(declaration);
-      const name = calledName(declaration.parent);
-      const file = declaration.getSourceFile();
+      const fn = declaration.parent;
+      const index = fn.parameters.indexOf(declaration);
+      const name = calledName(fn);
       for (const call of name === undefined ? [] : (calls.get(name) ?? [])) {
         const arg = call.arguments.at(index);
-        if (arg !== undefined && call.getSourceFile() === file) collect(`${via} from ${locationOf(arg)}`, arg, follow, hops + 1, resolved);
+        if (arg !== undefined && callsFunction(call, fn)) collect(`${via} from ${locationOf(arg)}`, arg, follow, hops + 1, resolved);
       }
     };
     const visit = (node: ts.Node): void => {
@@ -341,6 +365,33 @@ function scannedSourceLines(): Line[] {
   return lines;
 }
 
+function parseSource(rel: string, text: string): ts.SourceFile {
+  return ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true);
+}
+
+/** The scan over the repo's sources the device's text is written in. */
+function scannedSourceLines(): Line[] {
+  return scannedLines(SCANNED.flatMap(({ dir, fields }) => sourceFiles(dir).map((rel) => ({ fields, source: parseSource(rel, fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8')) }))));
+}
+
+/** A name is followed to the calls of its own function only, and through a `for … of` loop. */
+function checkScanFollowsNames(): void {
+  const source = parseSource('fixture.ts', [
+    'function fail(message: string) { return { hint: message }; }',
+    "fail('called by its name');",
+    "other.fail('called on another object');",
+    'class Run {',
+    '  stop(message: string) { return { reason: message }; }',
+    "  go() { this.stop('called on this'); }",
+    '}',
+    "runner.stop('called on another runner');",
+    "for (const word of ['looped over']) send({ notice: word });",
+  ].join('\n'));
+  const seen = scannedLines([{ fields: DEVICE_FIELDS, source }]).map(([, text]) => text);
+  for (const text of ['called by its name', 'called on this', 'looped over']) check(`the scan follows a name to ${text}`, seen.includes(text), seen.join('\n'));
+  for (const text of ['called on another object', 'called on another runner']) check(`the scan does not take ${text} for a call of the same-file function`, !seen.includes(text), seen.join('\n'));
+}
+
 /** The scan sees at least what the modules hand out as such text: every failure reason the
  *  machine exports, every refusal hint, and every error body the routes export. */
 function checkScanCoverage(scanned: readonly Line[]): void {
@@ -357,6 +408,7 @@ function checkScanCoverage(scanned: readonly Line[]): void {
 
 export async function runDeviceTextTests(): Promise<void> {
   section('Server text the device shows word for word speaks the glossary');
+  checkScanFollowsNames();
   const scanned = scannedSourceLines();
   checkScanCoverage(scanned);
   const lines: Line[] = [
