@@ -22,6 +22,7 @@ import com.facebook.react.bridge.LifecycleEventListener
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 import com.facebook.react.views.modal.ReactModalHostView
+import com.swmansion.rnscreens.ScreenStackHeaderConfig
 import com.swmansion.rnscreens.fragment.restoration.RNScreensFragmentFactory
 import com.whim.launch.LaunchScreen
 import java.util.WeakHashMap
@@ -226,6 +227,10 @@ class MainActivity : ReactActivity() {
   // - Whim in front (split screen): no resume comes, so the hook runs after the next layout.
   // - Whim in the background (the Settings app): the change arrives before `onResume`, whose
   //   `super` runs the hook at once, so `onResume` measures the window first.
+  // A pushed screen's native header (react-native-screens) sets its title's size in sp once, when
+  // its props change, so the title kept the old scale's pixels (#218): every header applies its
+  // props again with the new scale (`refreshStackHeaders`). Only the top screen's header is
+  // applied there; one under it is applied again when it comes back to the top.
   private var fontScale = 0f
   private var measureBeforeResume = false
 
@@ -234,6 +239,7 @@ class MainActivity : ReactActivity() {
     window.setBackgroundDrawable(ColorDrawable(getColor(R.color.launch_background)))
     if (newConfig.fontScale == fontScale) return
     fontScale = newConfig.fontScale
+    refreshStackHeaders(window.decorView)
     if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
       measureBeforeResume = true
       return
@@ -261,6 +267,14 @@ class MainActivity : ReactActivity() {
       }
     }
     super.onResume()
+  }
+
+  private fun refreshStackHeaders(view: View) {
+    if (view is ScreenStackHeaderConfig) {
+      view.onUpdate()
+      return
+    }
+    if (view is ViewGroup) for (i in 0 until view.childCount) refreshStackHeaders(view.getChildAt(i))
   }
 
   private fun rereadFontScaleForJs() {

@@ -191,12 +191,23 @@ function withAlpha(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
+/** How opaque a one-line iOS field's `ink` is: a shade no eye tells from `ink`, so that its colour
+ *  differs from a multiline field's (`fieldSelection`). */
+const ONE_LINE_INK_ALPHA = 0.99;
+
 /** A field's caret, selection handles and highlight (system.md §7.1 Text field: an `ink` caret). iOS
  *  tints all three from `selectionColor` and draws the highlight translucent itself, so `ink` is the
  *  whole answer there. Android paints the highlight in exactly `selectionColor`, under the selected
- *  text, so it gets `ink` at 30%, and the caret and handles take `ink` through their own props. */
-export function fieldSelection(t: Pick<ShellTokens, 'platform' | 'colors'>): SelectionColors {
-  if (t.platform === 'ios') return { selectionColor: t.colors.ink };
+ *  text, so it gets `ink` at 30%, and the caret and handles take `ink` through their own props.
+ *
+ *  On iOS a one-line field's `ink` is a hair translucent (#218). React Native recycles native text
+ *  fields, and one that comes back with the other line mode swaps its inner UIKit view for a new
+ *  one, with the system blue tint (`RCTTextInputComponentView` `_setMultiline`); it tints the new
+ *  view only when `selectionColor` differs from the recycled field's last. Measured on the iOS 27
+ *  simulator: after the one-line server address in Advanced, the Whim sheet's multiline field showed
+ *  a blue caret. With the colours apart by line mode, every such swap is tinted again. */
+export function fieldSelection(t: Pick<ShellTokens, 'platform' | 'colors'>, multiline = false): SelectionColors {
+  if (t.platform === 'ios') return { selectionColor: multiline ? t.colors.ink : withAlpha(t.colors.ink, ONE_LINE_INK_ALPHA) };
   return { selectionColor: withAlpha(t.colors.ink, 0.3), cursorColor: t.colors.ink, selectionHandleColor: t.colors.ink };
 }
 

@@ -34,6 +34,8 @@ import { ToastHost, useToast, type ToastApi } from '../ui/Toast';
 import { haptics } from '../haptics';
 import { Text } from '../ui/Text';
 import { useTokens, type ShellTokens } from '../ui/tokens';
+import { useScrimsUp } from '../ui/OverlayModal';
+import { statusBarStyleOver } from '../ui/status-bar-style';
 import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
 import { runFork } from './fork-op';
@@ -421,10 +423,12 @@ function stackTitle(on: StackScreen): string | undefined {
 
 /** The shell's frame (the status-bar strip above a screen drawn without the native stack) and the
  *  status bar's content: over an open app those of the settings its realm was delivered with
- *  (`appFrame`, `null` before the delivery), else the phone's `live` tokens. */
-function shellFrame(screen: Screen, live: ShellTokens, appFrame: ShellTokens | null) {
+ *  (`appFrame`, `null` before the delivery), else the phone's `live` tokens. With `scrims` overlays
+ *  up, the content reads on the frame dimmed by each one's scrim, drawn in the `live` scheme. */
+function shellFrame(screen: Screen, live: ShellTokens, appFrame: ShellTokens | null, scrims: number) {
   const t = screen.kind === 'app' && appFrame !== null ? appFrame : live;
-  return { background: t.colors.bg, barStyle: t.barStyle };
+  const dimmedBy = Array.from({ length: scrims }, () => live.colors.scrim);
+  return { background: t.colors.bg, barStyle: statusBarStyleOver(t.colors.bg, dimmedBy) };
 }
 
 /** The update screen in place of `from`, holding the prompt typed there when `from` is a flow step
@@ -710,7 +714,8 @@ function DevLogTools() {
 }
 
 /** While the store age check runs it shows nothing, so Android back is the way out: it cancels the
- *  check, as `Back` on the age screen did. Mounted only for the length of the check. */
+ *  check, as `Back` on the age screen did. Mounted only for the length of the check, while the stack
+ *  under it answers no back (`NativeStack`'s `backOverlaid`). */
 function AgeCheckBack({ onLeave }: Readonly<{ onLeave: () => void }>) {
   useSystemBack(onLeave);
   return null;
@@ -835,6 +840,7 @@ function LauncherShell({
   // Reduce Motion as the stream handlers read it: they outlive the render that started them.
   const reduceMotionRef = useRef(tokens.reduceMotion);
   reduceMotionRef.current = tokens.reduceMotion;
+  const scrimsUp = useScrimsUp();
   // The settings an open app's frame is held to from its delivery (`MiniAppStage`), `null` before it.
   const [appFrame, setAppFrame] = useState<ShellTokens | null>(null);
   // The language every legal screen and link uses (legal-surface-v2 D6): resolved once at launch
@@ -3742,7 +3748,7 @@ function LauncherShell({
   if (!ready) {
     content = <HomeSkeleton count={knownAppCount} />;
   } else if (stack !== null) {
-    content = <NativeStack entries={stack.map(stackEntry)} onSettled={onStackSettled} />;
+    content = <NativeStack entries={stack.map(stackEntry)} onSettled={onStackSettled} backOverlaid={checkingAge !== undefined} />;
   } else {
     content = renderScreenContent();
   }
@@ -3767,7 +3773,7 @@ function LauncherShell({
   // failing-screen identifier in the log record and the reset key, so navigating away and back
   // re-attempts a screen that failed once.
   const exit = SCREEN_EXITS[screen.kind];
-  const frame = shellFrame(base, tokens, appFrame);
+  const frame = shellFrame(base, tokens, appFrame, scrimsUp);
 
   return (
     <SafeAreaView edges={frameEdgesFor(base.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>

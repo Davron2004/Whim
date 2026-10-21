@@ -56,8 +56,6 @@ export interface ShellTokens {
   readonly platform: ShellPlatform;
   /** The minimum touch target: 44 pt iOS, 48 dp Android (§2.8). */
   readonly touchTarget: number;
-  /** Status-bar content that reads on `bg`. */
-  readonly barStyle: 'dark-content' | 'light-content';
 }
 
 /** §6: "From 135%" the large-text layouts apply. */
@@ -92,7 +90,6 @@ export function resolveTokens(env: Readonly<ShellEnvironment>): ShellTokens {
     largeText: fontScale >= LARGE_TEXT_FROM,
     platform,
     touchTarget: LAYOUT.touchTarget[platform],
-    barStyle: scheme === 'dark' ? 'light-content' : 'dark-content',
   });
   resolved.set(key, tokens);
   return tokens;

@@ -14,6 +14,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { blockCommentEnd } from './android-project';
 import type { NativeReleaseConfig } from './native-config';
 
 // ── XML plist reader (dict, array, string, true/false, integer) ────────────────────────────
@@ -364,6 +365,7 @@ const PBXPROJ_PATH = 'ios/Whim.xcodeproj/project.pbxproj';
 const INFO_PLIST_PATH = `${IOS_DIR}/Info.plist`;
 const ENTITLEMENTS_PATH = `${IOS_DIR}/Whim.entitlements`;
 const PRIVACY_MANIFEST_PATH = `${IOS_DIR}/PrivacyInfo.xcprivacy`;
+const APP_DELEGATE_PATH = `${IOS_DIR}/AppDelegate.swift`;
 const CODE_SIGN_ENTITLEMENTS_VALUE = 'Whim/Whim.entitlements';
 const WHIM_RELEASE_XCCONFIG_SUFFIX = 'release/whim-release.xcconfig';
 const SCENE_DELEGATE_PROJECT_PATH = 'Whim/SceneDelegate.swift';
@@ -539,8 +541,78 @@ function checkInfoPlist(repoRoot: string): IosProjectFinding[] {
     });
   }
 
+  // design-system-v1 (#218): a scene-based app on iOS 27 ignores the app-wide status-bar setter, so
+  // the bar follows the shell only through view-controller-based appearance (`WhimStatusBar`).
+  if (plist.UIViewControllerBasedStatusBarAppearance !== true) {
+    findings.push({
+      file: INFO_PLIST_PATH,
+      message: `"UIViewControllerBasedStatusBarAppearance" must be true (the shell's status bar is answered by its view controllers), got ${JSON.stringify(plist.UIViewControllerBasedStatusBarAppearance)}`,
+    });
+  }
+
   findings.push(...checkSceneManifest(plist));
   return findings;
+}
+
+/** The index past the string literal opening at `start` (`"…"` with escapes, or `"""…"""`). */
+function swiftLiteralEnd(text: string, start: number): number {
+  if (text.startsWith('"""', start)) {
+    const close = text.indexOf('"""', start + 3);
+    return close === -1 ? text.length : close + 3;
+  }
+  let i = start + 1;
+  while (i < text.length && text[i] !== '"' && text[i] !== '\n') i += text[i] === '\\' ? 2 : 1;
+  return i + 1;
+}
+
+/** Swift source with its comments removed (line and block, nested as Swift nests them), its string
+ *  literals kept as written (the wiring names classes and selectors in them), so a commented-out call
+ *  doesn't count. A plain scan, no backtracking regexes. Raw strings (`#"…"#`) aren't parsed, and
+ *  `AppDelegate.swift` has none. */
+function swiftCode(text: string): string {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    if (text.startsWith('//', i)) {
+      const lineEnd = text.indexOf('\n', i);
+      i = lineEnd === -1 ? text.length : lineEnd;
+    } else if (text.startsWith('/*', i)) {
+      i = blockCommentEnd(text, i);
+      out += ' ';
+    } else if (text[i] === '"') {
+      const end = swiftLiteralEnd(text, i);
+      out += text.slice(i, end);
+      i = end;
+    } else {
+      out += text[i];
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/** What `AppDelegate.swift`'s `WhimStatusBar` must do under view-controller-based appearance, in live
+ *  code (comments dropped): take over both of React Native's status-bar setters (each logs an error
+ *  there otherwise), have the `Modal`'s controller answer both questions, install it at launch, and
+ *  make the window's root the controller that answers with it. */
+const STATUS_BAR_WIRING: readonly (readonly [RegExp, string])[] = [
+  [/replace\("RCTStatusBarManager",\s*NSSelectorFromString\("setStyle:animated:"\)/, 'replace RCTStatusBarManager setStyle:animated:'],
+  [/replace\("RCTStatusBarManager",\s*NSSelectorFromString\("setHidden:withAnimation:"\)/, 'replace RCTStatusBarManager setHidden:withAnimation:'],
+  [/replace\("RCTFabricModalHostViewController",\s*#selector\(getter: UIViewController\.preferredStatusBarStyle\)/, "replace the Modal controller's preferredStatusBarStyle"],
+  [/replace\("RCTFabricModalHostViewController",\s*#selector\(getter: UIViewController\.prefersStatusBarHidden\)/, "replace the Modal controller's prefersStatusBarHidden"],
+  [/WhimStatusBar\.install\(\)/, 'call WhimStatusBar.install()'],
+  [
+    /override func createRootViewController\(\)\s*->\s*UIViewController\s*\{\s*(?:return\s+)?WhimRootViewController\(\)\s*\}/,
+    'create the root view controller as WhimRootViewController (createRootViewController)',
+  ],
+];
+
+function checkStatusBarWiring(repoRoot: string): IosProjectFinding[] {
+  const source = swiftCode(readRepoFile(repoRoot, APP_DELEGATE_PATH));
+  return STATUS_BAR_WIRING.filter(([pattern]) => !pattern.test(source)).map(([, what]) => ({
+    file: APP_DELEGATE_PATH,
+    message: `must ${what} (the shell's status bar under view-controller-based appearance)`,
+  }));
 }
 
 function checkEntitlements(repoRoot: string, config: NativeReleaseConfig): IosProjectFinding[] {
@@ -604,5 +676,6 @@ export function checkIosProject(repoRoot: string, config: NativeReleaseConfig): 
     ...checkInfoPlist(repoRoot),
     ...checkEntitlements(repoRoot, config),
     ...checkPrivacyManifest(repoRoot),
+    ...checkStatusBarWiring(repoRoot),
   ];
 }

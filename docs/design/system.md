@@ -371,7 +371,7 @@ extracts the way it extracts `capabilities`. `tileColor` is deprecated (§7.2).
 | Sizes | 24 inline, 40 sheets and headers, 64 grid, 96 hero (Ready, History). No others |
 | Glyph | 50% of the tile, centred, white, stroke 2 on the 24 grid |
 | Label | `caption` 12/16 500, `text`, centred, two lines, 4 pt side padding, then ellipsis; names ≤ 24 characters; the full name heads the menu and is the a11y label |
-| State line | Under the label, only for state, `caption` in the role's text colour |
+| State line | Under the label, only for state, `caption` in the role's text colour. The names of a grid row take as many lines as its longest name (`minHeight`), so its state lines sit level; a row with no wrapped name has no empty line |
 | Badge | 18 pt at the top-trailing corner (failed, change failed) |
 | Touch | The whole cell, at least 64 × 84 |
 

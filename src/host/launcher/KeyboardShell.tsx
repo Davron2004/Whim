@@ -803,7 +803,7 @@ export function KeyboardTextInput({
   const doneBar = showsDoneBar(Platform.OS, props.multiline);
   const field = (
     <TextInput
-      {...fieldSelection(tokens)}
+      {...fieldSelection(tokens, props.multiline === true)}
       {...props}
       ref={input}
       style={[style, Platform.OS === 'ios' && props.multiline !== true && styles.naturalLineHeight]}

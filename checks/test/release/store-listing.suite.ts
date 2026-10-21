@@ -298,7 +298,7 @@ export async function run(): Promise<void> {
   await test('store-privacy: the privacy manifest marking a type used for tracking fails, naming the file and the type', () => {
     const manifest = replaceOnce(
       committed(PRIVACY_MANIFEST_PATH),
-      /(<string>NSPrivacyCollectedDataTypeProductInteraction<\/string>\s*<key>NSPrivacyCollectedDataTypeLinked<\/key>\s*<true\/>\s*<key>NSPrivacyCollectedDataTypeTracking<\/key>\s*)<false\/>/,
+      /(<string>NSPrivacyCollectedDataTypeProductInteraction<\/string>[^]*?<key>NSPrivacyCollectedDataTypeTracking<\/key>\s*)<false\/>/,
       '$1<true/>',
     );
     withFixtureRepo({ text: { [PRIVACY_MANIFEST_PATH]: manifest } }, (dir) => {

@@ -8,7 +8,9 @@
  * `LauncherRoot`'s machine stays the one source of truth: the entries are rendered from its state,
  * and every native pop writes back to it through the popped entry's `onLeave`, the same handler the
  * screen binds to system back. So `onLeave` must move the machine off its entry synchronously: an
- * entry still rendered after the platform popped it would be pushed again.
+ * entry still rendered after the platform popped it would be pushed again. Only the top entry's
+ * screen answers system back (`SystemBackOnTop`), whatever order the screens' listeners were bound in,
+ * and none does while something over the stack owns back (`backOverlaid`, the store age check).
  *
  * A running app is never on this stack (#67): it is a full-screen layer of its own, so there is no
  * edge swipe over it and its Android back keeps its own seam.
@@ -19,7 +21,9 @@ import type { NativeSyntheticEvent } from 'react-native';
 import { ScreenStack, ScreenStackItem } from 'react-native-screens';
 import type { ScreenStackHeaderConfigProps } from 'react-native-screens';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTokens } from '../ui/tokens';
 import { typeStyle } from '../ui/tokens-pure';
+import { SystemBackOnTop } from './use-system-back-with';
 
 export interface StackEntry {
   /** Stable while the entry stays on the stack, so a push or a pop never remounts what is under it. */
@@ -47,11 +51,15 @@ export function poppedEntry(top: number, dismissCount: number): number {
   return Math.max(1, top - Math.max(1, dismissCount) + 1);
 }
 
-function headerFor(entry: StackEntry, root: boolean): ScreenStackHeaderConfigProps {
+/** The header of a pushed entry with a title. At large text (system.md §6) the iOS back button is
+ *  its chevron alone (#218): the title of the screen it returns to, at that size, truncated to "S…gs"
+ *  beside this screen's own. VoiceOver reads it as "Back". */
+function headerFor(entry: StackEntry, root: boolean, largeText: boolean): ScreenStackHeaderConfigProps {
   if (root || entry.title === undefined) return { hidden: true };
   const title = typeStyle('headline');
   return {
     title: entry.title,
+    ...(largeText ? { backButtonDisplayMode: 'minimal' as const } : {}),
     largeTitle: entry.largeTitle === true,
     backgroundColor: entry.background,
     largeTitleBackgroundColor: entry.background,
@@ -70,9 +78,13 @@ interface NativeStackProps {
   /** A push or pop the platform was drawing has finished (react-native-screens' `onFinishTransitioning`:
    *  UIKit's `didShowViewController` on iOS, the fragment animation's end on Android). */
   readonly onSettled?: () => void;
+  /** Something drawn over the stack answers system back itself (`LauncherRoot`'s age check): no entry
+   *  does, however recently its screen mounted again. */
+  readonly backOverlaid?: boolean;
 }
 
-export default function NativeStack({ entries, onSettled }: Readonly<NativeStackProps>) {
+export default function NativeStack({ entries, onSettled, backOverlaid = false }: Readonly<NativeStackProps>) {
+  const { largeText } = useTokens();
   return (
     <ScreenStack style={styles.fill} onFinishTransitioning={onSettled}>
       {entries.map((entry, index) => {
@@ -83,7 +95,7 @@ export default function NativeStack({ entries, onSettled }: Readonly<NativeStack
             key={entry.key}
             screenId={entry.key}
             activityState={2}
-            headerConfig={headerFor(entry, root)}
+            headerConfig={headerFor(entry, root, largeText)}
             gestureEnabled={!root}
             contentStyle={{ backgroundColor: entry.background }}
             onDismissed={(event: NativeSyntheticEvent<{ dismissCount: number }>) =>
@@ -92,7 +104,7 @@ export default function NativeStack({ entries, onSettled }: Readonly<NativeStack
             onHeaderBackButtonClicked={entry.onLeave}
           >
             <SafeAreaView edges={ownHeader ? ['top', 'bottom'] : ['bottom']} style={styles.fill}>
-              {entry.children}
+              <SystemBackOnTop.Provider value={!backOverlaid && index === entries.length - 1}>{entry.children}</SystemBackOnTop.Provider>
             </SafeAreaView>
           </ScreenStackItem>
         );

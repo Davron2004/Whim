@@ -48,7 +48,8 @@ import { OverlayShownContext, useKeyboardOverlap } from '../launcher/KeyboardShe
 import type { IconName } from '../../design/icons/names';
 import { Icon } from './Icon';
 import { timing, usePressFeedback } from './motion';
-import { OverlayModal, useOverlayTurn } from './OverlayModal';
+import { OverlayModal, useOverlayTurn, useScrimCount } from './OverlayModal';
+import { TopHighlight } from './TopHighlight';
 import { wrappingType } from './Text';
 import { useTokens } from './tokens';
 import { hitSlopFor, ICON_BUTTON, makeStyles, MAX_FONT_SCALE, PRESS_RETENTION, springConfig } from './tokens-pure';
@@ -89,6 +90,14 @@ export function dragPosition(start: number, translation: number, dimension: numb
   'worklet';
   const raw = start + translation;
   return raw >= 0 ? raw : -rubberBand(-raw, dimension);
+}
+
+/** The scrim's opacity under a card `y` below its open position, `height` tall: it follows the card,
+ *  so a drag fades it with the finger, and the Reduce Motion cross-fade `fade`. */
+function scrimOpacity(y: number, height: number, fade: number): number {
+  'worklet';
+  const shown = height > 0 ? 1 - Math.min(1, Math.max(0, y / height)) : 1;
+  return shown * fade;
 }
 
 // ── Sheet ─────────────────────────────────────────────────────────────────────
@@ -192,7 +201,7 @@ const styles = makeStyles((t) => ({
   // The card paints the sheet to its edges and has no border: on Android React Native shrinks a
   // rounded view's background by 0.8 px on every side once it has any border, so a top border here
   // left a 1 px line of the scrim and shadow along the card's sides and bottom. The 1 px top
-  // highlight is its own line over the card, and the card keeps its 1 px of room for it.
+  // highlight is its own line over the card (`TopHighlight`), and the card keeps its 1 px of room for it.
   card: {
     backgroundColor: t.colors.sheet,
     borderTopLeftRadius: RADII.xl.radius,
@@ -200,18 +209,6 @@ const styles = makeStyles((t) => ({
     borderCurve: 'continuous' as const,
     boxShadow: t.shadows.raised,
     paddingTop: 1,
-  },
-  highlight: {
-    position: 'absolute' as const,
-    top: 0,
-    left: 0,
-    right: 0,
-    height: RADII.xl.radius,
-    borderTopLeftRadius: RADII.xl.radius,
-    borderTopRightRadius: RADII.xl.radius,
-    borderCurve: 'continuous' as const,
-    borderTopWidth: 1,
-    borderColor: t.topHighlight,
   },
   header: { paddingTop: SHEET_GRABBER.top },
   grabber: {
@@ -263,6 +260,10 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
   const y = useSharedValue(windowHeight);
   const height = useSharedValue(windowHeight);
   const fade = useSharedValue(t.reduceMotion ? 0 : 1);
+  useScrimCount(turn, () => {
+    'worklet';
+    return scrimOpacity(y.value, height.value, fade.value);
+  });
 
   const settled = useCallback(() => {
     if (!closingRef.current && openRef.current) return;
@@ -436,10 +437,7 @@ function SheetFrame({ closing, motion, reduceMotion, title, detent, closeLabel, 
     opacity: fade.value,
     paddingBottom: sheetBottomPadding(overlap.value, safeBottom),
   }));
-  const scrimMotion = useAnimatedStyle(() => {
-    const shown = height.value > 0 ? 1 - Math.min(1, Math.max(0, y.value / height.value)) : 1;
-    return { opacity: shown * fade.value };
-  });
+  const scrimMotion = useAnimatedStyle(() => ({ opacity: scrimOpacity(y.value, height.value, fade.value) }));
   const onCardLayout = (event: LayoutChangeEvent) => {
     height.value = event.nativeEvent.layout.height;
   };
@@ -457,7 +455,7 @@ function SheetFrame({ closing, motion, reduceMotion, title, detent, closeLabel, 
         accessibilityViewIsModal
         onAccessibilityEscape={onClose}
       >
-        <View style={s.highlight} pointerEvents="none" />
+        <TopHighlight radius={RADII.xl.radius} continuous corners="top" />
         <GestureDetector gesture={drag}>
           <View style={s.header}>
             <View style={s.grabber} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" />

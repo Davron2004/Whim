@@ -42,7 +42,7 @@ export const GRID = {
 } as const;
 
 export type GridLayout =
-  | { kind: 'grid'; columns: number; columnWidth: number; tile: number; cellHeight: number; rowGap: number; gutter: number }
+  | { kind: 'grid'; columns: number; columnWidth: number; tile: number; cellHeight: number; labelLine: number; rowGap: number; gutter: number }
   | { kind: 'list'; tile: number; rowHeight: number; gutter: number };
 
 /** The row padding of a list-mode cell, on each side; the loading skeleton draws the same. */
@@ -55,7 +55,7 @@ export function listRowPadding(largeText: boolean): number {
  *  cannot drop to its own row; a width that leaves no room, or is not a number, gets the 64 pt touch
  *  minimum rather than a zero or NaN cell) with the 64 tile
  *  and a two-line `caption` label; three from 135%; a list of rows with the 40 tile from 200%.
- *  Heights grow with the label's text size. */
+ *  Heights grow with the label's text size; `labelLine` is one line of the label at this size. */
 export function gridLayout(width: number, fontScale: number): GridLayout {
   const scale = Math.max(1, fontScale);
   if (scale >= GRID.listFrom) {
@@ -74,7 +74,52 @@ export function gridLayout(width: number, fontScale: number): GridLayout {
     columnWidth: Number.isFinite(fitted) && fitted > 0 ? fitted : GRID.minTouch.width,
     tile: TILE_SIDE.grid,
     cellHeight,
+    labelLine: TYPE_SCALE.caption.lineHeight * scale,
     rowGap: GRID.rowGap,
     gutter: LAYOUT.gutter,
   };
+}
+
+/** Whether a tile draws a name under its plate: the one rule the tile and the label alignment share,
+ *  so the grid never waits on a name no tile draws (the older cell's, or an app's empty name). */
+export function drawsName(name: string): boolean {
+  return name !== '';
+}
+
+/** How long the grid waits for its names to report before it shows anyway, in ms (about six frames):
+ *  a platform that never lays out a name cannot keep Home blank. */
+export const LABEL_MEASURE_BUDGET_MS = 100;
+
+/** A grid cell as the label alignment sees it: its key, and whether it has a name under its plate
+ *  (`drawsName`). */
+export interface LabelCell {
+  key: string;
+  named: boolean;
+}
+
+/** How many lines each laid-out name took (`onTextLayout`), by cell key. */
+export type MeasuredLabels = Readonly<Record<string, number>>;
+
+/**
+ * The line count of the name block under each cell's plate, by cell index: the most lines any
+ * measured name in the cell's row of `columns` took, capped at the label's two, and one while no name
+ * in the row is measured. A row with no wrapped name has no empty line under any name; a row where
+ * one name wraps gives every name in it the same block, so the state lines under them sit level.
+ */
+export function rowLabelLines(cells: readonly LabelCell[], columns: number, measured: MeasuredLabels): number[] {
+  const perRow = Math.max(1, Math.floor(columns));
+  return cells.map((_, index) => {
+    const start = index - (index % perRow);
+    let lines = 1;
+    for (const cell of cells.slice(start, start + perRow)) {
+      const took = cell.named ? measured[cell.key] : undefined;
+      if (took !== undefined) lines = Math.max(lines, Math.min(GRID.labelLines, took));
+    }
+    return lines;
+  });
+}
+
+/** Every named cell's name has been laid out once: the rows' name blocks are final. */
+export function labelsMeasured(cells: readonly LabelCell[], measured: MeasuredLabels): boolean {
+  return cells.every((cell) => !cell.named || measured[cell.key] !== undefined);
 }

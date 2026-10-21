@@ -165,7 +165,19 @@ export const StyleSheet = { create: <T,>(styles: T): T => styles, hairlineWidth:
 export const useSafeAreaInsets = () => ({ top: 20, bottom: 30, left: 0, right: 0 });
 /** The phone's text size; set it before rendering to test Dynamic Type. */
 export const windowMetrics = { fontScale: 1 };
-export const useWindowDimensions = () => ({ width: 390, height: 844, scale: 1, fontScale: windowMetrics.fontScale });
+const windowNow = () => ({ width: 390, height: 844, scale: 1, fontScale: windowMetrics.fontScale });
+const windowListeners = new Set<() => void>();
+const subscribeWindow = (listener: () => void) => { windowListeners.add(listener); return () => { windowListeners.delete(listener); }; };
+/** The phone's text size changed while the app shows: every `useWindowDimensions` re-renders, as
+ *  RN's does on a `Dimensions` change (call inside act). */
+export function setFontScale(scale: number): void {
+  windowMetrics.fontScale = scale;
+  for (const listener of [...windowListeners]) listener();
+}
+export const useWindowDimensions = () => {
+  React.useSyncExternalStore(subscribeWindow, () => windowMetrics.fontScale);
+  return windowNow();
+};
 let colorScheme: 'light' | 'dark' | null = 'light';
 const schemeListeners = new Set<() => void>();
 const subscribeScheme = (listener: () => void) => { schemeListeners.add(listener); return () => { schemeListeners.delete(listener); }; };
@@ -204,7 +216,7 @@ export function emitAccessibility(event: AccessibilityEvent, on: boolean): void 
 export function accessibilityListenerCount(): number {
   return [...accessibilityListeners.values()].reduce((n, listeners) => n + listeners.size, 0);
 }
-export const Dimensions = { get: useWindowDimensions };
+export const Dimensions = { get: windowNow };
 class Value {
   constructor(public value: number) {}
   setValue(value: number) { this.value = value; }
