@@ -302,7 +302,7 @@ export async function runReadyMotionUiTests(h: Harness): Promise<void> {
       h.ok(p > 0.1 && p < 0.9 && close(mid.x + TARGET.width / 2, there.x) && close(mid.y + TARGET.height / 2, there.y), `on its way, between the two places (${p.toFixed(2)})`);
       h.eq(seenEmbers(tree).length, 1, 'still one ember seen');
       await run(() => elapseSprings(3000));
-      h.eq(flying(tree), null, 'landed, the layer draws nothing');
+      h.ok(flying(tree) === null, 'landed, the layer draws nothing');
       h.eq(seenEmbers(tree).length, 1, 'one ember seen, the tile’s own');
       h.ok(animations.some(isSpark), 'and it flares from where the travel left it');
       h.eq(tree.root.findAllByType(MakingPage).length, 0, 'the Making page has gone');
@@ -347,11 +347,29 @@ export async function runReadyMotionUiTests(h: Harness): Promise<void> {
         await press(button(tree, COPY.sheetClose));
         h.eq(acted, ['close'], 'the close closed the sheet');
         const tile = seen(tileOn(tree));
-        h.eq([tile.opacity, tile.scale, seenEmbers(tree).length, flying(tree)], [1, 1, 0, null], 'the tile whole, no ember, nothing travelling');
+        h.eq([tile.opacity, tile.scale, seenEmbers(tree).length, flying(tree) === null], [1, 1, 0, true], 'the tile whole, no ember, nothing travelling');
         h.ok(textsSeen(tree).every((t) => t.opacity === 1), 'every text whole as the sheet leaves');
       } finally { await leave(tree, release); }
     });
   }
+
+  // A failed deepStrictEqual on the travelling element once inspected its whole fiber graph and took the machine's memory.
+  await h.test('A failed check on a rendered element is reported in a message of bounded size', async () => {
+    const { tree, release } = await land();
+    const quiet = console.error;
+    try {
+      const element = flying(tree)!.node;
+      const probe = new Harness();
+      console.error = () => {};
+      probe.eq({ travelling: element }, null, 'probe');
+      console.error = quiet;
+      h.eq([probe.failures.length, probe.passed], [1, 0], 'the mismatch failed');
+      h.ok(/^probe \(got \{\s+travelling: ReactTestInstance/.test(probe.failures[0]) && probe.failures[0].length < 10_000, `the failure names the check and the element in ${probe.failures[0].length} characters`);
+    } finally {
+      console.error = quiet;
+      await leave(tree, release);
+    }
+  });
 
   await h.test('M10: the flare’s peak, the rise from 0.6 and the 80 ms between the words are system.md’s M10', async () => {
     const doc = fs.readFileSync(path.join(process.cwd(), 'docs/design/system.md'), 'utf8');
