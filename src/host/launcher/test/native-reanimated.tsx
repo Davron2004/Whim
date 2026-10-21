@@ -4,7 +4,12 @@
  *  spring or timing config, delays, sequences and repeats — and the style it settles in.
  *  `useAnimatedStyle` evaluates its updater at render and re-renders when a shared value it read
  *  changes, as the UI thread would repaint. An animation's end callback runs as it is assigned, unless
- *  the test holds animations (`holdAnimations`) to look at a frame while one is still running. */
+ *  the test holds animations (`holdAnimations`) to look at a frame while one is still running.
+ *  `Animated.View`, `.Text` and `.ScrollView` render as host elements of those names and log the
+ *  layout animations (`FadeIn`, `FadeOut`, `LinearTransition` and their builder calls) they enter and
+ *  exit with in `layoutAnimations`; `playedUnder` says what one does under Reduce Motion.
+ *  `useAnimatedReaction` reacts synchronously, `measure` reports `measuredRect`. The double's own
+ *  contract is `native-reanimated.suite.tsx`. */
 import React from 'react';
 
 type HostProps = { children?: React.ReactNode; [key: string]: unknown };
@@ -217,6 +222,125 @@ export function emitNativeEvent(name: string, payload: Record<string, unknown>):
 /** react-native-worklets' hop back to the React Native thread: there is only one thread here. */
 export function scheduleOnRN<A extends unknown[]>(fn: (...args: A) => void, ...args: A): void { fn(...args); }
 
-const AnimatedView = (props: HostProps) => React.createElement('Animated.View', props, props.children);
-const Animated = { View: AnimatedView };
+/** Reanimated's `interpolate` over piecewise-linear segments, with its extrapolation modes. */
+export const Extrapolation = { IDENTITY: 'identity', CLAMP: 'clamp', EXTEND: 'extend' } as const;
+type ExtrapolationMode = (typeof Extrapolation)[keyof typeof Extrapolation];
+type ExtrapolationArg = ExtrapolationMode | { extrapolateLeft?: ExtrapolationMode; extrapolateRight?: ExtrapolationMode };
+export function interpolate(x: number, input: readonly number[], output: readonly number[], extrapolation: ExtrapolationArg = Extrapolation.EXTEND): number {
+  const modes = typeof extrapolation === 'string' ? { extrapolateLeft: extrapolation, extrapolateRight: extrapolation } : extrapolation;
+  const last = input.length - 1;
+  let outside: ExtrapolationMode | null = null;
+  if (x < input[0]) outside = modes.extrapolateLeft ?? Extrapolation.EXTEND;
+  if (x > input[last]) outside = modes.extrapolateRight ?? Extrapolation.EXTEND;
+  if (outside === Extrapolation.IDENTITY) return x;
+  if (outside === Extrapolation.CLAMP) return x < input[0] ? output[0] : output[last];
+  let i = 0;
+  while (i < last - 1 && x > input[i + 1]) i++;
+  const [x0, x1, y0, y1] = [input[i], input[i + 1], output[i], output[i + 1]];
+  return x1 === x0 ? y0 : y0 + ((x - x0) / (x1 - x0)) * (y1 - y0);
+}
+
+/** Runs `prepare` reading shared values; returns its result and the values it read. */
+function track<T>(prepare: () => T): [T, Set<SharedValue<unknown>>] {
+  const outer = reading;
+  reading = new Set();
+  try {
+    return [prepare(), reading];
+  } finally {
+    reading = outer;
+  }
+}
+
+/** `prepare` runs once the component mounts and again, synchronously, each time a shared value it
+ *  read is assigned; every run hands `react` its result and the previous one (null the first time),
+ *  as Reanimated's mapper does. The latest `prepare` and `react` are used, so `deps` is not needed. */
+export function useAnimatedReaction<T>(prepare: () => T, react: (current: T, previous: T | null) => void): void {
+  const latest = React.useRef({ prepare, react });
+  latest.current = { prepare, react };
+  React.useEffect(() => {
+    let previous: T | null = null;
+    let stops: (() => void)[] = [];
+    const run = () => {
+      const [current, read] = track(latest.current.prepare);
+      for (const stop of stops) stop();
+      stops = [...read].map((value) => value.listen(run));
+      const before = previous;
+      previous = current;
+      latest.current.react(current, before);
+    };
+    run();
+    return () => { for (const stop of stops) stop(); };
+  }, []);
+}
+
+/** What `measure` reports for any mounted view; a test sets the rect it needs. */
+export const measuredRect = { x: 0, y: 0, width: 100, height: 100, pageX: 0, pageY: 0 };
+/** Reanimated's synchronous measurement: the view's rect, or null once its ref holds no view. */
+export function measure<T>(ref: AnimatedRef<T>): typeof measuredRect | null {
+  return ref.current === null ? null : { ...measuredRect };
+}
+
+// ── Layout animations ────────────────────────────────────────────────────────
+
+/** A layout animation as a component built it: the preset, every builder call in order, and the
+ *  config those calls add up to (`springify` true, each other call its first argument). */
+export interface LayoutAnimation {
+  preset: string;
+  calls: { name: string; args: unknown[] }[];
+  config: Record<string, unknown>;
+}
+const LAYOUT = Symbol('layout animation');
+const BUILDER_CALLS = ['duration', 'delay', 'springify', 'damping', 'stiffness', 'mass', 'dampingRatio', 'overshootClamping', 'easing', 'reduceMotion', 'withCallback', 'withInitialValues', 'randomDelay'] as const;
+type LayoutBuilder = LayoutAnimation & { [LAYOUT]: true } & Record<(typeof BUILDER_CALLS)[number], (...args: unknown[]) => LayoutBuilder>;
+
+function layoutBuilder(preset: string, calls: LayoutAnimation['calls']): LayoutBuilder {
+  const config: Record<string, unknown> = {};
+  for (const { name, args } of calls) config[name] = name === 'springify' ? true : args[0];
+  const builder = { preset, calls, config, [LAYOUT]: true as const } as LayoutBuilder;
+  for (const name of BUILDER_CALLS) builder[name] = (...args: unknown[]) => layoutBuilder(preset, [...calls, { name, args }]);
+  return builder;
+}
+export const isLayoutAnimation = (v: unknown): v is LayoutAnimation => typeof v === 'object' && v !== null && LAYOUT in v;
+export const FadeIn = layoutBuilder('FadeIn', []);
+export const FadeOut = layoutBuilder('FadeOut', []);
+export const LinearTransition = layoutBuilder('LinearTransition', []);
+
+/** What a layout animation does on the phone: under the OS Reduce Motion setting Reanimated skips
+ *  every animation not marked `ReduceMotion.Never` (App.tsx mounts `ReducedMotionConfig` System), so
+ *  the view lands at once — null; otherwise the animation itself. */
+export function playedUnder(animation: unknown, reduceMotion: boolean): LayoutAnimation | null {
+  if (!isLayoutAnimation(animation)) return null;
+  const mode = animation.config.reduceMotion ?? ReduceMotion.System;
+  if (mode === ReduceMotion.Always) return null;
+  return reduceMotion && mode !== ReduceMotion.Never ? null : animation;
+}
+
+/** A view's `entering` animation ran as it mounted, or its `exiting` one as it unmounted; oldest first,
+ *  splice to reset. A `layout` transition stays readable as the view's prop. */
+export interface LayoutEvent {
+  phase: 'entering' | 'exiting';
+  component: string;
+  animation: LayoutAnimation;
+}
+export const layoutAnimations: LayoutEvent[] = [];
+
+/** An Animated host component: renders as `name`, and logs its entering and exiting animations. */
+function animatedComponent(name: string) {
+  const Component = (props: HostProps) => {
+    const entering = React.useRef(props.entering);
+    const exiting = React.useRef(props.exiting);
+    exiting.current = props.exiting;
+    React.useEffect(() => {
+      if (isLayoutAnimation(entering.current)) layoutAnimations.push({ phase: 'entering', component: name, animation: entering.current });
+      return () => {
+        if (isLayoutAnimation(exiting.current)) layoutAnimations.push({ phase: 'exiting', component: name, animation: exiting.current });
+      };
+    }, []);
+    return React.createElement(name, props, props.children);
+  };
+  Component.displayName = name;
+  return Component;
+}
+
+const Animated = { View: animatedComponent('Animated.View'), Text: animatedComponent('Animated.Text'), ScrollView: animatedComponent('Animated.ScrollView') };
 export default Animated;

@@ -16,9 +16,9 @@ import {
 } from './native-host';
 import { hostType, renderScreen, unmountScreen } from './react-screen';
 import { useTokens } from '../../ui/tokens';
-import { makeStyles, resolveTokens, springConfig, type ShellTokens } from '../../ui/tokens-pure';
+import { makeStyles, resolveTokens, springConfig, staggerDelay, type ShellTokens } from '../../ui/tokens-pure';
 import { Text } from '../../ui/Text';
-import { COLORS, LAYOUT, SPRINGS, type SpringName } from '../../../design/tokens';
+import { COLORS, LAYOUT, SPRINGS, TIMINGS, type SpringName } from '../../../design/tokens';
 import { SAMPLED_SPRINGS } from '../../../design/generated/springs';
 
 /** Renders what `useTokens()` returns, so a test reads the hook's live value. */
@@ -163,5 +163,15 @@ export async function runShellTokensTests(h: Harness): Promise<void> {
       const documented = SAMPLED_SPRINGS[name].durationMs;
       h.ok(Math.abs(measured - documented) <= 1000 / 60 + 1, `${name} settles in ${documented} ms (Reanimated config settles in ${measured.toFixed(0)} ms)`);
     }
+  });
+
+  await h.test('stagger: one step per item over the first items, the rest together one step later; nothing waits under Reduce Motion', async () => {
+    const first = TIMINGS.staggerFirst;
+    const delays = Array.from({ length: first + 4 }, (_, i) => staggerDelay(i, false));
+    h.eq(delays[0], 0, 'the first item does not wait');
+    h.eq(delays.slice(1, first + 1).map((d, i) => d - delays[i]), Array(first).fill(TIMINGS.staggerPerItem), `each of the first ${first} items starts one ${TIMINGS.staggerPerItem} ms step after the one before`);
+    h.eq(new Set(delays.slice(first)).size, 1, `every item from the ${first + 1}th on arrives together`);
+    h.ok(delays[first] > delays[first - 1], 'and after the staggered ones, never before them');
+    h.eq(delays.map((_, i) => staggerDelay(i, true)), Array(delays.length).fill(0), 'Reduce Motion: no stagger');
   });
 }

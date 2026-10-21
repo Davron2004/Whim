@@ -8,6 +8,8 @@
  *    and its distance from the reserved hues;
  *  - no colour hex literal or spring config lives in `src/host/**` or `src/sdk/**` outside the
  *    module, apart from the exemptions listed below;
+ *  - shell motion runs on Reanimated: no React Native `Animated`, `LayoutAnimation`,
+ *    `useNativeDriver` or literal spring config in production `src/host` (system.md §4);
  *  - every component `vc-sdk` exports appears in the style gallery (system.md §7.2);
  *  - the shell's copy uses one name per concept and its controls never speak in Whim's "I"
  *    (system.md §8), and no number in `src/host` is formatted in the phone's locale (#89).
@@ -18,6 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import ts from 'typescript';
 import { test, assert } from '../harness';
 import * as tokens from '../../../src/design/tokens';
 import { SAMPLED_SPRINGS } from '../../../src/design/generated/springs';
@@ -154,6 +157,128 @@ function productFiles(dir: string): string[] {
 /** The specifiers `source` imports or re-exports from. */
 function importSpecifiers(source: string): string[] {
   return [...withoutComments(source).matchAll(/\b(?:import|export)\b[^'"`;]*?\bfrom\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
+}
+
+// ── Shell motion ─────────────────────────────────────────────────────────────
+
+const REACT_NATIVE = 'react-native';
+/** Deep imports of React Native's own animation modules. */
+const RN_ANIMATION_PATH = /^react-native\/Libraries\/(?:Animated|LayoutAnimation)\b/;
+/** Names banned in production `src/host` whatever they come from. */
+const BANNED_NAMES = new Set(['LayoutAnimation', 'useNativeDriver']);
+
+/** `node` without the parentheses and `await` around it. */
+function unwrap(node: ts.Expression): ts.Expression {
+  let n = node;
+  while (ts.isParenthesizedExpression(n) || ts.isAwaitExpression(n)) n = n.expression;
+  return n;
+}
+
+const isModule = (node: ts.Node | undefined, matches: (spec: string) => boolean) => node !== undefined && ts.isStringLiteralLike(node) && matches(node.text);
+const isReactNative = (spec: string) => spec === REACT_NATIVE;
+const isRnAnimationPath = (spec: string) => RN_ANIMATION_PATH.test(spec);
+const RN_ANIMATED = "React Native's Animated";
+
+/** `require(spec)` or `import(spec)`, with the module it loads. */
+function loadedModule(node: ts.Node): string | undefined {
+  if (!ts.isCallExpression(node) || node.arguments.length !== 1 || !ts.isStringLiteralLike(node.arguments[0])) return undefined;
+  const callee = node.expression;
+  const loads = (ts.isIdentifier(callee) && callee.text === 'require') || callee.kind === ts.SyntaxKind.ImportKeyword;
+  return loads ? node.arguments[0].text : undefined;
+}
+
+/** The name an import, export or destructuring element takes from its source. */
+const sourceName = (el: ts.ImportSpecifier | ts.ExportSpecifier | ts.BindingElement) => {
+  const name = el.propertyName ?? el.name;
+  return ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+};
+
+/** Whether an expression is the whole react-native module: loaded in place, or a local name bound to it. */
+type BindsReactNative = (expression: ts.Expression) => boolean;
+/** What a node uses of React Native's animation APIs, each as the node to name and what it is. */
+type MotionRule = (node: ts.Node, bindsReactNative: BindsReactNative) => [ts.Node, string][];
+
+/** The local name `node` binds to the whole react-native module, if it binds one. */
+function reactNativeBinding(node: ts.Node, bindsReactNative: BindsReactNative): string | undefined {
+  if (ts.isImportDeclaration(node) && isModule(node.moduleSpecifier, isReactNative)) {
+    const bindings = node.importClause?.namedBindings;
+    return node.importClause?.name?.text ?? (bindings && ts.isNamespaceImport(bindings) ? bindings.name.text : undefined);
+  }
+  if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference) && isModule(node.moduleReference.expression, isReactNative)) return node.name.text;
+  if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && bindsReactNative(node.initializer)) return node.name.text;
+  return undefined;
+}
+
+const animatedElements = (elements: readonly (ts.ImportSpecifier | ts.ExportSpecifier | ts.BindingElement)[], what: string): [ts.Node, string][] =>
+  elements.filter((el) => sourceName(el) === 'Animated').map((el) => [el, what]);
+
+const MOTION_RULES: readonly MotionRule[] = [
+  // A deep import of RN's animation modules, static or loaded.
+  (node) => {
+    const spec = ts.isImportDeclaration(node) || ts.isExportDeclaration(node) ? node.moduleSpecifier : undefined;
+    const deep = isModule(spec, isRnAnimationPath) || isRnAnimationPath(loadedModule(node) ?? '');
+    return deep ? [[node, `${RN_ANIMATED} (a deep import)`]] : [];
+  },
+  // `import { Animated } from 'react-native'`.
+  (node) => {
+    if (!ts.isImportDeclaration(node) || !isModule(node.moduleSpecifier, isReactNative)) return [];
+    const bindings = node.importClause?.namedBindings;
+    return bindings && ts.isNamedImports(bindings) ? animatedElements(bindings.elements, RN_ANIMATED) : [];
+  },
+  // `export { Animated } from 'react-native'`, `export * (as RN) from 'react-native'`.
+  (node) => {
+    if (!ts.isExportDeclaration(node) || !isModule(node.moduleSpecifier, isReactNative)) return [];
+    const clause = node.exportClause;
+    if (!clause || ts.isNamespaceExport(clause)) return [[node, `${RN_ANIMATED} (re-exported with the whole module)`]];
+    return animatedElements(clause.elements, `${RN_ANIMATED} (re-exported)`);
+  },
+  // `RN.Animated`, `RN['Animated']`, `require('react-native').Animated`.
+  (node, bindsReactNative) => {
+    const named = ts.isPropertyAccessExpression(node) && node.name.text === 'Animated';
+    const indexed = ts.isElementAccessExpression(node) && isModule(node.argumentExpression, (s) => s === 'Animated');
+    return (named || indexed) && bindsReactNative(node.expression) ? [[node, RN_ANIMATED]] : [];
+  },
+  // `const { Animated } = require('react-native')` (or a namespace).
+  (node, bindsReactNative) =>
+    ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && node.initializer && bindsReactNative(node.initializer)
+      ? animatedElements(node.name.elements, RN_ANIMATED)
+      : [],
+  // `LayoutAnimation` and `useNativeDriver`, as a name or a quoted property name.
+  (node) => {
+    const quotedKey = ts.isStringLiteral(node) && ts.isPropertyAssignment(node.parent) && node.parent.name === node;
+    return (ts.isIdentifier(node) || quotedKey) && BANNED_NAMES.has(node.text) ? [[node, node.text]] : [];
+  },
+];
+
+/** One finding per use of React Native's own animation APIs or a literal spring config in `source`,
+ *  as `file:line: what`. RN's `Animated` is found by where it comes from — a named import, a
+ *  namespace or default import, `require`/`import()`, a destructuring, a re-export — so
+ *  Reanimated's default `Animated` is not one; `LayoutAnimation` and `useNativeDriver` are found
+ *  wherever they appear. */
+function shellMotionFindings(file: string, source: string): string[] {
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const namespaces = new Set<string>();
+  const bindsReactNative: BindsReactNative = (expression) => {
+    const n = unwrap(expression);
+    return loadedModule(n) === REACT_NATIVE || (ts.isIdentifier(n) && namespaces.has(n.text));
+  };
+  const collect = (node: ts.Node): void => {
+    const name = reactNativeBinding(node, bindsReactNative);
+    if (name !== undefined) namespaces.add(name);
+    ts.forEachChild(node, collect);
+  };
+  collect(sf);
+
+  const findings = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    for (const [at, what] of MOTION_RULES.flatMap((rule) => rule(node, bindsReactNative))) {
+      findings.add(`${file}:${sf.getLineAndCharacterOfPosition(at.getStart(sf)).line + 1}: ${what}`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  for (const hit of secondSourceHits(source)) if (hit.endsWith(': spring config')) findings.add(`${file}:${hit}`);
+  return [...findings];
 }
 
 /** Every `.ts` file under `dir`, repo-relative. */
@@ -343,6 +468,66 @@ export async function run(): Promise<void> {
     }
     assert(hits.length === 0, `move these values into src/design/tokens.ts: ${hits.join(', ')}`);
     assert(stale.length === 0, `these exemptions no longer hold a value; remove them from EXEMPT: ${stale.join(', ')}`);
+  });
+
+  await test('shell motion: no React Native Animated, LayoutAnimation, useNativeDriver or literal spring config in src/host', () => {
+    const files = productFiles('src/host');
+    const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
+    const findings = files.flatMap((file) => shellMotionFindings(file, read(file)));
+    assert(findings.length === 0, `shell motion runs on Reanimated with the token springs (system.md §4): ${findings.join(', ')}`);
+    const reanimated = files.filter((file) => /from 'react-native-reanimated'/.test(read(file)));
+    assert(reanimated.length >= 10, `the scan reads the shell's Reanimated components: ${reanimated.join(', ')}`);
+    const sheet = 'src/host/ui/Sheet.tsx';
+    const swapped = shellMotionFindings(sheet, read(sheet).replace(/^import Animated, \{/m, `import { Animated } from '${REACT_NATIVE}';\nimport {`));
+    assert(swapped.length === 1 && swapped[0].startsWith(`${sheet}:`) && swapped[0].endsWith(": React Native's Animated"), `the sheet's Animated taken from react-native instead is a finding: ${swapped.join(', ')}`);
+  });
+
+  await test('shell motion: a withSpring given { stiffness: 300, damping: 20 } fails, naming the file', () => {
+    const source = "import Animated, { withSpring } from 'react-native-reanimated';\nx.value = withSpring(1, { stiffness: 300, damping: 20 });";
+    const findings = shellMotionFindings('src/host/ui/Fancy.tsx', source);
+    assert(findings.join() === 'src/host/ui/Fancy.tsx:2: spring config', `the literal spring is named with its file and line: ${findings.join(', ')}`);
+  });
+
+  await test('shell motion: React Native Animated is found by its import source, however it is reached', () => {
+    const cases: [string, string, string][] = [
+      ['a named import', "import { View, Animated } from 'react-native';", "1: React Native's Animated"],
+      ['an aliased import', "import { Animated as Motion } from 'react-native';", "1: React Native's Animated"],
+      ['a namespace access', "import * as RN from 'react-native';\nconst o = new RN.Animated.Value(0);", "2: React Native's Animated"],
+      ['a default-import access', "import RN from 'react-native';\nRN['Animated'].timing(v, cfg);", "2: React Native's Animated"],
+      ['a require access', "const A = require('react-native').Animated;", "1: React Native's Animated"],
+      ['a destructured require', "const { View, Animated: Motion } = require('react-native');", "1: React Native's Animated"],
+      ['a dynamic import', "const { Animated } = await import('react-native');", "1: React Native's Animated"],
+      ['a required namespace', "const RN = require('react-native');\nRN.Animated.loop(a);", "2: React Native's Animated"],
+      ['a named re-export', "export { Animated } from 'react-native';", "1: React Native's Animated (re-exported)"],
+      ['a whole-module re-export', "export * from 'react-native';", "1: React Native's Animated (re-exported with the whole module)"],
+      ['a deep import', "import Animated from 'react-native/Libraries/Animated/Animated';", "1: React Native's Animated (a deep import)"],
+    ];
+    for (const [what, source, finding] of cases) {
+      const findings = shellMotionFindings('src/host/launcher/Forged.tsx', source);
+      assert(findings.join() === `src/host/launcher/Forged.tsx:${finding}`, `${what} is one finding naming the file: ${findings.join(', ')}`);
+    }
+  });
+
+  await test('shell motion: LayoutAnimation and useNativeDriver are found wherever they appear', () => {
+    const layout = shellMotionFindings('src/host/ui/List.tsx', "import { LayoutAnimation } from 'react-native';\n\nLayoutAnimation.configureNext(LayoutAnimation.Presets.spring);");
+    assert(layout.join() === 'src/host/ui/List.tsx:1: LayoutAnimation,src/host/ui/List.tsx:3: LayoutAnimation', `LayoutAnimation, imported and called: ${layout.join(', ')}`);
+    const driver = shellMotionFindings('src/host/ui/Fade.ts', "const a = { duration: 160 };\nconst b = { toValue: 1, useNativeDriver: true };\nconst c = { 'useNativeDriver': false };");
+    assert(driver.join() === 'src/host/ui/Fade.ts:2: useNativeDriver,src/host/ui/Fade.ts:3: useNativeDriver', `useNativeDriver, bare and quoted: ${driver.join(', ')}`);
+  });
+
+  await test("shell motion: Reanimated's Animated, other react-native imports and comments are not findings", () => {
+    const source = [
+      "import Animated, { FadeIn, withSpring } from 'react-native-reanimated';",
+      "import * as RN from 'react-native';",
+      "import { View, Text } from 'react-native';",
+      'const Row = Animated.createAnimatedComponent(RN.View);',
+      'const lib = { Animated: View };',
+      'const tag = <Animated.View entering={FadeIn} style={lib.Animated} />;',
+      '// LayoutAnimation and useNativeDriver are gone; RN.Animated too.',
+      "x.value = withSpring(1, springConfig('smooth'));",
+    ].join('\n');
+    const findings = shellMotionFindings('src/host/ui/Fine.tsx', source);
+    assert(findings.length === 0, `no findings: ${findings.join(', ')}`);
   });
 
   await test('gallery: every component vc-sdk exports appears in the style gallery, and no deprecated one', () => {

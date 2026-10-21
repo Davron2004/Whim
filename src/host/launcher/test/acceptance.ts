@@ -99,6 +99,7 @@ import { runShellTokensTests } from './shell-tokens.suite';
 import { runShellControlsUiTests } from './shell-controls-ui.suite';
 import { runShellStatusUiTests } from './shell-status-ui.suite';
 import { runShellSurfacesUiTests } from './shell-surfaces-ui.suite';
+import { runNativeReanimatedTests } from './native-reanimated.suite';
 
 const h = new Harness();
 
@@ -195,6 +196,7 @@ await runShellTokensTests(h);
 await runShellControlsUiTests(h);
 await runShellStatusUiTests(h);
 await runShellSurfacesUiTests(h);
+await runNativeReanimatedTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

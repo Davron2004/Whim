@@ -183,6 +183,14 @@ export function timingOf(name: TimingName): { duration: number; bezier: [number,
   return { duration: TIMINGS[name], bezier: bezierOf(TIMINGS.fadeEasing) };
 }
 
+/** The `stagger` timing (§4.2): how long item `index` of a set's first appearance waits — one step
+ *  per item over the first items, the rest together one step after them; under Reduce Motion
+ *  nothing waits (§4.5). For JS-side scheduling (`withDelay`, a layout animation's `.delay()`) only:
+ *  it is not a worklet, so never call it inside a gesture worklet. */
+export function staggerDelay(index: number, reduceMotion: boolean): number {
+  return reduceMotion ? 0 : Math.min(index, TIMINGS.staggerFirst) * TIMINGS.staggerPerItem;
+}
+
 export type PressKind = 'button' | 'chip' | 'icon';
 
 /** §4.3 rule 5: the scale a control presses to on touch-down. */
