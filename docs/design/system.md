@@ -464,6 +464,8 @@ Reanimated's `duration`/`dampingRatio` mode.
 4. **No JS-driven layout per frame.** Transform and opacity by default; shell reflow uses Reanimated
    layout transitions; one leaf view's width, height and radius may animate on the UI thread (the
    container transforms: M2, M3, M5, M6). The SDK uses FLIP. No non-uniform scale on a rounded shape.
+   A container's content never draws outside the growing shape: it fades in with `fade-in` once the
+   shape covers it, and out with `fade-out` before the shape shrinks inside it, mid-flight turns included.
 5. **Press:** scale 0.97 (buttons, rows), 0.96 (tiles, cards, chips), 0.92 (icon buttons) on touch-down
    with `instant`, release with `snappy`; 10 pt off the control cancels, back re-presses.
 6. **Drags** track 1:1 after 10 pt slop. Release projects `current + (v/1000)·0.998/(1−0.998)`, snaps to

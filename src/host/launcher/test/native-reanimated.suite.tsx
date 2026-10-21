@@ -104,10 +104,11 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
       value.value = withTiming(0, { duration: 100 });
       elapse(25);
       h.eq(value.value, 10 - 10 * 0.125, 'with no curve given, Reanimated’s default in-out quad: an eighth of the way at a quarter of the time');
+      // cubic-bezier(0.2, 0, 0, 1) at t = ½: x = 3·¼·½·0.2 + ⅛ = 0.2 of the time, y = 3·½·¼ + ⅛ = ½ of the way.
+      const from = value.value;
       value.value = withTiming(5, { duration: 100, easing: Easing.bezier(0.2, 0, 0, 1) });
-      let refused = false;
-      try { elapse(10); } catch (error) { refused = error instanceof Error && error.message.includes('bezier'); }
-      h.ok(refused, 'a bezier curve it cannot follow part way is refused, not guessed');
+      elapse(20);
+      h.ok(Math.abs(value.value - (from + (5 - from) / 2)) < 1e-6, `a bezier timing follows its curve: half way there at a fifth of the time (${value.value})`);
     } finally {
       release();
     }

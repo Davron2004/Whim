@@ -541,6 +541,21 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     await act(() => tree.unmount());
   });
 
+  await h.test('Sheet: its drag has a gesture root in its own window — Android draws a Modal in a window of its own, where the app’s root never sees a touch and a drag never starts', async () => {
+    await resetPhone();
+    const tree = await render(<HeldSheet onCloseCount={{ n: 0 }} />);
+    const window = all(tree, 'Modal')[0];
+    const detectors = all(tree, 'GestureDetector').filter((n) => inside(n, window));
+    h.ok(detectors.length > 0, 'the sheet’s drag is drawn in its window');
+    for (const detector of detectors) {
+      let root: Node | null = null;
+      for (let at = detector.parent; at && at !== window && root === null; at = at.parent) if (hostType(at) === 'GestureHandlerRootView') root = at;
+      h.ok(root !== null, 'a gesture root sits between the drag and its window');
+      h.eq(root ? flat(root).flex : undefined, 1, 'and fills the window, so a touch anywhere in it reaches the drag');
+    }
+    await act(() => tree.unmount());
+  });
+
   await h.test('Sheet: from the moment it starts closing it takes no touch: a row tapped during its exit, or the scrim, does nothing, however it was closed', async () => {
     const ways: [string, (tree: Tree) => Promise<void>][] = [
       ['the close control', (tree) => press(rowButtons(tree).find((n) => n.props.accessibilityLabel === COPY.sheetClose)!)],

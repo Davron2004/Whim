@@ -25,8 +25,9 @@ export function GestureDetector({ gesture, children }: { gesture: PanConfig; chi
   return React.createElement('GestureDetector', { gesture }, children);
 }
 
-export function GestureHandlerRootView({ children }: { children?: React.ReactNode }) {
-  return React.createElement(React.Fragment, null, children);
+/** A host element, so a test can tell which window's gestures have a root to run in. */
+export function GestureHandlerRootView({ style, children }: { style?: unknown; children?: React.ReactNode }) {
+  return React.createElement('GestureHandlerRootView', { style }, children);
 }
 
 /** Plays a vertical drag through `config`: activation, one update per translation, then release at

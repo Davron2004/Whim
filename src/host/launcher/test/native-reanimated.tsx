@@ -73,6 +73,23 @@ const sprung = new Set<SharedValue<unknown>>();
 /** Reanimated's default timing curve, `Easing.inOut(Easing.quad)`. */
 const inOutQuad = (x: number) => (x < 0.5 ? 2 * x * x : 1 - 2 * (1 - x) * (1 - x));
 
+/** The curve `Easing.bezier(x1, y1, x2, y2)` draws: the time share `x` is found on the curve's x by
+ *  bisection (x rises with t for control points inside 0…1), and its y read there. */
+function bezierCurve([x1, y1, x2, y2]: readonly number[]): (x: number) => number {
+  const at = (a: number, b: number, t: number) => 3 * (1 - t) * (1 - t) * t * a + 3 * (1 - t) * t * t * b + t * t * t;
+  return (x) => {
+    let lo = 0;
+    let hi = 1;
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      if (at(x1, x2, mid) < x) lo = mid;
+      else hi = mid;
+    }
+    return at(y1, y2, (lo + hi) / 2);
+  };
+}
+const isBezier = (v: unknown): v is { bezier: number[] } => typeof v === 'object' && v !== null && Array.isArray((v as { bezier?: unknown }).bezier);
+
 /** From now on an assigned animation keeps running: its value stays where it was and its end callback
  *  waits. The returned release ends every one of them, oldest first, as they would have. */
 export function holdAnimations(): () => void {
@@ -160,8 +177,9 @@ class SharedValue<T> {
       return;
     }
     const easing = step.config?.easing ?? inOutQuad;
-    if (typeof easing !== 'function') throw new Error('elapse: this double cannot follow a bezier timing curve part way');
-    const progress = (easing as (x: number) => number)(run.elapsed / duration);
+    const curve = isBezier(easing) ? bezierCurve(easing.bezier) : easing;
+    if (typeof curve !== 'function') throw new Error('elapse: this double cannot follow this timing curve part way');
+    const progress = (curve as (x: number) => number)(run.elapsed / duration);
     this.current = ((run.from as number) + ((step.to as number) - (run.from as number)) * progress) as T;
     this.changed();
   }

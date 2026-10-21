@@ -1,7 +1,7 @@
 /** M6 Composer → Describe and M5 Leave it running (system.md §4.4), with their Reduce Motion pairs
  *  (§4.5): the making sheet grows out of a place on Home and goes back into it (`SheetAnchor`), its
  *  plate set out from and landing on the place's measured rect, the place's face still where it is,
- *  the card fading in once the plate nearly fills it; a close mid-way turns back from where it is, a
+ *  the card fading in only once the plate covers it and out before the plate shrinks inside it; a close mid-way turns back from where it is, a
  *  tap on the place mid-close reopens it; the Making page's ember leads it into the tile's ember, one
  *  ember on every frame, in the light it had. */
 import React, { useState } from 'react';
@@ -21,7 +21,7 @@ import { useTokens } from '../../ui/tokens';
 import { emberLook, springConfig, timingOf } from '../../ui/tokens-pure';
 import { StyleSheet, accessibilitySettings, emitAccessibility } from './native-host';
 import { pan } from './native-gesture-handler';
-import { animations, elapseSprings, holdAnimations, isStep, measuring, ReduceMotion } from './native-reanimated';
+import { animations, elapse, elapseSprings, holdAnimations, isStep, measuring, ReduceMotion } from './native-reanimated';
 import { androidBack, button, hostType, isHost, press, renderScreen, textOf, unmountScreen } from './react-screen';
 
 type Tree = TestRenderer.ReactTestRenderer;
@@ -35,6 +35,7 @@ const run = (fn: () => void) => TestRenderer.act(async () => { fn(); });
 
 const MORPH = springConfig('morph');
 const SMOOTH = springConfig('smooth');
+const FADE_OUT_MS = timingOf('fadeOut').duration;
 
 const RUN = 'run-1';
 const rect = (pageX: number, pageY: number, width: number, height: number): Rect => ({ x: 0, y: 0, width, height, pageX, pageY });
@@ -156,6 +157,37 @@ const uniform = (tree: Tree) => {
   return m === undefined || m.findAll((n) => typeof n.type === 'string').every((n) => !('scaleX' in transformOf(n)) && !('scaleY' in transformOf(n)));
 };
 
+/** The card as the phone lays it out, `CARD_HEIGHT` tall at the bottom of the window. */
+const CARD_HEIGHT = 600;
+async function cardLaidOut(tree: Tree): Promise<void> {
+  await TestRenderer.act(async () => card(tree).props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: FRAME.width, height: CARD_HEIGHT } } }));
+}
+/** One frame of the sheet as drawn: how much of the card shows, and whether a drawn plate covers the
+ *  card's rect (where its translation puts it), read off the plate's own style. */
+function frameOf(tree: Tree) {
+  const shown = seen(card(tree)).opacity;
+  const p = plate(tree);
+  const ps = p ? flat(p) : null;
+  const drawn = ps !== null && ((ps.opacity as number | undefined) ?? 1) > 0 && ((ps.width as number | undefined) ?? 0) > 0;
+  const top = FRAME.height - CARD_HEIGHT + ((transformOf(card(tree)).translateY as number | undefined) ?? 0);
+  let covers = false;
+  if (drawn && p) {
+    const at = transformOf(p);
+    const [x, y, w, hgt] = [at.translateX, at.translateY, ps.width as number, ps.height as number];
+    covers = ps.opacity === 1 && x <= 1e-6 && y <= top + 1e-6 && x + w >= FRAME.width - 1e-6 && y + hgt >= top + CARD_HEIGHT - 1e-6;
+  }
+  return { shown, drawn, covers };
+}
+/** Runs 16 ms frames (springs and timings alike) until `until` holds or `frames` have passed, calling
+ *  `each` on every frame. */
+async function frames(tree: Tree, count: number, each: (f: ReturnType<typeof frameOf>) => void, until: () => boolean = () => false): Promise<void> {
+  for (let i = 0; i < count && !until(); i++) {
+    await run(() => { elapseSprings(16); elapse(16); });
+    if (modal(tree) === undefined) return;
+    each(frameOf(tree));
+  }
+}
+
 export async function runSheetMorphUiTests(h: Harness): Promise<void> {
   await h.test('M6: tapping the composer grows the sheet out of the capsule on morph, from its measured rect to the card, the placeholder still where it was, the card fading in at the end', async () => {
     const { tree, release } = await rig(null);
@@ -215,6 +247,66 @@ export async function runSheetMorphUiTests(h: Harness): Promise<void> {
     } finally { await leave(tree, release); }
   });
 
+  await h.test('M6 and M5: nothing of the card draws outside the plate — it fades in on fade-in only once the plate covers it, and out on fade-out before the plate shrinks inside it, turns mid-way included', async () => {
+    /** Every frame: wherever any of the card shows over a plate, or shows only in part, the plate covers it. */
+    const inside = (where: string, seenParts: { partly: number; grew: number }) => (f: ReturnType<typeof frameOf>) => {
+      if (f.shown > 0 && f.shown < 1) seenParts.partly += 1;
+      if (f.drawn && !f.covers) seenParts.grew += 1;
+      h.ok(!(f.shown > 0 && (f.drawn || f.shown < 1) && !f.covers), `${where}: the card (${f.shown.toFixed(2)}) shows only over a plate that covers it`);
+    };
+    const fadesOn = (to: number, token: 'fadeIn' | 'fadeOut') => animations.some((a) => isStep(a) && a.kind === 'timing' && a.to === to && a.config?.duration === timingOf(token).duration);
+
+    // M6 open, then a swipe down mid-growth.
+    {
+      const { tree, release } = await rig(null);
+      try {
+        await press(composerButton(tree));
+        await cardLaidOut(tree);
+        const parts = { partly: 0, grew: 0 };
+        await frames(tree, 120, inside('M6 open', parts), () => seen(card(tree)).opacity === 1 && !frameOf(tree).drawn);
+        h.ok(parts.grew > 5 && parts.partly > 0, `M6 open: the plate grew over frames (${parts.grew}) and the card faded in over frames (${parts.partly})`);
+        h.ok(fadesOn(1, 'fadeIn') && seen(card(tree)).opacity === 1, 'M6 open: the card faded in on fade-in and shows whole');
+      } finally { await leave(tree, release); }
+    }
+    {
+      const { tree, release } = await rig(null);
+      try {
+        await press(composerButton(tree));
+        await cardLaidOut(tree);
+        await frames(tree, 6, inside('M6 growing', { partly: 0, grew: 0 }));
+        await TestRenderer.act(async () => pan(sheetDrag(tree), [40, 120, 200], 1500));
+        await frames(tree, 120, inside('M6 swiped back mid-growth', { partly: 0, grew: 0 }));
+        h.eq(modal(tree), undefined, 'M6 swiped back: in the bar, the sheet has left');
+      } finally { await leave(tree, release); }
+    }
+    // M5 close by X, then turns: a tap on the tile while the card fades out, and while the plate shrinks.
+    for (const turn of ['none', 'fading', 'shrinking'] as const) {
+      const { tree, release } = await rig('making');
+      try {
+        await run(release);
+        await cardLaidOut(tree);
+        animations.splice(0);
+        const hold = holdAnimations();
+        await press(button(tree, COPY.sheetClose));
+        const parts = { partly: 0, grew: 0 };
+        const check = inside(`M5 ${turn}`, parts);
+        check(frameOf(tree));
+        if (turn === 'none') {
+          await frames(tree, 120, check);
+          h.ok(fadesOn(0, 'fadeOut') && parts.partly > 0 && parts.grew > 5, `M5: the card faded out on fade-out (${parts.partly} frames), then the plate shrank (${parts.grew} frames)`);
+          h.eq(modal(tree), undefined, 'M5: in the tile, the sheet has left');
+        } else {
+          await frames(tree, turn === 'fading' ? 3 : Math.ceil(FADE_OUT_MS / 16) + 8, check);
+          h.ok(turn === 'fading' ? frameOf(tree).shown > 0 && frameOf(tree).shown < 1 : frameOf(tree).shown === 0 && frameOf(tree).drawn && !frameOf(tree).covers, `M5 ${turn}: caught where the turn is meant (${frameOf(tree).shown.toFixed(2)})`);
+          await press(faceTap(tree)!);
+          await frames(tree, 120, check, () => seen(card(tree)).opacity === 1 && !frameOf(tree).drawn);
+          h.ok(modal(tree) !== undefined && seen(card(tree)).opacity === 1, `M5 ${turn}: turned back, the card shows whole`);
+        }
+        await run(hold);
+      } finally { await leave(tree, release); }
+    }
+  });
+
   await h.test('M6 under Reduce Motion: the composer cross-fades the sheet in, nothing grows (the pair: without it, it grows on morph)', async () => {
     for (const reduced of [false, true]) {
       const { tree, release } = await rig(null, reduced);
@@ -237,7 +329,9 @@ export async function runSheetMorphUiTests(h: Harness): Promise<void> {
         if (route === 'x') await press(button(tree, COPY.sheetClose));
         else await androidBack(tree);
         await run(() => elapseSprings(0));
-        h.eq(springsTo(0, SMOOTH).length, 1, `${route}: back into the tile on smooth`);
+        h.eq(springsTo(0, SMOOTH).length, 0, `${route}: the plate waits while the card fades out`);
+        await run(() => elapse(FADE_OUT_MS));
+        h.eq(springsTo(0, SMOOTH).length, 1, `${route}: then goes back into the tile on smooth`);
         for (const ms of [16, 50, 80, 120, 200]) {
           await run(() => elapseSprings(ms));
           const k = grownOf(tree, TILE);
@@ -262,6 +356,7 @@ export async function runSheetMorphUiTests(h: Harness): Promise<void> {
       animations.splice(0);
       const hold = holdAnimations();
       await press(button(tree, COPY.sheetClose));
+      await run(() => elapse(FADE_OUT_MS));
       await run(() => elapseSprings(150));
       const was = grownOf(tree, TILE);
       h.ok(was > 0.05 && was < 0.95, `mid-way (${was.toFixed(2)})`);
@@ -294,7 +389,7 @@ export async function runSheetMorphUiTests(h: Harness): Promise<void> {
       const drawn = body(own);
       h.ok(drawn < emberLook('working', 1).body - 0.05, `the Making ember is still on its way up (${drawn.toFixed(3)})`);
       await press(button(tree, COPY.sheetClose));
-      await run(() => elapseSprings(1));
+      await run(() => { elapse(1); elapseSprings(1); });
       const led = embersIn(tree)[0];
       h.ok(inside(led, lead(tree)!.node), 'the ember seen is the one leading');
       h.ok(Math.abs(body(led) - drawn) < 1e-3, `it sets out in the light it had (${drawn.toFixed(3)} → ${body(led).toFixed(3)})`);
@@ -310,9 +405,9 @@ export async function runSheetMorphUiTests(h: Harness): Promise<void> {
         animations.splice(0);
         const hold = holdAnimations();
         await press(button(tree, COPY.sheetClose));
-        await run(() => elapseSprings(16));
+        await run(() => { elapse(reduced ? 16 : FADE_OUT_MS); elapseSprings(16); });
         const fadeOut = animations.some((a) => isStep(a) && a.kind === 'timing' && a.to === 0 && a.config?.duration === timingOf('fadeOut').duration);
-        h.eq([springsTo(0, SMOOTH).length > 0, lead(tree) !== null && lead(tree)!.opacity === 1, fadeOut], [!reduced, !reduced, reduced], reduced ? 'Reduce Motion: it fades out where it is' : 'motion: it shrinks, the ember leading');
+        h.eq([springsTo(0, SMOOTH).length > 0, lead(tree) !== null && lead(tree)!.opacity === 1, fadeOut], [!reduced, !reduced, true], reduced ? 'Reduce Motion: it fades out where it is' : 'motion: the card fades out, then it shrinks, the ember leading');
         await run(hold);
       } finally { await leave(tree, release); }
     }
