@@ -186,8 +186,6 @@ function appStrings(): string[] {
   const copy = Object.values(COPY).filter((value) => typeof value === 'string');
   return [
     ...copy,
-    // Eyebrow text renders uppercase ("YOUR APPS", "ADVANCED").
-    ...copy.map((value) => value.toUpperCase()),
     historyVersionCount(2),
     // The server-address field's placeholder (SettingsScreen): the full address in a build with
     // beta-1 D20, the bare host in 382511.

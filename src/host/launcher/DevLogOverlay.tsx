@@ -60,8 +60,9 @@ export default function DevLogOverlay({ visible, onClose, buffer = log.buffer }:
 
   const rows = visibleRecords(snapshot, { channel, minLevel });
 
-  // Like `SheetModal`: the Modal's window draws under both system bars on every Android version
-  // (Whim draws edge to edge), so the overlay keeps clear of them with that window's own insets.
+  // Like the `Sheet`'s `OverlayModal`: the Modal's window draws under both system bars on every
+  // Android version (Whim draws edge to edge), so the overlay keeps clear of them with that
+  // window's own insets.
   return (
     <Modal visible={visible} animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
       <SafeAreaProvider>

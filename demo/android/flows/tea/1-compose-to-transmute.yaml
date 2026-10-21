@@ -1,6 +1,6 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# LinkedIn cut, shot 1 — cold open on the grid → compose → (clarify) → plan → inline row edit →
-# Build → ghost tile waits → transmutes. One continuous take, native frame. Film it with:
+# LinkedIn cut, shot 1 — cold open on the grid → describe → plan (with its choices) → Make it →
+# ghost tile waits → transmutes. One continuous take, native frame. Film it with:
 #
 #   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/1-compose-to-transmute.yaml \
 #        --device emulator-5554 --out demo/raw/<date>/shot-1 --name take-1 \
@@ -18,7 +18,7 @@
 appId: com.anycognition.whim
 ---
 - extendedWaitUntil:
-    visible: "YOUR APPS"
+    visible: "Your apps"
     timeout: 20000
 
 # Beat 1 — cold open: hold the grid.
@@ -39,29 +39,12 @@ appId: com.anycognition.whim
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 900, optional: true }
 - tapOn: "Continue"
 
-# Beat 4 — clarify lands, or the plan does. Branch on whichever shows.
-# `Build it` (host copy, PrimaryAction) is the gate, not a plan row label: the row labels
-# ("THE SCREEN" et al.) are the rewrite MODEL's output and a run that omits them would hang here.
-# `Build it` mounts only once the rewrite response lands, so it also means "rows are on screen".
+# Beat 4 — the plan drafts itself, any questions on the same page ("A few choices", each on
+# "Decide for me" until picked). `Make it` (host copy, the plan's primary action) is the gate, not a
+# plan row label: the rows are the MODEL's output and a run that omits them would hang here. The
+# action reads "Writing the plan…" until the plan lands, so `Make it` also means "rows are on screen".
 - extendedWaitUntil:
-    visible: ".*quick thing.*|Build it"
-    timeout: 180000
-- waitForAnimationToEnd
-- runFlow:
-    when:
-      visible: ".*quick thing.*"
-    commands:
-      - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2800, optional: true }
-      - tapOn:
-          text: ".*"
-          below:
-            text: ".*\\?"
-      - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
-      - tapOn: "Continue"
-
-# Beat 5 — the plan drafts itself.
-- extendedWaitUntil:
-    visible: "Build it"
+    visible: "Make it"
     timeout: 180000
 - waitForAnimationToEnd
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 3200, optional: true }
@@ -70,24 +53,24 @@ appId: com.anycognition.whim
 # inputText / Save) focused the field programmatically with no soft keyboard, so
 # Gboard showed its floating toolbar pill on camera. Plan screen holds as-is.
 
-# Beat 7 — Build, then leave it running.
-- tapOn: "Build it"
+# Beat 7 — Make it, then leave the Making page by the sheet's close (it has no leave button).
+- tapOn: "Make it"
 - extendedWaitUntil:
-    visible: "Leave it running"
+    visible: "Making .*"
     timeout: 90000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 3400, optional: true }
-- tapOn: "Leave it running"
+- tapOn: "Close"
 - waitForAnimationToEnd
 
-# Beat 8 — the ghost tile, captioned "Building…".
+# Beat 8 — the ghost tile, captioned "Making…" (read as "<name>, making" on the tile's own node).
 - extendedWaitUntil:
-    visible: ".*Building.*"
+    visible: ".*[Mm]aking.*"
     timeout: 30000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
 
 # Beat 9 — THE moment: the caption goes when the finished app replaces its ghost.
 - extendedWaitUntil:
-    notVisible: ".*Building.*"
+    notVisible: ".*[Mm]aking.*"
     timeout: 720000
 - waitForAnimationToEnd
 

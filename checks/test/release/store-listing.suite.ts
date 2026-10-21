@@ -16,6 +16,7 @@ import {
 } from '../../../scripts/release/lib/store-listing';
 import { MANIFESTS, latestVersion, type DisclosureManifest } from '../../../contract/src/disclosure-manifest';
 import { DIAGNOSTICS_PATH } from '../../../src/host/logging/diagnostics';
+import { COPY } from '../../../src/host/launcher/copy';
 import { loadNativeReleaseConfig, type NativeReleaseConfig } from '../../../scripts/release/lib/native-config';
 
 const REPO_ROOT = process.cwd();
@@ -39,6 +40,16 @@ const ANSWERS_PATH = 'release/store/answers.md';
  *  own mapping code, so a misunderstanding in the checker can't be copied into its fixture. */
 function committed(relPath: string): string {
   return fs.readFileSync(path.join(REPO_ROOT, relPath), 'utf8');
+}
+
+/** The words a reviewer is told to look for between `from` and `to` in `text` (each match of
+ *  `quoted`'s first group, with an ASCII "..." read as "…") that no copy key says. */
+function unshownWords(text: string, from: string, to: string, quoted: RegExp): string[] {
+  const start = text.indexOf(from);
+  const end = text.indexOf(to, start + 1);
+  assert(start !== -1 && end !== -1, `no section from "${from}" to "${to}"`);
+  const shown = new Set<string>(Object.values(COPY));
+  return [...text.slice(start, end).matchAll(quoted)].map((m) => m[1].replace(/\.\.\.$/, '…')).filter((words) => !shown.has(words));
 }
 
 /** `text` with the one match of `pattern` replaced; throws when there isn't exactly one match,
@@ -445,6 +456,15 @@ export async function run(): Promise<void> {
     assert(reviewerParagraph !== -1, 'notes.txt has no "WHAT LEAVES THE PHONE, AND WHEN" paragraph');
     assert(notes.slice(reviewerParagraph).includes('OpenRouter'), 'the reviewer paragraph must name OpenRouter');
     assert(!notes.slice(0, reviewerParagraph).includes('OpenRouter'), 'notes.txt must name OpenRouter only in the reviewer paragraph');
+  });
+
+  await test('store-listing: every control the review notes tell a reviewer to find is one the app shows, word for word', () => {
+    const notes = unshownWords(committed('release/store/app-store/review_information/notes.txt'), 'HOW TO TRY WHIM', 'GUIDELINE 4.7', /"([^"]+)"/g);
+    assert(notes.length === 0, `notes.txt names words the app doesn't show: ${notes.join(', ')}`);
+    const doc = unshownWords(committed('docs/store/review-notes.md'), '## 1. How to try Whim', '## 2.', /`([^`]+)`/g);
+    assert(doc.length === 0, `review-notes.md names words the app doesn't show: ${doc.join(', ')}`);
+    const stale = unshownWords('HOW TO TRY WHIM\n1. Tap "Make an app...", then "Agree and continue".\nGUIDELINE 4.7', 'HOW TO TRY WHIM', 'GUIDELINE 4.7', /"([^"]+)"/g);
+    assert(stale.join() === 'Agree and continue', `a retired button is caught and a real one is not: ${stale.join(', ')}`);
   });
 
   await test('store-listing: a 1080x2400 Play screenshot fails, naming the file and its 2.22 aspect ratio', () => {

@@ -309,7 +309,7 @@ const CLARIFY_SYSTEM = [
   'and leave "questions" empty: "reason" says in one short sentence what an app made here cannot do',
   '(call it an "app", never a "mini-app"),',
   'and "alternative" is the nearest app that CAN be built, as a short noun phrase that reads right on',
-  'the app\'s button "Build <alternative> instead" (for example "a weather log you fill in yourself"),',
+  'the app\'s button "Make <alternative> instead" (for example "a weather log you fill in yourself"),',
   'never a sentence or a request. Each is at most 200 characters.',
   'Otherwise "limit" is null. When only an extra needs something an app made here cannot do, "limit" is',
   'null too: ask about the rest and never offer the extra as an option; the plan will say it is left out.',

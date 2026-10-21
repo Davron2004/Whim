@@ -31,7 +31,7 @@ env:
   V1_RE: ".*Saved steep time.*"  # v1's card readout label; v2 renamed it to "Steep time"
 ---
 - extendedWaitUntil:
-    visible: "YOUR APPS"
+    visible: "Your apps"
     timeout: 20000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
 
@@ -74,7 +74,7 @@ env:
 - back
 - waitForAnimationToEnd
 - extendedWaitUntil:
-    visible: "YOUR APPS"
+    visible: "Your apps"
     timeout: 20000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
 
@@ -98,7 +98,7 @@ env:
 - back
 - waitForAnimationToEnd
 - extendedWaitUntil:
-    visible: "YOUR APPS"
+    visible: "Your apps"
     timeout: 20000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 1600, optional: true }
 - tapOn:

@@ -153,6 +153,16 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('lexer: `state` is a whole word — letters and hyphens join it, sentence punctuation ends it', () => {
+    for (const text of ['It is already open.', 'A ready-made list.', 'It failed-over twice.', 'It is unfailed.', 'It is readying.']) {
+      h.eq(lexProse(text).filter((s) => s.cls === 'state').length, 0, `"${text}" marks no status word`);
+    }
+    for (const [text, word] of [['It is ready.', 'ready'], ['It failed, then ran.', 'failed']] as const) {
+      const spans = lexProse(text).filter((s) => s.cls === 'state');
+      h.eq(spans.map((s) => text.slice(s.start, s.end)), [word], `"${text}" marks “${word}”`);
+    }
+  });
+
   await h.test('lexer: `yours` is matched verbatim, never reconstructed from a paraphrase', () => {
     const prompt = 'make the numbers bigger';
 
@@ -240,6 +250,19 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
 
     const sameApp = renderProse('Pour Timer replaced Pour Timer.', { apps: [POUR_TIMER] });
     h.eq(countOf(sameApp, 'app'), 2, 'the same hue twice is one colour, so both mentions keep it');
+  });
+
+  await h.test('renderer: `yours` never spends the sentence’s one colour', () => {
+    const withApp = renderProse('You said “go faster” and Pour Timer did.', {
+      apps: [POUR_TIMER],
+      storedPrompt: 'go faster',
+    });
+    h.eq(textOf(withApp, 'yours'), ['go faster'], 'the person’s words are marked');
+    h.eq(textOf(withApp, 'app'), ['Pour Timer'], 'and the app mention keeps its hue beside them');
+
+    const withState = renderProse('You said “go faster” and it failed.', { storedPrompt: 'go faster' });
+    h.eq(textOf(withState, 'yours'), ['go faster'], 'the person’s words are marked');
+    h.eq(textOf(withState, 'state'), ['failed'], 'and “failed” keeps its colour beside them');
   });
 
   await h.test('renderer: `yours` is exempt from the mark cap', () => {

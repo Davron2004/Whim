@@ -93,7 +93,7 @@ outline; flare `withSequence` 1.18 → 1 on `spark`; Reduce Motion = still inten
 
 - Ember flicker (§4.6 `0.06·ã`, token-arrival timed) — needs per-token events, not the `activity` prop.
 - Stacking paired buttons from 135% — read `t.largeText` in the screen's action area.
-- Switching existing screens: none moved in this chain; `SHELL_PALETTE` (`launcher/theme.ts`) stays for them.
+- Switching existing screens: done by chain 21; every screen reads `useTokens()` and the primitives.
 
 ## Platform: dark mode on Android (chain-9)
 

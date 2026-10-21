@@ -7,7 +7,7 @@ appId: com.anycognition.whim
 ---
 - launchApp
 - extendedWaitUntil:
-    visible: "YOUR APPS"
+    visible: "Your apps"
     timeout: 60000
 - tapOn: "(.*, )?Water Counter(, .*)?"
 - extendedWaitUntil:

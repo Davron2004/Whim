@@ -138,12 +138,18 @@ function lexMeasures(text: string): Span[] {
 
 // ── state ─────────────────────────────────────────────────────────────────────
 
+/** A hyphen joins a status word into a compound ("ready-made", "failed-over") that reports no
+ *  outcome, so for `state` it is part of the word, not a boundary. */
+function isStateWord(text: string, start: number, end: number): boolean {
+  return isWholeWord(text, start, end) && text[start - 1] !== '-' && text[end] !== '-';
+}
+
 function lexStates(text: string): Span[] {
   const spans: Span[] = [];
   for (const word of STATE_VOCABULARY) {
     for (const start of findAll(text, word, true)) {
       const end = start + word.length;
-      if (isWholeWord(text, start, end)) spans.push({ cls: 'state', start, end });
+      if (isStateWord(text, start, end)) spans.push({ cls: 'state', start, end });
     }
   }
   return spans;

@@ -1,5 +1,5 @@
 /**
- * keyboard-shell — the decisions behind `KeyboardShell.tsx`, `SheetModal.tsx` and the shell's
+ * keyboard-shell — the decisions behind `KeyboardShell.tsx` and the shell's
  * `Sheet` (beta-1 D3, design-system-v1 task 11.3), free of React Native so the launcher's Node
  * suite can import them.
  *
@@ -25,7 +25,7 @@
 import { SPACE } from '../../design/tokens';
 import type { ShellTokens } from '../ui/tokens-pure';
 
-/** Who pads for the keyboard: a whole screen, or the sheet (`SheetModal`) a shell sits in, which
+/** Who pads for the keyboard: a whole screen, or the `Sheet` a shell sits in, which
  *  pads for the shell inside it. */
 export type KeyboardShellHost = 'screen' | 'sheet';
 

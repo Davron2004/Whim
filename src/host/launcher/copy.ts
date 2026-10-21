@@ -1095,8 +1095,8 @@ export function timelineGrowthLine(chars: number, thinkingChars = 0): string {
  *  page's own action is `COPY.planMakeInstead` and shows the alternative in a card; the server
  *  test pins that the prompt asks for words that read right here, so the prompt and this stay one
  *  change. */
-export function clarifyBuildInstead(alternative: string): string {
-  return `Build ${alternative} instead`;
+export function clarifyMakeInstead(alternative: string): string {
+  return `Make ${alternative} instead`;
 }
 
 // ── change mode reads as changing, on every page (C1) ────────────────────────

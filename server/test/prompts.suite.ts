@@ -54,7 +54,7 @@ import { GenerationMachine, type CheckContext, type CheckStage } from '../src/ge
 import { parseJsonBlock } from '../src/generation/json-block';
 import { runStaticChecks } from '../../checks/index';
 import { FIELD_TYPES } from '../../src/host/storage-engine/contract';
-import { clarifyBuildInstead } from '../../src/host/launcher/copy';
+import { clarifyMakeInstead } from '../../src/host/launcher/copy';
 import { TINT_NAMES } from '../../src/design/tokens';
 import { CHROME_NAMES, GLYPH_GROUPS, GLYPH_NAMES } from '../../src/design/icons/names';
 import { HAPTIC_KINDS, SOUND_NAMES } from '../../src/host/bridge/contract';
@@ -990,19 +990,19 @@ function testMiniAppLimits(): void {
   );
 }
 
-/** The device puts a limit's `alternative` into its button as is (`copy.ts#clarifyBuildInstead`), so
+/** The device puts a limit's `alternative` into its button as is (`copy.ts#clarifyMakeInstead`), so
  *  the clarify prompt must ask for words that fit there: a noun phrase, not a request. */
 function testLimitAlternativeFitsTheButton(): void {
-  section('Tripwire: clarify asks for a limit alternative that reads right on the app’s "Build … instead" button');
+  section('Tripwire: clarify asks for a limit alternative that reads right on the app’s "Make … instead" button');
 
   const clarifySystem = buildClarifyMessages({ request: { prompt: 'a weather app' } }).find((m) => m.role === 'system')?.content ?? '';
-  const button = clarifyBuildInstead('<alternative>');
+  const button = clarifyMakeInstead('<alternative>');
   check('the clarify prompt quotes the app’s own button, with the alternative’s place in it', clarifySystem.includes(`"${button}"`), button);
   const example = /for example "([^"]+)"/.exec(clarifySystem)?.[1] ?? '';
   check(
     'the prompt’s example alternative is a noun phrase, so the button reads as one short sentence',
     /^an? [a-z]/.test(example) && !/[.!?]$/.test(example),
-    clarifyBuildInstead(example),
+    clarifyMakeInstead(example),
   );
 }
 

@@ -57,8 +57,9 @@ env:
       id: "android:id/input_method_nav_back"
     timeout: 10000
 - tapOn: "Back"
+# Maestro matches text case-insensitively, so "Your apps" also finds earlier builds' "YOUR APPS".
 - extendedWaitUntil:
-    visible: "YOUR APPS"
+    visible: "Your apps"
     timeout: 15000
 
 # 2. Saved data in an example: one "+2 glasses". The line under the title changes once the saved
@@ -76,7 +77,7 @@ env:
 # inside the dismiss layer's one accessibility element, so Maestro can't see "Home" there.
 - launchApp
 - extendedWaitUntil:
-    visible: "YOUR APPS"
+    visible: "Your apps"
     timeout: 30000
 
 # 3. A generated app: the legal steps and consent, then describe → plan → make. The previous release
@@ -187,5 +188,5 @@ env:
     timeout: 300000
 - tapOn: "Back to your apps"
 - extendedWaitUntil:
-    visible: "YOUR APPS"
+    visible: "Your apps"
     timeout: 30000

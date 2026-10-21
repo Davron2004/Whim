@@ -24,7 +24,7 @@
 appId: com.anycognition.whim
 ---
 - extendedWaitUntil:
-    visible: "YOUR APPS"
+    visible: "Your apps"
     timeout: 20000
 
 # Beat 1 — hold on the grid with the new tile, then open it.

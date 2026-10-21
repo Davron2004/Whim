@@ -1606,7 +1606,7 @@ function LauncherShell({
   };
 
   // ── The legal flow: terms, then AI-data consent (design D1/D2/D5; legal-surface-v2 D5) ─────
-  // Every data-sending entry point — the composer row, "Prompt again", the orb's change action,
+  // Every data-sending entry point — the composer row, the tile menu's "Change it", the orb's change action,
   // History’s "Change it", and Retry — calls `openWithConsent` instead of acting
   // directly. `onRetryPending` (defined below, among the ghost-tile handlers) is referenced here
   // only inside a closure that never runs before this render completes, so its declaration order
@@ -2737,10 +2737,10 @@ function LauncherShell({
    * BEFORE the request goes out (design D3/D4), the stream runs, and exactly one of three
    * settlements follows — delivered (record deleted, after the store and index are both written),
    * failed (record persisted with its payload, never deleted), or cancelled (record deleted by the
-   * cancel path itself). The plan's `Build it` and a ghost's Retry are its only two entries, so
+   * cancel path itself). The plan's `Make it` and a ghost's Retry are its only two entries, so
    * this stays the shell's single `generateApp` call site.
    *
-   * `fromPlan` is the plan screen `Build it` was tapped from — carried ONLY so a fresh attempt
+   * `fromPlan` is the plan screen `Make it` was tapped from — carried ONLY so a fresh attempt
    * refused while still on the build screen can return to plan with every row exactly as it was
    * (design D9/D10); a Retry passes none, since a refused Retry never lands on plan.
    */
