@@ -16,14 +16,16 @@
  * steps back (Plan) has its back control beside the close control (`useSheetBack` with `control`),
  * so the headlines start at the same height.
  *
- * A page that hands an element on to the next (the Making page's ember, which travels into the Ready
- * page's tile: `TravelLayer`) stays mounted, untouchable, under the page that replaced it,
- * until the element has landed, so the travel sets out from where it is drawn (`TravelLeft`).
+ * A page that hands an element on to the next (Make it's ember, which travels into the Making page's
+ * 128; the Making page's, which travels into the Ready page's tile: `TravelLayer`) stays mounted,
+ * untouchable and without its step back, under the page that replaced it, fading out on `fade-out`,
+ * until the element has landed and it has faded, so the travel sets out from where it is drawn and
+ * nothing on the page vanishes in one frame (`TravelPage`). It is the same mounted page throughout.
  */
 import React, { useEffect, useReducer, useRef } from 'react';
-import { StyleSheet, View } from 'react-native';
-import { Sheet, type SheetDetent } from '../ui/Sheet';
-import { TravelLeft, useTravel } from '../ui/TravelLayer';
+import { StyleSheet } from 'react-native';
+import { Sheet, SheetPageLeaving, type SheetDetent } from '../ui/Sheet';
+import { TravelPage, useTravel } from '../ui/TravelLayer';
 
 /** A page to show: what it is shown under, the page itself, and the height it takes: `large` (the
  *  making flow) unless it asks to `fit` its content (the Whim sheet's own pages). A page that asks for
@@ -78,6 +80,9 @@ function Pages({ shown }: Readonly<{ shown: SheetContent }>) {
   }
   const current = page.current;
   const left = leaving.current;
+  // The serial of the leaving page whose fade-out has ended, and what then checks whether it can go.
+  const faded = useRef(0);
+  const settle = useRef(() => {});
   useEffect(() => {
     if (left === null) return undefined;
     const drop = () => {
@@ -85,18 +90,35 @@ function Pages({ shown }: Readonly<{ shown: SheetContent }>) {
       leaving.current = null;
       redraw();
     };
-    if (travel === null || !travel.flying()) {
+    // Kept only when the page that replaced it asked it for an element.
+    if (travel === null || !travel.takeHandOff()) {
       drop();
       return undefined;
     }
-    return travel.onLanding(drop);
+    const settleNow = () => {
+      if (!travel.flying() && faded.current === left.serial) drop();
+    };
+    settle.current = settleNow;
+    const stop = travel.onLanding(settleNow);
+    settleNow();
+    return () => {
+      stop();
+      settle.current = () => {};
+    };
   }, [left, travel]);
+  const onFaded = (serial: number) => {
+    faded.current = serial;
+    settle.current();
+  };
+  // One list in drawing order, so the page shown stays the same mounted view as it starts to leave.
+  const pages = left ? [left, current] : [current];
   return (
     <>
-      {left ? <TravelLeft key={left.serial}>{left.node}</TravelLeft> : null}
-      <View key={current.serial} style={styles.page}>
-        {current.node}
-      </View>
+      {pages.map((one) => (
+        <TravelPage key={one.serial} leaving={one !== current} onFaded={() => onFaded(one.serial)} style={styles.page}>
+          <SheetPageLeaving leaving={one !== current}>{one.node}</SheetPageLeaving>
+        </TravelPage>
+      ))}
     </>
   );
 }

@@ -17,9 +17,9 @@ import { TilePlate } from '../../ui/AppTile';
 import { TILE_SIDE } from '../../ui/AppTile-geometry';
 import { Ember } from '../../ui/Ember';
 import { useTokens } from '../../ui/tokens';
-import { READY_RISE_FROM, READY_STAGGER_MS, SPARK_PEAK, springConfig, springReachMs, timingOf } from '../../ui/tokens-pure';
+import { ambientOpacity, READY_RISE_FROM, READY_STAGGER_MS, SPARK_PEAK, springConfig, springReachMs, timingOf } from '../../ui/tokens-pure';
 import { StyleSheet, accessibilitySettings, emitAccessibility } from './native-host';
-import { animations, elapseSprings, holdAnimations, isStep, measuring, ReduceMotion, type Animation } from './native-reanimated';
+import { animations, elapse, elapseSprings, holdAnimations, isStep, measuring, ReduceMotion, type Animation } from './native-reanimated';
 import { button, hostType, press, renderScreen, textOf, unmountScreen } from './react-screen';
 import { hasInstalled, resultEvent, waitFor, withLauncher, type sseStream } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
@@ -32,6 +32,7 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 const SPARK = springConfig('spark');
 const FADE_IN = timingOf('fadeIn');
+const FADE_OUT = timingOf('fadeOut');
 /** When the ember settles: once its flare has covered 95% of its way to the peak, the time
  *  system.md's table gives the spark spring (checked against the table in `home-motion-ui.suite`). */
 const SETTLE = springReachMs('spark', 0.95);
@@ -121,23 +122,29 @@ const places = { source: SOURCE, target: TARGET, layer: LAYER };
 
 /** Every host view's ref holds its element, so `measure` can tell the three places apart. */
 const nodeMock = (element: React.ReactElement) => ({ element });
+/** `node` is, or holds among its children, an ember of `size`. */
+function holdsEmber(node: React.ReactNode, size: number): boolean {
+  if (Array.isArray(node)) return node.some((one) => holdsEmber(one, size));
+  if (!React.isValidElement<{ size?: number; children?: React.ReactNode }>(node)) return false;
+  return (node.type === Ember && node.props.size === size) || holdsEmber(node.props.children, size);
+}
 function placeOf(node: unknown): Rect | undefined {
   const { props } = (node as { element: React.ReactElement<Record<string, unknown>> }).element;
   if (props.pointerEvents === 'none' && props.collapsable === false) return places.layer;
-  const child = props.children;
-  if (React.isValidElement<{ size?: number }>(child) && child.type === Ember && child.props.size === 128) return places.source;
+  if (holdsEmber(props.children as React.ReactNode, 128)) return places.source;
   if ((StyleSheet.flatten(props.style) ?? {}).width === TILE_SIDE.hero) return places.target;
   return undefined;
 }
 
-/** The making sheet on the Making page, then on Ready once the delivery lands; its close closes it. */
-function Flow({ ready, acted }: Readonly<{ ready: boolean; acted: string[] }>) {
+/** The making sheet on the Making page (its run's activity `activity`), then on Ready once the
+ *  delivery lands; its close closes it. */
+function Flow({ ready, acted, activity = 0.5 }: Readonly<{ ready: boolean; acted: string[]; activity?: number }>) {
   useTokens();
   const [open, setOpen] = useState(true);
   const node = ready ? (
     <ReadyPage app={APP} words={WORDS} changed={false} onOpen={() => acted.push('open')} onDone={() => acted.push('done')} />
   ) : (
-    <MakingPage name={APP.name} changing={false} words={WORDS} stage={null} delivering signals={null} now={0} activity={0.5} onStop={() => {}} />
+    <MakingPage name={APP.name} changing={false} words={WORDS} stage={null} delivering signals={null} now={0} activity={activity} onStop={() => {}} />
   );
   return <MakingSheet content={open ? { key: 'run:tea', node } : null} onClose={() => { acted.push('close'); setOpen(false); }} />;
 }
@@ -307,7 +314,8 @@ export async function runReadyMotionUiTests(h: Harness): Promise<void> {
       h.ok(flying(tree) === null, 'landed, the layer draws nothing');
       h.eq(seenEmbers(tree).length, 1, 'one ember seen, the tile’s own');
       h.ok(animations.some(isSpark), 'and it flares from where the travel left it');
-      h.eq(tree.root.findAllByType(MakingPage).length, 0, 'the Making page has gone');
+      await run(() => elapse(FADE_OUT.duration));
+      h.eq(tree.root.findAllByType(MakingPage).length, 0, 'landed and faded out, the Making page has gone');
     } finally { await leave(tree, release); }
   });
 
@@ -347,8 +355,54 @@ export async function runReadyMotionUiTests(h: Harness): Promise<void> {
         return { travels: travels().length, flying: flying(tree) !== null, making: tree.root.findAllByType(MakingPage).length, seen: seenEmbers(tree).length, flare: animations.some(isSpark), tileFades: seen(tileOn(tree)).scale };
       } finally { await leave(tree, release); }
     };
-    h.eq(await play(false), { travels: 1, flying: true, making: 1, seen: 1, flare: false, tileFades: READY_RISE_FROM }, 'off: one ember travels while the Making page stays, unseen, as its place');
-    h.eq(await play(true), { travels: 0, flying: false, making: 0, seen: 1, flare: false, tileFades: 1 }, 'on: the tile’s own ember, cross-fading; no travel, no flare');
+    h.eq(await play(false), { travels: 1, flying: true, making: 1, seen: 1, flare: false, tileFades: READY_RISE_FROM }, 'off: one ember travels while the Making page stays, its own ember unseen, as its place');
+    h.eq(await play(true), { travels: 0, flying: false, making: 1, seen: 1, flare: false, tileFades: 1 }, 'on: the tile’s own ember, cross-fading, as the Making page fades out without its own; no travel, no flare');
+  });
+
+  await h.test('Making → Ready: the Making page’s title, words, steps and light fade out on fade-out under Ready as the ember travels (the reduced fade under Reduce Motion) — nothing on it vanishes in one frame, and text only fades', async () => {
+    const play = async (on: boolean) => {
+      const { tree, release } = await land(on);
+      try {
+        const making = tree.root.findByType(MakingPage);
+        const texts = [`Making ${APP.name}`, `“${WORDS}”`, COPY.buildStepWriting].map((text) => textNode(tree, text));
+        const light = making.findAll((n) => hostType(n) === 'RadialGradient' && n.props.rx === '50%')[0];
+        const first = [...texts, light].map((node) => seen(node));
+        const fade = animations.filter((a) => isStep(a) && a.kind === 'timing' && a.to === 0 && same(a.config, { duration: FADE_OUT.duration, easing: { bezier: FADE_OUT.bezier }, ...(on ? { reduceMotion: ReduceMotion.Never } : {}) }));
+        await run(release);
+        return { first: first.map((one) => [one.opacity, one.moved, one.scale]), fades: fade.length, gone: tree.root.findAllByType(MakingPage).length };
+      } finally { await leave(tree, release); }
+    };
+    const whole = [1, false, 1];
+    // The light at its own opacity for the run's activity, 0.5 here (the reduced light burns as at 1).
+    const lit = (on: boolean) => [ambientOpacity(on ? 1 : 0.5), false, 1];
+    h.eq(await play(false), { first: [whole, whole, whole, lit(false)], fades: 1, gone: 0 }, 'off: on the first frame of the travel the title, the words, a step and the light are all still seen, in place; one fade-out takes them, and once it and the travel end the page has gone');
+    h.eq(await play(true), { first: [whole, whole, whole, lit(true)], fades: 1, gone: 0 }, 'on: the same, over the fade the root ReducedMotionConfig plays');
+  });
+
+  await h.test('Making → Ready: the travelling ember is drawn in the light the Making page’s ember had as it set out, part way along its smoothing, and Ready’s ember flares in that same light', async () => {
+    places.source = SOURCE;
+    places.target = TARGET;
+    measuring.rectOf = placeOf;
+    const acted: string[] = [];
+    const tree = await renderScreen(<Flow ready={false} acted={acted} activity={0.9} />, { createNodeMock: nodeMock });
+    const release = holdAnimations();
+    try {
+      // The stream quietens: the ember dims on the smoothing spring, and is part way there as the delivery lands.
+      await TestRenderer.act(async () => tree.update(<Flow ready={false} acted={acted} activity={0.1} />));
+      await run(() => elapseSprings(150));
+      const making = seen(embers(tree)[0]).opacity;
+      h.ok(making < 0.55 + 0.45 * 0.9 - 0.01 && making > 0.55 + 0.45 * 0.1 + 0.01, `the Making ember is part way down (${making.toFixed(3)})`);
+      await TestRenderer.act(async () => tree.update(<Flow ready acted={acted} activity={0.1} />));
+      await run(() => elapseSprings(0));
+      const start = flying(tree)!;
+      const travelling = seenEmbers(tree);
+      h.ok(travelling.length === 1 && inside(travelling[0], start.node), 'one ember seen, the travelling one');
+      h.ok(close(seen(travelling[0]).opacity, making), `it sets out in the Making ember’s light (${seen(travelling[0]).opacity.toFixed(3)} against ${making.toFixed(3)})`);
+      await run(() => elapseSprings(3000));
+      const ready = seenEmbers(tree);
+      h.ok(flying(tree) === null && ready.length === 1 && animations.some(isSpark), 'landed, the tile’s own ember flares');
+      h.ok(close(seen(ready[0]).opacity, making), `in that same light (${seen(ready[0]).opacity.toFixed(3)})`);
+    } finally { await leave(tree, release); }
   });
 
   for (const moment of ['mid-travel', 'mid-flare'] as const) {

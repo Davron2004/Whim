@@ -8,8 +8,9 @@
  *
  * M10 (system.md §4.4): the page mounts as the delivery lands, in place of the Making page, so it
  * carries the moment itself. The Making page's ember travels on `morph` from where it is drawn to the
- * tile's place (`TravelLayer`; at once when the page was not reached from Making), where it flares
- * (1 → 1.18 → 1, `spark`);
+ * tile's place (`TravelLayer`; at once when the page was not reached from Making), in the light it
+ * had there, which it keeps as it flares (1 → 1.18 → 1, `spark`), so it never brightens or dims at the
+ * hand-off;
  * once the flare has reached its peak it settles into the tile, which rises from 0.6 to 1 on
  * `spark` as the ember fades out over it. The name, the words and the buttons fade in 80 ms apart
  * from then; text only fades, it never moves (§4.3 rule 8). Done, Open it or closing the sheet by any
@@ -26,7 +27,7 @@ import { LAYOUT, SPACE } from '../../design/tokens';
 import { TilePlate } from '../ui/AppTile';
 import { TILE_SIDE } from '../ui/AppTile-geometry';
 import { Button } from '../ui/Button';
-import { Ember, RESTING_ACTIVITY } from '../ui/Ember';
+import { Ember, emberFrom, RESTING_ACTIVITY, type EmberLight, type EmberProps } from '../ui/Ember';
 import { timing } from '../ui/motion';
 import { useSheetLeaving } from '../ui/Sheet';
 import { Text } from '../ui/Text';
@@ -118,12 +119,15 @@ function useReadyMotion(reduceMotion: boolean, landed: boolean): ReadyMotion {
   return { arrived, shown, reduced, spark, settled, finish };
 }
 
+/** The ember's light: the one it was handed from the Making page, else the still, fully lit mark. */
+const lightOf = (light: EmberLight | null): Pick<EmberProps, 'state' | 'activity' | 'flicker' | 'from'> =>
+  light === null ? { state: 'working', activity: RESTING_ACTIVITY } : emberFrom(light);
+
 export default function ReadyPage({ app, words, changed, onOpen, onDone }: Readonly<ReadyPageProps>) {
   const t = useTokens();
   const s = styles(t);
   const tile = tileOf(app);
-  const ember = <Ember size={96} state="working" activity={RESTING_ACTIVITY} />;
-  const travel = useTravelTarget('ember', ember, t.reduceMotion);
+  const travel = useTravelTarget('ember', (light) => <Ember size={96} {...lightOf(light)} />, t.reduceMotion);
   const { arrived, shown, reduced, spark, settled, finish: showEnd } = useReadyMotion(t.reduceMotion, travel.landed);
   const finish = () => {
     travel.land();
@@ -175,7 +179,7 @@ export default function ReadyPage({ app, words, changed, onOpen, onDone }: Reado
         </Animated.View>
         {settled ? null : (
           <Animated.View style={[StyleSheet.absoluteFill, emberOut]} pointerEvents="none">
-            {travel.travelling ? null : <Ember size={96} state="working" activity={RESTING_ACTIVITY} spark={spark} />}
+            {travel.travelling ? null : <Ember size={96} {...lightOf(travel.light)} spark={spark} />}
           </Animated.View>
         )}
       </View>

@@ -33,7 +33,7 @@
  *   finger and settles with a cross-fade.
  */
 
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
 import type { LayoutChangeEvent } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
@@ -143,6 +143,16 @@ export function useSheetLeaving(): boolean {
   return useContext(SheetLeavingContext);
 }
 
+/** The caller's page is leaving the sheet under the page that replaced it (`TravelPage`): its step
+ *  back is no longer the sheet's. */
+const PageLeavingContext = createContext(false);
+
+/** Wraps a page that is leaving the sheet under its successor: from then on the page's
+ *  `useSheetBack` no longer takes Android back or draws the back control. */
+export function SheetPageLeaving({ leaving, children }: Readonly<{ leaving: boolean; children: React.ReactNode }>) {
+  return <PageLeavingContext.Provider value={leaving}>{children}</PageLeavingContext.Provider>;
+}
+
 export interface SheetBackOptions {
   /** Also draws the back control in the sheet's header row, beside the close control, for as long as
    *  the page is up: the page's visible way back, taking the same step. */
@@ -153,14 +163,17 @@ export interface SheetBackOptions {
  * Takes Android back (and hardware Escape) on the page that calls it, in place of closing the sheet:
  * a page that steps back before it closes — Plan returning to Describe, a row edit cancelling —
  * passes the step here. A `Modal` consumes the press, so `BackHandler` never sees it while a sheet is
- * up. The close control, the scrim and a drag still call `onClose`. Outside a sheet it does nothing.
+ * up. The close control, the scrim and a drag still call `onClose`. Outside a sheet, or once the
+ * page is leaving (`SheetPageLeaving`), it does nothing.
  */
 export function useSheetBack(handler: () => void, { control = false }: SheetBackOptions = {}): void {
   const back = useContext(SheetBackContext);
+  const leaving = useContext(PageLeavingContext);
   const latest = useRef(handler);
   latest.current = handler;
-  useEffect(() => {
-    if (back === null) return undefined;
+  // Before the frame the page is drawn on, so a page that starts to leave drops its control on that frame.
+  useLayoutEffect(() => {
+    if (back === null || leaving) return undefined;
     const { slot, showControl } = back;
     const call = () => latest.current();
     slot.current = call;
@@ -169,7 +182,7 @@ export function useSheetBack(handler: () => void, { control = false }: SheetBack
       if (slot.current === call) slot.current = null;
       showControl(false);
     };
-  }, [back, control]);
+  }, [back, control, leaving]);
 }
 
 const HEADER_ICON = 24;

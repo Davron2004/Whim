@@ -12,16 +12,21 @@
  * when not being edited. Answers never appear in the rows — they travel to making as
  * `clarifications`.
  *
+ * M9 (system.md §4.4): `Make it` is where the making ember sets out from (`TravelLayer`): it appears
+ * over the button, as large as fits in it, and travels to the Making page's 128 as this page fades
+ * out under that one.
+ *
  * When clarify answered that the request can't be made as asked, the page is the limit state
  * instead: the reason, a card with the nearest thing that could be made, `Make that instead` and
  * `Change my idea`.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Keyboard, Pressable, View } from 'react-native';
+import { Keyboard, Pressable, StyleSheet, View } from 'react-native';
 import Animated, { Easing, FadeIn, ReduceMotion, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
 import { LAYOUT, RADII, SPACE } from '../../design/tokens';
 import { Button } from '../ui/Button';
 import { Chip } from '../ui/Chip';
+import { Ember } from '../ui/Ember';
 import { Icon } from '../ui/Icon';
 import { Notice } from '../ui/Notice';
 import { useSheetBack } from '../ui/Sheet';
@@ -29,7 +34,8 @@ import { Skeleton, SkeletonBlock } from '../ui/Skeleton';
 import { Text, wrappingType } from '../ui/Text';
 import { TextArea, TextField } from '../ui/TextField';
 import { useTokens } from '../ui/tokens';
-import { CHIP, makeStyles, PRESS_RETENTION, springConfig, staggerDelay, timingOf } from '../ui/tokens-pure';
+import { useTravelSource } from '../ui/TravelLayer';
+import { buttonMetrics, CHIP, makeStyles, PRESS_RETENTION, springConfig, staggerDelay, timingOf } from '../ui/tokens-pure';
 import { timing } from '../ui/motion';
 import WhimProse from '../ui/whim-prose/WhimProse';
 import { REFLOW, REFLOW_REDUCED, TilePlate } from '../ui/AppTile';
@@ -499,6 +505,31 @@ function PlanRows({ rows, arriving, changing, editingRow, reflows, onEditing, on
   );
 }
 
+/** M9: the making ember sets out from Make it at 48, or the button's height where that is less, so
+ *  it is drawn within the button. */
+export const MAKE_IT_EMBER = Math.min(48, buttonMetrics('large').height);
+
+const CENTRED = { alignItems: 'center', justifyContent: 'center' } as const;
+
+/** Make it, with the place over its centre that the making ember sets out from. The ember shows there
+ *  only on a frame it has set out on and the travel layer cannot draw it yet, as a run that has not
+ *  started burns (the Making page's first look), so it is seen from the first frame of its travel. */
+function MakeItPlace({ children }: Readonly<{ children: React.ReactNode }>) {
+  const { ref, departing } = useTravelSource('make-it');
+  return (
+    <View>
+      {children}
+      <View style={[StyleSheet.absoluteFill, CENTRED]} pointerEvents="none">
+        <View ref={ref} collapsable={false} style={{ width: MAKE_IT_EMBER, height: MAKE_IT_EMBER }}>
+          <Animated.View style={[departing, { transform: [{ scale: MAKE_IT_EMBER / 48 }] }]}>
+            <Ember size={48} state="working" activity={0} />
+          </Animated.View>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMake, onTryAgain, onMakeInstead }: Readonly<PlanPageProps>) {
   const t = useTokens();
   const s = styles(t);
@@ -576,14 +607,16 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
           {screen.problem ? (
             <Button label={COPY.planTryAgain} variant="ember" onPress={onTryAgain} />
           ) : (
-            <Button
-              label={changing ? COPY.planBuildEdit : COPY.planBuild}
-              variant="ember"
-              haptic="handoff"
-              busy={screen.loading ? COPY.planBusy : undefined}
-              disabled={gated || editingRow !== null}
-              onPress={onMake}
-            />
+            <MakeItPlace>
+              <Button
+                label={changing ? COPY.planBuildEdit : COPY.planBuild}
+                variant="ember"
+                haptic="handoff"
+                busy={screen.loading ? COPY.planBusy : undefined}
+                disabled={gated || editingRow !== null}
+                onPress={onMake}
+              />
+            </MakeItPlace>
           )}
         </View>
       }

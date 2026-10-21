@@ -5,7 +5,9 @@
  * arrivals (`useFlicker`), stuck dims to 35% over 1.5 s and holds still, out is the 1.5 pt `text-2`
  * outline alone. A change of `spark` plays the done flare (1 → 1.18 → 1, `spark`). Under Reduce
  * Motion the ember is a still intensity per state, cross-faded, with no flicker and no flare. Both
- * are hidden from screen readers: the status line carries the words.
+ * are hidden from screen readers: the status line carries the words. An ember that travels on as
+ * another (`TravelLayer`) carries its light as drawn (`EmberLight`), so it neither brightens nor dims
+ * on the way.
  */
 
 import React, { useEffect, useId, useRef } from 'react';
@@ -90,8 +92,27 @@ export function useFlicker(activity: number, working: boolean, pulse: FlickerPul
   return { on, smoothed, pulse: pulse ?? idle };
 }
 
+/** An ember's light as it is drawn now: its state, its arrival pulse, and where its body and halo
+ *  are (part way along the smoothing spring when its activity just changed). */
+export interface EmberLight {
+  readonly state: EmberState;
+  readonly flicker?: FlickerPulse;
+  readonly body: number;
+  readonly halo: number;
+}
+
+/** Where an ember publishes how to read its light now (`EmberProps.lightRef`). */
+export type EmberLightRef = { current: (() => EmberLight) | null };
+
+/** An ember drawn on in `light`: at its body and halo, held there (the activity whose body that is),
+ *  in its state, flickering with its pulse. Its light leaves the stream where it was handed over. */
+export function emberFrom(light: EmberLight): Pick<EmberProps, 'state' | 'activity' | 'flicker' | 'from'> {
+  const activity = Math.min(1, Math.max(0, (light.body - HONEST_LIGHT.base) / HONEST_LIGHT.gain));
+  return { state: light.state, activity, flicker: light.flicker, from: light };
+}
+
 export interface EmberProps {
-  /** 20 (the orb), 24 inline, 48 plan wait, 96 Ready and failure, 128 making and empty home
+  /** 20 (the orb), 24 inline, 48 setting out from Make it, 96 Ready and failure, 128 making and empty home
    *  (64 from 135% text). */
   size: EmberSize;
   state: EmberState;
@@ -101,15 +122,20 @@ export interface EmberProps {
   spark?: number;
   /** The run's arrival pulse: the working ember flickers with it (§4.6). */
   flicker?: FlickerPulse;
+  /** Set out at this body and halo (the light of the ember this one goes on from) rather than at the
+   *  state's own; from there it moves as any change of light does. */
+  from?: Pick<EmberLight, 'body' | 'halo'>;
+  /** Given a way to read this ember's light as drawn, for an ember that travels on from it. */
+  lightRef?: EmberLightRef;
 }
 
-export function Ember({ size, state, activity = 0, spark, flicker }: Readonly<EmberProps>) {
+export function Ember({ size, state, activity = 0, spark, flicker, from, lightRef }: Readonly<EmberProps>) {
   const t = useTokens();
   const px = emberSize(size, t);
   // Reduce Motion: a still intensity per state, whatever the stream does.
   const look = emberLook(state, t.reduceMotion ? 1 : activity);
-  const body = useSharedValue(look.body);
-  const halo = useSharedValue(look.halo);
+  const body = useSharedValue(from?.body ?? look.body);
+  const halo = useSharedValue(from?.halo ?? look.halo);
   const scale = useSharedValue(1);
   useEffect(() => {
     body.value = lightTo(look.body, state, t);
@@ -122,6 +148,14 @@ export function Ember({ size, state, activity = 0, spark, flicker }: Readonly<Em
     if (!t.reduceMotion) scale.value = withSequence(withSpring(SPARK_PEAK, springConfig('spark')), withSpring(1, springConfig('spark')));
   }, [scale, spark, t.reduceMotion]);
   const { on, smoothed, pulse } = useFlicker(activity, state === 'working', flicker);
+  useEffect(() => {
+    if (lightRef === undefined) return undefined;
+    const read = () => ({ state, flicker, body: body.value, halo: halo.value });
+    lightRef.current = read;
+    return () => {
+      if (lightRef.current === read) lightRef.current = null;
+    };
+  }, [lightRef, state, flicker, body, halo]);
   const bodyStyle = useAnimatedStyle(() => ({ opacity: body.value + flickerOffset(on, smoothed.value, pulse.value) }));
   const haloStyle = useAnimatedStyle(() => ({ opacity: halo.value }));
   const flare = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));

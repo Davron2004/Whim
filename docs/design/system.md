@@ -405,7 +405,7 @@ tip that rises and curls slightly up, no face, no eyes, no name. Fill: radial `g
 | Out | Failure, failed or stopped tile | 1.5 pt `text-2` outline of the silhouette, no fill, no glow |
 
 Done is one `spark` flare. Sizes 24, 48, 96, 128 (128 drops to 64 from 135% text); the orb carries a
-20 pt mark. It appears on the making page (128), the plan wait (48), Ready and failure (96), the empty
+20 pt mark. It appears on the making page (128), setting out from Make it (48), Ready and failure (96), the empty
 home (128), inline status (24), the orb, the app icon and the launch screen; never inside an app's
 content, in settings or legal, as decoration, with a speech bubble or a name. **Ambient light**, the
 second signature: a soft radial glow behind the making header and under the composer, same signal,
@@ -489,7 +489,7 @@ Numbers are stable; R-numbers are the animation research's (`docs/research/anima
 | M7 (R10) Describe → Plan | Continue | Plan pushes in from the trailing edge; the description travels to the top as the quote | `smooth` | Back reverses | Cross-fade |
 | M8 (R7) Plan arrives | Questions (~1.8 s), then rows (~2.3 s more) | Skeletons swap with `fade-in`; rows rise 8 px with `stagger` the first time; answered questions collapse when scrolled past | `fade-in` + `smooth` | Reopen retargets | Cross-fade |
 | M25 Edit a plan row | Tap a row | The row grows into a text area; Save and Cancel fade in | `smooth` | Cancel reverses | Instant |
-| M9 Make it | Tap Make it | The 48 ember travels and scales to the making 128; plan fades out; words and steps fade in; the marker moves to a repair row with `snappy` | `morph` | Closing leaves for home (M5) | Cross-fade |
+| M9 Make it | Tap Make it | The ember sets out from Make it at 48 (or the button's height, if less) and travels and scales to the making 128; plan fades out; words and steps fade in; the marker moves to a repair row with `snappy` | `morph` | Closing leaves for home (M5) | Cross-fade |
 | M5 Leave it running | Close X, back, swipe down, scrim | The sheet shrinks into its ghost tile, ember first | `smooth` | Tapping the tile reverses | Cross-fade |
 | M10 Ready | Delivery with the sheet open | Ember flares (1 → 1.18 → 1) and settles into the 96 tile rising 0.6 → 1; name, words, buttons fade in 80 ms apart | `spark` | Done jumps to the end | Cross-fade, no flare |
 | M4 (R1) Ghost → tile | Delivery with the grid visible | Glow flares; a circle mask fills the squircle with the tint from the centre; glyph fades in from 0.9 | `morph`, glow `spark` | Opening finishes it | Cross-fade |
