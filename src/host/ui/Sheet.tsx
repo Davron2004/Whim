@@ -51,6 +51,7 @@ import type { LayoutChangeEvent } from 'react-native';
 import Animated, { useAnimatedReaction, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
+import { KeyboardController, KeyboardEvents } from 'react-native-keyboard-controller';
 import { scheduleOnRN } from 'react-native-worklets';
 import { LAYOUT, RADII, SPACE } from '../../design/tokens';
 import { haptics } from '../haptics';
@@ -547,6 +548,18 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
     if (anchored) setMoving(true);
     playExit(motion, how, settled);
   }, [open, up, t.reduceMotion, anchored, motion, settled, exited]);
+
+  // A close that starts while the keyboard is still on its way (asked for, not yet risen) cannot
+  // take the request back: the show comes after the close began. While leaving, any keyboard that
+  // sets off is cut away at once, unanimated, so none is drawn over the sheet on its way out.
+  const leaving = up && !open;
+  useEffect(() => {
+    if (!leaving) return undefined;
+    const shows = KeyboardEvents.addListener('keyboardWillShow', () => {
+      KeyboardController.dismiss({ animated: false }).catch(() => undefined);
+    });
+    return () => shows.remove();
+  }, [leaving]);
 
   const dragClosed = useCallback(() => {
     closingRef.current = true;

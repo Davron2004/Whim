@@ -32,9 +32,10 @@ import { appLinkFor } from '../app-link';
 import { contrastRatio } from '../../../design/tints';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
-import { Alert, hardwareBack, openLink, setColorScheme, StyleSheet, windowMetrics } from './native-host';
+import { accessibilitySettings, Alert, emitAccessibility, hardwareBack, openLink, setColorScheme, StyleSheet, windowMetrics } from './native-host';
 import { iosPop, stackItems, stackMoveEnds, stackUnmountsMidMove } from './native-screens';
-import { holdAnimations } from './native-reanimated';
+import { holdAnimations, layoutAnimations, playedUnder, viewTagOf, type LayoutAnimation } from './native-reanimated';
+import { springConfig, timingOf } from '../../ui/tokens-pure';
 import { androidBack, button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 import { chooseRow, dismissToast, longPress, pressToastAction, renderHome, sheetRows, tile, toastOf } from './home-rig';
 import { accessOver, disposeDeviceState, installApp, newDeviceState, withEngine } from './data-copy-rig';
@@ -1387,6 +1388,137 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       }
     });
   });
+
+  // ── M26 History row ────────────────────────────────────────────────────────
+
+  await h.test('M26: a tapped row opens on smooth — its card grows as a layout transition and the rows below move with it — while its actions fade in on fade-in, its words neither moving nor fading', async () => {
+    const { access, app } = await threeVersions();
+    await withHistory(access, app, async (tree) => {
+      await settledList(tree);
+      const card = cardOf(tree, 'add a chime');
+      const view = viewTagOf(card);
+      layoutAnimations.splice(0);
+      await press(row(tree, 'add a chime'));
+      const open = cardOf(tree, 'add a chime');
+      h.ok(viewTagOf(open) === view, 'the card that grows is the row’s own, not a new view put in its place');
+      h.ok(isSmoothMove(open.props.layout), 'it grows on smooth, a layout transition');
+      h.ok(isSmoothMove(cellOf(tree, 'a tea timer').props.layout), 'the row below moves on smooth');
+      const fading = open.findAll((n) => hostType(n) === 'Animated.View' && n.props.entering !== undefined);
+      h.eq(fading.length, 1, 'one part of the opened row fades in');
+      const entering = fading[0]?.props.entering as LayoutAnimation | undefined;
+      h.ok(entering?.preset === 'FadeIn' && entering.config.duration === FADE_IN.duration && JSON.stringify(entering.config.easing) === JSON.stringify({ bezier: FADE_IN.bezier }), 'on the fade-in token');
+      h.ok(entering !== undefined && entering.config.withInitialValues === undefined, 'opacity only: it sets out from no other place or size');
+      h.ok(fading[0] !== undefined && textOf(fading[0]).includes(COPY.historyUseVersion), 'and it holds the actions');
+      h.eq(fading[0]?.findAll((n) => n === row(tree, 'add a chime')).length, 0, 'the words are not in it: they are there at once');
+      h.eq(layoutAnimations.filter((e) => e.phase === 'entering').length, 1, 'only that one entering animation played');
+    });
+  });
+
+  await h.test('M26: tapping the row again while it is still opening closes the same card from where it is, the rows below moving back on smooth', async () => {
+    const { access, app } = await threeVersions();
+    await withHistory(access, app, async (tree) => {
+      await settledList(tree);
+      const card = viewTagOf(cardOf(tree, 'add a chime'));
+      const below = viewTagOf(cellOf(tree, 'a tea timer'));
+      const release = holdAnimations();
+      try {
+        await press(row(tree, 'add a chime'));
+        layoutAnimations.splice(0);
+        await press(row(tree, 'add a chime'));
+      } finally { release(); }
+      h.eq(rows(tree).map((r) => r.props.accessibilityState.expanded), [false, false, false], 'the second tap closes it');
+      const closed = cardOf(tree, 'add a chime');
+      h.ok(viewTagOf(closed) === card, 'the card the opening ran on is the card that closes: its transition retargets from the frame on screen');
+      h.ok(isSmoothMove(closed.props.layout), 'on smooth');
+      h.ok(viewTagOf(cellOf(tree, 'a tea timer')) === below && isSmoothMove(cellOf(tree, 'a tea timer').props.layout), 'the row below moves back, the same view');
+      h.eq(layoutAnimations.length, 0, 'nothing plays an arrival or a leaving again');
+    });
+  });
+
+  await h.test('M26: History drawn moves nothing — while its first frames lay it out (and correct it as its texts measure) no row or cell carries a move; once it has held still, they do', async () => {
+    const { access, app } = await threeVersions();
+    // Frames drawn one at a time, by the test.
+    const frames = new Map<number, (time: number) => void>();
+    let nextId = 1;
+    const real = { request: globalThis.requestAnimationFrame, cancel: globalThis.cancelAnimationFrame };
+    globalThis.requestAnimationFrame = (callback) => {
+      frames.set(nextId, callback);
+      return nextId++;
+    };
+    globalThis.cancelAnimationFrame = (id) => { if (id != null) frames.delete(id); };
+    const nextFrame = () => TestRenderer.act(async () => {
+      const due = [...frames.values()];
+      frames.clear();
+      for (const callback of due) callback(Date.now());
+    });
+    try {
+      await withHistory(access, app, async (tree) => {
+        await waitFor(() => rows(tree).length === 3, 'the versions to load');
+        h.ok(movesOf(tree).every((m) => m === undefined), 'drawn, nothing moves');
+        await nextFrame();
+        await nextFrame();
+        h.ok(movesOf(tree).every((m) => m === undefined), 'nor over its first two frames');
+        await nextFrame();
+        h.ok(movesOf(tree).every(isSmoothMove), 'held still for three, the rows take their move on smooth');
+      });
+    } finally {
+      globalThis.requestAnimationFrame = real.request;
+      globalThis.cancelAnimationFrame = real.cancel;
+    }
+  });
+
+  await h.test('M26 under Reduce Motion: a row opens and closes at once, the rows below with it, and its actions are simply there; with motion, the same taps move', async () => {
+    const { access, app } = await threeVersions();
+    for (const reduced of [true, false]) {
+      accessibilitySettings.reduceMotion = reduced;
+      await TestRenderer.act(async () => emitAccessibility('reduceMotionChanged', reduced));
+      try {
+        await withHistory(access, app, async (tree) => {
+          await settledList(tree);
+          layoutAnimations.splice(0);
+          await press(row(tree, 'add a chime'));
+          const label = reduced ? 'reduced' : 'with motion';
+          const moves = [cardOf(tree, 'add a chime').props.layout, cellOf(tree, 'a tea timer').props.layout];
+          const played = moves.map((m) => playedUnder(m, reduced));
+          h.eq(played.map((m) => m !== null), [!reduced, !reduced], `${label}: the card and the row below ${reduced ? 'change at once' : 'move'}`);
+          h.eq(layoutAnimations.filter((e) => playedUnder(e.animation, reduced) !== null).length, reduced ? 0 : 1, `${label}: ${reduced ? 'no fade' : 'the actions fade in'}`);
+          h.ok(textOf(tree.root).includes(COPY.historyUseVersion), `${label}: the actions show`);
+          await press(row(tree, 'add a chime'));
+          h.eq(playedUnder(cardOf(tree, 'add a chime').props.layout, reduced) !== null, !reduced, `${label}: and it closes ${reduced ? 'at once' : 'on smooth'}`);
+        });
+      } finally {
+        accessibilitySettings.reduceMotion = false;
+        await TestRenderer.act(async () => emitAccessibility('reduceMotionChanged', false));
+      }
+    }
+  });
+}
+
+const SMOOTH = springConfig('smooth');
+const FADE_IN = timingOf('fadeIn');
+const WORDS = ['make it louder', 'add a chime', 'a tea timer'];
+/** `smooth` as a layout transition: Reanimated's spring mode with the token's physics. */
+const isSmoothMove = (layout: unknown): boolean => {
+  const l = layout as LayoutAnimation | undefined;
+  return l?.preset === 'LinearTransition' && l.config.springify === true && JSON.stringify({ mass: l.config.mass, stiffness: l.config.stiffness, damping: l.config.damping }) === JSON.stringify(SMOOTH);
+};
+/** The nearest animated view holding `node`. */
+function animatedAround(node: Node): Node {
+  let up: Node | null = node.parent;
+  while (up && hostType(up) !== 'Animated.View') up = up.parent;
+  if (!up) throw new Error(`"${textOf(node)}" sits in no animated view`);
+  return up;
+}
+/** A row's card: the view it opens in (M26). */
+const cardOf = (tree: Tree, words: string) => animatedAround(row(tree, words));
+/** A row's cell in the list: the view that moves when a row above it opens or closes. */
+const cellOf = (tree: Tree, words: string) => animatedAround(cardOf(tree, words));
+/** The move every row's card and cell carries. */
+const movesOf = (tree: Tree): unknown[] => [...WORDS.map((w) => cardOf(tree, w).props.layout), ...WORDS.map((w) => cellOf(tree, w).props.layout)];
+/** History loaded, and its list drawn for long enough to have held still (a frame is a timeout here). */
+async function settledList(tree: Tree): Promise<void> {
+  await waitFor(() => rows(tree).length === 3, 'the versions to load');
+  await TestRenderer.act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
 }
 
 const WATER = 'water-counter';

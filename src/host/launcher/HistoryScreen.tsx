@@ -14,7 +14,8 @@
 // with its icon and `Current` on the active version. No filters. All store access goes through
 // `StoreAccess`; the row model lives in `history-logic.ts`, Node-testable without this component.
 //
-// Tapping a row EXPANDS it (never changes the version); at most one row is open. Its actions act at
+// Tapping a row EXPANDS it (never changes the version); at most one row is open. M26: it opens and
+// closes on `smooth` with the rows below moving, its actions fading in (`RowsMove`). Its actions act at
 // once, with Undo instead of a question (decision #75, "undo over are you sure"): "Use this version"
 // makes it current and offers Undo in the toast, and the version it left stays listed, so the same
 // Undo is a row away once the toast has gone; "Make a copy from here" asks only "Copy the data, or
@@ -22,8 +23,9 @@
 // says when going there would hide saved data. The summary and the expanded result are agent prose
 // and render through the one shared `WhimProse` renderer; everything else is product copy and is
 // never marked (Whim Syntax rule 7).
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Pressable, Text as RNText, View } from 'react-native';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { FlatList, Pressable, Text as RNText, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
+import Animated, { Easing, FadeIn } from 'react-native-reanimated';
 import type { SummaryKind, SummaryMark } from '@whim/contract';
 import { LAYOUT, RADII, SPACE, TINTS, TYPE_SCALE, type ColorRole, type TypeToken } from '../../design/tokens';
 import type { IconName } from '../../design/icons/names';
@@ -46,7 +48,7 @@ import { CopyQuestionSheet } from './CopyQuestionSheet';
 import { tileOf } from './tile-identity';
 import { useSystemBack } from './use-system-back';
 import WhimProse from '../ui/whim-prose/WhimProse';
-import { TilePlate } from '../ui/AppTile';
+import { REFLOW, TilePlate } from '../ui/AppTile';
 import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
 import { BackButton } from '../ui/IconButton';
@@ -54,7 +56,7 @@ import { Skeleton, SkeletonBlock } from '../ui/Skeleton';
 import { Text, wrappingType } from '../ui/Text';
 import { useToast } from '../ui/Toast';
 import { useTokens } from '../ui/tokens';
-import { ICON_BUTTON, makeStyles, MAX_FONT_SCALE, type ShellTokens } from '../ui/tokens-pure';
+import { ICON_BUTTON, makeStyles, MAX_FONT_SCALE, timingOf, type ShellTokens } from '../ui/tokens-pure';
 import { haptics } from '../haptics';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
@@ -104,6 +106,47 @@ const ROW_GAP = 22;
 /** How many placeholder rows the first load draws. The real count is not known until the read
  *  resolves, so this is a shape hint, not a prediction. */
 const HISTORY_SKELETON_ROWS = 3;
+
+/** M26: an opened row's actions fade in on `fade-in`, in place. */
+const FADE_IN = timingOf('fadeIn');
+const ACTIONS_IN = FadeIn.duration(FADE_IN.duration).easing(Easing.bezier(...FADE_IN.bezier));
+/** Frames the list's layout holds still, once it is drawn, before a row's change of size moves. */
+const LIST_SETTLE_FRAMES = 3;
+
+/** M26: how a row opening or closing moves: the row changes size and the rows below it move on
+ *  `smooth` (`REFLOW`, a layout transition, which retargets one still running), or, undefined, at
+ *  once. Undefined under Reduce Motion, and until the list has been drawn and held still for
+ *  `LIST_SETTLE_FRAMES` frames: the list's own first layout, and any correction of it as its texts
+ *  measure, is never played as a move. */
+const RowsMove = React.createContext<typeof REFLOW | undefined>(undefined);
+
+/** Whether History's list has been drawn and held still, at this text size (a new size lays it out
+ *  afresh). */
+function useListSettled(shown: boolean, fontScale: number): boolean {
+  const [settledAt, setSettledAt] = useState<number | null>(null);
+  const settled = settledAt === fontScale;
+  useEffect(() => {
+    if (!shown || settled) return undefined;
+    let frames = 0;
+    let frame = requestAnimationFrame(function tick() {
+      frames += 1;
+      if (frames >= LIST_SETTLE_FRAMES) setSettledAt(fontScale);
+      else frame = requestAnimationFrame(tick);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [shown, settled, fontScale]);
+  return shown && settled;
+}
+
+/** A row's cell in the list, a view of its own on the native side: it moves with `RowsMove` when a
+ *  row above it opens or closes. */
+function HistoryCell({ children, style, onLayout }: Readonly<{ children?: React.ReactNode; style?: StyleProp<ViewStyle>; onLayout?: (event: LayoutChangeEvent) => void }>) {
+  return (
+    <Animated.View style={style} onLayout={onLayout} layout={useContext(RowsMove)}>
+      {children}
+    </Animated.View>
+  );
+}
 
 /** The dot's centre, down from the row's top: on the middle of the words' first line, at the
  *  phone's text size up to the 200% cap. */
@@ -162,17 +205,17 @@ const styles = makeStyles((t) => {
     },
     dot: { width: RAIL.dot, height: RAIL.dot, borderRadius: RAIL.dot / 2, backgroundColor: t.colors.border },
     dotCurrent: { backgroundColor: t.colors.ink },
-    // A row's words sit in the same place open or closed: a closed row keeps the open card's side
-    // padding, and the card reaches up by its top padding, so it grows around the words instead of
-    // pushing them in.
-    flat: { paddingTop: ROW_TOP, paddingHorizontal: CARD_PADDING.horizontal },
+    // A row's words sit in the same place open or closed: the card, drawn only open, reaches up by
+    // its top padding whether drawn or not, so it grows around the words, downward from a top that
+    // stays put, instead of pushing them in; growing (M26), it shows only what it has reached.
     card: {
       marginTop: ROW_TOP - CARD_PADDING.vertical,
       borderRadius: RADII.lg.radius,
-      backgroundColor: t.colors.surface,
-      paddingVertical: CARD_PADDING.vertical,
+      paddingTop: CARD_PADDING.vertical,
       paddingHorizontal: CARD_PADDING.horizontal,
+      overflow: 'hidden' as const,
     },
+    cardOpen: { backgroundColor: t.colors.surface, paddingBottom: CARD_PADDING.vertical },
     summary: { marginTop: SPACE[1] },
     meta: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, alignItems: 'center' as const, gap: SPACE[2], marginTop: SPACE[2] },
     chip: {
@@ -237,6 +280,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
   // `loading` already false is exactly the fake-empty flash this screen had).
   const [{ loading, snapshots, activeId }, setLoad] = useState<HistoryLoadState>(HISTORY_LOADING);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const settled = useListSettled(!loading, t.fontScale);
   // The row actions' double-submit guard, shared by Use this version, its Undo and Make a copy. A
   // ref, not state: two taps inside one frame both read the same rendered busy value, so only a
   // synchronous claim can refuse the second.
@@ -389,13 +433,16 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
             <HistoryLoadingRows />
           </View>
         ) : (
-          <FlatList
-            data={rows}
-            keyExtractor={row => row.id}
-            renderItem={renderRow}
-            ListHeaderComponent={titleBlock}
-            contentContainerStyle={s.list}
-          />
+          <RowsMove.Provider value={settled && !t.reduceMotion ? REFLOW : undefined}>
+            <FlatList
+              data={rows}
+              keyExtractor={row => row.id}
+              renderItem={renderRow}
+              CellRendererComponent={HistoryCell}
+              ListHeaderComponent={titleBlock}
+              contentContainerStyle={s.list}
+            />
+          </RowsMove.Provider>
         )}
       </React.Fragment>
 
@@ -449,6 +496,7 @@ function HistoryRowView({
 }: Readonly<HistoryRowViewProps>) {
   const t = useTokens();
   const s = styles(t);
+  const moves = useContext(RowsMove);
   const [annotationFields, setAnnotationFields] = useState<string[]>([]);
   const [hiddenData, setHiddenData] = useState<RestoreDiffState>(RESTORE_DIFF_NONE);
   const chip = row.kind ? KIND_CHIP[row.kind] : null;
@@ -526,7 +574,7 @@ function HistoryRowView({
       <View style={s.ring}>
         <View style={[s.dot, row.isCurrent && s.dotCurrent]} />
       </View>
-      <View style={expanded ? s.card : s.flat}>
+      <Animated.View style={[s.card, expanded && s.cardOpen]} layout={moves}>
         <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded }}>
           {words}
           {summary && <View style={s.summary}>{summary}</View>}
@@ -553,7 +601,7 @@ function HistoryRowView({
         </Pressable>
 
         {expanded && (
-          <View style={s.expanded}>
+          <Animated.View style={s.expanded} entering={moves === undefined ? undefined : ACTIONS_IN}>
             {row.touched.length > 0 && (
               <>
                 <Text type="footnote" color="text-2" header>
@@ -598,9 +646,9 @@ function HistoryRowView({
                 />
               )}
             </View>
-          </View>
+          </Animated.View>
         )}
-      </View>
+      </Animated.View>
     </View>
   );
 }

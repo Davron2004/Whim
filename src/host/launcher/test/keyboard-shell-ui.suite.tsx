@@ -29,7 +29,7 @@ import { reportClientOptions } from '../transport-shared';
 import { button, freshApp, press, textOf, unmountScreen, hostType } from './react-screen';
 import { testAppInfo } from './client-fixtures';
 import { Keyboard, Platform, StyleSheet, changeKeyboardFrame, keyboardFrameListenerCount, refuseModalPresentations, setColorScheme, useSafeAreaInsets } from './native-host';
-import { dragKeyboard, emitKeyboardEvent, endKeyboard, keyboardRequests, keyboardState, keyboardSubscriptions, keyboardWindow, moveKeyboard, resetKeyboard, startKeyboard, stepKeyboard } from './native-keyboard-controller';
+import { dismissals, dragKeyboard, emitKeyboardEvent, endKeyboard, keyboardRequests, keyboardState, keyboardSubscriptions, keyboardWindow, moveKeyboard, resetKeyboard, startKeyboard, stepKeyboard } from './native-keyboard-controller';
 import { emitNativeEvent, holdAnimations } from './native-reanimated';
 
 type Tree = TestRenderer.ReactTestRenderer;
@@ -413,6 +413,15 @@ const report = (onClose = noop) => (
   </Sheet>
 );
 const editFourthRow = (tree: Tree) => press(tree.root.find((n) => String(n.type) === 'Pressable' && n.props.accessibilityRole === 'button' && textOf(n).includes('A soft chime')));
+
+/** Describe in a large sheet that `close.current()` closes, as a person's close does. */
+function closableSheet(close: { current: () => void }) {
+  return function Closable() {
+    const [visible, setVisible] = React.useState(true);
+    close.current = () => setVisible(false);
+    return <Sheet visible={visible} detent="large" onClose={noop}><DescribePage text="" onChangeText={noop} onContinue={noop} /></Sheet>;
+  };
+}
 
 export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
   await h.test('describe opens with the keyboard: its field takes focus once mounted, and the idea chips wait for the keyboard to go down', async () => {
@@ -903,11 +912,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
 
   await h.test('Android: a sheet that is leaving asks for no keyboard — closed before its window reports it is shown, or while its field is still asking (the keyboard would rise over a sheet on its way out)', async () => {
     const close = { current: noop };
-    function Closable() {
-      const [visible, setVisible] = React.useState(true);
-      close.current = () => setVisible(false);
-      return <Sheet visible={visible} detent="large" onClose={noop}><DescribePage text="" onChangeText={noop} onContinue={noop} /></Sheet>;
-    }
+    const Closable = closableSheet(close);
     const release = refuseModalPresentations();
     const hold = holdAnimations();
     try {
@@ -925,6 +930,33 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         await TestRenderer.act(async () => close.current());
         await playFrames(5);
         h.eq(keyboardRequests.asked, asked, 'closed while asking: it asks no more');
+      });
+    } finally {
+      hold();
+      release();
+    }
+  });
+
+  await h.test('Android: a close that starts while the keyboard is still on its way cancels it — the show that comes after the close began is cut away at once, unanimated; a sheet that stays keeps its keyboard', async () => {
+    const close = { current: noop };
+    const Closable = closableSheet(close);
+    const release = refuseModalPresentations();
+    const hold = holdAnimations();
+    try {
+      await on(ANDROID_17, <Closable />, async ({ tree }) => {
+        await TestRenderer.act(async () => tree.root.find(isType('Modal')).props.onShow());
+        await playFrames(2);
+        await TestRenderer.act(async () => moveKeyboard(KEYBOARD_HEIGHT));
+        h.eq(dismissals.length, 0, 'control: open, the keyboard it asked for stays');
+      });
+      await on(ANDROID_17, <Closable />, async ({ tree }) => {
+        await TestRenderer.act(async () => tree.root.find(isType('Modal')).props.onShow());
+        await playFrames(2);
+        h.ok(keyboardRequests.asked > 0 && !keyboardState.visible, 'setup: the field has asked, and no keyboard has come yet');
+        await TestRenderer.act(async () => close.current());
+        h.eq(dismissals.length, 0, 'setup: no keyboard to put away as the close starts');
+        await TestRenderer.act(async () => moveKeyboard(KEYBOARD_HEIGHT));
+        h.eq(dismissals, [{ animated: false }], 'the keyboard that comes once the close began is cut away at once, with no frames');
       });
     } finally {
       hold();

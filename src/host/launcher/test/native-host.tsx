@@ -142,8 +142,22 @@ export function Modal(props: HostProps) {
   if (!visible && !(ios && kept)) return null;
   return React.createElement('Modal', props, React.createElement(PresenterContext.Provider, { value: self }, props.children));
 }
-export function FlatList({ data, renderItem, ListHeaderComponent, ...props }: HostProps & { data: unknown[]; renderItem: (args: { item: unknown; index: number }) => React.ReactNode; ListHeaderComponent?: React.ReactElement }) {
-  const items = data.map((item, index) => React.createElement(React.Fragment, { key: index }, renderItem({ item, index })));
+/** Every item is drawn (no windowing), keyed as the list keys its cells, inside the list's
+ *  `CellRendererComponent` when it gives one, as the native list's cell views are. */
+export function FlatList({ data, renderItem, ListHeaderComponent, keyExtractor, CellRendererComponent, ...props }: HostProps & {
+  data: unknown[];
+  renderItem: (args: { item: unknown; index: number }) => React.ReactNode;
+  ListHeaderComponent?: React.ReactElement;
+  keyExtractor?: (item: unknown, index: number) => string;
+  CellRendererComponent?: React.ComponentType<{ cellKey: string; index: number; item: unknown; children: React.ReactNode }>;
+}) {
+  const items = data.map((item, index) => {
+    const key = keyExtractor?.(item, index) ?? String(index);
+    const cell = renderItem({ item, index });
+    return CellRendererComponent
+      ? React.createElement(CellRendererComponent, { key, cellKey: key, index, item, children: cell })
+      : React.createElement(React.Fragment, { key }, cell);
+  });
   return React.createElement('FlatList', props, ListHeaderComponent, ...items);
 }
 /** The app's state, as `AppState` reports it; `setAppState` plays a change to every listener. */
