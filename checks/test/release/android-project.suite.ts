@@ -132,7 +132,9 @@ const DIALOG_WALK_CALLS = /^ *clearDialogNavigationBarScrims\(\)\n/gm;
 /** The dialog walk clearing a dialog's window. */
 const DIALOG_CLEAR_CALLS = /^ *clearNavigationBarScrim\(dialogWindow\)\n/gm;
 /** The window listing handing over to the walk. */
-const WALK_FROM_LISTING = /^ *if \(unlisted\) watchDialogScrims\(window\.decorView\)\n/m;
+const WALK_FROM_LISTING = /^ *if \(unwatched\) watchDialogScrims\(window\.decorView\)\n/m;
+/** The listing skipping a window once its dialog is watched. */
+const SKIP_WATCHED = / \|\| root in scrimWatched\)/;
 /** The dialog's pre-draw listener starting the walk again after clearing its window (the nested-sheet fix). */
 const DIALOG_LISTENER_WALK = /(\n *clearNavigationBarScrim\(dialogWindow\)\n) *clearDialogNavigationBarScrims\(\)\n/;
 /** The dialog's pre-draw listener clearing its window again (React Native turns the scrim back on). */
@@ -291,6 +293,13 @@ export async function run(): Promise<void> {
       content: () => REAL_MAIN_ACTIVITY.replace(WALK_FROM_LISTING, ''),
       expectFile: ANDROID_MAIN_ACTIVITY_PATH,
       matches: /clearDialogNavigationBarScrims, listing/,
+    },
+    {
+      name: 'a MainActivity whose listing stops walking for a window once it has listed it, watched or not, fails (a preallocated Modal\'s dialog shows before its host is in the tree)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(SKIP_WATCHED, ' || root in scrimUnwatchedChecks)'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /clearDialogNavigationBarScrims must keep walking for a window until its dialog is in scrimWatched/,
     },
     {
       name: 'a MainActivity whose dialog listener no longer walks fails (the activity\'s listener still does: a sheet opened from a sheet keeps its band)',

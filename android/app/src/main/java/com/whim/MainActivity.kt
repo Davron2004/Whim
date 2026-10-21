@@ -99,16 +99,26 @@ class MainActivity : ReactActivity() {
   // A dialog is found from the window it is presented from: a Modal's host view sits in the
   // activity's view tree or, for an overlay inside another's content, in that overlay's dialog, so
   // the walk follows each host into its dialog. A check runs before every frame of the activity
-  // and of each dialog, and walks only when this activity has a window it hasn't listed yet: a
-  // dialog that just showed, or a window that is no Modal's, such as an AlertDialog, a date picker
-  // or Chromium's select dialog (a popup, the text-selection toolbar or WebView autofill carries
-  // its anchor's window token, not the activity's, so it is never listed). So each new window costs
-  // one walk, and a dialog is found in the frame it shows, nested or shown over another, with no
-  // wait on a focus change (a dialog shown over another takes that one's focus, never the
+  // and of each watched dialog, and walks while this activity has a window it doesn't watch yet:
+  // a dialog that just showed, or a window that is no Modal's, such as an AlertDialog, a date
+  // picker or Chromium's select dialog (a popup, the text-selection toolbar or WebView autofill
+  // carries its anchor's window token, not the activity's, so it is never listed). A window seen
+  // once is not done: with Fabric's view preallocation (on by default) a Modal's host is created
+  // with its props ahead of the commit that inserts it, and `ReactModalHostManager`'s
+  // `onAfterUpdateTransaction` shows its dialog right then, so the dialog can draw for frames
+  // before any walk can reach its host. So the walk goes on until the window is watched, or until
+  // it has been listed unwatched for SCRIM_WALK_FRAMES checks, which only a window that is no
+  // Modal's reaches; then it costs nothing more. A check runs only when the activity or a watched
+  // dialog draws, and inserting the host draws the window it lands in (the parent's `addView`
+  // invalidates it, and the mount lays the new view out), so the walk finds the host in the frame
+  // it is inserted, as long as budget is left: about a second of one window drawing at 120 Hz, two
+  // at 60, longer than the rest of the render that preallocated the host takes to commit (an idle
+  // screen draws no frames, so it spends none). A dialog is found nested or shown over another,
+  // with no wait on a focus change (a dialog shown over another takes that one's focus, never the
   // activity's). Windows are listed from API 29, the first that has the scrim. The bar's icons stay
   // legible on their own: they follow the scheme (`onConfigurationChanged`, `mirrorBarAppearance`).
   private val scrimWatched = WeakHashMap<View, Unit>()
-  private val scrimListed = WeakHashMap<View, Unit>()
+  private val scrimUnwatchedChecks = WeakHashMap<View, Int>()
 
   private fun clearNavigationBarScrim(target: Window) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
@@ -118,13 +128,16 @@ class MainActivity : ReactActivity() {
   private fun clearDialogNavigationBarScrims() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
     val token = window.attributes.token
-    var unlisted = false
+    var unwatched = false
     for (root in WindowInspector.getGlobalWindowViews()) {
-      if (root === window.decorView) continue
+      if (root === window.decorView || root in scrimWatched) continue
       if ((root.layoutParams as? WindowManager.LayoutParams)?.token !== token) continue
-      if (scrimListed.put(root, Unit) == null) unlisted = true
+      val checks = scrimUnwatchedChecks[root] ?: 0
+      if (checks >= SCRIM_WALK_FRAMES) continue
+      scrimUnwatchedChecks[root] = checks + 1
+      unwatched = true
     }
-    if (unlisted) watchDialogScrims(window.decorView)
+    if (unwatched) watchDialogScrims(window.decorView)
   }
 
   private fun watchDialogScrims(view: View) {
@@ -227,6 +240,7 @@ class MainActivity : ReactActivity() {
 
   private companion object {
     const val TAG = "Whim"
+    const val SCRIM_WALK_FRAMES = 120
     const val BAR_APPEARANCE =
         WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
             WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS

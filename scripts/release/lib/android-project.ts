@@ -262,8 +262,10 @@ function preDrawListeners(body: string): { lambdas: string[]; rest: string } {
  *  created, and the dialog walk must run before each of the activity's frames (its pre-draw
  *  listener), follow each host into its dialog (where nested hosts live), and give each dialog a
  *  pre-draw listener that clears the dialog's window and runs the walk again (a sheet opened from a
- *  sheet). Each call is looked for where it must sit, not anywhere in the function. Comments are
- *  dropped, so a commented-out call fails. */
+ *  sheet). The listing must skip a window only once its dialog is watched (`scrimWatched`, or a
+ *  frame budget): a window merely seen once may be a preallocated Modal's dialog whose host isn't in
+ *  the tree yet. Each call is looked for where it must sit, not anywhere in the function. Comments
+ *  are dropped, so a commented-out call fails. */
 function checkNavigationBarScrim(repoRoot: string): AndroidProjectFinding[] {
   let text: string;
   try {
@@ -303,7 +305,10 @@ function checkNavigationBarScrim(repoRoot: string): AndroidProjectFinding[] {
   }
   const dialogs = kotlinFunction(code, 'clearDialogNavigationBarScrims');
   if (dialogs === undefined || !/\bwatchDialogScrims\(/.test(dialogs.body)) {
-    problems.push('MainActivity must define clearDialogNavigationBarScrims, listing the activity\'s windows and calling watchDialogScrims while one is unlisted');
+    problems.push('MainActivity must define clearDialogNavigationBarScrims, listing the activity\'s windows and calling watchDialogScrims while one is unwatched');
+  }
+  if (dialogs !== undefined && !/\broot\s+!?in\s+scrimWatched\b|\bscrimWatched\.containsKey\(\s*root\s*\)/.test(dialogs.body)) {
+    problems.push('MainActivity.clearDialogNavigationBarScrims must keep walking for a window until its dialog is in scrimWatched (or its frame budget is spent), never stop once it has listed it: React Native can show a preallocated Modal\'s dialog frames before its host is in the tree');
   }
   return problems.map((message) => ({ file: ANDROID_MAIN_ACTIVITY_PATH, message }));
 }
