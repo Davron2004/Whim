@@ -10,7 +10,9 @@
  *  layout animations (`FadeIn`, `FadeOut`, `LinearTransition`, `FadingTransition` and their builder calls) they enter and
  *  exit with in `layoutAnimations`; `playedUnder` says what one does under Reduce Motion.
  *  Each mount of an Animated view is a native view of its own (`viewTagOf`).
- *  `useAnimatedReaction` reacts synchronously, `measure` reports `measuredRect` (or a view's own, `measuring`). The double's own
+ *  `useAnimatedReaction` reacts synchronously, `measure` reports `measuredRect` (or a view's own, `measuring`), except in a
+ *  `useAnimatedStyle` run a render made rather than a shared value changing: Reanimated computes a style on the JS thread
+ *  only as it mounts (where `measure` has no views, so null), and otherwise on a UI frame. The double's own
  *  contract is `native-reanimated.suite.tsx`. */
 import React from 'react';
 
@@ -228,21 +230,35 @@ export function useSharedValue<T>(initial: T): SharedValue<T> {
   ref.current ??= new SharedValue(initial);
   return ref.current;
 }
+/** A `useAnimatedStyle` is running for a render, not a UI frame: `measure` answers null. */
+let onJsThread = false;
 /** The styles `useAnimatedStyle` made, with the updater that keeps each current on the UI thread. */
 const animatedStyles = new WeakMap<object, () => unknown>();
 
 export function useAnimatedStyle<T>(updater: () => T): T {
   const [, repaint] = React.useReducer((n: number) => n + 1, 0);
+  const uiFrame = React.useRef(false);
   reading = new Set();
-  const style = updater();
+  onJsThread = !uiFrame.current;
+  uiFrame.current = false;
+  let style: T;
+  try {
+    style = updater();
+  } finally {
+    onJsThread = false;
+  }
   if (typeof style === 'object' && style !== null) animatedStyles.set(style, updater);
   const read = [...reading].map((value) => [value, value.version] as const);
   reading = null;
   React.useEffect(() => {
-    const stops = read.map(([value]) => value.listen(repaint));
+    const frame = () => {
+      uiFrame.current = true;
+      repaint();
+    };
+    const stops = read.map(([value]) => value.listen(frame));
     // An assignment made after this render but before this effect subscribed (an earlier effect
     // of the same component) still repaints.
-    if (read.some(([value, version]) => value.version !== version)) repaint();
+    if (read.some(([value, version]) => value.version !== version)) frame();
     return () => { for (const stop of stops) stop(); };
   });
   return style;
@@ -384,7 +400,7 @@ export const measuredRect = { x: 0, y: 0, width: 100, height: 100, pageX: 0, pag
 export const measuring: { rectOf: ((node: unknown) => typeof measuredRect | undefined) | null } = { rectOf: null };
 /** Reanimated's synchronous measurement: the view's rect, or null once its ref holds no view. */
 export function measure<T>(ref: AnimatedRef<T>): typeof measuredRect | null {
-  if (ref.current === null) return null;
+  if (ref.current === null || onJsThread) return null;
   return { ...(measuring.rectOf?.(ref.current) ?? measuredRect) };
 }
 

@@ -143,8 +143,9 @@ function Flow({ ready, acted }: Readonly<{ ready: boolean; acted: string[] }>) {
 }
 
 /** The making sheet open on Making (Reduce Motion `reduced`), then the delivery landing with motion
- *  held at its first frame. */
-async function land(reduced = false): Promise<{ tree: Tree; acted: string[]; release: () => void }> {
+ *  held at its first frame: the UI thread's, unless `uiFrame` is false (then only the styles the JS
+ *  thread computed as the Ready page mounted, before anything was measured). */
+async function land(reduced = false, uiFrame = true): Promise<{ tree: Tree; acted: string[]; release: () => void }> {
   places.source = SOURCE;
   places.target = TARGET;
   measuring.rectOf = placeOf;
@@ -154,6 +155,7 @@ async function land(reduced = false): Promise<{ tree: Tree; acted: string[]; rel
   animations.splice(0);
   const release = holdAnimations();
   await TestRenderer.act(async () => tree.update(<Flow ready acted={acted} />));
+  if (uiFrame) await run(() => elapseSprings(0));
   return { tree, acted, release };
 }
 async function leave(tree: Tree, release: () => void): Promise<void> {
@@ -309,6 +311,17 @@ export async function runReadyMotionUiTests(h: Harness): Promise<void> {
     } finally { await leave(tree, release); }
   });
 
+  await h.test('Making → Ready: as the travel sets out, one ember is seen on every frame — the Making page’s own until the layer has measured where to draw the travelling one, then only that one', async () => {
+    const { tree, release } = await land(false, false);
+    try {
+      h.eq([flying(tree) === null, seenEmbers(tree).length, tree.root.findAllByType(MakingPage).length], [true, 1, 1], 'before the UI thread has measured, the layer draws nothing and the Making page is still seen');
+      h.ok(inside(seenEmbers(tree)[0], tree.root.findByType(MakingPage)), 'the ember seen is the Making page’s own');
+      await run(() => elapseSprings(0));
+      const start = flying(tree);
+      h.ok(start !== null && seenEmbers(tree).length === 1 && inside(seenEmbers(tree)[0], start.node), 'from the first frame the layer draws it, only the travelling ember is seen');
+    } finally { await leave(tree, release); }
+  });
+
   await h.test('Making → Ready: every frame measures both places, so a target that moves mid-flight is retargeted and a sheet dragged mid-flight carries the ember with it', async () => {
     const { tree, release } = await land();
     try {
@@ -321,7 +334,7 @@ export async function runReadyMotionUiTests(h: Harness): Promise<void> {
       const before = flying(tree)!;
       places.source = { ...SOURCE, pageY: SOURCE.pageY + 40 };
       places.target = { ...places.target, pageY: places.target.pageY + 40 };
-      await TestRenderer.act(async () => tree.update(<Flow ready acted={[]} />));
+      await run(() => elapseSprings(0));
       const dragged = flying(tree)!;
       h.eq([dragged.scale, close(dragged.y - before.y, 40), close(dragged.x, before.x)], [before.scale, true, true], 'both places 40 pt lower, the ember is 40 pt lower at the same progress');
     } finally { await leave(tree, release); }

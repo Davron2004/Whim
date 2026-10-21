@@ -16,7 +16,7 @@
  */
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import Animated, { measure, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, type SharedValue } from 'react-native-reanimated';
+import Animated, { makeMutable, measure, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import { springConfig } from './tokens-pure';
 
@@ -31,6 +31,8 @@ interface Flight {
   readonly target: PlaceRef;
   readonly node: React.ReactNode;
   readonly onLanded: () => void;
+  /** How far it has come, 0 → 1 on `morph`: its own, so no travel starts from another's end. */
+  readonly progress: SharedValue<number>;
 }
 
 interface Travel {
@@ -49,17 +51,34 @@ interface Travel {
 
 const TravelContext = createContext<Travel | null>(null);
 
+/** The element on its way, as the layer draws it. */
+interface Drawn {
+  readonly flight: Flight | null;
+  readonly layer: PlaceRef;
+}
+const DrawnContext = createContext<Drawn | null>(null);
+
+/** What the layer, the source and the target measure now, or `null` on a frame any of them cannot be
+ *  measured: the style's first run on the JS thread, before the views are laid out, or once one has gone. */
+function placesOf(layer: PlaceRef, flight: Flight) {
+  'worklet';
+  const origin = measure(layer);
+  const from = measure(flight.source);
+  const to = measure(flight.target);
+  return origin === null || from === null || to === null || to.width === 0 ? null : { origin, from, to };
+}
+
 /** The travelling element at progress `progress` between what `source` and `target` measure now, both
  *  read against the layer's own place. It is drawn at the target's size, so only its transform and
- *  opacity move (§4.3). Hidden on a frame either place cannot be measured. */
-function Flying({ flight, layer, progress }: Readonly<{ flight: Flight; layer: PlaceRef; progress: SharedValue<number> }>) {
-  const { source, target } = flight;
+ *  opacity move (§4.3). Hidden on a frame the places cannot be measured, when `TravelLeft` shows the
+ *  source's own element instead. */
+function Flying({ flight, layer }: Readonly<{ flight: Flight; layer: PlaceRef }>) {
+  const { progress } = flight;
   const style = useAnimatedStyle(() => {
     const p = progress.value;
-    const origin = measure(layer);
-    const from = measure(source);
-    const to = measure(target);
-    if (origin === null || from === null || to === null || to.width === 0) return { opacity: 0 };
+    const places = placesOf(layer, flight);
+    if (places === null) return { opacity: 0 };
+    const { origin, from, to } = places;
     const between = (a: number, b: number) => a + (b - a) * p;
     const scale = between(from.width / to.width, 1);
     return {
@@ -77,7 +96,6 @@ function Flying({ flight, layer, progress }: Readonly<{ flight: Flight; layer: P
 /** Hosts travels between the places inside it, drawing each above them. */
 export function TravelLayer({ children }: Readonly<{ children: React.ReactNode }>) {
   const layer = useAnimatedRef<View>();
-  const progress = useSharedValue(0);
   const [flight, setFlight] = useState<Flight | null>(null);
   const state = useRef({ flight: null as Flight | null, sources: new Map<string, PlaceRef>(), next: 1, listeners: new Set<() => void>() });
   const travel = useMemo<Travel>(() => {
@@ -102,9 +120,9 @@ export function TravelLayer({ children }: Readonly<{ children: React.ReactNode }
         const source = own.sources.get(name);
         if (source === undefined) return null;
         const id = own.next++;
-        own.flight = { id, source, target, node, onLanded };
+        const progress = makeMutable(0);
+        own.flight = { id, source, target, node, onLanded, progress };
         setFlight(own.flight);
-        progress.value = 0;
         progress.value = withSpring(1, MORPH, (finished) => {
           'worklet';
           if (finished) scheduleOnRN(land, id);
@@ -123,14 +141,38 @@ export function TravelLayer({ children }: Readonly<{ children: React.ReactNode }
         };
       },
     };
-  }, [progress]);
+  }, []);
+  const drawn = useMemo<Drawn>(() => ({ flight, layer }), [flight, layer]);
   return (
     <TravelContext.Provider value={travel}>
-      {children}
-      <View ref={layer} style={StyleSheet.absoluteFill} pointerEvents="none" collapsable={false}>
-        {flight ? <Flying key={flight.id} flight={flight} layer={layer} progress={progress} /> : null}
-      </View>
+      <DrawnContext.Provider value={drawn}>
+        {children}
+        <View ref={layer} style={StyleSheet.absoluteFill} pointerEvents="none" collapsable={false}>
+          {flight ? <Flying key={flight.id} flight={flight} layer={layer} /> : null}
+        </View>
+      </DrawnContext.Provider>
     </TravelContext.Provider>
+  );
+}
+
+/** A page an element has left from, kept in place (unseen by touch and by a screen reader) while the
+ *  element travels. It is hidden on exactly the frames the layer draws the element, so the element is
+ *  always seen once: never twice, and never on no frame at all as the travel sets out. */
+export function TravelLeft({ children }: Readonly<{ children: React.ReactNode }>) {
+  const drawn = useContext(DrawnContext);
+  const fallback = useSharedValue(0);
+  const flight = drawn?.flight ?? null;
+  const layer = drawn?.layer ?? null;
+  const progress = flight?.progress ?? fallback;
+  const style = useAnimatedStyle(() => {
+    // Read so this runs on every frame of the travel, as the element's own style does.
+    progress.value;
+    return { opacity: flight !== null && layer !== null && placesOf(layer, flight) !== null ? 0 : 1 };
+  });
+  return (
+    <Animated.View style={[StyleSheet.absoluteFill, style]} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      {children}
+    </Animated.View>
   );
 }
 

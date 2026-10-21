@@ -17,13 +17,13 @@
  * so the headlines start at the same height.
  *
  * A page that hands an element on to the next (the Making page's ember, which travels into the Ready
- * page's tile: `TravelLayer`) stays mounted, unseen and untouchable under the page that replaced it,
- * until the element has landed, so the travel sets out from where it is drawn.
+ * page's tile: `TravelLayer`) stays mounted, untouchable, under the page that replaced it,
+ * until the element has landed, so the travel sets out from where it is drawn (`TravelLeft`).
  */
 import React, { useEffect, useReducer, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Sheet, type SheetDetent } from '../ui/Sheet';
-import { useTravel } from '../ui/TravelLayer';
+import { TravelLeft, useTravel } from '../ui/TravelLayer';
 
 /** A page to show: what it is shown under, the page itself, and the height it takes: `large` (the
  *  making flow) unless it asks to `fit` its content (the Whim sheet's own pages). A page that asks for
@@ -93,11 +93,7 @@ function Pages({ shown }: Readonly<{ shown: SheetContent }>) {
   }, [left, travel]);
   return (
     <>
-      {left ? (
-        <View key={left.serial} style={styles.left} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-          {left.node}
-        </View>
-      ) : null}
+      {left ? <TravelLeft key={left.serial}>{left.node}</TravelLeft> : null}
       <View key={current.serial} style={styles.page}>
         {current.node}
       </View>
@@ -108,5 +104,4 @@ function Pages({ shown }: Readonly<{ shown: SheetContent }>) {
 const styles = StyleSheet.create({
   // A page fills the sheet's body as the body fills the card (`Sheet`), so it lays out as if unwrapped.
   page: { flexGrow: 1, flexShrink: 1 },
-  left: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: 0 },
 });

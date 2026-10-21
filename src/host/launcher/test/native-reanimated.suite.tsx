@@ -236,7 +236,7 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
 
   await h.test('reanimated double: measure reports the set rect for a mounted view and null once it goes', async () => {
     let ref!: ReturnType<typeof useAnimatedRef<View>>;
-    function Probe() {
+    function Probe(_: Readonly<{ pass: number }>) {
       ref = useAnimatedRef<View>();
       return <Animated.View ref={ref} />;
     }
@@ -251,6 +251,30 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
       Object.assign(measuredRect, before);
     }
     h.eq(measure(ref), null, 'an unmounted view measures null');
+  });
+
+  await h.test('reanimated double: a style measuring a view gets null when a render runs it (the JS thread) and the rect when a shared value does (a UI frame)', async () => {
+    let ref!: ReturnType<typeof useAnimatedRef<View>>;
+    let value!: ReturnType<typeof useSharedValue<number>>;
+    const widths: (number | null)[] = [];
+    function Probe() {
+      ref = useAnimatedRef<View>();
+      value = useSharedValue(0);
+      const style = useAnimatedStyle(() => {
+        widths.push(value.value >= 0 ? (measure(ref)?.width ?? null) : null);
+        return {};
+      });
+      return <Animated.View ref={ref} style={style} />;
+    }
+    const tree = await renderScreen(<Probe pass={0} />, { createNodeMock: () => ({}) });
+    try {
+      await TestRenderer.act(async () => { value.value = 1; });
+      const framed = widths.length;
+      await TestRenderer.act(async () => tree.update(<Probe pass={1} />));
+      h.eq([widths[0], widths[framed - 1], widths[framed]], [null, measuredRect.width, null], 'null as it mounts, the view’s width on a UI frame, null again on the re-render’s own run');
+    } finally {
+      await unmountScreen(tree);
+    }
   });
 
   await h.test('reanimated double: Animated views log their entering and exiting animations with every builder call', async () => {
