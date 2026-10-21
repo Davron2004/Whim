@@ -411,6 +411,14 @@ function stackFor(screen: Screen): readonly StackScreen[] | null {
 
 const HOME: Screen = { kind: 'home' };
 
+/** `node`, except while `hold`: then the one rendered last before it, the same element, which React
+ *  does not render again. */
+function useHeld(node: React.ReactNode, hold: boolean): React.ReactNode {
+  const held = useRef(node);
+  if (!hold) held.current = node;
+  return held.current;
+}
+
 /** An app coming out of its tile or going back into it (`AppMorph`), named by its launch's `tappedAt`. */
 interface StageMorph {
   readonly at: number;
@@ -896,6 +904,8 @@ function LauncherShell({
   // launch: a stale one names a launch no longer running.
   const [stageMorph, setStageMorph] = useState<StageMorph | null>(null);
   const morphNow = morphOf(stageMorph, screen);
+  const morphRef = useRef(morphNow);
+  morphRef.current = morphNow;
   // The same, for a run or a toast that acts later than the render it was started from.
   const runningRef = useRef(running);
   runningRef.current = running;
@@ -1596,8 +1606,10 @@ function LauncherShell({
   /** A tile on Home: the app it opens, out of the tile. Its own app's tile, while that app is going
    *  back into it, turns it back out (M3 "Reopening retargets"); while it is coming out, nothing. */
   const openFromHome = (app: InstalledApp, fromTile?: boolean) => {
-    if (screen.kind === 'app' && screen.app.id === app.id) {
-      if (morphNow?.leaving) setStageMorph({ ...morphNow, leaving: false });
+    // Read through refs: Home under an app coming out of its tile is the one drawn before it (`useHeld`).
+    const morph = morphRef.current;
+    if (morph !== null && runningRef.current?.app.id === app.id) {
+      if (morph.leaving) setStageMorph({ ...morph, leaving: false });
       return;
     }
     onOpen(app, undefined, fromTile === true).catch(() => undefined);
@@ -3853,6 +3865,9 @@ function LauncherShell({
   } else {
     content = renderScreenContent();
   }
+  // Home under an app coming out of its tile is the Home drawn as it was tapped, not drawn again: the
+  // app's first frames go to its page (tap-to-first-paint).
+  content = useHeld(content, morphNow?.homeUnder === true && !morphNow.leaving);
 
   // Task 15.2 (design-system-v1 D12): the shell root, not HomeScreen's layout, ends the launch-screen
   // hold, on the frame after the first real screen (Home, or a link's landing) commits; the skeleton

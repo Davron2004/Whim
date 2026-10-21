@@ -15,7 +15,7 @@
 // fresh WebView starts waiting, unseen, once the launch has painted, so the next is warm too.
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
-import Animated, { useAnimatedReaction, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { useAnimatedReaction, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -346,8 +346,8 @@ interface MorphInputs {
   failed: boolean;
 }
 
-/** M2 and M3 (`AppMorph`) over the opening state (task 18.3): the `bg` leaf (`leafStyle`), which is
- *  also what covers the page until it is revealed; the plate's opacity and its place on the tile
+/** M2 and M3 (`AppMorph`) over the opening state (task 18.3): how far the app's `bg` has grown, how
+ *  much of it covers the page and where the tile is (`shape`, drawn by `BgShape`); the plate's opacity and its place on the tile
  *  (`plateMove`, "Opening…" under it: `labelMove`), centred when the app came from no tile; the orb,
  *  which comes and goes with the app. The page is revealed once the `bg` covers the screen and this
  *  launch has painted (or the 600 ms cap passed). */
@@ -364,16 +364,20 @@ function useAppMorph({ morph, appId, frame, reduceMotion, look, failed }: MorphI
   // 1 while the page is covered, 0 once it shows.
   const veil = useSharedValue(1);
   const plate = useSharedValue(1);
+  // The orb comes in once the app covers the screen and goes as it leaves.
+  const orbShown = useSharedValue(fromTile ? 0 : 1);
   const tileAt = useSharedValue<TileAt | null>(null);
   const [covered, setCovered] = useState(!fromTile);
 
-  // The tile on every frame the app moves, kept where it was last seen once Home has gone.
+  // Where the tile is: measured once as the app comes out of it, kept once Home has gone (every view a
+  // frame moves is a commit of its own, and the page paints its first frame meanwhile); on every frame
+  // it goes back into it, where Home under it may still be settling.
   useAnimatedReaction(
-    () => (Number.isFinite(grown.value) && tile !== null ? placeIn(frame, tile) : null),
+    () => (Number.isFinite(grown.value) && tile !== null && (leaving || tileAt.value === null) ? placeIn(frame, tile) : null),
     (at) => {
       if (at !== null) tileAt.value = at;
     },
-    [frame, tile],
+    [frame, tile, leaving],
   );
   const coveredNow = useCallback(() => {
     setCovered(true);
@@ -414,6 +418,10 @@ function useAppMorph({ morph, appId, frame, reduceMotion, look, failed }: MorphI
     if (leaving) return;
     plate.value = look.plate ? 1 : withTiming(0, timing('fadeIn', reduceMotion));
   }, [plate, look.plate, leaving, reduceMotion]);
+  useEffect(() => {
+    const shown = covered && !leaving ? 1 : 0;
+    if (orbShown.value !== shown) orbShown.value = withTiming(shown, timing(shown === 1 ? 'fadeIn' : 'fadeOut', reduceMotion));
+  }, [orbShown, covered, leaving, reduceMotion]);
 
   // Leaving: the page goes under the `bg` first (§4.3 rule 4), so the launcher can draw Home under the
   // app; then back into the tile from wherever it is, the plate coming back where the tile is. A tap on
@@ -454,21 +462,6 @@ function useAppMorph({ morph, appId, frame, reduceMotion, look, failed }: MorphI
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leaving, homeUnder, failed]);
 
-  // The one leaf whose insets and corners move (§4.3 rule 4): from the tile's measured rect to the
-  // stage's. With no tile measured, and under Reduce Motion, it keeps the stage's size and fades.
-  const leafStyle = useAnimatedStyle(() => {
-    const k = clamp01(grown.value);
-    const at = tileAt.value;
-    if (reduceMotion || at === null || k >= 1) return { opacity: veil.value * k, top: 0, left: 0, right: 0, bottom: 0, borderRadius: 0 };
-    return {
-      opacity: veil.value,
-      top: lerp(at.y, 0, k),
-      left: lerp(at.x, 0, k),
-      right: lerp(at.frameWidth - at.x - at.width, 0, k),
-      bottom: lerp(at.frameHeight - at.y - at.height, 0, k),
-      borderRadius: lerp(TILE.corner * at.width, 0, k),
-    };
-  });
   const plateStyle = useAnimatedStyle(() => ({ opacity: plate.value }));
   // The plate sits where the tile is, at its drawn size, for an app that came out of it or is going
   // back into it, and is not drawn until the tile has been measured; centred otherwise.
@@ -487,8 +480,82 @@ function useAppMorph({ morph, appId, frame, reduceMotion, look, failed }: MorphI
     const dy = at.y + at.height - (at.frameHeight + TILE_SIDE.grid) / 2;
     return { opacity: 1, transform: [{ translateX: dx }, { translateY: dy }] };
   });
-  const orbStyle = useAnimatedStyle(() => ({ opacity: clamp01(grown.value) }));
-  return { leafStyle, plateStyle, plateMove, labelMove, orbStyle, moving };
+  const orbStyle = useAnimatedStyle(() => ({ opacity: orbShown.value }));
+  return { shape: { grown, veil, tileAt, reduceMotion }, plateStyle, plateMove, labelMove, orbStyle, moving };
+}
+
+/** Where the app's `bg` is, `k` of the way from the tile `at` to the stage, and its corner radius;
+ *  `full` when it is the whole stage (grown, or with no tile to grow from, or under Reduce Motion,
+ *  where only its opacity moves). */
+function shapeOf(k: number, at: TileAt | null, reduced: boolean) {
+  'worklet';
+  if (reduced || at === null || k >= 1) return { full: true, x: 0, y: 0, w: 1, h: 1, r: 0, fw: 1, fh: 1 };
+  return {
+    full: false,
+    x: lerp(at.x, 0, k),
+    y: lerp(at.y, 0, k),
+    w: lerp(at.width, at.frameWidth, k),
+    h: lerp(at.height, at.frameHeight, k),
+    r: lerp(TILE.corner * at.width, 0, k),
+    fw: at.frameWidth,
+    fh: at.frameHeight,
+  };
+}
+
+/** The corner discs are drawn at this diameter and scaled uniformly to the corner's radius. */
+const CORNER_DISC = 64;
+
+interface BgShapeProps {
+  grown: SharedValue<number>;
+  veil: SharedValue<number>;
+  tileAt: SharedValue<TileAt | null>;
+  reduceMotion: boolean;
+  color: string;
+}
+
+/**
+ * The app's `bg` growing out of its tile (M2) and back into it (M3), which is also what covers the page
+ * until it is revealed. Moved by transforms only (§4.3 rule 4's default): animating a view's size goes
+ * through a layout commit on every frame, which on Android delayed the page's first paint by two
+ * frames (`tapToPaintMs`, emulator, 71 → 102 ms). The rounded rect is drawn as two plain bars,
+ * stretched (no rounded shape is ever scaled unevenly), and four discs at its corners, scaled
+ * evenly to the radius. Its opacity only ever moves while it is the whole stage, drawn by one bar.
+ */
+const BgShape = React.memo(function BgShapeView({ grown, veil, tileAt, reduceMotion, color }: Readonly<BgShapeProps>) {
+  const across = useAnimatedStyle(() => {
+    const s = shapeOf(clamp01(grown.value), tileAt.value, reduceMotion);
+    const opacity = s.full ? veil.value * clamp01(grown.value) : veil.value;
+    return { opacity, transform: [{ translateX: s.x }, { translateY: s.full ? 0 : s.y + s.r }, { scaleX: s.full ? 1 : s.w / s.fw }, { scaleY: s.full ? 1 : (s.h - 2 * s.r) / s.fh }] };
+  });
+  const down = useAnimatedStyle(() => {
+    const s = shapeOf(clamp01(grown.value), tileAt.value, reduceMotion);
+    if (s.full) return { opacity: 0, transform: [{ translateX: 0 }, { translateY: 0 }, { scaleX: 1 }, { scaleY: 1 }] };
+    return { opacity: veil.value, transform: [{ translateX: s.x + s.r }, { translateY: s.y }, { scaleX: (s.w - 2 * s.r) / s.fw }, { scaleY: s.h / s.fh }] };
+  });
+  return (
+    <>
+      <Animated.View style={[styles.shapeBar, { backgroundColor: color }, across]} pointerEvents="none" />
+      <Animated.View style={[styles.shapeBar, { backgroundColor: color }, down]} pointerEvents="none" />
+      {CORNERS.map((corner) => (
+        <Corner key={corner.join()} corner={corner} grown={grown} veil={veil} tileAt={tileAt} reduceMotion={reduceMotion} color={color} />
+      ))}
+    </>
+  );
+});
+
+/** Which corner a disc rounds: 0 the leading or top side, 1 the trailing or bottom side. */
+const CORNERS = [[0, 0], [1, 0], [0, 1], [1, 1]] as const;
+
+function Corner({ corner: [right, bottom], grown, veil, tileAt, reduceMotion, color }: Readonly<BgShapeProps & { corner: readonly [number, number] }>) {
+  const style = useAnimatedStyle(() => {
+    const s = shapeOf(clamp01(grown.value), tileAt.value, reduceMotion);
+    if (s.full) return { opacity: 0, transform: [{ translateX: 0 }, { translateY: 0 }, { scale: 0 }] };
+    return {
+      opacity: veil.value,
+      transform: [{ translateX: s.x + right * (s.w - 2 * s.r) }, { translateY: s.y + bottom * (s.h - 2 * s.r) }, { scale: (2 * s.r) / CORNER_DISC }],
+    };
+  });
+  return <Animated.View style={[styles.shapeCorner, { backgroundColor: color }, style]} pointerEvents="none" />;
 }
 
 /** System back while the app moves between its tile and the screen (`useAppMorph`): mounted only then,
@@ -623,7 +690,7 @@ export default function MiniAppView({
     return () => clearTimeout(cap);
   }, [slotKey, deliveredFor]);
   const look = openingLook(surface, { cap: slotKey !== null && capFor === slotKey, label: slotKey !== null && labelFor === slotKey });
-  const { leafStyle, plateStyle, plateMove, labelMove, orbStyle, moving } = useAppMorph({
+  const { shape, plateStyle, plateMove, labelMove, orbStyle, moving } = useAppMorph({
     morph,
     appId: installedApp.id,
     frame,
@@ -694,7 +761,7 @@ export default function MiniAppView({
           layers define all four insets, so they span the root's full border-box (the root already
           sits below the status bar). `pointerEvents="none"` keeps the orb's guaranteed exit
           reachable throughout the wait. */}
-      <Animated.View style={[styles.leaf, { backgroundColor: bg }, leafStyle]} pointerEvents="none" />
+      <BgShape {...shape} color={bg} />
       <Animated.View
         style={[styles.layer, styles.opening, plateStyle]}
         pointerEvents="none"
@@ -730,8 +797,10 @@ const styles = StyleSheet.create({
   // The one action, the full width.
   errorAction: { alignSelf: 'stretch' },
   layer: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
-  // The app's `bg`: its insets and corners are the morph's (`useAppMorph`).
-  leaf: { position: 'absolute' },
+  // The app's `bg` (`BgShape`): two bars laid out over the whole stage and four corner discs, each
+  // moved and scaled from its top-left.
+  shapeBar: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, transformOrigin: 'left top' },
+  shapeCorner: { position: 'absolute', top: 0, left: 0, width: CORNER_DISC, height: CORNER_DISC, borderRadius: CORNER_DISC / 2, transformOrigin: 'left top' },
   opening: { alignItems: 'center', justifyContent: 'center' },
   // Under the centred plate without moving it: the words appear late, and the plate must not jump.
   openingLabel: { position: 'absolute', top: '50%', left: SPACE[6], right: SPACE[6], marginTop: TILE_SIDE.grid / 2 + SPACE[3] },

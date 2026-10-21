@@ -105,13 +105,30 @@ async function tapTile(tree: Tree, name: string): Promise<void> {
 const homeShown = (tree: Tree) => tree.root.findAllByType(HomeScreen).length === 1;
 const appOpen = (tree: Tree) => tree.root.findAllByType(MiniAppView).length === 1;
 /** The app's `bg`: the one childless, absolutely placed view in the app's layers with corners. */
-const leaf = (tree: Tree) => tree.root.findByType(MiniAppView).findAll((n) => hostType(n) === 'Animated.View' && n.children.length === 0 && flat(n).position === 'absolute' && 'borderRadius' in flat(n))[0];
-const insetsOf = (node: Node) => { const s = flat(node); return { top: s.top, left: s.left, right: s.right, bottom: s.bottom }; };
+/** The views the app's `bg` is drawn with: two bars over the whole stage and four corner discs, each
+ *  moved and scaled from its top-left. */
+const shapeViews = (tree: Tree) => tree.root.findByType(MiniAppView).findAll((n) => hostType(n) === 'Animated.View' && n.children.length === 0 && flat(n).transformOrigin === 'left top');
+const transformOf = (node: Node) => Object.assign({}, ...((flat(node).transform as Record<string, number>[] | undefined) ?? [])) as Record<string, number>;
+const round = (v: number) => Math.round(v * 1000) / 1000;
+/** The rounded rect the `bg` is drawn as, in the stage, read off its two bars (`BgShape`): the bar
+ *  across spans its width, the bar down its height, and the corner radius is how far in it starts. */
+function shapeOf(tree: Tree) {
+  const [across, down] = shapeViews(tree).filter((n) => flat(n).bottom === 0);
+  const a = transformOf(across);
+  const d = transformOf(down);
+  const opacity = flat(across).opacity as number;
+  if (flat(down).opacity === 0) return { x: 0, y: 0, w: STAGE.width, h: STAGE.height, r: 0, opacity };
+  return { x: a.translateX, y: d.translateY, w: a.scaleX * STAGE.width, h: d.scaleY * STAGE.height, r: d.translateX - a.translateX, opacity };
+}
+const insetsOf = (tree: Tree) => {
+  const { x, y, w, h } = shapeOf(tree);
+  return { top: round(y), left: round(x), right: round(STAGE.width - x - w), bottom: round(STAGE.height - y - h) };
+};
 /** Where `tile` is, as insets in the stage. */
 const insetsAt = (tile: Rect) => ({ top: tile.pageY - STAGE.pageY, left: tile.pageX, right: STAGE.width - tile.pageX - tile.width, bottom: STAGE.pageY + STAGE.height - tile.pageY - tile.height });
 const FULL = { top: 0, left: 0, right: 0, bottom: 0 };
 /** How far the `bg` has grown from `tile` (0) to the stage (1), read off its left inset. */
-const grownFrom = (tree: Tree, tile: Rect) => 1 - (flat(leaf(tree)).left as number) / tile.pageX;
+const grownFrom = (tree: Tree, tile: Rect) => 1 - shapeOf(tree).x / tile.pageX;
 /** The app's plate: the view that places the opening's tile-sized plate. */
 const plateBox = (tree: Tree) => tree.root.findByType(MiniAppView).findByType(TilePlate).parent!;
 /** Where the plate is drawn in the stage: its centre and side, from its centred place and its move. */
@@ -142,7 +159,7 @@ async function paint(tree: Tree): Promise<void> {
   await TestRenderer.act(async () => boundWebView(tree).props.onMessage({ nativeEvent: { data: JSON.stringify(frame) } }));
 }
 /** The page shows: the `bg` over it is fully faded. */
-const pageShown = (tree: Tree) => flat(leaf(tree)).opacity === 0;
+const pageShown = (tree: Tree) => shapeOf(tree).opacity === 0;
 
 export async function runAppMorphUiTests(h: Harness): Promise<void> {
   await h.test('M2: a tapped tile’s app grows its bg from that tile’s measured rect to the screen on morph, the plate stays on the tile, and Home stays under it until the bg covers the screen', async () => {
@@ -151,8 +168,8 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       const release = holdAnimations();
       await tapTile(tree, 'Timer');
       h.ok(appOpen(tree) && homeShown(tree), 'the app opens over Home, which stays drawn under it');
-      h.eq(insetsOf(leaf(tree)), insetsAt(TIMER_TILE), 'the bg sets out exactly on the tapped tile (the second tile, not the first)');
-      h.eq(flat(leaf(tree)).borderRadius, TILE.corner * TIMER_TILE.width, 'with the tile’s corners');
+      h.eq(insetsOf(tree), insetsAt(TIMER_TILE), 'the bg sets out exactly on the tapped tile (the second tile, not the first)');
+      h.eq(round(shapeOf(tree).r), round(TILE.corner * TIMER_TILE.width), 'with the tile’s corners');
       const plate = plateRect(tree);
       h.eq([plate.cx, plate.cy, plate.side], [TIMER_TILE.pageX + 32 - STAGE.pageX, TIMER_TILE.pageY + 32 - STAGE.pageY, 64], 'the tint plate sits on the tile at its size');
       const grow = stepsSince(from).filter((s) => s.kind === 'spring' && isConfig(s, MORPH));
@@ -161,8 +178,12 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       const k = grownFrom(tree, TIMER_TILE);
       h.ok(k > 0.2 && k < 1 && homeShown(tree), `mid-way the bg is between the tile and the screen (${k.toFixed(2)}), Home still under it`);
       h.eq([plateRect(tree).cx, plateRect(tree).side], [plate.cx, plate.side], 'the plate stays where the tile is, at its size');
+      const { x, y, w, h: tall, r } = shapeOf(tree);
+      const discs = shapeViews(tree).filter((n) => flat(n).bottom !== 0).map((n) => { const t = transformOf(n); return [round(t.translateX), round(t.translateY), round(t.scale * (flat(n).width as number))]; });
+      h.eq(discs, [[x, y], [x + w - 2 * r, y], [x, y + tall - 2 * r], [x + w - 2 * r, y + tall - 2 * r]].map(([cx, cy]) => [round(cx), round(cy), round(2 * r)]),
+        'its corners are discs of its radius, one in each corner');
       await TestRenderer.act(async () => release());
-      h.eq(insetsOf(leaf(tree)), FULL, 'grown, the bg is the screen');
+      h.eq(insetsOf(tree), FULL, 'grown, the bg is the screen');
       h.ok(!homeShown(tree), 'and Home goes once the bg covers it');
       h.ok(!pageShown(tree), 'the page stays covered until this launch paints');
       await paint(tree);
@@ -177,7 +198,7 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       await paint(tree);
       await TestRenderer.act(async () => elapseSprings(120));
       await TestRenderer.act(async () => elapse(FADE_IN_MS));
-      h.ok(flat(leaf(tree)).opacity === 1 && grownFrom(tree, TIMER_TILE) < 1, 'painted mid-growth, the page is still under the growing bg');
+      h.ok(shapeOf(tree).opacity === 1 && grownFrom(tree, TIMER_TILE) < 1, 'painted mid-growth, the page is still under the growing bg');
       await TestRenderer.act(async () => release());
       h.ok(pageShown(tree), 'then fades in once the bg covers the screen');
     });
@@ -193,10 +214,11 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
           const tints = new Set<unknown>([TINTS.ocean.light, TINTS.ocean.dark]);
           for (const ms of [0, 60, 160, 400]) {
             await TestRenderer.act(async () => elapseSprings(ms));
-            h.eq(flat(leaf(tree)).backgroundColor, COLORS[scheme].bg, `${scheme}, +${ms} ms: the growing view is the bg`);
+            h.eq([...new Set(shapeViews(tree).map((n) => flat(n).backgroundColor))], [COLORS[scheme].bg], `${scheme}, +${ms} ms: every view the growing shape is drawn with is the bg`);
             const filled = tree.root.findByType(MiniAppView).findAll((n) => typeof n.type === 'string' && tints.has(flat(n).backgroundColor));
             h.eq(filled.length, 0, `${scheme}, +${ms} ms: no view is filled with the tint`);
             h.ok(plateRect(tree).side <= TIMER_TILE.width, `${scheme}, +${ms} ms: the tint is the tile-sized plate`);
+            h.ok(shapeViews(tree).every((n) => !flat(n).borderRadius || !('scaleX' in transformOf(n) || 'scaleY' in transformOf(n))), `${scheme}, +${ms} ms: no rounded view is scaled unevenly`);
           }
           await TestRenderer.act(async () => release());
         });
@@ -247,7 +269,7 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       h.ok(fade.length >= 1 && fade.every((s) => s.config?.duration === FADE_OUT_MS), 'the page goes under the bg on fade-out');
       h.ok(!homeShown(tree), 'with Home not drawn yet: nothing of Home shows over the page');
       await TestRenderer.act(async () => elapse(FADE_OUT_MS));
-      h.ok(homeShown(tree) && flat(leaf(tree)).opacity === 1, 'once covered, Home is drawn under the app');
+      h.ok(homeShown(tree) && shapeOf(tree).opacity === 1, 'once covered, Home is drawn under the app');
       const shrink = stepsSince(from).filter((s) => s.kind === 'spring' && s.to === 0);
       h.ok(shrink.length === 1 && isConfig(shrink[0], SMOOTH), 'and it shrinks on smooth');
       await TestRenderer.act(async () => elapseSprings(200));
@@ -267,11 +289,11 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       const release = holdAnimations();
       await tapTile(tree, 'Timer');
       await TestRenderer.act(async () => elapseSprings(150));
-      const before = insetsOf(leaf(tree));
+      const before = insetsOf(tree);
       const k = grownFrom(tree, TIMER_TILE);
       const from = animations.length;
       await TestRenderer.act(async () => { hardwareBack(); });
-      h.eq(insetsOf(leaf(tree)), before, `back leaves the bg where it was (${k.toFixed(2)}), no jump`);
+      h.eq(insetsOf(tree), before, `back leaves the bg where it was (${k.toFixed(2)}), no jump`);
       const steps = stepsSince(from);
       h.ok(steps.some((s) => s.kind === 'spring' && s.to === 0 && isConfig(s, SMOOTH)), 'and turns it back toward the tile on smooth');
       h.ok(!steps.some((s) => s.kind === 'timing' && s.to === 1 && s.config?.duration === FADE_OUT_MS), 'with nothing to cover first: the page was never shown');
@@ -292,12 +314,12 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => { hardwareBack(); });
       await TestRenderer.act(async () => elapse(FADE_OUT_MS));
       await TestRenderer.act(async () => elapseSprings(150));
-      const before = insetsOf(leaf(tree));
+      const before = insetsOf(tree);
       const k = grownFrom(tree, TIMER_TILE);
       h.ok(k > 0 && k < 1 && homeShown(tree), `mid-close (${k.toFixed(2)}) Home is under the app`);
       const from = animations.length;
       await tapTile(tree, 'Timer');
-      h.eq(insetsOf(leaf(tree)), before, 'the tap leaves the bg where it was');
+      h.eq(insetsOf(tree), before, 'the tap leaves the bg where it was');
       h.ok(stepsSince(from).some((s) => s.kind === 'spring' && s.to === 1 && isConfig(s, MORPH)), 'and turns it back out on morph');
       h.ok(boundWebView(tree) === web && injectedScripts.length === delivered, 'the same launch: its WebView kept, nothing delivered again');
       await TestRenderer.act(async () => release());
@@ -318,7 +340,7 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
         const from = animations.length;
         const release = holdAnimations();
         await tapTile(tree, 'Timer');
-        const opening = { insets: insetsOf(leaf(tree)), opacity: flat(leaf(tree)).opacity };
+        const opening = { insets: insetsOf(tree), opacity: shapeOf(tree).opacity };
         await TestRenderer.act(async () => release());
         const opened = stepsSince(from);
         await paint(tree);
@@ -356,7 +378,7 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       h.ok(!appOpen(tree), 'the tap waits while the pop runs');
       await stackMoveEnds();
       await waitFor(() => appOpen(tree), 'the app once the pop finished');
-      h.eq(insetsOf(leaf(tree)), insetsAt(DICE_TILE), 'it grows out of the tapped tile');
+      h.eq(insetsOf(tree), insetsAt(DICE_TILE), 'it grows out of the tapped tile');
       h.ok(homeShown(tree), 'over Home, still drawn under it');
       h.eq(stackUnmountsMidMove(), midMove, 'no stack was unmounted while the pop ran');
       await TestRenderer.act(async () => release());
