@@ -168,16 +168,32 @@ const PAGE_WORDS: ReadonlySet<string> = new Set([
   'Envoyez-moi des nouvelles de Whim par courriel',
 ]);
 
+/** The trimmed phrases between each “ and the ” after it, and each « and the » after it. */
+function quotedPhrases(text: string): string[] {
+  const phrases: string[] = [];
+  for (const [open, close] of [['“', '”'], ['«', '»']] as const) {
+    for (let at = text.indexOf(open); at !== -1; ) {
+      const end = text.indexOf(close, at + 1);
+      if (end === -1) break;
+      phrases.push(text.slice(at + 1, end).trim());
+      at = text.indexOf(open, end + 1);
+    }
+  }
+  return phrases;
+}
+
 /** Every phrase the policy `html` puts in quotes (“…” or « … ») to name something in the app
  *  that the app doesn't show word for word: no value of `COPY` or of the page's legal table, no
  *  heading on the page itself, and none of `PAGE_WORDS`. */
 function unshownQuotes(html: string, language: keyof typeof LEGAL_COPY): string[] {
   const apostrophes = (text: string) => text.replace(/[’']/g, "'");
   const shown = new Set([...Object.values(COPY), ...Object.values(LEGAL_COPY[language])].map(apostrophes));
-  const headings = [...html.matchAll(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/g)].map((m) => apostrophes(pageText(m[1])));
+  const headings = html
+    .split(/<h[1-6][^>]*>/)
+    .slice(1)
+    .map((opened) => apostrophes(pageText(opened.slice(0, opened.search(/<\/h[1-6]>/)))));
   const text = pageText(html);
-  return [...text.matchAll(/“([^”]+)”|«\s*([^»]+?)\s*»/g)]
-    .map((m) => m[1] ?? m[2])
+  return quotedPhrases(text)
     .filter((words) => !shown.has(apostrophes(words)) && !headings.some((heading) => heading.includes(apostrophes(words))) && !PAGE_WORDS.has(words));
 }
 

@@ -161,7 +161,10 @@ function checkNavigationBarScrim(repoRoot: string): AndroidProjectFinding[] {
     if ((err as { code?: unknown }).code === 'ENOENT') return [{ file: ANDROID_MAIN_ACTIVITY_PATH, message: 'file not found' }];
     throw err;
   }
-  const code = text.replace(/\/\/.*$/gm, '');
+  const code = text
+    .split('\n')
+    .map((line) => (line.includes('//') ? line.slice(0, line.indexOf('//')) : line))
+    .join('\n');
   if (/\.isNavigationBarContrastEnforced\s*=\s*false\b/.test(code)) return [];
   return [
     {
