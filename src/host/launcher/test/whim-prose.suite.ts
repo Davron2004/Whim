@@ -185,6 +185,16 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
     h.eq(countOf(renderProse(quoted, { storedPrompt: null }), 'yours'), 0, 'no stored prompt, no attribution');
   });
 
+  await h.test('lexer: `yours` matches the person’s words whatever their case, and keeps the text as written', () => {
+    const prompt = 'Make a packing list';
+    const summary = 'I made what you asked for: “make a packing list”, with a tick box on each item.';
+    const segments = renderProse(summary, { storedPrompt: prompt });
+    h.eq(textOf(segments, 'yours'), ['make a packing list'], 'a lowercased quote of a capitalised prompt is still the user’s words, as the producer wrote it');
+    h.eq(segments.map((s) => s.text).join(''), summary, 'the rendered text is the producer’s, letter for letter');
+    h.eq(textOf(renderProse('MAKE A PACKING LIST', { storedPrompt: prompt }), 'yours'), ['MAKE A PACKING LIST'], 'the prompt as a headline matches in any case');
+    h.eq(countOf(renderProse('You said “make a packing app”.', { storedPrompt: prompt }), 'yours'), 0, 'case folding attributes no paraphrase');
+  });
+
   await h.test('lexer: `chg` and `hedge` are never inferred on device', () => {
     const text = 'The countdown changed, and it may be about 2 seconds off.';
     const spans = lexProse(text, [POUR_TIMER], text);

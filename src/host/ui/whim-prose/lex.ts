@@ -191,27 +191,41 @@ function tightenedRange(text: string, start: number, end: number): [number, numb
   return [from, to];
 }
 
+/** `text` lowercased letter by letter, keeping its length: a letter whose lowercase is longer
+ *  (`İ`) stays as it is, so every index into the folded text is the same index into `text`. */
+function foldCase(text: string): string {
+  let folded = '';
+  for (const ch of text) {
+    const lower = ch.toLowerCase();
+    folded += lower.length === ch.length ? lower : ch;
+  }
+  return folded;
+}
+
 /**
- * `yours` is MATCHED, never reconstructed. Two exact rules, both case-sensitive:
+ * `yours` is MATCHED, never reconstructed. Two exact rules, both blind to case (a keyboard
+ * capitalises the prompt's first letter; a summary quoting it mid-sentence doesn't):
  *   1. the stored prompt appearing verbatim in the text (a history row whose headline IS the
  *      user's prompt), and
  *   2. a quoted run whose contents are an exact substring of the stored prompt.
  *
  * A paraphrase matches neither and therefore carries no mark — the deliberate failure direction,
- * because the class is attribution and attributing a paraphrase to the user is a lie.
+ * because the class is attribution and attributing a paraphrase to the user is a lie. The spans
+ * index the text as written, so it renders letter for letter as the producer wrote it.
  */
 function lexYours(text: string, storedPrompt: string | null | undefined): Span[] {
-  const prompt = (storedPrompt ?? '').trim();
+  const prompt = foldCase((storedPrompt ?? '').trim());
   if (prompt.length < 3) return [];
+  const folded = foldCase(text);
 
   const spans: Span[] = [];
-  for (const start of findAll(text, prompt, false)) {
+  for (const start of findAll(folded, prompt, false)) {
     spans.push({ cls: 'yours', start, end: start + prompt.length });
   }
 
   for (const [innerStart, innerEnd] of quotedRanges(text)) {
     const [start, end] = tightenedRange(text, innerStart, innerEnd);
-    if (end > start && prompt.includes(text.slice(start, end))) {
+    if (end > start && prompt.includes(folded.slice(start, end))) {
       spans.push({ cls: 'yours', start, end });
     }
   }
