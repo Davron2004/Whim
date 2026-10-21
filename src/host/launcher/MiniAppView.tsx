@@ -422,16 +422,17 @@ export default function MiniAppView({
   useEffect(() => {
     if (paintedAt !== null) onOpened();
   }, [paintedAt, onOpened]);
-  // A launch refused pre-delivery (#41 D7, structured `launchApp` failure) never delivers a
-  // bundle -- show honest product copy instead of a blank realm, with a way back to Home. Nothing
-  // was delivered, so the frame is the phone's and the `Button` (on `useTokens()`) matches it.
+  // A launch refused at its delivery (#41 D7, structured `launchApp` failure) never runs a bundle --
+  // show honest product copy instead of a blank realm, with a way back to Home. The refusal came at
+  // the delivery, which already pinned the frame, so the `Button` takes the frame's tokens like the
+  // text: on the phone's live ones it would follow a scheme change the frame keeps out.
   if (surface === 'launch-failed') {
     return (
       <View style={[styles.layer, styles.errorRoot, { backgroundColor: bg }]}>
         <Text tokens={frameTokens} type="title2" style={styles.errorTitle}>{COPY.launchFailedTitle}</Text>
         <Text tokens={frameTokens} color="text-2" style={styles.errorBody}>{COPY.launchFailedBody}</Text>
         <View style={styles.errorAction}>
-          <Button label={COPY.launchFailedBack} variant="ink" onPress={onExit} />
+          <Button tokens={frameTokens} label={COPY.launchFailedBack} variant="ink" onPress={onExit} />
         </View>
       </View>
     );

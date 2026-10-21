@@ -1293,6 +1293,29 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('mini-app: a launch refused at its delivery keeps the frame it was delivered with, its Back button too, when the phone’s scheme changes', async () => {
+    const conflicting: AppRecord = JSON.parse(JSON.stringify(WATER));
+    conflicting.schemaArtifact!.collections.Drinks.fields.at.type = 'text';
+    try {
+      await withMiniApp(conflicting, async ({ loadEnd, shown, tree }) => {
+        const earlier = createStorageEngine({ appId: WATER.appId, mode: "persistent" });
+        earlier.open(WATER.schemaArtifact!);
+        earlier.close();
+        await loadEnd();
+        h.ok(shown().includes(COPY.launchFailedTitle), 'the launch-failed screen is up');
+        await TestRenderer.act(async () => { setColorScheme('dark'); });
+        const title = tree.root.find((n) => hostType(n) === 'Text' && textOf(n) === COPY.launchFailedTitle);
+        const back = button(tree, COPY.launchFailedBack);
+        const capsule = flat(back.find((n) => hostType(n) === 'Animated.View')).backgroundColor;
+        const label = flat(back.find((n) => hostType(n) === 'Text')).color;
+        h.eq([flat(title).color, capsule, label], [COLORS.light.text, COLORS.light.ink, COLORS.light['on-ink']], 'title and Back drawn in the light frame on a dark phone');
+        h.ok(COLORS.light.ink !== COLORS.dark.ink, 'the two schemes’ inks differ, so the phone’s would be caught');
+      });
+    } finally {
+      setColorScheme('light');
+    }
+  });
+
   await h.test('mini-app: at 200% text the launch-failed screen’s Back grows with its words — nothing around it has a fixed height', async () => {
     const conflicting: AppRecord = JSON.parse(JSON.stringify(WATER));
     conflicting.schemaArtifact!.collections.Drinks.fields.at.type = 'text';
