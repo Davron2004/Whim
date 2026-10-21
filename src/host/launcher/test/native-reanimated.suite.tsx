@@ -236,7 +236,7 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
 
   await h.test('reanimated double: measure reports the set rect for a mounted view and null once it goes', async () => {
     let ref!: ReturnType<typeof useAnimatedRef<View>>;
-    function Probe(_: Readonly<{ pass: number }>) {
+    function Probe() {
       ref = useAnimatedRef<View>();
       return <Animated.View ref={ref} />;
     }
@@ -257,7 +257,7 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
     let ref!: ReturnType<typeof useAnimatedRef<View>>;
     let value!: ReturnType<typeof useSharedValue<number>>;
     const widths: (number | null)[] = [];
-    function Probe() {
+    function Probe(_: Readonly<{ pass: number }>) {
       ref = useAnimatedRef<View>();
       value = useSharedValue(0);
       const style = useAnimatedStyle(() => {
