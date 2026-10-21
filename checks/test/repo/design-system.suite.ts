@@ -207,21 +207,32 @@ function copyFindings(table: Readonly<Record<string, string>>, kinds: Readonly<R
   return findings;
 }
 
-/** A number, date or time written in the phone's locale: `toLocaleString()`,
- *  `toLocaleTimeString()`, `toLocaleDateString()`, `Intl.NumberFormat` or `Intl.DateTimeFormat`
- *  with no locale. Reading the phone's locale (`Intl.DateTimeFormat().resolvedOptions()`) writes
- *  nothing, so it is not one. */
-const MACHINE_LOCALE_FORMATS: readonly RegExp[] = [
-  /\.toLocale(?:Date|Time)?String\(\s*(?:\)|undefined\b)/,
-  /\bIntl\.NumberFormat\(\s*(?:\)|undefined\b)/,
-  /\bDateTimeFormat\(\s*(?:undefined\b|\)(?!\.resolvedOptions\(\)))/,
-];
+/** A call that writes a number, date, time, relative time or list, or picks a plural, in the
+ *  locale its first argument names: `toLocaleString`, `toLocaleDateString`, `toLocaleTimeString`
+ *  and the `Intl` formatters. */
+const LOCALE_TAKING_CALL = /\.toLocale(?:Date|Time)?String\(|\b(?:NumberFormat|DateTimeFormat|RelativeTimeFormat|ListFormat|PluralRules)\(/g;
 
-/** Each line of `source` formatting a number, date or time in the phone's locale, as `line`. */
+/** How far past a call's `(` its first argument is read. */
+const ARGUMENT_WINDOW = 200;
+
+/** The first argument that leaves the locale to the phone: none, `undefined`, or an empty list. */
+const NO_LOCALE = /^\s*(?:\)|undefined\b|\[\s*\])/;
+
+/** Each line of `source` where a call formats in the phone's locale, as the line the call starts
+ *  on. The argument is read past line breaks, so a locale left out on the next line still counts.
+ *  Reading the phone's locale (`Intl.DateTimeFormat().resolvedOptions()`) writes nothing, so it is
+ *  not one. */
 function machineLocaleFormats(source: string): number[] {
-  return withoutComments(source)
-    .split('\n')
-    .flatMap((line, i) => (MACHINE_LOCALE_FORMATS.some((format) => format.test(line)) ? [i + 1] : []));
+  const code = withoutComments(source);
+  const lines: number[] = [];
+  for (const call of code.matchAll(LOCALE_TAKING_CALL)) {
+    const at = call.index ?? 0;
+    const after = code.slice(at + call[0].length, at + call[0].length + ARGUMENT_WINDOW);
+    if (!NO_LOCALE.test(after) || /^\s*\)\.resolvedOptions\(\)/.test(after)) continue;
+    const line = code.slice(0, at).split('\n').length;
+    if (lines.at(-1) !== line) lines.push(line);
+  }
+  return lines;
 }
 
 const parseNumbers = (css: string, fn: string) => (new RegExp(`^${fn}\\((.*)\\)$`).exec(css)?.[1] ?? '').split(',').map(Number);
@@ -411,5 +422,25 @@ export async function run(): Promise<void> {
       'a clock time or date with no locale is a hit',
     );
     assert(machineLocaleFormats("n.toLocaleString('en');\n// n.toLocaleString()\nd.toLocaleTimeString(language);\nIntl.DateTimeFormat().resolvedOptions().locale;").length === 0, 'an explicit locale, a comment, or reading the locale is not');
+  });
+
+  await test('copy numbers: an empty locale list is the phone’s locale', () => {
+    const hits = machineLocaleFormats("d.toLocaleTimeString([]);\nnew Intl.DateTimeFormat([ ], { hour: 'numeric' }).format(d);");
+    assert(hits.join() === '1,2', `both calls are hits: ${hits.join()}`);
+  });
+
+  await test('copy numbers: a call whose missing locale is on its next line is a hit, at the call’s line', () => {
+    const hits = machineLocaleFormats("const f = new Intl.DateTimeFormat(\n  undefined,\n  { hour: 'numeric' },\n);\nd.toLocaleDateString(\n);");
+    assert(hits.join() === '1,5', `both calls are hits: ${hits.join()}`);
+  });
+
+  await test('copy numbers: relative times, lists and plural rules with no locale are hits', () => {
+    const hits = machineLocaleFormats("new Intl.RelativeTimeFormat().format(-1, 'day');\nnew Intl.ListFormat(undefined, { type: 'and' }).format(names);\nnew Intl.PluralRules([]).select(n);");
+    assert(hits.join() === '1,2,3', `all three calls are hits: ${hits.join()}`);
+  });
+
+  await test('copy numbers: a locale given, on the call’s line or the next, is not a hit', () => {
+    const hits = machineLocaleFormats("new Intl.PluralRules(language).select(n);\nnew Intl.ListFormat(\n  'en',\n  { type: 'and' },\n).format(names);\nnew Intl.RelativeTimeFormat([language]).format(1, 'day');");
+    assert(hits.length === 0, `no hits: ${hits.join()}`);
   });
 }
