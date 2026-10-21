@@ -150,9 +150,97 @@ function checkVariantNetworkConfigs(repoRoot: string): AndroidProjectFinding[] {
     .map((file) => ({ file, message: `a build-variant network security config would replace ${ANDROID_MAIN_NETWORK_CONFIG_PATH} in that build type; delete it` }));
 }
 
+/** The index past the block comment opening at `start`, nested as Kotlin nests them. */
+function blockCommentEnd(text: string, start: number): number {
+  let depth = 0;
+  let i = start;
+  do {
+    if (text.startsWith('/*', i)) {
+      depth += 1;
+      i += 2;
+    } else if (text.startsWith('*/', i)) {
+      depth -= 1;
+      i += 2;
+    } else {
+      i += 1;
+    }
+  } while (depth > 0 && i < text.length);
+  return i;
+}
+
+/** The index past the string or character literal opening at `start`. */
+function literalEnd(text: string, start: number): number {
+  if (text.startsWith('"""', start)) {
+    const close = text.indexOf('"""', start + 3);
+    return close === -1 ? text.length : close + 3;
+  }
+  const quote = text[start];
+  let i = start + 1;
+  while (i < text.length && text[i] !== quote && text[i] !== '\n') i += text[i] === '\\' ? 2 : 1;
+  return i + 1;
+}
+
+/** Kotlin source with its comments removed (line and block, nested as Kotlin nests them) and its
+ *  string and character literals emptied, so a commented-out call doesn't count and a brace inside
+ *  a string can't unbalance a body. A plain scan, no backtracking regexes. */
+function kotlinCode(text: string): string {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    if (text.startsWith('//', i)) {
+      const lineEnd = text.indexOf('\n', i);
+      i = lineEnd === -1 ? text.length : lineEnd;
+    } else if (text.startsWith('/*', i)) {
+      i = blockCommentEnd(text, i);
+      out += ' ';
+    } else if (text[i] === '"' || text[i] === "'") {
+      i = literalEnd(text, i);
+      out += '""';
+    } else {
+      out += text[i];
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/** The index of the bracket closing the one at `open`, or `undefined`. */
+function closingBracket(code: string, open: number): number | undefined {
+  const opener = code[open];
+  const closer = opener === '(' ? ')' : '}';
+  let depth = 0;
+  for (let i = open; i < code.length; i += 1) {
+    if (code[i] === opener) depth += 1;
+    else if (code[i] === closer) {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return undefined;
+}
+
+/** The block body of the function `name`, or `undefined` when it has none. */
+function kotlinFunction(code: string, name: string): { body: string } | undefined {
+  const declaration = new RegExp(`\\bfun ${name}\\(`).exec(code);
+  if (declaration === null) return undefined;
+  const params = closingBracket(code, declaration.index + declaration[0].length - 1);
+  if (params === undefined) return undefined;
+  for (let i = params + 1; i < code.length; i += 1) {
+    if (code[i] === '=') return undefined;
+    if (code[i] === '{') {
+      const end = closingBracket(code, i);
+      return end === undefined ? undefined : { body: code.slice(i, end + 1) };
+    }
+  }
+  return undefined;
+}
+
 /** `MainActivity` turns off the contrast scrim Android draws under a transparent 3-button
- *  navigation bar, which React Native's edge to edge turns on: without it a lighter band (darker in
- *  dark) sits under every page's `bg`. Line comments are dropped, so a commented-out line fails. */
+ *  navigation bar, which React Native's edge to edge turns on for the activity and for every
+ *  Modal's dialog: without it a lighter band (darker in dark) sits under every page's `bg` and every
+ *  sheet. So the clearing function must exist, the activity must clear its own window as it is
+ *  created, and the dialog walk must clear each dialog's window and be reached from the activity's
+ *  frames. Comments are dropped, so a commented-out call fails. */
 function checkNavigationBarScrim(repoRoot: string): AndroidProjectFinding[] {
   let text: string;
   try {
@@ -161,17 +249,28 @@ function checkNavigationBarScrim(repoRoot: string): AndroidProjectFinding[] {
     if ((err as { code?: unknown }).code === 'ENOENT') return [{ file: ANDROID_MAIN_ACTIVITY_PATH, message: 'file not found' }];
     throw err;
   }
-  const code = text
-    .split('\n')
-    .map((line) => (line.includes('//') ? line.slice(0, line.indexOf('//')) : line))
-    .join('\n');
-  if (/\.isNavigationBarContrastEnforced\s*=\s*false\b/.test(code)) return [];
-  return [
-    {
-      file: ANDROID_MAIN_ACTIVITY_PATH,
-      message: 'MainActivity must set isNavigationBarContrastEnforced = false: with 3-button navigation Android otherwise draws a contrast band under the page',
-    },
-  ];
+  const code = kotlinCode(text);
+  const problems: string[] = [];
+  const clear = kotlinFunction(code, 'clearNavigationBarScrim');
+  if (clear === undefined || !/\.isNavigationBarContrastEnforced\s*=\s*false\b/.test(clear.body)) {
+    problems.push('MainActivity must define clearNavigationBarScrim(window), setting isNavigationBarContrastEnforced = false: with 3-button navigation Android otherwise draws a contrast band under the page');
+  }
+  const onCreate = kotlinFunction(code, 'onCreate');
+  if (onCreate === undefined || !/\bclearNavigationBarScrim\(window\)/.test(onCreate.body)) {
+    problems.push('MainActivity.onCreate must call clearNavigationBarScrim(window): React Native turns the activity\'s scrim on as it starts');
+  }
+  const watch = kotlinFunction(code, 'watchDialogScrims');
+  if (watch === undefined || !/\bclearNavigationBarScrim\(/.test(watch.body)) {
+    problems.push('MainActivity must define watchDialogScrims, calling clearNavigationBarScrim on each Modal dialog\'s window: React Native turns a dialog\'s scrim on each time it applies the Modal\'s props');
+  }
+  const dialogs = kotlinFunction(code, 'clearDialogNavigationBarScrims');
+  if (dialogs === undefined || !/\bwatchDialogScrims\(/.test(dialogs.body)) {
+    problems.push('MainActivity must define clearDialogNavigationBarScrims, listing the activity\'s windows and calling watchDialogScrims while one is unwatched');
+  }
+  if (onCreate === undefined || !/\bclearDialogNavigationBarScrims\(/.test(onCreate.body)) {
+    problems.push('MainActivity.onCreate must call clearDialogNavigationBarScrims before the activity\'s frames, or no dialog\'s scrim is ever cleared');
+  }
+  return problems.map((message) => ({ file: ANDROID_MAIN_ACTIVITY_PATH, message }));
 }
 
 /** Every finding across the manifest, MainActivity and the network security configs. Empty means the project passes. */

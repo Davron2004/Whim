@@ -42,6 +42,7 @@ class MainActivity : ReactActivity() {
     LaunchScreen.hold(this)
     window.decorView.viewTreeObserver.addOnPreDrawListener {
       mirrorBarAppearance()
+      clearDialogNavigationBarScrims()
       true
     }
   }
@@ -86,7 +87,6 @@ class MainActivity : ReactActivity() {
     if (!hasFocus) {
       mirroredAppearance = null
       mirrorBarAppearance()
-      clearDialogNavigationBarScrims(window.decorView)
     }
   }
 
@@ -95,9 +95,16 @@ class MainActivity : ReactActivity() {
   // #FEFEFE under a #F6F4F1 page in light and #151518 under #100E0D in dark. React Native's edge to
   // edge turns the scrim on for the activity (`ReactActivityDelegate.onCreate`) and for every
   // Modal's dialog each time it applies the Modal's props (`ReactModalHostView.updateProperties`),
-  // so the activity opts out once its delegate has run, and a sheet when it shows (it takes the
-  // activity's focus) and before each of its frames after. The bar's icons stay legible on their
-  // own: they follow the scheme (`onConfigurationChanged`, `mirrorBarAppearance`).
+  // so the activity opts out once its delegate has run, and every dialog before each of its frames.
+  // A dialog is found from the window it is presented from: a Modal's host view sits in the
+  // activity's view tree or, for an overlay inside another's content, in that overlay's dialog, so
+  // the walk follows each host into its dialog. It runs before a frame of the activity or of any
+  // dialog, only while this activity has a window it doesn't watch yet (a dialog that just showed,
+  // or a window that is no Modal's, such as a text-selection popup), so a dialog is found in the
+  // frame it shows, nested or shown over another, with no wait on a focus change (a dialog shown
+  // over another takes that one's focus, never the activity's). Windows are listed from API 29,
+  // the first that has the scrim. The bar's icons stay legible on their own: they follow the scheme
+  // (`onConfigurationChanged`, `mirrorBarAppearance`).
   private val scrimWatched = WeakHashMap<View, Unit>()
 
   private fun clearNavigationBarScrim(target: Window) {
@@ -105,20 +112,34 @@ class MainActivity : ReactActivity() {
     if (target.isNavigationBarContrastEnforced) target.isNavigationBarContrastEnforced = false
   }
 
-  private fun clearDialogNavigationBarScrims(view: View) {
+  private fun clearDialogNavigationBarScrims() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+    val token = window.attributes.token
+    val unwatched =
+        WindowInspector.getGlobalWindowViews().any { root ->
+          root !== window.decorView &&
+              root !in scrimWatched &&
+              (root.layoutParams as? WindowManager.LayoutParams)?.token === token
+        }
+    if (unwatched) watchDialogScrims(window.decorView)
+  }
+
+  private fun watchDialogScrims(view: View) {
     if (view is ReactModalHostView) {
       val dialogWindow = view.dialog?.window ?: return
-      clearNavigationBarScrim(dialogWindow)
       val decor = dialogWindow.decorView
       if (scrimWatched.put(decor, Unit) == null) {
+        clearNavigationBarScrim(dialogWindow)
         decor.viewTreeObserver.addOnPreDrawListener {
           clearNavigationBarScrim(dialogWindow)
+          clearDialogNavigationBarScrims()
           true
         }
       }
+      watchDialogScrims(decor)
       return
     }
-    if (view is ViewGroup) for (i in 0 until view.childCount) clearDialogNavigationBarScrims(view.getChildAt(i))
+    if (view is ViewGroup) for (i in 0 until view.childCount) watchDialogScrims(view.getChildAt(i))
   }
 
   // The app follows the phone's appearance. `uiMode` is a handled config change (the manifest's

@@ -125,6 +125,14 @@ const MAIN_NETWORK_CONFIG_WITH_OVERRIDE = [
 /** The real `MainActivity.kt`, so the fixture starts from what ships. */
 const REAL_MAIN_ACTIVITY = fs.readFileSync(path.join(REPO_ROOT, ANDROID_MAIN_ACTIVITY_PATH), 'utf8');
 const SCRIM_OFF = /^.*\.isNavigationBarContrastEnforced\s*=\s*false.*$/gm;
+/** The activity clearing its own window, in `onCreate`. */
+const ACTIVITY_CLEAR_CALL = /^ *clearNavigationBarScrim\(window\)\n/m;
+/** Every call starting the dialog walk (the activity's frames and each dialog's). */
+const DIALOG_WALK_CALLS = /^ *clearDialogNavigationBarScrims\(\)\n/gm;
+/** The dialog walk clearing a dialog's window. */
+const DIALOG_CLEAR_CALLS = /^ *clearNavigationBarScrim\(dialogWindow\)\n/gm;
+/** The window listing handing over to the walk. */
+const WALK_FROM_LISTING = /^ *if \(unwatched\) watchDialogScrims\(window\.decorView\)\n/m;
 
 function writeValidFixture(root: string): void {
   writeFile(root, ANDROID_MANIFEST_PATH, VALID_MANIFEST);
@@ -211,6 +219,62 @@ export async function run(): Promise<void> {
       content: () => REAL_MAIN_ACTIVITY.replace(SCRIM_OFF, (line) => `// ${line}`),
       expectFile: ANDROID_MAIN_ACTIVITY_PATH,
       matches: /isNavigationBarContrastEnforced = false/,
+    },
+    {
+      name: 'a MainActivity whose scrim-off line is block-commented fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(SCRIM_OFF, (line) => `/* ${line} */`),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /isNavigationBarContrastEnforced = false/,
+    },
+    {
+      name: 'a MainActivity that never clears the activity window fails (the clearing function still defined and used for dialogs)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(ACTIVITY_CLEAR_CALL, ''),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /onCreate must call clearNavigationBarScrim\(window\)/,
+    },
+    {
+      name: 'a MainActivity whose activity-window clear is block-commented fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(ACTIVITY_CLEAR_CALL, (line) => `/* ${line.trimEnd()} */\n`),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /onCreate must call clearNavigationBarScrim\(window\)/,
+    },
+    {
+      name: 'a MainActivity whose activity-window clear sits in a nested block comment fails (discriminating: a stripper that ends a comment at the first */ leaves the call in)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(ACTIVITY_CLEAR_CALL, (line) => `/* /* old */ ${line.trimEnd()} */\n`),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /onCreate must call clearNavigationBarScrim\(window\)/,
+    },
+    {
+      name: 'a MainActivity that never starts the dialog walk fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(DIALOG_WALK_CALLS, ''),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /onCreate must call clearDialogNavigationBarScrims/,
+    },
+    {
+      name: 'a MainActivity whose dialog walk start is block-commented fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(DIALOG_WALK_CALLS, (line) => `/* ${line.trimEnd()} */\n`),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /onCreate must call clearDialogNavigationBarScrims/,
+    },
+    {
+      name: 'a MainActivity whose dialog walk clears no dialog window fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(DIALOG_CLEAR_CALLS, ''),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /watchDialogScrims, calling clearNavigationBarScrim/,
+    },
+    {
+      name: 'a MainActivity whose window listing never walks to the dialogs fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(WALK_FROM_LISTING, ''),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /clearDialogNavigationBarScrims, listing/,
     },
     {
       name: 'a main config that refuses cleartext at the base fails',
