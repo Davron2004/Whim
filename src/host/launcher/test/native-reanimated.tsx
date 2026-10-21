@@ -35,8 +35,8 @@ export const isStep = (a: Animation): a is Step => a.kind === 'spring' || a.kind
 
 /** Every animation assigned to any shared value, oldest first; splice to reset. */
 export const animations: Animation[] = [];
-/** How many times `cancelAnimation` ran. */
-export const cancelled = { count: 0 };
+/** How many times `cancelAnimation` ran, and the shared values it ran on, oldest first. */
+export const cancelled: { count: number; values: unknown[] } = { count: 0, values: [] };
 
 const tag = (a: Animation): Animation => Object.assign(a, { [ANIMATION]: true as const });
 const isAnimation = (v: unknown): v is Tagged => typeof v === 'object' && v !== null && ANIMATION in v;
@@ -111,6 +111,10 @@ class SharedValue<T> {
     }
     this.current = next;
     this.changed();
+  }
+  /** `cancelAnimation`: a held animation running here stops where it is, as a new assignment stops it. */
+  cancel(): void {
+    this.interrupt();
   }
   /** A held animation still running here is cancelled by the new assignment: it never ends, and its
    *  callback hears it did not finish. */
@@ -193,7 +197,12 @@ export const withTiming = (to: unknown, config?: Record<string, unknown>, callba
 export const withDelay = (delay: number, animation: Animation) => tag({ kind: 'delay', delay, animation });
 export const withSequence = (...list: Animation[]) => tag({ kind: 'sequence', animations: list });
 export const withRepeat = (animation: Animation, count = 2) => tag({ kind: 'repeat', animation, count });
-export function cancelAnimation(): void { cancelled.count += 1; }
+export function cancelAnimation<T>(value?: SharedValue<T>): void {
+  cancelled.count += 1;
+  if (!value) return;
+  cancelled.values.push(value);
+  value.cancel();
+}
 export const Easing = { bezier: (...points: number[]) => ({ bezier: points }), linear: (x: number) => x };
 export const ReduceMotion = { System: 'system', Always: 'always', Never: 'never' } as const;
 /** An animated ref: a ref callback a worklet can scroll through, which tells its observers the

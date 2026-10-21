@@ -26,7 +26,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Harness } from './harness';
 import { accessibilitySettings, emitAccessibility } from './native-host';
-import { animations, elapse, holdAnimations, isLayoutAnimation, layoutAnimations, makeMutable, measuredRect, playedUnder, type LayoutAnimation } from './native-reanimated';
+import { animations, cancelAnimation, cancelled, elapse, holdAnimations, isLayoutAnimation, layoutAnimations, makeMutable, measuredRect, playedUnder, type LayoutAnimation } from './native-reanimated';
 import { hostType, renderScreen, unmountScreen } from './react-screen';
 import { useTokens } from '../../ui/tokens';
 import { staggerDelay, timingOf } from '../../ui/tokens-pure';
@@ -111,6 +111,23 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
       release();
     }
     h.eq(value.value, 5, 'released, the last timing lands');
+  });
+
+  await h.test('reanimated double: cancelAnimation stops a held timing where it stands, names the value it ran on, and the release no longer lands it', async () => {
+    const value = makeMutable(0);
+    const release = holdAnimations();
+    try {
+      value.value = withTiming(10, { duration: 100, easing: Easing.linear });
+      elapse(30);
+      cancelAnimation(value);
+      h.ok(cancelled.values.includes(value), 'the cancel names the value it ran on');
+      h.eq(value.value, 3, 'cancelled, the value stays where the timing had brought it');
+      elapse(100);
+      h.eq(value.value, 3, 'and time moves it no further');
+    } finally {
+      release();
+    }
+    h.eq(value.value, 3, 'released, the cancelled timing does not land');
   });
 
   await h.test('reanimated double: withDelay is recorded with its delay and lands at its end, or waits while held', async () => {

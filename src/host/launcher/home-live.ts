@@ -26,7 +26,8 @@ export interface FlickerPulse {
   readonly value: number;
 }
 
-interface LiveAttemptView {
+/** One running attempt as Home reads it. */
+export interface LiveAttemptView {
   id: string;
   signals: LiveSignals;
   pulse?: FlickerPulse;

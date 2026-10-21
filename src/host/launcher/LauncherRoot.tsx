@@ -95,8 +95,8 @@ import { repairAttemptsIn, runTimelineDevModeEnabled } from './run-timeline-view
 import { HomeSkeleton } from './HomeSkeleton';
 import { toastClearance } from './ComposerBar';
 import { useHomeLive } from './use-home-live';
-import type { LiveView } from './home-live';
-import { createRunLight, lightArrived, type RunLight } from './run-light';
+import type { LiveAttemptView, LiveView } from './home-live';
+import { createRunLight, lightArrived, lightReleased, type RunLight } from './run-light';
 import { PendingPurgeStore, completeInterruptedPurges, completePurge } from './pending-purge';
 import { PurgeWindows } from './soft-delete';
 import type { TileIdentity } from './tile-identity';
@@ -832,6 +832,9 @@ function LauncherShell({
   hideLaunchScreen: () => void;
 }>) {
   const tokens = useTokens();
+  // Reduce Motion as the stream handlers read it: they outlive the render that started them.
+  const reduceMotionRef = useRef(tokens.reduceMotion);
+  reduceMotionRef.current = tokens.reduceMotion;
   // The settings an open app's frame is held to from its delivery (`MiniAppStage`), `null` before it.
   const [appFrame, setAppFrame] = useState<ShellTokens | null>(null);
   // The language every legal screen and link uses (legal-surface-v2 D6): resolved once at launch
@@ -1164,7 +1167,7 @@ function LauncherShell({
   // The view of the attempts running right now: which wait for a spot, how hard each stream works.
   // Home's tiles read it, and so do the Making page's ember and the orb, each for its own run only.
   const liveView = useHomeLive(screen.kind === 'home' || screen.kind === 'making' || runningChange.changing !== undefined, () =>
-    [...liveAttemptsRef.values()].map(({ id, signals, light }) => ({ id, signals, pulse: light.pulse })),
+    [...liveAttemptsRef.values()].map(({ id, signals, light }): LiveAttemptView => ({ id, signals, pulse: light.pulse })),
   );
   const orb = orbOver(runningChange, liveView);
 
@@ -2063,8 +2066,15 @@ function LauncherShell({
     if (genRef.current === ctl) genRef.current = null;
   };
   const releaseLiveRef = (lease: PendingAttemptLease) => {
-    if (liveAttemptsRef.get(lease.id)?.lease === lease) liveAttemptsRef.delete(lease.id);
-    if (liveRef.current?.lease === lease) liveRef.current = null;
+    const owned = liveAttemptsRef.get(lease.id);
+    if (owned?.lease === lease) {
+      liveAttemptsRef.delete(lease.id);
+      lightReleased(owned.light);
+    }
+    if (liveRef.current?.lease === lease) {
+      lightReleased(liveRef.current.light);
+      liveRef.current = null;
+    }
   };
   const whenLiveAttemptOwns = (lease: PendingAttemptLease, complete: (selected: boolean) => void) => {
     if (liveAttemptsRef.get(lease.id)?.lease === lease) complete(liveRef.current?.lease === lease);
@@ -2100,7 +2110,6 @@ function LauncherShell({
     const at = Date.now();
     const nextSignals = journalStreamEvent(journal, attemptId, signals, event, at);
     currentLive.signals = nextSignals;
-    if (event.type === 'token' || event.type === 'thinking') lightArrived(currentLive.light, at);
     const selected = isSelectedLiveAttempt(lease);
     if (selected) signalsRef.current = nextSignals;
     const nextScreen = withStreamEvent(currentLive.screen, event, at);
@@ -2108,6 +2117,8 @@ function LauncherShell({
       currentLive.screen = nextScreen;
       if (selected) setScreen((previous) => (previous.kind === 'making' ? withStreamEvent(previous, event, at) : previous));
     }
+    // Last: the journal and the screen already hold this frame, whatever the light does.
+    if (event.type === 'token' || event.type === 'thinking') lightArrived(currentLive.light, at, reduceMotionRef.current);
     return nextSignals;
   };
 

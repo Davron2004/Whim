@@ -284,13 +284,13 @@ export async function runShellStatusUiTests(h: Harness): Promise<void> {
     try {
       const kicks: number[] = [];
       for (let i = 0; i < 6; i++) {
-        lightArrived(run, 10_000 + i * 40);
+        lightArrived(run, 10_000 + i * 40, false);
         kicks.push(run.pulse.value);
       }
       h.ok(kicks.every((k) => Math.abs(k) >= 0.5 && Math.abs(k) <= 1), `every kick between half and full height: ${kicks.map((k) => k.toFixed(2)).join(', ')}`);
       h.ok(kicks.every((k, i) => i === 0 || Math.sign(k) === -Math.sign(kicks[i - 1])), 'each kick the other way from the one before');
       const last = run.pulse.value;
-      lightArrived(run, 10_000 + 5 * 40 + 5);
+      lightArrived(run, 10_000 + 5 * 40 + 5, false);
       h.eq(run.pulse.value, last, 'an arrival 5 ms after the last kicks nothing more');
       elapse(windowMs - 1);
       h.ok(run.pulse.value !== 0, `${windowMs - 1} ms after the last arrival the pulse still stands`);
@@ -310,7 +310,7 @@ export async function runShellStatusUiTests(h: Harness): Promise<void> {
       const release = holdAnimations();
       try {
         const rest = opacityOf(light(tree));
-        await act(() => lightArrived(run, 10_000));
+        await act(() => lightArrived(run, 10_000, false));
         const moved = opacityOf(light(tree)) - rest;
         h.ok(Math.abs(moved - amplitude * run.pulse.value) < 1e-9 && moved !== 0, `${name}: moved ${moved.toFixed(4)}, ${amplitude}·1·pulse`);
         await act(() => elapse(windowMs - 1));
@@ -343,7 +343,7 @@ export async function runShellStatusUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('honest light under Reduce Motion: an arrival kicks the pulse but moves no light', async () => {
+  await h.test('honest light under Reduce Motion: an arrival starts no pulse animation, and a pulse kicked before it was on moves no light', async () => {
     const { windowMs } = flickerDoc();
     accessibilitySettings.reduceMotion = true;
     try {
@@ -351,14 +351,20 @@ export async function runShellStatusUiTests(h: Harness): Promise<void> {
         const run = createRunLight();
         const tree = await renderScreen(draw(1, run.pulse));
         const release = holdAnimations();
+        const pulse = run.pulse as unknown as { value: number; listen: (fn: () => void) => () => void };
+        let writes = 0;
+        const stop = pulse.listen(() => { writes += 1; });
         try {
           const rest = opacityOf(light(tree));
-          await act(() => lightArrived(run, 10_000));
-          h.ok(run.pulse.value !== 0, `${name}: the arrival did kick the pulse`);
-          h.eq(opacityOf(light(tree)), rest, `${name}: but the light does not move`);
+          await act(() => lightArrived(run, 10_000, true));
+          h.eq([writes, run.pulse.value], [0, 0], `${name}: the arrival under Reduce Motion writes nothing to the pulse, no kick and no fall`);
+          await act(() => lightArrived(run, 20_000, false));
+          h.ok(run.pulse.value !== 0, `${name}: a pulse kicked as if Reduce Motion were off`);
+          h.eq(opacityOf(light(tree)), rest, `${name}: still moves no light`);
           await act(() => elapse(windowMs + 1));
           h.eq(opacityOf(light(tree)), rest, `${name}: nor after`);
         } finally {
+          stop();
           await act(release);
           await unmountScreen(tree);
         }
