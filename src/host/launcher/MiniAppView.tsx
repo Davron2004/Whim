@@ -102,11 +102,13 @@ export interface MiniAppLaunch {
 
 /**
  * Opening and closing between Home and the screen (system.md §4.4 M2, M3). The app's `bg` grows out of
- * its tile (`appAnchor`, measured on the UI thread on every frame) to the screen on `morph`, one leaf
- * view whose insets and corners move, with the tint a tile-sized plate where the tile is; leaving, the
+ * its tile (`appAnchor`, measured on the UI thread) to the screen on `morph`, moved by transforms only
+ * (`BgShape`: two stretched bars and four corner discs), with the tint a tile-sized plate where the tile is; leaving, the
  * page is covered first (`fade-out`) and the `bg` shrinks back into the tile on `smooth`, the plate
  * fading back in there. The launcher draws Home under the app while either runs (`homeUnder`), never
  * over its page: Home is added only once the page is covered, and goes once the `bg` covers the screen.
+ * Meanwhile the `bg` takes every touch inside it and Home only those outside it (§4.3 rule 2): one
+ * inside it does nothing while the app comes out, and turns it back out while it goes back in.
  * Under Reduce Motion the `bg` keeps the screen's size and cross-fades over Home instead.
  */
 export interface AppMorph {
@@ -123,6 +125,8 @@ export interface AppMorph {
   onVeiled: () => void;
   /** Leaving, the app is back in its tile (or has faded, with no tile to go into): the launch ends. */
   onClosed: () => void;
+  /** Leaving, a touch on the app's `bg`: it turns back out from where it is (M3 "Reopening retargets"). */
+  onReopen: () => void;
 }
 
 export interface MiniAppStageProps {
@@ -515,7 +519,9 @@ function useAppMorph({ morph, appId, frame, reduceMotion, look, failed }: MorphI
     return { opacity: leaving && !tileSettled.value ? 0 : 1, transform: [{ translateX: dx }, { translateY: dy }] };
   });
   const orbStyle = useAnimatedStyle(() => ({ opacity: orbShown.value }));
-  return { shape: { grown, veil, tileAt, reduceMotion }, plateStyle, plateMove, labelMove, orbStyle, moving };
+  // Fading out or faded, the orb takes no touch and is out of the accessibility tree.
+  const orbOn = covered && !leaving;
+  return { shape: { grown, veil, tileAt, reduceMotion }, plateStyle, plateMove, labelMove, orbStyle, orbOn, moving };
 }
 
 /** Where the app's `bg` is, `k` of the way from the tile `at` to the stage, and its corner radius;
@@ -535,6 +541,15 @@ function shapeOf(k: number, at: TileAt | null, reduced: boolean) {
     fh: at.frameHeight,
   };
 }
+
+/** A layer that takes touches where it draws something and is read, or, `on` false, neither. */
+const reachOf = (on: boolean) =>
+  on
+    ? { pointerEvents: 'box-none' as const, accessibilityElementsHidden: false, importantForAccessibility: 'auto' as const }
+    : { pointerEvents: 'none' as const, accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const };
+
+/** A touch on the app's `bg` while it comes out of its tile: it goes on growing. */
+const noTouch = () => undefined;
 
 /** The corner discs are drawn at this diameter and scaled uniformly to the corner's radius. */
 const CORNER_DISC = 64;
@@ -590,6 +605,27 @@ function Corner({ corner: [right, bottom], grown, veil, tileAt, reduceMotion, co
     };
   });
   return <Animated.View style={[styles.shapeCorner, { backgroundColor: color }, style]} pointerEvents="none" />;
+}
+
+/** What takes the touches inside the app's `bg` while Home is drawn under it (`AppMorph`): one view,
+ *  untinted, moved and scaled over the stage as the `bg` is, so a touch lands on it wherever the `bg` is
+ *  drawn on that frame and on Home everywhere else. Its corners are square: the `bg`'s rounded ones
+ *  are at most a tile's. */
+function BgTouches({ grown, tileAt, reduceMotion, morph }: Readonly<Omit<BgShapeProps, 'veil' | 'color'> & { morph: AppMorph | undefined }>) {
+  const place = useAnimatedStyle(() => {
+    const s = shapeOf(clamp01(grown.value), tileAt.value, reduceMotion);
+    return { transform: [{ translateX: s.x }, { translateY: s.y }, { scaleX: s.w / s.fw }, { scaleY: s.h / s.fh }] };
+  });
+  if (morph?.homeUnder !== true) return null;
+  return (
+    <Animated.View
+      style={[styles.shapeBar, place]}
+      onStartShouldSetResponder={() => true}
+      onResponderRelease={morph.leaving ? morph.onReopen : noTouch}
+      accessible={false}
+      importantForAccessibility="no"
+    />
+  );
 }
 
 /** System back while the app moves between its tile and the screen (`useAppMorph`): mounted only then,
@@ -724,7 +760,7 @@ export default function MiniAppView({
     return () => clearTimeout(cap);
   }, [slotKey, deliveredFor]);
   const look = openingLook(surface, { cap: slotKey !== null && capFor === slotKey, label: slotKey !== null && labelFor === slotKey });
-  const { shape, plateStyle, plateMove, labelMove, orbStyle, moving } = useAppMorph({
+  const { shape, plateStyle, plateMove, labelMove, orbStyle, orbOn, moving } = useAppMorph({
     morph,
     appId: installedApp.id,
     frame,
@@ -813,7 +849,8 @@ export default function MiniAppView({
           </Animated.View>
         ) : null}
       </Animated.View>
-      <Animated.View style={[styles.layer, orbStyle]} pointerEvents="box-none">
+      <BgTouches grown={shape.grown} tileAt={shape.tileAt} reduceMotion={shape.reduceMotion} morph={morph} />
+      <Animated.View style={[styles.layer, orbStyle]} {...reachOf(orbOn)}>
         <Orb appId={installedApp.id} {...orb} onOpen={onOpenSheet} />
       </Animated.View>
       {moving ? <BackWhileMoving onBack={onExit} /> : null}

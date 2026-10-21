@@ -30,6 +30,7 @@ import { SYSCALL_VERSION } from '../../bridge/contract';
 import { STARTUP_DEADLINE_MS } from '../boot-state';
 import { AppCrashed } from '../AppCrashed';
 import { log } from '../../logging';
+import { Dispatcher } from '../../bridge/dispatcher';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -110,7 +111,7 @@ const appOpen = (tree: Tree) => tree.root.findAllByType(MiniAppView).length === 
 /** The app's `bg`: the one childless, absolutely placed view in the app's layers with corners. */
 /** The views the app's `bg` is drawn with: two bars over the whole stage and four corner discs, each
  *  moved and scaled from its top-left. */
-const shapeViews = (tree: Tree) => tree.root.findByType(MiniAppView).findAll((n) => hostType(n) === 'Animated.View' && n.children.length === 0 && flat(n).transformOrigin === 'left top');
+const shapeViews = (tree: Tree) => tree.root.findByType(MiniAppView).findAll((n) => hostType(n) === 'Animated.View' && n.children.length === 0 && flat(n).transformOrigin === 'left top' && n.props.pointerEvents === 'none');
 const transformOf = (node: Node) => Object.assign({}, ...((flat(node).transform as Record<string, number>[] | undefined) ?? [])) as Record<string, number>;
 const round = (v: number) => Math.round(v * 1000) / 1000;
 /** The rounded rect the `bg` is drawn as, in the stage, read off its two bars (`BgShape`): the bar
@@ -191,6 +192,82 @@ async function leaveWhileBooting(tree: Tree): Promise<{ generation: number; rele
 }
 /** The page shows: the `bg` over it is fully faded. */
 const pageShown = (tree: Tree) => shapeOf(tree).opacity === 0;
+
+/** Where a view of the app's layers is drawn in the stage: laid out over the whole stage, moved and
+ *  scaled from its top-left. */
+function drawnRect(node: Node) {
+  const t = transformOf(node);
+  return { x: t.translateX ?? 0, y: t.translateY ?? 0, w: (t.scaleX ?? 1) * STAGE.width, h: (t.scaleY ?? 1) * STAGE.height };
+}
+/** What a touch at (`x`, `y`) in the stage lands on while Home is drawn under the app (the app's
+ *  layers are drawn over it): the topmost view of the app's layers that takes touches and is drawn
+ *  there, else Home. */
+function touchAt(tree: Tree, x: number, y: number): Node | 'home' {
+  const app = tree.root.findByType(MiniAppView);
+  const untouchable = (n: Node) => {
+    for (let up: Node | null = n; up && up !== app; up = up.parent) if (up.props.pointerEvents === 'none') return true;
+    return false;
+  };
+  const takers = app.findAll((n) => typeof n.type === 'string' && n.props.onStartShouldSetResponder?.() === true && !untouchable(n));
+  for (const n of takers.reverse()) {
+    const r = drawnRect(n);
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return n;
+  }
+  return 'home';
+}
+/** The centre of the app's `bg` as drawn. */
+const shapeCentre = (tree: Tree): [number, number] => {
+  const { x, y, w, h } = shapeOf(tree);
+  return [x + w / 2, y + h / 2];
+};
+/** Whether the orb can be touched and is in the accessibility tree: no view holding it says otherwise. */
+function orbReach(tree: Tree) {
+  let touch = true;
+  let a11y = true;
+  for (let up: Node | null = button(tree, COPY.orbMenuOpenLabel); up; up = up.parent) {
+    if (up.props.pointerEvents === 'none') touch = false;
+    if (up.props.accessibilityElementsHidden === true || up.props.importantForAccessibility === 'no-hide-descendants') a11y = false;
+  }
+  return { touch, a11y };
+}
+/** The bundle reads, held: each app's read waits until `answer(appId)` lets it through. */
+function holdReads(): (appId: string) => Promise<void> {
+  const waiting = new Map<string, () => void>();
+  const read = StoreAccess.prototype.activeLaunch;
+  StoreAccess.prototype.activeLaunch = function (target) {
+    return new Promise((resolve) => waiting.set(target.id, () => resolve(read.call(this, target))));
+  };
+  return async (appId) => {
+    const go = waiting.get(appId);
+    waiting.delete(appId);
+    await TestRenderer.act(async () => go?.());
+    await settle();
+  };
+}
+/** Every syscall's answer held back until the returned call lets them all through. */
+function holdSyscalls(): () => void {
+  const { handle } = Dispatcher.prototype;
+  let open!: () => void;
+  const gate = new Promise<void>((resolve) => { open = resolve; });
+  Dispatcher.prototype.handle = async function held(raw) {
+    await gate;
+    return handle.call(this, raw);
+  };
+  return () => {
+    Dispatcher.prototype.handle = handle;
+    open();
+  };
+}
+/** A call into the host from the realm bound at `generation`. */
+const syscallAt = (generation: number, id: number) => JSON.stringify({ kind: 'syscall', trusted: false, payload: { whim: 'syscall', v: SYSCALL_VERSION, id, gen: generation, method: 'diag.echo', params: { payload: id } } });
+/** Answers relayed into any WebView so far. */
+const relayed = () => injectedScripts.filter((js) => js.includes('__whimRelaySysret(')).length;
+/** Leaves the open app (Android back at depth 0) and lets it shrink until `k` of it is left. */
+async function shrinkTo(tree: Tree, k: number): Promise<void> {
+  await TestRenderer.act(async () => { hardwareBack(); });
+  await TestRenderer.act(async () => elapse(FADE_OUT_MS));
+  for (let i = 0; i < 40 && grownFrom(tree, TIMER_TILE) > k; i++) await TestRenderer.act(async () => elapseSprings(20));
+}
 
 export async function runAppMorphUiTests(h: Harness): Promise<void> {
   await h.test('M2: a tapped tile’s app grows its bg from that tile’s measured rect to the screen on morph, the plate stays on the tile, and Home stays under it until the bg covers the screen', async () => {
@@ -548,6 +625,159 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => release());
       h.ok(!homeShown(tree), 'Home goes once the app covers the screen');
       h.eq(stackUnmountsMidMove(), midMove, 'and no stack was unmounted mid-move then either');
+    });
+  });
+
+  await h.test('M2/M3: while Home is drawn under the app, a touch inside its bg lands on the app on every frame, never on Home: coming out it does nothing, going back in it turns the app back out', async () => {
+    await withLauncher(async ({ tree }) => {
+      const release = holdAnimations();
+      await tapTile(tree, 'Timer');
+      const growing: string[] = [];
+      for (let frame = 0; frame < 4; frame++) {
+        await TestRenderer.act(async () => elapseSprings(50));
+        const at = touchAt(tree, ...shapeCentre(tree));
+        const shape = shapeOf(tree);
+        const spansBg = at !== 'home' && JSON.stringify(Object.values(drawnRect(at)).map(round)) === JSON.stringify([shape.x, shape.y, shape.w, shape.h].map(round));
+        if (at === 'home') growing.push('home');
+        else growing.push(spansBg ? 'app' : 'app, off the bg');
+      }
+      h.ok(homeShown(tree) && grownFrom(tree, TIMER_TILE) < 1, 'mid-open, over Home');
+      h.eq(growing, ['app', 'app', 'app', 'app'], 'coming out, a touch inside the bg lands on the app, which spans the bg as drawn');
+      const from = animations.length;
+      const inside = touchAt(tree, ...shapeCentre(tree)) as Node;
+      await TestRenderer.act(async () => inside.props.onResponderRelease());
+      h.ok(stepsSince(from).length === 0 && appOpen(tree) && homeShown(tree), 'and does nothing: it goes on growing');
+      await TestRenderer.act(async () => release());
+      await paint(tree);
+      const web = boundWebView(tree);
+      const held = holdAnimations();
+      await shrinkTo(tree, 0.6);
+      const k = grownFrom(tree, TIMER_TILE);
+      h.ok(homeShown(tree) && k > 0 && k < 1, `mid-close (${k.toFixed(2)}), over Home`);
+      const back = touchAt(tree, ...shapeCentre(tree));
+      h.ok(back !== 'home', 'going back in, a touch inside the bg lands on the app');
+      const before = insetsOf(tree);
+      const turned = animations.length;
+      await TestRenderer.act(async () => (back as Node).props.onResponderRelease());
+      h.eq(insetsOf(tree), before, 'the touch leaves the bg where it was');
+      h.ok(stepsSince(turned).some((st) => st.kind === 'spring' && st.to === 1 && isConfig(st, MORPH)), 'and turns it back out on morph');
+      await TestRenderer.act(async () => held());
+      h.ok(appOpen(tree) && !homeShown(tree) && boundWebView(tree) === web, 'the same launch covers the screen again');
+    });
+  });
+
+  await h.test('M3: a touch on Home where the shrinking bg is not drawn reaches Home: a tile tapped there opens its app, the closing one torn down, its answer still in flight dropped, the new one at a later generation', async () => {
+    await withLauncher(async ({ tree }) => {
+      await tapTile(tree, 'Timer');
+      await paint(tree);
+      const first = deliveredGeneration();
+      const release = holdAnimations();
+      await shrinkTo(tree, 0.3);
+      const diceCentre = [DICE_TILE.pageX + DICE_TILE.width / 2, DICE_TILE.pageY + DICE_TILE.height / 2 - STAGE.pageY] as const;
+      h.ok(touchAt(tree, ...diceCentre) === 'home', `the Dice tile, outside the bg (${JSON.stringify(shapeOf(tree))}), takes the touch`);
+      const answers = holdSyscalls();
+      try {
+        await TestRenderer.act(async () => boundWebView(tree).props.onMessage({ nativeEvent: { data: syscallAt(first, 7) } }));
+        const before = relayed();
+        await tapTile(tree, 'Dice');
+        await waitFor(() => appOpen(tree) && tree.root.findByType(MiniAppView).props.installedApp.id === 'dice', 'Dice open');
+        const second = await deliver(tree);
+        h.ok(second > first, `Dice is a new realm at a later generation (${first} → ${second})`);
+        h.eq(insetsOf(tree), insetsAt(DICE_TILE), 'growing out of its tile');
+        answers();
+        await settle();
+        h.eq(relayed(), before, 'the closing app’s call, answered after it was torn down, reaches no WebView');
+        await TestRenderer.act(async () => release());
+        h.ok(appOpen(tree) && tree.root.findByType(MiniAppView).props.installedApp.id === 'dice', 'and the closing app’s shrink, ending after, ends nothing: Dice stays open');
+      } finally {
+        answers();
+        await TestRenderer.act(async () => release());
+      }
+    });
+  });
+
+  await h.test('M3: a call the app makes while it goes back into its tile, answered once the close has ended, reaches no WebView', async () => {
+    await withLauncher(async ({ tree }) => {
+      await tapTile(tree, 'Timer');
+      await paint(tree);
+      const generation = deliveredGeneration();
+      const web = boundWebView(tree);
+      const release = holdAnimations();
+      await shrinkTo(tree, 0.6);
+      const answers = holdSyscalls();
+      try {
+        const before = relayed();
+        await TestRenderer.act(async () => web.props.onMessage({ nativeEvent: { data: syscallAt(generation, 9) } }));
+        await TestRenderer.act(async () => release());
+        h.ok(!appOpen(tree) && homeShown(tree), 'the close ends on Home');
+        answers();
+        await settle();
+        h.eq(relayed(), before, 'no answer is relayed');
+      } finally {
+        answers();
+      }
+    });
+  });
+
+  await h.test('M3: a Reload whose bundle is read while the app goes back into its tile opens nothing: the close goes on and ends on Home', async () => {
+    await withLauncher(async ({ tree }) => {
+      await tapTile(tree, 'Timer');
+      await paint(tree);
+      const { tappedAt } = tree.root.findByType(MiniAppView).props;
+      const answer = holdReads();
+      await TestRenderer.act(async () => tree.root.findByType(MiniAppView).props.onReload());
+      const release = holdAnimations();
+      await shrinkTo(tree, 0.6);
+      await answer('timer');
+      const still = tree.root.findByType(MiniAppView).props;
+      h.ok(still.tappedAt === tappedAt && still.morph.leaving === true, 'the read lands while the same launch goes on going back in');
+      await TestRenderer.act(async () => release());
+      await settle();
+      h.ok(!appOpen(tree) && homeShown(tree), 'and the close ends on Home, nothing reopened');
+    });
+  });
+
+  await h.test('M2/M3: the orb, faded while the app comes out and from the moment it leaves, takes no touch and is out of the accessibility tree', async () => {
+    await withLauncher(async ({ tree }) => {
+      const release = holdAnimations();
+      await tapTile(tree, 'Timer');
+      await TestRenderer.act(async () => elapseSprings(150));
+      h.eq(orbReach(tree), { touch: false, a11y: false }, 'coming out, before it covers the screen');
+      await h.throws(() => press(button(tree, COPY.orbMenuOpenLabel)), 'Cannot press a disabled control', 'a tap where it is drawn does nothing');
+      await TestRenderer.act(async () => release());
+      await paint(tree);
+      h.eq(orbReach(tree), { touch: true, a11y: true }, 'once the app covers the screen, it is there');
+      holdAnimations();
+      await TestRenderer.act(async () => { hardwareBack(); });
+      h.eq(orbReach(tree), { touch: false, a11y: false }, 'leaving, it is gone at once');
+    });
+  });
+
+  await h.test('M2: of two tiles tapped quickly, the later tap’s app shows, growing out of its tile over Home; the earlier read landing after it, or once an app covers Home, opens nothing', async () => {
+    await withLauncher(async ({ tree }) => {
+      const answer = holdReads();
+      const release = holdAnimations();
+      await tapTile(tree, 'Timer');
+      await tapTile(tree, 'Dice');
+      await answer('dice');
+      await answer('timer');
+      const shown = tree.root.findByType(MiniAppView).props;
+      h.eq(shown.installedApp.id, 'dice', 'the later tap’s app shows');
+      h.ok(shown.morph.homeUnder === true && homeShown(tree), 'over Home');
+      h.eq(insetsOf(tree), insetsAt(DICE_TILE), 'growing out of its own tile');
+      await TestRenderer.act(async () => release());
+      await paint(tree);
+      await TestRenderer.act(async () => { hardwareBack(); });
+      await settle();
+      h.ok(!appOpen(tree) && homeShown(tree), 'closed again');
+      const grow = holdAnimations();
+      await tapTile(tree, 'Timer');
+      await tapTile(tree, 'Dice');
+      await answer('timer');
+      await TestRenderer.act(async () => grow());
+      h.ok(!homeShown(tree) && tree.root.findByType(MiniAppView).props.installedApp.id === 'timer', 'the earlier tap’s app landed first and covers Home');
+      await answer('dice');
+      h.eq(tree.root.findByType(MiniAppView).props.installedApp.id, 'timer', 'the later read, landing once Home has gone, opens nothing');
     });
   });
 }

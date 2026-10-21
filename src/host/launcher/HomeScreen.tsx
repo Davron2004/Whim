@@ -201,6 +201,34 @@ function useRowLabels(cells: readonly GridCell[], layout: GridLayout, fontScale:
   return { lineCounts: rowLabelLines(labelCells, layout.columns, measured), shown, measure };
 }
 
+/** Frames the grid's layout holds still, once its names are laid out, before a change of a tile's
+ *  place moves it (M18's reflow). */
+const GRID_SETTLE_FRAMES = 3;
+
+/**
+ * Whether the grid's tiles reflow (`AppTileProps.reflows`). Home drawn afresh (under an app going back
+ * into its tile, or at a new text size) lays every row out with one-line names until they report, then
+ * corrects the rows that have a wrapped one (`useRowLabels`): with the tiles' reflow on, that correction
+ * played as a reflow of its own after every close (tiles sliding, or rows cross-fading under Reduce
+ * Motion). The reflow comes on only once the names are laid out and `GRID_SETTLE_FRAMES` frames have
+ * drawn that layout, never in the commit that corrects it.
+ */
+function useGridReflows(shown: boolean, fontScale: number): boolean {
+  const [settledAt, setSettledAt] = useState<number | null>(null);
+  const settled = settledAt === fontScale;
+  useEffect(() => {
+    if (!shown || settled) return undefined;
+    let frames = 0;
+    let frame = requestAnimationFrame(function tick() {
+      frames += 1;
+      if (frames >= GRID_SETTLE_FRAMES) setSettledAt(fontScale);
+      else frame = requestAnimationFrame(tick);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [shown, settled, fontScale]);
+  return shown && settled;
+}
+
 /** M17, the grid's first appearance (`HomeScreenProps.firstAppearance`): until the grid is `shown`
  *  (its names laid out) and no longer `covered` by the launch screen its tiles hold out of sight; then each tile it holds rises in after its place's stagger delay. A touch
  *  ends it, as does every one of those tiles having risen; a tile that comes later is simply there. */
@@ -323,6 +351,7 @@ export default function HomeScreen({
   const customized = customizing ? (apps.find((a) => a.id === customizing.id) ?? null) : null;
 
   const labels = useRowLabels(cells, layout, fontScale);
+  const reflows = useGridReflows(labels.shown, fontScale);
   const entrance = useGridEntrance({ first: firstAppearance, shown: labels.shown, covered, keys: cells.map(cellKey), reduceMotion: t.reduceMotion, onAppeared });
 
   const closeMenu = () => setMenu((m) => (m ? { ...m, open: false } : m));
@@ -465,6 +494,7 @@ export default function HomeScreen({
         onRisen={() => entrance.risen(key)}
         presence={departures.presenceOf(cell)}
         onPresenceSettled={() => departures.settled(cell)}
+        reflows={reflows}
         anchor={placesOf(cell, live)}
       />
     );

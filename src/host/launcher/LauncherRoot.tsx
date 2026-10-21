@@ -906,6 +906,11 @@ function LauncherShell({
   const morphNow = morphOf(stageMorph, screen);
   const morphRef = useRef(morphNow);
   morphRef.current = morphNow;
+  // Whether Home is drawn: on its own, or under an app coming out of its tile or going back into it.
+  const homeDrawn = useRef(false);
+  homeDrawn.current = screen.kind === 'home' || morphNow?.homeUnder === true;
+  // Tile taps that opened an app, counted, and the count of the last one whose app showed.
+  const tileTaps = useRef({ tapped: 0, shown: 0 });
   // The same, for a run or a toast that acts later than the render it was started from.
   const runningRef = useRef(running);
   runningRef.current = running;
@@ -1388,8 +1393,14 @@ function LauncherShell({
   const onOpen = (app: InstalledApp, onFailed?: () => void, fromTile = false): Promise<boolean> => {
     const tappedAt = Date.now();
     const holding = stackPop.current !== null;
-    // From its tile, Home stays under the app until it has grown over the screen.
+    // From its tile, Home stays under the app until it has grown over the screen. Of two tiles tapped
+    // quickly, the app of the later tap is the one that shows: the earlier one's read landing after it
+    // shows nothing, and leaves the morph to the launch on screen. Nor does one land once Home has gone
+    // from the screen (an app covers it).
+    const tap = fromTile ? ++tileTaps.current.tapped : 0;
     const show = (launch: AppScreen) => {
+      if (tileTaps.current.shown > tap || !homeDrawn.current) return;
+      tileTaps.current.shown = tap;
       setScreen({ ...launch, fromTile: true });
       setStageMorph({ at: tappedAt, homeUnder: true, leaving: false });
     };
@@ -1408,8 +1419,8 @@ function LauncherShell({
    *  now current, in place — a new launch, so a fresh WebView and realm (`MiniAppStage`), with nothing
    *  in between: no Home, no closed frame. A change that landed on a continuation opens that entry
    *  instead, and so does `landedOn`, the entry a toast named (the app opened again since, it runs
-   *  behind that entry). A launch the person has left meanwhile is not reopened; one whose bundle
-   *  cannot be read keeps running as it was. */
+   *  behind that entry). A launch the person has left meanwhile is not reopened, nor one going back
+   *  into its tile (M3) as the bundle is read; one whose bundle cannot be read keeps running as it was. */
   const reloadRunning = async (landedOn?: InstalledApp): Promise<void> => {
     if (running === null) return;
     const from = running;
@@ -1426,8 +1437,11 @@ function LauncherShell({
       }
     });
   };
-  /** Puts a new launch in the place of `from`, wherever it still is: on screen, or under a sheet. */
+  /** Puts a new launch in the place of `from`, wherever it still is: on screen, or under a sheet; not
+   *  while the person is leaving it. */
   const replacing = (from: AppScreen) => (next: AppScreen) => {
+    const morph = morphRef.current;
+    if (morph?.at === from.tappedAt && morph.leaving) return;
     setScreen((s) => (s.kind === 'app' && s.tappedAt === from.tappedAt ? next : s));
     setUnder((u) => (u?.tappedAt === from.tappedAt ? next : u));
   };
@@ -3834,11 +3848,14 @@ function LauncherShell({
         leaving: morphNow?.leaving === true,
         onCovered: () => setStageMorph((m) => (m?.at === tappedAt && !m.leaving ? { ...m, homeUnder: false } : m)),
         onVeiled: () => setStageMorph((m) => (m?.at === tappedAt && m.leaving ? { ...m, homeUnder: true } : m)),
+        // Only for the launch on screen: one replaced while it went back in (another tile tapped) ends nothing.
         onClosed: () => {
-          if (morphNow?.leaving !== true) return;
+          const now = morphRef.current;
+          if (now?.at !== tappedAt || !now.leaving) return;
           setStageMorph(null);
           goHome();
         },
+        onReopen: () => setStageMorph((m) => (m?.at === tappedAt && m.leaving ? { ...m, leaving: false } : m)),
       },
     };
     return <MiniAppStage launch={launch} onFrame={setAppFrame}>{screenContent}</MiniAppStage>;

@@ -372,6 +372,31 @@ export async function runHomeMotionUiTests(h: Harness): Promise<void> {
     } finally { await unmountScreen(tree); }
   });
 
+  await h.test('M18: a Home drawn afresh corrects its rows once its names report, and that correction is no reflow (none with motion, no cross-fade under Reduce Motion); a delete once it has settled reflows its neighbours', async () => {
+    const names = ['Dice', 'Timer', 'Plants', 'Water Counter', 'Tea'];
+    for (const reduced of [false, true]) {
+      await reduceMotion(reduced);
+      const tree = await renderHome({ apps: examples(names), ...deletable() });
+      try {
+        const block = () => flat(tile(tree, 'Dice').findAll((m) => hostType(m) === 'Text' && textOf(m) === 'Dice')[0]).minHeight;
+        h.eq(block(), line, `${reduced ? 'reduced: ' : ''}drawn afresh, the first row is laid out with one-line names`);
+        await layOut(tree, { ...oneLine(names), 'Water Counter': 2 });
+        h.eq(block(), 2 * line, 'once the names report, it is corrected to the two-line block');
+        h.eq(names.map((n) => reflowOf(tree, n)?.preset ?? null), names.map(() => null), 'and no tile reflows into the corrected place');
+        await waitFor(() => names.every((n) => reflowOf(tree, n) !== undefined), 'the grid settled');
+        const release = await deleteHeld(tree, 'Timer');
+        await run(release);
+        h.eq(tileLabels(tree).map(nameOfLabel), ['Dice', 'Plants', 'Water Counter', 'Tea'], 'a delete once it has settled');
+        for (const n of ['Dice', 'Plants', 'Water Counter', 'Tea']) {
+          h.ok(Object.is(reflowOf(tree, n), reduced ? REFLOW_REDUCED : REFLOW) && playedUnder(reflowOf(tree, n), reduced) !== null, `${reduced ? 'reduced: ' : ''}${n} reflows (or cross-fades) after a delete`);
+        }
+      } finally {
+        await unmountScreen(tree);
+        await reduceMotion(false);
+      }
+    }
+  });
+
   await h.test('M18: the wait before a return is the time system.md gives the smooth spring to cover 95% of its way, as it does for every spring', async () => {
     const table = fs.readFileSync(path.join(process.cwd(), 'docs/design/system.md'), 'utf8');
     const rows = [...table.matchAll(/^\| `(\w+)` \| [\d.]+ \| [\d.]+ \| [\d.]+ \| [\d.]+ \| (\d+) \/ \d+ ms/gm)].map((m) => [m[1], Number(m[2])] as const);

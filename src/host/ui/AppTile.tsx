@@ -95,6 +95,10 @@ const MORPH = springConfig('morph');
  *  160 ms `fade-in`, which the root `ReducedMotionConfig` must not skip. */
 export const REFLOW = LinearTransition.springify().mass(SMOOTH.mass).stiffness(SMOOTH.stiffness).damping(SMOOTH.damping);
 export const REFLOW_REDUCED = FadingTransition.duration(timingOf('fadeIn').duration).reduceMotion(ReduceMotion.Never);
+const reflowOf = (reflows: boolean, reduced: boolean) => {
+  if (!reflows) return undefined;
+  return reduced ? REFLOW_REDUCED : REFLOW;
+};
 
 /** A leaving tile (M18) takes no touch and a screen reader skips it. */
 const LEAVING = { pointerEvents: 'none', accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' } as const;
@@ -394,6 +398,10 @@ export interface AppTileProps {
    *  both happen at once. */
   presence?: TilePresence;
   onPresenceSettled?: () => void;
+  /** Whether a change of its place in the grid moves it there (M18's reflow; a cross-fade under Reduce
+   *  Motion). Off, it is simply there: Home holds it off while its grid is still being laid out. On
+   *  by default. */
+  reflows?: boolean;
   /** The names its plate is registered under as a place (`SheetAnchor`): a run's, whose making sheet
    *  shrinks into it as it closes and grows out of it as it opens (M5); an app's, which grows out of
    *  it as it opens and goes back into it as it closes (M2, M3). */
@@ -517,6 +525,7 @@ export function AppTile({
   onRisen,
   presence = 'shown',
   onPresenceSettled,
+  reflows = true,
   anchor,
 }: Readonly<AppTileProps>) {
   const t = useTokens();
@@ -576,7 +585,7 @@ export function AppTile({
   ) : null;
 
   return (
-    <Animated.View style={[frame, cellMotion]} layout={t.reduceMotion ? REFLOW_REDUCED : REFLOW} {...(presence === 'leaving' ? LEAVING : STAYING)}>
+    <Animated.View style={[frame, cellMotion]} layout={reflowOf(reflows, t.reduceMotion)} {...(presence === 'leaving' ? LEAVING : STAYING)}>
       <Pressable
         ref={ref}
         onPress={tap}
