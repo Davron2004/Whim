@@ -10,6 +10,7 @@
 import { Harness } from './harness';
 import * as copyModule from '../copy';
 import {
+  COMPOSED_KINDS,
   COPY,
   CONSENT_WHATS_NEW,
   LEGAL_COPY,
@@ -57,6 +58,7 @@ import {
   workingPlanPhrase,
 } from '../copy';
 import { tileColor } from '../tiles';
+import { lineFindings } from '../../../../checks/test/repo/copy-glossary';
 
 // Mechanism / git vocabulary that must never reach the launcher surface. A raw lineage id
 // ("fork-1") is forbidden here; the word "fork" itself is a retired glossary word (below).
@@ -65,12 +67,6 @@ const FORBIDDEN: RegExp[] = [
   /\btree\b/i, /gitdir/i, /\bHEAD\b/, /\brealm\b/i, /generation/i, /dispatcher/i, /iframe/i,
   /webview/i, /\blineage\b/i, /\bsnapshot\b/i, /fork-\d/i, /[0-9a-f]{40}/i,
   /\bschema\b/i, /\bdatabase\b/i, /\bstorage\b/i, /\bclone\b/i,
-];
-
-// The glossary's retired words (system.md §8; app-launcher "Shell copy has one name per concept").
-const RETIRED: RegExp[] = [
-  /\bmini[- ]?apps?\b/i, /\bbuil(?:d|ds|ding|t)\b/i, /\bgenerat\w*/i, /\bfork\w*/i, /\bsnapshots?\b/i,
-  /\brestor\w*/i, /\brevert\w*/i, /\bprompt again\b/i,
 ];
 
 const NOW = Date.UTC(2026, 9, 20, 12);
@@ -150,14 +146,23 @@ export async function runProductVerbsTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('product-verbs: every line copy.ts composes uses the glossary, never a retired word', async () => {
-    const lines = Object.values(composedLines()).flat();
+  await h.test('product-verbs: every line copy.ts composes uses the glossary, and a composed control has no Whim "I"', async () => {
+    const composed = Object.entries(composedLines());
+    const lines = composed.flatMap(([, texts]) => texts);
     h.ok(lines.length >= 30 && lines.every((line) => line.length > 0), `the composed lines render (${lines.length})`);
-    for (const line of lines) {
-      for (const bad of RETIRED) {
-        h.ok(!bad.test(line), `"${line}" must not say the retired word ${bad}`);
-      }
+    for (const [name, texts] of composed) {
+      for (const line of texts) h.eq(lineFindings(name, line, COMPOSED_KINDS[name]), [], `"${line}" uses the glossary`);
     }
+  });
+
+  await h.test('product-verbs: a composed control in Whim’s "I", or a prefixed retired word in a composed line, fails naming the function', async () => {
+    const placeholder = lineFindings('composePlaceholder', 'I’ll write it for you', COMPOSED_KINDS.composePlaceholder);
+    h.ok(placeholder.length === 1 && placeholder[0].startsWith('composePlaceholder: Whim\'s "I" on a control'), `a composed placeholder: ${placeholder.join('; ')}`);
+    const fix = lineFindings('crashFixWords', 'I’ll fix the error', COMPOSED_KINDS.crashFixWords);
+    h.ok(fix.length === 1 && fix[0].startsWith('crashFixWords: Whim\'s "I"'), `the person's words with the maker's "I’ll": ${fix.join('; ')}`);
+    const toast = lineFindings('versionSwitchToast', 'Regenerated version 3', COMPOSED_KINDS.versionSwitchToast);
+    h.ok(toast.length === 1 && toast[0].startsWith('versionSwitchToast: retired word "generate"'), `a prefixed retired word: ${toast.join('; ')}`);
+    h.eq(lineFindings('makingTitle', 'I’m making Pour Timer', COMPOSED_KINDS.makingTitle), [], 'the maker may say "I" in prose');
   });
 
   await h.test('product-verbs: every function copy.ts exports is sampled above, or named as composing no line', async () => {
@@ -170,5 +175,7 @@ export async function runProductVerbsTests(h: Harness): Promise<void> {
       (name) => typeof (copyModule as Record<string, unknown>)[name] !== 'function',
     );
     h.eq(stale, [], 'every name listed is still a function copy.ts exports');
+    h.eq(Object.keys(sampled).filter((name) => !(name in COMPOSED_KINDS)), [], 'every composer says who speaks in COMPOSED_KINDS');
+    h.eq(Object.keys(COMPOSED_KINDS).filter((name) => !(name in sampled)), [], 'COMPOSED_KINDS names only sampled composers');
   });
 }

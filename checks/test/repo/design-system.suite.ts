@@ -24,6 +24,7 @@ import { SAMPLED_SPRINGS } from '../../../src/design/generated/springs';
 import { contrastRatio, deltaE } from '../../../src/design/tints';
 import * as vcSdk from '../../../src/sdk/index';
 import { checkOutputs, formatDrift, reservedColors, tileRim, tintSoft, SYSTEM_MD, MOCKUP_HTML, PALETTE_JSON } from '../../../scripts/lib/design-tokens';
+import { FIRST_PERSON, lineFindings, type CopyKind } from './copy-glossary';
 import { COPY, COPY_KINDS, formatClockTime, formatCount, reportCodeSizeLabel, timelineGrowthLine } from '../../../src/host/launcher/copy';
 
 const ROOT = process.cwd();
@@ -195,34 +196,13 @@ function galleryGaps(components: readonly string[], source: string): string[] {
 
 // ── Copy ─────────────────────────────────────────────────────────────────────
 
-type CopyKind = (typeof COPY_KINDS)[keyof typeof COPY_KINDS];
-
-/** The retired words of system.md §8 and the requirement "Shell copy has one name per concept". */
-const RETIRED_WORDS: readonly (readonly [string, RegExp])[] = [
-  ['mini-app', /\bmini[- ]?apps?\b/i],
-  ['build', /\bbuil(?:d|ds|ding|t)\b/i],
-  ['generate', /\bgenerat\w*/i],
-  ['fork', /\bfork\w*/i],
-  ['snapshot', /\bsnapshots?\b/i],
-  ['restore', /\brestor\w*/i],
-  ['revert', /\brevert\w*/i],
-  ['Prompt again', /\bprompt again\b/i],
-];
-
-/** Whim's first person: any "I" on a control, and on a person's control the maker's contractions. */
-const FIRST_PERSON = /\bI\b/;
-const MAKER_CONTRACTION = /\bI[’'](?:ll|m|ve|d)\b/;
-
 /** One finding per key of `table` with no kind, a retired word, or Whim's "I" on a control. */
 function copyFindings(table: Readonly<Record<string, string>>, kinds: Readonly<Record<string, CopyKind>>): string[] {
   const findings: string[] = [];
   for (const [key, text] of Object.entries(table)) {
     const kind = kinds[key] as CopyKind | undefined;
     if (kind === undefined) findings.push(`${key}: has no kind in COPY_KINDS`);
-    const retired = RETIRED_WORDS.filter(([, word]) => word.test(text)).map(([name]) => name);
-    findings.push(...retired.map((name) => `${key}: retired word "${name}" in "${text}"`));
-    if (kind === 'control' && FIRST_PERSON.test(text)) findings.push(`${key}: Whim's "I" on a control: "${text}"`);
-    if (kind === 'person' && MAKER_CONTRACTION.test(text)) findings.push(`${key}: Whim's "I" on a control: "${text}"`);
+    findings.push(...lineFindings(key, text, kind));
   }
   return findings;
 }
@@ -386,15 +366,23 @@ export async function run(): Promise<void> {
     assert(FIRST_PERSON.test(COPY.composeHelper) && COPY_KINDS.composeHelper === 'prose', 'the maker says "I" in prose, and the lint lets it');
   });
 
-  await test('copy lint: a control saying "I’ll decide" or "I", a retired word, and an untagged key each fail, naming the key', () => {
+  await test('copy lint: a control saying "I’ll decide" or "I", a retired word (prefixed too), and an untagged key each fail, naming the key', () => {
     const decide = copyFindings({ ...COPY, clarifyIllDecide: 'I’ll decide' }, { ...COPY_KINDS, clarifyIllDecide: 'control' });
     assert(decide.length === 1 && decide[0].startsWith('clarifyIllDecide: Whim\'s "I" on a control'), `"I’ll decide": ${decide.join('; ')}`);
     const bareI = copyFindings({ ...COPY, readyOpen: 'I can open it' }, COPY_KINDS);
     assert(bareI.length === 1 && bareI[0].startsWith('readyOpen: Whim\'s "I"'), `a bare "I": ${bareI.join('; ')}`);
     const person = copyFindings({ ...COPY, reportIncludePrompt: 'I’ll include what you asked for' }, COPY_KINDS);
     assert(person.length === 1 && person[0].startsWith('reportIncludePrompt:'), `the maker's "I’ll" on a person's control: ${person.join('; ')}`);
+    const row = copyFindings({ ...COPY, whimSheetNewVersion: 'I made a new version' }, COPY_KINDS);
+    assert(row.length === 1 && row[0].startsWith('whimSheetNewVersion: Whim\'s "I" on a control'), `a pressable row's title is a control: ${row.join('; ')}`);
+    const placeholder = copyFindings({ ...COPY, clarifyOtherPlaceholder: 'Or I’ll pick for you' }, COPY_KINDS);
+    assert(placeholder.length === 1 && placeholder[0].startsWith('clarifyOtherPlaceholder: Whim\'s "I"'), `a field's placeholder is a control: ${placeholder.join('; ')}`);
     const restore = copyFindings({ ...COPY, historyUseVersion: 'Restore this version' }, COPY_KINDS);
     assert(restore.length === 1 && restore[0].startsWith('historyUseVersion: retired word "restore"'), `a retired word: ${restore.join('; ')}`);
+    const rebuild = copyFindings({ ...COPY, actionReload: 'Rebuild it' }, COPY_KINDS);
+    assert(rebuild.length === 1 && rebuild[0].startsWith('actionReload: retired word "build"'), `a prefixed retired word: ${rebuild.join('; ')}`);
+    const regenerate = copyFindings({ ...COPY, actionReload: 'Regenerate' }, COPY_KINDS);
+    assert(regenerate.length === 1 && regenerate[0].startsWith('actionReload: retired word "generate"'), `a prefixed retired word: ${regenerate.join('; ')}`);
     const prose = copyFindings({ ...COPY, failureTitle: 'Couldn’t generate this' }, COPY_KINDS);
     assert(prose.length === 1 && prose[0].startsWith('failureTitle: retired word "generate"'), `a retired word in prose: ${prose.join('; ')}`);
     const untagged = copyFindings({ ...COPY, homeNewLine: 'Something new' }, COPY_KINDS);

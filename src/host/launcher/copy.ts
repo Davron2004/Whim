@@ -519,15 +519,16 @@ export const COPY = {
 } as const;
 
 /** Who speaks in a `COPY` string (system.md §8 "Who speaks"). `control`: something the person
- *  presses, picks or toggles, and its busy words; it speaks as the person and never in Whim's "I".
- *  `person`: a control in the person's own first person ("Include what I asked for"), whose "I" is
- *  theirs. `prose`: everything read rather than pressed, where the maker may say "I". */
+ *  presses, picks or toggles (a pressable row's title too), its busy words, and a field's
+ *  placeholder; it speaks as the person and never in Whim's "I". `person`: a control in the
+ *  person's own first person ("Include what I asked for"), or words put in a field as theirs; the
+ *  "I" is theirs. `prose`: everything read rather than pressed, where the maker may say "I". */
 type CopyKind = 'control' | 'person' | 'prose';
 
 /** Every `COPY` key's kind, so the copy lint knows which strings must not carry Whim's "I". */
 export const COPY_KINDS: Readonly<Record<keyof typeof COPY, CopyKind>> = {
   homeTitle: 'prose', homeComposerPlaceholder: 'control', homeComposerDraftLabel: 'control', homeComposerHint: 'prose',
-  homeSearchLabel: 'prose', homeSearchEmpty: 'prose', homeLoadingLabel: 'prose', homeOfflineNotice: 'prose',
+  homeSearchLabel: 'control', homeSearchEmpty: 'prose', homeLoadingLabel: 'prose', homeOfflineNotice: 'prose',
   homeEmptyTitle: 'prose', homeEmptyLine: 'prose', homeIdeaTimer: 'control', homeIdeaTracker: 'control',
   homeIdeaDice: 'control', exampleBadge: 'prose', settingsTitle: 'control', actionOpen: 'control',
   actionChangeIt: 'control', actionMakeCopy: 'control', actionCustomize: 'control', actionShareLink: 'control',
@@ -539,13 +540,13 @@ export const COPY_KINDS: Readonly<Record<keyof typeof COPY, CopyKind>> = {
   tileHintFailure: 'prose', tileHintUpdate: 'prose', tileHintOlder: 'prose', tileMenuAction: 'control', olderTitle: 'prose',
   toastUndo: 'control', discardedToast: 'prose', undoTooLateToast: 'prose', copyMadeToast: 'prose', copyFailedToast: 'prose',
   copyQuestionTitle: 'prose', copyQuestionData: 'control', copyQuestionFresh: 'control', copyQuestionFreshSubtitle: 'prose',
-  customizeTitle: 'prose', customizeTintHeader: 'prose', customizeGlyphHeader: 'prose', customizeSearchLabel: 'prose',
+  customizeTitle: 'prose', customizeTintHeader: 'prose', customizeGlyphHeader: 'prose', customizeSearchLabel: 'control',
   customizeSearchEmpty: 'prose', customizeReset: 'control', interruptedBuildReason: 'prose', backLabel: 'control',
   sheetClose: 'control', toastDismiss: 'control', fieldClear: 'control',
   flowContinue: 'control', composeHeadline: 'prose', composeHeadlineEdit: 'prose', composeHelper: 'prose',
-  composePlaceholderEdit: 'prose', planHeadline: 'prose', planHeadlineEdit: 'prose', planChoicesHeader: 'prose',
+  composePlaceholderEdit: 'control', planHeadline: 'prose', planHeadlineEdit: 'prose', planChoicesHeader: 'prose',
   planMakeHeader: 'prose', planMakeHeaderEdit: 'prose', clarifyPickMany: 'prose', clarifyDecide: 'control',
-  clarifyOtherPlaceholder: 'prose', planQuestionReopenHint: 'prose', planBuild: 'control', planBuildEdit: 'control',
+  clarifyOtherPlaceholder: 'control', planQuestionReopenHint: 'prose', planBuild: 'control', planBuildEdit: 'control',
   planBusy: 'control', planRowSave: 'control', planRowEdited: 'prose', planRowEditHint: 'prose', planRowFieldLabel: 'prose',
   planTryAgain: 'control', planLimitHeadline: 'prose', planLimitCardLead: 'prose', planMakeInstead: 'control',
   planChangeIdea: 'control', workingClarify: 'prose', workingPlan: 'prose', workingPlanEdit: 'prose',
@@ -566,11 +567,11 @@ export const COPY_KINDS: Readonly<Record<keyof typeof COPY, CopyKind>> = {
   historyReassurancePending: 'prose',
   orbMenuOpenLabel: 'control', orbStateChanging: 'prose', orbStateReady: 'prose', orbStateFinished: 'prose',
   orbStateFailed: 'prose', orbMoveCorner: 'control',
-  whimSheetNewVersion: 'prose', actionReload: 'control', changeFailedToast: 'prose', toastSeeWhy: 'control',
-  whimSheetAsk: 'prose', whimSheetSend: 'control', whimSheetBackToApps: 'control',
-  reportScreenTitle: 'prose', historyReportAction: 'control', reportReasonEyebrow: 'prose', reportReasonBroken: 'control',
+  whimSheetNewVersion: 'control', actionReload: 'control', changeFailedToast: 'prose', toastSeeWhy: 'control',
+  whimSheetAsk: 'control', whimSheetSend: 'control', whimSheetBackToApps: 'control',
+  reportScreenTitle: 'control', historyReportAction: 'control', reportReasonEyebrow: 'prose', reportReasonBroken: 'control',
   reportReasonWrongResult: 'control', reportReasonHardToUse: 'control', reportReasonHarmful: 'control',
-  reportReasonOffensive: 'control', reportReasonOther: 'control', reportNotePlaceholder: 'prose', reportPreviewTitle: 'prose',
+  reportReasonOffensive: 'control', reportReasonOther: 'control', reportNotePlaceholder: 'control', reportPreviewTitle: 'prose',
   reportFieldReason: 'prose', reportFieldNote: 'prose', reportFieldAppName: 'prose', reportFieldPrompt: 'prose',
   reportFieldSource: 'prose', reportIncludePrompt: 'person', reportNoCodeDisclosure: 'prose', reportDeviceIdLine: 'prose',
   reportSend: 'control', reportSendBusy: 'control', reportShowMore: 'control', reportShowLess: 'control',
@@ -578,7 +579,7 @@ export const COPY_KINDS: Readonly<Record<keyof typeof COPY, CopyKind>> = {
   reportSendFailedGeneric: 'prose', reportTooLarge: 'prose',
   appBootLabel: 'prose', appBootA11yLabel: 'prose',
   launchFailedTitle: 'prose', launchFailedBody: 'prose', launchFailedBack: 'control', appOpenTimedOut: 'prose',
-  appCrashedBody: 'prose', appCrashedBehindBody: 'prose', appCrashedAskFix: 'control', appCrashedFixRequest: 'prose',
+  appCrashedBody: 'prose', appCrashedBehindBody: 'prose', appCrashedAskFix: 'control', appCrashedFixRequest: 'person',
   failureEmptyBuild: 'prose', failureHintsTitle: 'prose', screenErrorTitle: 'prose', screenErrorBody: 'prose',
   screenErrorRetry: 'control', screenErrorBack: 'control',
   consentTitle: 'prose', consentLead: 'prose', consentSentTitle: 'prose', consentSentRequest: 'prose',
@@ -610,6 +611,22 @@ export const COPY_KINDS: Readonly<Record<keyof typeof COPY, CopyKind>> = {
   serverProbeUnreachable: 'prose', promptServerUnreachable: 'prose',
   appLinkMissingTitle: 'prose', appLinkMissingBody: 'prose', appLinkMissingBack: 'control',
   keyboardDone: 'control',
+};
+
+/** Who speaks in each line a function below composes, by the function's name, so the copy lint
+ *  reads composed lines as it reads `COPY`. */
+export const COMPOSED_KINDS: Readonly<Record<string, CopyKind>> = {
+  composePlaceholder: 'control', composerContinueLine: 'control', tileOlderLine: 'control',
+  crashFixWords: 'person', quotedWords: 'person', historyQuotedPrompt: 'person',
+  copyQuestionDataSubtitle: 'prose', deletedToast: 'prose', discardedManyToast: 'prose', serverProbeLabel: 'prose',
+  addedFieldsLine: 'prose', makingTitle: 'prose', makingRepairLine: 'prose', makingQueueLine: 'prose',
+  makingStallLine: 'prose', failureCouldntRunLine: 'prose', readyTitle: 'prose', changedTitle: 'prose',
+  appCrashedTitle: 'prose', composeHeadline: 'prose', planHeadline: 'prose', planMakeHeader: 'prose',
+  workingPlanPhrase: 'prose', editingEyebrow: 'prose', whimSheetVersionLine: 'prose', historyVersionCount: 'prose',
+  historyRowMeta: 'prose', versionSwitchToast: 'prose', reportRecipientLine: 'prose', reportCodeLine: 'prose',
+  reportThanksLine: 'prose', reportCodeSizeLabel: 'prose', timelineStageLabel: 'prose', timelineDurationLabel: 'prose',
+  timelineStageLine: 'prose', timelineGrowthLine: 'prose', retryLineSeconds: 'prose', retryLineMinutes: 'prose',
+  retryLineHoursFallback: 'prose', retryLineElapsed: 'prose', retryLineSameDay: 'prose', retryLineTomorrow: 'prose',
 };
 
 /** One what's-new line (legal-surface-v2 design D4): shown under `consentOutdatedLine` when the
