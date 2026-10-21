@@ -20,8 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
 import { RUNTIME_HTML } from '../../runtime/generated/runtime-html';
-import { RADIUS, SPACING } from '../../sdk/theme';
-import { SPACE } from '../../design/tokens';
+import { LAYOUT, RADII, SPACE } from '../../design/tokens';
 import { TilePlate } from '../ui/AppTile';
 import { TILE_SIDE } from '../ui/AppTile-geometry';
 import { timing } from '../ui/motion';
@@ -502,14 +501,14 @@ const styles = StyleSheet.create({
   waiting: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: 0 },
   slot: { flex: 1 },
   waitingSlot: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: 0 },
-  errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.lg },
-  errorTitle: { textAlign: 'center', marginBottom: SPACING.sm },
-  errorBody: { textAlign: 'center', marginBottom: SPACING.lg },
+  errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: LAYOUT.gutter },
+  errorTitle: { textAlign: 'center', marginBottom: SPACE[3] },
+  errorBody: { textAlign: 'center', marginBottom: LAYOUT.gapTitleToContent },
   // A filled primary the full width.
   errorAction: {
     alignSelf: 'stretch',
-    height: 52,
-    borderRadius: RADIUS.card,
+    height: LAYOUT.buttonHeight.large,
+    borderRadius: RADII.full.radius,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',

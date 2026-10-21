@@ -25,7 +25,6 @@ import { closedDatabases, resetNativeStorage } from './native-storage';
 import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 import { animations, isStep } from './native-reanimated';
 import { TilePlate } from '../../ui/AppTile';
-import { SHELL_PALETTE } from '../theme';
 import { WARM_ANSWER, WARM_PROBE_JS } from '../webview-pool';
 import { RUNTIME_HTML } from '../../../runtime/generated/runtime-html';
 import { SYSCALL_VERSION } from '../../bridge/contract';
@@ -835,7 +834,8 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
         h.ok(layers.length > 0 && layers.every((n) => flat(n).backgroundColor === COLORS.dark.bg), 'what covers the page while it opens is the dark bg');
         h.ok(!container.findAll((n) => typeof n.type === 'string').some((n) => [TINTS.ocean.light, TINTS.ocean.dark].includes(flat(n).backgroundColor ?? '')),
           'and no view is filled with the tint');
-        const light = new Set<string | undefined>(Object.values(SHELL_PALETTE));
+        const dark = new Set<string>(Object.values(COLORS.dark));
+        const light = new Set<string | undefined>(Object.values(COLORS.light).filter((c) => !dark.has(c)));
         await loadEnd();
         await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
         const screen = tree.root.findAll((n) => hostType(n) === 'ScrollView' && textOf(n).includes(COPY.appCrashedBody))[0];
@@ -843,7 +843,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
         const title = tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n) === appCrashedTitle(TIP.name)).at(-1)!;
         h.eq(flat(title).color, COLORS.dark.text, 'with the dark text colour');
         const colours = screen.findAll((n) => typeof n.type === 'string').flatMap((n) => [flat(n).backgroundColor, flat(n).color, (flat(n) as { borderColor?: string }).borderColor]);
-        h.ok(!colours.some((c) => light.has(c)), 'and none of its colours is the light shell palette');
+        h.ok(!colours.some((c) => light.has(c)), 'and none of its colours is a light role the dark scheme does not share');
       }, { tint: 'ocean', icon: 'glass-water' });
     } finally {
       setColorScheme('light');

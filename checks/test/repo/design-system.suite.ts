@@ -110,8 +110,7 @@ function withColor(scheme: tokens.Scheme, role: tokens.ColorRole, value: string)
 /** Files that still carry colour values of their own, each with the reason. Remove an entry when
  *  its file stops needing it; an entry whose file no longer has a hit fails the suite. */
 const EXEMPT: Readonly<Record<string, string>> = {
-  'src/sdk/design-tokens.ts': 'the v2 shell tokens, read by the screens that have not moved to src/design/tokens.ts yet',
-  'src/host/launcher/theme.ts': "the v2 shell palette's white `onAccent`, pinned until the shell moves to the token module",
+  'src/sdk/design-tokens.ts': "`appColor`'s palette and the v2 hues it avoids, read until the legacy `tileColor` goes",
   'src/host/BridgeProbeScreen.tsx': 'a flag-gated on-device acceptance probe (RUN_BRIDGE_PROBE), off in the product',
   'src/host/StorageProbeScreen.tsx': 'a flag-gated on-device acceptance probe (RUN_STORAGE_PROBE), off in the product',
   'src/host/VersionStoreProbeScreen.tsx': 'a flag-gated on-device acceptance probe (RUN_VSTORE_PROBE), off in the product',

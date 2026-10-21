@@ -15,13 +15,15 @@
  * language switch as the terms step (spec legal-text-localization).
  */
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { ScrollView, View } from 'react-native';
+import { Button } from '../ui/Button';
+import { Text } from '../ui/Text';
+import { useTokens } from '../ui/tokens';
 import { LEGAL_COPY } from './copy';
+import { fullScreenStyles } from './full-screen-styles';
 import LegalLanguageSwitch from './LegalLanguageSwitch';
 import type { LegalLanguage } from './legal-language';
 import type { AgeHold } from './age-check';
-import { SHELL_PALETTE } from './theme';
 import { useSystemBack } from './use-system-back';
 
 export interface AgeScreenProps {
@@ -36,37 +38,21 @@ export interface AgeScreenProps {
 }
 
 export default function AgeScreen({ language, onLanguageChange, held, onClose }: Readonly<AgeScreenProps>) {
-  const p = SHELL_PALETTE;
+  const s = fullScreenStyles(useTokens());
   useSystemBack(onClose);
   const copy = LEGAL_COPY[language];
   const under13 = held === 'under-13';
 
   return (
-    <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <ScrollView contentContainerStyle={styles.content}>
+    <View style={s.root}>
+      <ScrollView contentContainerStyle={s.content}>
         <LegalLanguageSwitch language={language} onChange={onLanguageChange} />
-        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{under13 ? copy.ageUnder13Title : copy.ageBlockedTitle}</Text>
-        <Text style={[TYPE_SCALE.body, styles.lead, { color: p.text }]}>{under13 ? copy.ageUnder13Body : copy.ageBlockedBody}</Text>
+        <Text type="title1">{under13 ? copy.ageUnder13Title : copy.ageBlockedTitle}</Text>
+        <Text>{under13 ? copy.ageUnder13Body : copy.ageBlockedBody}</Text>
       </ScrollView>
-
-      <TouchableOpacity onPress={onClose} accessibilityRole="button" style={[styles.primary, { backgroundColor: p.accent }]}>
-        <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{copy.ageBack}</Text>
-      </TouchableOpacity>
+      <View style={s.footer}>
+        <Button label={copy.ageBack} variant="ink" onPress={onClose} />
+      </View>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  root: { flex: 1 },
-  content: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl, paddingBottom: SPACING.xl },
-  lead: { marginTop: SPACING.sm },
-  primary: {
-    height: 52,
-    marginHorizontal: SPACING.lg,
-    marginTop: SPACING.sm,
-    marginBottom: SPACING.lg,
-    borderRadius: RADIUS.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

@@ -13,9 +13,9 @@
 // This is a developer surface, like `DevProbeScreen` — its labels are mechanism words and are
 // deliberately NOT in `copy.ts`, which is the product surface's table.
 import React, { useEffect, useState } from 'react';
-import { FlatList, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, Modal, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { RADII, SPACE } from '../../design/tokens';
 // `@whim/contract` is a TYPE-ONLY import (design D6) — importing the zod schema VALUES would pull
 // zod into the Metro graph. `import type` erases the statement entirely, so nothing crosses.
 import type { DevLogRecord } from '@whim/contract';
@@ -32,7 +32,9 @@ import {
   formatRecordTime,
   visibleRecords,
 } from './dev-log-view';
-import { SHELL_PALETTE } from './theme';
+import { Text } from '../ui/Text';
+import { useTokens } from '../ui/tokens';
+import { makeStyles } from '../ui/tokens-pure';
 
 const LABELS = { title: 'Logs', close: 'Close', empty: 'Nothing logged yet', all: 'all' } as const;
 
@@ -44,7 +46,7 @@ export interface DevLogOverlayProps {
 }
 
 export default function DevLogOverlay({ visible, onClose, buffer = log.buffer }: Readonly<DevLogOverlayProps>) {
-  const p = SHELL_PALETTE;
+  const s = styles(useTokens());
   const [channel, setChannel] = useState<Channel | typeof ALL_CHANNELS_FILTER>(DEFAULT_DEV_LOG_FILTER.channel);
   const [minLevel, setMinLevel] = useState<LogLevel>(DEFAULT_DEV_LOG_FILTER.minLevel);
   const [snapshot, setSnapshot] = useState<readonly DevLogRecord[]>([]);
@@ -64,31 +66,31 @@ export default function DevLogOverlay({ visible, onClose, buffer = log.buffer }:
     <Modal visible={visible} animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
       <SafeAreaProvider>
         <InsetFrame>
-            <View style={styles.header}>
-              <Text style={[TYPE_SCALE.screenTitle, { color: p.text }]}>{LABELS.title}</Text>
+            <View style={s.header}>
+              <Text type="title2">{LABELS.title}</Text>
               <TouchableOpacity onPress={onClose} accessibilityRole="button">
-                <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.accent }]}>{LABELS.close}</Text>
+                <Text type="headline">{LABELS.close}</Text>
               </TouchableOpacity>
             </View>
 
-            <View style={styles.filters}>
-              <Pill label={LABELS.all} on={channel === ALL_CHANNELS_FILTER} palette={p} onPress={() => setChannel(ALL_CHANNELS_FILTER)} />
+            <View style={s.filters}>
+              <Pill label={LABELS.all} on={channel === ALL_CHANNELS_FILTER} onPress={() => setChannel(ALL_CHANNELS_FILTER)} />
               {ALL_CHANNELS.map(name => (
-                <Pill key={name} label={name} on={channel === name} palette={p} onPress={() => setChannel(name)} />
+                <Pill key={name} label={name} on={channel === name} onPress={() => setChannel(name)} />
               ))}
             </View>
-            <View style={styles.filters}>
+            <View style={s.filters}>
               {LEVELS.map(level => (
-                <Pill key={level} label={level} on={minLevel === level} palette={p} onPress={() => setMinLevel(level)} />
+                <Pill key={level} label={level} on={minLevel === level} onPress={() => setMinLevel(level)} />
               ))}
             </View>
 
             <FlatList
               data={rows}
               keyExtractor={(item, index) => `${item.at}:${index}`}
-              ListEmptyComponent={<Text style={[TYPE_SCALE.body, { color: p.textMuted }]}>{LABELS.empty}</Text>}
-              contentContainerStyle={styles.list}
-              renderItem={({ item }) => <Row record={item} textColor={p.text} metaColor={p.textMuted} />}
+              ListEmptyComponent={<Text color="text-2">{LABELS.empty}</Text>}
+              contentContainerStyle={s.list}
+              renderItem={({ item }) => <Row record={item} />}
             />
         </InsetFrame>
       </SafeAreaProvider>
@@ -98,17 +100,17 @@ export default function DevLogOverlay({ visible, onClose, buffer = log.buffer }:
 
 /** The overlay's page, inset from the Modal window's system bars and display cutout. */
 function InsetFrame({ children }: Readonly<{ children: React.ReactNode }>) {
+  const s = styles(useTokens());
   const insets = useSafeAreaInsets();
   return (
     <View
       style={[
-        styles.root,
+        s.root,
         {
-          backgroundColor: SHELL_PALETTE.bg,
-          paddingTop: insets.top + SPACING.md,
+          paddingTop: insets.top + SPACE[4],
           paddingBottom: insets.bottom,
-          paddingLeft: insets.left + SPACING.md,
-          paddingRight: insets.right + SPACING.md,
+          paddingLeft: insets.left + SPACE[4],
+          paddingRight: insets.right + SPACE[4],
         },
       ]}
     >
@@ -117,36 +119,36 @@ function InsetFrame({ children }: Readonly<{ children: React.ReactNode }>) {
   );
 }
 
-function Row({ record, textColor, metaColor }: Readonly<{ record: DevLogRecord; textColor: string; metaColor: string }>) {
+function Row({ record }: Readonly<{ record: DevLogRecord }>) {
+  const s = styles(useTokens());
   const fields = formatFields(record.fields);
   return (
-    <View style={styles.row}>
-      <Text style={[TYPE_SCALE.metaPlain, { color: metaColor }]}>
+    <View style={s.row}>
+      <Text type="footnote" color="text-2" tabular>
         {`${formatRecordTime(record.at)}  ${record.level}  ${record.channel}`}
       </Text>
-      <Text style={[TYPE_SCALE.body, { color: textColor }]}>{record.message}</Text>
-      {fields.length > 0 && <Text style={[TYPE_SCALE.caption, { color: metaColor }]}>{fields}</Text>}
+      <Text>{record.message}</Text>
+      {fields.length > 0 && <Text type="footnote" color="text-2">{fields}</Text>}
     </View>
   );
 }
 
-function Pill({ label, on, palette, onPress }: Readonly<{ label: string; on: boolean; palette: { accent: string; card: string; cardBorder: string; onAccent: string; textMuted: string }; onPress: () => void }>) {
+/** A filter: `ink` when it is the one applied, `fill` otherwise. */
+function Pill({ label, on, onPress }: Readonly<{ label: string; on: boolean; onPress: () => void }>) {
+  const s = styles(useTokens());
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      accessibilityRole="button"
-      style={[styles.pill, { backgroundColor: on ? palette.accent : palette.card, borderColor: palette.cardBorder }]}
-    >
-      <Text style={[TYPE_SCALE.metaWide, { color: on ? palette.onAccent : palette.textMuted }]}>{label}</Text>
+    <TouchableOpacity onPress={onPress} accessibilityRole="button" style={[s.pill, on ? s.pillOn : null]}>
+      <Text type="caption" color={on ? 'on-ink' : 'text'}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  filters: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs, marginTop: SPACING.xs },
-  pill: { borderWidth: 1, borderRadius: RADIUS.chip, paddingHorizontal: SPACING.sm, paddingVertical: SPACING.xs },
-  list: { paddingVertical: SPACING.md, gap: SPACING.sm },
-  row: { gap: SPACING.xs },
-});
+const styles = makeStyles((t) => ({
+  root: { flex: 1, backgroundColor: t.colors.bg },
+  header: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const },
+  filters: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: SPACE[2], marginTop: SPACE[2] },
+  pill: { borderRadius: RADII.full.radius, paddingHorizontal: SPACE[3], paddingVertical: SPACE[2], backgroundColor: t.colors.fill },
+  pillOn: { backgroundColor: t.colors.ink },
+  list: { paddingVertical: SPACE[4], gap: SPACE[3] },
+  row: { gap: SPACE[2] },
+}));

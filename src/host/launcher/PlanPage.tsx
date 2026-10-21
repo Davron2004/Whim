@@ -47,7 +47,7 @@ import {
   type PlanProblem,
   type PlanScreen,
 } from './prompt-flow';
-import { useRetryGate } from './ServiceNotice';
+import { useRetryGate } from './refusal-window';
 import { tileOf } from './tile-identity';
 
 /** The radio or checkbox drawn at the start of an option row. */

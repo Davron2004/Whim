@@ -1,6 +1,6 @@
 // Node acceptance suite for the theme a mini-app renders under (docs/design/system.md §2.5, §7.2;
 // sdk-design-system "The host-supplied theme is inert, sanitized data", "Components resolve semantic
-// tokens through the active theme") and for the v2 shell tokens `theme.ts` still re-exports.
+// tokens through the active theme") and for `appColor`, which `theme.ts` still re-exports.
 // Auto-discovered by `src/sdk/test/run.mjs` (every `*.acceptance.ts(x)` under this directory).
 import assert from 'node:assert';
 import fs from 'node:fs';
@@ -14,7 +14,6 @@ import {
   SHELL_COLORS,
   STATUS_COLORS,
   STATUS_COLORS_ON_INK,
-  TYPE_SCALE,
   type WhimTheme,
 } from '../theme';
 import {
@@ -319,29 +318,6 @@ for (const [key, value] of Object.entries(STATUS_COLORS)) {
 }
 for (const [key, value] of Object.entries(STATUS_COLORS_ON_INK)) {
   ok(HEX_RE.test(value), `STATUS_COLORS_ON_INK.${key} = "${value}" is a hex colour`);
-}
-
-// ── standing invariants on the type-role vocabulary ───────────────────────────
-// These pin the SHAPE of the scale, never the mockups' numbers: `kindBadge`/`metaPlain`/
-// `metaWide`/`body` sizes are still under review (findings.md rulings R4/R5, decided in the
-// on-device screenshot pass), so asserting their pixel values here would fight that pass.
-
-// R2: the history screen's four mono microcopy roles are four DISTINCT design faces. They were
-// once collapsed onto a single over-weighted, over-spaced `eyebrow`; nothing but this assertion
-// stops that from recurring the next time someone "tidies" near-identical entries together.
-{
-  const microcopy = ['eyebrow', 'kindBadge', 'metaPlain', 'metaWide'] as const;
-  const signatures = new Set(
-    microcopy.map((role) => {
-      const face = TYPE_SCALE[role];
-      return [face.fontSize, face.letterSpacing, face.textTransform ?? 'none', face.fontWeight ?? 'none'].join('/');
-    }),
-  );
-  equal(
-    signatures.size,
-    microcopy.length,
-    `the mono microcopy roles must stay distinguishable faces (${microcopy.join(', ')} collapsed to ${describe([...signatures])})`,
-  );
 }
 
 console.log('SDK theme acceptance: PASS');

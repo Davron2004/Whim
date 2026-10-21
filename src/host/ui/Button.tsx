@@ -1,8 +1,7 @@
 /**
  * Button — the shell's one button (system.md §7.1): a capsule in one of seven variants, three
  * sizes, an optional 20 pt leading icon, busy words instead of a spinner, the `fill` + `text-3`
- * disabled look, a 2 pt focus ring and M1's press. Replaces `PrimaryAction` and every inline
- * button treatment as screens move onto it.
+ * disabled look, a 2 pt focus ring and M1's press.
  */
 
 import React, { useState } from 'react';

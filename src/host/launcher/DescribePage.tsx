@@ -28,7 +28,7 @@ import { COPY, composeHeadline, composePlaceholder, editingEyebrow } from './cop
 import { FlowNoticeBlock } from './FlowNoticeBlock';
 import KeyboardShell from './KeyboardShell';
 import type { FlowNotice } from './prompt-flow';
-import { useRetryGate } from './ServiceNotice';
+import { useRetryGate } from './refusal-window';
 import { tileOf } from './tile-identity';
 
 /** The three idea chips, verbatim from the copy table. */

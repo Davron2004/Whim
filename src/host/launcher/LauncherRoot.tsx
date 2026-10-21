@@ -15,12 +15,12 @@
 // one app: launching reads the active bundle source from the record and hands it to MiniAppView
 // (keyed by launcher id, so each launch is a fresh realm).
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Linking, StatusBar, StyleSheet, Text, TouchableOpacity, Alert } from 'react-native';
+import { Linking, StatusBar, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
 import { APP_BUNDLES } from '../../runtime/generated/app-bundles';
-import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { RADII, SPACE } from '../../design/tokens';
 import { hideLaunchScreen as nativeHideLaunchScreen } from '../launch-screen';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
@@ -32,6 +32,7 @@ import type { KVBackend } from '../version-store/fs/kv-fs';
 import { copyStorage, deleteStorage, peekAppliedSchema } from '../storage-engine';
 import { ToastHost, useToast, type ToastApi } from '../ui/Toast';
 import { haptics } from '../haptics';
+import { Text } from '../ui/Text';
 import { useTokens, type ShellTokens } from '../ui/tokens';
 import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
@@ -129,7 +130,6 @@ import type { DescribeScreen, FlowLimit, FlowNotice, FlowQuestion, FlowScreen, M
 import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 import { PROTOCOL_LEVEL } from './wire-headers';
 import { FlowRequests, onlyOnStep } from './flow-request';
-import { SHELL_PALETTE } from './theme';
 import {
   acknowledgeOwnServer,
   chooseServer,
@@ -167,7 +167,7 @@ import { consentGrantDue, declineTarget, nextLegalStep } from './consent-flow';
 import type { ConsentContinuation, LegalFlow } from './consent-flow';
 import { REFUSAL_RULES, refusalRemedy, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
 import type { ServiceRefusal } from './service-refusal';
-import { useNoticeWindowClear } from './ServiceNotice';
+import { useNoticeWindowClear } from './refusal-window';
 import { errorReason, errorReasonCode, errorRemedy, errorRephraseHelps, GENERIC_STREAM_ERROR } from './error-reason';
 import { liveClientOptions } from './consent-options';
 import { resolveOptions } from './resolve-options';
@@ -414,28 +414,10 @@ function stackTitle(on: StackScreen): string | undefined {
   }
 }
 
-/** Whether a stack screen draws from the token module, following the phone's appearance; the
- *  consent screen still draws the fixed light v2 palette (`theme.ts`). Its header and the status bar
- *  follow whichever the screen on top draws. History follows the phone wherever it was opened from:
- *  it is a host screen, never the frame of the app it was opened over. */
-function schemeFollowing(on: StackScreen): boolean {
-  return on.kind === 'home' || on.kind === 'settings' || on.kind === 'advanced' || on.kind === 'report' || on.kind === 'history';
-}
-
-/** Whether the shell's frame (the status-bar strip above a screen drawn without the native stack)
- *  and the status bar's content follow the phone's scheme: they take the colours of the screen they
- *  frame — the token `bg` over a running app, the Home skeleton (`ready` false) and a scheme-following
- *  stack screen on `top`; the light v2 palette over a screen still drawn in it (the dev probe, the
- *  age hold, the missing link, the update screen). */
-function frameFollowsScheme(screen: Screen, top: StackScreen | undefined, ready: boolean): boolean {
-  if (top !== undefined) return schemeFollowing(top);
-  return screen.kind === 'app' || !ready;
-}
-
-/** The frame's colours: over an open app those of the settings its realm was delivered with
- *  (`appFrame`, `null` before the delivery), else the phone's `live` tokens or the light v2 palette. */
-function shellFrame(screen: Screen, top: StackScreen | undefined, ready: boolean, live: ShellTokens, appFrame: ShellTokens | null) {
-  if (!frameFollowsScheme(screen, top, ready)) return { background: SHELL_PALETTE.bg, barStyle: 'dark-content' as const };
+/** The shell's frame (the status-bar strip above a screen drawn without the native stack) and the
+ *  status bar's content: over an open app those of the settings its realm was delivered with
+ *  (`appFrame`, `null` before the delivery), else the phone's `live` tokens. */
+function shellFrame(screen: Screen, live: ShellTokens, appFrame: ShellTokens | null) {
   const t = screen.kind === 'app' && appFrame !== null ? appFrame : live;
   return { background: t.colors.bg, barStyle: t.barStyle };
 }
@@ -512,7 +494,7 @@ function logGenError(stage: string, err: unknown, streamRequestId?: string): voi
 /** A recognised service refusal turned into the notice a step screen renders (design D9/D11/D12):
  *  the hint verbatim (or the phone's own text for the code, `refusalText`), the tone
  *  `REFUSAL_RULES` assigns its code, and — only when it carried a `Retry-After` — the re-enable
- *  moment. `ServiceNotice` derives the copy-table retry line from `retryAt` fresh on every render,
+ *  moment. `FlowNoticeBlock` derives the copy-table retry line from `retryAt` fresh on every render,
  *  so nothing here precomputes or caches that text. */
 function noticeFrom(refusal: ServiceRefusal): FlowNotice {
   const retryAt = retryAtOf(refusal, Date.now());
@@ -701,6 +683,7 @@ export default function LauncherRoot({
  * a developer reads the log of the screen they are looking at without navigating away from it.
  */
 function DevLogTools() {
+  const { colors } = useTokens();
   const [open, setOpen] = useState(false);
   // Above the navigation bar the app draws under (edge to edge on every Android version).
   const bottomInset = useSafeAreaInsets().bottom;
@@ -712,9 +695,9 @@ function DevLogTools() {
       <TouchableOpacity
         onPress={() => setOpen(true)}
         accessibilityLabel={DEV_LOG_LABEL}
-        style={[styles.devLogBtn, { bottom: bottomInset + SPACING.md, backgroundColor: SHELL_PALETTE.card, borderColor: SHELL_PALETTE.cardBorder }]}
+        style={[styles.devLogBtn, { bottom: bottomInset + SPACE[4], backgroundColor: colors.fill }]}
       >
-        <Text style={[TYPE_SCALE.eyebrow, { color: SHELL_PALETTE.textMuted }]}>{DEV_LOG_LABEL}</Text>
+        <Text type="caption" color="text-2">{DEV_LOG_LABEL}</Text>
       </TouchableOpacity>
       <DevLogOverlay visible={open} onClose={() => setOpen(false)} />
     </>
@@ -843,7 +826,6 @@ function LauncherShell({
   significantUpdate: SignificantUpdateSheet | undefined;
   hideLaunchScreen: () => void;
 }>) {
-  const palette = SHELL_PALETTE;
   const tokens = useTokens();
   // The settings an open app's frame is held to from its delivery (`MiniAppStage`), `null` before it.
   const [appFrame, setAppFrame] = useState<ShellTokens | null>(null);
@@ -3687,8 +3669,7 @@ function LauncherShell({
   /** One stack entry: its header, its colours and its content, all keyed to the screen it shows. */
   const stackEntry = (on: StackScreen): StackEntry => {
     const leave = leaveFor(on);
-    const look = schemeFollowing(on) ? { background: tokens.colors.bg, foreground: tokens.colors.text } : { background: palette.bg, foreground: palette.text };
-    return { key: on.kind, title: stackTitle(on), largeTitle: on.kind === 'settings', onLeave: leave, ...look, children: renderStackScreen(on, leave) };
+    return { key: on.kind, title: stackTitle(on), largeTitle: on.kind === 'settings', onLeave: leave, background: tokens.colors.bg, foreground: tokens.colors.text, children: renderStackScreen(on, leave) };
   };
 
   /** The mini-app container, mounted under every screen once the shell is ready (design-system-v1
@@ -3758,7 +3739,7 @@ function LauncherShell({
   // failing-screen identifier in the log record and the reset key, so navigating away and back
   // re-attempts a screen that failed once.
   const exit = SCREEN_EXITS[screen.kind];
-  const frame = shellFrame(base, stack?.at(-1), ready, tokens, appFrame);
+  const frame = shellFrame(base, tokens, appFrame);
 
   return (
     <SafeAreaView edges={frameEdgesFor(base.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>
@@ -3807,10 +3788,9 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   devLogBtn: {
     position: 'absolute',
-    right: SPACING.md,
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.sm,
-    borderWidth: 1,
-    borderRadius: RADIUS.chip,
+    right: SPACE[4],
+    paddingVertical: SPACE[2],
+    paddingHorizontal: SPACE[3],
+    borderRadius: RADII.full.radius,
   },
 });

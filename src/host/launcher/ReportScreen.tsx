@@ -38,7 +38,7 @@ import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 import type { ServiceRefusal } from './service-refusal';
 import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } from './report-send';
 import type { ReportPhase, SendOutcome } from './report-send';
-import { useNoticeWindowClear, useRetryGate } from './ServiceNotice';
+import { useNoticeWindowClear, useRetryGate } from './refusal-window';
 import KeyboardShell from './KeyboardShell';
 import { COPY, reportCodeLine, reportCodeSizeLabel, reportRecipientLine, reportThanksLine } from './copy';
 import { RELEASE } from './release-config';

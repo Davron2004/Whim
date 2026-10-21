@@ -23,7 +23,7 @@
  */
 
 import { SPACE } from '../../design/tokens';
-import { SELECTION_HIGHLIGHT, SHELL_PALETTE } from './theme';
+import type { ShellTokens } from '../ui/tokens-pure';
 
 /** Who pads for the keyboard: a whole screen, or the sheet (`SheetModal`) a shell sits in, which
  *  pads for the shell inside it. */
@@ -185,14 +185,19 @@ export interface SelectionColors {
   readonly selectionHandleColor?: string;
 }
 
-/** Whim's accent for a field's caret and selection handles, and a highlight its text stays readable
- *  on. iOS tints all three from `selectionColor` and draws the highlight translucent itself, so the
- *  accent is the whole answer there. Android paints the highlight in exactly `selectionColor`, over
- *  the selected text, so it gets the translucent highlight, and the caret and handles take the
- *  accent through their own props. */
-export function selectionColors(os: string): SelectionColors {
-  if (os !== 'android') return { selectionColor: SHELL_PALETTE.accent };
-  return { selectionColor: SELECTION_HIGHLIGHT, cursorColor: SHELL_PALETTE.accent, selectionHandleColor: SHELL_PALETTE.accent };
+/** `hex` (`#rrggbb`) at `alpha`, as an rgba string. */
+function withAlpha(hex: string, alpha: number): string {
+  const [r, g, b] = [1, 3, 5].map((at) => Number.parseInt(hex.slice(at, at + 2), 16));
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/** A field's caret, selection handles and highlight (system.md §7.1 Text field: an `ink` caret). iOS
+ *  tints all three from `selectionColor` and draws the highlight translucent itself, so `ink` is the
+ *  whole answer there. Android paints the highlight in exactly `selectionColor`, under the selected
+ *  text, so it gets `ink` at 30%, and the caret and handles take `ink` through their own props. */
+export function fieldSelection(t: Pick<ShellTokens, 'platform' | 'colors'>): SelectionColors {
+  if (t.platform === 'ios') return { selectionColor: t.colors.ink };
+  return { selectionColor: withAlpha(t.colors.ink, 0.3), cursorColor: t.colors.ink, selectionHandleColor: t.colors.ink };
 }
 
 /** A multiline field on iOS gets the keyboard's Done bar: Return adds a newline there, and iOS has

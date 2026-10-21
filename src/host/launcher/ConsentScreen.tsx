@@ -16,14 +16,17 @@
  * legal-text-localization).
  */
 import React from 'react';
-import { Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { Linking, ScrollView, TouchableOpacity, View } from 'react-native';
+import { LAYOUT, SPACE, TYPE_SCALE } from '../../design/tokens';
+import { Button } from '../ui/Button';
+import { Text } from '../ui/Text';
+import { useTokens } from '../ui/tokens';
+import { hitSlopFor, makeStyles, type ButtonVariant } from '../ui/tokens-pure';
 import { LEGAL_COPY, type LegalCopyTable } from './copy';
 import { disclosureOf } from './consent-disclosure';
-import { consentScreenActions, type ConsentScreenAction } from './consent-screen-actions';
+import { consentScreenActions, type ConsentActionRow, type ConsentScreenAction } from './consent-screen-actions';
 import LegalLanguageSwitch from './LegalLanguageSwitch';
 import { privacyPolicyUrl, type LegalLanguage } from './legal-language';
-import { SHELL_PALETTE } from './theme';
 import { useSystemBack } from './use-system-back';
 
 /** `consentScreenActions`' row → this component's own label and press handler — the one place
@@ -41,9 +44,22 @@ function actionLabel(action: ConsentScreenAction, copy: LegalCopyTable): string 
   }
 }
 
-function SectionTitle({ text }: Readonly<{ text: string }>) {
-  return <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: SHELL_PALETTE.textMuted }]}>{text}</Text>;
+/** A row's button: the large one is `ink` only when it grants; `keepOn`, review mode's safe choice
+ *  (design D5), does what hardware back does, so it never wears the granting action's fill. */
+function actionVariant(row: ConsentActionRow): ButtonVariant {
+  if (row.kind === 'plain') return 'plain';
+  return row.grants ? 'ink' : 'secondary';
 }
+
+const styles = makeStyles((t) => ({
+  root: { flex: 1, backgroundColor: t.colors.bg },
+  content: { paddingHorizontal: LAYOUT.gutter, paddingTop: SPACE[2], paddingBottom: LAYOUT.gapBetweenGroups, gap: LAYOUT.gapInGroup },
+  section: { gap: SPACE[1], marginTop: SPACE[3] },
+  bullet: { flexDirection: 'row' as const, gap: SPACE[2] },
+  bulletText: { flex: 1 },
+  privacyLink: { alignSelf: 'flex-start' as const },
+  footer: { paddingHorizontal: LAYOUT.gutter, paddingTop: LAYOUT.actionAreaTop, paddingBottom: LAYOUT.actionAreaBottom, gap: SPACE[3] },
+}));
 
 export interface ConsentScreenProps {
   /** The active legal language: this screen's copy and its privacy link. */
@@ -69,7 +85,8 @@ export default function ConsentScreen({
   onTurnOff,
   onClose,
 }: Readonly<ConsentScreenProps>) {
-  const p = SHELL_PALETTE;
+  const t = useTokens();
+  const s = styles(t);
   useSystemBack(onClose);
   const copy = LEGAL_COPY[language];
 
@@ -88,91 +105,53 @@ export default function ConsentScreen({
   const { sections, closing } = disclosureOf(copy);
 
   return (
-    <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <ScrollView style={[styles.scroll, { borderBottomColor: p.cardBorder }]} contentContainerStyle={styles.content}>
+    <View style={s.root}>
+      <ScrollView contentContainerStyle={s.content}>
         <LegalLanguageSwitch language={language} onChange={onLanguageChange} />
-        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{copy.consentTitle}</Text>
-        <Text style={[TYPE_SCALE.body, styles.lead, { color: p.text }]}>{copy.consentLead}</Text>
+        <Text type="title1">{copy.consentTitle}</Text>
+        <Text>{copy.consentLead}</Text>
 
         {sections.map((section) => (
-          <View key={section.title}>
-            <SectionTitle text={section.title} />
+          <View key={section.title} style={s.section}>
+            <Text type="footnote" header color="text-2">
+              {section.title}
+            </Text>
             {section.bullets?.map((item) => (
-              <View key={item} style={styles.bulletRow}>
-                <Text style={[TYPE_SCALE.body, styles.bullet, { color: p.textMuted }]}>•</Text>
-                <Text style={[TYPE_SCALE.body, styles.bulletText, { color: p.text }]}>{item}</Text>
+              <View key={item} style={s.bullet}>
+                <Text color="text-2">•</Text>
+                <View style={s.bulletText}>
+                  <Text>{item}</Text>
+                </View>
               </View>
             ))}
-            {section.body ? <Text style={[TYPE_SCALE.body, styles.item, { color: p.text }]}>{section.body}</Text> : null}
+            {section.body ? <Text>{section.body}</Text> : null}
           </View>
         ))}
 
-        <Text style={[TYPE_SCALE.body, styles.askFirst, { color: p.text }]}>{closing[0]}</Text>
-        <Text style={[TYPE_SCALE.caption, styles.footnote, { color: p.textMuted }]}>{closing[1]}</Text>
+        <Text>{closing[0]}</Text>
+        <Text type="footnote" color="text-2">
+          {closing[1]}
+        </Text>
 
         <TouchableOpacity
           onPress={() => Linking.openURL(privacyPolicyUrl(language))}
-          hitSlop={10}
-          style={styles.privacyLink}
+          hitSlop={hitSlopFor(TYPE_SCALE.headline.lineHeight, t)}
+          style={s.privacyLink}
         >
-          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.accent }]}>{copy.privacyPolicyLabel}</Text>
+          <Text type="headline">{copy.privacyPolicyLabel}</Text>
         </TouchableOpacity>
       </ScrollView>
 
-      {actions.map((row) =>
-        row.kind === 'primary' ? (
-          <TouchableOpacity
+      <View style={s.footer}>
+        {actions.map((row) => (
+          <Button
             key={row.action}
+            label={actionLabel(row.action, copy)}
+            variant={actionVariant(row)}
             onPress={row.action === 'decline' || row.action === 'keepOn' ? onClose : pressHandlerFor(row.action)}
-            accessibilityRole="button"
-            // `keepOn` is review mode's safe choice (design D5) — it keeps the SAME behaviour as
-            // hardware back, so its button reads visually distinct from the accent-coloured agree
-            // actions, never the CTA colour a grant uses.
-            style={[styles.primary, { backgroundColor: row.action === 'keepOn' ? p.text : p.accent }]}
-          >
-            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{actionLabel(row.action, copy)}</Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity
-            key={row.action}
-            onPress={row.action === 'decline' || row.action === 'keepOn' ? onClose : pressHandlerFor(row.action)}
-            accessibilityRole="button"
-            style={styles.plainAction}
-          >
-            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{actionLabel(row.action, copy)}</Text>
-          </TouchableOpacity>
-        ),
-      )}
+          />
+        ))}
+      </View>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  root: { flex: 1 },
-  // The disclosure scrolls under the pinned actions; a hairline marks where it is cut off.
-  scroll: { borderBottomWidth: StyleSheet.hairlineWidth },
-  content: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl, paddingBottom: SPACING.xl },
-  lead: { marginTop: SPACING.sm },
-  sectionTitle: { marginTop: SPACING.lg, marginBottom: SPACING.xs },
-  item: { marginTop: SPACING.xs },
-  bulletRow: { flexDirection: 'row', marginTop: SPACING.xs },
-  bullet: { width: SPACING.md },
-  bulletText: { flex: 1 },
-  askFirst: { marginTop: SPACING.lg },
-  footnote: { marginTop: SPACING.sm },
-  privacyLink: { marginTop: SPACING.sm },
-  primary: {
-    height: 52,
-    marginHorizontal: SPACING.lg,
-    marginTop: SPACING.sm,
-    borderRadius: RADIUS.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  plainAction: {
-    height: 46,
-    marginBottom: SPACING.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

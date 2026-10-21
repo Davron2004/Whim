@@ -1,8 +1,8 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { androidBack, button, press, renderScreen, unmountScreen, hostType } from './react-screen';
-import { hardwareBack, backListenerCount } from './native-host';
+import { androidBack, button, press, renderScreen, unmountScreen, hostType, textOf } from './react-screen';
+import { hardwareBack, backListenerCount, setColorScheme, StyleSheet } from './native-host';
 import { androidHeaderBack, headerBackShown, iosPop } from './native-screens';
 import { COPY } from '../copy';
 import type { ScreenKind } from '../screen-exits';
@@ -116,6 +116,33 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
         await TestRenderer.act(async () => { hardwareBack(); });
         h.eq([closed, changes], [2, 0], 'both exits preserve the current grant');
       } finally { await unmountScreen(tree); }
+    });
+  }
+  // The full screens and the AI features review draw from the phone's scheme: each one's canvas, title,
+  // second line and `ink` action are the scheme's roles, and the legal language switch is a `text` action.
+  const drawn: [string, React.ReactElement, { title: string; line: string; lineRole: 'text' | 'text-2'; action: string; switch?: string }][] = [
+    ['link-missing', <AppLinkMissingScreen onBackToApps={noop} />, { title: COPY.appLinkMissingTitle, line: COPY.appLinkMissingBody, lineRole: 'text-2', action: COPY.appLinkMissingBack }],
+    ['update-required', <UpdateRequiredScreen onNotNow={noop} />, { title: COPY.updateTitle, line: COPY.updateBody, lineRole: 'text-2', action: COPY.updateAction }],
+    ['age', <AgeScreen language="en" onLanguageChange={noop} held="minor-not-approved" onClose={noop} />, { title: COPY.ageBlockedTitle, line: COPY.ageBlockedBody, lineRole: 'text', action: COPY.ageBack, switch: COPY.legalLanguageSwitch }],
+    ['consent review', <ConsentScreen language="en" onLanguageChange={noop} consentOn={false} onAgree={noop} onClose={noop} />, { title: COPY.consentTitle, line: COPY.consentLead, lineRole: 'text', action: COPY.consentReviewTurnOn, switch: COPY.legalLanguageSwitch }],
+    ['error fallback', <ScreenErrorFallback error={new Error('screen failed')} screen="history" resetErrorBoundary={noop} />, { title: COPY.screenErrorTitle, line: COPY.screenErrorBody, lineRole: 'text-2', action: COPY.screenErrorRetry }],
+  ];
+  for (const [name, element, want] of drawn) {
+    await h.test(`${name}: drawn in the phone's scheme, light and dark`, async () => {
+      for (const scheme of ['light', 'dark'] as const) {
+        const c = COLORS[scheme];
+        await TestRenderer.act(async () => setColorScheme(scheme));
+        const tree = await renderScreen(element);
+        try {
+          const colour = (text: string) => StyleSheet.flatten(tree.root.find((n) => hostType(n) === 'Text' && textOf(n) === text).props.style).color;
+          h.eq(StyleSheet.flatten(tree.root.find((n) => hostType(n) === 'View').props.style).backgroundColor, c.bg, `${scheme}: on the scheme's bg`);
+          h.eq([colour(want.title), colour(want.line), colour(want.action)], [c.text, c[want.lineRole], c['on-ink']], `${scheme}: title in text, the line under it in ${want.lineRole}, the action's label on ink`);
+          if (want.switch !== undefined) h.eq(colour(want.switch), c.text, `${scheme}: the language switch is a text action`);
+        } finally {
+          await unmountScreen(tree);
+          await TestRenderer.act(async () => setColorScheme('light'));
+        }
+      }
     });
   }
   await h.test('error fallback: leave is visible only when supplied, and differs from retry', async () => {

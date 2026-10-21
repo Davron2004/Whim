@@ -39,7 +39,7 @@ import {
   versionSwitchToast,
   whimSheetVersionLine,
 } from '../copy';
-import { monogram, tileColor } from '../tiles';
+import { tileColor } from '../tiles';
 
 // Mechanism / git vocabulary that must never reach the launcher surface. A raw lineage id
 // ("fork-1") is forbidden here; the word "fork" itself is a retired glossary word (below).
@@ -103,7 +103,6 @@ export async function runProductVerbsTests(h: Harness): Promise<void> {
       ...Object.values(LEGAL_COPY.fr),
       ...Object.values(CONSENT_WHATS_NEW).flatMap((lines) => Object.values(lines).map((line) => line.text)),
       ...composedLines(),
-      monogram('Water Counter'),
       tileColor('Water Counter'),
     ];
     for (const str of strings) {
