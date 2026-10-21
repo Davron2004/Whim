@@ -50,6 +50,7 @@ import type { MenuAnchor } from './ContextMenu';
 import { timing, usePressFeedback } from './motion';
 import { drawsName, GRID, TILE, TILE_SIDE, listRowPadding, type GridLayout, type TileSize } from './AppTile-geometry';
 import { stateLine, tileAccessibilityHint, tileAccessibilityLabel, tileLook, type StateLine, type TileState } from './AppTile-states';
+import { useSheetAnchor, type PlaceRef } from './SheetAnchor';
 import { Text } from './Text';
 import { useTokens } from './tokens';
 import {
@@ -133,6 +134,10 @@ export interface TilePlateProps {
    *  tile at once (opening finishes it). */
   arrival?: TileState | null;
   onArrived?: () => void;
+  /** Draws no ember: a sheet's own ember stands in for it (M5). Default true. */
+  ember?: boolean;
+  /** The view its ember is drawn in, for a sheet's ember to land on (M5). */
+  emberPlace?: PlaceRef;
 }
 
 const plateStyles = makeStyles((t) => ({
@@ -149,8 +154,10 @@ const plateStyles = makeStyles((t) => ({
   },
 }));
 
-/** The ember a plate in `state` carries, if any: a waiting one, or one whose stream stalled, is stuck. */
-function plateEmber(state: TileState, stuck: boolean): EmberState | undefined {
+/** The ember a plate in `state` carries, if any (none where it is not `drawn`): a waiting one, or one
+ *  whose stream stalled, is stuck. */
+function plateEmber(state: TileState, stuck: boolean, drawn: boolean): EmberState | undefined {
+  if (!drawn) return undefined;
   const { ember } = tileLook(state);
   if (ember === 'waiting' || (ember === 'working' && stuck)) return 'stuck';
   return ember;
@@ -283,7 +290,7 @@ function useArrivalsDone(from: TileState | null): number {
   return done;
 }
 
-export function TilePlate({ size, state, tint, glyph, activity = 0, flicker, stuck = false, tokens, arrival = null, onArrived }: Readonly<TilePlateProps>) {
+export function TilePlate({ size, state, tint, glyph, activity = 0, flicker, stuck = false, tokens, arrival = null, onArrived, ember = true, emberPlace }: Readonly<TilePlateProps>) {
   const live = useTokens();
   const t = tokens ?? live;
   const s = plateStyles(t);
@@ -311,7 +318,7 @@ export function TilePlate({ size, state, tint, glyph, activity = 0, flicker, stu
   }, [intensity, ringState, ringTarget, t]);
   const { on, smoothed, pulse } = useFlicker(activity, look.ring && !stuck, flicker);
   const ringGlow = useAnimatedStyle(() => ({ opacity: intensity.value + flickerOffset(on, smoothed.value, pulse.value) }));
-  const emberState = plateEmber(from ?? state, stuck);
+  const emberState = plateEmber(from ?? state, stuck, ember);
   const ringBox = { top: -(RING.gap + RING.width), start: -(RING.gap + RING.width), width: ringSide, height: ringSide };
   const glyphIcon = <Icon name={glyph} size={side * TILE.glyph} color={ON_PLATE} stroke={TILE.glyphStroke} />;
 
@@ -325,7 +332,11 @@ export function TilePlate({ size, state, tint, glyph, activity = 0, flicker, stu
       <PlateBase key="plate" side={side} plate={plate} arriving={arriving} glyph={glyphIcon} centre={s.centre} />
       <PlateCentre key={`centre-${arrivals}`} centre={s.centre} arriving={arriving?.progress ?? null}>
         {onTint && arriving === null ? glyphIcon : null}
-        {emberState ? <Ember size={emberFor(side)} state={emberState} activity={activity} flicker={flicker} spark={arriving ? 1 : 0} /> : null}
+        {emberState ? (
+          <View ref={emberPlace} collapsable={false}>
+            <Ember size={emberFor(side)} state={emberState} activity={activity} flicker={flicker} spark={arriving ? 1 : 0} />
+          </View>
+        ) : null}
       </PlateCentre>
       {look.ring ? (
         <Animated.View key="ring" style={[s.ring, ringBox, ringGlow]} pointerEvents="none">
@@ -383,6 +394,9 @@ export interface AppTileProps {
    *  both happen at once. */
   presence?: TilePresence;
   onPresenceSettled?: () => void;
+  /** The name its plate is registered under as a sheet's anchor (`SheetAnchor`): the run's making
+   *  sheet shrinks into it as it closes and grows out of it as it opens (M5). */
+  anchor?: string;
 }
 
 export type TileEntrance = 'hold' | number | 'done';
@@ -502,6 +516,7 @@ export function AppTile({
   onRisen,
   presence = 'shown',
   onPresenceSettled,
+  anchor,
 }: Readonly<AppTileProps>) {
   const t = useTokens();
   const s = cellStyles(t);
@@ -534,13 +549,23 @@ export function AppTile({
 
   const inList = layout.kind === 'list';
   const size: TileSize = inList ? 'menu' : 'grid';
+  const tap = () => {
+    // Opening finishes an arrival still under way.
+    arrived();
+    onPress();
+  };
+  const place = useSheetAnchor(anchor, {
+    radius: TILE.corner * TILE_SIDE[size],
+    face: <TilePlate size={size} state={state} tint={tint} glyph={glyph} activity={activity} flicker={flicker} stuck={stuck} ember={false} />,
+    onPress: tap,
+  });
   const frame = inList
     ? { minHeight: layout.rowHeight, width: '100%' as const }
     : { minHeight: layout.cellHeight, width: layout.columnWidth };
   // Only the plate carries the lift's shadow, with the plate's own corner: the cell around it is not a shape.
   const plate = (
-    <View style={lifted ? [s.lifted, { borderRadius: TILE.corner * TILE_SIDE[size] }] : null}>
-      <TilePlate size={size} state={state} tint={tint} glyph={glyph} activity={activity} flicker={flicker} stuck={stuck} arrival={arrival} onArrived={arrived} />
+    <View ref={place.ref} collapsable={false} onLayout={place.onLayout} style={lifted ? [s.lifted, { borderRadius: TILE.corner * TILE_SIDE[size] }] : null}>
+      <TilePlate size={size} state={state} tint={tint} glyph={glyph} activity={activity} flicker={flicker} stuck={stuck} arrival={arrival} onArrived={arrived} emberPlace={place.ember} />
     </View>
   );
   const lines = line ? (
@@ -553,11 +578,7 @@ export function AppTile({
     <Animated.View style={[frame, cellMotion]} layout={t.reduceMotion ? REFLOW_REDUCED : REFLOW} {...(presence === 'leaving' ? LEAVING : STAYING)}>
       <Pressable
         ref={ref}
-        onPress={() => {
-          // Opening finishes an arrival still under way.
-          arrived();
-          onPress();
-        }}
+        onPress={tap}
         onLongPress={openMenu}
         delayLongPress={LONG_PRESS_MS}
         onPressIn={() => {

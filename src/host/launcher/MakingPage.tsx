@@ -26,7 +26,7 @@ import { Button } from '../ui/Button';
 import { AmbientLight, Ember, type EmberLight, type EmberLightRef } from '../ui/Ember';
 import { Icon } from '../ui/Icon';
 import { timing } from '../ui/motion';
-import { useSheetLeaving } from '../ui/Sheet';
+import { useSheetLead, useSheetLeaving } from '../ui/Sheet';
 import { Text, wrappingType } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
 import { useTravelSource, useTravelTarget } from '../ui/TravelLayer';
@@ -243,6 +243,8 @@ export default function MakingPage({
   const arrival = useTravelTarget('make-it', () => <Ember size={128} state={ember.state} activity={ember.activity} flicker={flicker} />, t.reduceMotion);
   const light: EmberLightRef = useRef<(() => EmberLight) | null>(null);
   const source = useTravelSource('ember', light);
+  // M5: the ember leads the sheet into its tile as it closes, and back out of it.
+  const lead = useSheetLead(source.ref, light, (from) => <Ember size={128} state={ember.state} activity={ember.activity} flicker={flicker} from={from ?? undefined} />);
   const reduced = useRef(t.reduceMotion).current;
   const shown = useSharedValue(arrival.arrived ? 0 : 1);
   // Before the page's first frame, so it fades in from the frame the ember sets out.
@@ -281,8 +283,10 @@ export default function MakingPage({
         <View ref={arrival.ref} collapsable={false} style={{ width: emberSide, height: emberSide }}>
           <View ref={source.ref} collapsable={false} style={{ width: emberSide, height: emberSide }}>
             {arrival.travelling ? null : (
-              <Animated.View style={[source.hidden, emberIn]}>
-                <Ember size={128} state={ember.state} activity={ember.activity} flicker={flicker} lightRef={light} />
+              <Animated.View style={lead}>
+                <Animated.View style={[source.hidden, emberIn]}>
+                  <Ember size={128} state={ember.state} activity={ember.activity} flicker={flicker} lightRef={light} />
+                </Animated.View>
               </Animated.View>
             )}
           </View>

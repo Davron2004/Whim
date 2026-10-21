@@ -96,7 +96,8 @@ import DevLogOverlay from './DevLogOverlay';
 import { devLogOverlayEnabled } from './dev-log-view';
 import { repairAttemptsIn, runTimelineDevModeEnabled } from './run-timeline-view';
 import { HomeSkeleton } from './HomeSkeleton';
-import { toastClearance } from './ComposerBar';
+import { COMPOSER_ANCHOR, toastClearance } from './ComposerBar';
+import { SheetAnchors, tileAnchor } from '../ui/SheetAnchor';
 import { useHomeLive } from './use-home-live';
 import type { LiveAttemptView, LiveView } from './home-live';
 import { createRunLight, lightArrived, lightReleased, type RunLight } from './run-light';
@@ -899,6 +900,8 @@ function LauncherShell({
   // M17: the grid rises in the first time it shows after launch, not on every return to Home, and
   // not under the launch screen: it waits for that to have faded (M27).
   const gridAppeared = useRef(false);
+  /** The description on screen was begun from the composer, which the sheet grows out of (M6). */
+  const composerBegun = useRef(false);
   const [launchCovered, setLaunchCovered] = useState(true);
   // Read by the mount-once app-link listener effect below, which cannot depend on `ready` without
   // resubscribing `Linking`'s event on every first-run tick.
@@ -3474,6 +3477,16 @@ function LauncherShell({
     }
   };
 
+  /** Where the making sheet grows out of and goes back into on Home (`SheetAnchor`): the composer for a
+   *  description begun there (M6), the run's own tile while it is made (M5). Nothing over a running
+   *  app, whose sheet rises and falls under the orb. */
+  const sheetAnchor = (): string | undefined => {
+    if (running !== null) return undefined;
+    if ((screen.kind === 'describe' || screen.kind === 'plan') && composerBegun.current) return COMPOSER_ANCHOR;
+    if (screen.kind === 'making' && screen.runId != null) return tileAnchor(screen.runId);
+    return undefined;
+  };
+
   /** The page the making sheet shows for the current screen, with the key it is shown under; `null`
    *  closes the sheet. */
   const renderSheetPage = (): SheetContent | null => {
@@ -3595,14 +3608,24 @@ function LauncherShell({
       stalled={liveView.stalled}
       flicker={liveView.flicker}
       onHistory={(app) => onHistory(app, 'home')}
-      onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
-      onCreate={(idea) => openWithConsent({ kind: 'compose', text: idea })}
+      onPromptAgain={(app) => {
+        composerBegun.current = false;
+        openWithConsent({ kind: 'compose', editing: app });
+      }}
+      onCreate={(idea) => {
+        // An idea chip begins a description too, but only the composer itself grows into the sheet.
+        composerBegun.current = idea === undefined;
+        openWithConsent({ kind: 'compose', text: idea });
+      }}
       onSettings={() => setScreen({ kind: 'settings' })}
       onOpenDevProbe={onOpenDevProbe}
       offline={showOfflineIndicator(connectivity)}
       onOpenPending={onOpenPending}
       onCancelPending={onCancelPending}
-      onRetryPending={(rec) => openWithConsent({ kind: 'retry', record: rec })}
+      onRetryPending={(rec) => {
+        composerBegun.current = false;
+        openWithConsent({ kind: 'retry', record: rec });
+      }}
       onCustomizeTile={onCustomizeTile}
       onResetTile={onResetTile}
     />
@@ -3796,6 +3819,7 @@ function LauncherShell({
       <StatusBar barStyle={frame.barStyle} />
       <ToastHost bottomOffset={toastOffset(base.kind)}>
         <ToastBridge api={toastRef} />
+        <SheetAnchors>
         <ScreenBoundary
           screen={screen.kind}
           FallbackComponent={ScreenErrorFallback}
@@ -3803,7 +3827,7 @@ function LauncherShell({
         >
           {renderMiniApp(sheetPage !== null)}
           {content}
-          <MakingSheet content={sheetPage} onClose={closeSheet} />
+          <MakingSheet content={sheetPage} onClose={closeSheet} anchor={sheetAnchor()} />
           {checkingAge !== undefined && <AgeCheckBack onLeave={() => onLegalDecline(checkingAge.returnTo)} />}
           <FirstRunHost
             ask={firstRunAskOf(screen)}
@@ -3815,6 +3839,7 @@ function LauncherShell({
             onDecline={onLegalDecline}
           />
         </ScreenBoundary>
+        </SheetAnchors>
       </ToastHost>
       <DevLogTools />
     </SafeAreaView>

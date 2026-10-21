@@ -41,15 +41,23 @@ export interface MakingSheetProps {
   content: SheetContent | null;
   /** Every way out: close, scrim, drag, Android back. The shell decides what each page's close does. */
   onClose: () => void;
+  /** The place on the screen behind the sheet its page grows out of and shrinks back into
+   *  (`SheetAnchor`): the composer for a description begun there (M6), the run's own tile while it is
+   *  made (M5). Kept from the last page shown, so a close goes back into the place it was showing. */
+  anchor?: string;
 }
 
-export function MakingSheet({ content, onClose }: Readonly<MakingSheetProps>) {
+export function MakingSheet({ content, onClose, anchor }: Readonly<MakingSheetProps>) {
   // What the sheet showed last, kept so a close animates that page out.
   const last = useRef<SheetContent | null>(null);
-  if (content !== null) last.current = content;
+  const lastAnchor = useRef<string | undefined>(undefined);
+  if (content !== null) {
+    last.current = content;
+    lastAnchor.current = anchor;
+  }
   const shown = last.current;
   return (
-    <Sheet visible={content !== null} onClose={onClose} detent={shown?.detent ?? 'large'}>
+    <Sheet visible={content !== null} onClose={onClose} detent={shown?.detent ?? 'large'} anchor={lastAnchor.current}>
       {shown ? <Pages shown={shown} /> : null}
     </Sheet>
   );

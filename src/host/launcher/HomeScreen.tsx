@@ -35,6 +35,7 @@ import type { FlickerPulse } from './home-live';
 import { isAppBusy, type AppBusyMap } from './app-busy';
 import { appLinkFor } from './app-link';
 import { ComposerBar } from './ComposerBar';
+import { tileAnchor } from '../ui/SheetAnchor';
 import { COPY, deletedToast, discardedManyToast, tileOlderLine } from './copy';
 import { CopyQuestionSheet } from './CopyQuestionSheet';
 import { CustomizeTileSheet } from './CustomizeTileSheet';
@@ -455,6 +456,7 @@ export default function HomeScreen({
         onRisen={() => entrance.risen(key)}
         presence={departures.presenceOf(cell)}
         onPresenceSettled={() => departures.settled(cell)}
+        anchor={live ? tileAnchor(live.id) : undefined}
       />
     );
   };
