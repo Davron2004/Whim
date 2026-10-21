@@ -6,7 +6,7 @@
  * unconditionally.
  */
 import React from 'react';
-import { View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { Button } from '../ui/Button';
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
@@ -25,10 +25,10 @@ export default function AppLinkMissingScreen({ onBackToApps }: Readonly<AppLinkM
 
   return (
     <View style={s.root}>
-      <View style={s.content}>
+      <ScrollView contentContainerStyle={s.content}>
         <Text type="title1">{COPY.appLinkMissingTitle}</Text>
         <Text type="callout" color="text-2">{COPY.appLinkMissingBody}</Text>
-      </View>
+      </ScrollView>
       <View style={s.footer}>
         <Button label={COPY.appLinkMissingBack} variant="ink" onPress={onBackToApps} />
       </View>

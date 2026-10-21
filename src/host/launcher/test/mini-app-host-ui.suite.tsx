@@ -49,7 +49,7 @@ interface Mounted {
   pageShown: () => boolean;
 }
 
-type Style = { backgroundColor?: string; opacity?: number; color?: string; position?: string; top?: number; bottom?: number; left?: number; right?: number };
+type Style = { backgroundColor?: string; opacity?: number; color?: string; position?: string; top?: number; bottom?: number; left?: number; right?: number; height?: number | string; minHeight?: number };
 const flat = (node: TestRenderer.ReactTestInstance): Style => StyleSheet.flatten(node.props.style) as Style;
 
 /** The view that holds the WebViews: the container's own background (the outermost such view). */
@@ -1291,5 +1291,28 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await press(button(tree, COPY.launchFailedBack));
       h.eq(exits(), 1, 'Back leaves the app');
     });
+  });
+
+  await h.test('mini-app: at 200% text the launch-failed screen’s Back grows with its words — nothing around it has a fixed height', async () => {
+    const conflicting: AppRecord = JSON.parse(JSON.stringify(WATER));
+    conflicting.schemaArtifact!.collections.Drinks.fields.at.type = 'text';
+    windowMetrics.fontScale = 2;
+    try {
+      await withMiniApp(conflicting, async ({ loadEnd, shown, tree }) => {
+        const earlier = createStorageEngine({ appId: WATER.appId, mode: 'persistent' });
+        earlier.open(WATER.schemaArtifact!);
+        earlier.close();
+        await loadEnd();
+        h.ok(shown().includes(COPY.launchFailedTitle), 'setup: the launch-failed screen shows');
+        const back = button(tree, COPY.launchFailedBack);
+        const chain: TestRenderer.ReactTestInstance[] = [...back.findAll((n) => typeof n.type === 'string')];
+        for (let up = back.parent; up && !textOf(up).includes(COPY.launchFailedTitle); up = up.parent) chain.push(up);
+        const fixed = chain.filter((n) => typeof n.type === 'string' && flat(n).height !== undefined).map((n) => `${String(n.type)} height ${String(flat(n).height)}`);
+        h.eq(fixed, [], 'no fixed height between the screen and the label, so 200% words are never clipped');
+        h.ok(back.findAll((n) => typeof n.type === 'string' && Number(flat(n).minHeight) > 0).length > 0, 'the action keeps its size as a minimum');
+      });
+    } finally {
+      windowMetrics.fontScale = 1;
+    }
   });
 }

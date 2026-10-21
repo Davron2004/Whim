@@ -7,7 +7,7 @@
  * §9 Update needed: **Update Whim** `ink`, **Not now**).
  */
 import React from 'react';
-import { Linking, Platform, View } from 'react-native';
+import { Linking, Platform, ScrollView, View } from 'react-native';
 import { Button } from '../ui/Button';
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
@@ -39,10 +39,10 @@ export default function UpdateRequiredScreen({ notice, onNotNow }: Readonly<Upda
 
   return (
     <View style={s.root}>
-      <View style={s.content}>
+      <ScrollView contentContainerStyle={s.content}>
         <Text type="title1">{COPY.updateTitle}</Text>
         <Text type="callout" color="text-2">{notice ?? COPY.updateBody}</Text>
-      </View>
+      </ScrollView>
       <View style={s.footer}>
         <Button label={COPY.updateAction} variant="ink" onPress={() => openWhimUpdate()} />
         <Button label={COPY.updateNotNow} variant="plain" onPress={onNotNow} />

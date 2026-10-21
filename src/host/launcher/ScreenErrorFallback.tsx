@@ -7,7 +7,7 @@
 // full screen in the phone's appearance from the shell's primitives; every string comes from
 // `copy.ts`.
 import React from 'react';
-import { View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { Button } from '../ui/Button';
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
@@ -30,10 +30,10 @@ export default function ScreenErrorFallback({ resetErrorBoundary, onLeave }: Rea
 
   return (
     <View style={s.root}>
-      <View style={s.content}>
+      <ScrollView contentContainerStyle={s.content}>
         <Text type="title1">{COPY.screenErrorTitle}</Text>
         <Text type="callout" color="text-2">{COPY.screenErrorBody}</Text>
-      </View>
+      </ScrollView>
       <View style={s.footer}>
         <Button label={COPY.screenErrorRetry} variant="ink" onPress={resetErrorBoundary} />
         {onLeave != null && <LeaveAction onLeave={onLeave} />}

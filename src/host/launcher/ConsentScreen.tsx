@@ -16,7 +16,7 @@
  * legal-text-localization).
  */
 import React from 'react';
-import { Linking, ScrollView, TouchableOpacity, View } from 'react-native';
+import { Linking, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { LAYOUT, SPACE, TYPE_SCALE } from '../../design/tokens';
 import { Button } from '../ui/Button';
 import { Text } from '../ui/Text';
@@ -53,6 +53,8 @@ function actionVariant(row: ConsentActionRow): ButtonVariant {
 
 const styles = makeStyles((t) => ({
   root: { flex: 1, backgroundColor: t.colors.bg },
+  // The disclosure scrolls under the pinned actions; a hairline marks where it is cut off.
+  scroll: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.colors.separator },
   content: { paddingHorizontal: LAYOUT.gutter, paddingTop: SPACE[2], paddingBottom: LAYOUT.gapBetweenGroups, gap: LAYOUT.gapInGroup },
   section: { gap: SPACE[1], marginTop: SPACE[3] },
   bullet: { flexDirection: 'row' as const, gap: SPACE[2] },
@@ -106,7 +108,7 @@ export default function ConsentScreen({
 
   return (
     <View style={s.root}>
-      <ScrollView contentContainerStyle={s.content}>
+      <ScrollView style={s.scroll} contentContainerStyle={s.content}>
         <LegalLanguageSwitch language={language} onChange={onLanguageChange} />
         <Text type="title1">{copy.consentTitle}</Text>
         <Text>{copy.consentLead}</Text>

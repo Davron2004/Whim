@@ -1,7 +1,9 @@
 /**
  * full-screen-styles — a full screen's anatomy (system.md §2.8 Screen anatomy, §9 "full screen"): on
  * `bg`, the title where a pushed screen's sits under its header row, an optional line under it, and the
- * bottom action area. Shared by the link-missing, update and age screens and the error fallback.
+ * bottom action area. Shared by the link-missing, update and age screens and the error fallback, each
+ * of which scrolls `content` (a `ScrollView`'s content container) above a `footer` pinned under it, so
+ * at the largest text sizes, or under a long server notice, the actions stay on screen.
  */
 
 import { LAYOUT, SPACE } from '../../design/tokens';

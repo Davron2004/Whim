@@ -2,7 +2,7 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { androidBack, button, press, renderScreen, unmountScreen, hostType, textOf } from './react-screen';
-import { hardwareBack, backListenerCount, setColorScheme, StyleSheet } from './native-host';
+import { hardwareBack, backListenerCount, setColorScheme, StyleSheet, windowMetrics } from './native-host';
 import { androidHeaderBack, headerBackShown, iosPop } from './native-screens';
 import { COPY } from '../copy';
 import type { ScreenKind } from '../screen-exits';
@@ -30,6 +30,7 @@ import MakingPage from '../MakingPage';
 import ReadyPage from '../ReadyPage';
 import FailurePage from '../FailurePage';
 import ScreenErrorFallback from '../ScreenErrorFallback';
+import { consentScreenActions } from '../consent-screen-actions';
 
 export const SCREEN_APP: InstalledApp = {
   id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main',
@@ -145,6 +146,71 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
       }
     });
   }
+  // At 200% text a long line (a server's notice, on the update screen) is taller than a small phone:
+  // the words scroll, and the actions stay pinned under them, never scrolled or clipped off-screen.
+  const LONG_NOTICE = Array.from({ length: 40 }, () => 'This message from the server is long.').join(' ');
+  const scrolled: [string, React.ReactElement, { line: string; actions: string[] }][] = [
+    ['link-missing', <AppLinkMissingScreen onBackToApps={noop} />, { line: COPY.appLinkMissingBody, actions: [COPY.appLinkMissingBack] }],
+    ['update-required', <UpdateRequiredScreen notice={LONG_NOTICE} onNotNow={noop} />, { line: LONG_NOTICE, actions: [COPY.updateAction, COPY.updateNotNow] }],
+    ['age', <AgeScreen language="en" onLanguageChange={noop} held="minor-not-approved" onClose={noop} />, { line: COPY.ageBlockedBody, actions: [COPY.ageBack] }],
+    ['error fallback', <ScreenErrorFallback error={new Error('screen failed')} screen="history" resetErrorBoundary={noop} onLeave={noop} />, { line: COPY.screenErrorBody, actions: [COPY.screenErrorRetry, COPY.screenErrorBack] }],
+  ];
+  for (const [name, element, want] of scrolled) {
+    await h.test(`${name}: at 200% text the words scroll and the actions stay pinned under them`, async () => {
+      windowMetrics.fontScale = 2;
+      const tree = await renderScreen(element);
+      try {
+        const inScroll = (node: TestRenderer.ReactTestInstance) => {
+          for (let up = node.parent; up; up = up.parent) if (hostType(up) === 'ScrollView') return true;
+          return false;
+        };
+        const line = tree.root.find((n) => hostType(n) === 'Text' && textOf(n) === want.line);
+        h.ok(inScroll(line), 'the line is in a scroll view');
+        h.eq(want.actions.filter((label) => inScroll(button(tree, label))), [], 'no action scrolls with it');
+      } finally {
+        windowMetrics.fontScale = 1;
+        await unmountScreen(tree);
+      }
+    });
+  }
+  await h.test('consent review: a `separator` hairline marks where the disclosure is cut off above the pinned actions, light and dark', async () => {
+    for (const scheme of ['light', 'dark'] as const) {
+      await TestRenderer.act(async () => setColorScheme(scheme));
+      const tree = await renderScreen(<ConsentScreen language="en" onLanguageChange={noop} consentOn onAgree={noop} onClose={noop} />);
+      try {
+        const scroll = tree.root.find((n) => hostType(n) === 'ScrollView' && textOf(n).includes(COPY.consentLead));
+        const edge = StyleSheet.flatten(scroll.props.style) as { borderBottomWidth?: number; borderBottomColor?: string };
+        h.eq([edge.borderBottomWidth, edge.borderBottomColor], [StyleSheet.hairlineWidth, COLORS[scheme].separator], `${scheme}: a hairline in \`separator\` under the scroll`);
+        h.ok(!textOf(scroll).includes(COPY.consentReviewKeepOn), `${scheme}: and the actions are below it, not in it`);
+      } finally {
+        await unmountScreen(tree);
+        await TestRenderer.act(async () => setColorScheme('light'));
+      }
+    }
+  });
+  await h.test('consent review: the action table is the footer, top to bottom, and only the row it marks `grants` agrees', async () => {
+    for (const consentOn of [false, true]) {
+      const rows = consentScreenActions({ consentOn });
+      h.eq(rows.filter((row) => row.grants).length, consentOn ? 0 : 1, `consent ${consentOn ? 'on' : 'off'}: ${consentOn ? 'no row' : 'exactly one row'} grants`);
+      for (let i = 0; i < rows.length; i++) {
+        const fired: string[] = [];
+        const tree = await renderScreen(
+          <ConsentScreen language="en" onLanguageChange={noop} consentOn={consentOn} onAgree={() => fired.push('agree')} onTurnOff={() => fired.push('turnOff')} onClose={() => fired.push('close')} />,
+        );
+        try {
+          const footer = tree.root.findAll((n) => hostType(n) === 'Pressable').filter((n) => {
+            for (let up = n.parent; up; up = up.parent) if (hostType(up) === 'ScrollView') return false;
+            return true;
+          });
+          h.eq(footer.length, rows.length, `consent ${consentOn ? 'on' : 'off'}: one footer action per row`);
+          await press(footer[i]);
+          h.eq(fired.includes('agree'), rows[i].grants, `consent ${consentOn ? 'on' : 'off'}, row ${i + 1} (${rows[i].action}): agrees exactly when the table says it grants`);
+        } finally {
+          await unmountScreen(tree);
+        }
+      }
+    }
+  });
   await h.test('error fallback: leave is visible only when supplied, and differs from retry', async () => {
     let leaves = 0;
     let retries = 0;
