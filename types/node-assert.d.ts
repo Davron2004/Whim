@@ -13,4 +13,5 @@ declare module 'node:assert' {
 }
 declare module 'node:util' {
   export function inspect(value: unknown, options?: { depth?: number; breakLength?: number }): string;
+  export function isDeepStrictEqual(actual: unknown, expected: unknown): boolean;
 }
