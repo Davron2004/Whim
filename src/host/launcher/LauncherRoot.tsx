@@ -3504,7 +3504,7 @@ function LauncherShell({
       );
     }
     if (from.kind === 'ready') {
-      return <ReadyPage app={from.app} words={from.text} onOpen={() => onOpen(from.app)} onDone={goHome} />;
+      return <ReadyPage app={from.app} words={from.text} changed={from.editing != null} onOpen={() => onOpen(from.app)} onDone={goHome} />;
     }
     return (
       <FailurePage

@@ -106,15 +106,15 @@ const SECOND_MS = 1000;
 const MINUTE_MS = 60 * SECOND_MS;
 const HOUR_MS = 60 * MINUTE_MS;
 
-/** One copy-table line saying when the retry window ends (spec "Retry-After holds the retry
- *  action until the window passes"): seconds under a minute, minutes under an hour, `after
- *  <time>` for later the same local day, `tomorrow after <time>` beyond that. `formatTime` is an
- *  injected local-time formatter (an `Intl.DateTimeFormat`-backed one in production, a fixed
+/** One copy-table sentence saying when the retry window ends (spec "Retry-After holds the retry
+ *  action until the window passes"): seconds under a minute, minutes under an hour, "Try again
+ *  after <time>." for later the same local day, "Try again tomorrow after <time>." beyond that.
+ *  `formatTime` is an injected local-time formatter (an `Intl.DateTimeFormat`-backed one in production, a fixed
  *  string in tests) so this function stays pure. When the global `Intl` is missing entirely (so
- *  no caller could have built a real `formatTime`), this falls back to `in about N hours` rather
+ *  no caller could have built a real `formatTime`), this falls back to "in about N hours" rather
  *  than call a formatter that cannot exist. When `now` has already reached or passed `retryAt`,
  *  the window has ended — naming a bucket would just restate a stale estimate, so this reads
- *  "shortly" instead. */
+ *  "Try again shortly." instead. */
 export function retryLine(retryAt: number, now: number, formatTime: (date: Date) => string): string {
   const remainingMs = retryAt - now;
   if (remainingMs <= 0) {
@@ -129,8 +129,11 @@ export function retryLine(retryAt: number, now: number, formatTime: (date: Date)
   if (typeof Intl === 'undefined') {
     return retryLineHoursFallback(Math.round(remainingMs / HOUR_MS));
   }
+  // Named to the nearest minute: `retryAt` is the server's whole seconds counted from when the
+  // answer arrived, so a window that ends at midnight UTC lands a moment either side of it, and
+  // either reads "after 8:00 PM", the time the notice names, never 7:59 or 8:01.
   const nowDate = new Date(now);
-  const retryDate = new Date(retryAt);
+  const retryDate = new Date(Math.round(retryAt / MINUTE_MS) * MINUTE_MS);
   const sameLocalDay =
     nowDate.getFullYear() === retryDate.getFullYear() &&
     nowDate.getMonth() === retryDate.getMonth() &&

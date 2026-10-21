@@ -74,7 +74,7 @@ const cases: Record<Exclude<ScreenKind, 'home' | 'app' | 'dev'>, { label: Exit; 
   describe: { label: COPY.sheetClose, render: leave => sheeted(leave, <DescribePage text="" onChangeText={noop} onContinue={noop} />), sheet: true },
   plan: { label: COPY.backLabel, render: leave => sheeted(noop, <PlanPage screen={planStep(describeStep(undefined, 'Timer'))} onBack={leave} onAnswer={noop} onChangeRow={noop} onMake={noop} onTryAgain={noop} onMakeInstead={noop} />), sheet: true },
   making: { label: COPY.sheetClose, render: leave => sheeted(leave, <MakingPage name="Timer" changing={false} words="A timer" stage={null} delivering={false} signals={null} now={0} activity={0} onStop={noop} />), sheet: true },
-  ready: { label: COPY.readyDone, render: leave => sheeted(leave, <ReadyPage app={SCREEN_APP} words="A timer" onOpen={noop} onDone={leave} />), sheet: true },
+  ready: { label: COPY.readyDone, render: leave => sheeted(leave, <ReadyPage app={SCREEN_APP} words="A timer" changed={false} onOpen={noop} onDone={leave} />), sheet: true },
   failure: { label: COPY.sheetClose, render: leave => sheeted(leave, <FailurePage kind="other" reason="Unavailable" diagnostics={[]} rephraseHelps changing={false} onChange={noop} onRetry={noop} />), sheet: true },
 };
 

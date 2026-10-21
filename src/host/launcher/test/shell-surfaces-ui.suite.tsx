@@ -21,6 +21,7 @@ import {
   Platform,
   refuseModalPresentations,
   setAppState,
+  setColorScheme,
   StyleSheet,
   useSafeAreaInsets,
   windowMetrics,
@@ -56,7 +57,7 @@ import { Icon } from '../../ui/Icon';
 import { gridLayout, TILE, TILE_SIDE } from '../../ui/AppTile-geometry';
 import KeyboardShell from '../KeyboardShell';
 import { COPY } from '../copy';
-import { COLORS, LAYOUT, SPRINGS, TIMINGS, TYPE_SCALE, type TypeToken } from '../../../design/tokens';
+import { COLORS, LAYOUT, SPRINGS, TIMINGS, TOP_HIGHLIGHT, TYPE_SCALE, type TypeToken } from '../../../design/tokens';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -398,6 +399,23 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     const scrim = tree.root.find((n) => hostType(n) === 'Pressable' && n.props.accessible === false);
     h.eq([scrim.props.importantForAccessibility, inside(card(tree), scrim), inside(title, scrim)], ['no', false, false], 'the scrim is a sibling screen readers skip, never a parent of the card');
     await act(() => tree.unmount());
+  });
+
+  await h.test('Sheet: the card paints the sheet to its edges with no border (Android shrinks a rounded, bordered view’s background by 0.8 px a side), and the dark top highlight is its own 1 px line along the rounded top', async () => {
+    await resetPhone();
+    await act(() => setColorScheme('dark'));
+    const tree = await render(<HeldSheet onCloseCount={{ n: 0 }} />);
+    const style = flat(card(tree));
+    const borders = Object.entries(style).filter(([key, value]) => /^border\w*Width$/.test(key) && typeof value === 'number' && value > 0);
+    h.eq([style.backgroundColor, borders], [COLORS.dark.sheet, []], 'the sheet-coloured card has no border width on any side');
+    const highlight = card(tree).findAll((n) => hostType(n) === 'View' && flat(n).borderTopWidth === 1);
+    h.eq(
+      highlight.map((n) => [flat(n).position, flat(n).top, flat(n).left, flat(n).right, flat(n).borderColor, flat(n).borderTopLeftRadius, n.props.pointerEvents]),
+      [['absolute', 0, 0, 0, TOP_HIGHLIGHT.dark, style.borderTopLeftRadius, 'none']],
+      'one top highlight inside the card, across its rounded top, taking no touch',
+    );
+    await act(() => tree.unmount());
+    await act(() => setColorScheme('light'));
   });
 
   await h.test('Sheet: opens from off-screen on the smooth spring; under Reduce Motion it cross-fades in place for 160 ms', async () => {

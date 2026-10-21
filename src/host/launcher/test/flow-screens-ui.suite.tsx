@@ -206,7 +206,8 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
       const onThePhone = function DateTimeFormat(locales?: string | string[], options?: Intl.DateTimeFormatOptions) {
         return new PhoneFormat(locales ?? machine, options);
       } as unknown as typeof Intl.DateTimeFormat;
-      const retryAt = Date.now() + 2 * 60 * 60_000;
+      // On a whole minute: the line names the window's end to the nearest minute.
+      const retryAt = Math.round((Date.now() + 2 * 60 * 60_000) / 60_000) * 60_000;
       const englishTime = new PhoneFormat('en', { hour: 'numeric', minute: '2-digit' }).format(new Date(retryAt));
       Intl.DateTimeFormat = onThePhone;
       try {
@@ -587,7 +588,7 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
 
   await h.test('ready: the app’s tile, its name and the words; Open it in the app’s tint opens it, Done goes home', async () => {
     const s = spies();
-    await rendered(<ReadyPage app={APP} words="A tea timer" onOpen={s.fn('open')} onDone={s.fn('done')} />, async (tree) => {
+    await rendered(<ReadyPage app={APP} words="A tea timer" changed={false} onOpen={s.fn('open')} onDone={s.fn('done')} />, async (tree) => {
       const shown = textOf(tree.root);
       h.ok(shown.includes('Timer') && shown.includes('“A tea timer”') && shown.includes(COPY.readyOnHome), 'the name, the words and where it is');
       h.eq(tree.root.findByType(TilePlate).props.size, 'hero', 'the 96 pt tile');

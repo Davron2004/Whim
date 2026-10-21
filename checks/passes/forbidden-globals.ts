@@ -24,13 +24,13 @@ function hintFor(name: string): string {
     return 'Apps render only through vc-sdk components (Screen/Stack/Text/...) — direct DOM/global access is not available.';
   }
   if (name === 'fetch' || name === 'XMLHttpRequest' || name === 'WebSocket' || name === 'EventSource' || name === 'RTCPeerConnection' || name === 'sendBeacon') {
-    return "Network access is not exposed to apps; persist data with vc-sdk's `storage` capability instead.";
+    return 'Network access is not exposed to apps; persist data with vc-sdk’s `storage` capability instead.';
   }
   if (name === 'localStorage' || name === 'sessionStorage' || name === 'indexedDB' || name === 'caches') {
-    return "Ambient persistence is blocked; use vc-sdk's `storage` capability instead.";
+    return 'Ambient persistence is blocked; use vc-sdk’s `storage` capability instead.';
   }
   if (name === 'Worker' || name === 'SharedWorker') {
-    return "Background threads are not available; use vc-sdk's `delay`/`interval` for async work instead.";
+    return 'Background threads are not available; use vc-sdk’s `delay`/`interval` for async work instead.';
   }
   return "This global is not reachable from a vc-sdk app; use the equivalent vc-sdk capability instead.";
 }
@@ -134,7 +134,7 @@ function checkCallExpression(ctx: CheckContext, node: ts.CallExpression): void {
         node,
         node.expression.text,
         `String-argument ${node.expression.text} is implicit eval.`,
-        'Pass a function, not a string, to the timer — or use vc-sdk\'s `delay`/`interval`.',
+        'Pass a function, not a string, to the timer — or use vc-sdk’s `delay`/`interval`.',
       );
     }
   }

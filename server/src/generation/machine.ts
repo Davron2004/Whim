@@ -240,7 +240,7 @@ export const CONTAINMENT_FAILURE_REASON = 'This app could not be safely run and 
  *  rather than promising an automatic retry: an unverified candidate is never re-run (design D3).
  *  The run's one automatic retry is a generate or repair turn resent once after a provider failure
  *  (`runModelTurn`, beta-1 D10), which voids that turn's partial output and re-runs no candidate. */
-export const UNVERIFIED_RUN_REASON = "We couldn't verify this app ran safely. Please try again.";
+export const UNVERIFIED_RUN_REASON = 'We couldn’t verify this app ran safely. Please try again.';
 export const GENERIC_INTERNAL_ERROR_REASON = 'Something went wrong while I was making this app. Please try again.';
 /** Design D13, in the shell's glossary (system.md §8). */
 export const EXPIRED_REASON = 'This took too long to make. Please try again.';

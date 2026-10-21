@@ -26,10 +26,15 @@ export const RETIRED_WORDS: readonly (readonly [string, RegExp])[] = [
 export const FIRST_PERSON = /\bI\b/;
 const MAKER_CONTRACTION = /\bI[’'](?:ll|m|ve|d)\b/;
 
-/** What is wrong with the line `text` of `kind`, named `name`: each retired word it says, and
- *  Whim's "I" on a control. A line of no kind is checked for retired words only. */
+/** A typewriter mark: the shell sets apostrophes and quotes curly (’ ‘ “ ”), in every line. */
+const STRAIGHT_QUOTE = /['"]/;
+
+/** What is wrong with the line `text` of `kind`, named `name`: each retired word it says, a
+ *  straight apostrophe or quote, and Whim's "I" on a control. A line of no kind is checked for
+ *  retired words and straight quotes only. */
 export function lineFindings(name: string, text: string, kind: CopyKind | undefined): string[] {
   const findings = RETIRED_WORDS.filter(([, word]) => word.test(text)).map(([word]) => `${name}: retired word "${word}" in "${text}"`);
+  if (STRAIGHT_QUOTE.test(text)) findings.push(`${name}: a straight apostrophe or quote (’ ‘ “ ” are the shell's) in "${text}"`);
   if (kind === 'control' && FIRST_PERSON.test(text)) findings.push(`${name}: Whim's "I" on a control: "${text}"`);
   if (kind === 'person' && MAKER_CONTRACTION.test(text)) findings.push(`${name}: Whim's "I" on a control: "${text}"`);
   return findings;

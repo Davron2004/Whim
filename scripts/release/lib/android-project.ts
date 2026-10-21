@@ -15,6 +15,8 @@ import path from 'node:path';
 export const ANDROID_MANIFEST_PATH = 'android/app/src/main/AndroidManifest.xml';
 export const ANDROID_MAIN_NETWORK_CONFIG_PATH = 'android/app/src/main/res/xml/network_security_config.xml';
 export const ANDROID_MAIN_ACTIVITY_PATH = 'android/app/src/main/java/com/whim/MainActivity.kt';
+/** The least time `MainActivity`'s scrim walk may keep looking for an unwatched window's Modal host. */
+const SCRIM_WALK_FLOOR_MS = 1000;
 const ANDROID_SOURCE_SETS_DIR = 'android/app/src';
 
 export interface AndroidProjectFinding {
@@ -262,9 +264,9 @@ function preDrawListeners(body: string): { lambdas: string[]; rest: string } {
  *  created, and the dialog walk must run before each of the activity's frames (its pre-draw
  *  listener), follow each host into its dialog (where nested hosts live), and give each dialog a
  *  pre-draw listener that clears the dialog's window and runs the walk again (a sheet opened from a
- *  sheet). The listing must skip a window only once its dialog is watched (`scrimWatched`, or a
- *  frame budget): a window merely seen once may be a preallocated Modal's dialog whose host isn't in
- *  the tree yet. Each call is looked for where it must sit, not anywhere in the function. Comments
+ *  sheet). The listing must skip a window only once its dialog is watched (`scrimWatched`, or a time
+ *  budget of at least `SCRIM_WALK_FLOOR_MS`): a window merely seen once may be a preallocated
+ *  Modal's dialog whose host isn't in the tree yet. Each call is looked for where it must sit, not anywhere in the function. Comments
  *  are dropped, so a commented-out call fails. */
 function checkNavigationBarScrim(repoRoot: string): AndroidProjectFinding[] {
   let text: string;
@@ -275,7 +277,7 @@ function checkNavigationBarScrim(repoRoot: string): AndroidProjectFinding[] {
     throw err;
   }
   const code = kotlinCode(text);
-  const problems: string[] = [];
+  const problems: string[] = checkNavigationBarIcons(code);
   const clear = kotlinFunction(code, 'clearNavigationBarScrim');
   if (clear === undefined || !/\.isNavigationBarContrastEnforced\s*=\s*false\b/.test(clear.body)) {
     problems.push('MainActivity must define clearNavigationBarScrim(window), setting isNavigationBarContrastEnforced = false: with 3-button navigation Android otherwise draws a contrast band under the page');
@@ -303,14 +305,71 @@ function checkNavigationBarScrim(repoRoot: string): AndroidProjectFinding[] {
   if (!intoDialog) {
     problems.push('MainActivity.watchDialogScrims must walk on into each dialog\'s decor view: a Modal inside another\'s content has its host there');
   }
+  problems.push(...checkScrimListing(code));
+  return problems.map((message) => ({ file: ANDROID_MAIN_ACTIVITY_PATH, message }));
+}
+
+/** The window listing behind the dialog walk: it walks while a window is unwatched, keeps walking
+ *  for a window until its dialog is watched, and gives up on one only after a time budget of at
+ *  least `SCRIM_WALK_FLOOR_MS`, read off the clock. */
+function checkScrimListing(code: string): string[] {
+  const problems: string[] = [];
   const dialogs = kotlinFunction(code, 'clearDialogNavigationBarScrims');
   if (dialogs === undefined || !/\bwatchDialogScrims\(/.test(dialogs.body)) {
     problems.push('MainActivity must define clearDialogNavigationBarScrims, listing the activity\'s windows and calling watchDialogScrims while one is unwatched');
   }
-  if (dialogs !== undefined && !/\broot\s+!?in\s+scrimWatched\b|\bscrimWatched\.containsKey\(\s*root\s*\)/.test(dialogs.body)) {
-    problems.push('MainActivity.clearDialogNavigationBarScrims must keep walking for a window until its dialog is in scrimWatched (or its frame budget is spent), never stop once it has listed it: React Native can show a preallocated Modal\'s dialog frames before its host is in the tree');
+  if (dialogs !== undefined && !/\broot\s+in\s+scrimWatched\b|(?<!!)\bscrimWatched\.containsKey\(\s*root\s*\)/.test(dialogs.body)) {
+    problems.push('MainActivity.clearDialogNavigationBarScrims must keep walking for a window until its dialog is in scrimWatched (or its time budget is spent), never stop once it has listed it: React Native can show a preallocated Modal\'s dialog frames before its host is in the tree');
   }
-  return problems.map((message) => ({ file: ANDROID_MAIN_ACTIVITY_PATH, message }));
+  const budget = /\bconst val SCRIM_WALK_MS\s*=\s*(\d+)L?\b/.exec(code);
+  if (budget === null || Number(budget[1]) < SCRIM_WALK_FLOOR_MS) {
+    problems.push(`MainActivity must declare const val SCRIM_WALK_MS of at least ${SCRIM_WALK_FLOOR_MS} ms: a shorter walk ends before a slow render inserts a preallocated Modal's host, and its sheet keeps the band`);
+  }
+  if (dialogs !== undefined && !(/\bSCRIM_WALK_MS\b/.test(dialogs.body) && /\bSystemClock\.uptimeMillis\(\)/.test(dialogs.body))) {
+    problems.push('MainActivity.clearDialogNavigationBarScrims must budget each unwatched window by time (SystemClock.uptimeMillis() against SCRIM_WALK_MS), not by checks: checks run on every window\'s frames, so several windows drawing spend a count in a fraction of a second');
+  }
+  return problems;
+}
+
+/** The expression assigned to `isAppearanceLightNavigationBars` in `body`, a local `val` it names
+ *  replaced by that val's initialiser, or `undefined` when there is no such assignment. */
+function navigationBarsAssignment(body: string): string | undefined {
+  const assigned = /\.isAppearanceLightNavigationBars\s*=\s*([^\n;]+)/.exec(body)?.[1].trim();
+  if (assigned === undefined || !/^\w+$/.test(assigned)) return assigned;
+  return new RegExp(`\\bval ${assigned}\\s*=\\s*([^\\n;]+)`).exec(body)?.[1].trim() ?? assigned;
+}
+
+/** With the scrim off the navigation bar shows what is under it, so `MainActivity` sets its icons
+ *  from that, never from the phone's night mode alone. On the activity's window that is the page
+ *  the status bar is over (a running app's frame keeps its scheme when the phone switches), so
+ *  `matchNavigationBarToStatusBar` copies the status bar's appearance and runs before each of the
+ *  activity's frames; on a Modal's dialog it is the overlay, in the shell's scheme, so each watched
+ *  dialog's pre-draw listener runs `matchNavigationBarToShellScheme`. No other code may set the
+ *  navigation bar's appearance: the night-mode assignment in `onConfigurationChanged` is the
+ *  regression (white icons on a light frame over a dark phone). */
+function checkNavigationBarIcons(code: string): string[] {
+  const problems: string[] = [];
+  const match = kotlinFunction(code, 'matchNavigationBarToStatusBar');
+  const copied = match === undefined ? undefined : navigationBarsAssignment(match.body);
+  if (copied === undefined || !/\bisAppearanceLightStatusBars\b/.test(copied)) {
+    problems.push('MainActivity must define matchNavigationBarToStatusBar, setting isAppearanceLightNavigationBars from isAppearanceLightStatusBars: the navigation bar shows the page the status bar is over, a running app\'s frame included');
+  }
+  const onCreate = kotlinFunction(code, 'onCreate');
+  const activityListeners = onCreate === undefined ? [] : preDrawListeners(onCreate.body).lambdas;
+  if (!activityListeners.some((lambda) => /\bmatchNavigationBarToStatusBar\(/.test(lambda))) {
+    problems.push('MainActivity.onCreate must add a pre-draw listener to the activity\'s window that calls matchNavigationBarToStatusBar: the JS StatusBar\'s style changes with the page, and the navigation bar\'s icons must follow it');
+  }
+  const watch = kotlinFunction(code, 'watchDialogScrims');
+  const dialogListeners = watch === undefined ? [] : preDrawListeners(watch.body).lambdas;
+  if (!dialogListeners.some((lambda) => /\bmatchNavigationBarToShellScheme\(/.test(lambda))) {
+    problems.push('MainActivity.watchDialogScrims must add a pre-draw listener to each dialog that calls matchNavigationBarToShellScheme: a sheet is drawn in the shell\'s scheme, whatever the frame under it');
+  }
+  const owners = ['matchNavigationBarToStatusBar', 'matchNavigationBarToShellScheme'].map((name) => kotlinFunction(code, name)?.body ?? '');
+  const elsewhere = owners.reduce((rest, body) => (body === '' ? rest : rest.replace(body, '')), code);
+  if (/\.isAppearanceLightNavigationBars\s*=(?!=)/.test(elsewhere)) {
+    problems.push('MainActivity must set isAppearanceLightNavigationBars only in matchNavigationBarToStatusBar and matchNavigationBarToShellScheme: set from the night mode elsewhere (onConfigurationChanged), a light frame over a dark phone gets white icons');
+  }
+  return problems;
 }
 
 /** Every finding across the manifest, MainActivity and the network security configs. Empty means the project passes. */

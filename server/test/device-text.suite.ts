@@ -1,7 +1,8 @@
 /**
  * The server's text the device shows word for word speaks the shell's glossary (app-launcher
- * "Shell copy has one name per concept"; system.md §8): no retired word, run through the SAME
- * lint the device's copy table runs (`checks/test/repo/copy-glossary.ts`).
+ * "Shell copy has one name per concept"; system.md §8): no retired word and no straight
+ * apostrophe or quote outside a code span, run through the SAME lint the device's copy table runs
+ * (`checks/test/repo/copy-glossary.ts`).
  *
  * What the device shows verbatim, from its render paths: a `failure` event's `reason` (the Failure
  * page's sentence for an `other` failure, and a "What happened" row) and its diagnostics' `hint`s
@@ -13,8 +14,9 @@
  * type checker: a sentence is found where it is written into one of the fields, held by a name or
  * parameter named for one (`DEVICE_TEXT_NAME`), returned by a producer so named or called to fill
  * one, or reached from a field's value through a same-file name (`hint: message` reads the
- * arguments the same file's calls pass as `message`, by the function's plain name or as a method on
- * `this`; a `for (const word of list)` variable reads `list`), up to `NAME_HOPS` names deep. Text
+ * arguments the same file's calls pass as `message`, by the function's plain name or, for a class's
+ * method or function property, on a `this` bound to that class; a `for (const word of list)`
+ * variable reads `list`), up to `NAME_HOPS` names deep. Text
  * reaching a field only through an import under another name, an object's property (`x.reason`), a
  * call on another receiver (`other.fail(…)`), a destructured name (`const { hint } = x`), a
  * `for … in` key or a callback is not followed: only the stub, checker and gate runs below see such
@@ -145,8 +147,9 @@ async function diagnosticHintLines(): Promise<Line[]> {
   const lines: Line[] = checked.diagnostics.map((d): Line => [`checker ${d.kind} hint`, d.hint]);
   const built = await createBuildStage().build('export const broken = (;');
   check('setup: the build stage refuses a source that does not compile', !built.ok);
-  // The location esbuild names is a temporary file path, not words the stage wrote.
-  if (!built.ok) lines.push(['build stage hint', built.diagnostic.hint.replace(/\([^()]*:\d+:\d+\)/, '(<where>)')]);
+  // What follows the stage's colon is esbuild's message and the temporary file it names, not words
+  // the stage wrote.
+  if (!built.ok) lines.push(['build stage hint', built.diagnostic.hint.replace(/: .*$/, ': <compiler message>.')]);
   return lines;
 }
 
@@ -161,6 +164,9 @@ function stubNoticeLines(): Line[] {
 /** Wire names a hint quotes, header names (`x-whim-build` is the installed build number): wire
  *  identifiers, not words the glossary governs, so each is read as a placeholder. */
 const WIRE_NAME = /\bx-whim-[a-z-]+/g;
+/** Code a hint quotes in backticks (`import ... from 'vc-sdk'`, a field's name): code keeps its own
+ *  quotes and names, so each span is read as a placeholder too. */
+const CODE_SPAN = /`[^`]*`/g;
 
 /** The envelope gate's hints, for envelope headers half sent and for a malformed one. */
 function envelopeLines(): Line[] {
@@ -254,10 +260,30 @@ function declarationOf(id: ts.Identifier): ts.ParameterDeclaration | ts.Variable
   return undefined;
 }
 
-/** The name a function is called by: its own, or the variable it is assigned to. */
+/** The name a function is called by: its own, or the variable or class property it is assigned to. */
 function calledName(fn: ts.SignatureDeclaration): string | undefined {
   if (ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn)) return nameOf(fn.name);
-  if ((ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) && ts.isVariableDeclaration(fn.parent)) return nameOf(fn.parent.name);
+  if ((ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) && (ts.isVariableDeclaration(fn.parent) || ts.isPropertyDeclaration(fn.parent))) return nameOf(fn.parent.name);
+  return undefined;
+}
+
+/** The class whose member `fn` is: a method of a class, or a function held by a class property
+ *  (`fail = (m) => …`). */
+function memberClassOf(fn: ts.SignatureDeclaration): ts.ClassLikeDeclaration | undefined {
+  if (ts.isMethodDeclaration(fn) && ts.isClassLike(fn.parent)) return fn.parent;
+  if ((ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) && ts.isPropertyDeclaration(fn.parent) && ts.isClassLike(fn.parent.parent)) return fn.parent.parent;
+  return undefined;
+}
+
+/** The class `this` names at `node`: the nearest enclosing class, through arrow functions (which
+ *  keep their `this`), or none when a `function`, or a method or accessor of an object literal,
+ *  binds `this` first. */
+function thisClassAt(node: ts.Node): ts.ClassLikeDeclaration | undefined {
+  for (let at = node.parent; at !== undefined; at = at.parent) {
+    if (ts.isFunctionDeclaration(at) || ts.isFunctionExpression(at)) return undefined;
+    if ((ts.isMethodDeclaration(at) || ts.isAccessor(at)) && ts.isObjectLiteralExpression(at.parent)) return undefined;
+    if (ts.isClassLike(at)) return at;
+  }
   return undefined;
 }
 
@@ -271,11 +297,13 @@ function callName(call: ts.CallExpression): string | undefined {
 }
 
 /** True when `call`, found under `fn`'s name, calls `fn`: from `fn`'s own file, by its plain name,
- *  or for a method, on `this` inside the method's class. */
+ *  or for a class's method or function property, on a `this` that is that class's. An object
+ *  literal's method is called on its object, which this scan does not follow. */
 function callsFunction(call: ts.CallExpression, fn: ts.SignatureDeclaration): boolean {
   if (call.getSourceFile() !== fn.getSourceFile()) return false;
-  if (!ts.isMethodDeclaration(fn)) return ts.isIdentifier(call.expression);
-  return !ts.isIdentifier(call.expression) && ts.findAncestor(call.parent, ts.isClassLike) === fn.parent;
+  const owner = memberClassOf(fn);
+  if (owner === undefined) return !ts.isMethodDeclaration(fn) && ts.isIdentifier(call.expression);
+  return !ts.isIdentifier(call.expression) && thisClassAt(call) === owner;
 }
 
 /** Every string a device-shown field can be written from, found in the source as syntax: the
@@ -294,7 +322,7 @@ function scannedLines(files: readonly { fields: ReadonlySet<string>; source: ts.
   for (const { source } of files) {
     const visit = (node: ts.Node): void => {
       if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.body) declare(nameOf(node.name), node);
-      if (ts.isVariableDeclaration(node) && node.initializer && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) {
+      if ((ts.isVariableDeclaration(node) || ts.isPropertyDeclaration(node)) && node.initializer && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) {
         declare(nameOf(node.name), node.initializer);
       }
       const callee = ts.isCallExpression(node) ? callName(node) : undefined;
@@ -383,13 +411,31 @@ function checkScanFollowsNames(): void {
     'class Run {',
     '  stop(message: string) { return { reason: message }; }',
     "  go() { this.stop('called on this'); }",
+    "  later() { setTimeout(function () { this.stop('called on the this of a nested function'); }); }",
+    "  literal() { return { go() { this.stop('called on the this of an object literal method'); } }; }",
+    "  inner() { return class { go() { this.stop('called on the this of a nested class'); } }; }",
     '}',
     "runner.stop('called on another runner');",
+    'class Job {',
+    '  halt = (message: string) => ({ notice: message });',
+    "  run() { this.halt('called on this, a function property'); }",
+    "  each() { ['x'].forEach(() => this.halt('called on this through an arrow')); }",
+    '}',
+    "job.halt('called on another job');",
     "for (const word of ['looped over']) send({ notice: word });",
   ].join('\n'));
   const seen = scannedLines([{ fields: DEVICE_FIELDS, source }]).map(([, text]) => text);
-  for (const text of ['called by its name', 'called on this', 'looped over']) check(`the scan follows a name to ${text}`, seen.includes(text), seen.join('\n'));
-  for (const text of ['called on another object', 'called on another runner']) check(`the scan does not take ${text} for a call of the same-file function`, !seen.includes(text), seen.join('\n'));
+  const followed = ['called by its name', 'called on this', 'called on this, a function property', 'called on this through an arrow', 'looped over'];
+  for (const text of followed) check(`the scan follows a name to ${text}`, seen.includes(text), seen.join('\n'));
+  const notFollowed = [
+    'called on another object',
+    'called on another runner',
+    'called on another job',
+    'called on the this of a nested function',
+    'called on the this of an object literal method',
+    'called on the this of a nested class',
+  ];
+  for (const text of notFollowed) check(`the scan does not take ${text} for a call of the same-file function`, !seen.includes(text), seen.join('\n'));
 }
 
 /** The scan sees at least what the modules hand out as such text: every failure reason the
@@ -420,6 +466,6 @@ export async function runDeviceTextTests(): Promise<void> {
     ...stubNoticeLines(),
     ...envelopeLines(),
   ];
-  const findings = lines.flatMap(([where, text]) => lineFindings(where, text.replaceAll(WIRE_NAME, '<header>'), 'prose'));
-  check(`no line the device shows from the server says a retired word (${lines.length} lines)`, findings.length === 0, findings.join('\n'));
+  const findings = lines.flatMap(([where, text]) => lineFindings(where, text.replaceAll(WIRE_NAME, '<header>').replaceAll(CODE_SPAN, '<code>'), 'prose'));
+  check(`no line the device shows from the server says a retired word or sets a straight apostrophe or quote outside code (${lines.length} lines)`, findings.length === 0, findings.join('\n'));
 }

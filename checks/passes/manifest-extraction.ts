@@ -38,12 +38,12 @@ function extractStringField(
 ): FieldResult<string> {
   const prop = getProperty(obj, field);
   if (!prop || !ts.isPropertyAssignment(prop)) {
-    errors.push(fieldDiag(sourceFile, prop ?? obj, field, `Manifest field "${field}" is required and must be a string literal.`));
+    errors.push(fieldDiag(sourceFile, prop ?? obj, field, `Manifest field \`${field}\` is required and must be a string literal.`));
     return { ok: false };
   }
   const conv = literalToJson(prop.initializer);
   if (!conv.ok || typeof conv.value !== 'string') {
-    errors.push(fieldDiag(sourceFile, prop.initializer, field, `Manifest field "${field}" must be a string literal.`));
+    errors.push(fieldDiag(sourceFile, prop.initializer, field, `Manifest field \`${field}\` must be a string literal.`));
     return { ok: false };
   }
   return { ok: true, value: conv.value };
@@ -57,7 +57,7 @@ function extractCapabilitiesField(
   const prop = getProperty(obj, 'capabilities');
   if (!prop || !ts.isPropertyAssignment(prop) || !ts.isArrayLiteralExpression(prop.initializer)) {
     errors.push(
-      fieldDiag(sourceFile, prop ?? obj, 'capabilities', 'Manifest field "capabilities" must be a literal array of capability strings.'),
+      fieldDiag(sourceFile, prop ?? obj, 'capabilities', 'Manifest field `capabilities` must be a literal array of capability strings.'),
     );
     return { ok: false };
   }
@@ -66,7 +66,7 @@ function extractCapabilitiesField(
     const conv = literalToJson(el);
     if (!conv.ok || typeof conv.value !== 'string') {
       errors.push(
-        fieldDiag(sourceFile, el, 'capabilities', 'Manifest field "capabilities" must be a literal array of capability strings.'),
+        fieldDiag(sourceFile, el, 'capabilities', 'Manifest field `capabilities` must be a literal array of capability strings.'),
       );
       return { ok: false };
     }
@@ -83,7 +83,7 @@ function extractScreensField(
   const prop = getProperty(obj, 'screens');
   if (!prop || !ts.isPropertyAssignment(prop) || !ts.isObjectLiteralExpression(prop.initializer)) {
     errors.push(
-      fieldDiag(sourceFile, prop ?? obj, 'screens', 'Manifest field "screens" must be a literal object mapping screen names to components.'),
+      fieldDiag(sourceFile, prop ?? obj, 'screens', 'Manifest field `screens` must be a literal object mapping screen names to components.'),
     );
     return { ok: false };
   }
@@ -91,7 +91,7 @@ function extractScreensField(
   for (const el of prop.initializer.properties) {
     if (!el.name || ts.isComputedPropertyName(el.name) || (!ts.isIdentifier(el.name) && !ts.isStringLiteral(el.name))) {
       errors.push(
-        fieldDiag(sourceFile, el, 'screens', 'Manifest field "screens" entries must be plain (non-computed, non-spread) properties.'),
+        fieldDiag(sourceFile, el, 'screens', 'Manifest field `screens` entries must be plain (non-computed, non-spread) properties.'),
       );
       return { ok: false };
     }
@@ -108,7 +108,7 @@ function extractSchemaField(
   const prop = getProperty(obj, 'schema');
   if (!prop) return { ok: false }; // schema is optional — absence is not an error
   if (!ts.isPropertyAssignment(prop)) {
-    errors.push(fieldDiag(sourceFile, prop, 'schema', 'Manifest field "schema" must be a literal object (or a same-module top-level const initialized with one).'));
+    errors.push(fieldDiag(sourceFile, prop, 'schema', 'Manifest field `schema` must be a literal object (or a same-module top-level const initialized with one).'));
     return { ok: false };
   }
   const resolved = resolveSchemaValue(sourceFile, prop.initializer);
@@ -118,7 +118,7 @@ function extractSchemaField(
         sourceFile,
         prop.initializer,
         'schema',
-        'Manifest field "schema" must be a literal object (or a same-module top-level const initialized with one) — imported identifiers, call results, spreads, and reassigned bindings are not statically analyzable.',
+        'Manifest field `schema` must be a literal object (or a same-module top-level const initialized with one) — imported identifiers, call results, spreads, and reassigned bindings are not statically analyzable.',
       ),
     );
     return { ok: false };
@@ -198,13 +198,13 @@ function extractIconField(
   if (!prop) return undefined;
   const conv = ts.isPropertyAssignment(prop) ? literalToJson(prop.initializer) : undefined;
   if (!ts.isPropertyAssignment(prop) || !conv?.ok || typeof conv.value !== 'string') {
-    warnings.push(tileDiag(sourceFile, prop, 'icon_fallback', 'icon', 'The icon must be a string literal; it is ignored.', 'Name one glyph from the glyph set, for example "timer".'));
+    warnings.push(tileDiag(sourceFile, prop, 'icon_fallback', 'icon', 'The icon must be a string literal; it is ignored.', 'Name one glyph from the glyph set, for example `timer`.'));
     return undefined;
   }
   const resolved = resolveGlyph(conv.value, appName);
   if (resolved.diagnostic !== undefined) {
     const { kind, message } = resolved.diagnostic;
-    warnings.push(tileDiag(sourceFile, prop.initializer, kind, 'icon', message, `Name one glyph from the glyph set, for example "${resolved.name === FALLBACK_ICON ? 'timer' : resolved.name}".`));
+    warnings.push(tileDiag(sourceFile, prop.initializer, kind, 'icon', message, `Name one glyph from the glyph set, for example \`${resolved.name === FALLBACK_ICON ? 'timer' : resolved.name}\`.`));
   }
   return resolved.name;
 }

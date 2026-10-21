@@ -166,6 +166,8 @@ export const COPY = {
   /** First in line; further back, `makingQueueLine` counts the runs ahead. */
   makingQueuedNext: 'Waiting for a free spot. You’re next.',
   readyOnHome: 'It’s on your home screen.',
+  /** The Ready page after a change: the app was already on the home screen; Open it shows the change. */
+  readyChanged: 'It opens with your change.',
   readyOpen: 'Open it',
   readyDone: 'Done',
   failureTitle: 'Couldn’t make this',
@@ -552,7 +554,7 @@ export const COPY_KINDS: Readonly<Record<keyof typeof COPY, CopyKind>> = {
   planChangeIdea: 'control', workingClarify: 'prose', workingPlan: 'prose', workingPlanEdit: 'prose',
   buildStepReading: 'prose', buildStepWriting: 'prose', buildStepChecking: 'prose', buildStepInstalling: 'prose',
   makingStepDone: 'prose', makingStepCurrent: 'prose', makingStepWaiting: 'prose', makingTimeUsual: 'prose',
-  makingTimeLonger: 'prose', makingTimeSlow: 'prose', makingQueuedNext: 'prose', readyOnHome: 'prose',
+  makingTimeLonger: 'prose', makingTimeSlow: 'prose', makingQueuedNext: 'prose', readyOnHome: 'prose', readyChanged: 'prose',
   readyOpen: 'control', readyDone: 'control', failureTitle: 'prose', failureChangeDescription: 'control',
   failureTryAgainAsIs: 'control', failureStopped: 'prose', failureNeedsUpdate: 'prose', failureConnection: 'prose',
   failureOfflineNotice: 'prose', failureOtherAppsUntouched: 'prose', failureCurrentVersionWorks: 'prose', planOffline: 'prose',
@@ -943,8 +945,8 @@ export function formatCount(n: number, language: LegalLanguage = COPY_LANGUAGE):
 }
 
 /** `date`'s local clock time as a copy table in `language` writes it: "3:05 PM" in English, "15:05" in
- *  French, whatever the phone's locale (the retry lines' "after 3:05 PM"). Only called where
- *  `Intl` exists: `retryLine` falls back to hours without it. */
+ *  French, whatever the phone's locale (the retry lines' "Try again after 3:05 PM."). Only called
+ *  where `Intl` exists: `retryLine` falls back to hours without it. */
 export function formatClockTime(date: Date, language: LegalLanguage = COPY_LANGUAGE): string {
   return new Intl.DateTimeFormat(language, { hour: 'numeric', minute: '2-digit' }).format(date);
 }
@@ -1215,35 +1217,36 @@ export function reportCodeSizeLabel(chars: number): string {
 // ── the refusal notice's retry-window line (service-refusals; design D11) ────
 // `service-refusal.ts#retryLine` owns the bucket ARITHMETIC (which of these five applies, and any
 // rounding); this module owns only the WORDING, the same split `timelineStageLine` already keeps
-// between `prompt-flow.ts`'s counts and its own phrasing.
+// between `prompt-flow.ts`'s counts and its own phrasing. The line sits on its own under the
+// notice's sentence, so each reads as a sentence of its own, saying what to do and when.
 
 export function retryLineSeconds(n: number): string {
-  return n === 1 ? 'in about 1 second' : `in about ${formatCount(n)} seconds`;
+  return n === 1 ? 'Try again in about 1 second.' : `Try again in about ${formatCount(n)} seconds.`;
 }
 
 export function retryLineMinutes(n: number): string {
-  return n === 1 ? 'in about 1 minute' : `in about ${formatCount(n)} minutes`;
+  return n === 1 ? 'Try again in about 1 minute.' : `Try again in about ${formatCount(n)} minutes.`;
 }
 
 /** The `Intl`-missing fallback — an hours-only estimate when no formatter could exist to build a
  *  local-time string at all. */
 export function retryLineHoursFallback(n: number): string {
-  return n === 1 ? 'in about 1 hour' : `in about ${formatCount(n)} hours`;
+  return n === 1 ? 'Try again in about 1 hour.' : `Try again in about ${formatCount(n)} hours.`;
 }
 
 /** The window had already ended by the moment this line was read: naming a bucket ("in about 0
  *  seconds") would just be a stale estimate restated, so this names no number at all. */
 export function retryLineElapsed(): string {
-  return 'shortly';
+  return 'Try again shortly.';
 }
 
-/** Later the same local day: "after 4:30 PM". `time` is already formatted by the caller's
- *  injected formatter (`formatClockTime`). */
+/** Later the same local day: "Try again after 4:30 PM.". `time` is already formatted by the
+ *  caller's injected formatter (`formatClockTime`). */
 export function retryLineSameDay(time: string): string {
-  return `after ${time}`;
+  return `Try again after ${time}.`;
 }
 
-/** Beyond the same local day: "tomorrow after 9:00 AM". */
+/** Beyond the same local day: "Try again tomorrow after 9:00 AM.". */
 export function retryLineTomorrow(time: string): string {
-  return `tomorrow after ${time}`;
+  return `Try again tomorrow after ${time}.`;
 }

@@ -402,6 +402,15 @@ export async function run(): Promise<void> {
     assert(legal.length === 1 && legal[0].startsWith('consentWhy: retired word "build"'), `legal copy has no carve-out: ${legal.join('; ')}`);
   });
 
+  await test('copy lint: a straight apostrophe or a straight quote fails, naming the key; the curly ones pass', () => {
+    const apostrophe = copyFindings({ ...COPY, readyOnHome: "It's on your home screen." }, COPY_KINDS);
+    assert(apostrophe.length === 1 && apostrophe[0].startsWith('readyOnHome: a straight apostrophe or quote'), `a straight apostrophe: ${apostrophe.join('; ')}`);
+    const quote = copyFindings({ ...COPY, homeSearchEmpty: 'Nothing called "tea"' }, COPY_KINDS);
+    assert(quote.length === 1 && quote[0].startsWith('homeSearchEmpty: a straight apostrophe or quote'), `a straight quote: ${quote.join('; ')}`);
+    const curly = copyFindings({ ...COPY, readyOnHome: 'It’s on your home screen.', homeSearchEmpty: 'Nothing called “tea”' }, COPY_KINDS);
+    assert(curly.length === 0, `curly apostrophes and quotes pass: ${curly.join('; ')}`);
+  });
+
   await test('copy numbers and clock times: written in the copy table’s language, English and French alike (#89, #214)', () => {
     assert(formatCount(1204, 'en') === '1,204', `English groups with a comma: ${formatCount(1204, 'en')}`);
     assert(formatCount(1204, 'fr') === '1 204', `French groups with a narrow no-break space: ${JSON.stringify(formatCount(1204, 'fr'))}`);

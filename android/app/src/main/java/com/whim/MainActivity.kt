@@ -3,6 +3,7 @@ package com.whim
 import android.content.res.Configuration
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
@@ -41,32 +42,70 @@ class MainActivity : ReactActivity() {
     fontScale = resources.configuration.fontScale
     LaunchScreen.hold(this)
     window.decorView.viewTreeObserver.addOnPreDrawListener {
+      matchNavigationBarToStatusBar(activityBars)
       mirrorBarAppearance()
       clearDialogNavigationBarScrims()
       true
     }
   }
 
+  // With no scrim (below) the navigation bar shows what is under it, so its icons must read against
+  // that. On the activity's window that is the page the status bar is over: Home and the shell's
+  // screens in the shell's scheme, a running app's own frame over the app, its crash screen and its
+  // launch failure. The JS `StatusBar` sets the status bar for the page shown, so the navigation
+  // bar's icons copy the status bar's, before each of the activity's frames (a style change
+  // schedules one); never the phone's night mode, or a light frame over a dark phone gets white
+  // icons on its light `bg`. On a Modal's dialog window it is the overlay itself (a sheet's surface,
+  // or a menu's backdrop over Home), drawn in the shell's scheme, which follows the phone's
+  // appearance, while its status bar is over the dimmed page under the overlay. Over a running app
+  // whose frame is in the other scheme the two differ, so a dialog's navigation bar takes the
+  // shell's scheme (`dialogBarAppearance`) and its status bar the activity's.
+  private val activityBars by lazy { WindowInsetsControllerCompat(window, window.decorView) }
+
+  private fun matchNavigationBarToStatusBar(bars: WindowInsetsControllerCompat) {
+    val light = bars.isAppearanceLightStatusBars
+    if (bars.isAppearanceLightNavigationBars != light) bars.isAppearanceLightNavigationBars = light
+  }
+
+  private fun shellSchemeLight(): Boolean =
+      (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) != Configuration.UI_MODE_NIGHT_YES
+
+  private fun matchNavigationBarToShellScheme(bars: WindowInsetsControllerCompat) {
+    val light = shellSchemeLight()
+    if (bars.isAppearanceLightNavigationBars != light) bars.isAppearanceLightNavigationBars = light
+  }
+
   // A React Native `Modal` (the shell's sheets and menus) is a dialog window of its own, drawn over
   // both system bars, so while one is up it decides the bars' icon colour. React Native copies the
   // activity's appearance into the dialog once, when it shows it, and never again (and from API 31
   // only the status bar's): a scheme change while a sheet is up left the sheet's bars in the old
-  // scheme (issue #189). Every change of the activity's own appearance (the JS `StatusBar`'s style,
-  // the navigation bar's in `onConfigurationChanged`) schedules a traversal of its window, so this
-  // pre-draw check sees it and hands it on to every dialog window of this activity; a dialog
-  // showing takes the activity's focus, so `onWindowFocusChanged` hands the whole appearance, both
-  // bars, to a new one. Dialog windows can be listed only from API 29 (`WindowInspector`); on 24–28
-  // a sheet keeps the bar colours it showed with until it closes, an accepted gap.
+  // scheme (issue #189). Every change of the activity's own appearance (the JS `StatusBar`'s style)
+  // schedules a traversal of its window, and so does a change of the phone's appearance (the
+  // window background is set again), so this pre-draw check sees either and hands the dialog
+  // appearance on to every dialog window of this activity; a dialog showing takes the activity's
+  // focus, so `onWindowFocusChanged` hands it, both bars, to a new one. Dialog windows can be listed
+  // only from API 29 (`WindowInspector`); on 24–28 a sheet keeps the bar colours it showed with until
+  // it closes, an accepted gap.
   private var mirroredAppearance: Int? = null
+
+  /** A dialog's bars: the status bar's icons as the activity's, the navigation bar's in the
+   *  shell's scheme. `null` while the activity's window has no insets controller. */
+  private fun dialogBarAppearance(): Int? {
+    val shellLight = shellSchemeLight()
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      val status = (window.insetsController ?: return null).systemBarsAppearance and WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+      status or (if (shellLight) WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS else 0)
+    } else {
+      @Suppress("DEPRECATION")
+      val status = window.decorView.systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+      @Suppress("DEPRECATION")
+      status or (if (shellLight) View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0)
+    }
+  }
 
   private fun mirrorBarAppearance() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
-    val appearance =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-          (window.insetsController ?: return).systemBarsAppearance and BAR_APPEARANCE
-        } else {
-          @Suppress("DEPRECATION") (window.decorView.systemUiVisibility and LIGHT_BAR_FLAGS)
-        }
+    val appearance = dialogBarAppearance() ?: return
     if (appearance == mirroredAppearance) return
     mirroredAppearance = appearance
     val token = window.attributes.token
@@ -107,18 +146,20 @@ class MainActivity : ReactActivity() {
   // with its props ahead of the commit that inserts it, and `ReactModalHostManager`'s
   // `onAfterUpdateTransaction` shows its dialog right then, so the dialog can draw for frames
   // before any walk can reach its host. So the walk goes on until the window is watched, or until
-  // it has been listed unwatched for SCRIM_WALK_FRAMES checks, which only a window that is no
-  // Modal's reaches; then it costs nothing more. A check runs only when the activity or a watched
-  // dialog draws, and inserting the host draws the window it lands in (the parent's `addView`
-  // invalidates it, and the mount lays the new view out), so the walk finds the host in the frame
-  // it is inserted, as long as budget is left: about a second of one window drawing at 120 Hz, two
-  // at 60, longer than the rest of the render that preallocated the host takes to commit (an idle
-  // screen draws no frames, so it spends none). A dialog is found nested or shown over another,
-  // with no wait on a focus change (a dialog shown over another takes that one's focus, never the
-  // activity's). Windows are listed from API 29, the first that has the scrim. The bar's icons stay
-  // legible on their own: they follow the scheme (`onConfigurationChanged`, `mirrorBarAppearance`).
+  // SCRIM_WALK_MS have passed since the window was first listed. The budget is time, not checks:
+  // checks run on every window's frames, so several windows drawing at 120 Hz would spend a count
+  // in a fraction of a second, and a slow render on a low-end phone could outlast it before the
+  // host is inserted. A Modal's window whose host never shows up in that time (its commit stalled
+  // past the budget) keeps its band until it closes; a window that is no Modal's always spends
+  // the budget, and then costs nothing more. Inserting the host draws the window it lands in (the
+  // parent's `addView` invalidates it, and the mount lays the new view out), so the walk finds the
+  // host in the frame it is inserted. A dialog is found nested or shown over another, with no wait
+  // on a focus change (a dialog shown over another takes that one's focus, never the activity's).
+  // Windows are listed from API 29, the first that has the scrim. The bar's icons stay legible on
+  // their own: they follow what is under the bar (`matchNavigationBarToStatusBar`,
+  // `dialogBarAppearance`).
   private val scrimWatched = WeakHashMap<View, Unit>()
-  private val scrimUnwatchedChecks = WeakHashMap<View, Int>()
+  private val scrimFirstListed = WeakHashMap<View, Long>()
 
   private fun clearNavigationBarScrim(target: Window) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
@@ -128,13 +169,13 @@ class MainActivity : ReactActivity() {
   private fun clearDialogNavigationBarScrims() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
     val token = window.attributes.token
+    val now = SystemClock.uptimeMillis()
     var unwatched = false
     for (root in WindowInspector.getGlobalWindowViews()) {
       if (root === window.decorView || root in scrimWatched) continue
       if ((root.layoutParams as? WindowManager.LayoutParams)?.token !== token) continue
-      val checks = scrimUnwatchedChecks[root] ?: 0
-      if (checks >= SCRIM_WALK_FRAMES) continue
-      scrimUnwatchedChecks[root] = checks + 1
+      val firstListed = scrimFirstListed.getOrPut(root) { now }
+      if (now - firstListed >= SCRIM_WALK_MS) continue
       unwatched = true
     }
     if (unwatched) watchDialogScrims(window.decorView)
@@ -145,9 +186,12 @@ class MainActivity : ReactActivity() {
       val dialogWindow = view.dialog?.window ?: return
       val decor = dialogWindow.decorView
       if (scrimWatched.put(decor, Unit) == null) {
+        val dialogBars = WindowInsetsControllerCompat(dialogWindow, decor)
         clearNavigationBarScrim(dialogWindow)
+        matchNavigationBarToShellScheme(dialogBars)
         decor.viewTreeObserver.addOnPreDrawListener {
           clearNavigationBarScrim(dialogWindow)
+          matchNavigationBarToShellScheme(dialogBars)
           clearDialogNavigationBarScrims()
           true
         }
@@ -160,9 +204,10 @@ class MainActivity : ReactActivity() {
 
   // The app follows the phone's appearance. `uiMode` is a handled config change (the manifest's
   // configChanges), so the activity isn't recreated when the phone switches: React Native updates
-  // `Appearance`, but the navigation bar's icon colour (set from the night mode when edge to edge
-  // starts) and the window background (the theme's `launch_background`) are re-read here, so the
-  // icons stay legible over the scheme's `bg`. The status bar's icons are the JS `StatusBar`'s.
+  // `Appearance`, and the window background (the theme's `launch_background`) is re-read here. The
+  // activity's bars' icons are the JS `StatusBar`'s (the navigation bar's copy the status bar's,
+  // above), never the night mode's: over a running app the page keeps the app's frame when the
+  // phone switches.
   // `fontScale` is handled too (issue #201: recreating the activity closed a running app and lost
   // its state). React Native requests a re-measure of its surface here, and the surface takes the
   // new scale into its layout only when that measure runs; JS must get the new scale
@@ -177,8 +222,6 @@ class MainActivity : ReactActivity() {
 
   override fun onConfigurationChanged(newConfig: Configuration) {
     super.onConfigurationChanged(newConfig)
-    val night = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-    WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightNavigationBars = !night
     window.setBackgroundDrawable(ColorDrawable(getColor(R.color.launch_background)))
     if (newConfig.fontScale == fontScale) return
     fontScale = newConfig.fontScale
@@ -240,7 +283,7 @@ class MainActivity : ReactActivity() {
 
   private companion object {
     const val TAG = "Whim"
-    const val SCRIM_WALK_FRAMES = 120
+    const val SCRIM_WALK_MS = 2000L
     const val BAR_APPEARANCE =
         WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
             WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
