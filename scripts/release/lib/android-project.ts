@@ -17,6 +17,9 @@ export const ANDROID_MAIN_NETWORK_CONFIG_PATH = 'android/app/src/main/res/xml/ne
 export const ANDROID_MAIN_ACTIVITY_PATH = 'android/app/src/main/java/com/whim/MainActivity.kt';
 /** The least time `MainActivity`'s scrim walk may keep looking for an unwatched window's Modal host. */
 const SCRIM_WALK_FLOOR_MS = 1000;
+/** The fewest drawing checks `MainActivity`'s scrim walk may spend on an unwatched window: a check
+ *  runs only when something draws, so a floor this size outlasts a stall, not just idle time. */
+const SCRIM_WALK_CHECKS_FLOOR = 30;
 const ANDROID_SOURCE_SETS_DIR = 'android/app/src';
 
 export interface AndroidProjectFinding {
@@ -264,8 +267,9 @@ function preDrawListeners(body: string): { lambdas: string[]; rest: string } {
  *  created, and the dialog walk must run before each of the activity's frames (its pre-draw
  *  listener), follow each host into its dialog (where nested hosts live), and give each dialog a
  *  pre-draw listener that clears the dialog's window and runs the walk again (a sheet opened from a
- *  sheet). The listing must skip a window only once its dialog is watched (`scrimWatched`, or a time
- *  budget of at least `SCRIM_WALK_FLOOR_MS`): a window merely seen once may be a preallocated
+ *  sheet). The listing must skip a window only once its dialog is watched (`scrimWatched`, or both a
+ *  time budget of at least `SCRIM_WALK_FLOOR_MS` and a checks budget of at least
+ *  `SCRIM_WALK_CHECKS_FLOOR` are spent): a window merely seen once may be a preallocated
  *  Modal's dialog whose host isn't in the tree yet. Each call is looked for where it must sit, not anywhere in the function. Comments
  *  are dropped, so a commented-out call fails. */
 function checkNavigationBarScrim(repoRoot: string): AndroidProjectFinding[] {
@@ -310,8 +314,10 @@ function checkNavigationBarScrim(repoRoot: string): AndroidProjectFinding[] {
 }
 
 /** The window listing behind the dialog walk: it walks while a window is unwatched, keeps walking
- *  for a window until its dialog is watched, and gives up on one only after a time budget of at
- *  least `SCRIM_WALK_FLOOR_MS`, read off the clock. */
+ *  for a window until its dialog is watched, and gives up on one only once both its time since first
+ *  listed (read off `SystemClock.uptimeMillis()`) reaches `SCRIM_WALK_MS`, at least
+ *  `SCRIM_WALK_FLOOR_MS`, and its checks reach `SCRIM_WALK_CHECKS`, at least `SCRIM_WALK_CHECKS_FLOOR`:
+ *  `<elapsed> >= SCRIM_WALK_MS && <checks> >= SCRIM_WALK_CHECKS`, in either order. */
 function checkScrimListing(code: string): string[] {
   const problems: string[] = [];
   const dialogs = kotlinFunction(code, 'clearDialogNavigationBarScrims');
@@ -325,8 +331,15 @@ function checkScrimListing(code: string): string[] {
   if (budget === null || Number(budget[1]) < SCRIM_WALK_FLOOR_MS) {
     problems.push(`MainActivity must declare const val SCRIM_WALK_MS of at least ${SCRIM_WALK_FLOOR_MS} ms: a shorter walk ends before a slow render inserts a preallocated Modal's host, and its sheet keeps the band`);
   }
-  if (dialogs !== undefined && !(/\bSCRIM_WALK_MS\b/.test(dialogs.body) && /\bSystemClock\.uptimeMillis\(\)/.test(dialogs.body))) {
-    problems.push('MainActivity.clearDialogNavigationBarScrims must budget each unwatched window by time (SystemClock.uptimeMillis() against SCRIM_WALK_MS), not by checks: checks run on every window\'s frames, so several windows drawing spend a count in a fraction of a second');
+  const checks = /\bconst val SCRIM_WALK_CHECKS\s*=\s*(\d+)\b/.exec(code);
+  if (checks === null || Number(checks[1]) < SCRIM_WALK_CHECKS_FLOOR) {
+    problems.push(`MainActivity must declare const val SCRIM_WALK_CHECKS of at least ${SCRIM_WALK_CHECKS_FLOOR}: a time budget alone counts idle seconds, so a Modal's host held back by a stalled JS thread lands after the walk and its sheet keeps the band`);
+  }
+  const elapsed = String.raw`[\w.]+\s*-\s*[\w.]+\s*>=?\s*SCRIM_WALK_MS\b`;
+  const counted = String.raw`[\w.]+\s*>=?\s*SCRIM_WALK_CHECKS\b`;
+  const bothSpent = new RegExp(String.raw`${elapsed}\s*&&\s*${counted}|${counted}\s*&&\s*${elapsed}`);
+  if (dialogs !== undefined && !(bothSpent.test(dialogs.body) && /\bSystemClock\.uptimeMillis\(\)/.test(dialogs.body))) {
+    problems.push('MainActivity.clearDialogNavigationBarScrims must stop walking for an unwatched window only once both budgets are spent: the time since it was first listed (SystemClock.uptimeMillis()) >= SCRIM_WALK_MS && its checks >= SCRIM_WALK_CHECKS. Time alone counts idle seconds while a stalled JS thread holds a Modal\'s host back; checks alone are spent in a fraction of a second by several windows drawing');
   }
   return problems;
 }

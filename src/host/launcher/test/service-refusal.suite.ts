@@ -147,11 +147,26 @@ export async function runServiceRefusalTests(h: Harness): Promise<void> {
     h.ok(lines[3].endsWith(`${formatClockTime(new Date(sameDay))}.`), `the same-day line names the time formatClockTime writes: ${lines[3]}`);
   });
 
-  await h.test('retryLine: the time is named to the nearest minute, so a window ending a moment either side of 8:00 PM reads "after 8:00 PM", never 7:59 or 8:01', () => {
+  await h.test('retryLine: a window ending within the Retry-After jitter either side of 8:00 PM reads "after 8:00 PM", never 7:59 or 8:01', () => {
     const now = new Date(2026, 8, 14, 10, 0, 0).getTime();
     const eight = `Try again after ${formatClockTime(new Date(2026, 8, 14, 20, 0, 0))}.`;
     h.eq(retryLine(new Date(2026, 8, 14, 19, 59, 59, 600).getTime(), now, formatClockTime), eight, 'a moment before');
     h.eq(retryLine(new Date(2026, 8, 14, 20, 0, 0, 800).getTime(), now, formatClockTime), eight, 'a moment after');
+  });
+
+  await h.test('retryLine: the time named is never before the reset by more than the Retry-After jitter, so a reset at 8:00:29 PM reads "after 8:01 PM", not 8:00', () => {
+    const now = new Date(2026, 8, 14, 10, 0, 0).getTime();
+    const eightOhOne = `Try again after ${formatClockTime(new Date(2026, 8, 14, 20, 1, 0))}.`;
+    h.eq(retryLine(new Date(2026, 8, 14, 20, 0, 29).getTime(), now, formatClockTime), eightOhOne, '29 s past the minute');
+    const eight = `Try again after ${formatClockTime(new Date(2026, 8, 14, 20, 0, 0))}.`;
+    h.eq(retryLine(new Date(2026, 8, 14, 19, 59, 59, 400).getTime(), now, formatClockTime), eight, 'jitter before the minute');
+  });
+
+  await h.test('retryLine: a reset a moment before local midnight reads "Try again tomorrow after 12:00 AM."', () => {
+    const now = new Date(2026, 8, 14, 10, 0, 0).getTime();
+    const line = retryLine(new Date(2026, 8, 14, 23, 59, 59, 600).getTime(), now, formatClockTime);
+    h.eq(line, `Try again tomorrow after ${formatClockTime(new Date(2026, 8, 15, 0, 0, 0))}.`, 'the day follows the named minute');
+    h.ok(/^Try again tomorrow after 12:00\sAM\.$/.test(line), `names midnight: ${line}`);
   });
 
   await h.test('retryLine: falls back to hours when Intl is missing', () => {

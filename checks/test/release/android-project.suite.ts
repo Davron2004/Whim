@@ -152,6 +152,11 @@ const CONFIGURATION_CHANGED = /(super\.onConfigurationChanged\(newConfig\)\n)/;
 /** The scrim walk's time budget, and the clock it is read against. */
 const WALK_BUDGET = /const val SCRIM_WALK_MS = \d+L/;
 const WALK_CLOCK = /SystemClock\.uptimeMillis\(\)/;
+/** The scrim walk's checks floor, and the comparisons that stop walking for an unwatched window. */
+const WALK_CHECKS = /const val SCRIM_WALK_CHECKS = \d+/;
+const WALK_ELAPSED = /now - walk\.firstListed >= SCRIM_WALK_MS/;
+const WALK_COUNTED = / && walk\.checks >= SCRIM_WALK_CHECKS\)/;
+const WALK_BOTH = /(SCRIM_WALK_MS) && (walk\.checks)/;
 /** The activity's pre-draw listener starting the walk, and the end of that listener. */
 const ACTIVITY_LISTENER_WALK = /(mirrorBarAppearance\(\)\n) *clearDialogNavigationBarScrims\(\)\n( *true\n *\}\n)/;
 
@@ -366,7 +371,42 @@ export async function run(): Promise<void> {
       file: ANDROID_MAIN_ACTIVITY_PATH,
       content: () => mainActivityWith(WALK_CLOCK, '++scrimChecks'),
       expectFile: ANDROID_MAIN_ACTIVITY_PATH,
-      matches: /clearDialogNavigationBarScrims must budget each unwatched window by time/,
+      matches: /clearDialogNavigationBarScrims must stop walking for an unwatched window only once both/,
+    },
+    {
+      name: 'a MainActivity that names SCRIM_WALK_MS but never compares the elapsed time against it fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_ELAPSED, 'SCRIM_WALK_MS > 0'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /clearDialogNavigationBarScrims must stop walking for an unwatched window only once both/,
+    },
+    {
+      name: 'a MainActivity that stops walking on time alone fails (idle seconds count: a preallocated Modal\'s host held back by a stalled JS thread lands after the walk)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_COUNTED, ')'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /clearDialogNavigationBarScrims must stop walking for an unwatched window only once both/,
+    },
+    {
+      name: 'a MainActivity that stops walking once either budget is spent fails (`||` for `&&`)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_BOTH, '$1 || $2'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /clearDialogNavigationBarScrims must stop walking for an unwatched window only once both/,
+    },
+    {
+      name: 'a MainActivity whose checks floor is 1 fails (the time budget alone again, in all but name)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_CHECKS, 'const val SCRIM_WALK_CHECKS = 1'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /must declare const val SCRIM_WALK_CHECKS of at least 30/,
+    },
+    {
+      name: 'a MainActivity whose checks floor sits just under the minimum fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_CHECKS, 'const val SCRIM_WALK_CHECKS = 29'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /must declare const val SCRIM_WALK_CHECKS of at least 30/,
     },
     {
       name: 'a MainActivity whose activity listener no longer matches the navigation bar to the status bar fails (white icons on a light frame over a dark phone)',

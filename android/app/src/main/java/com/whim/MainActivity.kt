@@ -145,21 +145,29 @@ class MainActivity : ReactActivity() {
   // once is not done: with Fabric's view preallocation (on by default) a Modal's host is created
   // with its props ahead of the commit that inserts it, and `ReactModalHostManager`'s
   // `onAfterUpdateTransaction` shows its dialog right then, so the dialog can draw for frames
-  // before any walk can reach its host. So the walk goes on until the window is watched, or until
-  // SCRIM_WALK_MS have passed since the window was first listed. The budget is time, not checks:
-  // checks run on every window's frames, so several windows drawing at 120 Hz would spend a count
-  // in a fraction of a second, and a slow render on a low-end phone could outlast it before the
-  // host is inserted. A Modal's window whose host never shows up in that time (its commit stalled
-  // past the budget) keeps its band until it closes; a window that is no Modal's always spends
-  // the budget, and then costs nothing more. Inserting the host draws the window it lands in (the
-  // parent's `addView` invalidates it, and the mount lays the new view out), so the walk finds the
-  // host in the frame it is inserted. A dialog is found nested or shown over another, with no wait
+  // before any walk can reach its host. So the walk goes on for a window until it is watched, or
+  // until both SCRIM_WALK_MS have passed since the window was first listed and SCRIM_WALK_CHECKS
+  // checks have walked for it. Neither alone is a budget. Time alone counts idle seconds: a stalled
+  // JS thread or a cold low-end phone can hold a preallocated Modal's host back past it while
+  // nothing draws. Checks alone run on every window's frames, so several windows drawing at
+  // 120 Hz spend a count in a fraction of a second. A check only runs when the activity or a
+  // watched dialog draws, so the count rises only while something renders; 60 is a second of
+  // frames at 60 Hz, enough for a render that resumes after a stall to commit and insert the host.
+  // A Modal's window whose host lands only after both are spent keeps its band until it closes; a
+  // window that is no Modal's always spends both, and then costs nothing more. Inserting the host
+  // draws the window it lands in (the parent's `addView` invalidates it, and the mount lays the new
+  // view out), so the walk finds the host in the frame it is inserted. A dialog is found nested or shown over another, with no wait
   // on a focus change (a dialog shown over another takes that one's focus, never the activity's).
   // Windows are listed from API 29, the first that has the scrim. The bar's icons stay legible on
   // their own: they follow what is under the bar (`matchNavigationBarToStatusBar`,
   // `dialogBarAppearance`).
   private val scrimWatched = WeakHashMap<View, Unit>()
-  private val scrimFirstListed = WeakHashMap<View, Long>()
+  private val scrimWalks = WeakHashMap<View, ScrimWalk>()
+
+  /** An unwatched window's walk budget: when it was first listed, and the checks walked for it since. */
+  private class ScrimWalk(val firstListed: Long) {
+    var checks = 0
+  }
 
   private fun clearNavigationBarScrim(target: Window) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
@@ -174,8 +182,9 @@ class MainActivity : ReactActivity() {
     for (root in WindowInspector.getGlobalWindowViews()) {
       if (root === window.decorView || root in scrimWatched) continue
       if ((root.layoutParams as? WindowManager.LayoutParams)?.token !== token) continue
-      val firstListed = scrimFirstListed.getOrPut(root) { now }
-      if (now - firstListed >= SCRIM_WALK_MS) continue
+      val walk = scrimWalks.getOrPut(root) { ScrimWalk(now) }
+      if (now - walk.firstListed >= SCRIM_WALK_MS && walk.checks >= SCRIM_WALK_CHECKS) continue
+      walk.checks++
       unwatched = true
     }
     if (unwatched) watchDialogScrims(window.decorView)
@@ -284,6 +293,7 @@ class MainActivity : ReactActivity() {
   private companion object {
     const val TAG = "Whim"
     const val SCRIM_WALK_MS = 2000L
+    const val SCRIM_WALK_CHECKS = 60
     const val BAR_APPEARANCE =
         WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
             WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
