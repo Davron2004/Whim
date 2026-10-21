@@ -16,8 +16,9 @@
  * instead: the reason, a card with the nearest thing that could be made, `Make that instead` and
  * `Change my idea`.
  */
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, View } from 'react-native';
+import Animated, { Easing, FadeIn, ReduceMotion, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
 import { LAYOUT, RADII, SPACE } from '../../design/tokens';
 import { Button } from '../ui/Button';
 import { Chip } from '../ui/Chip';
@@ -28,9 +29,10 @@ import { Skeleton, SkeletonBlock } from '../ui/Skeleton';
 import { Text, wrappingType } from '../ui/Text';
 import { TextArea, TextField } from '../ui/TextField';
 import { useTokens } from '../ui/tokens';
-import { CHIP, makeStyles, PRESS_RETENTION } from '../ui/tokens-pure';
+import { CHIP, makeStyles, PRESS_RETENTION, springConfig, staggerDelay, timingOf } from '../ui/tokens-pure';
+import { timing } from '../ui/motion';
 import WhimProse from '../ui/whim-prose/WhimProse';
-import { TilePlate } from '../ui/AppTile';
+import { REFLOW, REFLOW_REDUCED, TilePlate } from '../ui/AppTile';
 import type { InstalledApp } from './app-index';
 import { COPY, editingEyebrow, planHeadline, planMakeHeader, quotedWords, workingPlanPhrase } from './copy';
 import { FlowNoticeBlock } from './FlowNoticeBlock';
@@ -57,6 +59,16 @@ const MARK = 24;
 export const PLAN_ROW = { minHeight: 72, count: 3 } as const;
 /** A question's skeleton: one headline-height bar over a row of chip-height blocks. */
 export const QUESTION_SKELETON = { barWidth: '58%', barHeight: 22, chipWidths: [84, 112, 72] } as const;
+
+/** M8: a plan row landing rises this far as it fades in. */
+const RISE = 8;
+const SMOOTH = springConfig('smooth');
+const FADE_IN = timingOf('fadeIn');
+/** M8: questions landing over their skeleton, and M25: Save and Cancel under a row grown into its
+ *  text area, fade in on `fade-in`. The questions' fade is itself the Reduce Motion form, so the root
+ *  `ReducedMotionConfig` must not skip it. */
+const FADES_IN = FadeIn.duration(FADE_IN.duration).easing(Easing.bezier(...FADE_IN.bezier));
+const QUESTION_IN = FADES_IN.reduceMotion(ReduceMotion.Never);
 
 export interface PlanPageProps {
   screen: PlanScreen;
@@ -93,6 +105,8 @@ const styles = makeStyles((t) => ({
     paddingHorizontal: LAYOUT.listRowPaddingHorizontal,
   },
   grow: { flex: 1 },
+  /** A block that changes size as a layout transition shows only what fits the size it has reached. */
+  clip: { overflow: 'hidden' as const },
   mark: { width: MARK, height: MARK, alignItems: 'center' as const, justifyContent: 'center' as const, borderWidth: 2 },
   markDot: { width: MARK / 2, height: MARK / 2, borderRadius: MARK / 4 },
   folded: {
@@ -105,6 +119,9 @@ const styles = makeStyles((t) => ({
     borderRadius: RADII.lg.radius,
     borderCurve: 'continuous' as const,
   },
+  /** A plan row's frame: what rises as the plan lands and grows as the row is edited; it clips what
+   *  it holds to the size it has reached. */
+  rowFrame: { backgroundColor: t.colors['sheet-group'], borderRadius: RADII.lg.radius, borderCurve: 'continuous' as const, overflow: 'hidden' as const },
   row: {
     minHeight: PLAN_ROW.minHeight,
     flexDirection: 'row' as const,
@@ -112,13 +129,11 @@ const styles = makeStyles((t) => ({
     gap: SPACE[3],
     paddingVertical: LAYOUT.listRowPaddingVertical,
     paddingHorizontal: LAYOUT.listRowPaddingHorizontal,
-    backgroundColor: t.colors['sheet-group'],
-    borderRadius: RADII.lg.radius,
-    borderCurve: 'continuous' as const,
   },
-  rowEditing: { gap: SPACE[3], padding: LAYOUT.listRowPaddingHorizontal, backgroundColor: t.colors['sheet-group'], borderRadius: RADII.lg.radius, borderCurve: 'continuous' as const },
+  rowEditing: { gap: SPACE[3], padding: LAYOUT.listRowPaddingHorizontal },
   rowActions: { flexDirection: 'row' as const, justifyContent: 'flex-end' as const, gap: SPACE[2] },
   rows: { gap: SPACE[2] },
+  planSection: { gap: SPACE[4] },
   card: { gap: SPACE[2], padding: LAYOUT.cardPadding, backgroundColor: t.colors['sheet-group'], borderRadius: RADII.lg.radius, borderCurve: 'continuous' as const },
   skeletonChips: { flexDirection: 'row' as const, gap: SPACE[2], marginTop: SPACE[2] },
 }));
@@ -191,6 +206,8 @@ interface QuestionRowProps {
   question: FlowQuestion;
   answer: FlowAnswer;
   folded: boolean;
+  /** M8: the question landed while the page was up, so it fades in over its skeleton. */
+  fadesIn: boolean;
   onAnswer: (change: AnswerChange) => void;
   onReopen: () => void;
   onExtent: (extent: BlockExtent) => void;
@@ -198,34 +215,54 @@ interface QuestionRowProps {
 
 /** One question (system.md §7.1 Question row): the question in `headline`, an optional hint, its
  *  options as wrapping chips (every option ≤ 20 characters) or as full-width rows, "Decide for me"
- *  last, then "Other" when allowed. Answered and scrolled past, it is one line that reopens. */
-function QuestionRow({ question, answer, folded, onAnswer, onReopen, onExtent }: Readonly<QuestionRowProps>) {
+ *  last, then "Other" when allowed. Answered and scrolled past, it is one line that reopens. M8: its
+ *  block collapses and reopens as a `smooth` layout transition, retargeting one still running, and
+ *  cross-fades in place under Reduce Motion. */
+function QuestionRow({ question, answer, folded, fadesIn, onAnswer, onReopen, onExtent }: Readonly<QuestionRowProps>) {
+  const t = useTokens();
+  return (
+    <Animated.View
+      layout={t.reduceMotion ? REFLOW_REDUCED : REFLOW}
+      entering={fadesIn ? QUESTION_IN : undefined}
+      onLayout={(event) => onExtent(event.nativeEvent.layout)}
+      style={styles(t).clip}
+    >
+      {folded ? <FoldedQuestion question={question} answer={answer} onReopen={onReopen} /> : <OpenQuestion question={question} answer={answer} onAnswer={onAnswer} />}
+    </Animated.View>
+  );
+}
+
+/** An answered question scrolled past: one line holding its answer, which reopens it. */
+function FoldedQuestion({ question, answer, onReopen }: Readonly<Pick<QuestionRowProps, 'question' | 'answer' | 'onReopen'>>) {
+  const t = useTokens();
+  const s = styles(t);
+  const summary = answerSummary(question, answer);
+  return (
+    <Pressable
+      onPress={onReopen}
+      pressRetentionOffset={PRESS_RETENTION}
+      style={s.folded}
+      accessibilityRole="button"
+      accessibilityLabel={`${question.question}, ${summary}`}
+      accessibilityHint={COPY.planQuestionReopenHint}
+    >
+      <View style={s.grow}>
+        <Text numberOfLines={1}>{summary}</Text>
+      </View>
+      <Icon name="chevron-down" size={20} color={t.colors['text-2']} />
+    </Pressable>
+  );
+}
+
+/** A question open: its words, its options, and "Other" when allowed. */
+function OpenQuestion({ question, answer, onAnswer }: Readonly<Pick<QuestionRowProps, 'question' | 'answer' | 'onAnswer'>>) {
   const t = useTokens();
   const s = styles(t);
   const multiple = question.select === 'many';
-  if (folded) {
-    const summary = answerSummary(question, answer);
-    return (
-      <Pressable
-        onPress={onReopen}
-        onLayout={(event) => onExtent(event.nativeEvent.layout)}
-        pressRetentionOffset={PRESS_RETENTION}
-        style={s.folded}
-        accessibilityRole="button"
-        accessibilityLabel={`${question.question}, ${summary}`}
-        accessibilityHint={COPY.planQuestionReopenHint}
-      >
-        <View style={s.grow}>
-          <Text numberOfLines={1}>{summary}</Text>
-        </View>
-        <Icon name="chevron-down" size={20} color={t.colors['text-2']} />
-      </Pressable>
-    );
-  }
   const chips = showsChips(question);
   const options = [...question.options.map((option) => ({ label: option, checked: answer.choices.includes(option), change: { kind: 'pick', option } as AnswerChange })), { label: COPY.clarifyDecide, checked: answer.decide, change: { kind: 'decide' } as AnswerChange }];
   return (
-    <View style={s.question} onLayout={(event) => onExtent(event.nativeEvent.layout)}>
+    <View style={s.question}>
       <Text type="headline">{question.question}</Text>
       {multiple ? (
         <Text type="footnote" color="text-2">
@@ -298,41 +335,78 @@ function RowsSkeleton({ editing }: Readonly<{ editing: boolean }>) {
 interface PlanRowViewProps {
   row: FlowPlanRow;
   editing: boolean;
+  /** M8: how long the row waits to rise as the plan lands (`staggerDelay`); null for a row the page
+   *  opened on, which is simply there. Read once, as the row first draws. */
+  rise: number | null;
   onStart: () => void;
   onSave: (text: string) => void;
   onCancel: () => void;
 }
 
+/** M8: a row landing while the page is up rises `RISE` pt on `smooth` as it fades in on `fade-in`,
+ *  after its stagger delay; under Reduce Motion it fades in where it is, with every other row. */
+function useRowRise(rise: number | null, reduceMotion: boolean) {
+  const start = useRef({ rise, reduceMotion }).current;
+  const shown = useSharedValue(start.rise === null ? 1 : 0);
+  const below = useSharedValue(start.rise === null || start.reduceMotion ? 0 : RISE);
+  useEffect(() => {
+    if (start.rise === null) return;
+    if (start.reduceMotion) {
+      shown.value = withTiming(1, timing('fadeIn', true));
+      return;
+    }
+    shown.value = withDelay(start.rise, withTiming(1, timing('fadeIn')));
+    below.value = withDelay(start.rise, withSpring(0, SMOOTH));
+  }, [start, shown, below]);
+  return useAnimatedStyle(() => ({ opacity: shown.value, transform: [{ translateY: below.value }] }));
+}
+
 /** A plan row: the label over the model's words, a pencil trailing; a row the person rewrote shows
- *  their words as typed and "Edited". Tapped, it becomes a field with Save and Cancel in place. */
-function PlanRowView({ row, editing, onStart, onSave, onCancel }: Readonly<PlanRowViewProps>) {
+ *  their words as typed and "Edited". Tapped, it becomes a field with Save and Cancel in place. M25:
+ *  the row's own frame grows into the text area as a `smooth` layout transition and shrinks back on
+ *  Save or Cancel, from wherever it has reached; the words are there at once, and only Save and
+ *  Cancel fade in. Under Reduce Motion it changes at once. */
+function PlanRowView({ row, editing, rise, onStart, onSave, onCancel }: Readonly<PlanRowViewProps>) {
+  const t = useTokens();
+  const s = styles(t);
+  const riseStyle = useRowRise(rise, t.reduceMotion);
+  return (
+    <Animated.View style={[s.rowFrame, riseStyle]} layout={t.reduceMotion ? undefined : REFLOW}>
+      {editing ? <RowEditor row={row} onSave={onSave} onCancel={onCancel} /> : <RowShown row={row} onStart={onStart} />}
+    </Animated.View>
+  );
+}
+
+/** A row being edited: its label, a field holding its words, and Save and Cancel. */
+function RowEditor({ row, onSave, onCancel }: Readonly<Pick<PlanRowViewProps, 'row' | 'onSave' | 'onCancel'>>) {
   const t = useTokens();
   const s = styles(t);
   const [draft, setDraft] = useState(row.text);
   const block = useRef<View>(null);
-  if (editing) {
-    return (
-      <View ref={block} style={s.rowEditing}>
-        {row.label.length > 0 ? (
-          <Text type="footnote" header color="text-2">
-            {row.label}
-          </Text>
-        ) : null}
-        <TextArea value={draft} onChangeText={setDraft} accessibilityLabel={row.label.length > 0 ? row.label : COPY.planRowFieldLabel} revealTarget={block} autoFocus />
-        <View style={s.rowActions}>
-          <Button label={COPY.cancel} variant="plain" size="medium" onPress={onCancel} />
-          <Button label={COPY.planRowSave} variant="ink" size="medium" disabled={draft.trim().length === 0} onPress={() => onSave(draft)} />
-        </View>
-      </View>
-    );
-  }
+  return (
+    <View ref={block} style={s.rowEditing}>
+      {row.label.length > 0 ? (
+        <Text type="footnote" header color="text-2">
+          {row.label}
+        </Text>
+      ) : null}
+      <TextArea value={draft} onChangeText={setDraft} accessibilityLabel={row.label.length > 0 ? row.label : COPY.planRowFieldLabel} revealTarget={block} autoFocus />
+      <Animated.View style={s.rowActions} entering={t.reduceMotion ? undefined : FADES_IN}>
+        <Button label={COPY.cancel} variant="plain" size="medium" onPress={onCancel} />
+        <Button label={COPY.planRowSave} variant="ink" size="medium" disabled={draft.trim().length === 0} onPress={() => onSave(draft)} />
+      </Animated.View>
+    </View>
+  );
+}
+
+/** A row at rest, which a tap opens for editing. */
+function RowShown({ row, onStart }: Readonly<Pick<PlanRowViewProps, 'row' | 'onStart'>>) {
+  const t = useTokens();
+  const s = styles(t);
   const label = [row.label, row.text, row.edited ? COPY.planRowEdited : ''].filter((part) => part.length > 0).join(', ');
   return (
     <Pressable
-      onPress={() => {
-        setDraft(row.text);
-        onStart();
-      }}
+      onPress={onStart}
       pressRetentionOffset={PRESS_RETENTION}
       style={s.row}
       accessibilityRole="button"
@@ -369,12 +443,16 @@ interface PlanRowsProps {
 }
 
 /** "What I'll make" and its rows, or their skeletons. With neither (the plan did not arrive) no label
- *  is drawn: it would head an empty gap. */
+ *  is drawn: it would head an empty gap. M8: rows that land while the page is up rise in, staggered
+ *  (`PlanRowViewProps.rise`); the section moves on `smooth` as the questions above it land or fold,
+ *  and at once under Reduce Motion, where a row's edit is instant too. */
 function PlanRows({ rows, arriving, changing, editingRow, onEditing, onChangeRow }: Readonly<PlanRowsProps>) {
-  const s = styles(useTokens());
+  const t = useTokens();
+  const s = styles(t);
+  const [openedOnPlan] = useState(rows.length > 0);
   if (!arriving && rows.length === 0) return null;
   return (
-    <>
+    <Animated.View style={s.planSection} layout={t.reduceMotion ? undefined : REFLOW}>
       <Text type="footnote" header color="text-2">
         {planMakeHeader(changing)}
       </Text>
@@ -385,6 +463,7 @@ function PlanRows({ rows, arriving, changing, editingRow, onEditing, onChangeRow
             key={`${index}:${row.label}`}
             row={row}
             editing={editingRow === index}
+            rise={openedOnPlan ? null : staggerDelay(index, t.reduceMotion)}
             onStart={() => onEditing(index)}
             onSave={(text) => {
               onChangeRow(index, text);
@@ -394,7 +473,7 @@ function PlanRows({ rows, arriving, changing, editingRow, onEditing, onChangeRow
           />
         ))}
       </View>
-    </>
+    </Animated.View>
   );
 }
 
@@ -405,6 +484,7 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
   const gated = useRetryGate(screen.notice?.retryAt);
   const [editingRow, setEditingRow] = useState<number | null>(null);
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
+  const [openedOnQuestions] = useState(screen.questions.length > 0);
   const extents = useRef<Record<string, BlockExtent>>({});
   const handleBack = () => {
     if (planBackAction(editingRow !== null) === 'cancel-edit') setEditingRow(null);
@@ -488,6 +568,7 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
           question={question}
           answer={screen.answers[question.id] ?? { choices: [], other: '', decide: true }}
           folded={folded.has(question.id) && isAnswered(screen.answers[question.id])}
+          fadesIn={!openedOnQuestions}
           onAnswer={(change) => onAnswer(question.id, change)}
           onReopen={() => reopen(question.id)}
           onExtent={(extent) => recordExtent(question.id, extent)}

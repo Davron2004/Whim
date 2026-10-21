@@ -9,6 +9,7 @@
  *  `Animated.View`, `.Text` and `.ScrollView` render as host elements of those names and log the
  *  layout animations (`FadeIn`, `FadeOut`, `LinearTransition`, `FadingTransition` and their builder calls) they enter and
  *  exit with in `layoutAnimations`; `playedUnder` says what one does under Reduce Motion.
+ *  Each mount of an Animated view is a native view of its own (`viewTagOf`).
  *  `useAnimatedReaction` reacts synchronously, `measure` reports `measuredRect`. The double's own
  *  contract is `native-reanimated.suite.tsx`. */
 import React from 'react';
@@ -433,9 +434,12 @@ const stylesIn = (style: unknown): unknown[] => (Array.isArray(style) ? style.fl
 
 /** An Animated host component: renders as `name`, and logs its entering and exiting animations. As on
  *  the phone, what an animated style last set stays on the view when the style is taken off it,
- *  until something sets that property again. */
+ *  until something sets that property again. Each mount is a new native view with its own
+ *  `viewTag` prop (`viewTagOf`): a layout transition retargets only on the view it is running on. */
 function animatedComponent(name: string) {
   const Component = (props: HostProps) => {
+    const viewTag = React.useRef(0);
+    if (viewTag.current === 0) viewTag.current = nextTag++;
     const applied = React.useRef<Record<string, unknown>>({});
     const attached = React.useRef<(() => unknown)[]>([]);
     const styles = stylesIn(props.style).filter((s): s is Record<string, unknown> => typeof s === 'object' && s !== null);
@@ -456,11 +460,15 @@ function animatedComponent(name: string) {
         if (isLayoutAnimation(exiting.current)) layoutAnimations.push({ phase: 'exiting', component: name, animation: exiting.current });
       };
     }, []);
-    return React.createElement(name, { ...props, style }, props.children);
+    return React.createElement(name, { ...props, style, viewTag: viewTag.current }, props.children);
   };
   Component.displayName = name;
   return Component;
 }
+
+/** The native view an Animated host element is drawn by: the same tag across re-renders, a new one
+ *  once it is mounted again. */
+export const viewTagOf = (node: { props: Record<string, unknown> }): number => node.props.viewTag as number;
 
 const Animated = { View: animatedComponent('Animated.View'), Text: animatedComponent('Animated.Text'), ScrollView: animatedComponent('Animated.ScrollView') };
 export default Animated;

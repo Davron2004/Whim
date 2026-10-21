@@ -27,7 +27,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Harness } from './harness';
 import { accessibilitySettings, emitAccessibility } from './native-host';
-import { animations, cancelAnimation, cancelled, elapse, elapseSprings, holdAnimations, isLayoutAnimation, layoutAnimations, makeMutable, measuredRect, playedUnder, type LayoutAnimation } from './native-reanimated';
+import { animations, cancelAnimation, cancelled, elapse, elapseSprings, holdAnimations, isLayoutAnimation, layoutAnimations, makeMutable, measuredRect, playedUnder, viewTagOf, type LayoutAnimation } from './native-reanimated';
 import { hostType, renderScreen, unmountScreen } from './react-screen';
 import { useTokens } from '../../ui/tokens';
 import { springConfig, staggerDelay, timingOf } from '../../ui/tokens-pure';
@@ -269,10 +269,15 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
     h.eq(layoutAnimations[0].animation.calls.map((c) => c.name), ['springify', 'duration', 'delay'], 'its builder calls, in order');
     const view = tree.root.findAll((n) => hostType(n) === 'Animated.View')[0];
     h.eq([view.props.layout.preset, view.props.layout.config], ['LinearTransition', { springify: true }], 'the layout transition, readable as the prop');
+    const tag = viewTagOf(view);
     await act(() => tree.update(<Probe leaving />));
+    h.eq(viewTagOf(tree.root.findAll((n) => hostType(n) === 'Animated.View')[0]), tag, 're-rendered, it is the same native view');
     await unmountScreen(tree);
     h.eq(layoutAnimations.slice(1).map((e) => [e.phase, e.component, e.animation.preset, e.animation.config]), [['exiting', 'Animated.View', 'FadeOut', { duration: 120 }]], 'the exiting animation it last had, logged as it unmounts');
     h.eq([FadeIn, FadeOut].map((preset) => isLayoutAnimation(preset) && preset.calls.length), [0, 0], 'building never changes the preset');
+    const again = await renderScreen(<Probe leaving={false} />);
+    h.ok(viewTagOf(again.root.findAll((n) => hostType(n) === 'Animated.View')[0]) !== tag, 'mounted again, it is a new native view');
+    await unmountScreen(again);
   });
 
   await h.test('reanimated double: under Reduce Motion an unmarked layout animation does not play; one marked Never does', async () => {

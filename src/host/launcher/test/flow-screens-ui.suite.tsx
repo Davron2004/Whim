@@ -298,7 +298,7 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
     await rendered(planPage(answered), async (tree) => {
       h.ok(textOf(tree.root).includes(COPY.planChoicesHeader), 'the choices are headed');
       const scroll = tree.root.find((n) => hostType(n) === 'ScrollView');
-      const questionBlock = tree.root.find((n) => hostType(n) === 'View' && typeof n.props.onLayout === 'function' && textOf(n).includes(SHORT.question));
+      const questionBlock = tree.root.find((n) => hostType(n) === 'Animated.View' && typeof n.props.onLayout === 'function' && textOf(n).includes(SHORT.question));
       await TestRenderer.act(async () => questionBlock.props.onLayout({ nativeEvent: { layout: { x: 0, y: 100, width: 350, height: 90 } } }));
       await TestRenderer.act(async () => scroll.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 200 } } }));
       h.eq(textOf(tree.root).includes(SHORT.question), false, 'scrolled wholly past, the answered question is one line');
