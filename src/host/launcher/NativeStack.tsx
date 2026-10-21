@@ -9,7 +9,8 @@
  * and every native pop writes back to it through the popped entry's `onLeave`, the same handler the
  * screen binds to system back. So `onLeave` must move the machine off its entry synchronously: an
  * entry still rendered after the platform popped it would be pushed again. Only the top entry's
- * screen answers system back (`SystemBackOnTop`), whatever order the screens' listeners were bound in.
+ * screen answers system back (`SystemBackOnTop`), whatever order the screens' listeners were bound in,
+ * and none does while something over the stack owns back (`backOverlaid`, the store age check).
  *
  * A running app is never on this stack (#67): it is a full-screen layer of its own, so there is no
  * edge swipe over it and its Android back keeps its own seam.
@@ -77,9 +78,12 @@ interface NativeStackProps {
   /** A push or pop the platform was drawing has finished (react-native-screens' `onFinishTransitioning`:
    *  UIKit's `didShowViewController` on iOS, the fragment animation's end on Android). */
   readonly onSettled?: () => void;
+  /** Something drawn over the stack answers system back itself (`LauncherRoot`'s age check): no entry
+   *  does, however recently its screen mounted again. */
+  readonly backOverlaid?: boolean;
 }
 
-export default function NativeStack({ entries, onSettled }: Readonly<NativeStackProps>) {
+export default function NativeStack({ entries, onSettled, backOverlaid = false }: Readonly<NativeStackProps>) {
   const { largeText } = useTokens();
   return (
     <ScreenStack style={styles.fill} onFinishTransitioning={onSettled}>
@@ -100,7 +104,7 @@ export default function NativeStack({ entries, onSettled }: Readonly<NativeStack
             onHeaderBackButtonClicked={entry.onLeave}
           >
             <SafeAreaView edges={ownHeader ? ['top', 'bottom'] : ['bottom']} style={styles.fill}>
-              <SystemBackOnTop.Provider value={index === entries.length - 1}>{entry.children}</SystemBackOnTop.Provider>
+              <SystemBackOnTop.Provider value={!backOverlaid && index === entries.length - 1}>{entry.children}</SystemBackOnTop.Provider>
             </SafeAreaView>
           </ScreenStackItem>
         );

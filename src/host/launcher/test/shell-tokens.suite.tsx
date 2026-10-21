@@ -141,15 +141,11 @@ export async function runShellTokensTests(h: Harness): Promise<void> {
     const at = (fontScale: number, platform: string) => resolveTokens({ scheme: 'light', fontScale, platform, reduceMotion: false, increaseContrast: false });
     h.eq([at(1.34, 'ios').largeText, at(1.35, 'ios').largeText, at(2, 'ios').largeText], [false, true, true], 'stacking from 135%');
     h.eq([at(1, 'ios').touchTarget, at(1, 'android').touchTarget], [LAYOUT.touchTarget.ios, LAYOUT.touchTarget.android], '44 pt on iOS, 48 dp on Android');
-    h.eq([at(1, 'ios').barStyle, resolveTokens({ scheme: 'dark', fontScale: 1, platform: 'ios', reduceMotion: false, increaseContrast: false }).barStyle], ['dark-content', 'light-content'], 'status-bar content reads on each scheme\'s canvas');
   });
 
   await h.test('status bar over a scrim: the content reads on the dimmed backdrop, not on either scheme alone (#218)', async () => {
-    const tokensOf = (scheme: 'light' | 'dark') => resolveTokens({ scheme, fontScale: 1, platform: 'ios', reduceMotion: false, increaseContrast: false });
     const contrasts = (backdrop: string) => ({ dark: contrastRatio('#000000', backdrop), light: contrastRatio('#FFFFFF', backdrop) });
-    for (const scheme of ['light', 'dark'] as const) {
-      h.eq(statusBarStyleOver(COLORS[scheme].bg), tokensOf(scheme).barStyle, `${scheme}, no sheet: the content the scheme's canvas takes`);
-    }
+    h.eq([statusBarStyleOver(COLORS.light.bg), statusBarStyleOver(COLORS.dark.bg)], ['dark-content', 'light-content'], 'no sheet: dark content on the light canvas, light on the dark');
     const lightAppDarkPhone = backdropOf(COLORS.light.bg, [COLORS.dark.scrim]);
     const darkReads = contrasts(lightAppDarkPhone);
     h.ok(darkReads.dark < 4.5 && darkReads.light > darkReads.dark,

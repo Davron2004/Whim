@@ -11,7 +11,7 @@
  * asks `CopyQuestionSheet` only when the copy can copy data. Share link opens the platform share sheet
  * with the app's link. No native alert anywhere.
  */
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ScrollView, Share, useWindowDimensions, View } from 'react-native';
 import { LAYOUT, SPACE } from '../../design/tokens';
 import { haptics } from '../haptics';
@@ -19,7 +19,7 @@ import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import { ContextMenu, type MenuAnchor, type MenuRow } from '../ui/ContextMenu';
 import { AppTile } from '../ui/AppTile';
-import { gridLayout, labelsMeasured, rowLabelLines, type GridLayout, type LabelCell, type MeasuredLabels } from '../ui/AppTile-geometry';
+import { drawsName, gridLayout, LABEL_MEASURE_BUDGET_MS, labelsMeasured, rowLabelLines, type GridLayout, type LabelCell, type MeasuredLabels } from '../ui/AppTile-geometry';
 import { Chip } from '../ui/Chip';
 import { Ember, RESTING_ACTIVITY } from '../ui/Ember';
 import { Notice } from '../ui/Notice';
@@ -129,6 +129,9 @@ interface OpenMenu {
   open: boolean;
 }
 
+/** The name a cell's tile draws: the older cell has none of its own. */
+const tileName = (cell: GridCell) => (cell.kind === 'older' ? '' : cellName(cell));
+
 /** The attempt a menu action acts on: the cell's own, or the change in flight on an app. */
 function attemptOf(cell: GridCell): PendingBuildRecord | undefined {
   if (cell.kind === 'attempt') return cell.rec;
@@ -140,11 +143,12 @@ function attemptOf(cell: GridCell): PendingBuildRecord | undefined {
  * no wrapped name has no empty line, and one that has gives every name the same block, so the state
  * lines sit level. The lines are measured, so a text size starts again with none; until every name
  * has reported once the grid is laid out but not `shown`, so no row's state lines, nor the rows
- * under it, move in view. A cell that arrives later settles its row as it appears.
+ * under it, move in view. A cell that arrives later settles its row as it appears. A name that never
+ * reports holds the grid back for `LABEL_MEASURE_BUDGET_MS` at most, then it shows anyway.
  */
 function useRowLabels(cells: readonly GridCell[], layout: GridLayout, fontScale: number) {
   const [labels, setLabels] = useState<LabelLines>({ fontScale, lines: {}, shown: false });
-  const labelCells: LabelCell[] = cells.map((cell) => ({ key: cellKey(cell), named: cell.kind !== 'older' }));
+  const labelCells: LabelCell[] = cells.map((cell) => ({ key: cellKey(cell), named: drawsName(tileName(cell)) }));
   const measured = labels.fontScale === fontScale ? labels.lines : {};
   const measure = (key: string, lines: number) =>
     setLabels((was) => {
@@ -153,8 +157,16 @@ function useRowLabels(cells: readonly GridCell[], layout: GridLayout, fontScale:
       const next = { ...current.lines, [key]: lines };
       return { fontScale, lines: next, shown: current.shown || labelsMeasured(labelCells, next) };
     });
-  if (layout.kind === 'list') return { lineCounts: [], shown: true, measure };
-  const shown = (labels.fontScale === fontScale && labels.shown) || labelsMeasured(labelCells, measured);
+  const shown = layout.kind === 'list' || (labels.fontScale === fontScale && labels.shown) || labelsMeasured(labelCells, measured);
+  useEffect(() => {
+    if (shown) return undefined;
+    const budget = setTimeout(
+      () => setLabels((was) => ({ ...(was.fontScale === fontScale ? was : { fontScale, lines: {} }), shown: true })),
+      LABEL_MEASURE_BUDGET_MS,
+    );
+    return () => clearTimeout(budget);
+  }, [shown, fontScale]);
+  if (layout.kind === 'list') return { lineCounts: [], shown, measure };
   return { lineCounts: rowLabelLines(labelCells, layout.columns, measured), shown, measure };
 }
 
@@ -322,7 +334,7 @@ export default function HomeScreen({
       <AppTile
         key={cellKey(cell)}
         layout={layout}
-        name={cell.kind === 'older' ? '' : cellName(cell)}
+        name={tileName(cell)}
         state={cell.kind === 'older' ? 'older' : cell.state}
         tint={tint}
         glyph={icon}

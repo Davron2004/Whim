@@ -20,7 +20,7 @@ import { button, hostType, press, textOf } from './react-screen';
 import { backListenerCount, hardwareBack, setColorScheme, setFontScale, StyleSheet, windowMetrics } from './native-host';
 import { LARGE_TEXT_FROM } from '../../ui/tokens-pure';
 import { androidHeaderBack, iosPop, stackIds, stackItems } from './native-screens';
-import { json, tap, waitFor, withLauncher, type Tree } from './rendered-launcher';
+import { firstRunOpen, json, settle, tap, waitFor, withLauncher, type Tree } from './rendered-launcher';
 
 const nothing = () => json({});
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
@@ -71,6 +71,25 @@ export async function runNativeStackUiTests(h: Harness): Promise<void> {
         });
       } finally { windowMetrics.fontScale = 1; }
     }
+  });
+
+  await h.test('native stack: system back during the age check over Settings cancels the check, even after a text size change remounted Settings (#218)', async () => {
+    let answer: (signal: string) => void = () => {};
+    const store = () => new Promise<unknown>((resolve) => { answer = resolve; });
+    try {
+      await withLauncher({ terms: false, consent: false, ageSignal: store, server: nothing }, async ({ tree }) => {
+        await openSettings(tree);
+        await press(button(tree, COPY.settingsAISectionTitle));
+        await press(button(tree, COPY.consentReviewTurnOn));
+        h.eq(stackIds(tree), ['home', 'settings'], 'the silent age check runs over Settings');
+        await TestRenderer.act(async () => setFontScale(1.3));
+        await TestRenderer.act(async () => { hardwareBack(); });
+        h.eq([stackIds(tree), showing(tree, SettingsScreen)], [['home', 'settings'], true], 'back cancels the check: Settings stays, Home is not shown');
+        await TestRenderer.act(async () => answer('adult'));
+        await settle();
+        h.ok(!firstRunOpen(tree), 'the check was cancelled: its late answer opens no first-run sheet');
+      });
+    } finally { windowMetrics.fontScale = 1; }
   });
 
   await h.test('native stack: the iOS back menu popping two screens at once lands on Home, and the launcher follows', async () => {

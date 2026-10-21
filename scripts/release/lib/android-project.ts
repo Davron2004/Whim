@@ -155,8 +155,8 @@ function checkVariantNetworkConfigs(repoRoot: string): AndroidProjectFinding[] {
     .map((file) => ({ file, message: `a build-variant network security config would replace ${ANDROID_MAIN_NETWORK_CONFIG_PATH} in that build type; delete it` }));
 }
 
-/** The index past the block comment opening at `start`, nested as Kotlin nests them. */
-function blockCommentEnd(text: string, start: number): number {
+/** The index past the block comment opening at `start`, nested as Kotlin (and Swift) nest them. */
+export function blockCommentEnd(text: string, start: number): number {
   let depth = 0;
   let i = start;
   do {

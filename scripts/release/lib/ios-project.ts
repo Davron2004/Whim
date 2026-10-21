@@ -14,6 +14,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { blockCommentEnd } from './android-project';
 import type { NativeReleaseConfig } from './native-config';
 
 // ── XML plist reader (dict, array, string, true/false, integer) ────────────────────────────
@@ -553,19 +554,61 @@ function checkInfoPlist(repoRoot: string): IosProjectFinding[] {
   return findings;
 }
 
-/** What `AppDelegate.swift`'s `WhimStatusBar` must do under view-controller-based appearance: take
- *  over both of React Native's status-bar setters (each logs an error there otherwise) and have the
- *  `Modal`'s controller answer both questions, installed at launch. */
+/** The index past the string literal opening at `start` (`"…"` with escapes, or `"""…"""`). */
+function swiftLiteralEnd(text: string, start: number): number {
+  if (text.startsWith('"""', start)) {
+    const close = text.indexOf('"""', start + 3);
+    return close === -1 ? text.length : close + 3;
+  }
+  let i = start + 1;
+  while (i < text.length && text[i] !== '"' && text[i] !== '\n') i += text[i] === '\\' ? 2 : 1;
+  return i + 1;
+}
+
+/** Swift source with its comments removed (line and block, nested as Swift nests them), its string
+ *  literals kept as written (the wiring names classes and selectors in them), so a commented-out call
+ *  doesn't count. A plain scan, no backtracking regexes. Raw strings (`#"…"#`) aren't parsed, and
+ *  `AppDelegate.swift` has none. */
+function swiftCode(text: string): string {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    if (text.startsWith('//', i)) {
+      const lineEnd = text.indexOf('\n', i);
+      i = lineEnd === -1 ? text.length : lineEnd;
+    } else if (text.startsWith('/*', i)) {
+      i = blockCommentEnd(text, i);
+      out += ' ';
+    } else if (text[i] === '"') {
+      const end = swiftLiteralEnd(text, i);
+      out += text.slice(i, end);
+      i = end;
+    } else {
+      out += text[i];
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/** What `AppDelegate.swift`'s `WhimStatusBar` must do under view-controller-based appearance, in live
+ *  code (comments dropped): take over both of React Native's status-bar setters (each logs an error
+ *  there otherwise), have the `Modal`'s controller answer both questions, install it at launch, and
+ *  make the window's root the controller that answers with it. */
 const STATUS_BAR_WIRING: readonly (readonly [RegExp, string])[] = [
   [/replace\("RCTStatusBarManager",\s*NSSelectorFromString\("setStyle:animated:"\)/, 'replace RCTStatusBarManager setStyle:animated:'],
   [/replace\("RCTStatusBarManager",\s*NSSelectorFromString\("setHidden:withAnimation:"\)/, 'replace RCTStatusBarManager setHidden:withAnimation:'],
   [/replace\("RCTFabricModalHostViewController",\s*#selector\(getter: UIViewController\.preferredStatusBarStyle\)/, "replace the Modal controller's preferredStatusBarStyle"],
   [/replace\("RCTFabricModalHostViewController",\s*#selector\(getter: UIViewController\.prefersStatusBarHidden\)/, "replace the Modal controller's prefersStatusBarHidden"],
   [/WhimStatusBar\.install\(\)/, 'call WhimStatusBar.install()'],
+  [
+    /override func createRootViewController\(\)\s*->\s*UIViewController\s*\{\s*(?:return\s+)?WhimRootViewController\(\)\s*\}/,
+    'create the root view controller as WhimRootViewController (createRootViewController)',
+  ],
 ];
 
 function checkStatusBarWiring(repoRoot: string): IosProjectFinding[] {
-  const source = readRepoFile(repoRoot, APP_DELEGATE_PATH);
+  const source = swiftCode(readRepoFile(repoRoot, APP_DELEGATE_PATH));
   return STATUS_BAR_WIRING.filter(([pattern]) => !pattern.test(source)).map(([, what]) => ({
     file: APP_DELEGATE_PATH,
     message: `must ${what} (the shell's status bar under view-controller-based appearance)`,

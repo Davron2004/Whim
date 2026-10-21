@@ -10,10 +10,12 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { SEED_VERSION } from '../seed';
 import { log } from '../../logging';
 import { resetNativeStorage } from './native-storage';
-import { injectedScripts, setColorScheme, StyleSheet } from './native-host';
+import { Dimensions, injectedScripts, setColorScheme, StyleSheet } from './native-host';
 import { boundWebView, button, press, renderScreen, unmountScreen, hostType } from './react-screen';
 import { COPY } from '../copy';
 import { COLORS } from '../../../design/tokens';
+import { holdAnimations } from './native-reanimated';
+import type { PanConfig, PanPoint } from './native-gesture-handler';
 
 const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
@@ -134,6 +136,39 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
         h.eq(barStyle(tree), 'light-content', 'the Whim sheet’s dark scrim dims the light app: light content');
         await press(button(tree, COPY.sheetClose));
         h.eq(barStyle(tree), 'dark-content', 'the sheet closed: dark content on the light app again');
+      });
+    } finally {
+      setColorScheme('light');
+    }
+  });
+
+  await h.test('frame: the status bar turns as the scrim’s fade passes half its strength, not as the sheet is asked to open or close (#218)', async () => {
+    const held = async (step: () => Promise<void>, check: () => void) => {
+      const release = holdAnimations();
+      try { await step(); check(); } finally { await TestRenderer.act(async () => release()); }
+    };
+    try {
+      setColorScheme('light');
+      await withLauncher(async () => 'window.__WHIM_APP_MODULE__ = {};', async (tree) => {
+        await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
+        await TestRenderer.act(async () => boundWebView(tree).props.onLoadEnd());
+        await TestRenderer.act(async () => { setColorScheme('dark'); });
+        await held(() => press(button(tree, COPY.orbMenuOpenLabel)), () =>
+          h.eq(barStyle(tree), 'dark-content', 'the sheet is still rising, its scrim not yet in: dark content'));
+        h.eq(barStyle(tree), 'light-content', 'risen, its scrim full: light content');
+        // A drag moves the card, and the scrim with it, 1:1 (the card is the window's height here).
+        const tall = Dimensions.get().height;
+        const drag = tree.root.findAll((n) => hostType(n) === 'GestureDetector').at(-1)!.props.gesture as PanConfig;
+        const at = (translationY: number): PanPoint => ({ translationX: 0, translationY, velocityX: 0, velocityY: 0 });
+        await TestRenderer.act(async () => { drag.onBegin?.(at(0)); drag.onActivate?.(at(0)); drag.onUpdate?.(at(0.4 * tall)); });
+        h.eq(barStyle(tree), 'light-content', 'dragged down 40%, the scrim at 60%: light content still');
+        await TestRenderer.act(async () => { drag.onUpdate?.(at(0.6 * tall)); });
+        h.eq(barStyle(tree), 'dark-content', 'dragged down 60%, the scrim at 40%: dark content');
+        await TestRenderer.act(async () => { drag.onUpdate?.(at(0)); drag.onDeactivate?.(at(0)); drag.onFinalize?.(at(0)); });
+        h.eq(barStyle(tree), 'light-content', 'let go where it opened: the scrim is full again, light content');
+        await held(() => press(button(tree, COPY.sheetClose)), () =>
+          h.eq(barStyle(tree), 'light-content', 'the sheet is leaving, its scrim still in: light content'));
+        h.eq(barStyle(tree), 'dark-content', 'gone, and its scrim: dark content on the light app again');
       });
     } finally {
       setColorScheme('light');

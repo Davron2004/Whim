@@ -80,7 +80,18 @@ export function gridLayout(width: number, fontScale: number): GridLayout {
   };
 }
 
-/** A grid cell as the label alignment sees it: its key, and whether it has a name under its plate. */
+/** Whether a tile draws a name under its plate: the one rule the tile and the label alignment share,
+ *  so the grid never waits on a name no tile draws (the older cell's, or an app's empty name). */
+export function drawsName(name: string): boolean {
+  return name !== '';
+}
+
+/** How long the grid waits for its names to report before it shows anyway, in ms (about six frames):
+ *  a platform that never lays out a name cannot keep Home blank. */
+export const LABEL_MEASURE_BUDGET_MS = 100;
+
+/** A grid cell as the label alignment sees it: its key, and whether it has a name under its plate
+ *  (`drawsName`). */
 export interface LabelCell {
   key: string;
   named: boolean;

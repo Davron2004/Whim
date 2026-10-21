@@ -30,7 +30,7 @@ import type { IconName } from '../../design/icons/names';
 import { COPY } from '../launcher/copy';
 import { Icon } from './Icon';
 import { timing } from './motion';
-import { OverlayModal, useOverlayTurn } from './OverlayModal';
+import { OverlayModal, useOverlayTurn, useScrimCount } from './OverlayModal';
 import { wrappingType } from './Text';
 import { TopHighlight } from './TopHighlight';
 import { useTokens } from './tokens';
@@ -160,6 +160,10 @@ export function ContextMenu({ visible, title, anchor, rows, onClose }: Readonly<
   const openRef = useRef(open);
   const appear = useSharedValue(0);
   const scale = useSharedValue(t.reduceMotion ? 1 : MENU.openScale);
+  useScrimCount(turn, () => {
+    'worklet';
+    return appear.value;
+  });
 
   const settled = useCallback(() => {
     if (!openRef.current) exited();

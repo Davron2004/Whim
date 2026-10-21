@@ -709,7 +709,8 @@ function DevLogTools() {
 }
 
 /** While the store age check runs it shows nothing, so Android back is the way out: it cancels the
- *  check, as `Back` on the age screen did. Mounted only for the length of the check. */
+ *  check, as `Back` on the age screen did. Mounted only for the length of the check, while the stack
+ *  under it answers no back (`NativeStack`'s `backOverlaid`). */
 function AgeCheckBack({ onLeave }: Readonly<{ onLeave: () => void }>) {
   useSystemBack(onLeave);
   return null;
@@ -3723,7 +3724,7 @@ function LauncherShell({
   if (!ready) {
     content = <HomeSkeleton count={knownAppCount} />;
   } else if (stack !== null) {
-    content = <NativeStack entries={stack.map(stackEntry)} onSettled={onStackSettled} />;
+    content = <NativeStack entries={stack.map(stackEntry)} onSettled={onStackSettled} backOverlaid={checkingAge !== undefined} />;
   } else {
     content = renderScreenContent();
   }

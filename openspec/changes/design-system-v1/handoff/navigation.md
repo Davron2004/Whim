@@ -14,7 +14,7 @@ export interface StackEntry {
   readonly foreground: string;   // header title / back tint
   readonly children: React.ReactNode;
 }
-export default function NativeStack(props: { entries: readonly StackEntry[]; onSettled?: () => void }): JSX.Element;
+export default function NativeStack(props: { entries: readonly StackEntry[]; onSettled?: () => void; backOverlaid?: boolean }): JSX.Element;
 export function poppedEntry(top: number, dismissCount: number): number; // lowest popped index, ≥ 1
 ```
 
@@ -22,7 +22,9 @@ export function poppedEntry(top: number, dismissCount: number): number; // lowes
   every entry but the root. Root and title-less entries get `edges={['top','bottom']}`; titled ones `['bottom']`.
 - iOS pop (header back, edge/content swipe, long-press menu) → `onDismissed(dismissCount)` → the lowest
   popped entry's `onLeave`. Android header back → `onHeaderBackButtonClicked` → `onLeave`. Android system
-  back is NOT the stack's: each screen binds `useSystemBack(onLeave)` itself (LIFO listeners, top wins).
+  back is NOT the stack's: each screen binds `useSystemBack(onLeave)`; only the top entry's answers (`SystemBackOnTop`:
+  false when covered, or on all while `backOverlaid`, the age check). Outside the stack (sheets via `onRequestClose`,
+  MakingSheet, FirstRunHost, AgeCheckBack, ScreenErrorFallback, the running app's BackHandler) it is the default, true.
 - `onSettled` = `ScreenStack`'s `onFinishTransitioning`: a push or pop the platform drew has finished (iOS
   `didShowViewController`; Android the fragment animation's end, read from source, not run on a device).
 - **Invariant: `onLeave` must move the machine off its entry synchronously** (no await first). An entry
@@ -52,12 +54,11 @@ function stackFor(screen: Screen): readonly StackScreen[] | null;  // root first
 
 - Push = `setScreen(next)`; pop = the entry's `onLeave`. To add a pushed screen: a Screen member, a branch
   in `stackFor`, `stackTitle`, `leaveFor`, `renderStackScreen`.
-- Every stack entry's header and the `StatusBar` follow the live `useTokens()` (`t.colors.bg`/`text`, `t.barStyle`).
+- Every stack entry's header and the `StatusBar` follow the live `useTokens()` (`t.colors.bg`/`text`; bar: `statusBarStyleOver`).
 - AI features row always opens review mode. Review's "Turn on AI features" runs the legal flow with
   continuation `{ kind: 'settings' }`; its consent step grants directly (`reviewedConsent`, #104).
 - Root `SafeAreaView` edges: `frameEdgesFor(kind, onNativeStack)` → `[]` on the stack.
-- `ToastHost` is mounted once in `LauncherRoot` around the screen boundary; `useToast()` works in every
-  screen (Advanced uses it for "Phone ID copied").
+- `ToastHost` is mounted once in `LauncherRoot` around the screen boundary; `useToast()` works in every screen.
 
 ## History's leave (`LauncherRoot.tsx`)
 

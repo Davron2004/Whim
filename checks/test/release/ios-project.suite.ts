@@ -279,6 +279,12 @@ function appDelegateWithout(line: RegExp): string {
   return kept.join('\n');
 }
 
+/** The real `AppDelegate.swift` with its first match of `from`, which must exist, replaced by `to`. */
+function appDelegateReplacing(from: RegExp, to: string): string {
+  if (!from.test(REAL_APP_DELEGATE)) throw new Error(`AppDelegate.swift has nothing matching ${from}`);
+  return REAL_APP_DELEGATE.replace(from, to);
+}
+
 /** Writes a minimal-but-complete fixture project under a fresh temp dir and runs `fn` against it, cleaning up after. */
 function withFixtureRepo(overrides: FixtureOverrides, fn: (dir: string) => void): void {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-ios-project-'));
@@ -441,6 +447,21 @@ const MUTATION_CASES: readonly MutationCase[] = [
     overrides: { appDelegate: appDelegateWithout(line) },
     expect: ['ios/Whim/AppDelegate.swift', what],
   })),
+  {
+    name: 'an AppDelegate.swift whose WhimStatusBar.install() is commented out fails (a presence-only check would pass this)',
+    overrides: { appDelegate: appDelegateReplacing(/WhimStatusBar\.install\(\)\n/, '// WhimStatusBar.install()\n') },
+    expect: ['ios/Whim/AppDelegate.swift', 'WhimStatusBar.install()'],
+  },
+  {
+    name: 'an AppDelegate.swift whose setStyle:animated: replacement sits in a nested block comment fails (a stripper that ends at the first */ would pass this)',
+    overrides: { appDelegate: appDelegateReplacing(/(replace\("RCTStatusBarManager", NSSelectorFromString\("setStyle:animated:"\)[^\n]*)/, '/* off for now /* #218 */ $1 */') },
+    expect: ['ios/Whim/AppDelegate.swift', 'setStyle:animated:'],
+  },
+  {
+    name: 'an AppDelegate.swift whose root view controller is not WhimRootViewController fails (the class alone still names it)',
+    overrides: { appDelegate: appDelegateReplacing(/ {2}override func createRootViewController\(\) -> UIViewController \{\n {4}WhimRootViewController\(\)\n {2}\}\n\n/, '') },
+    expect: ['ios/Whim/AppDelegate.swift', 'WhimRootViewController'],
+  },
 ];
 
 export async function run(): Promise<void> {

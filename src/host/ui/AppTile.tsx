@@ -33,7 +33,7 @@ import { Ember } from './Ember';
 import { Icon } from './Icon';
 import type { MenuAnchor } from './ContextMenu';
 import { timing, usePressFeedback } from './motion';
-import { GRID, TILE, TILE_SIDE, listRowPadding, type GridLayout, type TileSize } from './AppTile-geometry';
+import { drawsName, GRID, TILE, TILE_SIDE, listRowPadding, type GridLayout, type TileSize } from './AppTile-geometry';
 import { stateLine, tileAccessibilityHint, tileAccessibilityLabel, tileLook, type StateLine, type TileState } from './AppTile-states';
 import { Text } from './Text';
 import { useTokens } from './tokens';
@@ -264,14 +264,14 @@ export function AppTile({
             <View style={s.row}>
               {plate}
               <View style={s.texts}>
-                {name === '' ? null : <Text type="body">{name}</Text>}
+                {drawsName(name) ? <Text type="body">{name}</Text> : null}
                 {lines}
               </View>
             </View>
           ) : (
             <View style={s.column}>
               {plate}
-              {name === '' ? null : (
+              {drawsName(name) ? (
                 <Text
                   type="caption"
                   numberOfLines={GRID.labelLines}
@@ -280,7 +280,7 @@ export function AppTile({
                 >
                   {name}
                 </Text>
-              )}
+              ) : null}
               {lines}
             </View>
           )}

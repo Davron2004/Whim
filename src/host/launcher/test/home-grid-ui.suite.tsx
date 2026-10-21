@@ -25,7 +25,7 @@ import { EMBER_PATH } from '../../../design/icons/ember';
 import { squirclePath } from '../../../design/icons/squircle';
 import { mixHex } from '../../../design/tints';
 import { Share, StyleSheet, accessibilitySettings, setColorScheme, windowMetrics } from './native-host';
-import { press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
+import { captureTimeouts, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 import {
   CELL_RECT, STATUS_BAR_OFFSET, chooseRow, longPress, menuCard, menuLabels, menuRows, pressToastAction, renderHome, settle, sheetRows, sheetTitled,
   tile, tileLabels, tiles, toastOf, updateHome, type Tree,
@@ -241,6 +241,7 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     // Four columns: Water Counter and Dice share the first row; at 135% three columns put Plants
     // in the second row, alone with Tea, and Water Counter's wrap no longer reaches it.
     const names = ['Water Counter', 'Dice', 'Timer', 'Plants', 'Tea'];
+    const clock = captureTimeouts();
     const tree = await renderHome({ apps: examples(names) });
     try {
       const order = tileLabels(tree).map((l) => l.split(',')[0]);
@@ -254,11 +255,12 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       h.ok(gridShown(tree), 'and is once they are');
       h.eq(['Water Counter', 'Dice', 'Timer'].map((n) => nameBlock(tree, n)), [2, 2, 2].map((n) => n * line(1.35)), 'the first row of three takes two lines at 135%');
       h.eq(['Plants', 'Tea'].map((n) => nameBlock(tree, n)), [1, 1].map((n) => n * line(1.35)), 'Plants, now in the second row, takes one');
-    } finally { await unmountScreen(tree); windowMetrics.fontScale = 1; }
+    } finally { clock.restore(); await unmountScreen(tree); windowMetrics.fontScale = 1; }
   });
 
   await h.test('home layout: the grid shows once every name has been laid out, and a tile that arrives later does not hide it again (#218)', async () => {
     await resetPhone();
+    const clock = captureTimeouts();
     const tree = await renderHome({ apps: examples(['Water Counter', 'Dice']) });
     try {
       h.ok(!gridShown(tree), 'before the names are laid out the grid is not shown');
@@ -269,7 +271,31 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       await updateHome(tree, { apps: examples(['Water Counter', 'Dice', 'Timer']) });
       h.ok(gridShown(tree), 'a new tile settles its row as it appears, the grid stays');
       h.eq(nameBlock(tree, 'Timer'), 2 * line(1), 'the new tile takes its row’s block from the names already measured');
-    } finally { await unmountScreen(tree); }
+    } finally { clock.restore(); await unmountScreen(tree); }
+  });
+
+  await h.test('home layout: an app whose name is empty draws no name and waits on none; the grid shows once the others are laid out (#218)', async () => {
+    await resetPhone();
+    const clock = captureTimeouts();
+    const tree = await renderHome({ apps: [app('blank', 2, { name: '', example: true }), app('Dice', 1, { example: true })] });
+    try {
+      h.eq(tiles(tree).length, 2, 'both apps have a tile');
+      await layOut(tree, { Dice: 1 });
+      h.ok(gridShown(tree), 'with Dice laid out, the grid shows, with no wait');
+    } finally { clock.restore(); await unmountScreen(tree); }
+  });
+
+  await h.test('home layout: a name the platform never reports on holds the grid back only briefly; within a quarter second it shows anyway (#218)', async () => {
+    await resetPhone();
+    const clock = captureTimeouts();
+    const tree = await renderHome({ apps: examples(['Water Counter', 'Dice']) });
+    try {
+      await layOut(tree, { Dice: 1 });
+      h.ok(!gridShown(tree), 'while Water Counter has not reported, the grid waits');
+      await TestRenderer.act(async () => { clock.fireWithin(250); });
+      h.ok(gridShown(tree), 'past the wait it shows, Water Counter unreported');
+      h.eq(nameBlock(tree, 'Water Counter'), line(1), 'its row keeps the one-line block until it reports');
+    } finally { clock.restore(); await unmountScreen(tree); }
   });
 
   await h.test('home layout: a grid label’s side padding and the list at 200% are untouched by the name block (no measuring in the list)', async () => {
