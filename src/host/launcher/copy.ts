@@ -1163,7 +1163,7 @@ const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
 /** How long ago `at` was, in words: "just now", "5 min ago", "3 h ago", "1 day ago", "2 days ago",
- *  and from a week on the date ("Oct 3"), in English like the rest of the copy. */
+ *  and from a week on the date ("Oct 3"), in the copy's language like its numbers. */
 function agoWords(at: number, now: number): string {
   const diff = Math.max(0, now - at);
   if (diff < MINUTE_MS) return 'just now';
@@ -1171,7 +1171,7 @@ function agoWords(at: number, now: number): string {
   if (diff < DAY_MS) return `${formatCount(Math.floor(diff / HOUR_MS))} h ago`;
   const days = Math.floor(diff / DAY_MS);
   if (days < 7) return days === 1 ? '1 day ago' : `${formatCount(days)} days ago`;
-  return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(new Date(at));
+  return new Intl.DateTimeFormat(COPY_LANGUAGE, { month: 'short', day: 'numeric' }).format(new Date(at));
 }
 
 /** The Whim sheet's version line for the running version: "Version 4 · changed 2 days ago". */
