@@ -7,6 +7,8 @@
  * `store-access.suite.ts` and `build-lifecycle.suite.ts`.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { Harness } from './harness';
 import { tileColor } from '../tiles';
 import { liftManifestTileColor } from '../manifest-tile-color';
@@ -22,6 +24,7 @@ import { StoreAccess } from '../store-access';
 import { seedFirstRun, type SeedSpec } from '../seed';
 import { EXAMPLE_TILES, declaredTile, tileOf, type TileIdentity } from '../tile-identity';
 import type { AppManifest } from '../../bridge/contract';
+import { runStaticChecks } from '../../../../checks/index';
 
 /** The three examples `LauncherRoot.tsx#defaultSeeds()` installs on first run. */
 const SEEDED_IDS = ['tip-splitter', 'water-counter', 'style-gallery'];
@@ -113,6 +116,22 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     h.ok(TINT_LIGHTS.has(tileColor('Budget', lifted)) && tileColor('Budget', lifted) !== reserved, 'the reader maps it onto a tint');
   });
 
+  // ── the shipped records — the build's tile comes from the checker's extraction ──
+  await h.test('shipped records: each fixture’s record carries the tint and icon the static checker resolves from its source', async () => {
+    // Decision #41: one extraction. The expectation is the server's own checker run on the fixture
+    // source, so a build that resolved the tile a second way (or dropped it) disagrees here.
+    const fixtureOf = (id: string) => path.join(process.cwd(), 'fixtures', `${id}.app.tsx`);
+    const checked = Object.keys(APP_RECORDS).filter((id) => fs.existsSync(fixtureOf(id)));
+    for (const id of SEEDED_IDS) h.ok(checked.includes(id), `${id}: a shipped fixture record is checked`);
+    for (const id of checked) {
+      const extracted = runStaticChecks(fs.readFileSync(fixtureOf(id), 'utf8')).manifest;
+      h.ok(extracted !== undefined, `${id}: the checker extracts a manifest from the fixture`);
+      const { tint, icon } = APP_RECORDS[id].manifest;
+      h.eq({ tint, icon }, { tint: extracted?.tint, icon: extracted?.icon }, `${id}: the record's tint and icon are the checker's`);
+      if (SEEDED_IDS.includes(id)) h.ok(tint !== undefined && icon !== undefined, `${id}: the example declares a tile`);
+    }
+  });
+
   // ── the seeded examples — from the shipped build output ───────────────────
   await h.test('examples: the shipped records’ colours land on distinct tints, each the example’s fixed tile', async () => {
     // Reads the real producer (the generated APP_RECORDS build.mjs#extractAppRecord emits), so the
@@ -154,7 +173,7 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     // Every other tint used once too, so the examples' tints are as reusable as any (all least used).
     const taken = new Set(Object.values(EXAMPLE_TILES).map((t) => t.tint));
     for (const tint of TINT_NAMES.filter((t) => !taken.has(t))) {
-      await access.install({ id: `app-${tint}`, name: `App ${tint}`, record: { appId: `app-${tint}`, name: 'x', manifest: { capabilities: [], tint, icon: 'star' } as AppManifest }, bundleSource: BUNDLE, prompt: 'p' });
+      await access.install({ id: `app-${tint}`, name: `App ${tint}`, record: { appId: `app-${tint}`, name: 'x', manifest: { capabilities: [], tint: [tint], icon: 'star' } as AppManifest }, bundleSource: BUNDLE, prompt: 'p' });
     }
     h.eq(new Set(index.list().map((a) => tileOf(a).tint)).size, TINT_NAMES.length, 'precondition: every tint is used exactly once');
 
@@ -167,7 +186,7 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     h.eq(tileOf(mimic).icon, EXAMPLE_TILES['water-counter'].icon, 'it keeps its own glyph; only the tint moves');
 
     // The guard is the PAIR, not the tint: another glyph may still take the example's tint.
-    const other = await access.install({ id: 'app-other', name: 'Rain', record: { appId: 'app-other', name: 'Rain', manifest: { capabilities: [], tint: EXAMPLE_TILES['water-counter'].tint, icon: 'cloud-rain' } as AppManifest }, bundleSource: BUNDLE, prompt: 'p' });
+    const other = await access.install({ id: 'app-other', name: 'Rain', record: { appId: 'app-other', name: 'Rain', manifest: { capabilities: [], tint: [EXAMPLE_TILES['water-counter'].tint], icon: 'cloud-rain' } as AppManifest }, bundleSource: BUNDLE, prompt: 'p' });
     h.eq(tileOf(other).tint, EXAMPLE_TILES['water-counter'].tint, 'a different glyph gets the example’s tint when it is least used');
 
     // The person may still pick it.
