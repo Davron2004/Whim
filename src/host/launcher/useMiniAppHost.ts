@@ -79,8 +79,11 @@ function handlePaintFrame(
   boundGeneration: number | null,
   startupDeadline: StartupDeadline,
   setS: (fn: (p: HostState) => HostState) => void,
+  expiredAway: { current: boolean },
 ): void {
   if (!startupDeadline.acceptPaint(frame, boundGeneration)) return;
+  // A paint after a deadline that ended while the app was leaving still opens it.
+  expiredAway.current = false;
   const paintedAt = Date.now();
   setS((p) => ({ ...p, paintMs: frame.payload?.mountToFirstPaintMs ?? null, paintedAt }));
 }
@@ -170,6 +173,10 @@ export interface UseMiniAppHostOptions {
   /** The WebView this host controls, when the caller renders it elsewhere (`MiniAppView`'s pool);
    *  it must keep its identity across renders. Absent: the host's own ref, for the caller to attach. */
   webRef?: React.RefObject<WebView | null>;
+  /** The person is leaving the app, which still runs while it goes back into its tile (M3) and may be
+   *  turned back out. A startup deadline that ends meanwhile fails the launch only if it does come
+   *  back out, at once: the realm's boot clock never stopped. */
+  leaving?: boolean;
 }
 
 export interface MiniAppHost {
@@ -200,14 +207,28 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   const popTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The runtime engine appId for the live realm (the launcher id, #5 D8 — a fork's own data).
   const engineId = useRef<string | null>(null);
-  const startupDeadline = useRef(createStartupDeadline(() => {
+  const leaving = opts.leaving ?? false;
+  const leavingRef = useRef(leaving);
+  leavingRef.current = leaving;
+  // The deadline ended while the app was leaving: it fails when the app is turned back out.
+  const expiredAway = useRef(false);
+  const [neverVisible] = useState(() => () => {
     log.error(CHANNELS.page, 'mini-app failed', { where: 'paint-timeout', errorClass: 'StartupDeadline', appId: engineId.current });
     setS((p) => (
       p.lastError || p.paintMs !== null
         ? p
         : { ...p, lastError: 'app never became visible', crash: { where: 'paint-timeout', errorClass: 'StartupDeadline' } }
     ));
+  });
+  const startupDeadline = useRef(createStartupDeadline(() => {
+    if (leavingRef.current) expiredAway.current = true;
+    else neverVisible();
   }));
+  useEffect(() => {
+    if (leaving || !expiredAway.current) return;
+    expiredAway.current = false;
+    neverVisible();
+  }, [leaving, neverVisible]);
   const onExitRef = useRef<(() => void) | undefined>(opts.onExit);
   onExitRef.current = opts.onExit;
   // Read fresh on every render (never re-subscribes the BackHandler listener below) — the same
@@ -245,6 +266,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
       live.current = null;
       if (popTimer.current) { clearTimeout(popTimer.current); popTimer.current = null; }
       startupDeadline.current.cancel();
+      expiredAway.current = false;
       lastGeneration += 1;
       const generation = lastGeneration;
       engineId.current = engineAppId;
@@ -338,7 +360,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         setS((p) => ({ ...p, lastTap: `${m.payload?.type ?? '?'} "${m.payload?.label ?? ''}"` }));
         return;
       case 'paint':
-        handlePaintFrame(m, live.current?.realm.generation ?? null, startupDeadline.current, setS);
+        handlePaintFrame(m, live.current?.realm.generation ?? null, startupDeadline.current, setS, expiredAway);
         return;
       case 'probes': {
         const r = m.payload || {};
@@ -368,9 +390,8 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
 
   // Leaving asks the launcher, which takes the app back into its tile first (M3) and unmounts it
   // there, where the realm is torn down: until then the app can still be turned back out, its realm
-  // alive.
+  // alive and its startup deadline running (`leaving`).
   const exit = useCallback(() => {
-    startupDeadline.current.cancel();
     onExitRef.current?.();
   }, []);
 

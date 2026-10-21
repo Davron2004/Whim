@@ -581,7 +581,7 @@ export default function MiniAppView({
   // The launcher's sheet over the running realm (the Whim sheet, design D14): while it is open,
   // back-policy's `overlayOpen` input closes it instead of forwarding the press into the app or
   // exiting (mini-app-back-navigation delta "A host sheet takes back first").
-  const host = useMiniAppHost({ onExit, overlayOpen: sheetOpen, onCloseOverlay: onCloseSheet, webRef });
+  const host = useMiniAppHost({ onExit, overlayOpen: sheetOpen, onCloseOverlay: onCloseSheet, webRef, leaving: morph?.leaving === true });
 
   // Deliver once the bound WebView's page has loaded, so injectJavaScript is not silently dropped
   // (#5 B1): at once for a WebView handed over already loaded, else at its `onLoadEnd` -- exactly

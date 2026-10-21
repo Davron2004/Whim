@@ -462,8 +462,11 @@ Reanimated's `duration`/`dampingRatio` mode.
    velocity. Never restart from a stored value; never disable input while something moves.
 3. **Same path out as in**, faster out: a morph opens with `morph`, closes with `smooth`.
 4. **No JS-driven layout per frame.** Transform and opacity by default; shell reflow uses Reanimated
-   layout transitions; one leaf view's width, height and radius may animate on the UI thread (the
-   container transforms: M2, M3, M5, M6). The SDK uses FLIP. No non-uniform scale on a rounded shape.
+   layout transitions. M2 and M3 move by transforms only: two straight bars stretched to the shape's
+   width and height, and four uniformly scaled corner discs, because a per-frame size animation
+   commits the shadow tree on every frame and delayed the app's first paint by ~2 frames. M5 and M6
+   may animate one leaf plate's width, height and radius on the UI thread. The SDK uses FLIP. No
+   non-uniform scale on a rounded shape.
    A container's content never draws outside the growing shape: it fades in with `fade-in` once the
    shape covers it, and out with `fade-out` before the shape shrinks inside it, mid-flight turns included.
 5. **Press:** scale 0.97 (buttons, rows), 0.96 (tiles, cards, chips), 0.92 (icon buttons) on touch-down
@@ -484,7 +487,7 @@ Numbers are stable; R-numbers are the animation research's (`docs/research/anima
 |---|---|---|---|---|---|
 | M1 (R2) Press | Touch-down on any pressable | Scale per §4.3 rule 5 | `instant` / `snappy` | Drag off cancels | Opacity 0.7 over 100 ms |
 | M15 (R12) Selection | Chip, switch, segment, checkbox, stepper | Chip fill (`color`), knob/thumb x, check stroke drawn over 160 ms, stepper digit rolls 6 px | `snappy` (rAF spring in apps) | New value retargets with velocity | Instant state, colour fade kept |
-| M2 (R3) Open an app | Tap a ready tile | A `bg` container grows from the tile rect to the screen (width, height, radius on the UI thread, one leaf view); the tint stays a tile-sized plate with its glyph and fades as the app paints. The pooled warm WebView stays hidden until this launch's generation-stamped `paint` (decision #75), cap 600 ms, then fades in over 160 ms. "Opening…" only after 1.5 s | `morph` | Back reverses from the current frame | 160 ms cross-fade |
+| M2 (R3) Open an app | Tap a ready tile | A `bg` container grows from the tile rect to the screen (transforms only, §4.3 rule 4: two stretched straight bars and four uniformly scaled corner discs); the tint stays a tile-sized plate with its glyph and fades as the app paints. The pooled warm WebView stays hidden until this launch's generation-stamped `paint` (decision #75), cap 600 ms, then fades in over 160 ms. "Opening…" only after 1.5 s | `morph` | Back reverses from the current frame | 160 ms cross-fade |
 | M3 (R4) Close an app | Orb → "Back to your apps"; Android back at depth 0 | The reverse into the tile; not finger-tracked | `smooth` | Reopening retargets | Cross-fade |
 | M20 (R9) Honest light | Stream activity | Glow and flicker on the making mark, ambient lights, ghost tile, changing ring, orb (§4.6) | Smoothing spring 0.6 s | Continuous | Still intensity per state, cross-faded |
 | M6 Composer → Describe | Tap the composer | The capsule grows into the sheet; the placeholder stays in place; the keyboard rises on its own curve | `morph` | Swipe down returns into the bar | Cross-fade |

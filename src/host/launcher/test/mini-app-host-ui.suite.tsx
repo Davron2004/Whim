@@ -1241,12 +1241,12 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('mini-app: leaving through Android back at the app’s root, or unmounting, disarms the startup deadline', async () => {
+  await h.test('mini-app: leaving through Android back at the app’s root leaves the startup deadline to the close, which may still turn the app back out; unmounting disarms it', async () => {
     await withMiniApp(TIP, async ({ loadEnd, clock, exits }) => {
       await loadEnd();
       await TestRenderer.act(async () => { hardwareBack(); });
       h.eq(exits(), 1, 'back at the root leaves the app');
-      h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'and no deadline outlives it');
+      h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'and its startup deadline runs on until the launch ends');
     });
     await withMiniApp(TIP, async ({ loadEnd, clock, tree }) => {
       await loadEnd();

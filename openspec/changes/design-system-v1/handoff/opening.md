@@ -20,9 +20,8 @@ export function themeFrame(t: ThemeFrameSettings, tint: TintName): WhimTheme;
   a running realm never re-themes; a settings change applies at the next open or Reload (a new launch).
 - Wire: unchanged — `deliverBySourceJs({ …, theme })` → `reinject({ theme })` → `__whimHostInit`;
   the loader strips `chromeInsetBottom`, installs the rest as `__WHIM_THEME__`.
-- Tests: `mini-app-host-ui.suite.tsx` ("a launch hands the realm the theme…", "pool: a warm hand-over
-  delivers the theme…", "a running app keeps the theme it opened with…"); desktop `deliver-by-source.desktop.mjs` check `host theme frame`
-  (esbuild-compiles `theme-frame.ts` + `tokens-pure.ts` and delivers the real frame).
+- Tests: `mini-app-host-ui` ("a launch hands the realm the theme…", "pool: a warm hand-over delivers the theme…", "a running
+  app keeps the theme it opened with…"); desktop `deliver-by-source.desktop.mjs` `host theme frame` (the real frame).
 
 ## Opening signal (18.2) — `src/host/launcher/boot-state.ts` (pure) + `useMiniAppHost.ts`
 
@@ -48,11 +47,9 @@ interface StartupDeadline {
 - Refused paints change nothing: the boot watchdog (`STARTUP_DEADLINE_MS` = 6 s) stays armed and
   still fails the launch ("app never became visible"). The 600 ms opening cap is 18c's, separate.
 - Wire: unchanged. `src/runtime/web/` untouched.
-- Tests: `boot-state.suite.ts` ("only a paint stamped with the current bind's generation…", "a stale
-  paint cannot cancel the startup deadline"); `mini-app-host-ui.suite.tsx` ("a trusted paint
-  stamped for another launch…", "after Reload opens the app again in a new realm, the old realm’s late paint…";
-  fixture `firstPaint()` stamps the generation parsed from the delivery script); desktop
-  `deliver-by-source.desktop.mjs` check `old realm paint after a reset`.
+- Tests: `boot-state.suite.ts` ("only a paint stamped with the current bind's generation…", "a stale paint cannot cancel
+  the startup deadline"); `mini-app-host-ui` ("a trusted paint stamped for another launch…", "after Reload opens the app again
+  in a new realm, the old realm’s late paint…"; `firstPaint()` stamps the delivered generation); desktop `old realm paint after a reset`.
 
 ## Opening state (18.3) — `boot-state.ts` (pure) + `MiniAppView.tsx`
 
@@ -81,7 +78,12 @@ export function openingLook(surface: MiniAppSurface, elapsed: { cap: boolean; la
   crash screen `AppCrashed({ name, tokens, bottomClearance, behind, onReload, onAskFix, onExit })` with the Orb over it; Reload = `MiniAppLaunch.onReload`, a new launch (no in-place retry); `behind` (= `MiniAppLaunch.behind`, the launch runs an older version than the app's current one) drops "Ask Whim to fix it" and says a newer version is ready.
 - `LauncherRoot`'s frame (status-bar strip) + `StatusBar`: `bg`/`barStyle` of `MiniAppStage`'s `onFrame(pinned)` over an
   open app, else live tokens (`shellFrame(screen, live, appFrame)`).
-- Closing: `onExit` → `goHome`. The tile→screen morph (chain 22) replaces the plate's position only.
+- Closing (M3, chain 22): `onExit` → `morph.leaving`; in its tile `onClosed` → `goHome` unmounts the launch. Until then
+  it keeps its WebView and realm (same generation): a tile tap mid-close turns the same launch back out, nothing re-delivered;
+  its syscalls (storage writes, cues) are still served, as it may come back. Unmount tears the realm down and destroys the
+  WebView; the next open is a new launch (WebView, iframe, nonce, generation). Leaving never cancels the startup deadline
+  (`useMiniAppHost({ leaving })`): the realm's own 6 s, no fresh window on reopen; one ending while leaving is held unrecorded
+  and fails the launch at once if it comes back out (an accepted paint clears it). Tests: `app-morph-ui` "M3: an app turned back out…".
 - Tests: `mini-app-host-ui` ("…shown at 600 ms anyway…", "a page still loading is never shown before
   it has the theme…", "fades in over 160 ms…", "…tile-sized plate…", stale-paint/Reload cases);
   `mini-app-delivery` (closing → Home; "frame: over an open app…", "frame: an app opened in dark keeps…").
@@ -112,9 +114,7 @@ export function openApp(pool: WebViewPool, opening: string | null): WebViewPool;
 
 ## Measuring tap-to-first-paint (18.4)
 
-- Logged once per launch at the accepted paint of its realm; every Reload is a launch of its own, timed from its press:
-  `[whim] tap to first paint { tapToPaintMs, paintMs, webView }` (info, `CHANNELS.app`), release too.
-  Android: `adb logcat -s ReactNativeJS`. iOS: os_log INFO, hidden by default — `xcrun simctl spawn <udid>
-  log stream --level info --predicate 'subsystem == "com.facebook.react.log"'` (device: Console.app, Include Info).
-- `tapToPaintMs` = `Date.now()` at `LauncherRoot.openNow` / `reloadRunning` (before the bundle read) → host accepts the
-  paint. `paintMs` = realm mount → first paint. `webView`: `warm` | `loading` (still loading) | `cold`.
+- Once per launch (each Reload too) at its realm's accepted paint, release too: `[whim] tap to first paint { tapToPaintMs,
+  paintMs, webView }` (info, `CHANNELS.app`). `tapToPaintMs` = `openNow`/`reloadRunning` press → accepted paint; `paintMs` =
+  realm mount → paint; `webView`: `warm` | `loading` | `cold`. Android: `adb logcat -s ReactNativeJS`. iOS: os_log INFO —
+  `xcrun simctl spawn <udid> log stream --level info --predicate 'subsystem == "com.facebook.react.log"'` (device: Console.app).

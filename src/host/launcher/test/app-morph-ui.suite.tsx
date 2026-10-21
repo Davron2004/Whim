@@ -27,6 +27,9 @@ import { stackMoveEnds, stackUnmountsMidMove } from './native-screens';
 import { boundWebView, button, captureTimeouts, hostType, press, renderScreen, unmountScreen } from './react-screen';
 import { settle, waitFor } from './rendered-launcher';
 import { SYSCALL_VERSION } from '../../bridge/contract';
+import { STARTUP_DEADLINE_MS } from '../boot-state';
+import { AppCrashed } from '../AppCrashed';
+import { log } from '../../logging';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -150,13 +153,36 @@ const SIZE_KEYS = ['width', 'height', 'top', 'left', 'right', 'bottom', 'opacity
 const webViewDrawn = (tree: Tree) => webViewLine(tree).map((n) => Object.fromEntries(Object.entries(flat(n)).filter(([k]) => SIZE_KEYS.includes(k))));
 /** The springs and timings assigned since `from`. */
 const stepsSince = (from: number) => animations.slice(from).filter(isStep) as Step[];
-const isConfig = (step: Step, config: Record<string, unknown>) => Object.entries(config).every(([k, v]) => step.config?.[k] === v);
+const isConfig = (step: Step, config: object) => Object.entries(config).every(([k, v]) => step.config?.[k] === v);
 
-async function paint(tree: Tree): Promise<void> {
+/** The generation the last delivery bound its realm at. */
+const deliveredGeneration = () => Number(/,generation:(\d+)/.exec(injectedScripts.at(-1) ?? '')?.[1]);
+/** The bound WebView's page loads, and the app is delivered into it. */
+async function deliver(tree: Tree): Promise<number> {
   await TestRenderer.act(async () => boundWebView(tree).props.onLoadEnd());
-  const generation = Number(/,generation:(\d+)/.exec(injectedScripts.at(-1) ?? '')?.[1]);
+  return deliveredGeneration();
+}
+/** A trusted first paint through the bound WebView, stamped `generation` (by default the last delivery's). */
+async function paintAt(tree: Tree, generation: number): Promise<void> {
   const frame = { kind: 'paint', trusted: true, payload: { generation, mountToFirstPaintMs: 12, appName: 'Timer' } };
   await TestRenderer.act(async () => boundWebView(tree).props.onMessage({ nativeEvent: { data: JSON.stringify(frame) } }));
+}
+async function paint(tree: Tree): Promise<void> {
+  await paintAt(tree, await deliver(tree));
+}
+const crashed = (tree: Tree) => tree.root.findAllByType(AppCrashed).length === 1;
+const paintTimeouts = () => log.buffer.snapshot().filter((r) => r.level === 'error' && (r.fields as { where?: string } | undefined)?.where === 'paint-timeout').length;
+/** Opened from its tile, delivered, grown, but not painted; then left (Android back at depth 0) and
+ *  caught mid-way back into the tile, animations held: `release` lets them run. */
+async function leaveWhileBooting(tree: Tree): Promise<{ generation: number; release: () => void }> {
+  const grow = holdAnimations();
+  await tapTile(tree, 'Timer');
+  const generation = await deliver(tree);
+  await TestRenderer.act(async () => grow());
+  const release = holdAnimations();
+  await TestRenderer.act(async () => { hardwareBack(); });
+  await TestRenderer.act(async () => elapseSprings(150));
+  return { generation, release };
 }
 /** The page shows: the `bg` over it is fully faded. */
 const pageShown = (tree: Tree) => shapeOf(tree).opacity === 0;
@@ -331,6 +357,85 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       await settle();
       const replies = (web.props.injected as string[]).filter((s) => s.includes('__whimRelaySysret('));
       h.ok(replies.length === 1 && replies[0].includes('\\"ok\\":true'), `its realm was never torn down: a call after the reopen is still answered (${replies.join(' ').slice(0, 160)})`);
+    });
+  });
+
+  await h.test('M3: an app turned back out while it boots still has its startup deadline: with no paint it fails to the crash screen; one that ends while it goes back in fails it only once it is back out', async () => {
+    await withLauncher(async ({ tree, clock }) => {
+      const { release } = await leaveWhileBooting(tree);
+      h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'leaving, its startup deadline keeps running');
+      await tapTile(tree, 'Timer');
+      await TestRenderer.act(async () => release());
+      h.ok(appOpen(tree) && !pageShown(tree) && !crashed(tree), 'turned back out, it is still booting');
+      h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'with its startup deadline armed');
+      await TestRenderer.act(async () => clock.fire(STARTUP_DEADLINE_MS));
+      h.ok(crashed(tree), 'and with no paint, the deadline fails it to the crash screen');
+    });
+    await withLauncher(async ({ tree, clock }) => {
+      const { release } = await leaveWhileBooting(tree);
+      log.buffer.clear();
+      await TestRenderer.act(async () => clock.fire(STARTUP_DEADLINE_MS));
+      h.ok(appOpen(tree) && homeShown(tree) && !crashed(tree) && grownFrom(tree, TIMER_TILE) < 1, 'a deadline that ends while it goes back in leaves it going: no crash screen over Home');
+      h.eq(paintTimeouts(), 0, 'and records no failure yet');
+      await tapTile(tree, 'Timer');
+      h.ok(crashed(tree), 'turned back out, it fails to the crash screen at once');
+      h.eq(paintTimeouts(), 1, 'recorded once');
+      await TestRenderer.act(async () => release());
+    });
+    await withLauncher(async ({ tree, clock }) => {
+      const { release } = await leaveWhileBooting(tree);
+      log.buffer.clear();
+      await TestRenderer.act(async () => clock.fire(STARTUP_DEADLINE_MS));
+      await TestRenderer.act(async () => release());
+      h.ok(!appOpen(tree) && homeShown(tree) && !crashed(tree), 'left for good, it goes into its tile as any app does');
+      h.eq(paintTimeouts(), 0, 'and an app the person left is not recorded as failed');
+    });
+  });
+
+  await h.test('M3: an app turned back out while it boots is the same realm: a paint stamped at the generation it was delivered with opens it, and disarms the deadline', async () => {
+    await withLauncher(async ({ tree, clock }) => {
+      const { generation, release } = await leaveWhileBooting(tree);
+      const delivered = injectedScripts.length;
+      await tapTile(tree, 'Timer');
+      await TestRenderer.act(async () => release());
+      h.eq(injectedScripts.length, delivered, 'nothing is delivered again');
+      await paintAt(tree, generation);
+      await TestRenderer.act(async () => elapse(FADE_IN_MS));
+      h.ok(pageShown(tree), 'the realm delivered before the close paints, and the page shows');
+      h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'its paint ends the startup deadline');
+    });
+    await withLauncher(async ({ tree, clock }) => {
+      const { generation, release } = await leaveWhileBooting(tree);
+      log.buffer.clear();
+      await TestRenderer.act(async () => clock.fire(STARTUP_DEADLINE_MS));
+      await paintAt(tree, generation);
+      await tapTile(tree, 'Timer');
+      await TestRenderer.act(async () => release());
+      await TestRenderer.act(async () => elapse(FADE_IN_MS));
+      h.ok(pageShown(tree) && !crashed(tree), 'a paint after a deadline that ended while it went back in still opens it');
+      h.eq(paintTimeouts(), 0, 'and no failure is recorded');
+    });
+  });
+
+  await h.test('M3: a close that ends unmounts the realm: the next open is a new realm in a new WebView, and a paint stamped for the closed one cannot open it', async () => {
+    await withLauncher(async ({ tree, clock }) => {
+      await tapTile(tree, 'Timer');
+      const first = await deliver(tree);
+      const web = boundWebView(tree);
+      const release = holdAnimations();
+      await TestRenderer.act(async () => { hardwareBack(); });
+      await TestRenderer.act(async () => release());
+      h.ok(!appOpen(tree) && homeShown(tree), 'the close ends on Home');
+      await tapTile(tree, 'Timer');
+      const second = await deliver(tree);
+      h.ok(boundWebView(tree) !== web, 'the next open is in another WebView');
+      h.ok(second > first, `delivered at a later generation (${first} → ${second})`);
+      await paintAt(tree, first);
+      await TestRenderer.act(async () => elapse(FADE_IN_MS));
+      h.ok(!pageShown(tree) && clock.count(STARTUP_DEADLINE_MS) === 1, 'a paint stamped for the closed realm opens nothing, and the deadline stays armed');
+      await paintAt(tree, second);
+      await TestRenderer.act(async () => elapse(FADE_IN_MS));
+      h.ok(pageShown(tree) && clock.count(STARTUP_DEADLINE_MS) === 0, 'the new realm’s own paint does');
     });
   });
 
