@@ -61,7 +61,7 @@ export interface TextProps { children: React.ReactNode; type?: TypeToken /* body
 export interface ButtonProps { label: string; onPress: () => void; variant: ButtonVariant; size?: ButtonSize /* large */;
   icon?: IconName; tint?: TintName /* for 'tint'; default slate */; disabled?: boolean;
   busy?: string /* busy words; taps ignored */; haptic?: HapticMoment /* prepare on press-in, play on press */;
-  accessibilityHint?: string }
+  accessibilityHint?: string; tokens?: ShellTokens /* draw in these, not useTokens(): a frame's (AppCrashed) */ }
 type ButtonVariant = 'ember'|'ink'|'tint'|'secondary'|'plain'|'plain-ember'|'danger'; type ButtonSize = 'large'|'medium'|'small';
 // IconButton.tsx — 44 × 44, press .92, hitSlop to 48 on Android
 export interface IconButtonProps { icon: IconName; label: string; onPress: () => void;

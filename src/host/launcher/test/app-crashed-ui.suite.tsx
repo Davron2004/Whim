@@ -17,7 +17,10 @@ import { CRASH_CLASS_MAX } from '../crash-report';
 import HistoryScreen from '../HistoryScreen';
 import { PendingBuildStore } from '../pending-builds';
 import type { StoreAccess } from '../store-access';
-import { button, hostType, isHost, press, textOf } from './react-screen';
+import { button, hostType, isHost, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { Platform, setColorScheme } from './native-host';
+import { resolveTokens } from '../../ui/tokens-pure';
+import { COLORS } from '../../../design/tokens';
 import { planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { streamingServer } from './prompt-flow-ui.suite';
 import { dismissToast, pressToastAction, toastOf } from './home-rig';
@@ -64,6 +67,32 @@ const never = () => new Promise<Response>(() => {});
 const versionRows = (tree: Tree, id: string): Node[] => tree.root.findAll((n) => typeof n.type === 'function' && n.props.row?.id === id);
 
 export async function runAppCrashedUiTests(h: Harness): Promise<void> {
+  await h.test('app crashed: its actions draw in the frame’s scheme, not the phone’s — Reload ink, Ask Whim to fix it ember text, Back text — dark over a light phone and light over a dark one', async () => {
+    const noop = () => {};
+    for (const [phone, frame] of [['light', 'dark'], ['dark', 'light']] as const) {
+      await TestRenderer.act(async () => { setColorScheme(phone); });
+      const tokens = resolveTokens({ scheme: frame, fontScale: 1, platform: Platform.OS, reduceMotion: false, increaseContrast: false });
+      const tree = await renderScreen(<AppCrashed name={APP_NAME} tokens={tokens} bottomClearance={0} behind={false} onReload={noop} onAskFix={noop} onExit={noop} />);
+      try {
+        const drawn = tree.root.findAll(isHost('Pressable')).map((action) => {
+          const capsule = StyleSheet.flatten(action.find(isHost('Animated.View')).props.style) as { backgroundColor?: string };
+          const label = StyleSheet.flatten(action.find(isHost('Text')).props.style) as { color?: string };
+          return [String(action.props.accessibilityLabel), capsule.backgroundColor, label.color];
+        });
+        const c = COLORS[frame];
+        h.eq(drawn, [
+          [COPY.actionReload, c.ink, c['on-ink']],
+          [COPY.appCrashedAskFix, 'transparent', c['ember-text']],
+          [COPY.launchFailedBack, 'transparent', c.text],
+        ], `${frame} actions on a ${phone} phone`);
+        h.ok(c.ink !== COLORS[phone].ink && c.text !== COLORS[phone].text, 'the two schemes’ colours differ, so the phone’s would be caught');
+      } finally {
+        await unmountScreen(tree);
+      }
+    }
+    await TestRenderer.act(async () => { setColorScheme('light'); });
+  });
+
   await h.test('app crashed: a render error puts the crash screen in the app’s place — its name, that it stopped and its data is safe, Reload, Ask Whim to fix it, Back to your apps — and the orb stays', async () => {
     await withLauncher({ examples: true, server: never }, async ({ tree }) => {
       await openTipSplitter(tree);

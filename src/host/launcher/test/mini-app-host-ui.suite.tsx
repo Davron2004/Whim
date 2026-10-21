@@ -867,7 +867,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       h.ok(shown().includes(COPY.appCrashedBody), 'the recovery screen replaces the app');
       h.ok(!shown().includes('SENTINEL'), 'without the raw error text');
       h.ok(webView() == null, 'the failed realm’s WebView is gone');
-      const reload = StyleSheet.flatten(button(tree, COPY.actionReload).props.style) as { backgroundColor?: string; borderColor?: string };
+      const reload = StyleSheet.flatten(button(tree, COPY.actionReload).find((n) => hostType(n) === 'Animated.View').props.style) as { backgroundColor?: string; borderColor?: string };
       h.eq([reload.backgroundColor, reload.borderColor], [COLORS.light.ink, undefined], 'Reload is its primary action, filled ink edge to edge with no ring of another colour');
       await press(button(tree, COPY.actionReload));
       h.ok(webView() != null && webView() !== first, 'Reload mounts a new WebView');
@@ -1123,7 +1123,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
         await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
         const screen = tree.root.findAll((n) => hostType(n) === 'ScrollView' && textOf(n).includes(COPY.appCrashedBody))[0];
         const title = tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n) === appCrashedTitle(TIP.name)).at(-1)!;
-        const retry = flat(button(tree, COPY.actionReload)) as Style & { borderColor?: string };
+        const retry = flat(button(tree, COPY.actionReload).findAll((n) => hostType(n) === 'Animated.View')[0]);
         h.eq([flat(screen).backgroundColor, flat(title).color, retry.backgroundColor], [COLORS.dark.bg, COLORS.dark.text, buttonColors(dark, 'ink', false).fill],
           'the recovery screen that replaces it is still the dark one: bg, text and its primary button');
 
