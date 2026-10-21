@@ -21,15 +21,16 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withDelay,
+  withSpring,
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
 import { Harness } from './harness';
 import { accessibilitySettings, emitAccessibility } from './native-host';
-import { animations, cancelAnimation, cancelled, elapse, holdAnimations, isLayoutAnimation, layoutAnimations, makeMutable, measuredRect, playedUnder, type LayoutAnimation } from './native-reanimated';
+import { animations, cancelAnimation, cancelled, elapse, elapseSprings, holdAnimations, isLayoutAnimation, layoutAnimations, makeMutable, measuredRect, playedUnder, type LayoutAnimation } from './native-reanimated';
 import { hostType, renderScreen, unmountScreen } from './react-screen';
 import { useTokens } from '../../ui/tokens';
-import { staggerDelay, timingOf } from '../../ui/tokens-pure';
+import { springConfig, staggerDelay, timingOf } from '../../ui/tokens-pure';
 
 const act = (fn: () => void) => TestRenderer.act(async () => { fn(); });
 
@@ -111,6 +112,33 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
       release();
     }
     h.eq(value.value, 5, 'released, the last timing lands');
+  });
+
+  await h.test('reanimated double: a held spring stays put while timings elapse; elapseSprings moves it by its physics to rest, and a spring assigned midway sets out from there with its velocity', async () => {
+    const smooth = springConfig('smooth');
+    // Critically damped (ζ = 1): x(t) = 1 − (1 + ωt)·e^(−ωt) from 0 to 1, ω = √(k/m).
+    const omega = Math.sqrt(smooth.stiffness / smooth.mass);
+    const closedForm = (ms: number) => 1 - (1 + (omega * ms) / 1000) * Math.exp((-omega * ms) / 1000);
+    const value = makeMutable(0);
+    const ends: (boolean | undefined)[] = [];
+    const release = holdAnimations();
+    try {
+      value.value = withSpring(1, smooth, (finished) => ends.push(finished));
+      elapse(100);
+      h.eq(value.value, 0, 'a plain elapse leaves a held spring where it set out');
+      elapseSprings(100);
+      h.ok(Math.abs(value.value - closedForm(100)) < 0.01, `100 ms in, where the closed form puts it (${value.value.toFixed(3)} vs ${closedForm(100).toFixed(3)})`);
+      const there = value.value;
+      value.value = withSpring(0, smooth);
+      h.eq(value.value, there, 'a spring assigned midway starts from where the value is');
+      h.eq(ends, [false], 'and the one it cut short hears it did not finish');
+      elapseSprings(5);
+      h.ok(value.value > there, 'still carried upward by the velocity it took over, before it turns back');
+      elapseSprings(3000);
+      h.eq(value.value, 0, 'at rest it lands on its target');
+    } finally {
+      release();
+    }
   });
 
   await h.test('reanimated double: cancelAnimation stops a held timing where it stands, names the value it ran on, and the release no longer lands it', async () => {

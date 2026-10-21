@@ -9,16 +9,18 @@
  * `tile-menus.ts`; this file draws them and routes what the person chooses. Delete and Discard hide
  * at once and offer Undo (`soft-delete.ts` owns the windows, `LauncherRoot` the stores). "Make a copy"
  * asks `CopyQuestionSheet` only when the copy can copy data. Share link opens the platform share sheet
- * with the app's link. No native alert anywhere.
+ * with the app's link. No native alert anywhere. The grid's motion (system.md §4.4): its first
+ * appearance after launch rises in, staggered (M17); a deleted tile leaves and its neighbours reflow,
+ * and Undo plays it back (M18); a delivered ghost turning into its tile (M4) is the tile's own.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ScrollView, Share, useWindowDimensions, View } from 'react-native';
 import { LAYOUT, SPACE } from '../../design/tokens';
 import { haptics } from '../haptics';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import { ContextMenu, type MenuAnchor, type MenuRow } from '../ui/ContextMenu';
-import { AppTile } from '../ui/AppTile';
+import { AppTile, type TileEntrance, type TilePresence } from '../ui/AppTile';
 import { drawsName, gridLayout, LABEL_MEASURE_BUDGET_MS, labelsMeasured, rowLabelLines, type GridLayout, type LabelCell, type MeasuredLabels } from '../ui/AppTile-geometry';
 import { Chip } from '../ui/Chip';
 import { Ember, RESTING_ACTIVITY } from '../ui/Ember';
@@ -27,7 +29,7 @@ import { Text } from '../ui/Text';
 import { TextField } from '../ui/TextField';
 import { useToast } from '../ui/Toast';
 import { useTokens } from '../ui/tokens';
-import { makeStyles } from '../ui/tokens-pure';
+import { makeStyles, staggerDelay } from '../ui/tokens-pure';
 import type { InstalledApp } from './app-index';
 import type { FlickerPulse } from './home-live';
 import { isAppBusy, type AppBusyMap } from './app-busy';
@@ -105,6 +107,11 @@ export interface HomeScreenProps {
   onCustomizeTile: (app: InstalledApp, tile: TileIdentity) => void;
   /** "Use the original tile": drop the override. */
   onResetTile: (app: InstalledApp) => void;
+  /** M17: this is the grid's first appearance since the shell started. Once the grid shows, its tiles
+   *  rise in, staggered, and `onAppeared` tells the shell, which passes false from then on. Omitted:
+   *  the grid is simply there. */
+  firstAppearance?: boolean;
+  onAppeared?: () => void;
 }
 
 const styles = makeStyles((t) => ({
@@ -127,6 +134,13 @@ interface LabelLines {
   lines: MeasuredLabels;
   shown: boolean;
 }
+
+/** M17, the grid's first appearance: waiting for the grid to show, its tiles (by key) rising in, or
+ *  done — every tile risen, or a touch finished it. */
+type Entrance = { phase: 'hold' } | { phase: 'rising'; keys: ReadonlySet<string> } | { phase: 'done' };
+
+/** M18: an app's tile still leaving after Delete, or coming back after an Undo that came once it had gone. */
+type Departure = 'leaving' | 'returning';
 
 interface OpenMenu {
   cell: GridCell;
@@ -175,6 +189,61 @@ function useRowLabels(cells: readonly GridCell[], layout: GridLayout, fontScale:
   return { lineCounts: rowLabelLines(labelCells, layout.columns, measured), shown, measure };
 }
 
+/** M17, the grid's first appearance (`HomeScreenProps.firstAppearance`): until the grid `shown` its
+ *  tiles hold out of sight; then each tile it holds rises in after its place's stagger delay. A touch
+ *  ends it, as does every one of those tiles having risen; a tile that comes later is simply there. */
+function useGridEntrance(first: boolean, shown: boolean, keys: readonly string[], reduceMotion: boolean, onAppeared: (() => void) | undefined) {
+  const [entrance, setEntrance] = useState<Entrance>(first ? { phase: 'hold' } : { phase: 'done' });
+  const risen = useRef(new Set<string>());
+  useEffect(() => {
+    if (entrance.phase !== 'hold' || !shown) return;
+    onAppeared?.();
+    setEntrance(keys.length === 0 ? { phase: 'done' } : { phase: 'rising', keys: new Set(keys) });
+  }, [entrance.phase, shown, keys, onAppeared]);
+  const finish = () => setEntrance((was) => (was.phase === 'done' ? was : { phase: 'done' }));
+  return {
+    /** What a touch on Home does: finish the appearance, while there is one. */
+    onTouchStart: entrance.phase === 'done' ? undefined : finish,
+    risen: (key: string) => {
+      risen.current.add(key);
+      setEntrance((was) => (was.phase === 'rising' && [...was.keys].every((k) => risen.current.has(k)) ? { phase: 'done' } : was));
+    },
+    of: (key: string, index: number): TileEntrance => {
+      if (entrance.phase === 'hold') return 'hold';
+      return entrance.phase === 'rising' && entrance.keys.has(key) ? staggerDelay(index, reduceMotion) : 'done';
+    },
+  };
+}
+
+/** M18, by app id: the tiles still leaving after Delete, and those coming back after an Undo that
+ *  came once they had gone. */
+function useDepartures() {
+  const [departures, setDepartures] = useState<ReadonlyMap<string, Departure>>(() => new Map());
+  const set = (id: string, how: Departure | null) =>
+    setDepartures((was) => {
+      if ((was.get(id) ?? null) === how) return was;
+      const next = new Map(was);
+      if (how === null) next.delete(id);
+      else next.set(id, how);
+      return next;
+    });
+  return {
+    /** The apps Delete hides: armed, and not still leaving. */
+    hidden: (apps: readonly InstalledApp[], purges: HomeScreenProps['purges']) =>
+      new Set(apps.filter((a) => purges?.has('app', a.id) && departures.get(a.id) !== 'leaving').map((a) => a.id)),
+    presenceOf: (cell: GridCell): TilePresence => (cell.kind === 'app' ? departures.get(cell.app.id) : undefined) ?? 'shown',
+    leave: (id: string) => set(id, 'leaving'),
+    /** An Undo that `restored` the app: a tile still leaving turns back where it is; one gone comes back. */
+    undone: (id: string, restored: boolean) => {
+      if (restored) set(id, 'returning');
+    },
+    /** A cell's leave or return has come to rest. */
+    settled: (cell: GridCell) => {
+      if (cell.kind === 'app') set(cell.app.id, null);
+    },
+  };
+}
+
 export default function HomeScreen({
   apps,
   pending,
@@ -205,6 +274,8 @@ export default function HomeScreen({
   onRetryPending,
   onCustomizeTile,
   onResetTile,
+  firstAppearance = false,
+  onAppeared,
 }: Readonly<HomeScreenProps>) {
   const t = useTokens();
   const s = styles(t);
@@ -216,11 +287,13 @@ export default function HomeScreen({
   const [copying, setCopying] = useState<{ app: InstalledApp; open: boolean } | null>(null);
   const [customizing, setCustomizing] = useState<{ id: string; open: boolean } | null>(null);
   const [olderOpen, setOlderOpen] = useState(false);
+  const departures = useDepartures();
 
+  // A deleted app's tile keeps its cell while it leaves; its neighbours reflow once it has gone.
   const all = composeGrid(pending ?? [], apps, {
     now: Date.now(),
     queued,
-    deletedApps: new Set(apps.filter((a) => purges?.has('app', a.id)).map((a) => a.id)),
+    deletedApps: departures.hidden(apps, purges),
     discardedAttempts: new Set((pending ?? []).filter((r) => purges?.hidesAttempt(r)).map((r) => r.id)),
   });
   const appCount = all.filter((c) => c.kind === 'app').length;
@@ -230,6 +303,7 @@ export default function HomeScreen({
   const customized = customizing ? (apps.find((a) => a.id === customizing.id) ?? null) : null;
 
   const labels = useRowLabels(cells, layout, fontScale);
+  const entrance = useGridEntrance(firstAppearance, labels.shown, cells.map(cellKey), t.reduceMotion, onAppeared);
 
   const closeMenu = () => setMenu((m) => (m ? { ...m, open: false } : m));
 
@@ -248,13 +322,20 @@ export default function HomeScreen({
     });
   };
 
+  // M18: the tile leaves; Undo turns it back while it still leaves, or plays its return once gone.
   const remove = (app: InstalledApp) => {
+    departures.leave(app.id);
     onDelete(app);
     haptics.play('warning');
+    const undo = () => {
+      const restored = onUndoDelete(app);
+      departures.undone(app.id, restored);
+      undone(restored);
+    };
     toast.show({
       message: deletedToast(app.name),
       undo: true,
-      action: { label: COPY.toastUndo, onPress: () => undone(onUndoDelete(app)) },
+      action: { label: COPY.toastUndo, onPress: undo },
       onEnd: () => onSettleDelete(app),
     });
   };
@@ -337,9 +418,10 @@ export default function HomeScreen({
     const { tint, icon } = tileOfCell(cell);
     const live = cell.kind === 'attempt' ? cell.rec : attemptOf(cell);
     const busy = cell.kind === 'app' && isAppBusy(appBusy, cell.app.id);
+    const key = cellKey(cell);
     return (
       <AppTile
-        key={cellKey(cell)}
+        key={key}
         layout={layout}
         name={tileName(cell)}
         state={cell.kind === 'older' ? 'older' : cell.state}
@@ -359,6 +441,10 @@ export default function HomeScreen({
         onLongPress={(anchor) => {
           if (!busy) setMenu({ cell, anchor, open: true });
         }}
+        entrance={entrance.of(key, index)}
+        onRisen={() => entrance.risen(key)}
+        presence={departures.presenceOf(cell)}
+        onPresenceSettled={() => departures.settled(cell)}
       />
     );
   };
@@ -369,7 +455,7 @@ export default function HomeScreen({
   const ideas = [COPY.homeIdeaTimer, COPY.homeIdeaTracker, COPY.homeIdeaDice];
 
   return (
-    <View style={s.root}>
+    <View style={s.root} onTouchStart={entrance.onTouchStart}>
       {/* Keyed by the text size, as a sheet's frame is: iOS keeps every text measured at the size it
           was first laid out at, so a size changed while Home shows left the composer's words cut in
           half and the title in a box too small for it. Built again, each text fits the new size.

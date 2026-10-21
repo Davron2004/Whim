@@ -5,9 +5,9 @@
  *  `useAnimatedStyle` evaluates its updater at render and re-renders when a shared value it read
  *  changes, as the UI thread would repaint. An animation's end callback runs as it is assigned, unless
  *  the test holds animations (`holdAnimations`) to look at a frame while one is still running;
- *  `elapse` then moves held timings along their curves. `makeMutable` makes a value outside React.
+ *  `elapse` then moves held timings along their curves, `elapseSprings` held springs by their physics. `makeMutable` makes a value outside React.
  *  `Animated.View`, `.Text` and `.ScrollView` render as host elements of those names and log the
- *  layout animations (`FadeIn`, `FadeOut`, `LinearTransition` and their builder calls) they enter and
+ *  layout animations (`FadeIn`, `FadeOut`, `LinearTransition`, `FadingTransition` and their builder calls) they enter and
  *  exit with in `layoutAnimations`; `playedUnder` says what one does under Reduce Motion.
  *  `useAnimatedReaction` reacts synchronously, `measure` reports `measuredRect`. The double's own
  *  contract is `native-reanimated.suite.tsx`. */
@@ -64,6 +64,8 @@ let held: (() => void)[] | null = null;
 
 /** The shared values a held timing is running on, which `elapse` moves along. */
 const timed = new Set<SharedValue<unknown>>();
+/** The shared values a held spring is running on, which `elapse` moves when asked to. */
+const sprung = new Set<SharedValue<unknown>>();
 
 /** Reanimated's default timing curve, `Easing.inOut(Easing.quad)`. */
 const inOutQuad = (x: number) => (x < 0.5 ? 2 * x * x : 1 - 2 * (1 - x) * (1 - x));
@@ -82,7 +84,10 @@ export function holdAnimations(): () => void {
 class SharedValue<T> {
   private current: T;
   /** The held animation running on this value, if any: where it set out from and how long it has run. */
-  private running: { animation: Tagged; end: () => void; from: unknown; elapsed: number } | null = null;
+  private running: { animation: Tagged; end: () => void; from: unknown; elapsed: number; velocity: number } | null = null;
+  /** The velocity of the held spring the latest assignment cut short, which a spring assigned in its
+   *  place sets out with, as Reanimated's retarget does. */
+  private carried = 0;
   /** Bumped on every assignment, so a style can tell it missed one. */
   version = 0;
   private readonly listeners = new Set<() => void>();
@@ -99,16 +104,21 @@ class SharedValue<T> {
         const end = () => {
           this.running = null;
           timed.delete(this as SharedValue<unknown>);
+          sprung.delete(this as SharedValue<unknown>);
           this.land(next);
         };
-        this.running = { animation: next, end, from: this.current, elapsed: 0 };
+        this.running = { animation: next, end, from: this.current, elapsed: 0, velocity: next.kind === 'spring' ? this.carried : 0 };
+        this.carried = 0;
         if (next.kind === 'timing') timed.add(this as SharedValue<unknown>);
+        if (next.kind === 'spring') sprung.add(this as SharedValue<unknown>);
         held.push(end);
         return;
       }
+      this.carried = 0;
       this.land(next);
       return;
     }
+    this.carried = 0;
     this.current = next;
     this.changed();
   }
@@ -123,7 +133,9 @@ class SharedValue<T> {
     if (!was) return;
     this.running = null;
     timed.delete(this as SharedValue<unknown>);
+    sprung.delete(this as SharedValue<unknown>);
     held = held?.filter((end) => end !== was.end) ?? null;
+    this.carried = was.animation.kind === 'spring' ? was.velocity : 0;
     if (isStep(was.animation)) was.animation.callback?.(false);
   }
   /** An animation reaches its end: the value rests there and its end callback runs. */
@@ -150,6 +162,33 @@ class SharedValue<T> {
     this.current = ((run.from as number) + ((step.to as number) - (run.from as number)) * progress) as T;
     this.changed();
   }
+  /** A held spring runs `ms` longer, by its physics (its mass, stiffness and damping, Reanimated's
+   *  defaults where it gives none) from where it is with its velocity, in 1 ms steps; it lands once it
+   *  is at rest. */
+  advanceSpring(ms: number): void {
+    const run = this.running;
+    if (!run || run.animation.kind !== 'spring') return;
+    const step = run.animation as Step;
+    const config = step.config ?? {};
+    const mass = typeof config.mass === 'number' ? config.mass : SPRING_DEFAULTS.mass;
+    const stiffness = typeof config.stiffness === 'number' ? config.stiffness : SPRING_DEFAULTS.stiffness;
+    const damping = typeof config.damping === 'number' ? config.damping : SPRING_DEFAULTS.damping;
+    const to = step.to as number;
+    let x = this.current as number;
+    let v = run.velocity;
+    for (let i = 0; i < ms; i++) {
+      v += ((-stiffness * (x - to) - damping * v) / mass) * 0.001;
+      x += v * 0.001;
+    }
+    if (Math.abs(x - to) < SPRING_REST.displacement && Math.abs(v) < SPRING_REST.speed) {
+      held = held?.filter((end) => end !== run.end) ?? null;
+      run.end();
+      return;
+    }
+    run.velocity = v;
+    this.current = x as T;
+    this.changed();
+  }
   private changed(): void {
     this.version += 1;
     for (const listener of [...this.listeners]) listener();
@@ -160,11 +199,22 @@ class SharedValue<T> {
   }
 }
 
+/** Reanimated's spring defaults and the rest it settles at. */
+const SPRING_DEFAULTS = { mass: 4, stiffness: 900, damping: 120 } as const;
+const SPRING_REST = { displacement: 0.001, speed: 0.01 } as const;
+
 /** While animations are held, `ms` pass on the UI thread: every held timing moves along its curve
  *  (its own easing, else Reanimated's default) and ends once its duration is up. Springs, delays and
  *  sequences stay where they are until released. */
 export function elapse(ms: number): void {
   for (const value of [...timed]) value.advance(ms);
+}
+
+/** While animations are held, `ms` pass for the springs alone: every held spring moves by its
+ *  physics, and one assigned while another still moved sets out with that one's velocity. Timings,
+ *  delays and sequences stay where they are. */
+export function elapseSprings(ms: number): void {
+  for (const value of [...sprung]) value.advanceSpring(ms);
 }
 
 /** A shared value made outside any component, as Reanimated's `makeMutable`. */
@@ -353,6 +403,7 @@ export const isLayoutAnimation = (v: unknown): v is LayoutAnimation => typeof v 
 export const FadeIn = layoutBuilder('FadeIn', []);
 export const FadeOut = layoutBuilder('FadeOut', []);
 export const LinearTransition = layoutBuilder('LinearTransition', []);
+export const FadingTransition = layoutBuilder('FadingTransition', []);
 
 /** What a layout animation does on the phone: under the OS Reduce Motion setting Reanimated skips
  *  every animation not marked `ReduceMotion.Never` (App.tsx mounts `ReducedMotionConfig` System), so

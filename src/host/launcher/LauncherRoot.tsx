@@ -895,6 +895,8 @@ function LauncherShell({
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [pendingBuilds, setPendingBuilds] = useState<PendingBuildView[]>([]);
   const [ready, setReady] = useState(false);
+  // M17: the grid rises in the first time it shows after launch, not on every return to Home.
+  const gridAppeared = useRef(false);
   // Read by the mount-once app-link listener effect below, which cannot depend on `ready` without
   // resubscribing `Linking`'s event on every first-run tick.
   const readyRef = useRef(ready);
@@ -3566,6 +3568,10 @@ function LauncherShell({
 
   const renderHome = (): React.ReactNode => (
     <HomeScreen
+      firstAppearance={!gridAppeared.current}
+      onAppeared={() => {
+        gridAppeared.current = true;
+      }}
       apps={apps}
       pending={pendingBuilds.map((view) => view.record)}
       purges={purges}

@@ -130,11 +130,12 @@ export function composeGrid(
   return [...making, ...recent, ...installed, ...tail];
 }
 
-/** A stable key for a cell, so a list re-renders the same tile in place. */
+/** A stable key for a cell, so a list re-renders the same tile in place. An attempt and the app it
+ *  is delivered as share their id, so they share the key too: the delivery turns the ghost tile into
+ *  the app's (M4) rather than swapping one tile for another. */
 export function cellKey(cell: GridCell): string {
-  if (cell.kind === 'app') return `app:${cell.app.id}`;
-  if (cell.kind === 'attempt') return `attempt:${cell.rec.id}`;
-  return 'older';
+  if (cell.kind === 'older') return 'older';
+  return `cell:${cell.kind === 'app' ? cell.app.id : cell.rec.id}`;
 }
 
 /** A cell's name as the grid and the menu title show it; the older cell has none of its own. */
