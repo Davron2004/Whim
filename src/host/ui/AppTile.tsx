@@ -270,6 +270,19 @@ function PlateCentre({ centre, arriving, children }: Readonly<{ centre: object; 
   return <Animated.View style={arriving ? [centre, out] : centre}>{children}</Animated.View>;
 }
 
+/** How many arrivals this plate has finished. Its middle is drawn afresh after each: Reanimated
+ *  leaves what a detached animated style last set on the native view, so the ember's fade-out would
+ *  otherwise keep the glyph that follows it unseen. */
+function useArrivalsDone(from: TileState | null): number {
+  const [seen, setSeen] = useState(from);
+  const [done, setDone] = useState(0);
+  if (seen !== from) {
+    setSeen(from);
+    if (from === null) setDone((n) => n + 1);
+  }
+  return done;
+}
+
 export function TilePlate({ size, state, tint, glyph, activity = 0, flicker, stuck = false, tokens, arrival = null, onArrived }: Readonly<TilePlateProps>) {
   const live = useTokens();
   const t = tokens ?? live;
@@ -286,6 +299,7 @@ export function TilePlate({ size, state, tint, glyph, activity = 0, flicker, stu
   const from = onTint ? arrival : null;
   const reduced = t.reduceMotion;
   const progress = useArrival(from, reduced, onArrived);
+  const arrivals = useArrivalsDone(from);
 
   // The ring is the change's light: working, it follows the stream and flickers; stuck, dim and
   // still; under Reduce Motion a still intensity per state.
@@ -304,12 +318,12 @@ export function TilePlate({ size, state, tint, glyph, activity = 0, flicker, stu
   const plate = <PlateShape side={side} fill={plateFill(t, state, tint)} rim={rim} outline={outline} />;
   const arriving = from === null ? null : { ghost: <PlateShape side={side} fill={plateFill(t, from, tint)} rim={null} outline={outline} />, progress, reduced };
 
-  // The centre keeps its place among the plate's layers, so its ember is the ghost's own all through
-  // an arrival.
+  // The centre keeps its place and key among the plate's layers through an arrival, so its ember is
+  // the ghost's own all the way; it is drawn afresh once the arrival has ended.
   return (
     <View style={{ width: side, height: side }} accessible={false} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
       <PlateBase key="plate" side={side} plate={plate} arriving={arriving} glyph={glyphIcon} centre={s.centre} />
-      <PlateCentre key="centre" centre={s.centre} arriving={arriving?.progress ?? null}>
+      <PlateCentre key={`centre-${arrivals}`} centre={s.centre} arriving={arriving?.progress ?? null}>
         {onTint && arriving === null ? glyphIcon : null}
         {emberState ? <Ember size={emberFor(side)} state={emberState} activity={activity} flicker={flicker} spark={arriving ? 1 : 0} /> : null}
       </PlateCentre>

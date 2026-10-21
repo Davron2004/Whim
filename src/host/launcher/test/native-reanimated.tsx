@@ -227,10 +227,14 @@ export function useSharedValue<T>(initial: T): SharedValue<T> {
   ref.current ??= new SharedValue(initial);
   return ref.current;
 }
+/** The styles `useAnimatedStyle` made, with the updater that keeps each current on the UI thread. */
+const animatedStyles = new WeakMap<object, () => unknown>();
+
 export function useAnimatedStyle<T>(updater: () => T): T {
   const [, repaint] = React.useReducer((n: number) => n + 1, 0);
   reading = new Set();
   const style = updater();
+  if (typeof style === 'object' && style !== null) animatedStyles.set(style, updater);
   const read = [...reading].map((value) => [value, value.version] as const);
   reading = null;
   React.useEffect(() => {
@@ -424,9 +428,25 @@ export interface LayoutEvent {
 }
 export const layoutAnimations: LayoutEvent[] = [];
 
-/** An Animated host component: renders as `name`, and logs its entering and exiting animations. */
+/** Every style in a (nested) style prop, in order. */
+const stylesIn = (style: unknown): unknown[] => (Array.isArray(style) ? style.flatMap(stylesIn) : [style]);
+
+/** An Animated host component: renders as `name`, and logs its entering and exiting animations. As on
+ *  the phone, what an animated style last set stays on the view when the style is taken off it,
+ *  until something sets that property again. */
 function animatedComponent(name: string) {
   const Component = (props: HostProps) => {
+    const applied = React.useRef<Record<string, unknown>>({});
+    const attached = React.useRef<(() => unknown)[]>([]);
+    const styles = stylesIn(props.style).filter((s): s is Record<string, unknown> => typeof s === 'object' && s !== null);
+    // Up to this render the UI thread kept every style attached last time current, whether or not
+    // React rendered in between; then this render's own animated styles apply.
+    for (const updater of attached.current) Object.assign(applied.current, updater());
+    attached.current = styles.flatMap((s) => animatedStyles.get(s) ?? []);
+    for (const style of styles) if (animatedStyles.has(style)) Object.assign(applied.current, style);
+    const current = Object.assign({}, ...styles) as Record<string, unknown>;
+    const left = Object.fromEntries(Object.entries(applied.current).filter(([key]) => !(key in current)));
+    const style = Object.keys(left).length === 0 ? props.style : [left, props.style];
     const entering = React.useRef(props.entering);
     const exiting = React.useRef(props.exiting);
     exiting.current = props.exiting;
@@ -436,7 +456,7 @@ function animatedComponent(name: string) {
         if (isLayoutAnimation(exiting.current)) layoutAnimations.push({ phase: 'exiting', component: name, animation: exiting.current });
       };
     }, []);
-    return React.createElement(name, props, props.children);
+    return React.createElement(name, { ...props, style }, props.children);
   };
   Component.displayName = name;
   return Component;

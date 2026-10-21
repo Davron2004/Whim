@@ -146,6 +146,14 @@ const glyphs = (root: Node) => root.findAll((n) => hostType(n) === 'Svg' && n.pr
 /** M4's glyph layer: the faded layer holding the glyph and no plate. */
 const glyphLayerOf = (tree: Tree, name: string): Node | undefined =>
   tile(tree, name).findAll((n) => hostType(n) === 'Animated.View' && flat(n).opacity !== undefined && glyphs(n).length === 1 && n.findAll((m) => hostType(m) === 'Svg' && m.props.width === TILE_SIDE.grid).length === 0)[0];
+/** How opaque a node is drawn: every view above it within its tile fades it. */
+function seenOpacity(node: Node, within: Node): number {
+  let opacity = 1;
+  for (let up: Node | null = node; up && up !== within; up = up.parent) {
+    if (typeof up.type === 'string') opacity *= (flat(up).opacity as number | undefined) ?? 1;
+  }
+  return opacity;
+}
 const scaleOf = (node: Node) => ((flat(node).transform as Record<string, number>[] | undefined) ?? []).find((s) => 'scale' in s)?.scale;
 const embers = (tree: Tree, name: string) => tile(tree, name).findAll((n) => hostType(n) === 'RadialGradient' && n.props.cy === '74%').length;
 const isSpark = (a: Animation) =>
@@ -400,7 +408,8 @@ export async function runHomeMotionUiTests(h: Harness): Promise<void> {
       h.eq([revealOf(tree, 'Tea Timer') !== undefined, embers(tree, 'Tea Timer')], [false, 0], 'arrived: no reveal left and no ember');
       const fills = tile(tree, 'Tea Timer').findAll((n) => hostType(n) === 'Path' && n.props.fill === tint);
       h.eq(fills.length, 1, 'the plate is the tint');
-      h.eq(glyphs(tile(tree, 'Tea Timer')).length, 1, 'with its glyph');
+      const [glyph] = glyphs(tile(tree, 'Tea Timer'));
+      h.ok(glyph !== undefined && seenOpacity(glyph, tile(tree, 'Tea Timer')) === 1, 'with its glyph, fully seen: nothing the arrival faded stays faded');
     } finally { await unmountScreen(tree); }
   });
 

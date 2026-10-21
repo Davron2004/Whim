@@ -141,6 +141,30 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('reanimated double: an animated style taken off a view leaves what the UI thread last set on it, until a style sets that property again', async () => {
+    const opacity = makeMutable(1);
+    function Fading({ attached, plain }: { attached: boolean; plain?: { opacity: number } }) {
+      const fade = useAnimatedStyle(() => ({ opacity: opacity.value }));
+      return <Animated.View style={[attached ? fade : null, plain]} />;
+    }
+    const seen = (tree: TestRenderer.ReactTestRenderer) => Object.assign({}, ...[tree.root.findAll((n) => hostType(n) === 'Animated.View')[0].props.style].flat(Infinity)).opacity;
+    const tree = await renderScreen(<Fading attached />);
+    try {
+      await act(() => tree.update(<Fading attached={false} />));
+      h.eq(seen(tree), 1, 'taken off at 1, it stays 1');
+      await act(() => tree.update(<Fading attached />));
+      await act(() => {
+        opacity.value = 0.25;
+        tree.update(<Fading attached={false} />);
+      });
+      h.eq(seen(tree), 0.25, 'moved to 0.25 by the UI thread as React takes it off, before React drew that value, the view stays at 0.25');
+      await act(() => tree.update(<Fading attached={false} plain={{ opacity: 1 }} />));
+      h.eq(seen(tree), 1, 'a style that sets it again wins');
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
   await h.test('reanimated double: cancelAnimation stops a held timing where it stands, names the value it ran on, and the release no longer lands it', async () => {
     const value = makeMutable(0);
     const release = holdAnimations();
