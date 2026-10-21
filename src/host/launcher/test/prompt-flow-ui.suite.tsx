@@ -485,7 +485,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('flow: Prompt again sends the app’s name and current description with clarify and rewrite, even when the description resolves after Continue', async () => {
+  await h.test('flow: Change it sends the app’s name and current description with clarify and rewrite, even when the description resolves after Continue', async () => {
     const original = StoreAccess.prototype.activeEdit;
     const describedAs = (words: Promise<string | undefined>) =>
       async (app: InstalledApp) => ({ app, description: await words, versionId: 'g1' });

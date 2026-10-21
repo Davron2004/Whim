@@ -13,15 +13,13 @@
  * 18g), not the phone's live ones. Nothing of the realm's error is shown here: the error goes, as plain
  * text, only into the request "Ask Whim to fix it" prefills (`crash-report.ts`).
  */
-import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import Animated from 'react-native-reanimated';
+import React from 'react';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import { LAYOUT, SPACE } from '../../design/tokens';
-import type { ColorRole } from '../../design/tokens';
+import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
-import { usePressFeedback } from '../ui/motion';
 import { Text } from '../ui/Text';
-import { buttonColors, buttonMetrics, hitSlopFor, PRESS_RETENTION, type ShellTokens } from '../ui/tokens-pure';
+import type { ShellTokens } from '../ui/tokens-pure';
 import { appCrashedTitle, COPY } from './copy';
 
 export interface AppCrashedProps {
@@ -40,43 +38,6 @@ export interface AppCrashedProps {
 /** §2.8 EmptyState's mark: a 32 pt icon in a 64 pt `fill` circle. */
 const MARK = { circle: 64, icon: 32 } as const;
 
-const LARGE = buttonMetrics('large');
-
-/** One of the screen's three actions: §7.1 Button's large capsule, in the launch's tokens. */
-function Action({ label, variant, labelColor, onPress, tokens }: Readonly<{
-  label: string;
-  variant: 'ink' | 'plain-ember' | 'plain';
-  labelColor: ColorRole;
-  onPress: () => void;
-  tokens: ShellTokens;
-}>) {
-  const press = usePressFeedback('button', tokens);
-  const [pressed, setPressed] = useState(false);
-  const colors = buttonColors(tokens, variant, false);
-  return (
-    <Pressable
-      onPress={onPress}
-      onPressIn={() => {
-        setPressed(true);
-        press.pressIn();
-      }}
-      onPressOut={() => {
-        setPressed(false);
-        press.pressOut();
-      }}
-      hitSlop={hitSlopFor(LARGE.height, tokens)}
-      pressRetentionOffset={PRESS_RETENTION}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={[styles.action, { backgroundColor: pressed ? colors.pressedFill : colors.fill }]}
-    >
-      <Animated.View style={[styles.actionInner, press.style]}>
-        <Text tokens={tokens} type={LARGE.type} color={labelColor} style={styles.centred}>{label}</Text>
-      </Animated.View>
-    </Pressable>
-  );
-}
-
 /** The mark, title and body centred in the space above the actions; the actions at the bottom, just
  *  above the orb (the mockups' `#app-error`). At large text sizes the whole screen scrolls. */
 export function AppCrashed({ name, tokens, bottomClearance, behind, onReload, onAskFix, onExit }: Readonly<AppCrashedProps>) {
@@ -94,11 +55,9 @@ export function AppCrashed({ name, tokens, bottomClearance, behind, onReload, on
         <Text tokens={tokens} color="text-2" style={styles.centred}>{behind ? COPY.appCrashedBehindBody : COPY.appCrashedBody}</Text>
       </View>
       <View style={styles.actions}>
-        <Action tokens={tokens} label={COPY.actionReload} variant="ink" labelColor="on-ink" onPress={onReload} />
-        {behind ? null : (
-          <Action tokens={tokens} label={COPY.appCrashedAskFix} variant="plain-ember" labelColor="ember-text" onPress={onAskFix} />
-        )}
-        <Action tokens={tokens} label={COPY.launchFailedBack} variant="plain" labelColor="text" onPress={onExit} />
+        <Button tokens={tokens} label={COPY.actionReload} variant="ink" onPress={onReload} />
+        {behind ? null : <Button tokens={tokens} label={COPY.appCrashedAskFix} variant="plain-ember" onPress={onAskFix} />}
+        <Button tokens={tokens} label={COPY.launchFailedBack} variant="plain" onPress={onExit} />
       </View>
     </ScrollView>
   );
@@ -111,7 +70,5 @@ const styles = StyleSheet.create({
   mark: { width: MARK.circle, height: MARK.circle, borderRadius: MARK.circle / 2, alignItems: 'center', justifyContent: 'center', marginBottom: SPACE[5] },
   title: { textAlign: 'center', marginBottom: SPACE[2] },
   actions: { gap: SPACE[2] },
-  action: { minHeight: LARGE.height, borderRadius: LARGE.height / 2, borderCurve: 'continuous', justifyContent: 'center', paddingHorizontal: LARGE.paddingHorizontal },
-  actionInner: { alignItems: 'center', justifyContent: 'center', paddingVertical: SPACE[2] },
   centred: { textAlign: 'center' },
 });

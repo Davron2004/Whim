@@ -872,6 +872,31 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('history screen: on a phone that turned highlighting off before the switch was removed, the stored switch is deleted at launch and Whim’s summary is marked anyway', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    const SUMMARY = 'Counts 8 glasses a day';
+    await withLauncher({
+      server: streamingServer(streams),
+      prepare: (kv) => {
+        kv.set('retired-keys-sweep', '1');
+        kv.set('highlighting', '0');
+      },
+    }, async ({ tree, kv }) => {
+      h.eq(kv.getString('highlighting'), undefined, 'the stored switch is gone once Whim has launched');
+      await startBuild(tree, 'A water tracker');
+      streams[0].push({ ...resultEvent('Water Tracker'), summary: { text: SUMMARY, kind: 'Start', touched: [], marks: [] } });
+      streams[0].end();
+      await waitFor(() => tree.root.findAllByType(ReadyPage).length === 1, 'the app');
+      await press(button(tree, COPY.readyDone));
+      const home = tree.root.findByType(HomeScreen);
+      const tracker = home.props.apps.find((a: InstalledApp) => a.name === 'Water Tracker');
+      await TestRenderer.act(async () => home.props.onHistory(tracker));
+      await waitFor(() => rows(tree).length === 1, 'its version on the timeline');
+      const count = innermostTexts(tree, '8').filter((n) => textOf(n) === '8');
+      h.eq(count.map((n) => styleOf(n).fontVariant), [['tabular-nums']], 'the count in the summary is marked, in tabular figures');
+    });
+  });
+
   await h.test('history screen: a seeded example changed with the same data shape raises no hidden-data line and no added fields; a change that adds a collection does', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     const record = APP_RECORDS['water-counter'];

@@ -23,7 +23,7 @@ import { GroupedRow, GroupedSection } from '../ui/GroupedList';
 import { Icon } from '../ui/Icon';
 import { useSheetBack } from '../ui/Sheet';
 import { Text } from '../ui/Text';
-import { areaHeight, FIELD, fieldBorder, fieldSelection } from '../ui/TextField';
+import { areaHeight, FIELD, fieldBorder } from '../ui/TextField';
 import { useTokens } from '../ui/tokens';
 import { buttonColors, hitSlopFor, makeStyles, MAX_FONT_SCALE, typeStyle } from '../ui/tokens-pure';
 import type { Snapshot } from '../version-store';
@@ -124,7 +124,6 @@ function SendArea({ text, onChangeText, onSend }: Readonly<Pick<WhimSheetProps, 
       ]}
     >
       <KeyboardTextInput
-        {...fieldSelection(t)}
         multiline
         scrollEnabled
         textAlignVertical="center"

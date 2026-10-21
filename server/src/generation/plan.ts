@@ -70,19 +70,19 @@ function shapePlan(value: unknown): PlanParseResult {
   const v = value as Record<string, unknown>;
 
   if (!Array.isArray(v.screens) || !v.screens.every(isScreen)) {
-    return { ok: false, reason: 'The plan\'s "screens" field must be an array of {name, purpose}.' };
+    return { ok: false, reason: 'The plan’s `screens` field must be an array of {name, purpose}.' };
   }
   if (typeof v.initial !== 'string') {
-    return { ok: false, reason: 'The plan\'s "initial" field must be a string.' };
+    return { ok: false, reason: 'The plan’s `initial` field must be a string.' };
   }
   if (!isStringArray(v.state)) {
-    return { ok: false, reason: 'The plan\'s "state" field must be an array of strings.' };
+    return { ok: false, reason: 'The plan’s `state` field must be an array of strings.' };
   }
   if (!isStringArray(v.capabilities)) {
-    return { ok: false, reason: 'The plan\'s "capabilities" field must be an array of strings.' };
+    return { ok: false, reason: 'The plan’s `capabilities` field must be an array of strings.' };
   }
   if (!isStringArray(v.storageKeys)) {
-    return { ok: false, reason: 'The plan\'s "storageKeys" field must be an array of strings.' };
+    return { ok: false, reason: 'The plan’s `storageKeys` field must be an array of strings.' };
   }
 
   return {
@@ -139,7 +139,7 @@ export function validatePlan(plan: Plan, request: GenerateRequest): PlanValidati
   if (!names.includes(plan.initial)) {
     return {
       ok: false,
-      reason: `The initial screen "${plan.initial}" does not name any declared screen (${names.join(', ') || 'none declared'}).`,
+      reason: `The initial screen \`${plan.initial}\` does not name any declared screen (${names.join(', ') || 'none declared'}).`,
     };
   }
 
@@ -154,7 +154,7 @@ export function validatePlan(plan: Plan, request: GenerateRequest): PlanValidati
   if (plan.storageKeys.length > 0 && !plan.capabilities.includes(STORAGE_CAPABILITY)) {
     return {
       ok: false,
-      reason: 'Storage keys are declared but the "storage" capability is not — add it or drop the keys.',
+      reason: 'Storage keys are declared but the `storage` capability is not — add it or drop the keys.',
     };
   }
 
@@ -166,7 +166,7 @@ export function validatePlan(plan: Plan, request: GenerateRequest): PlanValidati
   ) {
     return {
       ok: false,
-      reason: 'This app already has stored data, but the plan drops the "storage" capability.',
+      reason: 'This app already has stored data, but the plan drops the `storage` capability.',
     };
   }
 

@@ -422,7 +422,7 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
   });
 
   await h.test('future frames: a clarify limit reaches the flow as the limit, with no questions', async () => {
-    const limit = { reason: 'Mini-apps can’t fetch live weather.', alternative: 'a packing list you fill in yourself' };
+    const limit = { reason: 'I can’t give an app live weather.', alternative: 'a packing list you fill in yourself' };
     const fetchImpl = (async () => json({ questions: [], limit }, 200)) as typeof fetch;
     const response = await bounded(clarifyPrompt({ ...OPTS, fetchImpl }, 'what to wear today'), 'clarify');
     h.eq(clarifyLimitOf(response), limit, 'the flow reads the reason and the alternative');

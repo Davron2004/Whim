@@ -25,7 +25,6 @@ import { closedDatabases, resetNativeStorage } from './native-storage';
 import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 import { animations, isStep } from './native-reanimated';
 import { TilePlate } from '../../ui/AppTile';
-import { SHELL_PALETTE } from '../theme';
 import { WARM_ANSWER, WARM_PROBE_JS } from '../webview-pool';
 import { RUNTIME_HTML } from '../../../runtime/generated/runtime-html';
 import { SYSCALL_VERSION } from '../../bridge/contract';
@@ -50,7 +49,7 @@ interface Mounted {
   pageShown: () => boolean;
 }
 
-type Style = { backgroundColor?: string; opacity?: number; color?: string; position?: string; top?: number; bottom?: number; left?: number; right?: number };
+type Style = { backgroundColor?: string; opacity?: number; color?: string; position?: string; top?: number; bottom?: number; left?: number; right?: number; height?: number | string; minHeight?: number };
 const flat = (node: TestRenderer.ReactTestInstance): Style => StyleSheet.flatten(node.props.style) as Style;
 
 /** The view that holds the WebViews: the container's own background (the outermost such view). */
@@ -835,7 +834,8 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
         h.ok(layers.length > 0 && layers.every((n) => flat(n).backgroundColor === COLORS.dark.bg), 'what covers the page while it opens is the dark bg');
         h.ok(!container.findAll((n) => typeof n.type === 'string').some((n) => [TINTS.ocean.light, TINTS.ocean.dark].includes(flat(n).backgroundColor ?? '')),
           'and no view is filled with the tint');
-        const light = new Set<string | undefined>(Object.values(SHELL_PALETTE));
+        const dark = new Set<string>(Object.values(COLORS.dark));
+        const light = new Set<string | undefined>(Object.values(COLORS.light).filter((c) => !dark.has(c)));
         await loadEnd();
         await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
         const screen = tree.root.findAll((n) => hostType(n) === 'ScrollView' && textOf(n).includes(COPY.appCrashedBody))[0];
@@ -843,7 +843,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
         const title = tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n) === appCrashedTitle(TIP.name)).at(-1)!;
         h.eq(flat(title).color, COLORS.dark.text, 'with the dark text colour');
         const colours = screen.findAll((n) => typeof n.type === 'string').flatMap((n) => [flat(n).backgroundColor, flat(n).color, (flat(n) as { borderColor?: string }).borderColor]);
-        h.ok(!colours.some((c) => light.has(c)), 'and none of its colours is the light shell palette');
+        h.ok(!colours.some((c) => light.has(c)), 'and none of its colours is a light role the dark scheme does not share');
       }, { tint: 'ocean', icon: 'glass-water' });
     } finally {
       setColorScheme('light');
@@ -867,7 +867,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       h.ok(shown().includes(COPY.appCrashedBody), 'the recovery screen replaces the app');
       h.ok(!shown().includes('SENTINEL'), 'without the raw error text');
       h.ok(webView() == null, 'the failed realm’s WebView is gone');
-      const reload = StyleSheet.flatten(button(tree, COPY.actionReload).props.style) as { backgroundColor?: string; borderColor?: string };
+      const reload = StyleSheet.flatten(button(tree, COPY.actionReload).find((n) => hostType(n) === 'Animated.View').props.style) as { backgroundColor?: string; borderColor?: string };
       h.eq([reload.backgroundColor, reload.borderColor], [COLORS.light.ink, undefined], 'Reload is its primary action, filled ink edge to edge with no ring of another colour');
       await press(button(tree, COPY.actionReload));
       h.ok(webView() != null && webView() !== first, 'Reload mounts a new WebView');
@@ -1123,7 +1123,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
         await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
         const screen = tree.root.findAll((n) => hostType(n) === 'ScrollView' && textOf(n).includes(COPY.appCrashedBody))[0];
         const title = tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n) === appCrashedTitle(TIP.name)).at(-1)!;
-        const retry = flat(button(tree, COPY.actionReload)) as Style & { borderColor?: string };
+        const retry = flat(button(tree, COPY.actionReload).findAll((n) => hostType(n) === 'Animated.View')[0]);
         h.eq([flat(screen).backgroundColor, flat(title).color, retry.backgroundColor], [COLORS.dark.bg, COLORS.dark.text, buttonColors(dark, 'ink', false).fill],
           'the recovery screen that replaces it is still the dark one: bg, text and its primary button');
 
@@ -1291,5 +1291,51 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await press(button(tree, COPY.launchFailedBack));
       h.eq(exits(), 1, 'Back leaves the app');
     });
+  });
+
+  await h.test('mini-app: a launch refused at its delivery keeps the frame it was delivered with, its Back button too, when the phone’s scheme changes', async () => {
+    const conflicting: AppRecord = JSON.parse(JSON.stringify(WATER));
+    conflicting.schemaArtifact!.collections.Drinks.fields.at.type = 'text';
+    try {
+      await withMiniApp(conflicting, async ({ loadEnd, shown, tree }) => {
+        const earlier = createStorageEngine({ appId: WATER.appId, mode: "persistent" });
+        earlier.open(WATER.schemaArtifact!);
+        earlier.close();
+        await loadEnd();
+        h.ok(shown().includes(COPY.launchFailedTitle), 'the launch-failed screen is up');
+        await TestRenderer.act(async () => { setColorScheme('dark'); });
+        const title = tree.root.find((n) => hostType(n) === 'Text' && textOf(n) === COPY.launchFailedTitle);
+        const back = button(tree, COPY.launchFailedBack);
+        const capsule = flat(back.find((n) => hostType(n) === 'Animated.View')).backgroundColor;
+        const label = flat(back.find((n) => hostType(n) === 'Text')).color;
+        h.eq([flat(title).color, capsule, label], [COLORS.light.text, COLORS.light.ink, COLORS.light['on-ink']], 'title and Back drawn in the light frame on a dark phone');
+        h.ok(COLORS.light.ink !== COLORS.dark.ink, 'the two schemes’ inks differ, so the phone’s would be caught');
+      });
+    } finally {
+      setColorScheme('light');
+    }
+  });
+
+  await h.test('mini-app: at 200% text the launch-failed screen’s Back grows with its words — nothing around it has a fixed height', async () => {
+    const conflicting: AppRecord = JSON.parse(JSON.stringify(WATER));
+    conflicting.schemaArtifact!.collections.Drinks.fields.at.type = 'text';
+    windowMetrics.fontScale = 2;
+    try {
+      await withMiniApp(conflicting, async ({ loadEnd, shown, tree }) => {
+        const earlier = createStorageEngine({ appId: WATER.appId, mode: 'persistent' });
+        earlier.open(WATER.schemaArtifact!);
+        earlier.close();
+        await loadEnd();
+        h.ok(shown().includes(COPY.launchFailedTitle), 'setup: the launch-failed screen shows');
+        const back = button(tree, COPY.launchFailedBack);
+        const chain: TestRenderer.ReactTestInstance[] = [...back.findAll((n) => typeof n.type === 'string')];
+        for (let up = back.parent; up && !textOf(up).includes(COPY.launchFailedTitle); up = up.parent) chain.push(up);
+        const fixed = chain.filter((n) => typeof n.type === 'string' && flat(n).height !== undefined).map((n) => `${String(n.type)} height ${String(flat(n).height)}`);
+        h.eq(fixed, [], 'no fixed height between the screen and the label, so 200% words are never clipped');
+        h.ok(back.findAll((n) => typeof n.type === 'string' && Number(flat(n).minHeight) > 0).length > 0, 'the action keeps its size as a minimum');
+      });
+    } finally {
+      windowMetrics.fontScale = 1;
+    }
   });
 }

@@ -1,22 +1,21 @@
 /**
- * whim-prose lexer — the four classes the DEVICE decides, with no model involvement (design D7;
- * app-launcher §"Four Whim Syntax classes are lexed deterministically on the device"):
+ * whim-prose lexer — the four classes the DEVICE decides, with no model involvement
+ * (docs/design/system.md §2.7):
  *
  *   `app`     — a mention of an installed app, matched against the installed-app list
  *   `measure` — anything counted or timed (a number, a duration, a version identifier)
  *   `yours`   — the user's own words, matched against the stored verbatim prompt
- *   `state`   — the fixed three-word status vocabulary, never a synonym
+ *   `state`   — "ready" or "failed", never another status word
  *
  * A pure function of (text, installed apps, stored prompt): same input, same spans, every run.
  * `chg` and `hedge` are NOT lexed here — they come only from the producer's marks.
  */
 
-import { appColor } from '../../../sdk/theme';
 import type { ProseApp, Span, WhimClass } from './types';
 
-/** The fixed status vocabulary. A synonym ("fine", "failed", "pending") is NOT a `state` — the
- *  class means the product's own three words, so lexing near-misses would make the hue lie. */
-export const STATE_VOCABULARY = ['working', 'broken', 'waiting'] as const;
+/** The fixed status vocabulary: the two outcomes the product reports. Any other status word
+ *  ("working", "building", "stopped") is NOT a `state`, so the colour never claims an outcome. */
+export const STATE_VOCABULARY = ['ready', 'failed'] as const;
 
 /**
  * Render priority, lowest number wins. Overlaps are resolved by dropping the LOWER-priority span
@@ -25,8 +24,8 @@ export const STATE_VOCABULARY = ['working', 'broken', 'waiting'] as const;
  *   `yours` — attribution, and exempt from the mark cap, so it can never be crowded out
  *   `app`   — the strongest tie between prose and the grid
  *   `chg`   — the one thing that changed: the point of the sentence
- *   `state` — a status word carries meaning a hue reinforces
- *   `measure` — face-only; the words read fine without it
+ *   `state` — an outcome word carries meaning its colour reinforces
+ *   `measure` — figures only; the words read fine without it
  *   `hedge` — detail that is deliberately not the point
  */
 export const CLASS_PRIORITY: Readonly<Record<WhimClass, number>> = {
@@ -50,14 +49,26 @@ export function sortSpans(spans: readonly Span[]): Span[] {
   );
 }
 
+/** A letter, digit or combining mark in any script: "caf" is inside "café" (precomposed or with a
+ *  combining accent), "таймер" inside "таймеры". The `u` flag's property escapes don't reach the
+ *  device as such: the React Native Babel preset (`@babel/plugin-transform-unicode-regex`) expands
+ *  them into plain ranges at bundle time. */
+const WORD_CHAR = /^[\p{L}\p{N}\p{M}]$/u;
+
 function isWordChar(ch: string | undefined): boolean {
-  return ch !== undefined && /[A-Za-z0-9]/.test(ch);
+  return ch !== undefined && WORD_CHAR.test(ch);
 }
 
 /** True when `[start, end)` is bounded by non-word characters — so "Pour Timer" matches in
- *  "open Pour Timer now" but not inside "Pour Timerish". */
+ *  "open Pour Timer now" but not inside "Pour Timerish". The characters either side are read
+ *  whole, so a letter outside the BMP (a surrogate pair) counts as one. A language that joins
+ *  words without a space has no boundary to find: a Korean particle ("타이머를") or Japanese
+ *  ("タイマーを") makes the prompt part of a longer word, so it isn't matched there — a known limit,
+ *  in the safe direction. */
 function isWholeWord(text: string, start: number, end: number): boolean {
-  return !isWordChar(text[start - 1]) && !isWordChar(text[end]);
+  const before = Array.from(text.slice(Math.max(0, start - 2), start)).at(-1);
+  const after = Array.from(text.slice(end, end + 2))[0];
+  return !isWordChar(before) && !isWordChar(after);
 }
 
 function findAll(text: string, needle: string, caseInsensitive: boolean): number[] {
@@ -74,6 +85,23 @@ function findAll(text: string, needle: string, caseInsensitive: boolean): number
   }
 }
 
+/** Every start of `needle` in `text` that sits on word boundaries at both ends, exact case. */
+function findWholeWords(text: string, needle: string): number[] {
+  if (needle.length === 0) return [];
+  const hits: number[] = [];
+  let from = 0;
+  for (;;) {
+    const at = text.indexOf(needle, from);
+    if (at < 0) return hits;
+    if (isWholeWord(text, at, at + needle.length)) {
+      hits.push(at);
+      from = at + needle.length;
+    } else {
+      from = at + 1;
+    }
+  }
+}
+
 // ── app ───────────────────────────────────────────────────────────────────────
 
 function lexApps(text: string, apps: readonly ProseApp[]): Span[] {
@@ -84,7 +112,7 @@ function lexApps(text: string, apps: readonly ProseApp[]): Span[] {
     for (const start of findAll(text, name, true)) {
       const end = start + name.length;
       if (isWholeWord(text, start, end)) {
-        spans.push({ cls: 'app', start, end, color: app.color ?? appColor(app.name) });
+        spans.push({ cls: 'app', start, end, color: app.color });
       }
     }
   }
@@ -139,12 +167,18 @@ function lexMeasures(text: string): Span[] {
 
 // ── state ─────────────────────────────────────────────────────────────────────
 
+/** A hyphen joins a status word into a compound ("ready-made", "failed-over") that reports no
+ *  outcome, so for `state` it is part of the word, not a boundary. */
+function isStateWord(text: string, start: number, end: number): boolean {
+  return isWholeWord(text, start, end) && text[start - 1] !== '-' && text[end] !== '-';
+}
+
 function lexStates(text: string): Span[] {
   const spans: Span[] = [];
   for (const word of STATE_VOCABULARY) {
     for (const start of findAll(text, word, true)) {
       const end = start + word.length;
-      if (isWholeWord(text, start, end)) spans.push({ cls: 'state', start, end });
+      if (isStateWord(text, start, end)) spans.push({ cls: 'state', start, end });
     }
   }
   return spans;
@@ -186,29 +220,51 @@ function tightenedRange(text: string, start: number, end: number): [number, numb
   return [from, to];
 }
 
+/** `text` lowercased letter by letter, keeping its length: a letter whose lowercase is longer
+ *  (`İ`) stays as it is, so every index into the folded text is the same index into `text`. */
+function foldCase(text: string): string {
+  let folded = '';
+  for (const ch of text) {
+    const lower = ch.toLowerCase();
+    folded += lower.length === ch.length ? lower : ch;
+  }
+  return folded;
+}
+
 /**
- * `yours` is MATCHED, never reconstructed. Two exact rules, both case-sensitive:
- *   1. the stored prompt appearing verbatim in the text (a history row whose headline IS the
- *      user's prompt), and
- *   2. a quoted run whose contents are an exact substring of the stored prompt.
+ * `yours` is MATCHED, never reconstructed. Two exact rules:
+ *   1. the stored prompt appearing verbatim in the text as whole words (a history row whose
+ *      headline IS the user's prompt): in any case when it is two words or more (a keyboard
+ *      capitalises the prompt's first letter, a headline may not), in its own case when it is one
+ *      word, as a one-word quote is, so a prompt "timer" doesn't claim a "Timer" label or "timers";
+ *   2. a quoted run whose contents are an exact substring of the stored prompt: in any case when
+ *      the run is two words or more (a summary quoting the prompt mid-sentence lowercases it), in
+ *      the prompt's own case and as a whole word of it when it is one word — a capitalised one-word
+ *      quote is far more often a label of the app ("Done", "Add") than the person's word, a prompt
+ *      holding that word in lowercase doesn't make it theirs, and “do” is not a word of "undo".
  *
  * A paraphrase matches neither and therefore carries no mark — the deliberate failure direction,
- * because the class is attribution and attributing a paraphrase to the user is a lie.
+ * because the class is attribution and attributing a paraphrase to the user is a lie. The spans
+ * index the text as written, so it renders letter for letter as the producer wrote it.
  */
 function lexYours(text: string, storedPrompt: string | null | undefined): Span[] {
-  const prompt = (storedPrompt ?? '').trim();
+  const asTyped = (storedPrompt ?? '').trim();
+  const prompt = foldCase(asTyped);
   if (prompt.length < 3) return [];
+  const folded = foldCase(text);
 
   const spans: Span[] = [];
-  for (const start of findAll(text, prompt, false)) {
+  const oneWord = !/\s/.test(asTyped);
+  for (const start of findWholeWords(oneWord ? text : folded, oneWord ? asTyped : prompt)) {
     spans.push({ cls: 'yours', start, end: start + prompt.length });
   }
 
   for (const [innerStart, innerEnd] of quotedRanges(text)) {
     const [start, end] = tightenedRange(text, innerStart, innerEnd);
-    if (end > start && prompt.includes(text.slice(start, end))) {
-      spans.push({ cls: 'yours', start, end });
-    }
+    if (end <= start) continue;
+    const quote = text.slice(start, end);
+    const theirs = /\s/.test(quote) ? prompt.includes(folded.slice(start, end)) : findWholeWords(asTyped, quote).length > 0;
+    if (theirs) spans.push({ cls: 'yours', start, end });
   }
   return spans;
 }

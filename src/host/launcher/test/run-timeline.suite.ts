@@ -145,7 +145,7 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     h.eq(timelineGrowthLine(910), 'Wrote 910 characters', 'and the parameter defaults to that same case');
     h.eq(
       timelineGrowthLine(910, 4_200),
-      'Wrote 910 characters after thinking through 4200 characters',
+      'Wrote 910 characters after thinking through 4,200 characters',
       'a run that thought gets a second clause naming how much',
     );
     h.eq(timelineGrowthLine(0, 1), 'Wrote 0 characters after thinking through 1 character', 'singular thinking count reads correctly');

@@ -2,7 +2,7 @@
  * Prompt-flow wiring (shell-redesign-v2, task D11): the pure and injectable pieces between the
  * `2a` screens and the outside world — the server-address store, the `POST /v1/clarify` and
  * `POST /v1/rewrite` calls (against an injected `fetchImpl`, no HTTP server), the request builder's
- * clarification threading, the per-step request slots, and the highlighting flag's store. How the
+ * clarification threading and the per-step request slots. How the
  * rendered shell uses them is in `prompt-flow-ui.suite.tsx` and `attempt-lifecycle-ui.suite.tsx`.
  */
 
@@ -25,7 +25,6 @@ import type { ConsentedClientOptions } from '../generation-client';
 import { buildGenerateRequest } from '../generation-request';
 import { isClarifySkip } from '../prompt-flow';
 import { FlowRequests, onlyOnStep } from '../flow-request';
-import { loadHighlighting, saveHighlighting } from '../highlighting';
 import type { StoreAccess } from '../store-access';
 import { grantedOptions } from './client-fixtures';
 
@@ -332,48 +331,4 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.ok(applied(settings) === settings, 'a rewrite that resolves after the plan step is gone is discarded');
     h.eq(applied({ kind: 'plan' }).kind, 'plan-with-rows', 'and still applies while the plan step is current');
   });
-
-  // ── highlighting.ts: real behavior against a fake KVBackend (pattern: server-address above) ──
-
-  await h.test('highlighting: default is ON when the key was never set', () => {
-    const kv = new MapKVBackend();
-    h.eq(loadHighlighting(kv), true, 'an absent key must resolve to ON');
-  });
-
-  await h.test('highlighting: save-off then load round-trips to off, and back on again', () => {
-    const kv = new MapKVBackend();
-    saveHighlighting(kv, false);
-    h.eq(loadHighlighting(kv), false, 'saved OFF must read back OFF');
-    saveHighlighting(kv, true);
-    h.eq(loadHighlighting(kv), true, 'saved ON must read back ON');
-  });
-
-  await h.test('highlighting: a corrupt stored value defaults to ON, never throws', () => {
-    const kv = new MapKVBackend();
-    kv.set('highlighting', 'not-a-flag');
-    let threw = false;
-    let result: boolean | undefined;
-    try {
-      result = loadHighlighting(kv);
-      // eslint-disable-next-line no-restricted-syntax -- intentional: the assertion IS "did it throw"; the thrown value is deliberately discarded and h.ok below reports the outcome
-    } catch {
-      threw = true;
-    }
-    h.ok(!threw, 'loadHighlighting must never throw on a corrupt stored value');
-    h.eq(result, true, 'only the literal "0" reads as OFF — anything else, corrupt included, defaults ON');
-  });
-
-  await h.test('highlighting: never throws on a KVBackend returning null', () => {
-    const kv = new MapKVBackend();
-    const nullish = { ...kv, getString: () => null } as unknown as MapKVBackend;
-    let threw = false;
-    try {
-      loadHighlighting(nullish);
-      // eslint-disable-next-line no-restricted-syntax -- intentional: the assertion IS "did it throw"; the thrown value is deliberately discarded and h.ok below reports the outcome
-    } catch {
-      threw = true;
-    }
-    h.ok(!threw, 'loadHighlighting must never throw on a null read');
-  });
-
 }

@@ -1,4 +1,6 @@
 # Unfilmed prep: delete ONE non-EXAMPLE tile named by env TILE (index IDX). Run repeatedly.
+# Delete acts at once and offers Undo on a "<name> deleted" toast; the delete settles when the
+# toast ends (10 s), so the next run starts from a grid without it.
 appId: com.anycognition.whim
 ---
 - longPressOn:
@@ -7,8 +9,9 @@ appId: com.anycognition.whim
 - waitForAnimationToEnd
 - tapOn: "Delete"
 - extendedWaitUntil:
-    visible: "Delete this app\\?"
+    visible: "${TILE} deleted"
     timeout: 8000
-- tapOn: "DELETE"
-- waitForAnimationToEnd
+- extendedWaitUntil:
+    notVisible: "${TILE} deleted"
+    timeout: 15000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 1500, optional: true }

@@ -1,23 +1,24 @@
 /**
  * whim-prose renderer — ONE shared renderer for every piece of machine-written prose on the shell
- * surface (design D7; app-launcher §"Shell prose renders through one shared Whim Syntax
- * renderer"). Per-screen highlighting is the failure this module exists to prevent: the rule set
- * IS the feature, and five copies of it diverge on the first deadline.
+ * surface (docs/design/system.md §2.7; app-launcher "Shell prose renders through one Whim Syntax
+ * renderer with simplified channels"). Per-screen marking is the failure this module exists to
+ * prevent: the rule set IS the feature, and five copies of it diverge on the first deadline.
  *
  * The discipline rules are enforced HERE, not merely prompted for, because a prompt is not a
  * guarantee and the failure mode is invisible:
  *
- *   1. four system marks per sentence, hard cap
- *   2. `yours` is exempt from that cap, and is the only span carrying two channels
- *   3. one channel per span (by construction — a span has exactly one class)
- *   4. one colour per sentence
- *   7. agent prose only — a string from the copy table is an OFFERING and never marked
+ *   1. four system marks per sentence, hard cap; `yours` is exempt
+ *   2. one channel per span (by construction — a span has exactly one class)
+ *   3. one colour per sentence
+ *   4. Whim's prose only — a string from the copy table is a label, button or heading and is
+ *      never marked
  *
  * A mark that a cap rejects is dropped WHOLE, to flat text. Nothing is ever truncated mid-span:
- * concatenating the returned segments always reproduces the input text exactly.
+ * concatenating the returned segments always reproduces the input text exactly, so every string
+ * reads the same rendered flat.
  */
 
-import { SHELL_COLORS, STATUS_COLORS, STATUS_COLORS_ON_INK } from '../../../sdk/theme';
+import { COLORS, type ColorRole } from '../../../design/tokens';
 import { COPY } from '../../launcher/copy';
 import { lexProse, sortSpans } from './lex';
 import type { Mark, ProseApp, ProseSegment, Span, WhimClass } from './types';
@@ -25,9 +26,12 @@ import type { Mark, ProseApp, ProseSegment, Span, WhimClass } from './types';
 /** Rule 1: above four marks readers stop trusting marks and read everything — worse than none. */
 export const MAX_SYSTEM_MARKS_PER_SENTENCE = 4;
 
-/** The classes that spend the sentence's one colour. `hedge`'s `faint` grey is de-emphasis — a
- *  reverse highlight, not a hue competing for attention — so it does not spend it. */
-const COLOURED_CLASSES: ReadonlySet<WhimClass> = new Set<WhimClass>(['yours', 'app', 'state']);
+/** The classes that spend the sentence's one colour. `yours` is in `text` and `hedge` in
+ *  `text-2`, the prose's own neutral roles, so neither competes for it. */
+const COLOURED_CLASSES: ReadonlySet<WhimClass> = new Set<WhimClass>(['app', 'state']);
+
+/** The colour roles for the phone's scheme, as `useTokens().colors` gives them. */
+export type ProseColors = Readonly<Record<ColorRole, string>>;
 
 export interface RenderProseOptions {
   /** The installed apps, for the `app` class. */
@@ -36,16 +40,14 @@ export interface RenderProseOptions {
   storedPrompt?: string | null;
   /** Producer-supplied `chg`/`hedge` marks (the run summary's). Never inferred on device. */
   marks?: readonly Mark[];
-  /** The persisted off-switch (`loadHighlighting`). `false` renders everything flat. */
-  highlighting?: boolean;
   /** `true` when a status indicator already sits beside this prose — `state` is then suppressed,
    *  because the same status said twice reads as two statuses. */
   statusIndicatorAdjacent?: boolean;
-  /** `true` on an ink background: colours resolve to their on-ink forms. */
-  onInk?: boolean;
+  /** The colour roles to resolve `yours`, `state` and `hedge` from (default: the light roles). */
+  colors?: ProseColors;
 }
 
-/** Every string the copy table offers. Rule 7: labels, buttons, settings and headings are what
+/** Every string the copy table offers. Rule 4: labels, buttons, settings and headings are what
  *  the product is OFFERING, not what it is TELLING you, so they are never marked — enforced here
  *  rather than trusted to each screen. */
 const OFFERING_STRINGS: ReadonlySet<string> = new Set(
@@ -102,9 +104,9 @@ function resolveOverlaps(spans: readonly Span[]): Span[] {
   return kept;
 }
 
-/** Rule 4 then rule 1, per sentence, in that order — a coloured span the colour rule rejects
+/** Rule 3 then rule 1, per sentence, in that order — a coloured span the colour rule rejects
  *  frees room under the mark cap rather than consuming it. */
-function applySentenceCaps(text: string, spans: readonly Span[], onInk: boolean): Span[] {
+function applySentenceCaps(text: string, spans: readonly Span[], colors: ProseColors): Span[] {
   const starts = sentenceStarts(text);
   const colourOf = new Map<number, string>();
   const systemCount = new Map<number, number>();
@@ -114,7 +116,7 @@ function applySentenceCaps(text: string, spans: readonly Span[], onInk: boolean)
     const sentence = sentenceIndexOf(starts, span.start);
 
     if (COLOURED_CLASSES.has(span.cls)) {
-      const colour = resolveColor(text, span, onInk) ?? '';
+      const colour = resolveColor(text, span, colors) ?? '';
       const taken = colourOf.get(sentence);
       if (taken !== undefined && taken !== colour) continue;
       colourOf.set(sentence, colour);
@@ -134,21 +136,16 @@ function applySentenceCaps(text: string, spans: readonly Span[], onInk: boolean)
 
 // ── colour ────────────────────────────────────────────────────────────────────
 
-function resolveColor(text: string, span: Span, onInk: boolean): string | undefined {
+function resolveColor(text: string, span: Span, colors: ProseColors): string | undefined {
   switch (span.cls) {
     case 'app':
       return span.color;
     case 'yours':
-      return onInk ? SHELL_COLORS.yoursOnDark : SHELL_COLORS.yours;
-    case 'state': {
-      const table = onInk ? STATUS_COLORS_ON_INK : STATUS_COLORS;
-      const word = text.slice(span.start, span.end).toLowerCase();
-      if (word === 'broken') return table.broken;
-      if (word === 'waiting') return table.waiting;
-      return table.working;
-    }
+      return colors.text;
+    case 'state':
+      return text.slice(span.start, span.end).toLowerCase() === 'failed' ? colors['danger-text'] : colors['positive-text'];
     case 'hedge':
-      return SHELL_COLORS.faint;
+      return colors['text-2'];
     default:
       return undefined;
   }
@@ -175,12 +172,12 @@ function validMarks(marks: readonly Mark[] | undefined, length: number): Span[] 
 
 // ── the renderer ──────────────────────────────────────────────────────────────
 
-function toSegments(text: string, spans: readonly Span[], onInk: boolean): ProseSegment[] {
+function toSegments(text: string, spans: readonly Span[], colors: ProseColors): ProseSegment[] {
   const segments: ProseSegment[] = [];
   let at = 0;
   for (const span of spans) {
     if (span.start > at) segments.push({ text: text.slice(at, span.start), cls: null });
-    const color = resolveColor(text, span, onInk);
+    const color = resolveColor(text, span, colors);
     segments.push({ text: text.slice(span.start, span.end), cls: span.cls, ...(color ? { color } : {}) });
     at = span.end;
   }
@@ -194,21 +191,19 @@ function toSegments(text: string, spans: readonly Span[], onInk: boolean): Prose
  */
 export function renderProse(text: string, options: RenderProseOptions = {}): ProseSegment[] {
   if (text.length === 0) return [];
+  if (isOffering(text)) return [{ text, cls: null }];
 
-  const highlighting = options.highlighting ?? true;
-  if (!highlighting || isOffering(text)) return [{ text, cls: null }];
-
-  const onInk = options.onInk ?? false;
+  const colors = options.colors ?? COLORS.light;
   const lexed = lexProse(text, options.apps ?? [], options.storedPrompt);
   const candidates = [...lexed, ...validMarks(options.marks, text.length)].filter(
     (span) => !(options.statusIndicatorAdjacent === true && span.cls === 'state'),
   );
 
-  return toSegments(text, applySentenceCaps(text, resolveOverlaps(candidates), onInk), onInk);
+  return toSegments(text, applySentenceCaps(text, resolveOverlaps(candidates), colors), colors);
 }
 
-/** The flat form of a piece of prose — every mark removed, the words untouched. Rule 5's test
- *  obligation ("it must survive being switched off") is exactly this equalling the input. */
+/** The flat form of a piece of prose — every mark removed, the words untouched. "Every string
+ *  reads unambiguously rendered flat" is exactly this equalling the input. */
 export function flattenProse(segments: readonly ProseSegment[]): string {
   return segments.map((segment) => segment.text).join('');
 }

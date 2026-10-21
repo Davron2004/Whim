@@ -34,7 +34,7 @@ function offAllowlistDiagnostic(sourceFile: ts.SourceFile, node: ts.Node, specif
   return importRejectionDiagnostic(sourceFile, node, {
     symbol: specifier,
     message: `Import specifier "${specifier}" is not on the allowlist.`,
-    hint: `Only "import ... from 'vc-sdk'" is allowed — replace "${specifier}" with 'vc-sdk'.`,
+    hint: `Only \`import ... from 'vc-sdk'\` is allowed — replace \`${specifier}\` with \`vc-sdk\`.`,
   });
 }
 
@@ -42,7 +42,7 @@ function requireDiagnostic(sourceFile: ts.SourceFile, node: ts.Node): Diagnostic
   return importRejectionDiagnostic(sourceFile, node, {
     symbol: 'require',
     message: 'require(...) is not allowed.',
-    hint: "Use a static \"import ... from 'vc-sdk'\" instead of require(...).",
+    hint: "Use a static `import ... from 'vc-sdk'` instead of `require(...)`.",
   });
 }
 
@@ -50,7 +50,7 @@ function dynamicImportDiagnostic(sourceFile: ts.SourceFile, node: ts.Node): Diag
   return importRejectionDiagnostic(sourceFile, node, {
     symbol: 'import()',
     message: 'Dynamic import() is not allowed.',
-    hint: "Use a static \"import ... from 'vc-sdk'\" instead of import().",
+    hint: "Use a static `import ... from 'vc-sdk'` instead of `import()`.",
   });
 }
 

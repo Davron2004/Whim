@@ -38,9 +38,9 @@ import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 import type { ServiceRefusal } from './service-refusal';
 import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } from './report-send';
 import type { ReportPhase, SendOutcome } from './report-send';
-import { useNoticeWindowClear, useRetryGate } from './ServiceNotice';
+import { useNoticeWindowClear, useRetryGate } from './refusal-window';
 import KeyboardShell from './KeyboardShell';
-import { COPY, reportCodeLine, reportCodeSizeLabel, reportRecipientLine, reportThanksLine } from './copy';
+import { COPY, formatClockTime, reportCodeLine, reportCodeSizeLabel, reportRecipientLine, reportThanksLine } from './copy';
 import { RELEASE } from './release-config';
 import { sameServer, serverLabel } from './server-address';
 import { privacyPolicyUrl, type LegalLanguage } from './legal-language';
@@ -112,10 +112,6 @@ async function sendClassified(options: ClientOptions, request: ReportRequest): P
     log.warn(CHANNELS.gen, 'report failed', { ...reportLogFields(request, sendFailureOutcome(err)) });
     return { kind: 'settled', outcome: { kind: 'failed', notice: { hint: COPY.reportSendFailedGeneric, tone: 'neutral' } } };
   }
-}
-
-function formatLocalTime(date: Date): string {
-  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
 }
 
 export interface ReportScreenProps {
@@ -310,7 +306,7 @@ function ReportForm({
         <Notice
           message={notice.hint}
           tone={notice.tone}
-          countdown={notice.retryAt !== undefined ? retryLine(notice.retryAt, Date.now(), formatLocalTime) : undefined}
+          countdown={notice.retryAt !== undefined ? retryLine(notice.retryAt, Date.now(), formatClockTime) : undefined}
         />
       )}
     </KeyboardShell>

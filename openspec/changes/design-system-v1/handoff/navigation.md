@@ -51,9 +51,8 @@ function stackFor(screen: Screen): readonly StackScreen[] | null;  // root first
 | report | `stackFor(from)` + `report` | "Report a problem" | `from` |
 
 - Push = `setScreen(next)`; pop = the entry's `onLeave`. To add a pushed screen: a Screen member, a branch
-  in `stackFor`, `stackTitle`, `leaveFor`, `renderStackScreen`, and `schemeFollowing` if it draws tokens.
-- `schemeFollowing(top)`: home/settings/advanced/report/history draw `useTokens()` (header + `StatusBar` =
-  `t.barStyle`); consent still draws `SHELL_PALETTE` and `dark-content`. Flip a kind when its screen moves.
+  in `stackFor`, `stackTitle`, `leaveFor`, `renderStackScreen`.
+- Every stack entry's header and the `StatusBar` follow the live `useTokens()` (`t.colors.bg`/`text`, `t.barStyle`).
 - AI features row always opens review mode. Review's "Turn on AI features" runs the legal flow with
   continuation `{ kind: 'settings' }`; its consent step grants directly (`reviewedConsent`, #104).
 - Root `SafeAreaView` edges: `frameEdgesFor(kind, onNativeStack)` → `[]` on the stack.

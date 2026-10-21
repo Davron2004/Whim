@@ -289,6 +289,30 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('ready: a change delivered with the sheet open says the app opens with the change, never that it is on the home screen; a new app says it is', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree }) => {
+      await waitFor(() => onHome(tree) && hasInstalled(tree, 'Tip Splitter'), 'the example apps');
+      const app = (home(tree).props.apps as InstalledApp[]).find((a) => a.name === 'Tip Splitter')!;
+      await startChange(tree, app, 'Add a tip slider');
+      await waitFor(() => streams.length === 1, 'the change’s stream');
+      streams[0].push(resultEvent('Tip Splitter'));
+      streams[0].end();
+      await waitFor(() => on(tree, ReadyPage), 'the change to deliver');
+      const changed = textOf(tree.root.findByType(ReadyPage));
+      h.ok(changed.includes(COPY.readyChanged) && !changed.includes(COPY.readyOnHome), `the change’s Ready page: ${changed}`);
+      await press(button(tree, COPY.readyDone));
+      await waitFor(() => onHome(tree), 'Home');
+      await startBuild(tree, 'A tea timer');
+      await waitFor(() => streams.length === 2, 'the new app’s stream');
+      streams[1].push(resultEvent('Tea Timer'));
+      streams[1].end();
+      await waitFor(() => on(tree, ReadyPage), 'the new app to deliver');
+      const made = textOf(tree.root.findByType(ReadyPage));
+      h.ok(made.includes(COPY.readyOnHome) && !made.includes(COPY.readyChanged), `the new app’s Ready page: ${made}`);
+    });
+  });
+
   await h.test('ghosts: an app link arriving on the Making page leaves the run running, and its tile reopens the run’s page', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     await withLauncher({ server: streamingServer(streams) }, async ({ tree, sent }) => {

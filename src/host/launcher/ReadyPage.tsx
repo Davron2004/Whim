@@ -1,7 +1,8 @@
 /**
  * ReadyPage — the making sheet's last page when a run delivers with the sheet open (system.md §9
  * Ready; `prompt-flow` "The Ready page opens the app or returns home"): the app's 96 pt tile, its
- * name, the person's words, "It's on your home screen.", `Open it` in the app's own tint and `Done`.
+ * name, the person's words, "It's on your home screen." (after a change, which put nothing new
+ * there, "It opens with your change."), `Open it` in the app's own tint and `Done`.
  * The app does not run until it is opened: there is no preview. Android back is the sheet's close,
  * which is `Done`, so the page registers nothing with the sheet.
  */
@@ -23,6 +24,8 @@ export interface ReadyPageProps {
   app: InstalledApp;
   /** The person's words, quoted under the name. */
   words: string;
+  /** The run changed an app already on the home screen, rather than making one. */
+  changed: boolean;
   /** Opens the app from its tile. */
   onOpen: () => void;
   /** Back to Home; nothing is launched. */
@@ -36,7 +39,7 @@ const styles = makeStyles(() => ({
   footer: { paddingHorizontal: LAYOUT.gutter, paddingTop: LAYOUT.actionAreaTop, paddingBottom: LAYOUT.actionAreaBottom, gap: SPACE[3] },
 }));
 
-export default function ReadyPage({ app, words, onOpen, onDone }: Readonly<ReadyPageProps>) {
+export default function ReadyPage({ app, words, changed, onOpen, onDone }: Readonly<ReadyPageProps>) {
   const s = styles(useTokens());
   const tile = tileOf(app);
   return (
@@ -56,7 +59,7 @@ export default function ReadyPage({ app, words, onOpen, onDone }: Readonly<Ready
       </Text>
       <Text type="title3" italic style={s.centered}>{quotedWords(words)}</Text>
       <Text type="callout" color="text-2" style={s.centered}>
-        {COPY.readyOnHome}
+        {changed ? COPY.readyChanged : COPY.readyOnHome}
       </Text>
     </KeyboardShell>
   );

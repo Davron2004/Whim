@@ -503,7 +503,7 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
   // ── per-repo serialization: a fork and its original are ONE repo ────────────────────────────
   // A repo's HEAD is a single shared mutable cursor and `ensureLineage` is a check-then-act across
   // an await, while the launcher's busy gate (app-busy.ts) is keyed by LAUNCHER id — which a fork
-  // and its original do not share. So "Prompt again" on a fork (an un-awaited read on the fork)
+  // and its original do not share. So "Change it" on a fork (an un-awaited read on the fork)
   // racing "Open" on the original used to leave the loser reading the other lineage's snapshot:
   // wrong data, silently. `StoreAccess.serial` makes switch-then-read atomic per repo.
 
@@ -520,7 +520,7 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
 
     let aRead: string | undefined;
     let bRead: string | undefined;
-    // A: "Prompt again" on the FORK — fired without awaiting, exactly as the prompt flow does.
+    // A: "Change it" on the FORK — fired without awaiting, exactly as the prompt flow does.
     const pA = access.activeWords(fork).then(v => { aRead = v.prompt; });
     // Wait for A's checkout to have actually moved the repo HEAD onto the fork lineage. That is
     // the window the bug lives in: A has switched but not yet read, and B's own lineage check is

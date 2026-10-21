@@ -23,11 +23,11 @@ function buildFailureDiagnostic(err: unknown): Diagnostic {
   if (isBuildFailure(err) && err.errors.length > 0) {
     const first = err.errors[0];
     const where = first.location ? ` (${first.location.file}:${first.location.line}:${first.location.column})` : '';
-    const hint = `Fix the build error before this candidate can run: ${first.text}${where}.`;
+    const hint = `Fix the compile error before this candidate can run: ${first.text}${where}.`;
     return { kind: 'build_failure', severity: 'error', message: hint, hint };
   }
   const text = err instanceof Error ? err.message : String(err);
-  const hint = `Fix the build error before this candidate can run: ${text}.`;
+  const hint = `Fix the compile error before this candidate can run: ${text}.`;
   return { kind: 'build_failure', severity: 'error', message: hint, hint };
 }
 

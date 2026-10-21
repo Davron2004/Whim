@@ -1,5 +1,5 @@
 /**
- * ServiceNotice — the live timing of a service refusal's notice (design D11/D12; spec
+ * refusal-window — the live timing of a service refusal's notice (design D11/D12; spec
  * `service-refusals`): the gate that holds a refused action until its window ends, and the clear
  * that drops a sender notice when it does. The notice itself is drawn by `FlowNoticeBlock` (the
  * shell's `Notice`).

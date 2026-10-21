@@ -32,7 +32,7 @@ export function rubberBand(overshoot, dimension): number;    // coefficient 0.55
 export function releaseCommits(position, velocity, dimension): boolean;  // v >= 0 && projected > dim/2
 export function dragPosition(start, translation, dimension): number;
 ```
-- `launcher/SheetModal.tsx` (Report's form) takes turns through `OverlayModal` too. `Sheet`'s frame is keyed by `fontScale`: its content, nested overlays included, is rebuilt on a live size change.
+- Report's form is a pushed screen (`ReportScreen`), or a page in the Whim sheet over a running app, never a sheet of its own. `Sheet`'s frame is keyed by `fontScale`: its content, nested overlays included, is rebuilt on a live size change.
 - Mounted through its exit. Opens/closes `smooth`; drag release → `fling` with velocity. Reduce Motion:
   160/120 ms cross-fade, drag still tracks. Closes via scrim (sibling, hidden from a11y), close `x`,
   `onRequestClose` (Android back; hardware Escape arrives as back), `onAccessibilityEscape`, drag past commit.

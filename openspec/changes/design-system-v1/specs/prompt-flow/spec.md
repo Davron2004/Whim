@@ -129,12 +129,17 @@ Closing the sheet (close button, back, drag or scrim) SHALL never cancel a run: 
 
 ### Requirement: The Ready page opens the app or returns home
 
-When a run delivers with the sheet open, the Ready page SHALL show the 96 pt tile, the app's name, the person's words, "It's on your home screen.", `Open it` in the app's tint and `Done` (plain). `Open it` SHALL launch the app; `Done` SHALL return to Home. When it delivers with the sheet closed, Home SHALL show the toast "<name> is ready · Open", or over a running app the orb SHALL get its `ember` dot. Ready SHALL NOT run the app before it is opened.
+When a run delivers with the sheet open, the Ready page SHALL show the 96 pt tile, the app's name, the person's words, "It's on your home screen." (after a change, "It opens with your change."), `Open it` in the app's tint and `Done` (plain). `Open it` SHALL launch the app; `Done` SHALL return to Home. When it delivers with the sheet closed, Home SHALL show the toast "<name> is ready · Open", or over a running app the orb SHALL get its `ember` dot. Ready SHALL NOT run the app before it is opened.
 
 #### Scenario: Open launches the app
 
 - **WHEN** the user takes `Open it`
 - **THEN** the delivered app opens from its tile
+
+#### Scenario: Ready after a change
+
+- **WHEN** a change to an app on the home screen delivers with the sheet open
+- **THEN** the Ready page reads "It opens with your change." in place of "It's on your home screen."
 
 ### Requirement: Failure is shown by kind, honestly, never as a crash
 

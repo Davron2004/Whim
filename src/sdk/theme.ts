@@ -125,7 +125,6 @@ function frozen(theme: WhimTheme): WhimTheme {
  *  theme (or an invalid one) is delivered. Frozen. */
 export const DEFAULT_THEME: WhimTheme = frozen(sanitizeTheme(undefined));
 
-// The shell design tokens (colour, status, radius, spacing, motion, type, `appColor`) live in
-// the sibling module below and are re-exported here so every downstream file keeps importing
-// from one surface (`../../sdk/theme`), same as before this redesign.
+// `appColor` and the v2 hues it avoids live in the sibling module below, re-exported here so its
+// readers import from one surface (`../../sdk/theme`).
 export * from './design-tokens';

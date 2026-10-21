@@ -22,7 +22,7 @@ The working directory is `$WHIM_IOS_DRIVER_DIR`, default `$TMPDIR/whim-ios-drive
 D=scripts/ios-ui-driver/driver.sh
 $D build <udid>        # once, and again after editing the Swift
 $D start <udid>        # detached; returns when the driver answers
-$D cmd tapText "Describe an app…"
+$D cmd tapText "Make an app…"
 $D cmd labels
 $D shot <udid> out.png
 $D stop                # before deleting the simulator

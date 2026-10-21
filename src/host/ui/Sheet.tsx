@@ -189,12 +189,27 @@ function HeaderIconButton({ icon, label, onPress }: Readonly<{ icon: IconName; l
 const styles = makeStyles((t) => ({
   frame: { flex: 1, justifyContent: 'flex-end' as const },
   scrim: { position: 'absolute' as const, top: 0, right: 0, bottom: 0, left: 0, backgroundColor: t.colors.scrim },
+  // The card paints the sheet to its edges and has no border: on Android React Native shrinks a
+  // rounded view's background by 0.8 px on every side once it has any border, so a top border here
+  // left a 1 px line of the scrim and shadow along the card's sides and bottom. The 1 px top
+  // highlight is its own line over the card, and the card keeps its 1 px of room for it.
   card: {
     backgroundColor: t.colors.sheet,
     borderTopLeftRadius: RADII.xl.radius,
     borderTopRightRadius: RADII.xl.radius,
     borderCurve: 'continuous' as const,
     boxShadow: t.shadows.raised,
+    paddingTop: 1,
+  },
+  highlight: {
+    position: 'absolute' as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    height: RADII.xl.radius,
+    borderTopLeftRadius: RADII.xl.radius,
+    borderTopRightRadius: RADII.xl.radius,
+    borderCurve: 'continuous' as const,
     borderTopWidth: 1,
     borderColor: t.topHighlight,
   },
@@ -442,6 +457,7 @@ function SheetFrame({ closing, motion, reduceMotion, title, detent, closeLabel, 
         accessibilityViewIsModal
         onAccessibilityEscape={onClose}
       >
+        <View style={s.highlight} pointerEvents="none" />
         <GestureDetector gesture={drag}>
           <View style={s.header}>
             <View style={s.grabber} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" />

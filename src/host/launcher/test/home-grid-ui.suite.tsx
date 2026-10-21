@@ -590,7 +590,7 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     } finally { await unmountScreen(tree); }
   });
 
-  await h.test('composer bar: “Describe an app…” until a description is in progress, then the words; either way it opens the describe sheet', async () => {
+  await h.test('composer bar: “Make an app…” until a description is in progress, then the words; either way it opens the describe sheet', async () => {
     await resetPhone();
     let opened = 0;
     const tree = await renderHome({ apps: [TIMER], onCreate: () => { opened += 1; } });

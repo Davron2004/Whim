@@ -26,7 +26,7 @@ import type { StoreAccess } from '../store-access';
 import { testAppInfo } from './client-fixtures';
 import { COLORS, LAYOUT, ON_TINT, SPRINGS, TIMINGS, TINTS, type ColorRole, type Scheme, type TypeToken } from '../../../design/tokens';
 import { ICON_PATHS } from '../../../design/icons/paths';
-import type { ButtonVariant } from '../../ui/tokens-pure';
+import { resolveTokens, type ButtonVariant } from '../../ui/tokens-pure';
 
 type Node = TestRenderer.ReactTestInstance;
 type Style = Record<string, unknown>;
@@ -141,6 +141,23 @@ export async function runShellControlsUiTests(h: Harness): Promise<void> {
           wantLabel = ON_TINT[scheme];
         }
         h.eq([capsule.backgroundColor, text.color], [wantFill, wantLabel], `${scheme} ${variant}`);
+        await unmountScreen(tree);
+      }
+    }
+    await resetPhone();
+  });
+
+  await h.test('a Button given a frame’s tokens draws in that scheme, not the phone’s, light over dark and dark over light', async () => {
+    const documented = documentedVariants();
+    for (const [phone, frame] of [['light', 'dark'], ['dark', 'light']] as [Scheme, Scheme][]) {
+      await act(() => setColorScheme(phone));
+      const tokens = resolveTokens({ scheme: frame, fontScale: 1, platform: Platform.OS, reduceMotion: false, increaseContrast: false });
+      for (const variant of ['ink', 'plain-ember', 'plain'] as ButtonVariant[]) {
+        const [fill, label] = documented.get(variant)!;
+        const tree = await renderScreen(<Button tokens={tokens} label="Reload" variant={variant} onPress={() => {}} />);
+        const want = [fill === 'none' ? 'transparent' : COLORS[frame][fill as ColorRole], COLORS[frame][label as ColorRole]];
+        h.ok(COLORS[frame][label as ColorRole] !== COLORS[phone][label as ColorRole], `${variant}'s label differs between the schemes, so the check can tell them apart`);
+        h.eq([style(one(tree, 'Animated.View')).backgroundColor, style(one(tree, 'Text')).color], want, `${frame} ${variant} on a ${phone} phone`);
         await unmountScreen(tree);
       }
     }
