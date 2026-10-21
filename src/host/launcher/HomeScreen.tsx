@@ -112,6 +112,8 @@ export interface HomeScreenProps {
    *  the grid is simply there. */
   firstAppearance?: boolean;
   onAppeared?: () => void;
+  /** The native launch screen still covers Home: a first appearance waits until it has gone. */
+  covered?: boolean;
 }
 
 const styles = makeStyles((t) => ({
@@ -189,17 +191,24 @@ function useRowLabels(cells: readonly GridCell[], layout: GridLayout, fontScale:
   return { lineCounts: rowLabelLines(labelCells, layout.columns, measured), shown, measure };
 }
 
-/** M17, the grid's first appearance (`HomeScreenProps.firstAppearance`): until the grid `shown` its
- *  tiles hold out of sight; then each tile it holds rises in after its place's stagger delay. A touch
+/** M17, the grid's first appearance (`HomeScreenProps.firstAppearance`): until the grid is `shown`
+ *  (its names laid out) and no longer `covered` by the launch screen its tiles hold out of sight; then each tile it holds rises in after its place's stagger delay. A touch
  *  ends it, as does every one of those tiles having risen; a tile that comes later is simply there. */
-function useGridEntrance(first: boolean, shown: boolean, keys: readonly string[], reduceMotion: boolean, onAppeared: (() => void) | undefined) {
+function useGridEntrance({ first, shown, covered, keys, reduceMotion, onAppeared }: {
+  first: boolean;
+  shown: boolean;
+  covered: boolean;
+  keys: readonly string[];
+  reduceMotion: boolean;
+  onAppeared: (() => void) | undefined;
+}) {
   const [entrance, setEntrance] = useState<Entrance>(first ? { phase: 'hold' } : { phase: 'done' });
   const risen = useRef(new Set<string>());
   useEffect(() => {
-    if (entrance.phase !== 'hold' || !shown) return;
+    if (entrance.phase !== 'hold' || !shown || covered) return;
     onAppeared?.();
     setEntrance(keys.length === 0 ? { phase: 'done' } : { phase: 'rising', keys: new Set(keys) });
-  }, [entrance.phase, shown, keys, onAppeared]);
+  }, [entrance.phase, shown, covered, keys, onAppeared]);
   const finish = () => setEntrance((was) => (was.phase === 'done' ? was : { phase: 'done' }));
   return {
     /** What a touch on Home does: finish the appearance, while there is one. */
@@ -276,6 +285,7 @@ export default function HomeScreen({
   onResetTile,
   firstAppearance = false,
   onAppeared,
+  covered = false,
 }: Readonly<HomeScreenProps>) {
   const t = useTokens();
   const s = styles(t);
@@ -303,7 +313,7 @@ export default function HomeScreen({
   const customized = customizing ? (apps.find((a) => a.id === customizing.id) ?? null) : null;
 
   const labels = useRowLabels(cells, layout, fontScale);
-  const entrance = useGridEntrance(firstAppearance, labels.shown, cells.map(cellKey), t.reduceMotion, onAppeared);
+  const entrance = useGridEntrance({ first: firstAppearance, shown: labels.shown, covered, keys: cells.map(cellKey), reduceMotion: t.reduceMotion, onAppeared });
 
   const closeMenu = () => setMenu((m) => (m ? { ...m, open: false } : m));
 

@@ -27,6 +27,7 @@ import Animated, {
   FadingTransition,
   LinearTransition,
   ReduceMotion,
+  useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
@@ -75,8 +76,9 @@ const BADGE_OUTSET = SPACE[1];
 const BUSY_OPACITY = 0.7;
 /** M17: a tile of the grid's first appearance rises this far as it fades in. */
 const RISE = 8;
-/** M18: a deleted tile shrinks to this as it fades out. */
+/** M18: a deleted tile shrinks to this as it fades out, and has gone once it is this faint. */
 const LEAVE_SCALE = 0.8;
+const GONE = 0.02;
 /** M4: the glyph fades in from this scale. */
 const GLYPH_FROM = 0.9;
 /** M4: the circle that reveals the tint never scales to nothing (its content counter-scales by 1/scale). */
@@ -411,28 +413,38 @@ function useEntrance(entrance: TileEntrance, reduceMotion: boolean, onRisen: (()
 /** M18: how much of a tile is there, 1 shown → 0 gone (`AppTileProps.presence`). */
 function usePresence(presence: TilePresence, reduceMotion: boolean, onSettled: (() => void) | undefined): SharedValue<number> {
   const shown = useSharedValue(presence === 'returning' && !reduceMotion ? 0 : 1);
+  const leaving = useSharedValue(false);
   const presenceWas = useRef<TilePresence>('shown');
   const settledRef = useRef(onSettled);
   settledRef.current = onSettled;
+  const settled = useRef(() => settledRef.current?.()).current;
+  // A leaving tile has gone once it can no longer be seen: the tail of its spring would only hold
+  // its neighbours' reflow back.
+  useAnimatedReaction(
+    () => leaving.value && shown.value <= GONE,
+    (gone, before) => {
+      if (gone && !before) scheduleOnRN(settled);
+    },
+  );
   useEffect(() => {
     const was = presenceWas.current;
     presenceWas.current = presence;
     // A return that has come to rest is simply shown.
     if (was === presence || (was === 'returning' && presence === 'shown')) return;
-    const settled = () => settledRef.current?.();
     const target = presence === 'leaving' ? 0 : 1;
     if (reduceMotion) {
       shown.value = target;
       settled();
       return;
     }
+    leaving.value = presence === 'leaving';
     const done = (finished?: boolean) => {
       'worklet';
       if (finished) scheduleOnRN(settled);
     };
     // From wherever it is: an Undo while the tile still leaves turns it back with its velocity.
-    shown.value = withSpring(target, SMOOTH, done);
-  }, [presence, shown, reduceMotion]);
+    shown.value = withSpring(target, SMOOTH, presence === 'leaving' ? undefined : done);
+  }, [presence, shown, leaving, settled, reduceMotion]);
   return shown;
 }
 

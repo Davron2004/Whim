@@ -36,6 +36,7 @@ import { Text } from '../ui/Text';
 import { useTokens, type ShellTokens } from '../ui/tokens';
 import { useScrimsUp } from '../ui/OverlayModal';
 import { statusBarStyleOver } from '../ui/status-bar-style';
+import { timingOf } from '../ui/tokens-pure';
 import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
 import { runFork } from './fork-op';
@@ -895,8 +896,10 @@ function LauncherShell({
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [pendingBuilds, setPendingBuilds] = useState<PendingBuildView[]>([]);
   const [ready, setReady] = useState(false);
-  // M17: the grid rises in the first time it shows after launch, not on every return to Home.
+  // M17: the grid rises in the first time it shows after launch, not on every return to Home, and
+  // not under the launch screen: it waits for that to have faded (M27).
   const gridAppeared = useRef(false);
+  const [launchCovered, setLaunchCovered] = useState(true);
   // Read by the mount-once app-link listener effect below, which cannot depend on `ready` without
   // resubscribing `Linking`'s event on every first-run tick.
   const readyRef = useRef(ready);
@@ -3569,6 +3572,7 @@ function LauncherShell({
   const renderHome = (): React.ReactNode => (
     <HomeScreen
       firstAppearance={!gridAppeared.current}
+      covered={launchCovered}
       onAppeared={() => {
         gridAppeared.current = true;
       }}
@@ -3766,11 +3770,17 @@ function LauncherShell({
   useEffect(() => {
     const hide = hideLaunchScreenRef.current;
     if (!ready || hide === null) return undefined;
+    let faded: ReturnType<typeof setTimeout> | undefined;
     const frame = requestAnimationFrame(() => {
       hideLaunchScreenRef.current = null;
       hide();
+      // The native side fades the launch screen out over M27's `fade-in`.
+      faded = setTimeout(() => setLaunchCovered(false), timingOf('fadeIn').duration);
     });
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(faded);
+    };
   }, [ready]);
 
   // The boundary wraps the screen switch's `content` and NOTHING above it (design D1): a screen

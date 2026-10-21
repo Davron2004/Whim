@@ -188,6 +188,18 @@ export async function runHomeMotionUiTests(h: Harness): Promise<void> {
     } finally { await unmountScreen(tree); }
   });
 
+  await h.test('M17: under the launch screen the grid waits; uncovered, it rises', async () => {
+    const names = ['Dice', 'Timer'];
+    const tree = await renderHome({ apps: examples(names), firstAppearance: true, covered: true });
+    try {
+      animations.splice(0);
+      await layOut(tree, oneLine(names));
+      h.ok(rises().length === 0 && names.every((n) => motion(tree, n).opacity === 0), 'laid out but still covered, nothing rises and nothing shows');
+      await updateHome(tree, { apps: examples(names), firstAppearance: true, covered: false });
+      h.eq(rises(), [0, 1].map((i) => staggerDelay(i, false)), 'uncovered, the tiles rise in');
+    } finally { await unmountScreen(tree); }
+  });
+
   await h.test('M17: a touch finishes it — mid-stagger every tile jumps to its place, and the tap that touched still lands', async () => {
     const names = ['Dice', 'Timer', 'Plants', 'Tea'];
     const opened: string[] = [];
@@ -223,14 +235,17 @@ export async function runHomeMotionUiTests(h: Harness): Promise<void> {
     h.eq(await appear(true), { rises: 0, inPlace: true }, 'on: every tile in place the moment the grid shows, nothing rising');
   });
 
-  await h.test('M17 in the shell: the grid rises in when it first shows after launch, and not when Home comes back from an open app', async () => {
+  await h.test('M17 in the shell: the grid rises in when it first shows after launch, once the launch screen has faded, and not when Home comes back from an open app', async () => {
     const examplesShown = (tree: Tree) => tileLabels(tree).length === 3;
-    await withLauncher({ examples: true, server: () => json({}) }, async ({ tree }) => {
+    await withLauncher({ examples: true, server: () => json({}) }, async ({ tree, clock }) => {
       animations.splice(0);
       await waitFor(() => examplesShown(tree), 'the three example apps');
       const names = tileLabels(tree).map(nameOfLabel);
       await layOut(tree, oneLine(names));
-      h.eq(rises(), [0, 1, 2].map((i) => staggerDelay(i, false)), 'at launch, the three tiles rise in, staggered');
+      await waitFor(() => clock.count(timingOf('fadeIn').duration) > 0, 'the launch screen to be told to go');
+      h.ok(rises().length === 0 && names.every((n) => motion(tree, n).opacity === 0), 'while the launch screen fades out over Home, the tiles wait out of sight');
+      await TestRenderer.act(async () => { clock.fire(timingOf('fadeIn').duration); });
+      h.eq(rises(), [0, 1, 2].map((i) => staggerDelay(i, false)), 'once it has gone, the three tiles rise in, staggered');
       await TestRenderer.act(async () => tile(tree, names[0]).props.onPress());
       await waitFor(() => tree.root.findAllByType(MiniAppView).length === 1, 'the app to open');
       animations.splice(0);
@@ -258,8 +273,11 @@ export async function runHomeMotionUiTests(h: Harness): Promise<void> {
       const mid = motion(tree, 'Timer');
       h.ok(Math.abs(mid.opacity - smoothFromWhole(120)) < 0.01, `120 ms in it has faded as far as the smooth spring brings it (${mid.opacity.toFixed(3)} vs ${smoothFromWhole(120).toFixed(3)})`);
       h.ok(Math.abs(mid.scale - (0.8 + 0.2 * mid.opacity)) < 1e-9 && mid.y === 0, `and shrinking toward 0.8 in step, uniformly (${mid.scale.toFixed(3)})`);
-      await pass(3000);
-      h.eq(tileLabels(tree).map(nameOfLabel), ['Dice', 'Plants', 'Tea', 'Coin'], 'once it has gone it leaves the grid');
+      await pass(180);
+      h.ok(tileLabels(tree).some((l) => nameOfLabel(l) === 'Timer') && motion(tree, 'Timer').opacity > 0.02, '300 ms in, still faintly there, it keeps its cell');
+      await pass(100);
+      h.ok(smoothFromWhole(400) > 0.001, 'the case under test: 400 ms in, the spring has not come to rest');
+      h.eq(tileLabels(tree).map(nameOfLabel), ['Dice', 'Plants', 'Tea', 'Coin'], 'once it can no longer be seen it leaves the grid, without waiting out the spring');
       for (const n of ['Dice', 'Plants', 'Tea', 'Coin']) {
         const reflow = reflowOf(tree, n);
         h.ok(reflow.preset === 'LinearTransition' && reflow.config.springify === true && same(springOf(reflow), SMOOTH), `${n} reflows on the token module’s smooth spring`);
