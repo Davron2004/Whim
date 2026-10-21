@@ -95,6 +95,11 @@ async function rig(start: 'describe' | 'making' | null, reduced = false, activit
   const release = holdAnimations();
   return { tree, release };
 }
+/** The capsule laid out at its resting size, as the phone reports it once. */
+async function laidOut(tree: Tree): Promise<void> {
+  const capsule = tree.root.findAll((n) => typeof n.type === 'string' && typeof n.props.onLayout === 'function' && flat(n).minHeight === COMPOSER_BAR.height)[0];
+  await TestRenderer.act(async () => capsule.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: CAPSULE.width, height: CAPSULE.height } } }));
+}
 async function leave(tree: Tree, release: () => void): Promise<void> {
   await run(release);
   await reduceMotion(false);
@@ -170,12 +175,27 @@ export async function runSheetMorphUiTests(h: Harness): Promise<void> {
         const k = grownOf(tree, CAPSULE);
         h.ok(k > 0 && k < 1, `the plate grows between the capsule and the card (${k.toFixed(2)})`);
         h.eq([transformOf(face(tree)!).translateX, transformOf(face(tree)!).translateY], still, 'the placeholder does not move');
-        h.eq(seen(face(tree)!).scales, [], 'nor scale');
+        h.ok(seen(face(tree)!).scales.every((step) => step.scale === 1), 'nor scale');
         h.ok(uniform(tree), 'nothing is stretched');
       }
       await run(release);
       h.ok(flat(plate(tree)!).opacity === 0 && seen(face(tree)!).opacity === 0, 'grown: the plate and the face have gone');
       h.eq(seen(card(tree)).opacity, 1, 'the card shows');
+    } finally { await leave(tree, release); }
+  });
+
+  await h.test('M6: tapped, the capsule is drawn pressed and Android measures it so; the face, laid out at the capsule’s size, sits exactly on the capsule as drawn', async () => {
+    const { tree, release } = await rig(null);
+    const scale = 0.97;
+    const pressed = rect(CAPSULE.pageX + (CAPSULE.width * (1 - scale)) / 2, CAPSULE.pageY + (CAPSULE.height * (1 - scale)) / 2, CAPSULE.width * scale, CAPSULE.height * scale);
+    try {
+      await laidOut(tree);
+      measuring.rectOf = (node) => (placeOf(node) === CAPSULE ? pressed : placeOf(node));
+      await press(composerButton(tree));
+      await run(() => elapseSprings(0));
+      const at = transformOf(face(tree)!);
+      const drawn = [at.translateX, at.translateY, CAPSULE.width * at.scale, CAPSULE.height * at.scale];
+      h.ok(flat(face(tree)!).transformOrigin === 'left top' && drawn.every((v, i) => close(v, [pressed.pageX, pressed.pageY, pressed.width, pressed.height][i])), `the face covers the pressed capsule (${drawn.map((v) => v.toFixed(2)).join(', ')})`);
     } finally { await leave(tree, release); }
   });
 

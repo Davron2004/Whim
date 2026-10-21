@@ -134,11 +134,20 @@ const lerp = (a: number, b: number, p: number) => {
   return a + (b - a) * p;
 };
 
+/** What `ref` measures, or `null`. On the UI thread an animated ref answers null until it is put on a
+ *  view, and Reanimated's `measure` hands that null to the native side, which ends the app: the
+ *  composer has no ember place, and a tile whose state has no ember draws none. */
+function measured(ref: PlaceRef) {
+  'worklet';
+  const held: unknown = ref();
+  return held === null ? null : measure(ref);
+}
+
 /** Where `ref` is drawn, from the frame's top-left, or `null` on a frame either cannot be measured. */
 function placeIn(frame: PlaceRef, ref: PlaceRef) {
   'worklet';
-  const origin = measure(frame);
-  const at = measure(ref);
+  const origin = measured(frame);
+  const at = measured(ref);
   if (origin === null || at === null || at.width === 0) return null;
   return { x: at.pageX - origin.pageX, y: at.pageY - origin.pageY, width: at.width, height: at.height, frameWidth: origin.width, frameHeight: origin.height };
 }
@@ -751,17 +760,20 @@ interface FaceProps {
   children: React.ReactNode;
 }
 
-/** The place's face where the place is, never moving or scaling: it fades as the sheet leaves it and
- *  comes back as the sheet returns. */
+/** The place's face where the place is drawn, never moving with the plate: it fades as the sheet
+ *  leaves it and comes back as the sheet returns. A press or a lift scales the place, and Android
+ *  measures what is drawn, so the copy, laid out at the place's own size, is scaled uniformly from its
+ *  top-left to what the place measures: it sits exactly on it. */
 function Face({ frame, place, grown, width, height, closing, onPress, children }: Readonly<FaceProps>) {
   const style = useAnimatedStyle(() => {
     const k = grown.value;
     const at = placeIn(frame, place);
     if (at === null || k >= 1) return { opacity: 0 };
-    return { opacity: 1 - clamp01(k / FACE_GONE), transform: [{ translateX: at.x }, { translateY: at.y }] };
+    const scale = width > 0 ? at.width / width : 1;
+    return { opacity: 1 - clamp01(k / FACE_GONE), transform: [{ translateX: at.x }, { translateY: at.y }, { scale }] };
   });
   return (
-    <Animated.View style={[morphStyles.at, { width, height }, style]} pointerEvents={closing ? 'auto' : 'none'}>
+    <Animated.View style={[morphStyles.at, morphStyles.fromCorner, { width, height }, style]} pointerEvents={closing ? 'auto' : 'none'}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onPress} disabled={!closing || onPress === undefined} accessible={false} importantForAccessibility="no-hide-descendants">
         {children}
       </Pressable>
@@ -801,4 +813,5 @@ const LeadEmber = React.memo(function LeadEmberView({ lead: store, frame, target
 
 const morphStyles = StyleSheet.create({
   at: { position: 'absolute', top: 0, left: 0 },
+  fromCorner: { transformOrigin: 'left top' },
 });

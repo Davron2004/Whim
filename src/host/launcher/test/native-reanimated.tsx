@@ -277,25 +277,32 @@ export function cancelAnimation<T>(value?: SharedValue<T>): void {
 export const Easing = { bezier: (...points: number[]) => ({ bezier: points }), linear: (x: number) => x };
 export const ReduceMotion = { System: 'system', Always: 'always', Never: 'never' } as const;
 /** An animated ref: a ref callback a worklet can scroll through, which tells its observers the
- *  tag of the view it holds (a fresh tag per ref; null once it lets go). */
+ *  tag of the view it holds (a fresh tag per ref; null once it lets go). Called with no view, as a
+ *  worklet reads it, it answers what it holds and changes nothing: null until it is put on a view. */
 type Observer = (tag: number | null) => (() => void) | undefined;
 interface AnimatedRef<T> {
-  (node: T | null): void;
+  (node?: T | null): T | null;
   current: T | null;
   observe: (observer: Observer) => () => void;
 }
+/** The refs React has put on a view (or taken one off): any other was never on one. */
+const boundRefs = new WeakSet<object>();
 let nextTag = 1;
 export function useAnimatedRef<T>(): AnimatedRef<T> {
   const ref = React.useRef<AnimatedRef<T> | null>(null);
   if (!ref.current) {
     const viewTag = nextTag++;
     const observers = new Map<Observer, (() => void) | undefined>();
-    const animatedRef = ((node: T | null) => {
+    const animatedRef = ((...given: [T | null] | []) => {
+      if (given.length === 0) return animatedRef.current;
+      const [node] = given;
+      boundRefs.add(animatedRef);
       animatedRef.current = node;
       for (const [observer, cleanup] of [...observers]) {
         cleanup?.();
         observers.set(observer, observer(node ? viewTag : null));
       }
+      return node;
     }) as AnimatedRef<T>;
     animatedRef.current = null;
     animatedRef.observe = (observer) => {
@@ -398,9 +405,13 @@ export const measuredRect = { x: 0, y: 0, width: 100, height: 100, pageX: 0, pag
 /** Where particular views are now: given what a ref holds (the test's `createNodeMock` output), the
  *  rect it measures, or undefined for `measuredRect`. A test sets `rectOf`, and clears it after. */
 export const measuring: { rectOf: ((node: unknown) => typeof measuredRect | undefined) | null } = { rectOf: null };
-/** Reanimated's synchronous measurement: the view's rect, or null once its ref holds no view. */
+/** Reanimated's synchronous measurement: the view's rect, or null once its ref holds no view. On a
+ *  UI frame a ref that was never put on a view throws, as the native `measure` does (it hands the
+ *  ref's null to the native side, which ends the app). */
 export function measure<T>(ref: AnimatedRef<T>): typeof measuredRect | null {
-  if (ref.current === null || onJsThread) return null;
+  if (onJsThread) return null;
+  if (!boundRefs.has(ref)) throw new Error('Value is null, expected an Object');
+  if (ref.current === null) return null;
   return { ...(measuring.rectOf?.(ref.current) ?? measuredRect) };
 }
 

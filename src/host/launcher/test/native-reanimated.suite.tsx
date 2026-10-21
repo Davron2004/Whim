@@ -253,6 +253,21 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
     h.eq(measure(ref), null, 'an unmounted view measures null');
   });
 
+  await h.test('reanimated double: a ref never put on a view answers null when read and throws when measured on a UI frame, as on Android', async () => {
+    let ref!: ReturnType<typeof useAnimatedRef<View>>;
+    function Probe() {
+      ref = useAnimatedRef<View>();
+      return <Animated.View />;
+    }
+    const tree = await renderScreen(<Probe />, { createNodeMock: () => ({}) });
+    try {
+      h.eq(ref() as unknown, null, 'read with no view, it answers null');
+      await h.throws(() => measure(ref), 'expected an Object', 'measuring it throws');
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
   await h.test('reanimated double: a style measuring a view gets null when a render runs it (the JS thread) and the rect when a shared value does (a UI frame)', async () => {
     let ref!: ReturnType<typeof useAnimatedRef<View>>;
     let value!: ReturnType<typeof useSharedValue<number>>;
