@@ -328,6 +328,15 @@ interface TileAt {
 const MORPH = springConfig('morph');
 const SMOOTH = springConfig('smooth');
 
+/** Frames a tile going back in must hold still on before its plate shows there. */
+const TILE_SETTLE_FRAMES = 3;
+
+/** The same place, give or take half a point. */
+const sameTileAt = (a: TileAt, b: TileAt) => {
+  'worklet';
+  return Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.width - b.width) < 0.5 && Math.abs(a.height - b.height) < 0.5;
+};
+
 const clamp01 = (v: number) => {
   'worklet';
   return Math.min(1, Math.max(0, v));
@@ -367,15 +376,38 @@ function useAppMorph({ morph, appId, frame, reduceMotion, look, failed }: MorphI
   // The orb comes in once the app covers the screen and goes as it leaves.
   const orbShown = useSharedValue(fromTile ? 0 : 1);
   const tileAt = useSharedValue<TileAt | null>(null);
+  // Leaving, whether the tile has been measured in one place on `TILE_SETTLE_FRAMES` frames in a row
+  // (`tileStill`: how many, and the last one's `grown`, which tells one frame from the next).
+  const tileSettled = useSharedValue(true);
+  const tileStill = useSharedValue({ frames: 0, k: Number.NaN });
   const [covered, setCovered] = useState(!fromTile);
 
   // Where the tile is: measured once as the app comes out of it, kept once Home has gone (every view a
   // frame moves is a commit of its own, and the page paints its first frame meanwhile); on every frame
-  // it goes back into it, where Home under it may still be settling.
+  // it goes back into it, where Home under it may still be settling: Home is drawn afresh under the
+  // app, and its first frames can lay the tile out higher than it ends up (by the status bar and a
+  // navigation bar: 108 pt on an iOS 27 simulator, 117 dp on an Android emulator, for one or two
+  // frames), so the plate fades in there only once the tile has held still. Under Reduce Motion going
+  // back is the cross-fade alone, with no plate.
+  const reducedNow = useRef(reduceMotion);
+  reducedNow.current = reduceMotion;
+  const tileSettledNow = useCallback(() => {
+    if (latest.current?.leaving === true && !reducedNow.current) plate.value = withTiming(1, timing('fadeIn'));
+  }, [plate]);
   useAnimatedReaction(
     () => (Number.isFinite(grown.value) && tile !== null && (leaving || tileAt.value === null) ? placeIn(frame, tile) : null),
     (at) => {
-      if (at !== null) tileAt.value = at;
+      if (at === null) return;
+      const before = tileAt.value;
+      tileAt.value = at;
+      if (tileSettled.value) return;
+      const k = grown.value;
+      const still = tileStill.value;
+      if (before === null || !sameTileAt(before, at)) tileStill.value = { frames: 1, k };
+      else if (k !== still.k) tileStill.value = { frames: still.frames + 1, k };
+      if (tileStill.value.frames < TILE_SETTLE_FRAMES) return;
+      tileSettled.value = true;
+      scheduleOnRN(tileSettledNow);
     },
     [frame, tile, leaving],
   );
@@ -438,6 +470,8 @@ function useAppMorph({ morph, appId, frame, reduceMotion, look, failed }: MorphI
     left.current = true;
     if (!homeUnder) {
       tileAt.value = null;
+      tileSettled.value = false;
+      tileStill.value = { frames: 0, k: Number.NaN };
       if (veil.value >= 1) {
         veiled();
         return;
@@ -457,28 +491,28 @@ function useAppMorph({ morph, appId, frame, reduceMotion, look, failed }: MorphI
       grown.value = withTiming(0, timing('fadeIn', true), done);
       return;
     }
-    plate.value = withTiming(1, timing('fadeIn'));
     grown.value = withSpring(0, SMOOTH, done);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leaving, homeUnder, failed]);
 
   const plateStyle = useAnimatedStyle(() => ({ opacity: plate.value }));
   // The plate sits where the tile is, at its drawn size, for an app that came out of it or is going
-  // back into it, and is not drawn until the tile has been measured; centred otherwise.
+  // back into it, and is not drawn until the tile has been measured (going back, measured settled);
+  // centred otherwise.
   const onTile = fromTile || leaving;
   const plateMove = useAnimatedStyle(() => {
     const at = tileAt.value;
     if (at === null) return { opacity: onTile ? 0 : 1, transform: [{ translateX: 0 }, { translateY: 0 }, { scale: 1 }] };
     const dx = at.x + at.width / 2 - at.frameWidth / 2;
     const dy = at.y + at.height / 2 - at.frameHeight / 2;
-    return { opacity: 1, transform: [{ translateX: dx }, { translateY: dy }, { scale: at.width / TILE_SIDE.grid }] };
+    return { opacity: leaving && !tileSettled.value ? 0 : 1, transform: [{ translateX: dx }, { translateY: dy }, { scale: at.width / TILE_SIDE.grid }] };
   });
   const labelMove = useAnimatedStyle(() => {
     const at = tileAt.value;
     if (at === null) return { opacity: onTile ? 0 : 1, transform: [{ translateX: 0 }, { translateY: 0 }] };
     const dx = at.x + at.width / 2 - at.frameWidth / 2;
     const dy = at.y + at.height - (at.frameHeight + TILE_SIDE.grid) / 2;
-    return { opacity: 1, transform: [{ translateX: dx }, { translateY: dy }] };
+    return { opacity: leaving && !tileSettled.value ? 0 : 1, transform: [{ translateX: dx }, { translateY: dy }] };
   });
   const orbStyle = useAnimatedStyle(() => ({ opacity: orbShown.value }));
   return { shape: { grown, veil, tileAt, reduceMotion }, plateStyle, plateMove, labelMove, orbStyle, moving };

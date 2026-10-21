@@ -140,6 +140,11 @@ function plateRect(tree: Tree) {
   const side = TILE_SIDE.grid * (t.scale ?? 1);
   return { cx: STAGE.width / 2 + (t.translateX ?? 0), cy: STAGE.height / 2 + (t.translateY ?? 0), side, opacity: flat(plateBox(tree)).opacity };
 }
+/** How much of the plate shows: its place's opacity times the opening layer's that holds it. */
+function plateShown(tree: Tree): number {
+  const layer = tree.root.findByType(MiniAppView).findAll((n) => hostType(n) === 'Animated.View' && n.props.accessibilityElementsHidden !== undefined && n.findAllByType(TilePlate).length === 1)[0];
+  return (plateRect(tree).opacity as number) * (flat(layer).opacity as number);
+}
 /** Every view between the bound WebView and the stage that holds it, the WebView included. */
 function webViewLine(tree: Tree): Node[] {
   const line: Node[] = [];
@@ -298,7 +303,8 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       h.ok(homeShown(tree) && shapeOf(tree).opacity === 1, 'once covered, Home is drawn under the app');
       const shrink = stepsSince(from).filter((s) => s.kind === 'spring' && s.to === 0);
       h.ok(shrink.length === 1 && isConfig(shrink[0], SMOOTH), 'and it shrinks on smooth');
-      await TestRenderer.act(async () => elapseSprings(200));
+      // Three frames: the plate fades in once the tile has held still on three of them.
+      for (const ms of [70, 70, 60]) await TestRenderer.act(async () => elapseSprings(ms));
       const k = grownFrom(tree, TIMER_TILE);
       h.ok(k > 0 && k < 0.9, `mid-way it is between the screen and the tile (${k.toFixed(2)})`);
       await TestRenderer.act(async () => elapse(FADE_IN_MS));
@@ -307,6 +313,39 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => release());
       h.ok(!appOpen(tree) && homeShown(tree), 'in the tile, the launch ends on Home');
       h.ok(!tree.root.findAll((n) => n === web).length, 'with its WebView');
+    });
+  });
+
+  await h.test('M3: Home drawn afresh under the app can lay the tile out higher on its first two frames; the plate never shows anywhere but where the tile ends up, and fades in there once the tile holds still', async () => {
+    await withLauncher(async ({ tree }) => {
+      await tapTile(tree, 'Timer');
+      await paint(tree);
+      await press(button(tree, COPY.orbMenuOpenLabel));
+      const release = holdAnimations();
+      await press(button(tree, COPY.whimSheetBackToApps));
+      // As measured on an iOS 27 simulator: the first two frames of a Home mounted afresh under an app
+      // opened from History lay its grid out 108 pt higher (no status bar, no navigation bar yet).
+      let lagging = 2;
+      measuring.rectOf = (node) => {
+        const at = placeOf(node);
+        return at === TIMER_TILE && lagging > 0 ? { ...TIMER_TILE, pageY: TIMER_TILE.pageY - 108 } : at;
+      };
+      await TestRenderer.act(async () => elapse(FADE_OUT_MS));
+      h.ok(homeShown(tree), 'covered, Home is drawn under the app');
+      const onTile = TIMER_TILE.pageY + 32 - STAGE.pageY;
+      const frames: { cy: number; shown: number }[] = [];
+      for (let frame = 0; frame < 6; frame++) {
+        await TestRenderer.act(async () => elapseSprings(16));
+        await TestRenderer.act(async () => elapse(FADE_IN_MS / 6));
+        const plate = plateRect(tree);
+        frames.push({ cy: plate.cy, shown: plateShown(tree) });
+        lagging -= 1;
+      }
+      h.eq(frames.filter((f) => f.shown > 0 && f.cy !== onTile), [], `no frame shows the plate off the tile: ${JSON.stringify(frames)}`);
+      const last = frames.at(-1)!;
+      h.ok(last.shown > 0 && last.cy === onTile, `once Home has settled, the plate shows on the tile: ${JSON.stringify(last)}`);
+      await TestRenderer.act(async () => release());
+      h.ok(!appOpen(tree) && homeShown(tree), 'and the launch ends on Home');
     });
   });
 
@@ -468,6 +507,26 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
         }
       }, reduced);
     }
+  });
+
+  await h.test('M3 under Reduce Motion: going back is the cross-fade alone; the plate never shows on the tile, however long the tile holds still', async () => {
+    await withLauncher(async ({ tree }) => {
+      await tapTile(tree, 'Timer');
+      await paint(tree);
+      await press(button(tree, COPY.orbMenuOpenLabel));
+      const release = holdAnimations();
+      await press(button(tree, COPY.whimSheetBackToApps));
+      await TestRenderer.act(async () => elapse(FADE_OUT_MS));
+      h.ok(homeShown(tree) && appOpen(tree), 'covered, Home is drawn under the app, which fades');
+      const shown: number[] = [];
+      for (let frame = 0; frame < 6; frame++) {
+        await TestRenderer.act(async () => elapse(FADE_IN_MS / 8));
+        shown.push(plateShown(tree));
+      }
+      h.eq(shown.filter((o) => o > 0), [], `no frame of the fade shows the plate: ${JSON.stringify(shown)}`);
+      await TestRenderer.act(async () => release());
+      h.ok(!appOpen(tree) && homeShown(tree), 'and the launch ends on Home');
+    }, true);
   });
 
   await h.test('M2: a tile tapped during History’s pop to Home grows only once the pop has finished, over the same Home, and no stack is unmounted mid-move', async () => {
