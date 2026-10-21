@@ -95,6 +95,8 @@ import { repairAttemptsIn, runTimelineDevModeEnabled } from './run-timeline-view
 import { HomeSkeleton } from './HomeSkeleton';
 import { toastClearance } from './ComposerBar';
 import { useHomeLive } from './use-home-live';
+import type { LiveView } from './home-live';
+import { createRunLight, lightArrived, type RunLight } from './run-light';
 import { PendingPurgeStore, completeInterruptedPurges, completePurge } from './pending-purge';
 import { PurgeWindows } from './soft-delete';
 import type { TileIdentity } from './tile-identity';
@@ -338,8 +340,11 @@ function changeOver(
 /** What the orb shows (system.md §7.1 Orb, §9 Changing in use), most recent first: a change being
  *  made (its stream's sampled activity), a change that failed, a change that landed, another app
  *  that finished, else rest. */
-function orbOver(change: ChangeOver, activity: Readonly<Record<string, number>>): MiniAppLaunch['orb'] {
-  if (change.changing !== undefined) return { state: 'changing', activity: activity[change.changing.id] ?? 0 };
+function orbOver(change: ChangeOver, live: LiveView): MiniAppLaunch['orb'] {
+  if (change.changing !== undefined) {
+    const id = change.changing.id;
+    return { state: 'changing', activity: live.activity[id] ?? 0, flicker: live.flicker[id], stuck: live.stalled.has(id) };
+  }
   if (change.failed !== undefined) return { state: 'failed', activity: 0 };
   if (change.landed !== undefined) return { state: 'ready', activity: 0 };
   return { state: change.finished ? 'finished' : 'rest', activity: 0 };
@@ -1099,6 +1104,8 @@ function LauncherShell({
     ctl: GenerationControl;
     /** A Try again's record and journal as they were before it: what a Stop brings back. */
     retrySnapshot: AttemptSnapshot | undefined;
+    /** The flicker its arrivals kick, which every light of the run reads (system.md §4.6). */
+    light: RunLight;
   };
   // Every active attempt keeps its own reattachment state. `liveRef` names the one selected by
   // the current build screen, so background frames can update their own journal without replacing
@@ -1156,8 +1163,10 @@ function LauncherShell({
 
   // The view of the attempts running right now: which wait for a spot, how hard each stream works.
   // Home's tiles read it, and so do the Making page's ember and the orb, each for its own run only.
-  const liveView = useHomeLive(screen.kind === 'home' || screen.kind === 'making' || runningChange.changing !== undefined, () => [...liveAttemptsRef.values()]);
-  const orb = orbOver(runningChange, liveView.activity);
+  const liveView = useHomeLive(screen.kind === 'home' || screen.kind === 'making' || runningChange.changing !== undefined, () =>
+    [...liveAttemptsRef.values()].map(({ id, signals, light }) => ({ id, signals, pulse: light.pulse })),
+  );
+  const orb = orbOver(runningChange, liveView);
 
   /** The installed apps and the attempts a person can reach: those whose purge is armed are gone as far
    *  as a link or a tile is concerned (an attempt only for the run its Discard named). */
@@ -2091,6 +2100,7 @@ function LauncherShell({
     const at = Date.now();
     const nextSignals = journalStreamEvent(journal, attemptId, signals, event, at);
     currentLive.signals = nextSignals;
+    if (event.type === 'token' || event.type === 'thinking') lightArrived(currentLive.light, at);
     const selected = isSelectedLiveAttempt(lease);
     if (selected) signalsRef.current = nextSignals;
     const nextScreen = withStreamEvent(currentLive.screen, event, at);
@@ -2810,7 +2820,7 @@ function LauncherShell({
       lastThinkingAt: null,
       lastFrameAt: startedAt,
     };
-    const live: LiveAttempt = { id: attemptId, lease, screen: building, signals, ctl, retrySnapshot };
+    const live: LiveAttempt = { id: attemptId, lease, screen: building, signals, ctl, retrySnapshot, light: createRunLight() };
     liveAttemptsRef.set(attemptId, live);
     showStartedAttempt(live, over);
     // The keepalive comment frame (`: keepalive\n\n`, build-liveness B2) is transport noise, never
@@ -3503,6 +3513,7 @@ function LauncherShell({
           signals={signalsRef.current}
           now={Date.now()}
           activity={from.runId != null ? liveView.activity[from.runId] ?? 0 : 0}
+          flicker={from.runId != null ? liveView.flicker[from.runId] : undefined}
           onStop={onStopMaking}
         />
       );
@@ -3554,6 +3565,8 @@ function LauncherShell({
       draft={composerDraft}
       queued={liveView.queued}
       activity={liveView.activity}
+      stalled={liveView.stalled}
+      flicker={liveView.flicker}
       onHistory={(app) => onHistory(app, 'home')}
       onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
       onCreate={(idea) => openWithConsent({ kind: 'compose', text: idea })}

@@ -20,7 +20,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import Svg, { Path } from 'react-native-svg';
 import { ON_PLATE, SPACE, TILE_RIM, TINTS, type TintName } from '../../design/tokens';
 import { squirclePath } from '../../design/icons/squircle';
@@ -28,17 +28,18 @@ import { mixHex } from '../../design/tints';
 import { haptics } from '../haptics';
 import { COPY } from '../launcher/copy';
 import type { TileGlyph } from '../launcher/tile-identity';
-import { Ember } from './Ember';
+import type { FlickerPulse } from '../launcher/home-live';
+import { Ember, lightTo, useFlicker } from './Ember';
 import { Icon } from './Icon';
 import type { MenuAnchor } from './ContextMenu';
-import { timing, usePressFeedback } from './motion';
+import { usePressFeedback } from './motion';
 import { GRID, TILE, TILE_SIDE, listRowPadding, type GridLayout, type TileSize } from './AppTile-geometry';
 import { stateLine, tileAccessibilityHint, tileAccessibilityLabel, tileLook, type StateLine, type TileState } from './AppTile-states';
 import { Text } from './Text';
 import { useTokens } from './tokens';
 import {
-  ACTIVITY_SMOOTHING,
   emberLook,
+  flickerOffset,
   makeStyles,
   PRESS_RETENTION,
   springConfig,
@@ -70,6 +71,10 @@ export interface TilePlateProps {
   glyph: TileGlyph;
   /** The stream's activity, 0–1, for the ember or ring of a tile being made or changed. */
   activity?: number;
+  /** That stream's arrival pulse: the ember or ring flickers with it (system.md §4.6). */
+  flicker?: FlickerPulse;
+  /** That stream stalled (no bytes for 40 s): the ember or ring is stuck, dim and still. */
+  stuck?: boolean;
   /** Tokens captured at one moment, in place of the phone's live ones, for the plate itself (fill,
    *  rim, outline, ring, badge): an open app's opening plate keeps the settings the app opened with.
    *  Omitted, the plate follows the phone. The ember of a plate being made always follows the phone. */
@@ -97,7 +102,7 @@ function plateFill(t: ShellTokens, state: TileState, tint: TintName): string {
   return plate === 'ember-soft' ? t.colors['ember-soft'] : t.colors.fill;
 }
 
-export function TilePlate({ size, state, tint, glyph, activity = 0, tokens }: Readonly<TilePlateProps>) {
+export function TilePlate({ size, state, tint, glyph, activity = 0, flicker, stuck = false, tokens }: Readonly<TilePlateProps>) {
   const live = useTokens();
   const t = tokens ?? live;
   const s = plateStyles(t);
@@ -107,12 +112,17 @@ export function TilePlate({ size, state, tint, glyph, activity = 0, tokens }: Re
   const ringSide = side + 2 * (RING.gap + RING.width);
   const rim = t.scheme === 'dark' && onTint ? mixHex(TINTS[tint].dark, TINTS[tint].light, TILE_RIM.mix) : null;
 
-  const intensity = useSharedValue(emberLook('working', activity).body);
+  // The ring is the change's light: working, it follows the stream and flickers; stuck, dim and
+  // still; under Reduce Motion a still intensity per state.
+  const ringState = stuck ? 'stuck' : 'working';
+  const ringTarget = emberLook(ringState, t.reduceMotion ? 1 : activity).body;
+  const intensity = useSharedValue(ringTarget);
   useEffect(() => {
-    const target = t.reduceMotion ? 1 : emberLook('working', activity).body;
-    intensity.value = t.reduceMotion ? withTiming(target, timing('fadeIn', true)) : withSpring(target, ACTIVITY_SMOOTHING);
-  }, [activity, intensity, t.reduceMotion]);
-  const ringGlow = useAnimatedStyle(() => ({ opacity: intensity.value }));
+    intensity.value = lightTo(ringTarget, ringState, t);
+  }, [intensity, ringState, ringTarget, t]);
+  const { on, smoothed, pulse } = useFlicker(activity, look.ring && !stuck, flicker);
+  const ringGlow = useAnimatedStyle(() => ({ opacity: intensity.value + flickerOffset(on, smoothed.value, pulse.value) }));
+  const emberState = look.ember === 'waiting' || (look.ember === 'working' && stuck) ? 'stuck' : look.ember;
   const ringBox = { top: -(RING.gap + RING.width), start: -(RING.gap + RING.width), width: ringSide, height: ringSide };
 
   return (
@@ -124,7 +134,7 @@ export function TilePlate({ size, state, tint, glyph, activity = 0, tokens }: Re
       </Svg>
       <View style={s.centre}>
         {onTint ? <Icon name={glyph} size={side * TILE.glyph} color={ON_PLATE} stroke={TILE.glyphStroke} /> : null}
-        {look.ember ? <Ember size={emberFor(side)} state={look.ember === 'waiting' ? 'stuck' : look.ember} activity={activity} /> : null}
+        {emberState ? <Ember size={emberFor(side)} state={emberState} activity={activity} flicker={flicker} /> : null}
       </View>
       {look.ring ? (
         <Animated.View style={[s.ring, ringBox, ringGlow]} pointerEvents="none">
@@ -155,6 +165,8 @@ export interface AppTileProps {
   copy?: boolean;
   count?: number;
   activity?: number;
+  flicker?: FlickerPulse;
+  stuck?: boolean;
   /** An operation on this app is running: the tile is dimmed and reads busy. */
   busy?: boolean;
   /** Its menu is open: the tile is lifted. */
@@ -185,6 +197,8 @@ export function AppTile({
   copy,
   count,
   activity,
+  flicker,
+  stuck,
   busy = false,
   lifted = false,
   onPress,
@@ -219,7 +233,7 @@ export function AppTile({
   // Only the plate carries the lift's shadow, with the plate's own corner: the cell around it is not a shape.
   const plate = (
     <View style={lifted ? [s.lifted, { borderRadius: TILE.corner * TILE_SIDE[size] }] : null}>
-      <TilePlate size={size} state={state} tint={tint} glyph={glyph} activity={activity} />
+      <TilePlate size={size} state={state} tint={tint} glyph={glyph} activity={activity} flicker={flicker} stuck={stuck} />
     </View>
   );
   const lines = line ? (

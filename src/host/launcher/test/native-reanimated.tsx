@@ -4,7 +4,8 @@
  *  spring or timing config, delays, sequences and repeats — and the style it settles in.
  *  `useAnimatedStyle` evaluates its updater at render and re-renders when a shared value it read
  *  changes, as the UI thread would repaint. An animation's end callback runs as it is assigned, unless
- *  the test holds animations (`holdAnimations`) to look at a frame while one is still running.
+ *  the test holds animations (`holdAnimations`) to look at a frame while one is still running;
+ *  `elapse` then moves held timings along their curves. `makeMutable` makes a value outside React.
  *  `Animated.View`, `.Text` and `.ScrollView` render as host elements of those names and log the
  *  layout animations (`FadeIn`, `FadeOut`, `LinearTransition` and their builder calls) they enter and
  *  exit with in `layoutAnimations`; `playedUnder` says what one does under Reduce Motion.
@@ -61,6 +62,12 @@ let reading: Set<SharedValue<unknown>> | null = null;
  *  the UI thread, until the test lets them end. */
 let held: (() => void)[] | null = null;
 
+/** The shared values a held timing is running on, which `elapse` moves along. */
+const timed = new Set<SharedValue<unknown>>();
+
+/** Reanimated's default timing curve, `Easing.inOut(Easing.quad)`. */
+const inOutQuad = (x: number) => (x < 0.5 ? 2 * x * x : 1 - 2 * (1 - x) * (1 - x));
+
 /** From now on an assigned animation keeps running: its value stays where it was and its end callback
  *  waits. The returned release ends every one of them, oldest first, as they would have. */
 export function holdAnimations(): () => void {
@@ -74,8 +81,8 @@ export function holdAnimations(): () => void {
 
 class SharedValue<T> {
   private current: T;
-  /** The held animation running on this value, if any. */
-  private running: { animation: Tagged; end: () => void } | null = null;
+  /** The held animation running on this value, if any: where it set out from and how long it has run. */
+  private running: { animation: Tagged; end: () => void; from: unknown; elapsed: number } | null = null;
   /** Bumped on every assignment, so a style can tell it missed one. */
   version = 0;
   private readonly listeners = new Set<() => void>();
@@ -91,9 +98,11 @@ class SharedValue<T> {
       if (held) {
         const end = () => {
           this.running = null;
+          timed.delete(this as SharedValue<unknown>);
           this.land(next);
         };
-        this.running = { animation: next, end };
+        this.running = { animation: next, end, from: this.current, elapsed: 0 };
+        if (next.kind === 'timing') timed.add(this as SharedValue<unknown>);
         held.push(end);
         return;
       }
@@ -109,6 +118,7 @@ class SharedValue<T> {
     const was = this.running;
     if (!was) return;
     this.running = null;
+    timed.delete(this as SharedValue<unknown>);
     held = held?.filter((end) => end !== was.end) ?? null;
     if (isStep(was.animation)) was.animation.callback?.(false);
   }
@@ -116,6 +126,24 @@ class SharedValue<T> {
   private land(animation: Tagged): void {
     this.current = settle(animation) as T;
     if (isStep(animation)) animation.callback?.(true);
+    this.changed();
+  }
+  /** A held timing runs `ms` longer: the value moves along its curve, and lands once its duration is up. */
+  advance(ms: number): void {
+    const run = this.running;
+    if (!run || run.animation.kind !== 'timing') return;
+    const step = run.animation as Step;
+    run.elapsed += ms;
+    const duration = typeof step.config?.duration === 'number' ? step.config.duration : 300;
+    if (run.elapsed >= duration) {
+      held = held?.filter((end) => end !== run.end) ?? null;
+      run.end();
+      return;
+    }
+    const easing = step.config?.easing ?? inOutQuad;
+    if (typeof easing !== 'function') throw new Error('elapse: this double cannot follow a bezier timing curve part way');
+    const progress = (easing as (x: number) => number)(run.elapsed / duration);
+    this.current = ((run.from as number) + ((step.to as number) - (run.from as number)) * progress) as T;
     this.changed();
   }
   private changed(): void {
@@ -126,6 +154,18 @@ class SharedValue<T> {
     this.listeners.add(listener);
     return () => { this.listeners.delete(listener); };
   }
+}
+
+/** While animations are held, `ms` pass on the UI thread: every held timing moves along its curve
+ *  (its own easing, else Reanimated's default) and ends once its duration is up. Springs, delays and
+ *  sequences stay where they are until released. */
+export function elapse(ms: number): void {
+  for (const value of [...timed]) value.advance(ms);
+}
+
+/** A shared value made outside any component, as Reanimated's `makeMutable`. */
+export function makeMutable<T>(initial: T): SharedValue<T> {
+  return new SharedValue(initial);
 }
 
 export function useSharedValue<T>(initial: T): SharedValue<T> {
@@ -154,7 +194,7 @@ export const withDelay = (delay: number, animation: Animation) => tag({ kind: 'd
 export const withSequence = (...list: Animation[]) => tag({ kind: 'sequence', animations: list });
 export const withRepeat = (animation: Animation, count = 2) => tag({ kind: 'repeat', animation, count });
 export function cancelAnimation(): void { cancelled.count += 1; }
-export const Easing = { bezier: (...points: number[]) => ({ bezier: points }) };
+export const Easing = { bezier: (...points: number[]) => ({ bezier: points }), linear: (x: number) => x };
 export const ReduceMotion = { System: 'system', Always: 'always', Never: 'never' } as const;
 /** An animated ref: a ref callback a worklet can scroll through, which tells its observers the
  *  tag of the view it holds (a fresh tag per ref; null once it lets go). */

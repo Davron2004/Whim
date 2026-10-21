@@ -83,7 +83,7 @@ export interface MiniAppLaunch {
   installedApp: InstalledApp;
   /** What the orb shows of a change to this app (`app-launcher` "Changing an app keeps it running
    *  and offers Reload"): being made, with its stream's activity; landed; failed; or nothing. */
-  orb: Required<Pick<OrbProps, 'state' | 'activity'>>;
+  orb: Required<Pick<OrbProps, 'state' | 'activity'>> & Pick<OrbProps, 'flicker' | 'stuck'>;
   /** The crash screen's Reload: the launcher opens the app again in place, a new launch. */
   onReload: () => void;
   /** The crash screen's "Ask Whim to fix it", with the error to attach (`crashAttachment`, plain
@@ -458,7 +458,7 @@ export default function MiniAppView({
           onAskFix={() => onAskFix(crash === null ? '' : crashAttachment(crash))}
           onExit={onExit}
         />
-        <Orb appId={installedApp.id} state={orb.state} activity={orb.activity} onOpen={onOpenSheet} />
+        <Orb appId={installedApp.id} {...orb} onOpen={onOpenSheet} />
       </>
     );
   }
@@ -486,7 +486,7 @@ export default function MiniAppView({
           </View>
         ) : null}
       </Animated.View>
-      <Orb appId={installedApp.id} state={orb.state} activity={orb.activity} onOpen={onOpenSheet} />
+      <Orb appId={installedApp.id} {...orb} onOpen={onOpenSheet} />
     </>
   );
 }

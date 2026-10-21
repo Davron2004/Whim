@@ -1,19 +1,20 @@
 /**
  * Ember and AmbientLight — Whim's mark and its light (system.md §3.3, §4.6). The ember is the flame
  * silhouette filled with the glow gradient over a `glow-ember` halo; it is honest: working
- * intensity follows `activity` through the §4.6 smoothing spring, stuck dims to 35% over 1.5 s and
- * holds still, out is the 1.5 pt `text-2` outline alone. A change of `spark` plays the done flare
- * (1 → 1.18 → 1, `spark`). Under Reduce Motion the ember is a still intensity per state,
- * cross-faded, with no flare. Both are hidden from screen readers: the status line carries the
- * words.
+ * intensity follows `activity` through the §4.6 smoothing spring and flickers with the run's token
+ * arrivals (`useFlicker`), stuck dims to 35% over 1.5 s and holds still, out is the 1.5 pt `text-2`
+ * outline alone. A change of `spark` plays the done flare (1 → 1.18 → 1, `spark`). Under Reduce
+ * Motion the ember is a still intensity per state, cross-faded, with no flicker and no flare. Both
+ * are hidden from screen readers: the status line carries the words.
  */
 
 import React, { useEffect, useId, useRef } from 'react';
 import { StyleSheet } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import Svg, { Circle, Defs, LinearGradient, Path, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { GLOW } from '../../design/tokens';
 import { EMBER_PATH, EMBER_VIEWBOX } from '../../design/icons/ember';
+import type { FlickerPulse } from '../launcher/home-live';
 import { timing } from './motion';
 import { useTokens } from './tokens';
 import {
@@ -23,6 +24,7 @@ import {
   emberLook,
   emberOutlineWidth,
   emberSize,
+  flickerOffset,
   HONEST_LIGHT,
   SPARK_PEAK,
   springConfig,
@@ -53,11 +55,39 @@ function useSvgId(prefix: string): string {
 
 /** How a light layer moves to `target` for the state: the smoothing spring while working, the
  *  1.5 s ease when stuck, the fade-out when out; a cross-fade under Reduce Motion. */
-function lightTo(target: number, state: EmberState, t: Pick<ShellTokens, 'reduceMotion'>) {
+export function lightTo(target: number, state: EmberState, t: Pick<ShellTokens, 'reduceMotion'>) {
   if (t.reduceMotion) return withTiming(target, timing('fadeIn', true));
   if (state === 'working') return withSpring(target, ACTIVITY_SMOOTHING);
   if (state === 'stuck') return withTiming(target, { duration: HONEST_LIGHT.stuckEaseMs });
   return withTiming(target, timing('fadeOut'));
+}
+
+interface Flicker {
+  /** Whether the light flickers at all: working, with Reduce Motion off. */
+  on: boolean;
+  /** `ã`: the activity through the smoothing spring. */
+  smoothed: SharedValue<number>;
+  /** The run's arrival pulse (`run-light.ts`), or a still 0 for a light with no stream. */
+  pulse: FlickerPulse;
+}
+
+/** §4.6 flicker, the one model every honest light shares (the making ember, the ambient lights, a
+ *  tile's ember and ring, the orb): `ã` follows `activity` through the smoothing spring, and the
+ *  light moves by `flickerOffset(on, ã, pulse)` as the run's arrivals kick its pulse. Its timing
+ *  comes from the arrivals alone; nothing here runs on a clock. Read the three in a worklet. */
+export function useFlicker(activity: number, working: boolean, pulse: FlickerPulse | undefined): Flicker {
+  const t = useTokens();
+  const on = working && !t.reduceMotion;
+  const target = on ? Math.min(1, Math.max(0, activity)) : 0;
+  const smoothed = useSharedValue(target);
+  const idle = useSharedValue(0);
+  const aimed = useRef(target);
+  useEffect(() => {
+    if (aimed.current === target) return;
+    aimed.current = target;
+    smoothed.value = on ? withSpring(target, ACTIVITY_SMOOTHING) : target;
+  }, [on, smoothed, target]);
+  return { on, smoothed, pulse: pulse ?? idle };
 }
 
 export interface EmberProps {
@@ -69,9 +99,11 @@ export interface EmberProps {
   activity?: number;
   /** Change this value to play the done flare once (M10); the first value plays nothing. */
   spark?: number;
+  /** The run's arrival pulse: the working ember flickers with it (§4.6). */
+  flicker?: FlickerPulse;
 }
 
-export function Ember({ size, state, activity = 0, spark }: Readonly<EmberProps>) {
+export function Ember({ size, state, activity = 0, spark, flicker }: Readonly<EmberProps>) {
   const t = useTokens();
   const px = emberSize(size, t);
   // Reduce Motion: a still intensity per state, whatever the stream does.
@@ -89,7 +121,8 @@ export function Ember({ size, state, activity = 0, spark }: Readonly<EmberProps>
     lastSpark.current = spark;
     if (!t.reduceMotion) scale.value = withSequence(withSpring(SPARK_PEAK, springConfig('spark')), withSpring(1, springConfig('spark')));
   }, [scale, spark, t.reduceMotion]);
-  const bodyStyle = useAnimatedStyle(() => ({ opacity: body.value }));
+  const { on, smoothed, pulse } = useFlicker(activity, state === 'working', flicker);
+  const bodyStyle = useAnimatedStyle(() => ({ opacity: body.value + flickerOffset(on, smoothed.value, pulse.value) }));
   const haloStyle = useAnimatedStyle(() => ({ opacity: halo.value }));
   const flare = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
   const bodyId = useSvgId('ember-body');
@@ -150,17 +183,20 @@ export interface AmbientLightProps {
    *  and that surface's colour: the light fades into it, from none at the cut to whole by its centre,
    *  so the cut shows no edge. */
   cut?: { at: number; backdrop: string };
+  /** The run's arrival pulse: the light flickers with it, as its ember does (§4.6). */
+  flicker?: FlickerPulse;
 }
 
 /** The ember's ambient light: a soft radial glow behind the making header and under the composer. */
-export function AmbientLight({ width, height, activity, cut }: Readonly<AmbientLightProps>) {
+export function AmbientLight({ width, height, activity, cut, flicker }: Readonly<AmbientLightProps>) {
   const t = useTokens();
   const target = ambientOpacity(t.reduceMotion ? 1 : activity);
   const opacity = useSharedValue(target);
   useEffect(() => {
     opacity.value = t.reduceMotion ? withTiming(target, timing('fadeIn', true)) : withSpring(target, ACTIVITY_SMOOTHING);
   }, [opacity, target, t.reduceMotion]);
-  const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  const { on, smoothed, pulse } = useFlicker(activity, true, flicker);
+  const style = useAnimatedStyle(() => ({ opacity: opacity.value + flickerOffset(on, smoothed.value, pulse.value) }));
   const id = useSvgId('ambient');
   const fadeId = useSvgId('ambient-fade');
   return (

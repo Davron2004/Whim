@@ -20,6 +20,7 @@ import { Text, wrappingType } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
 import { makeStyles, MAX_FONT_SCALE } from '../ui/tokens-pure';
 import { COPY, makingTitle, quotedWords } from './copy';
+import type { FlickerPulse } from './home-live';
 import KeyboardShell from './KeyboardShell';
 import { makingProgress, type MakingRow } from './making-progress';
 import type { RunSignals, Stage } from './prompt-flow';
@@ -47,6 +48,8 @@ export interface MakingPageProps {
   now: number;
   /** This run's sampled stream activity, 0–1. */
   activity: number;
+  /** This run's arrival pulse: the ember and its light flicker with it (system.md §4.6). */
+  flicker?: FlickerPulse;
   /** Ends the run at once; it stays on Home as a stopped tile. Not offered once `delivering`:
    *  the stream has ended and the app is being put on the home screen, so delivery wins. */
   onStop: () => void;
@@ -126,6 +129,7 @@ export default function MakingPage({
   signals,
   now,
   activity,
+  flicker,
   onStop,
 }: Readonly<MakingPageProps>) {
   const t = useTokens();
@@ -147,9 +151,9 @@ export default function MakingPage({
     >
       <View style={s.header}>
         <View style={[s.ambient, { width: ambientWidth }]} pointerEvents="none">
-          <AmbientLight width={ambientWidth} height={AMBIENT.height} cut={{ at: AMBIENT.lift, backdrop: t.colors.sheet }} activity={progress.ember.state === 'stuck' ? 0 : progress.ember.activity} />
+          <AmbientLight width={ambientWidth} height={AMBIENT.height} cut={{ at: AMBIENT.lift, backdrop: t.colors.sheet }} activity={progress.ember.state === 'stuck' ? 0 : progress.ember.activity} flicker={flicker} />
         </View>
-        <Ember size={128} state={progress.ember.state} activity={progress.ember.activity} />
+        <Ember size={128} state={progress.ember.state} activity={progress.ember.activity} flicker={flicker} />
         <Text type="title1" style={s.title}>
           {makingTitle(name, changing)}
         </Text>

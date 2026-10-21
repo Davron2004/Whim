@@ -29,6 +29,7 @@ import { useToast } from '../ui/Toast';
 import { useTokens } from '../ui/tokens';
 import { makeStyles } from '../ui/tokens-pure';
 import type { InstalledApp } from './app-index';
+import type { FlickerPulse } from './home-live';
 import { isAppBusy, type AppBusyMap } from './app-busy';
 import { appLinkFor } from './app-link';
 import { ComposerBar } from './ComposerBar';
@@ -62,6 +63,10 @@ export interface HomeScreenProps {
   queued?: ReadonlySet<string>;
   /** The stream's activity, 0–1, per attempt id: the ember on a tile being made or changed follows it. */
   activity?: Readonly<Record<string, number>>;
+  /** The attempts whose stream stalled (no bytes for 40 s): their tile's light is stuck. */
+  stalled?: ReadonlySet<string>;
+  /** Each attempt's arrival pulse: its tile's light flickers with it. */
+  flicker?: Readonly<Record<string, FlickerPulse>>;
   /** Whether "Make a copy" can copy the data (`StoreAccess.canCopyData`). When false the copy is made
    *  fresh at once and no question is asked. */
   canCopyData?: boolean;
@@ -134,6 +139,8 @@ export default function HomeScreen({
   offline,
   queued,
   activity,
+  stalled,
+  flicker,
   canCopyData = false,
   draft,
   onOpen,
@@ -296,6 +303,8 @@ export default function HomeScreen({
         copy={cell.kind === 'app' && cell.app.forkedFrom !== undefined}
         count={cell.kind === 'older' ? cell.recs.length : undefined}
         activity={live ? activity?.[live.id] : undefined}
+        flicker={live ? flicker?.[live.id] : undefined}
+        stuck={live ? stalled?.has(live.id) : undefined}
         busy={busy}
         lifted={menu?.open === true && cellKey(menu.cell) === cellKey(cell)}
         onPress={() => press(cell)}

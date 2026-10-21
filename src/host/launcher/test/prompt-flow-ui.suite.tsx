@@ -14,6 +14,8 @@ import MiniAppView from '../MiniAppView';
 import { MakingSheet } from '../MakingSheet';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { TextArea } from '../../ui/TextField';
+import { AmbientLight, Ember } from '../../ui/Ember';
+import { TilePlate } from '../../ui/AppTile';
 import { COPY } from '../copy';
 import { StoreAccess } from '../store-access';
 import { RunJournalStore } from '../run-journal';
@@ -64,6 +66,12 @@ export function streamingServer(streams: ReturnType<typeof sseStream>[]) {
     streams.push(stream);
     return stream.response;
   };
+}
+
+/** Wait out more than a display frame of wall time, so the next arrival is not one with the last. */
+async function moreThanAFrame(): Promise<void> {
+  const later = Date.now() + 30;
+  await waitFor(() => Date.now() >= later, 'more than a frame to pass');
 }
 
 /** A promise the test resolves by hand. */
@@ -460,6 +468,41 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => home(tree).props.onOpenPending(home(tree).props.pending[0]));
       h.ok(makingSheetOpen(tree) && tree.root.findByType(MakingPage).props.stage === 'generate', 'tapping the tile reopens the page, where the run is');
       streams[0].end();
+    });
+  });
+
+  await h.test('honest light: the run’s token and reasoning arrivals kick one pulse, which its making ember, its ambient light and its Home tile all read; other frames kick nothing', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
+      await startBuild(tree, 'A tea timer');
+      const page = () => tree.root.findByType(MakingPage);
+      await waitFor(() => page().findByType(Ember).props.flicker !== undefined, 'the making ember to get its run’s pulse');
+      const pulse = page().findByType(Ember).props.flicker as { value: number; listen: (fn: () => void) => () => void };
+      h.ok(page().findByType(AmbientLight).props.flicker === pulse, 'the ambient light reads the same pulse');
+      let kicks = 0;
+      const stop = pulse.listen(() => { if (pulse.value !== 0) kicks += 1; });
+      try {
+        streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
+        await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'generate', 'the stage');
+        streams[0].push({ type: 'diagnostic', diagnostic: { kind: 'type', hint: 'Use a number.' } });
+        await settle();
+        h.eq(kicks, 0, 'a stage or a diagnostic is no arrival');
+        streams[0].push({ type: 'token', text: 'const a = 1;' });
+        await waitFor(() => kicks === 1, 'a token to kick the pulse');
+        await moreThanAFrame();
+        streams[0].push({ type: 'thinking', chars: 40 });
+        await waitFor(() => kicks === 2, 'a reasoning delta to kick it');
+        await moreThanAFrame();
+        for (let i = 0; i < 5; i++) streams[0].push({ type: 'token', text: 'x' });
+        await settle();
+        h.ok(kicks >= 3 && kicks <= 7, `five more tokens kick at least once and never more than five times (${kicks - 2})`);
+        await press(button(tree, COPY.sheetClose));
+        h.ok(onHome(tree), 'on Home');
+        h.ok(tree.root.findByType(TilePlate).props.flicker === pulse, 'the run’s tile reads the same pulse');
+      } finally {
+        stop();
+        streams[0].end();
+      }
     });
   });
 

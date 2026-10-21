@@ -8,6 +8,7 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import type { View } from 'react-native';
 import Animated, {
+  Easing,
   Extrapolation,
   FadeIn,
   FadeOut,
@@ -25,7 +26,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Harness } from './harness';
 import { accessibilitySettings, emitAccessibility } from './native-host';
-import { animations, holdAnimations, isLayoutAnimation, layoutAnimations, measuredRect, playedUnder, type LayoutAnimation } from './native-reanimated';
+import { animations, elapse, holdAnimations, isLayoutAnimation, layoutAnimations, makeMutable, measuredRect, playedUnder, type LayoutAnimation } from './native-reanimated';
 import { hostType, renderScreen, unmountScreen } from './react-screen';
 import { useTokens } from '../../ui/tokens';
 import { staggerDelay, timingOf } from '../../ui/tokens-pure';
@@ -88,6 +89,30 @@ function Faded({ value }: { value: SharedValue<number> }) {
 }
 
 export async function runNativeReanimatedTests(h: Harness): Promise<void> {
+  await h.test('reanimated double: a held timing moves along its curve as time elapses and lands at its end; a value made outside React is a shared value too', async () => {
+    const value = makeMutable(0);
+    const release = holdAnimations();
+    try {
+      value.value = withTiming(10, { duration: 100, easing: Easing.linear });
+      elapse(50);
+      h.eq(value.value, 5, 'half way through a straight timing, half way there');
+      elapse(49);
+      h.eq(value.value, 9.9, 'a millisecond before its end, nearly there');
+      elapse(1);
+      h.eq(value.value, 10, 'at its end it lands');
+      value.value = withTiming(0, { duration: 100 });
+      elapse(25);
+      h.eq(value.value, 10 - 10 * 0.125, 'with no curve given, Reanimated’s default in-out quad: an eighth of the way at a quarter of the time');
+      value.value = withTiming(5, { duration: 100, easing: Easing.bezier(0.2, 0, 0, 1) });
+      let refused = false;
+      try { elapse(10); } catch (error) { refused = error instanceof Error && error.message.includes('bezier'); }
+      h.ok(refused, 'a bezier curve it cannot follow part way is refused, not guessed');
+    } finally {
+      release();
+    }
+    h.eq(value.value, 5, 'released, the last timing lands');
+  });
+
   await h.test('reanimated double: withDelay is recorded with its delay and lands at its end, or waits while held', async () => {
     let opacity!: SharedValue<number>;
     function Probe() {

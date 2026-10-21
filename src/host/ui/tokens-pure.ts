@@ -330,8 +330,29 @@ export type EmberState = 'working' | 'stuck' | 'out';
 export type EmberSize = 20 | 24 | 48 | 96 | 128;
 
 /** §4.6 Honest light: intensity `0.55 + 0.45·ã`, `ã` smoothed by a critically damped spring of
- *  response 0.6 s; stuck eases to 0.35 over 1.5 s and holds still. */
-export const HONEST_LIGHT = { base: 0.55, gain: 0.45, stuck: 0.35, stuckEaseMs: 1500 } as const;
+ *  response 0.6 s; stuck eases to 0.35 over 1.5 s and holds still. The flicker moves the intensity
+ *  by up to `0.06·ã`, only while a token arrived in the last 500 ms. */
+export const HONEST_LIGHT = { base: 0.55, gain: 0.45, stuck: 0.35, stuckEaseMs: 1500, flicker: 0.06, flickerWindowMs: 500 } as const;
+
+/** §4.6 flicker: how far a light's intensity moves at smoothed activity `ã` while the run's arrival
+ *  pulse stands at `pulse` (−1…1, 0 once 500 ms passed with no arrival). `on` is false for a light
+ *  that does not flicker (not working, Reduce Motion). Runs on the UI thread. */
+export function flickerOffset(on: boolean, smoothed: number, pulse: number): number {
+  'worklet';
+  if (!on || !Number.isFinite(smoothed)) return 0;
+  return HONEST_LIGHT.flicker * Math.min(1, Math.max(0, smoothed)) * pulse;
+}
+
+/** The golden ratio's fraction: successive multiples of it spread evenly over 0–1, never repeating. */
+const GOLDEN_FRACTION = 0.6180339887498949;
+
+/** The pulse the `n`th arrival kicks: alternating in sign, so successive arrivals flicker rather than
+ *  drift, at a height between half and full spread by the golden ratio. Its phase comes from the
+ *  arrival count, never from a clock. */
+export function flickerKick(n: number): number {
+  const height = 0.5 + 0.5 * ((n * GOLDEN_FRACTION) % 1);
+  return n % 2 === 0 ? height : -height;
+}
 
 /** The spring `ã` follows (§4.6). */
 export const ACTIVITY_SMOOTHING: PhysicsSpring = physicsSpring(0.6, 1);
