@@ -1,6 +1,7 @@
 /**
  * Checks the Android project's identity-independent shape: the app-link intent filter,
- * `singleTask` + portrait + the handled config changes on `MainActivity`, and the one network security config every build type
+ * `singleTask` + portrait + the handled config changes on `MainActivity`, its opting out of the
+ * navigation bar's contrast scrim, and the one network security config every build type
  * uses (specs/app-links/spec.md "The Android app verifies and delivers app links";
  * specs/native-release-config/spec.md "Store builds carry no cleartext exception" as beta-1 D20
  * amends it, "The iOS app declares its export, device and permission surface" Android portrait
@@ -13,6 +14,7 @@ import path from 'node:path';
 
 export const ANDROID_MANIFEST_PATH = 'android/app/src/main/AndroidManifest.xml';
 export const ANDROID_MAIN_NETWORK_CONFIG_PATH = 'android/app/src/main/res/xml/network_security_config.xml';
+export const ANDROID_MAIN_ACTIVITY_PATH = 'android/app/src/main/java/com/whim/MainActivity.kt';
 const ANDROID_SOURCE_SETS_DIR = 'android/app/src';
 
 export interface AndroidProjectFinding {
@@ -148,10 +150,32 @@ function checkVariantNetworkConfigs(repoRoot: string): AndroidProjectFinding[] {
     .map((file) => ({ file, message: `a build-variant network security config would replace ${ANDROID_MAIN_NETWORK_CONFIG_PATH} in that build type; delete it` }));
 }
 
-/** Every finding across the manifest and the network security configs. Empty means the project passes. */
+/** `MainActivity` turns off the contrast scrim Android draws under a transparent 3-button
+ *  navigation bar, which React Native's edge to edge turns on: without it a lighter band (darker in
+ *  dark) sits under every page's `bg`. Line comments are dropped, so a commented-out line fails. */
+function checkNavigationBarScrim(repoRoot: string): AndroidProjectFinding[] {
+  let text: string;
+  try {
+    text = fs.readFileSync(path.join(repoRoot, ANDROID_MAIN_ACTIVITY_PATH), 'utf8');
+  } catch (err) {
+    if ((err as { code?: unknown }).code === 'ENOENT') return [{ file: ANDROID_MAIN_ACTIVITY_PATH, message: 'file not found' }];
+    throw err;
+  }
+  const code = text.replace(/\/\/.*$/gm, '');
+  if (/\.isNavigationBarContrastEnforced\s*=\s*false\b/.test(code)) return [];
+  return [
+    {
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      message: 'MainActivity must set isNavigationBarContrastEnforced = false: with 3-button navigation Android otherwise draws a contrast band under the page',
+    },
+  ];
+}
+
+/** Every finding across the manifest, MainActivity and the network security configs. Empty means the project passes. */
 export function checkAndroidProject(repoRoot: string): AndroidProjectFinding[] {
   return [
     ...checkManifest(repoRoot),
+    ...checkNavigationBarScrim(repoRoot),
     ...checkMainNetworkConfig(repoRoot),
     ...checkVariantNetworkConfigs(repoRoot),
   ];

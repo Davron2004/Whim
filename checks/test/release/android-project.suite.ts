@@ -13,6 +13,7 @@ import {
   checkAndroidProject,
   ANDROID_MANIFEST_PATH,
   ANDROID_MAIN_NETWORK_CONFIG_PATH,
+  ANDROID_MAIN_ACTIVITY_PATH,
 } from '../../../scripts/release/lib/android-project';
 
 const REPO_ROOT = process.cwd();
@@ -121,9 +122,14 @@ const MAIN_NETWORK_CONFIG_WITH_OVERRIDE = [
   '',
 ].join('\n');
 
+/** The real `MainActivity.kt`, so the fixture starts from what ships. */
+const REAL_MAIN_ACTIVITY = fs.readFileSync(path.join(REPO_ROOT, ANDROID_MAIN_ACTIVITY_PATH), 'utf8');
+const SCRIM_OFF = /^.*\.isNavigationBarContrastEnforced\s*=\s*false.*$/gm;
+
 function writeValidFixture(root: string): void {
   writeFile(root, ANDROID_MANIFEST_PATH, VALID_MANIFEST);
   writeFile(root, ANDROID_MAIN_NETWORK_CONFIG_PATH, MAIN_NETWORK_CONFIG);
+  writeFile(root, ANDROID_MAIN_ACTIVITY_PATH, REAL_MAIN_ACTIVITY);
 }
 
 export async function run(): Promise<void> {
@@ -191,6 +197,20 @@ export async function run(): Promise<void> {
       content: () => manifest({ autoVerify: true, host: '${whimWebHost}', configChanges: `${REAL_CONFIG_CHANGES}|density` }),
       expectFile: ANDROID_MANIFEST_PATH,
       matches: /must not include density/,
+    },
+    {
+      name: 'a MainActivity that leaves the navigation bar contrast scrim on fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(SCRIM_OFF, ''),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /isNavigationBarContrastEnforced = false/,
+    },
+    {
+      name: 'a MainActivity whose scrim-off line is commented out fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(SCRIM_OFF, (line) => `// ${line}`),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /isNavigationBarContrastEnforced = false/,
     },
     {
       name: 'a main config that refuses cleartext at the base fails',

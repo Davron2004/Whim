@@ -5,7 +5,9 @@ import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.util.Log
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewTreeObserver
+import android.view.Window
 import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.view.inspector.WindowInspector
@@ -18,8 +20,10 @@ import com.facebook.react.ReactApplication
 import com.facebook.react.bridge.LifecycleEventListener
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
+import com.facebook.react.views.modal.ReactModalHostView
 import com.swmansion.rnscreens.fragment.restoration.RNScreensFragmentFactory
 import com.whim.launch.LaunchScreen
+import java.util.WeakHashMap
 
 class MainActivity : ReactActivity() {
 
@@ -33,6 +37,7 @@ class MainActivity : ReactActivity() {
     supportFragmentManager.fragmentFactory = RNScreensFragmentFactory()
     setTheme(R.style.AppTheme)
     super.onCreate(savedInstanceState)
+    clearNavigationBarScrim(window)
     fontScale = resources.configuration.fontScale
     LaunchScreen.hold(this)
     window.decorView.viewTreeObserver.addOnPreDrawListener {
@@ -81,7 +86,39 @@ class MainActivity : ReactActivity() {
     if (!hasFocus) {
       mirroredAppearance = null
       mirrorBarAppearance()
+      clearDialogNavigationBarScrims(window.decorView)
     }
+  }
+
+  // The page's `bg` runs under a transparent navigation bar (edge to edge). With 3-button
+  // navigation Android draws its own contrast scrim there unless the window opts out, a band of
+  // #FEFEFE under a #F6F4F1 page in light and #151518 under #100E0D in dark. React Native's edge to
+  // edge turns the scrim on for the activity (`ReactActivityDelegate.onCreate`) and for every
+  // Modal's dialog each time it applies the Modal's props (`ReactModalHostView.updateProperties`),
+  // so the activity opts out once its delegate has run, and a sheet when it shows (it takes the
+  // activity's focus) and before each of its frames after. The bar's icons stay legible on their
+  // own: they follow the scheme (`onConfigurationChanged`, `mirrorBarAppearance`).
+  private val scrimWatched = WeakHashMap<View, Unit>()
+
+  private fun clearNavigationBarScrim(target: Window) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+    if (target.isNavigationBarContrastEnforced) target.isNavigationBarContrastEnforced = false
+  }
+
+  private fun clearDialogNavigationBarScrims(view: View) {
+    if (view is ReactModalHostView) {
+      val dialogWindow = view.dialog?.window ?: return
+      clearNavigationBarScrim(dialogWindow)
+      val decor = dialogWindow.decorView
+      if (scrimWatched.put(decor, Unit) == null) {
+        decor.viewTreeObserver.addOnPreDrawListener {
+          clearNavigationBarScrim(dialogWindow)
+          true
+        }
+      }
+      return
+    }
+    if (view is ViewGroup) for (i in 0 until view.childCount) clearDialogNavigationBarScrims(view.getChildAt(i))
   }
 
   // The app follows the phone's appearance. `uiMode` is a handled config change (the manifest's
