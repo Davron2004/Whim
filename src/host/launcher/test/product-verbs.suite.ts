@@ -128,6 +128,7 @@ function composedLines(): Readonly<Record<string, readonly string[]>> {
 /** The functions `copy.ts` exports that compose no shell line of their own, each with the reason. */
 const NOT_COMPOSED: Readonly<Record<string, string>> = {
   formatCount: 'a number, no words',
+  formatClockTime: 'a clock time, no words',
   firstRunSentText: 'legal copy: joins first-run keys whose words are versioned with consent',
   consentWhatsNewText: 'legal copy: a what’s-new line, versioned with consent',
   legalLanguageName: 'a language’s own name',

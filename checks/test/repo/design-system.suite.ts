@@ -24,7 +24,7 @@ import { SAMPLED_SPRINGS } from '../../../src/design/generated/springs';
 import { contrastRatio, deltaE } from '../../../src/design/tints';
 import * as vcSdk from '../../../src/sdk/index';
 import { checkOutputs, formatDrift, reservedColors, tileRim, tintSoft, SYSTEM_MD, MOCKUP_HTML, PALETTE_JSON } from '../../../scripts/lib/design-tokens';
-import { COPY, COPY_KINDS, formatCount, reportCodeSizeLabel, timelineGrowthLine } from '../../../src/host/launcher/copy';
+import { COPY, COPY_KINDS, formatClockTime, formatCount, reportCodeSizeLabel, timelineGrowthLine } from '../../../src/host/launcher/copy';
 
 const ROOT = process.cwd();
 
@@ -227,14 +227,21 @@ function copyFindings(table: Readonly<Record<string, string>>, kinds: Readonly<R
   return findings;
 }
 
-/** A number written in the phone's locale: `toLocaleString()` or `Intl.NumberFormat` with no locale. */
-const MACHINE_LOCALE_NUMBER = /\.toLocaleString\(\s*\)|\.toLocaleString\(\s*undefined\b|\bIntl\.NumberFormat\(\s*(?:\)|undefined\b)/;
+/** A number, date or time written in the phone's locale: `toLocaleString()`,
+ *  `toLocaleTimeString()`, `toLocaleDateString()`, `Intl.NumberFormat` or `Intl.DateTimeFormat`
+ *  with no locale. Reading the phone's locale (`Intl.DateTimeFormat().resolvedOptions()`) writes
+ *  nothing, so it is not one. */
+const MACHINE_LOCALE_FORMATS: readonly RegExp[] = [
+  /\.toLocale(?:Date|Time)?String\(\s*(?:\)|undefined\b)/,
+  /\bIntl\.NumberFormat\(\s*(?:\)|undefined\b)/,
+  /\bDateTimeFormat\(\s*(?:undefined\b|\)(?!\.resolvedOptions\(\)))/,
+];
 
-/** Each line of `source` formatting a number in the phone's locale, as `line`. */
-function machineLocaleNumbers(source: string): number[] {
+/** Each line of `source` formatting a number, date or time in the phone's locale, as `line`. */
+function machineLocaleFormats(source: string): number[] {
   return withoutComments(source)
     .split('\n')
-    .flatMap((line, i) => (MACHINE_LOCALE_NUMBER.test(line) ? [i + 1] : []));
+    .flatMap((line, i) => (MACHINE_LOCALE_FORMATS.some((format) => format.test(line)) ? [i + 1] : []));
 }
 
 const parseNumbers = (css: string, fn: string) => (new RegExp(`^${fn}\\((.*)\\)$`).exec(css)?.[1] ?? '').split(',').map(Number);
@@ -396,18 +403,25 @@ export async function run(): Promise<void> {
     assert(legal.length === 1 && legal[0].startsWith('consentWhy: retired word "build"'), `legal copy has no carve-out: ${legal.join('; ')}`);
   });
 
-  await test('copy numbers: written in the copy table’s language, English and French alike (#89)', () => {
+  await test('copy numbers and clock times: written in the copy table’s language, English and French alike (#89, #214)', () => {
     assert(formatCount(1204, 'en') === '1,204', `English groups with a comma: ${formatCount(1204, 'en')}`);
     assert(formatCount(1204, 'fr') === '1 204', `French groups with a narrow no-break space: ${JSON.stringify(formatCount(1204, 'fr'))}`);
     assert(timelineGrowthLine(1204) === 'Wrote 1,204 characters', `the English table writes English numbers: ${timelineGrowthLine(1204)}`);
     assert(reportCodeSizeLabel(12043) === '12,043 characters', `the report's code size: ${reportCodeSizeLabel(12043)}`);
+    const fivePastThree = new Date(2026, 0, 1, 15, 5);
+    assert(/^3:05\sPM$/.test(formatClockTime(fivePastThree, 'en')), `English writes a 12-hour clock: ${formatClockTime(fivePastThree, 'en')}`);
+    assert(formatClockTime(fivePastThree, 'fr') === '15:05', `French writes a 24-hour clock: ${formatClockTime(fivePastThree, 'fr')}`);
   });
 
-  await test('copy numbers: no number in src/host is formatted in the phone’s locale', () => {
-    const hits = productFiles('src/host').flatMap((file) => machineLocaleNumbers(fs.readFileSync(path.join(ROOT, file), 'utf8')).map((line) => `${file}:${line}`));
-    assert(hits.length === 0, `pass the copy table's language (copy.ts#formatCount): ${hits.join(', ')}`);
-    assert(machineLocaleNumbers('const s = `${n.toLocaleString()} characters`;').join() === '1', 'toLocaleString() with no locale is a hit');
-    assert(machineLocaleNumbers('new Intl.NumberFormat(undefined).format(n);\nnew Intl.NumberFormat().format(n);').join() === '1,2', 'Intl.NumberFormat with no locale is a hit');
-    assert(machineLocaleNumbers("n.toLocaleString('en');\n// n.toLocaleString()").length === 0, 'an explicit locale, or a comment, is not');
+  await test('copy numbers: no number, date or time in src/host is formatted in the phone’s locale', () => {
+    const hits = productFiles('src/host').flatMap((file) => machineLocaleFormats(fs.readFileSync(path.join(ROOT, file), 'utf8')).map((line) => `${file}:${line}`));
+    assert(hits.length === 0, `pass the copy table's language (copy.ts#formatCount, #formatClockTime): ${hits.join(', ')}`);
+    assert(machineLocaleFormats('const s = `${n.toLocaleString()} characters`;').join() === '1', 'toLocaleString() with no locale is a hit');
+    assert(machineLocaleFormats('new Intl.NumberFormat(undefined).format(n);\nnew Intl.NumberFormat().format(n);').join() === '1,2', 'Intl.NumberFormat with no locale is a hit');
+    assert(
+      machineLocaleFormats("new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).format(d);\nd.toLocaleTimeString();\nd.toLocaleDateString(undefined, opts);\nnew Intl.DateTimeFormat().format(d);").join() === '1,2,3,4',
+      'a clock time or date with no locale is a hit',
+    );
+    assert(machineLocaleFormats("n.toLocaleString('en');\n// n.toLocaleString()\nd.toLocaleTimeString(language);\nIntl.DateTimeFormat().resolvedOptions().locale;").length === 0, 'an explicit locale, a comment, or reading the locale is not');
   });
 }

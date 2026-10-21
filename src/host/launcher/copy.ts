@@ -925,6 +925,13 @@ export function formatCount(n: number, language: LegalLanguage = COPY_LANGUAGE):
   return typeof Intl === 'undefined' ? String(n) : new Intl.NumberFormat(language).format(n);
 }
 
+/** `date`'s local clock time as a copy table in `language` writes it: "3:05 PM" in English, "15:05" in
+ *  French, whatever the phone's locale (the retry lines' "after 3:05 PM"). Only called where
+ *  `Intl` exists: `retryLine` falls back to hours without it. */
+export function formatClockTime(date: Date, language: LegalLanguage = COPY_LANGUAGE): string {
+  return new Intl.DateTimeFormat(language, { hour: 'numeric', minute: '2-digit' }).format(date);
+}
+
 /** The "2 didn’t work" line of the tile that gathers attempts older than a day. */
 export function tileOlderLine(count: number): string {
   return `${formatCount(count)} didn’t work`;
@@ -1214,7 +1221,7 @@ export function retryLineElapsed(): string {
 }
 
 /** Later the same local day: "after 4:30 PM". `time` is already formatted by the caller's
- *  injected `Intl.DateTimeFormat`-backed formatter. */
+ *  injected formatter (`formatClockTime`). */
 export function retryLineSameDay(time: string): string {
   return `after ${time}`;
 }
