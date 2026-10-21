@@ -29,6 +29,7 @@
  * - The keyboard: the card's bottom padding follows the keyboard frame by frame on the keyboard's own
  *   curve (`useKeyboardOverlap`): the card continues behind the keyboard and its content ends above
  *   it. A body with fields renders a `KeyboardShell host="sheet"`, which keeps the focused field in view.
+ *   A close, by any route, puts the keyboard away as it starts.
  * - Reduce Motion: opening and closing cross-fade in place (160 / 120 ms); a drag still tracks the
  *   finger and settles with a cross-fade.
  * - Growing from a place behind it (`anchor`, `SheetAnchor`; M6 the composer, M5 a ghost tile): it
@@ -45,7 +46,7 @@
  */
 
 import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
+import { AccessibilityInfo, Keyboard, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
 import type { LayoutChangeEvent } from 'react-native';
 import Animated, { measure, useAnimatedReaction, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -496,6 +497,7 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
   const { height: windowHeight } = useWindowDimensions();
   const gate = useOverlayTurn(visible, { onRefused: onClose });
   // The window's own report that it is on screen, which Android needs before it serves a field in it.
+  // A sheet already leaving asks for no keyboard, however late the report comes.
   const [presented, setPresented] = useState(false);
   const turn = useMemo(() => ({ ...gate, shown: () => { gate.shown(); setPresented(true); } }), [gate]);
   const { open, up, exited } = turn;
@@ -556,6 +558,8 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
       playEntrance(motion, how, fresh);
       return;
     }
+    // Its fields go with it, so the keyboard leaves as it starts to, not once its window has gone.
+    if (up) Keyboard.dismiss();
     // Off screen already (its own drag ended it, or the system refused it), or a drag is carrying it out.
     if (!up || closingRef.current) return;
     if (anchored) setMoving(true);
@@ -585,7 +589,7 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
     <OverlayModal turn={turn} onRequestClose={requestClose}>
       <SafeAreaProvider>
         <SheetBackContext.Provider value={back}>
-          <OverlayShownContext.Provider value={presented}>
+          <OverlayShownContext.Provider value={presented && open}>
             <SheetLeavingContext.Provider value={!visible}>
               <TravelLayer>
                 <SheetFrame
@@ -665,8 +669,8 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
   const dragStart = useSharedValue(0);
   const slop = useSharedValue(0);
   const committing = useSharedValue(false);
-  const drag = usePanGesture({
-    activeOffsetY: [-DRAG_SLOP, DRAG_SLOP],
+  const dragConfig = {
+    activeOffsetY: [-DRAG_SLOP, DRAG_SLOP] as [number, number],
     onBegin: () => {
       'worklet';
       scheduleOnRN(prepareCommit);
@@ -702,6 +706,17 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
         y.value = withSpring(0, { ...FLING, velocity: e.velocityY });
       }
     },
+  } satisfies Parameters<typeof usePanGesture>[0];
+  const drag = usePanGesture(dragConfig);
+  // While it grows out of its place the card is not seen yet, and a view that is not seen takes no
+  // touch, so the plate, the shape that is seen, takes the same drag.
+  const plateDrag = usePanGesture({
+    activeOffsetY: dragConfig.activeOffsetY,
+    onBegin: dragConfig.onBegin,
+    onActivate: dragConfig.onActivate,
+    onUpdate: dragConfig.onUpdate,
+    onDeactivate: dragConfig.onDeactivate,
+    enabled: !closing,
   });
 
   const cardMotion = useAnimatedStyle(() => ({
@@ -722,7 +737,7 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
       <Animated.View style={[s.scrim, scrimMotion]} pointerEvents={closing ? 'none' : 'box-none'}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessible={false} accessibilityRole="none" importantForAccessibility="no" />
       </Animated.View>
-      {anchor ? <AnchorMorph anchor={anchor} frame={frame} motion={motion} closing={closing} /> : null}
+      {anchor ? <AnchorMorph anchor={anchor} frame={frame} motion={motion} closing={closing} drag={plateDrag} /> : null}
       <Animated.View
         onLayout={onCardLayout}
         pointerEvents={closing ? 'none' : 'auto'}
@@ -756,16 +771,19 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
   );
 }
 
-/** The plate growing between the anchor and the card, and the anchor's face, still, over it. The face
- *  takes a tap while the sheet shrinks into it: the place's own tap, which reopens it. Each moving
+/** The plate growing between the anchor and the card, and the anchor's face, still, over it. The plate
+ *  takes the sheet's drag while it is the shape seen; the face takes a tap while the sheet shrinks
+ *  into it: the place's own tap, which reopens it. Each moving
  *  part is its own memoised view, so a render of the sheet or of Home never recomputes a style
  *  mid-way off the UI thread, where nothing can be measured. */
-function AnchorMorph({ anchor, frame, motion, closing }: Readonly<{ anchor: SheetAnchorEntry; frame: PlaceRef; motion: SheetMotion; closing: boolean }>) {
+function AnchorMorph({ anchor, frame, motion, closing, drag }: Readonly<{ anchor: SheetAnchorEntry; frame: PlaceRef; motion: SheetMotion; closing: boolean; drag: ReturnType<typeof usePanGesture> }>) {
   const t = useTokens();
   const { ref, look, size } = anchor;
   return (
     <>
-      <Plate frame={frame} place={ref} radius={look.radius} y={motion.y} height={motion.height} grown={motion.grown} shown={motion.shown} color={t.colors.sheet} shadow={t.shadows.raised} />
+      <GestureDetector gesture={drag}>
+        <Plate frame={frame} place={ref} radius={look.radius} y={motion.y} height={motion.height} grown={motion.grown} shown={motion.shown} color={t.colors.sheet} shadow={t.shadows.raised} />
+      </GestureDetector>
       <Face frame={frame} place={ref} grown={motion.grown} width={size.width} height={size.height} closing={closing} onPress={look.onPress}>
         {look.face}
       </Face>
@@ -808,7 +826,7 @@ const Plate = React.memo(function PlateView({ frame, place, radius, y, height, g
       borderBottomRightRadius: bottom,
     };
   });
-  return <Animated.View style={[morphStyles.at, { backgroundColor: color, boxShadow: shadow }, style]} pointerEvents="none" />;
+  return <Animated.View style={[morphStyles.at, { backgroundColor: color, boxShadow: shadow }, style]} />;
 });
 
 interface FaceProps {

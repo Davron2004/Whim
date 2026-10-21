@@ -15,6 +15,7 @@ import {
   appStateListenerCount,
   emitAccessibility,
   hapticCalls,
+  Keyboard,
   holdModalDismissals,
   holdUnmountedModalDismissals,
   modalPresentations,
@@ -581,6 +582,30 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
         await act(() => release());
       }
       h.ok(!modalShown(tree), `${way}: and its window goes once the exit ends`);
+      await act(() => tree.unmount());
+    }
+  });
+
+  await h.test('Sheet: the keyboard goes as the sheet starts to close, by every route, not once its window has gone (the pair: opening, or a drag that springs back, leaves it up)', async () => {
+    const ways: [string, (tree: Tree) => Promise<void>, boolean][] = [
+      ['the close control', (tree) => press(rowButtons(tree).find((n) => n.props.accessibilityLabel === COPY.sheetClose)!), true],
+      ['the scrim', (tree) => press(tree.root.find((n) => hostType(n) === 'Pressable' && n.props.accessible === false)), true],
+      ['Android back', (tree) => act(() => all(tree, 'Modal')[0].props.onRequestClose()), true],
+      ['a drag', (tree) => act(() => pan(dragOf(tree), [100, 220, 330], 600)), true],
+      ['a drag that springs back', (tree) => act(() => pan(dragOf(tree), [20, 60, 100], 0)), false],
+    ];
+    for (const [way, close, closes] of ways) {
+      await resetPhone();
+      const tree = await render(<RowSheet onRow={() => {}} />);
+      await layoutCard(tree);
+      const before = Keyboard.dismissed;
+      const release = holdAnimations();
+      try {
+        await close(tree);
+        h.eq([modalShown(tree), Keyboard.dismissed - before], [true, closes ? 1 : 0], closes ? `${way}: still leaving, the keyboard is already put away` : `${way}: the keyboard stays up`);
+      } finally {
+        await act(() => release());
+      }
       await act(() => tree.unmount());
     }
   });

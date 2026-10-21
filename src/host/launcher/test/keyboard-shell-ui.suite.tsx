@@ -30,7 +30,7 @@ import { button, freshApp, press, textOf, unmountScreen, hostType } from './reac
 import { testAppInfo } from './client-fixtures';
 import { Keyboard, Platform, StyleSheet, changeKeyboardFrame, keyboardFrameListenerCount, refuseModalPresentations, setColorScheme, useSafeAreaInsets } from './native-host';
 import { dragKeyboard, emitKeyboardEvent, endKeyboard, keyboardRequests, keyboardState, keyboardSubscriptions, keyboardWindow, moveKeyboard, resetKeyboard, startKeyboard, stepKeyboard } from './native-keyboard-controller';
-import { emitNativeEvent } from './native-reanimated';
+import { emitNativeEvent, holdAnimations } from './native-reanimated';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -897,6 +897,37 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         h.ok(focused() >= 1, 'iOS: the field asks for focus a frame after it mounts, shown or not');
       });
     } finally {
+      release();
+    }
+  });
+
+  await h.test('Android: a sheet that is leaving asks for no keyboard — closed before its window reports it is shown, or while its field is still asking (the keyboard would rise over a sheet on its way out)', async () => {
+    const close = { current: noop };
+    function Closable() {
+      const [visible, setVisible] = React.useState(true);
+      close.current = () => setVisible(false);
+      return <Sheet visible={visible} detent="large" onClose={noop}><DescribePage text="" onChangeText={noop} onContinue={noop} /></Sheet>;
+    }
+    const release = refuseModalPresentations();
+    const hold = holdAnimations();
+    try {
+      await on(ANDROID_17, <Closable />, async ({ tree, focused }) => {
+        await TestRenderer.act(async () => close.current());
+        await TestRenderer.act(async () => tree.root.find(isType('Modal')).props.onShow());
+        await playFrames(5);
+        h.eq([focused(), keyboardRequests.asked], [0, 0], 'closed before the report: the field neither takes focus nor asks');
+      });
+      await on(ANDROID_17, <Closable />, async ({ tree }) => {
+        await TestRenderer.act(async () => tree.root.find(isType('Modal')).props.onShow());
+        await playFrames(2);
+        const asked = keyboardRequests.asked;
+        h.ok(asked > 0, 'setup: shown, the field is asking');
+        await TestRenderer.act(async () => close.current());
+        await playFrames(5);
+        h.eq(keyboardRequests.asked, asked, 'closed while asking: it asks no more');
+      });
+    } finally {
+      hold();
       release();
     }
   });
