@@ -58,6 +58,7 @@ import {
   makeStyles,
   PRESS_RETENTION,
   springConfig,
+  springReachMs,
   timingOf,
   type EmberSize,
   type EmberState,
@@ -97,6 +98,9 @@ export const REFLOW_REDUCED = FadingTransition.duration(timingOf('fadeIn').durat
 /** A leaving tile (M18) takes no touch and a screen reader skips it. */
 const LEAVING = { pointerEvents: 'none', accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' } as const;
 const STAYING = { pointerEvents: 'auto', accessibilityElementsHidden: false, importantForAccessibility: 'auto' } as const;
+/** M18: a tile an Undo brings back once it had gone plays the delete back — its neighbours reflow
+ *  out of its way first (on `smooth`), then it grows in where they made room. */
+const RETURN_AFTER = springReachMs('smooth', 0.95);
 
 /** The states a delivery turns from a ghost into the app's tile (M4). */
 const GHOSTS: ReadonlySet<TileState> = new Set<TileState>(['making', 'queued']);
@@ -442,8 +446,10 @@ function usePresence(presence: TilePresence, reduceMotion: boolean, onSettled: (
       'worklet';
       if (finished) scheduleOnRN(settled);
     };
-    // From wherever it is: an Undo while the tile still leaves turns it back with its velocity.
-    shown.value = withSpring(target, SMOOTH, presence === 'leaving' ? undefined : done);
+    // From wherever it is: an Undo while the tile still leaves turns it back with its velocity; one
+    // that comes once it had gone waits for its neighbours to make room.
+    const spring = withSpring(target, SMOOTH, presence === 'leaving' ? undefined : done);
+    shown.value = was === 'shown' && presence === 'returning' ? withDelay(RETURN_AFTER, spring) : spring;
   }, [presence, shown, leaving, settled, reduceMotion]);
   return shown;
 }

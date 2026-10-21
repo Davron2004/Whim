@@ -3,6 +3,8 @@
  *  neighbours reflow and Undo plays it back; M4 a ghost delivered with the grid in view turns into its
  *  tile. Also the nameless older cell keeping its row's name block. The grid itself is
  *  `home-grid-ui.suite.tsx`. */
+import fs from 'node:fs';
+import path from 'node:path';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { COPY, tileOlderLine } from '../copy';
@@ -14,7 +16,7 @@ import type { InstalledApp } from '../app-index';
 import { tileOf } from '../tile-identity';
 import { REFLOW, REFLOW_REDUCED } from '../../ui/AppTile';
 import { GRID, TILE, TILE_SIDE } from '../../ui/AppTile-geometry';
-import { resolveTokens, SPARK_PEAK, springConfig, staggerDelay, timingOf } from '../../ui/tokens-pure';
+import { resolveTokens, SPARK_PEAK, springConfig, springReachMs, staggerDelay, timingOf } from '../../ui/tokens-pure';
 import { TINTS, TYPE_SCALE } from '../../../design/tokens';
 import { StyleSheet, accessibilitySettings, emitAccessibility } from './native-host';
 import { animations, elapseSprings, holdAnimations, isStep, playedUnder, ReduceMotion, type Animation, type LayoutAnimation } from './native-reanimated';
@@ -283,10 +285,13 @@ export async function runHomeMotionUiTests(h: Harness): Promise<void> {
         h.ok(reflow.preset === 'LinearTransition' && reflow.config.springify === true && same(springOf(reflow), SMOOTH), `${n} reflows on the token module’s smooth spring`);
         h.ok(playedUnder(reflow, false) !== null, `${n}’s reflow plays`);
       }
+      animations.splice(0);
       await pressToastAction(tree);
       h.eq(tileLabels(tree).map(nameOfLabel), names, 'Undo brings it back to its place');
       h.ok(same(motion(tree, 'Timer'), { opacity: 0, y: 0, scale: 0.8 }), 'from where it left off: nothing, at 0.8');
-      await pass(3000);
+      const back = animations.filter((a) => a.kind === 'delay' && isSmoothTo(a.animation, 1)).map((a) => (a.kind === 'delay' ? a.delay : null));
+      h.eq(back, [springReachMs('smooth', 0.95)], 'played back: it grows in once the neighbours’ smooth reflow has made room');
+      await run(release);
       h.ok(atRest(tree, 'Timer'), 'and plays it back to whole');
       h.eq(cellOf(tree, 'Timer').props.pointerEvents, 'auto', 'touchable again');
     } finally { await run(release); await unmountScreen(tree); }
@@ -357,6 +362,16 @@ export async function runHomeMotionUiTests(h: Harness): Promise<void> {
       h.eq(['Timer', 'Plants', 'Tea', 'Water Counter'].map(block), [2, 2, 2, 2].map((n) => n * line), 'which now gives every name the two-line block');
       h.eq(shown, [true, true], 'the grid never went out of sight while it reflowed');
     } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('M18: the wait before a return is the time system.md gives the smooth spring to cover 95% of its way, as it does for every spring', async () => {
+    const table = fs.readFileSync(path.join(process.cwd(), 'docs/design/system.md'), 'utf8');
+    const rows = [...table.matchAll(/^\| `(\w+)` \| [\d.]+ \| [\d.]+ \| [\d.]+ \| [\d.]+ \| (\d+) \/ \d+ ms/gm)].map((m) => [m[1], Number(m[2])] as const);
+    h.eq(rows.map(([name]) => name), ['instant', 'snappy', 'smooth', 'fling', 'morph', 'spark'], 'the table lists the six springs');
+    for (const [name, documented] of rows) {
+      const reach = springReachMs(name as Parameters<typeof springReachMs>[0], 0.95);
+      h.ok(Math.abs(reach - documented) <= 1, `${name}: 95% of the way at ${reach} ms, the table says ${documented}`);
+    }
   });
 
   // ── M4 ghost → tile ────────────────────────────────────────────────────────

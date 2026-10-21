@@ -159,6 +159,23 @@ export function springConfig(name: SpringName): PhysicsSpring {
   return { mass: SPRING_MASS, stiffness, damping };
 }
 
+/** How long, in ms, the named spring released from rest toward its target takes to first cover
+ *  `share` of the way (system.md §4.2 tabulates the 95% figure): for a motion that waits on another. */
+export function springReachMs(name: SpringName, share: number): number {
+  const { mass, stiffness, damping } = springConfig(name);
+  const dt = 0.0001;
+  let x = 0;
+  let v = 0;
+  for (let ms = 1; ms <= 10_000; ms++) {
+    for (let i = 0; i < 10; i++) {
+      v += ((stiffness * (1 - x) - damping * v) / mass) * dt;
+      x += v * dt;
+    }
+    if (x >= share) return ms;
+  }
+  return Infinity;
+}
+
 /** A spring with the token module's derivation (stiffness = (2π/response)², damping =
  *  4π·ζ/response), for the one smoothing spring system.md §4.6 defines outside the named set. */
 function physicsSpring(response: number, dampingRatio: number): PhysicsSpring {
