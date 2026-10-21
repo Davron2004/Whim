@@ -50,6 +50,7 @@ import { Icon } from './Icon';
 import { timing, usePressFeedback } from './motion';
 import { OverlayModal, useOverlayTurn, useScrimCount } from './OverlayModal';
 import { TopHighlight } from './TopHighlight';
+import { TravelLayer } from './TravelLayer';
 import { wrappingType } from './Text';
 import { useTokens } from './tokens';
 import { hitSlopFor, ICON_BUTTON, makeStyles, MAX_FONT_SCALE, PRESS_RETENTION, springConfig } from './tokens-pure';
@@ -132,6 +133,15 @@ interface SheetBack {
   readonly showControl: (shown: boolean) => void;
 }
 const SheetBackContext = createContext<SheetBack | null>(null);
+
+/** The sheet is leaving: its owner closed it, by whatever route. */
+const SheetLeavingContext = createContext(false);
+
+/** Whether the sheet the caller is in is leaving (any close: the control, the scrim, a drag, Android
+ *  back), so a page can end a moment it is playing rather than leave on a frame of it. */
+export function useSheetLeaving(): boolean {
+  return useContext(SheetLeavingContext);
+}
 
 export interface SheetBackOptions {
   /** Also draws the back control in the sheet's header row, beside the close control, for as long as
@@ -329,21 +339,25 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
       <SafeAreaProvider>
         <SheetBackContext.Provider value={back}>
           <OverlayShownContext.Provider value={presented}>
-            <SheetFrame
-              key={t.fontScale}
-              closing={!open}
-              motion={{ y, height, fade }}
-              reduceMotion={t.reduceMotion}
-              title={title}
-              detent={detent}
-              closeLabel={closeLabel}
-              onClose={onClose}
-              onBack={backControl ? () => backSlot.current?.() : undefined}
-              onDragClosed={dragClosed}
-              onSettled={settled}
-            >
-              {children}
-            </SheetFrame>
+            <SheetLeavingContext.Provider value={!visible}>
+              <TravelLayer>
+                <SheetFrame
+                  key={t.fontScale}
+                  closing={!open}
+                  motion={{ y, height, fade }}
+                  reduceMotion={t.reduceMotion}
+                  title={title}
+                  detent={detent}
+                  closeLabel={closeLabel}
+                  onClose={onClose}
+                  onBack={backControl ? () => backSlot.current?.() : undefined}
+                  onDragClosed={dragClosed}
+                  onSettled={settled}
+                >
+                  {children}
+                </SheetFrame>
+              </TravelLayer>
+            </SheetLeavingContext.Provider>
           </OverlayShownContext.Provider>
         </SheetBackContext.Provider>
       </SafeAreaProvider>

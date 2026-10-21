@@ -7,14 +7,18 @@
  * which is `Done`, so the page registers nothing with the sheet.
  *
  * M10 (system.md §4.4): the page mounts as the delivery lands, in place of the Making page, so it
- * carries the moment itself. An ember drawn over the tile's place flares (1 → 1.18 → 1, `spark`);
+ * carries the moment itself. The Making page's ember travels on `morph` from where it is drawn to the
+ * tile's place (`TravelLayer`; at once when the page was not reached from Making), where it flares
+ * (1 → 1.18 → 1, `spark`);
  * once the flare has reached its peak it settles into the tile, which rises from 0.6 to 1 on
  * `spark` as the ember fades out over it. The name, the words and the buttons fade in 80 ms apart
- * from then; text only fades, it never moves (§4.3 rule 8). Done or Open it mid-way shows the end
- * at once and still acts. Under Reduce Motion, read as the delivery lands, the ember cross-fades
- * into the whole tile over `fade-in`, with no flare and no rise, and everything else fades in with it.
+ * from then; text only fades, it never moves (§4.3 rule 8). Done, Open it or closing the sheet by any
+ * route mid-way shows the end at once (Done and Open it still act), so the sheet never leaves on a
+ * frame of the moment. Under Reduce Motion, read as the delivery lands, nothing travels: the ember
+ * cross-fades into the whole tile over `fade-in`, with no flare and no rise, and everything else fades
+ * in with it.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated, { useAnimatedReaction, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
@@ -24,8 +28,10 @@ import { TILE_SIDE } from '../ui/AppTile-geometry';
 import { Button } from '../ui/Button';
 import { Ember, RESTING_ACTIVITY } from '../ui/Ember';
 import { timing } from '../ui/motion';
+import { useSheetLeaving } from '../ui/Sheet';
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
+import { useTravelTarget } from '../ui/TravelLayer';
 import { makeStyles, READY_RISE_FROM, READY_STAGGER_MS, springConfig, springReachMs } from '../ui/tokens-pure';
 import type { InstalledApp } from './app-index';
 import { COPY, quotedWords } from './copy';
@@ -74,13 +80,14 @@ interface ReadyMotion {
   finish: () => void;
 }
 
-/** M10's timeline, started as the page mounts (the delivery landing). */
-function useReadyMotion(reduceMotion: boolean): ReadyMotion {
+/** M10's timeline, started once the ember has `landed` on the tile's place, unless it was ended first. */
+function useReadyMotion(reduceMotion: boolean, landed: boolean): ReadyMotion {
   const [reduced] = useState(reduceMotion);
   const [spark, setSpark] = useState(0);
   const [settled, setSettled] = useState(false);
   const arrived = useSharedValue(0);
   const shown = [useSharedValue(0), useSharedValue(0), useSharedValue(0)] as const;
+  const ended = useRef(false);
   // Once the tile is wholly there the ember is wholly gone, so it leaves: overshoot or not.
   useAnimatedReaction(
     () => arrived.value >= 1,
@@ -89,6 +96,7 @@ function useReadyMotion(reduceMotion: boolean): ReadyMotion {
     },
   );
   useEffect(() => {
+    if (!landed || ended.current) return;
     if (reduced) {
       arrived.value = withTiming(1, timing('fadeIn', true));
       for (const value of shown) value.value = withTiming(1, timing('fadeIn', true));
@@ -99,10 +107,11 @@ function useReadyMotion(reduceMotion: boolean): ReadyMotion {
     shown.forEach((value, i) => {
       value.value = withDelay(SETTLE_AFTER + i * READY_STAGGER_MS, withTiming(1, timing('fadeIn')));
     });
-    // Played once, as the delivery lands.
+    // Played once, as the ember lands.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [landed]);
   const finish = () => {
+    ended.current = true;
     arrived.value = 1;
     for (const value of shown) value.value = 1;
   };
@@ -113,7 +122,19 @@ export default function ReadyPage({ app, words, changed, onOpen, onDone }: Reado
   const t = useTokens();
   const s = styles(t);
   const tile = tileOf(app);
-  const { arrived, shown, reduced, spark, settled, finish } = useReadyMotion(t.reduceMotion);
+  const ember = <Ember size={96} state="working" activity={RESTING_ACTIVITY} />;
+  const travel = useTravelTarget('ember', ember, t.reduceMotion);
+  const { arrived, shown, reduced, spark, settled, finish: showEnd } = useReadyMotion(t.reduceMotion, travel.landed);
+  const finish = () => {
+    travel.land();
+    showEnd();
+  };
+  const leaving = useSheetLeaving();
+  useEffect(() => {
+    if (leaving) finish();
+    // Ends the moment as the sheet starts to leave.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leaving]);
   const tileIn = useAnimatedStyle(() => ({
     opacity: Math.min(1, arrived.value),
     transform: [{ scale: reduced ? 1 : READY_RISE_FROM + (1 - READY_RISE_FROM) * arrived.value }],
@@ -148,13 +169,13 @@ export default function ReadyPage({ app, words, changed, onOpen, onDone }: Reado
         </Animated.View>
       }
     >
-      <View style={s.hero}>
+      <View ref={travel.ref} collapsable={false} style={s.hero}>
         <Animated.View style={tileIn}>
           <TilePlate size="hero" state="ready" tint={tile.tint} glyph={tile.icon} />
         </Animated.View>
         {settled ? null : (
           <Animated.View style={[StyleSheet.absoluteFill, emberOut]} pointerEvents="none">
-            <Ember size={96} state="working" activity={RESTING_ACTIVITY} spark={spark} />
+            {travel.travelling ? null : <Ember size={96} state="working" activity={RESTING_ACTIVITY} spark={spark} />}
           </Animated.View>
         )}
       </View>

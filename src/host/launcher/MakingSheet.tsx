@@ -15,9 +15,15 @@
  * a blank one. Every page starts its headline right under the sheet's header row, where a page that
  * steps back (Plan) has its back control beside the close control (`useSheetBack` with `control`),
  * so the headlines start at the same height.
+ *
+ * A page that hands an element on to the next (the Making page's ember, which travels into the Ready
+ * page's tile: `TravelLayer`) stays mounted, unseen and untouchable under the page that replaced it,
+ * until the element has landed, so the travel sets out from where it is drawn.
  */
-import React, { Fragment, useRef } from 'react';
+import React, { useEffect, useReducer, useRef } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { Sheet, type SheetDetent } from '../ui/Sheet';
+import { useTravel } from '../ui/TravelLayer';
 
 /** A page to show: what it is shown under, the page itself, and the height it takes: `large` (the
  *  making flow) unless it asks to `fit` its content (the Whim sheet's own pages). A page that asks for
@@ -42,7 +48,65 @@ export function MakingSheet({ content, onClose }: Readonly<MakingSheetProps>) {
   const shown = last.current;
   return (
     <Sheet visible={content !== null} onClose={onClose} detent={shown?.detent ?? 'large'}>
-      {shown ? <Fragment key={shown.key}>{shown.node}</Fragment> : null}
+      {shown ? <Pages shown={shown} /> : null}
     </Sheet>
   );
 }
+
+/** One mounted page: a new one for a new key or a different page under the same key. */
+interface PageInstance {
+  readonly serial: number;
+  readonly key: string;
+  readonly node: React.ReactNode;
+}
+
+const typeOf = (node: React.ReactNode): unknown => (React.isValidElement(node) ? node.type : null);
+
+/** The page shown, and the one it replaced while an element travels out of it. */
+function Pages({ shown }: Readonly<{ shown: SheetContent }>) {
+  const travel = useTravel();
+  const [, redraw] = useReducer((n: number) => n + 1, 0);
+  const page = useRef<PageInstance | null>(null);
+  const leaving = useRef<PageInstance | null>(null);
+  const was = page.current;
+  if (was === null || was.key !== shown.key || typeOf(was.node) !== typeOf(shown.node)) {
+    // Only a page an element can leave from is kept: any other goes as it always did.
+    leaving.current = was !== null && travel?.hasSource() ? was : null;
+    page.current = { serial: (was?.serial ?? 0) + 1, key: shown.key, node: shown.node };
+  } else {
+    page.current = { ...was, node: shown.node };
+  }
+  const current = page.current;
+  const left = leaving.current;
+  useEffect(() => {
+    if (left === null) return undefined;
+    const drop = () => {
+      if (leaving.current !== left) return;
+      leaving.current = null;
+      redraw();
+    };
+    if (travel === null || !travel.flying()) {
+      drop();
+      return undefined;
+    }
+    return travel.onLanding(drop);
+  }, [left, travel]);
+  return (
+    <>
+      {left ? (
+        <View key={left.serial} style={styles.left} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          {left.node}
+        </View>
+      ) : null}
+      <View key={current.serial} style={styles.page}>
+        {current.node}
+      </View>
+    </>
+  );
+}
+
+const styles = StyleSheet.create({
+  // A page fills the sheet's body as the body fills the card (`Sheet`), so it lays out as if unwrapped.
+  page: { flexGrow: 1, flexShrink: 1 },
+  left: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: 0 },
+});

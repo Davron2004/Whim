@@ -9,6 +9,7 @@
  * diagnostic, the transport or an output counter: the page reads only the run's own page state and
  * signals, through `making-progress.ts`. Leaving is the sheet's close (and Android back, which the
  * sheet delivers as its close); neither stops the run, so the page registers nothing with the sheet.
+ * The ember is where the Ready page's ember travels from as the delivery lands (`TravelLayer`).
  */
 import React from 'react';
 import { Text as RNText, useWindowDimensions, View } from 'react-native';
@@ -18,6 +19,7 @@ import { AmbientLight, Ember } from '../ui/Ember';
 import { Icon } from '../ui/Icon';
 import { Text, wrappingType } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
+import { useTravelSource } from '../ui/TravelLayer';
 import { makeStyles, MAX_FONT_SCALE } from '../ui/tokens-pure';
 import { COPY, makingTitle, quotedWords } from './copy';
 import type { FlickerPulse } from './home-live';
@@ -137,6 +139,7 @@ export default function MakingPage({
   const { width } = useWindowDimensions();
   const progress = makingProgress({ stage, delivering, queuedPosition, repairAttempt, stepSince }, signals, now, activity);
   const ambientWidth = width + 2 * AMBIENT.overhang;
+  const emberPlace = useTravelSource('ember');
   return (
     <KeyboardShell
       host="sheet"
@@ -153,7 +156,9 @@ export default function MakingPage({
         <View style={[s.ambient, { width: ambientWidth }]} pointerEvents="none">
           <AmbientLight width={ambientWidth} height={AMBIENT.height} cut={{ at: AMBIENT.lift, backdrop: t.colors.sheet }} activity={progress.ember.state === 'stuck' ? 0 : progress.ember.activity} flicker={flicker} />
         </View>
-        <Ember size={128} state={progress.ember.state} activity={progress.ember.activity} flicker={flicker} />
+        <View ref={emberPlace} collapsable={false}>
+          <Ember size={128} state={progress.ember.state} activity={progress.ember.activity} flicker={flicker} />
+        </View>
         <Text type="title1" style={s.title}>
           {makingTitle(name, changing)}
         </Text>

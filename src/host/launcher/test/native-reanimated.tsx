@@ -10,7 +10,7 @@
  *  layout animations (`FadeIn`, `FadeOut`, `LinearTransition`, `FadingTransition` and their builder calls) they enter and
  *  exit with in `layoutAnimations`; `playedUnder` says what one does under Reduce Motion.
  *  Each mount of an Animated view is a native view of its own (`viewTagOf`).
- *  `useAnimatedReaction` reacts synchronously, `measure` reports `measuredRect`. The double's own
+ *  `useAnimatedReaction` reacts synchronously, `measure` reports `measuredRect` (or a view's own, `measuring`). The double's own
  *  contract is `native-reanimated.suite.tsx`. */
 import React from 'react';
 
@@ -379,9 +379,13 @@ export function useAnimatedReaction<T>(prepare: () => T, react: (current: T, pre
 
 /** What `measure` reports for any mounted view; a test sets the rect it needs. */
 export const measuredRect = { x: 0, y: 0, width: 100, height: 100, pageX: 0, pageY: 0 };
+/** Where particular views are now: given what a ref holds (the test's `createNodeMock` output), the
+ *  rect it measures, or undefined for `measuredRect`. A test sets `rectOf`, and clears it after. */
+export const measuring: { rectOf: ((node: unknown) => typeof measuredRect | undefined) | null } = { rectOf: null };
 /** Reanimated's synchronous measurement: the view's rect, or null once its ref holds no view. */
 export function measure<T>(ref: AnimatedRef<T>): typeof measuredRect | null {
-  return ref.current === null ? null : { ...measuredRect };
+  if (ref.current === null) return null;
+  return { ...(measuring.rectOf?.(ref.current) ?? measuredRect) };
 }
 
 // ── Layout animations ────────────────────────────────────────────────────────

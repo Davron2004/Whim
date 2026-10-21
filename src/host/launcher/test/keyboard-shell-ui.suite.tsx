@@ -80,7 +80,9 @@ function answerersAround(scroll: Node): string[] {
   return found;
 }
 /** Every frame that pads itself for the keyboard (the one view measured on its page). */
-const frames = (tree: Tree) => tree.root.findAll((n) => String(n.type) === 'View' && n.props.collapsable === false);
+/** The padded frames: views kept as native views that read their own layout (a sheet's travel layer
+ *  and a travelling element's places are kept too, but read none). */
+const frames = (tree: Tree) => tree.root.findAll((n) => String(n.type) === 'View' && n.props.collapsable === false && typeof n.props.onLayout === 'function');
 const flat = (node: Node) => StyleSheet.flatten(node.props.style) as Record<string, unknown>;
 
 interface Device { readonly name: string; readonly os: 'ios' | 'android'; readonly version: string | number }
