@@ -1029,7 +1029,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('every launcher field wears ink for its caret and selection handles, selected text stays readable on its highlight, it paints its own background, and on iOS a one-line field sets no line height', async () => {
+  await h.test('every launcher field wears ink for its caret and selection handles, selected text stays readable on its highlight, it paints its own background, and on iOS a one-line field sets no line height and a different selection colour from a multiline one (#218)', async () => {
     for (const scheme of ['light', 'dark'] as const) {
       await TestRenderer.act(async () => setColorScheme(scheme));
       try {
@@ -1041,6 +1041,9 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
             ['describe', compose(), async () => {}, true],
             ['plan row', plan(), editFourthRow, true],
           ];
+          // iOS selection colours by line count: one recycled native field crossing between the two
+          // keeps its old tint unless the colour differs (`fieldSelection`).
+          const iosSelections = new Map<boolean, Set<string>>([[false, new Set()], [true, new Set()]]);
           for (const [name, element, open, multiline] of fields) {
             await on(device, element, async ({ tree }) => {
               await open(tree);
@@ -1049,7 +1052,9 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
               const background = paintedBackground(input);
               h.ok(background !== undefined, `${where}: it paints its own background, which covers Android's default field underline`);
               if (device.os === 'ios') {
-                h.eq(input.props.selectionColor, ink, `${where}: ink tints the caret, the handles and the highlight iOS draws translucent itself`);
+                const [r, g, b, a] = rgba(String(input.props.selectionColor));
+                h.ok(JSON.stringify([r, g, b]) === JSON.stringify(rgba(ink).slice(0, 3)) && a >= 0.99, `${where}: ink tints the caret, the handles and the highlight iOS draws translucent itself (${input.props.selectionColor})`);
+                iosSelections.get(multiline)?.add(String(input.props.selectionColor));
               } else {
                 h.eq([input.props.cursorColor, input.props.selectionHandleColor], [ink, ink], `${where}: ink caret and selection handles`);
                 const contrast = contrastOnHighlight(String(flat(input).color), String(input.props.selectionColor), String(background));
@@ -1058,6 +1063,11 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
               const oneLineOnIos = device.os === 'ios' && !multiline;
               h.eq(typeof flat(input).lineHeight, oneLineOnIos ? 'undefined' : 'number', `${where}: ${oneLineOnIos ? 'no line height, so iOS keeps its descenders' : 'its type’s line height'}`);
             });
+          }
+          if (device.os === 'ios') {
+            const [oneLine, multiline] = [[...(iosSelections.get(false) ?? [])], [...(iosSelections.get(true) ?? [])]];
+            h.ok(oneLine.length > 0 && multiline.length > 0 && oneLine.every((colour) => !multiline.includes(colour)),
+              `${scheme} iOS: a one-line field's selection colour (${oneLine.join(', ')}) differs from a multiline one's (${multiline.join(', ')}), so a recycled native field that changes line mode applies its ink again`);
           }
         }
       } finally {

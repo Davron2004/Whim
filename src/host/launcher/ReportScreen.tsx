@@ -14,6 +14,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { Linking, View } from 'react-native';
+import type { ScrollView } from 'react-native';
 import type { ReportReason, ReportRequest } from '@whim/contract';
 import { LAYOUT, SPACE } from '../../design/tokens';
 import { log } from '../logging';
@@ -174,6 +175,10 @@ function ReportForm({
   // The note and the include switch under it: the block kept in view while the note is focused,
   // so the pinned Send never cuts the switch in half.
   const noteBlock = useRef<View>(null);
+  // A send's notice sits at the end of the scroll, above the pinned footer, and may land below what
+  // shows: once the scroll view reports the content with it, it moves to its end (#218).
+  const scroll = useRef<ScrollView>(null);
+  const revealNotice = useRef(false);
   // Leaving mid-send drops the answer: nothing left on screen to show it.
   const live = useRef(true);
   useEffect(() => () => { live.current = false; }, []);
@@ -201,6 +206,13 @@ function ReportForm({
     const settled = settleSend<ReportNotice>(outcome);
     setPhase(settled.phase);
     setNotice(settled.notice);
+    revealNotice.current = settled.notice !== null;
+  };
+
+  const onContentSizeChange = () => {
+    if (!revealNotice.current) return;
+    revealNotice.current = false;
+    scroll.current?.scrollToEnd({ animated: true });
   };
 
   const handleSend = async () => {
@@ -238,6 +250,8 @@ function ReportForm({
       host={host}
       style={host === 'screen' ? s.bg : undefined}
       contentContainerStyle={[s.content, host === 'sheet' && s.sheetContent]}
+      scrollRef={scroll}
+      onContentSizeChange={onContentSizeChange}
       footer={
         <View style={[s.actions, s.footer]}>
           <Button

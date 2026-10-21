@@ -19,6 +19,7 @@ import type { NativeSyntheticEvent } from 'react-native';
 import { ScreenStack, ScreenStackItem } from 'react-native-screens';
 import type { ScreenStackHeaderConfigProps } from 'react-native-screens';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTokens } from '../ui/tokens';
 import { typeStyle } from '../ui/tokens-pure';
 
 export interface StackEntry {
@@ -47,11 +48,15 @@ export function poppedEntry(top: number, dismissCount: number): number {
   return Math.max(1, top - Math.max(1, dismissCount) + 1);
 }
 
-function headerFor(entry: StackEntry, root: boolean): ScreenStackHeaderConfigProps {
+/** The header of a pushed entry with a title. At large text (system.md §6) the iOS back button is
+ *  its chevron alone (#218): the title of the screen it returns to, at that size, truncated to "S…gs"
+ *  beside this screen's own. VoiceOver reads it as "Back". */
+function headerFor(entry: StackEntry, root: boolean, largeText: boolean): ScreenStackHeaderConfigProps {
   if (root || entry.title === undefined) return { hidden: true };
   const title = typeStyle('headline');
   return {
     title: entry.title,
+    ...(largeText ? { backButtonDisplayMode: 'minimal' as const } : {}),
     largeTitle: entry.largeTitle === true,
     backgroundColor: entry.background,
     largeTitleBackgroundColor: entry.background,
@@ -73,6 +78,7 @@ interface NativeStackProps {
 }
 
 export default function NativeStack({ entries, onSettled }: Readonly<NativeStackProps>) {
+  const { largeText } = useTokens();
   return (
     <ScreenStack style={styles.fill} onFinishTransitioning={onSettled}>
       {entries.map((entry, index) => {
@@ -83,7 +89,7 @@ export default function NativeStack({ entries, onSettled }: Readonly<NativeStack
             key={entry.key}
             screenId={entry.key}
             activityState={2}
-            headerConfig={headerFor(entry, root)}
+            headerConfig={headerFor(entry, root, largeText)}
             gestureEnabled={!root}
             contentStyle={{ backgroundColor: entry.background }}
             onDismissed={(event: NativeSyntheticEvent<{ dismissCount: number }>) =>

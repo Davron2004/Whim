@@ -1431,7 +1431,9 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     await act(() => input().props.onFocus({}));
     h.eq([flat(boxOf()).borderWidth, flat(boxOf()).borderColor], [2, LIGHT.text], 'focused: 2 pt text');
     h.eq(extent(), rest, 'the same outer size focused');
-    h.eq(input().props.selectionColor, LIGHT.ink, 'iOS: an ink caret');
+    const [r, g, b] = [1, 3, 5].map((at) => Number.parseInt(LIGHT.ink.slice(at, at + 2), 16));
+    const caret = /^rgba\((\d+),(\d+),(\d+),([\d.]+)\)$/.exec(String(input().props.selectionColor));
+    h.ok(caret !== null && [Number(caret[1]), Number(caret[2]), Number(caret[3])].join() === [r, g, b].join() && Number(caret[4]) >= 0.99, `iOS: an ink caret (${input().props.selectionColor})`);
     await act(() => tree.update(<Field error="That address didn’t answer." />));
     h.eq([flat(boxOf()).borderWidth, flat(boxOf()).borderColor], [2, LIGHT.danger], 'error: 2 pt danger');
     h.ok(textOf(tree.root).includes('That address didn’t answer.') && tree.root.findAll((n) => hostType(n) === 'Path').length >= 1, 'its words, with an icon, under the field');

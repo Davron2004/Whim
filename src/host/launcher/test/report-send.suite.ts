@@ -90,6 +90,40 @@ export async function runReportSendTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('report: a refusal’s notice, at the end of the scroll above the pinned footer, is scrolled into view once it is laid out; later growth of the draft scrolls nothing (#218)', async () => {
+    const answers: (() => Promise<Response>)[] = [];
+    const fetchImpl = (async () => answers.shift()!()) as typeof fetch;
+    const ends: unknown[] = [];
+    const tree = await renderScreen(React.createElement(ReportScreen, {
+      app: APP, access: ACCESS, options: { ...reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo), fetchImpl }, onLeave: () => {}, onUpdateRequired: () => {}, legalLanguage: 'en',
+    }), {
+      createNodeMock: (node) => (String(node.type) === 'ScrollView' ? { scrollTo: () => {}, scrollToEnd: (options: unknown) => { ends.push(options); } } : {}),
+    });
+    const scroll = () => tree.root.find(isHost('ScrollView'));
+    // The scroll view reports its content's new height once the native layout has it.
+    const laidOut = (height: number) => TestRenderer.act(async () => { scroll().props.onContentSizeChange(390, height); });
+    try {
+      await TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });
+      await press(button(tree, COPY.reportReasonBroken));
+      await laidOut(900);
+      h.eq(ends, [], 'a draft growing as it is filled in scrolls nothing');
+      answers.push(async () => json({ error: 'payload_too_large', hint: 'That report is too large to send.' }, 413));
+      await press(button(tree, COPY.reportSend));
+      h.ok(textOf(tree.root).includes(COPY.reportTooLarge), 'the refusal shows its notice');
+      h.eq(ends, [], 'nothing scrolls before the notice is laid out');
+      await laidOut(1000);
+      h.eq(ends, [{ animated: true }], 'with the notice laid out, the scroll view moves to its end, the whole notice above the footer');
+      await laidOut(1040);
+      h.eq(ends.length, 1, 'once: growth after that leaves the scroll where the person puts it');
+      answers.push(async () => json({ error: 'payload_too_large', hint: 'That report is too large to send.' }, 413));
+      await press(button(tree, COPY.reportSend));
+      await laidOut(1000);
+      h.eq(ends.length, 2, 'a second refusal’s notice is brought into view again');
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
   await h.test('report: the preview shows exactly the body Send posts, and the screen is the report’s notice', async () => {
     const bodies: Record<string, unknown>[] = [];
     const fetchImpl = (async (_url: string, init?: RequestInit) => {

@@ -17,7 +17,8 @@ import ConsentScreen from '../ConsentScreen';
 import { COLORS } from '../../../design/tokens';
 import type { InstalledApp } from '../app-index';
 import { button, hostType, press, textOf } from './react-screen';
-import { backListenerCount, hardwareBack, setColorScheme, StyleSheet } from './native-host';
+import { backListenerCount, hardwareBack, setColorScheme, StyleSheet, windowMetrics } from './native-host';
+import { LARGE_TEXT_FROM } from '../../ui/tokens-pure';
 import { androidHeaderBack, iosPop, stackIds, stackItems } from './native-screens';
 import { json, tap, waitFor, withLauncher, type Tree } from './rendered-launcher';
 
@@ -111,6 +112,22 @@ export async function runNativeStackUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => home(tree).props.onHistory(home(tree).props.apps[0]));
       h.eq(header(tree, 'history').hidden, true, 'History draws its own header with its own back');
     });
+  });
+
+  await h.test('native stack: at large text the iOS back button is its chevron alone, so it never truncates the screen it returns to; at the default size it names it (#218)', async () => {
+    for (const [scale, mode] of [[1, undefined], [LARGE_TEXT_FROM, 'minimal'], [3.12, 'minimal']] as const) {
+      windowMetrics.fontScale = scale;
+      try {
+        await withLauncher({ server: nothing }, async ({ tree }) => {
+          await openSettings(tree);
+          await press(button(tree, COPY.settingsAdvancedSectionTitle));
+          h.eq([header(tree, 'settings').backButtonDisplayMode, header(tree, 'advanced').backButtonDisplayMode], [mode, mode], `text at ${scale}×: back over Settings and over Advanced is ${mode ?? 'the platform default'}`);
+          h.eq(header(tree, 'advanced').title, COPY.settingsAdvancedSectionTitle, `text at ${scale}×: the screen keeps its title`);
+        });
+      } finally {
+        windowMetrics.fontScale = 1;
+      }
+    }
   });
 
   await h.test('native stack: Home, Settings and AI features follow the scheme: the status bar, the header and the screen itself', async () => {
