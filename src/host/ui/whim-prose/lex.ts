@@ -203,18 +203,23 @@ function foldCase(text: string): string {
 }
 
 /**
- * `yours` is MATCHED, never reconstructed. Two exact rules, both blind to case (a keyboard
- * capitalises the prompt's first letter; a summary quoting it mid-sentence doesn't):
- *   1. the stored prompt appearing verbatim in the text (a history row whose headline IS the
- *      user's prompt), and
- *   2. a quoted run whose contents are an exact substring of the stored prompt.
+ * `yours` is MATCHED, never reconstructed. Two exact rules:
+ *   1. the stored prompt appearing verbatim in the text, in any case (a history row whose
+ *      headline IS the user's prompt; a keyboard capitalises the prompt's first letter, a
+ *      headline may not), and
+ *   2. a quoted run whose contents are an exact substring of the stored prompt: in any case when
+ *      the run is two words or more (a summary quoting the prompt mid-sentence lowercases it), in
+ *      the prompt's own case when it is one word — a capitalised one-word quote is far more often
+ *      a label of the app ("Done", "Add") than the person's word, and a prompt holding that word
+ *      in lowercase doesn't make it theirs.
  *
  * A paraphrase matches neither and therefore carries no mark — the deliberate failure direction,
  * because the class is attribution and attributing a paraphrase to the user is a lie. The spans
  * index the text as written, so it renders letter for letter as the producer wrote it.
  */
 function lexYours(text: string, storedPrompt: string | null | undefined): Span[] {
-  const prompt = foldCase((storedPrompt ?? '').trim());
+  const asTyped = (storedPrompt ?? '').trim();
+  const prompt = foldCase(asTyped);
   if (prompt.length < 3) return [];
   const folded = foldCase(text);
 
@@ -225,9 +230,10 @@ function lexYours(text: string, storedPrompt: string | null | undefined): Span[]
 
   for (const [innerStart, innerEnd] of quotedRanges(text)) {
     const [start, end] = tightenedRange(text, innerStart, innerEnd);
-    if (end > start && prompt.includes(folded.slice(start, end))) {
-      spans.push({ cls: 'yours', start, end });
-    }
+    if (end <= start) continue;
+    const quote = text.slice(start, end);
+    const theirs = /\s/.test(quote) ? prompt.includes(folded.slice(start, end)) : asTyped.includes(quote);
+    if (theirs) spans.push({ cls: 'yours', start, end });
   }
   return spans;
 }

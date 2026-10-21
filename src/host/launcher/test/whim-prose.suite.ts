@@ -195,6 +195,14 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
     h.eq(countOf(renderProse('You said “make a packing app”.', { storedPrompt: prompt }), 'yours'), 0, 'case folding attributes no paraphrase');
   });
 
+  await h.test('lexer: a one-word quote is the person’s only in their exact case — a quoted button label is not their word', () => {
+    const prompt = 'a checklist that ticks off when I’m done, and lets me add items';
+    const summary = 'Tap “Done” to tick an item, or “Add” for a new one.';
+    h.eq(countOf(renderProse(summary, { storedPrompt: prompt }), 'yours'), 0, 'capitalised labels quoted from the app are not the lowercase words of the prompt');
+    h.eq(textOf(renderProse('It shows “done” once every item is ticked.', { storedPrompt: prompt }), 'yours'), ['done'], 'a one-word quote in the prompt’s own case is still the person’s word');
+    h.eq(textOf(renderProse('I added “Ticks Off” to each row.', { storedPrompt: prompt }), 'yours'), ['Ticks Off'], 'a quote of two words or more matches whatever its case');
+  });
+
   await h.test('lexer: `chg` and `hedge` are never inferred on device', () => {
     const text = 'The countdown changed, and it may be about 2 seconds off.';
     const spans = lexProse(text, [POUR_TIMER], text);
