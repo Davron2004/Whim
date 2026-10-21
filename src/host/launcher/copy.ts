@@ -1091,14 +1091,6 @@ export function timelineGrowthLine(chars: number, thinkingChars = 0): string {
   return `${written} after thinking through ${thinking}`;
 }
 
-/** The button the clarify prompt (`server/src`) still quotes for a limit's alternative. The plan
- *  page's own action is `COPY.planMakeInstead` and shows the alternative in a card; the server
- *  test pins that the prompt asks for words that read right here, so the prompt and this stay one
- *  change. */
-export function clarifyMakeInstead(alternative: string): string {
-  return `Make ${alternative} instead`;
-}
-
 // ── change mode reads as changing, on every page (C1) ────────────────────────
 // One function per branching string, so a page reads through a function rather than an inline
 // ternary — `prompt-flow-screens.suite.ts`'s static check pins that every page actually calls

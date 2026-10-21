@@ -104,6 +104,6 @@ Components: `ComposeStep`, `ClarifyStep`, `PlanStep`, `TermsScreen`, `refusal-ta
 `StepNotice`/`BackHeader`, `ClarifyQuestionsSkeleton`. Machine: kinds `compose`, `clarify`, `build`, `done` (now
 `describe`, merged into `plan`, `making`, `ready`), `FlowStep`, `primaryActionLabel`, `backFrom`, `stepAfterClarifyExchange`,
 `refusalLanding`. `ConsentScreen` is review-mode only. Copy keys: `composeChip*`, `clarifyHeadline*`, `clarifyHelper`,
-`clarifyLimit*`, `planSubhead`, `planFooter`, `terms{Title,Lead,Accept,Decline}`, `ageChecking`. `clarifyMakeInstead` stays
-for the server's clarify-prompt test. New: `plan*`, `firstRun*`, `composerContinueLine`, `planMakeHeader`.
+`clarifyLimit*`, `planSubhead`, `planFooter`, `terms{Title,Lead,Accept,Decline}`, `ageChecking`, `clarifyMakeInstead` (the server's
+clarify-prompt test pins `planLimitCardLead` + `planMakeInstead`). New: `plan*`, `firstRun*`, `composerContinueLine`, `planMakeHeader`.
 The plan's proposed name is not on the wire: `attemptName` still derives from the words.
