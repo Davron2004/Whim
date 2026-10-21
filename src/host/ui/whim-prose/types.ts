@@ -1,14 +1,16 @@
 /**
- * whim-prose types — the Whim Syntax vocabulary (design D7; the v2 handoff README (removed by decision #75; in git history) "Whim Syntax —
- * prose highlighting").
+ * whim-prose types — the Whim Syntax vocabulary (docs/design/system.md §2.7 "Whim Syntax,
+ * simplified"; `app-launcher` "Shell prose renders through one Whim Syntax renderer with simplified
+ * channels").
  *
  * Shell-side ONLY. This vocabulary is never exported from `vc-sdk`: the marks describe what the
- * PRODUCT is telling the user about a change, and the three status hues do not carry that meaning
+ * PRODUCT is telling the user about a change, and its status colours do not carry that meaning
  * inside a mini-app's own UI.
  */
 
-/** The six classes. Each renders on exactly ONE channel — colour, weight, face, or de-emphasis —
- *  except `yours`, the single class allowed two (Newsreader italic + the `yours` brown). */
+/** The six classes, each on one channel (§2.7): `app` its tint text colour, `chg` weight 600,
+ *  `yours` italic in `text`, `measure` tabular figures, `state` `positive-text`/`danger-text`,
+ *  `hedge` `text-2`. */
 export type WhimClass = 'app' | 'chg' | 'yours' | 'measure' | 'state' | 'hedge';
 
 /** The two model-tagged classes. The device NEVER infers these — they arrive as producer marks on
@@ -25,7 +27,7 @@ export interface Mark {
 }
 
 /** One lexed or marked run of text, `[start, end)`. `color` is set only for `app` spans (that
- *  app's own hue, resolved through the single `appColor`/declared-colour path). */
+ *  app's tint text colour, as the caller resolved it). */
 export interface Span {
   cls: WhimClass;
   start: number;
@@ -33,12 +35,12 @@ export interface Span {
   color?: string;
 }
 
-/** An installed app as the lexer sees it: its display name and, when the app declared one, its
- *  tile colour. With no declared colour the lexer falls back to the SDK's `appColor(name)` — the
- *  one name -> hue mapping in the repo, so a tile and every prose mention of it always agree. */
+/** An installed app as the lexer sees it: its display name and its tint's text colour for the
+ *  current scheme (`TINTS[tint][scheme]`, the tint the tile draws), so a tile and every prose
+ *  mention of it always agree. */
 export interface ProseApp {
   name: string;
-  color?: string;
+  color: string;
 }
 
 /** A contiguous piece of rendered prose. `cls === null` means flat text. Concatenating every

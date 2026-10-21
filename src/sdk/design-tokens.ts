@@ -88,19 +88,6 @@ export const SPACING = {
   xl: 34,
 } as const;
 
-/** The retired v2 faces' names (decision #75: system faces only). No font file ships any more, so
- *  each name draws the platform's system font; the screens still naming one drop it when they move
- *  to the `src/host/ui/` primitives, and this constant goes with the last of them. */
-export const FONT_FAMILY = {
-  sansRegular: 'InstrumentSans-Regular',
-  sansMedium: 'InstrumentSans-Medium',
-  sansSemiBold: 'InstrumentSans-SemiBold',
-  sansBold: 'InstrumentSans-Bold',
-  monoRegular: 'IBMPlexMono-Regular',
-  monoMedium: 'IBMPlexMono-Medium',
-  serifItalic: 'Newsreader-Italic',
-} as const;
-
 /** Field names match RN `TextStyle` exactly (fontSize/lineHeight/letterSpacing/
  *  fontWeight/fontStyle/textTransform/color) so a consumer can spread a `TYPE_SCALE` entry
  *  straight into a `Text` style array. This module does not import `react-native` (kept

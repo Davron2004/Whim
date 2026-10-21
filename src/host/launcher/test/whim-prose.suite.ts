@@ -1,7 +1,8 @@
 /**
- * whim-prose acceptance (shell-redesign-v2 group B; design D7) — the Whim Syntax lexer, the
- * shared renderer, and the discipline caps the renderer must enforce ITSELF rather than trust a
- * producer to respect.
+ * whim-prose acceptance (design-system-v1 task 21.3; `app-launcher` "Shell prose renders through one
+ * Whim Syntax renderer with simplified channels") — the Whim Syntax lexer, the shared renderer, the
+ * discipline caps the renderer must enforce ITSELF rather than trust a producer to respect, and the
+ * removal of the stored highlighting preference.
  *
  * The lexer, renderer and styles are pure and run directly; the component (`WhimProse.tsx`, a thin
  * `Text` mapping over `renderProse` + `proseStyle`) is rendered at the end.
@@ -11,8 +12,9 @@
  */
 
 import React from 'react';
+import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import WhimProse, { HighlightingProvider } from '../../ui/whim-prose/WhimProse';
+import WhimProse from '../../ui/whim-prose/WhimProse';
 import { renderScreen, textOf as screenText, unmountScreen, hostType } from './react-screen';
 import { lexProse, STATE_VOCABULARY } from '../../ui/whim-prose/lex';
 import {
@@ -23,7 +25,10 @@ import {
 } from '../../ui/whim-prose/render';
 import { proseStyle } from '../../ui/whim-prose/styles';
 import type { ProseSegment, WhimClass } from '../../ui/whim-prose/types';
-import { appColor, SHELL_COLORS, STATUS_COLORS, STATUS_COLORS_ON_INK } from '../../../sdk/theme';
+import { COLORS, TINTS } from '../../../design/tokens';
+import { MapKVBackend, type KVBackend } from '../../version-store/fs/kv-fs';
+import { sweepRetiredKeys } from '../retired-keys';
+import { setColorScheme, StyleSheet } from './native-host';
 import {
   COPY,
   CONSENT_WHATS_NEW,
@@ -47,7 +52,20 @@ import {
   tileOlderLine,
 } from '../copy';
 
-const POUR_TIMER = { name: 'Pour Timer' };
+const POUR_TIMER = { name: 'Pour Timer', color: TINTS.blue.light };
+const WATER_COUNTER = { name: 'Water Counter', color: TINTS.ocean.light };
+
+/** A KVBackend over `inner` that counts what is done to it. */
+function counted(inner: KVBackend) {
+  const ops = { reads: 0, writes: 0, deletes: 0 };
+  const kv: KVBackend = {
+    getString: (key) => { ops.reads++; return inner.getString(key); },
+    set: (key, value) => { ops.writes++; inner.set(key, value); },
+    delete: (key) => { ops.deletes++; inner.delete(key); },
+    getAllKeys: () => inner.getAllKeys(),
+  };
+  return { kv, ops };
+}
 
 function classesOf(segments: readonly ProseSegment[]): WhimClass[] {
   return segments.map((s) => s.cls).filter((cls): cls is WhimClass => cls !== null);
@@ -101,10 +119,7 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
     const app = spans.find((s) => s.cls === 'app');
     h.eq(app?.start, 0, 'the app span starts at the mention');
     h.eq(app?.end, 'Pour Timer'.length, 'the app span covers exactly the name');
-    h.eq(app?.color, appColor('Pour Timer'), 'an undeclared app falls back to the one appColor');
-
-    const declared = lexProse(text, [{ name: 'Pour Timer', color: '#123456' }]);
-    h.eq(declared.find((s) => s.cls === 'app')?.color, '#123456', 'a declared colour wins');
+    h.eq(app?.color, TINTS.blue.light, 'the span carries the tint text colour the caller resolved for that app');
 
     h.eq(
       lexProse('Pour Timerish got faster.', [POUR_TIMER]).filter((s) => s.cls === 'app').length,
@@ -127,14 +142,14 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('lexer: `state` is the fixed three words, never a synonym', () => {
-    for (const word of STATE_VOCABULARY) {
-      const spans = lexProse(`It is ${word} now.`).filter((s) => s.cls === 'state');
-      h.eq(spans.length, 1, `"${word}" is in the vocabulary`);
+  await h.test('lexer: `state` is only “ready” and “failed”, never another status word', () => {
+    h.eq([...STATE_VOCABULARY].sort((a, b) => a.localeCompare(b)), ['failed', 'ready'], 'the vocabulary is the two words');
+    for (const text of ['It is ready now.', 'Ready to open.', 'The last change failed.']) {
+      h.eq(lexProse(text).filter((s) => s.cls === 'state').length, 1, `"${text}" marks its status word`);
     }
-    for (const synonym of ['fine', 'failed', 'pending', 'healthy', 'stuck', 'brokenish']) {
-      const spans = lexProse(`It is ${synonym} now.`).filter((s) => s.cls === 'state');
-      h.eq(spans.length, 0, `"${synonym}" is a synonym, not a state`);
+    for (const word of ['working', 'broken', 'waiting', 'building', 'stopped', 'fine', 'pending', 'readying', 'unfailed']) {
+      const spans = lexProse(`It is ${word} now.`).filter((s) => s.cls === 'state');
+      h.eq(spans.length, 0, `"${word}" is not a state`);
     }
   });
 
@@ -174,13 +189,22 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
     const fixtures = [
       'Pour Timer is working again after 2 tries.',
       'It ran 1 2 3 4 5 6 times.',
-      'You said “go faster” and it is broken now.',
+      'You said “go faster” and it failed now.',
       ...everyCopyString(),
     ];
     for (const text of fixtures) {
       const segments = renderProse(text, { apps: [POUR_TIMER], storedPrompt: 'go faster' });
       h.eq(flattenProse(segments), text, `"${text}" survives rendering intact`);
     }
+  });
+
+  await h.test('renderer: a producer marking five spans in one sentence shows at most four marks', () => {
+    const text = 'The timer, chime, colour, font and size changed.';
+    const word = (w: string) => ({ cls: 'chg' as const, start: text.indexOf(w), end: text.indexOf(w) + w.length });
+    const marks = ['timer', 'chime', 'colour', 'font', 'size'].map(word);
+    const segments = renderProse(text, { marks });
+    h.eq(textOf(segments, 'chg'), ['timer', 'chime', 'colour', 'font'], 'four marks render, the fifth is flat');
+    h.eq(flattenProse(segments), text, 'and the fifth keeps its word');
   });
 
   await h.test('renderer: at most four system marks per sentence, the rest flat', () => {
@@ -203,14 +227,14 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
   });
 
   await h.test('renderer: one colour per sentence — the second coloured span renders flat', () => {
-    const text = 'Pour Timer is working again.';
+    const text = 'Pour Timer is ready again.';
     const segments = renderProse(text, { apps: [POUR_TIMER] });
     h.eq(countOf(segments, 'app'), 1, 'the app mention keeps the sentence’s one colour');
     h.eq(countOf(segments, 'state'), 0, 'a second hue in the same sentence renders flat');
     h.eq(flattenProse(segments), text, 'and keeps its words');
 
     const twoApps = renderProse('Pour Timer and Water Counter both ran.', {
-      apps: [POUR_TIMER, { name: 'Water Counter' }],
+      apps: [POUR_TIMER, WATER_COUNTER],
     });
     h.eq(countOf(twoApps, 'app'), 1, 'two different apps in one sentence: only one is coloured');
 
@@ -240,14 +264,14 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
     h.eq(textOf(chgOverMeasure, 'chg'), ['45s'], 'the one thing that changed outranks the count');
     h.eq(countOf(chgOverMeasure, 'measure'), 0, 'the measure span is dropped whole');
 
-    const stateOverHedge = renderProse('Nothing is broken now.', {
+    const stateOverHedge = renderProse('Nothing has failed now.', {
       marks: [{ cls: 'hedge', start: 12, end: 18 }],
     });
-    h.eq(textOf(stateOverHedge, 'state'), ['broken'], 'a status word outranks a hedge over it');
+    h.eq(textOf(stateOverHedge, 'state'), ['failed'], 'a status word outranks a hedge over it');
   });
 
   await h.test('renderer: `state` is suppressed when a status indicator is already adjacent', () => {
-    const text = 'The timer is broken.';
+    const text = 'The timer failed.';
     h.eq(countOf(renderProse(text), 'state'), 1, 'marked on its own');
     h.eq(
       countOf(renderProse(text, { statusIndicatorAdjacent: true }), 'state'),
@@ -270,35 +294,11 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
     h.eq(flattenProse(bad), text, 'and the text is untouched');
   });
 
-  // ── the off-switch ──────────────────────────────────────────────────────────
-
-  await h.test('off-switch: highlighting off emits no class-bearing span, anywhere', () => {
-    const fixtures = [
-      'Pour Timer is working again after 2 tries.',
-      'You said “go faster” and it took 0:45.',
-      'It ran 1 2 3 4 5 6 times.',
-    ];
-    for (const text of fixtures) {
-      const flat = renderProse(text, {
-        apps: [POUR_TIMER],
-        storedPrompt: 'go faster',
-        marks: [{ cls: 'chg', start: 0, end: 2 }],
-        highlighting: false,
-      });
-      h.eq(classesOf(flat).length, 0, `"${text}" renders flat`);
-      h.eq(flattenProse(flat), text, 'and reads identically');
-      h.ok(
-        classesOf(renderProse(text, { apps: [POUR_TIMER], storedPrompt: 'go faster' })).length > 0,
-        'the same fixture DOES mark with highlighting on (the switch is non-vacuous)',
-      );
-    }
-  });
-
   // ── rule 5 (survives being flat) and rule 7 (agent prose only) ──────────────
 
   await h.test('copy: every string in the table renders flat — nothing is offering-marked', () => {
     for (const text of Object.values(COPY)) {
-      const segments = renderProse(text, { apps: [POUR_TIMER, { name: 'timer' }], storedPrompt: text });
+      const segments = renderProse(text, { apps: [POUR_TIMER, { name: 'timer', color: TINTS.slate.light }], storedPrompt: text });
       h.eq(classesOf(segments).length, 0, `"${text}" is an offering and carries no class`);
       h.eq(flattenProse(segments), text, `"${text}" is unchanged`);
     }
@@ -307,7 +307,7 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
   await h.test('copy: the offering guard is non-vacuous — the same words as agent prose DO mark', () => {
     h.ok(isOffering(COPY.homeIdeaTimer), 'a copy-table string is an offering');
     h.ok(!isOffering(`${COPY.homeIdeaTimer} today`), 'agent prose is not');
-    const asProse = renderProse(`${COPY.homeIdeaTimer} today`, { apps: [{ name: 'timer' }] });
+    const asProse = renderProse(`${COPY.homeIdeaTimer} today`, { apps: [{ name: 'timer', color: TINTS.slate.light }] });
     h.eq(countOf(asProse, 'app'), 1, 'the identical words outside the table lex normally');
   });
 
@@ -321,59 +321,83 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
 
   // ── channels ────────────────────────────────────────────────────────────────
 
-  await h.test('styles: one channel per class — `yours` is the only two-channel span', () => {
+  await h.test('styles: one channel per class, on the system font', () => {
     const style = (cls: WhimClass, color?: string) => proseStyle({ text: 'x', cls, color }) ?? {};
-    h.eq(style('app', '#2563eb').color, '#2563eb', 'app is colour');
-    h.ok(style('app', '#2563eb').fontWeight === undefined, 'app carries no weight');
-    h.ok(style('chg').color === undefined, 'chg is weight, never colour');
-    h.eq(style('chg').fontWeight, '500', 'chg is weight 500');
-    h.ok(style('measure').color === undefined, 'measure is face, never colour');
-    h.ok(style('measure').fontFamily?.startsWith('IBMPlexMono') === true, 'measure is the mono face');
-    h.eq(style('hedge', SHELL_COLORS.faint).color, SHELL_COLORS.faint, 'hedge is faint');
-    const yours = style('yours', SHELL_COLORS.yours);
-    h.ok(
-      yours.fontStyle === 'italic' && yours.color === SHELL_COLORS.yours,
-      'yours alone carries both italic Newsreader and the brown',
-    );
+    h.eq(style('app', TINTS.blue.light), { color: TINTS.blue.light }, 'app is its colour alone');
+    h.eq(style('chg'), { fontWeight: '600' }, 'chg is weight 600, no colour');
+    h.eq(style('measure'), { fontVariant: ['tabular-nums'] }, 'measure is tabular figures, no colour');
+    h.eq(style('hedge', COLORS.light['text-2']), { color: COLORS.light['text-2'] }, 'hedge is `text-2`');
+    h.eq(style('state', COLORS.light['positive-text']), { color: COLORS.light['positive-text'] }, 'state is its colour alone');
+    h.eq(style('yours', COLORS.light.text), { fontStyle: 'italic', color: COLORS.light.text }, 'yours is italic in `text`');
     h.ok(proseStyle({ text: 'x', cls: null }) === undefined, 'flat text has no style');
   });
 
-  await h.test('renderer: colours resolve through the shell tokens, on paper and on ink', () => {
-    const onPaper = renderProse('It is broken now.');
-    h.eq(onPaper.find((s) => s.cls === 'state')?.color, STATUS_COLORS.broken, 'status hue on paper');
-    const onInk = renderProse('It is broken now.', { onInk: true });
-    h.eq(onInk.find((s) => s.cls === 'state')?.color, STATUS_COLORS_ON_INK.broken, 'status hue on ink');
+  await h.test('renderer: no retired faces — `measure` and `yours` render in the system font', () => {
+    const segments = renderProse('You said “go faster” and it took 0:45.', { storedPrompt: 'go faster' });
+    for (const cls of ['measure', 'yours'] as const) {
+      const segment = segments.find((s) => s.cls === cls);
+      h.ok(segment !== undefined, `the fixture renders a \`${cls}\` span`);
+      h.ok(!Object.keys(proseStyle(segment ?? { text: '', cls }) ?? {}).includes('fontFamily'), `\`${cls}\` names no face, so it draws the system font`);
+    }
+  });
 
-    const quote = { storedPrompt: 'go faster' };
-    h.eq(
-      renderProse('You said “go faster”.', quote).find((s) => s.cls === 'yours')?.color,
-      SHELL_COLORS.yours,
-      'the brown on paper',
-    );
-    h.eq(
-      renderProse('You said “go faster”.', { ...quote, onInk: true }).find((s) => s.cls === 'yours')?.color,
-      SHELL_COLORS.yoursOnDark,
-      'the brown on ink',
-    );
+  await h.test('renderer: colours resolve through the token roles, in light and dark', () => {
+    for (const scheme of ['light', 'dark'] as const) {
+      const colors = COLORS[scheme];
+      const colourOf = (text: string, cls: WhimClass, options = {}) => renderProse(text, { colors, ...options }).find((s) => s.cls === cls)?.color;
+      h.eq(colourOf('It is ready now.', 'state'), colors['positive-text'], `${scheme}: “ready” in \`positive-text\``);
+      h.eq(colourOf('The change failed.', 'state'), colors['danger-text'], `${scheme}: “failed” in \`danger-text\``);
+      h.eq(colourOf('You said “go faster”.', 'yours', { storedPrompt: 'go faster' }), colors.text, `${scheme}: the person’s words in \`text\`, never a brown`);
+      h.eq(colourOf('It may be off.', 'hedge', { marks: [{ cls: 'hedge', start: 3, end: 13 }] }), colors['text-2'], `${scheme}: a hedge in \`text-2\``);
+    }
+    h.eq(renderProse('It is ready now.').find((s) => s.cls === 'state')?.color, COLORS.light['positive-text'], 'with no colours given, the light roles');
   });
 
   // ── placement (design D7): shell-side, one renderer ─────────────────────────
 
   // ── the component, rendered ─────────────────────────────────────────────────
 
-  await h.test('component: WhimProse styles its spans, and renders flat text when the provider turns highlighting off', async () => {
-    const text = 'Pour Timer is broken after 2 tries.';
-    // One outer Text holds the sentence; every styled span is a Text nested inside it.
-    const styledSpans = (tree: Awaited<ReturnType<typeof renderScreen>>) => tree.root.findAll((n) => hostType(n) === 'Text').length - 1;
-    const on = await renderScreen(React.createElement(WhimProse, { text, apps: [POUR_TIMER] }));
-    const off = await renderScreen(React.createElement(HighlightingProvider, { enabled: false, children: React.createElement(WhimProse, { text, apps: [POUR_TIMER] }) }));
+  await h.test('component: WhimProse always styles its spans, in the phone’s scheme', async () => {
+    const text = 'Pour Timer failed after 2 tries.';
+    const spans = (tree: Awaited<ReturnType<typeof renderScreen>>) =>
+      tree.root.findAll((n) => hostType(n) === 'Text').slice(1).map((n) => ({ text: screenText(n), style: StyleSheet.flatten(n.props.style) }));
+    const light = await renderScreen(React.createElement(WhimProse, { text, apps: [POUR_TIMER] }));
+    let dark: Awaited<ReturnType<typeof renderScreen>> | undefined;
     try {
-      h.ok(styledSpans(on) > 0, 'with highlighting on, the app name, state and count are styled spans');
-      h.eq(styledSpans(off), 0, 'under a provider with highlighting off, nothing is styled');
-      h.eq(screenText(off.root), text, 'and the words are unchanged');
+      h.eq(spans(light), [
+        { text: 'Pour Timer', style: { color: TINTS.blue.light } },
+        { text: '2', style: { fontVariant: ['tabular-nums'] } },
+      ], 'the app name in its tint and the count in tabular figures (the sentence’s one colour is the app’s)');
+      h.eq(screenText(light.root), text, 'and the words are unchanged');
+      await TestRenderer.act(async () => setColorScheme('dark'));
+      dark = await renderScreen(React.createElement(WhimProse, { text: 'It failed.' }));
+      h.eq(spans(dark), [{ text: 'failed', style: { color: COLORS.dark['danger-text'] } }], 'in dark, “failed” takes the dark `danger-text`');
     } finally {
-      await unmountScreen(on);
-      await unmountScreen(off);
+      await TestRenderer.act(async () => setColorScheme('light'));
+      await unmountScreen(light);
+      if (dark) await unmountScreen(dark);
     }
+  });
+
+  // ── the retired highlighting preference ─────────────────────────────────────
+
+  await h.test('retired preference: a phone already swept once still loses the stored highlighting switch, and keeps everything else', () => {
+    const phone = new MapKVBackend(new Map([['retired-keys-sweep', '1'], ['highlighting', '0'], ['device-id', 'd-1'], ['orb-corner:app-a', 'leading']]));
+    sweepRetiredKeys(phone);
+    h.eq(phone.getString('highlighting'), undefined, 'the stored switch is gone');
+    h.eq([phone.getString('device-id'), phone.getString('orb-corner:app-a')], ['d-1', 'leading'], 'the other settings are untouched');
+    const later = counted(phone);
+    sweepRetiredKeys(later.kv);
+    h.eq(later.ops, { reads: 1, writes: 0, deletes: 0 }, 'the next launch reads its marker and does nothing else');
+  });
+
+  await h.test('retired preference: a fresh install gains only the sweep’s marker', () => {
+    const fresh = new MapKVBackend(new Map([['device-id', 'd-1']]));
+    sweepRetiredKeys(fresh);
+    h.eq(fresh.getAllKeys().filter((key) => key !== 'device-id').length, 1, 'one new key, the marker');
+    h.eq(fresh.getString('device-id'), 'd-1', 'and nothing it had is lost');
+    const later = counted(fresh);
+    sweepRetiredKeys(later.kv);
+    h.eq(later.ops, { reads: 1, writes: 0, deletes: 0 }, 'a second launch reads one key and changes nothing');
   });
 }

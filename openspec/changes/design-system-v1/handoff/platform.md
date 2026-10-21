@@ -79,8 +79,8 @@ export default TurboModuleRegistry.get<Spec>('WhimLaunchScreen');   // null on a
 
 - No font file ships (`assets/fonts/`, `android/app/src/main/assets/fonts/` deleted; iOS never bundled any).
   `TYPE_SCALE` faces carry no `fontFamily` (`TypeFace.fontFamily` is optional, never set).
-- Still present until 21.4: `FONT_FAMILY` (names only) and its one consumer (`ui/whim-prose/styles.ts`). With no
-  file behind them, those names draw the system font on both platforms.
+- `FONT_FAMILY` is deleted (21.3, with its last consumer): Whim Syntax marks are weight, italic, tabular
+  figures and colour on the system font.
 
 ## Evidence
 

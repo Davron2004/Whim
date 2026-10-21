@@ -1,22 +1,21 @@
 /**
- * whim-prose lexer — the four classes the DEVICE decides, with no model involvement (design D7;
- * app-launcher §"Four Whim Syntax classes are lexed deterministically on the device"):
+ * whim-prose lexer — the four classes the DEVICE decides, with no model involvement
+ * (docs/design/system.md §2.7):
  *
  *   `app`     — a mention of an installed app, matched against the installed-app list
  *   `measure` — anything counted or timed (a number, a duration, a version identifier)
  *   `yours`   — the user's own words, matched against the stored verbatim prompt
- *   `state`   — the fixed three-word status vocabulary, never a synonym
+ *   `state`   — "ready" or "failed", never another status word
  *
  * A pure function of (text, installed apps, stored prompt): same input, same spans, every run.
  * `chg` and `hedge` are NOT lexed here — they come only from the producer's marks.
  */
 
-import { appColor } from '../../../sdk/theme';
 import type { ProseApp, Span, WhimClass } from './types';
 
-/** The fixed status vocabulary. A synonym ("fine", "failed", "pending") is NOT a `state` — the
- *  class means the product's own three words, so lexing near-misses would make the hue lie. */
-export const STATE_VOCABULARY = ['working', 'broken', 'waiting'] as const;
+/** The fixed status vocabulary: the two outcomes the product reports. Any other status word
+ *  ("working", "building", "stopped") is NOT a `state`, so the colour never claims an outcome. */
+export const STATE_VOCABULARY = ['ready', 'failed'] as const;
 
 /**
  * Render priority, lowest number wins. Overlaps are resolved by dropping the LOWER-priority span
@@ -25,8 +24,8 @@ export const STATE_VOCABULARY = ['working', 'broken', 'waiting'] as const;
  *   `yours` — attribution, and exempt from the mark cap, so it can never be crowded out
  *   `app`   — the strongest tie between prose and the grid
  *   `chg`   — the one thing that changed: the point of the sentence
- *   `state` — a status word carries meaning a hue reinforces
- *   `measure` — face-only; the words read fine without it
+ *   `state` — an outcome word carries meaning its colour reinforces
+ *   `measure` — figures only; the words read fine without it
  *   `hedge` — detail that is deliberately not the point
  */
 export const CLASS_PRIORITY: Readonly<Record<WhimClass, number>> = {
@@ -84,7 +83,7 @@ function lexApps(text: string, apps: readonly ProseApp[]): Span[] {
     for (const start of findAll(text, name, true)) {
       const end = start + name.length;
       if (isWholeWord(text, start, end)) {
-        spans.push({ cls: 'app', start, end, color: app.color ?? appColor(app.name) });
+        spans.push({ cls: 'app', start, end, color: app.color });
       }
     }
   }

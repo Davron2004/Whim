@@ -10,7 +10,7 @@
 // the pure machine in `prompt-flow.ts`. This is also the host wiring: the MMKV-backed
 // installed-apps index, the persistent version store, the sanctioned StoreAccess path (with the
 // device user-data delete), first-run seeding (D7), the fork/delete flows (D2), the fixed theme,
-// the highlighting off-switch, and the persisted device id + server address — all read once from
+// and the persisted device id + server address — all read once from
 // the same `whim.launcher` KVBackend the installed-apps index uses. One WebView == one realm ==
 // one app: launching reads the active bundle source from the record and hands it to MiniAppView
 // (keyed by launcher id, so each launch is a fresh realm).
@@ -30,7 +30,6 @@ import { createPersistentStore } from '../version-store';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import type { KVBackend } from '../version-store/fs/kv-fs';
 import { copyStorage, deleteStorage, peekAppliedSchema } from '../storage-engine';
-import { HighlightingProvider } from '../ui/whim-prose/WhimProse';
 import { ToastHost, useToast, type ToastApi } from '../ui/Toast';
 import { haptics } from '../haptics';
 import { useTokens, type ShellTokens } from '../ui/tokens';
@@ -149,7 +148,6 @@ import type { Connectivity } from './connectivity';
 import { isNetworkFailure, showOfflineIndicator, showServerUnreachableNotice } from './connectivity-ux';
 import { appIsForeground, useAppForeground } from './use-app-foreground';
 import { FlowDrafts, draftKey } from './flow-draft';
-import { loadHighlighting } from './highlighting';
 import { sweepRetiredKeys } from './retired-keys';
 import { getDeviceId, resetDeviceId } from './device-id';
 import { errorDetailsEnabled, setErrorDetails } from './error-details';
@@ -651,7 +649,7 @@ export default function LauncherRoot({
   hideLaunchScreen?: () => void;
 }>) {
   // Construct the persistent host services once (device native modules — lazy under the hood).
-  // The device id, server address and highlighting flag all read from the SAME `whim.launcher`
+  // The device id and server address both read from the SAME `whim.launcher`
   // KVBackend instance the installed-apps index uses (one MMKV instance, several consumers).
   const { index, access, pending, journal, kv, purges } = useMemo(() => {
     const launcherKv: KVBackend = createMmkvBackend('whim.launcher');
@@ -914,7 +912,6 @@ function LauncherShell({
   // The session probe's latest answer and the address it went to: Advanced shows it under the
   // address field rather than sending a probe of its own (#130).
   const [lastProbe, setLastProbe] = useState<SessionProbe | null>(null);
-  const [highlighting] = useState<boolean>(() => loadHighlighting(kv));
   const [errorDetailsShown, setErrorDetailsShown] = useState<boolean>(() => errorDetailsEnabled(kv));
 
   // State, not a memo: Settings' "Make a new ID" replaces it, and every options memo below is keyed
@@ -3764,34 +3761,32 @@ function LauncherShell({
   const frame = shellFrame(base, stack?.at(-1), ready, tokens, appFrame);
 
   return (
-    <HighlightingProvider enabled={highlighting}>
-      <SafeAreaView edges={frameEdgesFor(base.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>
-        <StatusBar barStyle={frame.barStyle} />
-        <ToastHost bottomOffset={toastOffset(base.kind)}>
-          <ToastBridge api={toastRef} />
-          <ScreenBoundary
-            screen={screen.kind}
-            FallbackComponent={ScreenErrorFallback}
-            onLeave={exit.back === 'root' ? undefined : goHome}
-          >
-            {renderMiniApp(sheetPage !== null)}
-            {content}
-            <MakingSheet content={sheetPage} onClose={closeSheet} />
-            {checkingAge !== undefined && <AgeCheckBack onLeave={() => onLegalDecline(checkingAge.returnTo)} />}
-            <FirstRunHost
-              ask={firstRunAskOf(screen)}
-              language={legalLanguage}
-              onLanguageChange={onLegalLanguageChange}
-              outdatedFrom={outdatedGrantVersion(consentStatus(kv))}
-              consentDue={grantDue}
-              onAgree={onFirstRunAgree}
-              onDecline={onLegalDecline}
-            />
-          </ScreenBoundary>
-        </ToastHost>
-        <DevLogTools />
-      </SafeAreaView>
-    </HighlightingProvider>
+    <SafeAreaView edges={frameEdgesFor(base.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>
+      <StatusBar barStyle={frame.barStyle} />
+      <ToastHost bottomOffset={toastOffset(base.kind)}>
+        <ToastBridge api={toastRef} />
+        <ScreenBoundary
+          screen={screen.kind}
+          FallbackComponent={ScreenErrorFallback}
+          onLeave={exit.back === 'root' ? undefined : goHome}
+        >
+          {renderMiniApp(sheetPage !== null)}
+          {content}
+          <MakingSheet content={sheetPage} onClose={closeSheet} />
+          {checkingAge !== undefined && <AgeCheckBack onLeave={() => onLegalDecline(checkingAge.returnTo)} />}
+          <FirstRunHost
+            ask={firstRunAskOf(screen)}
+            language={legalLanguage}
+            onLanguageChange={onLegalLanguageChange}
+            outdatedFrom={outdatedGrantVersion(consentStatus(kv))}
+            consentDue={grantDue}
+            onAgree={onFirstRunAgree}
+            onDecline={onLegalDecline}
+          />
+        </ScreenBoundary>
+      </ToastHost>
+      <DevLogTools />
+    </SafeAreaView>
   );
 }
 
