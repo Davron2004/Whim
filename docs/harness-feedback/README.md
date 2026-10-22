@@ -120,3 +120,13 @@ Beta-1 reinforced T1, T4, T7 and T10, and added:
   - DRAWBACK: one device verifier spent ~4 real production generations (fresh install defaults to prod); briefs now set the own server first.
   - ENV: XCUITest's doubleTap reaches RN as one press — race bugs needing two fast taps can't be proven on the iOS simulator.
   - Proposals: gate.sh guard against the primary tree as cwd from an agent; ratchet resolves a non-ancestor base to the merge-base itself; a shared device-verifier stub with storage/cue/storage-less variants in the repo (not scratch).
+- **2026-10-20/22 — design-system-v1 21 (21a–21m), fix chain 16o, 22 (22a–22h3), closure spec debt (one top-level session, ~75 subagents, ≤3 in parallel).**
+  - CAUGHT-REAL-MISTAKE: device passes found what 19k Node checks didn't (composer tap crash on a never-attached ref, Android sheet drag dead on EVERY sheet, a 0.8 s post-close dead tap, plate/tile one-frame offsets); first-paint measurement caught a 2-frame regression from a size-animated container (71→102 ms, fixed to 71).
+  - CAUGHT-REAL-MISTAKE: whole-chain reviews split by subsystem (two in parallel) found cross-piece bugs piece reviews missed (late Reload reopening a left app, Home taking taps under the app shape).
+  - DRAWBACK: a failed `deepStrictEqual` util.inspect-ed a ReactTestInstance → ~11 GB, twice, Mac out of memory; `--max-old-space-size` did nothing (off-heap). Now: harness `eq` = isDeepStrictEqual + bounded message, and an RSS watchdog (capped-run.sh) for every node/npm run and the gate.
+  - DRAWBACK: the Reanimated double was more lenient than 4.6 (fixed-limit spring end, no wrapped callbacks, no cancel on unmount) → timing bugs invisible; now matches the library to the ms. Rule: a double must never be more forgiving than the platform.
+  - DRAWBACK: implementers added `Co-Authored-By: Claude` (harness default) to 30 commits against the owner's rule; stripped pre-merge; briefs now forbid it.
+  - DRAWBACK: device-heavy pieces overran budgets (300–546k vs 250–300k); splitting code and device halves kept them in budget.
+  - ENV: swiftshader emulator runs Reanimated far below real time — never judge sub-second timing on it; use `-gpu host` or the iOS sim with on-device tap scheduling. Reanimated ignores animator_duration_scale and the sim's slow mode (0.25× via ffmpeg).
+  - ENV: an API weekly rate limit cut an agent mid-run; resuming it via SendMessage (work saved, status file current) lost nothing.
+  - Proposals: commit capped-run.sh to scripts/ and make gate.sh self-cap; a gate check that no commit on a chain branch carries agent attribution; a repo-owned device-verifier stub with stall/slow/limit markers (#222 found the stub's own limits masquerading as bugs).
