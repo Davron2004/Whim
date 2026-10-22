@@ -24,8 +24,8 @@
 // and render through the one shared `WhimProse` renderer; everything else is product copy and is
 // never marked (Whim Syntax rule 7).
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Pressable, Text as RNText, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
-import Animated, { Easing, FadeIn } from 'react-native-reanimated';
+import { FlatList, Pressable, Text as RNText, View, type FlatListProps } from 'react-native';
+import Animated, { Easing, FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import type { SummaryKind, SummaryMark } from '@whim/contract';
 import { LAYOUT, RADII, SPACE, TINTS, TYPE_SCALE, type ColorRole, type TypeToken } from '../../design/tokens';
 import type { IconName } from '../../design/icons/names';
@@ -52,6 +52,7 @@ import { REFLOW, TilePlate } from '../ui/AppTile';
 import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
 import { BackButton } from '../ui/IconButton';
+import { timing } from '../ui/motion';
 import { Skeleton, SkeletonBlock } from '../ui/Skeleton';
 import { Text, wrappingType } from '../ui/Text';
 import { useToast } from '../ui/Toast';
@@ -107,9 +108,13 @@ const ROW_GAP = 22;
  *  resolves, so this is a shape hint, not a prediction. */
 const HISTORY_SKELETON_ROWS = 3;
 
-/** M26: an opened row's actions fade in on `fade-in`, in place. */
+/** M26: an opened row's actions fade in on `fade-in`, in place; closing, the same path out: they and
+ *  the card's fill fade out on `fade-out` as the card shrinks. */
 const FADE_IN = timingOf('fadeIn');
 const ACTIONS_IN = FadeIn.duration(FADE_IN.duration).easing(Easing.bezier(...FADE_IN.bezier));
+const FADE_OUT = timingOf('fadeOut');
+const ACTIONS_OUT = FadeOut.duration(FADE_OUT.duration).easing(Easing.bezier(...FADE_OUT.bezier));
+const FILL_OUT = timing('fadeOut');
 /** How long a move on `smooth` takes to come to rest. */
 const SMOOTH_SETTLE_MS = springReachMs('smooth', 0.99);
 
@@ -125,16 +130,17 @@ const RowsMove = React.createContext<typeof REFLOW | undefined>(undefined);
  *  that sets it, so a change of size committed together with it would jump, and one committed
  *  together with its removal would still move: `act`'s change waits for the commit that opened the
  *  window, and the window closes only after its change. `hold` keeps it open until an action's
- *  re-read has landed. */
+ *  re-read has landed; one that lands after History has gone starts nothing. */
 function usePersonsMove() {
   const [open, setOpen] = useState(false);
   const committed = useRef(false);
   const pending = useRef<(() => void)[]>([]);
   const holds = useRef(0);
   const closing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const gone = useRef(false);
   const settle = () => {
     clearTimeout(closing.current);
-    if (holds.current === 0) closing.current = setTimeout(() => setOpen(false), SMOOTH_SETTLE_MS);
+    if (holds.current === 0 && !gone.current) closing.current = setTimeout(() => setOpen(false), SMOOTH_SETTLE_MS);
   };
   useEffect(() => {
     committed.current = open;
@@ -143,7 +149,13 @@ function usePersonsMove() {
     for (const change of due) change();
     if (due.length > 0) settle();
   });
-  useEffect(() => () => clearTimeout(closing.current), []);
+  useEffect(() => {
+    gone.current = false;
+    return () => {
+      gone.current = true;
+      clearTimeout(closing.current);
+    };
+  }, []);
   const act = (change?: () => void) => {
     clearTimeout(closing.current);
     if (committed.current) {
@@ -169,11 +181,17 @@ function usePersonsMove() {
   return { open, act, hold, opens };
 }
 
+/** What the list hands each cell it draws through `CellRendererComponent`. */
+type HistoryCellProps = Pick<React.ComponentProps<NonNullable<FlatListProps<HistoryRow>['CellRendererComponent']>>, 'children' | 'style' | 'onLayout' | 'onFocusCapture'>;
+
 /** A row's cell in the list, a view of its own on the native side: it moves with `RowsMove` when a
- *  row above it opens or closes. */
-function HistoryCell({ children, style, onLayout }: Readonly<{ children?: React.ReactNode; style?: StyleProp<ViewStyle>; onLayout?: (event: LayoutChangeEvent) => void }>) {
+ *  row above it opens or closes. The list hears focus land in it (`onFocusCapture`), as it does in
+ *  the cells it draws itself. */
+function HistoryCell({ children, style, onLayout, onFocusCapture }: Readonly<HistoryCellProps>) {
+  // A View takes `onFocusCapture` (ViewPropTypes.js), which React Native's own TypeScript types leave out.
+  const focus: object = { onFocusCapture };
   return (
-    <Animated.View style={style} onLayout={onLayout} layout={useContext(RowsMove)}>
+    <Animated.View style={style} onLayout={onLayout} {...focus} layout={useContext(RowsMove)}>
       {children}
     </Animated.View>
   );
@@ -246,7 +264,9 @@ const styles = makeStyles((t) => {
       paddingHorizontal: CARD_PADDING.horizontal,
       overflow: 'hidden' as const,
     },
-    cardOpen: { backgroundColor: t.colors.surface, paddingBottom: CARD_PADDING.vertical },
+    cardOpen: { paddingBottom: CARD_PADDING.vertical },
+    // The open card's fill, under its content, its own view so a close can fade it.
+    fill: { position: 'absolute' as const, top: 0, right: 0, bottom: 0, left: 0, backgroundColor: t.colors.surface },
     summary: { marginTop: SPACE[1] },
     meta: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, alignItems: 'center' as const, gap: SPACE[2], marginTop: SPACE[2] },
     chip: {
@@ -528,6 +548,30 @@ interface HistoryRowViewProps {
   onMakeCopy: () => void;
 }
 
+/** M26's way out, the opening's backwards: the card's fill and its actions fade out on `fade-out` while
+ *  the card shrinks on `smooth`. The fill shows at once as a row opens; the actions fade out only once
+ *  they have faded in (Reanimated's fade-out sets out from whole), so a row closed while its actions
+ *  still fade in drops them at once. Nothing fades while nothing moves (`moves` undefined). */
+function useClosingFades(expanded: boolean, moves: typeof REFLOW | undefined) {
+  const fill = useSharedValue(expanded ? 1 : 0);
+  const [actionsShown, setActionsShown] = useState(false);
+  useEffect(() => {
+    if (expanded) fill.value = 1;
+    else fill.value = moves === undefined ? 0 : withTiming(0, FILL_OUT);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only an open or a close fades the fill
+  }, [expanded]);
+  useEffect(() => {
+    if (!expanded) {
+      setActionsShown(false);
+      return undefined;
+    }
+    const faded = setTimeout(() => setActionsShown(true), FADE_IN.duration);
+    return () => clearTimeout(faded);
+  }, [expanded]);
+  const fillStyle = useAnimatedStyle(() => ({ opacity: fill.value }));
+  return { fillStyle, actionsExit: moves !== undefined && actionsShown ? ACTIONS_OUT : undefined };
+}
+
 function HistoryRowView({
   row,
   app,
@@ -547,6 +591,7 @@ function HistoryRowView({
   const t = useTokens();
   const s = styles(t);
   const moves = useContext(RowsMove);
+  const { fillStyle, actionsExit } = useClosingFades(expanded, moves);
   const [annotationFields, setAnnotationFields] = useState<string[]>([]);
   const [hiddenData, setHiddenData] = useState<RestoreDiffState>(RESTORE_DIFF_NONE);
   const chip = row.kind ? KIND_CHIP[row.kind] : null;
@@ -625,6 +670,7 @@ function HistoryRowView({
         <View style={[s.dot, row.isCurrent && s.dotCurrent]} />
       </View>
       <Animated.View style={[s.card, expanded && s.cardOpen]} layout={moves}>
+        <Animated.View style={[s.fill, fillStyle]} pointerEvents="none" />
         <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded }}>
           {words}
           {summary && <View style={s.summary}>{summary}</View>}
@@ -651,7 +697,7 @@ function HistoryRowView({
         </Pressable>
 
         {expanded && (
-          <Animated.View style={s.expanded} entering={moves === undefined ? undefined : ACTIONS_IN}>
+          <Animated.View style={s.expanded} entering={moves === undefined ? undefined : ACTIONS_IN} exiting={actionsExit}>
             {row.touched.length > 0 && (
               <>
                 <Text type="footnote" color="text-2" header>

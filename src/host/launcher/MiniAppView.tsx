@@ -345,6 +345,17 @@ const clamp01 = (v: number) => {
   'worklet';
   return Math.min(1, Math.max(0, v));
 };
+
+/** Whether the `bg` going back in, `k` of the way from the tile `at` to the stage, is drawn where it
+ *  lands: faded out under Reduce Motion, else every edge within half a point of the tile's. Unmeasured,
+ *  the `bg` is the whole stage (`shapeOf`), which is far from landed. */
+function closeLanded(k: number, at: TileAt | null, reduced: boolean): boolean {
+  'worklet';
+  if (reduced) return k <= 1 / 255;
+  if (at === null) return false;
+  const span = Math.max(Math.abs(at.x), Math.abs(at.y), Math.abs(at.frameWidth - at.x - at.width), Math.abs(at.frameHeight - at.y - at.height));
+  return clamp01(k) * span <= 0.5;
+}
 const lerp = (a: number, b: number, p: number) => {
   'worklet';
   return a + (b - a) * p;
@@ -501,6 +512,17 @@ function useAppMorph({ morph, appId, frame, reduceMotion, look, failed }: MorphI
     grown.value = withSpring(0, SMOOTH, done);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leaving, homeUnder, failed]);
+  // The close ends on the frame it is seen to land: Reanimated 4.6 ends `smooth` at 6e-9 of its
+  // starting energy, ~0.35 s after the `bg` is within half a point of the tile, and until the close
+  // ends Android back is held (`BackWhileMoving`) and a Reload refused. The animation's end stays the
+  // fallback (`onClosed` ends only the launch still leaving).
+  useAnimatedReaction(
+    () => leaving && homeUnder && !failed && closeLanded(grown.value, tileAt.value, reduceMotion),
+    (landed, before) => {
+      if (landed && before !== true) scheduleOnRN(closed);
+    },
+    [leaving, homeUnder, failed, reduceMotion, closed],
+  );
 
   const plateStyle = useAnimatedStyle(() => ({ opacity: plate.value }));
   // The plate sits where the tile is, at its drawn size, for an app that came out of it or is going

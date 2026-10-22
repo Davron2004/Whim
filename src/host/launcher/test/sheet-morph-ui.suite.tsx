@@ -19,9 +19,9 @@ import { SheetAnchors, tileAnchor } from '../../ui/SheetAnchor';
 import { Text } from '../../ui/Text';
 import { useTokens } from '../../ui/tokens';
 import { emberLook, springConfig, timingOf } from '../../ui/tokens-pure';
-import { StyleSheet, accessibilitySettings, emitAccessibility } from './native-host';
+import { StyleSheet, accessibilitySettings, emitAccessibility, holdModalDismissals } from './native-host';
 import { pan } from './native-gesture-handler';
-import { animations, elapse, elapseSprings, holdAnimations, isStep, measuring, ReduceMotion } from './native-reanimated';
+import { animations, elapse, elapseSprings, frameStyles, holdAnimations, isStep, measuring, ReduceMotion, runningAnimations } from './native-reanimated';
 import { androidBack, button, hostType, isHost, press, renderScreen, textOf, unmountScreen } from './react-screen';
 
 type Tree = TestRenderer.ReactTestRenderer;
@@ -372,6 +372,73 @@ export async function runSheetMorphUiTests(h: Harness): Promise<void> {
         h.eq(modal(tree), undefined, `${route}: in the tile, the sheet has left`);
       } finally { await leave(tree, release); }
     }
+  });
+
+  await h.test('M5 and M6: the sheet’s window hides on the frame the plate is seen back in its place (every edge within half a point, the card gone), not ~0.35 s later when the smooth spring formally ends: a presented window takes every touch on the screen (by X into the tile, by a drag into the capsule)', async () => {
+    const cases: [string, 'making' | 'describe', Rect, (tree: Tree) => Promise<void>][] = [
+      ['M5 by X', 'making', TILE, (tree) => press(button(tree, COPY.sheetClose))],
+      ['M6 by a drag', 'describe', CAPSULE, (tree) => TestRenderer.act(async () => pan(sheetDrag(tree), [40, 120, 200], 1500))],
+    ];
+    for (const [name, start, place, closeIt] of cases) {
+      const { tree, release } = await rig(start);
+      const reported = holdModalDismissals();
+      try {
+        await run(release);
+        await cardLaidOut(tree);
+        const hold = holdAnimations();
+        await closeIt(tree);
+        const inPlace = () => {
+          const p = plate(tree);
+          if (p === null || seen(card(tree)).opacity > 0) return false;
+          const at = transformOf(p);
+          const [w, ht] = [flat(p).width as number, flat(p).height as number];
+          const edges = [at.translateX - place.pageX, at.translateY - place.pageY, at.translateX + w - place.pageX - place.width, at.translateY + ht - place.pageY - place.height];
+          return edges.every((d) => Math.abs(d) <= 0.5);
+        };
+        const steps: { visible: boolean; landed: boolean; still: boolean }[] = [];
+        for (let i = 0; i < 120 && steps.at(-1)?.visible !== false; i++) {
+          await run(() => { elapseSprings(16); elapse(16); });
+          steps.push({ visible: modal(tree)?.props.visible === true, landed: inPlace(), still: runningAnimations() > 0 });
+        }
+        const hidden = steps.findIndex((f) => !f.visible);
+        h.ok(hidden > 5 && steps.slice(0, hidden).every((f) => !f.landed), `${name}: the window stays up on every frame the plate is still on its way (${hidden} frames)`);
+        h.ok(hidden >= 0 && steps[hidden].landed && steps[hidden].still, `${name}: and hides on the first frame it is in its place, its spring still formally running (${JSON.stringify(steps.slice(Math.max(0, hidden - 2), hidden + 1))})`);
+        await run(hold);
+      } finally {
+        await run(reported);
+        await leave(tree, release);
+      }
+    }
+  });
+
+  await h.test('M6: a drag of the open sheet measures nothing on the UI thread: the plate, hidden under a card shown whole, runs on every frame the card moves (its style captures the card’s place) and never measures its place', async () => {
+    const { tree, release } = await rig(null);
+    try {
+      await press(composerButton(tree));
+      await run(release);
+      await cardLaidOut(tree);
+      h.ok(seen(card(tree)).opacity === 1 && flat(plate(tree)!).opacity === 0, 'open: the card shows whole, the plate is hidden');
+      const measured: unknown[] = [];
+      measuring.rectOf = (node) => {
+        measured.push(placeOf(node));
+        return placeOf(node);
+      };
+      const drag = sheetDrag(tree);
+      const at = (translationY: number) => ({ translationX: 0, translationY, velocityX: 0, velocityY: 0 });
+      const plateFrames: { plate: Record<string, unknown>; cardY: number }[] = [];
+      await TestRenderer.act(async () => {
+        drag.onBegin(at(0));
+        drag.onActivate(at(20));
+        for (const y of [40, 80, 120]) {
+          drag.onUpdate(at(y));
+          const cardAt = (frameStyles(card(tree).props.style).transform as Record<string, number>[])[0];
+          plateFrames.push({ plate: frameStyles(plate(tree)!.props.style), cardY: cardAt.translateY });
+        }
+        drag.onDeactivate(at(120));
+      });
+      h.eq(plateFrames.map((f) => [f.cardY, f.plate.opacity]), [[20, 0], [60, 0], [100, 0]], 'the drag moved the card 1:1 past the slop, the plate hidden under it');
+      h.eq(measured, [], 'and the plate measured nothing on its frames');
+    } finally { await leave(tree, release); }
   });
 
   await h.test('M5: tapping the tile while the sheet shrinks into it reverses it on morph, from where it has got to', async () => {

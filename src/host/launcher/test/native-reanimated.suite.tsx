@@ -371,6 +371,25 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
     h.eq(seen.length, 3, 'nothing reacts once the component is gone');
   });
 
+  await h.test('reanimated double: a reaction whose deps change is a new mapper — it listens to what the new prepare reads and first runs as one of those is next assigned (the next frame), its previous result kept', async () => {
+    const seen: [boolean, boolean | null][] = [];
+    let y!: SharedValue<number>;
+    function Probe({ leaving }: Readonly<{ leaving: boolean }>) {
+      y = useSharedValue(0);
+      useAnimatedReaction(() => leaving && y.value >= 10, (now, before) => { seen.push([now, before]); }, [leaving]);
+      return null;
+    }
+    const tree = await renderScreen(<Probe leaving={false} />);
+    h.eq(seen, [[false, null]], 'one run at mount: its prepare read nothing');
+    await act(() => tree.update(<Probe leaving />));
+    h.eq(seen, [[false, null]], 'the new mapper waits for the next frame');
+    await act(() => { y.value = 4; });
+    h.eq(seen, [[false, null], [false, false]], 'which the value it now reads starts, with the result before it');
+    await act(() => { y.value = 12; });
+    h.eq(seen.at(-1), [true, false], 'and it reacts to that value from then on');
+    await unmountScreen(tree);
+  });
+
   await h.test('reanimated double: measure on the UI thread reports the set rect for a mounted view and null once it goes; on the JS thread it answers null', async () => {
     let ref!: ReturnType<typeof useAnimatedRef<View>>;
     function Probe() {

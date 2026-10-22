@@ -21,8 +21,9 @@ import { TilePlate } from '../../ui/AppTile';
 import { TILE, TILE_SIDE } from '../../ui/AppTile-geometry';
 import { springConfig, timingOf } from '../../ui/tokens-pure';
 import { resetNativeStorage } from './native-storage';
-import { accessibilitySettings, emitAccessibility, hardwareBack, injectedScripts, setColorScheme, StyleSheet } from './native-host';
-import { animations, elapse, elapseSprings, holdAnimations, isStep, measuring, ReduceMotion, type Step } from './native-reanimated';
+import { accessibilitySettings, Dimensions, emitAccessibility, hardwareBack, injectedScripts, setColorScheme, StyleSheet } from './native-host';
+import { Easing, makeMutable, withSpring, withTiming } from 'react-native-reanimated';
+import { animations, elapse, elapseSprings, holdAnimations, isStep, measuring, ReduceMotion, runningAnimations, type Step } from './native-reanimated';
 import { stackMoveEnds, stackUnmountsMidMove } from './native-screens';
 import { boundWebView, button, captureTimeouts, hostType, press, renderScreen, unmountScreen } from './react-screen';
 import { settle, waitFor } from './rendered-launcher';
@@ -106,6 +107,8 @@ async function tapTile(tree: Tree, name: string): Promise<void> {
   await TestRenderer.act(async () => tileOf(tree, name).props.onPress());
   await settle();
 }
+/** A sheet's card: the view a screen reader is held in. */
+const isSheetCard = (n: Node) => hostType(n) === 'Animated.View' && n.props.accessibilityViewIsModal === true;
 const homeShown = (tree: Tree) => tree.root.findAllByType(HomeScreen).length === 1;
 const appOpen = (tree: Tree) => tree.root.findAllByType(MiniAppView).length === 1;
 /** The app's `bg`: the one childless, absolutely placed view in the app's layers with corners. */
@@ -617,14 +620,74 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => elapse(FADE_OUT_MS));
       h.ok(homeShown(tree) && appOpen(tree), 'covered, Home is drawn under the app, which fades');
       const shown: number[] = [];
-      for (let frame = 0; frame < 6; frame++) {
+      // Until the fade is seen to end, where the launch ends.
+      for (let frame = 0; frame < 6 && appOpen(tree); frame++) {
         await TestRenderer.act(async () => elapse(FADE_IN_MS / 8));
-        shown.push(plateShown(tree));
+        if (appOpen(tree)) shown.push(plateShown(tree));
       }
+      h.ok(shown.length >= 3, `the fade is checked on its frames (${shown.length})`);
       h.eq(shown.filter((o) => o > 0), [], `no frame of the fade shows the plate: ${JSON.stringify(shown)}`);
       await TestRenderer.act(async () => release());
       h.ok(!appOpen(tree) && homeShown(tree), 'and the launch ends on Home');
     }, true);
+  });
+
+  await h.test('M3: the launch ends on the frame the bg is seen to land in its tile (every edge within half a point; under Reduce Motion, faded past the last step of opacity), not ~0.35 s later when the spring formally ends, so Android back and a Reload are not held past it', async () => {
+    for (const reduced of [false, true]) {
+      await withLauncher(async ({ tree }) => {
+        await tapTile(tree, 'Timer');
+        await paint(tree);
+        const release = holdAnimations();
+        try {
+          await TestRenderer.act(async () => { hardwareBack(); });
+          await TestRenderer.act(async () => elapse(FADE_OUT_MS));
+          h.ok(homeShown(tree) && appOpen(tree), `${reduced ? 'reduced' : 'motion'}: covered, the app goes back in over Home`);
+          // The same motion on a value of the test's own, set out on the same frame: where the bg is.
+          const k = makeMutable(1);
+          k.value = reduced ? withTiming(0, { duration: FADE_IN_MS, easing: Easing.bezier(...timingOf('fadeIn').bezier) }) : withSpring(0, SMOOTH);
+          const tile = insetsAt(TIMER_TILE);
+          const span = Math.max(tile.top, tile.left, tile.right, tile.bottom);
+          const landed = () => (reduced ? k.value <= 1 / 255 : k.value * span <= 0.5);
+          const frames: { open: boolean; landed: boolean; running: boolean }[] = [];
+          for (let i = 0; i < 80 && frames.at(-1)?.open !== false; i++) {
+            await TestRenderer.act(async () => { elapseSprings(reduced ? 4 : 16); elapse(reduced ? 4 : 16); });
+            frames.push({ open: appOpen(tree), landed: landed(), running: k.value !== 0 });
+          }
+          const ended = frames.findIndex((f) => !f.open);
+          h.ok(ended > 2 && frames.slice(0, ended).every((f) => !f.landed), `${reduced ? 'reduced' : 'motion'}: the launch goes on while the bg is still seen on its way (${ended} frames)`);
+          h.ok(ended >= 0 && frames[ended].landed && frames[ended].running, `${reduced ? 'reduced' : 'motion'}: and ends on Home on the first frame it has landed, its animation still formally running`);
+        } finally {
+          await TestRenderer.act(async () => release());
+        }
+      }, reduced);
+    }
+  });
+
+  await h.test('Back to your apps, then a tile tapped as soon as the sheet and the app are seen to have gone (their springs still formally running): the tap opens that app — no window is left presented over Home to take it', async () => {
+    await withLauncher(async ({ tree }) => {
+      await tapTile(tree, 'Timer');
+      await paint(tree);
+      await press(button(tree, COPY.orbMenuOpenLabel));
+      const release = holdAnimations();
+      try {
+        await press(button(tree, COPY.whimSheetBackToApps));
+        const sheetGone = () => {
+          const card = tree.root.findAll(isSheetCard)[0];
+          return card === undefined || (transformOf(card).translateY ?? 0) >= Dimensions.get().height - 0.5;
+        };
+        const diceCentre = [DICE_TILE.pageX + DICE_TILE.width / 2, DICE_TILE.pageY + DICE_TILE.height / 2 - STAGE.pageY] as const;
+        const homeTakes = () => homeShown(tree) && (!appOpen(tree) || touchAt(tree, ...diceCentre) === 'home');
+        for (let i = 0; i < 60 && !(sheetGone() && homeTakes()); i++) await TestRenderer.act(async () => { elapseSprings(16); elapse(16); });
+        h.ok(sheetGone() && homeTakes() && runningAnimations() > 0, 'the sheet is off the screen and Home is drawn where the Dice tile is, the springs still formally running');
+        const presented = tree.root.findAll((n) => hostType(n) === 'Modal' && n.props.visible === true);
+        h.eq(presented.length, 0, 'no window is presented over Home: a presented one takes every touch on the screen');
+        if (presented.length === 0) await tapTile(tree, 'Dice');
+        await waitFor(() => appOpen(tree) && tree.root.findByType(MiniAppView).props.installedApp.id === 'dice', 'Dice open');
+        h.ok(appOpen(tree) && tree.root.findByType(MiniAppView).props.installedApp.id === 'dice', 'the tap opened Dice');
+      } finally {
+        await TestRenderer.act(async () => release());
+      }
+    });
   });
 
   await h.test('M2: a tile tapped during History’s pop to Home grows only once the pop has finished, over the same Home, and no stack is unmounted mid-move', async () => {

@@ -32,11 +32,11 @@ import { appLinkFor } from '../app-link';
 import { contrastRatio } from '../../../design/tints';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
-import { accessibilitySettings, Alert, emitAccessibility, hardwareBack, openLink, setColorScheme, StyleSheet, windowMetrics } from './native-host';
+import { accessibilitySettings, Alert, emitAccessibility, focusedCells, hardwareBack, openLink, setColorScheme, StyleSheet, windowMetrics } from './native-host';
 import { iosPop, stackItems, stackMoveEnds, stackUnmountsMidMove } from './native-screens';
-import { holdAnimations, layoutAnimations, layoutCommits, playedUnder, viewTagOf, type LayoutAnimation } from './native-reanimated';
+import { elapse, holdAnimations, layoutAnimations, layoutCommits, playedUnder, viewTagOf, type LayoutAnimation } from './native-reanimated';
 import { springConfig, springReachMs, timingOf } from '../../ui/tokens-pure';
-import { androidBack, button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
+import { androidBack, button, captureTimeouts, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 import { chooseRow, dismissToast, longPress, pressToastAction, renderHome, sheetRows, tile, toastOf } from './home-rig';
 import { accessOver, disposeDeviceState, installApp, newDeviceState, withEngine } from './data-copy-rig';
 import { buildIt, planLoaded, resultEvent, settle, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
@@ -1431,6 +1431,39 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('M26: closing an open row is its opening backwards — its card’s fill and its actions fade out on fade-out while the card shrinks on smooth; under Reduce Motion they go at once', async () => {
+    const { access, app } = await threeVersions();
+    for (const reduced of [false, true]) {
+      accessibilitySettings.reduceMotion = reduced;
+      await TestRenderer.act(async () => emitAccessibility('reduceMotionChanged', reduced));
+      const label = reduced ? 'reduced' : 'with motion';
+      try {
+        await withHistory(access, app, async (tree) => {
+          await settledList(tree);
+          await press(row(tree, 'add a chime'));
+          await restAfterMove(tree);
+          const fill = () => cardOf(tree, 'add a chime').findAll(isCardFill)[0];
+          h.eq(styleOf(fill()).opacity, 1, `${label}: open, the card is filled`);
+          layoutAnimations.splice(0);
+          const release = holdAnimations();
+          try {
+            await press(row(tree, 'add a chime'));
+            h.eq(isSmoothMove(cardOf(tree, 'add a chime').props.layout), !reduced, `${label}: the card ${reduced ? 'shrinks at once' : 'shrinks on smooth'}`);
+            const exits = layoutAnimations.filter((e) => e.phase === 'exiting' && playedUnder(e.animation, reduced) !== null);
+            h.eq(exits.map((e) => [e.animation.preset, e.animation.config.duration, JSON.stringify(e.animation.config.easing)]), reduced ? [] : [['FadeOut', FADE_OUT.duration, JSON.stringify({ bezier: FADE_OUT.bezier })]], `${label}: ${reduced ? 'the actions go at once' : 'the actions fade out on fade-out'}`);
+            await TestRenderer.act(async () => elapse(FADE_OUT.duration / 2));
+            const mid = styleOf(fill()).opacity as number;
+            h.ok(reduced ? mid === 0 : mid > 0 && mid < 1, `${label}: ${reduced ? 'the fill goes at once' : 'the fill is fading out'} (${mid})`);
+          } finally { await TestRenderer.act(async () => release()); }
+          h.eq(styleOf(fill()).opacity, 0, `${label}: closed, the card has no fill`);
+        });
+      } finally {
+        accessibilitySettings.reduceMotion = false;
+        await TestRenderer.act(async () => emitAccessibility('reduceMotionChanged', false));
+      }
+    }
+  });
+
   await h.test('M26: tapping the row again while it is still opening closes the same card from where it is, the rows below moving back on smooth', async () => {
     const { access, app } = await threeVersions();
     await withHistory(access, app, async (tree) => {
@@ -1557,6 +1590,64 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('History: focus landing in a row (a screen reader, a keyboard) reaches the list, as it does in the cells the list draws itself, so the list keeps that row drawn', async () => {
+    const { access, app } = await threeVersions();
+    await withHistory(access, app, async (tree) => {
+      await settledList(tree);
+      focusedCells.splice(0);
+      const cell = cellOf(tree, 'a tea timer');
+      const hears = typeof cell.props.onFocusCapture === 'function';
+      h.ok(hears, 'the row’s cell view hears focus land in it');
+      if (hears) await TestRenderer.act(async () => cell.props.onFocusCapture({ nativeEvent: {} }));
+      h.eq(focusedCells.length, 1, 'and the list hears it');
+    });
+  });
+
+  await h.test('M26: History closed while a Use this version’s re-read is still on its way leaves nothing behind: the re-read landing afterwards starts no timer', async () => {
+    const { access, app } = await threeVersions();
+    const reread = held<void>();
+    let gated = false;
+    let waiting = 0;
+    // The reads a re-read makes, while any is on its way.
+    let reading = 0;
+    const counted = async <T,>(read: () => Promise<T>): Promise<T> => {
+      reading += 1;
+      try { return await read(); } finally { reading -= 1; }
+    };
+    const timeline = access.timeline.bind(access);
+    const activeId = access.activeId.bind(access);
+    access.timeline = (...args) => counted(async () => {
+      if (gated) {
+        waiting += 1;
+        await reread.promise;
+      }
+      return timeline(...args);
+    });
+    access.activeId = (...args) => counted(() => activeId(...args));
+    const tree = await renderScreen(historyScreen(access, app));
+    let clock: ReturnType<typeof captureTimeouts> | null = null;
+    try {
+      await settledList(tree);
+      await press(row(tree, 'add a chime'));
+      await restAfterMove(tree);
+      gated = true;
+      await press(button(tree, COPY.historyUseVersion));
+      await waitFor(() => waiting > 0, 'the re-read to be on its way');
+      await unmountScreen(tree);
+      clock = captureTimeouts();
+      await TestRenderer.act(async () => { reread.resolve(); });
+      // The re-read's reads are off the JS turn: every one of them lands, then the turns after it run.
+      const turn = () => TestRenderer.act(nextTurn);
+      for (let i = 0; i < 2000 && reading > 0; i++) await turn();
+      for (let i = 0; i < 5; i++) await turn();
+      h.eq(reading, 0, 'the re-read has landed');
+      h.eq(clock.count(springReachMs('smooth', 0.99)), 0, 'no timer to close the rows’ move is started once History has gone');
+    } finally {
+      clock?.restore();
+      reread.resolve();
+    }
+  });
+
   await h.test('M26 under Reduce Motion: a row opens and closes at once, the rows below with it, and its actions are simply there; with motion, the same taps move', async () => {
     const { access, app } = await threeVersions();
     for (const reduced of [true, false]) {
@@ -1586,6 +1677,11 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
 
 const SMOOTH = springConfig('smooth');
 const FADE_IN = timingOf('fadeIn');
+const FADE_OUT = timingOf('fadeOut');
+/** An open card's fill, in the light scheme: the view under its content painted `surface`. */
+const isCardFill = (n: Node) => hostType(n) === 'Animated.View' && n.props.pointerEvents === 'none' && styleOf(n).backgroundColor === COLORS.light.surface;
+/** The next turn of the event loop. */
+const nextTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
 const WORDS = ['make it louder', 'add a chime', 'a tea timer'];
 /** `smooth` as a layout transition: Reanimated's spring mode with the token's physics. */
 const isSmoothMove = (layout: unknown): boolean => {

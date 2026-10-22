@@ -415,6 +415,11 @@ export function elapseSprings(ms: number): void {
   for (const value of [...sprung]) value.advanceSpring(ms);
 }
 
+/** How many held springs and timings are still running. */
+export function runningAnimations(): number {
+  return timed.size + sprung.size;
+}
+
 /** A shared value made outside any component, as Reanimated's `makeMutable`. */
 export function makeMutable<T>(initial: T): SharedValue<T> {
   return new SharedValue(initial);
@@ -444,6 +449,14 @@ export function onUi<R>(fn: () => R): R {
 }
 /** The styles `useAnimatedStyle` made, with the updater that keeps each current on the UI thread. */
 const animatedStyles = new WeakMap<object, () => unknown>();
+
+/** A UI frame of the animated styles in a host view's `style` prop, merged: Reanimated runs a style's
+ *  worklet on every frame any shared value it captures moves, whatever it read last time (this double
+ *  repaints a style only on a change of what it read). */
+export function frameStyles(style: unknown): Record<string, unknown> {
+  const updaters = stylesIn(style).flatMap((s) => (typeof s === 'object' && s !== null ? animatedStyles.get(s) ?? [] : []));
+  return Object.assign({}, ...updaters.map((updater) => onUi(updater)));
+}
 
 export function useAnimatedStyle<T>(updater: () => T): T {
   const [, repaint] = React.useReducer((n: number) => n + 1, 0);
@@ -591,24 +604,34 @@ function track<T>(prepare: () => T): [T, Set<SharedValue<unknown>>] {
 
 /** `prepare` runs once the component mounts and again, synchronously, each time a shared value it
  *  read is assigned; every run hands `react` its result and the previous one (null the first time),
- *  as Reanimated's mapper does. The latest `prepare` and `react` are used, so `deps` is not needed. */
-export function useAnimatedReaction<T>(prepare: () => T, react: (current: T, previous: T | null) => void): void {
+ *  as Reanimated's mapper does. The latest `prepare` and `react` are used. When `deps` change,
+ *  Reanimated starts a new mapper (hook/useAnimatedReaction.ts), which first runs on the next frame,
+ *  with the values that frame moves: here it starts listening to what the new `prepare` reads and runs
+ *  as one of them is next assigned, `previous` kept (Reanimated keeps it in a shared value). */
+export function useAnimatedReaction<T>(prepare: () => T, react: (current: T, previous: T | null) => void, deps: readonly unknown[] = []): void {
   const latest = React.useRef({ prepare, react });
   latest.current = { prepare, react };
+  const previous = React.useRef<T | null>(null);
+  const started = React.useRef(false);
   React.useEffect(() => {
-    let previous: T | null = null;
     let stops: (() => void)[] = [];
-    const run = () => {
-      const [current, read] = onUi(() => track(latest.current.prepare));
+    const listen = (read: Set<SharedValue<unknown>>) => {
       for (const stop of stops) stop();
       stops = [...read].map((value) => value.listen(run));
-      const before = previous;
-      previous = current;
+    };
+    const run = () => {
+      const [current, read] = onUi(() => track(latest.current.prepare));
+      listen(read);
+      const before = previous.current;
+      previous.current = current;
       onUi(() => latest.current.react(current, before));
     };
-    run();
+    if (started.current) listen(onUi(() => track(latest.current.prepare))[1]);
+    else run();
+    started.current = true;
     return () => { for (const stop of stops) stop(); };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the caller's deps, as Reanimated takes them
+  }, deps);
 }
 
 /** What `measure` reports for any mounted view; a test sets the rect it needs. */
@@ -682,8 +705,12 @@ export interface LayoutCommit {
   held: unknown;
   layout: unknown;
   style: string;
+  /** What `layoutProbe.read` read as the commit was drawn: a test reads what else that commit drew. */
+  seen: unknown;
 }
 export const layoutCommits: LayoutCommit[] = [];
+/** Read on every view's entry in `layoutCommits` while a test sets it; clear it after. */
+export const layoutProbe: { read: (() => unknown) | null } = { read: null };
 let commits = 0;
 let inCommit = false;
 const inThisCommit = new Set<number>();
@@ -735,7 +762,7 @@ function animatedComponent(name: string) {
     // size committed with this render moves with the one registered before it (`layoutCommits`).
     const registered = React.useRef<unknown>(undefined);
     React.useLayoutEffect(() => {
-      layoutCommits.push({ commit: commitNumber(viewTag.current), viewTag: viewTag.current, held: registered.current, layout: props.layout, style: JSON.stringify(props.style) });
+      layoutCommits.push({ commit: commitNumber(viewTag.current), viewTag: viewTag.current, held: registered.current, layout: props.layout, style: JSON.stringify(props.style), seen: layoutProbe.read?.() });
       registered.current = props.layout;
     });
     return React.createElement(name, { ...props, style, viewTag: viewTag.current }, props.children);

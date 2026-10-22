@@ -443,6 +443,29 @@ function shrinkInto({ grown, shown, toward }: SheetMotion, velocity: number, don
   });
 }
 
+/** Closer than this to where it lands, a moving edge is drawn where it lands. */
+const LANDED = 0.5;
+/** The last step of 8-bit opacity: faded further, nothing of the sheet is drawn. */
+const FADED = 1 / 255;
+
+/** Whether a leaving sheet is drawn where its exit lands, however long its animation has still to
+ *  run: faded out (Reduce Motion), every edge of the plate within `LANDED` of its place with the card
+ *  gone (an anchor), or the card within `LANDED` of off-screen. */
+function exitLanded({ y, height, fade, grown, shown }: SheetMotion, frame: PlaceRef, place: PlaceRef | null): boolean {
+  'worklet';
+  if (fade.value <= FADED) return true;
+  if (place === null) return y.value >= height.value - LANDED;
+  if (shown.value > 0) return false;
+  const k = Math.max(0, grown.value);
+  if (k === 0) return true;
+  const at = placeIn(frame, place);
+  // A place that cannot be measured draws no plate and no face: nothing is left to see.
+  if (at === null) return true;
+  const top = at.frameHeight - height.value + y.value;
+  const span = Math.max(Math.abs(at.x), Math.abs(at.frameWidth - at.x - at.width), Math.abs(top - at.y), Math.abs(top + height.value - at.y - at.height));
+  return k * span <= LANDED;
+}
+
 /** The exit of a tapped close, from where the sheet is; `settled` once it has ended. */
 function playExit(motion: SheetMotion, { reduced, anchored }: SheetMoves, settled: () => void): void {
   const { y, height, fade } = motion;
@@ -706,6 +729,18 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
     },
   } satisfies Parameters<typeof usePanGesture>[0];
   const drag = usePanGesture(dragConfig);
+  // The exit ends on the frame it is seen to end. Reanimated 4.6 ends a spring once its energy is
+  // down to 6e-9 of where it set out: ~790 ms for `smooth`, where the card is within half a point of
+  // off-screen by ~420 ms. Until the exit ends the `Modal` is presented and takes every touch, so a
+  // tap on Home in between would land on nothing. The animation's own end stays the fallback.
+  const place = anchor?.ref ?? null;
+  useAnimatedReaction(
+    () => closing && exitLanded(motion, frame, place),
+    (landed, before) => {
+      if (landed && before !== true) scheduleOnRN(onSettled);
+    },
+    [closing, motion, frame, place, onSettled],
+  );
   // While it grows out of its place the card is not seen yet, and a view that is not seen takes no
   // touch, so the plate, the shape that is seen, takes the same drag.
   const plateDrag = usePanGesture({
@@ -729,7 +764,8 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
   };
 
   // A sheet that has started to leave takes no touch, from the commit that closes it on: a tap meant
-  // for what is under it (the orb, right after a close) would otherwise land on a row still sliding out.
+  // for what is under it would otherwise land on a row still sliding out. It does not reach what is
+  // under it either: the presented `Modal` takes every touch until the exit lands (above).
   return (
     <View ref={frame} collapsable={false} onLayout={onFrameLayout} style={s.frame} pointerEvents={closing ? 'box-none' : 'auto'}>
       <Animated.View style={[s.scrim, scrimMotion]} pointerEvents={closing ? 'none' : 'box-none'}>
@@ -807,10 +843,11 @@ interface PlateProps {
 const Plate = React.memo(function PlateView({ frame, place, radius, y, height, grown, shown, color, shadow }: Readonly<PlateProps>) {
   const style = useAnimatedStyle(() => {
     const k = Math.min(1, grown.value);
-    const whole = shown.value >= 1;
+    // An open card hides the plate: settled there, a drag moves it without measuring anything.
+    if (k >= 1 && shown.value >= 1) return { opacity: 0, width: 0, height: 0 };
     const at = placeIn(frame, place);
-    if (at === null || (k >= 1 && whole)) return { opacity: 0, width: 0, height: 0 };
-    const r = Math.min(radius, at.height / 2, at.width / 2);
+    if (at === null) return { opacity: 0, width: 0, height: 0 };
+    const r =Math.min(radius, at.height / 2, at.width / 2);
     const top = lerp(r, RADII.xl.radius, k);
     const bottom = lerp(r, 0, k);
     return {
@@ -845,8 +882,9 @@ interface FaceProps {
 function Face({ frame, place, grown, width, height, closing, onPress, children }: Readonly<FaceProps>) {
   const style = useAnimatedStyle(() => {
     const k = grown.value;
+    if (k >= 1) return { opacity: 0 };
     const at = placeIn(frame, place);
-    if (at === null || k >= 1) return { opacity: 0 };
+    if (at === null) return { opacity: 0 };
     const scale = width > 0 ? at.width / width : 1;
     return { opacity: 1 - clamp01(k / FACE_GONE), transform: [{ translateX: at.x }, { translateY: at.y }, { scale }] };
   });

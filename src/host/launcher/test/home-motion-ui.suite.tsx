@@ -20,7 +20,7 @@ import { GRID, TILE, TILE_SIDE } from '../../ui/AppTile-geometry';
 import { resolveTokens, SPARK_PEAK, springConfig, springReachMs, staggerDelay, timingOf } from '../../ui/tokens-pure';
 import { TINTS, TYPE_SCALE } from '../../../design/tokens';
 import { StyleSheet, accessibilitySettings, emitAccessibility } from './native-host';
-import { animations, elapseSprings, holdAnimations, isStep, playedUnder, ReduceMotion, type Animation, type LayoutAnimation } from './native-reanimated';
+import { animations, elapseSprings, holdAnimations, isStep, layoutCommits, layoutProbe, playedUnder, ReduceMotion, viewTagOf, type Animation, type LayoutAnimation } from './native-reanimated';
 import { button, hostType, press, textOf, unmountScreen } from './react-screen';
 import { chooseRow, longPress, menuCard, pressToastAction, renderHome, tile, tileLabels, updateHome, type Tree } from './home-rig';
 import { json, resultEvent, waitFor, withLauncher, hasInstalled, type sseStream } from './rendered-launcher';
@@ -395,6 +395,33 @@ export async function runHomeMotionUiTests(h: Harness): Promise<void> {
         await reduceMotion(false);
       }
     }
+  });
+
+  await h.test('M18: a tile that arrives once the grid has settled reflows its neighbours on smooth; its name, reporting a wrapped line a moment later, gives its row the two-line block at once — no cell moves with that correction — and the reflow is back on for the next change', async () => {
+    const names = ['Dice', 'Timer', 'Plants', 'Tea'];
+    const tree = await renderHome({ apps: examples(names) });
+    try {
+      await layOut(tree, oneLine(names));
+      await waitFor(() => names.every((n) => Object.is(reflowOf(tree, n), REFLOW)), 'the grid settled');
+      const cells = () => [...names, 'Water Counter'].map((n) => viewTagOf(cellOf(tree, n)));
+      const from = layoutCommits.length;
+      await updateHome(tree, { apps: examples(['Water Counter', ...names]) });
+      const arrival = layoutCommits.slice(from).filter((c) => cells().includes(c.viewTag));
+      h.ok(arrival.some((c) => c.viewTag === viewTagOf(cellOf(tree, 'Tea')) && Object.is(c.held, REFLOW)), 'the arrival moves its neighbours on smooth');
+      const block = (n: string) => flat(tile(tree, n).findAll((m) => hostType(m) === 'Text' && textOf(m) === n)[0]).minHeight;
+      h.eq(block('Dice'), line, 'its name has not reported yet: the row keeps one-line names');
+      const reported = layoutCommits.length;
+      layoutProbe.read = () => block('Dice');
+      try {
+        await layOut(tree, { 'Water Counter': 2 });
+      } finally { layoutProbe.read = null; }
+      h.eq(['Water Counter', 'Dice', 'Timer', 'Plants'].map(block), [2, 2, 2, 2].map((n) => n * line), 'reported, it gives its row the two-line block');
+      const corrected = layoutCommits.slice(reported).filter((c) => cells().includes(c.viewTag) && c.seen === 2 * line);
+      const first = Math.min(...corrected.map((c) => c.commit));
+      const drawn = corrected.filter((c) => c.commit === first);
+      h.ok(drawn.length === cells().length && drawn.every((c) => c.held === undefined), `the commit that draws it moves no cell with a reflow: the correction lands at once (${drawn.map((c) => (c.held === undefined ? '-' : 'reflow')).join(' ')})`);
+      await waitFor(() => [...names, 'Water Counter'].every((n) => Object.is(reflowOf(tree, n), REFLOW)), 'the reflow back on');
+    } finally { await unmountScreen(tree); }
   });
 
   await h.test('M18: the wait before a return is the time system.md gives the smooth spring to cover 95% of its way, as it does for every spring', async () => {

@@ -138,7 +138,16 @@ interface LabelLines {
   fontScale: number;
   lines: MeasuredLabels;
   shown: boolean;
+  /** Lines reported once the grid shows that change a row's block: they wait for one commit drawn with
+   *  the tiles' reflow off, so the correction lands at once rather than riding a reflow. */
+  waiting: MeasuredLabels | null;
+  /** How many of those corrections have landed at this text size. */
+  corrections: number;
 }
+
+const freshLabels = (fontScale: number): LabelLines => ({ fontScale, lines: {}, shown: false, waiting: null, corrections: 0 });
+
+const sameRows = (a: readonly number[], b: readonly number[]) => a.length === b.length && a.every((n, i) => n === b[i]);
 
 /** M17, the grid's first appearance: waiting for the grid to show, its tiles (by key) rising in, or
  *  done — every tile risen, or a touch finished it. */
@@ -174,31 +183,43 @@ function placesOf(cell: GridCell, live: PendingBuildRecord | undefined): readonl
  * no wrapped name has no empty line, and one that has gives every name the same block, so the state
  * lines sit level. The lines are measured, so a text size starts again with none; until every name
  * has reported once the grid is laid out but not `shown`, so no row's state lines, nor the rows
- * under it, move in view. A cell that arrives later settles its row as it appears. A name that never
- * reports holds the grid back for `LABEL_MEASURE_BUDGET_MS` at most, then it shows anyway.
+ * under it, move in view. A cell that arrives later settles its row as it appears, at once: a name
+ * reporting once the grid shows that changes its row's block waits for a commit drawn with the tiles'
+ * reflow off (`quiet`), then lands, so only an arrival or a departure itself moves the tiles. A name
+ * that never reports holds the grid back for `LABEL_MEASURE_BUDGET_MS` at most, then it shows anyway.
  */
 function useRowLabels(cells: readonly GridCell[], layout: GridLayout, fontScale: number) {
-  const [labels, setLabels] = useState<LabelLines>({ fontScale, lines: {}, shown: false });
+  const [labels, setLabels] = useState<LabelLines>(() => freshLabels(fontScale));
   const labelCells: LabelCell[] = cells.map((cell) => ({ key: cellKey(cell), named: drawsName(tileName(cell)) }));
   const measured = labels.fontScale === fontScale ? labels.lines : {};
   const measure = (key: string, lines: number) =>
     setLabels((was) => {
-      const current = was.fontScale === fontScale ? was : { fontScale, lines: {}, shown: false };
-      if (current.lines[key] === lines) return current;
-      const next = { ...current.lines, [key]: lines };
-      return { fontScale, lines: next, shown: current.shown || labelsMeasured(labelCells, next) };
+      const current = was.fontScale === fontScale ? was : freshLabels(fontScale);
+      const known = current.waiting ?? current.lines;
+      if (known[key] === lines) return current;
+      const next = { ...known, [key]: lines };
+      const moves = layout.kind === 'grid' && !sameRows(rowLabelLines(labelCells, layout.columns, current.lines), rowLabelLines(labelCells, layout.columns, next));
+      if (current.waiting !== null || (current.shown && moves)) return { ...current, waiting: next };
+      return { ...current, lines: next, shown: current.shown || labelsMeasured(labelCells, next) };
     });
+  const quiet = labels.fontScale === fontScale && labels.waiting !== null;
+  // The commit with the reflow off has been drawn: the waiting lines land.
+  useEffect(() => {
+    if (!quiet) return;
+    setLabels((was) => (was.waiting === null ? was : { ...was, lines: was.waiting, waiting: null, corrections: was.corrections + 1 }));
+  }, [quiet]);
+  const settles = `${fontScale}:${labels.fontScale === fontScale ? labels.corrections : 0}`;
   const shown = layout.kind === 'list' || (labels.fontScale === fontScale && labels.shown) || labelsMeasured(labelCells, measured);
   useEffect(() => {
     if (shown) return undefined;
     const budget = setTimeout(
-      () => setLabels((was) => ({ ...(was.fontScale === fontScale ? was : { fontScale, lines: {} }), shown: true })),
+      () => setLabels((was) => ({ ...(was.fontScale === fontScale ? was : freshLabels(fontScale)), shown: true })),
       LABEL_MEASURE_BUDGET_MS,
     );
     return () => clearTimeout(budget);
   }, [shown, fontScale]);
-  if (layout.kind === 'list') return { lineCounts: [], shown, measure };
-  return { lineCounts: rowLabelLines(labelCells, layout.columns, measured), shown, measure };
+  if (layout.kind === 'list') return { lineCounts: [], shown, measure, quiet, settles };
+  return { lineCounts: rowLabelLines(labelCells, layout.columns, measured), shown, measure, quiet, settles };
 }
 
 /** Frames the grid's layout holds still, once its names are laid out, before a change of a tile's
@@ -211,22 +232,23 @@ const GRID_SETTLE_FRAMES = 3;
  * corrects the rows that have a wrapped one (`useRowLabels`): with the tiles' reflow on, that correction
  * played as a reflow of its own after every close (tiles sliding, or rows cross-fading under Reduce
  * Motion). The reflow comes on only once the names are laid out and `GRID_SETTLE_FRAMES` frames have
- * drawn that layout, never in the commit that corrects it.
+ * drawn that layout (`settles` names it: the text size and the corrections landed), never in the commit
+ * that corrects it; it goes off while a late correction waits (`quiet`).
  */
-function useGridReflows(shown: boolean, fontScale: number): boolean {
-  const [settledAt, setSettledAt] = useState<number | null>(null);
-  const settled = settledAt === fontScale;
+function useGridReflows({ shown, settles, quiet }: Readonly<{ shown: boolean; settles: string; quiet: boolean }>): boolean {
+  const [settledAt, setSettledAt] = useState<string | null>(null);
+  const settled = settledAt === settles;
   useEffect(() => {
     if (!shown || settled) return undefined;
     let frames = 0;
     let frame = requestAnimationFrame(function tick() {
       frames += 1;
-      if (frames >= GRID_SETTLE_FRAMES) setSettledAt(fontScale);
+      if (frames >= GRID_SETTLE_FRAMES) setSettledAt(settles);
       else frame = requestAnimationFrame(tick);
     });
     return () => cancelAnimationFrame(frame);
-  }, [shown, settled, fontScale]);
-  return shown && settled;
+  }, [shown, settled, settles]);
+  return shown && settled && !quiet;
 }
 
 /** M17, the grid's first appearance (`HomeScreenProps.firstAppearance`): until the grid is `shown`
@@ -351,7 +373,7 @@ export default function HomeScreen({
   const customized = customizing ? (apps.find((a) => a.id === customizing.id) ?? null) : null;
 
   const labels = useRowLabels(cells, layout, fontScale);
-  const reflows = useGridReflows(labels.shown, fontScale);
+  const reflows = useGridReflows(labels);
   const entrance = useGridEntrance({ first: firstAppearance, shown: labels.shown, covered, keys: cells.map(cellKey), reduceMotion: t.reduceMotion, onAppeared });
 
   const closeMenu = () => setMenu((m) => (m ? { ...m, open: false } : m));

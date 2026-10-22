@@ -506,7 +506,7 @@ Numbers are stable; R-numbers are the animation research's (`docs/research/anima
 | M16 Orb corner | Drag the orb | 1:1 after 10 pt; projects to bottom-trailing or bottom-leading; remembered per app | `fling` | Grab any time | Tracks, settles by cross-fade |
 | M14 Toast | Show, auto-dismiss, swipe | Rises 16 px with a fade; swipe down tracks | `smooth`; swipe `fling` | A new toast replaces in place | Cross-fade |
 | M26 History row | Tap a version | Expands; rows below move; actions fade in | `smooth` layout | Tap again collapses | Instant |
-| M17 (R5) Grid appears | First launch, back from onboarding | Tiles rise 8 px and fade, `stagger` | `smooth` | Touch finishes it | At once |
+| M17 (R5) Grid appears | The first time Home shows after each launch | Tiles rise 8 px and fade, `stagger` | `smooth` | Touch finishes it | At once |
 | M18 Delete an app | Delete in the menu | Tile to 0.8 and fades, neighbours reflow; Undo plays it back | `smooth` reflow | Undo retargets | Removed, neighbours cross-fade |
 | M19 (R8) Skeleton | Local load past 300 ms | `breathe` | | Content replaces with `fade-in` | Static 0.6 |
 | M27 Launch → home | Cold start | Native launch screen holds until Home's first frame, then fades 160 ms (iOS: an overlay copying the storyboard; Android 12+: the system splash) | `fade-in` | | Same |

@@ -27,7 +27,7 @@ import {
   useSafeAreaInsets,
   windowMetrics,
 } from './native-host';
-import { animations, holdAnimations, isStep, type Animation, type Step } from './native-reanimated';
+import { animations, elapse, elapseSprings, holdAnimations, isStep, runningAnimations, type Animation, type Step } from './native-reanimated';
 import { pan, type PanConfig } from './native-gesture-handler';
 import { dismissals, keyboardWindow, moveKeyboard, resetKeyboard } from './native-keyboard-controller';
 import { captureTimeouts, freshApp, hostType, press, screenReaderElement, textOf } from './react-screen';
@@ -531,6 +531,42 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     } finally {
       Platform.OS = 'ios';
     }
+  });
+
+  await h.test('Sheet: its window hides on the frame the sheet is seen to have gone — the card within half a point of off-screen, or faded past the last step of opacity — not ~0.35 s later when its spring formally ends: a presented window takes every touch on the screen (tapped close, drag-release close, Reduce Motion fade)', async () => {
+    const cases: [string, boolean, (tree: Tree) => Promise<void>, (tree: Tree) => boolean][] = [
+      ['a tapped close', false, (tree) => press(rowButtons(tree).find((n) => n.props.accessibilityLabel === COPY.sheetClose)!), (tree) => cardY(tree) >= SHEET_HEIGHT - 0.5],
+      ['a drag let go past half', false, (tree) => act(() => pan(dragOf(tree), [100, 220, 330], 600)), (tree) => cardY(tree) >= SHEET_HEIGHT - 0.5],
+      ['a tapped close under Reduce Motion', true, (tree) => press(rowButtons(tree).find((n) => n.props.accessibilityLabel === COPY.sheetClose)!), (tree) => (flat(card(tree)).opacity as number) <= 1 / 255],
+    ];
+    for (const [name, reduced, close, gone] of cases) {
+      await resetPhone();
+      accessibilitySettings.reduceMotion = reduced;
+      const tree = await render(<HeldSheet onCloseCount={{ n: 0 }} />);
+      await settle();
+      await layoutCard(tree);
+      // iOS keeps a hidden window mounted until the system reports it gone, so the frame it hides on can be read.
+      const reported = holdModalDismissals();
+      const release = holdAnimations();
+      try {
+        await close(tree);
+        const frames: { visible: boolean; gone: boolean; still: boolean }[] = [];
+        for (let i = 0; i < 80 && frames.at(-1)?.visible !== false; i++) {
+          await act(() => { elapseSprings(reduced ? 4 : 16); elapse(reduced ? 4 : 16); });
+          frames.push({ visible: modalHosts(tree)[0].props.visible === true, gone: gone(tree), still: runningAnimations() > 0 });
+        }
+        const hidden = frames.findIndex((f) => !f.visible);
+        h.ok(hidden > 2 && frames.slice(0, hidden).every((f) => !f.gone), `${name}: the window stays up on every frame some of the sheet is still seen (${hidden} frames)`);
+        h.ok(hidden >= 0 && frames[hidden].gone, `${name}: and hides on the first frame it has gone`);
+        h.ok(hidden >= 0 && frames[hidden].still, `${name}: while its animation still formally runs`);
+      } finally {
+        await act(() => release());
+        await act(() => reported());
+      }
+      h.ok(!modalShown(tree), `${name}: its window has gone`);
+      await act(() => tree.unmount());
+    }
+    await resetPhone();
   });
 
   await h.test('Sheet: a sheet that closes by a drag has left no window behind', async () => {

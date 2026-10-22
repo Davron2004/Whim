@@ -483,8 +483,9 @@ function usePresence(presence: TilePresence, reduceMotion: boolean, onSettled: (
       'worklet';
       if (finished) scheduleOnRN(settled);
     };
-    // From wherever it is: an Undo while the tile still leaves turns it back with its velocity; one
-    // that comes once it had gone waits for its neighbours to make room.
+    // From wherever it is: an Undo while the tile still leaves turns it back from where it is drawn
+    // (Reanimated 4.6 drops a velocity that points away from the new target, so it sets out from
+    // rest); one that comes once it had gone waits for its neighbours to make room.
     const spring = withSpring(target, SMOOTH, presence === 'leaving' ? undefined : done);
     shown.value = was === 'shown' && presence === 'returning' ? withDelay(RETURN_AFTER, spring) : spring;
   }, [presence, shown, leaving, settled, reduceMotion]);

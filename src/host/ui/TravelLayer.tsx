@@ -20,10 +20,11 @@
  */
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import Animated, { makeMutable, measure, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
+import Animated, { makeMutable, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import type { EmberLight, EmberLightRef } from './Ember';
 import { timing } from './motion';
+import { measured } from './SheetAnchor';
 import { useTokens } from './tokens';
 import { springConfig } from './tokens-pure';
 
@@ -83,12 +84,13 @@ interface Drawn {
 const DrawnContext = createContext<Drawn | null>(null);
 
 /** What the layer, the source and the target measure now, or `null` on a frame any of them cannot be
- *  measured: the style's first run on the JS thread, before the views are laid out, or once one has gone. */
+ *  measured: the style's first run on the JS thread, before the views are laid out, or once one has
+ *  gone (`measured`: a ref not on a view is never handed to the native `measure`). */
 function placesOf(layer: PlaceRef, source: PlaceRef, target: PlaceRef) {
   'worklet';
-  const origin = measure(layer);
-  const from = measure(source);
-  const to = measure(target);
+  const origin = measured(layer);
+  const from = measured(source);
+  const to = measured(target);
   return origin === null || from === null || to === null || to.width === 0 ? null : { origin, from, to };
 }
 
