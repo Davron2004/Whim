@@ -4,7 +4,7 @@
 
 The launcher SHALL open the first-run sheet over the current screen, in place of the requested screen, whenever the user takes a data-sending action without a current grant. The data-sending actions are: the home composer; changing an app from its tile menu, from inside the running app or from History; and trying a failed or stopped attempt again. After the user agrees, the action they started SHALL continue as if consent had already existed. Reattaching to a run that is already in flight sends nothing and SHALL NOT ask. Where another requirement of this capability says the consent screen opens for a data-sending action, the first-run sheet opens; the consent screen of "Settings shows consent and can review or turn it off" stays a full screen in review mode.
 
-#### Scenario: Composer on a fresh install
+#### Scenario: Composer row on a fresh install
 
 - **WHEN** a user with no grant taps the home composer
 - **THEN** the first-run sheet opens, the Describe page is not shown, and no request is sent
@@ -47,12 +47,12 @@ Neither layer SHALL name any provider company or call the phone ID anonymous, an
 - **WHEN** the first-run sheet renders at consent version 2 with "Full details" collapsed
 - **THEN** the visible text names what the user asks for, the phone ID and error details as sent, the AI companies working for Whim and every other screen-named recipient role, and what the data is used for, and it shows the privacy policy link and no terms wording outside the checkbox row
 
-#### Scenario: The full disclosure is one tap away before any act
+#### Scenario: The disclosure is complete
 
 - **WHEN** the user taps "Full details" before ticking the box or agreeing
 - **THEN** each section above shows in order and names every screen-named role in the version-2 manifest
 
-#### Scenario: No vendor on the sheet
+#### Scenario: No vendor on the screen
 
 - **WHEN** the copy tables for every language are scanned
 - **THEN** no first-run or consent string contains "OpenRouter" or "anonymous"

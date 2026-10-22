@@ -24,12 +24,12 @@ The launcher SHALL ask for the terms acceptance on the first-run sheet (see `ai-
 - **WHEN** the user taps the terms link
 - **THEN** the system browser opens the terms for the active legal language and the box stays unticked
 
-#### Scenario: Declining sends nothing
+#### Scenario: Declining the terms sends nothing
 
 - **WHEN** the user taps `Not now` on the first-run sheet
 - **THEN** no acceptance is stored, no grant is stored, no request is sent, and installed apps keep working
 
-#### Scenario: A current acceptance leaves the checkbox out
+#### Scenario: A current acceptance skips the step
 
 - **WHEN** the terms are current and the consent grant is outdated
 - **THEN** the data-sending action opens the first-run sheet with no checkbox row and its agree action enabled
@@ -38,6 +38,11 @@ The launcher SHALL ask for the terms acceptance on the first-run sheet (see `ai-
 
 - **WHEN** the consent grant is current, the terms acceptance is outdated, and the user takes a data-sending action
 - **THEN** the sheet shows the updated-terms line and the checkbox row, its action reads as continuing, and taking it with the box ticked stores the new acceptance and leaves the stored grant unchanged
+
+#### Scenario: The step carries no data disclosure
+
+- **WHEN** the checkbox row renders
+- **THEN** none of its strings mention what is sent, to whom, or why
 
 ### Requirement: One pass through the legal flow shows each legal screen at most once
 

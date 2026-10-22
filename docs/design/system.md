@@ -460,6 +460,8 @@ Reanimated's `duration`/`dampingRatio` mode.
    moments.
 2. **Start from what's on screen.** Read the presentation value, retarget the running spring with its
    velocity. Never restart from a stored value; never disable input while something moves.
+   One exception: a sheet's native `Modal` takes every touch until its exit is visibly done (~0.66 s plain,
+   ~1.02 s anchored), so input comes back the frame the sheet is seen gone, never at the spring's end (#224).
 3. **Same path out as in**, faster out: a morph opens with `morph`, closes with `smooth`.
 4. **No JS-driven layout per frame.** Transform and opacity by default; shell reflow uses Reanimated
    layout transitions. M2 and M3 move by transforms only: two straight bars stretched to the shape's

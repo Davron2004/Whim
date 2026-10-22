@@ -9,11 +9,11 @@ The controls are: the native stack's header back control on Settings, Advanced, 
 - **WHEN** a user on an iPhone opens Settings from the home grid and taps the header back control
 - **THEN** the home grid is shown, and no gesture or hardware button was needed
 
-#### Scenario: Leaving the making flow on an iPhone
+#### Scenario: Leaving the flow on an iPhone
 - **WHEN** a user on an iPhone is on the Plan page and taps back, then the close button
 - **THEN** the sheet shows Describe with the text kept, then closes to the home grid with the draft kept in the composer
 
-#### Scenario: Leaving a running app on an iPhone
+#### Scenario: Leaving a running mini-app on an iPhone
 - **WHEN** an app is running on an iPhone and the user taps the orb, then `Back to your apps`
 - **THEN** the app closes into its tile and the home grid is shown
 
@@ -22,13 +22,30 @@ On every launcher screen that handles system back, system back SHALL perform exa
 
 On the Plan page, while a row is being edited, both the header back and system back SHALL cancel the row edit and keep the page; with no row being edited, both SHALL return to Describe. On the Making page, system back and the close button SHALL leave the run going and SHALL never stop it. On Ready, system back SHALL do what `Done` does. With a sheet open over a screen, system back SHALL close the sheet. The system back listener SHALL be registered once per screen mount and SHALL always run the screen's current handler.
 
-#### Scenario: Header back while editing a plan row
+#### Scenario: Header Back while editing a plan row
 - **WHEN** a row on the Plan page is being edited and the user taps the header back
 - **THEN** the edit is cancelled and the Plan page stays
 
-#### Scenario: Back on the Making page never stops the run
+#### Scenario: System back on the build step never cancels
 - **WHEN** the user presses Android back on the Making page
 - **THEN** the sheet collapses into the run's tile and the run continues
+
+#### Scenario: System back on the done step
+- **WHEN** a run has just delivered and the user presses Android system back on the Ready page
+- **THEN** the home grid is shown with the new tile, the same as tapping `Done`, and Whim stays in the foreground
+
+### Requirement: Controls at the bottom of a screen clear the bottom system area
+Every launcher screen other than a running mini-app and the developer probe screen SHALL keep its content above the bottom safe-area inset (the iOS home indicator, the Android navigation bar), so a control anchored to the bottom of the screen is fully tappable.
+
+A running mini-app keeps its full-height frame; its orb and its sheets add the bottom inset themselves. The developer probe screen applies its own safe area.
+
+#### Scenario: The build step on an iPhone with a home indicator
+- **WHEN** the Making page renders on an iPhone that reports a bottom safe-area inset
+- **THEN** `Stop` sits entirely above that inset
+
+#### Scenario: A running mini-app keeps its full height
+- **WHEN** a mini-app is running on the same iPhone
+- **THEN** its view extends to the bottom edge and the orb sits above the inset
 
 ## ADDED Requirements
 

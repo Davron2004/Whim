@@ -17,7 +17,7 @@ an untyped record on the wire; the host validates and assigns where it consumes 
 - **THEN** it has no app-id, install-state or assigned-tint fields, and a `result` event validates with only
   generation outputs
 
-#### Scenario: Tile identity has one home
+#### Scenario: The tile colour has one home
 - **WHEN** a delivered record for an app that named a tint and an icon is inspected
 - **THEN** `tint` and `icon` appear inside `manifest` and nowhere else on the record
 
