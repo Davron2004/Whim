@@ -1,5 +1,22 @@
 ## MODIFIED Requirements
 
+### Requirement: A refusal is recognised by the contract's closed refusal vocabulary
+The launcher SHALL treat a request error as a service refusal exactly when it is an HTTP error whose body validated as `ApiError`, whose `error` is a member of the contract's `ServiceRefusalCode`, and whose `hint` is non-empty. Every other error SHALL keep its existing handling.
+
+The launcher's per-code handling SHALL be a table keyed by `ServiceRefusalCode` (`payload_too_large`, `daily_limit`, `device_busy`, `server_busy`, `content_policy`, `policy_unavailable`, `budget_exhausted`, `update_required`, `consent_required`), written so that a member added to the contract without a matching entry fails the typecheck. Matching SHALL use the identifier, never the status code or the hint text.
+
+#### Scenario: Every contract code is recognised
+- **WHEN** each of the nine `ServiceRefusalCode` members arrives as an `ApiError` body with a hint
+- **THEN** each is classified as a service refusal carrying that code and hint
+
+#### Scenario: An identifier outside the vocabulary is not a refusal
+- **WHEN** a `429` arrives with `ApiError` `{ error: 'rate_limited', hint: '…' }`
+- **THEN** it is not a service refusal and takes the existing failure handling
+
+#### Scenario: A body without a hint is not a refusal
+- **WHEN** a `422` arrives whose body is `{ error: 'content_policy' }` with no hint
+- **THEN** it is not a service refusal
+
 ### Requirement: A refusal of what the user wrote lands where they can change it
 A `content_policy` or `payload_too_large` refusal SHALL return the user to the page of the making sheet where the refused text is edited, with a notice. For a clarify or rewrite request that page is Describe, with the person's words and the app being changed preserved. For a generate request started from the Plan page it is the Plan page, with its rows, answers and any hand edits preserved. Changing the text (typing on Describe, or saving a row edit on Plan) SHALL clear the notice.
 

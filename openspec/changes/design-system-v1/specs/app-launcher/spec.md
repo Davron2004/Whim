@@ -26,7 +26,7 @@ The launcher SHALL offer Delete on every installed app with no confirmation dial
 
 ### Requirement: Forking creates an independent launcher entry
 
-The launcher SHALL offer "Make a copy" on every installed app (tile menu, and History for any version). Before creating the copy the launcher MUST ask "Copy the data, or start fresh?" (owner ruling 2026-10-09; skipped, starting fresh, when the original has never saved any user data). The copy MUST appear as a new launcher entry carrying its provenance, MUST start from the chosen version's bundle, MUST evolve independently, and MUST have its own user data store under its own storage-engine appId (#43b) — either a one-time copy of the original's data (change `copy-app-data`) or empty. A copy never shares data with its original. A toast "Copy made" SHALL offer Open. Joining an original's storage group SHALL remain reserved to rewind continuations, which are never asked (see `linked-apps`).
+The launcher SHALL offer "Make a copy" on every installed app (tile menu, and History for any version). Before creating the copy the launcher MUST ask "Copy the data, or start fresh?" (owner ruling 2026-10-09; skipped, starting fresh, when the original has never saved any user data). The copy MUST appear as a new launcher entry carrying its provenance, MUST start from the chosen version's bundle, MUST evolve independently, and MUST have its own user data store under its own storage-engine appId (#43b) — either a one-time copy of the original's data (change `copy-app-data`) or empty. A copy never shares data with its original. A toast "Copy made" SHALL offer Open. While a copy is being made the app's tile SHALL read busy and open no menu, so a second copy of that app cannot start until the first settles; a copy that cannot be made SHALL say so in one toast and add no tile. Joining an original's storage group SHALL remain reserved to rewind continuations, which are never asked (see `linked-apps`).
 
 #### Scenario: A fork runs independently of its original
 
@@ -48,6 +48,11 @@ The launcher SHALL offer "Make a copy" on every installed app (tile menu, and Hi
 - **WHEN** the user taps "Make a copy" on an app that has never saved any data
 - **THEN** no question is asked and the copy starts fresh
 
+#### Scenario: A second copy cannot start mid-copy
+
+- **WHEN** a copy of an app is still being made and the user long-presses that app's tile
+- **THEN** the tile reads busy, no menu opens, and only one copy is made
+
 ### Requirement: The create affordance and per-app re-prompt action open the prompt flow
 
 The home screen SHALL carry a composer bar reading `Make an app…` as its create affordance, opening the prompt flow's new-app entry point on tap. A ready app's tile menu SHALL include a "Change it" action, opening the prompt flow's change entry point scoped to that app.
@@ -61,6 +66,87 @@ The home screen SHALL carry a composer bar reading `Make an app…` as its creat
 
 - **WHEN** the user long-presses an app tile and chooses "Change it"
 - **THEN** the Describe page opens scoped to that app
+
+### Requirement: The launcher exposes no unshipped-feature copy
+User-facing launcher copy SHALL NOT promise features that are not present. Text that sets an expectation the build cannot meet (e.g. "Coming soon.") MUST NOT ship.
+
+#### Scenario: Opening the create-app modal
+- **WHEN** the user taps `Make an app…` and the making sheet opens on its Describe page
+- **THEN** the page contains no "Coming soon." text
+
+### Requirement: The Settings screen persists a server address for the prompt flow
+Every build of the launcher SHALL let the user point Whim at their own server: an optional override of the compiled-in production server (see `release-config`), used by every request the launcher sends, including reports and diagnostics. The choice SHALL be the Server group of the pushed Advanced screen: "Whim's server" and "Your own server" as two selectable rows. The override SHALL be honoured only while "Your own server" is chosen and only after the user has confirmed, once per install, that the chosen server sees everything Whim sends, that its operator decides what it keeps, and that Whim's privacy policy doesn't cover it; the first choice of "Your own server" SHALL ask for that confirmation in a confirm sheet. Until that acknowledgement is recorded, a saved address (including one saved by an earlier build) SHALL stay unread and every request SHALL go to the compiled-in server. The address field SHALL show only while "Your own server" is chosen. While an address is saved, a caption under the field SHALL restate that the user's server is the user's responsibility. A blank address SHALL mean "no override" and SHALL never cause a crash. An `http://` address SHALL be accepted only for a loopback or private-range IP literal (loopback, RFC 1918, link-local, IPv6 unique-local, carrier-grade NAT), `localhost`, a `.local` name or a single-label host that isn't numeric; any other host SHALL require `https://`, and a refused address SHALL be explained inline and not saved. Choosing "Whim's server" SHALL send every request to the compiled-in server and SHALL keep both the saved address and the acknowledgement, so choosing "Your own server" again uses that address with nothing to confirm. The field's placeholder SHALL name the default server's host so the user can see what "no override" means.
+
+#### Scenario: Configured address is used
+- **WHEN** the user has confirmed the acknowledgement, chosen "Your own server", entered a server address and submits a prompt
+- **THEN** the clarify, rewrite, generation and report requests target that address
+
+#### Scenario: No override uses the default server
+- **WHEN** no server address has been entered and the user submits a prompt with consent granted
+- **THEN** the requests target the compiled-in production server, and no "set an address in Settings" message is shown
+
+#### Scenario: The acknowledgement comes first
+- **WHEN** a user opens Advanced for the first time and taps "Your own server"
+- **THEN** a confirm sheet explains that the server sees everything Whim sends and that Whim's privacy policy doesn't cover it; "Keep Whim's server" leaves Whim's server chosen with no field and no override, and confirming chooses "Your own server" and shows the field
+
+#### Scenario: An address from an earlier build waits for the acknowledgement
+- **WHEN** a build starts on a phone where an earlier build saved an override and no acknowledgement is recorded
+- **THEN** every request targets the compiled-in production server, and Settings shows the saved address only after the user confirms
+
+#### Scenario: Plain http only for a local server
+- **WHEN** the user enters `http://192.168.1.20:8787`, then `http://example.com`, then `http://8.8.8.8`
+- **THEN** the first is saved and used, and the other two are refused inline with a note that non-local servers need `https://`
+
+#### Scenario: Going back to the default
+- **WHEN** an address is saved and the user chooses "Whim's server"
+- **THEN** the next request targets the compiled-in production server, and choosing "Your own server" again shows the saved address and uses it with no second acknowledgement
+
+### Requirement: Tapping a ghost tile opens the build or failure screen by state
+Tapping a tile being made (a `building` pending record, queued or not) SHALL open the making sheet on that run's own page, its Making page while it runs, reattaching to the in-flight generation with no new request; a `building` record with no run left in this process SHALL open nothing. Tapping a failed, stopped or needs-update attempt's tile (a `failed` or `interrupted` record) SHALL open the making sheet's Failure page, hydrated from its current store view under prompt-flow's persisted/volatile failure rules. The tile-menu rows that show an attempt (`system.md` §3.2) SHALL open the same pages. Pending app-link routing SHALL consume the same current records and open the same handler as tapping the tile; a volatile failed entry SHALL NOT route to stale building or missing behavior. Tile and app-link failure opening SHALL honor persisted `journalUnavailable: true` after a fresh launcher instance or process restart; lifecycle still comes only from the current pending record.
+
+#### Scenario: Tap a building ghost
+
+- **WHEN** the user taps a tile being made
+- **THEN** the making sheet opens on its Making page, reflecting the still-running generation
+
+#### Scenario: Tap a failed ghost
+
+- **WHEN** the user taps a failed attempt's tile
+- **THEN** the Failure page opens, showing the verified persisted reason and diagnostics or the store-retained generic failure as applicable
+
+#### Scenario: Tap an interrupted ghost
+
+- **WHEN** the user taps the tile of an attempt that was stopped or that Whim was closed under
+- **THEN** the Failure page opens, saying the attempt was stopped or that Whim closed during it
+
+#### Scenario: A link opens a retained failed attempt
+
+- **WHEN** an app link targets a current volatile failed entry whose raw state is building or whose raw key was partially removed during Discard
+- **THEN** the same generic failure and recovery actions open as for tapping its tile, with no new generation request
+
+#### Scenario: Cold generic failure keeps its durable report guard
+
+- **WHEN** Home or an app link opens a persisted generic failed record marked journalUnavailable after restart while an old raw journal still exists
+- **THEN** the Failure page opens without that old report and the tile stays failed; journal availability does not change its lifecycle state
+
+### Requirement: Grid composition dedupes pending and installed entries by id, pending wins
+When composing the grid from pending-build records and installed-app records, an id present in both lists SHALL render exactly once, as the attempt's tile, until the pending record is deleted. A pending record that changes an installed app SHALL NOT be a tile of its own: it shows on that app's tile (see "Tiles show their state").
+
+#### Scenario: Transmute does not double-render
+
+- **WHEN** a pending-build record and its just-delivered installed-app record briefly coexist under the same id during a delivery sequence
+- **THEN** the grid shows exactly one tile for that id, not two
+
+### Requirement: Opening an app shows an immediate busy affordance
+Tapping a ready app's tile SHALL show a busy affordance on that tile immediately (the tile dims and reads busy to assistive technology), persisting while the app's active bundle is read, until the app starts growing out of its tile or the open attempt fails. From then on "Opening an app grows out of its tile and waits for the realm's paint" governs the plate, the WebView's reveal and the "Opening…" label. A tap MUST NOT be allowed to read as unregistered while the app's active bundle is being read, and while the tile is busy a second tap SHALL start no second open and a long-press SHALL open no menu.
+
+#### Scenario: A slow open still looks alive
+- **WHEN** the user taps an app tile and reading its active bundle takes noticeably long
+- **THEN** the tile shows a busy affordance from the moment of the tap until the app starts growing out of it
+
+#### Scenario: A failed open clears the busy affordance
+- **WHEN** opening an app fails
+- **THEN** the tile's busy affordance clears and the existing failure alert is shown
 
 ## REMOVED Requirements
 
@@ -153,6 +239,36 @@ The home screen SHALL carry a composer bar reading `Make an app…` as its creat
 
 **Reason**: The orb and tiles are redrawn; their rendering rules move into the new requirements.
 **Migration**: See "The orb is an opaque, draggable disc that opens the Whim sheet" and "A tile is a tinted squircle with one glyph".
+
+### Requirement: A ghost tile displays a working title
+
+**Reason**: Ghost tiles are replaced by tiles being made, whose name rule lives with the tile states.
+**Migration**: See "Tiles show their state" (the plan's proposed name, else the description's first three words without a leading article).
+
+### Requirement: No always-visible cancel affordance on the ghost tile face
+
+**Reason**: Ghost tiles are replaced by tiles being made; the rule now covers every tile.
+**Migration**: See "Tile menus follow the tile's state": no tile shows a cancel or discard control on its face, and Stop and Discard are tile-menu rows.
+
+### Requirement: Rebuilding an existing app marks its installed tile as building, spawning no ghost
+
+**Reason**: A change in flight is now the app tile's `changing` state (ember ring, "Changing…"), defined with the other tile states.
+**Migration**: See "Tiles show their state", scenario "A change in flight shows on the app's own tile".
+
+### Requirement: Fork and delete show a busy state and cannot be re-triggered mid-operation
+
+**Reason**: Delete no longer runs while the person waits: it takes the tile off the grid at once with a 10-second Undo and purges when the window ends, so there is nothing to show busy or re-trigger. Make a copy asks "Copy the data, or start fresh?" first.
+**Migration**: Delete: see "Deleting an app leaves no residue". Copy: see "Forking creates an independent launcher entry", which carries the busy tile and the refusal of a second copy mid-copy.
+
+### Requirement: First run seeds two example apps and a create affordance
+
+**Reason**: First run now seeds three examples (the style gallery joined tip splitter and water counter), and the create affordance is the composer bar, not a "make your first app" affordance.
+**Migration**: See "First run seeds the example apps and a create affordance".
+
+### Requirement: Text input never hides the content or action it belongs to
+
+**Reason**: The compose screen is now the making sheet's Describe page, which opens with the keyboard up (`prompt-flow` "Describe opens with the keyboard"); the old scenario "Compose opens without the keyboard" no longer holds.
+**Migration**: See "Text input keeps its field and action above the keyboard".
 
 ## ADDED Requirements
 
@@ -420,7 +536,17 @@ Shell copy SHALL use the glossary of `system.md` §8 (app, make, change, History
 
 ### Requirement: Shell motion runs on Reanimated with the named springs
 
-Shell motion SHALL use Reanimated with the named springs and timings of the token module and the moments of `system.md` §4.4; RN `Animated`, `LayoutAnimation`, `useNativeDriver` and literal spring configs SHALL NOT appear in `src/host/`, enforced by a static check. Every animation SHALL start from the presentation value and SHALL NOT block input. With the OS Reduce Motion setting on, every moment SHALL show its reduced form.
+Shell motion SHALL use Reanimated with the named springs and timings of the token module and the moments of `system.md` §4.4; RN `Animated`, `LayoutAnimation`, `useNativeDriver` and literal spring configs SHALL NOT appear in `src/host/`, enforced by a static check. Every animation SHALL start from the presentation value and SHALL NOT block input, except a sheet's native `Modal` while its exit is visible (#224). With the OS Reduce Motion setting on, every moment SHALL show its reduced form.
+
+#### Scenario: A sheet's visible exit is the one exception
+
+- **WHEN** the user taps while a closing sheet is still visible (the M5 and M6 morphs across its boundary included): up to about 0.66 s after the tap that closed a plain sheet, about 1.02 s for an anchored close
+- **THEN** the sheet's native window takes the tap and nothing under it responds; this lasts until GitHub issue #224 moves sheets off the native presentation
+
+#### Scenario: A tap right after a sheet is gone reaches what is under it
+
+- **WHEN** a sheet closes (tapped close, drag release or Reduce Motion fade) and the user taps the screen under it on the first frame the sheet is seen to be gone
+- **THEN** the tap reaches what is under it: the sheet's window was dismissed on the frame the card came within half a point of off-screen (or faded past its last opacity step), not at the spring's later formal end
 
 #### Scenario: A literal spring fails the check
 
@@ -431,3 +557,36 @@ Shell motion SHALL use Reanimated with the named springs and timings of the toke
 
 - **WHEN** Reduce Motion is on and the user opens an app
 - **THEN** the app cross-fades in over 160 ms with no container growth
+
+### Requirement: First run seeds the example apps and a create affordance
+
+On first run the launcher SHALL seed the built-in examples (tip splitter, water counter and style gallery) as installed, example-labeled records — full citizens: launchable, copyable, deletable, with history from their first install — and Home SHALL carry the composer bar `Make an app…` as its create affordance. Seeding MUST be idempotent across restarts and MUST NOT resurrect deleted examples.
+
+#### Scenario: A fresh install is not empty
+
+- **WHEN** the host runs for the first time
+- **THEN** the grid shows the examples, each with the "Example" state line, plus the composer bar, and each example launches and runs on-device
+
+#### Scenario: Deleted examples stay deleted
+
+- **WHEN** the user deletes a seeded example, lets the Undo window pass and restarts the host
+- **THEN** the example does not reappear
+
+### Requirement: Text input keeps its field and action above the keyboard
+
+Every launcher screen and sheet page with a text input SHALL keep the focused field and its primary action visible above the keyboard (at the largest text sizes the action may scroll with the content), SHALL let the rest scroll into view while the keyboard is up, and SHALL let the user put the keyboard away on both platforms without submitting. Describe SHALL open focused, keyboard up (`prompt-flow`).
+
+#### Scenario: Describe on iOS
+
+- **WHEN** a user types a description on the Describe page on iOS
+- **THEN** Continue stays visible above the keyboard, and tapping Done, tapping empty space or dragging the content puts the keyboard away
+
+#### Scenario: Describe opens with its field focused
+
+- **WHEN** the making sheet opens on the Describe page for a new app
+- **THEN** the field is focused with the keyboard up, and the idea chips show once the keyboard is down while the field is empty
+
+#### Scenario: Every input screen
+
+- **WHEN** the keyboard is up on the Plan page's row editing, the Whim sheet's change field, the report page or any other input screen, on iOS or Android
+- **THEN** the focused field and the primary action are visible and the content above scrolls
