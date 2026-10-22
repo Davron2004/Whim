@@ -3,10 +3,10 @@
  * second while Home is the screen, and only re-rendered when something it shows changed.
  */
 import { useEffect, useRef, useState } from 'react';
-import { NO_LIVE_VIEW, sameLiveView, sampleLive, type LiveSample, type LiveSignals, type LiveView } from './home-live';
+import { NO_LIVE_VIEW, sameLiveView, sampleLive, type LiveAttemptView, type LiveSample, type LiveView } from './home-live';
 import { RUN_SIGNAL_TICK_MS } from './prompt-flow';
 
-export function useHomeLive(active: boolean, attempts: () => readonly { id: string; signals: LiveSignals }[]): LiveView {
+export function useHomeLive(active: boolean, attempts: () => readonly LiveAttemptView[]): LiveView {
   const samples = useRef(new Map<string, LiveSample>()).current;
   const read = useRef(attempts);
   read.current = attempts;

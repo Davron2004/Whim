@@ -722,7 +722,7 @@ export const STALL_MS = 40_000;
  *  one ambiguous "quiet" reading. */
 export type Liveness = 'writing' | 'thinking' | 'connected' | 'stalled';
 
-export function livenessOf(s: RunSignals, now: number): Liveness {
+export function livenessOf(s: Pick<RunSignals, 'lastTokenAt' | 'lastThinkingAt' | 'lastFrameAt'>, now: number): Liveness {
   if (s.lastTokenAt != null && now - s.lastTokenAt <= WRITING_WINDOW_MS) return 'writing';
   if (s.lastThinkingAt != null && now - s.lastThinkingAt <= THINKING_WINDOW_MS) return 'thinking';
   if (now - s.lastFrameAt <= STALL_MS) return 'connected';

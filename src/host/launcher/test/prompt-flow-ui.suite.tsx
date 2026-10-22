@@ -14,12 +14,16 @@ import MiniAppView from '../MiniAppView';
 import { MakingSheet } from '../MakingSheet';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { TextArea } from '../../ui/TextField';
+import { AmbientLight, Ember } from '../../ui/Ember';
+import { TilePlate } from '../../ui/AppTile';
 import { COPY } from '../copy';
 import { StoreAccess } from '../store-access';
 import { RunJournalStore } from '../run-journal';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { grantConsent, revokeConsent } from '../ai-consent';
-import { Share, holdModalDismissals, modalPresentations } from './native-host';
+import { Share, emitAccessibility, holdModalDismissals, modalPresentations } from './native-host';
+import { cancelled, elapse, holdAnimations } from './native-reanimated';
+import type { FlickerPulse } from '../home-live';
 import { chooseRow, longPress, pressToastAction, toastOf } from './home-rig';
 import { streamResponse } from './client-fixtures';
 import { androidBack, button, isHost, press, textOf } from './react-screen';
@@ -64,6 +68,12 @@ export function streamingServer(streams: ReturnType<typeof sseStream>[]) {
     streams.push(stream);
     return stream.response;
   };
+}
+
+/** Wait out more than a display frame of wall time, so the next arrival is not one with the last. */
+async function moreThanAFrame(): Promise<void> {
+  const later = Date.now() + 30;
+  await waitFor(() => Date.now() >= later, 'more than a frame to pass');
 }
 
 /** A promise the test resolves by hand. */
@@ -460,6 +470,94 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => home(tree).props.onOpenPending(home(tree).props.pending[0]));
       h.ok(makingSheetOpen(tree) && tree.root.findByType(MakingPage).props.stage === 'generate', 'tapping the tile reopens the page, where the run is');
       streams[0].end();
+    });
+  });
+
+  await h.test('honest light: the run’s token and reasoning arrivals kick one pulse, which its making ember, its ambient light and its Home tile all read; other frames, a keepalive among them, kick nothing', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
+      await startBuild(tree, 'A tea timer');
+      const page = () => tree.root.findByType(MakingPage);
+      await waitFor(() => page().findByType(Ember).props.flicker !== undefined, 'the making ember to get its run’s pulse');
+      const pulse = page().findByType(Ember).props.flicker as { value: number; listen: (fn: () => void) => () => void };
+      h.ok(page().findByType(AmbientLight).props.flicker === pulse, 'the ambient light reads the same pulse');
+      let kicks = 0;
+      const stop = pulse.listen(() => { if (pulse.value !== 0) kicks += 1; });
+      try {
+        streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
+        await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'generate', 'the stage');
+        streams[0].push({ type: 'diagnostic', diagnostic: { kind: 'type', hint: 'Use a number.' } });
+        await settle();
+        await moreThanAFrame();
+        const keptAt = Date.now();
+        streams[0].keepalive();
+        await waitFor(() => (tree.root.findByType(MakingPage).props.signals?.lastFrameAt ?? 0) >= keptAt, 'the keepalive to move the run’s frame clock');
+        h.eq(kicks, 0, 'a stage, a diagnostic or a keepalive is no arrival');
+        streams[0].push({ type: 'token', text: 'const a = 1;' });
+        await waitFor(() => kicks === 1, 'a token to kick the pulse');
+        await moreThanAFrame();
+        streams[0].push({ type: 'thinking', chars: 40 });
+        await waitFor(() => kicks === 2, 'a reasoning delta to kick it');
+        await moreThanAFrame();
+        for (let i = 0; i < 5; i++) streams[0].push({ type: 'token', text: 'x' });
+        await settle();
+        h.ok(kicks >= 3 && kicks <= 7, `five more tokens kick at least once and never more than five times (${kicks - 2})`);
+        await press(button(tree, COPY.sheetClose));
+        h.ok(onHome(tree), 'on Home');
+        h.ok(tree.root.findByType(TilePlate).props.flicker === pulse, 'the run’s tile reads the same pulse');
+      } finally {
+        stop();
+        streams[0].end();
+      }
+    });
+  });
+
+  await h.test('honest light: a run released mid-fall (Stop) has its pulse cancelled, at rest, and moved by nothing after', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
+      await startBuild(tree, 'A tea timer');
+      await waitFor(() => tree.root.findByType(MakingPage).findByType(Ember).props.flicker !== undefined, 'the making ember to get its run’s pulse');
+      const pulse = tree.root.findByType(MakingPage).findByType(Ember).props.flicker as FlickerPulse;
+      const release = holdAnimations();
+      try {
+        streams[0].push({ type: 'token', text: 'const a = 1;' });
+        await waitFor(() => pulse.value !== 0, 'a token to kick the pulse');
+        const kicked = pulse.value;
+        await TestRenderer.act(async () => elapse(100));
+        h.ok(pulse.value !== 0 && Math.abs(pulse.value) < Math.abs(kicked), `the pulse is falling (${kicked.toFixed(2)} → ${pulse.value.toFixed(2)})`);
+        await press(button(tree, COPY.actionStop));
+        h.ok(onHome(tree), 'Stop released the run');
+        h.ok(cancelled.values.includes(pulse), 'its pulse’s fall was cancelled');
+        h.eq(pulse.value, 0, 'and the pulse rests at 0');
+        await TestRenderer.act(async () => elapse(1_000));
+        h.eq(pulse.value, 0, 'nothing moves it after');
+      } finally {
+        await TestRenderer.act(async () => release());
+      }
+    });
+  });
+
+  await h.test('honest light under Reduce Motion: the run’s arrivals start no pulse animation', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
+      await startBuild(tree, 'A tea timer');
+      await waitFor(() => tree.root.findByType(MakingPage).findByType(Ember).props.flicker !== undefined, 'the making ember to get its run’s pulse');
+      const pulse = tree.root.findByType(MakingPage).findByType(Ember).props.flicker as { value: number; listen: (fn: () => void) => () => void };
+      let writes = 0;
+      const stop = pulse.listen(() => { writes += 1; });
+      try {
+        await TestRenderer.act(async () => emitAccessibility('reduceMotionChanged', true));
+        streams[0].push({ type: 'token', text: 'const a = 1;' });
+        await moreThanAFrame();
+        streams[0].push({ type: 'thinking', chars: 40 });
+        streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
+        await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'generate', 'the frames after the arrivals');
+        h.eq([writes, pulse.value], [0, 0], 'a token and a reasoning delta write nothing to the pulse: no kick, no fall');
+      } finally {
+        stop();
+        await TestRenderer.act(async () => emitAccessibility('reduceMotionChanged', false));
+        streams[0].end();
+      }
     });
   });
 

@@ -223,7 +223,7 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
   await h.test('home live: an attempt in line is waiting; the ember follows tokens a second, 40 being full; a first sight is idle; ended attempts are forgotten', () => {
     const samples = new Map<string, LiveSample>();
     const at = (id: string, tokens: number, extra: { inLine?: boolean; thinkingChars?: number } = {}) => ({
-      id, signals: { aggregates: { tokens, thinkingChars: extra.thinkingChars }, inLine: extra.inLine },
+      id, signals: { aggregates: { tokens, thinkingChars: extra.thinkingChars }, inLine: extra.inLine, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: 9_000 },
     });
     const first = sampleLive([at('a', 100), at('b', 0, { inLine: true })], samples, 10_000);
     h.eq([first.queued.has('b'), first.queued.has('a'), first.activity.a], [true, false, 0], 'b waits for a spot; a has no rate yet');

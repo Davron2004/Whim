@@ -78,7 +78,13 @@ import { runPromptFlowUiTests } from './prompt-flow-ui.suite';
 import { runAttemptLifecycleUiTests } from './attempt-lifecycle-ui.suite';
 import { runMiniAppHostUiTests } from './mini-app-host-ui.suite';
 import { runHomeGridUiTests } from './home-grid-ui.suite';
+import { runHomeMotionUiTests } from './home-motion-ui.suite';
 import { runFlowScreensUiTests } from './flow-screens-ui.suite';
+import { runPlanMotionUiTests } from './plan-motion-ui.suite';
+import { runMakeItMotionUiTests } from './make-it-motion-ui.suite';
+import { runSheetMorphUiTests } from './sheet-morph-ui.suite';
+import { runAppMorphUiTests } from './app-morph-ui.suite';
+import { runReadyMotionUiTests } from './ready-motion-ui.suite';
 import { runHistoryUiTests } from './history-ui.suite';
 import { runAppInfoTests } from './app-info.suite';
 import { runRequestEnvelopeUiTests } from './request-envelope-ui.suite';
@@ -99,6 +105,7 @@ import { runShellTokensTests } from './shell-tokens.suite';
 import { runShellControlsUiTests } from './shell-controls-ui.suite';
 import { runShellStatusUiTests } from './shell-status-ui.suite';
 import { runShellSurfacesUiTests } from './shell-surfaces-ui.suite';
+import { runNativeReanimatedTests } from './native-reanimated.suite';
 
 const h = new Harness();
 
@@ -174,7 +181,13 @@ await runPromptFlowUiTests(h);
 await runAttemptLifecycleUiTests(h);
 await runMiniAppHostUiTests(h);
 await runHomeGridUiTests(h);
+await runHomeMotionUiTests(h);
 await runFlowScreensUiTests(h);
+await runPlanMotionUiTests(h);
+await runMakeItMotionUiTests(h);
+await runSheetMorphUiTests(h);
+await runAppMorphUiTests(h);
+await runReadyMotionUiTests(h);
 await runHistoryUiTests(h);
 await runAppInfoTests(h);
 await runRequestEnvelopeUiTests(h);
@@ -195,6 +208,7 @@ await runShellTokensTests(h);
 await runShellControlsUiTests(h);
 await runShellStatusUiTests(h);
 await runShellSurfacesUiTests(h);
+await runNativeReanimatedTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

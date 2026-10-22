@@ -18,6 +18,9 @@ const listeners = new Map<EventName, Set<Listener>>();
 export const keyboardWindow = { width: 390, height: 844 };
 /** Where the keyboard is and how often it was put away. */
 export const keyboardState = { height: 0, visible: false, dismissed: 0 };
+/** The options of every `KeyboardController.dismiss`, oldest first (`animated: false` cuts the keyboard
+ *  away at once, with no frames). */
+export const dismissals: ({ keepFocus?: boolean; animated?: boolean } | undefined)[] = [];
 
 const data = (height: number): EventData => ({ height, duration: 250, timestamp: 0, target: -1, type: 'default', appearance: 'light' });
 
@@ -46,7 +49,10 @@ export const keyboardRequests: { asked: number; handler: (() => void) | null } =
 export const KeyboardController = {
   isVisible: () => keyboardState.visible,
   state: () => data(keyboardState.height),
-  dismiss: async () => { keyboardState.dismissed += 1; },
+  dismiss: async (options?: { keepFocus?: boolean; animated?: boolean }) => {
+    keyboardState.dismissed += 1;
+    dismissals.push(options);
+  },
   setFocusTo: (_direction: string) => {
     keyboardRequests.asked += 1;
     keyboardRequests.handler?.();
@@ -103,6 +109,7 @@ export function keyboardSubscriptions(): ReadonlySet<unknown> {
 export function resetKeyboard(): void {
   keyboardRequests.asked = 0;
   keyboardRequests.handler = null;
+  dismissals.splice(0);
   emit('keyboardDidHide', 0);
 }
 

@@ -159,6 +159,23 @@ export function springConfig(name: SpringName): PhysicsSpring {
   return { mass: SPRING_MASS, stiffness, damping };
 }
 
+/** How long, in ms, the named spring released from rest toward its target takes to first cover
+ *  `share` of the way (system.md §4.2 tabulates the 95% figure): for a motion that waits on another. */
+export function springReachMs(name: SpringName, share: number): number {
+  const { mass, stiffness, damping } = springConfig(name);
+  const dt = 0.0001;
+  let x = 0;
+  let v = 0;
+  for (let ms = 1; ms <= 10_000; ms++) {
+    for (let i = 0; i < 10; i++) {
+      v += ((stiffness * (1 - x) - damping * v) / mass) * dt;
+      x += v * dt;
+    }
+    if (x >= share) return ms;
+  }
+  return Infinity;
+}
+
 /** A spring with the token module's derivation (stiffness = (2π/response)², damping =
  *  4π·ζ/response), for the one smoothing spring system.md §4.6 defines outside the named set. */
 function physicsSpring(response: number, dampingRatio: number): PhysicsSpring {
@@ -178,6 +195,14 @@ export type TimingName = 'fadeIn' | 'fadeOut' | 'color';
 export function timingOf(name: TimingName): { duration: number; bezier: [number, number, number, number] } {
   if (name === 'color') return { duration: TIMINGS.color, bezier: bezierOf(TIMINGS.colorEasing) };
   return { duration: TIMINGS[name], bezier: bezierOf(TIMINGS.fadeEasing) };
+}
+
+/** The `stagger` timing (§4.2): how long item `index` of a set's first appearance waits — one step
+ *  per item over the first items, the rest together one step after them; under Reduce Motion
+ *  nothing waits (§4.5). For JS-side scheduling (`withDelay`, a layout animation's `.delay()`) only:
+ *  it is not a worklet, so never call it inside a gesture worklet. */
+export function staggerDelay(index: number, reduceMotion: boolean): number {
+  return reduceMotion ? 0 : Math.min(index, TIMINGS.staggerFirst) * TIMINGS.staggerPerItem;
 }
 
 export type PressKind = 'button' | 'chip' | 'icon';
@@ -319,8 +344,29 @@ export type EmberState = 'working' | 'stuck' | 'out';
 export type EmberSize = 20 | 24 | 48 | 96 | 128;
 
 /** §4.6 Honest light: intensity `0.55 + 0.45·ã`, `ã` smoothed by a critically damped spring of
- *  response 0.6 s; stuck eases to 0.35 over 1.5 s and holds still. */
-export const HONEST_LIGHT = { base: 0.55, gain: 0.45, stuck: 0.35, stuckEaseMs: 1500 } as const;
+ *  response 0.6 s; stuck eases to 0.35 over 1.5 s and holds still. The flicker moves the intensity
+ *  by up to `0.06·ã`, only while a token arrived in the last 500 ms. */
+export const HONEST_LIGHT = { base: 0.55, gain: 0.45, stuck: 0.35, stuckEaseMs: 1500, flicker: 0.06, flickerWindowMs: 500 } as const;
+
+/** §4.6 flicker: how far a light's intensity moves at smoothed activity `ã` while the run's arrival
+ *  pulse stands at `pulse` (−1…1, 0 once 500 ms passed with no arrival). `on` is false for a light
+ *  that does not flicker (not working, Reduce Motion). Runs on the UI thread. */
+export function flickerOffset(on: boolean, smoothed: number, pulse: number): number {
+  'worklet';
+  if (!on || !Number.isFinite(smoothed)) return 0;
+  return HONEST_LIGHT.flicker * Math.min(1, Math.max(0, smoothed)) * pulse;
+}
+
+/** The golden ratio's fraction: successive multiples of it spread evenly over 0–1, never repeating. */
+const GOLDEN_FRACTION = 0.6180339887498949;
+
+/** The pulse the `n`th arrival kicks: alternating in sign, so successive arrivals flicker rather than
+ *  drift, at a height between half and full spread by the golden ratio. Its phase comes from the
+ *  arrival count, never from a clock. */
+export function flickerKick(n: number): number {
+  const height = 0.5 + 0.5 * ((n * GOLDEN_FRACTION) % 1);
+  return n % 2 === 0 ? height : -height;
+}
 
 /** The spring `ã` follows (§4.6). */
 export const ACTIVITY_SMOOTHING: PhysicsSpring = physicsSpring(0.6, 1);
@@ -349,6 +395,12 @@ export function emberOutlineWidth(size: number): number {
 
 /** M10: the done flare peaks at 1.18. */
 export const SPARK_PEAK = 1.18;
+
+/** M10: the Ready page's 96 tile rises from this scale as the ember settles into it. */
+export const READY_RISE_FROM = 0.6;
+
+/** M10: the Ready page's name, words and buttons fade in this many ms apart. */
+export const READY_STAGGER_MS = 80;
 
 /** The ambient light at activity `a` (the mockup's `ambient`): its gradient is drawn once at full
  *  strength (centre `glow-mid` at 0.40, `glow-core` at 0.16 by 55%), and the layer's opacity carries

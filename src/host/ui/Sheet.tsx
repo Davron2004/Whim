@@ -29,16 +29,29 @@
  * - The keyboard: the card's bottom padding follows the keyboard frame by frame on the keyboard's own
  *   curve (`useKeyboardOverlap`): the card continues behind the keyboard and its content ends above
  *   it. A body with fields renders a `KeyboardShell host="sheet"`, which keeps the focused field in view.
+ *   A close, by any route, puts the keyboard away as it starts.
  * - Reduce Motion: opening and closing cross-fade in place (160 / 120 ms); a drag still tracks the
  *   finger and settles with a cross-fade.
+ * - Growing from a place behind it (`anchor`, `SheetAnchor`; M6 the composer, M5 a ghost tile): it
+ *   opens out of that place on `morph` and closes back into it on `smooth`, by every route, from where
+ *   it is (a close mid-way turns back; a tap on the place mid-close reopens it). The card stays where
+ *   it rests; one leaf plate behind it grows from the place's rect, corners and all, to the card's
+ *   (width, height and radius on the UI thread, §4.3 rule 4: a rounded shape that changes its aspect
+ *   is never scaled), the place's face stays where it is and fades, and the scrim follows. Nothing of
+ *   the card draws outside the plate: the card fades in on `fade-in` once the plate covers it, and
+ *   out on `fade-out` before the plate shrinks inside it, a turn mid-way included. A page's ember
+ *   (`useSheetLead`) travels between its own place and the place's ember ahead of the card, one ember
+ *   on every frame. The `Modal` stays up until the plate is back in the place. Under Reduce Motion it
+ *   cross-fades as any sheet does.
  */
 
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AccessibilityInfo, Keyboard, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
 import type { LayoutChangeEvent } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
+import Animated, { useAnimatedReaction, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
+import { KeyboardController, KeyboardEvents } from 'react-native-keyboard-controller';
 import { scheduleOnRN } from 'react-native-worklets';
 import { LAYOUT, RADII, SPACE } from '../../design/tokens';
 import { haptics } from '../haptics';
@@ -46,10 +59,13 @@ import { COPY } from '../launcher/copy';
 import { sheetBottomPadding } from '../launcher/keyboard-shell';
 import { OverlayShownContext, useKeyboardOverlap } from '../launcher/KeyboardShell';
 import type { IconName } from '../../design/icons/names';
+import type { EmberLight, EmberLightRef } from './Ember';
 import { Icon } from './Icon';
 import { timing, usePressFeedback } from './motion';
 import { OverlayModal, useOverlayTurn, useScrimCount } from './OverlayModal';
+import { placeIn, useAnchorEntry, type PlaceRef, type SheetAnchorEntry } from './SheetAnchor';
 import { TopHighlight } from './TopHighlight';
+import { TravelLayer } from './TravelLayer';
 import { wrappingType } from './Text';
 import { useTokens } from './tokens';
 import { hitSlopFor, ICON_BUTTON, makeStyles, MAX_FONT_SCALE, PRESS_RETENTION, springConfig } from './tokens-pure';
@@ -93,11 +109,104 @@ export function dragPosition(start: number, translation: number, dimension: numb
 }
 
 /** The scrim's opacity under a card `y` below its open position, `height` tall: it follows the card,
- *  so a drag fades it with the finger, and the Reduce Motion cross-fade `fade`. */
-function scrimOpacity(y: number, height: number, fade: number): number {
+ *  so a drag fades it with the finger, the Reduce Motion cross-fade `fade`, and how far the sheet has
+ *  grown out of its anchor, `grown`. */
+function scrimOpacity(y: number, height: number, fade: number, grown: number): number {
   'worklet';
   const shown = height > 0 ? 1 - Math.min(1, Math.max(0, y / height)) : 1;
-  return shown * fade;
+  return shown * fade * Math.min(1, Math.max(0, grown));
+}
+
+// ── Growing out of a place (M6, M5) ───────────────────────────────────────────
+
+/** How far along the way from the place to the card (0 → 1) the plate is whole: it fades in over
+ *  the first stretch and out over the last, so its corners never show beside the place's own shape. */
+export const PLATE_WHOLE = 0.1;
+/** The place's face has faded out by this far along. */
+export const FACE_GONE = 0.4;
+/** A page's ember has reached the place once the sheet is this far on its way back into it: it leads. */
+export const LEAD_SHARE = 0.6;
+
+const clamp01 = (v: number) => {
+  'worklet';
+  return Math.min(1, Math.max(0, v));
+};
+const lerp = (a: number, b: number, p: number) => {
+  'worklet';
+  return a + (b - a) * p;
+};
+
+/** Whether the plate, `k` of the way from the place to the card, covers the card. It is drawn
+ *  between the place's rect and the card's, and a place is never as wide as the window, so it does
+ *  only once it has reached the card's: the first frame the spring gets there. */
+function plateCovers(k: number): boolean {
+  'worklet';
+  return k >= 1;
+}
+
+/** Where the page's ember (`from`) and the anchor's ember place (`to`) are, or `null` when either
+ *  cannot be measured: then the page's ember stays its own and fades with the card. */
+function leadPlaces(frame: PlaceRef, source: PlaceRef, target: PlaceRef) {
+  'worklet';
+  const from = placeIn(frame, source);
+  const to = placeIn(frame, target);
+  return from === null || to === null ? null : { from, to };
+}
+
+/** The ember a page hands the sheet to lead with: where it is drawn, its light, and how to draw it. */
+interface Lead {
+  readonly ref: PlaceRef;
+  readonly light: EmberLightRef;
+  readonly draw: (from: EmberLight | null) => React.ReactNode;
+}
+
+/** The ember the page shown leads with, if it has one. */
+type LeadStore = { current: Lead | null };
+
+/** What a page in an anchored sheet reads: how far the sheet has grown, where its frame and the
+ *  anchor's ember are, and where its own ember goes. */
+interface SheetMorph {
+  readonly grown: SharedValue<number>;
+  /** How much of the card shows (0 → 1), never while the plate does not cover it. */
+  readonly shown: SharedValue<number>;
+  readonly anchored: boolean;
+  readonly frame: PlaceRef;
+  readonly target: PlaceRef | null;
+  readonly lead: LeadStore;
+}
+const SheetMorphContext = createContext<SheetMorph | null>(null);
+
+/**
+ * The caller's ember leads the sheet into its anchor's ember place as it shrinks into it (M5, "ember
+ * first") and back out as it grows from it. `ref` is the view the ember is drawn in, `light` reads its
+ * light, `draw(from)` draws it at that view's size setting out in the light `from`. Put the returned
+ * style on the ember: it hides it on exactly the frames the sheet draws it. Nothing outside an
+ * anchored sheet.
+ */
+export function useSheetLead(ref: PlaceRef, light: EmberLightRef, draw: (from: EmberLight | null) => React.ReactNode) {
+  const morph = useContext(SheetMorphContext);
+  const store = morph?.lead ?? null;
+  // Every render, so the ember the sheet draws follows the page's light inputs.
+  useLayoutEffect(() => {
+    if (store !== null) store.current = { ref, light, draw };
+  });
+  useEffect(
+    () => () => {
+      if (store !== null) store.current = null;
+    },
+    [store],
+  );
+  const still = useSharedValue(1);
+  const grown = morph?.grown ?? still;
+  const shown = morph?.shown ?? still;
+  const on = morph?.anchored === true && morph.target !== null;
+  const frame = morph?.frame ?? ref;
+  const target = morph?.target ?? ref;
+  return useAnimatedStyle(() => {
+    const whole = shown.value >= 1;
+    const away = grown.value < 1 || !whole;
+    return { opacity: on && away && leadPlaces(frame, ref, target) !== null ? 0 : 1 };
+  });
 }
 
 // ── Sheet ─────────────────────────────────────────────────────────────────────
@@ -122,6 +231,9 @@ export interface SheetProps {
   detent?: SheetDetent;
   /** Default `COPY.sheetClose`. */
   closeLabel?: string;
+  /** The place behind it (`useSheetAnchor`) it grows out of as it opens and shrinks back into as it
+   *  closes; it rises from the bottom edge as any sheet when that place is not on the screen. */
+  anchor?: string;
   children: React.ReactNode;
 }
 
@@ -133,6 +245,25 @@ interface SheetBack {
 }
 const SheetBackContext = createContext<SheetBack | null>(null);
 
+/** The sheet is leaving: its owner closed it, by whatever route. */
+const SheetLeavingContext = createContext(false);
+
+/** Whether the sheet the caller is in is leaving (any close: the control, the scrim, a drag, Android
+ *  back), so a page can end a moment it is playing rather than leave on a frame of it. */
+export function useSheetLeaving(): boolean {
+  return useContext(SheetLeavingContext);
+}
+
+/** The caller's page is leaving the sheet under the page that replaced it (`TravelPage`): its step
+ *  back is no longer the sheet's. */
+const PageLeavingContext = createContext(false);
+
+/** Wraps a page that is leaving the sheet under its successor: from then on the page's
+ *  `useSheetBack` no longer takes Android back or draws the back control. */
+export function SheetPageLeaving({ leaving, children }: Readonly<{ leaving: boolean; children: React.ReactNode }>) {
+  return <PageLeavingContext.Provider value={leaving}>{children}</PageLeavingContext.Provider>;
+}
+
 export interface SheetBackOptions {
   /** Also draws the back control in the sheet's header row, beside the close control, for as long as
    *  the page is up: the page's visible way back, taking the same step. */
@@ -143,14 +274,17 @@ export interface SheetBackOptions {
  * Takes Android back (and hardware Escape) on the page that calls it, in place of closing the sheet:
  * a page that steps back before it closes — Plan returning to Describe, a row edit cancelling —
  * passes the step here. A `Modal` consumes the press, so `BackHandler` never sees it while a sheet is
- * up. The close control, the scrim and a drag still call `onClose`. Outside a sheet it does nothing.
+ * up. The close control, the scrim and a drag still call `onClose`. Outside a sheet, or once the
+ * page is leaving (`SheetPageLeaving`), it does nothing.
  */
 export function useSheetBack(handler: () => void, { control = false }: SheetBackOptions = {}): void {
   const back = useContext(SheetBackContext);
+  const leaving = useContext(PageLeavingContext);
   const latest = useRef(handler);
   latest.current = handler;
-  useEffect(() => {
-    if (back === null) return undefined;
+  // Before the frame the page is drawn on, so a page that starts to leave drops its control on that frame.
+  useLayoutEffect(() => {
+    if (back === null || leaving) return undefined;
     const { slot, showControl } = back;
     const call = () => latest.current();
     slot.current = call;
@@ -159,7 +293,7 @@ export function useSheetBack(handler: () => void, { control = false }: SheetBack
       if (slot.current === call) slot.current = null;
       showControl(false);
     };
-  }, [back, control]);
+  }, [back, control, leaving]);
 }
 
 const HEADER_ICON = 24;
@@ -241,13 +375,135 @@ interface SheetMotion {
   y: SharedValue<number>;
   height: SharedValue<number>;
   fade: SharedValue<number>;
+  /** How far it has grown out of its anchor (1 when it has none). */
+  grown: SharedValue<number>;
+  /** How much of the card shows over the plate (1 when it has no anchor). */
+  shown: SharedValue<number>;
+  /** Where the growth is headed: 1 out to the card, 0 back into the place. */
+  toward: SharedValue<number>;
 }
 
-export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = COPY.sheetClose, children }: Readonly<SheetProps>) {
+// Spring configs as module constants: a worklet never calls `springConfig` (motion.ts).
+const MORPH = springConfig('morph');
+const SMOOTH = springConfig('smooth');
+
+/** How a sheet moves: cross-faded under Reduce Motion, else out of and back into its anchor when it
+ *  has one, else up from and down to the bottom edge. */
+interface SheetMoves {
+  readonly reduced: boolean;
+  readonly anchored: boolean;
+}
+
+/** The entrance: from off screen (or, `fresh` false, from wherever a close has got to). Out of an
+ *  anchor, the card fades in once the plate covers it (`useCardReveal`). */
+function playEntrance({ y, height, fade, grown, shown, toward }: SheetMotion, { reduced, anchored }: SheetMoves, fresh: boolean): void {
+  if (reduced || !anchored) {
+    shown.value = 1;
+    toward.value = 1;
+  }
+  if (reduced) {
+    y.value = 0;
+    grown.value = 1;
+    fade.value = withTiming(1, timing('fadeIn', true));
+    return;
+  }
+  fade.value = 1;
+  if (!anchored) {
+    // A showing that last went back into a place starts again from the bottom edge.
+    if (fresh && grown.value < 1) y.value = height.value;
+    grown.value = 1;
+    y.value = withSpring(0, SMOOTH);
+    return;
+  }
+  // Out of the place, or back out from wherever a close into it has got to.
+  if (fresh) {
+    y.value = 0;
+    grown.value = 0;
+    shown.value = 0;
+  } else {
+    y.value = withSpring(0, SMOOTH);
+  }
+  toward.value = 1;
+  grown.value = withSpring(1, MORPH);
+}
+
+/** Back into the place from where the sheet is: the card fades out first if any of it shows, and the
+ *  plate shrinks once it has gone, setting out at `velocity` (progress per second) when nothing had
+ *  to fade; `done` once it is in the place. A turn back out cancels both. */
+function shrinkInto({ grown, shown, toward }: SheetMotion, velocity: number, done: (finished?: boolean) => void): void {
+  'worklet';
+  toward.value = 0;
+  if (shown.value <= 0) {
+    grown.value = withSpring(0, { ...SMOOTH, velocity }, done);
+    return;
+  }
+  shown.value = withTiming(0, FADE_OUT, (finished?: boolean) => {
+    'worklet';
+    if (finished) grown.value = withSpring(0, SMOOTH, done);
+  });
+}
+
+/** Closer than this to where it lands, a moving edge is drawn where it lands. */
+const LANDED = 0.5;
+/** The last step of 8-bit opacity: faded further, nothing of the sheet is drawn. */
+const FADED = 1 / 255;
+
+/** Whether a leaving sheet is drawn where its exit lands, however long its animation has still to
+ *  run: faded out (Reduce Motion), every edge of the plate within `LANDED` of its place with the card
+ *  gone (an anchor), or the card within `LANDED` of off-screen. */
+function exitLanded({ y, height, fade, grown, shown }: SheetMotion, frame: PlaceRef, place: PlaceRef | null): boolean {
+  'worklet';
+  if (fade.value <= FADED) return true;
+  if (place === null) return y.value >= height.value - LANDED;
+  if (shown.value > 0) return false;
+  const k = Math.max(0, grown.value);
+  if (k === 0) return true;
+  const at = placeIn(frame, place);
+  // A place that cannot be measured draws no plate and no face: nothing is left to see.
+  if (at === null) return true;
+  const top = at.frameHeight - height.value + y.value;
+  const span = Math.max(Math.abs(at.x), Math.abs(at.frameWidth - at.x - at.width), Math.abs(top - at.y), Math.abs(top + height.value - at.y - at.height));
+  return k * span <= LANDED;
+}
+
+/** The exit of a tapped close, from where the sheet is; `settled` once it has ended. */
+function playExit(motion: SheetMotion, { reduced, anchored }: SheetMoves, settled: () => void): void {
+  const { y, height, fade } = motion;
+  const done = (finished?: boolean) => {
+    'worklet';
+    if (finished) scheduleOnRN(settled);
+  };
+  if (reduced) fade.value = withTiming(0, timing('fadeOut', true), done);
+  else if (anchored) shrinkInto(motion, 0, done);
+  else y.value = withSpring(height.value, SMOOTH, done);
+}
+
+/** Out of an anchor, the card fades in on `fade-in` from the frame the plate covers it, and the
+ *  growth has ended (`grew`) once it shows. */
+function useCardReveal({ grown, shown, toward }: SheetMotion, anchored: boolean, grew: () => void): void {
+  useAnimatedReaction(
+    () => {
+      const out = toward.value === 1;
+      const covered = plateCovers(grown.value);
+      return anchored && out && covered;
+    },
+    (covered, before) => {
+      if (!covered || before === true || shown.value >= 1) return;
+      shown.value = withTiming(1, FADE_IN, (finished?: boolean) => {
+        'worklet';
+        if (finished) scheduleOnRN(grew);
+      });
+    },
+    [anchored, grew],
+  );
+}
+
+export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = COPY.sheetClose, anchor, children }: Readonly<SheetProps>) {
   const t = useTokens();
   const { height: windowHeight } = useWindowDimensions();
   const gate = useOverlayTurn(visible, { onRefused: onClose });
   // The window's own report that it is on screen, which Android needs before it serves a field in it.
+  // A sheet already leaving asks for no keyboard, however late the report comes.
   const [presented, setPresented] = useState(false);
   const turn = useMemo(() => ({ ...gate, shown: () => { gate.shown(); setPresented(true); } }), [gate]);
   const { open, up, exited } = turn;
@@ -260,16 +516,30 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
   const y = useSharedValue(windowHeight);
   const height = useSharedValue(windowHeight);
   const fade = useSharedValue(t.reduceMotion ? 0 : 1);
+  // How far the sheet has grown out of its anchor: 1 is the card, 0 the place.
+  const grown = useSharedValue(1);
+  const shown = useSharedValue(1);
+  const toward = useSharedValue(1);
+  const motion = useMemo<SheetMotion>(() => ({ y, height, fade, grown, shown, toward }), [y, height, fade, grown, shown, toward]);
+  const entry = useAnchorEntry(anchor);
+  const anchored = entry !== undefined && !t.reduceMotion;
+  // A growth or shrink is under way: the sheet draws its ember lead, measured on every frame.
+  const [moving, setMoving] = useState(false);
   useScrimCount(turn, () => {
     'worklet';
-    return scrimOpacity(y.value, height.value, fade.value);
+    return scrimOpacity(y.value, height.value, fade.value, grown.value);
   });
 
+  const grew = useCallback(() => {
+    if (openRef.current) setMoving(false);
+  }, []);
   const settled = useCallback(() => {
     if (!closingRef.current && openRef.current) return;
+    setMoving(false);
     closingRef.current = false;
     exited();
   }, [exited]);
+  useCardReveal(motion, anchored, grew);
 
   // The `open` last acted on: only a change of it plays the entrance or the exit, never a change of
   // settings while the sheet shows.
@@ -285,32 +555,44 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
       return;
     }
     actedOn.current = open;
+    const how = { reduced: t.reduceMotion, anchored };
     if (open) {
+      const fresh = !entered.current;
       entered.current = true;
       closingRef.current = false;
-      if (t.reduceMotion) {
-        y.value = 0;
-        fade.value = withTiming(1, timing('fadeIn', true));
-      } else {
-        fade.value = 1;
-        y.value = withSpring(0, springConfig('smooth'));
-      }
+      if (anchored) setMoving(true);
+      playEntrance(motion, how, fresh);
       return;
     }
+    // Its fields go with it, so the keyboard leaves as it starts to, not once its window has gone.
+    // Under Reduce Motion the sheet is gone in a 120 ms fade, long before the keyboard's own slide
+    // ends, so the keyboard is cut away at once, with no frames, rather than left on screen alone.
+    if (up && t.reduceMotion) KeyboardController.dismiss({ animated: false }).catch(() => undefined);
+    else if (up) Keyboard.dismiss();
     // Off screen already (its own drag ended it, or the system refused it), or a drag is carrying it out.
     if (!up || closingRef.current) return;
-    const done = (finished?: boolean) => {
-      'worklet';
-      if (finished) scheduleOnRN(settled);
-    };
-    if (t.reduceMotion) fade.value = withTiming(0, timing('fadeOut', true), done);
-    else y.value = withSpring(height.value, springConfig('smooth'), done);
-  }, [open, up, t.reduceMotion, y, fade, height, settled, exited]);
+    if (anchored) setMoving(true);
+    playExit(motion, how, settled);
+  }, [open, up, t.reduceMotion, anchored, motion, settled, exited]);
+
+  // A close that starts while the keyboard is still on its way (asked for, not yet risen) cannot
+  // take the request back: the show comes after the close began. While leaving, any keyboard that
+  // sets off is cut away at once, unanimated, so none is drawn over the sheet on its way out.
+  const leaving = up && !open;
+  useEffect(() => {
+    if (!leaving) return undefined;
+    const shows = KeyboardEvents.addListener('keyboardWillShow', () => {
+      KeyboardController.dismiss({ animated: false }).catch(() => undefined);
+    });
+    return () => shows.remove();
+  }, [leaving]);
 
   const dragClosed = useCallback(() => {
     closingRef.current = true;
+    if (anchored) setMoving(true);
     onClose();
-  }, [onClose]);
+  }, [onClose, anchored]);
+  const lead = useRef<Lead | null>(null);
 
   const backSlot = useRef<(() => void) | null>(null);
   const [backControl, setBackControl] = useState(false);
@@ -328,22 +610,29 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
     <OverlayModal turn={turn} onRequestClose={requestClose}>
       <SafeAreaProvider>
         <SheetBackContext.Provider value={back}>
-          <OverlayShownContext.Provider value={presented}>
-            <SheetFrame
-              key={t.fontScale}
-              closing={!open}
-              motion={{ y, height, fade }}
-              reduceMotion={t.reduceMotion}
-              title={title}
-              detent={detent}
-              closeLabel={closeLabel}
-              onClose={onClose}
-              onBack={backControl ? () => backSlot.current?.() : undefined}
-              onDragClosed={dragClosed}
-              onSettled={settled}
-            >
-              {children}
-            </SheetFrame>
+          <OverlayShownContext.Provider value={presented && open}>
+            <SheetLeavingContext.Provider value={!visible}>
+              <TravelLayer>
+                <SheetFrame
+                  key={t.fontScale}
+                  closing={!open}
+                  motion={motion}
+                  anchor={anchored ? entry : undefined}
+                  moving={moving}
+                  lead={lead}
+                  reduceMotion={t.reduceMotion}
+                  title={title}
+                  detent={detent}
+                  closeLabel={closeLabel}
+                  onClose={onClose}
+                  onBack={backControl ? () => backSlot.current?.() : undefined}
+                  onDragClosed={dragClosed}
+                  onSettled={settled}
+                >
+                  {children}
+                </SheetFrame>
+              </TravelLayer>
+            </SheetLeavingContext.Provider>
           </OverlayShownContext.Provider>
         </SheetBackContext.Provider>
       </SafeAreaProvider>
@@ -355,6 +644,11 @@ interface SheetFrameProps {
   /** The sheet is leaving (or not yet open): neither the card nor the scrim takes a touch. */
   closing: boolean;
   motion: SheetMotion;
+  /** The place it grows out of and shrinks into, under motion. */
+  anchor: SheetAnchorEntry | undefined;
+  /** It is growing out of its anchor or shrinking into it. */
+  moving: boolean;
+  lead: LeadStore;
   reduceMotion: boolean;
   title?: string;
   detent: SheetDetent;
@@ -377,12 +671,13 @@ const FLING = springConfig('fling');
 const FADE_OUT = timing('fadeOut', true);
 const FADE_IN = timing('fadeIn', true);
 
-function SheetFrame({ closing, motion, reduceMotion, title, detent, closeLabel, onClose, onBack, onDragClosed, onSettled, children }: Readonly<SheetFrameProps>) {
+function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title, detent, closeLabel, onClose, onBack, onDragClosed, onSettled, children }: Readonly<SheetFrameProps>) {
   const t = useTokens();
   const s = styles(t);
   const insets = useSafeAreaInsets();
-  const { y, height, fade } = motion;
-  const frame = useRef<View>(null);
+  const { y, height, fade, grown, shown } = motion;
+  const anchored = anchor !== undefined;
+  const frame = useAnimatedRef<View>();
   const titleRef = useRef<RNText>(null);
   const { overlap, onLayout: onFrameLayout } = useKeyboardOverlap(frame, true);
   const safeBottom = insets.bottom;
@@ -395,8 +690,8 @@ function SheetFrame({ closing, motion, reduceMotion, title, detent, closeLabel, 
   const dragStart = useSharedValue(0);
   const slop = useSharedValue(0);
   const committing = useSharedValue(false);
-  const drag = usePanGesture({
-    activeOffsetY: [-DRAG_SLOP, DRAG_SLOP],
+  const dragConfig = {
+    activeOffsetY: [-DRAG_SLOP, DRAG_SLOP] as [number, number],
     onBegin: () => {
       'worklet';
       scheduleOnRN(prepareCommit);
@@ -423,6 +718,8 @@ function SheetFrame({ closing, motion, reduceMotion, title, detent, closeLabel, 
       if (releaseCommits(y.value, e.velocityY, height.value)) {
         scheduleOnRN(onDragClosed);
         if (reduceMotion) fade.value = withTiming(0, FADE_OUT, done);
+        // Back into its place, on `smooth` as any close of a morph, carrying the release's speed.
+        else if (anchored) shrinkInto(motion, height.value > 0 ? -e.velocityY / height.value : 0, done);
         else y.value = withSpring(height.value, { ...FLING, velocity: e.velocityY }, done);
       } else if (reduceMotion) {
         y.value = withTiming(0, FADE_IN);
@@ -430,27 +727,54 @@ function SheetFrame({ closing, motion, reduceMotion, title, detent, closeLabel, 
         y.value = withSpring(0, { ...FLING, velocity: e.velocityY });
       }
     },
+  } satisfies Parameters<typeof usePanGesture>[0];
+  const drag = usePanGesture(dragConfig);
+  // The exit ends on the frame it is seen to end. Reanimated 4.6 ends a spring once its energy is
+  // down to 6e-9 of where it set out: ~790 ms for `smooth`, where the card is within half a point of
+  // off-screen by ~420 ms. Until the exit ends the `Modal` is presented and takes every touch, so a
+  // tap on Home in between would land on nothing. The animation's own end stays the fallback.
+  const place = anchor?.ref ?? null;
+  useAnimatedReaction(
+    () => closing && exitLanded(motion, frame, place),
+    (landed, before) => {
+      if (landed && before !== true) scheduleOnRN(onSettled);
+    },
+    [closing, motion, frame, place, onSettled],
+  );
+  // While it grows out of its place the card is not seen yet, and a view that is not seen takes no
+  // touch, so the plate, the shape that is seen, takes the same drag.
+  const plateDrag = usePanGesture({
+    activeOffsetY: dragConfig.activeOffsetY,
+    onBegin: dragConfig.onBegin,
+    onActivate: dragConfig.onActivate,
+    onUpdate: dragConfig.onUpdate,
+    onDeactivate: dragConfig.onDeactivate,
+    enabled: !closing,
   });
 
   const cardMotion = useAnimatedStyle(() => ({
     transform: [{ translateY: y.value }],
-    opacity: fade.value,
+    opacity: fade.value * shown.value,
     paddingBottom: sheetBottomPadding(overlap.value, safeBottom),
   }));
-  const scrimMotion = useAnimatedStyle(() => ({ opacity: scrimOpacity(y.value, height.value, fade.value) }));
+  const scrimMotion = useAnimatedStyle(() => ({ opacity: scrimOpacity(y.value, height.value, fade.value, grown.value) }));
+  const morph = useMemo<SheetMorph>(() => ({ grown, shown, anchored, frame, target: anchor?.ember ?? null, lead }), [grown, shown, anchored, frame, anchor?.ember, lead]);
   const onCardLayout = (event: LayoutChangeEvent) => {
     height.value = event.nativeEvent.layout.height;
   };
 
   // A sheet that has started to leave takes no touch, from the commit that closes it on: a tap meant
-  // for what is under it (the orb, right after a close) would otherwise land on a row still sliding out.
+  // for what is under it would otherwise land on a row still sliding out. It does not reach what is
+  // under it either: the presented `Modal` takes every touch until the exit lands (above).
   return (
-    <View ref={frame} collapsable={false} onLayout={onFrameLayout} style={s.frame} pointerEvents={closing ? 'none' : 'auto'}>
-      <Animated.View style={[s.scrim, scrimMotion]} pointerEvents="box-none">
+    <View ref={frame} collapsable={false} onLayout={onFrameLayout} style={s.frame} pointerEvents={closing ? 'box-none' : 'auto'}>
+      <Animated.View style={[s.scrim, scrimMotion]} pointerEvents={closing ? 'none' : 'box-none'}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessible={false} accessibilityRole="none" importantForAccessibility="no" />
       </Animated.View>
+      {anchor ? <AnchorMorph anchor={anchor} frame={frame} motion={motion} closing={closing} drag={plateDrag} /> : null}
       <Animated.View
         onLayout={onCardLayout}
+        pointerEvents={closing ? 'none' : 'auto'}
         style={[s.card, detent === 'large' ? { height: SHEET_MAX_HEIGHT } : { maxHeight: SHEET_MAX_HEIGHT }, cardMotion]}
         accessibilityViewIsModal
         onAccessibilityEscape={onClose}
@@ -472,8 +796,139 @@ function SheetFrame({ closing, motion, reduceMotion, title, detent, closeLabel, 
             </View>
           </View>
         </GestureDetector>
-        <View style={s.body}>{children}</View>
+        <View style={s.body}>
+          <SheetMorphContext.Provider value={morph}>{children}</SheetMorphContext.Provider>
+        </View>
       </Animated.View>
+      {anchor && moving ? <LeadEmber lead={lead} frame={frame} target={anchor.ember} grown={grown} shown={shown} /> : null}
     </View>
   );
 }
+
+/** The plate growing between the anchor and the card, and the anchor's face, still, over it. The plate
+ *  takes the sheet's drag while it is the shape seen; the face takes a tap while the sheet shrinks
+ *  into it: the place's own tap, which reopens it. Each moving
+ *  part is its own memoised view, so a render of the sheet or of Home never recomputes a style
+ *  mid-way off the UI thread, where nothing can be measured. */
+function AnchorMorph({ anchor, frame, motion, closing, drag }: Readonly<{ anchor: SheetAnchorEntry; frame: PlaceRef; motion: SheetMotion; closing: boolean; drag: ReturnType<typeof usePanGesture> }>) {
+  const t = useTokens();
+  const { ref, look, size } = anchor;
+  return (
+    <>
+      <GestureDetector gesture={drag}>
+        <Plate frame={frame} place={ref} radius={look.radius} y={motion.y} height={motion.height} grown={motion.grown} shown={motion.shown} color={t.colors.sheet} shadow={t.shadows.raised} />
+      </GestureDetector>
+      <Face frame={frame} place={ref} grown={motion.grown} width={size.width} height={size.height} closing={closing} onPress={look.onPress}>
+        {look.face}
+      </Face>
+    </>
+  );
+}
+
+interface PlateProps {
+  frame: PlaceRef;
+  place: PlaceRef;
+  radius: number;
+  y: SharedValue<number>;
+  height: SharedValue<number>;
+  grown: SharedValue<number>;
+  shown: SharedValue<number>;
+  color: string;
+  shadow: string;
+}
+
+/** The one leaf view whose width, height and corners move (§4.3 rule 4): from the place's measured
+ *  rect and radius to the card's, the card's top corners and square bottom. It stays on the card's
+ *  rect, under it, until the card shows whole. */
+const Plate = React.memo(function PlateView({ frame, place, radius, y, height, grown, shown, color, shadow }: Readonly<PlateProps>) {
+  const style = useAnimatedStyle(() => {
+    const k = Math.min(1, grown.value);
+    // An open card hides the plate: settled there, a drag moves it without measuring anything.
+    if (k >= 1 && shown.value >= 1) return { opacity: 0, width: 0, height: 0 };
+    const at = placeIn(frame, place);
+    if (at === null) return { opacity: 0, width: 0, height: 0 };
+    const r =Math.min(radius, at.height / 2, at.width / 2);
+    const top = lerp(r, RADII.xl.radius, k);
+    const bottom = lerp(r, 0, k);
+    return {
+      opacity: clamp01(k / PLATE_WHOLE),
+      width: lerp(at.width, at.frameWidth, k),
+      height: lerp(at.height, height.value, k),
+      transform: [{ translateX: lerp(at.x, 0, k) }, { translateY: lerp(at.y, at.frameHeight - height.value + y.value, k) }],
+      borderTopLeftRadius: top,
+      borderTopRightRadius: top,
+      borderBottomLeftRadius: bottom,
+      borderBottomRightRadius: bottom,
+    };
+  });
+  return <Animated.View style={[morphStyles.at, { backgroundColor: color, boxShadow: shadow }, style]} />;
+});
+
+interface FaceProps {
+  frame: PlaceRef;
+  place: PlaceRef;
+  grown: SharedValue<number>;
+  width: number;
+  height: number;
+  closing: boolean;
+  onPress: (() => void) | undefined;
+  children: React.ReactNode;
+}
+
+/** The place's face where the place is drawn, never moving with the plate: it fades as the sheet
+ *  leaves it and comes back as the sheet returns. A press or a lift scales the place, and Android
+ *  measures what is drawn, so the copy, laid out at the place's own size, is scaled uniformly from its
+ *  top-left to what the place measures: it sits exactly on it. */
+function Face({ frame, place, grown, width, height, closing, onPress, children }: Readonly<FaceProps>) {
+  const style = useAnimatedStyle(() => {
+    const k = grown.value;
+    if (k >= 1) return { opacity: 0 };
+    const at = placeIn(frame, place);
+    if (at === null) return { opacity: 0 };
+    const scale = width > 0 ? at.width / width : 1;
+    return { opacity: 1 - clamp01(k / FACE_GONE), transform: [{ translateX: at.x }, { translateY: at.y }, { scale }] };
+  });
+  return (
+    <Animated.View style={[morphStyles.at, morphStyles.fromCorner, { width, height }, style]} pointerEvents={closing ? 'auto' : 'none'}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onPress} disabled={!closing || onPress === undefined} accessible={false} importantForAccessibility="no-hide-descendants">
+        {children}
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+/** The page's ember on its way between its own place and the anchor's ember place, ahead of the card
+ *  (`LEAD_SHARE`): drawn at its own size, scaled uniformly to the place's, setting out in the light it
+ *  had. Drawn as the move starts and not again until it ends. */
+const LeadEmber = React.memo(function LeadEmberView({ lead: store, frame, target, grown, shown }: Readonly<{ lead: LeadStore; frame: PlaceRef; target: PlaceRef; grown: SharedValue<number>; shown: SharedValue<number> }>) {
+  const [lead] = useState(() => store.current);
+  const [node] = useState(() => lead?.draw(lead.light.current?.() ?? null) ?? null);
+  const source = lead?.ref ?? target;
+  const style = useAnimatedStyle(() => {
+    const k = Math.min(1, grown.value);
+    const whole = shown.value >= 1;
+    const places = leadPlaces(frame, source, target);
+    if (places === null || (k >= 1 && whole)) return { opacity: 0 };
+    const e = clamp01((1 - k) / LEAD_SHARE);
+    const { from: a, to: b } = places;
+    return {
+      opacity: 1,
+      transform: [
+        { translateX: lerp(a.x + a.width / 2, b.x + b.width / 2, e) - a.width / 2 },
+        { translateY: lerp(a.y + a.height / 2, b.y + b.height / 2, e) - a.height / 2 },
+        { scale: lerp(1, b.width / a.width, e) },
+      ],
+    };
+  });
+  if (node === null) return null;
+  return (
+    <Animated.View style={[morphStyles.at, style]} pointerEvents="none">
+      {node}
+    </Animated.View>
+  );
+});
+
+const morphStyles = StyleSheet.create({
+  at: { position: 'absolute', top: 0, left: 0 },
+  fromCorner: { transformOrigin: 'left top' },
+});

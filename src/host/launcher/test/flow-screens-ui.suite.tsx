@@ -25,7 +25,7 @@ import { tileOf } from '../tile-identity';
 import { COLORS } from '../../../design/tokens';
 import type { InstalledApp } from '../app-index';
 import { androidBack, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
-import { windowMetrics } from './native-host';
+import { Keyboard, windowMetrics } from './native-host';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -298,7 +298,7 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
     await rendered(planPage(answered), async (tree) => {
       h.ok(textOf(tree.root).includes(COPY.planChoicesHeader), 'the choices are headed');
       const scroll = tree.root.find((n) => hostType(n) === 'ScrollView');
-      const questionBlock = tree.root.find((n) => hostType(n) === 'View' && typeof n.props.onLayout === 'function' && textOf(n).includes(SHORT.question));
+      const questionBlock = tree.root.find((n) => hostType(n) === 'Animated.View' && typeof n.props.onLayout === 'function' && textOf(n).includes(SHORT.question));
       await TestRenderer.act(async () => questionBlock.props.onLayout({ nativeEvent: { layout: { x: 0, y: 100, width: 350, height: 90 } } }));
       await TestRenderer.act(async () => scroll.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 200 } } }));
       h.eq(textOf(tree.root).includes(SHORT.question), false, 'scrolled wholly past, the answered question is one line');
@@ -318,12 +318,15 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
       h.eq(field.props.value, 'Buzzes at zero', 'the tapped row opens as a field holding its text');
       h.eq(button(tree, COPY.planBuild).props.disabled, true, 'Make it waits for Save or Cancel');
       await TestRenderer.act(async () => field.props.onChangeText('Chimes at zero'));
+      const dismissed = Keyboard.dismissed;
       await press(button(tree, COPY.cancel));
       h.eq(s.count('row'), 0, 'Cancel changes nothing');
+      h.eq(Keyboard.dismissed, dismissed + 1, 'and puts the keyboard away with the field, which Android would otherwise hand to the next field on the page');
       await press(button(tree, 'Alert, Buzzes at zero'));
       await TestRenderer.act(async () => textField(tree).props.onChangeText('Chimes at zero'));
       await press(button(tree, COPY.planRowSave));
       h.eq(s.calls.row, [[1, 'Chimes at zero']], 'Save commits the edit to that row, by position');
+      h.eq(Keyboard.dismissed, dismissed + 2, 'and puts the keyboard away too');
       h.eq(s.count('make'), 0, 'and does not make');
     });
     const edited = updatePlanRow(landed(), 0, 'Counts down from 90s and then rings.');

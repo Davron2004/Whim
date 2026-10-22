@@ -22,6 +22,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { SPACE } from '../../design/tokens';
 import { haptics } from '../haptics';
 import { Ember, RESTING_ACTIVITY } from '../ui/Ember';
+import type { FlickerPulse } from './home-live';
 import { timing, usePressFeedback } from '../ui/motion';
 import { DRAG_SLOP } from '../ui/Sheet';
 import { useTokens } from '../ui/tokens';
@@ -88,11 +89,15 @@ export interface OrbProps {
   state?: OrbState;
   /** The stream's activity (0–1) while a change is being made. */
   activity?: number;
+  /** The change's flicker pulse (system.md §4.6), while it is being made. */
+  flicker?: FlickerPulse;
+  /** The change's stream stalled: the ember is stuck. */
+  stuck?: boolean;
   /** A tap opens the Whim sheet. */
   onOpen: () => void;
 }
 
-export default function Orb({ appId, state = 'rest', activity = 0, onOpen }: Readonly<OrbProps>) {
+export default function Orb({ appId, state = 'rest', activity = 0, flicker, stuck = false, onOpen }: Readonly<OrbProps>) {
   // The corner persists through the same `whim.launcher` KVBackend id every other launcher setting
   // uses — a second MMKV instance opened with the same id shares the same storage.
   const kv = useRef(createMmkvBackend('whim.launcher')).current;
@@ -104,6 +109,7 @@ export default function Orb({ appId, state = 'rest', activity = 0, onOpen }: Rea
   const [corner, setCorner] = useState<OrbCorner>(() => loadOrbCorner(kv, appId));
   const keyboardUp = useKeyboardUp();
   const press = usePressFeedback('icon', t);
+  const changing = state === 'changing';
 
   // The target's left edge (`x`), how far a drag lifts it (`lift`), the corner it rests in (`rest`,
   // as an x), the corners themselves, and two opacities: the keyboard's veil and the cross-fade a
@@ -230,7 +236,13 @@ export default function Orb({ appId, state = 'rest', activity = 0, onOpen }: Rea
           }}
         >
           <Animated.View style={[s.disc, press.style]}>
-            <Ember size={20} state="working" activity={state === 'changing' ? activity : RESTING_ACTIVITY} spark={flare.count} />
+            <Ember
+              size={20}
+              state={changing && stuck ? 'stuck' : 'working'}
+              activity={changing ? activity : RESTING_ACTIVITY}
+              flicker={changing ? flicker : undefined}
+              spark={flare.count}
+            />
             {dot === null ? null : <View style={[s.dot, { backgroundColor: dot }]} />}
           </Animated.View>
         </Pressable>

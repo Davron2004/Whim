@@ -1,13 +1,11 @@
 /**
- * tearDownLiveRealm — the shared unmount/exit teardown helper (E2).
+ * tearDownLiveRealm — the realm teardown a launch's unmount runs (E2).
  *
- * Extracted so BOTH the `exit` callback (explicit leave) and the unmount effect (component
- * removed without routing through exit) call identical logic. Intentionally RN-free: only
- * imports from `../bridge` so the Node launcher test suite can import it directly.
- *
- * The caller (useMiniAppHost) is responsible for firing `onExit` AFTER calling this helper
- * when the user is explicitly exiting — unmount-only callers must NOT fire `onExit` (leaving
- * the component is already done by the time unmount fires).
+ * Leaving does not call it: `exit` only asks the launcher, which takes the app back into its tile
+ * (M3) while the realm stays alive, and unmounts the launch once it is there; the unmount effect
+ * (useMiniAppHost) tears the realm down then, and on every other unmount. Intentionally RN-free:
+ * only imports from `../bridge` so the Node launcher test suite can import it directly. It never
+ * fires `onExit`.
  */
 
 import { tearDownRealm, type RealmRecord } from '../bridge';
@@ -27,7 +25,7 @@ interface LiveRealm {
 
 /**
  * Clear the popTimer and tear down the live realm (if any). Safe to call when either or both
- * are already null. Does NOT call `onExit` — that is the exit()-path caller's responsibility.
+ * are already null. Does NOT call `onExit`.
  */
 export function tearDownLiveRealm(
   live: MutableRef<LiveRealm | null>,
