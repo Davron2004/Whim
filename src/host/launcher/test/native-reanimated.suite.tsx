@@ -21,13 +21,14 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withDelay,
+  withSequence,
   withSpring,
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
 import { Harness } from './harness';
 import { accessibilitySettings, emitAccessibility } from './native-host';
-import { animations, cancelAnimation, cancelled, elapse, elapseSprings, holdAnimations, isLayoutAnimation, layoutAnimations, makeMutable, measuredRect, playedUnder, viewTagOf, type LayoutAnimation } from './native-reanimated';
+import { animations, cancelAnimation, cancelled, elapse, elapseSprings, emitNativeEvent, holdAnimations, useEvent, isLayoutAnimation, layoutAnimations, makeMutable, measuredRect, onUi, playedUnder, viewTagOf, type LayoutAnimation } from './native-reanimated';
 import { hostType, renderScreen, unmountScreen } from './react-screen';
 import { useTokens } from '../../ui/tokens';
 import { springConfig, staggerDelay, timingOf } from '../../ui/tokens-pure';
@@ -84,6 +85,20 @@ async function reducedFormHolds(Row: Row): Promise<boolean> {
   return staggered && crossFade;
 }
 
+/** A view whose reaction to `tick`, and whose handler for native `onScroll` events, each measure it. */
+function MeasuringProbe({ tick, widths }: Readonly<{ tick: { readonly value: number }; widths: (number | null)[] }>) {
+  const ref = useAnimatedRef<View>();
+  const width = () => measure(ref)?.width ?? null;
+  useAnimatedReaction(() => tick.value, (now) => { if (now > 0) widths.push(width()); });
+  const handler = useEvent(() => { widths.push(width()); }, ['onScroll']);
+  React.useEffect(() => {
+    const viewTag = 7001;
+    handler.workletEventHandler.registerForEvents(viewTag);
+    return () => handler.workletEventHandler.unregisterFromEvents(viewTag);
+  }, [handler]);
+  return <Animated.View ref={ref} />;
+}
+
 function Faded({ value }: { value: SharedValue<number> }) {
   const style = useAnimatedStyle(() => ({ opacity: value.value }));
   return <Animated.View style={style} />;
@@ -130,16 +145,137 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
       elapseSprings(100);
       h.ok(Math.abs(value.value - closedForm(100)) < 0.01, `100 ms in, where the closed form puts it (${value.value.toFixed(3)} vs ${closedForm(100).toFixed(3)})`);
       const there = value.value;
-      value.value = withSpring(0, smooth);
+      // Two springs from rest at `there`, to compare against: one on toward 2, one back to 0.
+      const restOn = makeMutable(there);
+      const restBack = makeMutable(there);
+      restOn.value = withSpring(2, smooth);
+      restBack.value = withSpring(0, smooth);
+      value.value = withSpring(2, smooth);
       h.eq(value.value, there, 'a spring assigned midway starts from where the value is');
       h.eq(ends, [false], 'and the one it cut short hears it did not finish');
       elapseSprings(5);
-      h.ok(value.value > there, 'still carried upward by the velocity it took over, before it turns back');
+      h.ok(value.value > restOn.value + 0.01, `on toward a further target, it keeps the velocity it took over: ahead of one from rest (${value.value.toFixed(4)} vs ${restOn.value.toFixed(4)})`);
+      value.value = withSpring(0, smooth);
+      const turned = value.value;
+      const restTurned = makeMutable(turned);
+      restTurned.value = withSpring(0, smooth);
+      elapseSprings(5);
+      h.ok(Math.abs(value.value - restTurned.value) < 1e-9, `turned back, the velocity that would carry it away is dropped (spring.ts:189-197): it moves as one from rest (${value.value} vs ${restTurned.value})`);
       elapseSprings(3000);
-      h.eq(value.value, 0, 'at rest it lands on its target');
+      h.eq([value.value, restBack.value], [0, 0], 'at rest it lands on its target');
     } finally {
       release();
     }
+  });
+
+  /** The time, in ms, the energy of a critically damped spring of `config` set out at rest is down
+   *  to Reanimated 4.6's 6e-9 of its start (springUtils.ts:384-394), whatever the distance: with
+   *  u = ωt, x = −(1+u)e^(−u)·d and v = ω²t·e^(−u)·d, so E/E₀ = e^(−2u)((1+u)² + u²) (m·ω² = k). */
+  const settleMs = (config: { mass: number; stiffness: number }) => {
+    const omega = Math.sqrt(config.stiffness / config.mass);
+    const share = (u: number) => Math.exp(-2 * u) * ((1 + u) ** 2 + u ** 2);
+    let [lo, hi] = [0, 100];
+    for (let i = 0; i < 100; i++) [lo, hi] = share((lo + hi) / 2) > 6e-9 ? [(lo + hi) / 2, hi] : [lo, (lo + hi) / 2];
+    return (hi / omega) * 1000;
+  };
+  /** How many ms a held spring from `from` to `to` runs before it lands, and what its callback heard. */
+  const runToRest = (from: number, to: number, config: { mass: number; stiffness: number; damping: number; energyThreshold?: number }) => {
+    const value = makeMutable(from);
+    const heard: (boolean | undefined)[] = [];
+    const release = holdAnimations();
+    let ms = 0;
+    try {
+      value.value = withSpring(to, config, (finished) => heard.push(finished));
+      while (heard.length === 0 && ms < 5000) {
+        elapseSprings(1);
+        ms += 1;
+      }
+    } finally {
+      release();
+    }
+    return { ms, heard, at: value.value };
+  };
+  const FRAME_MS = 1000 / 60;
+
+  await h.test('reanimated double: a spring ends as Reanimated 4.6’s does, once its energy is down to a share of what it set out with — the same time over 1 point or 400', async () => {
+    const smooth = springConfig('smooth');
+    const expected = settleMs(smooth);
+    const unit = runToRest(0, 1, smooth);
+    h.ok(unit.ms >= expected && unit.ms - expected <= FRAME_MS, `0 → 1 on smooth ends within a frame after its energy is spent (${unit.ms} ms; the energy rule says ${expected.toFixed(1)} ms)`);
+    h.eq([unit.heard, unit.at], [[true], 1], 'its callback hears it finished, and the value rests exactly on its target');
+    const points = runToRest(0, 400, smooth);
+    h.ok(Math.abs(points.ms - unit.ms) <= 1, `0 → 400 points ends when 0 → 1 does: the rule is relative (${points.ms} vs ${unit.ms} ms)`);
+    const loose = runToRest(0, 1, { ...smooth, energyThreshold: 1e-3 });
+    h.ok(loose.ms < unit.ms - 100, `a config’s own energyThreshold ends it sooner (${loose.ms} ms)`);
+  });
+
+  await h.test('reanimated double: a spring re-aimed at the same target while it runs carries on and ends when it would have; one toward where the value already is ends at once', async () => {
+    const smooth = springConfig('smooth');
+    const whole = runToRest(0, 1, smooth).ms;
+    const value = makeMutable(0);
+    const heard: string[] = [];
+    const release = holdAnimations();
+    let ms = 0;
+    try {
+      value.value = withSpring(1, smooth, (finished) => heard.push(`first ${finished}`));
+      elapseSprings(300);
+      ms = 300;
+      value.value = withSpring(1, smooth, (finished) => heard.push(`again ${finished}`));
+      while (heard.length < 2 && ms < 5000) {
+        elapseSprings(1);
+        ms += 1;
+      }
+      h.eq(heard, ['first false', 'again true'], 'the first hears it was cut short, the second that it finished');
+      h.ok(Math.abs(ms - whole) <= 1, `it ends when the uninterrupted spring would (${ms} vs ${whole} ms), not a fresh spring’s settling time later`);
+      value.value = withSpring(1, smooth, (finished) => heard.push(`spring there ${finished}`));
+      value.value = withTiming(1, { duration: 300 }, (finished) => heard.push(`timing there ${finished}`));
+      h.eq(heard.slice(2), ['spring there true', 'timing there true'], 'a spring or a timing toward where it already is finishes as it is assigned, held or not (valueSetter.ts:36-43)');
+    } finally {
+      release();
+    }
+  });
+
+  await h.test('reanimated double: the callbacks inside withDelay and withSequence hear how the animation ended — landing, cut short by an assignment, by cancelAnimation, or by the unmount', async () => {
+    const heard: string[] = [];
+    const note = (name: string) => (finished?: boolean) => heard.push(`${name} ${finished}`);
+    const value = makeMutable(0);
+    value.value = withDelay(100, withSpring(1, undefined, note('delayed')));
+    h.eq(heard, ['delayed true'], 'landing, a delayed spring’s callback hears it finished (delay.ts:100-104)');
+    heard.splice(0);
+    value.value = withSequence(withTiming(2, undefined, note('first')), withDelay(50, withTiming(3, undefined, note('second'))));
+    h.eq(heard, ['first true', 'second true'], 'landing, a sequence calls each part’s callback, in order (sequence.ts:113-115)');
+    heard.splice(0);
+    const release = holdAnimations();
+    try {
+      value.value = withDelay(100, withSpring(0, undefined, note('delayed')));
+      h.eq(heard, [], 'held, nothing has ended');
+      value.value = withSequence(withTiming(1, undefined, note('first')), withTiming(2, undefined, note('second')));
+      h.eq(heard, ['delayed false'], 'cut short by an assignment, the delayed spring hears it did not finish');
+      cancelAnimation(value);
+      h.eq(heard, ['delayed false', 'first false', 'second false'], 'cancelled, every part of the sequence that had not ended hears so, in order (sequence.ts:93-105)');
+    } finally {
+      release();
+    }
+    h.eq(heard.length, 3, 'and the release lands none of them');
+  });
+
+  await h.test('reanimated double: a component’s shared value cancels its animation as it unmounts, so a held one released after never lands', async () => {
+    let shown!: SharedValue<number>;
+    function Probe() {
+      shown = useSharedValue(0);
+      return <Faded value={shown} />;
+    }
+    const heard: (boolean | undefined)[] = [];
+    const tree = await renderScreen(<Probe />);
+    const release = holdAnimations();
+    try {
+      await act(() => { shown.value = withDelay(40, withSpring(1, springConfig('smooth'), (finished) => heard.push(finished))); });
+      await unmountScreen(tree);
+      h.eq(heard, [false], 'unmounted, its callback hears it did not finish (hook/useSharedValue.ts:36-40)');
+    } finally {
+      release();
+    }
+    h.eq([heard, shown.value], [[false], 0], 'released, it does not land');
   });
 
   await h.test('reanimated double: an animated style taken off a view leaves what the UI thread last set on it, until a style sets that property again', async () => {
@@ -235,7 +371,7 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
     h.eq(seen.length, 3, 'nothing reacts once the component is gone');
   });
 
-  await h.test('reanimated double: measure reports the set rect for a mounted view and null once it goes', async () => {
+  await h.test('reanimated double: measure on the UI thread reports the set rect for a mounted view and null once it goes; on the JS thread it answers null', async () => {
     let ref!: ReturnType<typeof useAnimatedRef<View>>;
     function Probe() {
       ref = useAnimatedRef<View>();
@@ -244,14 +380,28 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
     const before = { ...measuredRect };
     const tree = await renderScreen(<Probe />, { createNodeMock: () => ({}) });
     try {
-      h.eq(measure(ref), measuredRect, 'the default rect');
+      h.eq(measure(ref), null, 'called on the JS thread, it answers null (measure.native.ts:35-37)');
+      h.eq(onUi(() => measure(ref)), measuredRect, 'in a worklet, the default rect');
       Object.assign(measuredRect, { pageX: 24, pageY: 300, width: 96, height: 96 });
-      h.eq(measure(ref), { x: 0, y: 0, width: 96, height: 96, pageX: 24, pageY: 300 }, 'the rect the test set');
+      h.eq(onUi(() => measure(ref)), { x: 0, y: 0, width: 96, height: 96, pageX: 24, pageY: 300 }, 'the rect the test set');
     } finally {
       await unmountScreen(tree);
       Object.assign(measuredRect, before);
     }
-    h.eq(measure(ref), null, 'an unmounted view measures null');
+    h.eq(onUi(() => measure(ref)), null, 'an unmounted view measures null');
+  });
+
+  await h.test('reanimated double: a reaction and a native event’s handler run on the UI thread, where measure measures', async () => {
+    const widths: (number | null)[] = [];
+    const probe = { tick: makeMutable(0) };
+    const tree = await renderScreen(<MeasuringProbe tick={probe.tick} widths={widths} />, { createNodeMock: () => ({}) });
+    try {
+      probe.tick.value = 1;
+      emitNativeEvent('onScroll', {});
+      h.eq(widths, [measuredRect.width, measuredRect.width], 'the reaction and the event handler each measure the view');
+    } finally {
+      await unmountScreen(tree);
+    }
   });
 
   await h.test('reanimated double: a ref never put on a view answers null when read and throws when measured on a UI frame, as on Android', async () => {
@@ -263,7 +413,7 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
     const tree = await renderScreen(<Probe />, { createNodeMock: () => ({}) });
     try {
       h.eq(ref() as unknown, null, 'read with no view, it answers null');
-      await h.throws(() => measure(ref), 'expected an Object', 'measuring it throws');
+      await h.throws(() => onUi(() => measure(ref)), 'expected an Object', 'measuring it on the UI thread throws');
     } finally {
       await unmountScreen(tree);
     }

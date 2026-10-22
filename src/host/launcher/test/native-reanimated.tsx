@@ -10,10 +10,12 @@
  *  layout animations (`FadeIn`, `FadeOut`, `LinearTransition`, `FadingTransition` and their builder calls) they enter and
  *  exit with in `layoutAnimations`; `playedUnder` says what one does under Reduce Motion.
  *  Each mount of an Animated view is a native view of its own (`viewTagOf`).
- *  `useAnimatedReaction` reacts synchronously, `measure` reports `measuredRect` (or a view's own, `measuring`), except in a
- *  `useAnimatedStyle` run a render made rather than a shared value changing: Reanimated computes a style on the JS thread
- *  only as it mounts (where `measure` has no views, so null), and otherwise on a UI frame. The double's own
- *  contract is `native-reanimated.suite.tsx`. */
+ *  `useAnimatedReaction` reacts synchronously, `measure` reports `measuredRect` (or a view's own, `measuring`) in a worklet
+ *  on the UI thread — a reaction, a native event's handler, a `useAnimatedStyle` run a shared value made — and null on
+ *  the JS thread, which includes a style's run a render made (Reanimated computes a style on the JS thread only as it
+ *  mounts). Springs move and end as Reanimated 4.6's do, the callbacks inside delays, sequences and repeats hear how
+ *  they ended, and a component's shared values cancel their animations as it unmounts. The double's own contract is
+ *  `native-reanimated.suite.tsx`. */
 import React from 'react';
 
 type HostProps = { children?: React.ReactNode; [key: string]: unknown };
@@ -101,13 +103,180 @@ export function holdAnimations(): () => void {
   };
 }
 
+/** What an animation's end tells the callbacks inside it, as Reanimated's wrappers pass it on: a
+ *  spring or timing hears it itself (valueSetter.ts:15, :61); a delay passes it to the animation it
+ *  delays (delay.ts:100-104); a sequence calls each part's as that part ends, in order
+ *  (sequence.ts:113-115), and, cut short, every part's that had not ended with false
+ *  (sequence.ts:93-105); a repeat calls its animation's on every repetition (repeat.ts:64-66) and,
+ *  cut short, with false (repeat.ts:93-101). An endless repeat never ends, so landing calls none. */
+function tell(animation: Animation, finished: boolean): void {
+  switch (animation.kind) {
+    case 'spring':
+    case 'timing':
+      animation.callback?.(finished);
+      return;
+    case 'delay':
+      tell(animation.animation, finished);
+      return;
+    case 'sequence':
+      for (const part of animation.animations) tell(part, finished);
+      return;
+    case 'repeat':
+      if (!finished) tell(animation.animation, false);
+      else for (let rep = 0; rep < animation.count; rep++) tell(animation.animation, true);
+  }
+}
+
+/** A spring as Reanimated 4.6 runs it, set up by its `onStart` (spring.ts:159-245). */
+interface SpringState {
+  to: number;
+  /** Where it set out from, as a displacement from `to` (spring.ts:172-178). */
+  startValue: number;
+  velocity: number;
+  zeta: number;
+  omega0: number;
+  omega1: number;
+  stiffness: number;
+  mass: number;
+  overshootClamping: boolean;
+  energyThreshold: number;
+  /** Its energy at the start, from `startValue` and the config's own velocity (spring.ts:232-238). */
+  initialEnergy: number;
+}
+
+/** What `withSpring` merges a config over (spring.ts:65-73; GentleSpringConfig and
+ *  GentleSpringConfigWithDuration, springConfigs.ts:28-37), dropping keys given as undefined
+ *  (springUtils.ts:71-88). */
+interface SpringConfig {
+  mass: number;
+  stiffness: number;
+  damping: number;
+  duration: number;
+  dampingRatio: number;
+  overshootClamping: boolean;
+  energyThreshold: number;
+  velocity: number;
+  clamp?: unknown;
+}
+const SPRING_DEFAULTS: SpringConfig = { mass: 4, stiffness: 900, damping: 120, duration: 550, dampingRatio: 1, overshootClamping: false, energyThreshold: 6e-9, velocity: 0 };
+
+function springConfigOf(given: Record<string, unknown> | undefined) {
+  const user = Object.fromEntries(Object.entries(given ?? {}).filter(([, v]) => v !== undefined));
+  const config = { ...SPRING_DEFAULTS, ...user } as SpringConfig;
+  // A duration or a damping ratio puts the spring in duration mode (spring.ts:80), whose stiffness
+  // Reanimated solves for by bisection; a clamp rescales its damping (springUtils.ts:162).
+  const unmodelled = Boolean(user.duration || user.dampingRatio) || config.clamp !== undefined;
+  // An invalid config, or a zero duration, ends on the first frame (spring.ts:86-90, springUtils.ts:40-69).
+  const invalid = (['stiffness', 'damping', 'dampingRatio', 'mass', 'energyThreshold'] as const).some((key) => config[key] <= 0) || config.duration <= 0;
+  return { config, unmodelled, skip: invalid };
+}
+
+/** springUtils.ts:226-236. */
+const energyOf = (displacement: number, velocity: number, stiffness: number, mass: number) => 0.5 * stiffness * displacement ** 2 + 0.5 * mass * velocity ** 2;
+
+/** One frame of `dt` seconds from where the spring is (spring.ts:104-133): Reanimated's closed forms,
+ *  the under-damped one below ζ 1 and the critically damped one at or above it
+ *  (springUtils.ts:307-368). */
+function springStep(s: SpringState, current: number, dt: number): { position: number; velocity: number } {
+  const x0 = current - s.to;
+  const v0 = s.velocity;
+  if (s.zeta < 1) {
+    const sin1 = Math.sin(s.omega1 * dt);
+    const cos1 = Math.cos(s.omega1 * dt);
+    const envelope = Math.exp(-s.zeta * s.omega0 * dt);
+    const frag = envelope * (sin1 * ((v0 + s.zeta * s.omega0 * x0) / s.omega1) + x0 * cos1);
+    return { position: s.to + frag, velocity: -s.zeta * s.omega0 * frag + envelope * (cos1 * (v0 + s.zeta * s.omega0 * x0) - s.omega1 * x0 * sin1) };
+  }
+  const envelope = Math.exp(-s.omega0 * dt);
+  return {
+    position: s.to + envelope * (x0 + (v0 + s.omega0 * x0) * dt),
+    velocity: envelope * -s.omega0 * (x0 + (v0 + s.omega0 * x0) * dt) + envelope * (v0 + s.omega0 * x0),
+  };
+}
+
+/** Whether the spring has ended where it now is (springUtils.ts:370-395): out of its start-to-target
+ *  span with `overshootClamping`, or once its energy is down to `energyThreshold` of what it set out
+ *  with — a share, so a move of 400 points ends when a move of 1 does. */
+function springEnded(s: SpringState, current: number): boolean {
+  if (s.overshootClamping) {
+    const left = s.startValue >= 0 ? s.to : s.to + s.startValue;
+    if (current < left || current > left + Math.abs(s.startValue)) return true;
+  }
+  return s.initialEnergy === 0 || energyOf(s.to - current, s.velocity, s.stiffness, s.mass) / s.initialEnergy <= s.energyThreshold;
+}
+
+/** The animation Reanimated still keeps on a value (`_animation`), which the next spring's `onStart`
+ *  reads: a running spring's state, or what an ended one left (a spring zeroes its velocity as it
+ *  ends, spring.ts:136; any other kind has none, which reads as NaN). A plain assignment or a cancel
+ *  clears it (valueSetter.ts:10-17). */
+type Prior = { velocity: number; running: SpringState | null } | null;
+
+/** What an animation that ended leaves on the value. */
+const endedPrior = (animation: Animation): Prior => ({ velocity: animation.kind === 'spring' ? 0 : NaN, running: null });
+
+/** What a held animation cut short leaves for the next one: a modelled spring its state as it moves. */
+function cutShortPrior(was: Running): Prior {
+  const spring = was.spring === 'unmodelled' ? null : was.spring;
+  return { velocity: spring ? spring.velocity : NaN, running: spring };
+}
+
+/** The velocity a spring sets out with (spring.ts:180-187): carried on from the same spring re-aimed,
+ *  added to the config's from any other, or the config's alone; NaN (no velocity) reads as 0. */
+function startVelocity(prior: Prior, twice: SpringState | null, configVelocity: number): number {
+  if (!prior) return configVelocity || 0;
+  return (twice ? twice.velocity : prior.velocity + configVelocity) || 0;
+}
+
+/** The damping ratio and frequencies of a physics-mode config (springUtils.ts:146-153). */
+function springShape(config: SpringConfig): Pick<SpringState, 'zeta' | 'omega0' | 'omega1'> {
+  const zeta = config.damping / (2 * Math.sqrt(config.stiffness * config.mass));
+  const omega0 = Math.sqrt(config.stiffness / config.mass);
+  return { zeta, omega0, omega1: zeta < 1 ? omega0 * Math.sqrt(1 - zeta ** 2) : 0 };
+}
+
+/** A spring's `onStart` (spring.ts:159-245) from `from`, after `prior`. */
+function startSpring(step: Step, from: number, prior: Prior): SpringState | 'unmodelled' | 'skip' {
+  const { config, unmodelled, skip } = springConfigOf(step.config);
+  if (skip) return 'skip';
+  if (unmodelled) return 'unmodelled';
+  const to = step.to as number;
+  // Assigned again toward the same target while it runs, it carries on from where it first set out
+  // (spring.ts:146-157, :172-176, :199-202).
+  const twice = prior?.running?.to === to ? prior.running : null;
+  const startValue = twice ? twice.startValue : from - to;
+  let velocity = startVelocity(prior, twice, config.velocity);
+  // A velocity that would carry it away from the target is dropped (spring.ts:189-197).
+  if ((to > from && velocity < 0) || (to < from && velocity > 0)) velocity = 0;
+  const { zeta, omega0, omega1 } = twice ?? springShape(config);
+  return {
+    to,
+    startValue,
+    velocity,
+    zeta,
+    omega0,
+    omega1,
+    stiffness: config.stiffness,
+    mass: config.mass,
+    overshootClamping: Boolean(config.overshootClamping),
+    energyThreshold: config.energyThreshold,
+    initialEnergy: energyOf(startValue, config.velocity, config.stiffness, config.mass),
+  };
+}
+
+interface Running {
+  animation: Tagged;
+  end: () => void;
+  from: unknown;
+  elapsed: number;
+  /** A spring's state as it moves; `unmodelled` for a spring this double cannot follow. */
+  spring: SpringState | 'unmodelled' | null;
+}
+
 class SharedValue<T> {
   private current: T;
   /** The held animation running on this value, if any: where it set out from and how long it has run. */
-  private running: { animation: Tagged; end: () => void; from: unknown; elapsed: number; velocity: number } | null = null;
-  /** The velocity of the held spring the latest assignment cut short, which a spring assigned in its
-   *  place sets out with, as Reanimated's retarget does. */
-  private carried = 0;
+  private running: Running | null = null;
+  private prior: Prior = null;
   /** Bumped on every assignment, so a style can tell it missed one. */
   version = 0;
   private readonly listeners = new Set<() => void>();
@@ -117,37 +286,55 @@ class SharedValue<T> {
     return this.current;
   }
   set value(next: T) {
+    const was = this.running;
     this.interrupt();
     if (isAnimation(next)) {
-      animations.push(next);
-      if (held) {
-        const end = () => {
-          this.running = null;
-          timed.delete(this as SharedValue<unknown>);
-          sprung.delete(this as SharedValue<unknown>);
-          this.land(next);
-        };
-        this.running = { animation: next, end, from: this.current, elapsed: 0, velocity: next.kind === 'spring' ? this.carried : 0 };
-        this.carried = 0;
-        if (next.kind === 'timing') timed.add(this as SharedValue<unknown>);
-        if (next.kind === 'spring') sprung.add(this as SharedValue<unknown>);
-        held.push(end);
-        return;
-      }
-      this.carried = 0;
-      this.land(next);
+      this.start(next, was ? cutShortPrior(was) : this.prior);
       return;
     }
-    this.carried = 0;
+    this.prior = null;
     this.current = next;
     this.changed();
   }
-  /** `cancelAnimation`: a held animation running here stops where it is, as a new assignment stops it. */
+  /** An animation assigned here, after `prior` (valueSetter.ts:18-69). */
+  private start(next: Tagged, prior: Prior): void {
+    animations.push(next);
+    // A spring or timing toward where the value already is ends at once, before it starts, and
+    // leaves no animation on the value (valueSetter.ts:36-43).
+    if (isStep(next) && next.to === this.current) {
+      this.prior = null;
+      tell(next, true);
+      return;
+    }
+    const spring = next.kind === 'spring' ? startSpring(next, this.current as number, prior) : null;
+    // The first frame runs as it is assigned (valueSetter.ts:69): a spring that starts at rest, or
+    // whose config Reanimated rejects, ends there.
+    const atRest = typeof spring === 'object' && spring !== null && springEnded(spring, this.current as number);
+    if (!held || spring === 'skip' || atRest) {
+      this.prior = endedPrior(next);
+      this.land(next);
+      return;
+    }
+    const end = () => {
+      this.running = null;
+      timed.delete(this as SharedValue<unknown>);
+      sprung.delete(this as SharedValue<unknown>);
+      this.prior = endedPrior(next);
+      this.land(next);
+    };
+    this.running = { animation: next, end, from: this.current, elapsed: 0, spring };
+    if (next.kind === 'timing') timed.add(this as SharedValue<unknown>);
+    if (next.kind === 'spring') sprung.add(this as SharedValue<unknown>);
+    held.push(end);
+  }
+  /** `cancelAnimation`: a held animation running here stops where it is, as a new assignment stops it,
+   *  and leaves no animation on the value (util.ts:58-63 assigns the value itself). */
   cancel(): void {
     this.interrupt();
+    this.prior = null;
   }
-  /** A held animation still running here is cancelled by the new assignment: it never ends, and its
-   *  callback hears it did not finish. */
+  /** A held animation still running here is cancelled by the new assignment: it never ends, and the
+   *  callbacks in it hear it did not finish (valueSetter.ts:10-17). */
   private interrupt(): void {
     const was = this.running;
     if (!was) return;
@@ -155,13 +342,12 @@ class SharedValue<T> {
     timed.delete(this as SharedValue<unknown>);
     sprung.delete(this as SharedValue<unknown>);
     held = held?.filter((end) => end !== was.end) ?? null;
-    this.carried = was.animation.kind === 'spring' ? was.velocity : 0;
-    if (isStep(was.animation)) was.animation.callback?.(false);
+    tell(was.animation, false);
   }
-  /** An animation reaches its end: the value rests there and its end callback runs. */
+  /** An animation reaches its end: the value rests there and the callbacks in it run. */
   private land(animation: Tagged): void {
     this.current = settle(animation) as T;
-    if (isStep(animation)) animation.callback?.(true);
+    tell(animation, true);
     this.changed();
   }
   /** A held timing runs `ms` longer: the value moves along its curve, and lands once its duration is up. */
@@ -183,30 +369,25 @@ class SharedValue<T> {
     this.current = ((run.from as number) + ((step.to as number) - (run.from as number)) * progress) as T;
     this.changed();
   }
-  /** A held spring runs `ms` longer, by its physics (its mass, stiffness and damping, Reanimated's
-   *  defaults where it gives none) from where it is with its velocity, in 1 ms steps; it lands once it
-   *  is at rest. */
+  /** A held spring runs `ms` longer, as Reanimated 4.6 moves it (`springStep`), checked for its end
+   *  every millisecond (`springEnded`): it lands on its target the millisecond its energy is spent. */
   advanceSpring(ms: number): void {
     const run = this.running;
     if (!run || run.animation.kind !== 'spring') return;
-    const step = run.animation as Step;
-    const config = step.config ?? {};
-    const mass = typeof config.mass === 'number' ? config.mass : SPRING_DEFAULTS.mass;
-    const stiffness = typeof config.stiffness === 'number' ? config.stiffness : SPRING_DEFAULTS.stiffness;
-    const damping = typeof config.damping === 'number' ? config.damping : SPRING_DEFAULTS.damping;
-    const to = step.to as number;
+    const spring = run.spring;
+    if (spring === null || spring === 'unmodelled') throw new Error('elapseSprings: this double cannot follow a duration-mode or clamped spring');
     let x = this.current as number;
-    let v = run.velocity;
     for (let i = 0; i < ms; i++) {
-      v += ((-stiffness * (x - to) - damping * v) / mass) * 0.001;
-      x += v * 0.001;
+      const next = springStep(spring, x, 0.001);
+      x = next.position;
+      spring.velocity = next.velocity;
+      if (springEnded(spring, x)) {
+        spring.velocity = 0;
+        held = held?.filter((end) => end !== run.end) ?? null;
+        run.end();
+        return;
+      }
     }
-    if (Math.abs(x - to) < SPRING_REST.displacement && Math.abs(v) < SPRING_REST.speed) {
-      held = held?.filter((end) => end !== run.end) ?? null;
-      run.end();
-      return;
-    }
-    run.velocity = v;
     this.current = x as T;
     this.changed();
   }
@@ -220,10 +401,6 @@ class SharedValue<T> {
   }
 }
 
-/** Reanimated's spring defaults and the rest it settles at. */
-const SPRING_DEFAULTS = { mass: 4, stiffness: 900, damping: 120 } as const;
-const SPRING_REST = { displacement: 0.001, speed: 0.01 } as const;
-
 /** While animations are held, `ms` pass on the UI thread: every held timing moves along its curve
  *  (its own easing, else Reanimated's default) and ends once its duration is up. Springs, delays and
  *  sequences stay where they are until released. */
@@ -232,8 +409,8 @@ export function elapse(ms: number): void {
 }
 
 /** While animations are held, `ms` pass for the springs alone: every held spring moves by its
- *  physics, and one assigned while another still moved sets out with that one's velocity. Timings,
- *  delays and sequences stay where they are. */
+ *  physics, and one assigned while another still moved sets out with that one's velocity where it
+ *  points toward the new target. Timings, delays and sequences stay where they are. */
 export function elapseSprings(ms: number): void {
   for (const value of [...sprung]) value.advanceSpring(ms);
 }
@@ -243,13 +420,28 @@ export function makeMutable<T>(initial: T): SharedValue<T> {
   return new SharedValue(initial);
 }
 
+/** A component's shared value: as it unmounts, the animation running on it is cancelled, so the
+ *  callbacks in it hear it did not finish (hook/useSharedValue.ts:36-40). */
 export function useSharedValue<T>(initial: T): SharedValue<T> {
   const ref = React.useRef<SharedValue<T> | null>(null);
   ref.current ??= new SharedValue(initial);
-  return ref.current;
+  const value = ref.current;
+  React.useEffect(() => () => { value.cancel(); }, [value]);
+  return value;
 }
-/** A `useAnimatedStyle` is running for a render, not a UI frame: `measure` answers null. */
-let onJsThread = false;
+/** Code runs as a worklet on the UI thread (a style on a UI frame, a reaction, a native event's
+ *  handler): only there does `measure` measure. */
+let onUiThread = false;
+/** Runs `fn` as a worklet on the UI thread, at once; a test measures through it. */
+export function onUi<R>(fn: () => R): R {
+  const outer = onUiThread;
+  onUiThread = true;
+  try {
+    return fn();
+  } finally {
+    onUiThread = outer;
+  }
+}
 /** The styles `useAnimatedStyle` made, with the updater that keeps each current on the UI thread. */
 const animatedStyles = new WeakMap<object, () => unknown>();
 
@@ -257,13 +449,14 @@ export function useAnimatedStyle<T>(updater: () => T): T {
   const [, repaint] = React.useReducer((n: number) => n + 1, 0);
   const uiFrame = React.useRef(false);
   reading = new Set();
-  onJsThread = !uiFrame.current;
+  const outer = onUiThread;
+  onUiThread = uiFrame.current;
   uiFrame.current = false;
   let style: T;
   try {
     style = updater();
   } finally {
-    onJsThread = false;
+    onUiThread = outer;
   }
   if (typeof style === 'object' && style !== null) animatedStyles.set(style, updater);
   const read = [...reading].map((value) => [value, value.version] as const);
@@ -361,7 +554,7 @@ export function useEvent(handler: NativeHandler, names: readonly string[] = []) 
 }
 export function emitNativeEvent(name: string, payload: Record<string, unknown>): void {
   for (const [viewTag, set] of nativeHandlers) {
-    for (const { handler, names } of [...set]) if (names.includes(name)) handler({ ...payload, eventName: `${viewTag}${name}` });
+    for (const { handler, names } of [...set]) if (names.includes(name)) onUi(() => handler({ ...payload, eventName: `${viewTag}${name}` }));
   }
 }
 /** react-native-worklets' hop back to the React Native thread: there is only one thread here. */
@@ -406,12 +599,12 @@ export function useAnimatedReaction<T>(prepare: () => T, react: (current: T, pre
     let previous: T | null = null;
     let stops: (() => void)[] = [];
     const run = () => {
-      const [current, read] = track(latest.current.prepare);
+      const [current, read] = onUi(() => track(latest.current.prepare));
       for (const stop of stops) stop();
       stops = [...read].map((value) => value.listen(run));
       const before = previous;
       previous = current;
-      latest.current.react(current, before);
+      onUi(() => latest.current.react(current, before));
     };
     run();
     return () => { for (const stop of stops) stop(); };
@@ -423,11 +616,12 @@ export const measuredRect = { x: 0, y: 0, width: 100, height: 100, pageX: 0, pag
 /** Where particular views are now: given what a ref holds (the test's `createNodeMock` output), the
  *  rect it measures, or undefined for `measuredRect`. A test sets `rectOf`, and clears it after. */
 export const measuring: { rectOf: ((node: unknown) => typeof measuredRect | undefined) | null } = { rectOf: null };
-/** Reanimated's synchronous measurement: the view's rect, or null once its ref holds no view. On a
- *  UI frame a ref that was never put on a view throws, as the native `measure` does (it hands the
- *  ref's null to the native side, which ends the app). */
+/** Reanimated's synchronous measurement: the view's rect, or null once its ref holds no view. Only a
+ *  worklet on the UI thread measures: on the JS thread it answers null (measure.native.ts:35-37).
+ *  On a UI frame a ref that was never put on a view throws, as the native `measure` does (it hands
+ *  the ref's null to the native side, which ends the app). */
 export function measure<T>(ref: AnimatedRef<T>): typeof measuredRect | null {
-  if (onJsThread) return null;
+  if (!onUiThread) return null;
   if (!boundRefs.has(ref)) throw new Error('Value is null, expected an Object');
   if (ref.current === null) return null;
   return { ...(measuring.rectOf?.(ref.current) ?? measuredRect) };
@@ -522,7 +716,7 @@ function animatedComponent(name: string) {
     const styles = stylesIn(props.style).filter((s): s is Record<string, unknown> => typeof s === 'object' && s !== null);
     // Up to this render the UI thread kept every style attached last time current, whether or not
     // React rendered in between; then this render's own animated styles apply.
-    for (const updater of attached.current) Object.assign(applied.current, updater());
+    for (const updater of attached.current) Object.assign(applied.current, onUi(updater));
     attached.current = styles.flatMap((s) => animatedStyles.get(s) ?? []);
     for (const style of styles) if (animatedStyles.has(style)) Object.assign(applied.current, style);
     const current = Object.assign({}, ...styles) as Record<string, unknown>;

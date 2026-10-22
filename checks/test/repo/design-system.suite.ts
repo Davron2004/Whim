@@ -9,7 +9,9 @@
  *  - no colour hex literal or spring config lives in `src/host/**` or `src/sdk/**` outside the
  *    module, apart from the exemptions listed below;
  *  - shell motion runs on Reanimated: no React Native `Animated`, `LayoutAnimation`,
- *    `useNativeDriver` or literal spring config in production `src/host` (system.md §4);
+ *    `useNativeDriver`, literal spring config or literal motion value (a builder call's
+ *    stiffness, damping, mass, duration or delay; a `duration` key) in production `src/host`
+ *    outside the token module (system.md §4);
  *  - every component `vc-sdk` exports appears in the style gallery (system.md §7.2);
  *  - the shell's copy uses one name per concept and its controls never speak in Whim's "I"
  *    (system.md §8), and no number in `src/host` is formatted in the phone's locale (#89).
@@ -164,8 +166,66 @@ function importSpecifiers(source: string): string[] {
 const REACT_NATIVE = 'react-native';
 /** Deep imports of React Native's own animation modules. */
 const RN_ANIMATION_PATH = /^react-native\/Libraries\/(?:Animated|LayoutAnimation)\b/;
-/** Names banned in production `src/host` whatever they come from. */
+/** Names banned in production `src/host` whatever they come from — save Reanimated's own
+ *  `LayoutAnimation` type, imported as a type (`reanimatedTypeNames`). */
 const BANNED_NAMES = new Set(['LayoutAnimation', 'useNativeDriver']);
+const REANIMATED = 'react-native-reanimated';
+/** The module the motion tokens are built in: the one place literal motion values live. */
+const MOTION_TOKEN_MODULE = 'src/host/ui/tokens-pure.ts';
+/** Layout-animation builder calls that set a motion value, and the config key that does. A zero
+ *  duration or delay is "at once", not a motion value. */
+const MOTION_BUILDER_CALLS = new Set(['stiffness', 'damping', 'mass', 'duration', 'delay']);
+const ZERO_ALLOWED = new Set(['duration', 'delay']);
+const LITERAL_MOTION = 'literal motion value';
+
+/** The number `node` is written as, if it is a numeric literal (signed or not). */
+function numericLiteral(node: ts.Node | undefined): number | undefined {
+  if (node === undefined) return undefined;
+  if (ts.isNumericLiteral(node)) return Number(node.text);
+  if (ts.isPrefixUnaryExpression(node) && (node.operator === ts.SyntaxKind.MinusToken || node.operator === ts.SyntaxKind.PlusToken) && ts.isNumericLiteral(node.operand)) {
+    return node.operator === ts.SyntaxKind.MinusToken ? -Number(node.operand.text) : Number(node.operand.text);
+  }
+  return undefined;
+}
+
+/** A literal motion value: `.stiffness(300)`-style builder calls (`LinearTransition.springify().stiffness(300)`,
+ *  `FadeIn.duration(250)`) and `duration` keys (`withTiming(x, { duration: 250 })`); literal
+ *  stiffness, damping and mass keys are `SPRING_CONFIG`'s. */
+function literalMotion(node: ts.Node): ts.Node | undefined {
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && MOTION_BUILDER_CALLS.has(node.expression.name.text)) {
+    const value = numericLiteral(node.arguments[0]);
+    if (value !== undefined && !(value === 0 && ZERO_ALLOWED.has(node.expression.name.text))) return node.expression.name;
+  }
+  if (ts.isPropertyAssignment(node) && (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) && node.name.text === 'duration') {
+    const value = numericLiteral(node.initializer);
+    if (value !== undefined && value !== 0) return node;
+  }
+  return undefined;
+}
+
+/** The local names `sf` imports Reanimated's `LayoutAnimation` type under, as a type. */
+function reanimatedTypeNames(sf: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  for (const statement of sf.statements) {
+    if (!ts.isImportDeclaration(statement) || !isModule(statement.moduleSpecifier, (spec) => spec === REANIMATED)) continue;
+    const clause = statement.importClause;
+    const bindings = clause?.namedBindings;
+    if (!clause || !bindings || !ts.isNamedImports(bindings)) continue;
+    for (const el of bindings.elements) if ((clause.isTypeOnly || el.isTypeOnly) && sourceName(el) === 'LayoutAnimation') names.add(el.name.text);
+  }
+  return names;
+}
+
+/** Whether `node` names Reanimated's `LayoutAnimation` type: in the type-only import that brings it
+ *  in, or as a type the file imported it as. */
+function isReanimatedLayoutType(node: ts.Identifier, typeNames: ReadonlySet<string>): boolean {
+  const specifier = node.parent;
+  if (ts.isImportSpecifier(specifier)) {
+    const declaration = specifier.parent.parent.parent;
+    return typeNames.has(specifier.name.text) && isModule(declaration.moduleSpecifier, (spec) => spec === REANIMATED);
+  }
+  return ts.isTypeReferenceNode(node.parent) && node.parent.typeName === node && typeNames.has(node.text);
+}
 
 /** `node` without the parentheses and `await` around it. */
 function unwrap(node: ts.Expression): ts.Expression {
@@ -195,8 +255,9 @@ const sourceName = (el: ts.ImportSpecifier | ts.ExportSpecifier | ts.BindingElem
 
 /** Whether an expression is the whole react-native module: loaded in place, or a local name bound to it. */
 type BindsReactNative = (expression: ts.Expression) => boolean;
-/** What a node uses of React Native's animation APIs, each as the node to name and what it is. */
-type MotionRule = (node: ts.Node, bindsReactNative: BindsReactNative) => [ts.Node, string][];
+/** What a node uses of React Native's animation APIs, each as the node to name and what it is;
+ *  `typeNames` are the names Reanimated's `LayoutAnimation` type is imported under. */
+type MotionRule = (node: ts.Node, bindsReactNative: BindsReactNative, typeNames: ReadonlySet<string>) => [ts.Node, string][];
 
 /** The local name `node` binds to the whole react-native module, if it binds one. */
 function reactNativeBinding(node: ts.Node, bindsReactNative: BindsReactNative): string | undefined {
@@ -243,18 +304,21 @@ const MOTION_RULES: readonly MotionRule[] = [
     ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && node.initializer && bindsReactNative(node.initializer)
       ? animatedElements(node.name.elements, RN_ANIMATED)
       : [],
-  // `LayoutAnimation` and `useNativeDriver`, as a name or a quoted property name.
-  (node) => {
+  // `LayoutAnimation` and `useNativeDriver`, as a name or a quoted property name — but not
+  // Reanimated's `LayoutAnimation` type.
+  (node, _bindsReactNative, typeNames) => {
     const quotedKey = ts.isStringLiteral(node) && ts.isPropertyAssignment(node.parent) && node.parent.name === node;
-    return (ts.isIdentifier(node) || quotedKey) && BANNED_NAMES.has(node.text) ? [[node, node.text]] : [];
+    if (!(ts.isIdentifier(node) || quotedKey) || !BANNED_NAMES.has(node.text)) return [];
+    return ts.isIdentifier(node) && isReanimatedLayoutType(node, typeNames) ? [] : [[node, node.text]];
   },
 ];
 
-/** One finding per use of React Native's own animation APIs or a literal spring config in `source`,
- *  as `file:line: what`. RN's `Animated` is found by where it comes from — a named import, a
- *  namespace or default import, `require`/`import()`, a destructuring, a re-export — so
- *  Reanimated's default `Animated` is not one; `LayoutAnimation` and `useNativeDriver` are found
- *  wherever they appear. */
+/** One finding per use of React Native's own animation APIs, a literal spring config or a literal
+ *  motion value (`literalMotion`, outside the token module) in `source`, as `file:line: what`.
+ *  RN's `Animated` is found by where it comes from — a named import, a namespace or default import,
+ *  `require`/`import()`, a destructuring, a re-export — so Reanimated's default `Animated` is not
+ *  one; `LayoutAnimation` and `useNativeDriver` are found wherever they appear, save Reanimated's
+ *  `LayoutAnimation` type imported as a type. */
 function shellMotionFindings(file: string, source: string): string[] {
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const namespaces = new Set<string>();
@@ -269,11 +333,13 @@ function shellMotionFindings(file: string, source: string): string[] {
   };
   collect(sf);
 
+  const typeNames = reanimatedTypeNames(sf);
   const findings = new Set<string>();
+  const lineOf = (at: ts.Node) => sf.getLineAndCharacterOfPosition(at.getStart(sf)).line + 1;
   const visit = (node: ts.Node): void => {
-    for (const [at, what] of MOTION_RULES.flatMap((rule) => rule(node, bindsReactNative))) {
-      findings.add(`${file}:${sf.getLineAndCharacterOfPosition(at.getStart(sf)).line + 1}: ${what}`);
-    }
+    for (const [at, what] of MOTION_RULES.flatMap((rule) => rule(node, bindsReactNative, typeNames))) findings.add(`${file}:${lineOf(at)}: ${what}`);
+    const literal = file === MOTION_TOKEN_MODULE ? undefined : literalMotion(node);
+    if (literal) findings.add(`${file}:${lineOf(literal)}: ${LITERAL_MOTION}`);
     ts.forEachChild(node, visit);
   };
   visit(sf);
@@ -511,8 +577,49 @@ export async function run(): Promise<void> {
   await test('shell motion: LayoutAnimation and useNativeDriver are found wherever they appear', () => {
     const layout = shellMotionFindings('src/host/ui/List.tsx', "import { LayoutAnimation } from 'react-native';\n\nLayoutAnimation.configureNext(LayoutAnimation.Presets.spring);");
     assert(layout.join() === 'src/host/ui/List.tsx:1: LayoutAnimation,src/host/ui/List.tsx:3: LayoutAnimation', `LayoutAnimation, imported and called: ${layout.join(', ')}`);
-    const driver = shellMotionFindings('src/host/ui/Fade.ts', "const a = { duration: 160 };\nconst b = { toValue: 1, useNativeDriver: true };\nconst c = { 'useNativeDriver': false };");
+    const driver = shellMotionFindings('src/host/ui/Fade.ts', "const a = { duration: TIMINGS.fadeOut };\nconst b = { toValue: 1, useNativeDriver: true };\nconst c = { 'useNativeDriver': false };");
     assert(driver.join() === 'src/host/ui/Fade.ts:2: useNativeDriver,src/host/ui/Fade.ts:3: useNativeDriver', `useNativeDriver, bare and quoted: ${driver.join(', ')}`);
+  });
+
+  await test('shell motion: a literal motion value fails in each form — a layout builder call, a duration key — outside the token module', () => {
+    const cases: [string, string, string][] = [
+      ['a springified layout stiffness and damping', 'const reflow = LinearTransition.springify().stiffness(300).damping(20);', '2: literal motion value'],
+      ['a springified layout mass', 'const reflow = LinearTransition.springify().mass(2);', '2: literal motion value'],
+      ['a layout duration', 'const enter = FadeIn.duration(250);', '2: literal motion value'],
+      ['a layout delay', 'const enter = FadeIn.delay(80);', '2: literal motion value'],
+      ['a spring given a duration', 'x.value = withSpring(1, { duration: 400 });', '2: literal motion value'],
+      ['a timing given a duration', "x.value = withTiming(1, { 'duration': 250 });", '2: literal motion value'],
+    ];
+    for (const [what, source, finding] of cases) {
+      const findings = shellMotionFindings('src/host/ui/Forged.tsx', `import { FadeIn, LinearTransition, withSpring, withTiming } from 'react-native-reanimated';\n${source}`);
+      assert(findings.join() === `src/host/ui/Forged.tsx:${finding}`, `${what} is one finding naming the file and line: ${findings.join(', ')}`);
+    }
+    const fromTokens = [
+      "const reflow = LinearTransition.springify().mass(SMOOTH.mass).stiffness(SMOOTH.stiffness).damping(SMOOTH.damping);",
+      "const enter = FadeIn.duration(timingOf('fadeIn').duration).delay(staggerDelay(i, false));",
+      "x.value = withTiming(1, { duration: TIMINGS.fadeOut });",
+      'const jump = { duration: 0 };',
+      'const now = FadeIn.delay(0);',
+    ].join('\n');
+    const clean = shellMotionFindings('src/host/ui/Fine.tsx', fromTokens);
+    assert(clean.length === 0, `values built from the tokens, and a zero duration or delay (at once), are not findings: ${clean.join(', ')}`);
+    const inTokens = shellMotionFindings('src/host/ui/tokens-pure.ts', 'export const REDUCED_PRESS = { opacity: 0.7, duration: 100 } as const;');
+    assert(inTokens.length === 0, `the token module holds the literal values: ${inTokens.join(', ')}`);
+  });
+
+  await test("shell motion: Reanimated's LayoutAnimation type, imported as a type, is not React Native's LayoutAnimation", () => {
+    const typed = [
+      "import { type LayoutAnimation, withSpring } from 'react-native-reanimated';",
+      "import type { LayoutAnimation as Entry } from 'react-native-reanimated';",
+      'const build = (): LayoutAnimation => ({ initialValues: {}, animations: {} });',
+      'let entry: Entry | null = null;',
+    ].join('\n');
+    const findings = shellMotionFindings('src/host/ui/Entering.tsx', typed);
+    assert(findings.length === 0, `Reanimated's type is not a finding: ${findings.join(', ')}`);
+    const rn = shellMotionFindings('src/host/ui/List.tsx', "import { LayoutAnimation } from 'react-native';\nconst next = (): void => LayoutAnimation.configureNext(LayoutAnimation.Presets.spring);");
+    assert(rn.join() === 'src/host/ui/List.tsx:1: LayoutAnimation,src/host/ui/List.tsx:2: LayoutAnimation', `React Native's is still found: ${rn.join(', ')}`);
+    const asValue = shellMotionFindings('src/host/ui/Odd.tsx', "import { LayoutAnimation } from 'react-native-reanimated';\nconst a = LayoutAnimation;");
+    assert(asValue.join() === 'src/host/ui/Odd.tsx:1: LayoutAnimation,src/host/ui/Odd.tsx:2: LayoutAnimation', `imported from Reanimated as a value, the name is still found: ${asValue.join(', ')}`);
   });
 
   await test("shell motion: Reanimated's Animated, other react-native imports and comments are not findings", () => {

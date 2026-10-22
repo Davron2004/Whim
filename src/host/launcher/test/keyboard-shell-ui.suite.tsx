@@ -30,7 +30,7 @@ import { button, freshApp, press, textOf, unmountScreen, hostType } from './reac
 import { testAppInfo } from './client-fixtures';
 import { Keyboard, Platform, StyleSheet, changeKeyboardFrame, keyboardFrameListenerCount, refuseModalPresentations, setColorScheme, useSafeAreaInsets } from './native-host';
 import { dismissals, dragKeyboard, emitKeyboardEvent, endKeyboard, keyboardRequests, keyboardState, keyboardSubscriptions, keyboardWindow, moveKeyboard, resetKeyboard, startKeyboard, stepKeyboard } from './native-keyboard-controller';
-import { emitNativeEvent, holdAnimations } from './native-reanimated';
+import { elapse, elapseSprings, emitNativeEvent, holdAnimations } from './native-reanimated';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -190,6 +190,15 @@ async function on(device: Device, element: React.ReactElement, body: (m: Mounted
 /** `count` animation frames, each run to its end before the next. */
 async function playFrames(count: number): Promise<void> {
   for (let frame = 0; frame < count; frame += 1) await TestRenderer.act(async () => flushRevealFrames());
+}
+
+/** While animations are held, `count` UI frames of them pass (60 Hz): a sheet that mounted has begun
+ *  to come up by the time anything can close it. */
+async function animateFrames(count: number): Promise<void> {
+  await TestRenderer.act(async () => {
+    elapse((count * 1000) / 60);
+    elapseSprings(Math.round((count * 1000) / 60));
+  });
 }
 
 /** Plays the keyboard coming up (top edge at `KEYBOARD_TOP`) or going away, through two frames on
@@ -917,6 +926,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     const hold = holdAnimations();
     try {
       await on(ANDROID_17, <Closable />, async ({ tree, focused }) => {
+        await animateFrames(1);
         await TestRenderer.act(async () => close.current());
         await TestRenderer.act(async () => tree.root.find(isType('Modal')).props.onShow());
         await playFrames(5);
@@ -925,6 +935,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
       await on(ANDROID_17, <Closable />, async ({ tree }) => {
         await TestRenderer.act(async () => tree.root.find(isType('Modal')).props.onShow());
         await playFrames(2);
+        await animateFrames(2);
         const asked = keyboardRequests.asked;
         h.ok(asked > 0, 'setup: shown, the field is asking');
         await TestRenderer.act(async () => close.current());
@@ -952,6 +963,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
       await on(ANDROID_17, <Closable />, async ({ tree }) => {
         await TestRenderer.act(async () => tree.root.find(isType('Modal')).props.onShow());
         await playFrames(2);
+        await animateFrames(2);
         h.ok(keyboardRequests.asked > 0 && !keyboardState.visible, 'setup: the field has asked, and no keyboard has come yet');
         await TestRenderer.act(async () => close.current());
         h.eq(dismissals.length, 0, 'setup: no keyboard to put away as the close starts');

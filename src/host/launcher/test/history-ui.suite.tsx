@@ -780,9 +780,11 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     const onFork: HistoryScreenProps['onFork'] = async (entry, id, opts) => { forks.push(id); return access.fork(entry, id, opts); };
     await withHistory(access, app, async (tree) => {
       await waitFor(() => hasRow(tree, 'add a chime'), 'the versions to load');
+      // The question has come up in full (a tap needs it on screen); from the first answer on, its
+      // way out is held.
+      await openAndPress(tree, 'add a chime', COPY.historyMakeCopyHere);
       const release = holdAnimations();
       try {
-        await openAndPress(tree, 'add a chime', COPY.historyMakeCopyHere);
         const fresh = questionRow(tree, COPY.copyQuestionFresh)!;
         await TestRenderer.act(async () => { fresh.props.onPress(); });
         await waitFor(() => toastOf(tree)?.message === COPY.copyMadeToast, 'the first copy to be made');

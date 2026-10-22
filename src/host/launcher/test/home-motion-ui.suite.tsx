@@ -15,13 +15,14 @@ import { MapKVBackend } from '../../version-store';
 import type { InstalledApp } from '../app-index';
 import { tileOf } from '../tile-identity';
 import { REFLOW, REFLOW_REDUCED } from '../../ui/AppTile';
+import { MENU } from '../../ui/ContextMenu';
 import { GRID, TILE, TILE_SIDE } from '../../ui/AppTile-geometry';
 import { resolveTokens, SPARK_PEAK, springConfig, springReachMs, staggerDelay, timingOf } from '../../ui/tokens-pure';
 import { TINTS, TYPE_SCALE } from '../../../design/tokens';
 import { StyleSheet, accessibilitySettings, emitAccessibility } from './native-host';
 import { animations, elapseSprings, holdAnimations, isStep, playedUnder, ReduceMotion, type Animation, type LayoutAnimation } from './native-reanimated';
 import { button, hostType, press, textOf, unmountScreen } from './react-screen';
-import { chooseRow, longPress, pressToastAction, renderHome, tile, tileLabels, updateHome, type Tree } from './home-rig';
+import { chooseRow, longPress, menuCard, pressToastAction, renderHome, tile, tileLabels, updateHome, type Tree } from './home-rig';
 import { json, resultEvent, waitFor, withLauncher, hasInstalled, type sseStream } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
@@ -104,15 +105,14 @@ function deletable(): Partial<HomeScreenProps> {
     onUndoDelete: (a) => hidden.delete(a.id),
   };
 }
-async function deleteTile(tree: Tree, name: string): Promise<void> {
-  await longPress(tree, name);
-  await chooseRow(tree, COPY.actionDelete);
-}
-/** Delete, and hold the motion it starts: the menu runs Delete once it has closed, so its close plays
- *  out and every motion after it is held. Resolves the release. */
+/** Delete, and hold the motion it starts. The tile's menu opens and has grown in (the platform lays
+ *  it out, and only then does it show), then the hold starts: the menu runs Delete once it has
+ *  closed, so its close plays out and every motion after it is held. Resolves the release. */
 async function deleteHeld(tree: Tree, name: string): Promise<() => void> {
+  await longPress(tree, name);
+  await TestRenderer.act(async () => menuCard(tree)!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: MENU.width, height: 300 } } }));
   let release = holdAnimations();
-  await deleteTile(tree, name);
+  await chooseRow(tree, COPY.actionDelete);
   await TestRenderer.act(async () => {
     release();
     release = holdAnimations();
