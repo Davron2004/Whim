@@ -29,7 +29,7 @@ import {
 } from './native-host';
 import { animations, holdAnimations, isStep, type Animation, type Step } from './native-reanimated';
 import { pan, type PanConfig } from './native-gesture-handler';
-import { keyboardWindow, moveKeyboard, resetKeyboard } from './native-keyboard-controller';
+import { dismissals, keyboardWindow, moveKeyboard, resetKeyboard } from './native-keyboard-controller';
 import { captureTimeouts, freshApp, hostType, press, screenReaderElement, textOf } from './react-screen';
 
 /** Every pending `setTimeout`, by delay, without running any. */
@@ -608,6 +608,32 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
       }
       await act(() => tree.unmount());
     }
+  });
+
+  await h.test('Sheet, Reduce Motion: as the sheet starts to close, by every route, its keyboard is cut away at once, with no frames, so none is left on screen after the 120 ms fade (a drag that springs back leaves it up)', async () => {
+    const ways: [string, (tree: Tree) => Promise<void>, boolean][] = [
+      ['the close control', (tree) => press(rowButtons(tree).find((n) => n.props.accessibilityLabel === COPY.sheetClose)!), true],
+      ['the scrim', (tree) => press(tree.root.find((n) => hostType(n) === 'Pressable' && n.props.accessible === false)), true],
+      ['Android back', (tree) => act(() => all(tree, 'Modal')[0].props.onRequestClose()), true],
+      ['a drag', (tree) => act(() => pan(dragOf(tree), [100, 220, 330], 600)), true],
+      ['a drag that springs back', (tree) => act(() => pan(dragOf(tree), [20, 60, 100], 0)), false],
+    ];
+    for (const [way, close, closes] of ways) {
+      await resetPhone();
+      accessibilitySettings.reduceMotion = true;
+      const tree = await render(<RowSheet onRow={() => {}} />);
+      await layoutCard(tree);
+      const before = Keyboard.dismissed;
+      const release = holdAnimations();
+      try {
+        await close(tree);
+        h.eq([modalShown(tree), dismissals, Keyboard.dismissed - before], [true, closes ? [{ animated: false }] : [], 0], closes ? `${way}: still fading out, the keyboard is already cut away, unanimated` : `${way}: the keyboard stays up`);
+      } finally {
+        await act(() => release());
+      }
+      await act(() => tree.unmount());
+    }
+    await resetPhone();
   });
 
   await h.test('Sheet: a release closes it only when its projected end passes half its height and it isn’t flicked back; it springs back otherwise; position alone never decides', async () => {

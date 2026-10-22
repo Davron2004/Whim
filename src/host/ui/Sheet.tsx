@@ -542,7 +542,10 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
       return;
     }
     // Its fields go with it, so the keyboard leaves as it starts to, not once its window has gone.
-    if (up) Keyboard.dismiss();
+    // Under Reduce Motion the sheet is gone in a 120 ms fade, long before the keyboard's own slide
+    // ends, so the keyboard is cut away at once, with no frames, rather than left on screen alone.
+    if (up && t.reduceMotion) KeyboardController.dismiss({ animated: false }).catch(() => undefined);
+    else if (up) Keyboard.dismiss();
     // Off screen already (its own drag ended it, or the system refused it), or a drag is carrying it out.
     if (!up || closingRef.current) return;
     if (anchored) setMoving(true);
