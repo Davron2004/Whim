@@ -19,7 +19,7 @@ The launcher SHALL offer Delete on every installed app with no confirmation dial
 - **WHEN** the user deletes an app and Whim is closed before the toast ends
 - **THEN** the next launch completes the purge and the app does not reappear
 
-#### Scenario: Deleting the original spares a surviving copy
+#### Scenario: Deleting the original spares a surviving fork
 
 - **WHEN** an app has a copy and the user deletes the original
 - **THEN** the copy still launches, keeps its history, and keeps its own user data
@@ -28,10 +28,15 @@ The launcher SHALL offer Delete on every installed app with no confirmation dial
 
 The launcher SHALL offer "Make a copy" on every installed app (tile menu, and History for any version). Before creating the copy the launcher MUST ask "Copy the data, or start fresh?" (owner ruling 2026-10-09; skipped, starting fresh, when the original has never saved any user data). The copy MUST appear as a new launcher entry carrying its provenance, MUST start from the chosen version's bundle, MUST evolve independently, and MUST have its own user data store under its own storage-engine appId (#43b) — either a one-time copy of the original's data (change `copy-app-data`) or empty. A copy never shares data with its original. A toast "Copy made" SHALL offer Open. Joining an original's storage group SHALL remain reserved to rewind continuations, which are never asked (see `linked-apps`).
 
-#### Scenario: A copy runs independently of its original
+#### Scenario: A fork runs independently of its original
 
 - **WHEN** the user makes a copy of an installed app and opens it
 - **THEN** the copy runs the same bundle as the original at that version but writes to its own storage; data entered in either never appears in the other
+
+#### Scenario: A fork created to share sees the original's data
+
+- **WHEN** the user changes an app while it is on an older version, so the change lands as a new launcher entry continuing from that version
+- **THEN** no question is asked, the new entry evolves its code independently, and it reads and writes the original's store; "Make a copy" never creates such an entry
 
 #### Scenario: The copy-or-fresh question is asked
 
@@ -47,12 +52,12 @@ The launcher SHALL offer "Make a copy" on every installed app (tile menu, and Hi
 
 The home screen SHALL carry a composer bar reading `Make an app…` as its create affordance, opening the prompt flow's new-app entry point on tap. A ready app's tile menu SHALL include a "Change it" action, opening the prompt flow's change entry point scoped to that app.
 
-#### Scenario: The composer bar opens the prompt flow
+#### Scenario: The composer row opens the prompt flow
 
 - **WHEN** the user taps `Make an app…` on the home screen
 - **THEN** the prompt flow's Describe page opens with no app being changed
 
-#### Scenario: Change it opens the prompt flow scoped to an app
+#### Scenario: Re-prompt opens the prompt flow scoped to an app
 
 - **WHEN** the user long-presses an app tile and chooses "Change it"
 - **THEN** the Describe page opens scoped to that app
@@ -61,8 +66,8 @@ The home screen SHALL carry a composer bar reading `Make an app…` as its creat
 
 ### Requirement: Explicit fork asks share-vs-fresh at fork time
 
-**Reason**: "Make a copy" is immediate and always starts fresh (decision #75 amends #52 D2).
-**Migration**: Copies get their own data; storage groups remain for rewind continuations. The share-question copy keys are deleted.
+**Reason**: A copy never shares data with its original (decision #75 amends #52 D2); "Make a copy" asks "Copy the data, or start fresh?" instead (owner ruling 2026-10-09).
+**Migration**: See "Forking creates an independent launcher entry": a copy gets its own data, copied or empty; storage groups remain for rewind continuations. The share-question copy keys are deleted.
 
 ### Requirement: A launched mini-app receives the active theme at delivery
 
