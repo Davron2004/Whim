@@ -421,6 +421,8 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       h.eq(frames.filter((f) => f.shown > 0 && f.cy !== onTile), [], `no frame shows the plate off the tile: ${JSON.stringify(frames)}`);
       const last = frames.at(-1)!;
       h.ok(last.shown > 0 && last.cy === onTile, `once Home has settled, the plate shows on the tile: ${JSON.stringify(last)}`);
+      const first = frames.find((f) => f.shown > 0)!;
+      h.ok(first.shown < 0.75 && last.shown > first.shown, `it fades in there from the frame it first shows (fade-in, a sixth of the way in), never popping in already faded in: ${JSON.stringify(frames)}`);
       await TestRenderer.act(async () => release());
       h.ok(!appOpen(tree) && homeShown(tree), 'and the launch ends on Home');
     });
@@ -441,6 +443,25 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       h.ok(!steps.some((s) => s.kind === 'timing' && s.to === 1 && s.config?.duration === FADE_OUT_MS), 'with nothing to cover first: the page was never shown');
       await TestRenderer.act(async () => elapseSprings(60));
       h.ok(grownFrom(tree, TIMER_TILE) < k, 'it heads back into the tile');
+      await TestRenderer.act(async () => release());
+      h.ok(!appOpen(tree) && homeShown(tree), 'and the launch ends on Home');
+    });
+  });
+
+  await h.test('M2: back mid-open after the page painted brings the plate back onto the tile on fade-in as the bg heads into it, never an empty tile until the launch ends', async () => {
+    await withLauncher(async ({ tree }) => {
+      const release = holdAnimations();
+      await tapTile(tree, 'Timer');
+      await TestRenderer.act(async () => elapseSprings(100));
+      await paint(tree);
+      await TestRenderer.act(async () => elapse(FADE_IN_MS));
+      h.ok(appOpen(tree) && homeShown(tree) && plateShown(tree) === 0, `painted mid-open (a warm WebView paints in ~70 ms), the plate has faded (${plateShown(tree)})`);
+      await TestRenderer.act(async () => { hardwareBack(); });
+      await TestRenderer.act(async () => elapseSprings(60));
+      await TestRenderer.act(async () => elapse(FADE_IN_MS));
+      const plate = plateRect(tree);
+      h.ok(appOpen(tree), 'still heading back into the tile');
+      h.eq([plate.cx, plate.cy, plateShown(tree)], [TIMER_TILE.pageX + 32 - STAGE.pageX, TIMER_TILE.pageY + 32 - STAGE.pageY, 1], 'the plate shows on the tile again');
       await TestRenderer.act(async () => release());
       h.ok(!appOpen(tree) && homeShown(tree), 'and the launch ends on Home');
     });

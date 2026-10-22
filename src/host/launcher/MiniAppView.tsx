@@ -487,6 +487,9 @@ function useAppMorph({ morph, appId, frame, reduceMotion, look, failed }: MorphI
       return;
     }
     setCovered(false);
+    // Back while it still comes out: Home never left, so its tile has not moved, and the plate (gone
+    // with the page's paint) comes back there at once rather than after the tile holds still.
+    if (tileSettled.value) tileSettledNow();
     const done = (finished?: boolean) => {
       'worklet';
       if (finished) scheduleOnRN(closed);
