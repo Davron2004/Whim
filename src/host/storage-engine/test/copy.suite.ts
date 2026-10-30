@@ -256,8 +256,9 @@ export async function runCopyTests(root: string, h: CopySuiteHelpers): Promise<v
            if (!fs.existsSync(process.argv[2])) return;
            clearInterval(poll);
            setTimeout(() => {
+             const t = Date.now();
              db.exec('COMMIT'); db.close();
-             process.stdout.write('committed ' + Date.now() + '\\n');
+             process.stdout.write('committed ' + t + '\\n');
            }, ${HOLD_AFTER_MARKER});
          }, 2);`,
         src,
@@ -273,7 +274,7 @@ export async function runCopyTests(root: string, h: CopySuiteHelpers): Promise<v
           if (!until.test(seen)) return false;
           holder.stdout.off('data', onData);
           holder.off('error', reject);
-          holder.off('exit', onExit);
+          holder.off('close', onClose);
           resolve();
           return true;
         };
@@ -281,12 +282,13 @@ export async function runCopyTests(root: string, h: CopySuiteHelpers): Promise<v
           seen += chunk.toString();
           check();
         };
-        const onExit = (): void => {
-          if (!check()) reject(new Error('the lock holder exited before it printed what the test waits for'));
+        // 'close' fires only after stdio has drained; 'exit' can precede the last stdout data.
+        const onClose = (): void => {
+          if (!check()) reject(new Error('the lock holder closed before it printed what the test waits for'));
         };
         holder.stdout.on('data', onData);
         holder.once('error', reject);
-        holder.once('exit', onExit);
+        holder.once('close', onClose);
         check();
       });
     try {
@@ -305,7 +307,7 @@ export async function runCopyTests(root: string, h: CopySuiteHelpers): Promise<v
       await withTimeout(lines(/committed \d+\n/), 10_000);
       const committedAt = Number(/committed (\d+)/.exec(seen)?.[1]);
       ok(thrown === undefined, `live write during a snapshot: the write that met the lock did not throw (got ${String(thrown)})`);
-      ok(doneAt >= committedAt - 25, `live write during a snapshot: the write did not return before the lock was released (returned ${committedAt - doneAt} ms early)`);
+      ok(doneAt >= committedAt, `live write during a snapshot: the write did not return before the lock was released (returned ${committedAt - doneAt} ms early)`);
       ok(waited < BUSY_TIMEOUT_MS, `live write during a snapshot: the write finished inside the busy timeout (${waited} ms)`);
       eq(await withTimeout(exited, 10_000), 0, 'live write during a snapshot: the lock holder released the lock and exited cleanly');
       eq(store.records.list('Notes').some(r => r.title === 'written during the snapshot'), true, 'live write during a snapshot: the write is in the store');
