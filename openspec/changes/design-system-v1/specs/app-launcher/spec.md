@@ -346,7 +346,7 @@ An installed app's tile SHALL be a superellipse (corner 22.5% of the side, one S
 
 ### Requirement: The host assigns each app's tint
 
-At install the host SHALL resolve the app's ranked tints and SHALL assign the first one not used by any installed app, else the least used, ties broken by the model's order then table order. A copy SHALL take the tint farthest (ΔE2000 of light values) from its original among the least used. A record carrying a hex `tileColor` and no tint SHALL display the tint nearest by ΔE2000. The assigned tint and resolved glyph SHALL be stored host-side and carried forward on every rebuild, and a rebuild SHALL keep them unless the person asks for a new look. Seeded examples SHALL each have a distinct tint, and no generated app SHALL be able to impersonate an example's tile by declaration alone.
+At install the host SHALL resolve the app's ranked tints and SHALL assign the first one not used by any installed app, else the least used, ties broken by the model's order then table order. A copy SHALL take the tint farthest (ΔE2000 of light values) from its original among the least used. A record with no stored or declared tint SHALL display its app id's fallback tint, and a `tileColor` it carries SHALL be ignored. The assigned tint and resolved glyph SHALL be stored host-side and carried forward on every rebuild, and a rebuild SHALL keep them unless the person asks for a new look. Seeded examples SHALL each have a distinct tint, and no generated app SHALL be able to impersonate an example's tile by declaration alone.
 
 #### Scenario: A new app avoids used tints
 
@@ -358,10 +358,10 @@ At install the host SHALL resolve the app's ranked tints and SHALL assign the fi
 - **WHEN** an installed app is changed and the new build ranks a different tint
 - **THEN** the tile keeps its assigned tint and glyph
 
-#### Scenario: An old hex record maps to a tint
+#### Scenario: An old hex record shows its fallback tint
 
 - **WHEN** an installed record has `tileColor: '#0369a1'` and no tint
-- **THEN** its tile shows the tint whose light value is nearest by ΔE2000
+- **THEN** its tile shows its app id's fallback tint, never that colour or a tint chosen from it
 
 ### Requirement: Customize tile changes an app's tint and glyph
 

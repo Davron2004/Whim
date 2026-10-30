@@ -101,7 +101,7 @@ No generation request SHALL be sent before the user takes `Make it`. Each plan r
 
 ### Requirement: The Making page shows honest progress without internals
 
-While a run streams the Making page SHALL show the 128 pt ember (working, stuck after 40 s with no frame, following the stream's activity), "Making <name>" (or "Changing <name>"), the person's words, the four steps (`Reading your plan`, `Writing the app`, `Checking it runs safely`, `Putting it on your home screen`) with done, current (elapsed time on it) and waiting states, one time line from `system.md` §8 chosen by elapsed time, stall and queue position, and Stop. A `repair` event SHALL add "Fixing a problem · try N of M" under the current step and move the marker down to it. Raw `token` text, raw diagnostic fields, transport wording and output-size counters SHALL NOT render. Stop SHALL end the run at once and leave a stopped tile.
+While a run streams the Making page SHALL show the 128 pt ember (working, stuck after 40 s with no progress event, following the stream's activity), "Making <name>" (or "Changing <name>"), the person's words, the four steps (`Reading your plan`, `Writing the app`, `Checking it runs safely`, `Putting it on your home screen`) with done, current (elapsed time on it) and waiting states, one time line from `system.md` §8 chosen by elapsed time, stall and queue position, and Stop. A `repair` event SHALL add "Fixing a problem · try N of M" under the current step and move the marker down to it. Raw `token` text, raw diagnostic fields, transport wording and output-size counters SHALL NOT render. Stop SHALL end the run at once and leave a stopped tile.
 
 #### Scenario: A slow run says so honestly
 
