@@ -66,4 +66,4 @@ Facts: harness.md §11 (lines ~379-380) already says a `running` tool call with 
 - Traps for the deployer: (1) task 8.2 says "There is no env, DNS or resource change", which is wrong while the secret does not exist: a new secret and IAM binding are a resource change; do them first. (2) `progress.md` (chain-5 note): the privacy change may need a Texas significant-change notice filed in Google Play first, effective date >= 3 days after, with `effectiveDates.privacy` moved before the site deploy (owner item, `docs/legal/change-process.md` §8). (3) PO ruling 12: bump privacy.html "Last updated" at this deploy. (4) The migration is the only production data write: save the dry-run output to the session scratchpad, never `~/.config/whim/`.
 
 ## Tip
-Content tip (before this line was recorded): see the final reply / `git log prep/beta-2-fixes`.
+Content tip: `9fa2f516eebc92ffacf6a6863e3361d8c41edc79` (the artifacts). The branch tip is the next commit, which only records this SHA.
