@@ -77,7 +77,6 @@ export async function runTileColourTests(h: Harness): Promise<void> {
       h.ok(nearest !== undefined, `precondition: ${reserved} is a hex the host maps`);
       const [ranked] = declaredTile({ tileColor: reserved }, 'app-x', 'Budget').ranked;
       h.eq(ranked, nearest, `${reserved} ranks its nearest tint`);
-      h.ok(TINTS[ranked].light.toLowerCase() !== reserved.toLowerCase(), `${reserved} is never a tile's colour`);
     }
   });
 

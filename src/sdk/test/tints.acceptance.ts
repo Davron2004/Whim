@@ -102,7 +102,13 @@ for (const unknown of ['chartreuse', '', 42, null, undefined, '#0852CB', 'constr
 
 const ids = Array.from({ length: 400 }, (_, i) => `app-${i}-${(i * 7919).toString(36)}`);
 assert.deepStrictEqual(new Set(ids.map(fallbackTint)).size, 10, 'the fallback reaches every one of the ten tints');
-assert.deepStrictEqual(ids.map((id) => fallbackTint(id)), ids.map(fallbackTint), 'the fallback is deterministic');
+// Known answers: djb2 (h = h*33 + c, seed 5381, 32-bit) of the id, mod 10, indexing the table in order.
+for (const [id, hash] of [['water-counter', 465493845], ['app-1', 253335012], ['a', 177670], ['', 5381]] as const) {
+  assert.deepStrictEqual(fallbackTint(id), TINT_NAMES[hash % 10], `fallbackTint(${JSON.stringify(id)}) is table[${hash} mod 10]`);
+}
+// An independent djb2 (BigInt, no shifts) agrees on every generated id.
+const referenceDjb2 = (text: string): bigint => [...Buffer.from(text)].reduce((h, c) => (h * 33n + BigInt(c)) % 2n ** 32n, 5381n);
+for (const id of ids) assert.deepStrictEqual(fallbackTint(id), TINT_NAMES[Number(referenceDjb2(id) % 10n)], `fallbackTint(${id}) follows the djb2 hash`);
 
 // ── Nearest tint for an installed hex tileColor ──────────────────────────────
 

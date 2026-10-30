@@ -24,8 +24,8 @@ type TileRequest =
   | { readonly kind: 'fixed'; readonly tile: TileIdentity };
 
 EXAMPLE_TILES: Readonly<Record<string, TileIdentity>>
-  // 'tip-splitter' slate/receipt · 'water-counter' blue/glass-water · 'style-gallery' orchid/palette
-  // (each tint = nearestTint of the example's shipped tileColor, so tileColor() agrees)
+  // 'tip-splitter' slate/receipt · 'water-counter' blue/glass-water · 'style-gallery' purple/palette
+  // (the first tint and icon each example's fixture declares)
 isTileGlyph(v: unknown): v is TileGlyph            // glyph set or 'circle' (never a chrome name)
 isTileIdentity(v: unknown): v is TileIdentity
 declaredTile(manifest: object, appId: string, appName: string): TileDeclaration
@@ -58,7 +58,7 @@ a person's override may take anything).
 - `fork(entry, versionId?, opts?)` — every fork (copy or rewind continuation) gets `copyTile(current original, index.list())`;
   no `tileOverride`. `shareData` semantics unchanged (#52 D2 held).
 - `deliverResult` (`build-lifecycle.ts`) passes `tile: { kind: 'assign', declared: declaredTile(wire.manifest, appId, wire.name) }`
-  on a new install (the wire's declaration, never the record's injected ghost `tileColor`).
+  on a new install (the wire's declaration).
 - `seedFirstRun` passes `{ kind: 'fixed', tile: EXAMPLE_TILES[id] }` for ids in the table.
 
 ## Override API (`AppIndex`)
@@ -93,10 +93,3 @@ completeInterruptedPurges(deps): Promise<void>   // at launch, before the first 
 
 Arming deletes and hides nothing: the entry stays in the index (refcounts and Undo stay exact) until
 `completePurge`. Callers own the 10 s / 6 s timers and the hiding.
-
-## `tiles.ts#tileColor(name, manifest?)` (transitional, signature unchanged)
-
-Returns `TINTS[t].light` where `t = nearestTint(manifest.tileColor) ?? fallbackTint(name)`. Never a
-reserved hue. Not the assigned tile — current screens keep calling it until chain 21; new surfaces
-use `tileOf`. `RESERVED_TILE_HUES` is gone; `ghostTileColorFor`, `monogram`, `manifest-tile-color.ts`
-and `mapWireRecord`'s ghost `tileColor` injection are untouched.

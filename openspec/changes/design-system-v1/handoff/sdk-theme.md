@@ -22,7 +22,6 @@ export interface WhimTheme {
 export const FONT_SCALE_RANGE = { min: 0.85, max: 2 };
 export function sanitizeTheme(input: unknown): WhimTheme;   // never throws
 export const DEFAULT_THEME: WhimTheme;                      // = sanitizeTheme(undefined), deep-frozen
-export * from './design-tokens';                            // v2 shell tokens, unchanged (shell still reads them)
 ```
 
 `vc-sdk` re-exports `WhimTheme` type-only; nothing else from this file is public.
