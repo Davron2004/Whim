@@ -78,3 +78,21 @@ build-lifecycle.suite (assertions 151→145, tests 43→41), tile-colour.suite (
 
 ## Open questions
 - None blocking. The dead `build/build.mjs` `tileColor` entry needs an owner-approved CONFIG_SET edit.
+
+## Fix pass (review-tilecolor.md findings 1-7)
+Commits: `1ed08687` (all findings), then the version-record test correction + this section (see `git log`).
+- 1 proposal.md and design.md: a `tileColor` is accepted and ignored; a tint-less record shows its fallback tint.
+- 2 handoff/generator.md: `ExtractedManifest.tileColor` line gone; wire lines no longer name `manifest.tileColor`.
+- 3 handoff/sdk-components.md: JSDoc quote matches `src/sdk/index.tsx`.
+- 4 tasks.md 12.2: "superseded by ruling 24" note only; no tick changed.
+- 5 docs/decisions.md: new entry #83 (supersedes #75, the entry at :1470).
+- 6 version-record.suite: the index record now carries a newer manifest (`capabilities` storage+cues) via `index.put`
+  before `activeLaunch`; the launch must still return the saved one. (The first attempt passed a modified entry; that
+  did not discriminate because `readActive` prefers the index record. Caught by the red-check.)
+- 7 Nothing passes `#rgb` (`git grep`: only an unrelated RN style literal), so the 3-digit branch in `src/design/tints.ts`
+  is removed; tints.acceptance now asserts `deltaE('#fff', '#FFFFFF')` is refused.
+Red-checks: restoring the 3-digit branch fails sdk:test (EXIT=1, "a short #rgb is refused ... threw """). Making
+`versionRecord` use `current.manifest` fails launcher:test with "the launch runs with the manifest the version saved,
+not the index record's" (the old assertion could not fail). Both restored with `git checkout --`.
+Suites: launcher:test 0, sdk:test 0 (before the test-only correction), typecheck 0, openspec validate --strict 0.
+No test or assertion count dropped; no trailers.
