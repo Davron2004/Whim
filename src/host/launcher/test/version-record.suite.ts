@@ -371,7 +371,9 @@ export async function runVersionRecordTests(h: Harness): Promise<void> {
       const { access, index } = accessOver(state);
       await waterCounterChanged(state, access, index, []);
       const manifestFile = JSON.parse((await state.store.active(WATER))!.artifacts['manifest.json']) as Record<string, unknown>;
-      h.eq(manifestFile, { capabilities: APP_RECORDS[WATER].manifest.capabilities }, 'the saved manifest is the declaration alone');
+      const { capabilities, tint, icon } = APP_RECORDS[WATER].manifest;
+      h.ok(tint !== undefined && icon !== undefined, 'setup: the shipped water-counter record declares a tint and an icon');
+      h.eq(manifestFile, { capabilities, tint, icon }, 'the saved manifest is the declaration alone, its tint and icon included');
       const { app } = await access.activeLaunch(index.get(WATER)!);
       h.eq(app.record.manifest.tileColor, APP_RECORDS[WATER].manifest.tileColor, 'the launch keeps the colour the app has');
     } finally {
