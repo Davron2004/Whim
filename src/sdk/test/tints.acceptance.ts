@@ -1,6 +1,6 @@
 // Node acceptance suite for the app tints (`src/design/tints.ts`, docs/design/system.md §2.4):
 // the colour maths against published reference values, name resolution against the alias list in
-// system.md, the id-hash fallback against `appColor`'s hash, and the host's assignment rules.
+// system.md, the id-hash fallback, and the host's assignment rules.
 // Auto-discovered by `src/sdk/test/run.mjs` (every `*.acceptance.ts(x)` under this directory).
 import assert from 'node:assert';
 import fs from 'node:fs';
@@ -20,7 +20,6 @@ import {
   type Lab,
 } from '../../design/tints';
 import { TINT_NAMES, TINTS, type TintName } from '../../design/tokens';
-import { appColor } from '../design-tokens';
 
 // ── CIEDE2000 ────────────────────────────────────────────────────────────────
 
@@ -104,18 +103,6 @@ for (const unknown of ['chartreuse', '', 42, null, undefined, '#0852CB', 'constr
 const ids = Array.from({ length: 400 }, (_, i) => `app-${i}-${(i * 7919).toString(36)}`);
 assert.deepStrictEqual(new Set(ids.map(fallbackTint)).size, 10, 'the fallback reaches every one of the ten tints');
 assert.deepStrictEqual(ids.map((id) => fallbackTint(id)), ids.map(fallbackTint), 'the fallback is deterministic');
-// The fallback is "the hash appColor uses today" mod 10: over many ids the tint an id gets and the
-// colour appColor gives it must determine each other one to one.
-const colourToTint = new Map<string, TintName>();
-const tintToColour = new Map<TintName, string>();
-for (const id of [...ids, '', 'Water Counter', 'Tip Splitter', 'é☃𝄞']) {
-  const colour = appColor(id);
-  const tint = fallbackTint(id);
-  assert.deepStrictEqual(colourToTint.get(colour) ?? tint, tint, `ids sharing appColor ${colour} share one fallback tint`);
-  assert.deepStrictEqual(tintToColour.get(tint) ?? colour, colour, `ids sharing fallback tint ${tint} share one appColor`);
-  colourToTint.set(colour, tint);
-  tintToColour.set(tint, colour);
-}
 
 // ── Nearest tint for an installed hex tileColor ──────────────────────────────
 

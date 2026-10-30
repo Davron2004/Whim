@@ -255,14 +255,11 @@ export interface CueBackend {
  *  runtime self-description. */
 export interface AppManifest {
   capabilities: string[];
-  /** The app's one declared tile colour (`#rrggbb`), extracted at build/generation time from the
-   *  literal `defineApp` argument exactly like `capabilities` — never obtained by executing or
-   *  introspecting the bundle (shell-redesign-v2 / app-launcher "A tile's colour is the app's
-   *  declared colour, with a deterministic fallback"; design.md D4). A generation-time producer
-   *  already drops an absent, malformed, or reserved-hue declaration before it reaches here — this
-   *  field is host-held and harness-trusted, never re-derived from the running bundle's own
-   *  self-report. Consumers resolve it via `src/host/launcher/tiles.ts#tileColor`, which still
-   *  falls back to `appColor(name)` when this is absent or fails its own validity check. */
+  /** A legacy tile colour (`#rrggbb`, deprecated by `tint`), extracted at build/generation time
+   *  from the literal `defineApp` argument exactly like `capabilities` and carried through
+   *  unvalidated (generation-pipeline). Host-held, never re-derived from the running bundle. For a
+   *  record with no `tint`, `src/host/launcher/tile-identity.ts#declaredTile` maps a hex to the
+   *  nearest tint and ignores anything else. */
   tileColor?: string;
   /** The app's declared tile tints, ranked, as the static checker's manifest extraction resolved
    *  them (decision #41: the one `defineApp` extraction, at build/generation time). Plain strings

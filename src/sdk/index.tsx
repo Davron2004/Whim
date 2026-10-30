@@ -166,12 +166,10 @@ export interface AppSpec {
    *  resolves by keyword, else draws a circle. */
   icon?: string;
   /** @deprecated Declare `tint` instead; a `tileColor` maps to the nearest tint.
-   *  The one thing the shell asks back from a generated app: its tile colour, as a `#rrggbb`
-   *  LITERAL. Extracted statically from this `defineApp` argument exactly as `capabilities` is —
-   *  never obtained by executing or introspecting the bundle, so a non-literal value is simply not
-   *  extracted. Absent, malformed, or equal to a reserved shell hue all mean "no declaration", and
-   *  the shell falls back to its deterministic `appColor(name)`. Nothing else about a generated
-   *  app's look is constrained by the shell. */
+   *  A `#rrggbb` LITERAL, extracted statically from this `defineApp` argument exactly as
+   *  `capabilities` is — never obtained by executing or introspecting the bundle. With no `tint`,
+   *  the host shows the tint whose light value is nearest it (ΔE2000); a value that is not a hex
+   *  is ignored and the app gets its fallback tint. */
   tileColor?: string;
 }
 

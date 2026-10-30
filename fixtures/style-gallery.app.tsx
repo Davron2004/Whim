@@ -442,6 +442,4 @@ export default defineApp({
   capabilities: [], // Tier-0: manual QA / knip anchor, zero syscalls
   tint: 'purple',
   icon: 'palette',
-  // Kept beside `tint` (#48/#52) while the shell still colours tiles from it: purple's light value.
-  tileColor: '#662a8d',
 });

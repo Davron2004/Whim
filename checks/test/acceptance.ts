@@ -54,7 +54,7 @@ import { burnedSchema, runStaticChecks as runStaticChecksRaw, scanStorageSurface
 import { AppliedSchema, diffSchemas } from '../../src/host/storage-engine/schema';
 import { SchemaArtifact, STORAGE_ERROR_KINDS } from '../../src/host/storage-engine/contract';
 import { UNDECLARED_CAPABILITY_KIND } from '../../src/host/bridge/contract';
-import { tileColor } from '../../src/host/launcher/tiles';
+import { EXAMPLE_TILES } from '../../src/host/launcher/tile-identity';
 
 /** Every diagnostic in the report is well-formed per harness-diagnostics req 1/2. */
 function assertAllWellFormed(r: CheckReport): void {
@@ -443,20 +443,20 @@ async function testManifestExtraction(): Promise<void> {
     assert(r.manifest?.initial === 'Home', `expected manifest.initial "Home", got ${String(r.manifest?.initial)}`);
   });
 
-  await test('manifest: the built-in examples\' declared tile colours are valid and pairwise distinct (#48/#52)', () => {
+  await test('manifest: the built-in examples\' declared tiles extract to their fixed tiles, pairwise distinct (#48/#52)', () => {
     // The real, on-disk sources of the three examples LauncherRoot.tsx#defaultSeeds() installs on
     // first run — extracted with the real static pass, not a fixture built for this test.
-    const examples = ['tip-splitter.app.tsx', 'water-counter.app.tsx', 'style-gallery.app.tsx'];
-    const resolved = examples.map((file) => {
-      const r = runStaticChecks(readFixture(file));
-      const declared = r.manifest?.tileColor;
-      assert(typeof declared === 'string', `${file}: expected a declared tileColor, extraction found none`);
-      // Runs the declared value through the same tileColor() resolution every render surface
-      // uses, so a value that is malformed or collides with a reserved shell hue (and so falls
-      // back to appColor(name)) is caught here too, not just a bad literal.
-      return tileColor(r.manifest?.name ?? file, { tileColor: declared });
+    const examples = ['tip-splitter', 'water-counter', 'style-gallery'];
+    const tiles = examples.map((id) => {
+      const m = runStaticChecks(readFixture(`${id}.app.tsx`)).manifest;
+      const tint = m?.tint?.[0];
+      assert(tint === EXAMPLE_TILES[id].tint, `${id}: expected first tint "${EXAMPLE_TILES[id].tint}", extraction found ${JSON.stringify(m?.tint)}`);
+      assert(m?.icon === EXAMPLE_TILES[id].icon, `${id}: expected icon "${EXAMPLE_TILES[id].icon}", extraction found ${JSON.stringify(m?.icon)}`);
+      assert(m?.tileColor === undefined, `${id}: an example declares no legacy tileColor, extraction found ${JSON.stringify(m?.tileColor)}`);
+      return { tint, icon: m?.icon };
     });
-    assert(new Set(resolved).size === resolved.length, `expected ${resolved.length} distinct example tile colours, got ${JSON.stringify(resolved)}`);
+    assert(new Set(tiles.map((t) => t.tint)).size === tiles.length, `expected ${tiles.length} distinct example tints, got ${JSON.stringify(tiles)}`);
+    assert(new Set(tiles.map((t) => t.icon)).size === tiles.length, `expected ${tiles.length} distinct example glyphs, got ${JSON.stringify(tiles)}`);
   });
 }
 
