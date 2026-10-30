@@ -95,7 +95,7 @@ export function createHaptics(native: Spec | null): Haptics {
   return {
     play(moment) {
       // MEASUREMENT-ONLY (task 24.6): never merge.
-      console.log(`HXJ t=${Date.now()} ev=play moment=${moment}`); // eslint-disable-line no-console
+      native?.hx(`HXJ t=${Date.now()} ev=play moment=${moment}`);
       run(moment, (module, { ios, android }) => {
         if (ios.kind === 'selection') module.selection(android);
         else if (ios.kind === 'impact') module.impact(ios.style, ios.intensity, android);
@@ -103,7 +103,7 @@ export function createHaptics(native: Spec | null): Haptics {
       });
     },
     prepare(moment) {
-      console.log(`HXJ t=${Date.now()} ev=prepare moment=${moment}`); // eslint-disable-line no-console
+      native?.hx(`HXJ t=${Date.now()} ev=prepare moment=${moment}`);
       run(moment, (module, { ios }) => module.prepare(generatorOf(ios)));
     },
   };

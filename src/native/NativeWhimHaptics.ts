@@ -29,6 +29,8 @@ export interface Spec extends TurboModule {
    *  iOS light impact / two light impacts 80 ms apart / heavy impact; Android
    *  `EFFECT_CLICK` / `EFFECT_DOUBLE_CLICK` / `EFFECT_HEAVY_CLICK`. Unknown tokens play as 'tap'. */
   cue(kind: string): void;
+  /** MEASUREMENT-ONLY (task 24.6, never merge): print one line to the native console (stderr). */
+  hx(line: string): void;
 }
 
 // `get` (not `getEnforcing`): a build without the module resolves to null and every haptic

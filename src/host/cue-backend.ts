@@ -68,7 +68,7 @@ export function createCueBackend({ haptics = WhimHaptics, now = Date.now }: CueB
     haptic(kind: HapticKind, realm: RealmRecord): void {
       // MEASUREMENT-ONLY (task 24.6): never merge.
       const allowed = mayPlay(realm);
-      console.log(`HXJ t=${Date.now()} ev=${allowed ? 'cue' : 'cap-drop'} kind=${kind}`); // eslint-disable-line no-console
+      haptics?.hx(`HXJ t=${Date.now()} ev=${allowed ? 'cue' : 'cap-drop'} kind=${kind}`);
       if (!allowed) return;
       try {
         haptics?.cue(kind);

@@ -147,6 +147,13 @@ UINotificationFeedbackType NotificationTypeForName(NSString *name)
   [generator notificationOccurred:NotificationTypeForName(kind)];
 }
 
+- (void)hx:(NSString *)line
+{
+  fprintf(stderr, "%s\n", line.UTF8String);
+  static os_log_t log = os_log_create("com.whim.hx", "js");
+  os_log(log, "%{public}s", line.UTF8String);
+}
+
 - (void)prepare:(NSString *)kind
 {
   HXLog("prepare", [NSString stringWithFormat:@"kind=%@", kind]);

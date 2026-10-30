@@ -40,6 +40,11 @@ class WhimHapticsModule(reactContext: ReactApplicationContext) : NativeWhimHapti
 
   override fun notification(kind: String, android: String) = perform(android)
 
+  // MEASUREMENT-ONLY (task 24.6, never merge).
+  override fun hx(line: String) {
+    android.util.Log.i("WhimHx", line)
+  }
+
   override fun prepare(kind: String) {
     // Android's haptic engine needs no warm-up.
   }

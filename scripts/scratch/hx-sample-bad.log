@@ -1,0 +1,193 @@
+2026-10-30 10:19:26.997 Whim[11763:2414740] _setUpFeatureFlags called with release level 2
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+HXM t=1730312008000.000 step=1
+HXM t=1730312016000.000 step=2
+HXM t=1730312024000.000 step=3
+HXN t=1730312024500.000 ev=engine api=impact style=light intensity=1.00
+HXM t=1730312032000.000 step=4
+HXM t=1730312040000.000 step=5
+HXJ t=1730312041200 ev=prepare moment=selection
+HXN t=1730312041200.000 ev=prepare kind=x
+HXJ t=1730312041350 ev=play moment=selection
+HXN t=1730312041352.133 ev=enter api=selection
+HXN t=1730312041354.267 ev=engine api=selection
+HXM t=1730312048000.000 step=6
+HXJ t=1730312049200 ev=prepare moment=selection
+HXN t=1730312049200.000 ev=prepare kind=x
+HXJ t=1730312049350 ev=play moment=selection
+HXN t=1730312049351.528 ev=enter api=selection
+HXN t=1730312049353.056 ev=engine api=selection
+HXM t=1730312056000.000 step=7
+HXJ t=1730312057200 ev=prepare moment=handoff
+HXN t=1730312057200.000 ev=prepare kind=x
+HXJ t=1730312057350 ev=play moment=handoff
+HXN t=1730312057353.278 ev=enter api=impact style=medium intensity=1.00
+HXN t=1730312057356.557 ev=engine api=impact style=medium intensity=1.00
+HXM t=1730312064000.000 step=8
+HXJ t=1730312065200 ev=prepare moment=success
+HXN t=1730312065200.000 ev=prepare kind=x
+HXJ t=1730312065350 ev=play moment=success
+HXN t=1730312065351.253 ev=enter api=notification type=success
+HXN t=1730312065352.507 ev=engine api=notification type=error
+HXM t=1730312072000.000 step=9
+HXJ t=1730312073000 ev=cue kind=tap
+HXN t=1730312073002.875 ev=enter api=cue kind=tap
+HXN t=1730312073005.751 ev=engine api=cue kind=tap part=1
+HXM t=1730312080000.000 step=10
+HXJ t=1730312081000 ev=cue kind=double
+HXN t=1730312081002.280 ev=enter api=cue kind=double
+HXN t=1730312081004.560 ev=engine api=cue kind=double part=1
+HXN t=1730312081084.560 ev=engine api=cue kind=double part=2
+HXM t=1730312088000.000 step=11
+HXJ t=1730312089000 ev=cue kind=heavy
+HXN t=1730312089001.203 ev=enter api=cue kind=heavy
+HXN t=1730312089002.406 ev=engine api=cue kind=heavy part=1
+HXM t=1730312096000.000 step=12
+HXJ t=1730312097000 ev=cue kind=tap
+HXN t=1730312097002.776 ev=enter api=cue kind=tap
+HXN t=1730312097005.552 ev=engine api=cue kind=tap part=1
+HXJ t=1730312097003 ev=cue kind=tap
+HXN t=1730312097004.131 ev=enter api=cue kind=tap
+HXN t=1730312097005.262 ev=engine api=cue kind=tap part=1
+HXJ t=1730312097006 ev=cue kind=tap
+HXN t=1730312097008.518 ev=enter api=cue kind=tap
+HXN t=1730312097011.035 ev=engine api=cue kind=tap part=1
+HXJ t=1730312097009 ev=cap-drop kind=tap
+HXJ t=1730312097012 ev=cap-drop kind=tap
+HXJ t=1730312097015 ev=cap-drop kind=tap
+HXJ t=1730312097018 ev=cap-drop kind=tap
+HXJ t=1730312097021 ev=cap-drop kind=tap
+HXJ t=1730312097024 ev=cap-drop kind=tap
+HXJ t=1730312097027 ev=cap-drop kind=tap
+HXJ t=1730312097030 ev=cap-drop kind=tap
+HXJ t=1730312097033 ev=cap-drop kind=tap
+HXJ t=1730312097036 ev=cap-drop kind=tap
+HXJ t=1730312097039 ev=cap-drop kind=tap
+HXJ t=1730312097042 ev=cap-drop kind=tap
+HXJ t=1730312097045 ev=cap-drop kind=tap
+HXJ t=1730312097048 ev=cap-drop kind=tap
+HXJ t=1730312097051 ev=cap-drop kind=tap
+HXJ t=1730312097054 ev=cap-drop kind=tap
+HXJ t=1730312097057 ev=cap-drop kind=tap
+HXM t=1730312104000.000 step=13
+HXJ t=1730312105000 ev=cue kind=tap
+HXN t=1730312105001.244 ev=enter api=cue kind=tap
+HXN t=1730312105002.489 ev=engine api=cue kind=tap part=1
+HXJ t=1730312105200 ev=cue kind=tap
+HXN t=1730312105201.317 ev=enter api=cue kind=tap
+HXN t=1730312105202.635 ev=engine api=cue kind=tap part=1
+HXJ t=1730312105400 ev=cue kind=tap
+HXN t=1730312105402.486 ev=enter api=cue kind=tap
+HXN t=1730312105404.972 ev=engine api=cue kind=tap part=1
+HXJ t=1730312105600 ev=cue kind=tap
+HXN t=1730312105603.894 ev=enter api=cue kind=tap
+HXN t=1730312105607.788 ev=engine api=cue kind=tap part=1
+HXJ t=1730312105800 ev=cue kind=tap
+HXN t=1730312105801.433 ev=enter api=cue kind=tap
+HXN t=1730312105802.867 ev=engine api=cue kind=tap part=1
+HXJ t=1730312106000 ev=cue kind=tap
+HXN t=1730312106001.781 ev=enter api=cue kind=tap
+HXN t=1730312106003.563 ev=engine api=cue kind=tap part=1
+HXJ t=1730312106200 ev=cue kind=tap
+HXN t=1730312106203.196 ev=enter api=cue kind=tap
+HXN t=1730312106206.392 ev=engine api=cue kind=tap part=1
+HXJ t=1730312106400 ev=cue kind=tap
+HXN t=1730312106404.317 ev=enter api=cue kind=tap
+HXN t=1730312106408.634 ev=engine api=cue kind=tap part=1
+HXJ t=1730312106600 ev=cue kind=tap
+HXN t=1730312106603.020 ev=enter api=cue kind=tap
+HXN t=1730312106606.040 ev=engine api=cue kind=tap part=1
+HXJ t=1730312106800 ev=cue kind=tap
+HXN t=1730312106802.388 ev=enter api=cue kind=tap
+HXN t=1730312106804.777 ev=engine api=cue kind=tap part=1
+HXJ t=1730312107000 ev=cue kind=tap
+HXN t=1730312107004.417 ev=enter api=cue kind=tap
+HXN t=1730312107008.834 ev=engine api=cue kind=tap part=1
+HXJ t=1730312107200 ev=cue kind=tap
+HXN t=1730312107201.163 ev=enter api=cue kind=tap
+HXN t=1730312107202.326 ev=engine api=cue kind=tap part=1
+HXJ t=1730312107400 ev=cue kind=tap
+HXN t=1730312107404.005 ev=enter api=cue kind=tap
+HXN t=1730312107408.009 ev=engine api=cue kind=tap part=1
+HXJ t=1730312107600 ev=cue kind=tap
+HXN t=1730312107602.014 ev=enter api=cue kind=tap
+HXN t=1730312107604.027 ev=engine api=cue kind=tap part=1
+HXJ t=1730312107800 ev=cue kind=tap
+HXN t=1730312107801.505 ev=enter api=cue kind=tap
+HXN t=1730312107803.010 ev=engine api=cue kind=tap part=1
+HXJ t=1730312108000 ev=cue kind=tap
+HXN t=1730312108001.412 ev=enter api=cue kind=tap
+HXN t=1730312108002.824 ev=engine api=cue kind=tap part=1
+HXJ t=1730312108200 ev=cue kind=tap
+HXN t=1730312108202.080 ev=enter api=cue kind=tap
+HXN t=1730312108204.159 ev=engine api=cue kind=tap part=1
+HXJ t=1730312108400 ev=cue kind=tap
+HXN t=1730312108403.856 ev=enter api=cue kind=tap
+HXN t=1730312108407.713 ev=engine api=cue kind=tap part=1
+HXJ t=1730312108600 ev=cue kind=tap
+HXN t=1730312108601.633 ev=enter api=cue kind=tap
+HXN t=1730312108603.265 ev=engine api=cue kind=tap part=1
+HXJ t=1730312108800 ev=cue kind=tap
+HXN t=1730312108803.036 ev=enter api=cue kind=tap
+HXN t=1730312108806.071 ev=engine api=cue kind=tap part=1
+HXM t=1730312112000.000 step=14
+HXM t=1730312120000.000 step=15
+HXJ t=1730312121200 ev=prepare moment=commit
+HXN t=1730312121200.000 ev=prepare kind=x
+HXJ t=1730312121350 ev=play moment=commit
+HXN t=1730312121353.236 ev=enter api=impact style=rigid intensity=0.60
+HXN t=1730312121356.472 ev=engine api=impact style=rigid intensity=0.60
+HXM t=1730312128000.000 step=16
+HXJ t=1730312129200 ev=prepare moment=commit
+HXN t=1730312129200.000 ev=prepare kind=x
+HXJ t=1730312129350 ev=play moment=commit
+HXN t=1730312129352.303 ev=enter api=impact style=rigid intensity=0.60
+HXN t=1730312129354.607 ev=engine api=impact style=rigid intensity=0.60
+HXM t=1730312136000.000 step=17
+HXJ t=1730312137200 ev=prepare moment=long-press
+HXN t=1730312137200.000 ev=prepare kind=x
+HXJ t=1730312137350 ev=play moment=long-press
+HXN t=1730312137352.917 ev=enter api=impact style=medium intensity=1.00
+HXN t=1730312137355.834 ev=engine api=impact style=medium intensity=1.00
+HXM t=1730312144000.000 step=18
+HXJ t=1730312145200 ev=prepare moment=success
+HXN t=1730312145200.000 ev=prepare kind=x
+HXJ t=1730312145350 ev=play moment=success
+HXN t=1730312145351.220 ev=enter api=notification type=success
+HXN t=1730312145352.439 ev=engine api=notification type=success
+HXM t=1730312152000.000 step=19
+HXJ t=1730312153200 ev=prepare moment=toggle-off
+HXN t=1730312153200.000 ev=prepare kind=x
+HXJ t=1730312153350 ev=play moment=toggle-off
+HXN t=1730312153351.208 ev=enter api=impact style=light intensity=1.00
+HXN t=1730312153352.417 ev=engine api=impact style=light intensity=1.00
+HXM t=1730312160000.000 step=20
+HXJ t=1730312161200 ev=prepare moment=toggle-on
+HXN t=1730312161200.000 ev=prepare kind=x
+HXJ t=1730312161350 ev=play moment=toggle-on
+HXN t=1730312161351.721 ev=enter api=impact style=light intensity=1.00
+HXN t=1730312161353.442 ev=engine api=impact style=light intensity=1.00
+HXM t=1730312168000.000 step=21
+HXJ t=1730312169200 ev=prepare moment=warning
+HXN t=1730312169200.000 ev=prepare kind=x
+HXJ t=1730312169350 ev=play moment=warning
+HXN t=1730312169353.381 ev=enter api=notification type=warning
+HXN t=1730312169356.763 ev=engine api=notification type=warning
+HXM t=1730312176000.000 step=22
+HXJ t=1730312177200 ev=prepare moment=selection
+HXN t=1730312177200.000 ev=prepare kind=x
+HXJ t=1730312177350 ev=play moment=selection
+HXN t=1730312177352.497 ev=enter api=selection
+HXN t=1730312177354.993 ev=engine api=selection
+HXM t=1730312184000.000 step=23
+HXJ t=1730312185200 ev=prepare moment=handoff
+HXN t=1730312185200.000 ev=prepare kind=x
+HXJ t=1730312185350 ev=play moment=handoff
+HXN t=1730312185352.100 ev=enter api=impact style=medium intensity=1.00
+HXN t=1730312185354.199 ev=engine api=impact style=medium intensity=1.00
+HXM t=1730312192000.000 step=24
+HXJ t=1730312193200 ev=prepare moment=failure
+HXN t=1730312193200.000 ev=prepare kind=x
+HXJ t=1730312193350 ev=play moment=failure
+HXN t=1730312193353.050 ev=enter api=notification type=error
+HXN t=1730312193356.099 ev=engine api=notification type=error
