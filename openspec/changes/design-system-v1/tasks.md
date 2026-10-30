@@ -97,7 +97,7 @@
 ## 12. Tile identity (host logic)
 
 - [x] 12.1 Host record fields: `tint`, `icon` (resolved), `tileOverride?`; `mapWireRecord` reads `manifest.tint`/`manifest.icon`, assigns with `assignTint` over installed apps, and `StoreAccess.update` carries the host fields forward on rebuild
-- [x] 12.2 Copies take `farthestTint`; hex `tileColor` records resolve with `nearestTint` on read; seeded examples get fixed distinct tints and glyphs; no generated app can claim an example's tile by declaration (#127)
+- [x] 12.2 Copies take `farthestTint`; hex `tileColor` records resolve with `nearestTint` on read (superseded by ruling 24, tileColor removal piece, 2026-10-30: a `tileColor` is ignored); seeded examples get fixed distinct tints and glyphs; no generated app can claim an example's tile by declaration (#127)
 - [x] 12.3 Reimplement `tileColor()` over the tints, keeping its signature for `checks/test/acceptance.ts:51` and the current screens; drop `RESERVED_TILE_HUES` (no tint can be a reserved hue); leave `ghostTileColorFor`, `monogram` and `manifest-tile-color.ts` in place for chain 21 to delete once Home no longer calls them
 - [x] 12.4 Customize-tile override storage API (set/clear, survives changes) and the pending-purge marker for soft delete and discard (D16)
 - [x] 12.5 Rewrite `tile-colour.suite.ts`, `build-lifecycle.suite.ts` and `store-access.suite.ts` cases: install-then-rebuild keeps tint and glyph, copy takes the farthest tint, interrupted purge completes at launch

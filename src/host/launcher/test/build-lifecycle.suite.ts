@@ -38,7 +38,8 @@ import { makingProgress } from '../making-progress';
 import { COPY, makingStallLine } from '../copy';
 import type { GenerationEvent } from '@whim/contract';
 import { tileOf } from '../tile-identity';
-import { fallbackTint, nearestTint } from '../../../design/tints';
+import { fallbackTint } from '../../../design/tints';
+import { TINT_NAMES, TINTS } from '../../../design/tokens';
 import { AppIndex } from '../app-index';
 import { createMemoryStore } from '../../version-store';
 import type { WireAppRecord } from '@whim/contract';
@@ -238,33 +239,26 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(tileOf(index.get(installed.id)!), { tint: 'violet', icon: 'music' }, 'the original is unchanged');
   });
 
-  // ── a legacy `tileColor` on the wire: carried onto the record, mapped to a tint by the host ───
+  // ── the wire → record mapping, and a stray `tileColor` (deprecated, ignored) ─────────────────
 
-  await h.test('legacy colour: mapWireRecord keeps a string tileColor verbatim, unvalidated', async () => {
-    const record = mapWireRecord('app-1', { ...WIRE, manifest: { capabilities: ['storage'], tileColor: '#2f6feb' } });
-    h.eq(record.manifest, { capabilities: ['storage'], tileColor: '#2f6feb' }, 'the declaration and the rest of the manifest round-trip');
-    h.eq(mapWireRecord('app-1', { ...WIRE, manifest: { tileColor: 'NotEvenHex' } }).manifest.tileColor, 'NotEvenHex', 'no re-validation here: declaredTile maps or ignores it');
+  await h.test('mapWireRecord: the record takes the wire’s name and declared manifest, and its schema only when it has keys', async () => {
+    const declared = { capabilities: ['storage'], tint: ['rose'], icon: 'coffee' };
+    const record = mapWireRecord('app-1', { ...WIRE, manifest: declared });
+    h.eq(record, { appId: 'app-1', name: WIRE.name, manifest: declared }, 'an empty schema is left off');
+    const schema = { collections: [] };
+    h.eq(mapWireRecord('app-1', { ...WIRE, schema }).schemaArtifact, schema, 'a schema with keys is kept');
   });
 
-  await h.test('legacy colour: mapWireRecord drops a tileColor that is not a string', async () => {
-    for (const bad of [42, null, undefined, { hex: '#2f6feb' }]) {
-      const manifest = mapWireRecord('app-1', { ...WIRE, manifest: { capabilities: [], tileColor: bad } }).manifest;
-      h.ok(!Object.hasOwn(manifest, 'tileColor'), `${JSON.stringify(bad)} is not kept on the record`);
-      h.eq(manifest.capabilities, [], 'the rest of the manifest is kept');
-    }
-  });
-
-  await h.test('legacy colour: a delivered install whose wire declares only a hex colour gets the nearest tint', async () => {
+  await h.test('stray colour: a delivered install whose wire carries only a hex tileColor gets the app id’s fallback tint', async () => {
     const { index, access } = realAccess();
     const store = new PendingBuildStore(new MapKVBackend());
     const id = startPendingBuild(store, { text: 'a tip splitter', reuseId: 'app-legacy-1' });
-    h.ok(nearestTint('#2f6feb') !== fallbackTint(id), 'sanity: the colour and the app id pick different tints, so this is not vacuous');
-    const delivered = await deliverAndSettle(store, { access, appId: id, text: 'a tip splitter', wire: { ...WIRE, manifest: { tileColor: '#2f6feb' } } });
-    h.eq(delivered.record.manifest.tileColor, '#2f6feb', 'the declaration reaches the record as the wire carried it');
-    h.eq(tileOf(index.get(id)!).tint, nearestTint('#2f6feb'), 'the tile takes the tint nearest it');
+    const other = TINT_NAMES.find((t) => t !== fallbackTint(id))!;
+    await deliverAndSettle(store, { access, appId: id, text: 'a tip splitter', wire: { ...WIRE, manifest: { tileColor: TINTS[other].light } } });
+    h.eq(tileOf(index.get(id)!).tint, fallbackTint(id), `the fallback, not ${other}, whose own light value the colour is`);
   });
 
-  await h.test('legacy colour: a rebuild records only what its wire declares, at tip and behind it', async () => {
+  await h.test('rebuild: at tip it updates the app in place; behind its tip it continues through the sharing seam (#52 D2)', async () => {
     const store = new PendingBuildStore(new MapKVBackend());
     const updates: { entry: InstalledApp; spec: UpdateSpec }[] = [];
     const forked: InstalledApp = { ...APP, id: 'app-fork' };
@@ -279,42 +273,30 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     const id = startPendingBuild(store, { editing: APP, text: 'add a dark mode' });
     await deliverResult({ access: atTip, appId: id, editing: APP, text: 'add a dark mode', wire: WIRE });
     await deliverResult({ access: behindTip, appId: id, editing: APP, text: 'add a dark mode', wire: WIRE });
-    h.ok(updates.every((u) => u.spec.record.manifest.tileColor === undefined), 'neither the in-place update nor the continuation records one');
+    h.eq(updates[0]?.entry.id, APP.id, 'the at-tip rebuild updated the app itself');
     // Decision #52 D2: the continuation keeps the user's data, through the one seam that shares it.
     h.eq(continueCalls.length, 1, 'the behind-tip rebuild continued once, through the sharing seam');
     h.eq((continueCalls[0]?.[0] as InstalledApp | undefined)?.id, APP.id, 'it continued the app being edited');
     h.eq(updates[1]?.entry.id, forked.id, 'and the update went onto the fork');
   });
 
-  await h.test('legacy colour: rebuilding a record from before tints keeps the tile it showed, though the wire declares no colour', async () => {
+  await h.test('pre-tint record: a rebuild keeps the tile it showed (its fallback, a stray colour ignored), though the wire ranks another tint', async () => {
     const { index, access } = realAccess();
     const store = new PendingBuildStore(new MapKVBackend());
     const installId = startPendingBuild(store, { text: 'a new app', reuseId: 'app-legacy-3' });
     const installed = await deliverAndSettle(store, { access, appId: installId, text: 'a new app', wire: wireDeclaring({ tint: 'violet', icon: 'music' }) });
+    const other = TINT_NAMES.find((t) => t !== fallbackTint(installed.id))!;
     // As stored before tints: no tint, no glyph, an old hex colour on the manifest.
-    const legacy: InstalledApp = { ...installed, record: { ...installed.record, manifest: { capabilities: [], tileColor: '#0369a1' } } };
+    const manifest = { capabilities: [], tileColor: TINTS[other].light };
+    const legacy: InstalledApp = { ...installed, record: { ...installed.record, manifest } };
     delete legacy.tint;
     delete legacy.icon;
     index.put(legacy);
     const before = tileOf(index.get(installed.id)!);
-    h.eq(before.tint, nearestTint('#0369a1'), 'precondition: it reads the nearest tint');
-    h.ok(before.tint !== fallbackTint(installed.id), 'sanity: the colour and the app id pick different tints, so this is not vacuous');
-    const rebuilt = await deliverAndSettle(store, { access, appId: installed.id, editing: legacy, text: 'add a dark mode', wire: WIRE });
-    h.ok(rebuilt.record.manifest.tileColor === undefined, 'precondition: the rebuilt record carries no colour');
+    h.eq(before.tint, fallbackTint(installed.id), 'precondition: it reads the fallback tint, not the colour');
+    await deliverAndSettle(store, { access, appId: installed.id, editing: legacy, text: 'add a dark mode', wire: wireDeclaring({ tint: other, icon: 'music' }) });
     h.eq(tileOf(index.get(installed.id)!), before, 'the tile it showed is kept');
-  });
-
-  await h.test('legacy colour: a rebuild whose wire DOES declare a colour records the new declaration', async () => {
-    const store = new PendingBuildStore(new MapKVBackend());
-    const updates: { entry: InstalledApp; spec: UpdateSpec }[] = [];
-    const coloured: InstalledApp = {
-      ...APP,
-      record: { appId: APP.id, name: APP.name, manifest: { capabilities: [], tileColor: '#7a3fd0' } },
-    };
-    const atTip = { ...fakeAccess({ updates }), timeline: async () => [{ id: 'snap-1' }], activeId: async () => 'snap-1' } as unknown as StoreAccess;
-    const id = startPendingBuild(store, { editing: coloured, text: 'make it blue' });
-    await deliverResult({ access: atTip, appId: id, editing: coloured, text: 'make it blue', wire: { ...WIRE, manifest: { tileColor: '#2f6feb' } } });
-    h.eq(updates[0].spec.record.manifest.tileColor, '#2f6feb', 'the new declaration replaces the old colour');
+    h.eq(index.get(installed.id)?.tint, before.tint, 'and is now written down on the entry');
   });
 
   // ── the install-time bundle guard (the stub-bundle incident) ────────────────────────────────

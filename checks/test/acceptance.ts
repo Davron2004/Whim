@@ -443,6 +443,16 @@ async function testManifestExtraction(): Promise<void> {
     assert(r.manifest?.initial === 'Home', `expected manifest.initial "Home", got ${String(r.manifest?.initial)}`);
   });
 
+  await test('manifest: a deprecated tileColor is ignored: the same manifest and diagnostics as without it', () => {
+    const plain = appSource("[]");
+    const declaring = plain.replace('capabilities: [],', "capabilities: [], tileColor: '#0369a1',");
+    assert(declaring !== plain, 'sanity: the declaring source differs from the plain one');
+    const [withColour, without] = [runStaticChecks(declaring), runStaticChecks(plain)];
+    assert(!!withColour.manifest && !Object.hasOwn(withColour.manifest, 'tileColor'), `no tileColor is extracted, got ${JSON.stringify(withColour.manifest)}`);
+    assert(JSON.stringify(withColour.manifest) === JSON.stringify(without.manifest), `the manifest is unchanged: ${JSON.stringify(withColour.manifest)} vs ${JSON.stringify(without.manifest)}`);
+    assert(JSON.stringify(withColour.diagnostics) === JSON.stringify(without.diagnostics), `the diagnostics are unchanged: ${JSON.stringify(withColour.diagnostics)}`);
+  });
+
   await test('manifest: the built-in examples\' declared tiles extract to their fixed tiles, pairwise distinct (#48/#52)', () => {
     // The real, on-disk sources of the three examples LauncherRoot.tsx#defaultSeeds() installs on
     // first run — extracted with the real static pass, not a fixture built for this test.
@@ -452,7 +462,6 @@ async function testManifestExtraction(): Promise<void> {
       const tint = m?.tint?.[0];
       assert(tint === EXAMPLE_TILES[id].tint, `${id}: expected first tint "${EXAMPLE_TILES[id].tint}", extraction found ${JSON.stringify(m?.tint)}`);
       assert(m?.icon === EXAMPLE_TILES[id].icon, `${id}: expected icon "${EXAMPLE_TILES[id].icon}", extraction found ${JSON.stringify(m?.icon)}`);
-      assert(m?.tileColor === undefined, `${id}: an example declares no legacy tileColor, extraction found ${JSON.stringify(m?.tileColor)}`);
       return { tint, icon: m?.icon };
     });
     assert(new Set(tiles.map((t) => t.tint)).size === tiles.length, `expected ${tiles.length} distinct example tints, got ${JSON.stringify(tiles)}`);

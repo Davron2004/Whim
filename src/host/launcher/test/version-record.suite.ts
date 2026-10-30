@@ -365,20 +365,22 @@ export async function runVersionRecordTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('version record: a saved manifest holds what the version declares, not the tile colour the host keeps, which stays the app’s', async () => {
+  await h.test('version record: a saved manifest holds what the version declares, and the launch runs with it', async () => {
     const state = newDeviceState();
     try {
       const { access, index } = accessOver(state);
-      // A record from before tints: the host held a legacy hex colour on the app's manifest.
       const shipped = APP_RECORDS[WATER];
-      const legacy = { ...shipped, manifest: { ...shipped.manifest, tileColor: '#0369a1' } };
-      await seedFirstRun(index, access, [{ id: WATER, name: 'Water Counter', prompt: 'count my glasses of water', record: legacy, bundleSource: APP_BUNDLES[WATER] }]);
+      await seedFirstRun(index, access, [{ id: WATER, name: 'Water Counter', prompt: 'count my glasses of water', record: shipped, bundleSource: APP_BUNDLES[WATER] }]);
       const manifestFile = JSON.parse((await state.store.active(WATER))!.artifacts['manifest.json']) as Record<string, unknown>;
       const { capabilities, tint, icon } = shipped.manifest;
       h.ok(tint !== undefined && icon !== undefined, 'setup: the shipped water-counter record declares a tint and an icon');
-      h.eq(manifestFile, { capabilities, tint, icon }, 'the saved manifest is the declaration alone, its tint and icon included');
+      h.eq(manifestFile, { capabilities, tint, icon }, 'the saved manifest is the declaration, its tint and icon included');
+      const entry = index.get(WATER)!;
+      const newer = { ...entry, record: { ...entry.record, manifest: { ...entry.record.manifest, capabilities: ['storage', 'cues'] } } };
+      h.ok(JSON.stringify(newer.record.manifest) !== JSON.stringify(manifestFile), 'setup: the index record holds a newer manifest than the saved one');
+      index.put(newer);
       const { app } = await access.activeLaunch(index.get(WATER)!);
-      h.eq(app.record.manifest.tileColor, '#0369a1', 'the launch keeps the colour the app has');
+      h.eq(app.record.manifest, manifestFile, 'the launch runs with the manifest the version saved, not the index record’s');
     } finally {
       disposeDeviceState(state);
     }

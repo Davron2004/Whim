@@ -14,7 +14,7 @@ record only from the literal `defineApp` argument the check stage already extrac
 prose, a second parse, or anything the candidate reports at run time. The check stage SHALL resolve them
 through the shared name resolver (aliases, then the deterministic fallback) and SHALL record a warning
 diagnostic for every alias or fallback it applied; a tint or icon name SHALL never be an error, fail a run or
-trigger a repair turn. A legacy `tileColor` SHALL be carried through unvalidated for the host to map.
+trigger a repair turn. A deprecated `tileColor` SHALL NOT be extracted or delivered, whatever its value.
 
 #### Scenario: Manifest comes from extraction, not from the model
 
@@ -44,8 +44,8 @@ trigger a repair turn. A legacy `tileColor` SHALL be carried through unvalidated
 
 #### Scenario: A reserved or malformed colour is dropped
 
-- **WHEN** a candidate declares a legacy `tileColor` that is malformed or equal to a reserved status hue
-- **THEN** the run is otherwise unaffected, the manifest carries the literal unvalidated, and no tile shows that colour: the host maps a hex to the nearest tint and drops anything else for the app's fallback tint
+- **WHEN** a candidate declares a deprecated `tileColor`, valid, malformed or equal to a reserved status hue
+- **THEN** the delivered manifest carries no `tileColor`, no diagnostic is recorded for it, and the run is otherwise unaffected
 
 ### Requirement: Clarify picks each question's answer mode, and delegated questions are decided in the open
 The clarify prompt SHALL instruct the model to mark a question `select: 'many'` only when several options can sensibly hold together, and `other: true` only when the options can't cover the likely answers. Because the plan page shows the questions beside the plan and "Decide for me" is every question's default, plan writing SHALL leave every question on the page out of the plan rows, and generation SHALL decide every question still delegated with `decide: true` and follow every answered one.

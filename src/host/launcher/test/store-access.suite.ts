@@ -18,7 +18,7 @@ import { PendingPurgeStore, completeInterruptedPurges, type PurgeDeps } from '..
 import { PendingBuildStore } from '../pending-builds';
 import { RunJournalStore } from '../run-journal';
 import { TINT_NAMES, TINTS, type TintName } from '../../../design/tokens';
-import { deltaE, nearestTint } from '../../../design/tints';
+import { deltaE, fallbackTint } from '../../../design/tints';
 
 const REC = (id: string): AppRecord => ({ appId: id, name: id, manifest: { capabilities: ['storage'] } });
 
@@ -632,16 +632,15 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     const { index, access } = harnessAccess();
     await access.install({ id: 'old', name: 'Old App', record: REC('old'), bundleSource: 'V1', prompt: 'p1' });
     // As stored before this change: no tint, no glyph, an old hex colour on the manifest.
-    const legacy: InstalledApp = {
-      id: 'old', name: 'Old App', createdAt: 1, lineageId: 'main',
-      record: { appId: 'old', name: 'Old App', manifest: { capabilities: [], tileColor: '#0369a1' } },
-    };
+    const other = TINT_NAMES.find((t) => t !== fallbackTint('old'))!;
+    const manifest = { capabilities: [], tileColor: TINTS[other].light };
+    const legacy: InstalledApp = { id: 'old', name: 'Old App', createdAt: 1, lineageId: 'main', record: { appId: 'old', name: 'Old App', manifest } };
     index.put(legacy);
     const before = tileOf(index.get('old')!);
-    h.eq(before.tint, nearestTint('#0369a1'), 'precondition: it reads the nearest tint');
+    h.eq(before.tint, fallbackTint('old'), `precondition: it reads the app id’s fallback, not ${other}, whose light value the stray colour is`);
     await access.update(legacy, { record: REC('old'), bundleSource: 'V2', prompt: 'p2' });
     h.eq(index.get('old')?.tint, before.tint, 'the rebuild wrote down the tint it was showing');
-    h.eq(tileOf(index.get('old')!), before, 'though the new record has no colour at all');
+    h.eq(tileOf(index.get('old')!), before, 'and still shows it');
   });
 
   await h.test('tile: a copy takes the tint farthest from its original among the least used, and the same glyph', async () => {

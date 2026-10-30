@@ -165,11 +165,8 @@ export interface AppSpec {
   /** The tile's glyph: one icon name from the glyph set. Extracted statically; an unknown name
    *  resolves by keyword, else draws a circle. */
   icon?: string;
-  /** @deprecated Declare `tint` instead; a `tileColor` maps to the nearest tint.
-   *  A `#rrggbb` LITERAL, extracted statically from this `defineApp` argument exactly as
-   *  `capabilities` is — never obtained by executing or introspecting the bundle. With no `tint`,
-   *  the host shows the tint whose light value is nearest it (ΔE2000); a value that is not a hex
-   *  is ignored and the app gets its fallback tint. */
+  /** @deprecated Declare `tint` instead. Still accepted so older sources compile, and ignored:
+   *  it is not extracted and does not change the tile. */
   tileColor?: string;
 }
 

@@ -30,7 +30,7 @@ isTileGlyph(v: unknown): v is TileGlyph            // glyph set or 'circle' (nev
 isTileIdentity(v: unknown): v is TileIdentity
 declaredTile(manifest: object, appId: string, appName: string): TileDeclaration
   // tint: string | string[]; first 3 entries, each via resolveTint (aliases; unknown → fallbackTint(appId)),
-  // repeats dropped. No tint → [nearestTint(tileColor)] if a hex tileColor, else [fallbackTint(appId)].
+  // repeats dropped. No tint → [fallbackTint(appId)] (a `tileColor` is ignored).
   // icon: resolveGlyph(icon ?? '', appName).name. Never throws.
 assignTile(declared, installed: readonly InstalledApp[]): TileIdentity     // assignTint over tileOf(installed)
 copyTile(original: InstalledApp, installed): TileIdentity                  // tileOf(original).icon + farthestTint

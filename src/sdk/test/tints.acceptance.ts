@@ -14,7 +14,6 @@ import {
   farthestTint,
   isTintName,
   mixHex,
-  nearestTint,
   resolveTint,
   TINT_ALIASES,
   type Lab,
@@ -47,6 +46,13 @@ for (const [a, b, want] of SHARMA) {
   assert.ok(Math.abs(got - want) < 1e-4, `CIEDE2000 ${JSON.stringify(a)} vs ${JSON.stringify(b)}: got ${got.toFixed(4)}, Sharma et al. give ${want}`);
 }
 assert.deepStrictEqual(deltaE('#535E6F', '#535E6F'), 0, 'a colour is no distance from itself');
+let shortHex = '';
+try {
+  deltaE('#fff', '#FFFFFF');
+} catch (err) {
+  shortHex = String(err);
+}
+assert.ok(/not a hex colour/.test(shortHex), `only #rrggbb is a colour: a short #rgb is refused, not guessed (threw ${JSON.stringify(shortHex)})`);
 
 // ── WCAG contrast and mixing ─────────────────────────────────────────────────
 
@@ -109,17 +115,6 @@ for (const [id, hash] of [['water-counter', 465493845], ['app-1', 253335012], ['
 // An independent djb2 (BigInt, no shifts) agrees on every generated id.
 const referenceDjb2 = (text: string): bigint => [...Buffer.from(text)].reduce((h, c) => (h * 33n + BigInt(c)) % 2n ** 32n, 5381n);
 for (const id of ids) assert.deepStrictEqual(fallbackTint(id), TINT_NAMES[Number(referenceDjb2(id) % 10n)], `fallbackTint(${id}) follows the djb2 hash`);
-
-// ── Nearest tint for an installed hex tileColor ──────────────────────────────
-
-for (const name of TINT_NAMES) {
-  assert.deepStrictEqual(nearestTint(TINTS[name].light), name, `a tint's own light value is nearest to it (${name})`);
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(TINTS[name].light.slice(i, i + 2), 16));
-  const nudged = '#' + [r + 2, g - 2, b + 1].map((c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0')).join('');
-  assert.deepStrictEqual(nearestTint(nudged), name, `a colour a step off ${name}'s light value (${nudged}) is still nearest to it`);
-}
-assert.deepStrictEqual(nearestTint('#fff'), nearestTint('#FFFFFF'), 'short and long hex forms are the same colour');
-for (const bad of ['', 'blue', '#12345', '#GGGGGG', 'rgb(0,0,0)']) assert.deepStrictEqual(nearestTint(bad), undefined, `${JSON.stringify(bad)} is not a hex colour`);
 
 // ── Assignment ───────────────────────────────────────────────────────────────
 

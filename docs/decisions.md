@@ -1724,3 +1724,10 @@ rejected option was the right one.
 - **A failed switch does not cost an older Undo.** An Undo whose newer switch is still running waits
   for it; it is dropped only if that switch lands.
 
+
+### 83. The legacy `tileColor` read path is removed; a tint-less record shows its fallback tint `[DECIDED — PO ruling 24 under the owner's delegation, 2026-10-30; openspec: design-system-v1 tileColor-removal piece; supersedes #75's nearest-tint mapping of installed hex colours]`
+
+The host no longer maps a stored or wire `tileColor` to the nearest tint (`nearestTint` is deleted). Pre-release there
+are no installed tester builds, and the generator stopped emitting `tileColor` in design-system-v1 chain 23. `defineApp`
+still accepts `tileColor` as an ignored, deprecated type, so no vc-sdk export is removed and older sources compile.
+The checker no longer extracts it. A record with no declared or stored tint shows its app id's fallback tint.

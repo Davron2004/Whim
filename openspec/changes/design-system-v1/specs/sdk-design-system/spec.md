@@ -79,7 +79,7 @@ Every SDK component, including the additions of this change (`Icon`, `Stepper`, 
 ### Requirement: An app declares its one tile colour
 
 **Reason**: A free hex `tileColor` is replaced by named `tint` and `icon`.
-**Migration**: `defineApp` keeps accepting `tileColor` (deprecated); an installed hex maps to the nearest tint light value by ΔE2000.
+**Migration**: `defineApp` keeps accepting `tileColor` (deprecated) and ignores it; a tile takes the declared `tint`, else the app id's fallback tint. See "An app names its tint and glyph, and every name resolves".
 
 ## ADDED Requirements
 
@@ -173,7 +173,7 @@ SDK components SHALL take their sizes, radii, colours and states from `system.md
 
 ### Requirement: The SDK adds components and deprecates without removing
 
-The SDK SHALL add `Icon`, `Stepper`, `DateInput`, `Picker`, `toast(text)`, `Screen` `title` and `action`, `icon` on `Button`, `ListItem` and `EmptyState`, and `ProgressBar` `variant: 'ring'` and `label`, as specified in `system.md` §7.2. `Heading`, the `radius` prop of `Button` and `Card`, and `defineApp` `tileColor` SHALL keep working and SHALL be absent from `docs/sdk-reference.md`. No export SHALL be removed.
+The SDK SHALL add `Icon`, `Stepper`, `DateInput`, `Picker`, `toast(text)`, `Screen` `title` and `action`, `icon` on `Button`, `ListItem` and `EmptyState`, and `ProgressBar` `variant: 'ring'` and `label`, as specified in `system.md` §7.2. `Heading` and the `radius` prop of `Button` and `Card` SHALL keep working, `defineApp` SHALL keep accepting `tileColor` and ignore it, and all three SHALL be absent from `docs/sdk-reference.md`. No export SHALL be removed.
 
 #### Scenario: An installed app using Heading still renders
 
