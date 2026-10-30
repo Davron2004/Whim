@@ -6,7 +6,7 @@ Planner output (side-track planner, 2026-10-30). Read-only: no code was run. Eac
 
 - [ ] F204 — first-run sheet: Language row above the summary
 - [ ] F193 — Report page title and Cancel in Android dark mode (verify-first)
-- [ ] F177 — copy suite live-write timing check cannot fail from scheduling
+- [x] F177 — copy suite live-write timing check cannot fail from scheduling
 
 ## F204
 
