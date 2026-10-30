@@ -724,3 +724,5 @@ synthrun UDP canary flake only (#172), `44532e5c` pass. Not done from the chain 
 - #227 fix-pass runner: gate.sh exit 0 (FAST GATE PASSED, no ^FAIL), integrity OK (allowlist + system.md), system.md diff = §5 "Try again" → "Try again (Failure page)" only, ratchet PASS (no authorised lines), 0 trailers. Verdict handoff/227-runner.md in the worktree.
 - merged: tileColor `923a0243` (--no-ff) after F177's regate passed. Regate runner dispatched; #227 merges after it.
 - #228 filed (`ai-proposed`): shell test for the `failure()` announce path (review LOW).
+- regate-pass after tileColor (runner): gate.sh on `75b9bdb6` exit 0, FAST GATE PASSED, no ^FAIL, tree clean. Worktree + branch chain/design-system-v1-tilecolor removed.
+- merged: #227 `43d117da` (--no-ff; system.md auto-merged, different sections). Regate runner dispatched.
