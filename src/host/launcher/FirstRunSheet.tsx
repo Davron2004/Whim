@@ -217,6 +217,9 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
         <Text color="text-2">{copy.firstRunLead}</Text>
       </View>
       <GroupedSection on="sheet">
+        <GroupedRow title={copy.firstRunLanguage} trailing={{ kind: 'value', text: copy.legalLanguageSwitch }} onPress={() => onLanguageChange(otherLegalLanguage(language))} />
+      </GroupedSection>
+      <GroupedSection on="sheet">
         <GroupedRow icon="arrow-up" title={copy.firstRunSentTitle} subtitle={firstRunSentText(copy)} />
         <GroupedRow icon="phone" title={copy.firstRunStaysTitle} subtitle={copy.firstRunStays} />
         <GroupedRow icon="lock" title={copy.firstRunNeverTitle} subtitle={copy.firstRunNever} />
@@ -226,9 +229,6 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
         <GroupedRow title={copy.firstRunDetails} trailing={{ kind: 'chevron', expanded }} onPress={() => setExpanded((open) => !open)} />
       </GroupedSection>
       {expanded ? <Disclosure language={language} /> : null}
-      <GroupedSection on="sheet">
-        <GroupedRow title={copy.firstRunLanguage} trailing={{ kind: 'value', text: copy.legalLanguageSwitch }} onPress={() => onLanguageChange(otherLegalLanguage(language))} />
-      </GroupedSection>
     </KeyboardShell>
   );
 }
