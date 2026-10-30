@@ -172,10 +172,10 @@
 - [x] 21.1 `copy.ts` glossary sweep (app, make, change, History, version, Use this version, Stop, Decide for me, Make a copy, Your apps, Discard, Delete; the before/after table of `system.md` §8); tag keys as control or prose
 - [x] 21.2 Copy lint in `checks/test/repo/design-system.suite.ts`: retired words and Whim first person on control keys fail; extend `product-verbs.suite.ts`; numbers formatted with the copy table's language (#89)
 - [x] 21.3 Whim Syntax renderer: simplified channels, `state` = ready/failed only, cap and flat-render rules kept; delete `highlighting.ts` and the stored preference
-- [ ] 21.4 Delete the retired components and constants (`SheetModal`, `ActionSheet`, `RunDetailsSheet`, `ServiceNotice`, `PrimaryAction`, `SHELL_PALETTE`, `src/sdk/design-tokens.ts` shell exports no longer read, `KIND_BADGE_COLORS`, `FONT_FAMILY` and the `TYPE_SCALE` face fields, `ghostTileColorFor`, `monogram`, `manifest-tile-color.ts`, `appColor`); point every remaining consumer at `useTokens()` and the tints
+- [x] 21.4 Delete the retired components and constants (`SheetModal`, `ActionSheet`, `RunDetailsSheet`, `ServiceNotice`, `PrimaryAction`, `SHELL_PALETTE`, `src/sdk/design-tokens.ts` shell exports no longer read, `KIND_BADGE_COLORS`, `FONT_FAMILY` and the `TYPE_SCALE` face fields, `ghostTileColorFor`, `monogram`, `manifest-tile-color.ts`, `appColor`); point every remaining consumer at `useTokens()` and the tints
 - [x] 21.5 Update `whim-prose`, `consent-coverage` and copy-asserting suites
 
-- [ ] 21.9 (orchestrator, after chain-23's class-B note) `build/build.mjs` extracts `tint`/`icon` from fixture manifests (manifests are extracted at build time — no second source of truth, #41); then remove the legacy `tileColor` from tip-splitter, water-counter and style-gallery and update `checks/test/acceptance.ts` + `tile-colour.suite.ts` to assert tint/icon instead. HUMAN-BOOTSTRAP (`build/` is gate CONFIG_SET: commit the build.mjs edit first). Do after chains 15/20 move the shell to `tileOf()`.
+- [x] 21.9 (orchestrator, after chain-23's class-B note) `build/build.mjs` extracts `tint`/`icon` from fixture manifests (manifests are extracted at build time — no second source of truth, #41); then remove the legacy `tileColor` from tip-splitter, water-counter and style-gallery and update `checks/test/acceptance.ts` + `tile-colour.suite.ts` to assert tint/icon instead. HUMAN-BOOTSTRAP (`build/` is gate CONFIG_SET: commit the build.mjs edit first). Do after chains 15/20 move the shell to `tileOf()`.
 
 ## 22. Shell motion
 
