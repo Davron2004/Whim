@@ -183,22 +183,6 @@ export function deltaE(a: string, b: string): number {
 
 // ── Host assignment ──────────────────────────────────────────────────────────
 
-/** The tint whose light value is nearest `hex` (an installed app's old hex `tileColor`), or
- *  undefined when `hex` is not a hex colour. */
-export function nearestTint(hex: string): TintName | undefined {
-  if (channels(hex) === undefined) return undefined;
-  let best: TintName = TINT_NAMES[0];
-  let bestDistance = Infinity;
-  for (const name of TINT_NAMES) {
-    const d = deltaE(hex, TINTS[name].light);
-    if (d < bestDistance) {
-      best = name;
-      bestDistance = d;
-    }
-  }
-  return best;
-}
-
 function tintCounts(used: readonly TintName[]): Map<TintName, number> {
   const counts = new Map<TintName, number>(TINT_NAMES.map((n) => [n, 0]));
   for (const t of used) if (counts.has(t)) counts.set(t, (counts.get(t) ?? 0) + 1);

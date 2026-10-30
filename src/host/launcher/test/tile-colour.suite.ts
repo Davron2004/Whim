@@ -1,8 +1,8 @@
 /**
  * tile-colour Node suite (design-system-v1 chain-12, task 12.5). An installed app's tile identity —
  * its tint and glyph (`tile-identity.ts`): what a manifest declares, the seeded examples' fixed
- * tiles, the #127 guard, the read path for records from before tints (a legacy hex `tileColor`
- * mapped to the nearest tint), the override's validation. Assignment against a real index,
+ * tiles, the #127 guard, the read path for records from before tints (a stray `tileColor` is
+ * ignored), the override's validation. Assignment against a real index,
  * rebuilds, copies and the wire → record mapping are in `store-access.suite.ts` and
  * `build-lifecycle.suite.ts`.
  */
@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Harness } from './harness';
 import { TINT_NAMES, TINTS } from '../../../design/tokens';
-import { fallbackTint, isTintName, nearestTint } from '../../../design/tints';
+import { fallbackTint, isTintName } from '../../../design/tints';
 import { GLYPH_NAMES } from '../../../design/icons/names';
 import { reservedColors } from '../../../../scripts/lib/design-tokens';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
@@ -55,28 +55,14 @@ function sameTile(a: TileIdentity, b: TileIdentity): boolean {
 }
 
 export async function runTileColourTests(h: Harness): Promise<void> {
-  // ── a legacy hex `tileColor` — mapped to a tint on read, never painted as itself ──
-  await h.test('legacy tileColor: a tint’s own light value, in any case, ranks that tint', async () => {
-    for (const t of TINT_NAMES) {
-      h.eq(declaredTile({ tileColor: TINTS[t].light }, 'app-1', 'Any').ranked, [t], `${t} light value`);
-      h.eq(declaredTile({ tileColor: TINTS[t].light.toLowerCase() }, 'app-1', 'Any').ranked, [t], `${t} light value, lower case`);
-    }
-  });
-
-  await h.test('legacy tileColor: anything that is not a hex ranks what no colour ranks, the app id’s fallback', async () => {
+  // ── a stray `tileColor` (deprecated, from before tints) — ignored on read ──
+  await h.test('stray tileColor: no value of it changes the ranking, which is the app id’s fallback, as with no colour', async () => {
     const none = declaredTile({}, 'app-x', 'Water Counter').ranked;
     h.eq(none, [fallbackTint('app-x')], 'no colour: the fallback tint for the app id');
-    for (const bad of ['not-a-hex', '#zzzzzz', 'ffaa00', '#12345', '', 42, null]) {
-      h.eq(declaredTile({ tileColor: bad }, 'app-x', 'Water Counter').ranked, none, `${JSON.stringify(bad)} falls back like no colour`);
-    }
-  });
-
-  await h.test('legacy tileColor: a reserved status colour is mapped to its nearest tint, never shown as itself', async () => {
-    for (const reserved of RESERVED) {
-      const nearest = nearestTint(reserved);
-      h.ok(nearest !== undefined, `precondition: ${reserved} is a hex the host maps`);
-      const [ranked] = declaredTile({ tileColor: reserved }, 'app-x', 'Budget').ranked;
-      h.eq(ranked, nearest, `${reserved} ranks its nearest tint`);
+    const otherTints = TINT_NAMES.filter((t) => t !== fallbackTint('app-x'));
+    h.ok(otherTints.length === TINT_NAMES.length - 1, 'sanity: nine tints’ light values differ from the fallback, so a colour that picked a tint would show');
+    for (const colour of [...otherTints.map((t) => TINTS[t].light), ...RESERVED, 'not-a-hex', '#zzzzzz', '', 42, null]) {
+      h.eq(declaredTile({ tileColor: colour }, 'app-x', 'Water Counter').ranked, none, `${JSON.stringify(colour)} ranks like no colour`);
     }
   });
 
@@ -165,7 +151,8 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     h.ok(unknown.length === 1 && isTintName(unknown[0]), 'an unknown name still ranks one tint');
     h.eq(declaredTile({ tint: 'chartreuse' }, 'app-x', 'B').ranked, unknown, 'chosen by the app id, not the name');
     h.eq(declaredTile({ tint: 'stone', tileColor: TINTS.ocean.light }, 'a', 'A').ranked, ['stone'], 'a declared tint wins over an old colour');
-    h.eq(declaredTile({ tileColor: TINTS.ocean.light }, 'a', 'A').ranked, ['ocean'], 'with no tint, an old colour ranks its nearest');
+    h.ok(fallbackTint('a') !== 'ocean', 'sanity: the fallback for "a" is not ocean');
+    h.eq(declaredTile({ tileColor: TINTS.ocean.light }, 'a', 'A').ranked, [fallbackTint('a')], 'with no tint, an old colour is ignored for the fallback');
   });
 
   await h.test('declaredTile: the icon resolves to a glyph tiles can draw', async () => {
@@ -179,11 +166,11 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     h.eq(declaredTile({ icon: 42 }, 'a', 'Q').icon, 'circle', 'a non-string icon with nothing to go on is the circle');
   });
 
-  await h.test('tileOf: an old record with a hex colour and no tint shows the nearest tint', async () => {
-    const record = { appId: 'old', name: 'Old App', manifest: { capabilities: [], tileColor: '#0369a1' } };
+  await h.test('tileOf: an old record with a hex colour and no tint shows its fallback tint', async () => {
+    const record = { appId: 'old', name: 'Old App', manifest: { capabilities: [], tileColor: TINTS.ocean.light } };
     const legacy: InstalledApp = { id: 'old', name: 'Old App', createdAt: 1, record, lineageId: 'main' };
-    h.ok(nearestTint('#0369a1') !== fallbackTint('old'), 'sanity: the colour and the app id pick different tints, so this is not vacuous');
-    h.eq(tileOf(legacy).tint, nearestTint('#0369a1'), 'the nearest tint by ΔE2000');
+    h.ok(fallbackTint('old') !== 'ocean', 'sanity: the colour (ocean’s own light value) and the app id pick different tints, so this is not vacuous');
+    h.eq(tileOf(legacy).tint, fallbackTint('old'), 'the app id’s fallback, not the colour');
   });
 
   await h.test('override: only a tint and a tile glyph are accepted; an app that is not installed is null', async () => {

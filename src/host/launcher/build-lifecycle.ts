@@ -67,19 +67,15 @@ export function freshAppId(): string {
  *  expect (design D5 "record: <mapped from wire>"). The wire's `manifest`/`schema` only need to
  *  round-trip on the wire (`ManifestShape`/`SchemaShape` are generic records) — they are
  *  structurally the same shapes `AppManifest`/`SchemaArtifact` describe, matching every fixture
- *  `APP_RECORDS` already ships. A legacy `tileColor` the wire carries through unvalidated
- *  (generation-pipeline) stays on the record only as the string `AppManifest` types it as, for
- *  `tile-identity.ts#declaredTile` to map to the nearest tint; anything else under that key is
- *  dropped. `schemaArtifact` is omitted entirely when the wire schema has no keys, the same
+ *  `APP_RECORDS` already ships. `schemaArtifact` is omitted entirely when the wire schema has no keys, the same
  *  "only when the app actually declares storage" convention every other record in
  *  `app-records.ts` follows. */
 export function mapWireRecord(appId: string, wire: WireAppRecord): AppRecord {
   const hasSchema = Object.keys(wire.schema).length > 0;
-  const { tileColor, ...declared } = wire.manifest;
   return {
     appId,
     name: wire.name,
-    manifest: { ...(declared as unknown as AppManifest), ...(typeof tileColor === 'string' ? { tileColor } : {}) },
+    manifest: wire.manifest as unknown as AppManifest,
     ...(hasSchema ? { schemaArtifact: wire.schema as unknown as SchemaArtifact } : {}),
   };
 }

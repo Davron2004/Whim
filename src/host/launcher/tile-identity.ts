@@ -10,11 +10,12 @@
  * host fields: a rebuild never re-assigns them (`StoreAccess.update` carries them forward).
  *
  * `tileOf` is the one read path: override, else the assignment, else — for a record installed
- * before tints existed — its old hex `tileColor` mapped to the nearest tint. Pure; no React import.
+ * before tints existed — what its manifest declares, else the app id's fallback tint. Pure; no React
+ * import.
  */
 
 import type { TintName } from '../../design/tokens';
-import { assignTint, fallbackTint, farthestTint, isTintName, nearestTint, resolveTint } from '../../design/tints';
+import { assignTint, fallbackTint, farthestTint, isTintName, resolveTint } from '../../design/tints';
 import { FALLBACK_ICON, GLYPH_NAMES, resolveGlyph, type GlyphName } from '../../design/icons/names';
 import type { InstalledApp } from './app-index';
 
@@ -65,7 +66,7 @@ export function isTileIdentity(value: unknown): value is TileIdentity {
 /**
  * Read a manifest's tile declaration. `tint` may be one name or a ranked list (only the first three
  * count); every entry resolves through `resolveTint` (aliases, else the app id's fallback). With no
- * `tint`, an old hex `tileColor` ranks its nearest tint, else the app id's fallback does. `icon`
+ * `tint`, the app id's fallback ranks alone. `icon`
  * resolves through `resolveGlyph` (aliases, then keywords on the icon name and the app name, else
  * the circle). Never throws: the manifest is untyped wire data.
  */
@@ -79,10 +80,7 @@ export function declaredTile(manifest: object, appId: string, appName: string): 
     const { tint } = resolveTint(name, appId);
     if (!ranked.includes(tint)) ranked.push(tint);
   }
-  if (ranked.length === 0) {
-    const legacy = typeof m.tileColor === 'string' ? nearestTint(m.tileColor) : undefined;
-    ranked.push(legacy ?? fallbackTint(appId));
-  }
+  if (ranked.length === 0) ranked.push(fallbackTint(appId));
   const icon = resolveGlyph(typeof m.icon === 'string' ? m.icon : '', appName).name;
   return { ranked, icon };
 }
@@ -126,8 +124,8 @@ export function resolveTileRequest(request: TileRequest, installed: readonly Ins
 }
 
 /** The host's assignment for an app, without any override. A record from before tints existed has
- *  none stored: a seeded example reads its fixed tile; any other reads its manifest (an old hex
- *  `tileColor` maps to the nearest tint) the way an install would have ranked it. */
+ *  none stored: a seeded example reads its fixed tile; any other reads its manifest the way an
+ *  install would have ranked it. */
 export function assignedTile(app: InstalledApp): TileIdentity {
   if (isTintName(app.tint) && isTileGlyph(app.icon)) return { tint: app.tint, icon: app.icon };
   if (app.example && Object.hasOwn(EXAMPLE_TILES, app.id)) return EXAMPLE_TILES[app.id];

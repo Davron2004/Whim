@@ -1,7 +1,7 @@
 /**
  * static-check-pipeline — manifest extraction pass (task 5.1, spec "The app manifest is
  * extracted statically, literal-only"). Reads the single default-exported `defineApp({...})`
- * literal into `{name, initial, screens, capabilities, schema, tileColor, tint, icon}`; any REQUIRED field that is not
+ * literal into `{name, initial, screens, capabilities, schema, tint, icon}`; any REQUIRED field that is not
  * statically analyzable produces a `manifest_not_static` error. `ctx.manifest` is set ONLY
  * when the four required fields (name/initial/screens/capabilities) all extract cleanly —
  * `schema` stays optional (its own extraction failure is reported but does not block the rest
@@ -126,18 +126,6 @@ function extractSchemaField(
   return { ok: true, value: resolved.value };
 }
 
-/**
- * `tileColor` is legacy (deprecated by `tint`), optional AND non-blocking: an absent or
- * non-string-literal declaration extracts nothing and raises no diagnostic. Only the literal value
- * is lifted here, unvalidated — the host maps it to the nearest tint where it consumes it.
- */
-function extractTileColorField(obj: ts.ObjectLiteralExpression): string | undefined {
-  const prop = getProperty(obj, 'tileColor');
-  if (!prop || !ts.isPropertyAssignment(prop)) return undefined;
-  const conv = literalToJson(prop.initializer);
-  return conv.ok && typeof conv.value === 'string' ? conv.value : undefined;
-}
-
 // ── Tile identity: `tint` and `icon` (design-system-v1 D5) ─────────────────────────────────
 // Both are optional and NEVER an error: every alias or fallback applied is a warning diagnostic,
 // and the server's check stage keeps those out of the repair loop (`TILE_DIAGNOSTIC_KINDS`).
@@ -244,7 +232,6 @@ export const manifestExtractionPass: Pass = (ctx: CheckContext) => {
   const screens = extractScreensField(sourceFile, argument, errors);
   const capabilities = extractCapabilitiesField(sourceFile, argument, errors);
   const schema = extractSchemaField(sourceFile, argument, errors);
-  const tileColor = extractTileColorField(argument);
   const warnings: Diagnostic[] = [];
   const tile = extractTileFields(sourceFile, argument, name.ok ? name.value : undefined, warnings);
 
@@ -258,7 +245,6 @@ export const manifestExtractionPass: Pass = (ctx: CheckContext) => {
       screens: screens.value,
       capabilities: capabilities.value,
       ...(schema.ok ? { schema: schema.value } : {}),
-      ...(tileColor !== undefined ? { tileColor } : {}),
       ...tile,
     };
   }

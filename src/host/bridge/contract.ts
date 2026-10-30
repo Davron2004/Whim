@@ -255,12 +255,6 @@ export interface CueBackend {
  *  runtime self-description. */
 export interface AppManifest {
   capabilities: string[];
-  /** A legacy tile colour (`#rrggbb`, deprecated by `tint`), extracted at build/generation time
-   *  from the literal `defineApp` argument exactly like `capabilities` and carried through
-   *  unvalidated (generation-pipeline). Host-held, never re-derived from the running bundle. For a
-   *  record with no `tint`, `src/host/launcher/tile-identity.ts#declaredTile` maps a hex to the
-   *  nearest tint and ignores anything else. */
-  tileColor?: string;
   /** The app's declared tile tints, ranked, as the static checker's manifest extraction resolved
    *  them (decision #41: the one `defineApp` extraction, at build/generation time). Plain strings
    *  here so the bridge contract imports no design types: the launcher re-validates them against

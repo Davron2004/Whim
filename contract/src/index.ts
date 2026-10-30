@@ -140,8 +140,7 @@ const SchemaShape = z.record(z.string(), z.unknown());
  *  already carries capabilities — and is deliberately NOT a set of top-level fields: manifest data
  *  has exactly one source. `manifest.tint` is the app's ranked tint names (1–3, already resolved to
  *  the ten, aliases applied, unknown names dropped; absent when none resolved) and `manifest.icon`
- *  its resolved glyph name (absent when none was declared). A legacy `manifest.tileColor` (a hex
- *  string from an older build) may still appear, unvalidated. `manifest` stays an untyped record on
+ *  its resolved glyph name (absent when none was declared). `manifest` stays an untyped record on
  *  the wire; the host validates and assigns the tint where it consumes it. */
 export const WireAppRecord = z.object({
   name: z.string(),
