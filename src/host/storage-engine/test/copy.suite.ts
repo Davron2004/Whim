@@ -237,33 +237,62 @@ export async function runCopyTests(root: string, h: CopySuiteHelpers): Promise<v
     store.open(notesV2);
 
     // The snapshot holds a read transaction on the source for its whole run. Another PROCESS holds
-    // one here (this thread cannot hold the lock and also be the blocked writer), released after
-    // HOLD_MS, so the write below meets the lock deterministically and must outlast it.
-    const HOLD_MS = 400;
+    // one here (this thread cannot hold the lock and also be the blocked writer). It keeps the lock
+    // until it SEES the marker file the parent writes immediately before the append, then holds for
+    // HOLD_AFTER_MARKER from its own observation and commits. No clock is shared with the parent's
+    // scheduling: the write cannot return before the child's reported commit time.
+    const HOLD_AFTER_MARKER = 300;
+    const marker = path.join(dir, 'append-is-next');
     const holder = spawn(
       process.execPath,
       [
         '-e',
-        `const { DatabaseSync } = require('node:sqlite');
+        `const fs = require('node:fs');
+         const { DatabaseSync } = require('node:sqlite');
          const db = new DatabaseSync(process.argv[1]);
          db.exec('BEGIN'); db.prepare('SELECT count(*) FROM "c1"').all();
          process.stdout.write('held\\n');
-         setTimeout(() => { db.exec('COMMIT'); db.close(); }, ${HOLD_MS});`,
+         const poll = setInterval(() => {
+           if (!fs.existsSync(process.argv[2])) return;
+           clearInterval(poll);
+           setTimeout(() => {
+             db.exec('COMMIT'); db.close();
+             process.stdout.write('committed ' + Date.now() + '\\n');
+           }, ${HOLD_AFTER_MARKER});
+         }, 2);`,
         src,
+        marker,
       ],
       { stdio: ['ignore', 'pipe', 'inherit'] },
     );
     const exited = new Promise<number | null>(resolve => holder.once('exit', code => resolve(code)));
+    let seen = '';
+    const lines = (until: RegExp): Promise<void> =>
+      new Promise<void>((resolve, reject) => {
+        const check = (): boolean => {
+          if (!until.test(seen)) return false;
+          holder.stdout.off('data', onData);
+          holder.off('error', reject);
+          holder.off('exit', onExit);
+          resolve();
+          return true;
+        };
+        const onData = (chunk: Buffer): void => {
+          seen += chunk.toString();
+          check();
+        };
+        const onExit = (): void => {
+          if (!check()) reject(new Error('the lock holder exited before it printed what the test waits for'));
+        };
+        holder.stdout.on('data', onData);
+        holder.once('error', reject);
+        holder.once('exit', onExit);
+        check();
+      });
     try {
-      await withTimeout(
-        new Promise<void>((resolve, reject) => {
-          holder.stdout.once('data', () => resolve());
-          holder.once('error', reject);
-          holder.once('exit', () => reject(new Error('the lock holder exited before it held the lock')));
-        }),
-        10_000,
-      );
+      await withTimeout(lines(/held\n/), 10_000);
 
+      fs.writeFileSync(marker, 'go');
       const started = Date.now();
       let thrown: unknown;
       try {
@@ -271,9 +300,12 @@ export async function runCopyTests(root: string, h: CopySuiteHelpers): Promise<v
       } catch (err) {
         thrown = err;
       }
-      const waited = Date.now() - started;
+      const doneAt = Date.now();
+      const waited = doneAt - started;
+      await withTimeout(lines(/committed \d+\n/), 10_000);
+      const committedAt = Number(/committed (\d+)/.exec(seen)?.[1]);
       ok(thrown === undefined, `live write during a snapshot: the write that met the lock did not throw (got ${String(thrown)})`);
-      ok(waited >= HOLD_MS / 2, `live write during a snapshot: the write waited for the lock instead of slipping past it (${waited} ms)`);
+      ok(doneAt >= committedAt - 25, `live write during a snapshot: the write did not return before the lock was released (returned ${committedAt - doneAt} ms early)`);
       ok(waited < BUSY_TIMEOUT_MS, `live write during a snapshot: the write finished inside the busy timeout (${waited} ms)`);
       eq(await withTimeout(exited, 10_000), 0, 'live write during a snapshot: the lock holder released the lock and exited cleanly');
       eq(store.records.list('Notes').some(r => r.title === 'written during the snapshot'), true, 'live write during a snapshot: the write is in the store');
