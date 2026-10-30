@@ -18,6 +18,7 @@
 import React, { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { LAYOUT, SPACE } from '../../design/tokens';
+import { haptics } from '../haptics';
 import { TilePlate } from '../ui/AppTile';
 import { GroupedRow, GroupedSection } from '../ui/GroupedList';
 import { Icon } from '../ui/Icon';
@@ -138,7 +139,11 @@ function SendArea({ text, onChangeText, onSend }: Readonly<Pick<WhimSheetProps, 
         onBlur={() => setFocused(false)}
       />
       <Pressable
-        onPress={onSend}
+        onPress={() => {
+          haptics.play('handoff');
+          onSend();
+        }}
+        onPressIn={() => haptics.prepare('handoff')}
         disabled={empty}
         hitSlop={hitSlopFor(SEND, t)}
         style={[s.send, { backgroundColor: colors.fill }]}

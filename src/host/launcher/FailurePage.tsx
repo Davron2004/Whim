@@ -14,9 +14,10 @@
  * nothing else. Leaving is the sheet's close (Android back included), which leaves the attempt as
  * it is, so the page registers nothing with the sheet.
  */
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { LAYOUT, SPACE } from '../../design/tokens';
+import { haptics } from '../haptics';
 import { Button } from '../ui/Button';
 import { Ember } from '../ui/Ember';
 import { GroupedRow, GroupedSection } from '../ui/GroupedList';
@@ -88,6 +89,10 @@ export default function FailurePage(props: Readonly<FailurePageProps>) {
   const { kind, reason, rephraseHelps, changing, journal = null, attemptStarted = false, notice, offline = false, onChange, onRetry, onDismiss, onNotNow } = props;
   const s = styles(useTokens());
   const [open, setOpen] = useState(false);
+  // The page mounts as the run fails: that frame is the one the failure confirms (§5, rule 7).
+  useEffect(() => {
+    haptics.play('failure');
+  }, []);
   const gated = useRetryGate(notice?.retryAt);
   const sentence = failureSentence(kind, { reason, rephraseHelps });
   const rows = whatHappened(props, sentence ?? notice?.hint ?? null);
@@ -108,6 +113,7 @@ export default function FailurePage(props: Readonly<FailurePageProps>) {
               key={action.move}
               label={action.label}
               variant={action.variant}
+              haptic={action.move === 'retry' ? 'handoff' : undefined}
               disabled={action.move === 'retry' && (gated || waiting)}
               onPress={() => moves[action.move]?.()}
             />
