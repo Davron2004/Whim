@@ -413,7 +413,7 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
       const row = button(tree, LEGAL_COPY.fr.firstRunTermsCheck);
       const listRow = button(tree, `${LEGAL_COPY.fr.firstRunLanguage}, ${LEGAL_COPY.fr.legalLanguageSwitch}`);
       h.ok(typeof style(listRow).paddingVertical === 'number' && (style(listRow).paddingVertical ?? 0) > 0, 'setup: a list row pads its words above and below');
-      h.eq(style(row).paddingVertical, style(listRow).paddingVertical, 'the terms row pads its words as the Language row above it does');
+      h.eq(style(row).paddingVertical, style(listRow).paddingVertical, 'the terms row pads its words as a list row (the Language row) does');
       const words = row.find((n) => hostType(n) === 'Text' && textOf(n) === LEGAL_COPY.fr.firstRunTermsCheck);
       let box = words.parent;
       while (box && hostType(box) === undefined) box = box.parent;
