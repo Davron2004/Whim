@@ -14,8 +14,9 @@ fixes the test's FailureKind ("generic" is not a kind; typecheck caught it) and 
   MakingPage. A retry goes Failure -> Making -> Failure: a new failed run is a new mount, plays again.
 - src/host/launcher/FailurePage.tsx:116 `haptic="handoff"` on the retry action's Button ("Try again"
   and "Try again as it is"): same Button path as "Make it" (prepare on touch-down, play on press).
-- src/host/launcher/WhimSheet.tsx:143 `haptics.play('handoff')` on the send arrow press (+ prepare on
-  press-in). "Make the change" on the plan page already passes haptic="handoff" (PlanPage:614).
+- Whim sheet Send plays nothing (fix pass): Send only opens the change's Describe/Plan, the same
+  step as Describe's Continue. The change's hand-off is "Make the change" on its plan page, which
+  already passes haptic="handoff" (PlanPage.tsx:614).
 
 ## Tests (src/host/launcher/test/haptic-moments-ui.suite.tsx, wired in acceptance.ts)
 - haptics: the Ready page plays success once as it appears, with motion / under Reduce Motion, and a re-render does not replay it

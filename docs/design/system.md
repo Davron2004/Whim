@@ -555,7 +555,7 @@ pattern): `UIImpactFeedbackGenerator` / `UISelectionFeedbackGenerator` /
 | Switch toggles | impact light | `TOGGLE_ON`/`TOGGLE_OFF`, `CONTEXT_CLICK` |
 | Long-press opens a menu | impact medium | `LONG_PRESS` |
 | A drag crosses its commit point | impact rigid 0.6 | `GESTURE_THRESHOLD_ACTIVATE`, `CONTEXT_CLICK` |
-| Work handed to Whim (Make it, Make the change, Try again) | impact medium | `CONFIRM` (API 30), `VIRTUAL_KEY` |
+| Work handed to Whim (Make it, Make the change, Try again (Failure page)) | impact medium | `CONFIRM` (API 30), `VIRTUAL_KEY` |
 | App ready; version restored; copy made | notification success | `CONFIRM` |
 | Making failed | notification error | `REJECT` (API 30), `LONG_PRESS` |
 | App deleted, attempt discarded, confirm sheet's consequential choice | notification warning | `REJECT` |

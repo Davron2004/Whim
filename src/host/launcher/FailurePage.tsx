@@ -35,6 +35,20 @@ import { runTimelineRows } from './run-timeline-view';
 import { useRetryGate } from './refusal-window';
 import { openWhimUpdate } from './UpdateRequiredScreen';
 
+/** A live failure's one confirmation (§5 "Making failed", rule 7). Each live transition onto the
+ *  Failure page makes a fresh one (`announceFailure`) and every later update of that screen carries
+ *  it unchanged; the page plays it the first time it shows and never again, so neither a re-render
+ *  nor a remount of the same failure (the sheet re-keys its pages by run) replays it. A page reopened
+ *  from its tile has none: a tapped sheet plays nothing. */
+export interface FailureAnnouncement {
+  readonly moment: 'failure';
+}
+
+export const announceFailure = (): FailureAnnouncement => ({ moment: 'failure' });
+
+/** The announcements already played, held weakly: a spent one goes with the screen that carried it. */
+const announced = new WeakSet<FailureAnnouncement>();
+
 export interface FailurePageProps {
   kind: FailureKind;
   /** The terminal event's reason, or the phone's own sentence for an error. */
@@ -63,6 +77,8 @@ export interface FailurePageProps {
   onDismiss?: () => void;
   /** "Not now" on a run only a newer Whim can finish: leave the page, the attempt kept. */
   onNotNow?: () => void;
+  /** Set only when this failure just replaced a live run's page: the failure haptic it plays once. */
+  announce?: FailureAnnouncement;
 }
 
 const styles = makeStyles(() => ({
@@ -86,13 +102,15 @@ function whatHappened(props: Readonly<FailurePageProps>, shown: string | null): 
 }
 
 export default function FailurePage(props: Readonly<FailurePageProps>) {
-  const { kind, reason, rephraseHelps, changing, journal = null, attemptStarted = false, notice, offline = false, onChange, onRetry, onDismiss, onNotNow } = props;
+  const { kind, reason, rephraseHelps, changing, journal = null, attemptStarted = false, notice, offline = false, onChange, onRetry, onDismiss, onNotNow, announce } = props;
   const s = styles(useTokens());
   const [open, setOpen] = useState(false);
-  // The page mounts as the run fails: that frame is the one the failure confirms (§5, rule 7).
+  // The frame the page first shows a live failure is the one the failure confirms.
   useEffect(() => {
+    if (announce == null || announced.has(announce)) return;
+    announced.add(announce);
     haptics.play('failure');
-  }, []);
+  }, [announce]);
   const gated = useRetryGate(notice?.retryAt);
   const sentence = failureSentence(kind, { reason, rephraseHelps });
   const rows = whatHappened(props, sentence ?? notice?.hint ?? null);
