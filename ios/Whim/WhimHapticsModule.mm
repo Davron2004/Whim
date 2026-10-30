@@ -11,10 +11,23 @@
 // ─────────────────────────────────────────────────────────────────────────────
 #import <WhimAppSpecs/WhimAppSpecs.h>
 #import <UIKit/UIKit.h>
+#import <os/log.h>
+#import <stdio.h>
 
 using namespace facebook::react;
 
 namespace {
+
+// MEASUREMENT-ONLY (design-system-v1 task 24.6): one line per module call, wall-clock epoch ms,
+// to stderr (devicectl --console) and os_log. Never merge.
+void HXLog(const char *ev, NSString *detail)
+{
+  double t = [[NSDate date] timeIntervalSince1970] * 1000.0;
+  NSString *line = [NSString stringWithFormat:@"HXN t=%.3f ev=%s %@", t, ev, detail];
+  fprintf(stderr, "%s\n", line.UTF8String);
+  static os_log_t log = os_log_create("com.whim.hx", "native");
+  os_log(log, "%{public}s", line.UTF8String);
+}
 
 constexpr int64_t kDoubleGapNanoseconds = 80 * NSEC_PER_MSEC;
 
@@ -112,21 +125,31 @@ UINotificationFeedbackType NotificationTypeForName(NSString *name)
 - (void)impact:(NSString *)style intensity:(double)intensity android:(NSString *)android
 {
   CGFloat clamped = (CGFloat)fmax(0.0, fmin(1.0, intensity));
-  [[self impactGenerator:ImpactStyleForName(style)] impactOccurredWithIntensity:clamped];
+  HXLog("enter", [NSString stringWithFormat:@"api=impact style=%@ intensity=%.2f", style, clamped]);
+  UIImpactFeedbackGenerator *generator = [self impactGenerator:ImpactStyleForName(style)];
+  HXLog("engine", [NSString stringWithFormat:@"api=impact style=%@ intensity=%.2f", style, clamped]);
+  [generator impactOccurredWithIntensity:clamped];
 }
 
 - (void)selection:(NSString *)android
 {
-  [[self selectionGenerator] selectionChanged];
+  HXLog("enter", @"api=selection");
+  UISelectionFeedbackGenerator *generator = [self selectionGenerator];
+  HXLog("engine", @"api=selection");
+  [generator selectionChanged];
 }
 
 - (void)notification:(NSString *)kind android:(NSString *)android
 {
-  [[self notificationGenerator] notificationOccurred:NotificationTypeForName(kind)];
+  HXLog("enter", [NSString stringWithFormat:@"api=notification type=%@", kind]);
+  UINotificationFeedbackGenerator *generator = [self notificationGenerator];
+  HXLog("engine", [NSString stringWithFormat:@"api=notification type=%@", kind]);
+  [generator notificationOccurred:NotificationTypeForName(kind)];
 }
 
 - (void)prepare:(NSString *)kind
 {
+  HXLog("prepare", [NSString stringWithFormat:@"kind=%@", kind]);
   if ([kind isEqualToString:@"selection"]) {
     [[self selectionGenerator] prepare];
   } else if ([kind isEqualToString:@"notification"]) {
@@ -138,15 +161,19 @@ UINotificationFeedbackType NotificationTypeForName(NSString *name)
 
 - (void)cue:(NSString *)kind
 {
+  HXLog("enter", [NSString stringWithFormat:@"api=cue kind=%@", kind]);
   if ([kind isEqualToString:@"heavy"]) {
+    HXLog("engine", @"api=cue kind=heavy part=1");
     [[self impactGenerator:UIImpactFeedbackStyleHeavy] impactOccurred];
     return;
   }
   UIImpactFeedbackGenerator *light = [self impactGenerator:UIImpactFeedbackStyleLight];
+  HXLog("engine", [NSString stringWithFormat:@"api=cue kind=%@ part=1", kind]);
   [light impactOccurred];
   if ([kind isEqualToString:@"double"]) {
     [light prepare];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, kDoubleGapNanoseconds), dispatch_get_main_queue(), ^{
+      HXLog("engine", @"api=cue kind=double part=2");
       [light impactOccurred];
     });
   }

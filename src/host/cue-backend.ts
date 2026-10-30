@@ -66,7 +66,10 @@ export function createCueBackend({ haptics = WhimHaptics, now = Date.now }: CueB
   const mayPlay = hapticRateCap(now);
   return {
     haptic(kind: HapticKind, realm: RealmRecord): void {
-      if (!mayPlay(realm)) return;
+      // MEASUREMENT-ONLY (task 24.6): never merge.
+      const allowed = mayPlay(realm);
+      console.log(`HXJ t=${Date.now()} ev=${allowed ? 'cue' : 'cap-drop'} kind=${kind}`); // eslint-disable-line no-console
+      if (!allowed) return;
       try {
         haptics?.cue(kind);
       } catch (e) {
