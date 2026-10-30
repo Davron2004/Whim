@@ -62,7 +62,7 @@ Steps 1 to 4 must give NO haptic. After each step write Y if you felt a haptic, 
 | 5 | On the plan page, tap an answer chip (any question) | A light tick (selection) | |
 | 6 | Tap a different chip | The same light tick | |
 | 7 | Tap "Make it" | One medium thump (handoff) | |
-| 8 | Wait on the Making page (about 10 seconds) until the app is ready | Nothing while waiting. On ready: a success buzz. Per the source, nobody plays this today: if silent, write N and "silent at ready" | |
+| 8 | Wait on the Making page (about 10 seconds) until the app is ready | Nothing while waiting. On ready: a success buzz as the Ready page appears (#227) | |
 | 9 | Open Haptic Lab (tap its tile). Tap "Tap" | One light tap | |
 | 10 | Tap "Double" | Two light taps, a hair apart | |
 | 11 | Tap "Heavy" | One heavy thump | |
@@ -78,7 +78,7 @@ Steps 1 to 4 must give NO haptic. After each step write Y if you felt a haptic, 
 | 21 | Home: long-press the Haptic Lab copy > Delete | A warning buzz as it leaves. Then tap Undo: nothing | |
 | 22 | Make an app again: type "break it [[fail]]", send, tap a chip on the plan page | The selection tick | |
 | 23 | Tap "Make it" | One medium thump (handoff) | |
-| 24 | Wait for it to fail | An error buzz when the failure shows. Per the source nobody plays this today: if silent, write N | |
+| 24 | Wait for it to fail | An error buzz as the failure page appears (#227). If silent, write N | |
 
 Negative checks are steps 1 to 4 and 14; also, throughout, taps on plain buttons (Settings rows, Back, Open) must be silent.
 Rate cap: step 12 sends 20 `cues.haptic('tap')` at once (expect about 3 played, 17 dropped, none queued afterwards) and
@@ -87,10 +87,14 @@ at 10 per second (`HAPTIC_CUE_BURST`, `HAPTIC_CUES_PER_SECOND` in `src/host/cue-
 
 ## Known gaps from reading the source (verify, do not assume)
 
-- "App ready" (success) and "Making failed" (failure) are in §5's table but no code plays them (`haptics.play`
-  is only wired for: selection in Chip, toggles in GroupedList, long-press in AppTile, commit in Sheet and Orb,
-  handoff on PlanPage's Make it/Make the change, success on copy made and version restored, failure on copy and
-  version-switch failing, warning on delete, discard and ConfirmSheet). Steps 8 and 24 are expected to be silent.
-- "Try again" (plan problem or failure page) has no handoff haptic.
+- Since #227 (staging `43d117da`): success plays as the Ready page mounts (`ReadyPage.tsx`), failure plays once per live
+  failure as the Failure page appears (`FailurePage.tsx`, `announce` token: reopening a failed attempt from its tile
+  plays nothing), handoff plays on "Make it" / "Make the change" (`PlanPage.tsx`) and on "Try again" on the Failure
+  page. Steps 8 and 24 now expect the haptic. The Whim sheet's Send plays nothing (it only opens the change's plan),
+  which is why step 4 stays silent.
+- `haptics.play` is also wired for: selection in Chip, toggles in GroupedList, long-press in AppTile, commit in Sheet
+  and Orb, success on copy made and version restored, failure on copy and version-switch failing, warning on delete,
+  discard and ConfirmSheet.
+- PlanPage's own "Try again" (plan problem) still has no handoff haptic.
 - The "Haptic Lab" app is the stub server's one app in this session (throwaway change on this branch). No app
   cue kind exists in the default install: no seeded app calls `cues.haptic`.
