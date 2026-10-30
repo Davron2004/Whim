@@ -6,8 +6,7 @@ Interface only. Sources: `checks/passes/manifest-extraction.ts`, `checks/contrac
 ## Manifest fields (one extraction — the `defineApp` literal, never a second parse)
 
 ```ts
-// checks/contract.ts — ExtractedManifest gains (all optional):
-tileColor?: string;                      // legacy, carried verbatim and UNVALIDATED (no hex / reserved-hue check)
+// checks/contract.ts — ExtractedManifest gains (all optional; a `tileColor` is not extracted, ruling 24):
 tint?: TintName[];                       // 1–3, ranked as declared, aliases applied, unknown dropped, deduped
 icon?: GlyphName | 'circle';             // resolveGlyph(declared, appName): glyph set only, never a chrome name
 ```
@@ -23,7 +22,7 @@ icon?: GlyphName | 'circle';             // resolveGlyph(declared, appName): gly
 - No declaration → no key, no diagnostic.
 - Server `CheckedManifest.manifest` = the extracted manifest minus `name`/`schema`, verbatim
   (`validTileColor` and the server `RESERVED_HUES` are deleted). So the wire record carries
-  `manifest.tint`, `manifest.icon`, `manifest.tileColor` exactly as above, never top-level
+  `manifest.tint`, `manifest.icon` exactly as above (never `manifest.tileColor`), never top-level
   (`contract/src/index.ts` `WireAppRecord` comment).
 
 ## Diagnostic kinds (closed `DIAGNOSTIC_KINDS`, additive)

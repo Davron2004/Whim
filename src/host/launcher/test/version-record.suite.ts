@@ -375,8 +375,11 @@ export async function runVersionRecordTests(h: Harness): Promise<void> {
       const { capabilities, tint, icon } = shipped.manifest;
       h.ok(tint !== undefined && icon !== undefined, 'setup: the shipped water-counter record declares a tint and an icon');
       h.eq(manifestFile, { capabilities, tint, icon }, 'the saved manifest is the declaration, its tint and icon included');
-      const { app } = await access.activeLaunch(index.get(WATER)!);
-      h.eq(app.record.manifest, manifestFile, 'the launch runs with the manifest the version saved');
+      const entry = index.get(WATER)!;
+      const newer = { ...entry, record: { ...entry.record, manifest: { ...entry.record.manifest, capabilities: ['storage', 'cues'] } } };
+      h.ok(JSON.stringify(newer.record.manifest) !== JSON.stringify(manifestFile), 'setup: the index holds a newer manifest than the saved one');
+      const { app } = await access.activeLaunch(newer);
+      h.eq(app.record.manifest, manifestFile, 'the launch runs with the manifest the version saved, not the index record’s');
     } finally {
       disposeDeviceState(state);
     }

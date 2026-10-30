@@ -46,6 +46,13 @@ for (const [a, b, want] of SHARMA) {
   assert.ok(Math.abs(got - want) < 1e-4, `CIEDE2000 ${JSON.stringify(a)} vs ${JSON.stringify(b)}: got ${got.toFixed(4)}, Sharma et al. give ${want}`);
 }
 assert.deepStrictEqual(deltaE('#535E6F', '#535E6F'), 0, 'a colour is no distance from itself');
+let shortHex = '';
+try {
+  deltaE('#fff', '#FFFFFF');
+} catch (err) {
+  shortHex = String(err);
+}
+assert.ok(/not a hex colour/.test(shortHex), `only #rrggbb is a colour: a short #rgb is refused, not guessed (threw ${JSON.stringify(shortHex)})`);
 
 // ── WCAG contrast and mixing ─────────────────────────────────────────────────
 

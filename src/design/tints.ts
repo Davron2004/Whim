@@ -74,12 +74,12 @@ type Rgb = readonly [number, number, number];
 /** CIELAB (D65) coordinates. */
 export type Lab = readonly [number, number, number];
 
-const HEX_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+const HEX_RE = /^#[0-9a-f]{6}$/i;
 
-/** `#rgb` or `#rrggbb` as sRGB channels in 0–1, or undefined. */
+/** `#rrggbb` as sRGB channels in 0–1, or undefined. */
 function channels(hex: string): Rgb | undefined {
   if (!HEX_RE.test(hex)) return undefined;
-  const digits = hex.length === 4 ? [...hex.slice(1)].map((d) => d + d).join('') : hex.slice(1);
+  const digits = hex.slice(1);
   const byte = (i: number) => parseInt(digits.slice(i, i + 2), 16) / 255;
   return [byte(0), byte(2), byte(4)];
 }
