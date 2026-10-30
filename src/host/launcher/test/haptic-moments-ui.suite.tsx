@@ -26,7 +26,7 @@ const played = (): string[] => hapticCalls.filter((c) => !c.startsWith('prepare:
 
 const ready = (onDone = () => {}) => <ReadyPage app={APP} words="A tea timer" changed={false} onOpen={() => {}} onDone={onDone} />;
 const failure = (onRetry?: () => void) => (
-  <FailurePage kind="generic" reason="It didn't work" diagnostics={[]} rephraseHelps={false} changing={false} onChange={() => {}} onRetry={onRetry} />
+  <FailurePage kind="couldnt-run" reason="It didn't work" diagnostics={[]} rephraseHelps={false} changing={false} onChange={() => {}} onRetry={onRetry} />
 );
 const whimSheet = (onSend: () => void) => (
   <WhimSheet app={APP} version={null} newVersion={false} changing={false} onStopChange={() => {}} text="Make it blue" onChangeText={() => {}} onSend={onSend} onReload={() => {}} onHistory={() => {}} onReport={() => {}} onExit={() => {}} />
