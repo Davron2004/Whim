@@ -130,3 +130,13 @@ Beta-1 reinforced T1, T4, T7 and T10, and added:
   - ENV: swiftshader emulator runs Reanimated far below real time — never judge sub-second timing on it; use `-gpu host` or the iOS sim with on-device tap scheduling. Reanimated ignores animator_duration_scale and the sim's slow mode (0.25× via ffmpeg).
   - ENV: an API weekly rate limit cut an agent mid-run; resuming it via SendMessage (work saved, status file current) lost nothing.
   - Proposals: commit capped-run.sh to scripts/ and make gate.sh self-cap; a gate check that no commit on a chain branch carries agent attribution; a repo-owned device-verifier stub with stall/slow/limit markers (#222 found the stub's own limits masquerading as bugs).
+- **2026-10-30 — design-system-v1 closure shift 1: 21.9 bootstrap land + 21e (nested integration orchestrator under a PO session; build → gate → fix split; 8 subagents, ≤2 in parallel).**
+  - CAUGHT-REAL-MISTAKE: the Opus reviewer found that a `Check-removal`-authorised drop (fallback-vs-appColor) was the only pin on `fallbackTint`'s djb2 algorithm; fixed with known answers. The ratchet accepts any trailer, so reviewers should ask "what live invariant did the removed assertion also pin?"
+  - CAUGHT-REAL-MISTAKE: research-21.9's "full removal" contradicted four live delta specs (legacy hex → nearest tint, passthrough); caught at brief time by grepping the change's specs, ruled spec-conformant, and full removal sent to the owner.
+  - HELPED: keep/remove ruling with spec line numbers in the builder brief (builder and reviewer both said conformance became mechanical); orchestrator grep census narrowed 21.4 to its 4 live items; Sonnet fixer on precise findings (~44k tokens, clean re-review).
+  - DRAWBACK: grandchild notifications reached the PO, not the nested orchestrator (first runner); worked around with background `until` watchers on verdict files at known paths.
+  - DRAWBACK: `fixloop.sh integrity` classes `build/` as Class 2, so an owner-ratified build.mjs commit can only exit 3 (never 6); the brief assumed 6. Proposal: integrity accepts a ratification token/allowlist for a named SHA.
+  - DRAWBACK: the reviewer agent has no write tool, but briefs asked it to write a findings file; the orchestrator saved it. Fix either side.
+  - DRAWBACK: foreground Bash auto-backgrounds at 180 s, which lost a builder's server:test exit code; briefs should say to run long suites with run_in_background and a log.
+  - DRAWBACK (cosmetic): the ratchet prints the first `Check-removal` trailer's text against every authorised file; and `grep -c FAIL` on gate logs counts harmless lines — a gate summary line with the real fail count would help.
+  - ENV: zsh reads `$r:path` as a modifier (write `"${r}":path`); macOS `sed -i` needs `''`.
