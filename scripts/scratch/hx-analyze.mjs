@@ -52,7 +52,7 @@ function fields(line) {
 export function parse(text) {
   const events = [];
   let seq = 0;
-  for (const raw of text.split('\n')) {
+  for (const raw of text.split(/\r?\n/)) {
     const m = raw.match(/\b(HX[JNM])\s+(t=.*)$/);
     if (!m) continue;
     const f = fields(m[2]);
