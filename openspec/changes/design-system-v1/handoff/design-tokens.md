@@ -47,7 +47,7 @@ TIMINGS = { fadeIn: 160, fadeOut: 120, fadeEasing, color: 150, colorEasing, stag
 ```ts
 TINT_ALIASES: Record<string, TintName>                  // exactly system.md §2.4's alias list (test-enforced)
 isTintName(value: unknown): value is TintName
-fallbackTint(appId: string): TintName                   // djb2(appId) % 10, table order — appColor's hash
+fallbackTint(appId: string): TintName                   // djb2(appId) % 10, table order
 interface TintResolution { tint: TintName; diagnostic?: string }
 resolveTint(name: unknown, appId: string): TintResolution
   // trim + lowercase; one of the ten → no diagnostic; alias → its tint + diagnostic;

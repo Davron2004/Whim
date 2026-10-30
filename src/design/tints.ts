@@ -35,7 +35,7 @@ export function isTintName(value: unknown): value is TintName {
   return typeof value === 'string' && (TINT_NAMES as readonly string[]).includes(value);
 }
 
-/** A stable string hash (djb2), the one `appColor` uses: same id, same number, every run. */
+/** A stable string hash (djb2): same id, same number, every run. */
 function djb2(text: string): number {
   let h = 5381;
   for (let i = 0; i < text.length; i++) {

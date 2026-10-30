@@ -39,8 +39,8 @@ export type TileRequest =
   | { readonly kind: 'assign'; readonly declared: TileDeclaration }
   | { readonly kind: 'fixed'; readonly tile: TileIdentity };
 
-/** The seeded examples' tiles, keyed by seed id: distinct tints (each the tint nearest the
- *  example's shipped `tileColor`, so the legacy `tileColor()` path agrees) and distinct glyphs. */
+/** The seeded examples' tiles, keyed by seed id: distinct tints and distinct glyphs, each the first
+ *  tint and the icon the example's fixture declares. */
 export const EXAMPLE_TILES: Readonly<Record<string, TileIdentity>> = {
   'tip-splitter': { tint: 'slate', icon: 'receipt' },
   'water-counter': { tint: 'blue', icon: 'glass-water' },

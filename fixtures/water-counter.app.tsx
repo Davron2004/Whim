@@ -85,6 +85,4 @@ export default defineApp({
   schema: SCHEMA,
   tint: ['blue', 'ocean'],
   icon: 'glass-water',
-  // A legacy colour, kept only until the home screen draws `tint`. New apps never declare it.
-  tileColor: '#0369a1',
 });

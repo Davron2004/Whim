@@ -1,6 +1,6 @@
 /**
  * KeyboardShell — the one keyboard-safe frame every launcher screen or sheet with a text field
- * renders (beta-1 D3; app-launcher "Text input never hides the content or action it belongs to";
+ * renders (beta-1 D3; app-launcher "Text input keeps its field and action above the keyboard";
  * design-system-v1 task 11.3). The keyboard is tracked by `react-native-keyboard-controller`; the
  * decisions live in `keyboard-shell.ts`.
  *
