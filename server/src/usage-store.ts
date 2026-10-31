@@ -134,8 +134,18 @@ export interface UsageStoreOptions {
   usageIdleDays?: number;
 }
 
-/** The four request kinds the ledger and daily-unit accounting distinguish. */
-export type RequestKind = 'generate' | 'clarify' | 'rewrite' | 'report';
+/** The request kinds the ledger and daily-unit accounting distinguish. `policy-check` is the
+ *  content-policy check of a generation that found every slot busy: its own row, beside the
+ *  generation's (`policyCheckRowId`). */
+export type RequestKind = 'generate' | 'clarify' | 'rewrite' | 'report' | 'policy-check';
+
+const POLICY_CHECK_ROW_SUFFIX = ':policy-check';
+
+/** The id of the `policy-check` row of request `requestId`: the request's own id plus
+ *  `:policy-check`, so it never collides with the request's own row and groups with it by prefix. */
+export function policyCheckRowId(requestId: string): string {
+  return `${requestId}${POLICY_CHECK_ROW_SUFFIX}`;
+}
 
 /** How a ledger row's request ended. Mirrors `RunTrace.outcome` (`'delivered' | 'failed' |
  *  'expired' | 'aborted'`) plus the unary/report-specific terminal states (design D7). */
@@ -260,7 +270,8 @@ export interface UsageSummary {
   days: UsageSummaryDay[];
   topDevicesByCost: UsageSummaryDevice[];
   generationStats: UsageSummaryGenerationStats;
-  /** Rows in the window that ended with each failure reason, refunded or not. */
+  /** Rows in the window that ended with each failure reason, refunded or not; a refusal in line
+   *  counts once, on its generate row, not again on its policy-check row. */
   failureReasonCounts: Partial<Record<FailureReason, number>>;
 }
 
@@ -329,18 +340,34 @@ function percentile(sorted: readonly number[], p: number): number {
 
 /** Shared summary computation over a flat list of rows — used by both implementations so their
  *  `summary()` semantics can never drift apart. */
-export function computeSummary(
-  rows: readonly {
-    deviceId: string;
-    kind: RequestKind;
-    utcDay: string;
-    costUsd: number | null;
-    costState: CostState;
-    refunded: boolean;
-    failureReason: FailureReason | null;
-  }[],
-  params: SummaryParams,
-): UsageSummary {
+/** The summary's view of one ledger row. */
+interface SummaryRow {
+  id: string;
+  deviceId: string;
+  kind: RequestKind;
+  utcDay: string;
+  costUsd: number | null;
+  costState: CostState;
+  refunded: boolean;
+  failureReason: FailureReason | null;
+}
+
+/** One generation's cost: its `generate` row's plus, when it waited in line, its `policy-check`
+ *  row's, so a generation that waited costs what one that took a free slot (whose row carries its
+ *  check) does. All or nothing, as the resolver stamps a row: either row `unresolved` makes the
+ *  generation unresolved, and it has a cost only once every row it has is resolved. */
+function generationCost(generation: SummaryRow, check: SummaryRow | undefined): number | 'unresolved' | 'pending' {
+  const rows = check ? [generation, check] : [generation];
+  if (rows.some((row) => row.costState === 'unresolved')) return 'unresolved';
+  if (rows.some((row) => row.costState !== 'resolved' || row.costUsd === null)) return 'pending';
+  return rows.reduce((sum, row) => sum + (row.costUsd ?? 0), 0);
+}
+
+/** Shared summary computation over a flat list of rows — used by both implementations so their
+ *  `summary()` semantics can never drift apart. Daily counts and costs go by row kind, a
+ *  `policy-check` row under its own kind; the generation cost stats group each `generate` row with
+ *  the `policy-check` row of the same request (`policyCheckRowId`). */
+export function computeSummary(rows: readonly SummaryRow[], params: SummaryParams): UsageSummary {
   const wantedDays = trailingUtcDays(params.now, params.days);
   const wantedSet = new Set(wantedDays);
   const inWindow = rows.filter((r) => wantedSet.has(r.utcDay));
@@ -369,15 +396,15 @@ export function computeSummary(
     .sort((a, b) => b.costUsd - a.costUsd)
     .slice(0, params.top ?? 10);
 
-  const generationRows = inWindow.filter((r) => r.kind === 'generate');
-  const resolvedCosts = generationRows
-    .filter((r) => r.costState === 'resolved' && r.costUsd !== null)
-    .map((r) => r.costUsd as number)
-    .sort((a, b) => a - b);
-  const unresolvedCount = generationRows.filter((r) => r.costState === 'unresolved').length;
+  const checkRows = new Map(inWindow.filter((r) => r.kind === 'policy-check').map((r) => [r.id, r]));
+  const generationCosts = inWindow
+    .filter((r) => r.kind === 'generate')
+    .map((r) => generationCost(r, checkRows.get(policyCheckRowId(r.id))));
+  const resolvedCosts = generationCosts.filter((cost): cost is number => typeof cost === 'number').sort((a, b) => a - b);
+  const unresolvedCount = generationCosts.filter((cost) => cost === 'unresolved').length;
   const sum = resolvedCosts.reduce((a, b) => a + b, 0);
   const generationStats: UsageSummaryGenerationStats = {
-    count: generationRows.length,
+    count: generationCosts.length,
     meanCostUsd: resolvedCosts.length > 0 ? sum / resolvedCosts.length : 0,
     medianCostUsd: percentile(resolvedCosts, 50),
     p95CostUsd: percentile(resolvedCosts, 95),
@@ -385,9 +412,14 @@ export function computeSummary(
     unresolvedCount,
   };
 
+  // A refusal in line settles its policy-check row and its generate row with the same reason; it
+  // counts once, on the generate row. A check row whose request wrote no such row still counts.
+  const generationsByCheckId = new Map(inWindow.filter((r) => r.kind === 'generate').map((r) => [policyCheckRowId(r.id), r]));
   const failureReasonCounts: Partial<Record<FailureReason, number>> = {};
   for (const r of inWindow) {
-    if (r.failureReason !== null) failureReasonCounts[r.failureReason] = (failureReasonCounts[r.failureReason] ?? 0) + 1;
+    if (r.failureReason === null) continue;
+    if (r.kind === 'policy-check' && generationsByCheckId.get(r.id)?.failureReason === r.failureReason) continue;
+    failureReasonCounts[r.failureReason] = (failureReasonCounts[r.failureReason] ?? 0) + 1;
   }
 
   return { days, topDevicesByCost, generationStats, failureReasonCounts };
@@ -900,8 +932,9 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
   summary(params: SummaryParams): Promise<UsageSummary> {
     return settle(() => {
       const rows = this.db.prepare(
-        'SELECT device_id, kind, utc_day, cost_usd, cost_state, refunded, failure_reason FROM requests'
+        'SELECT id, device_id, kind, utc_day, cost_usd, cost_state, refunded, failure_reason FROM requests'
       ).all() as {
+        id: string;
         device_id: string;
         kind: RequestKind;
         utc_day: string;
@@ -912,6 +945,7 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
       }[];
       return computeSummary(
         rows.map((r) => ({
+          id: r.id,
           deviceId: r.device_id,
           kind: r.kind,
           utcDay: r.utc_day,

@@ -1,6 +1,8 @@
 /**
  * `npm run stores:firestore:test`: runs `server/test/firestore.run.mjs` against a Firestore emulator
- * started by the repo's pinned firebase-tools, on ports picked free for this run.
+ * started by the repo's pinned firebase-tools, on ports picked free for this run. Given a script
+ * (and its arguments), runs that instead: `deploy/loadtest/firestore-admission.sh` passes
+ * `server/test/firestore-admission.run.mjs`.
  *
  * The emulator used to listen on fixed ports (8085, with the hub on 4400 and logging on 4500), so
  * two checkouts gating at once collided: the second run failed with "port taken" (#144). Each run
@@ -9,6 +11,7 @@
  * and the emulator's bind, so a run that fails to start on a taken port is retried on new ports.
  *
  *   npm run stores:firestore:test
+ *   node scripts/firestore-emulator-test.mjs <node script> [args...]
  */
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -23,24 +26,30 @@ const firebaseBin = fileURLToPath(import.meta.resolve('firebase-tools/lib/bin/fi
 const HOST = '127.0.0.1';
 const ATTEMPTS = 3;
 const PORT_TAKEN = /port taken|EADDRINUSE|address already in use/i;
+const [scriptArg, ...scriptArgs] = process.argv.slice(2);
+const scriptPath = scriptArg ? path.resolve(scriptArg) : path.join(root, 'server', 'test', 'firestore.run.mjs');
 
-/** A port the OS reports free right now. */
-function freePort() {
+/** `word` single-quoted for the shell `emulators:exec` runs its script in. */
+function shellQuote(word) {
+  const closeQuoteEscapeReopen = String.raw`'\''`;
+  return `'${word.replaceAll("'", closeQuoteEscapeReopen)}'`;
+}
+
+/** A port the OS reports free right now, held open until `release()` so no other pick can repeat it. */
+function holdPort() {
   return new Promise((resolve, reject) => {
     const probe = net.createServer();
     probe.once('error', reject);
-    probe.listen(0, HOST, () => {
-      const { port } = probe.address();
-      probe.close(() => resolve(port));
-    });
+    const release = () => new Promise((done) => probe.close(done));
+    probe.listen(0, HOST, () => resolve({ port: probe.address().port, release }));
   });
 }
 
 /** Distinct free ports for the emulator, its websocket, the hub and the logging emulator. */
 async function freePorts() {
-  const ports = new Set();
-  while (ports.size < 4) ports.add(await freePort());
-  const [firestore, websocket, hub, logging] = ports;
+  const held = await Promise.all(Array.from({ length: 4 }, holdPort));
+  await Promise.all(held.map((probe) => probe.release()));
+  const [firestore, websocket, hub, logging] = held.map((probe) => probe.port);
   return { firestore, websocket, hub, logging };
 }
 
@@ -59,7 +68,7 @@ async function runOnce() {
     },
   }, null, 2)}\n`);
   const project = `demo-whim-conformance-${randomBytes(4).toString('hex')}`;
-  const script = `"${process.execPath}" "${path.join(root, 'server', 'test', 'firestore.run.mjs')}"`;
+  const script = [process.execPath, scriptPath, ...scriptArgs].map(shellQuote).join(' ');
   console.log(`firestore emulator on ${HOST}:${ports.firestore} (hub ${ports.hub}, logging ${ports.logging}, websocket ${ports.websocket}), project ${project}`);
   let output = '';
   const child = spawn(process.execPath, [firebaseBin, 'emulators:exec', '--config', config, '--only', 'firestore', '--project', project, script], {
@@ -79,7 +88,8 @@ async function runOnce() {
   return { code, portTaken: !started && PORT_TAKEN.test(output) };
 }
 
-for (let attempt = 1; ; attempt++) {
+// Each attempt waits on the previous one: a retry only makes sense once that run has ended.
+for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
   const { code, portTaken } = await runOnce();
   if (!portTaken || attempt === ATTEMPTS) process.exit(code);
   console.error(`stores:firestore:test: an emulator port was taken before it bound; retrying on new ports (${attempt}/${ATTEMPTS - 1}).`);

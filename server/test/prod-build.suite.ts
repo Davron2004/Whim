@@ -20,6 +20,7 @@ import path from 'node:path';
 import { spawn, spawnSync, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { createRequire, isBuiltin } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
 import { build } from 'esbuild';
@@ -33,6 +34,7 @@ import { openRouterUsageAndCostTransport } from '../src/usage/openrouter-stats';
 import { NodeSqliteWaitlistStore, WAITLIST_RETENTION_DAYS } from '../src/waitlist/store';
 import { CURRENT_NOTICE_ID } from '../src/waitlist/notices';
 import { MANIFESTS, keepLimit, latestVersion } from '../../contract/src/disclosure-manifest';
+import { browserLaunchOptions } from '../../synthrun/session';
 
 const ROOT = process.cwd();
 const BUNDLES = [
@@ -111,8 +113,8 @@ class TreeProcess {
   private readonly child: ChildProcessByStdio<null, Readable, Readable>;
   private exit: Exit | undefined;
 
-  constructor(root: string, env: Record<string, string>) {
-    this.child = spawn(process.execPath, ['server/main.mjs'], {
+  constructor(root: string, env: Record<string, string>, nodeArgs: string[] = []) {
+    this.child = spawn(process.execPath, [...nodeArgs, 'server/main.mjs'], {
       cwd: root,
       env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? os.homedir(), WHIM_LOG_JSON: '1', ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -503,21 +505,90 @@ async function testBootRefusals(fixture: Fixture): Promise<void> {
     }
   }
 
-  // Chromium cannot start from an empty browser directory: the real pipeline must stop at the launch
-  // and never listen. No browser process starts and no request is made.
-  const noBrowsers = fixture.dataDir('no-browsers');
-  await expectBootRefusal(
-    'a browser that cannot start',
+  await testBrowserThatCannotStart(fixture);
+}
+
+/** Preloaded into the server process (`node --import`): wraps the `chromium.launch` the server's
+ *  bundle calls, writing each call's options as a JSON line on stdout, then launches as asked. */
+const LAUNCH_RECORDER = `import { createRequire } from 'node:module';
+import path from 'node:path';
+const { chromium } = createRequire(path.join(process.cwd(), 'server', 'main.mjs'))('playwright');
+const launch = chromium.launch;
+chromium.launch = (options) => {
+  process.stdout.write(JSON.stringify({ msg: 'test: browser launch attempt', options }) + '\\n');
+  return launch.call(chromium, options);
+};
+`;
+
+/** The position of the first JSON log line whose `msg` is `message` in `text`, or -1. */
+function firstLogLine(text: string, message: string): number {
+  return text.split('\n').findIndex((line) => line.startsWith('{') && line.includes(JSON.stringify(message)) && (JSON.parse(line) as { msg?: unknown }).msg === message);
+}
+
+/** The fields pino adds to every record, and the message. */
+const RECORD_BASE = new Set(['level', 'severity', 'time', 'pid', 'hostname', 'scope', 'msg']);
+
+/**
+ * specs/server-deployment "A browser that cannot sandbox never serves", "Retries never weaken the
+ * browser", "The boot host is recorded": Chromium cannot start from an empty browser directory, so
+ * every attempt fails. Boot records its host, makes three attempts with the production options,
+ * logs each failure, then stops at the launch and never listens. No browser process starts and no
+ * request is made.
+ */
+async function testBrowserThatCannotStart(fixture: Fixture): Promise<void> {
+  const recorder = path.join(fixture.scratch, 'launch-recorder.mjs');
+  fs.writeFileSync(recorder, LAUNCH_RECORDER);
+  const proc = new TreeProcess(
     fixture.tree,
     {
-      PLAYWRIGHT_BROWSERS_PATH: noBrowsers,
+      PLAYWRIGHT_BROWSERS_PATH: fixture.dataDir('no-browsers'),
       OPENROUTER_API_KEY: 'unused-no-network',
       WHIM_ENGINEER_MODEL: 'test/engineer',
       WHIM_REWRITE_MODEL: 'test/rewrite',
       WHIM_DATA_DIR: fixture.dataDir('launch'),
+      WHIM_SERVER_HOST: '127.0.0.1',
+      WHIM_SERVER_PORT: String(await freePort()),
     },
-    'browser_launch',
+    ['--import', pathToFileURL(recorder).href],
   );
+  try {
+    const exit = await exitOf(proc);
+    check('a browser that cannot start: the process exits non-zero', exit !== TIMED_OUT && exit.code !== 0 && exit.code !== null, JSON.stringify(exit));
+    check('  ... naming the browser launch', proc.logs('boot failed')[0]?.reason === 'browser_launch', proc.text().slice(-2000));
+    eq('  ... and it never listened', proc.logs('whim-server listening').length, 0);
+
+    const attempts = proc.logs('test: browser launch attempt');
+    eq('  ... after exactly three launch attempts', attempts.length, 3);
+    const production = JSON.parse(JSON.stringify(browserLaunchOptions())) as unknown;
+    attempts.forEach((attempt, i) => eq(`  ... attempt ${i + 1} carried the production launch options, sandbox on`, attempt.options, production));
+
+    const failures = proc.logs('browser launch failed');
+    eq('  ... each failed attempt is logged with its number', failures.map((f) => f.attempt), [1, 2, 3]);
+    eq(
+      '  ... and its error, and nothing else',
+      failures.map((f) => Object.keys(f).filter((key) => !RECORD_BASE.has(key)).sort((a, b) => a.localeCompare(b))),
+      [['attempt', 'error'], ['attempt', 'error'], ['attempt', 'error']],
+    );
+    check('  ... the error is the launch error', failures.every((f) => typeof f.error === 'string' && f.error.includes("Executable doesn't exist")), JSON.stringify(failures));
+
+    const hosts = proc.logs('boot host');
+    eq('  ... boot logged one host record', hosts.length, 1);
+    const host = hosts[0] ?? {};
+    eq('  ... naming the kernel release', host.kernel, os.release());
+    if (fs.existsSync('/proc/cpuinfo')) {
+      const lines = fs.readFileSync('/proc/cpuinfo', 'utf8').split('\n').map((line) => line.split(':'));
+      const field = (key: string): string | undefined => lines.find(([name]) => name.trim() === key)?.slice(1).join(':').trim();
+      const flags = field('flags')?.split(' ');
+      eq('  ... and this host\'s CPU model', host.cpuModel, field('model name') || 'unknown');
+      eq('  ... and its pku/ospke flag presence', [host.pku, host.ospke], flags ? [flags.includes('pku'), flags.includes('ospke')] : ['unknown', 'unknown']);
+    } else {
+      eq('  ... and the CPU fields as unknown on a host without /proc/cpuinfo', [host.cpuModel, host.pku, host.ospke], ['unknown', 'unknown', 'unknown']);
+    }
+    const hostAt = firstLogLine(proc.text(), 'boot host');
+    check('  ... before the first launch attempt', hostAt >= 0 && hostAt < firstLogLine(proc.text(), 'test: browser launch attempt'), proc.text().slice(0, 2000));
+  } finally {
+    await proc.dispose();
+  }
 }
 
 /** `WHIM_STUB_DELAY_MS` reaches the stub pipeline the composed server runs (beta-1 fix-3): with a

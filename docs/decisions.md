@@ -1503,3 +1503,43 @@ ungated UI haptics, a root-close request for edge swipe, modal-open and input-fo
 untouched until it passes); a live preview on Ready (it would run the app's code before the person opens it);
 live tiles (need background execution and a new app-to-host channel); blur/glass (level 3 only, later);
 server-sent live time percentiles.
+
+### 76. Server ops on Cloud Run: exact credit, metered line checks, launch retry, alerts and smoke `[DECIDED — openspec: server-ops-hardening; product-owner rulings 2026-10-09; amends #71 and #73]`
+
+Cloud Run with Firestore (#71–#73) left credit at-least-once, the classifier unmetered for
+generations waiting in line, one boot in ten lost to a Chromium crash, the alerts on the VM's log id
+and no check after a deploy. The runbook is `docs/deploy.md`, "Cloud Run".
+
+- **Credit is exactly once (#145).** The SDK re-sends a commit whose reply was lost, so a plain
+  increment could count twice. `FirestoreUsageStore.credit` runs in a transaction that reads and
+  creates `creditMarks/{id}`, an id minted once per call: a replay sees its own marker and writes
+  nothing, `admit`'s `admissionId` pattern. Markers hold only `{ utcDay }` and the ledger purge
+  deletes those before the previous UTC day. Rejected: accepting double credit (the usage report
+  sizes credit from it), a create-or-`ALREADY_EXISTS` batch (a second idempotency pattern), a flag
+  on the request row (credit call sites have no request id).
+- **A check in line is a metered row (#120, ruling 3).** A generation that finds every slot busy
+  admits a `policy-check` row (`<request id>:policy-check`) against 30 per device and 800 per UTC
+  day before its classifier call, then settles it with the check's tokens and cost, never refunded.
+  Fresh device ids beat the per-device limit; the global one caps classifier spend at about $0.40 a
+  day. A refusal in line also settles a non-refunded `generate` row `refused` / `content_policy`, so
+  it costs a generation unit as on a free slot; the usage summary counts that refusal once.
+  The classifier itself gets a second attempt inside the unchanged 10 s deadline (#119).
+- **Chromium launch is retried, never weakened (#139).** Boot and every relaunch make up to 3
+  launch attempts, 500 ms apart, with byte-identical options, sandbox on; then boot exits as before.
+  Boot logs `boot host` (CPU model, `pku`/`ospke`, kernel) for the open root cause. Rejected:
+  dropping `--cpu-boost` (unmeasured, needs throwaway deploys), `--no-sandbox` (forbidden), a
+  startup probe (does not stop the crash).
+- **Every deploy is checked and alerted on (#138, #146).** All log filters select the `whim-server`
+  revision's stdout; the VM variants are not kept. A plain deploy applies all of
+  `deploy/monitoring/` and needs `WHIM_ALERT_EMAIL`. `deploy/cloudrun/smoke.sh` ends every deploy
+  mode and sends the one sanctioned production write, a `POST /v1/clarify` from device
+  `5e0ce000-0000-4000-8000-00000000c1a1`, on rollbacks too (ruling 2); `--no-live` writes nothing.
+  The server deploys with `--cpu-throttling` (request-based billing), so the uptime check's warm
+  instance costs nothing idle, and the smoke fails without it (ruling 4).
+- **Admission load test (#143).** Emulator by default; a capped (≤ 50,000 operations) throwaway
+  `whim-loadtest-*` database on request, deleted on exit. 2026-10-09 run: admission exact in every
+  burst, but the shared clarify/rewrite ceiling contends (100-burst p50 28 s, p99 40 s); sharding it
+  is #154.
+- **Out: re-measuring the generation caps on Cloud Run (#134).** That needs a real gen2 instance
+  under replay load, and an amd64 container on Apple silicon gives meaningless CPU numbers. The caps
+  (3 / 2) stay the VM's, unmeasured on Cloud Run, until the owner approves the cost.
