@@ -9,7 +9,7 @@
 import { Harness } from './harness';
 import { createMemoryStore, MapKVBackend } from '../../version-store';
 import { AppIndex } from '../app-index';
-import { StoreAccess, storeIdOf } from '../store-access';
+import { StoreAccess, messageOf, storeIdOf } from '../store-access';
 import { promptEnvelope } from '../prompt-envelope';
 import type { AppManifest, AppRecord } from '../../bridge/contract';
 import type { InstalledApp } from '../app-index';
@@ -18,7 +18,7 @@ import { PendingPurgeStore, completeInterruptedPurges, type PurgeDeps } from '..
 import { PendingBuildStore } from '../pending-builds';
 import { RunJournalStore } from '../run-journal';
 import { TINT_NAMES, TINTS, type TintName } from '../../../design/tokens';
-import { deltaE, nearestTint } from '../../../design/tints';
+import { deltaE, fallbackTint } from '../../../design/tints';
 
 const REC = (id: string): AppRecord => ({ appId: id, name: id, manifest: { capabilities: ['storage'] } });
 
@@ -177,6 +177,17 @@ function instrumentRepoOps(store: Store): { calls: string[]; hold: (appId: strin
 }
 
 export async function runStoreAccessTests(h: Harness): Promise<void> {
+  await h.test('store-access messageOf: a thrown value reads as text, never "[object Object]"', () => {
+    h.eq(messageOf(new Error('disk full')), 'disk full', 'an Error is its message');
+    h.eq(messageOf('plain'), 'plain', 'a string is itself');
+    h.eq(messageOf({ code: 'EIO' }), '{"code":"EIO"}', 'an object is its JSON');
+    h.eq(messageOf(null), 'null', 'null reads as null');
+    h.eq(messageOf(undefined), 'undefined', 'undefined falls back to its type');
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    h.eq(messageOf(cyclic), 'object', 'an object with no JSON form falls back to its type');
+  });
+
   // §9 fork mapping
   await h.test('store-access §9 fork creates a new entry: shared repo, new lineage, provenance', async () => {
     const { index, access } = harnessAccess();
@@ -414,12 +425,8 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     h.eq(updated.createdAt, orig.createdAt, 'createdAt unchanged');
     h.eq(updated.record, newRecord, 'record updated');
     // The new record's name ('wc-v2') deliberately differs from the entry's own name ('WC') —
-    // `update` must NOT adopt it. `app.name` (not `app.record.name`) is what tile-colour resolution
-    // hashes for an app with no declared/injected colour (`tiles.ts#tileColor` -> `appColor(name)`
-    // via `HomeScreen`/`HistoryScreen`'s `AppTile`/`tileColor` calls, both keyed on `app.name`).
-    // Refreshing the entry's name from the record here would silently move that app's hue the first
-    // time it is renamed by a rebuild — see build-lifecycle.ts's PRESERVE comment on `deliverResult`.
-    h.eq(updated.name, orig.name, 'update preserves the entry\'s own name — tile-colour hash stability for records with no declared colour depends on it, not adopting `spec.record.name`');
+    // `update` must NOT adopt it: a rebuild leaves the name the app has on the grid as it was.
+    h.eq(updated.name, orig.name, 'update preserves the entry\'s own name, not adopting `spec.record.name`');
     h.eq(index.get('wc')?.record, newRecord, 'index reflects the new record');
     h.eq(await access.activeBundle(orig), 'V2', 'the new bundle is the active snapshot');
     h.eq((await access.history(orig)).map(s => s.prompt), ['p2', 'p1'], 'update snapshots onto the same lineage (history grows)');
@@ -636,16 +643,15 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     const { index, access } = harnessAccess();
     await access.install({ id: 'old', name: 'Old App', record: REC('old'), bundleSource: 'V1', prompt: 'p1' });
     // As stored before this change: no tint, no glyph, an old hex colour on the manifest.
-    const legacy: InstalledApp = {
-      id: 'old', name: 'Old App', createdAt: 1, lineageId: 'main',
-      record: { appId: 'old', name: 'Old App', manifest: { capabilities: [], tileColor: '#0369a1' } },
-    };
+    const other = TINT_NAMES.find((t) => t !== fallbackTint('old'))!;
+    const manifest = { capabilities: [], tileColor: TINTS[other].light };
+    const legacy: InstalledApp = { id: 'old', name: 'Old App', createdAt: 1, lineageId: 'main', record: { appId: 'old', name: 'Old App', manifest } };
     index.put(legacy);
     const before = tileOf(index.get('old')!);
-    h.eq(before.tint, nearestTint('#0369a1'), 'precondition: it reads the nearest tint');
+    h.eq(before.tint, fallbackTint('old'), `precondition: it reads the app id’s fallback, not ${other}, whose light value the stray colour is`);
     await access.update(legacy, { record: REC('old'), bundleSource: 'V2', prompt: 'p2' });
     h.eq(index.get('old')?.tint, before.tint, 'the rebuild wrote down the tint it was showing');
-    h.eq(tileOf(index.get('old')!), before, 'though the new record has no colour at all');
+    h.eq(tileOf(index.get('old')!), before, 'and still shows it');
   });
 
   await h.test('tile: a copy takes the tint farthest from its original among the least used, and the same glyph', async () => {

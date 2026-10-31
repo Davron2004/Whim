@@ -1,7 +1,7 @@
 /**
  * app-busy — the home grid's per-app wait affordances (`app-launcher`: "Opening an app shows an
- * immediate busy affordance", "Fork and delete show a busy state and cannot be re-triggered
- * mid-operation").
+ * immediate busy affordance", "Forking creates an independent launcher entry" scenario "A second
+ * copy cannot start mid-copy").
  *
  * Behavioural against the real `runAppOp`/`AppBusy` the shell runs: an operation publishes its
  * busy state before the version-store call resolves, a second invocation for the same app while

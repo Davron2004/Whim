@@ -147,8 +147,9 @@ What the system claims is that no tint is ever mistaken for a status or for Whim
 - **Aliases** (resolve with a build diagnostic, never an error): red→`rose`; pink, magenta→`orchid`;
   grape→`purple`; sky→`blue`; cyan, teal, green, mint, lime→`ocean`; navy→`indigo`; yellow, orange,
   amber, brown, cocoa→`stone`; gray, grey, graphite, black→`slate`.
-- **Unknown name** → the tint at (djb2 hash of the app id, the hash `appColor` uses today) mod 10, in table order, with a build
-  diagnostic. **An installed hex `tileColor`** maps to the nearest light value by ΔE2000.
+- **Unknown name** → the tint at (djb2 hash of the app id) mod 10, in table order, with a build
+  diagnostic. An app with no tint (a record from before tints) takes the same fallback; a `tileColor`
+  is ignored.
 - **The host assigns.** The model returns up to three ranked tints; the host takes the first not used by
   any installed app, else the least used (ties: the model's order, then table order). A copy takes the
   tint farthest (ΔE2000 of light values) from the original among the least used. "Customize tile" stores
@@ -460,6 +461,8 @@ Reanimated's `duration`/`dampingRatio` mode.
    moments.
 2. **Start from what's on screen.** Read the presentation value, retarget the running spring with its
    velocity. Never restart from a stored value; never disable input while something moves.
+   One exception: a sheet's native `Modal` takes every touch until its exit is visibly done (~0.66 s plain,
+   ~1.02 s anchored), so input comes back the frame the sheet is seen gone, never at the spring's end (#224).
 3. **Same path out as in**, faster out: a morph opens with `morph`, closes with `smooth`.
 4. **No JS-driven layout per frame.** Transform and opacity by default; shell reflow uses Reanimated
    layout transitions. M2 and M3 move by transforms only: two straight bars stretched to the shape's
@@ -553,7 +556,7 @@ pattern): `UIImpactFeedbackGenerator` / `UISelectionFeedbackGenerator` /
 | Switch toggles | impact light | `TOGGLE_ON`/`TOGGLE_OFF`, `CONTEXT_CLICK` |
 | Long-press opens a menu | impact medium | `LONG_PRESS` |
 | A drag crosses its commit point | impact rigid 0.6 | `GESTURE_THRESHOLD_ACTIVATE`, `CONTEXT_CLICK` |
-| Work handed to Whim (Make it, Make the change, Try again) | impact medium | `CONFIRM` (API 30), `VIRTUAL_KEY` |
+| Work handed to Whim (Make it, Make the change, Try again (Failure page)) | impact medium | `CONFIRM` (API 30), `VIRTUAL_KEY` |
 | App ready; version restored; copy made | notification success | `CONFIRM` |
 | Making failed | notification error | `REJECT` (API 30), `LONG_PRESS` |
 | App deleted, attempt discarded, confirm sheet's consequential choice | notification warning | `REJECT` |
@@ -642,7 +645,7 @@ works with no optional props. Type tokens multiply by `fontScale`; layouts grow 
 |---|---|
 | Add | `Icon`, `Stepper`, `DateInput`, `Picker`, `toast(text)`, `Screen` `title`/`action`, `icon` on `Button`/`ListItem`/`EmptyState`, `ProgressBar` `variant: 'ring'` + `label`, `defineApp` `tint`/`icon`, `List` `items`/`keyBy`/`renderItem` |
 | Change | `Text`/`Icon` `color` narrowed to `text`, `text-muted`, `primary`, `positive`, `danger`, `warning`; `Row` defaults `align="center"`, `justify="start"`; every size, colour, radius and motion |
-| Deprecate (kept working, gone from the reference) | `Heading` (alias of `Text size="title"`); `Button`/`Card` `radius` (accepted, ignored); `defineApp` `tileColor` (nearest light value by ΔE2000) |
+| Deprecate (kept working, gone from the reference) | `Heading` (alias of `Text size="title"`); `Button`/`Card` `radius` (accepted, ignored); `defineApp` `tileColor` (accepted, ignored) |
 | Rejected | `Reveal`, `useMotion`, `Morph`, `useReducedMotion`, `TabBar`, `Image`, confetti, `Canvas` |
 
 No export is removed; every installed bundle keeps working.

@@ -9,7 +9,7 @@ overrides): the stored record is the launcher's concern, the wire record is this
 An app's tile identity SHALL ride inside `manifest` — the same statically extracted structure that
 already carries capabilities — as `tint` (the app's ranked tint names, resolved to the closed set) and
 `icon` (its resolved glyph name), and SHALL NOT become top-level fields, because manifest data has exactly
-one source. A legacy `tileColor` MAY still appear in `manifest` from an older build. The manifest remains
+one source. `manifest` SHALL NOT carry `tileColor`, and the host SHALL ignore one it finds. The manifest remains
 an untyped record on the wire; the host validates and assigns where it consumes it.
 
 #### Scenario: Wire record is install-state-free
@@ -17,7 +17,7 @@ an untyped record on the wire; the host validates and assigns where it consumes 
 - **THEN** it has no app-id, install-state or assigned-tint fields, and a `result` event validates with only
   generation outputs
 
-#### Scenario: Tile identity has one home
+#### Scenario: The tile colour has one home
 - **WHEN** a delivered record for an app that named a tint and an icon is inspected
 - **THEN** `tint` and `icon` appear inside `manifest` and nowhere else on the record
 

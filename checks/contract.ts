@@ -216,9 +216,6 @@ export interface ExtractedManifest {
   capabilities: string[];
   /** The raw `schema` literal, when declared — validated separately by the schema pass. */
   schema?: unknown;
-  /** The app's declared tile colour, when it was declared AS A STRING LITERAL. Legacy (deprecated
-   *  by `tint`): carried through this one extraction unvalidated, for the host to map to a tint. */
-  tileColor?: string;
   /** The declared `tint` (a name or a list), resolved to the closed set: ranked, aliases applied,
    *  unknown names dropped, duplicates removed, at most three. Absent when nothing resolved — the
    *  device then falls back by app id. */

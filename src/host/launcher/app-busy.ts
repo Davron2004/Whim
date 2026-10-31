@@ -1,7 +1,7 @@
 /**
  * app-busy — the per-app in-flight registry behind the home grid's wait affordances
- * (`app-launcher`: "Opening an app shows an immediate busy affordance" / "Fork and delete show a
- * busy state and cannot be re-triggered mid-operation").
+ * (`app-launcher`: "Opening an app shows an immediate busy affordance" / "Forking creates an
+ * independent launcher entry": while a copy is being made the tile reads busy and opens no menu).
  *
  * One app can have at most ONE operation in flight. That single rule buys both halves of the
  * spec at once: the affordance knows what to render (`opFor`), and a second tap while the first
@@ -53,11 +53,11 @@ export class AppBusy {
 
 /**
  * Run one app operation under the registry: claim the slot, publish the affordance, and release
- * it once `work` settles — success, failure or throw alike, so a failed fork or delete can never
+ * it once `work` settles — success, failure or throw alike, so a failed open or copy can never
  * strand a tile in a permanent busy state.
  *
  * Returns `false` without running `work` at all when that app already has an operation in flight.
- * That refusal is the whole "cannot be re-triggered mid-operation" requirement, and it lives here
+ * That refusal is what keeps a second open or copy from starting mid-operation, and it lives here
  * rather than in the screen so the *version-store call* is what is guarded, not merely the
  * control that triggers it.
  *
@@ -84,10 +84,9 @@ export async function runAppOp(
 
 /**
  * Whether the home grid should render `appId`'s tile busy. ANY in-flight operation counts, not
- * just `open`: fork and delete are triggered from sheets that close before the version-store call
- * starts (`app-launcher`: "Fork and delete each show a busy state on their triggering control
- * while their underlying version-store operation runs"), so after the sheet is gone the tile is
- * the only surviving control for that app and therefore where the wait has to be visible.
+ * just `open`: a copy is triggered from a menu that closes before the version-store call starts
+ * (`app-launcher` "Forking creates an independent launcher entry"), so after the menu is gone the
+ * tile is the only surviving control for that app and therefore where the wait has to be visible.
  */
 export function isAppBusy(busy: AppBusyMap | undefined, appId: string): boolean {
   return busy?.[appId] !== undefined;

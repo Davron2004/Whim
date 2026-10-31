@@ -51,6 +51,4 @@ export default defineApp({
   capabilities: [],
   tint: ['slate', 'stone'],
   icon: 'receipt',
-  // A legacy colour, kept only until the home screen draws `tint`. New apps never declare it.
-  tileColor: '#15803d',
 });

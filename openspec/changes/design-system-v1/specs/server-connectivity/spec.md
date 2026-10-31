@@ -79,7 +79,7 @@ An online session SHALL turn offline only on evidence, by one of two routes. Fir
 
 The system SHALL NOT introduce any background or push-triggered scheduling for the connectivity loop: no probe SHALL be sent or scheduled while the app is not in the foreground, and an app that is merely inactive (the iOS app switcher, Control Center, a system sheet) counts as not in the foreground. Leaving the foreground SHALL cancel any pending probe, and a loop started while the app is not in the foreground SHALL send its startup probe on the first return to it. When the app returns to the foreground the system SHALL re-check the server with one probe, at most once per 10 seconds: a return less than 10 seconds after the previous probe SHALL send none, and an offline session then continues its backoff. The loop SHALL read the foreground state the host runtime reports and SHALL NOT depend on an operating-system network-status signal.
 
-#### Scenario: Backgrounding pauses retries
+#### Scenario: Backgrounding pauses retries without extra code
 
 - **WHEN** the app is backgrounded mid-retry-loop and later foregrounded
 - **THEN** no retry attempt occurs while backgrounded, and on the return one probe is sent unless the previous probe was less than 10 seconds before

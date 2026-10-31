@@ -1,21 +1,13 @@
 // Node acceptance suite for the theme a mini-app renders under (docs/design/system.md §2.5, §7.2;
 // sdk-design-system "The host-supplied theme is inert, sanitized data", "Components resolve semantic
-// tokens through the active theme") and for `appColor`, which `theme.ts` still re-exports.
+// tokens through the active theme").
 // Auto-discovered by `src/sdk/test/run.mjs` (every `*.acceptance.ts(x)` under this directory).
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as React from 'react';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
-import {
-  appColor,
-  DEFAULT_THEME,
-  sanitizeTheme,
-  SHELL_COLORS,
-  STATUS_COLORS,
-  STATUS_COLORS_ON_INK,
-  type WhimTheme,
-} from '../theme';
+import { DEFAULT_THEME, sanitizeTheme, type WhimTheme } from '../theme';
 import {
   resolveColor,
   resolveTextColor,
@@ -61,8 +53,6 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
-const HEX_RE = /^#[0-9a-f]{6}$/i;
-
 // The suite is bundled to a temp file before it runs, so no source path survives — derive the repo
 // root by walking up for the `package.json` that owns `marker`, rather than trusting the CWD. A miss
 // throws instead of quietly checking an empty set.
@@ -78,41 +68,6 @@ function findRepoRoot(from: string, marker: string): string {
 
 const SYSTEM_MD_PATH = path.join('docs', 'design', 'system.md');
 const SYSTEM_MD = fs.readFileSync(path.join(findRepoRoot(process.cwd(), SYSTEM_MD_PATH), SYSTEM_MD_PATH), 'utf8').split('\n');
-
-// ── appColor ─────────────────────────────────────────────────────────────────
-
-equal(appColor('Water Counter'), appColor('Water Counter'), 'appColor: same name -> same colour');
-equal(appColor(''), appColor(''), 'appColor: empty-string name is still deterministic');
-
-// One sweep over the named apps plus a denser hash exercise (purely to cover many inputs, never
-// asserting a fixed distribution): every result is a hex colour, deterministic on repeat, and
-// outside the FULL reserved set (a merge of the two sweeps this replaces — the second one's own
-// reserved set had silently dropped STATUS_COLORS.done).
-{
-  const names = [
-    'Water Counter', 'Tip Splitter', 'Habit Tracker', 'Recipe Box', 'Countdown', 'Budget',
-    ...Array.from({ length: 200 }, (_, i) => `app-${i}`),
-  ];
-  const reserved = new Set(
-    [
-      STATUS_COLORS.working,
-      STATUS_COLORS.done,
-      STATUS_COLORS.broken,
-      STATUS_COLORS.waiting,
-      STATUS_COLORS_ON_INK.working,
-      STATUS_COLORS_ON_INK.broken,
-      SHELL_COLORS.accent,
-      SHELL_COLORS.yours,
-      SHELL_COLORS.yoursOnDark,
-    ].map((hex) => hex.toLowerCase()),
-  );
-  for (const name of names) {
-    const color = appColor(name);
-    ok(HEX_RE.test(color), `appColor(${name}): result "${color}" is a hex colour`);
-    ok(!reserved.has(color.toLowerCase()), `appColor(${name}): result "${color}" must not be a reserved hue`);
-    equal(appColor(name), color, `appColor(${name}): repeat call is stable`);
-  }
-}
 
 // ── sanitizeTheme: every field validated, every invalid one defaulted ─────────
 
@@ -306,18 +261,6 @@ async function renderedTextStyle(element: React.ReactElement): Promise<Record<st
   (globalThis as { __WHIM_THEME__?: unknown }).__WHIM_THEME__ = { ...DELIVERED, scheme: 'light', tint: 'rose' };
   const again = await renderedTextStyle(React.createElement(Text, { color: 'primary' }, 'tinted'));
   equal(again.color, TINTS.purple.dark, 'a theme global replaced after mount is never re-read');
-}
-
-// ── shell tokens exist and are hex/well-formed (v2 exactness) ──────────────────
-
-for (const [key, value] of Object.entries(SHELL_COLORS)) {
-  ok(HEX_RE.test(value), `SHELL_COLORS.${key} = "${value}" is a hex colour`);
-}
-for (const [key, value] of Object.entries(STATUS_COLORS)) {
-  ok(HEX_RE.test(value), `STATUS_COLORS.${key} = "${value}" is a hex colour`);
-}
-for (const [key, value] of Object.entries(STATUS_COLORS_ON_INK)) {
-  ok(HEX_RE.test(value), `STATUS_COLORS_ON_INK.${key} = "${value}" is a hex colour`);
 }
 
 console.log('SDK theme acceptance: PASS');

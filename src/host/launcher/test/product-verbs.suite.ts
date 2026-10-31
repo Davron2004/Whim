@@ -57,7 +57,6 @@ import {
   whimSheetVersionLine,
   workingPlanPhrase,
 } from '../copy';
-import { tileColor } from '../tiles';
 import { lineFindings } from '../../../../checks/test/repo/copy-glossary';
 
 // Mechanism / git vocabulary that must never reach the launcher surface. A raw lineage id
@@ -137,7 +136,6 @@ export async function runProductVerbsTests(h: Harness): Promise<void> {
       ...Object.values(LEGAL_COPY.fr),
       ...Object.values(CONSENT_WHATS_NEW).flatMap((lines) => Object.values(lines).map((line) => line.text)),
       ...Object.values(composedLines()).flat(),
-      tileColor('Water Counter'),
     ];
     for (const str of strings) {
       for (const bad of FORBIDDEN) {

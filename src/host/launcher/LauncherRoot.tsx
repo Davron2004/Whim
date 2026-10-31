@@ -77,7 +77,7 @@ import { listVersions } from './history-logic';
 import { VersionSwitches } from './version-switches';
 import MakingPage from './MakingPage';
 import ReadyPage from './ReadyPage';
-import FailurePage from './FailurePage';
+import FailurePage, { announceFailure, type FailureAnnouncement } from './FailurePage';
 import { failureCauseOf, failureKindOf } from './failure-kind';
 import { attemptName } from './grid-composition';
 import ConsentScreen from './ConsentScreen';
@@ -286,6 +286,10 @@ type Screen =
       cause?: PendingFailureCause;
       /** A record an `update` fallback ended, while this build still needs that update. */
       needsUpdate?: true;
+      /** Set ONLY by a live run's ending onto this screen (`failure`, `showStreamFailure`, a refused
+       *  Retry from its Making page), never by a page reopened from its tile (`failureFromRecord`):
+       *  the failure haptic, played once (`FailureAnnouncement`). */
+      announce?: FailureAnnouncement;
     };
 
 type AppScreen = Extract<Screen, { kind: 'app' }>;
@@ -1921,6 +1925,7 @@ function LauncherShell({
       hasWorkingVersion: editing != null,
       rephraseHelps: attemptRephraseHelps(err),
       ...attemptCause(err),
+      announce: announceFailure(),
     };
   };
 
@@ -2408,6 +2413,7 @@ function LauncherShell({
       // dropped connection SHALL never suggest rewording").
       rephraseHelps: input.remedy == null,
       ...(terminalPersisted && input.cause ? { cause: input.cause } : {}),
+      announce: announceFailure(),
     });
   };
 
@@ -2512,7 +2518,7 @@ function LauncherShell({
     const updated = pending.get(attemptId);
     if (updated) {
       const back = failureFromRecord(updated);
-      const target = refusalScreen(refusal, back, { kind: 'retry', record: updated }) ?? { ...back, notice };
+      const target = refusalScreen(refusal, back, { kind: 'retry', record: updated }) ?? { ...back, notice, announce: announceFailure() };
       setScreen(onlyOnStep<Screen, 'making'>('making', () => target));
     }
   };
@@ -3658,6 +3664,7 @@ function LauncherShell({
         attemptStarted={from.journalId != null}
         devMode={timelineDevMode}
         onNotNow={goHome}
+        announce={from.announce}
         {...failureActions(from)}
       />
     );

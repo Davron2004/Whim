@@ -181,10 +181,10 @@ Deferred: an OS network-status dependency (reacts the moment the radio changes),
 1. Land the token module, icons and SDK theme first: installed apps re-theme through roles with no rebuild.
 2. Add native dependencies and modules (bootstrap chains), then the shell primitives.
 3. Move screens one chain at a time; old and new components coexist until the copy chain deletes the old.
-4. Generator changes land after the SDK surface is final; installed `tileColor` apps keep working through the
-   nearest-tint mapping, and pre-release builds are not a compatibility constraint.
+4. Generator changes land after the SDK surface is final; a `tileColor` is accepted and ignored (a tint-less record shows its
+   app id's fallback tint), and pre-release builds are not a compatibility constraint.
 5. Rollback is per chain (each merges separately onto the staging branch); no data migration needs reversing:
-   assigned tints and overrides are additive record fields, and hex records are mapped on read.
+   assigned tints and overrides are additive record fields, and a `tileColor` is ignored on read.
 
 ## Verification plan
 

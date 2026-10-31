@@ -97,15 +97,12 @@ function messageOf(e: unknown): string {
 /** The files a version is saved as: its code, its original source when there is one, and the
  *  manifest and schema the bridge runs it with (`manifest.json`, `schema.json`: decision #36's repo
  *  contents). Both come from the record the version was built with and nowhere else, so the schema
- *  file exists exactly when the record declares a schema. The manifest is saved without the tile
- *  colour: that is the host's, kept on the app, never moved by a version (`versionRecord`). */
+ *  file exists exactly when the record declares a schema. */
 function versionFiles(spec: { record: AppRecord; bundleSource: string; source?: string }): Record<string, string> {
-  const manifest = { ...spec.record.manifest };
-  delete manifest.tileColor;
   return {
     'bundle.js': spec.bundleSource,
     ...(spec.source != null ? { 'source.ts': spec.source } : {}),
-    'manifest.json': JSON.stringify(manifest),
+    'manifest.json': JSON.stringify(spec.record.manifest),
     ...(spec.record.schemaArtifact != null ? { 'schema.json': JSON.stringify(spec.record.schemaArtifact) } : {}),
   };
 }
@@ -123,14 +120,13 @@ function versionDeclaration(version: SnapshotContent): VersionDeclaration | null
   const manifestFile = version.artifacts['manifest.json'];
   if (manifestFile == null) return null;
   const manifest = JSON.parse(manifestFile) as AppManifest;
-  delete manifest.tileColor; // a version saved before the colour was left out of its manifest
   const schemaFile = version.artifacts['schema.json'];
   return { manifest, ...(schemaFile != null ? { schemaArtifact: JSON.parse(schemaFile) as SchemaArtifact } : {}) };
 }
 
 /**
  * The record a version runs with: what it declares (`versionDeclaration`) over the host's own fields
- * of `current` (the app id, its name, and the tile colour, which a version switch never moves).
+ * of `current` (the app id and its name, which a version switch never moves).
  *
  * KNOWN LIMITATION (pre-release, accepted — decision #81): a version saved before versions kept
  * their manifest (`declared` null) runs with `current` unchanged, which is whatever record the app
@@ -144,12 +140,10 @@ function versionDeclaration(version: SnapshotContent): VersionDeclaration | null
  */
 function versionRecord(current: AppRecord, declared: VersionDeclaration | null): AppRecord {
   if (declared == null) return current;
-  const manifest = { ...declared.manifest };
-  if (current.manifest.tileColor !== undefined) manifest.tileColor = current.manifest.tileColor;
   return {
     appId: current.appId,
     name: current.name,
-    manifest,
+    manifest: declared.manifest,
     ...(declared.schemaArtifact != null ? { schemaArtifact: declared.schemaArtifact } : {}),
   };
 }
@@ -306,11 +300,8 @@ export class StoreAccess {
       await this.ensureLineage(entry);
       await this.store.snapshot(storeIdOf(entry), versionFiles(spec), spec.prompt);
       // `entry.name` is deliberately NOT refreshed from `spec.record.name` here (they can differ —
-      // `mapWireRecord` sets `record.name = wire.name`). `app.name` is what tile-colour resolution
-      // hashes for a record with no declared/injected colour (`tiles.ts#tileColor` -> `fallbackTint(name)`
-      // via `AppTile`); build-lifecycle.ts's `deliverResult` PRESERVE comment depends on this holding
-      // in the other direction. Adopting the new name here would move that app's hue on its next
-      // rename-carrying rebuild. Pinned: store-access.suite.ts §34.
+      // `mapWireRecord` sets `record.name = wire.name`): a rebuild leaves the name the app has on
+      // the grid as it was. Pinned: store-access.suite.ts §34.
       const current = this.index.get(entry.id) ?? entry;
       const { tint, icon } = assignedTile(current);
       const updated: InstalledApp = { ...entry, record: spec.record, tint, icon };

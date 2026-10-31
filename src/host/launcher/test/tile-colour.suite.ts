@@ -1,17 +1,17 @@
 /**
  * tile-colour Node suite (design-system-v1 chain-12, task 12.5). An installed app's tile identity —
  * its tint and glyph (`tile-identity.ts`): what a manifest declares, the seeded examples' fixed
- * tiles, the #127 guard, the read path for records from before tints, the override's validation —
- * and the transitional `tiles.ts#tileColor` the current screens still paint with, which now always
- * lands on a tint. Assignment against a real index, rebuilds and copies are in
- * `store-access.suite.ts` and `build-lifecycle.suite.ts`.
+ * tiles, the #127 guard, the read path for records from before tints (a stray `tileColor` is
+ * ignored), the override's validation. Assignment against a real index,
+ * rebuilds, copies and the wire → record mapping are in `store-access.suite.ts` and
+ * `build-lifecycle.suite.ts`.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { Harness } from './harness';
-import { tileColor } from '../tiles';
-import { liftManifestTileColor } from '../manifest-tile-color';
 import { TINT_NAMES, TINTS } from '../../../design/tokens';
-import { isTintName, nearestTint } from '../../../design/tints';
+import { fallbackTint, isTintName } from '../../../design/tints';
 import { GLYPH_NAMES } from '../../../design/icons/names';
 import { reservedColors } from '../../../../scripts/lib/design-tokens';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
@@ -22,11 +22,11 @@ import { StoreAccess } from '../store-access';
 import { seedFirstRun, type SeedSpec } from '../seed';
 import { EXAMPLE_TILES, declaredTile, tileOf, type TileIdentity } from '../tile-identity';
 import type { AppManifest } from '../../bridge/contract';
+import { runStaticChecks } from '../../../../checks/index';
 
 /** The three examples `LauncherRoot.tsx#defaultSeeds()` installs on first run. */
 const SEEDED_IDS = ['tip-splitter', 'water-counter', 'style-gallery'];
 
-const TINT_LIGHTS: ReadonlySet<string> = new Set(TINT_NAMES.map((t) => TINTS[t].light));
 const RESERVED: readonly string[] = [...Object.values(reservedColors('light')), ...Object.values(reservedColors('dark'))];
 
 const BUNDLE = 'var __WHIM_APP_MODULE__ = (() => ({}))();';
@@ -55,77 +55,44 @@ function sameTile(a: TileIdentity, b: TileIdentity): boolean {
 }
 
 export async function runTileColourTests(h: Harness): Promise<void> {
-  // ── tileColor — the transitional reader, always a tint ────────────────────
-  await h.test('tileColor: every result is a tint’s light value, whatever the record declares', async () => {
-    const declared = [
-      ...TINT_NAMES.flatMap((t) => [TINTS[t].light, TINTS[t].dark]),
-      ...RESERVED,
-      '#2f6feb',
-      '#fff',
-      'not-a-hex',
-      '',
-    ];
-    for (const hex of declared) {
-      const colour = tileColor('Pour Timer', { tileColor: hex });
-      h.ok(TINT_LIGHTS.has(colour), `"${hex}" paints a tint (got ${colour})`);
-    }
-    h.ok(TINT_LIGHTS.has(tileColor('Pour Timer')), 'no manifest paints a tint too');
-    for (const reserved of RESERVED) {
-      h.ok(tileColor('Budget', { tileColor: reserved }) !== reserved, `reserved colour ${reserved} is never painted as a tile`);
+  // ── a stray `tileColor` (deprecated, from before tints) — ignored on read ──
+  await h.test('stray tileColor: no value of it changes the ranking, which is the app id’s fallback, as with no colour', async () => {
+    const none = declaredTile({}, 'app-x', 'Water Counter').ranked;
+    h.eq(none, [fallbackTint('app-x')], 'no colour: the fallback tint for the app id');
+    const otherTints = TINT_NAMES.filter((t) => t !== fallbackTint('app-x'));
+    h.ok(otherTints.length === TINT_NAMES.length - 1, 'sanity: nine tints’ light values differ from the fallback, so a colour that picked a tint would show');
+    for (const colour of [...otherTints.map((t) => TINTS[t].light), ...RESERVED, 'not-a-hex', '#zzzzzz', '', 42, null]) {
+      h.eq(declaredTile({ tileColor: colour }, 'app-x', 'Water Counter').ranked, none, `${JSON.stringify(colour)} ranks like no colour`);
     }
   });
 
-  await h.test('tileColor: a tint’s own value, in any case, paints that tint', async () => {
-    for (const t of TINT_NAMES) {
-      h.eq(tileColor('Any', { tileColor: TINTS[t].light }), TINTS[t].light, `${t} light value`);
-      h.eq(tileColor('Any', { tileColor: TINTS[t].light.toLowerCase() }), TINTS[t].light, `${t} light value, lower case`);
+  // ── the shipped records — the build's tile comes from the checker's extraction ──
+  await h.test('shipped records: each fixture’s record carries the tint and icon the static checker resolves from its source', async () => {
+    // Decision #41: one extraction. The expectation is the server's own checker run on the fixture
+    // source, so a build that resolved the tile a second way (or dropped it) disagrees here.
+    const fixtureOf = (id: string) => path.join(process.cwd(), 'fixtures', `${id}.app.tsx`);
+    const checked = Object.keys(APP_RECORDS).filter((id) => fs.existsSync(fixtureOf(id)));
+    for (const id of SEEDED_IDS) h.ok(checked.includes(id), `${id}: a shipped fixture record is checked`);
+    for (const id of checked) {
+      const extracted = runStaticChecks(fs.readFileSync(fixtureOf(id), 'utf8')).manifest;
+      h.ok(extracted !== undefined, `${id}: the checker extracts a manifest from the fixture`);
+      const { tint, icon } = APP_RECORDS[id].manifest;
+      h.eq({ tint, icon }, { tint: extracted?.tint, icon: extracted?.icon }, `${id}: the record's tint and icon are the checker's`);
+      if (SEEDED_IDS.includes(id)) h.ok(tint !== undefined && icon !== undefined, `${id}: the example declares a tile`);
     }
-  });
-
-  await h.test('tileColor: a malformed or absent colour paints what no colour paints, spread over the tints by name', async () => {
-    for (const bad of ['not-a-hex', '#zzzzzz', 'ffaa00', '#12345', '']) {
-      h.eq(tileColor('Water Counter', { tileColor: bad }), tileColor('Water Counter'), `"${bad}" falls back like no colour`);
-    }
-    h.eq(tileColor('Recipe Box', {}), tileColor('Recipe Box'), 'an absent field falls back like no manifest');
-    h.eq(tileColor('Recipe Box'), tileColor('Recipe Box'), 'the fallback is stable for a name');
-    const reached = new Set(Array.from({ length: 200 }, (_, i) => tileColor(`My App ${i}`)));
-    h.ok(reached.size >= 5, `the name fallback spreads over the tints, not one colour (reached ${reached.size})`);
-  });
-
-  // ── liftManifestTileColor — the wire -> host-record lift, no re-validation ─
-  await h.test('liftManifestTileColor: a string tileColor is lifted verbatim', async () => {
-    h.eq(liftManifestTileColor({ tileColor: '#2f6feb' }), { tileColor: '#2f6feb' }, 'string value round-trips');
-    h.eq(liftManifestTileColor({ tileColor: 'NotEvenHex' }), { tileColor: 'NotEvenHex' }, 'no re-validation performed here');
-  });
-
-  await h.test('liftManifestTileColor: a missing or non-string tileColor lifts nothing', async () => {
-    h.eq(liftManifestTileColor({}), {}, 'no key at all');
-    h.eq(liftManifestTileColor({ tileColor: 42 }), {}, 'a number is dropped');
-    h.eq(liftManifestTileColor({ tileColor: null }), {}, 'null is dropped');
-    h.eq(liftManifestTileColor({ tileColor: undefined }), {}, 'undefined is dropped');
-    h.eq(liftManifestTileColor({ capabilities: ['x'] }), {}, 'an unrelated manifest key is ignored');
-  });
-
-  await h.test('liftManifestTileColor: a lifted reserved colour still paints a tint downstream', async () => {
-    const reserved = reservedColors('light').danger;
-    const lifted = liftManifestTileColor({ tileColor: reserved });
-    h.eq(lifted, { tileColor: reserved }, 'lift is a straight passthrough');
-    h.ok(TINT_LIGHTS.has(tileColor('Budget', lifted)) && tileColor('Budget', lifted) !== reserved, 'the reader maps it onto a tint');
   });
 
   // ── the seeded examples — from the shipped build output ───────────────────
-  await h.test('examples: the shipped records’ colours land on distinct tints, each the example’s fixed tile', async () => {
-    // Reads the real producer (the generated APP_RECORDS build.mjs#extractAppRecord emits), so the
-    // current screens' colour for an example and its fixed tile can never drift apart.
-    const tints = SEEDED_IDS.map((id) => {
-      const record = APP_RECORDS[id];
-      h.ok(typeof record?.manifest.tileColor === 'string', `${id}: the shipped manifest declares a colour`);
+  await h.test('examples: each example’s shipped record declares its fixed tile first, and no legacy colour', async () => {
+    // Reads the real producer (the generated APP_RECORDS build.mjs#extractAppRecord emits), so an
+    // example's declaration and its fixed tile can never drift apart.
+    for (const id of SEEDED_IDS) {
+      const manifest = APP_RECORDS[id]?.manifest;
       h.ok(Object.hasOwn(EXAMPLE_TILES, id), `${id}: has a fixed tile`);
-      const painted = tileColor(record?.name ?? id, record?.manifest);
-      h.eq(painted, TINTS[EXAMPLE_TILES[id].tint].light, `${id}: the current screens paint its fixed tint`);
-      return nearestTint(record?.manifest.tileColor ?? '');
-    });
-    h.eq(new Set(tints).size, SEEDED_IDS.length, `three distinct tints (got ${JSON.stringify(tints)})`);
+      h.eq(manifest?.tint?.[0], EXAMPLE_TILES[id].tint, `${id}: its first declared tint is its fixed tint`);
+      h.eq(manifest?.icon, EXAMPLE_TILES[id].icon, `${id}: its declared icon is its fixed glyph`);
+      h.ok(manifest !== undefined && !Object.hasOwn(manifest, 'tileColor'), `${id}: the example declares no legacy tileColor`);
+    }
   });
 
   await h.test('examples: first-run seeding installs each example with its fixed tile, distinct in tint and glyph', async () => {
@@ -154,20 +121,21 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     // Every other tint used once too, so the examples' tints are as reusable as any (all least used).
     const taken = new Set(Object.values(EXAMPLE_TILES).map((t) => t.tint));
     for (const tint of TINT_NAMES.filter((t) => !taken.has(t))) {
-      await access.install({ id: `app-${tint}`, name: `App ${tint}`, record: { appId: `app-${tint}`, name: 'x', manifest: { capabilities: [], tint, icon: 'star' } as AppManifest }, bundleSource: BUNDLE, prompt: 'p' });
+      await access.install({ id: `app-${tint}`, name: `App ${tint}`, record: { appId: `app-${tint}`, name: 'x', manifest: { capabilities: [], tint: [tint], icon: 'star' } as AppManifest }, bundleSource: BUNDLE, prompt: 'p' });
     }
     h.eq(new Set(index.list().map((a) => tileOf(a).tint)).size, TINT_NAMES.length, 'precondition: every tint is used exactly once');
 
-    // The #127 shape: the model copies the few-shot example's name and colour (and so its glyph).
+    // The #127 shape: the model copies the few-shot example's name, tints and glyph.
     const water = APP_RECORDS['water-counter'];
-    const copied = { capabilities: [], tileColor: water?.manifest.tileColor } as AppManifest;
+    const copied = { capabilities: [], tint: water?.manifest.tint, icon: water?.manifest.icon } as AppManifest;
     const mimic = await access.install({ id: 'app-mimic', name: 'Water Counter', record: { appId: 'app-mimic', name: 'Water Counter', manifest: copied }, bundleSource: BUNDLE, prompt: 'p' });
-    h.eq(declaredTile(copied, 'app-mimic', 'Water Counter'), { ranked: [EXAMPLE_TILES['water-counter'].tint], icon: EXAMPLE_TILES['water-counter'].icon }, 'precondition: it declares exactly the example’s tile');
+    const declared = declaredTile(copied, 'app-mimic', 'Water Counter');
+    h.eq({ tint: declared.ranked[0], icon: declared.icon }, EXAMPLE_TILES['water-counter'], 'precondition: it declares exactly the example’s tile first');
     for (const id of SEEDED_IDS) h.ok(!sameTile(tileOf(mimic), EXAMPLE_TILES[id]), `the copy does not show ${id}’s tile (got ${JSON.stringify(tileOf(mimic))})`);
     h.eq(tileOf(mimic).icon, EXAMPLE_TILES['water-counter'].icon, 'it keeps its own glyph; only the tint moves');
 
     // The guard is the PAIR, not the tint: another glyph may still take the example's tint.
-    const other = await access.install({ id: 'app-other', name: 'Rain', record: { appId: 'app-other', name: 'Rain', manifest: { capabilities: [], tint: EXAMPLE_TILES['water-counter'].tint, icon: 'cloud-rain' } as AppManifest }, bundleSource: BUNDLE, prompt: 'p' });
+    const other = await access.install({ id: 'app-other', name: 'Rain', record: { appId: 'app-other', name: 'Rain', manifest: { capabilities: [], tint: [EXAMPLE_TILES['water-counter'].tint], icon: 'cloud-rain' } as AppManifest }, bundleSource: BUNDLE, prompt: 'p' });
     h.eq(tileOf(other).tint, EXAMPLE_TILES['water-counter'].tint, 'a different glyph gets the example’s tint when it is least used');
 
     // The person may still pick it.
@@ -183,7 +151,8 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     h.ok(unknown.length === 1 && isTintName(unknown[0]), 'an unknown name still ranks one tint');
     h.eq(declaredTile({ tint: 'chartreuse' }, 'app-x', 'B').ranked, unknown, 'chosen by the app id, not the name');
     h.eq(declaredTile({ tint: 'stone', tileColor: TINTS.ocean.light }, 'a', 'A').ranked, ['stone'], 'a declared tint wins over an old colour');
-    h.eq(declaredTile({ tileColor: TINTS.ocean.light }, 'a', 'A').ranked, ['ocean'], 'with no tint, an old colour ranks its nearest');
+    h.ok(fallbackTint('a') !== 'ocean', 'sanity: the fallback for "a" is not ocean');
+    h.eq(declaredTile({ tileColor: TINTS.ocean.light }, 'a', 'A').ranked, [fallbackTint('a')], 'with no tint, an old colour is ignored for the fallback');
   });
 
   await h.test('declaredTile: the icon resolves to a glyph tiles can draw', async () => {
@@ -197,11 +166,11 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     h.eq(declaredTile({ icon: 42 }, 'a', 'Q').icon, 'circle', 'a non-string icon with nothing to go on is the circle');
   });
 
-  await h.test('tileOf: an old record with a hex colour and no tint shows the nearest tint, as the current screens paint it', async () => {
-    const record = { appId: 'old', name: 'Old App', manifest: { capabilities: [], tileColor: '#0369a1' } };
+  await h.test('tileOf: an old record with a hex colour and no tint shows its fallback tint', async () => {
+    const record = { appId: 'old', name: 'Old App', manifest: { capabilities: [], tileColor: TINTS.ocean.light } };
     const legacy: InstalledApp = { id: 'old', name: 'Old App', createdAt: 1, record, lineageId: 'main' };
-    h.eq(tileOf(legacy).tint, nearestTint('#0369a1'), 'the nearest tint by ΔE2000');
-    h.eq(TINTS[tileOf(legacy).tint].light, tileColor(legacy.name, record.manifest), 'the same colour the current tile paints');
+    h.ok(fallbackTint('old') !== 'ocean', 'sanity: the colour (ocean’s own light value) and the app id pick different tints, so this is not vacuous');
+    h.eq(tileOf(legacy).tint, fallbackTint('old'), 'the app id’s fallback, not the colour');
   });
 
   await h.test('override: only a tint and a tile glyph are accepted; an app that is not installed is null', async () => {

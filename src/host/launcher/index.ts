@@ -13,7 +13,6 @@ export type { SeedSpec } from './seed';
 export { BackPolicy, step, initialBackState, UNHANDLED_PRESS_WINDOW_MS } from './back-policy';
 export type { BackAction, BackEvent, BackState } from './back-policy';
 export { deliverBySourceJs, MAX_BUNDLE_SOURCE_BYTES, BundleTooLargeError } from './deliver';
-export { tileColor } from './tiles';
 export { COPY } from './copy';
 export { useMiniAppHost } from './useMiniAppHost';
 export type { MiniAppHost, HostState } from './useMiniAppHost';
