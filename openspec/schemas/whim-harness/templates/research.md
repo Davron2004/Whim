@@ -20,6 +20,9 @@
 ## Integration points
 <!-- Where new code would attach: functions, modules, events, routes. -->
 
+## Pattern census
+<!-- Security/hardening changes only: every in-repo occurrence of the pattern, `file:line | SAFE / UNSAFE / NOT-CHECKED | test applied`. Delete otherwise. -->
+
 ## Risks and unknowns
 <!-- Anything not confirmed. Say "I did not verify X" explicitly. -->
 

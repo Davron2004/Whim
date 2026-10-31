@@ -447,6 +447,43 @@ const chromiumBrowser = await chromium.launch();
   }
 }
 
+// 10. HOST-DISPATCH PROVENANCE — the sandboxed app realm can NAME `whimHostDispatch` (the raw CDP
+//     binding lands on every execution context), so the guard in scenario() must make that name
+//     INERT, not absent. A hand-rolled syscall frame from the app frame, stamped with the LIVE
+//     generation so the generation fence cannot be what drops it, is refused before dispatch: no
+//     sysret, a counted refusal, and the write absent when READ BACK FROM THE REAL ENGINE. The
+//     positive control on the same wiring, from the main frame, proves the engine and verb are live.
+{
+  let seen = null;
+  const r = await scenario('host-dispatch-provenance', 'water-counter', {
+    drive: async (page, host) => {
+      const frame = (id, key, value) => JSON.stringify({ whim: 'syscall', v: 1, id, gen: host.realm.generation, method: 'storage.kv.set', params: { key, value } });
+      const f = await appFrame(page);
+      const hostile = f ? await f.evaluate(async (raw) => {
+        const g = globalThis;
+        const reachable = typeof g.whimHostDispatch;
+        const sysret = reachable === 'function' ? await g.whimHostDispatch(raw) : 'NAME NOT REACHABLE';
+        return { subordinate: g.top !== g, shimKind: typeof g.__whimSyscall?.call, reachable, sysret };
+      }, frame(9201, 'pwned-by-frame', 'yes')) : null;
+      const control = await page.evaluate((raw) => globalThis.whimHostDispatch(raw), frame(9202, 'host-write', 'ok'));
+      seen = { hostile: hostile || {}, control };
+    },
+  });
+  const h = seen?.hostile || {};
+  const engine = r.host.realm.engine;
+  // Non-vacuity first: really the subordinate realm, the shim being bypassed really installed, the
+  // name really reachable — so this tests capability, not naming.
+  const nonVacuous = h.subordinate === true && h.shimKind === 'function' && h.reachable === 'function';
+  const refused = h.sysret === null;
+  const notWritten = engine?.kv.get('pwned-by-frame') === undefined;
+  const counted = r.foreignCalls === 1;
+  const controlOk = /"whim":"sysret"/.test(String(seen?.control)) && engine?.kv.get('host-write') === 'ok';
+  record(nonVacuous && refused && notWritten && counted && controlOk,
+    'host-dispatch provenance (sandbox-realm caller inert, main frame still dispatches)',
+    `subordinate=${h.subordinate} shim-installed=${h.shimKind === 'function'} name-reachable=${h.reachable === 'function'} ` +
+    `sysret=${JSON.stringify(h.sysret)} engine-write-absent=${notWritten} refusals=${r.foreignCalls} (want 1) positive-control=${controlOk}`);
+}
+
 await chromiumBrowser.close();
 await rm(shimOut, { force: true });
 
