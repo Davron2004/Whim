@@ -14,7 +14,7 @@ export interface StackEntry {
   readonly foreground: string;   // header title / back tint
   readonly children: React.ReactNode;
 }
-export default function NativeStack(props: { entries: readonly StackEntry[] }): JSX.Element;
+export default function NativeStack(props: { entries: readonly StackEntry[]; onSettled?: () => void }): JSX.Element;
 export function poppedEntry(top: number, dismissCount: number): number; // lowest popped index, ≥ 1
 ```
 
@@ -23,6 +23,8 @@ export function poppedEntry(top: number, dismissCount: number): number; // lowes
 - iOS pop (header back, edge/content swipe, long-press menu) → `onDismissed(dismissCount)` → the lowest
   popped entry's `onLeave`. Android header back → `onHeaderBackButtonClicked` → `onLeave`. Android system
   back is NOT the stack's: each screen binds `useSystemBack(onLeave)` itself (LIFO listeners, top wins).
+- `onSettled` = `ScreenStack`'s `onFinishTransitioning`: a push or pop the platform drew has finished (iOS
+  `didShowViewController`; Android the fragment animation's end, read from source, not run on a device).
 - **Invariant: `onLeave` must move the machine off its entry synchronously** (no await first). An entry
   still rendered after the platform popped it is pushed again.
 - A running app, the making flow, the legal ask screens and full screens are never entries.
@@ -45,19 +47,31 @@ function stackFor(screen: Screen): readonly StackScreen[] | null;  // root first
 | settings | `home, settings` | "Settings", large | `goHome` |
 | advanced | `home, settings, advanced` | "Advanced" | settings |
 | consent review (AI features) | `home, settings, consent` | "AI features" | settings |
-| history | `home, history` | hidden (History draws its own until 20.1) | `goHome`, then reopens the app when `from: 'app'` |
+| history | `home, history` | hidden (History draws its own until 20.1) | a swipe: `leaveHistory`; its Back and system back: see "History's leave" |
 | report | `stackFor(from)` + `report` | "Report a problem" | `from` |
 
 - Push = `setScreen(next)`; pop = the entry's `onLeave`. To add a pushed screen: a Screen member, a branch
   in `stackFor`, `stackTitle`, `leaveFor`, `renderStackScreen`, and `schemeFollowing` if it draws tokens.
-- `schemeFollowing(top)`: settings/advanced/report draw `useTokens()` (header + `StatusBar` = `t.barStyle`);
-  home/history/consent still draw `SHELL_PALETTE` and `dark-content`. Flip a kind when its screen moves.
+- `schemeFollowing(top)`: home/settings/advanced/report draw `useTokens()` (header + `StatusBar` = `t.barStyle`);
+  history/consent still draw `SHELL_PALETTE` and `dark-content`. Flip a kind when its screen moves.
 - AI features row always opens review mode. Review's "Turn on AI features" runs the legal flow with
   continuation `{ kind: 'settings' }`; its consent step grants directly (`reviewedConsent`, #104).
 - Root `SafeAreaView` edges: `frameEdgesFor(kind, onNativeStack)` → `[]` on the stack.
 - `ToastHost` is mounted once in `LauncherRoot` around the screen boundary; `useToast()` works in every
   screen (Advanced uses it for "Phone ID copied").
-- Done step still opens `ReportSheet` (host-level `reportTarget`) until 17.2 removes Report from Ready.
+
+## History's leave (`LauncherRoot.tsx`)
+
+History's `onLeave` (a swipe: `onDismissed`) is `leaveHistory(app, from)`: `goHome()` at once (UIKit already popped),
+then `onOpen(app)` when `from === 'app'`, at the version now current. Its own Back and system back are bound apart:
+- Opened over an app: `backFromHistoryToApp(app)`. Never Home first; History stays until `onOpen` has replaced it with
+  the app in one step. Failed open: alert, then Home. Refused open (the app is busy with a copy): Home. A second Back
+  or system back while THAT app's `open` is in flight (`appOps.opFor(app.id) === 'open'`) is ignored.
+- Opened from Home: `backFromHistoryToHome` = `startStackPop()`, then `goHome()` (a JS pop UIKit animates). An `onOpen`
+  or app link arriving meanwhile waits for `NativeStack`'s `onSettled` or `POP_FALLBACK_MS` (1000 ms); only the latest
+  waiter then runs, earlier ones resolve `false`. A swipe pop starts no hold.
+- **Never pop the stack and then replace or unmount it (an app opening) within the pop's animation**: react-native-screens
+  recycles the stack with the pop unfinished and the next Home is blank for good (iOS).
 
 ## Exit table — `screen-exits.ts`
 
@@ -74,9 +88,8 @@ function stackFor(screen: Screen): readonly StackScreen[] | null;  // root first
 { onBack; errorDetails; onErrorDetailsChange; deviceId; onResetDeviceId; serverChoice: ServerChoice;
   ownServerAcknowledged; onAcknowledgeOwnServer: () => void; onChooseServer: (c: ServerChoice) => void;
   savedAddress?: string; onServerUrlChange; canProbe; probe: SessionProbe | null; legalLanguage }
-// ReportScreen (default) and ReportSheet (named; over a running app / Done until 19.2 and 17.2)
+// ReportScreen (default: on the stack) and ReportPage (named: a page of the Whim sheet over a running app)
 ReportScreenProps = { app: InstalledApp | null; access; options; onLeave; onUpdateRequired; legalLanguage }
-ReportSheet: Omit<ReportScreenProps, 'onLeave'> & { onClose: () => void }   // app null = closed
 ```
 
 - `server-address.ts`: `type ServerChoice = 'whim' | 'own'`, `serverChoice(kv)`, `chooseServer(kv, c)`
@@ -98,5 +111,8 @@ callback; classic stack has no progress handling). Flag left off; issue #164. Po
 ## Tests
 
 `native-screens.tsx` (alias for `react-native-screens`): `stackIds`, `stackItems`, `headerBackShown`,
-`iosPop(tree, n)`, `androidHeaderBack`. `native-host.tsx` adds `Clipboard.copied`. Suites:
-`native-stack-ui.suite.tsx` (new), `screen-controls`, `privacy-settings-ui`, `settings-screen`, `report-send`.
+`iosPop(tree, n)`, `androidHeaderBack`; its `ScreenStack` models iOS moves (a JS-changed top starts one, `iosPop`
+does not): `stackUnmountsMidMove()` counts unmounts during one, `stackMoveEnds()` (async) ends it and fires
+`onFinishTransitioning`. `native-host.tsx` adds `Clipboard.copied`. Suites: `native-stack-ui.suite.tsx` (new),
+`screen-controls`, `privacy-settings-ui`, `settings-screen`, `report-send`, `history-ui` (the leave rules above),
+`launcher-stress-ui` (asserts `stackUnmountsMidMove()` is unchanged by every step).

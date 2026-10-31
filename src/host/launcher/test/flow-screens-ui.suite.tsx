@@ -571,7 +571,7 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
       h.eq(tree.root.findByType(TilePlate).props.size, 'hero', 'the 96 pt tile');
       const open = tree.root.findAllByType(Button).find((b) => b.props.label === COPY.readyOpen);
       h.eq([open?.props.variant, open?.props.tint], ['tint', tileOf(APP).tint], 'Open it is in the app’s own tint');
-      h.ok(!shown.includes(COPY.reportSheetTitle), 'and the page carries no report action');
+      h.eq(tree.root.findAllByType(Button).map((b) => b.props.label), [COPY.readyOpen, COPY.readyDone], 'and the page carries no other action, no report among them');
       await press(button(tree, COPY.readyOpen));
       h.eq([s.count('open'), s.count('done')], [1, 0], 'Open it opens the app');
       await press(button(tree, COPY.readyDone));

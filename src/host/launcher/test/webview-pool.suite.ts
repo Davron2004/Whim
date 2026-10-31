@@ -5,6 +5,7 @@
  * page and a page whose scripts did not run, is in `deliver-by-source.desktop.mjs`.
  */
 import { Harness } from './harness';
+import { mulberry32 } from './mulberry32';
 import {
   EMPTY_POOL,
   launchFailed,
@@ -14,7 +15,6 @@ import {
   pageAnswered,
   pageGone,
   pageLoaded,
-  retryLaunch,
   waitingSlot,
   type WebViewPool,
 } from '../webview-pool';
@@ -43,20 +43,6 @@ function violations(pool: WebViewPool, before: WebViewPool, owner: Map<number, n
   const kept = (p: WebViewPool, q: WebViewPool) => p.slots.map((s) => s.key).filter((key) => q.slots.some((s) => s.key === key));
   if (kept(pool, before).join() !== kept(before, pool).join()) broken += 1;
   return broken;
-}
-
-/** mulberry32: a 32-bit PRNG whose every step stays an exact integer (`Math.imul`), so the sequence
- *  reaches every step kind evenly. */
-function mulberry32(seed: number): () => number {
-  /* eslint-disable no-bitwise -- 32-bit integer mixing is what this generator is, not a bitmask */
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
-  };
-  /* eslint-enable no-bitwise */
 }
 
 export async function runWebViewPoolTests(h: Harness): Promise<void> {
@@ -93,6 +79,15 @@ export async function runWebViewPoolTests(h: Harness): Promise<void> {
     h.eq(launchSlot(unopened)?.handedOut, 'cold', 'an app left before it opened leaves none waiting: the next gets a cold one');
   });
 
+  await h.test('pool: the open app opened again in place (Reload) is a new launch: its WebView is destroyed and the new launch takes the one that waited beside it', () => {
+    const running = launchOpened(openApp(warmed(openApp(EMPTY_POOL, null)), 'tip@1'));
+    const reloaded = openApp(warmed(running), 'tip@2');
+    h.ok(reloaded.launch !== running.launch, 'a new launch');
+    h.ok(!reloaded.slots.some((s) => s.key === launchSlot(running)!.key), 'the running launch’s WebView is gone, never handed out again');
+    h.eq([launchSlot(reloaded)?.key, launchSlot(reloaded)?.handedOut, reloaded.slots.length], [waitingSlot(running)!.key, 'warm', 1],
+      'the new launch has the WebView that warmed while the app ran, and none other loads while it opens');
+  });
+
   await h.test('pool: a waiting WebView still loading is handed out as it is; one that loaded without answering is not', () => {
     const loading = openApp(openApp(EMPTY_POOL, null), 'a');
     h.eq(launchSlot(loading)?.handedOut, 'loading', 'a page still loading is handed over, to be delivered into once it loads');
@@ -114,18 +109,18 @@ export async function runWebViewPoolTests(h: Harness): Promise<void> {
     h.eq(pageGone(open, launchSlot(open)!.key), open, 'the open app’s own WebView is the launch’s to fail, not the pool’s');
   });
 
-  await h.test('pool: a failure surface destroys the launch’s WebView, and Retry binds one it never had', () => {
-    const open = openApp(warmed(openApp(EMPTY_POOL, null)), 'a');
+  await h.test('pool: a failure surface destroys the launch’s WebView, and Reload (a new opening) takes the one that waited meanwhile', () => {
+    const open = openApp(warmed(openApp(EMPTY_POOL, null)), 'a@1');
     const first = launchSlot(open)!.key;
     const failed = launchFailed(open);
     h.eq([launchSlot(failed), failed.slots.length, failed.launch], [undefined, 1, open.launch], 'no WebView of its own while the recovery screen shows; one starts waiting');
-    const retried = retryLaunch(warmed(failed));
-    h.ok(launchSlot(retried)!.key !== first && launchSlot(retried)!.handedOut === 'warm' && retried.launch === open.launch,
-      'Retry gives the same launch a new WebView: the one that warmed meanwhile');
-    h.ok(launchSlot(retryLaunch(retried))!.key !== launchSlot(retried)!.key, 'and Retry without a failure screen replaces the WebView too');
+    const reloaded = openApp(warmed(failed), 'a@2');
+    h.ok(launchSlot(reloaded)!.key !== first && launchSlot(reloaded)!.key === waitingSlot(failed)!.key && launchSlot(reloaded)!.handedOut === 'warm',
+      'Reload binds the WebView that warmed while the crash screen showed');
+    h.ok(reloaded.launch !== open.launch && reloaded.slots.length === 1, 'as a new launch, with none other loading while it opens');
   });
 
-  await h.test('pool: over any sequence of opens, closes, failures, retries and page events, no WebView ever serves two launches or waits again', () => {
+  await h.test('pool: over any sequence of opens, closes, failures and page events, no WebView ever serves two launches or waits again', () => {
     let pool = openApp(EMPTY_POOL, null);
     const owner = new Map<number, number>();
     let notWaiting = 0;
@@ -137,7 +132,7 @@ export async function runWebViewPoolTests(h: Harness): Promise<void> {
     const waitingKey = (p: WebViewPool, step: (p: WebViewPool, key: number) => WebViewPool) => (waitingSlot(p) ? step(p, waitingSlot(p)!.key) : p);
     const steps: Record<string, (p: WebViewPool) => WebViewPool> = {
       'open a': (p) => openApp(p, 'a'), 'open b': (p) => openApp(p, 'b'), close: (p) => openApp(p, null),
-      launchFailed, retryLaunch, launchOpened: opened,
+      launchFailed, launchOpened: opened,
       pageLoaded: (p) => waitingKey(p, pageLoaded), pageAnswered: (p) => waitingKey(p, pageAnswered), pageGone: (p) => waitingKey(p, pageGone),
     };
     const kinds = Object.keys(steps);
@@ -154,7 +149,7 @@ export async function runWebViewPoolTests(h: Harness): Promise<void> {
       const bound = launchSlot(pool);
       if (bound !== undefined && pool.launch !== before.launch && bound.key === waitingSlot(before)?.key) {
         if (bound.handedOut === 'warm') warmHandOvers += 1;
-        if (before.appId !== null && before.appId !== pool.appId) appToApp += 1;
+        if (before.opening !== null && before.opening !== pool.opening) appToApp += 1;
       }
       broken += violations(pool, before, owner);
     }

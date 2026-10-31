@@ -5,11 +5,10 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { COPY } from '../copy';
+import { COPY, appCrashedTitle } from '../copy';
 import { MiniAppStage, type MiniAppLaunch } from '../MiniAppView';
 import { STARTUP_DEADLINE_MS } from '../boot-state';
 import type { InstalledApp } from '../app-index';
-import type { StoreAccess } from '../store-access';
 import type { AppRecord } from '../../bridge';
 import { createStorageEngine } from '../../storage-engine';
 import { DEFAULT_THEME, sanitizeTheme } from '../../../sdk/theme';
@@ -19,12 +18,11 @@ import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { DiagnosticsBatch } from '@whim/contract';
 import { log } from '../../logging';
-import { accessibilitySettings, emitAccessibility, finishAnimations, injectedScripts, Platform, setColorScheme, StyleSheet, windowMetrics } from './native-host';
+import { accessibilitySettings, emitAccessibility, hardwareBack, injectedScripts, Platform, setColorScheme, StyleSheet, windowMetrics } from './native-host';
 import { keyboardWindow, moveKeyboard, resetKeyboard } from './native-keyboard-controller';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { closedDatabases, resetNativeStorage } from './native-storage';
 import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
-import { grantedOptions } from './client-fixtures';
 import { animations, isStep } from './native-reanimated';
 import { TilePlate } from '../../ui/AppTile';
 import { SHELL_PALETTE } from '../theme';
@@ -111,6 +109,22 @@ function pageIsShown(tree: Tree): boolean {
   });
 }
 
+/** Where the orb's target is drawn: its left edge and bottom (from its positioned frame and that
+ *  frame's slide) and its height. */
+function orbPlace(tree: Tree): { left: number; bottom: number; height: number } {
+  const orb = button(tree, COPY.orbMenuOpenLabel);
+  let frame: TestRenderer.ReactTestInstance | null = orb;
+  while (frame && !(typeof frame.type === 'string' && flat(frame).position === 'absolute')) frame = frame.parent;
+  if (!frame) throw new Error('the orb has no positioned frame');
+  const style = StyleSheet.flatten(frame.props.style) as { left?: number; bottom?: number; transform?: Record<string, number>[] };
+  const slide = style.transform?.find((t) => 'translateX' in t)?.translateX ?? 0;
+  return { left: (style.left ?? 0) + slide, bottom: style.bottom ?? 0, height: Number((StyleSheet.flatten(orb.props.style) as { height?: number }).height) };
+}
+
+/** The orb is drawn: one control whose name starts "Whim menu". */
+const orbShown = (tree: Tree) =>
+  tree.root.findAll((n) => hostType(n) === 'Pressable' && String(n.props.accessibilityLabel).startsWith(COPY.orbMenuOpenLabel)).length === 1;
+
 const isOpening = (tree: Tree) =>
   tree.root.findAll((n) => typeof n.type === 'string' && n.props.accessibilityRole === 'progressbar' && n.props.accessibilityLabel === COPY.appBootA11yLabel).length > 0;
 
@@ -138,7 +152,7 @@ function pageInset(tree: Tree): number {
 /** The launch of `record` as the launcher hands it over (installed with `tile`, tapped at `tappedAt`). */
 function launchOf(
   record: AppRecord,
-  opts: { tile?: Pick<InstalledApp, 'tint' | 'icon'>; tappedAt?: number; onExit?: () => void } = {},
+  opts: { tile?: Pick<InstalledApp, 'tint' | 'icon'>; tappedAt?: number; onExit?: () => void; onReload?: () => void; onOpenSheet?: () => void } = {},
 ): MiniAppLaunch {
   return {
     record,
@@ -146,13 +160,13 @@ function launchOf(
     engineAppId: record.appId,
     tappedAt: opts.tappedAt ?? Date.now(),
     onExit: opts.onExit ?? (() => {}),
-    onVersions: () => {},
-    onChangeIt: () => {},
+    onOpenSheet: opts.onOpenSheet ?? (() => {}),
+    sheetOpen: false,
+    onCloseSheet: () => {},
     installedApp: { id: record.appId, name: record.name, createdAt: 1, lineageId: 'main', record, ...opts.tile },
-    access: {} as StoreAccess,
-    reportOptions: grantedOptions('https://server.test', 'device'),
-    onUpdateRequired: () => {},
-    legalLanguage: 'en',
+    orb: { state: 'rest', activity: 0 },
+    onReload: opts.onReload ?? (() => {}),
+    onAskFix: () => {},
   };
 }
 
@@ -160,7 +174,8 @@ function launchOf(
 const ignoreFrame = () => {};
 
 /** Mount the container for `record` (installed with `tile`, if given, and tapped at `tappedAt`), run
- *  `body`, and unmount. */
+ *  `body`, and unmount. The crash screen's Reload opens the app again in place, as the launcher does:
+ *  a new launch, tapped now. */
 async function withMiniApp(
   record: AppRecord,
   body: (m: Mounted) => Promise<void>,
@@ -171,10 +186,15 @@ async function withMiniApp(
   injectedScripts.length = 0;
   const clock = captureTimeouts();
   let exits = 0;
-  const tree = await renderScreen(
-    <MiniAppStage launch={launchOf(record, { tile, tappedAt, onExit: () => { exits++; } })} onFrame={ignoreFrame} />,
-    { createNodeMock: measuredAsContainer },
+  let launchedAt = tappedAt;
+  const stage = (): React.ReactElement => (
+    <MiniAppStage launch={launchOf(record, { tile, tappedAt: launchedAt, onExit: () => { exits++; }, onReload: reload })} onFrame={ignoreFrame} />
   );
+  const reload = () => {
+    launchedAt = Math.max(Date.now(), launchedAt + 1);
+    tree.update(stage());
+  };
+  const tree = await renderScreen(stage(), { createNodeMock: measuredAsContainer });
   // The launch's own WebView, the one a touch reaches: not the one waiting unseen beside it.
   const webView = () => touchedWebView(tree);
   try {
@@ -382,11 +402,15 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
           'the accepted paint is logged with the time since the tap, and a launch with no WebView waiting got a cold one');
         now += 500;
         await frame(firstPaint());
+        h.eq(timed().length, 1, 'a later paint of the same realm is not logged again');
         await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
-        await press(button(tree, COPY.appErrorRetry));
+        await press(button(tree, COPY.actionReload));
+        now += 60;
         await loadEnd();
         await frame(firstPaint());
-        h.eq(timed().length, 1, 'a later paint, even a recreated realm’s after Retry, is not logged again');
+        h.eq(timed().at(-1), ['whim', 'info', { tapToPaintMs: 60, paintMs: 42, webView: 'loading' }],
+          'Reload is a launch of its own: its paint is logged from the Reload, with the WebView that was loading beside the first');
+        h.eq(timed().length, 2, 'once');
       }, undefined, now);
     } finally {
       Date.now = realNow;
@@ -403,18 +427,18 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       h.ok(opening() && !pageShown(), 'nor does one claiming a launch that has not happened');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'the startup deadline stays armed');
       await TestRenderer.act(async () => clock.fire(STARTUP_DEADLINE_MS));
-      h.ok(shown().includes(COPY.appErrorTitle), 'and, with no paint of its own, the launch reaches the recovery screen');
+      h.ok(shown().includes(COPY.appCrashedBody), 'and, with no paint of its own, the launch reaches the recovery screen');
     });
   });
 
-  await h.test('mini-app: after Retry recreates the realm, the old realm’s late paint cannot open the new one', async () => {
+  await h.test('mini-app: after Reload opens the app again in a new realm, the old realm’s late paint cannot open it', async () => {
     await withMiniApp(TIP, async ({ loadEnd, frame, opening, pageShown, clock, tree }) => {
       await loadEnd();
       const old = boundGeneration();
       await TestRenderer.act(async () => clock.fire(600));
       h.ok(pageShown(), 'the first realm’s page was shown at the cap');
       await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
-      await press(button(tree, COPY.appErrorRetry));
+      await press(button(tree, COPY.actionReload));
       await loadEnd();
       h.ok(boundGeneration() !== old, 'the recreated realm is bound at a new generation');
       await frame(firstPaint(old));
@@ -426,12 +450,12 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('mini-app: after Retry, an accepted delivery still queued from the failed realm’s WebView does not restart the new realm’s startup deadline', async () => {
+  await h.test('mini-app: after Reload, an accepted delivery still queued from the failed realm’s WebView does not restart the new realm’s startup deadline', async () => {
     await withMiniApp(TIP, async ({ webView, loadEnd, frame, tree }) => {
       await loadEnd();
       const failedRealm = webView()!.props.onMessage as (e: { nativeEvent: { data: string } }) => void;
       await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
-      await press(button(tree, COPY.appErrorRetry));
+      await press(button(tree, COPY.actionReload));
       await loadEnd();
       // The loader's own acknowledgement, as the page forwards it: its generation is the realm's
       // own counter (1 in every fresh realm), so it cannot tell the two realms apart.
@@ -507,7 +531,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await send(next, { kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
       await send(next, syscall(gen, 1, 'storage.kv.get', { key: 'note' }));
       await settle();
-      h.ok(!textOf(tree.root).includes(COPY.appErrorTitle), 'a fatal error frame from the waiting WebView does not reach the running app');
+      h.ok(!textOf(tree.root).includes(COPY.appCrashedBody), 'a fatal error frame from the waiting WebView does not reach the running app');
       h.eq([...repliesIn(next), ...repliesIn(web)], [], 'and a syscall from it, stamped with the app’s generation, is answered nowhere');
       await send(next, WARM_ANSWER);
       h.eq(next.props.injected, [WARM_PROBE_JS], 'it is handed the probe and nothing else: no bundle, no theme, no generation');
@@ -521,6 +545,37 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await send(again, firstPaint(generationIn(again)));
       h.ok(generationIn(again) !== gen, 'at a generation of its own');
       h.eq(timedRecords().map((f) => f.webView), ['warm'], 'and the timing record says warm');
+    });
+  });
+
+  // design-system-v1 19f: an app reopened right after Back sometimes never painted on Android. The
+  // device order for that reopen, as react-native-webview 13 reports it on Android: the WebView that
+  // started warming at the first paint is handed over still loading; its page finishes
+  // (`onPageFinished` → `onLoadEnd`, only after the main frame's load, so its scripts have run); the
+  // delivery's realm reset loads a new iframe, after which Android may report the page finished once
+  // more; then the realm paints.
+  await h.test('pool: closed and reopened before the next WebView finished loading, the app opens in it once its page loads — one delivery, a repeated load end ignored — and its paint opens it', async () => {
+    await withStage(async ({ tree, show, webViews, send }) => {
+      const [first] = webViews();
+      await TestRenderer.act(async () => first.props.onLoadEnd());
+      await send(first, WARM_ANSWER);
+      await show(launchOf(WATER));
+      await send(first, firstPaint(generationIn(first)));
+      const next = webViews().find((w) => w !== first)!;
+      await show(null);
+      log.buffer.clear();
+      await show(launchOf(WATER));
+      const [web] = webViews();
+      h.ok(web === next && webViews().length === 1, 'the reopen takes the WebView that was still loading, and the closed launch’s is gone');
+      h.eq(deliveriesInto(web), [], 'nothing is delivered before its page has loaded');
+      await TestRenderer.act(async () => web.props.onLoadEnd());
+      h.eq(deliveriesInto(web).length, 1, 'its load end delivers the app');
+      await TestRenderer.act(async () => web.props.onLoadEnd());
+      h.eq(deliveriesInto(web).length, 1, 'a second load end after the realm reset does not deliver again');
+      h.ok(isOpening(tree), 'the app is still opening until its realm paints');
+      await send(web, firstPaint(generationIn(web)));
+      h.ok(!isOpening(tree) && pageIsShown(tree), 'the realm’s paint opens it');
+      h.eq(timedRecords().map((f) => f.webView), ['loading'], 'and the timing record says the WebView was loading');
     });
   });
 
@@ -624,10 +679,11 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('pool: a launch whose WebView fails to load while it opens gets the recovery screen, not an endless opening; Retry opens it in a fresh WebView', async () => {
+  await h.test('pool: a launch whose WebView fails to load while it opens gets the recovery screen, not an endless opening; Reload opens it again in a fresh WebView', async () => {
     await withStage(async ({ tree, show, webViews, send }) => {
       const [loading] = webViews();
-      await show(launchOf(TIP));
+      let reloads = 0;
+      await show(launchOf(TIP, { tappedAt: 1, onReload: () => { reloads += 1; } }));
       const [web] = webViews();
       h.ok(web === loading, 'the app takes the waiting WebView while its page still loads');
       // react-native-webview follows a load error with a load end for the same page, in the same
@@ -637,12 +693,14 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
         onError({ nativeEvent: { code: -6, description: 'net::ERR_CONNECTION_REFUSED' } });
         onLoadEnd();
       });
-      h.ok(textOf(tree.root).includes(COPY.appErrorTitle) && !isOpening(tree), 'the recovery screen replaces the opening at once');
+      h.ok(textOf(tree.root).includes(COPY.appCrashedBody) && !isOpening(tree), 'the recovery screen replaces the opening at once');
       h.eq(injected, [], 'nothing is delivered into the failed page');
       h.ok(!webViews().includes(web), 'and its WebView is gone');
-      await press(button(tree, COPY.appErrorRetry));
+      await press(button(tree, COPY.actionReload));
+      h.eq(reloads, 1, 'Reload asks the launcher to open the app again');
+      await show(launchOf(TIP, { tappedAt: 2 }));
       const fresh = touchedWebView(tree)!;
-      h.ok(fresh !== undefined && fresh !== web, 'Retry binds a fresh WebView');
+      h.ok(fresh !== undefined && fresh !== web, 'the new launch binds a fresh WebView');
       await TestRenderer.act(async () => fresh.props.onLoadEnd());
       h.eq(deliveriesInto(fresh).length, 1, 'delivered into once its page loads');
       await send(fresh, firstPaint(generationIn(fresh)));
@@ -650,22 +708,26 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('pool: an app whose web content process dies after it painted gets the recovery screen instead of a dead page; Retry opens it in a fresh WebView', async () => {
+  await h.test('pool: an app whose web content process dies after it painted gets the recovery screen instead of a dead page; Reload opens it again in a fresh WebView', async () => {
     for (const death of ['onRenderProcessGone', 'onContentProcessDidTerminate'] as const) {
       await withStage(async ({ tree, show, webViews, send }) => {
         const [first] = webViews();
         await TestRenderer.act(async () => first.props.onLoadEnd());
         await send(first, WARM_ANSWER);
-        await show(launchOf(WATER));
+        let reloads = 0;
+        await show(launchOf(WATER, { tappedAt: 1, onReload: () => { reloads += 1; } }));
         const [web] = webViews();
         await send(web, firstPaint(generationIn(web)));
         h.ok(!isOpening(tree) && pageIsShown(tree), `${death}: the app is open`);
         await TestRenderer.act(async () => web.props[death]({ nativeEvent: { didCrash: true } }));
-        h.ok(textOf(tree.root).includes(COPY.appErrorTitle), `${death}: the recovery screen replaces the dead page`);
+        h.ok(textOf(tree.root).includes(appCrashedTitle(WATER.name)) && textOf(tree.root).includes(COPY.appCrashedBody), `${death}: the crash screen replaces the dead page`);
+        h.ok(orbShown(tree), `${death}: with the orb over it`);
         h.ok(!webViews().includes(web), `${death}: and its WebView is gone`);
-        await press(button(tree, COPY.appErrorRetry));
+        await press(button(tree, COPY.actionReload));
+        h.eq(reloads, 1, `${death}: Reload asks the launcher to open the app again`);
+        await show(launchOf(WATER, { tappedAt: 2 }));
         const fresh = touchedWebView(tree)!;
-        h.ok(fresh !== undefined && fresh !== web, `${death}: Retry binds a fresh WebView`);
+        h.ok(fresh !== undefined && fresh !== web, `${death}: the new launch binds a fresh WebView`);
         await TestRenderer.act(async () => fresh.props.onLoadEnd());
         h.eq(deliveriesInto(fresh).length, 1, `${death}: delivered into once`);
         await send(fresh, firstPaint(generationIn(fresh)));
@@ -752,9 +814,9 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
         const light = new Set<string | undefined>(Object.values(SHELL_PALETTE));
         await loadEnd();
         await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
-        const screen = tree.root.findAll((n) => hostType(n) === 'View' && textOf(n).includes(COPY.appErrorTitle))[0];
+        const screen = tree.root.findAll((n) => hostType(n) === 'ScrollView' && textOf(n).includes(COPY.appCrashedBody))[0];
         h.eq(flat(screen).backgroundColor, COLORS.dark.bg, 'the recovery screen is on the dark bg');
-        const title = tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n) === COPY.appErrorTitle).at(-1)!;
+        const title = tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n) === appCrashedTitle(TIP.name)).at(-1)!;
         h.eq(flat(title).color, COLORS.dark.text, 'with the dark text colour');
         const colours = screen.findAll((n) => typeof n.type === 'string').flatMap((n) => [flat(n).backgroundColor, flat(n).color, (flat(n) as { borderColor?: string }).borderColor]);
         h.ok(!colours.some((c) => light.has(c)), 'and none of its colours is the light shell palette');
@@ -772,20 +834,20 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('mini-app: a bundle that fails shows the recovery screen; Retry mounts a fresh WebView and delivers again', async () => {
+  await h.test('mini-app: a bundle that fails shows the recovery screen; Reload opens it again in a fresh WebView and delivers again', async () => {
     await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown, opening, pageShown, clock, tree }) => {
       await loadEnd();
       await frame(firstPaint());
       const first = webView();
       await frame({ kind: 'error', trusted: true, payload: { where: 'bundle', message: 'SENTINEL_TypeError: x is undefined' } });
-      h.ok(shown().includes(COPY.appErrorTitle), 'the recovery screen replaces the app');
+      h.ok(shown().includes(COPY.appCrashedBody), 'the recovery screen replaces the app');
       h.ok(!shown().includes('SENTINEL'), 'without the raw error text');
       h.ok(webView() == null, 'the failed realm’s WebView is gone');
-      const retry = StyleSheet.flatten(button(tree, COPY.appErrorRetry).props.style) as { backgroundColor?: string; borderColor?: string };
-      h.eq(retry.borderColor, retry.backgroundColor, 'Retry is its primary action, filled edge to edge with no ring of another colour');
-      await press(button(tree, COPY.appErrorRetry));
-      h.ok(webView() != null && webView() !== first, 'Retry mounts a new WebView');
-      h.ok(!shown().includes(COPY.appErrorTitle), 'the recovery screen is gone');
+      const reload = StyleSheet.flatten(button(tree, COPY.actionReload).props.style) as { backgroundColor?: string; borderColor?: string };
+      h.eq([reload.backgroundColor, reload.borderColor], [COLORS.light.ink, undefined], 'Reload is its primary action, filled ink edge to edge with no ring of another colour');
+      await press(button(tree, COPY.actionReload));
+      h.ok(webView() != null && webView() !== first, 'Reload mounts a new WebView');
+      h.ok(!shown().includes(COPY.appCrashedBody), 'the recovery screen is gone');
       await loadEnd();
       h.ok(opening() && !pageShown(), 'the new realm starts from the opening state, not the old realm’s paint');
       h.eq(injectedScripts.length, 2, 'the new WebView gets its own delivery');
@@ -807,7 +869,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await loadEnd();
       await frame(firstPaint());
       await frame({ kind: 'error', trusted: true, payload: { where: 'probes', message: 'probe hiccup' } });
-      h.ok(webView() != null && !shown().includes(COPY.appErrorTitle), 'the app keeps running');
+      h.ok(webView() != null && !shown().includes(COPY.appCrashedBody), 'the app keeps running');
       h.ok(log.buffer.snapshot().some((r) => r.message === 'non-fatal error frame from the realm' && (r.fields as { detail?: unknown } | undefined)?.detail === 'probe hiccup'), 'and the error is recorded');
     });
   });
@@ -819,7 +881,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       log.buffer.clear();
       await frame(RUNTIME_ERROR_FRAME);
       await frame(REJECTION_ERROR_FRAME);
-      h.ok(webView() != null && !shown().includes(COPY.appErrorTitle), 'neither takes the app down');
+      h.ok(webView() != null && !shown().includes(COPY.appCrashedBody), 'neither takes the app down');
       h.eq(
         miniAppErrorRecords(),
         [
@@ -837,7 +899,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       log.buffer.clear();
       // loader.js's mount-failure frame carries the message; only the class may reach the seam.
       await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError', message: 'SENTINEL cannot read total' } });
-      h.ok(shown().includes(COPY.appErrorTitle), 'the recovery screen shows');
+      h.ok(shown().includes(COPY.appCrashedBody), 'the recovery screen shows');
       h.eq(
         miniAppErrorRecords(),
         [{ message: 'mini-app failed', fields: { where: 'mount', errorClass: 'TypeError', appId: TIP.appId } }],
@@ -856,7 +918,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await frame({ kind: 'rejected-forgery', trusted: false, forgedKind: 'error', payload: { where: 'runtime', name: 'ForgedError' } });
       // A frame claiming the `error` kind without the page's authentication.
       await frame({ kind: 'error', trusted: false, payload: { where: 'mount', name: 'ForgedError' } });
-      h.ok(webView() != null && !shown().includes(COPY.appErrorTitle), 'the app keeps running');
+      h.ok(webView() != null && !shown().includes(COPY.appCrashedBody), 'the app keeps running');
       h.eq(miniAppErrorRecords(), [], 'and no mini-app error record is emitted');
     });
   });
@@ -867,8 +929,8 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await frame(firstPaint());
       log.buffer.clear();
       await frame(RENDER_ERROR_FRAME);
-      h.ok(shown().includes(COPY.appErrorTitle), 'the recovery screen replaces the unmounted app');
-      h.ok(webView() == null, 'and the failed realm’s WebView is gone, so Retry recreates it');
+      h.ok(shown().includes(COPY.appCrashedBody), 'the recovery screen replaces the unmounted app');
+      h.ok(webView() == null, 'and the failed realm’s WebView is gone, so Reload recreates it');
       h.eq(
         miniAppErrorRecords(),
         [{ message: 'mini-app failed', fields: { where: 'render', errorClass: 'LedgerError', appId: TIP.appId } }],
@@ -882,7 +944,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await loadEnd();
       log.buffer.clear();
       await frame(RENDER_ERROR_FRAME);
-      h.ok(shown().includes(COPY.appErrorTitle) && !opening(), 'the recovery screen replaces the opening state at once');
+      h.ok(shown().includes(COPY.appCrashedBody) && !opening(), 'the recovery screen replaces the opening state at once');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'the startup deadline is disarmed, so it cannot report the same failure again');
       h.eq(miniAppErrorRecords().map((r) => r.fields.where), ['render'], 'one error record');
     });
@@ -899,7 +961,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       // carrying no mark at all.
       await frame({ ...RENDER_ERROR_FRAME, trusted: false });
       await frame({ kind: RENDER_ERROR_FRAME.kind, payload: RENDER_ERROR_FRAME.payload });
-      h.ok(webView() != null && !shown().includes(COPY.appErrorTitle), 'the app keeps running');
+      h.ok(webView() != null && !shown().includes(COPY.appCrashedBody), 'the app keeps running');
       h.eq(miniAppErrorRecords(), [], 'and no mini-app error record is emitted');
     });
   });
@@ -907,16 +969,62 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
   await h.test('mini-app: every delivery tells the realm how much of its bottom edge the orb covers, bottom safe-area inset included', async () => {
     await withMiniApp(TIP, async ({ loadEnd, frame, tree }) => {
       await loadEnd();
-      const orb = StyleSheet.flatten(button(tree, COPY.orbMenuOpenLabel).props.style) as { bottom: number; height: number };
+      const orb = orbPlace(tree);
       const first = deliveredTheme(injectedScripts[0]);
-      h.eq(first.chromeInsetBottom, orb.bottom + orb.height, 'the footprint reaches exactly the top of the orb as drawn over the inset');
+      const footprint = Number(first.chromeInsetBottom);
+      h.ok(footprint >= orb.bottom + orb.height, `the footprint (${footprint}) covers the orb's whole target as drawn over the inset (top at ${orb.bottom + orb.height})`);
       const theme = withoutInset(first);
       h.eq(theme, sanitizeTheme(theme), 'beside a theme the SDK keeps exactly as delivered');
       await frame({ kind: 'error', trusted: true, payload: { where: 'bundle' } });
-      await press(button(tree, COPY.appErrorRetry));
+      await press(button(tree, COPY.actionReload));
       await loadEnd();
-      h.eq(deliveredTheme(injectedScripts[1]).chromeInsetBottom, orb.bottom + orb.height, 'the recreated realm is told again');
+      h.eq(deliveredTheme(injectedScripts[1]).chromeInsetBottom, footprint, 'the recreated realm is told again');
     });
+  });
+
+  await h.test('mini-app: the orb follows the phone’s scheme while the app keeps the theme it opened with', async () => {
+    try {
+      await withMiniApp(TIP, async ({ loadEnd, tree }) => {
+        await loadEnd();
+        await TestRenderer.act(async () => { setColorScheme('dark'); });
+        h.eq(flat(containerOf(tree)).backgroundColor, COLORS.light.bg, 'the app’s area stays light');
+        const fills = button(tree, COPY.orbMenuOpenLabel).findAll((n) => typeof n.type === 'string' && flat(n).backgroundColor !== undefined).map((n) => flat(n).backgroundColor);
+        h.ok(fills.includes(COLORS.dark.raised) && !fills.includes(COLORS.light.raised), `the orb is drawn dark (${fills.join(', ')})`);
+      });
+    } finally {
+      setColorScheme('light');
+    }
+  });
+
+  await h.test('mini-app: a tap on the orb over the running app asks the launcher for the Whim sheet, and the orb opens no menu of its own', async () => {
+    resetNativeStorage();
+    let asked = 0;
+    const tree = await renderScreen(<MiniAppStage launch={launchOf(TIP, { onOpenSheet: () => { asked++; } })} onFrame={ignoreFrame} />, { createNodeMock: measuredAsContainer });
+    try {
+      await press(button(tree, COPY.orbMenuOpenLabel));
+      h.eq(asked, 1, 'the launcher is asked once');
+      h.eq(tree.root.findAll((n) => hostType(n) === 'Modal').length, 0, 'and nothing opens over the app from the orb itself');
+      h.ok(orbShown(tree), 'the orb stays, under its own name');
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
+  await h.test('mini-app: the orb comes back in the corner each app left it in, across closing and reopening', async () => {
+    const left = (tree: Tree) => orbPlace(tree).left;
+    await withMiniApp(TIP, async ({ tree }) => {
+      const right = left(tree);
+      const orb = button(tree, COPY.orbMenuOpenLabel);
+      await TestRenderer.act(async () => { orb.props.onAccessibilityAction({ nativeEvent: { actionName: orb.props.accessibilityActions[0].name } }); });
+      h.ok(left(tree) < right, 'Tip Splitter’s orb moved bottom-leading');
+    });
+    const reopen = async (record: AppRecord, body: (tree: Tree) => void) => {
+      // withMiniApp clears storage for a clean mount; reopen over what the first mount stored.
+      const tree = await renderScreen(<MiniAppStage launch={launchOf(record)} onFrame={ignoreFrame} />, { createNodeMock: measuredAsContainer });
+      try { body(tree); } finally { await unmountScreen(tree); }
+    };
+    await reopen(TIP, (tree) => { h.ok(left(tree) < 100, `reopened, it is still bottom-leading (left ${left(tree)})`); });
+    await reopen(WATER, (tree) => { h.ok(left(tree) > 200, `Water Counter’s orb is bottom-trailing (left ${left(tree)})`); });
   });
 
   await h.test('mini-app: a launch hands the realm the theme for the phone’s settings and the app’s tint: dark, 135% text, ocean', async () => {
@@ -972,7 +1080,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('mini-app: an app opened in dark keeps a dark container, page background, cover, plate, "Opening…" and recovery screen when the phone turns light; Retry’s fresh realm takes the new scheme', async () => {
+  await h.test('mini-app: an app opened in dark keeps a dark container, page background, cover, plate, "Opening…" and recovery screen when the phone turns light; Reload’s fresh realm takes the new scheme', async () => {
     const dark = resolveTokens({ scheme: 'dark', fontScale: 1, platform: Platform.OS, reduceMotion: false, increaseContrast: false });
     try {
       setColorScheme('dark');
@@ -989,14 +1097,14 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
         h.eq(flat(label).color, COLORS.dark['text-2'], '"Opening…" stays dark-mode text');
 
         await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
-        const screen = tree.root.findAll((n) => hostType(n) === 'View' && textOf(n).includes(COPY.appErrorTitle))[0];
-        const title = tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n) === COPY.appErrorTitle).at(-1)!;
-        const retry = flat(button(tree, COPY.appErrorRetry)) as Style & { borderColor?: string };
+        const screen = tree.root.findAll((n) => hostType(n) === 'ScrollView' && textOf(n).includes(COPY.appCrashedBody))[0];
+        const title = tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n) === appCrashedTitle(TIP.name)).at(-1)!;
+        const retry = flat(button(tree, COPY.actionReload)) as Style & { borderColor?: string };
         h.eq([flat(screen).backgroundColor, flat(title).color, retry.backgroundColor], [COLORS.dark.bg, COLORS.dark.text, buttonColors(dark, 'ink', false).fill],
           'the recovery screen that replaces it is still the dark one: bg, text and its primary button');
 
-        await press(button(tree, COPY.appErrorRetry));
-        h.eq(flat(containerOf(tree)).backgroundColor, COLORS.light.bg, 'Retry’s fresh realm opens on the phone’s light bg');
+        await press(button(tree, COPY.actionReload));
+        h.eq(flat(containerOf(tree)).backgroundColor, COLORS.light.bg, 'Reload’s fresh realm opens on the phone’s light bg');
         await loadEnd();
         h.eq(deliveredTheme(injectedScripts.at(-1)).scheme, 'light', 'and is delivered light');
         h.eq([flat(containerOf(tree)).backgroundColor, flat(webView()!).backgroundColor], [COLORS.light.bg, COLORS.light.bg], 'then held to light');
@@ -1099,7 +1207,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await loadEnd();
       log.buffer.clear();
       await TestRenderer.act(async () => clock.fire(STARTUP_DEADLINE_MS));
-      h.ok(shown().includes(COPY.appErrorTitle), 'the recovery screen shows instead of an endless boot surface');
+      h.ok(shown().includes(COPY.appCrashedBody), 'the recovery screen shows instead of an endless boot surface');
       h.eq(
         miniAppErrorRecords(),
         [{ message: 'mini-app failed', fields: { where: 'paint-timeout', errorClass: 'StartupDeadline', appId: TIP.appId } }],
@@ -1108,14 +1216,11 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('mini-app: leaving through the orb, or unmounting, disarms the startup deadline', async () => {
-    await withMiniApp(TIP, async ({ loadEnd, clock, tree, exits }) => {
+  await h.test('mini-app: leaving through Android back at the app’s root, or unmounting, disarms the startup deadline', async () => {
+    await withMiniApp(TIP, async ({ loadEnd, clock, exits }) => {
       await loadEnd();
-      await press(button(tree, COPY.orbMenuOpenLabel));
-      await TestRenderer.act(async () => { finishAnimations(); });
-      const home = tree.root.findAll((n) => hostType(n) === 'Pressable' && textOf(n).endsWith(COPY.orbActionHome));
-      await press(home[0]);
-      h.eq(exits(), 1, 'Home leaves the app');
+      await TestRenderer.act(async () => { hardwareBack(); });
+      h.eq(exits(), 1, 'back at the root leaves the app');
       h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'and no deadline outlives it');
     });
     await withMiniApp(TIP, async ({ loadEnd, clock, tree }) => {
