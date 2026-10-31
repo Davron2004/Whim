@@ -22,6 +22,8 @@ import { runUnmountTeardownTests } from './unmount-teardown.suite';
 import { runDeliverTests } from './deliver.suite';
 import { runHistoryLogicTests } from './history-logic.suite';
 import { runSharedStorageTests } from './shared-storage.suite';
+import { runDataCopyCrashTests } from './data-copy-crash.suite';
+import { runDataCopyTests } from './data-copy.suite';
 import { runPromptFlowScreensTests } from './prompt-flow-screens.suite';
 import { runGenerationClientTests } from './generation-client.suite';
 import { runServerProbeTests } from './server-probe.suite';
@@ -88,6 +90,7 @@ import { runLaunchScreenTests } from './launch-screen.suite';
 import { runShellTokensTests } from './shell-tokens.suite';
 import { runShellControlsUiTests } from './shell-controls-ui.suite';
 import { runShellStatusUiTests } from './shell-status-ui.suite';
+import { runShellSurfacesUiTests } from './shell-surfaces-ui.suite';
 
 const h = new Harness();
 
@@ -104,6 +107,8 @@ await runUnmountTeardownTests(h);
 await runDeliverTests(h);
 await runHistoryLogicTests(h);
 await runSharedStorageTests(h);
+await runDataCopyCrashTests(h);
+await runDataCopyTests(h);
 await runPromptFlowScreensTests(h);
 await runGenerationClientTests(h);
 await runServerProbeTests(h);
@@ -173,6 +178,7 @@ await runLaunchScreenTests(h);
 await runShellTokensTests(h);
 await runShellControlsUiTests(h);
 await runShellStatusUiTests(h);
+await runShellSurfacesUiTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

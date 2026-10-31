@@ -26,14 +26,18 @@ await build({
   // Keep the runtime deps external — they resolve from node_modules at run time (store-access
   // exercises the real VersionStore over MemoryFs, which pulls isomorphic-git). React's Node
   // build must keep its native require('timers'): async act otherwise falls back to MessageChannel
-  // in the ESM bundle and leaves ports open after the suite completes.
-  external: ['isomorphic-git', 'pako', 'sha.js', 'crc-32', 'buffer', 'text-encoding-polyfill', 'react', 'react-test-renderer', 'react-error-boundary'],
+  // in the ESM bundle and leaves ports open after the suite completes. esbuild itself is called by
+  // the data-copy crash suite, to bundle the child process it kills mid-copy.
+  external: ['isomorphic-git', 'pako', 'sha.js', 'crc-32', 'buffer', 'text-encoding-polyfill', 'react', 'react-test-renderer', 'react-error-boundary', 'esbuild'],
   alias: {
     'react-native': path.join(here, 'native-host.tsx'),
     'react-native-safe-area-context': path.join(here, 'native-host.tsx'),
     'react-native-webview': path.join(here, 'native-host.tsx'),
     'react-native-svg': path.join(here, 'native-svg.tsx'),
     'react-native-reanimated': path.join(here, 'native-reanimated.tsx'),
+    'react-native-worklets': path.join(here, 'native-reanimated.tsx'),
+    'react-native-gesture-handler': path.join(here, 'native-gesture-handler.tsx'),
+    'react-native-keyboard-controller': path.join(here, 'native-keyboard-controller.tsx'),
     'react-native-mmkv': path.join(here, 'native-storage.ts'),
     '@op-engineering/op-sqlite': path.join(here, 'native-storage.ts'),
   },

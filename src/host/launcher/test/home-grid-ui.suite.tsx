@@ -137,7 +137,7 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
         apps={[APP]}
         pending={records}
         onOpen={noop} onDelete={noop} onPromptAgain={noop} onCreate={noop} onSettings={noop}
-        onFork={(a, opts) => { ran.push(`fork ${a.id}, shareData ${opts.shareData}`); }}
+        onFork={(a, opts) => { ran.push(`fork ${a.id}, data ${opts.data}`); }}
         onHistory={(a) => { ran.push(`history ${a.id}`); }}
         onCancelPending={(r) => { ran.push(`cancel ${r.id}`); }}
         onDismissPending={(r) => { ran.push(`dismiss ${r.id}`); }}
@@ -166,9 +166,9 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
 
       await TestRenderer.act(async () => cell(tree, APP.name).props.onLongPress());
       await activate(row(COPY.actionFork));
-      readAsButtons('the fork question', [COPY.forkShareData, COPY.forkStartFresh, COPY.cancel]);
+      readAsButtons('the fork question', [COPY.forkStartFresh, COPY.cancel]);
       await activate(row(COPY.forkStartFresh));
-      h.eq(ran.slice(1), [`fork ${APP.id}, shareData false`], 'activating Fork asks the fork question, and activating Start fresh forks without the data');
+      h.eq(ran.slice(1), [`fork ${APP.id}, data fresh`], 'activating Fork asks the fork question, and activating Start fresh forks without the data');
 
       await TestRenderer.act(async () => cell(tree, 'A dice roller').props.onLongPress());
       readAsButtons('the ghost sheet', [COPY.actionDismissBuild, COPY.cancel]);

@@ -247,6 +247,7 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     const { store, index, access, deleted } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
     const fork = await access.fork(orig);
+    h.eq(deleted.splice(0), [fork.id], 'the fork cleared any stray store under its own id before its entry existed');
     await access.remove(orig); // repo survives (fork references it)
     await access.remove(fork); // now last reference → repo removed
     h.eq((await store.history('wc')).length, 0, 'repo removed once the last reference is deleted');
@@ -344,32 +345,32 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     h.eq(pins2[0].snapshotId, g2, 're-pinning moved the label to the new snapshot');
   });
 
-  // §27-28 engineAppId resolves the storage group, and a shareData fork joins its parent’s (linked-apps-data-model D1)
+  // §27-28 engineAppId resolves the storage group, and a continuation joins its parent’s (linked-apps-data-model D1)
   await h.test('store-access §27 engineAppId resolves storageGroupId ?? id', async () => {
     const { access } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
     h.eq(access.engineAppId(orig), 'wc', 'ungrouped entry resolves to its own id');
-    const shared = await access.fork(orig, undefined, { shareData: true });
+    const shared = await access.continueSharingData(orig);
     h.eq(shared.storageGroupId, 'wc', 'shared fork copies the founder\'s own id as its group');
     h.eq(access.engineAppId(shared), 'wc', 'grouped entry resolves to the group id, not its own launcher id');
   });
 
-  await h.test('store-access §29 fork without shareData gets no storageGroupId (unchanged default)', async () => {
+  await h.test('store-access §29 a fork gets no storageGroupId (its own group)', async () => {
     const { access } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
     const noArg = await access.fork(orig);
-    const explicitFalse = await access.fork(orig, undefined, { shareData: false });
-    h.eq(noArg.storageGroupId, undefined, 'no third argument at all: own group, same as today');
-    h.eq(explicitFalse.storageGroupId, undefined, 'shareData:false: own group');
+    const fresh = await access.fork(orig, undefined, { data: 'fresh' });
+    h.eq(noArg.storageGroupId, undefined, 'no third argument at all: own group');
+    h.eq(fresh.storageGroupId, undefined, "data 'fresh': own group");
   });
 
   // §30 group membership is immutable / transitive through the founder
-  await h.test('store-access §30 fork-of-a-fork with shareData:true resolves to the ORIGINAL founder', async () => {
+  await h.test('store-access §30 a continuation of a continuation resolves to the ORIGINAL founder', async () => {
     const { access } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
-    const shared = await access.fork(orig, undefined, { shareData: true });
+    const shared = await access.continueSharingData(orig);
     h.eq(shared.storageGroupId, 'wc', 'first sharer joins the founder\'s group');
-    const grandchild = await access.fork(shared, undefined, { shareData: true });
+    const grandchild = await access.continueSharingData(shared);
     h.eq(grandchild.storageGroupId, 'wc', 'fork-of-a-fork still resolves to the original founder, never re-rooted');
     h.eq(access.engineAppId(grandchild), 'wc', 'grandchild engine appId is the founder\'s id');
   });
@@ -378,7 +379,7 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
   await h.test('store-access §32 founder-first delete: storage survives while a sharer remains', async () => {
     const { access, deleted } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
-    const shared = await access.fork(orig, undefined, { shareData: true });
+    const shared = await access.continueSharingData(orig);
     await access.remove(orig);
     h.eq(deleted, [], 'deleteStorage NOT called: the sharer still references the group');
     h.eq(access.engineAppId(shared), 'wc', 'surviving sharer still resolves to the same group id');
@@ -387,7 +388,7 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
   await h.test('store-access §32 sharer-first delete: storage survives while the founder remains', async () => {
     const { access, deleted } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
-    const shared = await access.fork(orig, undefined, { shareData: true });
+    const shared = await access.continueSharingData(orig);
     await access.remove(shared);
     h.eq(deleted, [], 'deleteStorage NOT called: the founder still references the group');
     h.eq(access.engineAppId(orig), 'wc', 'surviving founder still resolves to its own group id');
@@ -396,7 +397,7 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
   await h.test('store-access §32 deleting the last remaining group member drops the storage', async () => {
     const { access, deleted } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
-    const shared = await access.fork(orig, undefined, { shareData: true });
+    const shared = await access.continueSharingData(orig);
     await access.remove(orig); // sharer remains, storage survives
     await access.remove(shared); // last reference
     h.eq(deleted, ['wc'], 'deleteStorage called once the group has no remaining member');
