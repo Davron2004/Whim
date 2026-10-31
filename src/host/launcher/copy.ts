@@ -234,23 +234,34 @@ export const COPY = {
   historyCopyConfirmBusy: 'Making the copy…',
   historyReassurancePending: 'Checking what this changes',
 
-  // ── inside a running app: the orb menu (3a) ─────────────────────────────────
-  // `versions` opens the real History screen and `change` opens the real compose step (review
-  // fix-pass, shell-redesign-v2) — there is no orb-local sheet left to title, so those two keys
-  // and the placeholder `copy` action's label are gone with it.
-  orbActionChangeIt: 'Change it',
-  orbActionHome: 'Home',
-  orbActionVersions: 'Versions',
-  orbActionReport: 'Report this app',
-  orbMenuOpenLabel: 'Open the app menu',
-  orbMenuCloseLabel: 'Close the app menu',
-  orbMenuDismissLabel: 'Dismiss the app menu',
+  // ── inside a running app: the orb ───────────────────────────────────────────
+  // The orb itself (system.md §6, §7.1): "Whim menu", then its state after a comma, and the one
+  // custom action a screen reader offers on it.
+  orbMenuOpenLabel: 'Whim menu',
+  orbStateChanging: 'making a change',
+  orbStateReady: 'new version ready',
+  orbStateFinished: 'an app finished',
+  orbStateFailed: 'change failed',
+  orbMoveCorner: 'Move to the other corner',
+
+  // ── the Whim sheet, what the orb opens (system.md §9 Whim sheet) ─────────────
+  /** The row on top while a newer version than the running one waits. */
+  whimSheetNewVersion: 'New version ready',
+  /** Opens the running app again on its current version, in a fresh realm: the Whim sheet's row and
+   *  the toast when a change lands. */
+  actionReload: 'Reload',
+  /** A change made while its app ran failed (system.md §9 Changing in use); its action opens the
+   *  change's Failure page. The landed change's toast is `changedTitle`. */
+  changeFailedToast: 'The change didn’t work',
+  toastSeeWhy: 'See why',
+  /** The send field's placeholder and screen-reader name, and its arrow button. */
+  whimSheetAsk: 'What should change?',
+  whimSheetSend: 'Send',
+  whimSheetBackToApps: 'Back to your apps',
 
   // ── the report screen (content-reporting; design D13/D14) ───────────────────
   /** The Report screen's header title on the native stack, from History and Settings. */
   reportScreenTitle: 'Report a problem',
-  /** The report sheet's title over a running app. */
-  reportSheetTitle: 'Report this app',
   /** The history header's entry point — reports the version the user is currently on. */
   historyReportAction: 'Report',
   reportReasonEyebrow: 'What went wrong?',
@@ -296,9 +307,15 @@ export const COPY = {
   launchFailedBody:
     'Something about this app doesn’t match what’s already saved here, so it can’t open right now.',
   launchFailedBack: 'Back to your apps',
-  appErrorTitle: 'This app ran into a problem',
-  appErrorBody: 'It stopped and can’t carry on right now. Try again, or go back to your apps.',
-  appErrorRetry: 'Try again',
+  /** The alert's message when reading an app back to open it never finished. */
+  appOpenTimedOut: 'It took too long to open. Try again.',
+  // The crash screen (`app-launcher` "A crashed app keeps the orb and offers a way forward"; system.md
+  // §9 App crashed): its title is `appCrashedTitle`, its Reload `actionReload`, its last action
+  // `launchFailedBack`.
+  appCrashedBody: 'It stopped and can’t carry on right now. Your saved data is safe.',
+  appCrashedAskFix: 'Ask Whim to fix it',
+  /** The request "Ask Whim to fix it" puts in the Whim sheet's field, the error attached under it. */
+  appCrashedFixRequest: 'Fix the error that stops this app.',
   // What a delivered bundle that defines no app reads as (bundle-validity guard): the generation
   // came back with nothing usable, so it is refused at delivery rather than stored and only
   // discovered broken the next time the app is opened.
@@ -871,6 +888,22 @@ export function readyTitle(name: string): string {
   return `${name} is ready`;
 }
 
+/** "<App name> changed": the toast when a change lands while its app runs; it offers Reload. */
+export function changedTitle(name: string): string {
+  return `${name} changed`;
+}
+
+/** "<App name> ran into a problem": the crash screen's title. */
+export function appCrashedTitle(name: string): string {
+  return `${name} ran into a problem`;
+}
+
+/** What "Ask Whim to fix it" puts in the Whim sheet's field: the request, then the error attached
+ *  (`crash-report.ts#crashAttachment`) as its own paragraph. */
+export function crashFixWords(attachment: string): string {
+  return attachment === '' ? COPY.appCrashedFixRequest : `${COPY.appCrashedFixRequest}\n\n${attachment}`;
+}
+
 /** The person's words in quotes, as the Plan, Making and Ready pages show them: trimmed, every run
  *  of whitespace one space (dictation leaves a leading space; a typed line break is not a quote's). */
 export function quotedWords(text: string): string {
@@ -1002,6 +1035,27 @@ export function composerContinueLine(preview: string): string {
  *  Plan headlines while `editing` is present. */
 export function editingEyebrow(name: string): string {
   return `Changing ${name}`;
+}
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+/** How long ago `at` was, in words: "just now", "5 min ago", "3 h ago", "1 day ago", "2 days ago",
+ *  and from a week on the date ("Oct 3"), in English like the rest of the copy. */
+function agoWords(at: number, now: number): string {
+  const diff = Math.max(0, now - at);
+  if (diff < MINUTE_MS) return 'just now';
+  if (diff < HOUR_MS) return `${Math.floor(diff / MINUTE_MS)} min ago`;
+  if (diff < DAY_MS) return `${Math.floor(diff / HOUR_MS)} h ago`;
+  const days = Math.floor(diff / DAY_MS);
+  if (days < 7) return days === 1 ? '1 day ago' : `${days} days ago`;
+  return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(new Date(at));
+}
+
+/** The Whim sheet's version line for the running version: "Version 4 · changed 2 days ago". */
+export function whimSheetVersionLine(version: number, changedAt: number, now: number): string {
+  return `Version ${version} · changed ${agoWords(changedAt, now)}`;
 }
 
 /** The history header's subtitle: "7 versions · started 3 days ago". */

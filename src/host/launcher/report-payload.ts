@@ -1,6 +1,6 @@
 /**
  * report-payload — the report draft/body/preview/log-fields shaping (design D13/D14; spec
- * "content-reporting"). RN-free: `ReportSheet.tsx` (a later chain) is the only caller that
+ * "content-reporting"). RN-free: `ReportScreen.tsx` is the only caller that
  * touches React Native.
  *
  * `ReportRequest`/`ReportReason` are imported TYPE-ONLY from `@whim/contract`, so this module

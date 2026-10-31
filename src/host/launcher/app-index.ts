@@ -16,6 +16,7 @@ import type { KVBackend } from '../version-store/fs/kv-fs';
 import type { AppRecord } from '../bridge/contract';
 import type { TintName } from '../../design/tokens';
 import { isTileIdentity, type TileGlyph, type TileIdentity } from './tile-identity';
+import { forgetOrbCorner } from './orb-corner';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 
@@ -128,9 +129,11 @@ export class AppIndex {
     }
   }
 
-  /** Drop a record and its order entry; survivors keep their relative order. */
+  /** Drop a record, its order entry and the corner its orb was left in; survivors keep their
+   *  relative order. */
   remove(id: string): void {
     this.kv.delete(APP_KEY(id));
+    forgetOrbCorner(this.kv, id);
     this.writeOrder(this.readOrder().filter(x => x !== id));
   }
 

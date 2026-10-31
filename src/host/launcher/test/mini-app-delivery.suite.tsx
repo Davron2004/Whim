@@ -10,8 +10,8 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { SEED_VERSION } from '../seed';
 import { log } from '../../logging';
 import { resetNativeStorage } from './native-storage';
-import { finishAnimations, injectedScripts, setColorScheme, StyleSheet } from './native-host';
-import { button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
+import { injectedScripts, setColorScheme, StyleSheet } from './native-host';
+import { button, press, renderScreen, unmountScreen, hostType } from './react-screen';
 import { COPY } from '../copy';
 import { COLORS } from '../../../design/tokens';
 
@@ -59,9 +59,8 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
       h.eq(injectedScripts.length, 1, 'one script is injected on load');
       h.ok(injectedScripts[0]?.includes('timer-bundle-7f3a') ?? false, 'the injected script carries the stored bundle');
       await press(button(tree, COPY.orbMenuOpenLabel));
-      await TestRenderer.act(async () => { finishAnimations(); });
-      await press(tree.root.find((node) => hostType(node) === 'Pressable' && textOf(node).endsWith(COPY.orbActionHome)));
-      h.ok(!webViews(tree).includes(waiting), 'closing it through the orb ends its realm with its WebView');
+      await press(button(tree, COPY.whimSheetBackToApps));
+      h.ok(!webViews(tree).includes(waiting), 'closing it through the orb’s Whim sheet ends its realm with its WebView');
       h.eq(tree.root.findAllByType(HomeScreen).length, 1, 'and returns to Home');
       h.eq(injectedScripts.length, 1, 'over a fresh WebView waiting, which nothing was injected into');
     });
@@ -126,8 +125,7 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
         h.ok(behind.length >= 2 && behind.every((c) => c === COLORS.dark.bg), `the container and the page background stay dark (${behind.join(', ')})`);
 
         await press(button(tree, COPY.orbMenuOpenLabel));
-        await TestRenderer.act(async () => { finishAnimations(); });
-        await press(tree.root.find((node) => hostType(node) === 'Pressable' && textOf(node).endsWith(COPY.orbActionHome)));
+        await press(button(tree, COPY.whimSheetBackToApps));
         h.eq(tree.root.findAllByType(HomeScreen).length, 1, 'closed to Home');
         h.eq([strip(tree), barStyle(tree)], [COLORS.light.bg, 'dark-content'], 'Home follows the phone: light');
 

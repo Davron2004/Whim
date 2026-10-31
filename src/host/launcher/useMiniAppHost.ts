@@ -28,6 +28,7 @@ import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import { BackPolicy, UNHANDLED_PRESS_WINDOW_MS } from './back-policy';
 import { createStartupDeadline, type StartupDeadline } from './boot-state';
+import type { AppCrash } from './crash-report';
 import { deliverBySourceJs } from './deliver';
 import { createCueBackend } from '../cue-backend';
 import { tearDownLiveRealm } from './teardown';
@@ -47,7 +48,7 @@ let lastGeneration = 1;
 // runs, or a render error no boundary in the app caught, which unmounts the app before or after
 // its first paint) -- distinct from post-paint diagnostics (e.g. `where: 'probes'`), which stay
 // diagnostic-only and never escalate into the product's full-screen recovery surface.
-function isFatalErrorWhere(where: unknown): boolean {
+function isFatalErrorWhere(where: unknown): where is 'bundle' | 'mount' | 'deliver' | 'render' {
   return where === 'bundle' || where === 'mount' || where === 'deliver' || where === 'render';
 }
 
@@ -111,8 +112,9 @@ function handleErrorFrame(
     return;
   }
   startupDeadline.cancel();
-  log.error(CHANNELS.page, 'mini-app failed', { where: payload.where, errorClass: frameErrorClass(payload), appId });
-  setS((p) => ({ ...p, lastError: payload?.message || payload?.name || 'error' }));
+  const errorClass = frameErrorClass(payload);
+  log.error(CHANNELS.page, 'mini-app failed', { where: payload.where, errorClass, appId });
+  setS((p) => ({ ...p, lastError: payload?.message || payload?.name || 'error', crash: { where: payload.where, errorClass } }));
 }
 
 export interface HostState {
@@ -130,6 +132,9 @@ export interface HostState {
   rejectedForgeries: number;
   t7AnyPoison: boolean | null;
   lastError: string | null;
+  /** The bound launch's failure after its delivery, set with `lastError` (not for a launch refused
+   *  before it): what the crash screen's "Ask Whim to fix it" attaches. */
+  crash: AppCrash | null;
   /** True exactly when the most recent bind() attempt was refused pre-delivery by launchApp
    *  (a structured launch failure, #41 D7) -- distinct from a later deliver/bundle error, so the
    *  product surface can show honest copy for this one case without misreading other errors. */
@@ -142,7 +147,7 @@ export interface HostState {
 
 const INITIAL: HostState = {
   contained: null, probesFrac: '—', paintMs: null, paintedAt: null, generation: null,
-  lastTap: null, rejectedForgeries: 0, t7AnyPoison: null, lastError: null, launchFailed: false,
+  lastTap: null, rejectedForgeries: 0, t7AnyPoison: null, lastError: null, crash: null, launchFailed: false,
   currentApp: '—', syscalls: 0, lastSyscall: null, navDepth: 0,
 };
 
@@ -180,12 +185,8 @@ export interface MiniAppHost {
   control: (js: string) => void;
   /** Tap the floating affordance / explicit leave (bypasses the realm entirely). */
   exit: () => void;
-  /** Clear a post-delivery `lastError` WITHOUT tearing down or rebinding the realm -- paired with
-   *  a WebView remount (a fresh `key`) by the caller so Retry falls through the error branch into
-   *  a normal render, whose `onLoadEnd` re-runs `deliverBySource` → `bind()` into a fresh realm. */
-  clearLastError: () => void;
   /** The WebView the realm lives in is gone (its page failed to load, or its web content process
-   *  died): the launch fails now, to the recovery screen, whose Retry binds a fresh WebView. */
+   *  died): the launch fails now, to the crash screen, whose Reload is a new launch in a fresh WebView. */
   webViewGone: () => void;
 }
 
@@ -204,7 +205,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     setS((p) => (
       p.lastError || p.paintMs !== null
         ? p
-        : { ...p, lastError: 'app never became visible' }
+        : { ...p, lastError: 'app never became visible', crash: { where: 'paint-timeout', errorClass: 'StartupDeadline' } }
     ));
   }));
   const onExitRef = useRef<(() => void) | undefined>(opts.onExit);
@@ -250,7 +251,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
       // paintMs is reset with the rest: it is the "has painted" signal the container's boot state
       // reads (`boot-state.ts`), so a PREVIOUS realm's paint must never make the next launch look
       // already-up and skip the boot state.
-      setS((p) => ({ ...p, currentApp: displayName, lastError: null, launchFailed: false, navDepth: 0, paintMs: null, paintedAt: null }));
+      setS((p) => ({ ...p, currentApp: displayName, lastError: null, crash: null, launchFailed: false, navDepth: 0, paintMs: null, paintedAt: null }));
 
       // ALWAYS bind a realm + dispatcher — even for a zero-capability app — so a bundle that
       // syscalls anyway (the cap-intruder) is DENIED with a structured error, not dropped into a
@@ -282,8 +283,9 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     try {
       js = deliverBySourceJs({ name: record.name, source, generation: realm.generation, theme });
     } catch (e) {
-      log.error(CHANNELS.page, 'mini-app failed', { where: 'launch', errorClass: e instanceof Error ? e.name : typeof e, appId: id });
-      setS((p) => ({ ...p, lastError: `deliver ${record.name}: ${(e as Error).message}` }));
+      const errorClass = e instanceof Error ? e.name : typeof e;
+      log.error(CHANNELS.page, 'mini-app failed', { where: 'launch', errorClass, appId: id });
+      setS((p) => ({ ...p, lastError: `deliver ${record.name}: ${(e as Error).message}`, crash: { where: 'deliver', errorClass } }));
       return;
     }
     // Start before page control: native loader/rule-list failure can suppress every page frame.
@@ -370,18 +372,9 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     onExitRef.current?.();
   }, []);
 
-  const clearLastError = useCallback(() => {
-    // Disarm the paint watchdog too -- otherwise an accepted delivery whose watchdog is still
-    // ticking (fatal error landed before paint) can fire AFTER Retry clears lastError but before
-    // the new WebView's onLoadEnd re-delivers into a fresh realm, re-setting lastError for an
-    // invisible reason.
-    startupDeadline.current.cancel();
-    setS((p) => ({ ...p, lastError: null }));
-  }, []);
-
   const webViewGone = useCallback(() => {
     startupDeadline.current.cancel();
-    setS((p) => (p.launchFailed || p.lastError ? p : { ...p, lastError: 'webview gone' }));
+    setS((p) => (p.launchFailed || p.lastError ? p : { ...p, lastError: 'webview gone', crash: { where: 'webview-gone', errorClass: 'WebViewGone' } }));
   }, []);
 
   // ── Android system back (#5 D4 — the guaranteed-exit wiring) ────────────────
@@ -421,7 +414,6 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     deliverBySource,
     control,
     exit,
-    clearLastError,
     webViewGone,
   };
 }

@@ -1,8 +1,8 @@
 /**
  * ReportScreen — reporting a problem (design D13/D14; spec content-reporting; system.md §9 Report a
  * problem). Pushed on the native stack from History (the version the user is on) and from Settings
- * (no particular app); over a running app the same form sits in `ReportSheet` until the Whim sheet
- * pushes it on its own small stack.
+ * (no particular app); over a running app the Whim sheet pushes the same form as a page of its own
+ * (`ReportPage`).
  *
  * "What went wrong?" chips, a note, the "Include what I asked for" switch, the code line, "What gets
  * sent" collapsed (a preview rendered from the SAME `ReportRequest` value Send posts), and the line
@@ -39,7 +39,6 @@ import type { ServiceRefusal } from './service-refusal';
 import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } from './report-send';
 import type { ReportPhase, SendOutcome } from './report-send';
 import { useNoticeWindowClear, useRetryGate } from './ServiceNotice';
-import SheetModal from './SheetModal';
 import KeyboardShell from './KeyboardShell';
 import { COPY, reportCodeLine, reportCodeSizeLabel, reportRecipientLine, reportThanksLine } from './copy';
 import { RELEASE } from './release-config';
@@ -425,12 +424,8 @@ export default function ReportScreen(props: Readonly<ReportScreenProps>) {
   return <ReportForm {...props} host="screen" />;
 }
 
-/** The report over a running app, in a sheet that keeps the app running underneath: `app == null`
- *  closes it, and each opening starts a fresh draft. */
-export function ReportSheet({ app, onClose, ...rest }: Readonly<Omit<ReportScreenProps, 'onLeave'> & { onClose: () => void }>) {
-  return (
-    <SheetModal visible={app != null} onClose={onClose}>
-      {app && <ReportForm key={app.id} {...rest} app={app} onLeave={onClose} host="sheet" title={COPY.reportSheetTitle} />}
-    </SheetModal>
-  );
+/** The report as a page inside a sheet that already holds the shell (the Whim sheet), which pads for
+ *  the keyboard: a new mount is a new draft. */
+export function ReportPage(props: Readonly<ReportScreenProps>) {
+  return <ReportForm {...props} host="sheet" title={COPY.reportScreenTitle} />;
 }

@@ -17,7 +17,7 @@ export function themeFrame(t: ThemeFrameSettings, tint: TintName): WhimTheme;
 - `MiniAppView` has no `theme` prop any more. It builds the frame from `useTokens()` and
   `tileOf(installedApp).tint` each render and delivers `{ ...frame, chromeInsetBottom }` once per
   bound WebView (at bind if its page has loaded, else its `onLoadEnd`; `loadEndAction` dedupe). The frame is captured at that delivery:
-  a running realm never re-themes; a settings change applies at the next open or Retry remount.
+  a running realm never re-themes; a settings change applies at the next open or Reload (a new launch).
 - Wire: unchanged — `deliverBySourceJs({ …, theme })` → `reinject({ theme })` → `__whimHostInit`;
   the loader strips `chromeInsetBottom`, installs the rest as `__WHIM_THEME__`.
 - Tests: `mini-app-host-ui.suite.tsx` ("a launch hands the realm the theme…", "pool: a warm hand-over
@@ -50,7 +50,7 @@ interface StartupDeadline {
 - Wire: unchanged. `src/runtime/web/` untouched.
 - Tests: `boot-state.suite.ts` ("only a paint stamped with the current bind's generation…", "a stale
   paint cannot cancel the startup deadline"); `mini-app-host-ui.suite.tsx` ("a trusted paint
-  stamped for another launch…", "after Retry recreates the realm, the old realm's late paint…";
+  stamped for another launch…", "after Reload opens the app again in a new realm, the old realm’s late paint…";
   fixture `firstPaint()` stamps the generation parsed from the delivery script); desktop
   `deliver-by-source.desktop.mjs` check `old realm paint after a reset`.
 
@@ -67,30 +67,30 @@ export function openingLook(surface: MiniAppSurface, elapsed: { cap: boolean; la
 - Layers in `MiniAppView`'s root (`bg`), in order: WebView (`bg`), cover (`bg`, all four insets 0,
   opacity 1 → 0), plate layer (transparent; `TilePlate size="grid" state="ready"` with
   `tileOf(installedApp)`'s tint and glyph, centred; "Opening…" `callout` `text-2` absolutely under it
-  so the plate never moves), Orb, ReportSheet. Both overlay layers are `pointerEvents="none"`.
+  so the plate never moves), Orb. Both overlay layers are `pointerEvents="none"`.
 - The WebView is never hidden itself (no opacity/visibility on it): the opaque cover hides it, so the
   page keeps drawing and its double-rAF `paint` is not throttled. "Hidden" = the cover is up.
 - Cover fades out (`withTiming(0, timing('fadeIn', reduceMotion))`, 160 ms) when `revealed`; the
   plate fades the same way when the launch paints (`surface` leaves `boot`). Under Reduce Motion the
   fade is kept and marked `ReduceMotion.Never` (system.md §4.5: M2 becomes a 160 ms cross-fade).
-- Timers keyed by the bound pool key (Retry restarts them): label from the bind, cap from the delivery —
+- Timers keyed by the bound pool key (Reload restarts them): label from the bind, cap from the delivery —
   a loading page paints the light default canvas until the theme reaches it (18e, iOS dark flash).
 - A failure surface (`launch-failed`, `app-error`) replaces the whole opening state at once.
-- Frame boundary (18g): the app's area (stage root, WebView bg, cover, plate, "Opening…", error screens) + strip + `StatusBar` read the tokens captured at delivery (live `useTokens()` before it; Retry's WebView recaptures); orb and sheets stay live. `Text`/`TilePlate` take `tokens?: ShellTokens` (omitted = live).
-- Error screens: `Text` title2/body `text-2`, primary = `buttonColors(t,'ink')`, secondary outlined `border` on
-  `bg`; no `SHELL_PALETTE`. Copy unchanged (the crash-screen copy is a later chain).
+- Frame boundary (18g): the app's area (stage root, WebView bg, cover, plate, "Opening…", error screens) + strip + `StatusBar` read the tokens captured at delivery (live `useTokens()` before it; Reload's WebView recaptures); orb and sheets stay live. `Text`/`TilePlate` take `tokens?: ShellTokens` (omitted = live).
+- `launch-failed` (refused before delivery): `Text` title2/body `text-2`, one `buttonColors(t,'ink')` Back; no `SHELL_PALETTE`. `app-error` (fatal frame, paint watchdog, WebView gone) is the
+  crash screen `AppCrashed({ name, tokens, bottomClearance, onReload, onAskFix, onExit })` with the Orb over it; Reload = `MiniAppLaunch.onReload`, a new launch (no in-place retry).
 - `LauncherRoot`'s frame (status-bar strip) + `StatusBar`: `bg`/`barStyle` of `MiniAppStage`'s `onFrame(pinned)` over an
   open app, else live tokens; skeleton, scheme-following stack top live; else `SHELL_PALETTE`/`dark-content`.
 - Closing: `onExit` → `goHome`. The tile→screen morph (chain 22) replaces the plate's position only.
 - Tests: `mini-app-host-ui` ("…shown at 600 ms anyway…", "a page still loading is never shown before
-  it has the theme…", "fades in over 160 ms…", "…tile-sized plate…", stale-paint/Retry cases);
+  it has the theme…", "fades in over 160 ms…", "…tile-sized plate…", stale-paint/Reload cases);
   `mini-app-delivery` (closing → Home; "frame: over an open app…", "frame: an app opened in dark keeps…").
 
 ## Pool (18.4) — `webview-pool.ts` (pure) + `MiniAppView.tsx` (`MiniAppStage`, `MiniAppView`)
 ```ts
 export function MiniAppStage(props: { launch: MiniAppLaunch | null; onFrame: (pinned: ShellTokens | null) => void }); // MiniAppView = one launch
-export function openApp(pool: WebViewPool, appId: string | null): WebViewPool; // + launchOpened, launchFailed,
-// retryLaunch, pageLoaded, pageAnswered, pageGone, launchSlot, waitingSlot; PoolSlot.handedOut: 'warm' | 'loading' | 'cold'
+export function openApp(pool: WebViewPool, opening: string | null): WebViewPool; // `${appId}@${tappedAt}`; + launchOpened, launchFailed,
+// pageLoaded, pageAnswered, pageGone, launchSlot, waitingSlot; PoolSlot.handedOut: 'warm' | 'loading' | 'cold'
 ```
 - One WebView waits with no app open, and beside an open app from its first accepted paint
   (`launchOpened`) or failure surface on (18e; not at bind: it slowed the opening). It holds
@@ -102,19 +102,19 @@ export function openApp(pool: WebViewPool, appId: string | null): WebViewPool; /
 - A launch takes the waiting WebView if `loading` or `warm` (delivered at once when loaded), else a cold one;
   loaded-but-unanswered (iOS JS off before the #74 rule list compiles), failed or process-gone ones are dropped.
 - Every delivery is `reinject({ reset: true })`: new iframe, nonce, process-wide generation. A WebView that hosted
-  a launch is destroyed on close, another app, a failure surface or Retry; a hand-over only restyles its slot.
+  a launch is destroyed on close, another app, a failure surface or Reload; a hand-over only restyles its slot.
 - Frames and load events reach a launch only from its bound WebView (by key): a stale frame of a previous
-  launch or retried realm, or any from the waiting one (`paint`, `delivery`, `syscall`, `error`), is dropped.
+  launch or reloaded realm, or any from the waiting one (`paint`, `delivery`, `syscall`, `error`), is dropped.
   Bound WebView gone (`onError`, process death): its events are dropped at once (Android sends a load end
-  after an error), `host.webViewGone()` → `app-error`; Retry binds a fresh WebView.
-- Tests: `webview-pool.suite.ts`, `mini-app-host-ui` "pool: …", "after Retry, an accepted delivery…";
+  after an error), `host.webViewGone()` → `app-error`; Reload is a new launch in a fresh WebView.
+- Tests: `webview-pool.suite.ts`, `mini-app-host-ui` "pool: …", "after Reload, an accepted delivery…";
   desktop "warm page, then a launch", "warm probe with … scripts off". Wire/`build/`/runtime unchanged.
 
 ## Measuring tap-to-first-paint (18.4)
 
-- Logged once per launch at the accepted paint of the realm the tap opened (never after Retry):
+- Logged once per launch at the accepted paint of its realm; every Reload is a launch of its own, timed from its press:
   `[whim] tap to first paint { tapToPaintMs, paintMs, webView }` (info, `CHANNELS.app`), release too.
   Android: `adb logcat -s ReactNativeJS`. iOS: os_log INFO, hidden by default — `xcrun simctl spawn <udid>
   log stream --level info --predicate 'subsystem == "com.facebook.react.log"'` (device: Console.app, Include Info).
-- `tapToPaintMs` = `Date.now()` at `LauncherRoot.onOpen` (before the bundle read) → host accepts the
+- `tapToPaintMs` = `Date.now()` at `LauncherRoot.openNow` / `reloadRunning` (before the bundle read) → host accepts the
   paint. `paintMs` = realm mount → first paint. `webView`: `warm` | `loading` (still loading) | `cold`.

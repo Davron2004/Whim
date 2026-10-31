@@ -40,7 +40,7 @@ import { runFork } from './fork-op';
 import type { AppBusyMap } from './app-busy';
 import { StoreAccess, type ForkOptions } from './store-access';
 import { DataCopyJournal } from './data-copy-journal';
-import { PendingBuildStore } from './pending-builds';
+import { AttemptInFlight, PendingBuildStore } from './pending-builds';
 import type { PendingAttemptLease, PendingBuildFailure, PendingBuildRecord, PendingBuildView, PendingFailureCause, PendingFailureRemedy } from './pending-builds';
 import { JOURNAL_KEY, RunJournalStore } from './run-journal';
 import type { RunJournalEntry, RunTerminalCounts } from './run-journal';
@@ -56,7 +56,8 @@ import {
 } from './build-lifecycle';
 import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAppContext } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
-import { COPY, LEGAL_COPY, readyTitle } from './copy';
+import { COPY, LEGAL_COPY, changedTitle, crashFixWords, readyTitle } from './copy';
+import { ORB_DISC, ORB_TARGET, ORB_TARGET_EDGE } from './orb-geometry';
 import HomeScreen from './HomeScreen';
 import { MiniAppStage, type MiniAppLaunch } from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
@@ -68,6 +69,7 @@ import { DescribePage } from './DescribePage';
 import { PlanPage } from './PlanPage';
 import { FirstRunSheet } from './FirstRunSheet';
 import { MakingSheet, type SheetContent } from './MakingSheet';
+import { runningVersion, WhimReportPage, WhimSheet, type RunningVersion } from './WhimSheet';
 import MakingPage from './MakingPage';
 import ReadyPage from './ReadyPage';
 import FailurePage from './FailurePage';
@@ -146,6 +148,7 @@ import { isNetworkFailure, showOfflineIndicator, showServerUnreachableNotice } f
 import { appIsForeground, useAppForeground } from './use-app-foreground';
 import { FlowDrafts, draftKey } from './flow-draft';
 import { loadHighlighting } from './highlighting';
+import { sweepRetiredKeys } from './retired-keys';
 import { getDeviceId, resetDeviceId } from './device-id';
 import { errorDetailsEnabled, setErrorDetails } from './error-details';
 import { GenerationClientError, clarifyPrompt, consentedClientOptions, generateApp, rewritePrompt } from './generation-client';
@@ -182,10 +185,24 @@ interface HeldPrompt {
  *  so where leaving it returns. */
 type HistoryScreenState = { kind: 'history'; app: InstalledApp; from: 'home' | 'app' };
 
+/** The Whim sheet's pages over a running app: its menu, and Report a problem pushed inside it. */
+type WhimSheetPage = 'menu' | 'report';
+
 type Screen =
   | { kind: 'home' }
   // `tappedAt`: when the tile was tapped (`Date.now()`), for the tap-to-first-paint record.
-  | { kind: 'app'; app: InstalledApp; record: AppRecord; source: string; engineAppId: string; tappedAt: number }
+  // `versionId`: the version the running bundle is, once read. `sheet`: the Whim sheet's page, while
+  // it is open over the app.
+  | {
+      kind: 'app';
+      app: InstalledApp;
+      record: AppRecord;
+      source: string;
+      engineAppId: string;
+      tappedAt: number;
+      versionId?: string;
+      sheet?: WhimSheetPage;
+    }
   | { kind: 'dev' }
   | { kind: 'settings' }
   // Pushed over Settings on the native stack.
@@ -262,6 +279,77 @@ type Screen =
       /** A record an `update` fallback ended, while this build still needs that update. */
       needsUpdate?: true;
     };
+
+type AppScreen = Extract<Screen, { kind: 'app' }>;
+
+/** The making sheet's pages a change can show over its running app: its Describe and Plan, and the
+ *  Failure page of a change that failed while the app ran. Making never does: a change made from the
+ *  running app collapses into the orb. */
+function overApp(screen: Screen): screen is Extract<Screen, { kind: 'describe' | 'plan' | 'failure' }> {
+  return screen.kind === 'describe' || screen.kind === 'plan' || screen.kind === 'failure';
+}
+
+/** The running app a change's page sits over (`overApp`): the app the Whim sheet sent the change from,
+ *  or whose failed change the toast's See why opened (`under`), while the page is for that app. The
+ *  app keeps running under the sheet, and the shell is laid out as over the app. `null` anywhere else. */
+function appUnder(screen: Screen, under: AppScreen | null): AppScreen | null {
+  if (under === null || !overApp(screen)) return null;
+  return screen.editing?.id === under.app.id ? under : null;
+}
+
+/** Where a change to the running app `on` stands, for this launch of it. */
+interface ChangeOver {
+  /** The change being made. */
+  changing?: PendingBuildRecord;
+  /** The change that failed while this launch ran, unless discarded. */
+  failed?: PendingBuildRecord;
+  /** The entry a change landed on while this launch ran: the app itself, or the continuation a change
+   *  sent from behind its tip forks onto. Reload opens it. */
+  landed?: InstalledApp;
+  /** Another app finished while this launch ran. */
+  finished: boolean;
+}
+
+/** Something that happened while one launch ran: `appId` and `at` (its `tappedAt`) name the launch. */
+interface LaunchMark {
+  appId: string;
+  at: number;
+}
+
+const marksLaunch = (mark: LaunchMark | null, on: AppScreen): boolean => mark?.appId === on.app.id && mark.at === on.tappedAt;
+
+function changeOver(
+  on: AppScreen | null,
+  records: readonly PendingBuildView[],
+  discarded: (rec: PendingBuildRecord) => boolean,
+  landed: (LaunchMark & { entry: InstalledApp }) | null,
+  finished: LaunchMark | null,
+): ChangeOver {
+  if (on === null) return { finished: false };
+  const changes = records.map((view) => view.record).filter((rec) => rec.editingAppId === on.app.id);
+  return {
+    changing: changes.find((rec) => rec.state === 'building' && !discarded(rec)),
+    failed: changes.find((rec) => rec.state === 'failed' && rec.updatedAt >= on.tappedAt && !discarded(rec)),
+    ...(landed !== null && marksLaunch(landed, on) ? { landed: landed.entry } : {}),
+    finished: marksLaunch(finished, on),
+  };
+}
+
+/** What the orb shows (system.md §7.1 Orb, §9 Changing in use), most recent first: a change being
+ *  made (its stream's sampled activity), a change that failed, a change that landed, another app
+ *  that finished, else rest. */
+function orbOver(change: ChangeOver, activity: Readonly<Record<string, number>>): MiniAppLaunch['orb'] {
+  if (change.changing !== undefined) return { state: 'changing', activity: activity[change.changing.id] ?? 0 };
+  if (change.failed !== undefined) return { state: 'failed', activity: 0 };
+  if (change.landed !== undefined) return { state: 'ready', activity: 0 };
+  return { state: change.finished ? 'finished' : 'rest', activity: 0 };
+}
+
+/** How far above the bottom safe area a toast keeps clear: of the orb over a running app, of the
+ *  composer on Home. */
+function toastOffset(kind: Screen['kind']): number {
+  return kind === 'app' ? ORB_CLEARANCE : toastClearance(kind);
+}
 
 /** The screens the native stack shows (design-system-v1 D6): Home at its root, then Settings and
  *  what it pushes (Advanced, AI features — the consent screen in review mode — and Report), and
@@ -373,6 +461,10 @@ function updateMayInterrupt(screen: Screen): boolean {
 /** The developer affordance that opens the dev log overlay. A mechanism word, deliberately not in
  *  `copy.ts` — the same standing `DevProbeScreen`'s and the overlay's own labels have. */
 const DEV_LOG_LABEL = 'Logs';
+
+/** How far above the bottom safe area the orb's disc reaches: a toast over a running app sits its own
+ *  gap above that (system.md §7.1 Toast, "12 pt above whatever floats"). */
+const ORB_CLEARANCE = ORB_TARGET_EDGE + (ORB_TARGET + ORB_DISC) / 2;
 
 /**
  * The build-time flag that lets the seam DELIVER records to the dev server, in the `RUN_*_PROBE`
@@ -560,6 +652,7 @@ export default function LauncherRoot({
   // KVBackend instance the installed-apps index uses (one MMKV instance, several consumers).
   const { index, access, pending, journal, kv, purges } = useMemo(() => {
     const launcherKv: KVBackend = createMmkvBackend('whim.launcher');
+    sweepRetiredKeys(launcherKv);
     const idx = new AppIndex(launcherKv);
     const store = createPersistentStore(createMmkvBackend('whim-version-store'));
     const acc = new StoreAccess({
@@ -706,6 +799,24 @@ function FirstRunHost({ ask, language, onLanguageChange, outdatedFrom, consentDu
   );
 }
 
+/** How long an open waits on History's pop to Home when the stack never says the pop finished: past
+ *  any push or pop UIKit or Android draws (19f3 measured them well under 0.5 s). */
+const POP_FALLBACK_MS = 1000;
+
+/** How long an open waits on reading the app back before it fails as an unreadable app does (the
+ *  alert, then wherever that open's caller goes on a failure): a read that never settles must not hold
+ *  a tile busy, or History over the app (whose second Back waits on that open), for good. */
+const OPEN_READ_TIMEOUT_MS = 10_000;
+
+/** `read`, or a rejection once `ms` have passed without it. A read that settles later is dropped. */
+function readWithin<T>(read: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(COPY.appOpenTimedOut)), ms);
+  });
+  return Promise.race([read, late]).finally(() => clearTimeout(timer));
+}
+
 function LauncherShell({
   index,
   access,
@@ -750,6 +861,27 @@ function LauncherShell({
   useEffect(() => {
     screenKindRef.current = screen.kind;
   }, [screen.kind]);
+  // The running app a change's pages sit over: it stays open under them (`appUnder`), and closing them
+  // returns to it. Dropped once the screen leaves those pages.
+  const [under, setUnder] = useState<AppScreen | null>(null);
+  useEffect(() => {
+    if (!overApp(screen)) setUnder(null);
+  }, [screen]);
+  const running = screen.kind === 'app' ? screen : appUnder(screen, under);
+  // The same, for a run or a toast that acts later than the render it was started from.
+  const runningRef = useRef(running);
+  runningRef.current = running;
+  // A change that landed while this launch of its app ran, and the entry it landed on: the orb's dot and
+  // the Whim sheet's Reload row stay until the app opens again, by Reload or otherwise.
+  const [landed, setLanded] = useState<(LaunchMark & { entry: InstalledApp }) | null>(null);
+  // Another app that finished while this launch ran: the orb's dot, until the app opens again.
+  const [finished, setFinished] = useState<LaunchMark | null>(null);
+  // The words in the Whim sheet's send area, for the app they were typed over. Held here, above the
+  // sheet's content, which a text-size change builds again.
+  const [whimWords, setWhimWords] = useState<{ appId: string; text: string } | null>(null);
+  // The Whim sheet's reading of the running app's versions, for the opening it was read in (`at`, the
+  // launch's `tappedAt`): the running version, and whether a newer one is current.
+  const [whimVersions, setWhimVersions] = useState<{ at: number; version: RunningVersion | null; newVersion: boolean } | null>(null);
   // A sender-landing (`neutral`-tone) notice on whichever step currently carries one clears the
   // instant its retry window ends (design D12: "A sender refusal clears when its window ends").
   // Leaving the step already clears it for free — the step's own constructor never carries a
@@ -1032,9 +1164,14 @@ function LauncherShell({
   );
   useEffect(() => () => purgeWindows.dispose(), [purgeWindows]);
 
+  // A change to the running app: being made, or failed while this launch of it ran (a discarded one is
+  // gone as far as the person is concerned).
+  const runningChange = changeOver(running, pendingBuilds, (rec) => purges.hidesAttempt(rec), landed, finished);
+
   // The view of the attempts running right now: which wait for a spot, how hard each stream works.
-  // Home's tiles read it, and so does the Making page's ember, for its own run only.
-  const liveView = useHomeLive(screen.kind === 'home' || screen.kind === 'making', () => [...liveAttemptsRef.values()]);
+  // Home's tiles read it, and so do the Making page's ember and the orb, each for its own run only.
+  const liveView = useHomeLive(screen.kind === 'home' || screen.kind === 'making' || runningChange.changing !== undefined, () => [...liveAttemptsRef.values()]);
+  const orb = orbOver(runningChange, liveView.activity);
 
   /** The installed apps and the attempts a person can reach: those whose purge is armed are gone as far
    *  as a link or a tile is concerned (an attempt only for the run its Discard named). */
@@ -1116,25 +1253,117 @@ function LauncherShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** The version the app opened at `tappedAt` runs, once read, kept on that launch's screen. */
+  const noteRunningVersion = (tappedAt: number, versionId: string | null) => {
+    if (versionId === null) return;
+    setScreen((s) => (s.kind === 'app' && s.tappedAt === tappedAt ? { ...s, versionId } : s));
+    setUnder((u) => (u?.tappedAt === tappedAt ? { ...u, versionId } : u));
+  };
+
+  /** Reads `app`'s current bundle for the launch tapped at `tappedAt` and hands that launch to `show`;
+   *  the version it runs is read right behind the bundle, on the app's serial store queue (so no
+   *  write lands between the two), and after it, so neither the opening nor the busy tile waits for it.
+   *  A bundle read past `OPEN_READ_TIMEOUT_MS` rejects, and nothing shows when it settles. */
+  const launchApp = async (app: InstalledApp, tappedAt: number, show: (launch: AppScreen) => void) => {
+    const bundleRead = access.activeBundle(app);
+    const versionRead = access.activeId(app).catch(() => null);
+    const source = await readWithin(bundleRead, OPEN_READ_TIMEOUT_MS);
+    show({ kind: 'app', app, record: app.record, source, engineAppId: access.engineAppId(app), tappedAt });
+    versionRead.then((versionId) => noteRunningVersion(tappedAt, versionId));
+  };
+
+  /** An app that could not be opened: the user gets the alert; the class/message/stack of what
+   *  actually failed is only recoverable from the seam (host-observability "The alert paths now log"). */
+  const openFailed = (e: unknown) => {
+    log.error(CHANNELS.app, 'installed-app action failed', { operation: 'open', ...errorFields(e) });
+    Alert.alert('Could not open this app', (e as Error)?.message ?? String(e));
+  };
+
+  /** The pop History's own Back starts when History was opened from Home: the shell asks for it, so
+   *  UIKit animates it, and an app opening meanwhile would unmount the stack mid-pop (react-native-screens
+   *  then keeps the unfinished pop in the stack it recycles, and the next Home it shows is blank for good,
+   *  iOS). It ends when the stack says its move finished (`NativeStack`'s `onSettled`), or after
+   *  `POP_FALLBACK_MS` should that never come. `latest` numbers what waits on it: only the last one goes. */
+  const stackPop = useRef<{ settled: Promise<void>; end: () => void; latest: number } | null>(null);
+  const startStackPop = () => {
+    if (stackPop.current !== null) return;
+    let release!: () => void;
+    const settled = new Promise<void>((resolve) => { release = resolve; });
+    const end = () => {
+      clearTimeout(timer);
+      if (stackPop.current === pop) stackPop.current = null;
+      release();
+    };
+    const timer = setTimeout(end, POP_FALLBACK_MS);
+    const pop = { settled, end, latest: 0 };
+    stackPop.current = pop;
+  };
+  useEffect(() => () => {
+    // The shell is gone: nothing that waits on the pop may run.
+    const pop = stackPop.current;
+    if (pop === null) return;
+    pop.latest = -1;
+    pop.end();
+  }, []);
+  /** Waits out that pop, if one runs: whether what waited may still go once it has finished — `false`
+   *  when something else arrived after it, which goes instead (two opens never both land). */
+  const stackPopOver = (): Promise<boolean> => {
+    const pop = stackPop.current;
+    if (pop === null) return Promise.resolve(true);
+    pop.latest += 1;
+    const turn = pop.latest;
+    return pop.settled.then(() => pop.latest === turn);
+  };
+
   /** The tile's tap: busy from the tap until the mini-app screen replaces the grid or the open
    *  fails (`app-launcher` "Opening an app shows an immediate busy affordance" — a tap MUST NOT
    *  read as unregistered while the active bundle is being read). `onFailed` runs after a failed
-   *  open's alert, for a caller that must not stay where it is. */
-  const onOpen = (app: InstalledApp, onFailed?: () => void) => {
+   *  open's alert, for a caller that must not stay where it is. An open arriving while History's
+   *  pop to Home runs (a tile, the "is ready" toast) is busy from the tap and waits for the pop to
+   *  finish; it is dropped when something else arrived after it, or the person left Home meanwhile. */
+  const onOpen = (app: InstalledApp, onFailed?: () => void): Promise<boolean> => {
     const tappedAt = Date.now();
+    const holding = stackPop.current !== null;
     return runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
+      if (holding && !((await stackPopOver()) && screenKindRef.current === 'home')) return;
       try {
-        const source = await access.activeBundle(app);
-        setScreen({ kind: 'app', app, record: app.record, source, engineAppId: access.engineAppId(app), tappedAt });
+        await launchApp(app, tappedAt, setScreen);
       } catch (e) {
-        // The user still gets the alert; the class/message/stack of what actually failed is only
-        // recoverable from the seam (host-observability "The alert paths now log").
-        log.error(CHANNELS.app, 'installed-app action failed', { operation: 'open', ...errorFields(e) });
-        Alert.alert('Could not open this app', (e as Error)?.message ?? String(e));
+        openFailed(e);
         onFailed?.();
       }
     });
   };
+
+  /** Reload (the toast's, or the Whim sheet's row): the running app opens again on the version that is
+   *  now current, in place — a new launch, so a fresh WebView and realm (`MiniAppStage`), with nothing
+   *  in between: no Home, no closed frame. A change that landed on a continuation opens that entry
+   *  instead, and so does `landedOn`, the entry a toast named (the app opened again since, it runs
+   *  behind that entry). A launch the person has left meanwhile is not reopened; one whose bundle
+   *  cannot be read keeps running as it was. */
+  const reloadRunning = async (landedOn?: InstalledApp): Promise<void> => {
+    if (running === null) return;
+    const from = running;
+    const target = landedOn ?? runningChange.landed ?? from.app;
+    const app = index.get(target.id) ?? target;
+    const tappedAt = Date.now();
+    // The Whim sheet Reload was pressed in starts closing at the press, not once the bundle is read.
+    setScreen((s) => (s.kind === 'app' && s.tappedAt === from.tappedAt && s.sheet !== undefined ? { ...s, sheet: undefined } : s));
+    await runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
+      try {
+        await launchApp(app, tappedAt, replacing(from));
+      } catch (e) {
+        openFailed(e);
+      }
+    });
+  };
+  /** Puts a new launch in the place of `from`, wherever it still is: on screen, or under a sheet. */
+  const replacing = (from: AppScreen) => (next: AppScreen) => {
+    setScreen((s) => (s.kind === 'app' && s.tappedAt === from.tappedAt ? next : s));
+    setUnder((u) => (u?.tappedAt === from.tappedAt ? next : u));
+  };
+  const reloadRef = useRef(reloadRunning);
+  reloadRef.current = reloadRunning;
 
   /** Make a copy: busy for that app while it runs. Resolves the new entry, or `null` when a copy (or
    *  an open) of the app is already running; rejects when the copy could not be made, with nothing
@@ -1154,13 +1383,37 @@ function LauncherShell({
     setScreen({ kind: 'history', app, from });
   };
 
-  /** Leaving History: Home, and from there back into the app it was opened over, reopened at
-   *  whatever version is now current (a restore there may have moved it). Home at once: History is
-   *  on the native stack, whose pops must find the machine already off it (`NativeStack.tsx`), and
-   *  Home is where a failing open leaves the user, never stranded on History. */
+  /** A native pop of History (a swipe): Home, and from there back into the app it was opened over,
+   *  reopened at whatever version is now current (a restore there may have moved it). Home at once:
+   *  the platform has already popped it, and its pops must find the machine off it (`NativeStack.tsx`). */
   const leaveHistory = (app: InstalledApp, from: 'home' | 'app') => {
     goHome();
     if (from === 'app') onOpen(index.get(app.id) ?? app);
+  };
+
+  /** History's own Back and system back, when it was opened over an app: History stays until that app
+   *  has opened again and replaces it in one step; Home only when it cannot be opened, never stranded on
+   *  History. Never Home first: going Home pops the stack, which UIKit animates, and the app opening
+   *  would unmount the stack mid-pop. react-native-screens then keeps the unfinished pop in the stack it
+   *  recycles, and the next Home it shows is blank for good (iOS). So a second Back while that app is
+   *  already opening does nothing: the open in flight replaces History, or fails to Home with its alert
+   *  (a read past `OPEN_READ_TIMEOUT_MS` among them). Home only when the app is busy with something
+   *  else (a copy). */
+  const backFromHistoryToApp = (app: InstalledApp) => {
+    if (appOps.opFor(app.id) === 'open') return;
+    onOpen(index.get(app.id) ?? app, goHome)
+      .then((opened) => {
+        if (!opened) goHome();
+      })
+      .catch(() => undefined);
+  };
+
+  /** History's own Back and system back, when it was opened from Home: a pop the shell asks for, which
+   *  an open arriving meanwhile waits out (`stackPop`). A swipe has already popped and leaves through
+   *  `leaveHistory`. */
+  const backFromHistoryToHome = () => {
+    startStackPop();
+    goHome();
   };
 
   /** Delete and Discard hide at once and complete when their Undo toast ends (`soft-delete.ts`):
@@ -1557,17 +1810,27 @@ function LauncherShell({
     // is the new-app one, as the composer opens it.
     const editing = reachableApps().find((app) => app.id === requested?.id);
     if (requested && !editing) drafts.clear(draftKey({ editing: requested }));
+    // A change of this app is already being made: that run shows, rather than a second change that
+    // would replace it.
+    if (editing && pending.hasLiveAttempt(editing.id)) {
+      showRunInFlight(editing.id, editing);
+      return;
+    }
     const kept = text === undefined ? drafts.reopen(editing, editing) : undefined;
     const opened = kept ?? describeStep(editing, text ?? takeHeldPrompt(editing) ?? '');
     setScreen(opened);
     if (opened.kind === 'plan') resumePlan(opened);
-    if (!editing) return;
+    if (editing) readAbout(editing, 'openCompose');
+  };
+
+  /** Reads what `editing` currently is (its description) into `aboutRef`, in the background. */
+  const readAbout = (editing: InstalledApp, operation: string) => {
     (async () => {
       let about: string | undefined;
       try {
         about = await access.activeDescription(editing);
       } catch (e) {
-        log.debug(CHANNELS.app, 'edit description unavailable', { operation: 'openCompose', ...errorFields(e) });
+        log.debug(CHANNELS.app, 'edit description unavailable', { operation, ...errorFields(e) });
         return;
       }
       if (about == null) return;
@@ -1869,7 +2132,7 @@ function LauncherShell({
     releaseLiveRef(live.lease);
     const record = pending.get(live.id);
     if (record?.editingAppId != null) {
-      dropAttempt(live.id);
+      dropStoppedChange(live, record);
     } else {
       try {
         pending.stop(live.id);
@@ -1881,6 +2144,38 @@ function LauncherShell({
       keepEarlierRunOnStop(live);
     }
     refresh();
+    return true;
+  };
+
+  /** A stopped change leaves nothing behind. When storage keeps its record or journal anyway, the run
+   *  still ends: its lease goes (the next change of the app starts), its record is settled stopped (so
+   *  nothing shows it being made) and its leftovers are purged as a Discard's are. */
+  const dropStoppedChange = (live: LiveAttempt, record: PendingBuildRecord) => {
+    try {
+      dropAttempt(live.id);
+    } catch (error) {
+      log.warn(CHANNELS.gen, 'stopped change could not be removed', { operation: 'stop-change', ...errorFields(error) });
+    }
+    pending.releaseAttempt(live.lease);
+    if (!purgeLeftover(record)) return;
+    try {
+      pending.stop(live.id);
+    } catch (error) {
+      log.warn(CHANNELS.gen, 'stopped change could not be settled', { operation: 'stop-change', ...errorFields(error) });
+    }
+  };
+
+  /** A run storage would not fully remove (a removal that threw, or said it removed and did not): its
+   *  purge is armed as a Discard arms one, so nothing shows the run from now on and the next launch
+   *  removes what is left (`completeInterruptedPurges`, which spares a later run of the same id).
+   *  Whether anything was left. */
+  const purgeLeftover = (run: PendingBuildRecord): boolean => {
+    if (pending.get(run.id) == null && journal.get(run.id) == null) return false;
+    try {
+      purges.armAttempt(run);
+    } catch (error) {
+      log.warn(CHANNELS.gen, 'leftover attempt purge could not be armed', { operation: 'purge-leftover', ...errorFields(error) });
+    }
     return true;
   };
 
@@ -2378,6 +2673,11 @@ function LauncherShell({
       const lease = pending.activateAttempt(attemptId);
       return { id: attemptId, lease, ...(reuseId != null ? { retrySnapshot: previous } : {}) };
     } catch (setupError) {
+      if (setupError instanceof AttemptInFlight) {
+        releaseGenRef(ctl);
+        showRunInFlight(setupError.id, editing);
+        return undefined;
+      }
       log.warn(CHANNELS.gen, 'attempt setup failed', {
         operation: 'start-pending-build',
         thrown: setupError instanceof Error ? 'error' : 'non-error',
@@ -2401,16 +2701,47 @@ function LauncherShell({
    * refused while still on the build screen can return to plan with every row exactly as it was
    * (design D9/D10); a Retry passes none, since a refused Retry never lands on plan.
    */
+  /** The running app a change to `editing` is made under: the app runs under the sheet the change was
+   *  sent from (the Whim sheet's plan, or its failed change's Try again). `null` for a new app, or a
+   *  change made from Home or History. */
+  const runningUnder = (editing: InstalledApp | undefined): AppScreen | null =>
+    running !== null && running.app.id === editing?.id ? running : null;
+
+  /** A started attempt takes over the screen with its Making page — unless it is a change made under
+   *  its running app (`over`): then the sheet collapses into the orb, which follows the run, and the
+   *  run never takes the screen (its ending is the orb's and a toast's; it starts detached). */
+  const showStartedAttempt = (live: LiveAttempt, over: AppScreen | null) => {
+    if (over !== null) {
+      setScreen({ ...over, sheet: undefined });
+      return;
+    }
+    liveRef.current = live;
+    signalsRef.current = live.signals;
+    setScreen(live.screen);
+  };
+
+  /** An attempt asked for an id whose run is still being made (`AttemptInFlight`): it never replaces
+   *  that run, whose record, journal and stream stay its own. The run in progress shows instead, as
+   *  Details on its tile would: the app it changes, when it runs under the sheet, else its Making page. */
+  const showRunInFlight = (id: string, editing: InstalledApp | undefined) => {
+    const over = runningUnder(editing);
+    const live = liveAttemptsRef.get(id);
+    if (over !== null) setScreen({ ...over, sheet: undefined });
+    else if (live) reattach(live);
+    else goHome();
+  };
+
   const runAttempt = async (opening: MakingScreen, reuseId?: string, fromPlan?: PlanScreen) => {
     const options = resolveClientOptions();
     if (!options) return;
     const markOnline = onlineForRequest(options);
     const requestFailed = failureForRequest(options);
 
-    const controller = new AbortController();
-    const ctl = { controller, cancelled: false, detached: false };
-    genRef.current = ctl;
     const editing = opening.editing;
+    const over = runningUnder(editing);
+    const controller = new AbortController();
+    const ctl = { controller, cancelled: false, detached: over !== null };
+    genRef.current = ctl;
     // Declared outside the try so a throw mid-stream still knows what the device observed, and on
     // which request (the stream's `x-whim-request-id`, once it has opened).
     const counts: EventCounts = { stage: 0, token: 0, diagnostic: 0, repair: 0 };
@@ -2434,9 +2765,7 @@ function LauncherShell({
     };
     const live: LiveAttempt = { id: attemptId, lease, screen: building, signals, ctl, retrySnapshot };
     liveAttemptsRef.set(attemptId, live);
-    liveRef.current = live;
-    signalsRef.current = signals;
-    setScreen(building);
+    showStartedAttempt(live, over);
     // The keepalive comment frame (`: keepalive\n\n`, build-liveness B2) is transport noise, never
     // a `GenerationEvent` — it reaches here through `ClientOptions.onKeepalive`, not the stream
     // loop below, and moves ONLY the any-frame clock (`withKeepalive` never touches the journal).
@@ -2546,6 +2875,7 @@ function LauncherShell({
       }
       // Store first, index second, pending record deleted LAST (design D5) — a process death
       // anywhere inside this await leaves the record behind to surface as `interrupted`.
+      const run = pending.get(attemptId);
       const delivered = await deliverAndSettleIfOwned(pending, {
         access,
         appId: attemptId,
@@ -2558,13 +2888,32 @@ function LauncherShell({
       // report, under the id the app NOW has (a behind-tip rebuild delivers onto a fork, whose id
       // is not the attempt's). After the delivery, never before it — a death in between loses the
       // report and nothing else (design D5).
+      // The delivery stands even when storage keeps the run's record or journal: those are purged.
       whenDeliverySettles(lease, delivered, (installed, selected) => {
-        journal.moveToLastRun(attemptId, installed.id);
+        try {
+          journal.moveToLastRun(attemptId, installed.id);
+        } catch (error) {
+          log.warn(CHANNELS.gen, 'delivered run journal could not be moved', { operation: 'move-last-run', ...errorFields(error) });
+        }
         pending.releaseAttempt(lease);
         releaseLiveRef(lease);
+        if (run !== null) purgeLeftover(run);
         refresh();
         if (selected && !ctl.detached) {
           setScreen((s) => (s.kind === 'making' ? readyStep(s, installed) : s));
+          return;
+        }
+        // A change that lands while its app runs reloads nothing: the toast, the orb's dot and the
+        // Whim sheet's row offer Reload. The app is the one the change was sent for (`editing`): sent
+        // from behind its tip, the change lands on a continuation (`installed`), which Reload opens.
+        // Another app finishing over it marks the orb with the same dot.
+        const open = runningRef.current;
+        if (open !== null && (open.app.id === installed.id || open.app.id === editing?.id)) {
+          changeLanded(open, installed);
+          return;
+        }
+        if (open !== null) {
+          setFinished({ appId: open.app.id, at: open.tappedAt });
           return;
         }
         // Delivered with the sheet closed: Home says so, and opens it from the toast.
@@ -2701,6 +3050,11 @@ function LauncherShell({
       log.warn(CHANNELS.gen, 'building ghost has no live run to reattach to', { pendingId: current.id });
       return;
     }
+    reattach(live);
+  };
+
+  /** A live run's own Making page again, un-detached, so its ending lands as if it was never left. */
+  const reattach = (live: LiveAttempt) => {
     liveRef.current = live;
     genRef.current = live.ctl;
     live.ctl.detached = false;
@@ -2722,9 +3076,10 @@ function LauncherShell({
     refresh();
   };
 
-  /** Discard on a Failure page: the page closes and the attempt goes the way Home's Discard sends
-   *  it (`soft-delete.ts`), hidden at once and purged, record and journal, when the "Discarded"
-   *  toast's 6 s Undo ends. A discard that cannot be armed changes nothing: the page stays. */
+  /** Discard on a Failure page: the page closes, onto Home or onto the running app it was over, and the
+   *  attempt goes the way Home's Discard sends it (`soft-delete.ts`), hidden at once and purged, record
+   *  and journal, when the "Discarded" toast's 6 s Undo ends. A discard that cannot be armed changes
+   *  nothing: the page stays. */
   const onDiscardFromFailure = (rec: PendingBuildRecord) => {
     try {
       onDiscard([rec]);
@@ -2732,7 +3087,8 @@ function LauncherShell({
       log.warn(CHANNELS.gen, 'discard could not be armed', { operation: 'discard-pending', ...errorFields(error) });
       return;
     }
-    goHome();
+    if (running === null) goHome();
+    else setScreen(running);
     haptics.play('warning');
     toastRef.current?.show({
       message: COPY.discardedToast,
@@ -2784,6 +3140,15 @@ function LauncherShell({
    *  React state, which can still be mount-time-stale the ONE time this fires before first render
    *  settles (the "waits" release, above). */
   const openAppLink = (id: string) => {
+    if (stackPop.current !== null) {
+      // History's pop to Home runs: the link lands once it has finished, from wherever the shell is then.
+      stackPopOver()
+        .then((go) => {
+          if (go) openAppLinkRef.current(id);
+        })
+        .catch(() => undefined);
+      return;
+    }
     if (screen.kind === 'app' && screen.app.id === id) return;
     const resolution = resolveAppLink(id, reachableApps(), reachableAttempts());
     leaveForLink(linkExitFor(screen.kind));
@@ -2863,18 +3228,172 @@ function LauncherShell({
     return null;
   };
 
+  // ── The Whim sheet over a running app (app-launcher "The Whim sheet is a running app's one menu") ──
+
+  /** Reads, for the Whim sheet opened over `on`, the version it runs and whether a newer one is current.
+   *  Until the running version's id is known, the current one is taken as running. */
+  const readWhimVersions = (on: AppScreen) => {
+    Promise.all([access.timeline(on.app), access.activeId(on.app)]).then(
+      ([timeline, active]) => {
+        const runningId = on.versionId ?? active;
+        setWhimVersions({ at: on.tappedAt, version: runningVersion(timeline, runningId), newVersion: active !== null && runningId !== active });
+      },
+      (e: unknown) => log.debug(CHANNELS.app, 'whim sheet versions unavailable', errorFields(e)),
+    );
+  };
+
+  /** The orb's tap: the Whim sheet opens over the running app. */
+  const openWhimSheet = () => {
+    if (screen.kind !== 'app') return;
+    readWhimVersions(screen);
+    setScreen((s) => (s.kind === 'app' ? { ...s, sheet: 'menu' } : s));
+  };
+
+  /** The Whim sheet's send: the same sheet grows into the plan page for a change of the running app,
+   *  which keeps running under it (`under`). Where the terms or consent are due, the first-run ask
+   *  comes first, as for every action that sends, and continues on Describe with the words. */
+  const onWhimSend = () => {
+    if (screen.kind !== 'app') return;
+    const from: AppScreen = { ...screen, sheet: undefined };
+    const text = whimWords?.appId === from.app.id ? whimWords.text : '';
+    const editing = reachableApps().find((app) => app.id === from.app.id);
+    if (text.trim() === '' || !editing) return;
+    const flow: LegalFlow<Screen> = { continuation: { kind: 'compose', editing, text }, returnTo: from, refused: false };
+    if (legalScreen(flow) !== undefined) {
+      setWhimWords(null);
+      advanceLegalFlow(flow);
+      return;
+    }
+    if (!resolveClientOptions()) return;
+    setWhimWords(null);
+    setUnder(from);
+    readAbout(editing, 'whimSheetSend');
+    onDescribeContinue(describeStep(editing, text)).catch((e: unknown) => logGenError('clarify continuation failed', e));
+  };
+
+  // ── Changing an app while it runs (app-launcher "Changing an app keeps it running and offers Reload") ──
+
+  /** A change to the app `on` runs landed on `installed` (that app, or its continuation): the orb's dot
+   *  and the Whim sheet's row for this launch, and the toast whose Reload opens `installed` in place. */
+  const changeLanded = (on: AppScreen, installed: InstalledApp) => {
+    setLanded({ appId: on.app.id, at: on.tappedAt, entry: installed });
+    toastRef.current?.show({
+      message: changedTitle(installed.name),
+      action: {
+        label: COPY.actionReload,
+        onPress: () => {
+          if (runningRef.current?.app.id === on.app.id) reloadRef.current(installed).catch(() => undefined);
+        },
+      },
+    });
+  };
+
+  /** The failed-change toast's See why: the change's Failure page, in the sheet over the running app.
+   *  Nothing once a new change of the app is running: the failure it told of is gone, and that
+   *  run's page would offer to start it again over itself. */
+  const seeWhy = (id: string) => {
+    const rec = pending.readCurrent(id)?.record;
+    if (running === null || rec?.editingAppId !== running.app.id || pending.hasLiveAttempt(id)) return;
+    keepDraft(screen);
+    setUnder({ ...running, sheet: undefined });
+    setScreen(failureFromRecord(rec));
+  };
+  const seeWhyRef = useRef(seeWhy);
+  seeWhyRef.current = seeWhy;
+
+  // A change that fails while its app runs says so once, over the app.
+  const failedToast = useRef<string | null>(null);
+  const failedId = runningChange.failed?.id;
+  const failedAt = runningChange.failed?.updatedAt;
+  useEffect(() => {
+    const told = `${failedId}:${failedAt}`;
+    if (failedId === undefined || failedToast.current === told) return;
+    failedToast.current = told;
+    toastRef.current?.show({ message: COPY.changeFailedToast, action: { label: COPY.toastSeeWhy, onPress: () => seeWhyRef.current(failedId) } });
+  }, [failedId, failedAt]);
+
+  /** "New version ready · Reload", and the crash screen's Reload: the app opens again in place, on the
+   *  version that is now current. */
+  const onWhimReload = () => {
+    reloadRunning().catch(() => undefined);
+  };
+
+  /** The crash screen's "Ask Whim to fix it": the Whim sheet over the crashed app, its field holding the
+   *  request with the error attached. It sends through the sheet's own send, so it starts nothing
+   *  itself, and while a change of the app is being made the sheet shows that change instead. */
+  const askWhimToFix = (attachment: string) => {
+    if (screen.kind !== 'app') return;
+    setWhimWords({ appId: screen.app.id, text: crashFixWords(attachment) });
+    openWhimSheet();
+  };
+
+  /** The Whim sheet's page for `page` over the running app `on`: its menu, or Report a problem pushed
+   *  inside it. Both fit their content. */
+  const whimSheetPage = (on: AppScreen, page: WhimSheetPage): SheetContent => {
+    const { app } = on;
+    if (page === 'report') {
+      return {
+        key: `whim-report:${app.id}`,
+        detent: 'fit',
+        node: (
+          <WhimReportPage
+            app={app}
+            access={access}
+            options={reportOptions}
+            legalLanguage={legalLanguage}
+            onUpdateRequired={onReportUpdateRequired}
+            onBack={() => setScreen((s) => (s.kind === 'app' && s.sheet === 'report' ? { ...s, sheet: 'menu' } : s))}
+          />
+        ),
+      };
+    }
+    const read = whimVersions?.at === on.tappedAt ? whimVersions : null;
+    return {
+      key: `whim:${app.id}`,
+      detent: 'fit',
+      node: (
+        <WhimSheet
+          app={app}
+          version={read?.version ?? null}
+          newVersion={runningChange.landed !== undefined || (read?.newVersion ?? false)}
+          changing={runningChange.changing !== undefined}
+          onStopChange={() => {
+            if (runningChange.changing) onCancelPending(runningChange.changing);
+          }}
+          text={whimWords?.appId === app.id ? whimWords.text : ''}
+          onChangeText={(text) => setWhimWords({ appId: app.id, text })}
+          onSend={onWhimSend}
+          onReload={onWhimReload}
+          onHistory={() => onHistory(app, 'app')}
+          onReport={() => setScreen((s) => (s.kind === 'app' ? { ...s, sheet: 'report' } : s))}
+          onExit={goHome}
+        />
+      ),
+    };
+  };
+
   /** Closing the sheet by any route (the close control, the scrim, a drag, Android back): on Making the
    *  run keeps going and the sheet collapses into its tile; on Describe and Plan the in-flight
-   *  clarify or rewrite is aborted and the draft kept (`goHome` → `keepDraft`); on Ready it is Done;
-   *  on Failure it leaves the attempt as it is, its tile and journal kept. */
+   *  clarify or rewrite is aborted and the draft kept (`goHome` → `keepDraft`), or, over the app the
+   *  Whim sheet sent the change from, the app shows again; on Ready it is Done; on Failure it leaves
+   *  the attempt as it is, its tile and journal kept. The Whim sheet closes onto its running app. */
   const closeSheet = () => {
-    if (screen.kind === 'making') onLeaveRunning();
-    else goHome();
+    if (screen.kind === 'making') {
+      onLeaveRunning();
+    } else if (screen.kind === 'app') {
+      setScreen({ ...screen, sheet: undefined });
+    } else if (running !== null) {
+      keepDraft(screen);
+      setScreen(running);
+    } else {
+      goHome();
+    }
   };
 
   /** The page the making sheet shows for the current screen, with the key it is shown under; `null`
    *  closes the sheet. */
   const renderSheetPage = (): SheetContent | null => {
+    if (screen.kind === 'app') return screen.sheet === undefined ? null : whimSheetPage(screen, screen.sheet);
     if (screen.kind === 'describe') {
       const from = screen;
       return {
@@ -2998,7 +3517,8 @@ function LauncherShell({
   );
 
   /** Where leaving a stack screen lands: one handler, run by its header back, a swipe and system
-   *  back alike, and always off the screen at once (`NativeStack.tsx`). */
+   *  back alike, and always off the screen at once (`NativeStack.tsx`). History opened over an app
+   *  leaves by its own Back and system back through `backFromHistoryToApp` instead. */
   const leaveFor = (from: StackScreen): (() => void) => {
     switch (from.kind) {
       case 'home':
@@ -3074,7 +3594,7 @@ function LauncherShell({
           <HistoryScreen
             app={on.app}
             access={access}
-            onBack={leave}
+            onBack={on.from === 'app' ? () => backFromHistoryToApp(on.app) : backFromHistoryToHome}
             onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
             onReport={() => setScreen({ kind: 'report', app: on.app, from: on })}
           />
@@ -3102,33 +3622,37 @@ function LauncherShell({
 
   /** The mini-app container, mounted under every screen once the shell is ready (design-system-v1
    *  task 18.4): hidden, with one WebView waiting, while no app is open; the open app when one is.
-   *  Both branches render it at the same place, so opening and closing never remount it. */
-  const renderMiniApp = (): React.ReactNode => {
+   *  Both branches render it at the same place, so opening and closing never remount it. The app stays
+   *  open under a change's pages the Whim sheet grew into (`running`). */
+  const renderMiniApp = (sheetOpen: boolean): React.ReactNode => {
     if (!ready) return null;
-    if (screen.kind !== 'app') return <MiniAppStage launch={null} onFrame={setAppFrame} />;
+    if (running === null) return <MiniAppStage launch={null} onFrame={setAppFrame} />;
     const launch: MiniAppLaunch = {
-      record: screen.record,
-      bundleSource: screen.source,
-      engineAppId: screen.engineAppId,
-      tappedAt: screen.tappedAt,
+      record: running.record,
+      bundleSource: running.source,
+      engineAppId: running.engineAppId,
+      tappedAt: running.tappedAt,
       onExit: goHome,
-      onVersions: () => onHistory(screen.app, 'app'),
-      onChangeIt: () => openWithConsent({ kind: 'compose', editing: screen.app }),
-      installedApp: screen.app,
-      access,
-      reportOptions,
-      onUpdateRequired: onReportUpdateRequired,
-      legalLanguage,
+      onOpenSheet: openWhimSheet,
+      sheetOpen,
+      onCloseSheet: closeSheet,
+      installedApp: running.app,
+      orb,
+      onReload: onWhimReload,
+      onAskFix: askWhimToFix,
     };
     return <MiniAppStage launch={launch} onFrame={setAppFrame} />;
   };
 
-  const stack = ready ? stackFor(screen) : null;
+  // What the shell is laid out around: the running app while a change's pages sit over it, else the screen.
+  const base: Screen = running ?? screen;
+  const sheetPage = renderSheetPage();
+  const stack = ready ? stackFor(base) : null;
   let content: React.ReactNode;
   if (!ready) {
     content = <HomeSkeleton count={knownAppCount} />;
   } else if (stack !== null) {
-    content = <NativeStack entries={stack.map(stackEntry)} />;
+    content = <NativeStack entries={stack.map(stackEntry)} onSettled={() => stackPop.current?.end()} />;
   } else {
     content = renderScreenContent();
   }
@@ -3153,22 +3677,22 @@ function LauncherShell({
   // failing-screen identifier in the log record and the reset key, so navigating away and back
   // re-attempts a screen that failed once.
   const exit = SCREEN_EXITS[screen.kind];
-  const frame = shellFrame(screen, stack?.at(-1), ready, tokens, appFrame);
+  const frame = shellFrame(base, stack?.at(-1), ready, tokens, appFrame);
 
   return (
     <HighlightingProvider enabled={highlighting}>
-      <SafeAreaView edges={frameEdgesFor(screen.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>
+      <SafeAreaView edges={frameEdgesFor(base.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>
         <StatusBar barStyle={frame.barStyle} />
-        <ToastHost bottomOffset={toastClearance(screen.kind)}>
+        <ToastHost bottomOffset={toastOffset(base.kind)}>
           <ToastBridge api={toastRef} />
           <ScreenBoundary
             screen={screen.kind}
             FallbackComponent={ScreenErrorFallback}
             onLeave={exit.back === 'root' ? undefined : goHome}
           >
-            {renderMiniApp()}
+            {renderMiniApp(sheetPage !== null)}
             {content}
-            <MakingSheet content={renderSheetPage()} onClose={closeSheet} />
+            <MakingSheet content={sheetPage} onClose={closeSheet} />
             {checkingAge !== undefined && <AgeCheckBack onLeave={() => onLegalDecline(checkingAge.returnTo)} />}
             <FirstRunHost
               ask={firstRunAskOf(screen)}
