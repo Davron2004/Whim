@@ -37,6 +37,7 @@ import { run as runAndroidEdgeToEdge } from './repo/android-edge-to-edge.suite';
 import { run as runTrackedWeight } from './repo/tracked-weight.suite';
 import { run as runDesignSystem } from './repo/design-system.suite';
 import { run as runBindingProvenance } from './repo/binding-provenance.suite';
+import { run as runOnlyFilter } from './repo/only-filter.suite';
 import { run as runWebviewFloor } from './repo/webview-floor.suite';
 import {
   CheckReport,
@@ -1371,6 +1372,7 @@ async function main(): Promise<void> {
   await runDesignSystem();
   await runBindingProvenance();
   await runWebviewFloor();
+  await runOnlyFilter();
 }
 
 main()

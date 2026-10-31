@@ -63,9 +63,10 @@ export function orbDragLift(translation: number): number {
 }
 
 /**
- * The corner a drag released at `x` with `velocityX` (pt/s, rightward-positive) settles in, as the
- * target's left edge: the corner its projected end is nearer, unless that is the other corner and the
- * release velocity points back toward `rest`, the corner it came from. Position alone never moves it.
+ * The arming predicate for a drag from `rest` at `x` with `velocityX` (pt/s, rightward-positive), as
+ * the corner it points to (the target's left edge): the corner its projected end is nearer, unless
+ * that is the other corner and the velocity points back toward `rest`. The orb asks it each frame
+ * (`stepCommit`) and on release for a drag that has not armed; the release itself goes by the latch.
  */
 export function orbReleaseX(rest: number, x: number, velocityX: number, leading: number, trailing: number): number {
   'worklet';
@@ -73,6 +74,19 @@ export function orbReleaseX(rest: number, x: number, velocityX: number, leading:
   const nearer = Math.abs(projected - leading) < Math.abs(projected - trailing) ? leading : trailing;
   if (nearer !== rest && (rest - x) * velocityX > 0) return rest;
   return nearer;
+}
+
+/** The corner across from `rest`, as the target's left edge. */
+export function orbOtherCorner(rest: number, leading: number, trailing: number): number {
+  'worklet';
+  return rest === leading ? trailing : leading;
+}
+
+/** Which way along x (+1 or −1) a drag from `rest` heads toward the other corner: a drag's commit
+ *  direction. A position or velocity times this is how far, or how fast, it is going across. */
+export function orbAcross(rest: number, leading: number, trailing: number): number {
+  'worklet';
+  return Math.sign(orbOtherCorner(rest, leading, trailing) - rest);
 }
 
 /** The velocity the settling spring is handed for a release at `x` with `velocityX` toward the

@@ -106,7 +106,7 @@ a { color: inherit; }
 .pg-table th { font-size: 12px; color: var(--pg-text2); font-weight: 600; }
 .pg-tablewrap { overflow-x: auto; }
 .pg-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
-.pg-icon { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 4px 8px; border-radius: 12px; font-size: 10.5px; color: var(--pg-text2); text-align: center; word-break: break-word; }
+.pg-icon { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 4px 8px; border-radius: 12px; font-size: 10.5px; color: var(--pg-text2); text-align: center; overflow-wrap: anywhere; }
 .pg-icon.glyph { background: var(--pg-raised); }
 .pg-icon svg { color: var(--pg-text); }
 
@@ -146,10 +146,9 @@ a { color: inherit; }
   -webkit-font-smoothing: antialiased; font-synthesis: none;
   font-size: 17px; line-height: 24px; text-rendering: optimizeLegibility;
 }
-.phone[data-platform="android"] { border-radius: 40px; }
+.phone[data-platform="android"] { border-radius: 40px; font-family: Roboto, "Roboto Flex", system-ui, Arial, sans-serif; }
 :where(.phone) *, :where(.phone) *::before, :where(.phone) *::after { box-sizing: border-box; }
 .phone[data-platform="ios"] { font-family: -apple-system, "SF Pro Text", "SF Pro", system-ui, "Helvetica Neue", Arial, sans-serif; }
-.phone[data-platform="android"] { font-family: Roboto, "Roboto Flex", system-ui, Arial, sans-serif; }
 :where(.phone) svg { display: block; }
 :where(.phone) button { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 
@@ -223,9 +222,8 @@ a { color: inherit; }
 .w-iconbtn.filled > span { width: 36px; height: 36px; border-radius: 18px; background: var(--w-fill); display: inline-flex; align-items: center; justify-content: center; }
 .w-textbtn { height: 44px; padding: 0 12px; display: inline-flex; align-items: center; font-size: 17px; font-weight: 600; color: var(--w-text); }
 .w-textbtn.danger { color: var(--w-danger-text); }
-.w-actions { flex: none; padding: 16px var(--w-gutter) 0; display: flex; flex-direction: column; gap: 4px; }
+.w-actions { flex: none; padding: 16px var(--w-gutter) 0; display: flex; flex-direction: column; gap: 4px; position: relative; }
 .w-actions .w-btn.plain, .w-actions .w-btn.plain-ember { min-height: 44px; }
-.w-actions { position: relative; }
 .w-actions.fade::before { content: ""; position: absolute; left: 0; right: 0; top: -16px; height: 16px; background: linear-gradient(color-mix(in srgb, var(--w-sheet) 0%, transparent), var(--w-sheet)); pointer-events: none; }
 
 /* ── Grouped list ──────────────────────────────────────────────────────── */
@@ -249,8 +247,7 @@ a { color: inherit; }
 .w-switch { width: 51px; height: 31px; border-radius: 16px; background: var(--w-fill-strong); position: relative; flex: none; }
 .w-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: var(--w-thumb); box-shadow: 0 2px 4px rgba(0, 0, 0, .18); }
 .w-switch.on { background: var(--w-ink); }
-.w-switch.on::after { left: 22px; }
-.w-switch.on::after { background: var(--w-on-ink); }
+.w-switch.on::after { left: 22px; background: var(--w-on-ink); }
 .phone[data-platform="android"] .w-switch { width: 52px; height: 32px; border: 2px solid var(--w-border); background: var(--w-fill); }
 .phone[data-platform="android"] .w-switch::after { width: 16px; height: 16px; top: 6px; left: 6px; background: var(--w-border); box-shadow: none; }
 .phone[data-platform="android"] .w-switch.on { border-color: var(--w-ink); background: var(--w-ink); }
@@ -261,8 +258,7 @@ a { color: inherit; }
 .w-chip { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 999px; background: var(--w-fill); color: var(--w-text); font-size: 15px; line-height: 20px; font-weight: 500; letter-spacing: 0.004em; white-space: nowrap; }
 .w-chip.sel { background: var(--w-ink); color: var(--w-on-ink); padding-left: 10px; }
 .w-chip.decide { color: var(--w-ember-text); }
-.w-chip.decide.sel { padding-left: 10px; }
-.w-chip.decide.sel { background: var(--w-ember-soft); color: var(--w-ember-text); }
+.w-chip.decide.sel { padding-left: 10px; background: var(--w-ember-soft); color: var(--w-ember-text); }
 .w-chip.idea { height: auto; min-height: 36px; padding: 8px 14px; white-space: normal; text-align: left; }
 
 /* ── Fields ────────────────────────────────────────────────────────────── */
@@ -404,13 +400,12 @@ a { color: inherit; }
 .phone[data-scheme="dark"] .s-seg span.on { box-shadow: none; }
 .s-switch { width: 48px; height: 28px; border-radius: 14px; background: var(--w-fill-strong); position: relative; flex: none; }
 .s-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 24px; height: 24px; border-radius: 12px; background: var(--w-thumb); box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
-.s-switch.on::after { background: var(--a-on); }
+.s-switch.on::after { background: var(--a-on); left: 22px; }
 .phone[data-platform="android"] .s-switch { width: 52px; height: 32px; border-radius: 16px; border: 2px solid var(--w-border); background: var(--w-fill); }
 .phone[data-platform="android"] .s-switch::after { width: 16px; height: 16px; top: 6px; left: 6px; background: var(--w-border); box-shadow: none; }
 .phone[data-platform="android"] .s-switch.on { border-color: var(--a-fill); background: var(--a-fill); }
 .phone[data-platform="android"] .s-switch.on::after { width: 24px; height: 24px; top: 2px; left: 22px; background: var(--a-on); }
 .s-switch.on { background: var(--a-fill); }
-.s-switch.on::after { left: 22px; }
 .s-check { width: 24px; height: 24px; border-radius: 7px; border: 2px solid var(--w-border); flex: none; display: flex; align-items: center; justify-content: center; }
 .s-check.on { background: var(--a-fill); border-color: var(--a-fill); color: var(--a-on); }
 .s-slider { position: relative; height: 28px; }
@@ -785,7 +780,7 @@ const ICONS = {
 // Whim mockups: HTML helpers for the phone frames. Every helper returns a string.
 // c = { p: 'ios' | 'android', s: 'light' | 'dark' } describes the frame being drawn.
 
-const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const esc = (t) => String(t).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 
 // Shell icons the generated set lacks (Lucide 0.460, ISC), kept beside the generated map.
 Object.assign(ICONS, {
@@ -817,7 +812,7 @@ const SQUIRCLE = (() => {
 // Three honest states: working (intensity follows the stream), stuck (dimmed to 35 %, still), out (the light
 // is out: the flame's outline only, 1.5 px in text-2, no fill, no glow). Sizes 24, 48, 96, 128; the orb draws it at 20.
 const EMBER_PATH = 'M26.6 3.2C28.4 9.6 37.6 15 37.6 28.4C37.6 37.6 31.6 44.6 24 44.6C16.4 44.6 10.4 38.4 10.4 30.6C10.4 23.6 14.4 19.4 17.8 15.8C18.2 19.6 19.8 22.4 22.6 23.4C21.4 16.6 24.2 9.6 26.6 3.2Z';
-const EMBER_SIZES = [20, 24, 48, 96, 128];
+const EMBER_SIZES = new Set([20, 24, 48, 96, 128]);
 
 // The gradient uses exactly the three glow tokens; the halo is glow-ember.
 const EMBER_DEFS = `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
@@ -826,7 +821,7 @@ const EMBER_DEFS = `<svg width="0" height="0" style="position:absolute" aria-hid
 </defs></svg>`;
 
 function emberMark({ size = 48, state = 'working', activity = .8, cls = '' } = {}) {
-  if (!EMBER_SIZES.includes(size)) throw new Error(`ember size ${size} is off the 24/48/96/128 scale`);
+  if (!EMBER_SIZES.has(size)) throw new Error(`ember size ${size} is off the 24/48/96/128 scale`);
   let inner;
   if (state === 'out') inner = `<path d="${EMBER_PATH}" style="fill:none;stroke:var(--w-text2)" stroke-width="${(1.5 * 48 / size).toFixed(2)}" stroke-linejoin="round"/>`;
   else if (state === 'stuck') inner = `<circle cx="24" cy="29" r="24" fill="url(#em-halo)" opacity=".12"/><path d="${EMBER_PATH}" style="fill:var(--w-fill-strong)"/><path d="${EMBER_PATH}" fill="url(#em-body)" opacity=".35"/>`;
@@ -986,13 +981,13 @@ class SpringValue {
     this.x = value; this.v = 0; this.target = value; this.onUpdate = onUpdate; this.raf = 0;
     this.cfg = SPRINGS.smooth; this.precision = precision; this.onRest = null;
   }
-  to(target, cfg = SPRINGS.smooth, velocity) {
-    this.target = target; this.cfg = cfg;
+  to(target, cfg, velocity) {
+    this.target = target; this.cfg = cfg ?? SPRINGS.smooth;
     if (velocity !== undefined) this.v = velocity;
     if (!this.raf) { this.last = performance.now(); this.raf = requestAnimationFrame((t) => this.step(t)); }
   }
   set(x) { this.stop(); this.x = x; this.v = 0; this.target = x; this.onUpdate(x); }
-  stop() { if (this.raf) cancelAnimationFrame(this.raf); this.raf = 0; }
+  stop() { if (this.raf) { cancelAnimationFrame(this.raf); } this.raf = 0; }
   step(t) {
     const dt = Math.min((t - this.last) / 1000, 1 / 20); this.last = t;
     const { k, c } = springConsts(this.cfg);
@@ -1020,7 +1015,7 @@ function rubberband(over, dim, c = 0.55) { return (over * dim * c) / (dim + c * 
 class VelocityTracker {
   constructor() { this.s = []; }
   add(x, t = performance.now()) { this.s.push([x, t]); while (this.s.length > 2 && t - this.s[0][1] > 80) this.s.shift(); }
-  velocity() { if (this.s.length < 2) return 0; const [x0, t0] = this.s[0], [x1, t1] = this.s[this.s.length - 1]; return t1 > t0 ? ((x1 - x0) / (t1 - t0)) * 1000 : 0; }
+  velocity() { if (this.s.length < 2) { return 0; } const [x0, t0] = this.s[0], [x1, t1] = this.s[this.s.length - 1]; return t1 > t0 ? ((x1 - x0) / (t1 - t0)) * 1000 : 0; }
   reset() { this.s = []; }
 }
 
@@ -1392,7 +1387,7 @@ ${sCard(`<div class="s-empty" style="padding:12px 8px"><span class="e-icon">${ic
   { id: 'home-135', group: 'More states', title: 'Text at 135 %', note: 'From 135 % text the grid drops to three columns so two-line labels stay readable; tiles keep their size.',
     render: (c) => frame(c, homeBody(c, readyCells(c, HOME_SET.slice(0, 9)), { cols: 3, ts: 1.35 })) },
   { id: 'home-200', group: 'More states', title: 'Text at 200 %', note: 'From 200 % the grid becomes a list: a 40 pt tile and the full name, wrapping as long as it needs.',
-    render: (c) => { const g = G(c); const rows = HOME_SET.slice(0, 7).map((k) => `<div class="ar tint-${APPS[k].tint}">${tile(APPS[k], { size: 40, label: false })}<div style="font-size:34px;line-height:40px;min-width:0">${esc(APPS[k].name)}</div></div>`).join(''); return frame(c, `<div class="w-screen ts" style="--ts:2">${topSpace(c)}${header(c, { back: false, right: iconBtn('settings', 'Settings', { size: 28 }) })}<div class="w-titleblock"><div class="t-large">Your apps</div></div><div class="w-pad w-applist" style="margin-top:10px">${rows}</div>${composerBar(c)}</div>`); } },
+    render: (c) => { const rows = HOME_SET.slice(0, 7).map((k) => `<div class="ar tint-${APPS[k].tint}">${tile(APPS[k], { size: 40, label: false })}<div style="font-size:34px;line-height:40px;min-width:0">${esc(APPS[k].name)}</div></div>`).join(''); return frame(c, `<div class="w-screen ts" style="--ts:2">${topSpace(c)}${header(c, { back: false, right: iconBtn('settings', 'Settings', { size: 28 }) })}<div class="w-titleblock"><div class="t-large">Your apps</div></div><div class="w-pad w-applist" style="margin-top:10px">${rows}</div>${composerBar(c)}</div>`); } },
   { id: 'failure-again', group: 'More states', title: 'Didn’t work: rewording won’t help', note: 'Failure kind 2 of 6. The body never suggests rewording when that wouldn’t help; Try again is Whim’s action, so it is ember.',
     render: (c) => frame(c, homeUnder(c), { overlay: failurePage(c, { body: 'I tried 3 times and couldn’t get it to run.', primary: btn('Try again', 'ember') }) }) },
   { id: 'failure-busy', group: 'More states', title: 'Didn’t work: server busy', note: 'Failure kind 3 of 6. The server’s reason as a notice with a countdown; Try again waits for the window to end.',
@@ -1460,7 +1455,7 @@ function historyBody(c, { expanded = -1, currentIndex = 0 } = {}) {
 }
 
 function customizeSheet(c) {
-  const g = G(c), app = { ...APPS.water, tint: 'ocean' };
+  const app = { ...APPS.water, tint: 'ocean' };
   const sw = TOKENS.tints.map(([n]) => `<span class="w-swatch tint-${n}${n === app.tint ? ' sel' : ''}" aria-label="${n}"></span>`).join('');
   const glyphs = GLYPHS_FOR_SHEET.map((n) => `<span class="w-glyph${n === app.icon ? ' sel' : ''}">${icon(n, 24, 2)}</span>`).join('');
   return frame(c, homeUnder(c), { overlay: flowSheet(c, `<div class="w-pad"><div class="t-title2">Customize tile</div></div>
@@ -1513,7 +1508,7 @@ function viewOverview() {
 <li><b>Fewer steps</b>Questions live on the plan; changing an app never closes it.</li>
 <li><b>Your words first</b>What you asked for, quoted, leads the plan, the making page, Ready and History.</li>
 </ul></div>
-<div class="pg-hero-art">${frameHTML(SCREENS.find((s) => s.id === 'home'), { p: PG.platform, s: 'light' }, narrow ? .5 : .5)}${narrow ? '' : frameHTML(SCREENS.find((s) => s.id === 'making'), { p: PG.platform, s: 'dark' }, .5)}</div></section>`;
+<div class="pg-hero-art">${frameHTML(SCREENS.find((s) => s.id === 'home'), { p: PG.platform, s: 'light' }, .5)}${narrow ? '' : frameHTML(SCREENS.find((s) => s.id === 'making'), { p: PG.platform, s: 'dark' }, .5)}</div></section>`;
   const story = (title, sub, steps) => {
     const nf = steps.length, sc = narrow ? Math.min(.42, (cw - 20) / (2 * W)) : Math.min(.36, (cw - 44 - (nf - 1) * 96) / (nf * W));
     const items = steps.map(([id, label], i) => `${i ? `<div class="pg-arrow"><span>→</span><small>${esc(label)}</small></div>` : ''}<a href="#s-${id}" class="pg-storyframe">${frameHTML(SCREENS.find((s) => s.id === id), { p: PG.platform, s: PG.scheme === 'dark' ? 'dark' : 'light' }, sc)}</a>`).join('');
@@ -1546,7 +1541,6 @@ function board(sc, inner) {
   return `<div class="phone" data-platform="${PG.platform}" data-scheme="${sc}" style="--pw:100%;--ph:auto;height:auto;border-radius:24px;padding:24px;overflow:visible">${inner}</div>`;
 }
 function viewComponents() {
-  const c = { p: PG.platform, s: 'light' };
   const spec = (sc) => board(sc, `
 <div class="t-footnote t-sec t-semibold">Buttons, by who acts</div>
 <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-top:10px">${btn('Make it', 'ember')}${btn('Agree to send descriptions', 'ink')}<div class="tint-stone">${btn('Open it', 'tint')}</div>${btn('Use this version', 'secondary')}${btn('Not now', 'plain')}${btn('Discard', 'danger', { iconName: 'trash-2' })}${btn('Sending…', 'disabled')}</div>
@@ -1606,14 +1600,14 @@ function viewTokens() {
 
 // ── Motion lab ──────────────────────────────────────────────────────────────
 function viewMotion() {
-  const sc = document.documentElement.getAttribute('data-theme') || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const sc = document.documentElement.dataset.theme || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   const stage = (inner, w = 320, h = 560, extra = '') => `<div class="pg-stage"><div class="phone" data-platform="${PG.platform}" data-scheme="${sc}" style="--pw:${w}px;--ph:${h}px;border-radius:32px;${extra}">${inner}</div></div>`;
   const springRows = Object.entries(SPRINGS).map(([n, s]) => `<div class="pg-spring"><div><b>${n}</b><div class="pg-mono">${s.response} · ${s.damping}</div></div><canvas data-spring="${n}" width="560" height="128" aria-label="${n} step response"></canvas><div class="pg-track" data-track="${n}" role="button" tabindex="0" aria-label="Play ${n}"><span class="ball"></span></div></div>`).join('');
   return `<div class="pg-focus-head"><div><div class="pg-flabel">Motion</div><h2>Play with it</h2><p>Real springs, interruptible. Tap mid-flight to reverse; drag the sheets and screens. Reduce Motion switches every demo to its calmer version.</p></div><div class="pg-row"><button class="pg-btn" id="rm-toggle" aria-pressed="false">Reduce Motion: off</button></div></div>
 <div class="pg-demos">
 <div class="pg-demo" style="grid-column:1/-1"><h3>The six springs</h3><p>Step response over 1.2 s. Tap a track to send the ball across; tap again before it lands to reverse it from where it is.</p><div>${springRows}</div></div>
 <div class="pg-demo"><h3>Press</h3><p>Touch-down: <b>instant</b> to 0.97. Release: <b>snappy</b> back. Drag off to cancel.</p>${stage(`<div class="w-screen" style="padding:56px 24px;gap:28px;align-items:center;justify-content:flex-start">${btn('Make it', 'ember')}<div style="display:flex;gap:18px" data-press-tiles>${tile(APPS.pour, { size: 64 })}${tile(APPS.water, { size: 64 })}${tile(APPS.dice, { size: 64 })}</div>${btn('Back to your apps', 'secondary')}</div>`, 320, 420)}</div>
-<div class="pg-demo"><h3>Sheet</h3><p>Drag it. Release projects your momentum (d = 0.998) and hands the velocity to <b>fling</b>; above the top it rubber-bands. It closes when the projected end passes half and your finger isn’t moving back up.</p>${stage(`<div class="w-screen" data-sheet-demo><div style="padding:60px 20px 0">${list([row({ title: 'History', chev: true, icon: 'history' }), row({ title: 'Report a problem', chev: true, icon: 'flag' })], { icons: true })}<div style="margin-top:16px">${btn('Open sheet', 'ink', { size: 'md' })}</div></div><div class="w-scrim" style="opacity:0;pointer-events:none"></div><div class="w-sheet" style="height:330px;touch-action:none;cursor:grab"><div class="w-grabber"></div><div class="w-sheet-head"><span class="t-title2">Drag me</span></div><div class="w-pad t-callout t-sec">Flick down to dismiss. A slow drag past halfway also dismisses; less springs back.</div></div></div>`)}</div>
+<div class="pg-demo"><h3>Sheet</h3><p>Drag it. Release projects your momentum (d = 0.998) and hands the velocity to <b>fling</b>; above the top it rubber-bands. It commits, with the commit haptic, on the frame the projected end passes half once the card is a quarter of the way down, and stays committed until you bring it back up past 10 pt; letting go after the haptic closes it unless you flick back up.</p>${stage(`<div class="w-screen" data-sheet-demo><div style="padding:60px 20px 0">${list([row({ title: 'History', chev: true, icon: 'history' }), row({ title: 'Report a problem', chev: true, icon: 'flag' })], { icons: true })}<div style="margin-top:16px">${btn('Open sheet', 'ink', { size: 'md' })}</div></div><div class="w-scrim" style="opacity:0;pointer-events:none"></div><div class="w-sheet" style="height:330px;touch-action:none;cursor:grab"><div class="w-grabber"></div><div class="w-sheet-head"><span class="t-title2">Drag me</span></div><div class="w-pad t-callout t-sec">Flick down to dismiss. A slow drag past halfway also dismisses; less springs back.</div></div></div>`)}</div>
 <div class="pg-demo"><h3>Open and close an app</h3><p>Tap a tile: a container in the app’s canvas colour (<code>bg</code>) grows out of it with <b>morph</b>, animating width, height and radius, never a stretch. The tint stays a tile-sized plate with the glyph and fades as the app paints. Tap the open app to close it into the tile with <b>smooth</b>.</p>${stage(`<div class="w-screen" data-morph-demo style="padding-top:64px"><div class="w-grid" style="--tile:64px">${[APPS.pour, APPS.water, APPS.dice, APPS.plant].map((a) => tile(a, { size: 64 })).join('')}</div><div class="w-grid" style="--tile:64px;margin-top:18px">${[APPS.read, APPS.focus, APPS.budget, APPS.habit].map((a) => tile(a, { size: 64 })).join('')}</div><div class="morph-layer" style="position:absolute;left:0;top:0;width:100%;height:100%;display:none;z-index:9;cursor:pointer"><div class="ml-app" style="position:absolute;left:0;top:0;width:320px;height:560px;opacity:0;padding:70px 20px"><div class="t-title1">App</div><div class="t-callout t-sec" style="margin-top:6px">Tap to close into the tile</div><div class="s-card" style="margin-top:20px;height:140px"></div><div class="s-btn" style="margin-top:16px">Start</div></div><div class="ml-plate" style="position:absolute;left:50%;top:50%;width:64px;height:64px;margin:-32px 0 0 -32px"></div></div></div>`)}</div>
 <div class="pg-demo"><h3>Ghost becomes tile</h3><p>The ember in the tile flares once to 1.18 (<b>spark</b>), the tint fills from the centre and the glyph settles (<b>morph</b>).</p>${stage(`<div class="w-screen" data-transmute style="align-items:center;justify-content:center;gap:26px"><div class="tm-tile" style="position:relative;width:96px;height:96px"></div><div class="pg-row" style="justify-content:center">${btn('Deliver', 'ember', { size: 'md', block: false })}${btn('Reset', 'secondary', { size: 'md', block: false })}</div></div>`, 320, 360)}</div>
 <div class="pg-demo"><h3>Honest light</h3><p>Only the ember’s intensity moves, and only with tokens per second; it has no poses. Nothing arrives, nothing moves; after a stall it dims to 35 % and holds still.</p>${stage(`<div class="w-screen" data-honest style="align-items:center;padding-top:60px;gap:18px"><div class="hl-wisp"></div><div class="t-headline hl-label">Making Pour Timer</div><div class="t-callout t-sec hl-line">Usually 1–2 min.</div></div>`, 320, 380)}<label class="pg-row" style="font-size:14px">Tokens per second <input type="range" id="hl-rate" class="pg-range" min="0" max="60" value="28" style="flex:1"></label><div class="pg-row"><button class="pg-btn" id="hl-stall">Stall the stream</button></div></div>
@@ -1658,7 +1652,7 @@ function wireMotion(root) {
     const sv = new SpringValue(1, (s) => { if (REDUCED) { el.style.transform = ''; el.style.opacity = String(1 - .3 * Math.min(1, (1 - s) / (1 - target))); } else { el.style.transform = `scale(${s})`; el.style.opacity = ''; } });
     let down = false;
     el.addEventListener('pointerdown', () => { down = true; sv.to(target, SPRINGS.instant); });
-    const up = () => { if (!down) return; down = false; sv.to(1, SPRINGS.snappy); };
+    const up = () => { if (!down) { return; } down = false; sv.to(1, SPRINGS.snappy); };
     el.addEventListener('pointerup', up); el.addEventListener('pointerleave', up); el.addEventListener('pointercancel', up);
   });
 
@@ -1670,9 +1664,9 @@ function wireMotion(root) {
     let dragging = false, startY = 0, startPos = 0; const vt = new VelocityTracker();
     const sv = new SpringValue(0, apply, { precision: .3 });
     sheet.addEventListener('pointerdown', (e) => { dragging = true; sv.stop(); startY = e.clientY; startPos = sv.x; vt.reset(); vt.add(e.clientY); sheet.setPointerCapture(e.pointerId); sheet.style.cursor = 'grabbing'; });
-    sheet.addEventListener('pointermove', (e) => { if (!dragging) return; let y = startPos + (e.clientY - startY); if (y < 0) y = rubberband(y, H); sv.x = y; apply(y); vt.add(e.clientY); });
+    sheet.addEventListener('pointermove', (e) => { if (!dragging) { return; } let y = startPos + (e.clientY - startY); if (y < 0) { y = rubberband(y, H); } sv.x = y; apply(y); vt.add(e.clientY); });
     const release = () => {
-      if (!dragging) return; dragging = false; sheet.style.cursor = 'grab';
+      if (!dragging) { return; } dragging = false; sheet.style.cursor = 'grab';
       const v = vt.velocity(), end = sv.x + project(v), close = end > H / 2 && v > -20;
       if (REDUCED) { sv.set(close ? H + 20 : 0); return; }
       sv.to(close ? H + 20 : 0, SPRINGS.fling, v);
@@ -1776,7 +1770,7 @@ function wireMotion(root) {
     const styleKnob = document.createElement('style');
     styleKnob.textContent = '[data-controls] .s-switch::after{left:calc(2px + var(--k,0) * 20px)!important}';
     ctl.appendChild(styleKnob);
-    ctl.querySelector('[data-switch]').addEventListener('click', () => { on = !on; if (REDUCED) knobSv.set(on ? 1 : 0); else knobSv.to(on ? 1 : 0, SPRINGS.snappy); sw.classList.toggle('on', on); });
+    ctl.querySelector('[data-switch]').addEventListener('click', () => { on = !on; if (REDUCED) knobSv.set(on ? 1 : 0); else { knobSv.to(on ? 1 : 0, SPRINGS.snappy); } sw.classList.toggle('on', on); });
     const seg = ctl.querySelector('[data-seg]'), thumb = seg.querySelector('.thumb'), opts = [...seg.querySelectorAll('span')];
     const segW = () => (seg.clientWidth - 4) / 3;
     const segSv = new SpringValue(1, (i) => { thumb.style.width = `${segW()}px`; thumb.style.transform = `translateX(${i * segW()}px)`; });
@@ -1788,7 +1782,7 @@ function wireMotion(root) {
     }));
     const val = ctl.querySelector('[data-val]'); let n = 5;
     ctl.querySelectorAll('[data-step]').forEach((b) => b.addEventListener('click', () => {
-      const d = +b.dataset.step; if (n + d < 0) return; n += d;
+      const d = +b.dataset.step; if (n + d < 0) { return; } n += d;
       if (REDUCED) { val.textContent = String(n); return; }
       const out = document.createElement('span'); out.textContent = val.textContent; out.style.cssText = 'position:absolute;left:0;right:0;top:0';
       val.textContent = String(n); val.appendChild(out);
@@ -1806,9 +1800,9 @@ function wireMotion(root) {
     const sv = new SpringValue(xs[1], apply, { precision: .3 });
     apply(xs[1]);
     o.addEventListener('pointerdown', (e) => { dragging = true; sv.stop(); sx = e.clientX; sy = e.clientY; startX = sv.x; vt.reset(); vt.add(e.clientX); o.setPointerCapture(e.pointerId); o.style.cursor = 'grabbing'; });
-    o.addEventListener('pointermove', (e) => { if (!dragging) return; const k = od.getBoundingClientRect().width / W; const x = startX + (e.clientX - sx) / k; y = Math.min(0, (e.clientY - sy) / k); sv.x = x; apply(x); vt.add(e.clientX); });
+    o.addEventListener('pointermove', (e) => { if (!dragging) { return; } const k = od.getBoundingClientRect().width / W; const x = startX + (e.clientX - sx) / k; y = Math.min(0, (e.clientY - sy) / k); sv.x = x; apply(x); vt.add(e.clientX); });
     const rel = () => {
-      if (!dragging) return; dragging = false; o.style.cursor = 'grab';
+      if (!dragging) { return; } dragging = false; o.style.cursor = 'grab';
       const v = vt.velocity(), end = sv.x + project(v), target = end + OW / 2 < W / 2 ? xs[0] : xs[1];
       const yS = new SpringValue(y, (yy) => { y = yy; apply(sv.x); }); yS.to(0, REDUCED ? { response: .16, damping: 1 } : SPRINGS.fling);
       if (REDUCED) sv.set(target); else sv.to(target, SPRINGS.fling, v);
@@ -1824,17 +1818,17 @@ function wireMotion(root) {
     const apply = (x) => { const p = Math.min(1, Math.max(0, x / W)); topEl.style.transform = `translateX(${x}px)`; under.style.transform = `translateX(${-.3 * W * (1 - p)}px)`; dim.style.opacity = String(.12 * (1 - p)); };
     const sv = new SpringValue(0, apply, { precision: .3 });
     apply(0);
-    topEl.addEventListener('pointerdown', (e) => { const r = topEl.getBoundingClientRect(); if (e.clientX - r.left > 28 && sv.x === 0) return; dragging = true; sv.stop(); sx = e.clientX; start = sv.x; vt.reset(); vt.add(e.clientX); topEl.setPointerCapture(e.pointerId); });
-    topEl.addEventListener('pointermove', (e) => { if (!dragging) return; const x = Math.max(0, start + e.clientX - sx); sv.x = x; apply(x); vt.add(e.clientX); });
+    topEl.addEventListener('pointerdown', (e) => { const r = topEl.getBoundingClientRect(); if (e.clientX - r.left > 28 && sv.x === 0) { return; } dragging = true; sv.stop(); sx = e.clientX; start = sv.x; vt.reset(); vt.add(e.clientX); topEl.setPointerCapture(e.pointerId); });
+    topEl.addEventListener('pointermove', (e) => { if (!dragging) { return; } const x = Math.max(0, start + e.clientX - sx); sv.x = x; apply(x); vt.add(e.clientX); });
     const rel = () => {
-      if (!dragging) return; dragging = false;
+      if (!dragging) { return; } dragging = false;
       const v = vt.velocity(), end = sv.x + project(v), commit = end > W / 2 && v > -20;
       if (REDUCED) { sv.set(commit ? W : 0); }
       else sv.to(commit ? W : 0, SPRINGS.fling, v);
       again.style.display = commit ? 'block' : 'none';
     };
     topEl.addEventListener('pointerup', rel); topEl.addEventListener('pointercancel', rel);
-    swd.addEventListener('click', (e) => { if (e.target.closest('.sw-again') || (sv.target === W && e.target.closest('.sw-under'))) { if (REDUCED) sv.set(0); else sv.to(0, SPRINGS.smooth); again.style.display = 'none'; } });
+    swd.addEventListener('click', (e) => { if (e.target.closest('.sw-again') || (sv.target === W && e.target.closest('.sw-under'))) { if (REDUCED) sv.set(0); else { sv.to(0, SPRINGS.smooth); } again.style.display = 'none'; } });
   }
 }
 

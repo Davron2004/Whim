@@ -75,9 +75,23 @@ trap cleanup EXIT
 # not its exact wording, so the message can be reworded without a test edit but cannot start
 # blaming a different cause.
 
+# contains <hay> <needle> — case-insensitive substring test with NO pipeline. `printf | grep -q`
+# under `pipefail` is a race: grep -q exits on its first match and printf, still writing, takes
+# SIGPIPE ("printf: write error: Broken pipe"), so the pipeline reports "absent" for text that IS
+# present. How often that happens depends on scheduling, so it flaked only under machine load
+# (#238). Every "mention X" assertion, including checkout stderr and the park note, goes through here.
+contains() {
+  local hay="$1" needle="$2" was=0 rc=1
+  shopt -q nocasematch && was=1
+  shopt -s nocasematch
+  [[ $hay == *"$needle"* ]] && rc=0
+  [ "$was" -eq 1 ] || shopt -u nocasematch
+  return "$rc"
+}
+
 assert_contains() {
   local name="$1" hay="$2" needle="$3"
-  if printf '%s' "$hay" | grep -qiF -- "$needle"; then
+  if contains "$hay" "$needle"; then
     pass "$name"
   else
     fail "$name (expected the output to mention '$needle')" "$hay"
@@ -86,7 +100,7 @@ assert_contains() {
 
 assert_not_contains() {
   local name="$1" hay="$2" needle="$3"
-  if printf '%s' "$hay" | grep -qiF -- "$needle"; then
+  if contains "$hay" "$needle"; then
     fail "$name (output must NOT mention '$needle')" "$hay"
   else
     pass "$name"
@@ -863,8 +877,10 @@ case_redcheck_ignores_primary_tree_checkout() {
   assert_rc_is    "redcheck judges the branch, not the primary tree's checkout (RED)" 0 "$rc" "$out"
   assert_contains "redcheck reports RED"                        "$out" "RED"
   assert_not_contains "redcheck does not call a real test vacuous" "$out" "GREEN"
-  if fgit -C "$fx" worktree list | grep -q redcheck-; then
-    fail "redcheck removes its worktree" "$(fgit -C "$fx" worktree list)"
+  local wtlist
+  wtlist="$(fgit -C "$fx" worktree list)"
+  if [[ $wtlist == *redcheck-* ]]; then
+    fail "redcheck removes its worktree" "$wtlist"
   else
     pass "redcheck removes its worktree"
   fi

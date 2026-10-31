@@ -764,6 +764,61 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     await act(() => tree.unmount());
   });
 
+  await h.test('Sheet: the commit haptic marks where letting go dismisses: a release after it closes the sheet, a release with none springs back, just short of and just past the threshold, a finger that slows after it, one jittering on it, a brisk peek (no arming before a quarter of the way), and one turned back past the slop (#234)', async () => {
+    // [name, frames as [translation, velocity], release velocity, closes, haptic before the release]
+    const cases: [string, [number, number][], number, boolean, boolean][] = [
+      ['moving, projected end just short of half, then let go at rest', [[50, 200], [100, 190], [100, 0]], 0, false, false],
+      ['moving, projected end just past half, then slowing to a stop short of half and let go', [[60, 200], [120, 200], [130, 40], [132, 0]], 0, true, true],
+      ['a brisk short peek, then held and let go', [[20, 1000], [40, 1000], [40, 0], [40, 0]], 0, false, false],
+      ['a brisk peek to 90 pt of the 400 pt card (under the arming floor, a quarter of it), then held and let go', [[30, 1000], [60, 1000], [90, 1000], [90, 0]], 0, false, false],
+      ['a brisk drag to 110 pt (just past the arming floor), then held and let go', [[50, 1000], [110, 1000], [110, 0]], 0, true, true],
+      ['a brisk drag a third of the way down, then held and let go', [[60, 800], [130, 800], [130, 0]], 0, true, true],
+      ['past half, then turned back more than the slop to short of half and let go', [[201, 0], [185, 0]], 0, false, true],
+      ['held still just short of half', [[100, 0], [199, 0]], 0, false, false],
+      ['held still just past half', [[100, 0], [201, 0]], 0, true, true],
+      ['jittering back and forth across half', [[150, 0], [195, 0], [201, 0], [198, 0], [203, 0], [199, 0], [202, 0], [197, 0]], 0, true, true],
+      ['short of half, flicked down on release', [[40, 0], [80, 0]], 800, true, false],
+    ];
+    for (const [name, frames, release, closes, before] of cases) {
+      await resetPhone();
+      const count = { n: 0 };
+      const tree = await render(<HeldSheet onCloseCount={count} />);
+      await layoutCard(tree);
+      const drag = dragOf(tree);
+      const at = (translationY: number, velocityY: number) => ({ translationX: 0, translationY, velocityX: 0, velocityY });
+      const commits = () => hapticCalls.filter((c) => c === 'impact:rigid,0.6,GESTURE_THRESHOLD_ACTIVATE').length;
+      await act(() => {
+        drag.onBegin!(at(0, 0));
+        drag.onActivate!(at(0, 0));
+        for (const [ty, vy] of frames) drag.onUpdate!(at(ty, vy));
+      });
+      const played = commits();
+      const last = frames.at(-1)![0];
+      await act(() => { drag.onDeactivate!(at(last, release)); drag.onFinalize?.(at(last, release)); });
+      h.eq([count.n, modalShown(tree)], [closes ? 1 : 0, !closes], `${name}: ${closes ? 'closes' : 'springs back'}`);
+      h.eq(played, before ? 1 : 0, `${name}: ${before ? 'one commit haptic during the drag' : 'no commit haptic during the drag'}`);
+      h.eq(commits(), before || closes ? 1 : 0, `${name}: exactly one commit haptic when it closed or armed, none otherwise`);
+      await act(() => tree.unmount());
+    }
+    await resetPhone();
+  });
+
+  await h.test('Sheet: a committed drag the system takes away (cancelled) springs back instead of closing', async () => {
+    await resetPhone();
+    const count = { n: 0 };
+    const tree = await render(<HeldSheet onCloseCount={count} />);
+    await layoutCard(tree);
+    const drag = dragOf(tree);
+    const at = (translationY: number, velocityY: number) => ({ translationX: 0, translationY, velocityX: 0, velocityY });
+    await act(() => { drag.onBegin!(at(0, 0)); drag.onActivate!(at(0, 0)); drag.onUpdate!(at(120, 0)); drag.onUpdate!(at(260, 600)); });
+    h.eq(hapticCalls.filter((c) => c === 'impact:rigid,0.6,GESTURE_THRESHOLD_ACTIVATE').length, 1, 'the drag had committed');
+    await act(() => { drag.onDeactivate!({ ...at(260, 600), canceled: true }); drag.onFinalize?.(at(260, 600)); });
+    h.eq([count.n, modalShown(tree)], [0, true], 'cancelled, it stays open');
+    h.eq(cardY(tree), 0, 'and the card springs back to its open place');
+    await act(() => tree.unmount());
+    await resetPhone();
+  });
+
   await h.test('Sheet: the card lifts on the keyboard frame by frame, continuing behind it, and drops back to the safe area', async () => {
     await resetPhone();
     const tree = await render(<HeldSheet onCloseCount={{ n: 0 }} />);
@@ -1461,6 +1516,46 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     const tree = await render(<ToastHost><Grab /></ToastHost>);
     await act(() => api.show({ message: 'Saved' }));
     h.eq(announcements, ['Copied'], 'Android: no announcement call; the polite live region reads it');
+    await act(() => tree.unmount());
+  });
+
+  for (const reduced of [false, true]) await h.test(`Toast: on every frame of its fade in and out${reduced ? ' under Reduce Motion' : ''}, its words show only while the capsule is opaque, so they never read over what is behind it (#241)`, async () => {
+    await resetPhone();
+    accessibilitySettings.reduceMotion = reduced;
+    let api!: ToastApi;
+    const Grab = () => { api = useToast(); return null; };
+    const tree = await render(<ToastHost><Grab /></ToastHost>);
+    const capsules = () => tree.root.findAll((n) => hostType(n) === 'Animated.View' && n.props.accessibilityLiveRegion === 'polite');
+    const opacity = (n: Node) => (StyleSheet.flatten(n.props.style)?.opacity as number | undefined) ?? 1;
+    /** The capsule's opacity, and its words' own under it: every view from the message up to the capsule. */
+    const frame = (): [number, number] => {
+      const capsule = capsules()[0];
+      let words = 1;
+      for (let n: Node | null = capsule.find((m) => hostType(m) === 'Text' && textOf(m) === COPY.changeFailedToast); n !== null && n !== capsule; n = n.parent) words *= opacity(n);
+      return [opacity(capsule), words];
+    };
+    const frames: [number, number][] = [];
+    const release = holdAnimations();
+    try {
+      await act(() => api.show({ message: COPY.changeFailedToast, action: { label: COPY.toastSeeWhy, onPress: () => {} } }));
+      await settle();
+      h.eq(capsules().length, 1, 'the toast is up');
+      for (let i = 0; i < 40 && frame()[1] < 1; i++) {
+        await act(() => elapse(8));
+        frames.push(frame());
+      }
+      h.eq(frame(), [1, 1], 'it comes in to the capsule and its words, both whole');
+      await act(() => capsules()[0].props.onAccessibilityAction({ nativeEvent: { actionName: 'dismiss' } }));
+      for (let i = 0; i < 40 && capsules().length === 1 && frame()[0] > 0; i++) {
+        await act(() => elapse(8));
+        if (capsules().length === 1) frames.push(frame());
+      }
+      h.ok(frames.some(([capsule]) => capsule > 0 && capsule < 1), `the capsule does fade (${JSON.stringify(frames)})`);
+      h.ok(frames.some(([, words]) => words > 0 && words < 1), 'and so do its words');
+      h.ok(frames.every(([capsule, words]) => capsule === 1 || words === 0), `no frame shows words on a capsule that lets the screen through (${JSON.stringify(frames)})`);
+    } finally {
+      await act(() => release());
+    }
     await act(() => tree.unmount());
   });
 

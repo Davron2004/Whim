@@ -101,6 +101,25 @@ async function drag(tree: Tree, xs: readonly number[], velocityX: number, veloci
   });
 }
 
+/** The commit haptics played so far. */
+const commits = () => hapticCalls.filter((c) => c.startsWith('impact:rigid')).length;
+
+/** Plays `xs` (translations) through the orb's pan, each update with the velocity its step implies at
+ *  60 frames a second, and lets go at rest. Returns the commit haptics played before the release. */
+async function jitteredDrag(tree: Tree, xs: readonly number[]): Promise<number> {
+  const g = gestureOf(tree);
+  let played = 0;
+  await TestRenderer.act(async () => {
+    g.onBegin?.(at(0));
+    g.onActivate?.(at(0));
+    xs.forEach((x, i) => g.onUpdate?.(at(x, 0, (x - (xs[i - 1] ?? 0)) * 60)));
+    played = commits();
+    g.onDeactivate?.(at(xs.at(-1) ?? 0));
+    g.onFinalize?.(at(xs.at(-1) ?? 0));
+  });
+  return played;
+}
+
 const springs = (from: number): Animation[] => animations.slice(from).filter((a) => a.kind === 'spring');
 
 const render = (props: Partial<OrbProps> = {}) =>
@@ -121,7 +140,7 @@ export async function runOrbUiTests(h: Harness): Promise<void> {
   const bounds = orbBounds(SCREEN.width, SAFE);
   const middle = (bounds.leading + bounds.trailing) / 2;
 
-  await h.test('orb: a release snaps to the corner its projected end is nearer, from either corner; a release whose velocity points back stays', async () => {
+  await h.test('orb: the arming predicate points to the corner the projected end is nearer, from either corner, and to its own corner while the velocity points back', async () => {
     const { leading, trailing } = bounds;
     h.eq(orbReleaseX(trailing, trailing - 40, -1200, leading, trailing), leading, 'a fling toward leading from 40 pt out lands bottom-leading');
     h.eq(orbReleaseX(leading, leading + 40, 1200, leading, trailing), trailing, 'a fling toward trailing from 40 pt out lands bottom-trailing');
@@ -170,6 +189,60 @@ export async function runOrbUiTests(h: Harness): Promise<void> {
       h.eq(targetRect(tree).left, bounds.trailing, 'a drag released moving back stays where it was');
       h.eq(targetRect(tree).bottom, flat(frameOf(tree)).bottom, 'and comes back down to the bottom');
     });
+  });
+
+  await h.test('orb: a slow drag whose finger jitters plays the commit haptic once, where it crosses, and the release goes by it (#235)', async () => {
+    const span = bounds.trailing - bounds.leading;
+
+    resetNativeStorage();
+    await withOrb({}, async (tree) => {
+      hapticCalls.length = 0;
+      // Corner to corner, 3 pt a frame, every other frame slipping 4.5 pt back: a slow finger's tremor.
+      const xs = Array.from({ length: Math.ceil(span / 3) + 4 }, (_, i) => -3 * i + (i % 2 === 1 ? 4.5 : 0));
+      const played = await jitteredDrag(tree, xs);
+      h.eq(played, 1, `slowly corner to corner with a trembling finger: one commit haptic, not one per tremor (${played})`);
+      h.eq([commits(), targetRect(tree).left], [1, bounds.leading], 'and let go, it settles in the other corner with no second haptic');
+    });
+
+    resetNativeStorage();
+    await withOrb({}, async (tree) => {
+      hapticCalls.length = 0;
+      // Out to the middle and held there, the finger trembling 3 pt either side of it.
+      const toMiddle = bounds.trailing - middle;
+      const out = Array.from({ length: Math.ceil(toMiddle / 6) }, (_, i) => -6 * i);
+      const held = Array.from({ length: 12 }, (_, i) => -toMiddle + (i % 2 === 0 ? -3 : 3));
+      const played = await jitteredDrag(tree, [...out, ...held]);
+      h.eq(played, 1, `held trembling on the middle: one commit haptic (${played})`);
+      h.eq([commits(), targetRect(tree).left], [1, bounds.leading], 'and the release goes where the haptic said: on to the other corner');
+    });
+  });
+
+  await h.test('orb: a brisk pick-up short of a quarter of the way neither arms nor crosses; past it, it arms and crosses; turned back past the slop, or cancelled, it stays', async () => {
+    const half = (bounds.trailing - bounds.leading) / 2;
+    // [name, frames as [translation, velocity] from bottom-trailing, release velocity, cancelled, crosses, haptics]
+    const cases: [string, [number, number][], number, boolean, boolean, number][] = [
+      ['a brisk pick-up 40 pt out, held and let go', [[-20, -1000], [-40, -1000], [-40, 0]], 0, false, false, 0],
+      ['a brisk pick-up put back in its own corner', [[-20, -1000], [-40, -1000], [-30, 0], [-4, 0]], 0, false, false, 0],
+      ['a brisk drag 0.7 of the way to the middle, held and let go', [[-0.3 * half, -1000], [-0.7 * half, -1000], [-0.7 * half, 0]], 0, false, true, 1],
+      ['past the middle, then turned back more than the slop to short of it and let go', [[-half - 1, 0], [-half + 15, 0]], 0, false, false, 1],
+      ['past the middle and committed, then cancelled by the system', [[-half - 20, 0]], 0, true, false, 1],
+    ];
+    for (const [name, frames, release, canceled, crosses, haptics] of cases) {
+      resetNativeStorage();
+      await withOrb({}, async (tree) => {
+        hapticCalls.length = 0;
+        const g = gestureOf(tree);
+        const last = frames.at(-1)![0];
+        await TestRenderer.act(async () => {
+          g.onBegin?.(at(0));
+          g.onActivate?.(at(0));
+          for (const [x, vx] of frames) g.onUpdate?.(at(x, 0, vx));
+          g.onDeactivate?.({ ...at(last, 0, release), canceled });
+          g.onFinalize?.(at(last, 0, release));
+        });
+        h.eq([targetRect(tree).left, commits()], [crosses ? bounds.leading : bounds.trailing, haptics], `${name}: ${crosses ? 'crosses' : 'stays'} with ${haptics} commit haptic(s)`);
+      });
+    }
   });
 
   await h.test('orb: under Reduce Motion a drag still tracks, and the release settles by a cross-fade, not a spring', async () => {

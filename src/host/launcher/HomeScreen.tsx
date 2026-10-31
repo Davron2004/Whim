@@ -505,7 +505,7 @@ export default function HomeScreen({
         count={cell.kind === 'older' ? cell.recs.length : undefined}
         activity={live ? activity?.[live.id] : undefined}
         flicker={live ? flicker?.[live.id] : undefined}
-        stuck={live ? stalled?.has(live.id) : undefined}
+        stuck={live ? stalled?.has(live.id) === true && queued?.has(live.id) !== true : undefined}
         busy={busy}
         lifted={menu?.open === true && cellKey(menu.cell) === cellKey(cell)}
         labelLines={labels.lineCounts[index]}

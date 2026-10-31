@@ -350,6 +350,25 @@ export async function runShellControlsUiTests(h: Harness): Promise<void> {
     await resetPhone();
   });
 
+  await h.test('a switch row: iOS keeps its own haptic for a flip of the switch and plays ours for a row press; Android plays ours for both', async () => {
+    for (const os of ['ios', 'android'] as const) {
+      Platform.OS = os;
+      const flips: boolean[] = [];
+      const tree = await renderScreen(<GroupedRow title="Send details" trailing={{ kind: 'switch', value: false, onValueChange: (v: boolean) => flips.push(v) }} />);
+      hapticCalls.splice(0);
+      haptics.play('toggle-on');
+      const ours = hapticCalls.splice(0);
+      h.ok(ours.length > 0, `${os}: toggle-on reaches the native module`);
+      await act(() => one(tree, 'Switch').props.onValueChange(true));
+      h.eq(hapticCalls.splice(0), os === 'ios' ? [] : ours, `${os}: the switch itself flipped`);
+      await press(one(tree, 'Pressable'));
+      h.eq(hapticCalls.splice(0), ours, `${os}: the row pressed`);
+      h.eq(flips, [true, true], `${os}: both paths change the setting`);
+      await unmountScreen(tree);
+    }
+    await resetPhone();
+  });
+
   await h.test('Chip: a selection move plays the selection haptic; a suggestion plays none; roles say how it is picked', async () => {
     hapticCalls.splice(0);
     haptics.prepare('selection');

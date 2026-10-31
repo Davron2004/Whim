@@ -2,7 +2,7 @@
 
 ### Requirement: The first action that would send data asks for consent at that moment
 
-The launcher SHALL open the first-run sheet over the current screen, in place of the requested screen, whenever the user takes a data-sending action without a current grant. The data-sending actions are: the home composer; changing an app from its tile menu, from inside the running app or from History; and trying a failed or stopped attempt again. After the user agrees, the action they started SHALL continue as if consent had already existed. Reattaching to a run that is already in flight sends nothing and SHALL NOT ask. Where another requirement of this capability says the consent screen opens for a data-sending action, the first-run sheet opens; the consent screen of "Settings shows consent and can review or turn it off" stays a full screen in review mode.
+The launcher SHALL open the first-run sheet over the current screen, in place of the requested screen, whenever the user takes a data-sending action without a current grant. The data-sending actions are: the home composer; changing an app from its tile menu, from inside the running app or from History; and trying a failed or stopped attempt again. After the user agrees, the action they started SHALL continue as if consent had already existed, except that a change sent from inside a running mini-app closes that app when the sheet opens, so after agreeing it continues as a change made from Home (its Describe page, plan and Making page, and closing its Failure page lands on Home) rather than collapsing into the orb of a running app. Reattaching to a run that is already in flight sends nothing and SHALL NOT ask. Where another requirement of this capability says the consent screen opens for a data-sending action, the first-run sheet opens; the consent screen of "Settings shows consent and can review or turn it off" stays a full screen in review mode.
 
 #### Scenario: Composer row on a fresh install
 
@@ -13,6 +13,11 @@ The launcher SHALL open the first-run sheet over the current screen, in place of
 
 - **WHEN** the user agrees on a first-run sheet opened by "Change it" on an app
 - **THEN** the Describe page opens in change mode for that app
+
+#### Scenario: Agreeing on a change sent from inside a running app
+
+- **WHEN** a user with no grant sends a change from the Whim sheet of a running mini-app, the first-run sheet opens, and the user agrees
+- **THEN** the running app is already closed, the change continues as one made from Home, and closing its Failure page lands on Home
 
 #### Scenario: Agreeing continues a retry
 

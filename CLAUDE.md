@@ -49,6 +49,8 @@ npm run sdk:test           # independently-discovered vc-sdk acceptance suites u
 npm run lint               # eslint
 ```
 
+The launcher, bridge, checks, server, vstore, storage, sdk and synthrun runners take `--only <pattern>` (repeatable or comma-separated; matches a suite name, or a test title written in the entry file itself; sdk:test: a suite file name) to run just that suite — `npm run launcher:test -- --only haptic-moments-ui`; a pattern that matches nothing exits non-zero.
+
 `npm test` is the untouched RN template jest script — there are no jest tests; the real suites are the ones above. `npm run guard:metro` is a CI-only check that the `contract`/`server` npm workspaces don't change what Metro resolves for the RN bundle (byte-size assertion). CI is effectively `gate-full.sh` on every push — see `docs/harness.md` §4.
 
 ### Test assertions

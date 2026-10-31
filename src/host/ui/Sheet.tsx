@@ -14,11 +14,13 @@
  * - Opens from off-screen with `smooth`; a tapped close leaves the same way. The scrim's opacity
  *   follows the card's position, so a drag fades it with the finger.
  * - Drag from the grabber or the header: 1:1 after 10 pt of slop, rubber-banding at 0.55 above the
- *   open position. Release projects the position with the release velocity
- *   (`current + (v/1000)·0.998/(1−0.998)`); it closes when the projected end passes half the card's
- *   height and the release velocity doesn't point back, handing that velocity to `fling`, else it
- *   springs back with `fling`. Position alone never closes it. Crossing the commit point plays the
- *   `commit` haptic once per crossing, on that frame.
+ *   open position. Each frame projects the position with its velocity
+ *   (`current + (v/1000)·0.998/(1−0.998)`); the drag commits (`commit` haptic, on that frame) on a
+ *   frame whose projected end passes half the card's height, once it is a quarter of the way down,
+ *   and stays committed until it comes back past the slop (`stepCommit`). Letting go closes a
+ *   committed drag unless the release velocity points back; an uncommitted one closes only when the
+ *   release itself projects past half (the haptic plays then). Closing hands the release velocity to
+ *   `fling`; staying springs back with `fling`. Position alone never closes it.
  * - Closes by scrim, close, Android back (and a hardware Escape, which Android delivers as back),
  *   the screen reader's escape gesture, or a drag. `onClose` must close it (`visible` false). Android
  *   back is the exception a page may take over (`useSheetBack`): the Modal consumes the press, so a
@@ -98,6 +100,56 @@ export function rubberBand(overshoot: number, dimension: number): number {
 export function releaseCommits(position: number, velocity: number, dimension: number): boolean {
   'worklet';
   return velocity >= 0 && projectRelease(position, velocity) > dimension / 2;
+}
+
+/** A drag's commit, carried from frame to frame of one gesture: whether letting go now commits
+ *  (`armed`), and, along the drag's commit direction, the furthest it has come since it armed or the
+ *  nearest since it last didn't (`mark`). The commit haptic plays on the frame it arms, and the release
+ *  goes by it, so the haptic always marks the point where letting go commits. */
+export interface DragCommit {
+  readonly armed: boolean;
+  readonly mark: number;
+}
+
+/** How far a committed drag comes back before it no longer commits, and how far an uncommitted one
+ *  moves on before it can: the slop, so a finger's jitter at the commit point never flips it. */
+const TURN_BACK = DRAG_SLOP;
+
+/** How far toward the threshold (where position alone would commit) a drag has come before it can
+ *  arm, as a share of the way: half, so a quarter of a sheet's height. A peek stays short of that,
+ *  so a brisk start no longer arms ~10 pt in; past it, a frame that projects past the threshold is a
+ *  throw. The one knob for how early the commit haptic can come. */
+const ARM_FLOOR = 0.5;
+
+/** A drag's commit as it takes over, `progress` along its commit direction. */
+export function startCommit(progress: number): DragCommit {
+  'worklet';
+  return { armed: false, mark: progress };
+}
+
+/** One frame of a drag at `progress` along its commit direction, where `passes` is whether this
+ *  frame's projected end passes the `threshold` (`releaseCommits`, `orbReleaseX`). It arms on a frame
+ *  that passes once it is past `ARM_FLOOR` of the way to the threshold and has moved on past the slop
+ *  from its nearest point, and disarms once it has come back past the slop from its furthest; a pause,
+ *  or a slower finger, keeps the commit. */
+export function stepCommit(state: DragCommit, progress: number, passes: boolean, threshold: number): DragCommit {
+  'worklet';
+  if (state.armed) {
+    return progress < state.mark - TURN_BACK ? { armed: false, mark: progress } : { armed: true, mark: Math.max(state.mark, progress) };
+  }
+  const arms = passes && progress >= threshold * ARM_FLOOR && progress >= state.mark + TURN_BACK;
+  return arms ? { armed: true, mark: progress } : { armed: false, mark: Math.min(state.mark, progress) };
+}
+
+/** The release, at `progress` with `velocity` along the commit direction: a committed drag commits
+ *  unless it has come back past the slop or its release velocity points back (projects back past the
+ *  slop); an uncommitted one commits only when the release itself passes (a flick, from anywhere),
+ *  and confirms on that frame. */
+export function releaseCommit(state: DragCommit, progress: number, velocity: number, passes: boolean, threshold: number): DragCommit {
+  'worklet';
+  const next = stepCommit(state, progress, passes, threshold);
+  if (next.armed) return projectRelease(0, velocity) < -TURN_BACK ? { armed: false, mark: progress } : next;
+  return { armed: passes, mark: progress };
 }
 
 /** Where a drag that started at `start` and has moved `translation` past the slop puts a surface
@@ -689,7 +741,7 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
 
   const dragStart = useSharedValue(0);
   const slop = useSharedValue(0);
-  const committing = useSharedValue(false);
+  const commit = useSharedValue<DragCommit>(startCommit(0));
   const dragConfig = {
     activeOffsetY: [-DRAG_SLOP, DRAG_SLOP] as [number, number],
     onBegin: () => {
@@ -700,14 +752,14 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
       'worklet';
       dragStart.value = y.value;
       slop.value = e.translationY;
-      committing.value = false;
+      commit.value = startCommit(y.value);
     },
     onUpdate: (e) => {
       'worklet';
       y.value = dragPosition(dragStart.value, e.translationY - slop.value, height.value);
-      const commits = releaseCommits(y.value, e.velocityY, height.value);
-      if (commits && !committing.value) scheduleOnRN(playCommit);
-      committing.value = commits;
+      const next = stepCommit(commit.value, y.value, releaseCommits(y.value, e.velocityY, height.value), height.value / 2);
+      if (next.armed && !commit.value.armed) scheduleOnRN(playCommit);
+      commit.value = next;
     },
     onDeactivate: (e) => {
       'worklet';
@@ -715,7 +767,13 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
         'worklet';
         if (finished) scheduleOnRN(onSettled);
       };
-      if (releaseCommits(y.value, e.velocityY, height.value)) {
+      // A drag the system took away (cancelled, failed) never commits, whatever it had felt.
+      const released = e.canceled
+        ? startCommit(y.value)
+        : releaseCommit(commit.value, y.value, e.velocityY, releaseCommits(y.value, e.velocityY, height.value), height.value / 2);
+      if (released.armed && !commit.value.armed) scheduleOnRN(playCommit);
+      commit.value = released;
+      if (released.armed) {
         scheduleOnRN(onDragClosed);
         if (reduceMotion) fade.value = withTiming(0, FADE_OUT, done);
         // Back into its place, on `smooth` as any close of a morph, carrying the release's speed.

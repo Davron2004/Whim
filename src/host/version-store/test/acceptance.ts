@@ -11,6 +11,7 @@
 
 import nodeAssert from 'node:assert';
 import { inspect } from 'node:util';
+import { onlyRanNothing } from '../../../../scripts/lib/only-ran.mjs';
 import * as git from 'isomorphic-git';
 import {
   createMemoryStore,
@@ -805,6 +806,7 @@ for (const verb of ['history', 'active'] as const) {
 
 // --- summary ---------------------------------------------------------------
 
+if (onlyRanNothing(passed + failures.length)) process.exit(1);
 // eslint-disable-next-line no-console
 console.log(`\n${passed} checks passed, ${failures.length} failed`);
 if (failures.length) {

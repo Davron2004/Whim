@@ -7,6 +7,7 @@
 
 import nodeAssert from 'node:assert';
 import { inspect, isDeepStrictEqual } from 'node:util';
+import { onlyRanNothing } from '../../scripts/lib/only-ran.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -65,6 +66,7 @@ export function section(title: string): void {
 
 export function report(): void {
   console.log(`\n${passed} passed, ${failed} failed`);
+  if (onlyRanNothing(passed + failed)) process.exit(1);
   if (failed > 0) {
     console.error('\nFAILURES:');
     failures.forEach((f) => console.error(f));

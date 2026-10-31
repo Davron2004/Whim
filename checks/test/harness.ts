@@ -4,6 +4,7 @@
  */
 
 import nodeAssert from 'node:assert';
+import { onlyRanNothing } from '../../scripts/lib/only-ran.mjs';
 import { CheckReport, Diagnostic, DiagnosticKind } from '../contract';
 
 interface TestRecord {
@@ -61,5 +62,5 @@ export function report(): { exitCode: number; pass: number; fail: number } {
   const pass = records.length - fail;
   console.log('');
   console.log(`PASS ${pass} · FAIL ${fail}`);
-  return { exitCode: fail > 0 ? 1 : 0, pass, fail };
+  return { exitCode: fail > 0 || onlyRanNothing(records.length) ? 1 : 0, pass, fail };
 }

@@ -62,6 +62,9 @@ export const COPY = {
   cancel: 'Cancel',
   // ── tile states (system.md §3.2) ────────────────────────────────────────────
   tileMaking: 'Making…',
+  /** A making or changing tile whose stream sent no progress event for 40 s: the words the Making
+   *  page's stall line starts with. */
+  tileStuck: 'No progress',
   tileQueued: 'Waiting…',
   tileFailed: 'Didn’t work',
   tileStopped: 'Stopped',
@@ -537,7 +540,7 @@ export const COPY_KINDS: Readonly<Record<keyof typeof COPY, CopyKind>> = {
   actionDelete: 'control', actionDetails: 'control', actionStop: 'control', actionStopChange: 'control',
   actionWhatHappened: 'control', actionTryAgain: 'control', actionDiscard: 'control', actionDiscardChange: 'control',
   actionDiscardAll: 'control', actionUpdateWhim: 'control', cancel: 'control',
-  tileMaking: 'prose', tileQueued: 'prose', tileFailed: 'prose', tileStopped: 'prose', tileNeedsUpdate: 'prose',
+  tileMaking: 'prose', tileStuck: 'prose', tileQueued: 'prose', tileFailed: 'prose', tileStopped: 'prose', tileNeedsUpdate: 'prose',
   tileChanging: 'prose', tileChangeFailed: 'prose', tileCopy: 'prose', tileHintOpens: 'prose', tileHintProgress: 'prose',
   tileHintFailure: 'prose', tileHintUpdate: 'prose', tileHintOlder: 'prose', tileMenuAction: 'control', olderTitle: 'prose',
   toastUndo: 'control', discardedToast: 'prose', undoTooLateToast: 'prose', copyMadeToast: 'prose', copyFailedToast: 'prose',
