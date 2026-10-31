@@ -216,12 +216,15 @@ function rowState(trailing: RowTrailing | undefined, disabled: boolean): { check
   return { disabled };
 }
 
-/** What a toggle row does when pressed: flips its switch, with the toggle haptic. */
-function flipper(trailing: RowTrailing | undefined): (() => void) | undefined {
+/** What a toggle row does when pressed: flips its switch, with the toggle haptic. A flip of the switch
+ *  itself (`direct`) on iOS already carries UIKit's own haptic, so ours stays out; a row press moves the
+ *  native switch through `value`, which UIKit does not buzz for, and Android's switch has no haptic. */
+function flipper(trailing: RowTrailing | undefined, platform: ShellTokens['platform'], direct: boolean): (() => void) | undefined {
   if (trailing?.kind !== 'switch') return undefined;
+  const nativeBuzz = platform === 'ios';
   return () => {
     const on = !trailing.value;
-    haptics.play(on ? 'toggle-on' : 'toggle-off');
+    if (!(direct && nativeBuzz)) haptics.play(on ? 'toggle-on' : 'toggle-off');
     trailing.onValueChange(on);
   };
 }
@@ -230,7 +233,8 @@ export function GroupedRow(props: Readonly<GroupedRowProps>) {
   const { title, subtitle, icon, trailing, onPress, destructive = false, disabled = false, accessibilityHint } = props;
   const t = useTokens();
   const s = styles(t);
-  const flip = flipper(trailing);
+  const flip = flipper(trailing, t.platform, false);
+  const switchFlip = flipper(trailing, t.platform, true);
   const press = flip ?? onPress;
   const value = trailing?.kind === 'value' ? `, ${trailing.text}` : '';
   // A trailing value takes width the title needs: at large text (system.md §6, paired things stack)
@@ -264,7 +268,7 @@ export function GroupedRow(props: Readonly<GroupedRowProps>) {
           ) : null}
         </View>
         {trailing && !stacked ? <TrailingMark t={t} trailing={trailing} /> : null}
-        {trailing?.kind === 'switch' && flip ? <RowSwitch t={t} value={trailing.value} onFlip={flip} disabled={disabled} /> : null}
+        {trailing?.kind === 'switch' && switchFlip ? <RowSwitch t={t} value={trailing.value} onFlip={switchFlip} disabled={disabled} /> : null}
       </Pressable>
       {trailing?.kind === 'copy' ? <CopyButton t={t} label={trailing.label} onCopy={trailing.onCopy} /> : null}
     </View>

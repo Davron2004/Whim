@@ -24,13 +24,13 @@ import { haptics } from '../haptics';
 import { Ember, RESTING_ACTIVITY } from '../ui/Ember';
 import type { FlickerPulse } from './home-live';
 import { timing, usePressFeedback } from '../ui/motion';
-import { DRAG_SLOP } from '../ui/Sheet';
+import { DRAG_SLOP, releaseCommit, startCommit, stepCommit, type DragCommit } from '../ui/Sheet';
 import { useTokens } from '../ui/tokens';
 import { makeStyles, springConfig } from '../ui/tokens-pure';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import { COPY } from './copy';
 import { loadOrbCorner, saveOrbCorner, type OrbCorner } from './orb-corner';
-import { ORB_DISC, ORB_TARGET, ORB_TARGET_EDGE, orbBounds, orbDragLift, orbDragX, orbReleaseX, orbSettleVelocity } from './orb-geometry';
+import { ORB_DISC, ORB_TARGET, ORB_TARGET_EDGE, orbAcross, orbBounds, orbDragLift, orbDragX, orbOtherCorner, orbReleaseX, orbSettleVelocity } from './orb-geometry';
 
 /** What the orb shows: at rest; a change being made (the ember follows the stream); a new version
  *  ready, or another app finished (an `ember` dot, after one flare); a change that failed (a `danger` dot). */
@@ -126,7 +126,7 @@ export default function Orb({ appId, state = 'rest', activity = 0, flicker, stuc
   const startX = useSharedValue(0);
   const slopX = useSharedValue(0);
   const slopY = useSharedValue(0);
-  const crossing = useSharedValue(false);
+  const commit = useSharedValue<DragCommit>(startCommit(0));
 
   // A new screen size (rotation, split screen) moves the corners: the orb follows its own at once.
   // A drag or the accessibility action has already set `rest` to the corner it went to.
@@ -161,19 +161,31 @@ export default function Orb({ appId, state = 'rest', activity = 0, flicker, stuc
       startX.value = x.value;
       slopX.value = e.translationX;
       slopY.value = e.translationY;
-      crossing.value = false;
+      commit.value = startCommit((x.value - rest.value) * orbAcross(rest.value, lead.value, trail.value));
     },
     onUpdate: (e) => {
       'worklet';
       x.value = orbDragX(startX.value, e.translationX - slopX.value, lead.value, trail.value);
       lift.value = orbDragLift(e.translationY - slopY.value);
+      const across = orbAcross(rest.value, lead.value, trail.value);
       const crosses = orbReleaseX(rest.value, x.value, e.velocityX, lead.value, trail.value) !== rest.value;
-      if (crosses && !crossing.value) scheduleOnRN(playCommit);
-      crossing.value = crosses;
+      const middle = Math.abs(trail.value - lead.value) / 2;
+      const next = stepCommit(commit.value, (x.value - rest.value) * across, crosses, middle);
+      if (next.armed && !commit.value.armed) scheduleOnRN(playCommit);
+      commit.value = next;
     },
     onDeactivate: (e) => {
       'worklet';
-      const to = orbReleaseX(rest.value, x.value, e.velocityX, lead.value, trail.value);
+      const across = orbAcross(rest.value, lead.value, trail.value);
+      const crosses = orbReleaseX(rest.value, x.value, e.velocityX, lead.value, trail.value) !== rest.value;
+      const middle = Math.abs(trail.value - lead.value) / 2;
+      // A drag the system took away (cancelled, failed) never commits: back to its own corner.
+      const released = e.canceled
+        ? startCommit(0)
+        : releaseCommit(commit.value, (x.value - rest.value) * across, e.velocityX * across, crosses, middle);
+      if (released.armed && !commit.value.armed) scheduleOnRN(playCommit);
+      commit.value = released;
+      const to = released.armed ? orbOtherCorner(rest.value, lead.value, trail.value) : rest.value;
       rest.value = to;
       if (reduced.value) {
         fade.value = withSequence(withTiming(0, FADE_OUT), withTiming(1, FADE_IN));

@@ -163,6 +163,7 @@ const styles = makeStyles((t) => ({
     backgroundColor: t.colors.raised,
     boxShadow: t.shadows.floating,
   },
+  words: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], flexShrink: 1 },
   message: { ...wrappingType('callout'), color: t.colors.text, flexShrink: 1 },
   action: { ...typeStyle('headline') },
 }));
@@ -283,7 +284,11 @@ function ToastView({ shown, bottomOffset, onEnd, onGone }: Readonly<ToastViewPro
     },
   });
 
-  const motion = useAnimatedStyle(() => ({ opacity: fade.value, transform: [{ translateY: y.value }] }));
+  // One fade, split so the words never read over what is behind the capsule (#241): the capsule is
+  // opaque while its words fade in its second half and out in its first, and thins only once they
+  // are gone.
+  const motion = useAnimatedStyle(() => ({ opacity: Math.min(1, fade.value * 2), transform: [{ translateY: y.value }] }));
+  const wordsMotion = useAnimatedStyle(() => ({ opacity: Math.max(0, fade.value * 2 - 1) }));
   const onLayout = (event: LayoutChangeEvent) => {
     height.value = event.nativeEvent.layout.height;
   };
@@ -309,19 +314,21 @@ function ToastView({ shown, bottomOffset, onEnd, onGone }: Readonly<ToastViewPro
           onAccessibilityEscape={leave}
         >
           <TopHighlight radius={RADII.full.radius} />
-          <RNText style={s.message} maxFontSizeMultiplier={MAX_FONT_SCALE}>
-            {toast.message}
-          </RNText>
-          {toast.action ? (
-            <Pressable onPress={runAction} disabled={leaving} accessibilityRole="button" accessibilityLabel={toast.action.label} hitSlop={hitSlopFor(TYPE_SCALE.headline.lineHeight, t)}>
-              <RNText
-                style={[s.action, { color: toast.action.asksWhim ? t.colors['ember-text'] : t.colors.text }]}
-                maxFontSizeMultiplier={MAX_FONT_SCALE}
-              >
-                {toast.action.label}
-              </RNText>
-            </Pressable>
-          ) : null}
+          <Animated.View style={[s.words, wordsMotion]}>
+            <RNText style={s.message} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+              {toast.message}
+            </RNText>
+            {toast.action ? (
+              <Pressable onPress={runAction} disabled={leaving} accessibilityRole="button" accessibilityLabel={toast.action.label} hitSlop={hitSlopFor(TYPE_SCALE.headline.lineHeight, t)}>
+                <RNText
+                  style={[s.action, { color: toast.action.asksWhim ? t.colors['ember-text'] : t.colors.text }]}
+                  maxFontSizeMultiplier={MAX_FONT_SCALE}
+                >
+                  {toast.action.label}
+                </RNText>
+              </Pressable>
+            ) : null}
+          </Animated.View>
         </Animated.View>
       </GestureDetector>
     </View>

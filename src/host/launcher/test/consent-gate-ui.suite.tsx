@@ -30,7 +30,12 @@ import { resetNativeStorage } from './native-storage';
 import { button, press, renderScreen, textOf, unmountScreen, captureTimeouts, hostType } from './react-screen';
 import { Linking } from './native-host';
 import { testAppInfo } from './client-fixtures';
-import { onHome } from './rendered-launcher';
+import { buildIt, firstRunOpen, makingSheetOpen, onHome, planLoaded, sseStream, tap, waitFor, withLauncher as withRenderedLauncher } from './rendered-launcher';
+import { streamingServer } from './prompt-flow-ui.suite';
+import { openSheet, openTipSplitter, showing, typeWords } from './whim-sheet-ui.suite';
+import { paintRunningApp } from './changing-in-use-ui.suite';
+import MiniAppView from '../MiniAppView';
+import MakingPage from '../MakingPage';
 
 const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
@@ -233,6 +238,33 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
       await press(button(tree, COPY.consentDecline));
       h.ok(onHome(tree), 'declining returns to Home, not to the torn-down app');
       h.eq(requests, [], 'nothing was sent');
+    });
+  });
+
+  await h.test('consent gate: a change sent from inside a running app closes the app as the first-run sheet opens; after agreeing it runs as a change made from Home, and its Failure page closes to Home', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withRenderedLauncher({ examples: true, consent: false, server: streamingServer(streams) }, async ({ tree }) => {
+      await openTipSplitter(tree);
+      await paintRunningApp(tree);
+      await openSheet(tree);
+      await typeWords(tree, 'Add a tip slider');
+      await press(button(tree, COPY.whimSheetSend));
+      await waitFor(() => firstRunOpen(tree), 'the first-run sheet');
+      h.ok(!showing(tree, MiniAppView), 'the running app is already gone once the first-run sheet is up');
+      await press(button(tree, COPY.consentAgree));
+      await waitFor(() => tree.root.findAllByType(DescribePage).length === 1, 'the Describe page');
+      h.ok(!showing(tree, MiniAppView), 'agreeing does not bring the app back: the change continues as one made from Home');
+      await tap(() => tree.root.findByType(DescribePage).props.onContinue());
+      await waitFor(() => planLoaded(tree), 'the change’s plan');
+      await buildIt(tree);
+      await waitFor(() => streams.length === 1 && showing(tree, MakingPage), 'the change being made');
+      h.ok(!showing(tree, MiniAppView), 'it is made over Home, not collapsed into the orb of a running app');
+      streams[0].push({ type: 'failure', reason: 'The change did not build.', attempts: 1, diagnostics: [] });
+      streams[0].end();
+      await waitFor(() => showing(tree, FailurePage), 'the Failure page');
+      await press(button(tree, COPY.sheetClose));
+      h.ok(onHome(tree) && !showing(tree, MiniAppView), 'closing the Failure page lands on Home, not on the app it was sent from');
+      h.ok(!makingSheetOpen(tree), 'with the sheet closed');
     });
   });
 

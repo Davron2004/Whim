@@ -11,16 +11,21 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
 import { tmpBundlePath } from '../../../scripts/lib/tmp-bundle.mjs';
+import { parseOnly, matchesOnly, requireMatched } from '../../../scripts/lib/only-filter.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const entries = fs
+const all = fs
   .readdirSync(here)
   .filter((name) => /\.acceptance\.tsx?$/.test(name))
   .sort((a, b) => a.localeCompare(b, 'en'));
 
-if (entries.length === 0) {
+if (all.length === 0) {
   throw new Error('SDK acceptance runner found no *.acceptance.ts(x) suites');
 }
+
+const only = parseOnly();
+const entries = only ? all.filter((name) => matchesOnly(only, name)) : all;
+if (only) requireMatched(only, entries, all);
 
 for (const entryName of entries) {
   const entry = path.join(here, entryName);

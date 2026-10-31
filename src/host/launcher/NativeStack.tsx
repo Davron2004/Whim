@@ -29,7 +29,8 @@ export interface StackEntry {
   /** Stable while the entry stays on the stack, so a push or a pop never remounts what is under it. */
   readonly key: string;
   /** The native header's title. Without one the header is hidden and the screen draws its own,
-   *  with its own visible back control. */
+   *  with its own visible back control. The root's header is always hidden (Home draws its own), but
+   *  its title still names it in the iOS back button's long-press menu (#237). */
   readonly title?: string;
   /** The title large under the bar on iOS (Settings). */
   readonly largeTitle?: boolean;
@@ -55,7 +56,8 @@ export function poppedEntry(top: number, dismissCount: number): number {
  *  its chevron alone (#218): the title of the screen it returns to, at that size, truncated to "S…gs"
  *  beside this screen's own. VoiceOver reads it as "Back". */
 function headerFor(entry: StackEntry, root: boolean, largeText: boolean): ScreenStackHeaderConfigProps {
-  if (root || entry.title === undefined) return { hidden: true };
+  if (entry.title === undefined) return { hidden: true };
+  if (root) return { hidden: true, title: entry.title };
   const title = typeStyle('headline');
   return {
     title: entry.title,

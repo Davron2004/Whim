@@ -24,6 +24,7 @@ import { RecordingExecutor } from '../sql-executor';
 import { JsonValue, SchemaArtifact, StorageEngine, StorageEngineError, StorageErrorKind } from '../contract';
 import { AppliedSchema, burnedIdFloor, emptyApplied } from '../schema';
 import { runCopyTests } from './copy.suite';
+import { onlyRanNothing } from '../../../../scripts/lib/only-ran.mjs';
 
 // ── tiny harness ─────────────────────────────────────────────────────────────
 
@@ -821,6 +822,7 @@ await runCopyTests(TMP, { ok, eq, fail: msg => failures.push(msg) });
 fs.rmSync(TMP, { recursive: true, force: true });
 
 console.log('');
+if (onlyRanNothing(passed + failures.length)) process.exit(1);
 if (failures.length === 0) {
   console.log(`✓ storage-engine acceptance: ${passed} checks passed`);
 } else {

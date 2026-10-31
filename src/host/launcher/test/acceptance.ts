@@ -107,6 +107,7 @@ import { runShellControlsUiTests } from './shell-controls-ui.suite';
 import { runShellStatusUiTests } from './shell-status-ui.suite';
 import { runShellSurfacesUiTests } from './shell-surfaces-ui.suite';
 import { runNativeReanimatedTests } from './native-reanimated.suite';
+import { onlyRanNothing } from '../../../../scripts/lib/only-ran.mjs';
 
 const h = new Harness();
 
@@ -212,6 +213,7 @@ await runShellStatusUiTests(h);
 await runShellSurfacesUiTests(h);
 await runNativeReanimatedTests(h);
 
+if (onlyRanNothing(h.passed + h.failures.length)) process.exit(1);
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {
   console.error('\nFAILURES:\n' + h.failures.map(f => '  - ' + f).join('\n'));

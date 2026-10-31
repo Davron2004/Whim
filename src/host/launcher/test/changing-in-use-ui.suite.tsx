@@ -22,11 +22,13 @@ import type { StoreAccess } from '../store-access';
 import { Ember } from '../../ui/Ember';
 import { stateLine, tileAccessibilityLabel } from '../../ui/AppTile-states';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
+import { RUN_SIGNAL_TICK_MS } from '../prompt-flow';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { PendingPurgeStore } from '../pending-purge';
 import { failNativeStorageRemovalsWhen } from './native-storage';
 import { afterRelaunch } from './attempt-lifecycle-ui.suite';
 import { button, hostType, press, textOf, unmountScreen } from './react-screen';
+import { iosPop } from './native-screens';
 import { dismissToast, pressToastAction, tile, tileLabels, toastOf } from './home-rig';
 import { makingSheetOpen, planLoaded, resultEvent, settle, sseStream, tap, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
@@ -177,6 +179,48 @@ export async function runChangingInUseUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('changing in use: the orb’s ember is stuck when the change’s stream stalls, but not while the change waits in line (#239 on the orb, as on the tile)', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    const realNow = Date.now;
+    const realSetInterval = globalThis.setInterval;
+    const realClearInterval = globalThis.clearInterval;
+    const ticks = new Map<unknown, () => void>();
+    globalThis.setInterval = ((callback: () => void, delay?: number) => {
+      const handle = realSetInterval(callback, delay);
+      if (delay === RUN_SIGNAL_TICK_MS) ticks.set(handle, callback);
+      return handle;
+    }) as typeof setInterval;
+    globalThis.clearInterval = ((handle: Parameters<typeof clearInterval>[0]) => {
+      ticks.delete(handle);
+      realClearInterval(handle);
+    }) as typeof clearInterval;
+    /** The sampler's next tick, on demand, at the clock as it stands. */
+    const tickNow = () => { for (const callback of ticks.values()) callback(); };
+    const tick = () => TestRenderer.act(async () => tickNow());
+    const emberState = (tree: Tree) => orb(tree).findByType(Ember).props.state;
+    try {
+      await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree }) => {
+        await openTipSplitter(tree);
+        await paintRunningApp(tree);
+        await makeChange(tree, streams);
+        h.eq(emberState(tree), 'working', 'setup: the change burns');
+        Date.now = () => realNow() + 60_000;
+        await tick();
+        h.eq(emberState(tree), 'stuck', 'a minute with no event: the orb’s ember is stuck');
+        streams[0].push({ type: 'queued', position: 2 });
+        await waitFor(() => { tickNow(); return emberState(tree) === 'working'; }, 'the queued event to land and wake the ember');
+        Date.now = () => realNow() + 120_000;
+        await tick();
+        h.eq(emberState(tree), 'working', 'a minute of silence while waiting in line: the ember is not stuck, the queue is the reason it is still');
+        streams[0].end();
+      });
+    } finally {
+      Date.now = realNow;
+      globalThis.setInterval = realSetInterval;
+      globalThis.clearInterval = realClearInterval;
+    }
+  });
+
   await h.test('changing in use: a landed change reloads nothing; a toast offers Reload, and the orb dot and the sheet’s row stay after the toast until Reload', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv }) => {
@@ -304,6 +348,53 @@ export async function runChangingInUseUiTests(h: Harness): Promise<void> {
       h.eq(orbState(tree), COPY.orbStateFailed, 'the dot stays');
     });
   });
+
+  for (const [leaving, leave] of [
+    ['Back', (tree: Tree) => press(button(tree, COPY.backLabel))],
+    ['the iOS swipe', (tree: Tree) => iosPop(tree)],
+  ] as const) {
+    await h.test(`changing in use: a failed change is still the app's to show after a trip into History and out by ${leaving} (the orb's dot, the sheet's See why row), and a fresh open from Home starts clean`, async () => {
+      const streams: ReturnType<typeof sseStream>[] = [];
+      await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv }) => {
+        await openTipSplitter(tree);
+        await paintRunningApp(tree);
+        await makeChange(tree, streams);
+        streams[0].push({ type: 'failure', reason: 'The change did not build.', attempts: 1, diagnostics: [] });
+        streams[0].end();
+        await waitFor(() => changeFailed(kv), 'the change to fail');
+        await settle();
+        h.eq(orbState(tree), COPY.orbStateFailed, 'setup: the orb carries the failed dot');
+
+        // Time moves on, so a reopened launch is certainly later than the failure.
+        const realNow = Date.now;
+        Date.now = () => realNow() + 60_000;
+        try {
+          const launch = runningApp(tree).props.tappedAt;
+          await openSheet(tree);
+          await press(button(tree, COPY.actionHistory));
+          await waitFor(() => showing(tree, HistoryScreen), 'History');
+          await leave(tree);
+          await waitFor(() => showing(tree, MiniAppView) && !showing(tree, HistoryScreen) && runningApp(tree).props.tappedAt !== launch, 'the app to open again');
+          await paintRunningApp(tree);
+          h.eq(orbState(tree), COPY.orbStateFailed, 'the orb still carries the failed dot');
+          await openSheet(tree);
+          h.ok(controlsIn(tree).some((name) => name.startsWith(COPY.changeFailedToast)), 'and the sheet still has its See why row');
+          await press(button(tree, COPY.whimSheetBackToApps));
+          await waitFor(() => showing(tree, HomeScreen) && !showing(tree, MiniAppView), 'Home');
+
+          const tipSplitter = (home(tree).props.apps as InstalledApp[]).find((a) => a.name === APP_NAME);
+          await tap(() => home(tree).props.onOpen(tipSplitter));
+          await waitFor(() => showing(tree, MiniAppView), `${APP_NAME} to open from Home`);
+          await paintRunningApp(tree);
+          h.ok(orbState(tree) !== COPY.orbStateFailed, 'opened fresh from Home, the old failure is not on the orb');
+          await openSheet(tree);
+          h.ok(!controlsIn(tree).some((name) => name.startsWith(COPY.changeFailedToast)), 'nor in the sheet');
+        } finally {
+          Date.now = realNow;
+        }
+      });
+    });
+  }
 
   await h.test('changing in use: closing the app mid-change keeps the change going; its tile shows it being changed, and it lands', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];

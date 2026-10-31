@@ -372,7 +372,7 @@ extracts the way it extracts `capabilities`. `tileColor` is deprecated (§7.2).
 | Sizes | 24 inline, 40 sheets and headers, 64 grid, 96 hero (Ready, History). No others |
 | Glyph | 50% of the tile, centred, white, stroke 2 on the 24 grid |
 | Label | `caption` 12/16 500, `text`, centred, two lines, 4 pt side padding, then ellipsis; names ≤ 24 characters; the full name heads the menu and is the a11y label |
-| State line | Under the label, only for state, `caption` in the role's text colour. The names of a grid row take as many lines as its longest name (`minHeight`), so its state lines sit level; a row with no wrapped name has no empty line |
+| State line | Under the label, only for state, `caption` in the role's text colour. The names of a grid row take as many lines as its longest name (`minHeight`), so its state lines sit level; a row with no wrapped name has no empty line. A state line is never cut and has no line cap: it wraps onto as many lines as its column needs, and its row grows ("Change didn't work" is wider than any phone's column; "Needs update" is wider than a 402 pt iPhone's, whose system font sets 12 pt about 9% wider than Roboto; at the largest text sizes in three columns a state takes three lines) |
 | Badge | 18 pt at the top-trailing corner (failed, change failed) |
 | Touch | The whole cell, at least 64 × 84 |
 
@@ -391,7 +391,10 @@ extracts the way it extracts `capabilities`. `tileColor` is deprecated (§7.2).
 
 A tile being made is named by the plan's proposed name, else the description's first three words without
 a leading "A", "An" or "The". The glyph is decorative to screen readers; the label is "Pour Timer,
-making" with the hint "Opens the app" or "Shows progress". Live tiles are not in v1.
+making" with the hint "Opens the app" or "Shows progress". A tile being made or changed whose ember or
+ring is stuck (§3.3) reads "No progress" `text-2` in place of "Making…" or "Changing…", and its label is
+"Pour Timer, no progress": the stall is said in words, never by the dimmed light alone. Live tiles are
+not in v1.
 
 ### 3.3 The ember
 
@@ -402,7 +405,7 @@ tip that rises and curls slightly up, no face, no eyes, no name. Fill: radial `g
 | State | When | Look |
 |---|---|---|
 | Working | The stream runs | Intensity follows the stream (§4.6) |
-| Stuck | No progress event for 40 s | 35%, still |
+| Stuck | No progress event for 40 s | 35%, still; on a tile, its state line says "No progress" (§3.2) |
 | Out | Failure, failed or stopped tile | 1.5 pt `text-2` outline of the silhouette, no fill, no glow |
 
 Done is one `spark` flare. Sizes 24, 48, 96, 128 (128 drops to 64 from 135% text); the orb carries a
@@ -475,9 +478,14 @@ Reanimated's `duration`/`dampingRatio` mode.
 5. **Press:** scale 0.97 (buttons, rows), 0.96 (tiles, cards, chips), 0.92 (icon buttons) on touch-down
    with `instant`, release with `snappy`; 10 pt off the control cancels, back re-presses.
 6. **Drags** track 1:1 after 10 pt slop. Release projects `current + (v/1000)·0.998/(1−0.998)`, snaps to
-   the nearest target, hands velocity to `fling`; past a bound rubber-band with 0.55. **A gesture commits
-   when its projected end passes the threshold and the release velocity doesn't point back.** Position
-   alone never commits.
+   the nearest target, hands velocity to `fling`; past a bound rubber-band with 0.55. **A drag that plays
+   the commit haptic (sheets, the orb) commits on the frame its projected end passes the threshold, and
+   stays committed until it comes back past the 10 pt slop or the release velocity points back; the
+   haptic plays on that frame, so letting go after it commits, and letting go before it dismisses only if the release itself passes.** It
+   arms only once it is half of the way to the threshold and 10 pt on from its nearest point (re-arming
+   too); the release points back once it projects more than 10 pt back (≈ 20 pt/s). A release that was
+   not armed commits only if it passes itself, with the haptic on that frame; a cancelled drag never
+   commits. Other drags (Toast) decide on release alone. Position alone never commits.
 7. **Haptics land on the frame they confirm.** SDK motion carries no haptics.
 8. **Text never animates in.** Back on shell screens is the native stack's; Whim never redraws it.
 
@@ -502,11 +510,11 @@ Numbers are stable; R-numbers are the animation research's (`docs/research/anima
 | M10 Ready | Delivery with the sheet open | Ember flares (1 → 1.18 → 1) and settles into the 96 tile rising 0.6 → 1; name, words, buttons fade in 80 ms apart | `spark` | Done jumps to the end | Cross-fade, no flare |
 | M4 (R1) Ghost → tile | Delivery with the grid visible | Glow flares; a circle mask fills the squircle with the tint from the centre; glyph fades in from 0.9 | `morph`, glow `spark` | Opening finishes it | Cross-fade |
 | M22 (R11) Making fails | Terminal failure | Glow fades (`fade-out`), outline remains; content fades in; no shake | `fade-out` + `fade-in` | | Cross-fade |
-| M11 (R6) Sheet | Present, dismiss, drag | y from off-screen; scrim follows position; release per rule 6, dismiss past half height | Tap `smooth`, release `fling` | Grab any time | Cross-fade; drag still tracks |
+| M11 (R6) Sheet | Present, dismiss, drag | y from off-screen; scrim follows position; release per rule 6: dismisses once the drag has committed (projected end past half height, armed from a quarter of the way) | Tap `smooth`, release `fling` | Grab any time | Cross-fade; drag still tracks |
 | M21 (R6) Orb → Whim sheet | Tap the orb | Sheet rises under the orb; orb dims to 0.6 | `smooth` | Tap orb or drag down | Cross-fade |
 | M12 Context menu | 350 ms long-press | Tile lifts to 1.06 + `shadow-floating`, scrim, menu grows from the tile edge 0.92 → 1; closes `fade-out` + 0.96 | `snappy` lift, `smooth` menu | Release before 350 ms = tap; 10 pt cancels; a second step swaps rows in 120 ms | Menu cross-fades, no lift |
 | M13 Push and pop | Settings, Advanced, AI features, History, Report; back | The native stack's own transition, iOS edge and content-area swipe, Android predictive back | Platform | Platform | Platform |
-| M16 Orb corner | Drag the orb | 1:1 after 10 pt; projects to bottom-trailing or bottom-leading; remembered per app | `fling` | Grab any time | Tracks, settles by cross-fade |
+| M16 Orb corner | Drag the orb | 1:1 after 10 pt; commits to the other corner per rule 6 (projected end past the middle, armed from a quarter of the way), else back to its own; remembered per app | `fling` | Grab any time | Tracks, settles by cross-fade |
 | M14 Toast | Show, auto-dismiss, swipe | Rises 16 px with a fade; swipe down tracks | `smooth`; swipe `fling` | A new toast replaces in place | Cross-fade |
 | M26 History row | Tap a version | Expands; rows below move; actions fade in | `smooth` layout | Tap again collapses | Instant |
 | M17 (R5) Grid appears | The first time Home shows after each launch | Tiles rise 8 px and fade, `stagger` | `smooth` | Touch finishes it | At once |
@@ -555,7 +563,7 @@ pattern): `UIImpactFeedbackGenerator` / `UISelectionFeedbackGenerator` /
 | Moment | iOS | Android (API 34 constant, fallback) |
 |---|---|---|
 | Selection moves (answer chip, segment, picker detent) | selection | `SEGMENT_TICK`, `CLOCK_TICK` |
-| Switch toggles | impact light | `TOGGLE_ON`/`TOGGLE_OFF`, `CONTEXT_CLICK` |
+| Switch toggles (iOS: only a row press; the native switch brings its own haptic) | impact light | `TOGGLE_ON`/`TOGGLE_OFF`, `CONTEXT_CLICK` |
 | Long-press opens a menu | impact medium | `LONG_PRESS` |
 | A drag crosses its commit point | impact rigid 0.6 | `GESTURE_THRESHOLD_ACTIVATE`, `CONTEXT_CLICK` |
 | Work handed to Whim (Make it, Make the change, Try again) | impact medium | `CONFIRM` (API 30), `VIRTUAL_KEY` |
@@ -771,7 +779,7 @@ anchored surface. **No edge swipe over a running app in v1 (#67).**
 | Didn't work (`#s-failure`) | The 96 ember out; "Couldn't make this" `text`; one sentence by kind (§8); a `sheet-group` list with "Your other apps are untouched" (or "Your current version still works") and a collapsed "What happened"; primary and plain per kind; **Discard** (`danger`) in the body |
 | Opening (`#s-app-opening`) | M2; the status bar follows the scheme |
 | Running app (`#s-app-timer`) | The app's tint is its primary; the orb per §7.1 |
-| Whim sheet (`#s-whim-sheet`, `#s-whim-plan`) | `fit` sheet: 40 tile, name, "Version 4 · changed 2 days ago"; a "New version ready · Reload" row on top while one waits, and a "The change didn't work · See why" row (the orb's failed dot as a row, staying after the toast has gone) while a change of the app has failed and none is being made, opening that change's Failure page in the sheet; "What should change?" send field; History, Report a problem, Back to your apps. Sending grows the sheet into the change's plan with **Make the change**; then it collapses into the orb. Report pushes inside the sheet on its own small stack |
+| Whim sheet (`#s-whim-sheet`, `#s-whim-plan`) | `fit` sheet: 40 tile, name, "Version 4 · changed 2 days ago"; a "New version ready · Reload" row on top while one waits, and a "The change didn't work · See why" row (the orb's failed dot as a row, staying after the toast has gone) while a change of the app has failed and none is being made, opening that change's Failure page in the sheet (the row is carried across a round trip to History and back; a fresh open of the app from Home starts clean, without it); "What should change?" send field; History, Report a problem, Back to your apps. Sending grows the sheet into the change's plan with **Make the change**; then it collapses into the orb. Report pushes inside the sheet on its own small stack |
 | Changing in use (`#s-app-changing`) | The app keeps running; the orb's ember glows; on landing "Pour Timer changed · Reload" (nothing reloads by itself; Reload recreates the realm); missed toast → `ember` dot and the Whim-sheet row; failure → `danger` dot, "The change didn't work · See why", and the Whim sheet's See why row |
 | App crashed (`#s-app-error`) | `circle-alert` in a `fill` circle, "Pour Timer ran into a problem", "It stopped and can't carry on right now. Your saved data is safe.", **Reload** (`ink`), **Ask Whim to fix it** (`plain-ember`, opens the change field prefilled "Fix the error that stops this app." with the error attached), **Back to your apps** (`plain`). The orb stays. Behind the current version (a change landed unreloaded, or an Undo moved the app after it opened): "It stopped, and a newer version is ready. Reload to open it. Your saved data is safe.", **Reload** (`ink`) and **Back to your apps** only, no Ask Whim to fix it; a crash after Reload offers it again (#82) |
 | History (`#s-history`, `#s-history-undo`) | Native stack; "Report" text button in the header; "History" `title1`, the 40 tile, the name in its tint, "4 versions"; timeline rows (§7.1), ordered by the version chain, not the clock. Use this version → at once, "Back on version 3 · Undo"; the version left stays listed, so its row is the Undo after the toast. Make a copy from here → Home's "Copy the data, or start fresh?" (skipped, fresh, when the app has no saved data), then "Copy made · Open"; either way the copy has its own data. No confirm sheets, no kind filters |
@@ -786,6 +794,10 @@ taps, the app stays open); from Home, tile menu → Change it; from History, the
 it. **Closing the making sheet keeps the draft**: the composer reads "Continue "…"" and reopening
 restores text, answers and plan edits. **Platform:** iOS sheets close by drag, close or scrim; Android
 adds back everywhere; inside a running app Android back goes back in the app, then closes it.
+
+**The first change before consent** is the exception to "the app stays open": a change sent from the Whim
+sheet opens the first-run sheet, which closes the running app. After Agree it continues as a change made
+from Home (Describe, plan, Making), so closing its Failure page lands on Home, not the app.
 
 ## 10. Do and don't
 

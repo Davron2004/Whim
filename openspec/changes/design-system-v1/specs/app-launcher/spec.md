@@ -374,12 +374,17 @@ The tile menu SHALL offer "Customize tile", opening a sheet with the ten tints a
 
 ### Requirement: Tiles show their state
 
-The grid SHALL render one tile per installed app and per applicable pending-build record, with the states of `system.md` §3.2: being made (`ember-soft` with the ember following the stream, "Making…"), queued ("Waiting…"), failed (ember out, badge, "Didn't work"), stopped ("Stopped"), needs update ("Needs update"), changing (the app's tile with an ember ring, "Changing…"), change failed (badge, "Change didn't work"), copy ("Copy") and example ("Example"). A tile being made SHALL NOT launch an app. Its name SHALL be the plan's proposed name, else the description's first three words without a leading article. Failed and stopped attempts older than a day SHALL collapse into one tile at the end of the grid.
+The grid SHALL render one tile per installed app and per applicable pending-build record, with the states of `system.md` §3.2: being made (`ember-soft` with the ember following the stream, "Making…"), queued ("Waiting…"), failed (ember out, badge, "Didn't work"), stopped ("Stopped"), needs update ("Needs update"), changing (the app's tile with an ember ring, "Changing…"), change failed (badge, "Change didn't work"), copy ("Copy") and example ("Example"). A tile being made or changed whose stream sent no progress event for 40 s SHALL read "No progress" in place of "Making…" or "Changing…", on its state line and in its accessibility label, besides its stuck light. A state line SHALL wrap onto as many lines as it needs rather than be cut. A tile being made SHALL NOT launch an app. Its name SHALL be the plan's proposed name, else the description's first three words without a leading article. Failed and stopped attempts older than a day SHALL collapse into one tile at the end of the grid.
 
 #### Scenario: A change in flight shows on the app's own tile
 
 - **WHEN** the user changes an installed app and returns to Home
 - **THEN** the app's own tile shows the ember ring and "Changing…", and no separate tile appears
+
+#### Scenario: A stalled make says so in words
+
+- **WHEN** a make's stream sends no progress event for 40 s while Home shows its tile
+- **THEN** the tile's ember is stuck, its state line reads "No progress" and a screen reader reads "Pour Timer, no progress"
 
 #### Scenario: Old attempts collapse
 
@@ -499,12 +504,17 @@ When a running app fails, the container SHALL show "<name> ran into a problem", 
 
 ### Requirement: The shell plays haptics from a fixed map
 
-The shell SHALL play haptics only for the moments of `system.md` §5 (selection moves, switch toggles, long-press menus, a drag crossing its commit point, handing work to Whim, ready, failed, delete and discard, restore and copy), through the `WhimHaptics` module on the frame of the visual change, and SHALL play none on plain taps, navigation, scrolling, typing, opening an app or a tapped sheet. RN `Vibration` SHALL NOT be imported anywhere in `src/`.
+The shell SHALL play haptics only for the moments of `system.md` §5 (selection moves, switch toggles, long-press menus, a drag crossing its commit point, handing work to Whim, ready, failed, delete and discard, restore and copy), through the `WhimHaptics` module on the frame of the visual change, and SHALL play none on plain taps, navigation, scrolling, typing, opening an app or a tapped sheet. RN `Vibration` SHALL NOT be imported anywhere in `src/`. On iOS a flip of the native switch itself relies on the system haptic and plays none of ours, while a press on the switch's row plays ours; on Android both play ours.
 
 #### Scenario: Make it confirms with a haptic
 
 - **WHEN** the user taps Make it
 - **THEN** one medium impact (iOS) or `CONFIRM` (Android) plays
+
+#### Scenario: A native switch on iOS plays no Whim haptic
+
+- **WHEN** the user flips a settings switch on iOS, and then presses the same switch's row
+- **THEN** the flip plays no Whim haptic and the row press plays toggle-on or toggle-off; on Android both play ours
 
 #### Scenario: Opening an app is silent
 

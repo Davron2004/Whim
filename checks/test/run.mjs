@@ -13,13 +13,17 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
 import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
+import { parseOnly, entryFilter } from '../../scripts/lib/only-filter.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const entry = path.join(here, 'acceptance.ts');
 const outfile = tmpBundlePath('checks-acceptance');
+const only = parseOnly();
+const filter = only && entryFilter(entry, only);
 
 await build({
   entryPoints: [entry],
+  plugins: filter ? [filter.plugin] : [],
   outfile,
   bundle: true,
   platform: 'node',
@@ -32,6 +36,8 @@ await build({
   external: ['typescript'],
   logLevel: 'warning',
 });
+
+filter?.assertMatched();
 
 try {
   await import(pathToFileURL(outfile));

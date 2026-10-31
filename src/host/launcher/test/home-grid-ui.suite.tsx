@@ -7,7 +7,7 @@ import path from 'node:path';
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { COPY } from '../copy';
+import { COPY, makingStallLine } from '../copy';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { createMemoryStore, MapKVBackend } from '../../version-store';
 import { AppIndex, type InstalledApp } from '../app-index';
@@ -442,6 +442,71 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       h.eq(tile(tree, 'Dice roller game').findByType(Ember).props.state, 'working', 'a run that did not stall burns on');
       await updateHome(tree, { ...live, stalled: new Set() });
       h.eq([flat(body('Pour over timer')).opacity, flat(ring('Timer')).opacity], [burning.making, burning.ring], 'bytes again: each burns as it did');
+    } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('home grid: a stuck tile says so in words, not by its dimmed light alone (#239) — a making or changing tile whose stream stalled reads “No progress”, to the eye and to a screen reader, and “making” again once the stalled flag clears', async () => {
+    await resetPhone();
+    const pending = attempts([
+      { id: 'p-making', prompt: 'A pour over timer', state: 'building' },
+      { id: 'p-other', prompt: 'A dice roller game', state: 'building' },
+      { id: 'p-queued', prompt: 'A coin flip app', state: 'building' },
+      { id: 'Timer', prompt: 'Add laps', state: 'building', editingAppId: 'Timer' },
+    ]);
+    const live = { apps: [TIMER], pending, queued: new Set(['p-queued']), activity: { 'p-making': 0.8, 'p-other': 0.8, Timer: 0.8 } };
+    const tree = await renderHome(live);
+    const lineUnder = (name: string) => tile(tree, name).findAll((n) => hostType(n) === 'Text' && textOf(n) !== name).map(textOf);
+    const working = ['Pour over timer, making', 'Dice roller game, making', 'Coin flip app, waiting', 'Timer, changing'];
+    try {
+      h.eq([...tileLabels(tree)].sort((a, b) => a.localeCompare(b)), [...working].sort((a, b) => a.localeCompare(b)), 'setup: every stream runs');
+      await updateHome(tree, { ...live, stalled: new Set(['p-making', 'Timer', 'p-queued']) });
+      h.eq([...tileLabels(tree)].sort((a, b) => a.localeCompare(b)), ['Coin flip app, waiting', 'Dice roller game, making', 'Pour over timer, no progress', 'Timer, no progress'],
+        'the stalled make and change read “no progress”; the run that did not stall still reads “making”, and one in line still “waiting”');
+      const stuckLine = lineUnder('Pour over timer');
+      h.eq([stuckLine, lineUnder('Timer')], [['No progress'], ['No progress']], 'the line under each stuck tile says it too, in place of “Making…” and “Changing…”');
+      h.ok(makingStallLine(40).startsWith(`${stuckLine[0]} `), `in the words the Making page’s stall line starts with (“${makingStallLine(40)}”)`);
+      const stuckColor = flat(tile(tree, 'Pour over timer').findAll((n) => hostType(n) === 'Text' && textOf(n) === 'No progress')[0]).color;
+      const makingColor = flat(tile(tree, 'Dice roller game').findAll((n) => hostType(n) === 'Text' && textOf(n) === COPY.tileMaking)[0]).color;
+      h.ok(stuckColor !== makingColor, 'and the line is no longer the working ember’s colour');
+      await updateHome(tree, { ...live, stalled: new Set() });
+      h.eq([...tileLabels(tree)].sort((a, b) => a.localeCompare(b)), [...working].sort((a, b) => a.localeCompare(b)), 'bytes again: each reads as before');
+      h.eq(lineUnder('Pour over timer'), [COPY.tileMaking], 'and says “Making…” again');
+    } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('home grid: a change waiting in line is not stuck (#239) — the queue is the reason it is still, so it reads “changing”, as the Making page shows the queue line before the stall line', async () => {
+    await resetPhone();
+    const pending = attempts([{ id: 'Timer', prompt: 'Add laps', state: 'building', editingAppId: 'Timer' }]);
+    const live = { apps: [TIMER], pending, activity: { Timer: 0.8 } };
+    const tree = await renderHome({ ...live, queued: new Set(['Timer']), stalled: new Set(['Timer']) });
+    try {
+      h.eq(tileLabels(tree), ['Timer, changing'], 'in line and silent for 40 s: still “changing”, not “no progress”');
+      h.eq(tile(tree, 'Timer').findAll((n) => hostType(n) === 'Text' && textOf(n) === COPY.tileChanging).length, 1, 'and its line says “Changing…”');
+      h.eq(tile(tree, 'Timer').findByType(TilePlate).props.stuck, false, 'and its light is not stuck: the ring keeps burning');
+      await updateHome(tree, { ...live, stalled: new Set(['Timer']) });
+      h.eq(tileLabels(tree), ['Timer, no progress'], 'out of the queue and still silent: now it is stuck');
+      h.eq(tile(tree, 'Timer').findByType(TilePlate).props.stuck, true, 'and so is its light');
+    } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('home grid: a state line is never cut (#240) — it takes no line cap, so it wraps as far as its column needs; the name keeps its two-line cut', async () => {
+    await resetPhone();
+    const pending = attempts([
+      { id: 'p-making', prompt: 'A pour over timer', state: 'building' },
+      { id: 'p-failed', prompt: 'A dice roller game', state: 'failed' },
+      { id: 'p-update', prompt: 'The garden planner', state: 'failed', remedy: true },
+      { id: 'Timer', prompt: 'Add laps', state: 'failed', editingAppId: 'Timer' },
+    ]);
+    const tree = await renderHome({ apps: [TIMER], pending });
+    try {
+      const cells: [string, string][] = [
+        ['Pour over timer', COPY.tileMaking], ['Dice roller game', COPY.tileFailed], ['Garden planner', COPY.tileNeedsUpdate], ['Timer', COPY.tileChangeFailed],
+      ];
+      for (const [name, state] of cells) {
+        const stateText = tile(tree, name).findAll((n) => hostType(n) === 'Text' && textOf(n) === state)[0];
+        const title = tile(tree, name).findAll((n) => hostType(n) === 'Text' && textOf(n) === name)[0];
+        h.eq([stateText?.props.numberOfLines, title?.props.numberOfLines], [undefined, 2], `${name}: “${state}” takes as many lines as it needs; the name is still cut at two`);
+      }
     } finally { await unmountScreen(tree); }
   });
 

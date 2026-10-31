@@ -199,5 +199,5 @@
 - [ ] 24.3 Keyboard flows: Describe, plan row edit, Whim sheet send, Advanced address, Report note, in-app inputs, Android IME height change (#50, #128, #129)
 - [ ] 24.4 Every screen exit by tap and by system back on both platforms (#149); predictive back on API 34/37 and `BackHandler` over a running app (D7, fallback recorded if needed)
 - [ ] 24.5 `paint` ordering versus the first visible frame on both platforms (D4); tap-to-first-paint with and without the warm WebView
-- [ ] 24.6 Haptics: every shell moment and cue kinds on an iPhone (if available) and Android; cue latency measured and recorded; rate cap observed
+- [x] 24.6 Haptics: every shell moment and cue kinds on an iPhone (if available) and Android; cue latency measured and recorded; rate cap observed
 - [ ] 24.7 Owner checks: ember silhouette at 24 pt, iOS title tracking, motion recordings; record results and any token adjustments in decision #75's status tag

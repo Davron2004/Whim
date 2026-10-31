@@ -141,7 +141,8 @@ export async function runNativeStackUiTests(h: Harness): Promise<void> {
     await withLauncher({ examples: true, server: nothing }, async ({ tree }) => {
       await waitFor(() => showing(tree, HomeScreen) && home(tree).props.apps.length > 0, 'the example apps');
       await openSettings(tree);
-      h.eq(header(tree, 'home').hidden, true, 'Home has no platform header');
+      h.eq([header(tree, 'home').hidden, header(tree, 'home').title], [true, COPY.homeTitle], 'Home has no platform header, but its title names it in the iOS back menu (#237)');
+      h.ok(textOf(home(tree)).includes(COPY.homeTitle), 'Home still draws its own title');
       h.eq([header(tree, 'settings').title, header(tree, 'settings').largeTitle], [COPY.settingsTitle, true], 'Settings: its title, large on iOS');
       await press(button(tree, COPY.settingsAdvancedSectionTitle));
       h.eq([header(tree, 'advanced').title, header(tree, 'advanced').largeTitle, header(tree, 'advanced').hidden], [COPY.settingsAdvancedSectionTitle, false, undefined], 'Advanced: its title in the bar');

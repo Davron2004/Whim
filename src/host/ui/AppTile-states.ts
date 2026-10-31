@@ -54,17 +54,22 @@ export interface StateLine {
 }
 
 /** A ready tile says "Example" on a seeded app and "Copy" on one made from another; `count` is the
- *  number of attempts an `older` cell stands for. */
+ *  number of attempts an `older` cell stands for; `stuck`, a making or changing tile's stream sent no
+ *  progress event for 40 s (system.md §3.3 Stuck). */
 export interface StateLineOptions {
   example?: boolean;
   copy?: boolean;
   count?: number;
+  stuck?: boolean;
 }
+
+/** A stalled stream says so in words as well as in its dimmed light (WCAG 1.4.1): "No progress". */
+const STUCK_LINE: StateLine = { text: COPY.tileStuck, color: 'text-2' };
 
 export function stateLine(state: TileState, options: StateLineOptions = {}): StateLine | null {
   switch (state) {
     case 'making':
-      return { text: COPY.tileMaking, color: 'ember-text' };
+      return options.stuck ? STUCK_LINE : { text: COPY.tileMaking, color: 'ember-text' };
     case 'queued':
       return { text: COPY.tileQueued, color: 'text-2' };
     case 'failed':
@@ -74,7 +79,7 @@ export function stateLine(state: TileState, options: StateLineOptions = {}): Sta
     case 'needs-update':
       return { text: COPY.tileNeedsUpdate, color: 'warning-text' };
     case 'changing':
-      return { text: COPY.tileChanging, color: 'ember-text' };
+      return options.stuck ? STUCK_LINE : { text: COPY.tileChanging, color: 'ember-text' };
     case 'change-failed':
       return { text: COPY.tileChangeFailed, color: 'danger-text' };
     case 'older':

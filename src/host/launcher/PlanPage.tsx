@@ -605,7 +605,7 @@ export function PlanPage({ screen, editing, onBack, onAnswer, onChangeRow, onMak
           {screen.problem ? <ProblemNotice problem={screen.problem} /> : null}
           {screen.notice ? <FlowNoticeBlock notice={screen.notice} /> : null}
           {screen.problem ? (
-            <Button label={COPY.planTryAgain} variant="ember" onPress={onTryAgain} />
+            <Button label={COPY.planTryAgain} variant="ember" haptic="handoff" onPress={onTryAgain} />
           ) : (
             <MakeItPlace>
               <Button

@@ -86,3 +86,21 @@ No regression on either platform. On iOS the values sit on frame steps (101–10
   shrunk into its tile by then (~0.4 s) and Home is idle, yet the tap neither reopens nor opens the app; the same
   tap 2 s after opens it. The driver's tap latency (~0.75 s) makes the exact window unknown. Needs a finger check
   (chain-24) before it is called a bug.
+
+## 24.6 haptics (DONE, ruling 34)
+
+Guided session with the owner on an iPhone 15 Plus, 2026-10-30: build 1.0.0 (435735) at staging `51e18158` plus
+throwaway logging (branch `device/24-6` @ `946b4388`, never merged). Evidence, outside the repo:
+`/Users/davrondjabborov/Work/other/Whim-evidence/design-system-v1/haptics/`: `analysis.txt` (log analysis),
+`owner-notes-2026-10-30.md` (how each haptic felt), `session-iphone15plus.log` (the session log).
+
+- Latency, JS call → native engine call: median 0.9 ms, p95 2.2 ms, max 3.2 ms (n = 380). The touch itself has no
+  timestamp in the log, so input → JS handler is not included.
+- Cue rate cap (burst 3, 10/s) held: 88 drops, at most 12 cues in any 1 s window (limit 13).
+- No haptic outside §5; every moment mapped to its §5 kind; the failure path (selection, handoff ×2, failure) was
+  checked against the stub.
+- Found and filed: #234 (sheet commit haptic before the real commit point), #235 (orb commit ticks repeatedly near
+  the middle), #236 (iOS native switch: system haptic plus ours), #237 (Home back-menu entry has no title). Fixed in
+  shift 4; the owner re-feels #234–#236 at PR review (`owner-checklist.md`).
+- The phone ran against production for most of the session ("Your own server" not set; ruling 36): a few real
+  generations, harmless pre-launch.

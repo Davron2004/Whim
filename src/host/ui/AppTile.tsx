@@ -372,6 +372,7 @@ export interface AppTileProps {
   count?: number;
   activity?: number;
   flicker?: FlickerPulse;
+  /** The stream stalled: the light is stuck, and a making or changing tile says "No progress". */
   stuck?: boolean;
   /** An operation on this app is running: the tile is dimmed and reads busy. */
   busy?: boolean;
@@ -533,7 +534,7 @@ export function AppTile({
   const s = cellStyles(t);
   const press = usePressFeedback('chip', t);
   const ref = useRef<View>(null);
-  const line: StateLine | null = stateLine(state, { example, copy, count });
+  const line: StateLine | null = stateLine(state, { example, copy, count, stuck });
 
   const lift = useSharedValue(1);
   useEffect(() => {
@@ -580,7 +581,7 @@ export function AppTile({
     </View>
   );
   const lines = line ? (
-    <Text type="caption" color={line.color} numberOfLines={1} style={inList ? undefined : s.label}>
+    <Text type="caption" color={line.color} style={inList ? undefined : s.label}>
       {line.text}
     </Text>
   ) : null;

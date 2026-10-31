@@ -17,6 +17,7 @@
 
 import nodeAssert from 'node:assert';
 import { inspect } from 'node:util';
+import { onlyRanNothing } from '../../../../scripts/lib/only-ran.mjs';
 import { createEngine } from '../../storage-engine/engine';
 import { createNodeSqlExecutor } from '../../storage-engine/bindings/node-sqlite';
 import { SchemaArtifact, StorageEngine } from '../../storage-engine/contract';
@@ -126,6 +127,7 @@ async function callErr(d: Dispatcher, method: string, params: Record<string, unk
 // ═══════════════════════════════════════════════════════════════════════════
 async function main(): Promise<void> {
   // ── §A registry append-only (D5) ───────────────────────────────────────────
+  // checks/test/repo/only-filter.suite.ts runs the real bridge runner and matches the titles starting §A duplicate registration, §G4, §G5 and §G8; renaming them breaks that suite.
   await test('§A duplicate registration is a startup error (append-only, no override)', () => {
     const reg = new CapabilityRegistry();
     registerStorageRows(reg);
@@ -344,6 +346,7 @@ async function main(): Promise<void> {
     eq(log.length, 0, 'no backend call on invalid params');
   });
 
+  // §G4, §G5 and §G8 titles are matched by checks/test/repo/only-filter.suite.ts (see §A duplicate registration).
   await test('§G4 a valid cue invokes the backend exactly once and resolves {} (fire-and-forget)', async () => {
     const { backend, log } = recordingBackend();
     const reg = createDefaultRegistry({ cueBackend: backend });
@@ -402,6 +405,7 @@ async function main(): Promise<void> {
 
   // ── verdict ────────────────────────────────────────────────────────────────
   console.log('');
+  if (onlyRanNothing(passed + failures.length)) process.exit(1);
   if (failures.length === 0) {
     console.log(`✓ capability-bridge acceptance: ${passed} checks passed`);
   } else {

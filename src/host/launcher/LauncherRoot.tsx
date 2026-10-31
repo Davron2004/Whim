@@ -188,7 +188,9 @@ interface HeldPrompt {
 
 /** History, and `from`: where it was opened — Home's sheet, or the orb over the running app — and
  *  so where leaving it returns. */
-type HistoryScreenState = { kind: 'history'; app: InstalledApp; from: 'home' | 'app' };
+// `since`: when History was opened over a running app, that launch's `changesSince`, so leaving History
+// reopens the app with the same window for its changes.
+type HistoryScreenState = { kind: 'history'; app: InstalledApp; from: 'home' | 'app'; since?: number };
 
 /** The Whim sheet's pages over a running app: its menu, and Report a problem pushed inside it. */
 type WhimSheetPage = 'menu' | 'report';
@@ -205,6 +207,10 @@ type Screen =
       source: string;
       engineAppId: string;
       tappedAt: number;
+      // The start of the window in which a failed change of the app is this launch's to show (the
+      // Whim sheet's See why row, the orb's dot): `tappedAt` unless a History round trip carried an
+      // earlier launch's.
+      changesSince?: number;
       versionId: string;
       sheet?: WhimSheetPage;
       // Opened by a tap on its tile: it grows out of it (M2).
@@ -340,7 +346,7 @@ function changeOver(
   const changes = records.map((view) => view.record).filter((rec) => rec.editingAppId === on.app.id);
   return {
     changing: changes.find((rec) => rec.state === 'building' && !discarded(rec)),
-    failed: changes.find((rec) => rec.state === 'failed' && rec.updatedAt >= on.tappedAt && !discarded(rec)),
+    failed: changes.find((rec) => rec.state === 'failed' && rec.updatedAt >= (on.changesSince ?? on.tappedAt) && !discarded(rec)),
     ...(landed !== null && marksLaunch(landed, on) ? { landed: landed.entry } : {}),
     finished: marksLaunch(finished, on),
   };
@@ -352,7 +358,7 @@ function changeOver(
 function orbOver(change: ChangeOver, live: LiveView): MiniAppLaunch['orb'] {
   if (change.changing !== undefined) {
     const id = change.changing.id;
-    return { state: 'changing', activity: live.activity[id] ?? 0, flicker: live.flicker[id], stuck: live.stalled.has(id) };
+    return { state: 'changing', activity: live.activity[id] ?? 0, flicker: live.flicker[id], stuck: live.stalled.has(id) && !live.queued.has(id) };
   }
   if (change.failed !== undefined) return { state: 'failed', activity: 0 };
   if (change.landed !== undefined) return { state: 'ready', activity: 0 };
@@ -442,9 +448,13 @@ function stacksOf(ready: boolean, base: Screen, homeUnder: boolean) {
   return { stack: homeUnder ? stackFor(HOME) : own, baseOnStack: own !== null };
 }
 
-/** The native header's title; none on Home and History, which draw their own header. */
+/** The native header's title; none on History, which draws its own header. Home draws its own too:
+ *  as the stack's root its header stays hidden, and its title only names it in the iOS back
+ *  button's long-press menu (#237). */
 function stackTitle(on: StackScreen): string | undefined {
   switch (on.kind) {
+    case 'home':
+      return COPY.homeTitle;
     case 'settings':
       return COPY.settingsTitle;
     case 'advanced':
@@ -1317,7 +1327,7 @@ function LauncherShell({
    *  (`StoreAccess.activeLaunch`, decision #81) — never the caller's `app.record`, which can be a copy
    *  older than an Undo that landed since, or than one still running. A read past
    *  `OPEN_READ_TIMEOUT_MS` rejects, and nothing shows when it settles. */
-  const launchApp = async (app: InstalledApp, tappedAt: number, show: (launch: AppScreen) => void) => {
+  const launchApp = async (app: InstalledApp, tappedAt: number, show: (launch: AppScreen) => void, changesSince?: number) => {
     const launch = await readWithin(access.activeLaunch(app), OPEN_READ_TIMEOUT_MS);
     show({
       kind: 'app',
@@ -1326,6 +1336,7 @@ function LauncherShell({
       source: launch.source,
       engineAppId: access.engineAppId(launch.app),
       tappedAt,
+      ...(changesSince === undefined ? {} : { changesSince }),
       versionId: launch.versionId,
     });
   };
@@ -1393,7 +1404,7 @@ function LauncherShell({
    *  open's alert, for a caller that must not stay where it is. An open arriving while History's
    *  pop to Home runs (a tile, the "is ready" toast) is busy from the tap and waits for the pop to
    *  finish; it is dropped when something else arrived after it, or the person left Home meanwhile. */
-  const onOpen = (app: InstalledApp, onFailed?: () => void, fromTile = false): Promise<boolean> => {
+  const onOpen = (app: InstalledApp, onFailed?: () => void, fromTile = false, changesSince?: number): Promise<boolean> => {
     const tappedAt = Date.now();
     const holding = stackPop.current !== null;
     // From its tile, Home stays under the app until it has grown over the screen. Of two tiles tapped
@@ -1410,7 +1421,7 @@ function LauncherShell({
     return runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
       if (holding && !((await stackPopOver()) && screenKindRef.current === 'home')) return;
       try {
-        await launchApp(app, tappedAt, fromTile ? show : setScreen);
+        await launchApp(app, tappedAt, fromTile ? show : setScreen, changesSince);
       } catch (e) {
         openFailed(e);
         onFailed?.();
@@ -1466,8 +1477,8 @@ function LauncherShell({
       (e) => log.error(CHANNELS.app, 'installed-app action failed', { operation: 'fork', ...errorFields(e) }),
     );
 
-  const onHistory = (app: InstalledApp, from: 'home' | 'app') => {
-    setScreen({ kind: 'history', app, from });
+  const onHistory = (app: InstalledApp, from: 'home' | 'app', since?: number) => {
+    setScreen({ kind: 'history', app, from, ...(since === undefined ? {} : { since }) });
   };
 
   // Whether the running launch is behind its app's current version (a change landed unreloaded, an
@@ -1516,9 +1527,9 @@ function LauncherShell({
   /** A native pop of History (a swipe): Home, and from there back into the app it was opened over,
    *  reopened at whatever version is now current (a restore there may have moved it). Home at once:
    *  the platform has already popped it, and its pops must find the machine off it (`NativeStack.tsx`). */
-  const leaveHistory = (app: InstalledApp, from: 'home' | 'app') => {
+  const leaveHistory = (on: HistoryScreenState) => {
     goHome();
-    if (from === 'app') onOpen(index.get(app.id) ?? app);
+    if (on.from === 'app') onOpen(index.get(on.app.id) ?? on.app, undefined, false, on.since);
   };
 
   /** History's own Back and system back, when it was opened over an app: History stays until that app
@@ -1529,9 +1540,10 @@ function LauncherShell({
    *  already opening does nothing: the open in flight replaces History, or fails to Home with its alert
    *  (a read past `OPEN_READ_TIMEOUT_MS` among them). Home only when the app is busy with something
    *  else (a copy). */
-  const backFromHistoryToApp = (app: InstalledApp) => {
+  const backFromHistoryToApp = (on: HistoryScreenState) => {
+    const { app } = on;
     if (appOps.opFor(app.id) === 'open') return;
-    onOpen(index.get(app.id) ?? app, goHome)
+    onOpen(index.get(app.id) ?? app, goHome, false, on.since)
       .then((opened) => {
         if (!opened) goHome();
       })
@@ -1547,7 +1559,7 @@ function LauncherShell({
   };
 
   /** History's own Back and system back, for where it was opened from. */
-  const historyBack = (on: HistoryScreenState) => (on.from === 'app' ? () => backFromHistoryToApp(on.app) : backFromHistoryToHome);
+  const historyBack = (on: HistoryScreenState) => (on.from === 'app' ? () => backFromHistoryToApp(on) : backFromHistoryToHome);
 
   /** Delete and Discard hide at once and complete when their Undo toast ends (`soft-delete.ts`):
    *  Home calls the `Settle` pair then. An Undo answers whether it restored everything. */
@@ -3543,7 +3555,7 @@ function LauncherShell({
           onChangeText={(text) => setWhimWords({ appId: app.id, text })}
           onSend={onWhimSend}
           onReload={onWhimReload}
-          onHistory={() => onHistory(app, 'app')}
+          onHistory={() => onHistory(app, 'app', on.changesSince ?? on.tappedAt)}
           onReport={() => setScreen((s) => (s.kind === 'app' ? { ...s, sheet: 'report' } : s))}
           onExit={leaveApp}
         />
@@ -3742,7 +3754,7 @@ function LauncherShell({
       case 'consent':
         return onConsentReviewClose;
       case 'history':
-        return () => leaveHistory(from.app, from.from);
+        return () => leaveHistory(from);
       case 'report':
         return () => setScreen(from.from);
     }
