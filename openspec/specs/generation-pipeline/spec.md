@@ -264,7 +264,8 @@ feeding nothing back to the model, and SHALL NOT be treated as contained under a
 any number of attempts, not as a fallback, and not on a last attempt. It SHALL be a distinct outcome from a
 negative verdict, carrying its own user-facing reason and the harness's own named unobserved-verdict
 diagnostic; the pipeline SHALL NOT report it as a containment failure. Its reason SHALL say that the app
-could not be verified, and SHALL NOT assert that the app was unsafe or that a breach was observed. An
+could not be verified, and SHALL NOT assert that the app was unsafe or that a breach was observed. Like
+every reason the device shows, it SHALL use typographic apostrophes and the product glossary. An
 unobserved verdict SHALL NOT be automatically re-run: the candidate is not rebuilt, re-executed, or
 re-prompted, and the device's existing retry affordance remains the recovery path.
 
@@ -282,7 +283,7 @@ channel.
 
 - **WHEN** a candidate's run report carries an unobserved containment verdict
 - **THEN** the run ends with a single `failure` terminal event whose `reason` is
-  "We couldn't verify this app ran safely. Please try again." — distinct from the containment-failure
+  "We couldn’t verify this app ran safely. Please try again." — distinct from the containment-failure
   reason, stating that the app could not be verified rather than that it was unsafe — and no repair
   prompt is built
 
@@ -336,11 +337,12 @@ NOT re-parse the source for manifest data, ask the model to restate the manifest
 any other source — there is exactly one extraction. A record SHALL be delivered only for a candidate whose
 check stage produced no error diagnostics and whose run report is green and untruncated.
 
-An app's declared tile colour is manifest data and SHALL follow that same single extraction: it reaches the
+An app's `tint` and `icon` are manifest data and SHALL follow that same single extraction: they reach the
 record only from the literal `defineApp` argument the check stage already extracted, never from the model's
-prose, never from a second parse, and never from anything the candidate reports about itself at run time. A
-declared colour that is not a valid hex, or that collides with a reserved status hue, SHALL be dropped at
-extraction rather than delivered for the host to reject.
+prose, a second parse, or anything the candidate reports at run time. The check stage SHALL resolve them
+through the shared name resolver (aliases, then the deterministic fallback) and SHALL record a warning
+diagnostic for every alias or fallback it applied; a tint or icon name SHALL never be an error, fail a run or
+trigger a repair turn. A deprecated `tileColor` SHALL NOT be extracted or delivered, whatever its value.
 
 #### Scenario: Manifest comes from extraction, not from the model
 
@@ -360,13 +362,18 @@ extraction rather than delivered for the host to reject.
 
 #### Scenario: The tile colour comes from the one extraction
 
-- **WHEN** a candidate declares a tile colour in its `defineApp` argument
-- **THEN** the delivered record's manifest carries exactly that value, and the source is not re-parsed for it
+- **WHEN** a candidate declares `tint: ['rose', 'stone']` and `icon: 'coffee'`
+- **THEN** the delivered manifest carries exactly those values, and the source is not re-parsed for them
+
+#### Scenario: A near-miss name is a warning, not a failure
+
+- **WHEN** a candidate declares `icon: 'alert-circle'` and `tint: 'teal'`
+- **THEN** the manifest carries `circle-alert` and `ocean`, two warning diagnostics are recorded, and the run is otherwise unaffected
 
 #### Scenario: A reserved or malformed colour is dropped
 
-- **WHEN** a candidate declares a malformed colour, or one equal to a reserved status hue
-- **THEN** the delivered manifest carries no tile colour, and the run is otherwise unaffected
+- **WHEN** a candidate declares a deprecated `tileColor`, valid, malformed or equal to a reserved status hue
+- **THEN** the delivered manifest carries no `tileColor`, no diagnostic is recorded for it, and the run is otherwise unaffected
 
 ### Requirement: A post-run summariser describes the completed run in one plain-words sentence
 
@@ -671,15 +678,19 @@ The clarify and plan-writing prompts SHALL be built from one list of things a mi
 - **THEN** the server suite fails until the list is updated
 
 ### Requirement: Clarify picks each question's answer mode, and delegated questions are decided in the open
-The clarify prompt SHALL instruct the model to mark a question `select: 'many'` only when several options can sensibly hold together, and `other: true` only when the options can't cover the likely answers; plan writing SHALL decide every question the user delegated with `decide: true`, and the plan SHALL state each such decision in plain words.
+The clarify prompt SHALL instruct the model to mark a question `select: 'many'` only when several options can sensibly hold together, and `other: true` only when the options can't cover the likely answers. Because the plan page shows the questions beside the plan and "Decide for me" is every question's default, plan writing SHALL leave every question on the page out of the plan rows, and generation SHALL decide every question still delegated with `decide: true` and follow every answered one.
 
 #### Scenario: Delegated question
 - **WHEN** a rewrite request carries a clarification with `decide: true` for "Which units?"
-- **THEN** the returned plan names the units Whim chose
+- **THEN** no returned plan row states or decides the units
+
+#### Scenario: Generation decides what was delegated
+- **WHEN** a generate request carries "Which units?" with `decide: true`
+- **THEN** the generated app uses one unit system the engineer chose
 
 #### Scenario: Several picks honoured
 - **WHEN** a clarification carries two `choices`
-- **THEN** the plan includes both
+- **THEN** the generated app includes both
 
 ### Requirement: A model turn that loses its provider is retried once
 The pipeline SHALL retry a generate or repair turn once with the same messages when the provider fails with an upstream error (5xx, 429, network or stream error), emitting a `restart` event first when the turn had already yielded token events, and SHALL end with today's terminal failure if the retry also fails; the failed attempt's usage SHALL still be metered.
@@ -716,4 +727,29 @@ The pipeline SHALL send `provider.quantizations` to OpenRouter when `WHIM_PROVID
 #### Scenario: Unset
 - **WHEN** `WHIM_PROVIDER_QUANTIZATIONS` is not set
 - **THEN** the provider object is identical to today's
+
+### Requirement: Clarify options are short enough to read as answers
+The clarify prompt SHALL cap every option at 40 characters, written as the answer itself, and the corpus eval SHALL track the share of options over 40 characters.
+
+#### Scenario: A long option is caught by the eval
+- **WHEN** the eval runs a corpus case whose clarify response has a 52-character option
+- **THEN** the case reports an option-length violation
+
+### Requirement: Plan rows are written for the app
+The rewrite prompt SHALL write each plan row's label for the app in at most three words in sentence case (no fixed label set), and each row's text in at most two sentences of about 140 characters, leaving out detail the person didn't ask about. Rows SHALL NOT restate a question shown on the same page. A limit reason SHALL use the product glossary ("apps", never "mini-apps").
+
+#### Scenario: Labels fit the app
+- **WHEN** a habit tracker's plan is written
+- **THEN** its labels name parts of that app (for example "Ticking a habit"), not a fixed set like "When a step ends"
+
+### Requirement: The generator learns tiles and defaults from the reference, not from layout rules
+The SDK reference SHALL describe exactly what the SDK does, including `tint` and `icon` with the ten tints, the glyph groups and four rules (pick the glyph for what the app is about; rank up to three tints by the subject's feeling; names up to 24 characters; keep the tile when changing unless asked). The generate prompt SHALL NOT dictate a layout (no "main content inside a Card" recipe) and SHALL point at the SDK's defaults. The corpus eval SHALL check that every generated app names a valid tint and icon, that a change keeps them, and SHALL track the invalid-icon rate.
+
+#### Scenario: A change keeps the tile
+- **WHEN** the eval changes an app that named `ocean` and `glass-water`
+- **THEN** the changed app still names `ocean` and `glass-water`
+
+#### Scenario: The reference has no stale theming
+- **WHEN** `docs/sdk-reference.md` is checked against the SDK's exports
+- **THEN** it documents no preset, shape or `tileColor`, and documents every exported component
 

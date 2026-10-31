@@ -6,9 +6,7 @@ The shared wire contract between the Whim device and the harness server: zod sch
 diagnostics envelope, the wire app record, and usage shapes. It is the single source of truth
 for every shape crossing the device↔server wire — consumed by the server now, and by the device
 prompt flow (#7), the static checks (#9), and evals (#12) later.
-
 ## Requirements
-
 ### Requirement: Shared wire-contract package
 The repo SHALL provide an npm workspace `contract/` (package `@whim/contract`) that is the
 single source of truth for every shape crossing the device↔server wire. Schemas SHALL be zod
@@ -64,7 +62,7 @@ The exchange SHALL be unary request/response. No clarify event, clarify stage me
 
 ### Requirement: Generation request and rewrite shapes
 The contract SHALL define `GenerateRequest` (`prompt`, optional `clarifications`, optional `app` carrying the current `source`, the
-`manifest`, the `schema`, and the `appliedSchema` for the edit flow — full re-send per Model 1, never wire
+`manifest`, the `schema`, the `appliedSchema` and the `declaredFields` for the edit flow — full re-send per Model 1, never wire
 diffs) and `RewriteRequest`/`RewriteResponse` (`prompt` plus optional `clarifications` and optional `app` in, `rewrittenPrompt` plus optional `plan` out).
 
 `clarifications` SHALL be an optional list of `{ id, question, choices, other?, decide? }` entries — the answers the user gave to the clarify exchange's questions, carried by value so the server holds no per-device state between calls. `choices` is the list of picked options (at most one for a `select: 'one'` question), `other` is the user's typed answer (1–200 characters), and `decide: true` means the user asked Whim to decide that question. An entry SHALL carry either `decide: true` with no choices and no `other`, or at least one choice or an `other`. Its absence and an empty list SHALL both mean "the user answered nothing", which is a legitimate, common state.
@@ -82,7 +80,19 @@ the supplied `manifest`/`appliedSchema` rather than treat compiled output as sou
 `app.appliedSchema` SHALL be an optional record carrying the **accumulated** applied-schema union of the
 database the app writes to — the storage group's `_meta` union, not the app's own snapshot artifact
 (decision #52 D5). It is the diff baseline the harness's schema checks run against and the source of the
-burned-ID allocation floor; when it is absent the baseline is the empty applied schema.
+burned-ID allocation floor; when it is absent the baseline is the empty applied schema. It SHALL hold only
+what the database holds.
+
+`app.declaredFields` SHALL be an optional list of `{ collection, id, type }`: the fields a saved version of
+the app (or of an app sharing its store) declares that `appliedSchema` does not hold — a version delivered
+and never opened, or one a rollback left behind (decision #82). Each is a burned id with a fixed type: the
+allocation floor counts it and a candidate reusing it with another type is refused, while a candidate that
+names it still needs a default (the database has no column for it) and none is required to keep it. A
+server built before the field strips it, since `app` is not strict, and checks against `appliedSchema` alone.
+Each `collection` and `id` SHALL be a burned id in the storage engine's alphabet (one lowercase letter, then
+digits) and each `type` one of the engine's closed field types, both taken from the engine's own contract,
+and the list SHALL hold at most 512 entries; a request outside these bounds is refused as `invalid_request`
+before admission, with no stream opened.
 
 #### Scenario: Edit flow carries full source
 - **WHEN** a client builds a `GenerateRequest` for editing an existing app whose original source it holds
@@ -96,6 +106,14 @@ burned-ID allocation floor; when it is absent the baseline is the empty applied 
 - **WHEN** `GenerateRequest` is inspected
 - **THEN** `app.schema` (the app's declared artifact) and `app.appliedSchema` (the database's accumulated
   union) are separate optional-vs-required fields that can legitimately differ
+
+#### Scenario: Declared fields ride beside the applied schema
+- **WHEN** a client builds a `GenerateRequest` for an app a saved version of which declares a field its database does not hold
+- **THEN** the request carries that field in `app.declaredFields` and not in `app.appliedSchema`, and a request carrying a field a server does not know still validates there, the field stripped
+
+#### Scenario: Declared fields outside the engine's vocabulary are refused
+- **WHEN** a `GenerateRequest` carries more than 512 declared fields, a declared id or collection outside the burned-id alphabet, or a declared type outside the closed field-type set
+- **THEN** the server answers one `400` `invalid_request` before admission, opens no stream and spends no generation
 
 #### Scenario: A generation carries the answers the user gave
 - **WHEN** a client builds a `GenerateRequest` after a clarify exchange the user answered
@@ -195,22 +213,23 @@ same package).
 ### Requirement: Wire app record
 The contract SHALL define `WireAppRecord` = `{ name, source, bundle, sourceMap?, manifest,
 schema }` — the verified-bundle payload a generation delivers. It MUST NOT contain device-side
-identity or install state (ids, install timestamps, launcher position): the stored record is
-the launcher's concern, the wire record is this contract's.
+identity or install state (ids, install timestamps, launcher position, assigned tint, tile
+overrides): the stored record is the launcher's concern, the wire record is this contract's.
 
-An app's declared tile colour SHALL ride inside `manifest` — the same statically extracted structure that
-already carries capabilities — and SHALL NOT become a second top-level field, because manifest data has
-exactly one source. The manifest remains an untyped record on the wire; the host validates the colour where
-it consumes it.
+An app's tile identity SHALL ride inside `manifest` — the same statically extracted structure that
+already carries capabilities — as `tint` (the app's ranked tint names, resolved to the closed set) and
+`icon` (its resolved glyph name), and SHALL NOT become top-level fields, because manifest data has exactly
+one source. `manifest` SHALL NOT carry `tileColor`, and the host SHALL ignore one it finds. The manifest remains
+an untyped record on the wire; the host validates and assigns where it consumes it.
 
 #### Scenario: Wire record is install-state-free
 - **WHEN** `WireAppRecord` is inspected
-- **THEN** it has no app-id or install-state fields, and a `result` event validates with only
+- **THEN** it has no app-id, install-state or assigned-tint fields, and a `result` event validates with only
   generation outputs
 
 #### Scenario: The tile colour has one home
-- **WHEN** a delivered record for an app that declared a tile colour is inspected
-- **THEN** the colour appears inside `manifest` and nowhere else on the record
+- **WHEN** a delivered record for an app that named a tint and an icon is inspected
+- **THEN** `tint` and `icon` appear inside `manifest` and nowhere else on the record
 
 ### Requirement: Usage shape
 The contract SHALL define `Usage` = `{ promptTokens, completionTokens, totalTokens }` (integer
@@ -364,3 +383,4 @@ Every SSE event and every unary JSON body (success or `ApiError`) SHALL be decod
 #### Scenario: A malformed optional summary or plan is dropped
 - **WHEN** a `result` event's optional `summary` or a rewrite response's optional `plan` fails its shape
 - **THEN** the client drops that field and still uses the message: the app installs with no summary, and the plan step shows the rewritten prompt as its one row
+

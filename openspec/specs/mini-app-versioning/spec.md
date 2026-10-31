@@ -2,9 +2,7 @@
 
 ## Purpose
 TBD - created by archiving change on-device-snapshot-store. Update Purpose after archive.
-
 ## Requirements
-
 ### Requirement: Every generation is an immutable snapshot tagged with its prompt
 
 Each generation of a mini-app SHALL be recorded as an immutable snapshot, and each snapshot MUST carry the structured prompt that produced it so a later snapshot can be traced back to the instruction that created it.
@@ -132,7 +130,7 @@ app is regenerated.
 - **THEN** enumeration and restore behave identically to before this change — every snapshot on the one line remains listed and restorable
 
 ### Requirement: Same-line enumeration survives rollback (timeline)
-The store SHALL provide an additive enumeration verb (`timeline`) that lists every snapshot on the active lineage's line — ancestors *and* tag-reachable descendants of the current position — newest first, capped like `history`. After a rollback moves the active position backward, snapshots later on the same line SHALL still be enumerated, so roll-forward targets remain discoverable without knowing their ids. Existing verbs SHALL be unchanged in shape and behavior; the verb returns the same snapshot shape (`{id, prompt, createdAt}`) as `history`.
+The store SHALL provide an additive enumeration verb (`timeline`) that lists every snapshot on the active lineage's line — ancestors *and* tag-reachable descendants of the current position — newest first by creation sequence (each snapshot's place in the order the line's snapshots were made), never by commit time, capped like `history`. After a rollback moves the active position backward, snapshots later on the same line SHALL still be enumerated, so roll-forward targets remain discoverable without knowing their ids. Existing verbs SHALL be unchanged in shape and behavior; the verb returns the same snapshot shape (`{id, prompt, createdAt}`) as `history`.
 
 #### Scenario: Descendants listed after rollback
 - **WHEN** an app has snapshots A→B→C, is rolled back to A, and `timeline` is called
@@ -145,6 +143,10 @@ The store SHALL provide an additive enumeration verb (`timeline`) that lists eve
 #### Scenario: Cap respected
 - **WHEN** the line holds more snapshots than the configured history limit
 - **THEN** `timeline` returns the newest entries up to the limit
+
+#### Scenario: Snapshots made within one second keep their order
+- **WHEN** two snapshots are made within the same second, or the clock moves backwards between them
+- **THEN** `timeline` lists the later-made one first
 
 ### Requirement: A version's declaration is readable without its code
 The store SHALL provide an additive read verb (`declarationOf`) that returns one snapshot's manifest and schema as saved and reads no other file of the version (not its code, source or prompt.md). A file the snapshot does not hold SHALL be reported as missing (`null`). An unknown snapshot SHALL be refused as `getSnapshot` refuses it. The verb SHALL take only the app and the snapshot id (no file path) and return no git terminology or identifiers; existing verbs are unchanged.
@@ -160,3 +162,4 @@ The store SHALL provide an additive read verb (`declarationOf`) that returns one
 #### Scenario: An unknown snapshot is refused
 - **WHEN** `declarationOf` is called with a snapshot id the app does not have, or for an app with no history
 - **THEN** it rejects naming the unknown snapshot, as `getSnapshot` does
+

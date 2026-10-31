@@ -2,9 +2,7 @@
 
 ## Purpose
 TBD - created by archiving change launcher-shell. Update Purpose after archive.
-
 ## Requirements
-
 ### Requirement: Installed apps are persistent host-held records
 
 The host SHALL maintain a persistent record for every installed mini-app — identity, display
@@ -52,64 +50,56 @@ the baked-bundle path.
 
 ### Requirement: Deleting an app leaves no residue
 
-The launcher SHALL offer delete on every installed app behind an explicit confirmation.
-Deletion MUST remove the launcher record; the app's user data store when no other installed
-entry resolves to its storage group; and its version history when no other installed entry
-shares the underlying version data — leaving no unreferenced per-app storage behind. Both
-shared resources are refcounted the same way (see `linked-apps`); an ungrouped app is the
-sole member of its own group, so its data is removed with it exactly as before.
+The launcher SHALL offer Delete on every installed app with no confirmation dialog: the tile SHALL leave the grid at once and a toast "<name> deleted" SHALL offer Undo for 10 seconds. Undo SHALL restore the tile, record, data and history unchanged. When the Undo window ends (or, if Whim was closed during it, at the next launch) the deletion SHALL complete and MUST remove the launcher record; the app's user data store when no other installed entry resolves to its storage group; and its version history when no other installed entry shares the underlying version data, leaving no unreferenced per-app storage behind. Both shared resources are refcounted the same way (see `linked-apps`).
 
 #### Scenario: Delete removes record, data, and history
 
-- **WHEN** the user deletes an installed app (and no fork of it remains) and confirms
-- **THEN** the app disappears from the grid, its user-data database is gone, its version
-  data is gone, and relaunching the host shows no trace of it
+- **WHEN** the user deletes an installed app (and no copy shares its data) and the Undo window passes
+- **THEN** the app is gone from the grid, its user-data database is gone, its version data is gone, and relaunching the host shows no trace of it
+
+#### Scenario: Undo brings it back whole
+
+- **WHEN** the user deletes an app and taps Undo within 10 seconds
+- **THEN** the tile returns in its place and the app opens with its data and history intact
+
+#### Scenario: Closing Whim during the window still completes the delete
+
+- **WHEN** the user deletes an app and Whim is closed before the toast ends
+- **THEN** the next launch completes the purge and the app does not reappear
 
 #### Scenario: Deleting the original spares a surviving fork
 
-- **WHEN** an app has a fork and the user deletes the original
-- **THEN** the fork still launches, keeps its history, and keeps its user data — its own when
-  it was forked fresh, or the group's shared data when it was forked to share
+- **WHEN** an app has a copy and the user deletes the original
+- **THEN** the copy still launches, keeps its history, and keeps its own user data
 
 ### Requirement: Forking creates an independent launcher entry
 
-The launcher SHALL offer fork on every installed app. The fork MUST appear as a new launcher
-entry carrying its provenance, MUST start from the original's current bundle, and MUST evolve
-independently (its future snapshots never affect the original, per the mini-app-forking
-contract). The fork MUST have its own empty user data store UNLESS the user chose at fork time
-to keep using the original's saved data, in which case it joins the original's storage group
-(see `linked-apps`). Code independence is unconditional; data independence is the default the
-user may decline.
+The launcher SHALL offer "Make a copy" on every installed app (tile menu, and History for any version). Before creating the copy the launcher MUST ask "Copy the data, or start fresh?" (owner ruling 2026-10-09; skipped, starting fresh, when the original has never saved any user data). The copy MUST appear as a new launcher entry carrying its provenance, MUST start from the chosen version's bundle, MUST evolve independently, and MUST have its own user data store under its own storage-engine appId (#43b) — either a one-time copy of the original's data (change `copy-app-data`) or empty. A copy never shares data with its original. A toast "Copy made" SHALL offer Open. While a copy is being made the app's tile SHALL read busy and open no menu, so a second copy of that app cannot start until the first settles; a copy that cannot be made SHALL say so in one toast and add no tile. Joining an original's storage group SHALL remain reserved to rewind continuations, which are never asked (see `linked-apps`).
 
 #### Scenario: A fork runs independently of its original
 
-- **WHEN** the user forks an installed app, chooses to start fresh, and opens the fork
-- **THEN** the fork runs the same bundle as the original at fork time, but writes to its own
-  storage — data entered in the fork never appears in the original, and vice versa
+- **WHEN** the user makes a copy of an installed app and opens it
+- **THEN** the copy runs the same bundle as the original at that version but writes to its own storage; data entered in either never appears in the other
 
 #### Scenario: A fork created to share sees the original's data
 
-- **WHEN** the user forks an installed app and chooses to use the same saved data
-- **THEN** the fork still evolves its code independently, but both entries read and write one
-  shared store — either one's writes are visible to the other
+- **WHEN** the user changes an app while it is on an older version, so the change lands as a new launcher entry continuing from that version
+- **THEN** no question is asked, the new entry evolves its code independently, and it reads and writes the original's store; "Make a copy" never creates such an entry
 
-### Requirement: Explicit fork asks share-vs-fresh at fork time
+#### Scenario: The copy-or-fresh question is asked
 
-When the user invokes the Fork action, the launcher SHALL ask one plain question before creating
-the new app: use the same saved data, or start fresh. The answer SHALL be threaded to the
-creation seam as the sharing decision. Rewind continuations SHALL NOT be asked (they share by
-default, per `linked-apps`). All question copy SHALL come from the centralized copy table and
-pass the product-verbs guard (no "clone"/"link"/storage vocabulary).
+- **WHEN** the user taps "Make a copy" on an app that has saved data
+- **THEN** a sheet asks "Copy the data, or start fresh?"; either answer creates a copy with its own storage, and no option shares data with the original
 
-#### Scenario: Fork with shared data
+#### Scenario: Nothing to copy
 
-- **WHEN** the user forks app A and chooses to use the same saved data
-- **THEN** the new app joins A's storage group and reads A's existing data on first launch
+- **WHEN** the user taps "Make a copy" on an app that has never saved any data
+- **THEN** no question is asked and the copy starts fresh
 
-#### Scenario: Fork starting fresh
+#### Scenario: A second copy cannot start mid-copy
 
-- **WHEN** the user forks app A and chooses to start fresh
-- **THEN** the new app gets its own empty database, exactly as forks behaved before this change
+- **WHEN** a copy of an app is still being made and the user long-presses that app's tile
+- **THEN** the tile reads busy, no menu opens, and only one copy is made
 
 ### Requirement: Delete tears down storage only when the group is empty
 
@@ -126,24 +116,6 @@ group — mirroring the existing refcount discipline used for the shared version
 
 - **WHEN** an app with its own database (no sharers) is deleted
 - **THEN** its database file is deleted with it, as before this change
-
-### Requirement: First run seeds two example apps and a create affordance
-
-On first run the launcher SHALL seed the tip splitter and water counter as installed,
-example-labeled records — full citizens: launchable, forkable, deletable, snapshot-backed
-from their first install — alongside a prominent "make your first app" affordance. Seeding
-MUST be idempotent across restarts and MUST NOT resurrect deleted examples.
-
-#### Scenario: A fresh install is not empty
-
-- **WHEN** the host runs for the first time
-- **THEN** the grid shows tip splitter and water counter labeled as examples plus the create
-  affordance, and both examples launch and run on-device
-
-#### Scenario: Deleted examples stay deleted
-
-- **WHEN** the user deletes a seeded example and restarts the host
-- **THEN** the example does not reappear
 
 ### Requirement: The launcher surface speaks product verbs only
 
@@ -188,8 +160,8 @@ When only a small number of apps exist, the home screen SHALL NOT present a larg
 User-facing launcher copy SHALL NOT promise features that are not present. Text that sets an expectation the build cannot meet (e.g. "Coming soon.") MUST NOT ship.
 
 #### Scenario: Opening the create-app modal
-- **WHEN** the user opens the "make your first app" modal
-- **THEN** the modal body contains no "Coming soon." text
+- **WHEN** the user taps `Make an app…` and the making sheet opens on its Describe page
+- **THEN** the page contains no "Coming soon." text
 
 ### Requirement: Production builds hide developer diagnostics surfaces
 The shipping build SHALL NOT display developer diagnostics. Neither the DELIVERY/PAINT/CONTAINMENT diagnostics panel nor the `CONTAINED … probes` containment status bar may be visible while a mini-app is open. The dev log overlay SHALL be held to the same rule: it SHALL NOT be reachable from any surface of a shipping build, and the affordance that opens it SHALL NOT render there.
@@ -221,45 +193,19 @@ The app SHALL draw edge to edge on every supported Android version, and launcher
 - **WHEN** a mini-app view renders on any supported Android version
 - **THEN** the top of the mini-app content begins below the system status bar
 
-### Requirement: A launched mini-app receives the active theme at delivery
-
-When launching a mini-app, the launcher SHALL hand the fixed v2 shell theme to the delivery path so the app renders in the shell's own token values, while delivery without a theme SHALL remain valid and render SDK defaults. There is no user theme preference to resolve: the shell is fixed, identical on every device, and the delivered theme is the same on every launch.
-
-#### Scenario: Shell and mini-app match
-
-- **WHEN** the user opens an installed app
-- **THEN** the delivered init payload SHALL carry the fixed v2 theme and the app's token-based UI SHALL render in it
-
-#### Scenario: Theme-less delivery stays byte-identical on the bundle path
-
-- **WHEN** a bundle is delivered with no theme (probes, invariant pages)
-- **THEN** the bundle bytes and the delivery channel SHALL be unchanged from the pre-theme contract and the app SHALL render with default tokens
-
-### Requirement: The shell palette is a module constant, never a parameter
-
-The launcher SHALL expose its shell palette as one module constant derived from the fixed v2 theme; no launcher component, hook, context, or helper SHALL accept a theme or palette as a prop, argument, or context value, except the fixed theme forwarded opaquely into mini-app delivery; and no launcher source SHALL name a theme picker or theme preference.
-
-#### Scenario: A source scan finds no `ShellPalette` mention outside theme.ts, no theme context, and no theme picker mention
-
-- **WHEN** launcher source outside `theme.ts` is scanned for the identifier `ShellPalette`, a theme context/hook, or the phrase "theme picker"
-- **THEN** none exists and the suite fails naming the file if one appears
-
-#### Scenario: A new component reads the constant and matches every other screen
-
-- **WHEN** a new component needs shell colours
-- **THEN** it imports the constant, and the rendered values are identical to every other screen
-
 ### Requirement: The create affordance and per-app re-prompt action open the prompt flow
 
-The home screen SHALL carry a composer entry row reading `Describe an app…` as its create affordance, opening the prompt flow's new-app entry point on tap. The app long-press action sheet SHALL include a "Prompt again" action alongside Open/Fork/Delete/History, opening the prompt flow's edit entry point scoped to that app.
+The home screen SHALL carry a composer bar reading `Make an app…` as its create affordance, opening the prompt flow's new-app entry point on tap. A ready app's tile menu SHALL include a "Change it" action, opening the prompt flow's change entry point scoped to that app.
 
 #### Scenario: The composer row opens the prompt flow
-- **WHEN** the user taps the composer entry row on the home screen
-- **THEN** the prompt flow's compose step opens with no app being edited
+
+- **WHEN** the user taps `Make an app…` on the home screen
+- **THEN** the prompt flow's Describe page opens with no app being changed
 
 #### Scenario: Re-prompt opens the prompt flow scoped to an app
-- **WHEN** the user long-presses an app tile and chooses "Prompt again"
-- **THEN** the compose step opens scoped to that app
+
+- **WHEN** the user long-presses an app tile and chooses "Change it"
+- **THEN** the Describe page opens scoped to that app
 
 ### Requirement: Version-store access for the prompt flow's delivery stays behind StoreAccess
 The launcher SHALL deliver a generated app (install a new entry, snapshot an existing entry's own lineage, or fork a silent shared continuation) exclusively through `StoreAccess` wrapper methods; no launcher component may hold or call a raw `VersionStore` handle. Each wrapper SHALL apply the existing ensure-lineage discipline.
@@ -269,10 +215,10 @@ The launcher SHALL deliver a generated app (install a new entry, snapshot an exi
 - **THEN** every store interaction goes through a `StoreAccess` method that ensures the entry's lineage first
 
 ### Requirement: The Settings screen persists a server address for the prompt flow
-Every build of the launcher SHALL let the user point Whim at their own server: an optional override of the compiled-in production server (see `release-config`), used by every request the launcher sends, including reports and diagnostics. The override SHALL be honoured only after the user has confirmed, once per install, that the chosen server sees everything Whim sends, that its operator decides what it keeps, and that Whim's privacy policy doesn't cover it. Until that acknowledgement is recorded, a saved address (including one saved by an earlier build) SHALL stay unread and every request SHALL go to the compiled-in server. The field SHALL live in the Settings screen's Advanced section and SHALL be editable only after the acknowledgement. While an override is active, a caption under the field SHALL restate that the user's server is the user's responsibility. A blank address SHALL mean "no override" and SHALL never cause a crash. An `http://` address SHALL be accepted only for a loopback or private-range IP literal (loopback, RFC 1918, link-local, IPv6 unique-local, carrier-grade NAT), `localhost`, a `.local` name or a single-label host that isn't numeric; any other host SHALL require `https://`, and a refused address SHALL be explained inline and not saved. When an override is saved, a plain-text action SHALL offer to go back to the default server, and taking it SHALL clear the override and keep the acknowledgement. The field's placeholder SHALL name the default server's host so the user can see what "no override" means.
+Every build of the launcher SHALL let the user point Whim at their own server: an optional override of the compiled-in production server (see `release-config`), used by every request the launcher sends, including reports and diagnostics. The choice SHALL be the Server group of the pushed Advanced screen: "Whim's server" and "Your own server" as two selectable rows. The override SHALL be honoured only while "Your own server" is chosen and only after the user has confirmed, once per install, that the chosen server sees everything Whim sends, that its operator decides what it keeps, and that Whim's privacy policy doesn't cover it; the first choice of "Your own server" SHALL ask for that confirmation in a confirm sheet. Until that acknowledgement is recorded, a saved address (including one saved by an earlier build) SHALL stay unread and every request SHALL go to the compiled-in server. The address field SHALL show only while "Your own server" is chosen. While an address is saved, a caption under the field SHALL restate that the user's server is the user's responsibility. A blank address SHALL mean "no override" and SHALL never cause a crash. An `http://` address SHALL be accepted only for a loopback or private-range IP literal (loopback, RFC 1918, link-local, IPv6 unique-local, carrier-grade NAT), `localhost`, a `.local` name or a single-label host that isn't numeric; any other host SHALL require `https://`, and a refused address SHALL be explained inline and not saved. Choosing "Whim's server" SHALL send every request to the compiled-in server and SHALL keep both the saved address and the acknowledgement, so choosing "Your own server" again uses that address with nothing to confirm. The field's placeholder SHALL name the default server's host so the user can see what "no override" means.
 
 #### Scenario: Configured address is used
-- **WHEN** the user has confirmed the acknowledgement, entered a server address in Settings and submits a prompt
+- **WHEN** the user has confirmed the acknowledgement, chosen "Your own server", entered a server address and submits a prompt
 - **THEN** the clarify, rewrite, generation and report requests target that address
 
 #### Scenario: No override uses the default server
@@ -280,8 +226,8 @@ Every build of the launcher SHALL let the user point Whim at their own server: a
 - **THEN** the requests target the compiled-in production server, and no "set an address in Settings" message is shown
 
 #### Scenario: The acknowledgement comes first
-- **WHEN** a user opens Advanced for the first time and takes "Use your own server"
-- **THEN** a confirm sheet explains that the server sees everything Whim sends and that Whim's privacy policy doesn't cover it; cancelling leaves no field and no override, and confirming shows the field
+- **WHEN** a user opens Advanced for the first time and taps "Your own server"
+- **THEN** a confirm sheet explains that the server sees everything Whim sends and that Whim's privacy policy doesn't cover it; "Keep Whim's server" leaves Whim's server chosen with no field and no override, and confirming chooses "Your own server" and shows the field
 
 #### Scenario: An address from an earlier build waits for the acknowledgement
 - **WHEN** a build starts on a phone where an earlier build saved an override and no acknowledgement is recorded
@@ -292,23 +238,8 @@ Every build of the launcher SHALL let the user point Whim at their own server: a
 - **THEN** the first is saved and used, and the other two are refused inline with a note that non-local servers need `https://`
 
 #### Scenario: Going back to the default
-- **WHEN** an override is saved and the user takes the use-the-default action
-- **THEN** the field is empty, the next request targets the compiled-in production server, and the field stays available without a second acknowledgement
-
-### Requirement: History entry point in the app action sheet
-The app long-press action sheet SHALL include a History action alongside Open/Fork/Delete, opening the app's full-screen history surface. The history screen SHALL follow the launcher's full-screen sibling pattern: its own back binding (its Back control and hardware back) returning to where it was opened from, which is Home when opened from the home grid and the running app, reopened at its current version, when opened from that app's orb, falling back to Home when that app cannot be reopened; theme colors via the shell palette; and all strings via the centralized copy table (product-verbs guard applies).
-
-#### Scenario: Opening history
-- **WHEN** the user long-presses an app tile and chooses History
-- **THEN** the app's history screen opens full-screen, and hardware back returns to Home
-
-#### Scenario: Opened from the orb
-- **WHEN** the user opens History from a running app's orb and goes back
-- **THEN** that app opens again, not Home
-
-#### Scenario: The app cannot be reopened
-- **WHEN** the user goes back from History opened over a running app and that app fails to open
-- **THEN** the failure is shown and the user lands on Home, not on History
+- **WHEN** an address is saved and the user chooses "Whim's server"
+- **THEN** the next request targets the compiled-in production server, and choosing "Your own server" again shows the saved address and uses it with no second acknowledgement
 
 ### Requirement: Version-store access for history flows stays behind StoreAccess
 The launcher SHALL reach all history-related store verbs (history/timeline listing, restore, pin, diff, fork-from-version) exclusively through `StoreAccess` wrapper methods; no launcher component may hold or call a raw `VersionStore` handle. Each wrapper SHALL apply the existing ensure-lineage discipline before delegating, so fork entries (whose store id and lineage differ from their launcher id) resolve correctly. Fork SHALL accept an optional version so "make this version its own app" reuses the existing fork→install flow unchanged.
@@ -334,376 +265,52 @@ The container's WebView error path SHALL report through the logging seam rather 
 - **WHEN** the WebView reports a load error
 - **THEN** a record is emitted on the mini-app container's channel carrying the native error's fields, and no `console.*` call is made
 
-### Requirement: App tiles use the ghost-letterform treatment
-
-An app tile SHALL be square with the tile radius (22px), filled solid with the app's own colour, and SHALL carry its monogram twice: once small in the foreground at the bottom-left, and once blown up, bleeding off the top-right edge, at 16% white. The tile SHALL carry a 1px inset white border at 30% opacity. The app's name SHALL render beneath the tile, never inside it.
-
-The grid SHALL show tiles at a uniform size and SHALL NOT vary treatment per app: the app's colour is the only thing that differs between two tiles.
-
-#### Scenario: A tile renders both letterforms
-
-- **WHEN** an installed app's tile renders
-- **THEN** its monogram appears once at readable size in the foreground and once oversized and clipped by the tile's top-right edge at 16% white
-
-#### Scenario: Two tiles differ only by colour
-
-- **WHEN** two installed apps' tiles are compared
-- **THEN** their geometry, radius, border and monogram placement are identical and only the fill colour differs
-
-### Requirement: A tile's colour is the app's declared colour, with a deterministic fallback
-
-The launcher SHALL take an app's tile colour from the host-held record's manifest when the app declared one, and next from a launcher-injected colour when the app declared none but the launcher recorded one (a new install's ghost-tile id hash, preserved across rebuilds per the "Ghost tile color is a deterministic hash of the launcher id" requirement below), and SHALL fall back to `appColor(name)` only when the record carries neither a declared nor a launcher-injected colour, when the declaration is malformed, or when it collides with a reserved status hue. The colour SHALL be read from the host-held record only — never from anything the running bundle reports about itself — and the launcher SHALL NOT hold a second name→colour mapping of its own.
-
-Every surface that shows an app's colour — the grid tile, the history header, and an `app`-class span in prose — SHALL resolve it through this one path, so a single app is one colour everywhere.
-
-#### Scenario: A declared colour wins
-
-- **WHEN** an installed app's record carries a valid declared tile colour
-- **THEN** its tile and every `app`-class mention of it render in that colour
-
-#### Scenario: A launcher-injected colour wins over the name hash
-
-- **WHEN** an installed app's record carries a launcher-injected tile colour (a new install with no declared colour of its own) rather than a declared one
-- **THEN** its tile and every `app`-class mention of it render in the injected colour, not `appColor(name)`
-
-#### Scenario: A pre-existing app keeps working
-
-- **WHEN** an app installed before declarations existed is rendered
-- **THEN** its colour resolves from `appColor(name)` and nothing in the grid, history, or prose errors or renders colourless
-
-#### Scenario: The bundle cannot recolour itself
-
-- **WHEN** a running mini-app reports a different colour than its host-held record carries
-- **THEN** the launcher SHALL use the record's value
-
-### Requirement: Shell prose renders through one shared Whim Syntax renderer
-
-All machine-written prose on the shell surface SHALL be rendered by a single shared renderer, never by per-screen highlighting. The renderer SHALL support exactly six classes, each on one channel: `app` (that app's own hue), `chg` (weight 500, no colour), `yours` (Newsreader italic + `yours`), `measure` (mono face, no colour), `state` (the three status hues, fixed vocabulary only), and `hedge` (`faint`, a reverse highlight).
-
-The renderer SHALL enforce the discipline rules itself rather than relying on the producer: at most **four** system marks per sentence; `yours` exempt from that cap and the only span permitted two channels at once; one channel per span; at most one **hue** coloured per sentence; `state` never applied when a status indicator is already adjacent. Marks in excess of a cap SHALL be dropped to flat text, never truncated mid-span.
-
-The one-hue cap is per DISTINCT colour, not per span: two coloured spans that resolve to the SAME hue (e.g. two mentions of the same app in one sentence) SHALL both render coloured. Only a second, DIFFERENT hue in the same sentence is capped — that span renders flat.
-
-Only prose the product is telling the user SHALL be marked. Labels, buttons, settings, and headings SHALL never be marked. Prose SHALL never be lexed inside a field being typed — a prompt is highlighted only after submission.
-
-#### Scenario: The cap is enforced at render time
-
-- **WHEN** a sentence arrives carrying five or more system marks
-- **THEN** the rendered sentence carries at most four, and the dropped spans render as flat text with their words intact
-
-#### Scenario: One hue per sentence
-
-- **WHEN** a sentence would resolve two coloured spans of two DIFFERENT hues
-- **THEN** only one renders coloured and the other renders flat
-
-#### Scenario: Repeated mentions of the same app keep their colour
-
-- **WHEN** a sentence would resolve two or more coloured spans that all resolve to the SAME hue (e.g. the same app named twice)
-- **THEN** every one of them renders coloured — the cap is on distinct hues, not on span count
-
-#### Scenario: Offering is never marked
-
-- **WHEN** a button label, settings row, or screen heading renders
-- **THEN** no Whim Syntax class is applied to it
-
-#### Scenario: The composer is never lexed live
-
-- **WHEN** the user is typing in the composer
-- **THEN** the field renders unmarked text, and highlighting appears only after the prompt is submitted
-
-#### Scenario: Every string survives being flattened
-
-- **WHEN** each shell prose string is rendered with all marks removed
-- **THEN** it remains unambiguous — no meaning was being carried by a mark alone
-
-### Requirement: Four Whim Syntax classes are lexed deterministically on the device
-
-The device SHALL determine `app`, `measure`, `yours`, and `state` itself, with no model involvement: `app` by matching the installed-app list, `measure` by a number / duration / version pattern, `yours` by matching against the stored verbatim prompt for that change, and `state` by lookup against the fixed three-word status vocabulary. The lexer SHALL be a pure function of (text, installed apps, stored prompt) and SHALL be exercised by a deterministic suite.
-
-`chg` and `hedge` SHALL come only from the producer's marks; the device SHALL NOT infer them.
-
-#### Scenario: The same input lexes the same way
-
-- **WHEN** the lexer runs twice over the same text, app list, and stored prompt
-- **THEN** the spans produced are identical
-
-#### Scenario: `yours` is matched, never reconstructed
-
-- **WHEN** the prose paraphrases the user rather than quoting them verbatim
-- **THEN** no `yours` span is produced, and no approximate or reconstructed quote is marked as the user's words
-
-#### Scenario: Status words outside the vocabulary are not marked
-
-- **WHEN** prose uses a synonym for a status rather than one of the fixed three words
-- **THEN** no `state` span is produced
-
-### Requirement: Highlighting can be switched off
-
-The Settings screen SHALL carry a single persisted switch that renders all shell prose flat. With it off, the renderer SHALL emit no class-bearing spans anywhere on any screen, and every string SHALL remain legible and unambiguous. The preference SHALL survive a restart, and an absent or unreadable stored value SHALL resolve to highlighting on, never to a crash.
-
-#### Scenario: Flat everywhere, in one switch
-
-- **WHEN** the user turns highlighting off and visits the history, plan, and build surfaces
-- **THEN** no marked span renders on any of them, and no screen retains its own highlighting
-
-#### Scenario: The preference survives restart
-
-- **WHEN** the launcher restarts with the switch stored off, or with a corrupted stored value
-- **THEN** it resolves off, or falls back to on, without crashing
-
-### Requirement: The orb is a tapped menu whose actions are instrumented
-
-Inside a running mini-app the shell SHALL present the orb as a tapped menu: tapping opens a list of actions, tapping the orb again closes it, and tapping the scrim dismisses it with no side effect. The menu SHALL carry only cheap, undoable actions — delete, rename, and restore SHALL NOT be reachable from it, because anything that cannot be undone with one tap belongs on a screen where it can be read.
-
-The launcher SHALL persist a per-action tap count through its existing key-value path, so the action set can later be chosen from use rather than from opinion. No counter, count, or instrumentation value SHALL be shown on the user-facing surface.
-
-No press-and-hold arming, directional flick, or wheel geometry SHALL exist in this change, and the menu SHALL NOT advertise one — no per-row direction hints and no "hold to flick" caption, because copy that promises an unshipped feature is forbidden on this surface.
-
-#### Scenario: Tap opens, tap closes
-
-- **WHEN** the user taps the orb, then taps it again
-- **THEN** the menu opens and then closes, and no action fires
-
-#### Scenario: Dismissing costs nothing
-
-- **WHEN** the user taps the scrim behind an open menu
-- **THEN** the menu closes and no action fires
-
-#### Scenario: Taps are counted
-
-- **WHEN** the user fires the same menu action twice across two launches
-- **THEN** the persisted count for that action is two, and nothing about the count appears on screen
-
-#### Scenario: Nothing destructive is on the menu
-
-- **WHEN** the menu's action set is inspected
-- **THEN** it contains no delete, rename, or restore action
-
-### Requirement: The home grid renders ghost tiles for pending-build records
-
-The home grid SHALL render one greyed, non-launchable tile for every applicable current pending-build record supplied by PendingBuildStore, interleaved with installed-app tiles. A ghost tile MUST NOT be tappable as a launch action — tapping it opens the build or failure screen (per the ghost interaction requirement below), never a running mini-app. Current views marked volatile SHALL remain represented exactly once; raw stored state, a journal, or absent live refs SHALL NOT override that current view. Rebuild/edit attempts retain their existing exception and create no separate ghost.
-
-#### Scenario: A building generation shows a ghost tile
-
-- **WHEN** a generation is in flight and the user is on the home screen
-- **THEN** the grid shows a greyed tile for that pending-build record alongside the installed apps
-
-#### Scenario: A ghost tile does not launch an app
-
-- **WHEN** the user taps a ghost tile
-- **THEN** no mini-app realm is opened
-
-#### Scenario: Known failure remains represented during a write outage
-
-- **WHEN** the store retains a volatile failed entry whose raw pending record still says building
-- **THEN** Home shows one failed ghost with the existing failed treatment, and tapping it opens its generic failure
-
-#### Scenario: Partial Discard has not removed the current entry
-
-- **WHEN** some raw keys were removed but retained Discard has not verified complete removal
-- **THEN** Home still shows that current entry exactly once
-
-### Requirement: Building and failed/interrupted ghosts are visually distinct
-
-A ghost tile SHALL render a state caption and visual treatment that distinguishes `building` from `failed`/`interrupted`: a `building` ghost carries a neutral in-progress treatment, while `failed` and `interrupted` ghosts carry a shared alert accent distinct from `building`.
-
-#### Scenario: A building ghost looks different from a failed one
-
-- **WHEN** the grid renders one `building` ghost and one `failed` ghost
-- **THEN** their visual treatments differ, and each carries a state caption naming its own state
-
-### Requirement: Ghost tile color is a deterministic hash of the launcher id, stable across transmute and undeclared rebuilds
-
-A ghost tile's color SHALL be derived deterministically from its pending-build record's launcher id, using the same tile-color derivation the installed tile will use once delivered. When the delivered app's manifest declares no tile color of its own, the color MUST NOT change as the ghost transmutes into the delivered tile at the same grid position, nor across a later rebuild whose own manifest ALSO declares no tile color. A manifest that DOES declare a tile color — at delivery or on a later rebuild — is the app stating its own identity (`sdk-design-system`), and that declaration wins over the derived hash; a color change at delivery, or at a rebuild whose manifest declares a color, is then intended behavior, not a violation of this requirement.
-
-#### Scenario: Same id, same color, before and after delivery
-
-- **WHEN** a ghost tile with launcher id X is showing, and its generation is delivered as an installed app with id X whose manifest declares no tile color
-- **THEN** the tile color at that position is unchanged across the transmute
-
-#### Scenario: A manifest that declares its own color takes it at delivery
-
-- **WHEN** a ghost tile with launcher id X is showing, and its generation is delivered with a manifest that declares its own tile color
-- **THEN** the delivered tile renders the declared color rather than the id-derived one
-
-#### Scenario: Rebuilding does not move a delivered app's color
-
-- **WHEN** an app delivered under the id-derived color is re-prompted and rebuilt, and the rebuilt manifest declares no tile color of its own
-- **THEN** the tile still renders the color it has rendered since delivery, not a name-derived one
-
-#### Scenario: Color is deterministic for a given id
-
-- **WHEN** the same launcher id is hashed to a tile color twice
-- **THEN** both derivations produce the same color
-
-### Requirement: A ghost tile displays a working title
-
-A ghost tile SHALL display the pending-build record's working title (derived from the user's prompt) as its label, since no app name exists until delivery.
-
-#### Scenario: Ghost label before a name exists
-
-- **WHEN** a ghost tile renders for a pending-build record with no delivered app yet
-- **THEN** the tile's visible label is the record's working title, not a blank or placeholder name
-
 ### Requirement: Tapping a ghost tile opens the build or failure screen by state
-
-Tapping a ghost tile whose current store state is `building` SHALL reopen the build-progress screen, reattaching to the in-flight generation. Tapping a `failed` or `interrupted` ghost tile SHALL open the failure screen, hydrated from its current store view under prompt-flow's persisted/volatile failure rules. Pending app-link routing SHALL consume the same current records and open the same handler as tapping the tile; a volatile failed entry SHALL NOT route to stale building or missing behavior. Ghost and app-link failure opening SHALL honor persisted `journalUnavailable: true` after a fresh launcher instance or process restart; lifecycle still comes only from the current pending record.
+Tapping a tile being made (a `building` pending record, queued or not) SHALL open the making sheet on that run's own page, its Making page while it runs, reattaching to the in-flight generation with no new request; a `building` record with no run left in this process SHALL open nothing. Tapping a failed, stopped or needs-update attempt's tile (a `failed` or `interrupted` record) SHALL open the making sheet's Failure page, hydrated from its current store view under prompt-flow's persisted/volatile failure rules. The tile-menu rows that show an attempt (`system.md` §3.2) SHALL open the same pages. Pending app-link routing SHALL consume the same current records and open the same handler as tapping the tile; a volatile failed entry SHALL NOT route to stale building or missing behavior. Tile and app-link failure opening SHALL honor persisted `journalUnavailable: true` after a fresh launcher instance or process restart; lifecycle still comes only from the current pending record.
 
 #### Scenario: Tap a building ghost
 
-- **WHEN** the user taps a `building` ghost tile
-- **THEN** the build-progress screen opens, reflecting the still-running generation
+- **WHEN** the user taps a tile being made
+- **THEN** the making sheet opens on its Making page, reflecting the still-running generation
 
 #### Scenario: Tap a failed ghost
 
-- **WHEN** the user taps a `failed` ghost tile
-- **THEN** the failure screen opens, showing the verified persisted reason and diagnostics or the store-retained generic failure as applicable
+- **WHEN** the user taps a failed attempt's tile
+- **THEN** the Failure page opens, showing the verified persisted reason and diagnostics or the store-retained generic failure as applicable
 
 #### Scenario: Tap an interrupted ghost
 
-- **WHEN** the user taps an `interrupted` ghost tile
-- **THEN** the failure screen opens, showing that the attempt was interrupted
+- **WHEN** the user taps the tile of an attempt that was stopped or that Whim was closed under
+- **THEN** the Failure page opens, saying the attempt was stopped or that Whim closed during it
 
 #### Scenario: A link opens a retained failed attempt
 
 - **WHEN** an app link targets a current volatile failed entry whose raw state is building or whose raw key was partially removed during Discard
-- **THEN** the same generic failure and recovery actions open as for tapping its ghost, with no new generation request
+- **THEN** the same generic failure and recovery actions open as for tapping its tile, with no new generation request
 
 #### Scenario: Cold generic failure keeps its durable report guard
 
 - **WHEN** Home or an app link opens a persisted generic failed record marked journalUnavailable after restart while an old raw journal still exists
-- **THEN** the failed screen opens without that old report and the ghost remains failed; journal availability does not change its lifecycle state
-
-### Requirement: Long-press on a ghost tile offers Cancel or Dismiss, never both
-
-Long-pressing a `building` ghost tile SHALL offer a Cancel action. Long-pressing a `failed` or `interrupted` ghost tile SHALL offer a Dismiss action. A ghost tile's long-press menu MUST NOT offer both actions at once.
-
-#### Scenario: Long-press a building ghost
-
-- **WHEN** the user long-presses a `building` ghost tile
-- **THEN** the action sheet offers Cancel and does not offer Dismiss
-
-#### Scenario: Long-press a failed or interrupted ghost
-
-- **WHEN** the user long-presses a `failed` or `interrupted` ghost tile
-- **THEN** the action sheet offers Dismiss and does not offer Cancel
-
-### Requirement: No always-visible cancel affordance on the ghost tile face
-
-A ghost tile's resting visual state SHALL NOT show a cancel or dismiss control on its face. Destructive actions are reached only through long-press, never a persistent button on the tile itself.
-
-#### Scenario: A resting ghost tile has no visible cancel control
-
-- **WHEN** a `building` ghost tile is rendered in its resting state, not long-pressed
-- **THEN** no cancel or dismiss control is visible on the tile
+- **THEN** the Failure page opens without that old report and the tile stays failed; journal availability does not change its lifecycle state
 
 ### Requirement: Grid composition dedupes pending and installed entries by id, pending wins
-
-When composing the grid from pending-build records and installed-app records, an id present in both lists SHALL render exactly once, as the pending (ghost) tile, until the pending record is deleted.
+When composing the grid from pending-build records and installed-app records, an id present in both lists SHALL render exactly once, as the attempt's tile, until the pending record is deleted. A pending record that changes an installed app SHALL NOT be a tile of its own: it shows on that app's tile (see "Tiles show their state").
 
 #### Scenario: Transmute does not double-render
 
 - **WHEN** a pending-build record and its just-delivered installed-app record briefly coexist under the same id during a delivery sequence
 - **THEN** the grid shows exactly one tile for that id, not two
 
-### Requirement: Rebuilding an existing app marks its installed tile as building, spawning no ghost
-
-When the user re-prompts an existing installed app, the home grid SHALL show that app's existing installed tile in a `building` state for the duration of the generation. No separate ghost tile SHALL appear for the rebuild attempt.
-
-#### Scenario: Re-prompting an installed app greys its own tile
-
-- **WHEN** the user re-prompts an existing app and the generation starts
-- **THEN** that app's existing tile shows a `building` state, and the grid gains no additional tile
-
 ### Requirement: Opening an app shows an immediate busy affordance
-Tapping an app tile SHALL show a pressed/busy affordance on that tile immediately, persisting
-until the launcher switches to the mini-app screen or the open attempt fails. A tap MUST NOT be
-allowed to read as unregistered while the app's active bundle is being read.
+Tapping a ready app's tile SHALL show a busy affordance on that tile immediately (the tile dims and reads busy to assistive technology), persisting while the app's active bundle is read, until the app starts growing out of its tile or the open attempt fails. From then on "Opening an app grows out of its tile and waits for the realm's paint" governs the plate, the WebView's reveal and the "Opening…" label. A tap MUST NOT be allowed to read as unregistered while the app's active bundle is being read, and while the tile is busy a second tap SHALL start no second open and a long-press SHALL open no menu.
 
 #### Scenario: A slow open still looks alive
 - **WHEN** the user taps an app tile and reading its active bundle takes noticeably long
-- **THEN** the tile shows a busy affordance from the moment of the tap until the screen switches
+- **THEN** the tile shows a busy affordance from the moment of the tap until the app starts growing out of it
 
 #### Scenario: A failed open clears the busy affordance
 - **WHEN** opening an app fails
 - **THEN** the tile's busy affordance clears and the existing failure alert is shown
-
-### Requirement: Fork and delete show a busy state and cannot be re-triggered mid-operation
-The Fork and Delete actions SHALL each show a busy state on their triggering control while their
-underlying version-store operation runs, and SHALL be disabled against re-triggering for the same
-app until that operation completes (success or failure).
-
-#### Scenario: Fork disables re-triggering
-- **WHEN** the user chooses a fork option and the fork operation is still running
-- **THEN** the fork action is shown busy and cannot be invoked again for that app until it
-  completes
-
-#### Scenario: Delete disables re-triggering
-- **WHEN** the user confirms delete and the delete operation is still running
-- **THEN** the delete action is shown busy and cannot be invoked again for that app until it
-  completes
-
-### Requirement: The mini-app container shows a boot state before first paint
-The mini-app container SHALL render a branded, minimal boot state, rather than a blank WebView, between binding a realm and that realm's first paint (or a launch failure). The boot state SHALL be replaced by the running realm as soon as first paint is observed, and by the existing launch-failure state if the launch fails first.
-
-#### Scenario: A slow-loading bundle shows a boot state, not a blank screen
-- **WHEN** an app is opened and the realm has bound but has not yet reported first paint
-- **THEN** the container shows the boot state rather than an empty WebView
-
-#### Scenario: First paint replaces the boot state
-- **WHEN** the realm reports its first paint
-- **THEN** the boot state is no longer shown and the rendered mini-app is visible
-
-#### Scenario: A launch failure replaces the boot state, not the other way around
-- **WHEN** the realm's launch fails before any paint is observed
-- **THEN** the existing launch-failure state is shown, not the boot state
-
-### Requirement: The home screen shows a quiet connectivity indicator
-The home screen SHALL show a quiet status indicator reflecting the session's connectivity state (unknown, checking, online, offline) sourced from `server-connectivity`. The indicator SHALL NOT block or obscure the app grid, and MUST NOT appear while the state is unknown, which includes every moment before AI-data consent is granted.
-
-#### Scenario: Offline indicator appears without blocking the grid
-- **WHEN** the connectivity state is offline
-- **THEN** the home screen shows a quiet offline indicator, and the app grid remains fully visible and usable
-
-#### Scenario: No indicator before consent
-- **WHEN** AI-data consent has not been granted
-- **THEN** the home screen shows no connectivity indicator
-
-### Requirement: Settings groups its controls into titled sections, with the server address under Advanced
-The Settings screen SHALL present, in order:
-- an AI features section, holding the consent row (see `ai-data-consent`) and the "Send error details" switch (see `privacy-settings`);
-- the existing Highlighting section;
-- an About section, with the privacy policy, terms of use and support links and the "This phone's ID" row (see `privacy-settings`);
-- an Advanced section holding the own-server action and, once acknowledged, the server address.
-
-The Advanced section SHALL be collapsed by default behind one row, SHALL open with a tap, and SHALL render already open while an acknowledged override is saved. Whether it is open SHALL NOT be persisted. Every string SHALL come from the copy table, and every style from the shell palette and SDK tokens.
-
-#### Scenario: Advanced is in every build
-- **WHEN** a user of a store build opens Settings
-- **THEN** AI features, Highlighting, About and a collapsed Advanced section are visible
-
-#### Scenario: An override keeps Advanced open
-- **WHEN** a user with an acknowledged, saved override opens Settings
-- **THEN** the Advanced section is already open and shows the saved address with the responsibility caption
-
-#### Scenario: About carries the legal links and the ID
-- **WHEN** the user opens Settings
-- **THEN** the About section shows the privacy policy, terms of use and support links and this phone's ID
-
-### Requirement: Text input never hides the content or action it belongs to
-Every launcher screen and sheet with a text input SHALL keep the focused field and the screen's primary action visible above the keyboard, SHALL let the rest of the content scroll into view while the keyboard is up, and SHALL let the user dismiss the keyboard on both platforms without submitting.
-
-#### Scenario: Compose on iOS
-- **WHEN** a user types a description on the compose screen on iOS
-- **THEN** Continue stays visible above the keyboard and tapping Done, tapping empty space, or dragging the content dismisses the keyboard
-
-#### Scenario: Compose opens without the keyboard
-- **WHEN** the compose screen opens
-- **THEN** the description field is not focused and the suggestions are visible
-
-#### Scenario: Every input screen
-- **WHEN** the keyboard is up on plan editing, "Change it", the report sheet or any other input screen, on iOS or Android
-- **THEN** the focused field and the primary action are visible and the content above scrolls
 
 ### Requirement: The host tells the realm how much of the bottom the orb covers
 The host SHALL pass the orb's bottom footprint (its size, margin and the bottom safe-area inset) into the mini-app realm as a sanitized number between 0 and 200 through the theme channel, whenever it mounts a mini-app.
@@ -722,17 +329,6 @@ The host SHALL treat a trusted `render` error frame from the realm as fatal and 
 #### Scenario: Untrusted frame ignored
 - **WHEN** a `render` error frame arrives without nonce authentication
 - **THEN** the host does not act on it
-
-### Requirement: Orb and tiles render cleanly on both platforms
-The orb menu's dim layer SHALL cover the whole window including the status bar, the orb SHALL draw no extra shape on Android, each tile's watermark SHALL stay inside the tile's rounded corners without truncation, and the built-in example apps SHALL each have a distinct tile colour.
-
-#### Scenario: Orb menu open
-- **WHEN** the orb menu is open on iOS or Android
-- **THEN** the status bar area is dimmed like the rest of the window and no grey disc is drawn at the orb
-
-#### Scenario: Home grid of examples
-- **WHEN** the home grid shows only the built-in examples
-- **THEN** no two example tiles share a colour and no watermark is clipped or shows an ellipsis
 
 ### Requirement: Numbers in English copy use an English locale
 The launcher SHALL format counts inside English copy with an explicit English locale, independent of the phone's locale.
@@ -780,3 +376,338 @@ A launcher entry made from another entry SHALL show "Copy" as its tile label, wh
 #### Scenario: Make a copy
 - **WHEN** the person makes a copy of an app with Make a copy
 - **THEN** the new tile reads "Copy"
+
+### Requirement: Each version keeps its own manifest and schema
+Every version `StoreAccess` saves SHALL keep, beside its bundle, the app's host-held manifest and, when declared, its schema artifact. Using an older version, copying from a version, and a change landing on an older version (a rewind continuation) SHALL run the entry with that version's own manifest and schema, keeping the host's fields (app id, name, tile). The schema applied to saved data SHALL stay the accumulated union (additive-only evolution).
+
+#### Scenario: An older version runs with its own capabilities
+- **WHEN** version 1 of an app declares storage, version 2 declares none, and the user uses version 1
+- **THEN** version 1 runs with storage granted and reads the data saved before version 2
+
+#### Scenario: Going back runs no migration
+- **WHEN** the user uses a version whose schema lacks fields a newer one added
+- **THEN** no migration runs and nothing is deleted: those fields stay stored, unread, until a version that names them runs again
+
+#### Scenario: A copy runs the manifest of the version it was made from
+- **WHEN** the user makes a copy from version 1 while version 2 is current
+- **THEN** the copy runs with version 1's manifest and schema, and the original keeps version 2's
+
+#### Scenario: A version saved before manifests were kept (known limitation)
+- **WHEN** the user uses a version saved before versions kept their manifest
+- **THEN** it runs with the record the entry has now, and nothing errors; its own manifest is not known (accepted pre-release: no tester builds hold such versions)
+
+#### Scenario: A change from an older version never reuses a later version's field ids
+- **WHEN** a later version declared a field the saved data does not hold yet (it was never opened), and the user changes the app from an older version
+- **THEN** the change request sends that field as a declared field beside the store's own applied schema; the burned-ID floor counts it, a field reusing its id with another type is refused, while the older version's own schema, which never names it, is accepted
+
+#### Scenario: Reusing a never-opened version's field still needs a default
+- **WHEN** that change names the later version's field with its declared type and no default
+- **THEN** the change is refused before delivery with `missing_default`, as the store would refuse to open it, and is accepted with a default
+
+#### Scenario: A change describes the code it sends
+- **WHEN** the user uses version 1, goes back to Home, taps Undo on Home's toast (Home not yet refreshed) and then Change it, or taps "Ask Whim to fix it" on an app whose saved record lags the version it runs
+- **THEN** the change request carries the active version's source with that version's own manifest and schema, read together, never the caller's copy of the record
+
+#### Scenario: A change follows the active version
+- **WHEN** a running app still shows an older version because a change landed and was not reloaded, and the user asks for another change
+- **THEN** the change is made from the active version, the one delivery builds on, so the landed change is kept (a crash of that older version offers Reload instead of "Ask Whim to fix it", since its error is not the active version's)
+
+### Requirement: The shell follows the phone's appearance through one scheme hook
+
+The shell SHALL render in light or dark following the phone's appearance setting, with no in-app picker. Launcher components SHALL read colours only through one hook that returns the token module's light or dark roles for the current scheme; no component SHALL accept a palette or theme as a prop or define its own colour literal, and styles SHALL be built per scheme so a change of appearance re-renders the shell without a restart. The status bar and system bars SHALL follow the scheme.
+
+#### Scenario: Switching the phone to dark
+
+- **WHEN** the phone's appearance changes to dark while Whim is open on Home
+- **THEN** Home re-renders with the dark roles and light status-bar content, with no restart
+
+#### Scenario: No palette parameter
+
+- **WHEN** `src/host/**` is scanned
+- **THEN** no component takes a palette or theme prop and no colour hex literal appears outside the token module
+
+### Requirement: A launched app receives the theme for the phone's settings at that moment
+
+When launching an app the launcher SHALL deliver a theme built from the token module for the phone's current scheme, the app's assigned tint, the system text scale (as `fontScale`), Reduce Motion, Increase Contrast and the platform. Delivery without a theme SHALL remain valid and render SDK defaults.
+
+#### Scenario: Shell and app match
+
+- **WHEN** the phone is in dark mode with 135% text and the user opens an app whose tint is `ocean`
+- **THEN** the app renders with the dark roles, `ocean`'s dark value as `primary`, and `fontScale` 1.35
+
+#### Scenario: Settings changed while an app runs apply next time
+
+- **WHEN** the phone switches to light while an app is open
+- **THEN** the running app keeps its theme, and it opens in light the next time
+
+### Requirement: A tile is a tinted squircle with one glyph
+
+An installed app's tile SHALL be a superellipse (corner 22.5% of the side, one SVG path on both platforms) filled with its tint's light value in both schemes, carrying its glyph in white at half the tile size, with the anatomy of `system.md` §3.2: sizes 24, 40, 64 and 96 only; in dark mode a 1.5 px inner rim; with Increase Contrast a 1 px `border` outline; the name under it in two lines at most. No monogram SHALL be drawn. The glyph SHALL be hidden from screen readers and the tile's label SHALL be its name plus its state.
+
+#### Scenario: A tile renders its glyph
+
+- **WHEN** an app with tint `stone` and icon `coffee` is on the grid
+- **THEN** its tile is a `#52443F` squircle with a white `coffee` glyph and no letters
+
+### Requirement: The host assigns each app's tint
+
+At install the host SHALL resolve the app's ranked tints and SHALL assign the first one not used by any installed app, else the least used, ties broken by the model's order then table order. A copy SHALL take the tint farthest (ΔE2000 of light values) from its original among the least used. A record with no stored or declared tint SHALL display its app id's fallback tint, and a `tileColor` it carries SHALL be ignored. The assigned tint and resolved glyph SHALL be stored host-side and carried forward on every rebuild, and a rebuild SHALL keep them unless the person asks for a new look. Seeded examples SHALL each have a distinct tint, and no generated app SHALL be able to impersonate an example's tile by declaration alone.
+
+#### Scenario: A new app avoids used tints
+
+- **WHEN** installed apps use `stone` and `ocean` and a new app ranks `stone`, `rose`, `slate`
+- **THEN** the new app is assigned `rose`
+
+#### Scenario: A rebuild keeps the tile
+
+- **WHEN** an installed app is changed and the new build ranks a different tint
+- **THEN** the tile keeps its assigned tint and glyph
+
+#### Scenario: An old hex record shows its fallback tint
+
+- **WHEN** an installed record has `tileColor: '#0369a1'` and no tint
+- **THEN** its tile shows its app id's fallback tint, never that colour or a tint chosen from it
+
+### Requirement: Customize tile changes an app's tint and glyph
+
+The tile menu SHALL offer "Customize tile", opening a sheet with the ten tints and a searchable grid of the glyph set. A choice SHALL be stored host-side as an override that wins over the assigned tint and glyph and survives changes to the app.
+
+#### Scenario: An override survives a change
+
+- **WHEN** the user picks `violet` and `music` for an app and later changes the app
+- **THEN** the tile still shows `violet` and `music`
+
+### Requirement: Tiles show their state
+
+The grid SHALL render one tile per installed app and per applicable pending-build record, with the states of `system.md` §3.2: being made (`ember-soft` with the ember following the stream, "Making…"), queued ("Waiting…"), failed (ember out, badge, "Didn't work"), stopped ("Stopped"), needs update ("Needs update"), changing (the app's tile with an ember ring, "Changing…"), change failed (badge, "Change didn't work"), copy ("Copy") and example ("Example"). A tile being made or changed whose stream sent no progress event for 40 s SHALL read "No progress" in place of "Making…" or "Changing…", on its state line and in its accessibility label, besides its stuck light. A state line SHALL wrap onto as many lines as it needs rather than be cut. A tile being made SHALL NOT launch an app. Its name SHALL be the plan's proposed name, else the description's first three words without a leading article. Failed and stopped attempts older than a day SHALL collapse into one tile at the end of the grid.
+
+#### Scenario: A change in flight shows on the app's own tile
+
+- **WHEN** the user changes an installed app and returns to Home
+- **THEN** the app's own tile shows the ember ring and "Changing…", and no separate tile appears
+
+#### Scenario: A stalled make says so in words
+
+- **WHEN** a make's stream sends no progress event for 40 s while Home shows its tile
+- **THEN** the tile's ember is stuck, its state line reads "No progress" and a screen reader reads "Pour Timer, no progress"
+
+#### Scenario: Old attempts collapse
+
+- **WHEN** two failed attempts are more than a day old
+- **THEN** one tile reading "2 didn't work" sits at the end of the grid and opens a list of them
+
+### Requirement: Tile menus follow the tile's state
+
+Long-pressing a tile for 350 ms SHALL open a context menu headed by the app's full name, with the rows of `system.md` §3.2 for its state (a ready app: Open, Change it, History, Make a copy, Customize tile, Share link, then Delete). No tile SHALL show a cancel or discard control on its face. Each row SHALL be its own accessibility element, and the menu SHALL be announced as a menu. Share link SHALL open the platform share sheet.
+
+#### Scenario: VoiceOver reaches every row
+
+- **WHEN** a VoiceOver user opens a tile's menu
+- **THEN** each row is focusable and activatable on its own
+
+#### Scenario: A tile being made offers Stop
+
+- **WHEN** the user long-presses a tile being made
+- **THEN** the menu offers Details and Stop, and nothing else
+
+### Requirement: The home grid orders and lays out apps for every text size
+
+Home SHALL show "Your apps" as its title, a settings icon button, and the grid in four columns of 64 pt tiles; three columns from 135% text; a list of rows with 40 pt tiles from 200%. Tiles being made SHALL come first, then failed and stopped attempts from the last day, then apps, each group newest first; an app SHALL keep its place when it changes. A search field SHALL appear under the title from 13 apps. The loading skeleton SHALL draw the title, the composer and one cell per known app in the real geometry. With no apps, Home SHALL show the still ember, "Make your first app" and three idea chips.
+
+#### Scenario: A finished app lands where people look
+
+- **WHEN** an app finishes while two others are still being made
+- **THEN** the finished app's tile appears first among the apps, after the tiles being made
+
+### Requirement: The home screen shows a live offline notice
+
+When the session's connectivity state is offline, Home SHALL show the neutral notice "Offline. Your apps still work; making new ones needs a connection." under the title, and SHALL remove it as soon as connectivity returns, without a relaunch. It SHALL NOT show while the state is unknown, including before AI-data consent.
+
+#### Scenario: Going offline and back
+
+- **WHEN** the phone loses its connection and regains it while Home is open
+- **THEN** the notice appears and then disappears with no relaunch
+
+### Requirement: Settings puts common settings first and diagnostics under Advanced
+
+Settings SHALL show, in order: "AI features" with the subtitle "Review what's sent", "Language", About (Privacy policy, Terms of use, Support, Version) and "Advanced". Advanced SHALL be a pushed screen with "Send error details" (its explanation as the group footer), This phone (the phone ID and "Make a new ID", per `privacy-settings`), and Server: "Whim's server" and "Your own server" as two selectable rows. Choosing Whim's server SHALL keep the saved own-server address. Typing an address SHALL send at most one health probe per typing pause. There SHALL be no Highlighting and no Reduce Motion switch.
+
+#### Scenario: Switching back keeps the address
+
+- **WHEN** the user switches from their own server to Whim's server and back
+- **THEN** the address they entered is still there and nothing was confirmed or erased
+
+#### Scenario: One probe per pause
+
+- **WHEN** the user types an address and pauses
+- **THEN** exactly one health probe is sent for that pause
+
+### Requirement: The orb is an opaque, draggable disc that opens the Whim sheet
+
+Over a running app the shell SHALL show the orb of `system.md` §7.1: an opaque 44 pt `raised` disc with the ember and a 52 pt target, resting bottom-trailing or bottom-leading inside the `chromeInsetBottom` the host reports, draggable between the two corners by momentum projection and remembered per app. It SHALL hide while the keyboard is up, on the host's own keyboard signal, and SHALL never move or hide on the app's request. It SHALL show an `ember` dot when a new version is ready or an app finished, and a `danger` dot when a change failed. Its accessibility label SHALL be "Whim menu" plus its state, with the action "Move to the other corner". No dim layer or extra shape SHALL be drawn around it.
+
+#### Scenario: Both corners sit inside the inset
+
+- **WHEN** the orb rests in either corner
+- **THEN** it lies entirely within the bottom inset that SDK `Screen` and `Modal`'s action row pad by
+
+#### Scenario: The keyboard hides the orb
+
+- **WHEN** an input inside the app raises the keyboard
+- **THEN** the orb fades out, and fades back when the keyboard falls
+
+### Requirement: The Whim sheet is a running app's one menu
+
+Tapping the orb SHALL open the Whim sheet over the running app: the app's tile, name and version line, a Reload row while a newer version waits, a "What should change?" field, then History, Report a problem and Back to your apps, each its own accessibility element. Sending SHALL grow the sheet into the plan page. Report SHALL push inside the sheet. History SHALL push on the native stack; its Back and system back SHALL reopen the app with the sheet closed, or Home if it cannot reopen.
+
+#### Scenario: Leaving through the sheet
+
+- **WHEN** the user taps Back to your apps
+- **THEN** the app closes into its tile on Home
+
+#### Scenario: Back from History reopens the app
+
+- **WHEN** the user opens History from the Whim sheet and presses Back, or system back
+- **THEN** the app is running again with the sheet closed
+
+#### Scenario: VoiceOver reads every row
+
+- **WHEN** VoiceOver focuses the open Whim sheet
+- **THEN** each row is reachable and announced on its own
+
+### Requirement: Changing an app keeps it running and offers Reload
+
+While a change to an open app is being made the app SHALL stay open on its current version and the orb's ember SHALL follow the stream. When the change lands a toast "<name> changed" SHALL offer Reload, which recreates the realm on the new version; nothing SHALL reload by itself. If the toast is missed, the orb's `ember` dot and the Whim sheet's "New version ready · Reload" row SHALL stay until the person reloads or reopens the app. A failed change SHALL show a `danger` dot and a toast "The change didn't work" with See why.
+
+#### Scenario: Typing is never lost to a change
+
+- **WHEN** a change lands while the person is typing in the app
+- **THEN** the app keeps running unchanged until they tap Reload
+
+### Requirement: Opening an app grows out of its tile and waits for the realm's paint
+
+Opening a ready tile SHALL grow a `bg` container from the tile to the screen while the tint stays a tile-sized plate with its glyph, and the WebView SHALL stay hidden until both the opening signal for that launch has arrived (the generation-stamped `paint` of `sandbox-rendering`, or the 600 ms cap) and the growing container covers the screen, then fade in. "Opening…" SHALL appear under the plate only after 1.5 s. A launch failure SHALL replace the opening state. Closing SHALL shrink the app back into its tile. One WebView SHALL be kept warm in a pool, and opening SHALL NOT regress tap-to-first-paint.
+
+#### Scenario: A stale paint does not release the opening
+
+- **WHEN** a `paint` from a previous launch reaches the host after a new launch has bound
+- **THEN** the new launch keeps its WebView hidden until its own `paint` or the 600 ms cap
+
+#### Scenario: Dark mode never flashes colour
+
+- **WHEN** an app opens in dark mode
+- **THEN** no frame shows the tint across the full screen
+
+### Requirement: A crashed app keeps the orb and offers a way forward
+
+When a running app fails, the container SHALL show "<name> ran into a problem", "It stopped and can't carry on right now. Your saved data is safe.", Reload, "Ask Whim to fix it" (opening the change field prefilled with "Fix the error that stops this app." and the error text attached) and Back to your apps, and the orb SHALL stay. When the crashed launch is behind its app's current version (a change landed and was not reloaded, or an Undo moved the app after it opened), the body SHALL say a newer version is ready and the screen SHALL offer only Reload and Back to your apps: the error belongs to code that is no longer current, and a change is made from the current version, so the fix is offered once Reload runs that version (decision #82).
+
+#### Scenario: A crash is a change request
+
+- **WHEN** the user taps "Ask Whim to fix it"
+- **THEN** the Whim sheet opens with the prefilled request and the error attached, and the app is not closed
+
+#### Scenario: A crash behind the current version leads with Reload
+
+- **WHEN** a change of the app landed while it ran, was not reloaded, and the app then crashes
+- **THEN** the crash screen says a newer version is ready and offers Reload and Back to your apps, without "Ask Whim to fix it", and after Reload a crash of the new version offers "Ask Whim to fix it" again
+
+### Requirement: The shell plays haptics from a fixed map
+
+The shell SHALL play haptics only for the moments of `system.md` §5 (selection moves, switch toggles, long-press menus, a drag crossing its commit point, handing work to Whim, ready, failed, delete and discard, restore and copy), through the `WhimHaptics` module on the frame of the visual change, and SHALL play none on plain taps, navigation, scrolling, typing, opening an app or a tapped sheet. RN `Vibration` SHALL NOT be imported anywhere in `src/`. On iOS a flip of the native switch itself relies on the system haptic and plays none of ours, while a press on the switch's row plays ours; on Android both play ours.
+
+#### Scenario: Make it confirms with a haptic
+
+- **WHEN** the user taps Make it
+- **THEN** one medium impact (iOS) or `CONFIRM` (Android) plays
+
+#### Scenario: A native switch on iOS plays no Whim haptic
+
+- **WHEN** the user flips a settings switch on iOS, and then presses the same switch's row
+- **THEN** the flip plays no Whim haptic and the row press plays toggle-on or toggle-off; on Android both play ours
+
+#### Scenario: Opening an app is silent
+
+- **WHEN** the user taps a ready tile
+- **THEN** no haptic plays
+
+### Requirement: Shell prose renders through one Whim Syntax renderer with simplified channels
+
+All machine-written prose on the shell SHALL render through one shared renderer with six classes on one channel each: `app` (the app's tint text colour), `chg` (weight 600), `yours` (italic in quotes, `text`), `measure` (tabular figures), `state` (only "ready" in `positive-text` and "failed" in `danger-text`) and `hedge` (`text-2`). The device SHALL lex `app`, `measure`, `yours` and `state` deterministically; `chg` and `hedge` SHALL come only from the producer's marks. The renderer SHALL enforce at most four system marks per sentence (`yours` exempt), one colour per sentence, no marks on labels, buttons, headings or a field being typed, and every string SHALL read unambiguously rendered flat.
+
+#### Scenario: The cap is enforced at render time
+
+- **WHEN** a producer marks five spans in one sentence
+- **THEN** the renderer shows at most four marks
+
+#### Scenario: No retired faces
+
+- **WHEN** a `measure` or `yours` span renders
+- **THEN** it uses the system font, never a mono or serif face
+
+### Requirement: Shell copy has one name per concept and controls speak as the person
+
+Shell copy SHALL use the glossary of `system.md` §8 (app, make, change, History, version, "Use this version", Stop, "Decide for me", "Make a copy", Your apps, Discard, Delete) and SHALL NOT use the retired words (mini-app, build, generate, fork, snapshot, restore, revert, "Prompt again"). Control labels SHALL speak as the person and SHALL NOT carry Whim's first person; Whim's "I" SHALL appear only in the maker's prose. Numbers SHALL be formatted with the app's language, never the machine locale. A fast-gate copy lint SHALL fail on a retired word or a first-person control label.
+
+#### Scenario: A first-person button fails the lint
+
+- **WHEN** a control label "I'll decide" is added to the copy table
+- **THEN** the copy lint fails, naming the key
+
+### Requirement: Shell motion runs on Reanimated with the named springs
+
+Shell motion SHALL use Reanimated with the named springs and timings of the token module and the moments of `system.md` §4.4; RN `Animated`, `LayoutAnimation`, `useNativeDriver` and literal spring configs SHALL NOT appear in `src/host/`, enforced by a static check. Every animation SHALL start from the presentation value and SHALL NOT block input, except a sheet's native `Modal` while its exit is visible (#224). With the OS Reduce Motion setting on, every moment SHALL show its reduced form.
+
+#### Scenario: A sheet's visible exit is the one exception
+
+- **WHEN** the user taps while a closing sheet is still visible (the M5 and M6 morphs across its boundary included): up to about 0.66 s after the tap that closed a plain sheet, about 1.02 s for an anchored close
+- **THEN** the sheet's native window takes the tap and nothing under it responds; this lasts until GitHub issue #224 moves sheets off the native presentation
+
+#### Scenario: A tap right after a sheet is gone reaches what is under it
+
+- **WHEN** a sheet closes (tapped close, drag release or Reduce Motion fade) and the user taps the screen under it on the first frame the sheet is seen to be gone
+- **THEN** the tap reaches what is under it: the sheet's window was dismissed on the frame the card came within half a point of off-screen (or faded past its last opacity step), not at the spring's later formal end
+
+#### Scenario: A literal spring fails the check
+
+- **WHEN** a component passes `{ stiffness: 300, damping: 20 }` to `withSpring`
+- **THEN** the static check fails, naming the file
+
+#### Scenario: Reduce Motion replaces a morph
+
+- **WHEN** Reduce Motion is on and the user opens an app
+- **THEN** the app cross-fades in over 160 ms with no container growth
+
+### Requirement: First run seeds the example apps and a create affordance
+
+On first run the launcher SHALL seed the built-in examples (tip splitter, water counter and style gallery) as installed, example-labeled records — full citizens: launchable, copyable, deletable, with history from their first install — and Home SHALL carry the composer bar `Make an app…` as its create affordance. Seeding MUST be idempotent across restarts and MUST NOT resurrect deleted examples.
+
+#### Scenario: A fresh install is not empty
+
+- **WHEN** the host runs for the first time
+- **THEN** the grid shows the examples, each with the "Example" state line, plus the composer bar, and each example launches and runs on-device
+
+#### Scenario: Deleted examples stay deleted
+
+- **WHEN** the user deletes a seeded example, lets the Undo window pass and restarts the host
+- **THEN** the example does not reappear
+
+### Requirement: Text input keeps its field and action above the keyboard
+
+Every launcher screen and sheet page with a text input SHALL keep the focused field and its primary action visible above the keyboard (at the largest text sizes the action may scroll with the content), SHALL let the rest scroll into view while the keyboard is up, and SHALL let the user put the keyboard away on both platforms without submitting. Describe SHALL open focused, keyboard up (`prompt-flow`).
+
+#### Scenario: Describe on iOS
+
+- **WHEN** a user types a description on the Describe page on iOS
+- **THEN** Continue stays visible above the keyboard, and tapping Done, tapping empty space or dragging the content puts the keyboard away
+
+#### Scenario: Describe opens with its field focused
+
+- **WHEN** the making sheet opens on the Describe page for a new app
+- **THEN** the field is focused with the keyboard up, and the idea chips show once the keyboard is down while the field is empty
+
+#### Scenario: Every input screen
+
+- **WHEN** the keyboard is up on the Plan page's row editing, the Whim sheet's change field, the report page or any other input screen, on iOS or Android
+- **THEN** the focused field and the primary action are visible and the content above scrolls
+
