@@ -153,15 +153,15 @@ Constraints for every task:
 
 ## 8. Attended production rollout (not dispatched)
 
-- [ ] 8.1 Pre-deploy, read only, against production with the owner's credentials:
+- [x] 8.1 Pre-deploy, read only, against production with the owner's credentials: — DONE 2026-10-31: 5 rows; dry run 5 planned / 0 migrated / 5 total (session scratch).
   - count the rows with `whim-waitlist export | tail -n +2 | wc -l` and expect 5;
   - run `whim-admin migrate-waitlist` without `--apply` and save its output to the session scratchpad, never `~/.config/whim/`; expect 5 planned.
-- [ ] 8.2 Full Cloud Run deploy from the merged `main` commit (server and pages). There is no env, DNS or resource change.
-- [ ] 8.3 Smoke, trap posts only, so nothing is stored:
+- [x] 8.2 Full Cloud Run deploy from the merged `main` commit (server and pages). There is no env, DNS or resource change. — DONE 2026-10-31 from main 349032c1 (whim-server-00005, whim-site at 349032c1; smoke incl. live /v1/clarify passed). The fingerprint secret was created first (ruling 19); first run stopped at the monitoring step (gcloud beta not installed), re-run completed.
+- [x] 8.3 Smoke, trap posts only, so nothing is stored: — DONE: evil Origin 303 /beta/retry; pages Origin and no Origin 303 /beta/thanks; Referrer-Policy strict-origin-when-cross-origin; beta-2 notice (news box 1); Cloud Logging origin + trap, no address.
   - `Origin: https://evil.example` → 303 retry;
   - the pages origin → 303 thanks;
   - no `Origin` → 303 thanks.
 
   Also check that `/beta` carries `Referrer-Policy: strict-origin-when-cross-origin` and the `beta-2` wording, and that Cloud Logging shows outcomes `origin` and `trap` with no address.
-- [ ] 8.4 Run the dry run again (expect 5 planned, or "already migrated" above 0 only when someone re-signed in the window), then `--apply`, then a dry run again (expect 0 planned). Diff the preserved fields per fingerprint prefix against 8.1's output: all equal. Count the rows again (5 plus any new signup), and list any row whose `updatedAt` falls inside the deploy window.
-- [ ] 8.5 Comment on and close #109–#114 with the commit and the verification. File `ai-proposed` follow-up issues for double opt-in, dropping the `updatesOptOut` rollback shadow, and a keyed fingerprint.
+- [x] 8.4 Run the dry run again (expect 5 planned, or "already migrated" above 0 only when someone re-signed in the window), then `--apply`, then a dry run again (expect 0 planned). Diff the preserved fields per fingerprint prefix against 8.1's output: all equal. Count the rows again (5 plus any new signup), and list any row whose `updatedAt` falls inside the deploy window. — DONE: dry run 5 planned → --apply verified 5 rows → dry run 0 planned / 5 already migrated; diff vs 8.1 empty; no row written in the deploy window; 5 rows.
+- [x] 8.5 Comment on and close #109–#114 with the commit and the verification. File `ai-proposed` follow-up issues for double opt-in, dropping the `updatesOptOut` rollback shadow, and a keyed fingerprint. — DONE: #109–#114 commented with the verification, #110–#114 closed (#109 already closed); filed #267 (double opt-in), #268 (drop the updatesOptOut shadow); the keyed-fingerprint follow-up is moot (shipped as HMAC under whim-waitlist-fingerprint-key).
