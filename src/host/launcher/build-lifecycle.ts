@@ -122,12 +122,12 @@ export function startPendingBuild(pending: PendingBuildStore, start: AttemptStar
  * every other event writes nothing at all.
  *
  * `at` is the arrival time (the caller's single clock reading for the event). Returns the signals
- * the next event should be folded into. `lastFrameAt` moves for EVERY event this function sees
- * (build-liveness B1: "ANY frame ... starts liveness") — a `diagnostic`/`usage`/terminal event
- * still proves the connection is alive even though it journals nothing and moves no counter, so
+ * the next event should be folded into. `lastProgressAt` moves for EVERY event this function sees
+ * (beta-2-spec-fixes D2: every `GenerationEvent` is progress) — a `diagnostic`/`usage`/terminal
+ * event still proves the make is moving even though it journals nothing and moves no counter, so
  * this never returns the exact same object by reference the way the pre-liveness version did.
- * (The keepalive COMMENT frame is a separate case entirely — `prompt-flow.ts#withKeepalive` — it
- * never reaches this function at all, since it is not a `GenerationEvent`.)
+ * (The keepalive COMMENT frame is not progress and never reaches this function: it is not a
+ * `GenerationEvent`, and the SSE parser drops it, `generation-client.ts#framesIn`.)
  *
  * The token's and thinking delta's TEXT are never carried out of here: `accumulateRunAggregates`
  * counts them and discards the text, which is what keeps the counters inside the no-internals
@@ -147,14 +147,14 @@ export function journalStreamEvent(
     // 'start'|'done'`), so journaling every stage event would double the timeline's spine and give
     // each stage a second, bogus duration measured across the gap to the next stage. `start` is
     // also the edge the shell's own repair tally counts, so the timeline's repair-attempt count and
-    // the failure screen's can never disagree. A `done` edge is still LIVENESS — it moves the
-    // any-frame clock, it just writes nothing.
+    // the failure screen's can never disagree. A `done` edge is still PROGRESS — it moves the
+    // progress clock, it just writes nothing.
     // A `start` edge also begins the model turn a later `restart` returns to (beta-1 D10).
     if (event.status === 'start') {
       journal.appendStage(launcherId, event.stage);
-      return { ...withTurnStart(signals), lastFrameAt: at };
+      return { ...withTurnStart(signals), lastProgressAt: at };
     }
-    return { ...signals, lastFrameAt: at };
+    return { ...signals, lastProgressAt: at };
   }
   if (event.type === 'restart') {
     // The turn's tokens are void: its counts go back to where it began. No journal entry — the
@@ -164,20 +164,20 @@ export function journalStreamEvent(
   if (event.type === 'token') {
     const aggregates = accumulateRunAggregates(signals.aggregates, event);
     journal.appendAggregate(launcherId, aggregates);
-    return { ...signals, aggregates, lastTokenAt: at, lastFrameAt: at };
+    return { ...signals, aggregates, lastTokenAt: at, lastProgressAt: at };
   }
   if (event.type === 'thinking') {
     // Same throttle, same entry kind as a token's — the journal's aggregate entry carries
     // `thinkingChars` ALONGSIDE `chars`/`tokens` (build-liveness B4), never a second entry kind.
     const aggregates = accumulateRunAggregates(signals.aggregates, event);
     journal.appendAggregate(launcherId, aggregates);
-    return { ...signals, aggregates, lastThinkingAt: at, lastFrameAt: at };
+    return { ...signals, aggregates, lastThinkingAt: at, lastProgressAt: at };
   }
   // `queued` (the build waiting its turn, beta-1 D8), `diagnostic`, `usage`, and the terminal
-  // events (handled by the caller, not here) still count as liveness — the stream is plainly still
-  // alive if the server just sent one of these — but none of them writes a journal entry or moves
-  // a counter.
-  return { ...signals, lastFrameAt: at };
+  // events (handled by the caller, not here) still count as progress — the make has plainly moved
+  // if the server just sent one of these — but none of them writes a journal entry or moves a
+  // counter.
+  return { ...signals, lastProgressAt: at };
 }
 
 /**

@@ -16,7 +16,7 @@ import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { TextArea } from '../../ui/TextField';
 import { AmbientLight, Ember } from '../../ui/Ember';
 import { TilePlate } from '../../ui/AppTile';
-import { COPY } from '../copy';
+import { COPY, makingStallLine } from '../copy';
 import { StoreAccess } from '../store-access';
 import { RunJournalStore } from '../run-journal';
 import { AppIndex, type InstalledApp } from '../app-index';
@@ -74,6 +74,19 @@ export function streamingServer(streams: ReturnType<typeof sseStream>[]) {
 async function moreThanAFrame(): Promise<void> {
   const later = Date.now() + 30;
   await waitFor(() => Date.now() >= later, 'more than a frame to pass');
+}
+
+/** The real `Date.now`, taken before any test holds the clock. */
+const REAL_DATE_NOW = Date.now;
+
+/** `waitFor` with its deadline on the real clock, for a test that holds `Date.now`: a regression
+ *  fails by name instead of hanging. */
+async function waitHeld(ready: () => boolean, what: string): Promise<void> {
+  const until = REAL_DATE_NOW() + 5_000;
+  while (!ready()) {
+    if (REAL_DATE_NOW() > until) throw new Error(`timed out waiting for ${what}`);
+    await TestRenderer.act(async () => { await new Promise<void>((resolve) => setImmediate(resolve)); });
+  }
 }
 
 /** A promise the test resolves by hand. */
@@ -489,9 +502,9 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
         streams[0].push({ type: 'diagnostic', diagnostic: { kind: 'type', hint: 'Use a number.' } });
         await settle();
         await moreThanAFrame();
-        const keptAt = Date.now();
         streams[0].keepalive();
-        await waitFor(() => (tree.root.findByType(MakingPage).props.signals?.lastFrameAt ?? 0) >= keptAt, 'the keepalive to move the run’s frame clock');
+        await settle();
+        await moreThanAFrame();
         h.eq(kicks, 0, 'a stage, a diagnostic or a keepalive is no arrival');
         streams[0].push({ type: 'token', text: 'const a = 1;' });
         await waitFor(() => kicks === 1, 'a token to kick the pulse');
@@ -508,6 +521,66 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       } finally {
         stop();
         streams[0].end();
+      }
+    });
+  });
+
+  await h.test('honest light: keepalives every 15 s with no event for 41 s show the Making page’s stall line and stick the Home tile; the line counts up from the last event, a keepalive alone clears neither, the next event clears both', async () => {
+    // Keepalives are liveness, not progress (beta-2-spec-fixes D2, #188): they keep the stream
+    // open but never reset the stall clock. The clock is held and moved only by the test, so the
+    // line's seconds are exact; the shell's own tick redraws. The waits here measure their
+    // deadline on the real clock, so a regression fails by name instead of hanging.
+    const streams: ReturnType<typeof sseStream>[] = [];
+    const realNow = REAL_DATE_NOW;
+    let clockBase = 0;
+    let skew = 0;
+    const keepaliveAt = async (at: number) => {
+      skew = at;
+      streams[0].keepalive();
+      await settle();
+    };
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
+      try {
+        await startBuild(tree, 'A tea timer');
+        clockBase = realNow();
+        Date.now = () => clockBase + skew;
+        const page = () => tree.root.findByType(MakingPage);
+        const anyStall = () => textOf(tree.root).includes('No progress for');
+        const stallReads = (seconds: number) => textOf(tree.root).includes(makingStallLine(seconds));
+        await keepaliveAt(0);
+        streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
+        await waitHeld(() => page().props.stage === 'generate', 'the stage');
+        for (const at of [15_000, 30_000]) await keepaliveAt(at);
+        await waitHeld(() => page().props.now === clockBase + 30_000, 'the page to redraw at 30 s');
+        h.ok(!anyStall(), 'keepalives with no event for 30 s are no stall yet');
+        await keepaliveAt(41_000);
+        await waitHeld(() => stallReads(41), 'the stall line to read 41 s after 41 s of keepalives and no event');
+        h.eq(page().findByType(Ember).props.state, 'stuck', 'the Making page shows the stall line with its ember stuck');
+        await keepaliveAt(50_000);
+        await waitHeld(() => page().props.now === clockBase + 50_000, 'the page to redraw after the keepalive');
+        h.ok(stallReads(50), 'a keepalive alone does not clear the stall line, which still counts from the last event');
+        skew = 90_000;
+        await waitHeld(() => page().props.now === clockBase + 90_000, 'the page’s tick to redraw at 90 s');
+        h.ok(stallReads(90), 'at 90 s with no event the line reads 90 s, counting up');
+        h.ok(!stallReads(41), 'and no longer the 41 s it first said');
+        streams[0].push({ type: 'stage', stage: 'check', status: 'start' });
+        await waitHeld(() => !anyStall(), 'the next event to clear the stall line');
+        h.ok(page().findByType(Ember).props.state !== 'stuck', 'the next event clears the stall line and unsticks the ember');
+
+        await press(button(tree, COPY.sheetClose));
+        const tileStuck = () => tree.root.findByType(TilePlate).props.stuck === true;
+        // Home samples its lights about once a second, so the tile catches up with that event.
+        await waitHeld(() => onHome(tree) && !tileStuck(), 'the tile to burn on Home after the event');
+        h.ok(!tileStuck(), 'on Home the run’s tile burns');
+        for (const at of [105_000, 120_000, 131_000]) await keepaliveAt(at);
+        await waitHeld(tileStuck, 'the Home tile to go stuck on keepalives alone');
+        h.ok(tileStuck(), 'the Home tile goes stuck on the same input');
+        streams[0].push({ type: 'stage', stage: 'check', status: 'done' });
+        await waitHeld(() => !tileStuck(), 'the next event to light the tile again');
+        h.ok(!tileStuck(), 'and burns again at the next event');
+      } finally {
+        Date.now = realNow;
+        streams[0]?.end();
       }
     });
   });

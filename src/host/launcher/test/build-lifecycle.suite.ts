@@ -31,7 +31,7 @@ import {
   startPendingBuild,
 } from '../build-lifecycle';
 import { RunJournalStore } from '../run-journal';
-import { EMPTY_RUN_AGGREGATES, STALL_MS, livenessOf, withKeepalive, withStreamEvent } from '../prompt-flow';
+import { EMPTY_RUN_AGGREGATES, STALL_MS, livenessOf, withStreamEvent } from '../prompt-flow';
 import { sampleLive } from '../home-live';
 import type { MakingScreen, RunSignals } from '../prompt-flow';
 import { makingProgress } from '../making-progress';
@@ -471,7 +471,7 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     const journal = new RunJournalStore(new MapKVBackend());
     journal.create('run-1');
     const run = {
-      signals: { startedAt: 0, aggregates: EMPTY_RUN_AGGREGATES, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: 0 } as RunSignals,
+      signals: { startedAt: 0, aggregates: EMPTY_RUN_AGGREGATES, lastTokenAt: null, lastThinkingAt: null, lastProgressAt: 0 } as RunSignals,
       page: { kind: 'making', text: 'A tea timer', rewritten: 'A tea timer', answers: {}, questions: [], stage: null, delivering: false, stepSince: 0 } as MakingScreen,
     };
     const fold = (event: GenerationEvent, at: number) => {
@@ -493,23 +493,23 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(at(157_000).line, COPY.makingTimeUsual, 'its turn came 7 s ago: the usual line, although it joined the line 156 s ago');
     fold({ type: 'token', text: 'const app = 1;' }, 229_000);
     h.eq(at(230_000).line, COPY.makingTimeLonger, 'and 80 s into its turn it is taking longer than most, not slow');
-    h.eq(at(270_000).line, makingStallLine(STALL_MS / 1000), 'while 41 s with no frame at all is a stall, whatever the time');
+    h.eq(at(270_000).line, makingStallLine(41), 'while 41 s with no event at all is a stall, whatever the time, and the line says the 41 s');
   });
 
-  await h.test('the Making page’s line: a run in line says its place, not a stall, however long no frame has come', () => {
+  await h.test('the Making page’s line: a run in line says its place, not a stall, however long no event has come', () => {
     const queued = makingRun();
     queued.fold({ type: 'queued', position: 2 }, 1_000);
     const silent = 1_000 + STALL_MS + 20_000;
     h.eq([queued.at(silent).line, queued.at(silent).ember.state], ['1 ahead of you.', 'stuck'], 'the place in line, the ember still and dim');
     const started = makingRun();
     started.fold({ type: 'stage', stage: 'plan', status: 'start' }, 1_000);
-    h.eq([started.at(silent).line, started.at(silent).ember.state], [makingStallLine(STALL_MS / 1000), 'stuck'], 'where the same silence out of line is a stall');
+    h.eq([started.at(silent).line, started.at(silent).ember.state], [makingStallLine(60), 'stuck'], 'where the same 60 s of silence out of line is a stall that says so');
   });
 
-  await h.test('honest light: a Home tile’s light is stuck exactly when its Making page’s ember is — no bytes for the stall time, a keepalive counting as bytes — and live again once bytes resume', () => {
+  await h.test('honest light: a Home tile’s light is stuck exactly when its Making page’s ember is — no progress event for the stall time, any event counting as progress — and live again once events resume', () => {
     const journal = new RunJournalStore(new MapKVBackend());
     journal.create('run-1');
-    let signals: RunSignals = { startedAt: 0, aggregates: EMPTY_RUN_AGGREGATES, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: 0 };
+    let signals: RunSignals = { startedAt: 0, aggregates: EMPTY_RUN_AGGREGATES, lastTokenAt: null, lastThinkingAt: null, lastProgressAt: 0 };
     let page = { kind: 'making', text: 'A tea timer', rewritten: 'A tea timer', answers: {}, questions: [], stage: null, delivering: false, stepSince: 0 } as MakingScreen;
     const fold = (event: GenerationEvent, at: number) => {
       signals = journalStreamEvent(journal, 'run-1', signals, event, at);
@@ -522,8 +522,8 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     fold({ type: 'token', text: 'const a = 1;' }, 2_000);
     h.eq(both(2_000 + STALL_MS), [false, false], 'at the stall time to the millisecond, both still burn');
     h.eq(both(2_000 + STALL_MS + 1), [true, true], 'a millisecond past it, both are stuck');
-    signals = withKeepalive(signals, 50_000);
-    h.eq(both(50_000 + STALL_MS), [false, false], 'a keepalive is bytes: both burn again, the page and the tile together');
+    fold({ type: 'usage', usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 } }, 50_000);
+    h.eq(both(50_000 + STALL_MS), [false, false], 'a usage event is progress: both burn again, the page and the tile together');
     h.eq(both(50_000 + STALL_MS + 1), [true, true], 'and the stall counts from it');
     fold({ type: 'thinking', chars: 120 }, 100_000);
     h.eq(both(100_001), [false, false], 'a reasoning delta resumes both');
@@ -605,7 +605,7 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
       aggregates: EMPTY_RUN_AGGREGATES,
       lastTokenAt: null,
       lastThinkingAt: null,
-      lastFrameAt: startedAt,
+      lastProgressAt: startedAt,
     };
     return { journal, signals, at: () => clock, tick: (ms: number) => (clock += ms) };
   }
@@ -621,7 +621,7 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(entries.length, 3, 'one entry per transition, none throttled away');
     h.eq(entries.map((e) => e.kind), ['stage', 'stage', 'stage'], 'each is a stage entry');
     h.eq(entries.map((e) => e.stage), ['plan', 'generate', 'check'], 'in arrival order, in the WIRE vocabulary');
-    h.eq(signals.lastFrameAt, f.at(), 'and the any-frame clock follows the last one');
+    h.eq(signals.lastProgressAt, f.at(), 'and the progress clock follows the last one');
   });
 
   await h.test('journal: a realistic start/done stream journals ONE entry per stage, on its start edge', async () => {
@@ -655,7 +655,7 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
       2,
       'two repair attempts — the same figure the shell’s own `status === "start"` tally reports',
     );
-    h.eq(signals.lastFrameAt, f.at(), 'a `done` edge still counts as liveness for the any-frame clock');
+    h.eq(signals.lastProgressAt, f.at(), 'a `done` edge is an event, so it still moves the progress clock');
   });
 
   await h.test('journal: a burst of tokens is bounded by elapsed time, never one entry per token', async () => {
@@ -680,34 +680,34 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.ok(!JSON.stringify(aggregates).includes('abcde'), 'and never the token text itself');
   });
 
-  await h.test('journal: an event that is neither stage/token/thinking writes and counts nothing — but still IS liveness', async () => {
+  await h.test('journal: an event that is neither stage/token/thinking writes and counts nothing — but still IS progress', async () => {
     const f = attemptFixture();
     const diagnostic: GenerationEvent = {
       type: 'diagnostic',
       diagnostic: { kind: 'type', symbol: 'x', message: 'boom', hint: 'try again' },
     };
     const after = journalStreamEvent(f.journal, RUN, f.signals, diagnostic, f.at() + 5_000);
-    // Build-liveness B1: "ANY frame" moves the any-frame clock, so this is no longer the same
-    // object by reference the way the pre-liveness version was — a diagnostic still proves the
-    // connection is alive even though it journals nothing.
-    h.ok(after !== f.signals, 'a diagnostic still moves the any-frame clock, so this is a new object');
-    h.eq(after.lastFrameAt, f.at() + 5_000, 'to the diagnostic’s own arrival time');
+    // Every event moves the progress clock (a keepalive is not an event and does not), so this is
+    // a new object, not the same one by reference — a diagnostic is progress even though it
+    // journals nothing.
+    h.ok(after !== f.signals, 'a diagnostic still moves the progress clock, so this is a new object');
+    h.eq(after.lastProgressAt, f.at() + 5_000, 'to the diagnostic’s own arrival time');
     h.eq(after.lastTokenAt, f.signals.lastTokenAt, 'but the token clock is untouched');
     h.eq(after.lastThinkingAt, f.signals.lastThinkingAt, 'and so is the thinking clock');
     h.eq(after.aggregates, f.signals.aggregates, 'and no counter moves');
     h.eq(f.journal.get(RUN) ?? [], [], 'and no entry is written for it');
   });
 
-  await h.test('journal: the any-frame clock moves on stage AND token; the token clock moves ONLY on token', async () => {
+  await h.test('journal: the progress clock moves on stage AND token; the token clock moves ONLY on token', async () => {
     const f = attemptFixture();
     f.tick(3_000);
     const afterStage = journalStreamEvent(f.journal, RUN, f.signals, STAGE('generate'), f.at());
-    h.eq(afterStage.lastFrameAt, f.at(), 'a stage arrival is liveness');
+    h.eq(afterStage.lastProgressAt, f.at(), 'a stage arrival is progress');
     h.eq(afterStage.lastTokenAt, null, 'but a stage is not a token — the writing clock stays unset');
     h.eq(afterStage.startedAt, f.signals.startedAt, 'the attempt’s start never moves');
     f.tick(3_000);
     const afterToken = journalStreamEvent(f.journal, RUN, afterStage, TOKEN('xy'), f.at());
-    h.eq(afterToken.lastFrameAt, f.at(), 'a token is liveness too');
+    h.eq(afterToken.lastProgressAt, f.at(), 'a token is progress too');
     h.eq(afterToken.lastTokenAt, f.at(), 'and now the writing clock is set');
     h.eq(afterToken.aggregates, { chars: 2, tokens: 1 }, 'which is also the only thing that moves the counts');
   });
@@ -749,11 +749,11 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
   });
 
   for (const [name, frame] of [['queued', { type: 'queued', position: 2 }], ['restart', RESTART]] as const) {
-    await h.test(`journal: a ${name} frame is heartbeat activity — it holds off the stall indication`, async () => {
+    await h.test(`journal: a ${name} frame is progress — it holds off the stall indication`, async () => {
       const f = attemptFixture();
       f.tick(STALL_MS - 1_000);
       const signals = journalStreamEvent(f.journal, RUN, f.signals, frame, f.at());
-      h.eq(signals.lastFrameAt, f.at(), `the ${name} frame moves the heartbeat’s clock`);
+      h.eq(signals.lastProgressAt, f.at(), `the ${name} frame moves the progress clock`);
       f.tick(STALL_MS - 1_000);
       h.eq(livenessOf(signals, f.at()), 'connected', 'so a stream that keeps sending it is not reported stalled');
       h.eq(livenessOf(f.signals, f.at()), 'stalled', 'control: the same quiet without it is a stall');
@@ -761,13 +761,13 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
   }
 
   // ── thinking distinguished from hanging (build-liveness B1/B4) ──────────────
-  await h.test('journal: a thinking event bumps the thinking clock and the any-frame clock, and folds into aggregates', async () => {
+  await h.test('journal: a thinking event bumps the thinking clock and the progress clock, and folds into aggregates', async () => {
     const f = attemptFixture();
     let signals = f.signals;
     f.tick(2_000);
     signals = journalStreamEvent(f.journal, RUN, signals, THINKING(800), f.at());
     h.eq(signals.lastThinkingAt, f.at(), 'the thinking clock moves');
-    h.eq(signals.lastFrameAt, f.at(), 'so does the any-frame clock');
+    h.eq(signals.lastProgressAt, f.at(), 'so does the progress clock');
     h.eq(signals.lastTokenAt, null, 'but not the writing clock — nothing has been written yet');
     h.eq(signals.aggregates, { chars: 0, tokens: 0, thinkingChars: 800 }, 'thinkingChars accumulates, separate from chars/tokens');
     const entries = f.journal.get(RUN)!;

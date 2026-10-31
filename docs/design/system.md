@@ -384,7 +384,7 @@ extracts the way it extracts `capabilities`. `tileColor` is deprecated (§7.2).
 | Failed | `fill` squircle, ember out, badge `circle-alert` `danger` | "Didn't work" `danger-text` | Failure page | What happened, Try again, Discard |
 | Stopped | `fill` squircle, ember out | "Stopped" `text-2` | Failure page, Try again first | Try again, Discard |
 | Older than a day (failed/stopped) | One `fill` squircle, ember out, end of grid | "2 didn't work" `text-2` | A list of them | Discard all |
-| Needs update | `fill` squircle, ember out | "Needs update" `warning-text` | Update screen | Update Whim, Discard |
+| Needs update | `fill` squircle, ember out | "Needs update" `warning-text` | Failure page | Update Whim, Discard |
 | Changing | The app's tile with a 2 pt `ember` superellipse ring 3 pt outside, glowing with the stream | "Changing…" `ember-text` | Opens the app | Details, Stop the change |
 | Change failed | The app's tile with the badge | "Change didn't work" `danger-text` | Opens the app | What happened, Try again, Discard the change |
 | Copy | Tint farthest from the original | "Copy" `text-2` | Opens the app | As Ready |
@@ -402,7 +402,7 @@ tip that rises and curls slightly up, no face, no eyes, no name. Fill: radial `g
 | State | When | Look |
 |---|---|---|
 | Working | The stream runs | Intensity follows the stream (§4.6) |
-| Stuck | No bytes for 40 s | 35%, still |
+| Stuck | No progress event for 40 s | 35%, still |
 | Out | Failure, failed or stopped tile | 1.5 pt `text-2` outline of the silhouette, no fill, no glow |
 
 Done is one `spark` flare. Sizes 24, 48, 96, 128 (128 drops to 64 from 135% text); the orb carries a
@@ -533,8 +533,10 @@ skeletons sit at 0.6; drags still track the finger and settle with a cross-fade.
 - Intensity `I = 0.55 + 0.45·ã`, `ã` = `a` smoothed by a critically damped spring, response 0.6 s.
 - Flicker amplitude `0.06·ã`, only while a token arrived in the last 500 ms; timing from token
   arrivals, never a timer.
-- Stuck after 40 s with no bytes (`STALL_MS`): `I` eases to 0.35 over 1.5 s and holds still. Out: fades
-  over `fade-out`, the outline stays. Nothing loops on a clock.
+- Stuck after 40 s with no progress event (`STALL_MS`): `I` eases to 0.35 over 1.5 s and holds still.
+  Every stream event is progress; the server's keepalive is liveness, not progress (beta-2-spec-fixes
+  D2): it keeps the connection open and never resets the 40 s. Out: fades over `fade-out`, the outline
+  stays. Nothing loops on a clock.
 
 ### 4.7 How motion is checked
 
@@ -556,7 +558,7 @@ pattern): `UIImpactFeedbackGenerator` / `UISelectionFeedbackGenerator` /
 | Switch toggles | impact light | `TOGGLE_ON`/`TOGGLE_OFF`, `CONTEXT_CLICK` |
 | Long-press opens a menu | impact medium | `LONG_PRESS` |
 | A drag crosses its commit point | impact rigid 0.6 | `GESTURE_THRESHOLD_ACTIVATE`, `CONTEXT_CLICK` |
-| Work handed to Whim (Make it, Make the change, Try again (Failure page)) | impact medium | `CONFIRM` (API 30), `VIRTUAL_KEY` |
+| Work handed to Whim (Make it, Make the change, Try again) | impact medium | `CONFIRM` (API 30), `VIRTUAL_KEY` |
 | App ready; version restored; copy made | notification success | `CONFIRM` |
 | Making failed | notification error | `REJECT` (API 30), `LONG_PRESS` |
 | App deleted, attempt discarded, confirm sheet's consequential choice | notification warning | `REJECT` |
@@ -728,7 +730,7 @@ thresholds live in one constant with the run that measured them):
 | 0–75 s | "Usually 1–2 min. You can leave; it keeps going." |
 | 75–150 s | "Taking longer than most. Still going." |
 | Over 150 s | "This one's slow. I'll keep at it; you can leave." |
-| No bytes for 40 s | "No word from the server for 40 s. Still waiting." (ember stuck) |
+| No progress event for 40 s | "No progress for N s. Still waiting." (N counts up from the last event; ember stuck) |
 | In line | "Waiting for a free spot. You're next." / "2 ahead of you." (ember still, dim) |
 
 **Failure kinds** (server reason strings map to these; unknown reasons show the server's text):
@@ -760,7 +762,7 @@ anchored surface. **No edge swipe over a running app in v1 (#67).**
 | Your apps (`#s-home`) | `settings` icon button trailing; "Your apps" `largeTitle`; grid per §3.2; search under the title from 13 apps; composer at the bottom; scroll-edge fades top and bottom. Order: being made, then failed/stopped from the last day, then apps, each newest first; older attempts collapse into one tile at the end; an app doesn't move when it changes. Offline: "Offline. Your apps still work; making new ones needs a connection." under the title; it shows when a request cannot reach the server, or the server cannot be reached on return to the app, and clears when the server answers. Skeleton: real title, composer, one cell per known app. Empty (`#s-home-empty`): the 128 ember, still, "Make your first app", one line of examples, three idea chips |
 | Delete (`#s-delete-confirm`) | No dialog: soft delete, tile leaves (M18), "Water Counter deleted · Undo" 10 s, purged after |
 | Share link | The platform share sheet |
-| First run (`#s-consent`) | One large sheet on the first composer tap: "Before Whim makes apps for you", a lead sentence, three icon rows that between them name what is sent (what you ask for, your answers and the plan; the phone ID; error details), who gets it and why (AnyCognition, the companies that work for it including the AI companies, Apple or Google, authorities when the law requires it), what stays on your phone and what Whim never does (rows may wrap), Privacy policy, Full details (the whole disclosure, expands in place, reachable before either act) and Language rows, then a checkbox row "I accept the Terms of use", unticked every time the sheet opens, Terms link in a target of its own beside it; **Agree to send descriptions** (`ink`, enabled once ticked; reads **Continue** when only the terms are due) and **Not now**. Two acts on purpose (GDPR art. 7(2)), recorded separately with their own versions. Age stays silent unless blocked |
+| First run (`#s-consent`) | One large sheet on the first composer tap: "Before Whim makes apps for you", a lead sentence, the Language row, three icon rows that between them name what is sent (what you ask for, your answers and the plan; the phone ID; error details), who gets it and why (AnyCognition, the companies that work for it including the AI companies, Apple or Google, authorities when the law requires it), what stays on your phone and what Whim never does (rows may wrap), Privacy policy and Full details rows (the whole disclosure, expands in place, reachable before either act), then a checkbox row "I accept the Terms of use", unticked every time the sheet opens, Terms link in a target of its own beside it; **Agree to send descriptions** (`ink`, enabled once ticked; reads **Continue** when only the terms are due) and **Not now**. Two acts on purpose (GDPR art. 7(2)), recorded separately with their own versions. Age stays silent unless blocked |
 | Describe (`#s-describe`) | "What should it do?" `title1`; a 17 pt area focused with the keyboard up; "Plain words are enough. I'll ask if anything's unclear."; **Continue** (`ember`) riding the keyboard; three idea chips when empty and no keyboard. Change mode: the 24 tile and "Changing Water Counter" over "What should change?" |
 | Plan (`#s-plan-thinking`, `#s-plan`, `#s-plan-edit`) | Clarify and plan are one page: "Here's the plan", your words as the hero, **A few choices** (question rows, shown as soon as they land) then **What I'll make** (plan rows; skeletons until they land), **Make it** (`ember`). Rows never restate an answer; answers travel as `clarifications`. A server notice sits above Make it. No step bars |
 | Can't make as asked (`#s-plan-limit`) | "I can't make this as asked", the quote, the reason in plain words, a card "I could make this instead…"; **Make that instead** (`ember`), **Change my idea** (`plain`) |
@@ -769,8 +771,8 @@ anchored surface. **No edge swipe over a running app in v1 (#67).**
 | Didn't work (`#s-failure`) | The 96 ember out; "Couldn't make this" `text`; one sentence by kind (§8); a `sheet-group` list with "Your other apps are untouched" (or "Your current version still works") and a collapsed "What happened"; primary and plain per kind; **Discard** (`danger`) in the body |
 | Opening (`#s-app-opening`) | M2; the status bar follows the scheme |
 | Running app (`#s-app-timer`) | The app's tint is its primary; the orb per §7.1 |
-| Whim sheet (`#s-whim-sheet`, `#s-whim-plan`) | `fit` sheet: 40 tile, name, "Version 4 · changed 2 days ago"; a "New version ready · Reload" row on top while one waits; "What should change?" send field; History, Report a problem, Back to your apps. Sending grows the sheet into the change's plan with **Make the change**; then it collapses into the orb. Report pushes inside the sheet on its own small stack |
-| Changing in use (`#s-app-changing`) | The app keeps running; the orb's ember glows; on landing "Pour Timer changed · Reload" (nothing reloads by itself; Reload recreates the realm); missed toast → `ember` dot and the Whim-sheet row; failure → `danger` dot and "The change didn't work · See why" |
+| Whim sheet (`#s-whim-sheet`, `#s-whim-plan`) | `fit` sheet: 40 tile, name, "Version 4 · changed 2 days ago"; a "New version ready · Reload" row on top while one waits, and a "The change didn't work · See why" row (the orb's failed dot as a row, staying after the toast has gone) while a change of the app has failed and none is being made, opening that change's Failure page in the sheet; "What should change?" send field; History, Report a problem, Back to your apps. Sending grows the sheet into the change's plan with **Make the change**; then it collapses into the orb. Report pushes inside the sheet on its own small stack |
+| Changing in use (`#s-app-changing`) | The app keeps running; the orb's ember glows; on landing "Pour Timer changed · Reload" (nothing reloads by itself; Reload recreates the realm); missed toast → `ember` dot and the Whim-sheet row; failure → `danger` dot, "The change didn't work · See why", and the Whim sheet's See why row |
 | App crashed (`#s-app-error`) | `circle-alert` in a `fill` circle, "Pour Timer ran into a problem", "It stopped and can't carry on right now. Your saved data is safe.", **Reload** (`ink`), **Ask Whim to fix it** (`plain-ember`, opens the change field prefilled "Fix the error that stops this app." with the error attached), **Back to your apps** (`plain`). The orb stays. Behind the current version (a change landed unreloaded, or an Undo moved the app after it opened): "It stopped, and a newer version is ready. Reload to open it. Your saved data is safe.", **Reload** (`ink`) and **Back to your apps** only, no Ask Whim to fix it; a crash after Reload offers it again (#82) |
 | History (`#s-history`, `#s-history-undo`) | Native stack; "Report" text button in the header; "History" `title1`, the 40 tile, the name in its tint, "4 versions"; timeline rows (§7.1), ordered by the version chain, not the clock. Use this version → at once, "Back on version 3 · Undo"; the version left stays listed, so its row is the Undo after the toast. Make a copy from here → Home's "Copy the data, or start fresh?" (skipped, fresh, when the app has no saved data), then "Copy made · Open"; either way the copy has its own data. No confirm sheets, no kind filters |
 | Settings (`#s-settings`) | `largeTitle`; "AI features" with subtitle "Review what's sent" ›; "Language" ›; About: Privacy policy, Terms of use, Support (`external-link`), Version; **Advanced** ›. No Highlighting or Reduce Motion switches |

@@ -308,9 +308,11 @@ curl -sI https://whim.<domain>/.well-known/assetlinks.json
 
 ## Troubleshooting
 
-- **`npm run android:release` fails or the emulator won't pick up the offline APK.** It runs
-  `react-native run-android --mode offline --active-arch-only`. If the install step alone fails,
-  fall back to Gradle directly: `cd android && ./gradlew installOffline`.
+- **`npm run android:release` fails or the emulator won't pick up the offline APK.** It names one device
+  (`--device <serial>` or `ANDROID_SERIAL`, exit 2 otherwise) and runs
+  `react-native run-android --mode offline --active-arch-only --device <serial> --appId <WHIM_APP_ID> --no-packager`
+  (no Metro window opens). If the install step alone fails, fall back to Gradle directly:
+  `cd android && ANDROID_SERIAL=<serial> ./gradlew installOffline`.
 - **A 32-bit Android native build fails during `fastlane android closed`.** Fall back to an
   arm64-only store build by running the Gradle step yourself with the narrower architecture list,
   then resume from `verify-aab` and upload the map yourself:

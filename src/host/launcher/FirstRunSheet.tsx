@@ -2,10 +2,10 @@
  * FirstRunSheet — the first data-sending action's ask, as one large sheet (system.md §9 First run;
  * design-system-v1 task 16.2). It replaces the full-screen terms step and consent screen in
  * presentation only: whatever has changed since the person last agreed, then "Before Whim makes apps
- * for you", a lead sentence, three summary rows (what's
- * sent, what stays on the phone, what we never do), a Privacy policy row, "Full details" (the whole
- * consent disclosure, expanding in place) and a Language row, whose value is the one-tap switch to
- * the other language, named in that language (spec legal-text-localization); then, pinned with the actions
+ * for you", a lead sentence, a Language row (its value is the one-tap switch to the other language,
+ * named in that language; spec legal-text-localization), three summary rows (what's sent, what stays
+ * on the phone, what we never do), a Privacy policy row and "Full details" (the whole consent
+ * disclosure, expanding in place); then, pinned with the actions
  * it unlocks, the terms checkbox row, unticked,
  * with the Terms link beside it and outside its hit area; and two actions on purpose (GDPR art.
  * 7(2)): `Agree to send descriptions` (`ink`, enabled once the terms are ticked) and `Not now`.
@@ -217,6 +217,9 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
         <Text color="text-2">{copy.firstRunLead}</Text>
       </View>
       <GroupedSection on="sheet">
+        <GroupedRow title={copy.firstRunLanguage} trailing={{ kind: 'value', text: copy.legalLanguageSwitch }} onPress={() => onLanguageChange(otherLegalLanguage(language))} />
+      </GroupedSection>
+      <GroupedSection on="sheet">
         <GroupedRow icon="arrow-up" title={copy.firstRunSentTitle} subtitle={firstRunSentText(copy)} />
         <GroupedRow icon="phone" title={copy.firstRunStaysTitle} subtitle={copy.firstRunStays} />
         <GroupedRow icon="lock" title={copy.firstRunNeverTitle} subtitle={copy.firstRunNever} />
@@ -226,9 +229,6 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
         <GroupedRow title={copy.firstRunDetails} trailing={{ kind: 'chevron', expanded }} onPress={() => setExpanded((open) => !open)} />
       </GroupedSection>
       {expanded ? <Disclosure language={language} /> : null}
-      <GroupedSection on="sheet">
-        <GroupedRow title={copy.firstRunLanguage} trailing={{ kind: 'value', text: copy.legalLanguageSwitch }} onPress={() => onLanguageChange(otherLegalLanguage(language))} />
-      </GroupedSection>
     </KeyboardShell>
   );
 }

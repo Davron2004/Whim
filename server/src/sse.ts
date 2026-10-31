@@ -7,8 +7,9 @@
  *   id: <monotonic-int>\n
  *   \n
  *
- * Keepalives are `:` comment lines emitted at an injectable interval while waiting for events
- * (off when keepaliveMs is 0/undefined).
+ * Keepalives are `:` comment lines (off when keepaliveMs is 0/undefined): one is written as the
+ * stream opens, before the source yields anything, so a client sees a first byte at once however
+ * slow the first step is; then one every injectable interval. They carry no `id:`.
  */
 import type { WireEvent } from './wire-level';
 
@@ -25,7 +26,8 @@ const KEEPALIVE_FRAME = ': keepalive\n\n';
  *
  * @param source      - The event source to drain: `GenerationEvent`s, or what `wire-level.ts`
  *                      made of them for the client's protocol level.
- * @param keepaliveMs - Emit a keepalive comment every N ms while the stream is open.
+ * @param keepaliveMs - Emit a keepalive comment every N ms while the stream is open,
+ *                      and one frame as the stream opens, before any event.
  *                      0 or undefined = disabled.
  * @param onCancel    - Invoked (in addition to the keepalive cleanup) when the consumer cancels
  *                      the stream — the caller wires this to abort the pipeline run producing
@@ -55,6 +57,7 @@ export function buildSseStream(
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       if (useKeepalive) {
+        controller.enqueue(enc.encode(KEEPALIVE_FRAME));
         keepaliveInterval = setInterval(() => {
           try {
             controller.enqueue(enc.encode(KEEPALIVE_FRAME));

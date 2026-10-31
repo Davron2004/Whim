@@ -5,7 +5,8 @@
  *
  * These are the helpers, not the render: elapsed formatting, cumulative aggregation (now `token`
  * AND `thinking`), the three-clock `livenessOf` derivation (including every boundary), the
- * liveness copy strings, the keepalive fold, and mapping a journal's stage entries to
+ * liveness copy strings, a keepalive-only stream reading as a stall (keepalives are liveness, not
+ * progress: beta-2-spec-fixes D2), and mapping a journal's stage entries to
  * consecutive-transition durations. The old single ~8s "quiet" heartbeat is GONE — see
  * `prompt-flow.ts`'s `livenessOf` doc comment for why one clock could not tell "thinking" from
  * "hanging" apart.
@@ -13,7 +14,12 @@
 
 import { Harness } from './harness';
 import type { GenerationEvent } from '@whim/contract';
-import type { RunJournalEntry } from '../run-journal';
+import { MapKVBackend } from '../../version-store';
+import { RunJournalStore, type RunJournalEntry } from '../run-journal';
+import { generateApp } from '../generation-client';
+import { journalStreamEvent } from '../build-lifecycle';
+import { grantedOptions, streamResponse } from './client-fixtures';
+import { untilSettled } from './fake-xhr';
 import { COPY, makingQueueLine } from '../copy';
 import { MAKING_TIMES, makingTimeLine } from '../making-progress';
 import {
@@ -25,7 +31,6 @@ import {
   elapsedLabel,
   livenessOf,
   stageDurations,
-  withKeepalive,
   type RunSignals,
 } from '../prompt-flow';
 
@@ -40,7 +45,7 @@ function signals(overrides: Partial<RunSignals> = {}): RunSignals {
     aggregates: EMPTY_RUN_AGGREGATES,
     lastTokenAt: null,
     lastThinkingAt: null,
-    lastFrameAt: 0,
+    lastProgressAt: 0,
     ...overrides,
   };
 }
@@ -96,47 +101,84 @@ export async function runRunSignalsTests(h: Harness): Promise<void> {
 
   // ── liveness: thinking distinguished from hanging (build-liveness B1) ───────
   await h.test('livenessOf: a recent token reads as writing', async () => {
-    h.eq(livenessOf(signals({ lastTokenAt: 10_000, lastFrameAt: 10_000 }), 10_000 + WRITING_WINDOW_MS), 'writing', 'exactly at the window is still writing');
+    h.eq(livenessOf(signals({ lastTokenAt: 10_000, lastProgressAt: 10_000 }), 10_000 + WRITING_WINDOW_MS), 'writing', 'exactly at the window is still writing');
     h.eq(
-      livenessOf(signals({ lastTokenAt: 10_000, lastFrameAt: 10_000 }), 10_000 + WRITING_WINDOW_MS + 1),
+      livenessOf(signals({ lastTokenAt: 10_000, lastProgressAt: 10_000 }), 10_000 + WRITING_WINDOW_MS + 1),
       'connected',
       'one ms past it, writing has lapsed — and with no thinking clock set at all, it falls through to connected',
     );
   });
 
   await h.test('livenessOf: writing beats thinking when both clocks are recent', async () => {
-    const s = signals({ lastTokenAt: 10_000, lastThinkingAt: 10_000, lastFrameAt: 10_000 });
+    const s = signals({ lastTokenAt: 10_000, lastThinkingAt: 10_000, lastProgressAt: 10_000 });
     h.eq(livenessOf(s, 10_000), 'writing', 'a token this instant wins even if thinking is equally recent');
   });
 
   await h.test('livenessOf: a recent thinking delta reads as thinking once writing has lapsed', async () => {
-    const s = signals({ lastTokenAt: 0, lastThinkingAt: 10_000, lastFrameAt: 10_000 });
+    const s = signals({ lastTokenAt: 0, lastThinkingAt: 10_000, lastProgressAt: 10_000 });
     h.eq(livenessOf(s, 10_000 + THINKING_WINDOW_MS), 'thinking', 'exactly at the window is still thinking');
     h.eq(livenessOf(s, 10_000 + THINKING_WINDOW_MS + 1), 'connected', 'one ms past it, thinking has lapsed too');
   });
 
   await h.test('livenessOf: no token or thinking delta at all falls straight to connected/stalled', async () => {
-    const s = signals({ lastFrameAt: 0 });
-    h.eq(livenessOf(s, STALL_MS), 'connected', 'a keepalive-only stream is connected, not stalled, up to the boundary');
-    h.eq(livenessOf(s, STALL_MS + 1), 'stalled', 'one ms past it, nothing has arrived at all');
+    const s = signals({ lastProgressAt: 0 });
+    h.eq(livenessOf(s, STALL_MS), 'connected', 'with no progress event since, the run is connected, not stalled, up to the boundary');
+    h.eq(livenessOf(s, STALL_MS + 1), 'stalled', 'one ms past it, it is a stall');
   });
 
   await h.test('livenessOf: minutes of thinking never read as a stall, however long it takes', async () => {
     // The reported bug, restated as a test: DeepSeek-class models reason for minutes before
-    // writing. As long as a `thinking` event (or the keepalive) keeps arriving, the screen must
-    // never say "stalled" just because no VISIBLE output has shown up yet.
-    const s = signals({ lastThinkingAt: 120_000, lastFrameAt: 120_000 });
+    // writing. As long as a `thinking` event (progress; a keepalive is not) keeps arriving, the
+    // screen must never say "stalled" just because no VISIBLE output has shown up yet.
+    const s = signals({ lastThinkingAt: 120_000, lastProgressAt: 120_000 });
     h.eq(livenessOf(s, 123_000), 'thinking', 'still reads as thinking two minutes into a run with no token yet');
   });
 
-  await h.test('withKeepalive: moves ONLY the any-frame clock, and takes no journal to move it in', async () => {
-    const s = signals({ lastTokenAt: 1_000, lastThinkingAt: 500, aggregates: { chars: 9, tokens: 1 }, lastFrameAt: 1_000 });
-    const after = withKeepalive(s, 9_000);
-    h.eq(after.lastFrameAt, 9_000, 'the any-frame clock moves to the keepalive');
-    h.eq(after.lastTokenAt, 1_000, 'the token clock is untouched');
-    h.eq(after.lastThinkingAt, 500, 'so is the thinking clock');
-    h.eq(after.aggregates, s.aggregates, 'and the output counters never move for a keepalive');
-    h.eq(after.startedAt, s.startedAt, 'nor does the attempt start time');
+  await h.test('the SSE parser yields nothing for a keepalive, so nothing moves the progress clock: keepalives every 15 s and no event for 41 s read as stalled, a stage event clears it', async () => {
+    // The whole device path below the shell: SSE bytes through `generateApp`'s parser, each event
+    // folded by `journalStreamEvent` at the arrival time the test sets. A keepalive is liveness,
+    // not progress (beta-2-spec-fixes D2): it must reach no clock.
+    const enc = new TextEncoder();
+    let body: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const fetchImpl = (async () =>
+      streamResponse(new ReadableStream<Uint8Array>({ start: (c) => { body = c; } }), { status: 200, headers: { 'content-type': 'text/event-stream' } })) as typeof fetch;
+    const journal = new RunJournalStore(new MapKVBackend());
+    journal.create('run-1');
+    let now = 0;
+    let s = signals();
+    let folded = 0;
+    let ended = false;
+    let failure: unknown;
+    const consumed = (async () => {
+      for await (const event of generateApp({ ...grantedOptions('https://example.invalid', 'device-1'), fetchImpl }, { prompt: 'p' })) {
+        s = journalStreamEvent(journal, 'run-1', s, event, now);
+        folded += 1;
+      }
+    })().catch((err: unknown) => { failure = err; }).finally(() => { ended = true; });
+    await untilSettled(() => body !== undefined, 'the stream to open');
+    /** Send `chunk` at `at` and wait until the parser has taken it off the body and run. */
+    const arrive = async (at: number, chunk: string) => {
+      now = at;
+      body?.enqueue(enc.encode(chunk));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await untilSettled(() => body?.desiredSize === 1, `the chunk sent at ${at} ms to be read`);
+    };
+    const keepalive = ': keepalive\n\n';
+    await arrive(0, keepalive);
+    await arrive(1_000, `data: ${JSON.stringify({ type: 'stage', stage: 'generate', status: 'start' })}\n\n`);
+    await untilSettled(() => folded === 1, 'the stage event to be folded');
+    for (const at of [16_000, 31_000, 41_500]) await arrive(at, keepalive);
+    h.eq([livenessOf(s, 1_000 + STALL_MS), livenessOf(s, 1_000 + STALL_MS + 1_000)], ['connected', 'stalled'], 'keepalives every 15 s with no event for 41 s read as stalled');
+    await arrive(50_000, keepalive);
+    h.eq(livenessOf(s, 50_000), 'stalled', 'a keepalive alone does not clear the stall');
+    h.eq(s.lastProgressAt, 1_000, 'the stall still counts from the last event');
+    await arrive(52_000, `data: ${JSON.stringify({ type: 'stage', stage: 'check', status: 'start' })}\n\n`);
+    await untilSettled(() => folded === 2, 'the next stage event to be folded');
+    h.eq(livenessOf(s, 52_000), 'connected', 'the next stage event clears it');
+    body?.close();
+    await untilSettled(() => ended, 'the stream to end');
+    await consumed;
+    h.eq(failure, undefined, 'and it ends cleanly');
   });
 
   // ── the Making page's time lines (system.md §8) ─────────────────────────────

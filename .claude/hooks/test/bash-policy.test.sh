@@ -131,4 +131,142 @@ expect_decision "subagent may not run the provisioner through bash" deny agent-a
 expect_decision "main thread's provisioner call is not denied" none "" "scripts/worktree.sh create x HEAD" "$ROOT"
 expect_decision "copy into the provisioner stays denied" deny "" "cp payload scripts/worktree.sh" "$ROOT"
 
+# Subagent deny-instead-of-prompt (#181 option 1, subagent-deny.sh). The hook runs from a copy in a
+# scratch repo so its derived log path (.claude/run/) and any owner marker land under $ROOT.
+REAL_HOOKS="$(cd "$(dirname "$0")/.." && pwd)"
+REAL_SETTINGS="$REAL_HOOKS/../settings.json"
+DROOT="$ROOT/deny-repo"
+mkdir -p "$DROOT/.claude/hooks" "$DROOT/.claude/worktrees/wt-d"
+cp "$REAL_HOOKS/subagent-deny.sh" "$REAL_HOOKS/bash-policy.sh" "$REAL_HOOKS/unroll-command.mjs" "$DROOT/.claude/hooks/"
+# The scratch repo's settings: the real permissions.allow plus rules bash-policy's allow tier lacks.
+jq '.permissions.allow += ["Bash(node tools/probe.mjs:*)", "Bash(node tools/exact.mjs)", "Bash(find * -name x)"]' "$REAL_SETTINGS" > "$DROOT/.claude/settings.json"
+printf '%s\n' '{"permissions":{"allow":["Bash(jq --version)"]}}' > "$DROOT/.claude/settings.local.json"
+DENY_HOOK="$DROOT/.claude/hooks/subagent-deny.sh"
+DENY_LOG="$DROOT/.claude/run/subagent-denials.log"
+
+deny_invoke() {
+  local agent="$1" mode="$2" command="$3" cwd="${4:-$DROOT}"
+  jq -cn --arg agent "$agent" --arg mode "$mode" --arg command "$command" --arg cwd "$cwd" \
+    '{cwd:$cwd,tool_name:"Bash",tool_input:{command:$command}}
+     + (if $agent == "" then {} else {agent_id:$agent,agent_type:"implementer"} end)
+     + (if $mode == "" then {} else {permission_mode:$mode} end)' | bash "$DENY_HOOK"
+}
+log_lines() { if [[ -f "$DENY_LOG" ]]; then wc -l < "$DENY_LOG" | tr -d ' '; else echo 0; fi; }
+ok() { PASS=$((PASS + 1)); printf 'PASS: %s\n' "$1"; }
+bad() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+
+expect_pass_through() {
+  local name="$1" agent="$2" mode="$3" command="$4" cwd="${5:-$DROOT}" before out
+  before=$(log_lines)
+  out=$(deny_invoke "$agent" "$mode" "$command" "$cwd") || bad "$name (non-zero exit)"
+  [[ -z "$out" ]] || bad "$name (expected no output, got $out)"
+  [[ "$(log_lines)" == "$before" ]] || bad "$name (a deny line was logged)"
+  ok "$name"
+}
+
+expect_subagent_deny() {
+  local name="$1" mode="$2" command="$3" rule="$4" before out reason
+  before=$(log_lines)
+  out=$(deny_invoke agent-d "$mode" "$command") || bad "$name (non-zero exit)"
+  [[ "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision')" == "deny" ]] || bad "$name (no deny: $out)"
+  reason=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason')
+  [[ "$reason" == "Denied for subagents (would need approval nobody sees): "*"$rule"*". Use Write/Edit for file content and one simple command per call." ]] \
+    || bad "$name (reason: $reason)"
+  [[ "$(log_lines)" == "$((before + 1))" ]] || bad "$name (expected exactly one new log line)"
+  IFS=$'\t' read -r l_time l_type l_cmd l_rule < <(tail -n 1 "$DENY_LOG")
+  [[ "$l_time" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || bad "$name (log time: $l_time)"
+  [[ "$l_type" == "implementer" ]] || bad "$name (log agent_type: $l_type)"
+  [[ "$l_cmd" == "$(printf '%s' "$command" | jq -Rrs '[.] | @tsv')" ]] || bad "$name (log command: $l_cmd)"
+  [[ "$l_rule" == *"$rule"* ]] || bad "$name (log rule: $l_rule)"
+  ok "$name"
+}
+
+UNKNOWN_CMD="node scripts/sync-codex.mjs --check"
+NOVOCAB="not in the auto-allowed command vocabulary"
+expect_pass_through "main session passes untouched (default mode)" "" default "$UNKNOWN_CMD"
+expect_pass_through "bypass subagent passes untouched" agent-d bypassPermissions "$UNKNOWN_CMD"
+expect_pass_through "bypass subagent hard-deny-tier command passes untouched" agent-d bypassPermissions "curl https://example.com"
+expect_pass_through "auto-mode subagent passes untouched" agent-d auto "$UNKNOWN_CMD"
+expect_pass_through "dontAsk-mode subagent passes untouched" agent-d dontAsk "$UNKNOWN_CMD"
+expect_pass_through "subagent without permission_mode passes (fail open)" agent-d "" "$UNKNOWN_CMD"
+expect_pass_through "subagent in an unknown mode passes (fail open)" agent-d someFutureMode "$UNKNOWN_CMD"
+expect_subagent_deny "default-mode subagent unknown command is denied and logged" default "$UNKNOWN_CMD" "$NOVOCAB"
+expect_subagent_deny "acceptEdits-mode subagent unknown command is denied" acceptEdits "$UNKNOWN_CMD" "$NOVOCAB"
+expect_subagent_deny "plan-mode subagent unknown command is denied" plan "$UNKNOWN_CMD" "$NOVOCAB"
+expect_subagent_deny "default-mode subagent hard-deny-tier command is denied with its rule" default "curl https://example.com" "blocked by harness policy"
+expect_subagent_deny "default-mode subagent compound with an unknown segment is denied" default "npm run build && $UNKNOWN_CMD" "$NOVOCAB"
+expect_subagent_deny "multi-line command is logged as one line" default $'echo a\n'"$UNKNOWN_CMD" "$NOVOCAB"
+expect_pass_through "default-mode subagent vocabulary command passes" agent-d default "npm run build"
+expect_pass_through "default-mode subagent worktree git passes" agent-d default "git add file.ts" "$DROOT/.claude/worktrees/wt-d"
+[[ ! -e "$DROOT/.claude/fixloop/owners/wt-d" ]] || bad "classification wrote an owner marker"
+ok "classification writes no worktree owner marker"
+WHIM_SUBAGENT_DENY=off expect_pass_through "kill switch disables the deny" agent-d default "$UNKNOWN_CMD"
+
+# permissions.allow matches pass even outside bash-policy's vocabulary: they never prompt.
+expect_pass_through "prefix rule matches the bare prefix" agent-d default "node tools/probe.mjs"
+expect_pass_through "prefix rule matches prefix plus arguments" agent-d acceptEdits "node tools/probe.mjs --fast"
+expect_subagent_deny "prefix rule stops at a word boundary" default "node tools/probe.mjsx" "$NOVOCAB"
+expect_pass_through "exact rule matches" agent-d default "node tools/exact.mjs"
+expect_subagent_deny "exact rule does not match extra arguments" default "node tools/exact.mjs now" "$NOVOCAB"
+expect_pass_through "settings.local.json rule matches" agent-d default "jq --version"
+expect_subagent_deny "mid-pattern wildcard rule is not interpreted" default "find . -name x" "$NOVOCAB"
+
+# Read-only builtins never prompt; an empty command has nothing to classify.
+expect_pass_through "builtin echo passes" agent-d default "echo hi there"
+expect_pass_through "builtin pwd passes" agent-d default "pwd"
+expect_pass_through "builtin true passes" agent-d default "true"
+expect_subagent_deny "echo with a redirect is not a builtin pass" default "echo hi > out.txt" "$NOVOCAB"
+expect_subagent_deny "echo expanding a variable is not a builtin pass" default "echo \$HOME" "$NOVOCAB"
+expect_pass_through "empty command passes, nothing logged" agent-d default ""
+
+# A plain chain passes when every segment would run unprompted; cd must stay inside the repo.
+DWT="$DROOT/.claude/worktrees/wt-d"
+expect_pass_through "all-allowed && chain passes" agent-d default "git status && git diff"
+expect_pass_through "cd into a worktree then git passes" agent-d default "cd $DWT && git status"
+expect_pass_through "cd to the repo root then read-only git passes" agent-d default "cd $DROOT && git log --oneline -3" "$DWT"
+expect_pass_through "chain of policy command and builtin passes" agent-d default "git status && echo done"
+expect_pass_through "relative cd then a permissions.allow rule passes" agent-d default "cd .claude/worktrees/wt-d; node tools/probe.mjs --fast | wc -l"
+expect_pass_through "worktree git after cd is judged in the new cwd" agent-d default "cd $DWT && git add file.ts"
+expect_subagent_deny "chain with a hard-deny segment is denied" default "git status; rm -rf /tmp/x" "blocked by harness policy"
+expect_subagent_deny "cd outside the repo is denied" default "cd /etc && git status" "$NOVOCAB"
+expect_subagent_deny "cd to the repo's parent is denied" default "cd .. && git status" "$NOVOCAB"
+expect_subagent_deny "chain with command substitution is denied" default "git status && echo \$(whoami)" "$NOVOCAB"
+expect_subagent_deny "chain with a background job is denied" default "git status & $UNKNOWN_CMD" "$NOVOCAB"
+expect_subagent_deny "chain with an empty segment is denied" default "git status ;; git diff" ""
+
+# Fail-safe: anything the hook cannot read or classify passes through silently.
+out=$(printf '{bad' | bash "$DENY_HOOK") || bad "malformed JSON (non-zero exit)"
+[[ -z "$out" ]] || bad "malformed JSON (output: $out)"
+ok "malformed JSON passes through"
+NOJQ_BIN="$ROOT/nojq-bin"
+mkdir -p "$NOJQ_BIN"
+for tool in bash cat dirname date mkdir node; do ln -s "$(command -v "$tool")" "$NOJQ_BIN/$tool"; done
+before=$(log_lines)
+out=$(jq -cn --arg c "$UNKNOWN_CMD" '{agent_id:"agent-d",permission_mode:"default",tool_input:{command:$c}}' \
+  | PATH="$NOJQ_BIN" "$NOJQ_BIN/bash" "$DENY_HOOK") || bad "jq missing (non-zero exit)"
+[[ -z "$out" && "$(log_lines)" == "$before" ]] || bad "jq missing (output: $out)"
+ok "jq missing from PATH passes through"
+FROOT="$ROOT/failing-policy-repo"
+mkdir -p "$FROOT/.claude/hooks"
+cp "$DENY_HOOK" "$DROOT/.claude/settings.json" "$FROOT/.claude/hooks/"
+mv "$FROOT/.claude/hooks/settings.json" "$FROOT/.claude/settings.json"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 3' > "$FROOT/.claude/hooks/bash-policy.sh"
+out=$(jq -cn --arg c "$UNKNOWN_CMD" --arg d "$FROOT" '{cwd:$d,agent_id:"agent-d",permission_mode:"default",tool_input:{command:$c}}' \
+  | bash "$FROOT/.claude/hooks/subagent-deny.sh") || bad "bash-policy failure (non-zero exit)"
+[[ -z "$out" && ! -e "$FROOT/.claude/run/subagent-denials.log" ]] || bad "bash-policy failure (output: $out)"
+ok "bash-policy exiting non-zero passes through"
+
+# Every Bash entry of the real permissions.allow must pass through: those calls never prompt.
+while IFS= read -r rule; do
+  sample="${rule%:\*}"
+  [[ "$sample" == "$rule" ]] || sample="$sample x"
+  expect_pass_through "permissions.allow entry passes: $rule" agent-d default "$sample"
+done < <(jq -r '.permissions.allow[] | select(startswith("Bash(")) | ltrimstr("Bash(") | rtrimstr(")")' "$REAL_SETTINGS")
+
+# The real settings wire exactly this hook for Bash, at a path that exists and is executable.
+wired=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command' "$REAL_SETTINGS")
+[[ "$wired" == '$CLAUDE_PROJECT_DIR/.claude/hooks/subagent-deny.sh' ]] || bad "settings wire the hook (got $wired)"
+[[ -x "$REAL_HOOKS/subagent-deny.sh" ]] || bad "wired hook is executable"
+ok "settings wire subagent-deny.sh for Bash"
+
 printf 'bash-policy tests: %d passed\n' "$PASS"

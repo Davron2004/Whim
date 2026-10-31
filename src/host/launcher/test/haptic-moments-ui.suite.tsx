@@ -19,7 +19,7 @@ import { describeStep, planStep, withPlan, withQuestions } from '../prompt-flow'
 import { haptics } from '../../haptics';
 import { accessibilitySettings, hapticCalls, openLink } from './native-host';
 import { button, press, renderScreen, unmountScreen } from './react-screen';
-import { hasInstalled, onHome, resultEvent, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, hasInstalled, json, onHome, planLoaded, resultEvent, sseStream, waitFor, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
 const APP: InstalledApp = { id: 'tea', name: 'Tea Timer', createdAt: 1, lineageId: 'main', record: { appId: 'tea', name: 'Tea Timer', manifest: { capabilities: [] } } };
@@ -37,7 +37,7 @@ const failure = (announce?: FailureAnnouncement, onRetry?: () => void) => (
   <FailurePage kind="couldnt-run" reason="It didn't work" diagnostics={[]} rephraseHelps={false} changing={false} onChange={() => {}} onRetry={onRetry} announce={announce} />
 );
 const whimSheet = (onSend: () => void) => (
-  <WhimSheet app={APP} version={null} newVersion={false} changing={false} onStopChange={() => {}} text="Make it blue" onChangeText={() => {}} onSend={onSend} onReload={() => {}} onHistory={() => {}} onReport={() => {}} onExit={() => {}} />
+  <WhimSheet app={APP} version={null} newVersion={false} changing={false} onStopChange={() => {}} failedChange={false} onSeeWhy={() => {}} text="Make it blue" onChangeText={() => {}} onSend={onSend} onReload={() => {}} onHistory={() => {}} onReport={() => {}} onExit={() => {}} />
 );
 const changePlan = (onMake: () => void) => {
   const screen = withPlan(withQuestions(planStep(describeStep(APP, 'Make it blue')), []), { rewrittenPrompt: 'Make it blue', plan: [{ label: 'Colour', text: 'Blue' }] });
@@ -95,6 +95,27 @@ export async function runHapticMomentsUiTests(h: Harness): Promise<void> {
     await unmountScreen(tree);
   });
 
+  await h.test('haptics: the plan page’s own Try again plays handoff once, on the press; the notice appearing plays nothing', async () => {
+    const handoff = callOf('handoff');
+    let clarifies = 0;
+    const server = (r: SentRequest) => {
+      if (r.path === '/v1/clarify') {
+        clarifies++;
+        return clarifies === 1 ? new Response('upstream down', { status: 500 }) : json({ questions: [] });
+      }
+      return json({ rewrittenPrompt: 'A tea timer', plan: [] });
+    };
+    await withLauncher({ server }, async ({ tree }) => {
+      hapticCalls.splice(0);
+      await composeAndContinue(tree, 'A tea timer');
+      await waitFor(() => button(tree, COPY.planTryAgain) != null, 'the notice with Try again');
+      h.eq(played(), [], 'the problem notice appearing plays nothing');
+      await press(button(tree, COPY.planTryAgain));
+      await waitFor(() => planLoaded(tree), 'the plan after trying again');
+      h.eq([clarifies, played()], [2, [handoff]], 'the request was sent again and handoff played once');
+    });
+  });
+
   await h.test('haptics: the Whim sheet’s send hands nothing to Whim yet, so it plays nothing', async () => {
     let sent = 0;
     const tree = await renderScreen(whimSheet(() => { sent++; }));
@@ -136,6 +157,23 @@ export async function runHapticMomentsUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => openLink(appLinkFor(id)));
       await waitFor(() => on(tree, FailurePage), 'the failure its app link reopens');
       h.eq(played(), [failed], 'an app link reopening the page plays nothing');
+    });
+  });
+
+  await h.test('haptics: a run that ends in a thrown error plays failure once as its Failure page appears', async () => {
+    const server = (r: SentRequest) => {
+      if (r.path === '/v1/clarify') return json({ questions: [] });
+      if (r.path === '/v1/rewrite') return json({ rewrittenPrompt: String(r.body?.prompt), plan: [] });
+      return json({ error: 'internal' }, 500);
+    };
+    await withLauncher({ server }, async ({ tree }) => {
+      const failed = callOf('failure');
+      await composeAndContinue(tree, 'A tea timer');
+      await waitFor(() => planLoaded(tree), 'the plan to load');
+      hapticCalls.splice(0);
+      await buildIt(tree);
+      await waitFor(() => on(tree, FailurePage), 'the failure page');
+      h.eq(played(), [failed], 'the thrown ending plays failure exactly once');
     });
   });
 

@@ -7,8 +7,8 @@
     "server"
   ],
   "scripts": {
-    "android": "react-native run-android",
-    "android:release": "react-native run-android --mode offline --active-arch-only",
+    "android": "node scripts/android-dev.mjs",
+    "android:release": "node scripts/android-release.mjs",
     "start": "react-native start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit && node scripts/typecheck-tests.mjs",

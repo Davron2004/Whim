@@ -10,7 +10,7 @@
  */
 import type { EmberState } from '../ui/tokens-pure';
 import { COPY, makingQueueLine, makingRepairLine, makingStallLine, REPAIR_ATTEMPT_LIMIT } from './copy';
-import { activeBuildStepIndex, BUILD_STEPS, elapsedLabel, livenessOf, STALL_MS, type MakingScreen, type RunSignals } from './prompt-flow';
+import { activeBuildStepIndex, BUILD_STEPS, elapsedLabel, livenessOf, type MakingScreen, type RunSignals } from './prompt-flow';
 
 /**
  * How long making takes, as measured (system.md §8): production flowbench, 22 runs — 53 s median,
@@ -102,7 +102,10 @@ export function makingProgress(state: MakingState, signals: RunSignals | null, n
     return { rows, line: makingQueueLine(state.queuedPosition), ember: { state: 'stuck', activity: 0 } };
   }
   if (signals !== null && livenessOf(signals, now) === 'stalled') {
-    return { rows, line: makingStallLine(STALL_MS / 1000), ember: { state: 'stuck', activity: 0 } };
+    // The time since the last progress event, counting up on the page's tick (spec: "its elapsed
+    // duration still counting from the last progress event").
+    const quietSeconds = Math.floor((now - signals.lastProgressAt) / 1000);
+    return { rows, line: makingStallLine(quietSeconds), ember: { state: 'stuck', activity: 0 } };
   }
   const making = signals === null ? 0 : now - (signals.turnCameAt ?? signals.startedAt);
   return { rows, line: makingTimeLine(making), ember: { state: 'working', activity } };

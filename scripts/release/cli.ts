@@ -17,6 +17,7 @@ import { loadNativeReleaseConfig, scanNativeLiterals } from './lib/native-config
 import { checkIosProject } from './lib/ios-project';
 import { checkAndroidProject } from './lib/android-project';
 import { checkAssets } from './lib/assets';
+import { checkDevScripts, realAndroidReleaseDeps, runAndroidRelease } from './lib/android-dev-script';
 import { checkStoreListing } from './lib/store-listing';
 import { collectPreflightSnapshot, evaluatePreflight, type ReleasePlatform } from './lib/preflight';
 import { parseFingerprintFile, getAabManifestFacts, getAabSignerFingerprint, aabFindings, type AabFacts } from './lib/verify-aab';
@@ -95,6 +96,7 @@ function runCheck(): number {
     ...scanNativeLiterals(repoRoot, config).map((f) => `native literal — ${f.file}:${f.line}: ${f.key} ${JSON.stringify(f.literal)}`),
     ...checkIosProject(repoRoot, config).map((f) => `iOS project — ${f.file}: ${f.message}`),
     ...checkAndroidProject(repoRoot).map((f) => `Android project — ${f.file}: ${f.message}`),
+    ...checkDevScripts(repoRoot).map((f) => `dev scripts — ${f}`),
     ...checkAssets(repoRoot).map((f) => `assets — ${f.path}: ${f.message}`),
     ...checkStoreListing(repoRoot, config).map((f) => `store listing — ${f.file}: ${f.message}`),
     ...checkDisclosureRelease(repoRoot).map((f) => `disclosure — ${f}`),
@@ -345,8 +347,16 @@ export const COMMANDS: Record<string, CliCommand> = {
     summary: 'generate-assets — renders every icon and launch asset from release/assets/ and writes generated.json.',
     run: runGenerateAssets,
   },
+  'android-release': {
+    summary: 'android-release --device <serial> — builds the offline Android variant and installs it on that one device (or ANDROID_SERIAL).',
+    run: (args) => runAndroidRelease(args, process.env, realAndroidReleaseDeps(process.cwd())),
+  },
+  'android-dev': {
+    summary: 'android-dev --device <serial> — installs the debug build on that one device (or ANDROID_SERIAL); start Metro yourself (npm start), no packager window opens.',
+    run: (args) => runAndroidRelease(args, process.env, realAndroidReleaseDeps(process.cwd()), 'dev'),
+  },
   check: {
-    summary: 'check — runs every repo release check (native literals, iOS/Android project, assets, store listing, disclosure).',
+    summary: 'check — runs every repo release check (native literals, iOS/Android project, dev scripts, assets, store listing, disclosure).',
     run: runCheck,
   },
   'disclosure-check': {

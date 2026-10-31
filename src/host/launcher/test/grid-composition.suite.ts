@@ -23,6 +23,7 @@ import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { MapKVBackend } from '../../version-store';
 import { sampleLive, sameLiveView, type LiveSample } from '../home-live';
 import type { InstalledApp } from '../app-index';
+import { PROTOCOL_LEVEL } from '../wire-headers';
 
 const NOW = 1_700_000_000_000;
 const DAY = ATTEMPT_RECENT_MS;
@@ -32,8 +33,9 @@ function app(id: string, createdAt: number, extra: Partial<InstalledApp> = {}): 
 }
 
 /** Records as the store writes them (creation, `setFailed`, the launch-time demotion to stopped),
- *  listed in the order given (newest first) and aged to `age` ms before `NOW`. */
-function attempts(spec: { id: string; prompt?: string; state?: 'building' | 'failed' | 'interrupted'; age?: number; editingAppId?: string; remedy?: 'update' }[]): PendingBuildRecord[] {
+ *  listed in the order given (newest first) and aged to `age` ms before `NOW`. An `update` remedy
+ *  names `remedyLevel`, by default the level this build writes (`LauncherRoot`'s update fallback). */
+function attempts(spec: { id: string; prompt?: string; state?: 'building' | 'failed' | 'interrupted'; age?: number; editingAppId?: string; remedy?: 'update'; remedyLevel?: number }[]): PendingBuildRecord[] {
   const store = new PendingBuildStore(new MapKVBackend());
   const make = (s: (typeof spec)[number]) =>
     store.create({ id: s.id, prompt: s.prompt ?? `prompt for ${s.id}`, workingTitle: s.id, ...(s.editingAppId ? { editingAppId: s.editingAppId } : {}) });
@@ -41,7 +43,7 @@ function attempts(spec: { id: string; prompt?: string; state?: 'building' | 'fai
   store.demoteBuildingToInterrupted();
   for (const s of spec.filter((x) => x.state !== 'interrupted')) {
     make(s);
-    if (s.state === 'failed') store.setFailed(s.id, { reason: 'no', ...(s.remedy ? { remedy: { kind: 'update' as const, protocolLevel: 9 } } : {}) });
+    if (s.state === 'failed') store.setFailed(s.id, { reason: 'no', ...(s.remedy ? { remedy: { kind: 'update' as const, protocolLevel: s.remedyLevel ?? PROTOCOL_LEVEL } } : {}) });
   }
   return spec.map((s) => ({ ...store.get(s.id)!, createdAt: NOW - (s.age ?? 0) }));
 }
@@ -64,29 +66,29 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
       { id: 'made-1', state: 'building' },
       { id: 'stopped-1', state: 'interrupted', age: 7_200_000 },
     ]);
-    const cells = composeGrid(pending, [app('old', 1), app('new', 50)], { now: NOW });
+    const cells = composeGrid(pending, [app('old', 1), app('new', 50)], { now: NOW, protocolLevel: PROTOCOL_LEVEL });
     h.eq(names(cells), ['made-2', 'made-1', 'failed-1', 'stopped-1', 'new', 'old'], 'making, recent attempts in the order given, apps newest first');
   });
 
   await h.test('home order: a finished app lands first among the apps, after the tiles still being made', () => {
     const others = [app('a', 10), app('b', 20)];
     const making = attempts([{ id: 'making-1', state: 'building' }, { id: 'making-2', state: 'building' }]);
-    const before = composeGrid(making, others, { now: NOW });
+    const before = composeGrid(making, others, { now: NOW, protocolLevel: PROTOCOL_LEVEL });
     h.eq(names(before), ['making-1', 'making-2', 'b', 'a'], 'before: two being made, then the apps');
-    const after = composeGrid(making, [...others, app('finished', NOW)], { now: NOW });
+    const after = composeGrid(making, [...others, app('finished', NOW)], { now: NOW, protocolLevel: PROTOCOL_LEVEL });
     h.eq(names(after), ['making-1', 'making-2', 'finished', 'b', 'a'], 'the finished app is the first app, after both tiles being made');
   });
 
   await h.test('home order: an app keeps its place when it changes — a rebuild, a new tint, a new name never move it', () => {
     const apps = [app('a', 10), app('b', 20), app('c', 30)];
-    const before = names(composeGrid([], apps, { now: NOW }));
+    const before = names(composeGrid([], apps, { now: NOW, protocolLevel: PROTOCOL_LEVEL }));
     const changed = apps.map((a) => (a.id === 'a' ? { ...a, name: 'Renamed', tint: 'rose' as const, record: { ...a.record, manifest: { capabilities: ['storage' as const] } } } : a));
     const rebuild = attempts([{ id: 'a', state: 'building', editingAppId: 'a' }]);
-    h.eq(names(composeGrid(rebuild, changed, { now: NOW })), before, 'the order is the same, a changing app and all');
+    h.eq(names(composeGrid(rebuild, changed, { now: NOW, protocolLevel: PROTOCOL_LEVEL })), before, 'the order is the same, a changing app and all');
   });
 
   await h.test('home order: newest install first, and a tie in time keeps the later install ahead', () => {
-    const cells = composeGrid([], [app('seed-1', 5), app('seed-2', 5), app('seed-3', 5)], { now: NOW });
+    const cells = composeGrid([], [app('seed-1', 5), app('seed-2', 5), app('seed-3', 5)], { now: NOW, protocolLevel: PROTOCOL_LEVEL });
     h.eq(names(cells), ['seed-3', 'seed-2', 'seed-1'], 'installed together: the index lists in install order, newest last');
   });
 
@@ -102,7 +104,7 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
       { id: 'dice', state: 'failed', editingAppId: 'dice' },
       { id: 'quiet', state: 'interrupted', editingAppId: 'quiet' },
     ]);
-    const cells = composeGrid(pending, [app('timer', 1), app('dice', 2), app('quiet', 3), app('plain', 4)], { now: NOW, queued: new Set(['a-waiting']) });
+    const cells = composeGrid(pending, [app('timer', 1), app('dice', 2), app('quiet', 3), app('plain', 4)], { now: NOW, protocolLevel: PROTOCOL_LEVEL, queued: new Set(['a-waiting']) });
     h.eq(
       Object.fromEntries(cells.map((c, i) => [names(cells)[i], states([c])[0]])),
       {
@@ -114,15 +116,29 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
     h.eq(cells.filter((c) => c.kind === 'attempt' && c.rec.editingAppId !== undefined).length, 0, 'a change in flight is never a tile of its own');
   });
 
+  await h.test('tile states: an update-ended attempt needs an update only while this Whim is at or below the level it names; past it, it failed and offers Try again', () => {
+    const pending = attempts([
+      { id: 'caught-up', state: 'failed', remedy: 'update', remedyLevel: PROTOCOL_LEVEL - 1 },
+      { id: 'same-level', state: 'failed', remedy: 'update', remedyLevel: PROTOCOL_LEVEL },
+      { id: 'above', state: 'failed', remedy: 'update', remedyLevel: PROTOCOL_LEVEL + 1 },
+    ]);
+    const cells = composeGrid(pending, [], { now: NOW, protocolLevel: PROTOCOL_LEVEL });
+    h.eq(states(cells), ['failed', 'needs-update', 'needs-update'], 'only the level this Whim already meets reads as an ordinary failure');
+    h.eq(menuFor(cells[0]).map((r) => r.action), ['what-happened', 'try-again', 'discard'], 'its menu has Try again');
+    h.eq(menuFor(cells[2]).map((r) => r.action), ['update', 'discard'], 'one above still offers Update Whim and Discard');
+    const later = composeGrid(pending, [], { now: NOW, protocolLevel: PROTOCOL_LEVEL + 1 });
+    h.eq(states(later), ['failed', 'failed', 'needs-update'], 'a Whim one level on has caught up with the record written at its old level');
+  });
+
   await h.test('home order: an id both installed and still an attempt is one tile, the attempt', () => {
-    const cells = composeGrid(attempts([{ id: 'same', state: 'building' }]), [app('same', 1), app('other', 2)], { now: NOW });
+    const cells = composeGrid(attempts([{ id: 'same', state: 'building' }]), [app('same', 1), app('other', 2)], { now: NOW, protocolLevel: PROTOCOL_LEVEL });
     h.eq(names(cells), ['same', 'other'], 'the attempt wins, the app returns when the record is gone');
     h.eq(cells[0].kind, 'attempt', 'as the attempt');
   });
 
   await h.test('home order: apps and attempts whose purge is armed are not cells; their neighbours keep their order', () => {
     const pending = attempts([{ id: 'x', state: 'failed' }, { id: 'y', state: 'failed' }]);
-    const cells = composeGrid(pending, [app('a', 1), app('b', 2), app('c', 3)], { now: NOW, deletedApps: new Set(['b']), discardedAttempts: new Set(['x']) });
+    const cells = composeGrid(pending, [app('a', 1), app('b', 2), app('c', 3)], { now: NOW, protocolLevel: PROTOCOL_LEVEL, deletedApps: new Set(['b']), discardedAttempts: new Set(['x']) });
     h.eq(names(cells), ['y', 'c', 'a'], 'the deleted app and the discarded attempt are gone');
   });
 
@@ -135,14 +151,14 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
       { id: 'old-update', state: 'failed', remedy: 'update', age: 9 * DAY },
       { id: 'old-making', state: 'building', age: 3 * DAY },
     ]);
-    const cells = composeGrid(pending, [app('a', 1)], { now: NOW });
+    const cells = composeGrid(pending, [app('a', 1)], { now: NOW, protocolLevel: PROTOCOL_LEVEL });
     h.eq(names(cells), ['old-making', 'recent-failed', 'old-update', 'a', 'older(old-failed,old-stopped)'], 'the two old ones are one cell, last');
     const older = cells.at(-1);
     h.ok(older?.kind === 'older' && older.recs.length === 2, 'standing for both attempts');
   });
 
   await h.test('older attempts: nothing old, no older cell', () => {
-    h.eq(composeGrid(attempts([{ id: 'r', state: 'failed', age: 1000 }]), [], { now: NOW }).some((c) => c.kind === 'older'), false, 'a day-old failure is still news');
+    h.eq(composeGrid(attempts([{ id: 'r', state: 'failed', age: 1000 }]), [], { now: NOW, protocolLevel: PROTOCOL_LEVEL }).some((c) => c.kind === 'older'), false, 'a day-old failure is still news');
   });
 
   // ── names and lines ─────────────────────────────────────────────────────────
@@ -183,7 +199,7 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
       { id: 'changing', state: 'building', editingAppId: 'changing' }, { id: 'broke', state: 'failed', editingAppId: 'broke' },
       { id: 'old-1', state: 'failed', age: 3 * DAY }, { id: 'old-2', state: 'interrupted', age: 3 * DAY },
     ]);
-    const cells = composeGrid(pending, [app('ready', 1), app('changing', 2), app('broke', 3)], { now: NOW, queued: new Set(['waiting']) });
+    const cells = composeGrid(pending, [app('ready', 1), app('changing', 2), app('broke', 3)], { now: NOW, protocolLevel: PROTOCOL_LEVEL, queued: new Set(['waiting']) });
     const rows = (id: string) => menuFor(cells.find((c) => names([c])[0] === id)!).map((r) => r.action);
     h.eq(rows('ready'), ['open', 'change', 'history', 'copy', 'customize', 'share', 'delete'], 'a ready app');
     h.eq(rows('making'), ['details', 'stop'], 'a tile being made offers Details and Stop and nothing else');
@@ -200,7 +216,7 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
   // ── search ──────────────────────────────────────────────────────────────────
   await h.test('search: appears from 13 apps and filters by name in any case; the older cell is not searched', () => {
     h.eq(SEARCH_FROM_APPS, 13, 'from thirteen apps');
-    const cells = composeGrid(attempts([{ id: 'old', state: 'failed', age: 3 * DAY }]), [app('Pour Timer', 1), app('Tip Splitter', 2), app('Water Counter', 3)], { now: NOW });
+    const cells = composeGrid(attempts([{ id: 'old', state: 'failed', age: 3 * DAY }]), [app('Pour Timer', 1), app('Tip Splitter', 2), app('Water Counter', 3)], { now: NOW, protocolLevel: PROTOCOL_LEVEL });
     h.eq(names(searchCells(cells, 'TIMER')), ['Pour Timer'], 'case does not matter');
     h.eq(names(searchCells(cells, 'e')).includes('older(old)'), false, 'the older cell is not a name');
     h.eq(searchCells(cells, '  ').length, cells.length, 'a blank query keeps everything');
@@ -223,7 +239,7 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
   await h.test('home live: an attempt in line is waiting; the ember follows tokens a second, 40 being full; a first sight is idle; ended attempts are forgotten', () => {
     const samples = new Map<string, LiveSample>();
     const at = (id: string, tokens: number, extra: { inLine?: boolean; thinkingChars?: number } = {}) => ({
-      id, signals: { aggregates: { tokens, thinkingChars: extra.thinkingChars }, inLine: extra.inLine, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: 9_000 },
+      id, signals: { aggregates: { tokens, thinkingChars: extra.thinkingChars }, inLine: extra.inLine, lastTokenAt: null, lastThinkingAt: null, lastProgressAt: 9_000 },
     });
     const first = sampleLive([at('a', 100), at('b', 0, { inLine: true })], samples, 10_000);
     h.eq([first.queued.has('b'), first.queued.has('a'), first.activity.a], [true, false, 0], 'b waits for a spot; a has no rate yet');

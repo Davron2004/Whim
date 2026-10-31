@@ -4,7 +4,9 @@
  * (`MakingSheet`), over the app, which keeps running under it:
  *
  * - the app's 40 pt tile, its name and "Version N · changed <when>" for the version that is running;
- * - "New version ready · Reload" on top while a newer version than the running one is current;
+ * - "New version ready · Reload" on top while a newer version than the running one is current, and
+ *   "See why" while a change of the app has failed and none is being made: the orb's `danger` dot as a
+ *   row that stays after the failed-change toast has gone, opening the same Failure page;
  * - the "What should change?" send area, with its 32 pt `ember` arrow inside its trailing edge, or,
  *   while a change of the app is being made, "Changing…" and Stop the change in its place;
  * - History, Report a problem and Back to your apps.
@@ -58,6 +60,11 @@ export interface WhimSheetProps {
    *  as the app's tile menu on Home offers, so a second change can't be sent over it. */
   changing: boolean;
   onStopChange: () => void;
+  /** A change of this app failed while this launch ran: the See why row shows, unless a newer change
+   *  is being made (`changing`), the same state that gives the orb its `danger` dot. */
+  failedChange: boolean;
+  /** See why: the failed change's Failure page, in the sheet over the app, as the toast's See why. */
+  onSeeWhy: () => void;
   /** The send area's words, held by the shell. */
   text: string;
   onChangeText: (text: string) => void;
@@ -158,6 +165,8 @@ export function WhimSheet({
   newVersion,
   changing,
   onStopChange,
+  failedChange,
+  onSeeWhy,
   text,
   onChangeText,
   onSend,
@@ -169,6 +178,7 @@ export function WhimSheet({
   const t = useTokens();
   const s = styles(t);
   const { tint, icon } = tileOf(app);
+  const seeWhy = failedChange && !changing;
   return (
     <KeyboardShell host="sheet" contentContainerStyle={s.content}>
       <View style={s.head}>
@@ -185,9 +195,14 @@ export function WhimSheet({
           </Text>
         </View>
       </View>
-      {newVersion ? (
+      {newVersion || seeWhy ? (
         <GroupedSection on="sheet">
-          <GroupedRow title={COPY.whimSheetNewVersion} trailing={{ kind: 'value', text: COPY.actionReload }} onPress={onReload} />
+          {newVersion ? (
+            <GroupedRow title={COPY.whimSheetNewVersion} trailing={{ kind: 'value', text: COPY.actionReload }} onPress={onReload} />
+          ) : null}
+          {seeWhy ? (
+            <GroupedRow title={COPY.changeFailedToast} trailing={{ kind: 'value', text: COPY.toastSeeWhy }} onPress={onSeeWhy} />
+          ) : null}
         </GroupedSection>
       ) : null}
       {changing ? (

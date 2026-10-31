@@ -18,8 +18,9 @@ import type { CompatFallback } from '@whim/contract';
 import { PROTOCOL_LEVEL } from './wire-headers';
 
 /** What this build does with a message it cannot use: `skip` carries on, `fail` ends the flow on
- *  the failure screen, `update` ends it on the update screen. `notice` is the message's own plain
- *  text for that screen, absent when it sent none. */
+ *  the failure screen, `update` ends a run on its needs-a-newer-Whim Failure page and any other flow
+ *  on the update screen. `notice` is the message's own plain text for that screen, absent when it
+ *  sent none. */
 export type WireFallback =
   | { readonly kind: 'skip' }
   | { readonly kind: 'fail'; readonly notice?: string }

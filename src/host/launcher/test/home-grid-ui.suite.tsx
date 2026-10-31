@@ -9,8 +9,12 @@ import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { COPY } from '../copy';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
-import { MapKVBackend } from '../../version-store';
-import type { InstalledApp } from '../app-index';
+import { createMemoryStore, MapKVBackend } from '../../version-store';
+import { AppIndex, type InstalledApp } from '../app-index';
+import { StoreAccess } from '../store-access';
+import { deliverResult } from '../build-lifecycle';
+import { listVersions } from '../history-logic';
+import type { WireAppRecord } from '@whim/contract';
 import { appLinkFor } from '../app-link';
 import { tileOf } from '../tile-identity';
 import { gridLayout, TILE_SIDE } from '../../ui/AppTile-geometry';
@@ -366,6 +370,27 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     } finally { await unmountScreen(tree); }
   });
 
+  await h.test('home grid: an entry made with Make a copy and the continuation a change to an older version lands on both read "Copy", whether or not they share the original’s data', async () => {
+    await resetPhone();
+    const store = createMemoryStore({ autoCompact: false });
+    const index = new AppIndex(new MapKVBackend());
+    const access = new StoreAccess({ store, index });
+    const water = await access.install({ id: 'Water', name: 'Water', record: { appId: 'Water', name: 'Water', manifest: { capabilities: [] } }, bundleSource: 'V1', prompt: 'p1' });
+    await store.snapshot('Water', { 'bundle.js': 'V2' }, 'p2');
+    const copy = await access.fork(water);
+    const [, v1] = await listVersions(access, water);
+    await access.rollback(water, v1.id);
+    const wire: WireAppRecord = { name: 'Water', source: 'export default () => null;', bundle: 'var __WHIM_APP_MODULE__ = (() => ({}))();', manifest: {}, schema: {} };
+    const continuation = await deliverResult({ access, appId: 'unused', editing: index.get('Water')!, text: 'p3', wire });
+    h.ok(continuation.id !== water.id && continuation.id !== copy.id && access.engineAppId(continuation) === access.engineAppId(water),
+      'setup: the change landed on a continuation that shares the original’s data');
+    h.ok(access.engineAppId(copy) !== access.engineAppId(water), 'setup: the copy has data of its own');
+    const tree = await renderHome({ apps: index.list() });
+    try {
+      h.eq(tileLabels(tree).sort((a, b) => a.localeCompare(b)), ['Water', 'Water, copy', 'Water, copy'], 'the original reads nothing; the copy and the continuation both read "Copy"');
+    } finally { await unmountScreen(tree); }
+  });
+
   await h.test('home grid: a tile being made does not launch an app; its page opens, as does a failed or stopped one’s', async () => {
     await resetPhone();
     const pending = attempts([{ id: 'p-making', prompt: 'A pour over timer', state: 'building' }, { id: 'p-failed', prompt: 'A dice roller game', state: 'failed' }]);
@@ -393,7 +418,7 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     } finally { await unmountScreen(tree); }
   });
 
-  await h.test('home grid: a stream with no bytes for 40 s makes its tile’s light stuck — a making tile’s ember and a changing tile’s ring ease to the stuck level over the stuck time and hold; bytes resume and each burns as before', async () => {
+  await h.test('home grid: a stream with no progress event for 40 s makes its tile’s light stuck — a making tile’s ember and a changing tile’s ring ease to the stuck level over the stuck time and hold; bytes resume and each burns as before', async () => {
     await resetPhone();
     const stuckDoc = /`I` eases to ([\d.]+) over ([\d.]+) s and holds still/.exec(fs.readFileSync(path.join(process.cwd(), 'docs/design/system.md'), 'utf8'));
     const [level, ms] = [Number(stuckDoc?.[1]), Number(stuckDoc?.[2]) * 1000];

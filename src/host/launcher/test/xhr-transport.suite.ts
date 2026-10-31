@@ -19,7 +19,8 @@ import { Harness } from './harness';
 import { generateApp, GenerationClientError, rewritePrompt } from '../generation-client';
 import type { ConsentedClientOptions } from '../generation-client';
 import { openXhrGenerateStream } from '../xhr-transport';
-import { FakeXMLHttpRequest } from './fake-xhr';
+import { CONNECT_TIMEOUT_HINT, CONNECT_TIMEOUT_MS } from '../transport-shared';
+import { FakeXMLHttpRequest, holdTimers, realSetTimeout, untilSettled } from './fake-xhr';
 import { TEST_APP_INFO, grantedOptions } from './client-fixtures';
 import { appInfoReader } from '../app-info';
 import type { GenerationEvent } from '@whim/contract';
@@ -61,7 +62,7 @@ function withTimeout(promise: Promise<NextResult>, ms: number): Promise<NextResu
   return Promise.race([
     promise,
     new Promise<'timeout'>((resolve) => {
-      setTimeout(() => resolve('timeout'), ms);
+      realSetTimeout(() => resolve('timeout'), ms);
     }),
   ]);
 }
@@ -189,7 +190,7 @@ function outcomeOrHung(promise: Promise<unknown>, ms: number): Promise<unknown> 
       (err: unknown) => err,
     ),
     new Promise<'hung'>((resolve) => {
-      setTimeout(() => resolve('hung'), ms);
+      realSetTimeout(() => resolve('hung'), ms);
     }),
   ]);
 }
@@ -225,20 +226,24 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
     h.ok(third.done === true, 'iteration ends once the response completes with no further frames');
   });
 
-  // build-liveness B2: the XHR path shares `generateApp`'s SSE-block parser (it never parses
-  // framing itself — see `generation-client.ts`'s module doc), so `onKeepalive` fires identically
-  // over this transport too.
-  await h.test('openXhrGenerateStream: onKeepalive fires over the XHR transport too, never as an event', async () => {
+  // The XHR path shares `generateApp`'s SSE-block parser (it never parses framing itself — see
+  // `generation-client.ts`'s module doc), so a keepalive is skipped identically over this transport.
+  await h.test('openXhrGenerateStream: keepalive comments are skipped over the XHR transport too, never an event', async () => {
     const fakeXhr = new FakeXMLHttpRequest();
     const event: GenerationEvent = { type: 'token', text: 'hello' };
-    let keepalives = 0;
-    const collected = collect(generateApp({ ...withFakeXhr(fakeXhr), onKeepalive: () => keepalives++ }, { prompt: 'p' }));
+    const collected = collect(generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }));
     fakeXhr.respondHeaders(200);
+    fakeXhr.respondIncremental(': keepalive\n\n');
     fakeXhr.respondIncremental(sseFrame(event, 1));
     fakeXhr.respondIncremental(': keepalive\n\n');
     fakeXhr.respondComplete();
-    h.eq(await collected, [event], 'still yields only the real event');
-    h.eq(keepalives, 1, 'and the caller hears about the keepalive frame');
+    h.eq(await collected, [event], 'only the real event is yielded');
+    const quiet = new FakeXMLHttpRequest();
+    const nothing = collect(generateApp(withFakeXhr(quiet), { prompt: 'p' }));
+    quiet.respondHeaders(200);
+    quiet.respondIncremental(': keepalive\n\n: keepalive\n\n');
+    quiet.respondComplete();
+    h.eq(await nothing, [], 'and a body of keepalives alone yields nothing and throws nothing');
   });
 
   await h.test(
@@ -623,13 +628,71 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
       const got = await Promise.race([
         collected,
         new Promise<'hung'>((resolve) => {
-          setTimeout(() => resolve('hung'), 1000);
+          realSetTimeout(() => resolve('hung'), 1000);
         }),
       ]);
       h.eq(got, [eventA, eventB], 'a stream idle far longer than the connect window is never killed');
       h.eq(fakeXhr.abortCount, 0, 'the live stream is never aborted');
     },
   );
+
+  // --- beta-2-spec-fixes D1/D2: a keepalive is the first byte, and no step after it is a lost
+  // connection. The production window (no `connectTimeoutMs`), with time moved by a held clock.
+
+  await h.test(
+    'openXhrGenerateStream: a keepalive as the first chunk disarms the connect window, so a 20 s first step and a 35 s later step end nothing',
+    async () => {
+      const fakeXhr = new FakeXMLHttpRequest();
+      const stage: GenerationEvent = { type: 'stage', stage: 'plan', status: 'start' };
+      const token: GenerationEvent = { type: 'token', text: 'const a = 1;' };
+      const clock = holdTimers();
+      try {
+        const gen = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' });
+        const first = gen.next();
+        await untilSettled(() => fakeXhr.sendCount === 1, 'the request to be sent');
+        h.eq(clock.armed(), 1, 'the connect window is armed while no byte has arrived');
+        fakeXhr.respondHeaders(200);
+        fakeXhr.respondIncremental(': keepalive\n\n');
+        h.eq(clock.armed(), 0, 'the opening keepalive disarms the connect window');
+        h.eq(clock.advance(20_000), 0, 'a first step 20 s long fires no timeout');
+        fakeXhr.respondIncremental(sseFrame(stage, 1));
+        const firstResult = await withTimeout(first, 1000);
+        h.eq(firstResult === 'timeout' ? firstResult : firstResult.value, stage, 'the attempt continues to the first event');
+
+        const second = gen.next();
+        let fired = clock.advance(15_000);
+        fakeXhr.respondIncremental(': keepalive\n\n');
+        fired += clock.advance(15_000);
+        fakeXhr.respondIncremental(': keepalive\n\n');
+        fired += clock.advance(5_000);
+        h.eq(fired, 0, 'a 35 s step with keepalives throughout fires no timeout');
+        fakeXhr.respondIncremental(sseFrame(token, 2));
+        const secondResult = await withTimeout(second, 1000);
+        h.eq(secondResult === 'timeout' ? secondResult : secondResult.value, token, 'and the next event arrives normally');
+        h.eq(fakeXhr.abortCount, 0, 'the live request is never aborted');
+        fakeXhr.respondComplete();
+      } finally {
+        clock.restore();
+      }
+    },
+  );
+
+  await h.test('openXhrGenerateStream: no byte within the production connect window still ends the attempt as a network failure', async () => {
+    const fakeXhr = new FakeXMLHttpRequest();
+    const clock = holdTimers();
+    try {
+      const outcome = outcomeOrHung(generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next(), 1000);
+      await untilSettled(() => fakeXhr.sendCount === 1, 'the request to be sent');
+      fakeXhr.respondHeaders(200);
+      h.eq(clock.advance(CONNECT_TIMEOUT_MS - 1), 0, 'a millisecond short of the window, nothing has fired');
+      h.eq(clock.advance(1), 1, 'at the window, the connect timeout fires');
+      const err = await outcome;
+      h.eq(err instanceof GenerationClientError ? [err.kind, err.hint] : err, ['network', CONNECT_TIMEOUT_HINT], 'and the attempt ends as a network failure');
+      h.eq(fakeXhr.abortCount, 1, 'releasing the socket');
+    } finally {
+      clock.restore();
+    }
+  });
 
   // --- task 3.6: exactly one request per generation ---
 
@@ -681,12 +744,11 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
       const body = thinkingHeavyBody(THINKING_FRAMES, TOKEN_FRAMES);
       const deliveries = splitIntoChunks(body.text, PROGRESS_DELIVERIES);
       const fakeXhr = new FakeXMLHttpRequest();
-      let keepalives = 0;
 
       const restoreDecoder = installCountingDecoder();
       let events: GenerationEvent[];
       try {
-        const collected = collect(generateApp({ ...withFakeXhr(fakeXhr), onKeepalive: () => keepalives++ }, { prompt: 'p' }));
+        const collected = collect(generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }));
         fakeXhr.respondHeaders(200);
         for (const delivery of deliveries) fakeXhr.respondIncremental(delivery);
         fakeXhr.respondComplete();
@@ -696,7 +758,7 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
       }
 
       h.eq(events.length, body.eventCount, 'every event still arrives, none dropped or doubled');
-      h.eq(keepalives, body.keepaliveCount, 'and every keepalive comment still fires onKeepalive exactly once');
+      h.ok(body.keepaliveCount > 0, `the body really interleaves keepalive comments (${body.keepaliveCount}), all skipped without a parse error`);
       h.eq(events[events.length - 1].type, 'result', 'the terminal result still ends the stream');
 
       // THE DISCRIMINATING CHECK. Wall time alone cannot carry this test: Node decodes natively and

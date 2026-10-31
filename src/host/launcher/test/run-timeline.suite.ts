@@ -217,7 +217,7 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     // what the timeline shows must be the run, not the run's edges.
     let clock = 1_000;
     const journal = new RunJournalStore(new MapKVBackend(), () => clock);
-    let signals: RunSignals = { startedAt: clock, aggregates: EMPTY_RUN_AGGREGATES, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: clock };
+    let signals: RunSignals = { startedAt: clock, aggregates: EMPTY_RUN_AGGREGATES, lastTokenAt: null, lastThinkingAt: null, lastProgressAt: clock };
     const wire = [
       ['plan', 'start'], ['plan', 'done'],
       ['generate', 'start'], ['generate', 'done'],

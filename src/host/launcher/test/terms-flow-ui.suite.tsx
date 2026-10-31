@@ -386,6 +386,24 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
     }
   });
 
+  for (const language of ['en', 'fr'] as const) {
+    await h.test(`first run (${language}): the Language row follows the lead and comes before the first summary row, and switches to the other language`, async () => {
+      const copy = LEGAL_COPY[language];
+      const asked: LegalLanguage[] = [];
+      const tree = await renderScreen(<FirstRunSheet visible language={language} onLanguageChange={(next) => asked.push(next)} termsDue consentDue onAgree={() => {}} onClose={() => {}} />);
+      try {
+        const text = textOf(tree.root);
+        const [lead, languageRow, firstSummary] = [copy.firstRunLead, copy.firstRunLanguage, copy.firstRunSentTitle].map((words) => text.indexOf(words));
+        h.ok(lead >= 0 && languageRow >= 0 && firstSummary >= 0, 'the lead, the Language row and the first summary row all render');
+        h.ok(lead < languageRow && languageRow < firstSummary, 'in render order: lead, then Language, then the first summary row');
+        await press(button(tree, `${copy.firstRunLanguage}, ${copy.legalLanguageSwitch}`));
+        h.eq(asked, [language === 'en' ? 'fr' : 'en'], 'pressing it asks for the other language');
+      } finally {
+        await unmountScreen(tree);
+      }
+    });
+  }
+
   await h.test('first run: the terms row has a list row’s padding above and below its words, and the words wrap in what the box leaves them', async () => {
     const tree = await renderScreen(<FirstRunSheet visible language="fr" onLanguageChange={() => {}} termsDue consentDue onAgree={() => {}} onClose={() => {}} />);
     try {
@@ -395,7 +413,7 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
       const row = button(tree, LEGAL_COPY.fr.firstRunTermsCheck);
       const listRow = button(tree, `${LEGAL_COPY.fr.firstRunLanguage}, ${LEGAL_COPY.fr.legalLanguageSwitch}`);
       h.ok(typeof style(listRow).paddingVertical === 'number' && (style(listRow).paddingVertical ?? 0) > 0, 'setup: a list row pads its words above and below');
-      h.eq(style(row).paddingVertical, style(listRow).paddingVertical, 'the terms row pads its words as the Language row above it does');
+      h.eq(style(row).paddingVertical, style(listRow).paddingVertical, 'the terms row pads its words as a list row (the Language row) does');
       const words = row.find((n) => hostType(n) === 'Text' && textOf(n) === LEGAL_COPY.fr.firstRunTermsCheck);
       let box = words.parent;
       while (box && hostType(box) === undefined) box = box.parent;
