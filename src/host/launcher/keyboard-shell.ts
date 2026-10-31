@@ -76,9 +76,9 @@ export interface ScrollMetrics {
   readonly content: number;
 }
 
-/** Whether content is hidden above (the header shows its divider) or below (the footer does). */
-export function scrollEdges({ offset, viewport, content }: ScrollMetrics): { readonly above: boolean; readonly below: boolean } {
-  return { above: offset > 0.5, below: offset + viewport < content - 0.5 };
+/** Whether content continues below the visible part (the footer shows its divider). */
+export function contentBelow({ offset, viewport, content }: ScrollMetrics): boolean {
+  return offset + viewport < content - 0.5;
 }
 
 /**
@@ -96,6 +96,29 @@ export function revealOffset(
   if (bottom + margin > offset + viewport) return Math.max(0, bottom + margin - viewport);
   if (fits && top - margin < offset) return Math.max(0, top - margin);
   return null;
+}
+
+/** The most of the window a sheet's pinned footer may take before it scrolls with the content
+ *  instead. Pinned, the footer is always in reach; but a footer that grows with the text size (two
+ *  buttons, one of them on three lines at 200%) would leave the content a sliver to scroll in and put
+ *  some of it out of reach. Three tenths of the window: a first-run footer at default size is about a
+ *  sixth of an iPhone 17 and a fifth of a small phone, and the largest text size is what crosses it. */
+export const FOOTER_SHARE = 0.3;
+
+/** Whether a sheet's footer, `footerHeight` tall, scrolls with the content in a window `windowHeight`
+ *  tall. Measured against the window, not the sheet: the sheet's own height changes with the keyboard,
+ *  which would move the footer in and out of the scroll as it rises. */
+export function footerJoinsScroll(footerHeight: number, windowHeight: number): boolean {
+  return windowHeight > 0 && footerHeight > windowHeight * FOOTER_SHARE;
+}
+
+/** How far the content's edge fade under a sheet's header shows at scroll offset `offset`: nothing at
+ *  rest, fully once the content has moved the fade's own height (system.md §6: content fades out over
+ *  16 pt under floating chrome). Following the offset keeps the fade from popping in over content
+ *  that has hardly moved. */
+export function topFadeOpacity(offset: number, fadeHeight: number): number {
+  if (fadeHeight <= 0) return 0;
+  return Math.min(1, Math.max(0, offset / fadeHeight));
 }
 
 /** The colours a field draws its caret, selection handles and selected text's highlight in. */

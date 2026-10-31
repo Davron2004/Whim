@@ -27,7 +27,6 @@ import type { InstalledApp } from './app-index';
 import { COPY, composeHeadline, composePlaceholder, editingEyebrow } from './copy';
 import { FlowNoticeBlock } from './FlowNoticeBlock';
 import KeyboardShell from './KeyboardShell';
-import { PageHead } from './MakingSheet';
 import type { FlowNotice } from './prompt-flow';
 import { useRetryGate } from './ServiceNotice';
 import { tileOf } from './tile-identity';
@@ -85,7 +84,6 @@ export function DescribePage({ text, editing, serverUnreachable, notice, onChang
     <KeyboardShell
       host="sheet"
       contentContainerStyle={s.content}
-      header={<PageHead />}
       footer={
         <View style={s.footer}>
           {notice ? <FlowNoticeBlock notice={notice} /> : null}

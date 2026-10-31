@@ -17,7 +17,7 @@ import DoneStep from '../DoneStep';
 import MiniAppView from '../MiniAppView';
 import WhimProse from '../../ui/whim-prose/WhimProse';
 import { SHELL_COLORS } from '../../../sdk/theme';
-import { Alert, finishAnimations, hardwareBack, StyleSheet } from './native-host';
+import { Alert, finishAnimations, hardwareBack, StyleSheet, windowMetrics } from './native-host';
 import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 import { chooseRow, longPress, renderHome } from './home-rig';
 import { buildIt, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
@@ -81,6 +81,9 @@ const hasRow = (tree: Tree, text: string) => tree.root.findAll((n) => hostType(n
 /** The words a rendered prose line attributes to the user (its `yours` spans). */
 const yoursIn = (prose: TestRenderer.ReactTestInstance) =>
   prose.findAll((n) => hostType(n) === 'Text' && StyleSheet.flatten(n.props.style).color === SHELL_COLORS.yours).map(textOf);
+
+/** The words naming the app in the screen's title. */
+const titleOf = (tree: Tree, name: string) => tree.root.find((n) => hostType(n) === 'Text' && textOf(n) === name);
 
 /** How many sheets are open. */
 const sheetsOpen = (tree: Tree) => tree.root.findAll((n) => String(n.type) === 'Modal').length;
@@ -189,6 +192,33 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       await waitFor(() => !textOf(tree.root).includes(COPY.historyRestoreConfirmBusy), 'the restore to finish');
       h.eq(rollbacks.length, 1, 'one restore in all');
       h.eq(await access.activeId(app), middle.id, 'and the app now runs that version');
+    });
+  });
+
+  await h.test('history screen: a text size changed while it shows builds its title and rows again, and History keeps what it holds — the open row and the question it is asking', async () => {
+    const { access, app } = await threeVersions();
+    await withHistory(access, app, async (tree) => {
+      try {
+        await waitFor(() => hasRow(tree, 'add a chime'), 'the versions to load');
+        await press(row(tree, 'add a chime'));
+        await press(button(tree, COPY.historyGoBackToThis));
+        const asking = () => tree.root.findByType(ConfirmSheet).props.confirm != null;
+        h.ok(asking(), 'setup: History is asking whether to go back to that version');
+        const title = () => titleOf(tree, app.name);
+        const built = { title: title(), row: row(tree, 'add a chime') };
+        await reloadHistory(tree, access, app);
+        h.ok(title() === built.title && row(tree, 'add a chime') === built.row, 'setup: a render at the same text size keeps what is drawn');
+        windowMetrics.fontScale = 2;
+        await reloadHistory(tree, access, app);
+        h.ok(title() !== built.title && row(tree, 'add a chime') !== built.row, 'the size changed: the title and the rows are built again, so iOS measures every text at the new size');
+        h.ok(button(tree, COPY.historyGoBackToThis) !== undefined, 'the row that was open is still open');
+        h.ok(asking(), 'and the question is still open');
+        const rebuilt = title();
+        await reloadHistory(tree, access, app);
+        h.ok(title() === rebuilt, 'built again once per size, not on every render');
+      } finally {
+        windowMetrics.fontScale = 1;
+      }
     });
   });
 

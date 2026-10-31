@@ -1,6 +1,6 @@
 /**
  * ComposerBar — Home's way into making an app (system.md §9 Your apps; app-launcher "The home grid
- * orders and lays out apps for every text size"): a raised capsule at the bottom that reads
+ * orders and lays out apps for every text size"): a raised capsule at the bottom, the 24 pt ember leading, that reads
  * "Describe an app…", or `Continue "A timer for my…"` when a description waits (`draft`, the start
  * of the words, `flow-draft.ts#draftPreview`). Tapping it opens the making sheet at the page the
  * draft was left on. One line.
@@ -9,7 +9,7 @@ import React from 'react';
 import { Pressable, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { LAYOUT, RADII, SPACE } from '../../design/tokens';
-import { Icon } from '../ui/Icon';
+import { Ember, RESTING_ACTIVITY } from '../ui/Ember';
 import { usePressFeedback } from '../ui/motion';
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
@@ -66,7 +66,7 @@ export function ComposerBar({ draft, onPress }: Readonly<ComposerBarProps>) {
         accessibilityHint={COPY.homeComposerHint}
       >
         <Animated.View style={[s.capsule, press.style]}>
-          <Icon name="plus" size={20} color={t.colors['text-2']} />
+          <Ember size={24} state="working" activity={RESTING_ACTIVITY} />
           <View style={s.words}>
             <Text type="body" color={drafting ? 'text' : 'text-2'} numberOfLines={1}>
               {drafting ? composerContinueLine(draftPreview(draft ?? '')) : COPY.homeComposerPlaceholder}

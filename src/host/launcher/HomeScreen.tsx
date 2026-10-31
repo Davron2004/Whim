@@ -21,7 +21,7 @@ import { ContextMenu, type MenuAnchor, type MenuRow } from '../ui/ContextMenu';
 import { AppTile } from '../ui/AppTile';
 import { gridLayout } from '../ui/AppTile-geometry';
 import { Chip } from '../ui/Chip';
-import { Ember } from '../ui/Ember';
+import { Ember, RESTING_ACTIVITY } from '../ui/Ember';
 import { Notice } from '../ui/Notice';
 import { Text } from '../ui/Text';
 import { TextField } from '../ui/TextField';
@@ -40,7 +40,7 @@ import { HomeHeader } from './HomeHeader';
 import { OlderAttemptsSheet } from './OlderAttemptsSheet';
 import type { PendingBuildRecord } from './pending-builds';
 import type { PendingPurgeStore } from './pending-purge';
-import { ScrollEdgeFade } from './ScrollEdgeFade';
+import { EDGE_FADE_HEIGHT, ScrollEdgeFade } from './ScrollEdgeFade';
 import type { ForkOptions } from './store-access';
 import { menuFor, type MenuAction } from './tile-menus';
 import { tileOf, type TileIdentity } from './tile-identity';
@@ -306,54 +306,62 @@ export default function HomeScreen({
   };
 
   const empty = all.length === 0;
-  const gridFrame = { paddingHorizontal: layout.gutter, rowGap: layout.kind === 'grid' ? layout.rowGap : 0 };
+  // The first row starts below the top fade: the fade only ever covers what has scrolled under it.
+  const gridFrame = { paddingHorizontal: layout.gutter, paddingTop: EDGE_FADE_HEIGHT, rowGap: layout.kind === 'grid' ? layout.rowGap : 0 };
   const ideas = [COPY.homeIdeaTimer, COPY.homeIdeaTracker, COPY.homeIdeaDice];
 
   return (
     <View style={s.root}>
-      <HomeHeader onSettings={onSettings} onOpenDevProbe={onOpenDevProbe} />
-      {offline ? (
-        <View style={s.gutter}>
-          <Notice message={COPY.homeOfflineNotice} />
-        </View>
-      ) : null}
-      {searching ? (
-        <View style={s.gutter}>
-          <TextField value={query} onChangeText={setQuery} accessibilityLabel={COPY.homeSearchLabel} placeholder={COPY.homeSearchLabel} autoCorrect={false} autoCapitalize="none" returnKeyType="search" />
-        </View>
-      ) : null}
-      <View style={s.listArea}>
-        <ScrollView contentContainerStyle={empty ? s.empty : undefined} keyboardShouldPersistTaps="handled">
-          {empty ? (
-            <>
-              <Ember size={128} state="working" />
-              <Text type="title1" style={s.centred}>
-                {COPY.homeEmptyTitle}
-              </Text>
-              <Text type="callout" color="text-2" style={s.centred}>
-                {COPY.homeEmptyLine}
-              </Text>
-              <View style={s.chips}>
-                {ideas.map((idea) => (
-                  <Chip key={idea} kind="suggestion" label={idea} onPress={() => onCreate(idea)} />
-                ))}
-              </View>
-            </>
-          ) : (
-            <View style={[layout.kind === 'grid' ? s.grid : s.list, s.gridEnd, gridFrame]}>
-              {cells.map(renderCell)}
-              {cells.length === 0 ? (
-                <Text type="callout" color="text-2">
-                  {COPY.homeSearchEmpty}
+      {/* Keyed by the text size, as a sheet's frame is: iOS keeps every text measured at the size it
+          was first laid out at, so a size changed while Home shows left the composer's words cut in
+          half and the title in a box too small for it. Built again, each text fits the new size.
+          Home's own state is above this and survives (the search words, an open menu or sheet); the
+          grid's scroll position and the search field's focus start again. */}
+      <React.Fragment key={fontScale}>
+        <HomeHeader onSettings={onSettings} onOpenDevProbe={onOpenDevProbe} />
+        {offline ? (
+          <View style={s.gutter}>
+            <Notice message={COPY.homeOfflineNotice} />
+          </View>
+        ) : null}
+        {searching ? (
+          <View style={s.gutter}>
+            <TextField value={query} onChangeText={setQuery} accessibilityLabel={COPY.homeSearchLabel} placeholder={COPY.homeSearchLabel} autoCorrect={false} autoCapitalize="none" returnKeyType="search" />
+          </View>
+        ) : null}
+        <View style={s.listArea}>
+          <ScrollView contentContainerStyle={empty ? s.empty : undefined} keyboardShouldPersistTaps="handled">
+            {empty ? (
+              <>
+                <Ember size={128} state="working" activity={RESTING_ACTIVITY} />
+                <Text type="title1" style={s.centred}>
+                  {COPY.homeEmptyTitle}
                 </Text>
-              ) : null}
-            </View>
-          )}
-        </ScrollView>
-        <ScrollEdgeFade edge="top" />
-        <ScrollEdgeFade edge="bottom" />
-      </View>
-      <ComposerBar draft={draft} onPress={() => onCreate()} />
+                <Text type="callout" color="text-2" style={s.centred}>
+                  {COPY.homeEmptyLine}
+                </Text>
+                <View style={s.chips}>
+                  {ideas.map((idea) => (
+                    <Chip key={idea} kind="suggestion" label={idea} onPress={() => onCreate(idea)} />
+                  ))}
+                </View>
+              </>
+            ) : (
+              <View style={[layout.kind === 'grid' ? s.grid : s.list, s.gridEnd, gridFrame]}>
+                {cells.map(renderCell)}
+                {cells.length === 0 ? (
+                  <Text type="callout" color="text-2">
+                    {COPY.homeSearchEmpty}
+                  </Text>
+                ) : null}
+              </View>
+            )}
+          </ScrollView>
+          <ScrollEdgeFade edge="top" />
+          <ScrollEdgeFade edge="bottom" />
+        </View>
+        <ComposerBar draft={draft} onPress={() => onCreate()} />
+      </React.Fragment>
 
       <ContextMenu
         visible={menu?.open === true}

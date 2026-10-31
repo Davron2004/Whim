@@ -12,6 +12,8 @@ import { DescribePage } from '../DescribePage';
 import { FirstRunSheet } from '../FirstRunSheet';
 import HistoryScreen from '../HistoryScreen';
 import MiniAppView from '../MiniAppView';
+import SettingsScreen from '../SettingsScreen';
+import ConsentScreen from '../ConsentScreen';
 import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW, LEGAL_COPY } from '../copy';
 import { consentStatus } from '../ai-consent';
 import { AI_CONSENT_VERSION, TERMS_VERSION } from '../release-config';
@@ -26,7 +28,7 @@ import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { consentRequiredRefusal } from '../../../../server/src/admission/refusals';
 import { androidBack, button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 import { composeAndContinue, firstRunOpen, json, onHome, settle, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
-import { Linking, Platform, StyleSheet, holdModalDismissals, injectedScripts } from './native-host';
+import { Linking, Platform, StyleSheet, holdModalDismissals, injectedScripts, modalPresentations, setColorScheme, windowMetrics } from './native-host';
 
 const TERMS_KEY = 'whim.terms:v1';
 const CONSENT_KEY = 'whim.ai-consent:v1';
@@ -63,11 +65,60 @@ function composingNewApp(tree: Tree): boolean {
   return describe.length === 1 && describe[0].props.editing === undefined;
 }
 
-/** The first-run sheet that is open, if one is. */
-/** How many modals are up. */
-const modalCount = (tree: Tree) => tree.root.findAll(isModal).length;
 const isModal = (n: TestRenderer.ReactTestInstance) => hostType(n) === 'Modal';
+/** Every modal host mounted: on screen, or hidden and not yet reported dismissed. */
+const modalHosts = (tree: Tree) => tree.root.findAll(isModal);
+/** How many modals the system has on screen. */
+const modalCount = (tree: Tree) => modalHosts(tree).filter((modal) => modal.props.visible === true).length;
+/** `type` is drawn inside a modal the system has on screen. */
+const presented = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) =>
+  modalHosts(tree).some((modal) => modal.props.visible === true && modal.findAllByType(type).length > 0);
+/** The first-run sheet is drawn in a modal the system has on screen. */
+const firstRunPresented = (tree: Tree) => modalHosts(tree).some((modal) => modal.props.visible === true && textOf(modal).includes(COPY.consentDecline));
+/** The first-run sheet that is open, if one is. */
 const firstRun = (tree: Tree) => tree.root.findAllByType(FirstRunSheet).filter((sheet) => sheet.props.visible)[0];
+/** Whether `node` sits inside `ancestor`. */
+function within(node: TestRenderer.ReactTestInstance, ancestor: TestRenderer.ReactTestInstance): boolean {
+  for (let at = node.parent; at; at = at.parent) if (at === ancestor) return true;
+  return false;
+}
+/** The view that answers a touch landing on `node`, as React Native's responder system picks it: the
+ *  nearest one, from the touched view outward, that asks for the touch (a touchable that is not
+ *  disabled, or a view whose `onStartShouldSetResponder` says yes). Null when none asks. */
+function touchAnswerer(node: TestRenderer.ReactTestInstance): TestRenderer.ReactTestInstance | null {
+  for (let at: TestRenderer.ReactTestInstance | null = node; at; at = at.parent) {
+    const type = hostType(at);
+    if ((type === 'Pressable' || type === 'TouchableOpacity') && at.props.disabled !== true) return at;
+    if (type !== undefined && typeof at.props.onStartShouldSetResponder === 'function' && at.props.onStartShouldSetResponder() === true) return at;
+  }
+  return null;
+}
+/** Whether a touch can land on `node` itself. A view with no padding that one child fills has no
+ *  surface of its own: every point of it is that child's. */
+function hasSurface(node: TestRenderer.ReactTestInstance): boolean {
+  if (hostType(node) !== 'View') return true;
+  const hostChildren = node.children.filter((child) => typeof child !== 'string' && child.findAll((n) => hostType(n) !== undefined).length > 0);
+  const style = StyleSheet.flatten(node.props.style) as Record<string, unknown>;
+  const padded = Object.entries(style).some(([key, value]) => key.startsWith('padding') && value !== 0);
+  return hostChildren.length !== 1 || padded;
+}
+/** The views in `scroll` whose touch a view around the scroll view would answer, as words. iOS does
+ *  not scroll while such a view holds the touch. */
+function strayTouches(scroll: TestRenderer.ReactTestInstance): string[] {
+  const answeredOutside = (node: TestRenderer.ReactTestInstance) => {
+    const answerer = touchAnswerer(node);
+    return answerer !== null && !within(answerer, scroll);
+  };
+  return scroll
+    .findAll((n) => hostType(n) !== undefined && n !== scroll && hasSurface(n))
+    .filter(answeredOutside)
+    .map((n) => `${hostType(n)} “${textOf(n).slice(0, 24)}”`);
+}
+/** The phone re-renders the shell. The rig's text size does not announce itself, so a change of
+ *  appearance stands in for the render the phone's own announcement causes. */
+async function rerender(scheme: 'light' | 'dark'): Promise<void> {
+  await TestRenderer.act(async () => setColorScheme(scheme));
+}
 const agree = (tree: Tree) => button(tree, COPY.consentAgree);
 /** The action when only the terms are due. */
 const proceed = (tree: Tree) => button(tree, COPY.firstRunContinue);
@@ -315,6 +366,75 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('first run: a drag that starts anywhere on the sheet’s scrolling content can scroll it — the touch is answered inside the scroll view, never by a view around it, with the footer pinned or scrolling along', async () => {
+    const tree = await renderScreen(<FirstRunSheet visible language="fr" onLanguageChange={() => {}} termsDue consentDue refused onAgree={() => {}} onClose={() => {}} />);
+    try {
+      const scroll = () => tree.root.find((n) => hostType(n) === 'ScrollView');
+      const strays = () => strayTouches(scroll());
+      const notNow = () => button(tree, LEGAL_COPY.fr.consentDecline);
+      h.ok(within(button(tree, LEGAL_COPY.fr.firstRunTermsCheck), scroll()) && scroll().findAll((n) => hostType(n) === 'Text').length > 5, 'setup: the sheet’s words and its terms row are in the scroll view');
+      h.eq(strays(), [], 'a touch on any view in the scroll view — a word, a row that does nothing, the space between groups — is answered inside it');
+      h.ok(touchAnswerer(scroll()) === null, 'and a touch on the gutters, the scroll view’s own padding, is answered by no view around it');
+      h.ok(!within(notNow(), scroll()), 'setup: the footer starts pinned under the scroll view');
+      let measured: TestRenderer.ReactTestInstance | null = notNow();
+      while (measured && !(hostType(measured) === 'View' && typeof measured.props.onLayout === 'function')) measured = measured.parent;
+      await TestRenderer.act(async () => measured!.props.onLayout({ nativeEvent: { layout: { height: 2000 } } }));
+      h.ok(within(notNow(), scroll()), 'setup: a footer that has outgrown its share of the window scrolls with the content');
+      h.eq(strays(), [], 'then a touch on the footer, between its buttons, is answered inside the scroll view as well');
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
+  await h.test('first run: the terms row has a list row’s padding above and below its words, and the words wrap in what the box leaves them', async () => {
+    const tree = await renderScreen(<FirstRunSheet visible language="fr" onLanguageChange={() => {}} termsDue consentDue onAgree={() => {}} onClose={() => {}} />);
+    try {
+      /** A view's style at rest; a pressable may give its style as a function of being pressed. */
+      const style = (node: TestRenderer.ReactTestInstance) =>
+        StyleSheet.flatten(typeof node.props.style === 'function' ? node.props.style({ pressed: false }) : node.props.style) as { flex?: number; paddingVertical?: number };
+      const row = button(tree, LEGAL_COPY.fr.firstRunTermsCheck);
+      const listRow = button(tree, `${LEGAL_COPY.fr.firstRunLanguage}, ${LEGAL_COPY.fr.legalLanguageSwitch}`);
+      h.ok(typeof style(listRow).paddingVertical === 'number' && (style(listRow).paddingVertical ?? 0) > 0, 'setup: a list row pads its words above and below');
+      h.eq(style(row).paddingVertical, style(listRow).paddingVertical, 'the terms row pads its words as the Language row above it does');
+      const words = row.find((n) => hostType(n) === 'Text' && textOf(n) === LEGAL_COPY.fr.firstRunTermsCheck);
+      let box = words.parent;
+      while (box && hostType(box) === undefined) box = box.parent;
+      h.ok(box !== null && box !== row && within(box, row), 'the words sit in a box of their own beside the checkbox');
+      h.eq(style(box!).flex, 1, 'which takes the width the checkbox leaves, so a long line wraps inside the row and never runs under the link');
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
+  await h.test('live text size: Settings and AI features are built again when the text size changes while they show, and the stack under them is the same Home', async () => {
+    await withLauncher({ apps: [APP], server: clarifyServer }, async ({ tree }) => {
+      const settings = () => tree.root.findByType(SettingsScreen);
+      const review = () => tree.root.findByType(ConsentScreen);
+      try {
+        await TestRenderer.act(async () => home(tree).props.onSettings());
+        const built = { home: home(tree), settings: settings() };
+        await rerender('dark');
+        h.ok(settings() === built.settings, 'setup: a render at the same text size keeps Settings as it was built');
+        windowMetrics.fontScale = 2;
+        await rerender('light');
+        h.ok(settings() !== built.settings, 'the size changed: Settings is built again, so iOS measures every text at the new size');
+        h.ok(home(tree) === built.home, 'Home, under it on the stack, is the same Home with what it holds');
+        await TestRenderer.act(async () => settings().props.onOpenAIFeatures());
+        const reviewBuilt = review();
+        await rerender('dark');
+        h.ok(review() === reviewBuilt, 'setup: a render at the same text size keeps AI features as it was built');
+        windowMetrics.fontScale = 1.35;
+        await rerender('light');
+        h.ok(review() !== reviewBuilt, 'the size changed again: AI features is built again');
+        await TestRenderer.act(async () => review().props.onClose());
+        h.ok(tree.root.findAllByType(ConsentScreen).length === 0 && tree.root.findAllByType(SettingsScreen).length === 1 && home(tree) === built.home, 'and leaving it lands on Settings, over the same Home: the stack was never rebuilt');
+      } finally {
+        windowMetrics.fontScale = 1;
+        await rerender('light');
+      }
+    });
+  });
+
   for (const language of ['en', 'fr'] as const) {
     await h.test(`first run (${language}): the action agrees to send descriptions when consent is due and reads as continuing when only the terms are`, async () => {
       const copy = LEGAL_COPY[language];
@@ -334,32 +454,54 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
 
   await h.test('first run: agreeing hands over to the Describe sheet only after the first-run sheet has finished closing, so two modals never overlap', async () => {
     await withLauncher({ terms: false, consent: false, server: clarifyServer }, async ({ tree }) => {
-      const modals = () => modalCount(tree);
+      const refused = modalPresentations.refused;
       await describeAnApp(tree);
-      h.eq(modals(), 1, 'the first-run sheet is the one modal up');
+      h.eq(modalCount(tree), 1, 'the first-run sheet is the one modal up');
       await press(termsRow(tree));
       const release = holdModalDismissals();
       try {
         await press(agree(tree));
-        h.eq([on(tree, DescribePage), modals()], [false, 0], 'the first-run sheet is gone, but the system has not said it is dismissed: Describe is not presented yet');
+        h.eq([on(tree, DescribePage), modalCount(tree)], [false, 0], 'the first-run sheet has left, but the system has not said it is dismissed: Describe is not presented yet');
         await TestRenderer.act(async () => release());
-        h.eq([composingNewApp(tree), modals()], [true, 1], 'once it has, Describe is presented, alone');
+        h.eq([composingNewApp(tree), presented(tree, DescribePage), modalCount(tree), modalHosts(tree).length], [true, true, 1, 1], 'once it has, Describe is presented, alone');
+        h.eq(modalPresentations.refused - refused, 0, 'and the system refused no presentation on the way');
       } finally {
         release();
       }
     });
   });
 
-  await h.test('first run: if the system never reports the dismissal, the hand-over goes ahead after a second rather than leaving the person with no sheet', async () => {
+  await h.test('first run: the sheet leaves reading as it did when the person agreed — its action and its notice do not change while it closes', async () => {
+    await withLauncher({ terms: false, consent: false, prepare: (kv) => kv.set(CONSENT_KEY, V1_GRANT), server: clarifyServer }, async ({ tree, kv }) => {
+      await describeAnApp(tree);
+      await press(termsRow(tree));
+      const release = holdModalDismissals();
+      try {
+        await press(agree(tree));
+        h.eq([termsStatus(kv).kind, consentStatus(kv).kind], ['accepted', 'granted'], 'both acts are recorded, so the store now says nothing is due');
+        const closing = modalHosts(tree).find((modal) => modal.props.visible === false);
+        h.ok(closing !== undefined && textOf(closing).includes(COPY.firstRunTermsCheck), 'the first-run sheet is still drawn, on its way out');
+        h.eq(closing!.findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === COPY.consentAgree).length, 1, 'its action still reads Agree to send descriptions');
+        h.eq(closing!.findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === COPY.firstRunContinue).length, 0, 'and has not turned into Continue');
+        h.ok(textOf(closing!).includes(COPY.consentOutdatedLine), 'and the line saying consent changed is still there');
+      } finally {
+        release();
+      }
+    });
+  });
+
+  await h.test('first run: if the system never reports the dismissal, Describe is presented anyway after a bounded wait, with no hidden modal left over the screen', async () => {
     await withLauncher({ terms: false, consent: false, server: clarifyServer }, async ({ tree, clock }) => {
       await describeAnApp(tree);
       await press(termsRow(tree));
       const release = holdModalDismissals();
       try {
         await press(agree(tree));
-        h.ok(!on(tree, DescribePage), 'held while the dismissal is unreported');
-        await TestRenderer.act(async () => clock.fire(1000));
-        h.ok(composingNewApp(tree), 'Describe is presented when the second is up');
+        h.eq([on(tree, DescribePage), modalHosts(tree).length], [false, 1], 'held while the dismissal is unreported: the first-run sheet’s hidden modal is still mounted');
+        let fired = 0;
+        await TestRenderer.act(async () => { fired = clock.fireWithin(1000); });
+        h.ok(fired > 0, 'a wait of at most a second is running, and it is up');
+        h.eq([composingNewApp(tree), presented(tree, DescribePage), modalHosts(tree).length], [true, true, 1], 'when the wait is up that modal is unmounted and Describe is presented');
       } finally {
         release();
       }
@@ -368,14 +510,17 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
 
   await h.test('first run: a refusal that reopens the first-run sheet waits for the making sheet to finish closing', async () => {
     await withLauncher({ server: consentRefusedResponse }, async ({ tree }) => {
+      const refused = modalPresentations.refused;
       const release = holdModalDismissals();
       try {
         await composeAndContinue(tree, 'A tea timer');
+        await waitFor(() => firstRunOpen(tree), 'the refusal to ask for the first-run sheet');
         await settle();
-        h.ok(!firstRunOpen(tree), 'the making sheet has left but is not reported dismissed: the first-run sheet is not presented yet');
+        h.eq([firstRunPresented(tree), modalCount(tree)], [false, 0], 'the making sheet has left but is not reported dismissed: the first-run sheet is not presented yet');
         await TestRenderer.act(async () => release());
-        await waitFor(() => firstRunOpen(tree), 'the first-run sheet once the making sheet is gone');
-        h.eq(modalCount(tree), 1, 'alone');
+        await waitFor(() => firstRunPresented(tree), 'the first-run sheet once the making sheet is gone');
+        h.eq([modalCount(tree), modalHosts(tree).length], [1, 1], 'alone');
+        h.eq(modalPresentations.refused - refused, 0, 'and the system refused no presentation on the way');
       } finally {
         release();
       }

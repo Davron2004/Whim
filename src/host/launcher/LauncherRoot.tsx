@@ -140,7 +140,8 @@ import { versionLabel, type SessionProbe } from './settings-sections';
 import { probeServerHealth } from './server-probe';
 import { ConnectivityLoop } from './connectivity';
 import type { Connectivity } from './connectivity';
-import { showOfflineIndicator, showServerUnreachableNotice } from './connectivity-ux';
+import { isNetworkFailure, showOfflineIndicator, showServerUnreachableNotice } from './connectivity-ux';
+import { appIsForeground, useAppForeground } from './use-app-foreground';
 import { FlowDrafts, draftKey } from './flow-draft';
 import { loadHighlighting } from './highlighting';
 import { getDeviceId, resetDeviceId } from './device-id';
@@ -605,38 +606,10 @@ function useFirstTake() {
     taken.current = page;
     return true;
   };
-  /** Runs `action` on `page` unless its forward action was already taken. */
-  const takeOnce = <P extends object>(page: P, action: (page: P) => unknown): unknown => (firstTake(page) ? action(page) : undefined);
-  return { firstTake, takeOnce };
+  return { firstTake };
 }
 
-/**
- * Presents the making sheet and the first-run sheet one after the other, never overlapping: a sheet
- * the screen wants is held back while the other is still on screen, and is presented the moment that
- * one reports it has finished closing (`Sheet`'s `onClosed`). iOS can drop a presentation issued
- * while another modal is still being dismissed, which is what agreeing (first-run closes, making
- * opens) and a `consent_required` refusal (the reverse) would otherwise do.
- */
-function useSheetHandOver(page: SheetContent | null, ask: FirstRunAsk | null) {
-  const [, redraw] = useState(0);
-  const onScreen = useRef({ making: false, firstRun: false }).current;
-  const making = page !== null && !onScreen.firstRun;
-  const firstRun = ask !== null && !onScreen.making;
-  if (making) onScreen.making = true;
-  if (firstRun) onScreen.firstRun = true;
-  const closed = (sheet: 'making' | 'firstRun') => {
-    onScreen[sheet] = false;
-    redraw((n) => n + 1);
-  };
-  return {
-    page: making ? page : null,
-    ask: firstRun ? ask : null,
-    onMakingClosed: () => closed('making'),
-    onFirstRunClosed: () => closed('firstRun'),
-  };
-}
-
-/** What the first-run sheet needs of the current terms and consent state, read fresh at render. */
+/** What the first-run sheet needs of the current terms and consent state. */
 interface FirstRunHostProps {
   ask: FirstRunAsk | null;
   language: LegalLanguage;
@@ -647,32 +620,39 @@ interface FirstRunHostProps {
   consentDue: (ask: FirstRunAsk) => boolean;
   onAgree: (ask: FirstRunAsk) => void;
   onDecline: (returnTo: Screen) => void;
-  onClosed: () => void;
+}
+
+/** An ask with what the store said of the consent grant as it opened. */
+interface OpenedAsk {
+  ask: FirstRunAsk;
+  consentDue: boolean;
+  outdatedFrom: number | undefined;
 }
 
 /**
  * The first-run sheet (design-system-v1 16.2) in place of the data-sending action that opened it. It
  * is shown while the machine is on the terms or ask-mode consent step; closing it keeps showing the
- * ask that was open for the length of the sheet's exit, so it never animates out blank.
+ * ask that was open for the length of the sheet's exit, so it never animates out blank. The grant's
+ * state is read once, as the ask opens: agreeing records the grant, and the sheet must leave reading
+ * as it did when the person agreed, not as the store reads a moment later.
  */
-function FirstRunHost({ ask, language, onLanguageChange, outdatedFrom, consentDue, onAgree, onDecline, onClosed }: Readonly<FirstRunHostProps>) {
-  const last = useRef<FirstRunAsk | null>(null);
-  if (ask !== null) last.current = ask;
-  const shown = last.current;
+function FirstRunHost({ ask, language, onLanguageChange, outdatedFrom, consentDue, onAgree, onDecline }: Readonly<FirstRunHostProps>) {
+  const [kept, setKept] = useState<OpenedAsk | null>(null);
+  const shown = ask !== null && kept?.ask !== ask ? { ask, consentDue: consentDue(ask), outdatedFrom } : kept;
+  if (shown !== kept) setKept(shown);
   if (shown === null) return null;
   return (
     <FirstRunSheet
       visible={ask !== null}
       language={language}
       onLanguageChange={onLanguageChange}
-      termsDue={shown.kind === 'terms'}
-      consentDue={consentDue(shown)}
-      termsOutdated={shown.kind === 'terms' && shown.outdated}
-      outdatedFrom={outdatedFrom}
-      refused={shown.refused}
-      onAgree={() => onAgree(shown)}
-      onClose={() => onDecline(shown.returnTo)}
-      onClosed={onClosed}
+      termsDue={shown.ask.kind === 'terms'}
+      consentDue={shown.consentDue}
+      termsOutdated={shown.ask.kind === 'terms' && shown.ask.outdated}
+      outdatedFrom={shown.outdatedFrom}
+      refused={shown.ask.refused}
+      onAgree={() => onAgree(shown.ask)}
+      onClose={() => onDecline(shown.ask.returnTo)}
     />
   );
 }
@@ -796,12 +776,25 @@ function LauncherShell({
 
   // Capture at request start. A response belongs to the address and consent session that sent
   // it, even if a detached generation outlives a Settings edit or a revoke/regrant cycle.
-  const onlineForRequest = (options: ConsentedClientOptions): (() => void) => {
+  const connectivityOfRequest = (options: ConsentedClientOptions) => {
     const epoch = connectivityEpoch.current;
-    return () => {
+    return (act: (loop: ConnectivityLoop) => void): void => {
       if (epoch === connectivityEpoch.current && options.baseUrl === effectiveServerUrl(kv)) {
-        connectivityLoopRef.current?.markOnline();
+        const loop = connectivityLoopRef.current;
+        if (loop) act(loop);
       }
+    };
+  };
+  const onlineForRequest = (options: ConsentedClientOptions): (() => void) => {
+    const inSession = connectivityOfRequest(options);
+    return () => inSession((loop) => loop.markOnline());
+  };
+  // A request that got no answer at all is the strongest sign the connection is gone: the loop
+  // confirms it with a probe and turns offline, and the notice follows.
+  const failureForRequest = (options: ConsentedClientOptions): ((error: unknown, abandoned?: boolean) => void) => {
+    const inSession = connectivityOfRequest(options);
+    return (error, abandoned = false) => {
+      if (!abandoned && isNetworkFailure(error)) inSession((loop) => loop.noteNetworkFailure());
     };
   };
 
@@ -829,17 +822,29 @@ function LauncherShell({
       return undefined;
     }
     let live = true;
+    // The update check is a launch-time one: the first probe that reads a minimum decides it, so
+    // a later probe (a return to the foreground, a retry) never brings back an update screen the
+    // person has dismissed.
+    let minimumRead = false;
     const loop = new ConnectivityLoop({
       probe: async () => {
         const health = await probeServerHealth(decision.baseUrl);
-        if (live) setLastProbe({ address: decision.baseUrl, result: health.result });
-        if (live && belowMinimumBuild(appInfo, health.minBuild)) {
+        // A later probe that finds what the last one found leaves the screens as they are.
+        if (live) {
+          setLastProbe((prev) => (prev?.address === decision.baseUrl && prev.result === health.result
+            ? prev
+            : { address: decision.baseUrl, result: health.result }));
+        }
+        const firstMinimum = !minimumRead && health.minBuild !== undefined;
+        if (firstMinimum) minimumRead = true;
+        if (live && firstMinimum && belowMinimumBuild(appInfo, health.minBuild)) {
           log.warn(CHANNELS.app, 'installed build is below the server minimum', { ...health.minBuild });
           setScreen((prev) => (updateMayInterrupt(prev) ? updateScreenFrom(prev) : prev));
         }
         return health.result;
       },
       publish: setConnectivity,
+      foreground: appIsForeground(),
     });
     connectivityLoopRef.current = loop;
     loop.start();
@@ -849,6 +854,13 @@ function LauncherShell({
       if (connectivityLoopRef.current === loop) connectivityLoopRef.current = null;
     };
   }, [clientOptions, appInfo]);
+
+  // The loop touches the network only while the app is in the foreground, and a return to it
+  // re-checks. Applied to every loop the effect above builds (it runs first).
+  const appForeground = useAppForeground();
+  useEffect(() => {
+    connectivityLoopRef.current?.setForeground(appForeground);
+  }, [clientOptions, appInfo, appForeground]);
 
   // A breadcrumb for every connectivity transition, the same device-observability discipline as
   // the `serverUrl`-keyed sink-config effect above: this session state has no screen surface of
@@ -1478,7 +1490,7 @@ function LauncherShell({
     ...(pendingId != null ? { pendingId } : {}),
   });
 
-  const { firstTake, takeOnce } = useFirstTake();
+  const { firstTake } = useFirstTake();
 
   /** Opens the making sheet, optionally scoped to one app being changed: on the draft the person left
    *  for it (a plan page comes back as it was, with its answers and edits; its missing requests are
@@ -1495,10 +1507,11 @@ function LauncherShell({
   const openCompose = (requested?: InstalledApp, text?: string) => {
     // The app as it is now: a draft kept for it carries the app as it was when the draft was kept (a
     // new version, a new name, a customised tile), and the plan's requests must send the current one.
-    // An app that has gone takes its draft with it.
-    const live = reachableApps().find((app) => app.id === requested?.id);
-    const editing = live ?? requested;
-    const kept = text === undefined ? drafts.reopen(requested, live) : undefined;
+    // An app that has gone takes its draft with it and leaves nothing to change: the page that opens
+    // is the new-app one, as the composer opens it.
+    const editing = reachableApps().find((app) => app.id === requested?.id);
+    if (requested && !editing) drafts.clear(draftKey({ editing: requested }));
+    const kept = text === undefined ? drafts.reopen(editing, editing) : undefined;
     const opened = kept ?? describeStep(editing, text ?? takeHeldPrompt(editing) ?? '');
     setScreen(opened);
     if (opened.kind === 'plan') resumePlan(opened);
@@ -1564,6 +1577,7 @@ function LauncherShell({
     const options = resolveClientOptions();
     if (!options) return;
     const markOnline = onlineForRequest(options);
+    const requestFailed = failureForRequest(options);
     const request = flowRequests.start('compose');
     let questions: FlowQuestion[] = [];
     let limit: FlowLimit | undefined;
@@ -1586,6 +1600,7 @@ function LauncherShell({
       // The sheet was left while this was in flight: the abort surfaces here as a plain
       // `AbortError`, and it is swallowed — no failure, no breadcrumb.
       if (request.cancelled) return;
+      requestFailed(e);
       const landing = refusalLandingOf(plan, 'clarify', e, markOnline);
       if (landing) {
         setScreen(onlyOnStep<Screen, 'plan'>('plan', () => landing));
@@ -1618,6 +1633,7 @@ function LauncherShell({
     const options = resolveClientOptions();
     if (!options) return;
     const markOnline = onlineForRequest(options);
+    const requestFailed = failureForRequest(options);
     const request = flowRequests.start('plan');
     try {
       const response = await rewritePrompt(
@@ -1636,6 +1652,7 @@ function LauncherShell({
     } catch (e) {
       // A request the user walked away from fails as an abort: no failure, no breadcrumb.
       if (request.cancelled) return;
+      requestFailed(e);
       const landing = refusalLandingOf(plan, 'rewrite', e, markOnline);
       setScreen(onlyOnStep<Screen, 'plan'>('plan', landing ? () => landing : planProblem('rewrite', e)));
     } finally {
@@ -2280,6 +2297,7 @@ function LauncherShell({
     const options = resolveClientOptions();
     if (!options) return;
     const markOnline = onlineForRequest(options);
+    const requestFailed = failureForRequest(options);
     setScreen(opening);
 
     const controller = new AbortController();
@@ -2440,6 +2458,7 @@ function LauncherShell({
         if (selected) setDoneIfAttached((s) => (s.kind === 'making' ? readyStep(s, installed) : s));
       });
     } catch (error) {
+      requestFailed(error, ctl.cancelled);
       settleUnexpectedAttemptFailure({
         error,
         ctl,
@@ -2459,8 +2478,10 @@ function LauncherShell({
   };
 
   /** The approval gate's action — the first moment a generation request is sent. The draft is
-   *  spent: the words are now a run, and the composer stops offering to continue them. */
+   *  spent: the words are now a run, and the composer stops offering to continue them. A tap that
+   *  cannot send (no current options) takes nothing, so the page's `Make it` is there for the next. */
   const onBuildIt = async (from: PlanScreen) => {
+    if (!resolveClientOptions() || !firstTake(from)) return;
     drafts.clear(draftKey(from));
     syncComposerDraft();
     await runAttempt(makingStep(from), undefined, from);
@@ -2818,7 +2839,7 @@ function LauncherShell({
             onBack={() => backToDescribePage(from)}
             onAnswer={(id, change) => setScreen(onlyOnStep<Screen, 'plan'>('plan', (s) => withAnswer(s, id, change)))}
             onChangeRow={(rowIndex, text) => setScreen(onlyOnStep<Screen, 'plan'>('plan', (s) => updatePlanRow(s, rowIndex, text)))}
-            onMake={() => takeOnce(from, onBuildIt)}
+            onMake={() => onBuildIt(from)}
             onTryAgain={() => onPlanTryAgain(from)}
             onMakeInstead={() => onBuildInstead(from)}
           />
@@ -2951,7 +2972,12 @@ function LauncherShell({
     }
   };
 
-  /** A stack screen's content, given the handler that leaves it. */
+  /** A stack screen's content, given the handler that leaves it. Settings and AI features are keyed
+   *  by the text size, as a sheet's frame is: iOS keeps every text measured at the size it was first
+   *  laid out at, so a size changed while they show left rows at their old height with the words cut
+   *  in half. They hold nothing of their own, so only their scroll position starts again; the stack
+   *  under them, drafts and a running build live in this shell and are untouched. Home keys its own
+   *  layout under its state (`HomeScreen`). */
   const renderStackScreen = (on: StackScreen, leave: () => void): React.ReactNode => {
     switch (on.kind) {
       case 'home':
@@ -2959,6 +2985,7 @@ function LauncherShell({
       case 'settings':
         return (
           <SettingsScreen
+            key={tokens.fontScale}
             onBack={leave}
             onOpenAIFeatures={onOpenAIFeatures}
             legalLanguage={legalLanguage}
@@ -2990,6 +3017,7 @@ function LauncherShell({
       case 'consent':
         return (
           <ConsentScreen
+            key={tokens.fontScale}
             language={legalLanguage}
             onLanguageChange={onLegalLanguageChange}
             consentOn={consentStatus(kv).kind === 'granted'}
@@ -3061,8 +3089,6 @@ function LauncherShell({
   const exit = SCREEN_EXITS[screen.kind];
   const top = stack?.at(-1);
 
-  const handOver = useSheetHandOver(renderSheetPage(), firstRunAskOf(screen));
-
   return (
     <HighlightingProvider enabled={highlighting}>
       <SafeAreaView edges={frameEdgesFor(screen.kind, stack !== null)} style={[styles.root, { backgroundColor: palette.bg }]}>
@@ -3074,17 +3100,16 @@ function LauncherShell({
             onLeave={exit.back === 'root' ? undefined : goHome}
           >
             {content}
-            <MakingSheet content={handOver.page} onClose={closeSheet} onClosed={handOver.onMakingClosed} />
+            <MakingSheet content={renderSheetPage()} onClose={closeSheet} />
             {checkingAge !== undefined && <AgeCheckBack onLeave={() => onLegalDecline(checkingAge.returnTo)} />}
             <FirstRunHost
-              ask={handOver.ask}
+              ask={firstRunAskOf(screen)}
               language={legalLanguage}
               onLanguageChange={onLegalLanguageChange}
               outdatedFrom={outdatedGrantVersion(consentStatus(kv))}
               consentDue={grantDue}
               onAgree={onFirstRunAgree}
               onDecline={onLegalDecline}
-              onClosed={handOver.onFirstRunClosed}
             />
           </ScreenBoundary>
         </ToastHost>

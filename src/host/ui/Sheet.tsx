@@ -1,11 +1,16 @@
 /**
  * Sheet — the shell's one presentation container (system.md §7.1 Sheet, §4.3 rule 6, M11; design-
  * system-v1 task 11.1). A `sheet` card rising from the bottom edge over a scrim, in its own
- * full-window `Modal` so it layers above a WebView and the orb and dims both system bars.
+ * full-window `Modal` so it layers above a WebView and the orb and dims both system bars. It takes
+ * its turn with the shell's other overlays (`OverlayModal`): shown while another sheet or a menu is
+ * still on screen, it rises once that one has gone.
  *
  * - Grabber (36 × 5 `fill-strong`, 6 pt from the top, always), an optional `title2` title 12 pt
- *   under it, a close `x` trailing on both platforms. Detents: `fit` (content height, to 92% of the
- *   window) and `large` (92%; the making flow).
+ *   under it, a close `x` trailing on both platforms, and, on a page that steps back, a back control
+ *   leading in the same row (`useSheetBack` with `control`), so no page needs a row of its own for
+ *   it. Both glyphs follow the text size to 1.5 times 24. Detents: `fit` (content height, to 92% of
+ *   the window) and `large` (92%; the making flow); in `large` the page body fills the card, so its
+ *   footer sits at the bottom.
  * - Opens from off-screen with `smooth`; a tapped close leaves the same way. The scrim's opacity
  *   follows the card's position, so a drag fades it with the finger.
  * - Drag from the grabber or the header: 1:1 after 10 pt of slop, rubber-banding at 0.55 above the
@@ -27,8 +32,8 @@
  *   finger and settles with a cross-fade.
  */
 
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Modal, Platform, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AccessibilityInfo, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
 import type { LayoutChangeEvent } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -38,11 +43,14 @@ import { LAYOUT, RADII, SPACE } from '../../design/tokens';
 import { haptics } from '../haptics';
 import { COPY } from '../launcher/copy';
 import { sheetBottomPadding } from '../launcher/keyboard-shell';
-import { useKeyboardOverlap } from '../launcher/KeyboardShell';
-import { IconButton } from './IconButton';
-import { timing } from './motion';
+import { OverlayShownContext, useKeyboardOverlap } from '../launcher/KeyboardShell';
+import type { IconName } from '../../design/icons/names';
+import { Icon } from './Icon';
+import { timing, usePressFeedback } from './motion';
+import { OverlayModal, useOverlayTurn } from './OverlayModal';
+import { wrappingType } from './Text';
 import { useTokens } from './tokens';
-import { makeStyles, MAX_FONT_SCALE, springConfig, typeStyle } from './tokens-pure';
+import { hitSlopFor, ICON_BUTTON, makeStyles, MAX_FONT_SCALE, PRESS_RETENTION, springConfig } from './tokens-pure';
 
 // ── Drag physics (§4.3 rule 6), shared by every dragged surface ─────────────────
 
@@ -104,20 +112,22 @@ export interface SheetProps {
   detent?: SheetDetent;
   /** Default `COPY.sheetClose`. */
   closeLabel?: string;
-  /** Called once after the sheet has finished closing and its `Modal` is gone: the exit animation has
-   *  ended and, on iOS, the system has reported the dismissal (`Modal`'s `onDismiss`; a second
-   *  presentation issued earlier can be dropped). Present the next sheet from here. */
-  onClosed?: () => void;
   children: React.ReactNode;
 }
 
-/** How long iOS may take to report a dismissal before the sheet counts as closed anyway, so a missed
- *  `onDismiss` cannot hold the next sheet back for good. */
-const DISMISS_FALLBACK_MS = 1000;
+/** What Android back does on the sheet's current page, when it is not "close", and the sheet's say
+ *  over whether its header shows a back control for it. */
+interface SheetBack {
+  readonly slot: React.MutableRefObject<(() => void) | null>;
+  readonly showControl: (shown: boolean) => void;
+}
+const SheetBackContext = createContext<SheetBack | null>(null);
 
-/** What Android back does on the sheet's current page, when it is not "close". */
-type SheetBackSlot = React.MutableRefObject<(() => void) | null>;
-const SheetBackContext = createContext<SheetBackSlot | null>(null);
+export interface SheetBackOptions {
+  /** Also draws the back control in the sheet's header row, beside the close control, for as long as
+   *  the page is up: the page's visible way back, taking the same step. */
+  readonly control?: boolean;
+}
 
 /**
  * Takes Android back (and hardware Escape) on the page that calls it, in place of closing the sheet:
@@ -125,18 +135,54 @@ const SheetBackContext = createContext<SheetBackSlot | null>(null);
  * passes the step here. A `Modal` consumes the press, so `BackHandler` never sees it while a sheet is
  * up. The close control, the scrim and a drag still call `onClose`. Outside a sheet it does nothing.
  */
-export function useSheetBack(handler: () => void): void {
-  const slot = useContext(SheetBackContext);
+export function useSheetBack(handler: () => void, { control = false }: SheetBackOptions = {}): void {
+  const back = useContext(SheetBackContext);
   const latest = useRef(handler);
   latest.current = handler;
   useEffect(() => {
-    if (slot === null) return undefined;
+    if (back === null) return undefined;
+    const { slot, showControl } = back;
     const call = () => latest.current();
     slot.current = call;
+    showControl(control);
     return () => {
       if (slot.current === call) slot.current = null;
+      showControl(false);
     };
-  }, [slot]);
+  }, [back, control]);
+}
+
+const HEADER_ICON = 24;
+const HEADER_ICON_MAX_SCALE = 1.5;
+
+/** The glyph size of a control in a sheet's header: 24 (system.md §7.1 "24 in headers"), growing with
+ *  the text size to 1.5 times that, where it stops being a header icon and starts crowding the title.
+ *  The target stays the 44 the control already has. */
+export function headerIconSize(fontScale: number): number {
+  return Math.round(HEADER_ICON * Math.min(HEADER_ICON_MAX_SCALE, Math.max(1, fontScale)));
+}
+
+/** An icon control in the sheet's header row. `IconButton` draws its glyph at a fixed 20 or 24;
+ *  these follow the text size (`headerIconSize`). */
+function HeaderIconButton({ icon, label, onPress }: Readonly<{ icon: IconName; label: string; onPress: () => void }>) {
+  const t = useTokens();
+  const s = styles(t);
+  const press = usePressFeedback('icon', t);
+  return (
+    <Pressable
+      onPress={onPress}
+      onPressIn={press.pressIn}
+      onPressOut={press.pressOut}
+      hitSlop={hitSlopFor(ICON_BUTTON.size, t)}
+      pressRetentionOffset={PRESS_RETENTION}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <Animated.View style={[s.headerIcon, press.style]}>
+        <Icon name={icon} size={headerIconSize(t.fontScale)} color={t.colors.text} />
+      </Animated.View>
+    </Pressable>
+  );
 }
 
 const styles = makeStyles((t) => ({
@@ -166,9 +212,14 @@ const styles = makeStyles((t) => ({
     paddingRight: SPACE[2],
     marginTop: TITLE_GAP - SPACE[2],
   },
+  // A back control sits where the close control does, so the row reads the same from both edges.
+  titleRowBack: { paddingLeft: SPACE[2] },
   titleSlot: { flex: 1 },
-  title: { color: t.colors.text, ...typeStyle('title2') },
-  body: { flexShrink: 1 },
+  title: { color: t.colors.text, ...wrappingType('title2') },
+  headerIcon: { width: ICON_BUTTON.size, height: ICON_BUTTON.size, alignItems: 'center' as const, justifyContent: 'center' as const },
+  // Fills the card of a `large` sheet, which has a height of its own, so a page's footer sits at its
+  // bottom; a `fit` sheet has none to fill and is as tall as its content, up to its cap.
+  body: { flexGrow: 1, flexShrink: 1 },
 }));
 
 /** The motion state a sheet's frame reads: the card's offset from open, its height, and the fade
@@ -179,52 +230,47 @@ interface SheetMotion {
   fade: SharedValue<number>;
 }
 
-export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = COPY.sheetClose, onClosed, children }: Readonly<SheetProps>) {
+export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = COPY.sheetClose, children }: Readonly<SheetProps>) {
   const t = useTokens();
   const { height: windowHeight } = useWindowDimensions();
-  const [mounted, setMounted] = useState(visible);
-  // iOS: the `Modal` is hidden but kept until the system says it is gone.
-  const [dismissing, setDismissing] = useState(false);
-  const visibleRef = useRef(visible);
-  const onClosedRef = useRef(onClosed);
-  onClosedRef.current = onClosed;
+  const gate = useOverlayTurn(visible, { onRefused: onClose });
+  // The window's own report that it is on screen, which Android needs before it serves a field in it.
+  const [presented, setPresented] = useState(false);
+  const turn = useMemo(() => ({ ...gate, shown: () => { gate.shown(); setPresented(true); } }), [gate]);
+  const { open, up, exited } = turn;
+  useEffect(() => {
+    if (!up) setPresented(false);
+  }, [up]);
+  const openRef = useRef(open);
   // A drag past the commit point already carries the card out; closing must not restart it.
   const closingRef = useRef(false);
   const y = useSharedValue(windowHeight);
   const height = useSharedValue(windowHeight);
   const fade = useSharedValue(t.reduceMotion ? 0 : 1);
 
-  const closed = useCallback(() => {
-    setDismissing(false);
-    setMounted(false);
-    onClosedRef.current?.();
-  }, []);
-
   const settled = useCallback(() => {
-    if (!closingRef.current && visibleRef.current) return;
+    if (!closingRef.current && openRef.current) return;
     closingRef.current = false;
-    if (Platform.OS === 'ios') setDismissing(true);
-    else closed();
-  }, [closed]);
+    exited();
+  }, [exited]);
 
+  // The `open` last acted on: only a change of it plays the entrance or the exit, never a change of
+  // settings while the sheet shows.
+  const actedOn = useRef(false);
+  // The entrance has played in this showing: a sheet that is up without ever having opened has no
+  // exit to wait for.
+  const entered = useRef(false);
   useEffect(() => {
-    if (!dismissing) return undefined;
-    const fallback = setTimeout(closed, DISMISS_FALLBACK_MS);
-    return () => clearTimeout(fallback);
-  }, [dismissing, closed]);
-
-  // The `visible` last acted on: only a change of it presents or dismisses the sheet, never a change
-  // of settings while it shows.
-  const actedOn = useRef<boolean | null>(null);
-  useEffect(() => {
-    visibleRef.current = visible;
-    if (actedOn.current === visible) return;
-    const wasOpen = actedOn.current === true;
-    actedOn.current = visible;
-    if (visible) {
+    openRef.current = open;
+    if (!up) entered.current = false;
+    if (actedOn.current === open) {
+      if (up && !open && !entered.current) exited();
+      return;
+    }
+    actedOn.current = open;
+    if (open) {
+      entered.current = true;
       closingRef.current = false;
-      setDismissing(false);
-      setMounted(true);
       if (t.reduceMotion) {
         y.value = 0;
         fade.value = withTiming(1, timing('fadeIn', true));
@@ -234,18 +280,15 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
       }
       return;
     }
-    if (!mounted) {
-      if (wasOpen) onClosedRef.current?.();
-      return;
-    }
-    if (closingRef.current) return;
+    // Off screen already (its own drag ended it, or the system refused it), or a drag is carrying it out.
+    if (!up || closingRef.current) return;
     const done = (finished?: boolean) => {
       'worklet';
       if (finished) scheduleOnRN(settled);
     };
     if (t.reduceMotion) fade.value = withTiming(0, timing('fadeOut', true), done);
     else y.value = withSpring(height.value, springConfig('smooth'), done);
-  }, [visible, mounted, t.reduceMotion, y, fade, height, settled]);
+  }, [open, up, t.reduceMotion, y, fade, height, settled, exited]);
 
   const dragClosed = useCallback(() => {
     closingRef.current = true;
@@ -253,39 +296,40 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
   }, [onClose]);
 
   const backSlot = useRef<(() => void) | null>(null);
+  const [backControl, setBackControl] = useState(false);
+  const back = useMemo<SheetBack>(() => ({ slot: backSlot, showControl: setBackControl }), []);
   const requestClose = () => {
     if (backSlot.current) backSlot.current();
     else onClose();
   };
 
-  if (!mounted) return null;
   return (
-    <Modal
-      visible={!dismissing}
-      transparent
-      animationType="none"
-      statusBarTranslucent
-      navigationBarTranslucent
-      onRequestClose={requestClose}
-      onDismiss={dismissing ? closed : undefined}
-    >
+    // The frame is keyed by the text size: a size changed while the sheet is up leaves every text
+    // measured at the old size on iOS (rows keep their height, words are cut in half), and only text
+    // that is laid out again fits the new one. The sheet's own motion and the page's state in the
+    // shell survive; what the page holds in itself (a ticked box, a half-edited row) starts again.
+    <OverlayModal turn={turn} onRequestClose={requestClose}>
       <SafeAreaProvider>
-        <SheetBackContext.Provider value={backSlot}>
-          <SheetFrame
-            motion={{ y, height, fade }}
-            reduceMotion={t.reduceMotion}
-            title={title}
-            detent={detent}
-            closeLabel={closeLabel}
-            onClose={onClose}
-            onDragClosed={dragClosed}
-            onSettled={settled}
-          >
-            {children}
-          </SheetFrame>
+        <SheetBackContext.Provider value={back}>
+          <OverlayShownContext.Provider value={presented}>
+            <SheetFrame
+              key={t.fontScale}
+              motion={{ y, height, fade }}
+              reduceMotion={t.reduceMotion}
+              title={title}
+              detent={detent}
+              closeLabel={closeLabel}
+              onClose={onClose}
+              onBack={backControl ? () => backSlot.current?.() : undefined}
+              onDragClosed={dragClosed}
+              onSettled={settled}
+            >
+              {children}
+            </SheetFrame>
+          </OverlayShownContext.Provider>
         </SheetBackContext.Provider>
       </SafeAreaProvider>
-    </Modal>
+    </OverlayModal>
   );
 }
 
@@ -296,6 +340,8 @@ interface SheetFrameProps {
   detent: SheetDetent;
   closeLabel: string;
   onClose: () => void;
+  /** The page's step back, when it asks for a control: drawn in the header row, leading. */
+  onBack?: () => void;
   onDragClosed: () => void;
   onSettled: () => void;
   children: React.ReactNode;
@@ -304,7 +350,14 @@ interface SheetFrameProps {
 const prepareCommit = () => haptics.prepare('commit');
 const playCommit = () => haptics.play('commit');
 
-function SheetFrame({ motion, reduceMotion, title, detent, closeLabel, onClose, onDragClosed, onSettled, children }: Readonly<SheetFrameProps>) {
+// What a released drag animates with, worked out here on the JS thread. The release runs on the UI
+// thread, where `springConfig` and `timing` cannot be called: they are not worklets, a call to one
+// from a worklet throws, and that throw ends the app (every drag of a sheet's header did, on release).
+const FLING = springConfig('fling');
+const FADE_OUT = timing('fadeOut', true);
+const FADE_IN = timing('fadeIn', true);
+
+function SheetFrame({ motion, reduceMotion, title, detent, closeLabel, onClose, onBack, onDragClosed, onSettled, children }: Readonly<SheetFrameProps>) {
   const t = useTokens();
   const s = styles(t);
   const insets = useSafeAreaInsets();
@@ -349,12 +402,12 @@ function SheetFrame({ motion, reduceMotion, title, detent, closeLabel, onClose, 
       };
       if (releaseCommits(y.value, e.velocityY, height.value)) {
         scheduleOnRN(onDragClosed);
-        if (reduceMotion) fade.value = withTiming(0, timing('fadeOut', true), done);
-        else y.value = withSpring(height.value, { ...springConfig('fling'), velocity: e.velocityY }, done);
+        if (reduceMotion) fade.value = withTiming(0, FADE_OUT, done);
+        else y.value = withSpring(height.value, { ...FLING, velocity: e.velocityY }, done);
       } else if (reduceMotion) {
-        y.value = withTiming(0, timing('fadeIn', true));
+        y.value = withTiming(0, FADE_IN);
       } else {
-        y.value = withSpring(0, { ...springConfig('fling'), velocity: e.velocityY });
+        y.value = withSpring(0, { ...FLING, velocity: e.velocityY });
       }
     },
   });
@@ -386,7 +439,8 @@ function SheetFrame({ motion, reduceMotion, title, detent, closeLabel, onClose, 
         <GestureDetector gesture={drag}>
           <View style={s.header}>
             <View style={s.grabber} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" />
-            <View style={s.titleRow}>
+            <View style={[s.titleRow, onBack ? s.titleRowBack : null]}>
+              {onBack ? <HeaderIconButton icon={t.platform === 'ios' ? 'chevron-left' : 'arrow-left'} label={COPY.backLabel} onPress={onBack} /> : null}
               <View style={s.titleSlot}>
                 {title ? (
                   <RNText ref={titleRef} style={s.title} accessibilityRole="header" maxFontSizeMultiplier={MAX_FONT_SCALE}>
@@ -394,7 +448,7 @@ function SheetFrame({ motion, reduceMotion, title, detent, closeLabel, onClose, 
                   </RNText>
                 ) : null}
               </View>
-              <IconButton icon="x" label={closeLabel} onPress={onClose} />
+              <HeaderIconButton icon="x" label={closeLabel} onPress={onClose} />
             </View>
           </View>
         </GestureDetector>

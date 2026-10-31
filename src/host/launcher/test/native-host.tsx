@@ -1,7 +1,6 @@
 /** Native host adapters for React interaction tests. Screen components and hooks run unchanged;
  * layout, animation and OS APIs are represented in memory, not asserted as device behavior. */
 import React from 'react';
-
 // React Native's runtime provides the frame callbacks Node lacks; a suite that steps frames itself
 // swaps these out for the test's duration.
 globalThis.requestAnimationFrame ??= (callback) => setImmediate(() => callback(performance.now())) as unknown as number;
@@ -19,11 +18,24 @@ export const Switch = host('Switch');
 export const KeyboardAvoidingView = host('KeyboardAvoidingView');
 export const InputAccessoryView = host('InputAccessoryView');
 /** Counts `Keyboard.dismiss` calls, so a test can tell putting the keyboard away from submitting.
- *  The keyboard's motion is react-native-keyboard-controller's (`native-keyboard-controller.tsx`). */
+ *  The keyboard's motion is react-native-keyboard-controller's (`native-keyboard-controller.tsx`);
+ *  what it does not report, iOS's own `keyboardDidChangeFrame`, `changeKeyboardFrame` plays. */
+type KeyboardFrameListener = (event: { endCoordinates: { screenX: number; screenY: number; width: number; height: number } }) => void;
+const keyboardFrameListeners = new Set<KeyboardFrameListener>();
 export const Keyboard = {
   dismissed: 0,
   dismiss: () => { Keyboard.dismissed += 1; },
+  addListener: (_event: 'keyboardDidChangeFrame', listener: KeyboardFrameListener) => {
+    keyboardFrameListeners.add(listener);
+    return { remove: () => { keyboardFrameListeners.delete(listener); } };
+  },
 };
+/** iOS says the keyboard's frame now spans `height` up from the window's bottom edge. */
+export function changeKeyboardFrame(height: number): void {
+  const window = Dimensions.get();
+  for (const listener of [...keyboardFrameListeners]) listener({ endCoordinates: { screenX: 0, screenY: window.height - height, width: window.width, height } });
+}
+export function keyboardFrameListenerCount(): number { return keyboardFrameListeners.size; }
 export const SafeAreaView = host('SafeAreaView');
 export const SafeAreaProvider = host('SafeAreaProvider');
 export const StatusBar = host('StatusBar');
@@ -35,35 +47,110 @@ export const WebView = React.forwardRef<{ injectJavaScript: (js: string) => void
   React.useImperativeHandle(ref, () => ({ injectJavaScript: (js: string) => { injectedScripts.push(js); } }), []);
   return React.createElement('WebView', props, props.children as React.ReactNode);
 });
-/** iOS reports a dismissed `Modal` through `onDismiss` after it is gone; `holdModalDismissals` keeps
- *  those reports back until the returned release runs, so a test can play a slow dismissal. */
-const heldDismissals: { queue: (() => void)[] | null } = { queue: null };
-export function holdModalDismissals(): () => void {
-  heldDismissals.queue = [];
+/** What the system does with a `Modal`, as React Native 0.85 shows it (measured on iOS 27):
+ *  - A presentation is confirmed through `onShow` on both platforms. iOS presents a modal from the
+ *    surface it sits on (the window, or the modal it is inside) and refuses one issued while that
+ *    surface is still presenting another: no `onShow`, and the host stays mounted and unseen, taking
+ *    every touch. `modalPresentations.refused` counts those. A surface is free again once its modal
+ *    was hidden or unmounted in an earlier commit. `refuseModalPresentations` refuses every
+ *    presentation until the returned release runs, as a presenter outside React does (an alert).
+ *  - iOS reports a hidden `Modal` through `onDismiss` once it is gone, and keeps its host and content
+ *    mounted (`visible` false) until then. `holdModalDismissals` keeps those reports back until the
+ *    returned release runs, so a test can play a slow dismissal, or one that is never reported.
+ *  - Android shows every modal in a window of its own, refuses none, reports no dismissal and drops
+ *    a hidden `Modal` at once. Neither platform reports anything to a `Modal` that was unmounted.
+ *  - An iOS `Modal` unmounted while it is up is dismissed all the same, and its surface is still
+ *    presenting until that is done (15–18 ms on the device): a presentation issued meanwhile is refused.
+ *    `holdUnmountedModalDismissals` keeps those dismissals pending until the returned release runs. */
+interface Presenter { presenting: object | null }
+const PresenterContext = React.createContext<Presenter>({ presenting: null });
+const modalSystem: { held: (() => void)[] | null; refusing: boolean; unmounting: (() => void)[] | null } = { held: null, refusing: false, unmounting: null };
+export const modalPresentations = { refused: 0 };
+export function holdUnmountedModalDismissals(): () => void {
+  modalSystem.unmounting = [];
   return () => {
-    const queue = heldDismissals.queue ?? [];
-    heldDismissals.queue = null;
+    const queue = modalSystem.unmounting ?? [];
+    modalSystem.unmounting = null;
+    for (const done of queue) done();
+  };
+}
+export function holdModalDismissals(): () => void {
+  modalSystem.held = [];
+  return () => {
+    const queue = modalSystem.held ?? [];
+    modalSystem.held = null;
     for (const report of queue) report();
   };
 }
+export function refuseModalPresentations(): () => void {
+  modalSystem.refusing = true;
+  return () => { modalSystem.refusing = false; };
+}
 export function Modal(props: HostProps) {
   const visible = Boolean(props.visible);
-  const wasVisible = React.useRef(visible);
-  const onDismiss = React.useRef(props.onDismiss as (() => void) | undefined);
-  onDismiss.current = props.onDismiss as (() => void) | undefined;
+  const ios = Platform.OS === 'ios';
+  const presenter = React.useContext(PresenterContext);
+  const [self] = React.useState<Presenter>(() => ({ presenting: null }));
+  const [kept, setKept] = React.useState(visible);
+  if (visible && !kept) setKept(true);
+  const wasVisible = React.useRef(false);
+  const latest = React.useRef(props);
+  latest.current = props;
+  const mounted = React.useRef(true);
+  React.useEffect(() => () => {
+    mounted.current = false;
+    if (presenter.presenting !== self) return;
+    if (ios && modalSystem.unmounting) {
+      const dismissing = {};
+      presenter.presenting = dismissing;
+      modalSystem.unmounting.push(() => { if (presenter.presenting === dismissing) presenter.presenting = null; });
+    } else {
+      presenter.presenting = null;
+    }
+  }, [presenter, self, ios]);
   React.useEffect(() => {
+    if (visible && !wasVisible.current) {
+      const taken = ios && presenter.presenting !== null && presenter.presenting !== self;
+      if (taken || modalSystem.refusing) {
+        modalPresentations.refused += 1;
+      } else {
+        presenter.presenting = self;
+        (latest.current.onShow as (() => void) | undefined)?.();
+      }
+    }
     if (wasVisible.current && !visible) {
-      const report = () => onDismiss.current?.();
-      if (heldDismissals.queue) heldDismissals.queue.push(report);
+      if (presenter.presenting === self) presenter.presenting = null;
+      const report = () => {
+        if (!mounted.current) return;
+        setKept(false);
+        (latest.current.onDismiss as (() => void) | undefined)?.();
+      };
+      if (!ios) setKept(false);
+      else if (modalSystem.held) modalSystem.held.push(report);
       else report();
     }
     wasVisible.current = visible;
-  }, [visible]);
-  return visible ? React.createElement('Modal', props, props.children) : null;
+  }, [visible, ios, presenter, self]);
+  if (!visible && !(ios && kept)) return null;
+  return React.createElement('Modal', props, React.createElement(PresenterContext.Provider, { value: self }, props.children));
 }
 export function FlatList({ data, renderItem, ...props }: HostProps & { data: unknown[]; renderItem: (args: { item: unknown; index: number }) => React.ReactNode }) {
   return React.createElement('FlatList', props, data.map((item, index) => React.createElement(React.Fragment, { key: index }, renderItem({ item, index }))));
 }
+/** The app's state, as `AppState` reports it; `setAppState` plays a change to every listener. */
+const appStateListeners = new Set<(state: string) => void>();
+export const AppState = {
+  currentState: 'active',
+  addEventListener: (_event: 'change', listener: (state: string) => void) => {
+    appStateListeners.add(listener);
+    return { remove: () => { appStateListeners.delete(listener); } };
+  },
+};
+export function setAppState(state: 'active' | 'inactive' | 'background'): void {
+  AppState.currentState = state;
+  for (const listener of [...appStateListeners]) listener(state);
+}
+export function appStateListenerCount(): number { return appStateListeners.size; }
 export const Platform = { OS: 'ios', Version: '26.0' as string | number, select: (options: Record<string, unknown>) => options.ios ?? options.default };
 export const StyleSheet = { create: <T,>(styles: T): T => styles, hairlineWidth: 1, absoluteFill: {}, absoluteFillObject: {}, flatten: (styles: unknown) => Object.assign({}, ...([styles].flat(Infinity))) };
 export const useSafeAreaInsets = () => ({ top: 20, bottom: 30, left: 0, right: 0 });

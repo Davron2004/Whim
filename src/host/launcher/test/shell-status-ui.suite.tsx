@@ -169,6 +169,19 @@ export async function runShellStatusUiTests(h: Harness): Promise<void> {
     await resetPhone();
   });
 
+  await h.test('Ember: the halo is drawn whole — its circle lies inside the drawing, so no edge of it is cut flat — at every size', async () => {
+    for (const size of [20, 24, 48, 96, 128] as const) {
+      const tree = await renderScreen(<Ember size={size} state="working" activity={1} />);
+      try {
+        const halo = all(tree, 'Circle')[0];
+        const svg = all(tree, 'Svg').find((v) => v.findAll((n) => hostType(n) === 'Circle').length > 0)!;
+        const [x, y, w, hh] = String(svg.props.viewBox).split(' ').map(Number);
+        const { cx, cy, r } = halo.props as { cx: number; cy: number; r: number };
+        h.ok(cx - r >= x && cy - r >= y && cx + r <= x + w && cy + r <= y + hh, `at ${size} the halo circle (${cx - r}..${cx + r} × ${cy - r}..${cy + r}) fits the viewBox ${svg.props.viewBox}`);
+      } finally { await unmountScreen(tree); }
+    }
+  });
+
   await h.test('Ember spark: a new value plays one flare on the spark spring; the first value and Reduce Motion play none', async () => {
     const peak = Number(doc(/Ember flares \(1 → ([\d.]+) → 1\)/, 'M10 flare')[1]);
     const spark = { mass: 1, stiffness: SPRINGS.spark.stiffness, damping: SPRINGS.spark.damping };

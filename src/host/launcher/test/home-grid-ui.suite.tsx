@@ -2,6 +2,8 @@
  *  and Discard with Undo, Make a copy and its question, Customize tile, search, the empty state, the
  *  offline notice, the skeleton, and the tile's plate in every state. The order and the rows
  *  themselves are `grid-composition.suite.ts`; the stores behind Delete are `launcher-interactions`. */
+import fs from 'node:fs';
+import path from 'node:path';
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
@@ -11,11 +13,14 @@ import { MapKVBackend } from '../../version-store';
 import type { InstalledApp } from '../app-index';
 import { appLinkFor } from '../app-link';
 import { tileOf } from '../tile-identity';
-import { gridLayout } from '../../ui/AppTile-geometry';
+import { gridLayout, TILE_SIDE } from '../../ui/AppTile-geometry';
 import { TilePlate } from '../../ui/AppTile';
+import { MENU } from '../../ui/ContextMenu';
+import { Ember, RESTING_ACTIVITY } from '../../ui/Ember';
 import { HomeSkeleton } from '../HomeSkeleton';
-import { COLORS, LAYOUT, ON_PLATE, SHAPE, TILE_RIM, TINTS } from '../../../design/tokens';
+import { COLORS, LAYOUT, ON_PLATE, SHAPE, TILE_RIM, TINTS, TYPE_SCALE } from '../../../design/tokens';
 import { ICON_PATHS } from '../../../design/icons/paths';
+import { EMBER_PATH } from '../../../design/icons/ember';
 import { squirclePath } from '../../../design/icons/squircle';
 import { mixHex } from '../../../design/tints';
 import AppTile from '../app-tile';
@@ -23,7 +28,7 @@ import { tileColor } from '../tiles';
 import { Share, StyleSheet, accessibilitySettings, setColorScheme, windowMetrics } from './native-host';
 import { press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 import {
-  chooseRow, longPress, menuCard, menuLabels, menuRows, pressToastAction, renderHome, settle, sheetRows, sheetTitled,
+  CELL_RECT, STATUS_BAR_OFFSET, chooseRow, longPress, menuCard, menuLabels, menuRows, pressToastAction, renderHome, settle, sheetRows, sheetTitled,
   tile, tileLabels, tiles, toastOf, updateHome, type Tree,
 } from './home-rig';
 
@@ -118,6 +123,83 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     } finally { await unmountScreen(list); windowMetrics.fontScale = 1; }
   });
 
+  await h.test('home layout: the first row starts below the top fade, on Home and on its skeleton, at every text size', async () => {
+    const host = (node: TestRenderer.ReactTestInstance) => {
+      let up = node.parent;
+      while (up && hostType(up) !== 'View') up = up.parent;
+      return up!;
+    };
+    /** The 16 pt fade over the top of the list, as drawn: the absolute, touch-through View at top 0. */
+    const topFade = (tree: Tree) => tree.root.find((n) => hostType(n) === 'View' && n.props.pointerEvents === 'none' && flat(n).position === 'absolute' && flat(n).top === 0 && typeof flat(n).height === 'number');
+    for (const scale of [1, 1.35, 2]) {
+      await resetPhone();
+      windowMetrics.fontScale = scale;
+      const real = await renderHome({ apps: [TIMER, app('Dice', 2)] });
+      const skeleton = await renderScreen(<HomeSkeleton count={2} />);
+      await settle();
+      try {
+        const fade = flat(topFade(real)).height as number;
+        const inset = flat(host(frameOf(tile(real, 'Timer')))).paddingTop as number;
+        h.ok(inset >= fade, `at ${scale * 100}% the grid is inset ${inset} pt, the fade is ${fade} pt: nothing at rest sits under it`);
+        const bar = skeleton.root.find((n) => hostType(n) === 'Animated.View' && n.props.accessibilityRole === 'progressbar');
+        h.eq(flat(bar).paddingTop, inset, 'the skeleton leaves the same room, so nothing moves when the tiles arrive');
+      } finally { await unmountScreen(real); await unmountScreen(skeleton); windowMetrics.fontScale = 1; }
+    }
+  });
+
+  await h.test('home layout: plates line up — a grid cell holds its plate at the top with or without a state line; a list row centres it in a row as tall as the one that states its state', async () => {
+    const seen: Record<string, { plain: Style; stated: Style; plainCell: Style; statedCell: Style }> = {};
+    for (const [scale, key] of [[1, 'normal'], [1.35, '135%'], [2, '200%']] as const) {
+      await resetPhone();
+      windowMetrics.fontScale = scale;
+      const tree = await renderHome({ apps: [TIMER, app('Dice', 2, { example: true })] });
+      try {
+        seen[key] = {
+          plain: flat(tile(tree, 'Timer')),
+          stated: flat(tile(tree, 'Dice, example')),
+          plainCell: flat(frameOf(tile(tree, 'Timer'))),
+          statedCell: flat(frameOf(tile(tree, 'Dice, example'))),
+        };
+      } finally { await unmountScreen(tree); windowMetrics.fontScale = 1; }
+    }
+    h.eq([seen.normal.plain.justifyContent, seen.normal.stated.justifyContent], ['flex-start', 'flex-start'], 'at 100% text a tile without a state line starts at the top of its cell, as its neighbour that has one does');
+    h.eq([seen['135%'].plain.justifyContent, seen['135%'].stated.justifyContent], ['flex-start', 'flex-start'], 'and at 135%');
+    h.eq([seen['200%'].plain.justifyContent, seen['200%'].stated.justifyContent], ['center', 'center'], 'a list row centres its plate on the row, with or without a state line');
+    const content = (TYPE_SCALE.body.lineHeight + TYPE_SCALE.caption.lineHeight) * 2;
+    h.ok((seen['200%'].statedCell.minHeight as number) >= content, 'a row that states its state fits its name and that line at 200% text');
+    h.eq(seen['200%'].plainCell.minHeight, seen['200%'].statedCell.minHeight, 'and the row without one is as tall, so the list keeps its rhythm');
+  });
+
+  await h.test('home layout: a grid label keeps the side padding system.md §3.2 gives it at every text size, large text included', async () => {
+    const documented = Number(/(\d{1,2}) pt side padding, then ellipsis/.exec(fs.readFileSync(path.join(process.cwd(), 'docs/design/system.md'), 'utf8'))?.[1]);
+    h.ok(Number.isFinite(documented), 'the doc states a side padding for the label');
+    for (const scale of [1, 1.35]) {
+      await resetPhone();
+      windowMetrics.fontScale = scale;
+      const tree = await renderHome({ apps: [TIMER] });
+      try {
+        const column = tile(tree, 'Timer').find((n) => hostType(n) === 'View' && flat(n).alignItems === 'center' && flat(n).paddingHorizontal !== undefined);
+        h.eq(flat(column).paddingHorizontal, documented, `at ${scale * 100}% text`);
+      } finally { await unmountScreen(tree); windowMetrics.fontScale = 1; }
+    }
+  });
+
+  await h.test('long-press lift: the shadow is on the plate, with the plate’s corner, and never on the rectangular cell around it', async () => {
+    await resetPhone();
+    const tree = await renderHome({ apps: [TIMER] });
+    try {
+      const shadowed = () => tile(tree, 'Timer').findAll((n) => hostType(n) === 'View' && flat(n).boxShadow !== undefined);
+      h.eq(shadowed().length, 0, 'no shadow at rest');
+      await longPress(tree, 'Timer');
+      const cell = frameOf(tile(tree, 'Timer'));
+      h.eq(flat(cell).boxShadow, undefined, 'the cell frame carries none while the menu is open');
+      const lifted = shadowed();
+      h.eq(lifted.length, 1, 'one shadowed shape');
+      h.eq(flat(lifted[0]).borderRadius, SHAPE.tileCorner * TILE_SIDE.grid, 'with the plate’s corner');
+      h.ok(paths(lifted[0]).some((p) => p.props.d === squirclePath(TILE_SIDE.grid)), 'and it wraps the plate');
+    } finally { await unmountScreen(tree); }
+  });
+
   // ── what is on the grid ─────────────────────────────────────────────────────
   await h.test('home grid: attempts being made first, then recent failures, then apps newest first, labelled with their state', async () => {
     await resetPhone();
@@ -193,6 +275,28 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       h.eq([card.props.accessibilityRole, card.props.accessibilityLabel], ['menu', long.name], 'announced as a menu named by the app’s full name');
       h.eq(menuLabels(tree), [COPY.actionOpen, COPY.actionChangeIt, COPY.actionHistory, COPY.actionMakeCopy, COPY.actionCustomize, COPY.actionShareLink, COPY.actionDelete], 'Open, Change it, History, Make a copy, Customize tile, Share link, then Delete');
       h.ok(menuRows(tree).every((row) => screenReaderElement(row) === row), 'each row is an element of its own, not read as part of one around it');
+    } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('tile menu: the card sits 8 pt under the cell as measured from the top of the root, where the menu’s own window starts, and not from below the status bar', async () => {
+    await resetPhone();
+    const tree = await renderHome({ apps: [TIMER] });
+    try {
+      await longPress(tree, 'Timer');
+      await TestRenderer.act(async () => menuCard(tree)!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: MENU.width, height: 300 } } }));
+      const top = flat(menuCard(tree)!).top as number;
+      h.eq(top, CELL_RECT.y + CELL_RECT.height + MENU.gap, `${MENU.gap} pt under the cell, the way the root measures it (a status bar of ${STATUS_BAR_OFFSET} pt would put it that much too high)`);
+      h.ok(top >= CELL_RECT.y + CELL_RECT.height, 'so never over its own name or its neighbours’');
+    } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('empty Home: the big ember and the composer’s mark both rest at full strength, not at the ember’s own default of none', async () => {
+    await resetPhone();
+    const tree = await renderHome({ apps: [] });
+    try {
+      const embers = tree.root.findAllByType(Ember);
+      h.eq(embers.map((e) => e.props.size).sort((a, b) => b - a), [128, 24], 'the empty state’s and the composer’s');
+      h.ok(embers.every((e) => e.props.activity === RESTING_ACTIVITY), 'each is given the resting activity');
     } finally { await unmountScreen(tree); }
   });
 
@@ -499,7 +603,38 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       h.ok(textOf(bar()).includes('A tea timer that buzzes') && !textOf(bar()).includes(COPY.homeComposerPlaceholder), 'and on the bar');
       await press(bar());
       h.eq(opened, 1, 'a tap opens the describe sheet');
+      const mark = () => bar().findAll((n) => hostType(n) === 'Path' && n.props.d === EMBER_PATH);
+      h.eq(mark().length, 1, 'the ember leads while a description waits');
+      await updateHome(tree, { apps: [TIMER], onCreate: () => { opened += 1; } });
+      const emberSvg = bar().find((n) => hostType(n) === 'Svg' && n.findAll((m) => hostType(m) === 'Path' && m.props.d === EMBER_PATH).length > 0);
+      h.eq(emberSvg.props.width, 24, 'and the ember leads the empty bar, 24 pt');
+      h.ok(bar().findAll((n) => hostType(n) === 'Path' && n.props.d === ICON_PATHS.plus).length === 0, 'in place of the plus');
     } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('live text size: a size changed while Home shows builds its title, grid and composer again, and Home keeps what it holds — the search words and the open menu', async () => {
+    await resetPhone();
+    const apps = Array.from({ length: 13 }, (_, i) => app(`App ${String(i + 1).padStart(2, '0')}`, i + 1));
+    const tree = await renderHome({ apps });
+    try {
+      const field = () => tree.root.find((n) => hostType(n) === 'TextInput');
+      const bar = () => tree.root.find((n) => hostType(n) === 'Pressable' && n.props.accessibilityHint === COPY.homeComposerHint);
+      const title = () => tree.root.find((n) => hostType(n) === 'Text' && textOf(n) === COPY.homeTitle);
+      await TestRenderer.act(async () => field().props.onChangeText('app 07'));
+      await longPress(tree, 'App 07');
+      h.ok(menuLabels(tree).length > 0, 'setup: the tile’s menu is open');
+      const built = { bar: bar(), title: title(), tile: tile(tree, 'App 07') };
+      await updateHome(tree, { apps });
+      h.ok(bar() === built.bar && title() === built.title && tile(tree, 'App 07') === built.tile, 'setup: a render at the same text size keeps what is drawn');
+      windowMetrics.fontScale = 2;
+      await updateHome(tree, { apps });
+      h.ok(bar() !== built.bar && title() !== built.title && tile(tree, 'App 07') !== built.tile, 'the size changed: the title, the tiles and the composer are built again, so iOS measures every text at the new size');
+      h.eq([field().props.value, tileLabels(tree)], ['app 07', ['App 07']], 'the search words are still in the field and still filter the grid');
+      h.ok(menuLabels(tree).length > 0, 'and the menu that was open is still open');
+      const rebuilt = bar();
+      await updateHome(tree, { apps });
+      h.ok(bar() === rebuilt, 'built again once per size, not on every render');
+    } finally { await unmountScreen(tree); windowMetrics.fontScale = 1; }
   });
 
   // ── skeleton ────────────────────────────────────────────────────────────────

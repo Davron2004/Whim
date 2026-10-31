@@ -19,6 +19,7 @@ import { RADII, SPACE, TYPE_SCALE } from '../../design/tokens';
 import { COPY } from '../launcher/copy';
 import { KeyboardTextInput } from '../launcher/KeyboardShell';
 import { Icon } from './Icon';
+import { wrappingType } from './Text';
 import { useTokens, type ShellTokens } from './tokens';
 import { hitSlopFor, makeStyles, MAX_FONT_SCALE, typeStyle } from './tokens-pure';
 
@@ -107,8 +108,8 @@ const styles = makeStyles((t) => ({
   input: { ...typeStyle('body'), color: t.colors.text, flex: 1, padding: 0, margin: 0 },
   clear: { marginLeft: SPACE[2], alignItems: 'center' as const, justifyContent: 'center' as const },
   helperRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[1], marginTop: FIELD.labelGap },
-  helper: { ...typeStyle('footnote'), color: t.colors['text-2'], flexShrink: 1 },
-  error: { ...typeStyle('footnote'), color: t.colors['danger-text'], flexShrink: 1 },
+  helper: { ...wrappingType('footnote'), color: t.colors['text-2'], flexShrink: 1 },
+  error: { ...wrappingType('footnote'), color: t.colors['danger-text'], flexShrink: 1 },
 }));
 
 interface FieldFrameProps {

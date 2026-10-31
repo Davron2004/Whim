@@ -1,12 +1,20 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
+import { resetOverlayHolds } from '../../ui/OverlayModal';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // React Native's frame callbacks, which Node lacks: one frame is the next timer turn.
 globalThis.requestAnimationFrame ??= (callback) => setTimeout(() => callback(Date.now()), 0) as unknown as number;
 globalThis.cancelAnimationFrame ??= (handle) => clearTimeout(handle);
 
+/** Starts a new app for the test about to render: the dismissals an earlier tree left in flight
+ *  (overlays it unmounted while up) are over, so they hold nothing of this one's overlays. */
+export function freshApp(): void {
+  resetOverlayHolds();
+}
+
 export async function renderScreen(element: React.ReactElement, options?: TestRenderer.TestRendererOptions): Promise<TestRenderer.ReactTestRenderer> {
+  freshApp();
   let tree!: TestRenderer.ReactTestRenderer;
   await TestRenderer.act(async () => { tree = TestRenderer.create(element, options); });
   return tree;
@@ -95,6 +103,13 @@ export function captureTimeouts() {
       const matches = [...pending].filter(([, timer]) => timer.delay === delay);
       if (!matches.length) throw new Error(`No pending ${delay}ms timeout`);
       for (const [id, timer] of matches) { pending.delete(id); timer.callback(); }
+    },
+    /** Fires every pending timeout of at most `ms`, shortest first, and says how many that was: the
+     *  time `ms` of fake time brings, for a test that must not name the constant behind a wait. */
+    fireWithin: (ms: number) => {
+      const due = [...pending].filter(([, timer]) => timer.delay <= ms).sort((a, b) => a[1].delay - b[1].delay);
+      for (const [id, timer] of due) { pending.delete(id); timer.callback(); }
+      return due.length;
     },
     restore: () => { globalThis.setTimeout = originalSet; globalThis.clearTimeout = originalClear; },
   };
