@@ -3,7 +3,7 @@ import type { AppSpec } from './index';
 import { chromeInsetContext } from './chrome-inset';
 import { ToastHost } from './toast';
 import { canAnimate, fadeTiming, play, reduceMotion, retarget, springTiming, stop, type MotionElement, type MotionKeyframe, type Timing } from './motion';
-import { activeTheme } from './tokens';
+import { activeTheme, own } from './tokens';
 
 // ── Navigation (sdk-navigation D1–D4) ────────────────────────────────────────
 // `nav` is deliberately a stable module-scope object rather than a hook: mini-app event
@@ -252,7 +252,7 @@ export function NavRoot({ spec, chromeInsetBottom = 0 }: NavRootProps): React.Re
         return;
       }
 
-      if (!Object.hasOwn(spec.screens, action.screenName)) {
+      if (!own(spec.screens, action.screenName)) {
         const declared = Object.keys(spec.screens).join(', ');
         console.warn(
           `vc-sdk nav: unknown screen "${action.screenName}"; declared screens: ${declared}`,

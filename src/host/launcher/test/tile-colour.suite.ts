@@ -4,18 +4,12 @@
  * tiles, the #127 guard, the read path for records from before tints, the override's validation —
  * and the transitional `tiles.ts#tileColor` the current screens still paint with, which now always
  * lands on a tint. Assignment against a real index, rebuilds and copies are in
- * `store-access.suite.ts` and `build-lifecycle.suite.ts`. Also the home grid cell width.
+ * `store-access.suite.ts` and `build-lifecycle.suite.ts`.
  */
 
 import { Harness } from './harness';
 import { tileColor } from '../tiles';
 import { liftManifestTileColor } from '../manifest-tile-color';
-import {
-  HOME_GRID_COLUMNS,
-  HOME_GRID_COLUMN_GAP,
-  HOME_GRID_SIDE_PADDING,
-  homeGridCellWidth,
-} from '../home-grid';
 import { TINT_NAMES, TINTS } from '../../../design/tokens';
 import { isTintName, nearestTint } from '../../../design/tints';
 import { GLYPH_NAMES } from '../../../design/icons/names';
@@ -219,62 +213,4 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     h.eq(index.setTileOverride('nope', { tint: 'violet', icon: 'music' }), null, 'unknown app');
     h.eq(index.clearTileOverride('nope'), null, 'unknown app, clear');
   });
-
-  // ── homeGridCellWidth — the fluid 3-up grid (finding V3, design html:388) ──────
-  const FALLBACK = 88; // stands in for APP_TILE_SIZE, which lives in an RN module Node cannot load
-
-  await h.test('homeGridCellWidth: the design’s 390 frame yields the 106 the mockup renders', async () => {
-    // repeat(3,1fr) across 390 minus 22 either side minus two 14 gaps = 318, split three ways.
-    h.eq(homeGridCellWidth(390, FALLBACK), 106, 'the mockup’s own frame reproduces the mockup’s own tile');
-    h.ok(homeGridCellWidth(390, FALLBACK) > FALLBACK, 'and it is genuinely wider than the fixed 88 this replaces');
-  });
-
-  await h.test('homeGridCellWidth: a wider device gets proportionally wider tiles', async () => {
-    h.eq(homeGridCellWidth(411, FALLBACK), 113, 'a 411dp Android frame divides exactly');
-    h.ok(homeGridCellWidth(411, FALLBACK) > homeGridCellWidth(390, FALLBACK), 'wider frame, wider tile — the grid is fluid, not capped');
-  });
-
-  await h.test('homeGridCellWidth: a frame that does not divide evenly is FLOORED, never rounded up', async () => {
-    // 412 - 44 - 28 = 340; 340/3 = 113.33... Rounding up (or leaving the fraction) can put
-    // 3 tiles + 2 gaps over the row, and the grid is flexWrap:'wrap' — an overflow of any size
-    // drops the third tile onto its own row. Flooring gives up <=2dp at the right edge instead.
-    h.eq(homeGridCellWidth(412, FALLBACK), 113, '113.33 floors to 113');
-    h.eq(homeGridCellWidth(413, FALLBACK), 113, '113.66 floors to 113 as well — never 114');
-  });
-
-  await h.test('homeGridCellWidth: three tiles plus two gaps never overflow the row, at any width', async () => {
-    const gutters = 2 * HOME_GRID_SIDE_PADDING + (HOME_GRID_COLUMNS - 1) * HOME_GRID_COLUMN_GAP;
-    for (let frame = 240; frame <= 1280; frame++) {
-      // A DOMAIN guard, not a value guard. Skipping on `cell === FALLBACK` would excuse any
-      // regression that returns the fallback for a perfectly good frame — and would silently skip
-      // frame 336, where floor(264/3) legitimately equals 88 and collides with the sentinel.
-      if (frame <= gutters) continue;
-      const cell = homeGridCellWidth(frame, FALLBACK);
-      const row = HOME_GRID_COLUMNS * cell + (HOME_GRID_COLUMNS - 1) * HOME_GRID_COLUMN_GAP;
-      h.ok(row <= frame - 2 * HOME_GRID_SIDE_PADDING, `frame ${frame}: a row of ${HOME_GRID_COLUMNS} fits without wrapping`);
-      h.eq(cell, Math.floor(cell), `frame ${frame}: the width is whole dp`);
-    }
-  });
-
-  await h.test('homeGridCellWidth: a degenerate frame falls back, never <= 0 and never NaN', async () => {
-    // 0 is what a window-dimensions read can hand back before the first layout pass; a frame
-    // narrower than the chrome being subtracted makes the subtraction negative.
-    //
-    // 72/73/74 are the band where the division lands on exactly zero (gutters are 2*22 + 2*14 =
-    // 72), which is the one case the `cell > 0` predicate exists for. Without them a `>= 0`
-    // regression ships a zero-width tile and every other case here still passes.
-    for (const frame of [0, -1, 40, 71, 72, 73, 74, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
-      const cell = homeGridCellWidth(frame, FALLBACK);
-      h.eq(cell, FALLBACK, `frame ${frame} falls back to the tile default`);
-      h.ok(Number.isFinite(cell) && cell > 0, `frame ${frame} never yields NaN or a non-positive width`);
-    }
-    h.eq(homeGridCellWidth(0, 999), 999, 'the fallback returned is the caller’s, not a second hardcoded 88');
-  });
-
-  // A prior version of this suite had a test named "AppTile: exports its size constants and no
-  // other module restates them" that only asserted `monogram('Pour Timer') === 'PT'` — tautological
-  // against its own name. `flow-skeletons.tsx` importing `APP_TILE_SIZE`/`APP_TILE_RADIUS` and
-  // using them directly (never restating a literal) is already covered by
-  // `prompt-flow-screens.suite.ts` ("skeletons: geometry is imported..."), so it is deleted here
-  // rather than fixed in place.
 }

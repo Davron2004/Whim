@@ -14,7 +14,7 @@ export { BackPolicy, step, initialBackState, UNHANDLED_PRESS_WINDOW_MS } from '.
 export type { BackAction, BackEvent, BackState } from './back-policy';
 export { deliverBySourceJs, MAX_BUNDLE_SOURCE_BYTES, BundleTooLargeError } from './deliver';
 export { monogram, tileColor } from './tiles';
-export { COPY, forkedFromLabel, deleteBody } from './copy';
+export { COPY } from './copy';
 export { useMiniAppHost } from './useMiniAppHost';
 export type { MiniAppHost, HostState } from './useMiniAppHost';
 export { default as LauncherRoot } from './LauncherRoot';

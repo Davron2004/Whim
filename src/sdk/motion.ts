@@ -37,15 +37,31 @@ export function easedSpring(sampled: SampledSpring, linearSupported: boolean): T
 interface CssNamespace {
   supports?: (property: string, value: string) => boolean;
 }
-let linearSupport: boolean | undefined;
+const cssSupport = new Map<string, boolean>();
 
-/** Whether the engine draws `linear()` easings, asked once per realm (iOS 15.1 predates them). */
-export function supportsLinearEasing(): boolean {
-  if (linearSupport === undefined) {
+/** Whether the engine accepts `value` for `property`, asked once per realm. */
+function cssSupports(property: string, value: string): boolean {
+  const key = `${property}:${value}`;
+  let supported = cssSupport.get(key);
+  if (supported === undefined) {
     const css = (globalThis as { CSS?: CssNamespace }).CSS;
-    linearSupport = typeof css?.supports === 'function' && css.supports('animation-timing-function', 'linear(0, 1)') === true;
+    supported = typeof css?.supports === 'function' && css.supports(property, value) === true;
+    cssSupport.set(key, supported);
   }
-  return linearSupport;
+  return supported;
+}
+
+/** Whether the engine draws `linear()` easings (iOS 15.1 predates them). */
+export function supportsLinearEasing(): boolean {
+  return cssSupports('animation-timing-function', 'linear(0, 1)');
+}
+
+/** Whether the engine has the individual CSS `translate` property (Chromium 104; the WebView floor
+ *  is 91). Without it the motions drawn through `translate` (a sliding thumb, a list row closing a
+ *  gap) are skipped and the element shows its end state, like Reduce Motion: writing the property
+ *  there draws nothing, and a part that follows the motion would drift from the part that cannot. */
+export function supportsTranslateProperty(): boolean {
+  return cssSupports('translate', '1px 0px');
 }
 
 /** The named spring as a WAAPI timing. */
@@ -347,7 +363,7 @@ export function useSlideSpring(
       followRef.current?.(offset);
     });
     const s = spring.current;
-    if (!changed || immediate() || reduceMotion()) {
+    if (!changed || immediate() || reduceMotion() || !supportsTranslateProperty()) {
       s.jump(0);
       return;
     }

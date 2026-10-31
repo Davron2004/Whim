@@ -16,6 +16,7 @@ import { RELEASE } from './release-config';
 
 const SERVER_URL_KEY = 'whim.server-url:v1';
 const SERVER_ACK_KEY = 'whim.server-ack:v1';
+const SERVER_CHOICE_KEY = 'whim.server-choice:v1';
 
 /**
  * Trims, strips trailing slashes (one or more — `host:8787///` → `host:8787`), and drops a blank
@@ -207,11 +208,12 @@ export function acknowledgeOwnServer(kv: KVBackend): void {
 
 /**
  * The override every request follows (design D20): the saved address once the acknowledgement is
- * recorded and only while it passes the address rule, else `undefined`. An address saved by an
+ * recorded, while "Whim's server" isn't chosen (`chooseServer`), and only while it passes the
+ * address rule, else `undefined`. An address saved by an
  * earlier build stays in place, unread, until the user confirms.
  */
 export function serverOverride(kv: KVBackend): string | undefined {
-  if (!ownServerAcknowledged(kv)) return undefined;
+  if (!ownServerAcknowledged(kv) || kv.getString(SERVER_CHOICE_KEY) === 'whim') return undefined;
   const saved = loadServerUrl(kv);
   return saved != null && serverAddressAllowed(saved) ? saved : undefined;
 }
@@ -225,10 +227,21 @@ export function effectiveServerUrl(kv: KVBackend): string {
   return serverOverride(kv) ?? RELEASE.serverUrl;
 }
 
+/** The server row chosen in Advanced (spec app-launcher "Settings puts common settings first and
+ *  diagnostics under Advanced"). */
+export type ServerChoice = 'whim' | 'own';
+
 /**
- * Remove the saved override so the next request goes to the compiled-in server, with no restart
- * needed (same spec, "Going back to the default"). The acknowledgement stays.
+ * Which row Advanced shows chosen: "Your own server" once the acknowledgement is recorded, unless
+ * the user has since picked "Whim's server". Choosing Whim's server keeps the saved address (only
+ * `serverOverride` stops reading it), so switching back finds it there with nothing to confirm.
  */
-export function clearServerUrl(kv: KVBackend): void {
-  kv.delete(SERVER_URL_KEY);
+export function serverChoice(kv: KVBackend): ServerChoice {
+  return ownServerAcknowledged(kv) && kv.getString(SERVER_CHOICE_KEY) !== 'whim' ? 'own' : 'whim';
+}
+
+/** Records the chosen row. `own` honours the saved address only once the acknowledgement exists. */
+export function chooseServer(kv: KVBackend, choice: ServerChoice): void {
+  if (choice === 'whim') kv.set(SERVER_CHOICE_KEY, 'whim');
+  else kv.delete(SERVER_CHOICE_KEY);
 }

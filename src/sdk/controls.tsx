@@ -7,7 +7,7 @@
 // only ambient capability touched is the one-way `ReactNativeWebView.postMessage` transport via
 // `emitUiEvent` (constraint #2, shared from `events.ts` — not duplicated).
 import * as React from 'react';
-import { space, radius, color, weight, textSize, textColor, activeTheme, FONT, TABULAR_NUMS, WEIGHT, type PaintRole } from './tokens';
+import { space, radius, color, weight, textSize, textColor, activeTheme, own, FONT, TABULAR_NUMS, WEIGHT, type PaintRole } from './tokens';
 import { raisedShadow, stacks, touchTarget, typeStyle, useGroupSurface, type TypeStyle } from './kit';
 import { emitUiEvent } from './events';
 import { CONTROL_RESET, TAP_RESET } from './press';
@@ -985,7 +985,7 @@ function msFromNative(text: string, mode: DateInputMode, previous: number | null
 }
 
 export function DateInput({ label, value, onChange, mode = 'date' }: DateInputProps) {
-  const safeMode: DateInputMode = Object.prototype.hasOwnProperty.call(NATIVE_TYPE, mode) ? mode : 'date';
+  const safeMode: DateInputMode = own(NATIVE_TYPE, mode) ? mode : 'date';
   const has = typeof value === 'number' && Number.isFinite(value);
   return React.createElement(FieldShell, {
     label,

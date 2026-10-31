@@ -3,8 +3,8 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import HomeScreen from '../HomeScreen';
-import ComposeStep from '../ComposeStep';
-import ConsentScreen from '../ConsentScreen';
+import { DescribePage } from '../DescribePage';
+import { FirstRunSheet } from '../FirstRunSheet';
 import LauncherRoot from '../LauncherRoot';
 import { COPY } from '../copy';
 import { AppIndex, type InstalledApp } from '../app-index';
@@ -14,6 +14,7 @@ import { acceptTerms } from '../terms-acceptance';
 import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { resetNativeStorage } from './native-storage';
 import { button, press, renderScreen, unmountScreen, textOf, captureTimeouts, hostType, isHost } from './react-screen';
+import { renderHome, tile } from './home-rig';
 
 const noop = () => {};
 const app: InstalledApp = {
@@ -25,8 +26,11 @@ function visibleTextCount(tree: TestRenderer.ReactTestRenderer, text: string): n
   return tree.root.findAll(node => hostType(node) === 'Text' && textOf(node) === text).length;
 }
 function createButton(tree: TestRenderer.ReactTestRenderer): TestRenderer.ReactTestInstance {
-  return tree.root.find(node => hostType(node) === 'TouchableOpacity' &&
-    node.findAll(child => hostType(child) === 'Text' && textOf(child) === COPY.homeComposerPlaceholder).length === 1);
+  return tree.root.find(node => hostType(node) === 'Pressable' && node.props.accessibilityLabel === COPY.homeComposerPlaceholder);
+}
+/** How many offline notices Home shows. */
+function noticeCount(tree: TestRenderer.ReactTestRenderer): number {
+  return tree.root.findAll(node => hostType(node) === 'View' && node.props.accessibilityLabel === COPY.homeOfflineNotice).length;
 }
 
 export async function runConnectivityUxTests(h: Harness): Promise<void> {
@@ -35,27 +39,23 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
     await h.test(`Home: offline=${offline} shows the matching notice and keeps app/create controls enabled`, async () => {
       const opened: string[] = [];
       let creates = 0;
-      const tree = await renderScreen(<HomeScreen apps={[app]} offline={offline}
-        onOpen={target => opened.push(target.id)} onCreate={() => { creates++; }}
-        onFork={noop} onDelete={noop} onHistory={noop} onPromptAgain={noop} onSettings={noop} />);
+      const tree = await renderHome({ apps: [app], offline, onOpen: target => opened.push(target.id), onCreate: () => { creates++; } });
       try {
-        h.eq(visibleTextCount(tree, COPY.homeOfflineIndicator), offline ? 1 : 0, 'the home notice follows connectivity');
-        const tile = tree.root.find(node => hostType(node) === 'TouchableOpacity' &&
-          typeof node.props.onLongPress === 'function' && textOf(node).includes(app.name));
-        await press(tile);
+        h.eq(noticeCount(tree), offline ? 1 : 0, 'the home notice follows connectivity');
+        await press(tile(tree, app.name));
         await press(createButton(tree));
         h.eq(opened, [app.id], 'the visible installed tile opens its app');
         h.eq(creates, 1, 'the visible create control starts creation');
       } finally { await unmountScreen(tree); }
     });
 
-    await h.test(`Compose: offline=${offline} shows the matching notice without blocking editing or Continue`, async () => {
+    await h.test(`Describe: offline=${offline} shows the matching notice without blocking editing or Continue`, async () => {
       const edits: string[] = [];
       let continues = 0;
-      const tree = await renderScreen(<ComposeStep text="Timer" editing={false} serverUnreachable={offline}
-        onChangeText={text => edits.push(text)} onContinue={() => { continues++; }} onBack={noop} />);
+      const tree = await renderScreen(<DescribePage text="Timer" serverUnreachable={offline}
+        onChangeText={(text: string) => edits.push(text)} onContinue={() => { continues++; }} />);
       try {
-        h.eq(visibleTextCount(tree, COPY.promptServerUnreachable), offline ? 1 : 0, 'the compose notice follows connectivity');
+        h.eq(visibleTextCount(tree, COPY.promptServerUnreachable), offline ? 1 : 0, 'the describe notice follows connectivity');
         const field = tree.root.find(isHost('TextInput'));
         h.ok(field.props.editable !== false, 'the prompt remains editable');
         await TestRenderer.act(async () => field.props.onChangeText('A tea timer'));
@@ -66,14 +66,14 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
     });
   }
 
-  await h.test('Compose: an active refusal window disables Continue even when offline is only advisory', async () => {
+  await h.test('Describe: an active refusal window disables Continue even when offline is only advisory', async () => {
     const clock = captureTimeouts();
     let continues = 0;
     let tree: TestRenderer.ReactTestRenderer | undefined;
     try {
-      tree = await renderScreen(<ComposeStep text="Timer" editing={false} serverUnreachable
+      tree = await renderScreen(<DescribePage text="Timer" serverUnreachable
         notice={{ hint: 'Try again later', tone: 'neutral', retryAt: Date.now() + 60_000 }}
-        onChangeText={noop} onContinue={() => { continues++; }} onBack={noop} />);
+        onChangeText={noop} onContinue={() => { continues++; }} />);
       h.eq(visibleTextCount(tree, COPY.promptServerUnreachable), 1, 'offline notice is still visible');
       h.eq(visibleTextCount(tree, 'Try again later'), 1, 'the refusal remains visible too');
       h.eq(button(tree, COPY.flowContinue).props.disabled, true, 'the retry window disables the actual Continue control');
@@ -85,7 +85,7 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
   });
 
   for (const consented of [false, true]) {
-    await h.test(`Launcher: consent=${consented} controls probing and propagates offline notices to Home and Compose`, async () => {
+    await h.test(`Launcher: consent=${consented} controls probing and propagates offline notices to Home and Describe`, async () => {
       resetNativeStorage();
       const kv = createMmkvBackend('whim.launcher');
       new AppIndex(kv).markSeeded(SEED_VERSION);
@@ -102,19 +102,19 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
       try {
         tree = await renderScreen(<LauncherRoot deviceLocale={() => 'en-US'} />);
         h.eq(requested.map(url => new URL(url).pathname), consented ? ['/health'] : [], 'only a current grant starts the failed health probe');
-        h.eq(visibleTextCount(tree, COPY.homeOfflineIndicator), consented ? 1 : 0, 'failed probe is visible at Home; no consent stays unknown');
+        h.eq(noticeCount(tree), consented ? 1 : 0, 'failed probe is visible at Home; no consent stays unknown');
         await press(createButton(tree));
-        h.eq(tree.root.findAllByType(ComposeStep).length, consented ? 1 : 0, 'creation opens compose only with consent');
-        h.eq(tree.root.findAllByType(ConsentScreen).length, consented ? 0 : 1, 'absent consent opens the disclosure');
-        h.eq(visibleTextCount(tree, COPY.promptServerUnreachable), consented ? 1 : 0, 'root passes the failed probe into the visible compose notice');
+        h.eq(tree.root.findAllByType(DescribePage).length, consented ? 1 : 0, 'creation opens describe only with consent');
+        h.eq(tree.root.findAllByType(FirstRunSheet).length, consented ? 0 : 1, 'absent consent opens the first-run sheet');
+        h.eq(visibleTextCount(tree, COPY.promptServerUnreachable), consented ? 1 : 0, 'root passes the failed probe into the visible describe notice');
         if (consented) {
           const field = tree.root.find(isHost('TextInput'));
           await TestRenderer.act(async () => field.props.onChangeText('A tea timer'));
-          h.eq(button(tree, COPY.flowContinue).props.disabled, false, 'root-managed compose enables Continue after typing while offline');
+          h.eq(button(tree, COPY.flowContinue).props.disabled, false, 'root-managed describe enables Continue after typing while offline');
         } else {
           await press(button(tree, COPY.consentDecline));
           h.eq(tree.root.findAllByType(HomeScreen).length, 1, 'declining returns to Home');
-          h.eq(visibleTextCount(tree, COPY.homeOfflineIndicator), 0, 'declining does not invent offline state');
+          h.eq(noticeCount(tree), 0, 'declining does not invent offline state');
           h.eq(requested, [], 'entering and declining consent send no requests');
         }
       } finally {

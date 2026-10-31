@@ -18,39 +18,11 @@ export const ScrollView = host('ScrollView');
 export const Switch = host('Switch');
 export const KeyboardAvoidingView = host('KeyboardAvoidingView');
 export const InputAccessoryView = host('InputAccessoryView');
-type KeyboardEventName = 'keyboardWillShow' | 'keyboardWillChangeFrame' | 'keyboardWillHide' | 'keyboardDidShow' | 'keyboardDidHide';
-interface KeyboardEvent { endCoordinates: { screenX: number; screenY: number; width: number; height: number }; duration: number; easing: string }
-export type KeyboardListener = (event: KeyboardEvent) => void;
-const keyboardListeners = new Map<KeyboardEventName, Set<KeyboardListener>>();
 /** Counts `Keyboard.dismiss` calls, so a test can tell putting the keyboard away from submitting.
- *  `emit` plays a keyboard event to every listener, as the native module would, with the keyboard's
- *  top edge at `screenY` in window coordinates (a hidden keyboard reports the window's bottom).
- *  `listening` is every listener still subscribed, to any event. */
+ *  The keyboard's motion is react-native-keyboard-controller's (`native-keyboard-controller.tsx`). */
 export const Keyboard = {
   dismissed: 0,
-  visible: false,
-  last: null as KeyboardEvent['endCoordinates'] | null,
   dismiss: () => { Keyboard.dismissed += 1; },
-  isVisible: () => Keyboard.visible,
-  metrics: () => (Keyboard.visible ? Keyboard.last : undefined),
-  addListener: (event: KeyboardEventName, listener: KeyboardListener) => {
-    const listeners = keyboardListeners.get(event) ?? new Set<KeyboardListener>();
-    keyboardListeners.set(event, listeners);
-    listeners.add(listener);
-    return { remove: () => listeners.delete(listener) };
-  },
-  listening: (): ReadonlySet<KeyboardListener> => new Set([...keyboardListeners.values()].flatMap((listeners) => [...listeners])),
-  emit: (event: KeyboardEventName, screenY: number) => {
-    Keyboard.visible = !event.endsWith('Hide') && screenY < 844;
-    Keyboard.last = { screenX: 0, screenY, width: 390, height: Math.max(0, 844 - screenY) };
-    for (const listener of keyboardListeners.get(event) ?? []) listener({ endCoordinates: Keyboard.last, duration: 250, easing: 'keyboard' });
-  },
-};
-/** Records every layout animation configured, so a test can see a change was set to move. */
-export const LayoutAnimation = {
-  configured: 0,
-  configureNext: () => { LayoutAnimation.configured += 1; },
-  Types: { spring: 'spring', linear: 'linear', easeInEaseOut: 'easeInEaseOut', easeIn: 'easeIn', easeOut: 'easeOut', keyboard: 'keyboard' },
 };
 export const SafeAreaView = host('SafeAreaView');
 export const SafeAreaProvider = host('SafeAreaProvider');
@@ -63,7 +35,32 @@ export const WebView = React.forwardRef<{ injectJavaScript: (js: string) => void
   React.useImperativeHandle(ref, () => ({ injectJavaScript: (js: string) => { injectedScripts.push(js); } }), []);
   return React.createElement('WebView', props, props.children as React.ReactNode);
 });
-export const Modal = (props: HostProps) => props.visible ? React.createElement('Modal', props, props.children) : null;
+/** iOS reports a dismissed `Modal` through `onDismiss` after it is gone; `holdModalDismissals` keeps
+ *  those reports back until the returned release runs, so a test can play a slow dismissal. */
+const heldDismissals: { queue: (() => void)[] | null } = { queue: null };
+export function holdModalDismissals(): () => void {
+  heldDismissals.queue = [];
+  return () => {
+    const queue = heldDismissals.queue ?? [];
+    heldDismissals.queue = null;
+    for (const report of queue) report();
+  };
+}
+export function Modal(props: HostProps) {
+  const visible = Boolean(props.visible);
+  const wasVisible = React.useRef(visible);
+  const onDismiss = React.useRef(props.onDismiss as (() => void) | undefined);
+  onDismiss.current = props.onDismiss as (() => void) | undefined;
+  React.useEffect(() => {
+    if (wasVisible.current && !visible) {
+      const report = () => onDismiss.current?.();
+      if (heldDismissals.queue) heldDismissals.queue.push(report);
+      else report();
+    }
+    wasVisible.current = visible;
+  }, [visible]);
+  return visible ? React.createElement('Modal', props, props.children) : null;
+}
 export function FlatList({ data, renderItem, ...props }: HostProps & { data: unknown[]; renderItem: (args: { item: unknown; index: number }) => React.ReactNode }) {
   return React.createElement('FlatList', props, data.map((item, index) => React.createElement(React.Fragment, { key: index }, renderItem({ item, index }))));
 }
@@ -82,15 +79,22 @@ export function setColorScheme(scheme: 'light' | 'dark' | null): void {
   for (const listener of [...schemeListeners]) listener();
 }
 export const useColorScheme = () => React.useSyncExternalStore(subscribeScheme, () => colorScheme);
-type AccessibilityEvent = 'reduceMotionChanged' | 'darkerSystemColorsChanged' | 'highTextContrastChanged';
+type AccessibilityEvent = 'reduceMotionChanged' | 'darkerSystemColorsChanged' | 'highTextContrastChanged' | 'screenReaderChanged';
 const accessibilityListeners = new Map<AccessibilityEvent, Set<(on: boolean) => void>>();
 /** The OS accessibility settings the `is…Enabled` queries answer with. Increase Contrast is one
  *  setting answered by both platform queries; `emitAccessibility` plays one platform's event. */
-export const accessibilitySettings = { reduceMotion: false, increaseContrast: false };
+export const accessibilitySettings = { reduceMotion: false, increaseContrast: false, screenReader: false };
+/** What the shell said to the screen reader (`announceForAccessibility`) and where it sent focus
+ *  (`sendAccessibilityEvent`'s host node), oldest first; splice to reset. */
+export const announcements: string[] = [];
+export const accessibilityFocus: unknown[] = [];
 export const AccessibilityInfo = {
   isReduceMotionEnabled: async () => accessibilitySettings.reduceMotion,
   isDarkerSystemColorsEnabled: async () => accessibilitySettings.increaseContrast,
   isHighTextContrastEnabled: async () => accessibilitySettings.increaseContrast,
+  isScreenReaderEnabled: async () => accessibilitySettings.screenReader,
+  announceForAccessibility: (message: string) => { announcements.push(message); },
+  sendAccessibilityEvent: (node: unknown, event: string) => { if (event === 'focus') accessibilityFocus.push(node); },
   addEventListener: (event: AccessibilityEvent, listener: (on: boolean) => void) => {
     const listeners = accessibilityListeners.get(event) ?? new Set<(on: boolean) => void>();
     accessibilityListeners.set(event, listeners);
@@ -159,6 +163,17 @@ export const Linking = {
 };
 export function linkListenerCount(): number { return urlListeners.size; }
 export function openLink(url: string): void { for (const listener of urlListeners) listener({ url }); }
+/** The system clipboard: what was last copied. */
+export const Clipboard = {
+  copied: [] as string[],
+  setString: (text: string) => { Clipboard.copied.push(text); },
+  getString: async () => Clipboard.copied.at(-1) ?? '',
+};
+/** Every `Share.share` call, so a test can read what the share sheet was handed. */
+export const Share = {
+  shared: [] as { message?: string; url?: string }[],
+  share: async (content: { message?: string; url?: string }) => { Share.shared.push(content); return { action: 'sharedAction' }; },
+};
 export interface AlertButton { text?: string; style?: string; onPress?: () => void }
 /** Every `Alert.alert` call, in order, so a test can read the dialog and press one of its buttons. */
 export const Alert = {

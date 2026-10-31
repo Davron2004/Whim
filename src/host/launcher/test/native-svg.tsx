@@ -12,4 +12,5 @@ export const Circle = host('Circle');
 export const Rect = host('Rect');
 export const Defs = host('Defs');
 export const RadialGradient = host('RadialGradient');
+export const LinearGradient = host('LinearGradient');
 export const Stop = host('Stop');

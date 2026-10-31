@@ -96,14 +96,14 @@ async function openSettings(tree: Tree): Promise<void> {
   await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onSettings());
 }
 
-/** Settings, then a tap on the collapsed Advanced row. */
+/** Settings, then a tap on its Advanced row, which pushes Advanced. */
 async function openAdvanced(tree: Tree): Promise<void> {
   await openSettings(tree);
   await press(button(tree, COPY.settingsAdvancedSectionTitle));
 }
 
 async function confirmOwnServer(tree: Tree): Promise<void> {
-  await press(button(tree, LEGAL_COPY.en.ownServerAction));
+  await press(button(tree, COPY.settingsServerOwn));
   await press(button(tree, LEGAL_COPY.en.ownServerConfirm));
 }
 
@@ -139,13 +139,13 @@ export async function runDiagnosticsUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('own server: records waiting when "Use Whim’s server" is taken are dropped, not sent to either server', async () => {
+  await h.test('own server: records waiting when "Whim’s server" is chosen are dropped, not sent to either server', async () => {
     const prepare = (kv: KVBackend) => { acknowledgeOwnServer(kv); saveServerUrl(kv, LAN); };
     await withLauncher({ prepare, server: nothingElse }, async ({ tree, kv }) => {
       await withDiagnostics(kv, async (urls) => {
         log.error(CHANNELS.gen, 'transport failed', { kind: 'own-server' });
-        await openSettings(tree);
-        await press(button(tree, COPY.settingsUseDefaultServer));
+        await openAdvanced(tree);
+        await press(button(tree, COPY.settingsServerWhim));
         await flushDiagnostics();
         h.eq(urls, [], 'the record about the own server reaches no server');
         log.error(CHANNELS.gen, 'transport failed', { kind: 'whim-server' });

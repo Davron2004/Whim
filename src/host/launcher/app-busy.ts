@@ -14,8 +14,8 @@
  */
 
 /** The operations a home-grid app can have in flight. Each is a distinct affordance: `open` is
- *  the tile's own pressed/busy look, `fork`/`delete` are their action-sheet rows. */
-export type AppBusyOp = 'open' | 'fork' | 'delete';
+ *  the tile's own pressed/busy look, `fork` the copy a menu row starts. */
+export type AppBusyOp = 'open' | 'fork';
 
 /** The render-visible projection: app id -> the operation currently running for it. */
 export type AppBusyMap = Readonly<Record<string, AppBusyOp>>;

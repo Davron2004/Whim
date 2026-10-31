@@ -88,11 +88,11 @@
 
 ## 11. Shell primitives: surfaces and keyboard
 
-- [ ] 11.1 `Sheet` on Gesture Handler + Reanimated: `fit`/`large` detents, grabber, header with close, scrim following position, projection commit with `fling`, rubber-band, Android back, Escape, modal accessibility, commit-point haptic
-- [ ] 11.2 `ConfirmSheet` (safe `ink` above `danger`), `ContextMenu` (anchored card, rows as separate accessibility elements, second step) (#135), `Toast` host with queue-of-one, pause under screen reader and on touch, swipe dismiss
-- [ ] 11.3 `TextField`/`TextArea` and keyboard handling on `react-native-keyboard-controller`: focused field 16 pt above the keyboard in screens and sheets, sheets lift on the keyboard curve, IME height changes tracked (#50, #128); retire `KeyboardShell`'s `LayoutAnimation`
-- [ ] 11.4 `GroupedList` (sections, rows, trailing kinds, destructive row) and `AppTile` geometry constants (no states yet)
-- [ ] 11.5 UI suites for each surface, including back closing a sheet and every menu row being reachable by accessibility
+- [x] 11.1 `Sheet` on Gesture Handler + Reanimated: `fit`/`large` detents, grabber, header with close, scrim following position, projection commit with `fling`, rubber-band, Android back, Escape, modal accessibility, commit-point haptic
+- [x] 11.2 `ConfirmSheet` (safe `ink` above `danger`), `ContextMenu` (anchored card, rows as separate accessibility elements, second step) (#135), `Toast` host with queue-of-one, pause under screen reader and on touch, swipe dismiss
+- [x] 11.3 `TextField`/`TextArea` and keyboard handling on `react-native-keyboard-controller`: focused field 16 pt above the keyboard in screens and sheets, sheets lift on the keyboard curve, IME height changes tracked (#50, #128); retire `KeyboardShell`'s `LayoutAnimation`
+- [x] 11.4 `GroupedList` (sections, rows, trailing kinds, destructive row) and `AppTile` geometry constants (no states yet)
+- [x] 11.5 UI suites for each surface, including back closing a sheet and every menu row being reachable by accessibility
 
 ## 12. Tile identity (host logic)
 
@@ -112,30 +112,30 @@
 
 ## 14. Shell navigation and settings
 
-- [ ] 14.1 Native stack with `react-native-screens` primitives driven by `LauncherRoot`'s machine: Home root; Settings, Advanced, AI features, History, Report pushed; gesture pops write back to the machine; status and navigation bar content per scheme
-- [ ] 14.2 `android:enableOnBackInvokedCallback="true"`; keep the running app's `BackHandler` path; extend the exit table and its scanner for the new screens (#67)
-- [ ] 14.3 Settings and Advanced per `system.md` §9 (AI features with "Review what's sent", Language, About, Advanced; Send error details, Phone ID truncated with copy, Make a new ID confirm sheet, Whim's server / Your own server rows keeping the address); one health probe per typing pause (#130); remove the Highlighting section
-- [ ] 14.4 AI features review screen on the stack shows consent once (#104)
-- [ ] 14.5 Report as a pushed screen (chips, note, include switch, collapsed preview, ID footer, `Sending…`, neutral thank-you on your own server (#153), failure notice above the buttons)
-- [ ] 14.6 Update `settings-screen`, `privacy-settings-ui`, `request-envelope-ui` and launcher-interaction suites
+- [x] 14.1 Native stack with `react-native-screens` primitives driven by `LauncherRoot`'s machine: Home root; Settings, Advanced, AI features, History, Report pushed; gesture pops write back to the machine; status and navigation bar content per scheme
+- [x] 14.2 `android:enableOnBackInvokedCallback="true"`; keep the running app's `BackHandler` path; extend the exit table and its scanner for the new screens (#67)
+- [x] 14.3 Settings and Advanced per `system.md` §9 (AI features with "Review what's sent", Language, About, Advanced; Send error details, Phone ID truncated with copy, Make a new ID confirm sheet, Whim's server / Your own server rows keeping the address); one health probe per typing pause (#130); remove the Highlighting section
+- [x] 14.4 AI features review screen on the stack shows consent once (#104)
+- [x] 14.5 Report as a pushed screen (chips, note, include switch, collapsed preview, ID footer, `Sending…`, neutral thank-you on your own server (#153), failure notice above the buttons)
+- [x] 14.6 Update `settings-screen`, `privacy-settings-ui`, `request-envelope-ui` and launcher-interaction suites
 
 ## 15. Home and tiles
 
-- [ ] 15.1 `AppTile` states of `system.md` §3.2 (being made, queued, failed, stopped, collapsed old attempts, needs update, changing ring, change failed, copy, example) with accessibility labels and hints (#48, #133)
-- [ ] 15.2 Home layout (calls `hideLaunchScreen()` on its first frame): "Your apps", settings button, 4/3-column grid and the 200% list, order rule (being made, recent attempts, apps, newest first) (#132), search from 13 apps, skeleton with exact cells, empty state with idea chips, live offline notice, composer bar with draft state
-- [ ] 15.3 Tile context menus per state (Open, Change it, History, Make a copy, Customize tile, Share link, Delete; Details/Stop; What happened/Try again/Discard) on `ContextMenu` (#135); Share link via the platform share sheet; remove the share-or-fresh fork sheet and its copy keys
-- [ ] 15.4 Soft delete with the 10 s Undo toast and Discard with 6 s, on the pending-purge marker; no native `Alert`
-- [ ] 15.5 Customize tile sheet (ten tints, searchable glyph grid) writing the override
-- [ ] 15.6 Update `home-grid-ui`, `launcher-interactions` and product-verbs suites
+- [x] 15.1 `AppTile` states of `system.md` §3.2 (being made, queued, failed, stopped, collapsed old attempts, needs update, changing ring, change failed, copy, example) with accessibility labels and hints (#48, #133)
+- [x] 15.2 Home layout (calls `hideLaunchScreen()` on its first frame): "Your apps", settings button, 4/3-column grid and the 200% list, order rule (being made, recent attempts, apps, newest first) (#132), search from 13 apps, skeleton with exact cells, empty state with idea chips, live offline notice, composer bar with draft state
+- [x] 15.3 Tile context menus per state (Open, Change it, History, Make a copy, Customize tile, Share link, Delete; Details/Stop; What happened/Try again/Discard) on `ContextMenu` (#135); Share link via the platform share sheet; remove the share-or-fresh fork sheet and its copy keys
+- [x] 15.4 Soft delete with the 10 s Undo toast and Discard with 6 s, on the pending-purge marker; no native `Alert`
+- [x] 15.5 Customize tile sheet (ten tints, searchable glyph grid) writing the override
+- [x] 15.6 Update `home-grid-ui`, `launcher-interactions` and product-verbs suites
 
 ## 16. Making flow: sheet, first run, describe, plan
 
-- [ ] 16.1 The making sheet with pages `describe | plan | making | ready | failure` keyed by the run journal id; composer opens Describe; closing keeps the draft (text, answers, plan edits) and aborts in-flight clarify/rewrite
-- [ ] 16.2 First-run sheet: summary rows, Privacy policy, Full details (expands in place), Language, unticked terms checkbox row with the Terms link outside its hit area, "Agree to send descriptions" (`ink`) and "Not now"; both acts recorded as today; age stays silent unless blocked
-- [ ] 16.3 Describe page: `title1`, 17 pt area focused, helper line, Continue (`ember`) riding the keyboard (#49), idea chips when empty, change mode header
-- [ ] 16.4 Plan page: quoted words, "A few choices" (question rows with chips ≤ 20 characters or radio/checkbox rows, "Decide for me" default and exclusive, collapse when scrolled past), "What I'll make" (plan rows, skeletons, in-place edit, "Edited"), notice above Make it; rewrite sent at once with every question delegated; answers to generate as `clarifications`
-- [ ] 16.5 Can't-make-as-asked state ("I can't make this as asked", alternative card, Make that instead, Change my idea)
-- [ ] 16.6 Update `prompt-flow-ui`, `prompt-flow-screens`, `flow-screens-ui` and consent suites
+- [x] 16.1 The making sheet with pages `describe | plan | making | ready | failure` keyed by the run journal id; composer opens Describe; closing keeps the draft (text, answers, plan edits) and aborts in-flight clarify/rewrite
+- [x] 16.2 First-run sheet: summary rows, Privacy policy, Full details (expands in place), Language, unticked terms checkbox row with the Terms link outside its hit area, "Agree to send descriptions" (`ink`) and "Not now"; both acts recorded as today; age stays silent unless blocked
+- [x] 16.3 Describe page: `title1`, 17 pt area focused, helper line, Continue (`ember`) riding the keyboard (#49), idea chips when empty, change mode header
+- [x] 16.4 Plan page: quoted words, "A few choices" (question rows with chips ≤ 20 characters or radio/checkbox rows, "Decide for me" default and exclusive, collapse when scrolled past), "What I'll make" (plan rows, skeletons, in-place edit, "Edited"), notice above Make it; rewrite sent at once with every question delegated; answers to generate as `clarifications`
+- [x] 16.5 Can't-make-as-asked state ("I can't make this as asked", alternative card, Make that instead, Change my idea)
+- [x] 16.6 Update `prompt-flow-ui`, `prompt-flow-screens`, `flow-screens-ui` and consent suites
 
 ## 17. Making flow: making, ready, failure
 

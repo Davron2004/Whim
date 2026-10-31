@@ -28,6 +28,7 @@ import {
   FONT,
   TABULAR_NUMS,
   activeTheme,
+  own,
   type SpaceToken,
   type RadiusToken,
   type TextColorToken,
@@ -487,8 +488,8 @@ export function Row({ gap = 'md', align = 'center', justify = 'start', children 
         flexDirection: 'row',
         flexWrap: 'wrap',
         // Own-property reads: an old bundle can pass any string, and `'constructor' in {}` is true.
-        alignItems: Object.hasOwn(ALIGN_ITEMS, align) ? ALIGN_ITEMS[align] : ALIGN_ITEMS.center,
-        justifyContent: Object.hasOwn(JUSTIFY_CONTENT, justify) ? JUSTIFY_CONTENT[justify] : JUSTIFY_CONTENT.start,
+        alignItems: own(ALIGN_ITEMS, align) ? ALIGN_ITEMS[align] : ALIGN_ITEMS.center,
+        justifyContent: own(JUSTIFY_CONTENT, justify) ? JUSTIFY_CONTENT[justify] : JUSTIFY_CONTENT.start,
         gap: space(gap),
       },
     },

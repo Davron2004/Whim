@@ -7,24 +7,23 @@ import TestRenderer from 'react-test-renderer';
 import { CLARIFICATION_OTHER_MAX_CHARS, Clarification } from '@whim/contract';
 import { Harness } from './harness';
 import HomeScreen from '../HomeScreen';
-import ComposeStep from '../ComposeStep';
-import ClarifyStep from '../ClarifyStep';
+import { DescribePage } from '../DescribePage';
+import { PlanPage } from '../PlanPage';
 import BuildStep from '../BuildStep';
 import DoneStep from '../DoneStep';
 import FailureScreen from '../FailureScreen';
 import UpdateRequiredScreen from '../UpdateRequiredScreen';
-import { COPY, clarifyBuildInstead } from '../copy';
-import { primaryActionLabel } from '../prompt-flow';
+import { COPY } from '../copy';
 import { AppIndex } from '../app-index';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { RunJournalStore } from '../run-journal';
 import type { InstalledApp } from '../app-index';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { PROTOCOL_LEVEL } from '../wire-headers';
-import { stubFutureFrame } from '../../../../server/src/stub-markers';
+import { STUB_LIMIT, stubFutureFrame } from '../../../../server/src/stub-markers';
 import { contentPolicyRefusal, serverBusyRefusal, type ServiceRefusal } from '../../../../server/src/admission/refusals';
 import { button, press, textOf } from './react-screen';
-import { buildIt, composeAndContinue, hasInstalled, json, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, hasInstalled, json, onHome, planLoaded, questionsLanded, resultEvent, sseStream, tap, waitFor, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
 type Stream = ReturnType<typeof sseStream>;
@@ -32,7 +31,7 @@ type Stream = ReturnType<typeof sseStream>;
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
 const build = (tree: Tree) => tree.root.findByType(BuildStep);
-const clarify = (tree: Tree) => tree.root.findByType(ClarifyStep);
+const plan = (tree: Tree) => tree.root.findByType(PlanPage).props.screen;
 const ghosts = (tree: Tree): PendingBuildRecord[] => home(tree).props.pending;
 const records = (kv: KVBackend) => new PendingBuildStore(kv).list().map((record) => [record.state, record.failure?.reason]);
 const generateSignal = (sent: readonly SentRequest[]) => sent.find((r) => r.path === '/v1/generate')?.signal;
@@ -45,13 +44,14 @@ const refused = (refusal: ServiceRefusal): Response =>
 
 const STAGE = { type: 'stage', stage: 'plan', status: 'start' };
 
-/** A question's pills are buttons; "Decide for me" is on every question, so its pills are told
- *  apart by position, in question order. */
-const decidePills = (tree: Tree) => tree.root.findAll((n) => String(n.type) === 'TouchableOpacity' && textOf(n) === COPY.clarifyDecide);
-const picked = (node: TestRenderer.ReactTestInstance) => node.props.accessibilityState?.selected === true;
+/** A question's options are chips, radios or checkboxes; "Decide for me" is on every question, so
+ *  its chips are told apart by position, in question order. */
+const decidePills = (tree: Tree) => tree.root.findAll((n) => String(n.type) === 'Pressable' && n.props.accessibilityLabel === COPY.clarifyDecide);
+const picked = (node: TestRenderer.ReactTestInstance) => node.props.accessibilityState?.checked === true;
 const otherField = (tree: Tree) => tree.root.find((n) => String(n.type) === 'TextInput');
 
-const LIMIT = { reason: 'Mini-apps can’t fetch live weather.', alternative: 'a packing list you fill in yourself' };
+/** The limit the server's own stub clarify answers with (`WHIM_PIPELINE=stub`, prompt marker `[[limit]]`). */
+const LIMIT = STUB_LIMIT.limit!;
 
 const ANSWER_QUESTIONS = [
   { id: 'extras', question: 'What goes in it?', options: ['Honey', 'Lemon', 'Milk'], select: 'many', other: false },
@@ -106,7 +106,7 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       await waitFor(() => build(tree).props.queuedPosition === 2, 'the place in line');
       await press(button(tree, COPY.actionCancelBuild));
       h.eq(sent.find((r) => r.path === '/v1/generate')?.signal?.aborted, true, 'the generation request is aborted');
-      h.ok(on(tree, HomeScreen), 'the user lands on Home');
+      h.ok(onHome(tree), 'the user lands on Home');
       h.eq(ghosts(tree), [], 'with no ghost left behind');
       h.eq(new PendingBuildStore(kv).list(), [], 'no pending record');
       h.eq(kv.getAllKeys().filter((k) => k.startsWith('journal:')), [], 'and no journal');
@@ -126,7 +126,7 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       streams[0].push(resultEvent('Tea Timer'));
       streams[0].end();
       await waitFor(() => hasInstalled(tree, 'Tea Timer'), 'the detached build to deliver');
-      h.ok(on(tree, HomeScreen), 'delivered silently, the user still on Home');
+      h.ok(onHome(tree), 'delivered silently, the user still on Home');
       h.eq(ghosts(tree), [], 'and its ghost is gone');
     });
   });
@@ -169,32 +169,32 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
     return streamingServer(streams)(r);
   };
 
-  await h.test('limit: the reason and the alternative show and nothing is sent; Build … instead asks clarify about the alternative', async () => {
+  await h.test('limit: the reason and the alternative show and nothing is sent; Make that instead asks clarify about the alternative', async () => {
     const streams: Stream[] = [];
     await withLauncher({ server: limitServer(streams) }, async ({ tree, sent, paths }) => {
       await composeAndContinue(tree, 'What to wear today');
-      await waitFor(() => on(tree, ClarifyStep) && clarify(tree).props.limit !== undefined, 'the limit');
-      h.ok(textOf(tree.root).includes(LIMIT.reason), 'the user sees why it can’t be built');
-      const instead = button(tree, clarifyBuildInstead(LIMIT.alternative));
-      h.ok(textOf(instead).includes(LIMIT.alternative), 'and a one-tap option to build the alternative');
+      await waitFor(() => on(tree, PlanPage) && plan(tree).limit !== undefined, 'the limit');
+      h.ok(textOf(tree.root).includes(COPY.planLimitHeadline), 'the page says it can’t be made as asked');
+      h.ok(textOf(tree.root).includes(LIMIT.reason), 'the user sees why it can’t be made');
+      h.ok(textOf(tree.root).includes(LIMIT.alternative), 'and the nearest thing that could be, in a card');
       h.eq(paths(), ['/v1/clarify'], 'nothing more is sent on its own — no plan, no build');
-      await tap(() => instead.props.onPress());
-      await waitFor(() => on(tree, ClarifyStep) && !clarify(tree).props.loading && clarify(tree).props.questions.length === 1, 'clarify about the alternative');
+      await tap(() => button(tree, COPY.planMakeInstead).props.onPress());
+      await waitFor(() => on(tree, PlanPage) && !plan(tree).asking && plan(tree).questions.length === 1, 'clarify about the alternative');
       h.eq(sent.filter((r) => r.path === '/v1/clarify').map((r) => r.body?.prompt), ['What to wear today', LIMIT.alternative], 'a new clarify call, about the alternative');
-      h.eq([clarify(tree).props.prompt, clarify(tree).props.limit], [LIMIT.alternative, undefined], 'the alternative is now the prompt, with its own question');
-      h.ok(!paths().includes('/v1/generate'), 'and still nothing is built');
+      h.eq([plan(tree).text, plan(tree).limit], [LIMIT.alternative, undefined], 'the alternative is now the prompt, with its own question');
+      h.ok(!paths().includes('/v1/generate'), 'and still nothing is made');
     });
   });
 
-  await h.test('limit: Change my idea returns to compose with the original words, editable', async () => {
+  await h.test('limit: Change my idea returns to describe with the original words, editable', async () => {
     await withLauncher({ server: limitServer([]) }, async ({ tree, paths }) => {
       await composeAndContinue(tree, 'What to wear today');
-      await waitFor(() => on(tree, ClarifyStep) && clarify(tree).props.limit !== undefined, 'the limit');
-      await press(button(tree, COPY.clarifyLimitChangeIdea));
-      h.ok(on(tree, ComposeStep), 'back on compose');
-      h.eq(tree.root.findByType(ComposeStep).props.text, 'What to wear today', 'with the original prompt');
-      await TestRenderer.act(async () => tree.root.findByType(ComposeStep).props.onChangeText('A packing list'));
-      h.eq(tree.root.findByType(ComposeStep).props.text, 'A packing list', 'which the user can edit');
+      await waitFor(() => on(tree, PlanPage) && plan(tree).limit !== undefined, 'the limit');
+      await press(button(tree, COPY.planChangeIdea));
+      h.ok(on(tree, DescribePage), 'back on describe');
+      h.eq(tree.root.findByType(DescribePage).props.text, 'What to wear today', 'with the original prompt');
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('A packing list'));
+      h.eq(tree.root.findByType(DescribePage).props.text, 'A packing list', 'which the user can edit');
       h.eq(paths(), ['/v1/clarify'], 'and nothing else was sent');
     });
   });
@@ -377,15 +377,17 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
         h.eq(new PendingBuildStore(kv).list(), [], 'and no attempt exists');
         await press(button(tree, COPY.updateNotNow));
         await TestRenderer.act(async () => home(tree).props.onCreate());
-        h.eq(tree.root.findByType(ComposeStep).props.text, 'A tea timer', 'the typed prompt is not lost');
+        h.eq(tree.root.findByType(DescribePage).props.text, 'A tea timer', 'the typed prompt is not lost');
       });
     });
 
-    await h.test(`fallback: a fail fallback on ${route} ends on the failure screen with the notice, and starts no build`, async () => {
+    await h.test(`fallback: a fail fallback on ${route} stays on the plan page with the notice and Try again, and starts no build`, async () => {
       await withLauncher({ server: server('fail') }, async ({ tree, kv, paths }) => {
         await composeAndContinue(tree, 'A tea timer');
-        await waitFor(() => on(tree, FailureScreen), 'the failure screen');
-        h.eq(tree.root.findByType(FailureScreen).props.reason, UNARY_NOTICE, 'the notice is the reason');
+        await waitFor(() => on(tree, PlanPage) && plan(tree).problem !== undefined, 'the notice');
+        h.eq(plan(tree).problem?.reason, UNARY_NOTICE, 'the notice is the reason');
+        h.ok(textOf(tree.root).includes(UNARY_NOTICE) && button(tree, COPY.planTryAgain) != null, 'shown with Try again');
+        h.eq(tree.root.findAllByType(FailureScreen).length, 0, 'never the failure page, which is for a run');
         h.eq(paths(), sentPaths, 'no build was started');
         h.eq(new PendingBuildStore(kv).list(), [], 'and no attempt exists to discard');
       });
@@ -413,17 +415,24 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
 
   // ── answer modes (4.5) ───────────────────────────────────────────────────────────────────────
 
-  await h.test('answers: one pick moves, several picks toggle, and Decide for me clears the picks and the typed answer', async () => {
+  await h.test('answers: every question starts on Decide for me; one pick moves, several picks toggle, and Decide for me clears the picks and the typed answer', async () => {
     await withLauncher({ server: answeringServer([]) }, async ({ tree }) => {
       await composeAndContinue(tree, 'A tea timer');
-      await waitFor(() => on(tree, ClarifyStep) && !clarify(tree).props.loading, 'the questions');
+      await waitFor(() => questionsLanded(tree), 'the questions');
+      h.eq(decidePills(tree).map(picked), [true, true, true], 'each question starts delegated');
       await press(button(tree, 'Sound'));
       await press(button(tree, 'Buzz'));
-      h.eq([picked(button(tree, 'Sound')), picked(button(tree, 'Buzz'))], [false, true], 'a second tap on a one-pick question moves the pick');
+      h.eq([picked(button(tree, 'Sound')), picked(button(tree, 'Buzz')), picked(decidePills(tree)[2])], [false, true, false], 'a second tap on a one-pick question moves the pick, and picking clears Decide for me');
       await press(button(tree, 'Honey'));
       await press(button(tree, 'Lemon'));
+      h.eq(picked(decidePills(tree)[0]), false, 'on a several-picks question picking clears Decide for me too');
       await press(button(tree, 'Honey'));
       h.eq(['Honey', 'Lemon', 'Milk'].map((option) => picked(button(tree, option))), [false, true, false], 'a several-picks question toggles');
+      await press(decidePills(tree)[0]);
+      h.eq([['Honey', 'Lemon', 'Milk'].map((option) => picked(button(tree, option))), picked(decidePills(tree)[0])], [[false, false, false], true], 'Decide for me clears every pick, and is exclusive');
+      await press(button(tree, 'Lemon'));
+      await press(button(tree, 'Lemon'));
+      h.eq(picked(decidePills(tree)[0]), true, 'emptying the last pick falls back to Decide for me');
       h.eq(otherField(tree).props.maxLength, CLARIFICATION_OTHER_MAX_CHARS, 'the Other field is capped as the contract caps it');
       await TestRenderer.act(async () => otherField(tree).props.onChangeText('a travel mug'));
       await press(button(tree, 'Small'));
@@ -435,11 +444,13 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('answers: several picks, a typed answer and Decide for me reach the rewrite and the generation', async () => {
+  await h.test('answers: the rewrite is sent at once with every question delegated, and the generation carries what was answered meanwhile', async () => {
     const streams: Stream[] = [];
     await withLauncher({ server: answeringServer(streams) }, async ({ tree, sent }) => {
       await composeAndContinue(tree, 'A tea timer');
-      await waitFor(() => on(tree, ClarifyStep) && !clarify(tree).props.loading, 'the questions');
+      await waitFor(() => planLoaded(tree), 'the plan');
+      const delegated = ANSWER_QUESTIONS.map((q) => ({ id: q.id, question: q.question, choices: [], decide: true }));
+      h.eq(sent.find((r) => r.path === '/v1/rewrite')?.body?.clarifications, delegated, 'the rewrite delegates every question, before the person has touched one');
       await press(button(tree, 'Honey'));
       await press(button(tree, 'Milk'));
       await press(button(tree, 'Large'));
@@ -447,18 +458,16 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       h.ok(!picked(button(tree, 'Large')), 'on a one-pick question, typing an answer takes the pick back');
       await press(button(tree, 'Sound'));
       await press(decidePills(tree)[2]);
-      await tap(() => button(tree, primaryActionLabel('clarify', false)).props.onPress());
-      await waitFor(() => planLoaded(tree), 'the plan');
+      await buildIt(tree);
+      await waitFor(() => streams.length === 1, 'the generation request');
       const expected = [
         { id: 'extras', question: 'What goes in it?', choices: ['Honey', 'Milk'] },
         { id: 'cup', question: 'What size is the cup?', choices: [], other: 'a travel mug' },
         { id: 'alert', question: 'How should it tell you?', choices: [], decide: true },
       ];
-      h.eq(sent.find((r) => r.path === '/v1/rewrite')?.body?.clarifications, expected, 'the rewrite carries choices, the trimmed other alone for the one-pick question, and decide alone');
       for (const clarification of expected) h.ok(Clarification.safeParse(clarification).success, `${clarification.id} is a contract Clarification`);
-      await buildIt(tree);
-      await waitFor(() => streams.length === 1, 'the generation request');
-      h.eq(sent.find((r) => r.path === '/v1/generate')?.body?.clarifications, expected, 'and so does the generation');
+      h.eq(sent.find((r) => r.path === '/v1/generate')?.body?.clarifications, expected, 'the generation carries choices, the trimmed other alone for the one-pick question, and decide alone');
+      h.eq(sent.filter((r) => r.path === '/v1/rewrite').length, 1, 'answering did not send the rewrite again');
       streams[0].end();
     });
   });
@@ -467,7 +476,7 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
     const older = ANSWER_QUESTIONS.map(({ id, question, options }) => ({ id, question, options }));
     await withLauncher({ server: (r) => (r.path === '/v1/clarify' ? json({ questions: older }) : streamingServer([])(r)) }, async ({ tree }) => {
       await composeAndContinue(tree, 'A tea timer');
-      await waitFor(() => on(tree, ClarifyStep) && !clarify(tree).props.loading, 'the questions');
+      await waitFor(() => questionsLanded(tree), 'the questions');
       await press(button(tree, 'Honey'));
       await press(button(tree, 'Lemon'));
       h.eq([picked(button(tree, 'Honey')), picked(button(tree, 'Lemon'))], [false, true], 'a second pick moves the first, as on a one-pick question');
@@ -475,20 +484,15 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('answers: skipping the questions sends no answers with the rewrite or the generation', async () => {
+  await h.test('answers: making without touching a choice sends every question delegated', async () => {
     const streams: Stream[] = [];
     await withLauncher({ server: answeringServer(streams) }, async ({ tree, sent }) => {
       await composeAndContinue(tree, 'A tea timer');
-      await waitFor(() => on(tree, ClarifyStep) && !clarify(tree).props.loading, 'the questions');
-      await press(button(tree, 'Honey'));
-      await press(button(tree, 'Honey'));
-      await tap(() => button(tree, primaryActionLabel('clarify', false)).props.onPress());
       await waitFor(() => planLoaded(tree), 'the plan');
       await buildIt(tree);
       await waitFor(() => streams.length === 1, 'the generation request');
-      const carried = sent.filter((r) => r.path === '/v1/rewrite' || r.path === '/v1/generate').map((r) => [r.path, r.body?.clarifications]);
-      h.eq(carried, [['/v1/rewrite', undefined], ['/v1/generate', undefined]],
-        'a question picked and unpicked again is no answer, and neither request carries answers');
+      const delegated = ANSWER_QUESTIONS.map((q) => ({ id: q.id, question: q.question, choices: [], decide: true }));
+      h.eq(sent.find((r) => r.path === '/v1/generate')?.body?.clarifications, delegated, 'each question goes out as decide: true');
       streams[0].end();
     });
   });

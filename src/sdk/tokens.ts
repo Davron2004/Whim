@@ -79,9 +79,11 @@ const LEGACY_TEXT_COLOR: Readonly<Record<string, TextColorToken>> = {
   border: 'text-muted',
 };
 
-/** `key` is an own property of `table` (a bundle can pass any string; `'constructor' in {}` is true). */
-function own<K extends string>(table: Readonly<Record<K, unknown>>, key: string): key is K {
-  return Object.prototype.hasOwnProperty.call(table, key);
+/** `key` is an own property of `table` (a bundle can pass any string; `'constructor' in {}` is true).
+ *  The SDK's one own-key test: `Object.hasOwn` is Chromium 93, above the WebView floor (91, see
+ *  docs/sdk-reference.md), and throws a TypeError there. */
+export function own<K extends string>(table: Readonly<Record<K, unknown>>, key: string): key is K {
+  return Object.prototype.hasOwnProperty.call(table, key); // NOSONAR: Object.hasOwn is above the WebView floor
 }
 
 function px(n: number): string {

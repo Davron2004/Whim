@@ -16,6 +16,8 @@ import { JOURNAL_KEY, LAST_RUN_KEY, RunJournalStore } from '../run-journal';
 import { GENERIC_STREAM_ERROR } from '../error-reason';
 import type { InstalledApp } from '../app-index';
 import { StoreAccess } from '../store-access';
+import { PendingPurgeStore } from '../pending-purge';
+import { renderRoot } from './home-rig';
 import { revokeConsent } from '../ai-consent';
 import { hardwareBack, openLink } from './native-host';
 import { failNativeStorageRemovalsWhen, failNativeStorageWritesWhen } from './native-storage';
@@ -1038,13 +1040,12 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('ghosts: a clarify failure has no attempt to discard, so its failure screen offers no Discard', async () => {
+  await h.test('ghosts: a clarify failure has no attempt to discard, so the plan page keeps its words, offers Try again and leaves no ghost', async () => {
     await withLauncher({ server: () => json({ error: 'internal' }, 500) }, async ({ tree }) => {
       await composeAndContinue(tree, 'A tea timer');
-      await waitFor(() => on(tree, FailureScreen), 'the failure screen');
-      h.ok(tree.root.findByType(FailureScreen).props.onDismiss === undefined, 'no discard action is wired');
-      await h.throws(() => button(tree, COPY.failureDismiss), 'Expected one visible button', 'and no Discard button renders');
-      await press(button(tree, COPY.failureBack));
+      await waitFor(() => button(tree, COPY.planTryAgain) != null, 'the notice with Try again');
+      h.eq(tree.root.findAllByType(FailureScreen).length, 0, 'no failure page: nothing was started');
+      await press(button(tree, COPY.sheetClose));
       h.eq(ghosts(tree), [], 'no ghost was ever created');
     });
   });
@@ -1090,7 +1091,7 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('ghosts: deleting a delivered app deletes its last-run report with it', async () => {
+  await h.test('ghosts: deleting a delivered app deletes its last-run report with it, at the purge — a purge that failed is finished at the next launch', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
       await startBuild(tree, 'A tea timer');
@@ -1106,11 +1107,21 @@ export async function runAttemptLifecycleUiTests(h: Harness): Promise<void> {
       const originalRemove = StoreAccess.prototype.remove;
       try {
         StoreAccess.prototype.remove = async () => { throw new Error('storage busy'); };
-        await TestRenderer.act(async () => { await home(tree).props.onDelete(installed); });
+        await TestRenderer.act(async () => { home(tree).props.onDelete(installed); });
+        await TestRenderer.act(async () => { home(tree).props.onSettleDelete(installed); });
+        await settle();
         h.ok(kv.getString(LAST_RUN_KEY(app.id)) != null, 'a removal that failed keeps the report of the app still installed');
+        h.ok(new PendingPurgeStore(kv).has('app', app.id), 'and keeps the purge armed for the next launch');
         StoreAccess.prototype.remove = async () => {};
-        await TestRenderer.act(async () => { await home(tree).props.onDelete(installed); });
-        h.eq(kv.getString(LAST_RUN_KEY(app.id)) ?? null, null, 'a removal that succeeded takes the report with it');
+        await unmountScreen(tree);
+        const relaunched = await renderRoot(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
+        try {
+          await waitFor(() => on(relaunched, HomeScreen), 'the relaunched Home');
+          h.eq(kv.getString(LAST_RUN_KEY(app.id)) ?? null, null, 'a removal that succeeded takes the report with it');
+          h.eq(new PendingPurgeStore(kv).list(), [], 'and clears the marker');
+        } finally {
+          await unmountScreen(relaunched);
+        }
       } finally {
         StoreAccess.prototype.remove = originalRemove;
       }

@@ -4,12 +4,10 @@ import android.content.res.Configuration
 import android.graphics.drawable.ColorDrawable
 import androidx.core.view.WindowInsetsControllerCompat
 import com.facebook.react.ReactActivity
-import com.facebook.react.ReactApplication
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 import com.swmansion.rnscreens.fragment.restoration.RNScreensFragmentFactory
-import com.whim.keyboard.KeyboardFrameReporter
 import com.whim.launch.LaunchScreen
 
 class MainActivity : ReactActivity() {
@@ -25,7 +23,6 @@ class MainActivity : ReactActivity() {
     setTheme(R.style.AppTheme)
     super.onCreate(savedInstanceState)
     LaunchScreen.hold(this)
-    keyboardFrames.attach()
   }
 
   // The app follows the phone's appearance. `uiMode` is a handled config change (the manifest's
@@ -39,15 +36,6 @@ class MainActivity : ReactActivity() {
     WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightNavigationBars = !night
     window.setBackgroundDrawable(ColorDrawable(getColor(R.color.launch_background)))
   }
-
-  override fun onDestroy() {
-    keyboardFrames.detach()
-    super.onDestroy()
-  }
-
-  // A keyboard that changes height while up reaches JS on Android 11+ as well (KeyboardFrameReporter).
-  private val keyboardFrames =
-      KeyboardFrameReporter(this) { (application as ReactApplication).reactHost?.currentReactContext }
 
   /**
    * Returns the name of the main component registered from JavaScript. This is used to schedule
