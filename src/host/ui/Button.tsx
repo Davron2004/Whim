@@ -1,8 +1,7 @@
 /**
  * Button — the shell's one button (system.md §7.1): a capsule in one of seven variants, three
  * sizes, an optional 20 pt leading icon, busy words instead of a spinner, the `fill` + `text-3`
- * disabled look, a 2 pt focus ring and M1's press. Replaces `PrimaryAction` and every inline
- * button treatment as screens move onto it.
+ * disabled look, a 2 pt focus ring and M1's press.
  */
 
 import React, { useState } from 'react';
@@ -25,6 +24,7 @@ import {
   PRESS_RETENTION,
   type ButtonSize,
   type ButtonVariant,
+  type ShellTokens,
 } from './tokens-pure';
 
 export interface ButtonProps {
@@ -44,6 +44,9 @@ export interface ButtonProps {
    *  played on the press. Plain taps take none (§5). */
   haptic?: HapticMoment;
   accessibilityHint?: string;
+  /** Draw in these tokens instead of the phone's live ones: a screen in a running app's place keeps
+   *  the scheme its frame was delivered with (`AppCrashed`), which can differ from the shell's. */
+  tokens?: ShellTokens;
 }
 
 const FOCUS_RING = { width: 2, gap: 2 } as const;
@@ -72,8 +75,9 @@ const styles = makeStyles((t) => ({
   label: { flexShrink: 1, textAlign: 'center' as const },
 }));
 
-export function Button({ label, onPress, variant, size = 'large', icon, tint, disabled = false, busy, haptic, accessibilityHint }: Readonly<ButtonProps>) {
-  const t = useTokens();
+export function Button({ label, onPress, variant, size = 'large', icon, tint, disabled = false, busy, haptic, accessibilityHint, tokens }: Readonly<ButtonProps>) {
+  const live = useTokens();
+  const t = tokens ?? live;
   const s = styles(t);
   const press = usePressFeedback('button', t);
   const [pressed, setPressed] = useState(false);

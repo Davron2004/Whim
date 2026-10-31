@@ -111,7 +111,5 @@ disables selection: text is selectable.
   is tabular. `NumberInput` is tabular. `Modal` sheet has `overscrollBehavior: 'contain'`.
 - Everything else (sizes, radii, borders, `16px` fonts in controls) is unchanged v2 styling over the
   new resolver values: chain-5's restyle.
-- `src/host/launcher/theme.ts` `SHELL_PALETTE` is pinned to the v2 `SHELL_COLORS`/`STATUS_COLORS`
-  values (EXEMPT entry in `design-system.suite.ts` for its white `onAccent`); `LauncherRoot` still
-  passes `DEFAULT_THEME` to `MiniAppView` — the host frame builder (scheme, tint, fontScale, …) is a
-  later chain's.
+- The shell reads colours only through `useTokens()` (the v2 shell palette is gone, chain 21);
+  `MiniAppView` delivers `themeFrame(tokens, tint)`, built from the phone's settings at each delivery.

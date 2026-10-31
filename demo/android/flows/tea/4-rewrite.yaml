@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# LinkedIn cut, shot 4 — "Prompt again": add a strength selector → build → payoff: the same app,
+# LinkedIn cut, shot 4 — "Change it": add a strength selector → make the change → payoff: the same app,
 # the saved steep time still there, plus the new control. One continuous take. Film it with:
 #
 #   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/4-rewrite.yaml \
@@ -12,28 +12,28 @@
 # (filmkit FEEDBACK #4). Every idiom here is explained in ../7-add-streaks.yaml.
 #
 # WRITTEN FOR THE INSTANCE GENERATED 2026-09-11 ("Tea Steeper"), stock 1344x2992 frame.
-# The long-press sheet is Open / Fork / History / Prompt again / Delete / Cancel (measured).
-# The REWRITE composer is its own screen ("CHANGING TEA STEEPER" / "What should change?" /
-# "Add, change, or remove something…"), NOT the first-run composer's "What should it do?" — that
+# The long-press menu is Open / Change it / History / Make a copy / Customize tile / Share link /
+# Delete (tile-menus.ts; not yet re-measured on a frame).
+# The change composer is the describe sheet in change mode ("Changing Tea Steeper" / "What should
+# change?" / "Add, change, or remove something…"), NOT the new-app "What should it do?" — that
 # wrong gate cost take-1. Its field takes `inputText` with no tap and raises a real soft keyboard
 # (so no Gboard floating toolbar pill), which `hideKeyboard` then drops.
 # The a11y tree is populated on open without a wake tap on this instance (measured warm AND cold),
 # so there is no wake tap and no stray tap ring in dead space.
-# Beats 4–5 gate on the plan screen's primary CTA, not on a plan row label like "THE SCREEN": the
-# row labels are the rewrite MODEL's output and a run that omits them would hang here. The CTA is
-# host copy that mounts only once the rewrite response lands, so it also means "rows are on
-# screen". Same idiom as 1-compose-to-transmute.yaml — but note the REWRITE plan screen's CTA is
-# "Make the change", NOT the first-run "Build it" (that wrong gate cost take-2, a full 180 s hang
-# with the plan sitting on screen). Header there reads "Here's the change".
-# The "Leave it running" sheet is tolerated rather than required: if the rewrite path ever skips
-# it, the run still reaches the build wait instead of hanging with the sheet undismissed.
+# Beat 4 gates on the plan's primary action, not on a plan row label: the rows are the MODEL's
+# output and a run that omits them would hang here. The action is host copy that reads "Writing
+# the plan…" until the plan lands, so it also means "rows are on screen". Same idiom as
+# 1-compose-to-transmute.yaml — but the change plan's action is "Make the change", NOT the new-app
+# "Make it" (the wrong gate cost take-2, a full 180 s hang with the plan sitting on screen). Its
+# headline reads "Here's the change". The Making page has no leave button: the sheet's close is
+# the way out.
 appId: com.anycognition.whim
 env:
   TILE_RE: "Tea Steeper"
   SETTING_RE: ".*7:20.*"
 ---
 - extendedWaitUntil:
-    visible: "YOUR APPS"
+    visible: "Your apps"
     timeout: 20000
 
 # Beat 1 — hold on the grid, reach for the tile.
@@ -42,8 +42,8 @@ env:
 - waitForAnimationToEnd
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 1800, optional: true }
 
-# Beat 2 — Prompt again.
-- tapOn: "Prompt again"
+# Beat 2 — Change it.
+- tapOn: "Change it"
 - waitForAnimationToEnd
 - extendedWaitUntil:
     visible: "What should change\\?"
@@ -60,24 +60,7 @@ env:
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 900, optional: true }
 - tapOn: "Continue"
 
-# Beat 4 — clarify lands, or the plan does. Branch on whichever shows.
-- extendedWaitUntil:
-    visible: ".*quick thing.*|Make the change"
-    timeout: 180000
-- waitForAnimationToEnd
-- runFlow:
-    when:
-      visible: ".*quick thing.*"
-    commands:
-      - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
-      - tapOn:
-          text: ".*"
-          below:
-            text: ".*\\?"
-      - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2000, optional: true }
-      - tapOn: "Continue"
-
-# Beat 5 — the plan for the change drafts itself.
+# Beat 4 — the plan for the change drafts itself, any questions on the same page.
 - extendedWaitUntil:
     visible: "Make the change"
     timeout: 180000
@@ -85,31 +68,26 @@ env:
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 3600, optional: true }
 - tapOn: "Make the change"
 
-# Beat 6 — leave it running, watch the tile.
+# Beat 5 — close the Making page, watch the tile ("Changing…", read as "<name>, changing").
 - extendedWaitUntil:
-    visible: "Leave it running"
+    visible: "Changing .*"
     timeout: 90000
-    optional: true
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 3000, optional: true }
-- runFlow:
-    when:
-      visible: "Leave it running"
-    commands:
-      - tapOn: "Leave it running"
-      - waitForAnimationToEnd
+- tapOn: "Close"
+- waitForAnimationToEnd
 - extendedWaitUntil:
-    visible: ".*Building.*"
+    visible: ".*[Cc]hanging.*"
     timeout: 30000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
 
-# Beat 7 — the new version lands.
+# Beat 6 — the new version lands.
 - extendedWaitUntil:
-    notVisible: ".*Building.*"
+    notVisible: ".*[Cc]hanging.*"
     timeout: 720000
 - waitForAnimationToEnd
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 3200, optional: true }
 
-# Beat 8 — open it: same app, saved setting intact, new control. Tolerant selectors: this beat
+# Beat 7 — open it: same app, saved setting intact, new control. Tolerant selectors: this beat
 # films a claim, it does not assert one (see ../7-add-streaks.yaml).
 - tapOn: ${TILE_RE}
 - extendedWaitUntil:

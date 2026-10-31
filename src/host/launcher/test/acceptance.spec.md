@@ -11,7 +11,7 @@ Run on a fresh install (clear app data first, so the seed marker is virgin).
 
 1. **Fresh install → seeded grid.** Launch the host. The home grid shows the example apps
    (**Tip Splitter**, **Water Counter**, **Style Gallery**), each badged "Example", under the
-   **"Describe an app…"** composer row. No probe bar is the default surface anymore. *(spec: a fresh install is not
+   **"Make an app…"** composer row. No probe bar is the default surface anymore. *(spec: a fresh install is not
    empty.)*
 
 2. **Launch water-counter from its record (by source, not baked name).** Tap Water Counter.

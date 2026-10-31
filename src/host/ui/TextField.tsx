@@ -68,20 +68,6 @@ export const FIELD = {
   helperIcon: 16,
 } as const;
 
-/** `hex` (`#rrggbb`) at `alpha`, as an rgba string. */
-function withAlpha(hex: string, alpha: number): string {
-  const [r, g, b] = [1, 3, 5].map((at) => Number.parseInt(hex.slice(at, at + 2), 16));
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-
-/** The caret, selection handles and highlight: `ink` caret and handles; Android paints the
- *  highlight under the selected text, so it gets `ink` at 30%; iOS tints all three from one colour
- *  and draws the highlight translucent itself. */
-export function fieldSelection(t: ShellTokens): Pick<TextInputProps, 'selectionColor' | 'cursorColor' | 'selectionHandleColor'> {
-  if (t.platform === 'ios') return { selectionColor: t.colors.ink };
-  return { selectionColor: withAlpha(t.colors.ink, 0.3), cursorColor: t.colors.ink, selectionHandleColor: t.colors.ink };
-}
-
 /** The border a field draws: 2 pt `danger` on error, 2 pt `text` while focused, else 1 pt `border`. */
 export function fieldBorder(t: ShellTokens, focused: boolean, error: boolean): { width: number; color: string } {
   if (error) return { width: FIELD.activeBorder, color: t.colors.danger };
@@ -198,7 +184,6 @@ export function TextField(props: Readonly<TextFieldProps>) {
       >
         <KeyboardTextInput
           {...passThrough(props)}
-          {...fieldSelection(t)}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
@@ -236,7 +221,6 @@ export function TextArea(props: Readonly<TextFieldProps>) {
     <FieldFrame t={t} label={label} error={error} helper={helper}>
       <KeyboardTextInput
         {...passThrough(props)}
-        {...fieldSelection(t)}
         multiline
         scrollEnabled
         textAlignVertical="top"

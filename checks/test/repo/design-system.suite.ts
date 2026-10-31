@@ -8,7 +8,9 @@
  *    and its distance from the reserved hues;
  *  - no colour hex literal or spring config lives in `src/host/**` or `src/sdk/**` outside the
  *    module, apart from the exemptions listed below;
- *  - every component `vc-sdk` exports appears in the style gallery (system.md §7.2).
+ *  - every component `vc-sdk` exports appears in the style gallery (system.md §7.2);
+ *  - the shell's copy uses one name per concept and its controls never speak in Whim's "I"
+ *    (system.md §8), and no number in `src/host` is formatted in the phone's locale (#89).
  *
  * Later design checks are added here, never as new registrations in `checks/test/acceptance.ts`.
  */
@@ -22,6 +24,8 @@ import { SAMPLED_SPRINGS } from '../../../src/design/generated/springs';
 import { contrastRatio, deltaE } from '../../../src/design/tints';
 import * as vcSdk from '../../../src/sdk/index';
 import { checkOutputs, formatDrift, reservedColors, tileRim, tintSoft, SYSTEM_MD, MOCKUP_HTML, PALETTE_JSON } from '../../../scripts/lib/design-tokens';
+import { FIRST_PERSON, lineFindings, type CopyKind } from './copy-glossary';
+import { COPY, COPY_KINDS, formatClockTime, formatCount, reportCodeSizeLabel, timelineGrowthLine } from '../../../src/host/launcher/copy';
 
 const ROOT = process.cwd();
 
@@ -107,8 +111,7 @@ function withColor(scheme: tokens.Scheme, role: tokens.ColorRole, value: string)
 /** Files that still carry colour values of their own, each with the reason. Remove an entry when
  *  its file stops needing it; an entry whose file no longer has a hit fails the suite. */
 const EXEMPT: Readonly<Record<string, string>> = {
-  'src/sdk/design-tokens.ts': 'the v2 shell tokens, read by the screens that have not moved to src/design/tokens.ts yet',
-  'src/host/launcher/theme.ts': "the v2 shell palette's white `onAccent`, pinned until the shell moves to the token module",
+  'src/sdk/design-tokens.ts': "`appColor`'s palette and the v2 hues it avoids, read until the legacy `tileColor` goes",
   'src/host/BridgeProbeScreen.tsx': 'a flag-gated on-device acceptance probe (RUN_BRIDGE_PROBE), off in the product',
   'src/host/StorageProbeScreen.tsx': 'a flag-gated on-device acceptance probe (RUN_STORAGE_PROBE), off in the product',
   'src/host/VersionStoreProbeScreen.tsx': 'a flag-gated on-device acceptance probe (RUN_VSTORE_PROBE), off in the product',
@@ -189,6 +192,47 @@ function renderedComponents(source: string): Set<string> {
 function galleryGaps(components: readonly string[], source: string): string[] {
   const rendered = renderedComponents(source);
   return components.filter((name) => !(name in GALLERY_EXEMPT) && !rendered.has(name));
+}
+
+// ── Copy ─────────────────────────────────────────────────────────────────────
+
+/** One finding per key of `table` with no kind, a retired word, or Whim's "I" on a control. */
+function copyFindings(table: Readonly<Record<string, string>>, kinds: Readonly<Record<string, CopyKind>>): string[] {
+  const findings: string[] = [];
+  for (const [key, text] of Object.entries(table)) {
+    const kind = kinds[key] as CopyKind | undefined;
+    if (kind === undefined) findings.push(`${key}: has no kind in COPY_KINDS`);
+    findings.push(...lineFindings(key, text, kind));
+  }
+  return findings;
+}
+
+/** A call that writes a number, date, time, relative time or list, or picks a plural, in the
+ *  locale its first argument names: `toLocaleString`, `toLocaleDateString`, `toLocaleTimeString`
+ *  and the `Intl` formatters. */
+const LOCALE_TAKING_CALL = /\.toLocale(?:Date|Time)?String\(|\b(?:NumberFormat|DateTimeFormat|RelativeTimeFormat|ListFormat|PluralRules)\(/g;
+
+/** How far past a call's `(` its first argument is read. */
+const ARGUMENT_WINDOW = 200;
+
+/** The first argument that leaves the locale to the phone: none, `undefined`, or an empty list. */
+const NO_LOCALE = /^\s*(?:\)|undefined\b|\[\s*\])/;
+
+/** Each line of `source` where a call formats in the phone's locale, as the line the call starts
+ *  on. The argument is read past line breaks, so a locale left out on the next line still counts.
+ *  Reading the phone's locale (`Intl.DateTimeFormat().resolvedOptions()`) writes nothing, so it is
+ *  not one. */
+function machineLocaleFormats(source: string): number[] {
+  const code = withoutComments(source);
+  const lines: number[] = [];
+  for (const call of code.matchAll(LOCALE_TAKING_CALL)) {
+    const at = call.index ?? 0;
+    const after = code.slice(at + call[0].length, at + call[0].length + ARGUMENT_WINDOW);
+    if (!NO_LOCALE.test(after) || /^\s*\)\.resolvedOptions\(\)/.test(after)) continue;
+    const line = code.slice(0, at).split('\n').length;
+    if (lines.at(-1) !== line) lines.push(line);
+  }
+  return lines;
 }
 
 const parseNumbers = (css: string, fn: string) => (new RegExp(`^${fn}\\((.*)\\)$`).exec(css)?.[1] ?? '').split(',').map(Number);
@@ -323,5 +367,89 @@ export async function run(): Promise<void> {
     assert(galleryGaps(components, withoutStepper).join() === 'Stepper', 'removing a component from the gallery names it');
     assert(galleryGaps(['Stepper'], '// <Stepper />\nconst x = 1;').join() === 'Stepper', 'a component mentioned only in a comment is not shown');
     assert(componentExports({ toast: () => {}, Card: () => null, ListProps: undefined }).join() === 'Card', 'only PascalCase function values are components');
+  });
+
+  await test('copy lint: every COPY key has a kind, and the shell copy uses the glossary with no Whim "I" on a control', () => {
+    const findings = copyFindings(COPY, COPY_KINDS);
+    assert(findings.length === 0, findings.join('; '));
+    const stale = Object.keys(COPY_KINDS).filter((key) => !(key in COPY));
+    assert(stale.length === 0, `COPY_KINDS tags keys COPY no longer has: ${stale.join(', ')}`);
+    assert(FIRST_PERSON.test(COPY.composeHelper) && COPY_KINDS.composeHelper === 'prose', 'the maker says "I" in prose, and the lint lets it');
+  });
+
+  await test('copy lint: a control saying "I’ll decide" or "I", a retired word (prefixed too), and an untagged key each fail, naming the key', () => {
+    const decide = copyFindings({ ...COPY, clarifyIllDecide: 'I’ll decide' }, { ...COPY_KINDS, clarifyIllDecide: 'control' });
+    assert(decide.length === 1 && decide[0].startsWith('clarifyIllDecide: Whim\'s "I" on a control'), `"I’ll decide": ${decide.join('; ')}`);
+    const bareI = copyFindings({ ...COPY, readyOpen: 'I can open it' }, COPY_KINDS);
+    assert(bareI.length === 1 && bareI[0].startsWith('readyOpen: Whim\'s "I"'), `a bare "I": ${bareI.join('; ')}`);
+    const person = copyFindings({ ...COPY, reportIncludePrompt: 'I’ll include what you asked for' }, COPY_KINDS);
+    assert(person.length === 1 && person[0].startsWith('reportIncludePrompt:'), `the maker's "I’ll" on a person's control: ${person.join('; ')}`);
+    const row = copyFindings({ ...COPY, whimSheetNewVersion: 'I made a new version' }, COPY_KINDS);
+    assert(row.length === 1 && row[0].startsWith('whimSheetNewVersion: Whim\'s "I" on a control'), `a pressable row's title is a control: ${row.join('; ')}`);
+    const placeholder = copyFindings({ ...COPY, clarifyOtherPlaceholder: 'Or I’ll pick for you' }, COPY_KINDS);
+    assert(placeholder.length === 1 && placeholder[0].startsWith('clarifyOtherPlaceholder: Whim\'s "I"'), `a field's placeholder is a control: ${placeholder.join('; ')}`);
+    const restore = copyFindings({ ...COPY, historyUseVersion: 'Restore this version' }, COPY_KINDS);
+    assert(restore.length === 1 && restore[0].startsWith('historyUseVersion: retired word "restore"'), `a retired word: ${restore.join('; ')}`);
+    const rebuild = copyFindings({ ...COPY, actionReload: 'Rebuild it' }, COPY_KINDS);
+    assert(rebuild.length === 1 && rebuild[0].startsWith('actionReload: retired word "build"'), `a prefixed retired word: ${rebuild.join('; ')}`);
+    const regenerate = copyFindings({ ...COPY, actionReload: 'Regenerate' }, COPY_KINDS);
+    assert(regenerate.length === 1 && regenerate[0].startsWith('actionReload: retired word "generate"'), `a prefixed retired word: ${regenerate.join('; ')}`);
+    const prose = copyFindings({ ...COPY, failureTitle: 'Couldn’t generate this' }, COPY_KINDS);
+    assert(prose.length === 1 && prose[0].startsWith('failureTitle: retired word "generate"'), `a retired word in prose: ${prose.join('; ')}`);
+    const untagged = copyFindings({ ...COPY, homeNewLine: 'Something new' }, COPY_KINDS);
+    assert(untagged.length === 1 && untagged[0].startsWith('homeNewLine: has no kind'), `an untagged key: ${untagged.join('; ')}`);
+    const legal = copyFindings({ ...COPY, consentWhy: 'To build your apps and run Whim.' }, COPY_KINDS);
+    assert(legal.length === 1 && legal[0].startsWith('consentWhy: retired word "build"'), `legal copy has no carve-out: ${legal.join('; ')}`);
+  });
+
+  await test('copy lint: a straight apostrophe or a straight quote fails, naming the key; the curly ones pass', () => {
+    const apostrophe = copyFindings({ ...COPY, readyOnHome: "It's on your home screen." }, COPY_KINDS);
+    assert(apostrophe.length === 1 && apostrophe[0].startsWith('readyOnHome: a straight apostrophe or quote'), `a straight apostrophe: ${apostrophe.join('; ')}`);
+    const quote = copyFindings({ ...COPY, homeSearchEmpty: 'Nothing called "tea"' }, COPY_KINDS);
+    assert(quote.length === 1 && quote[0].startsWith('homeSearchEmpty: a straight apostrophe or quote'), `a straight quote: ${quote.join('; ')}`);
+    const curly = copyFindings({ ...COPY, readyOnHome: 'It’s on your home screen.', homeSearchEmpty: 'Nothing called “tea”' }, COPY_KINDS);
+    assert(curly.length === 0, `curly apostrophes and quotes pass: ${curly.join('; ')}`);
+  });
+
+  await test('copy numbers and clock times: written in the copy table’s language, English and French alike (#89, #214)', () => {
+    assert(formatCount(1204, 'en') === '1,204', `English groups with a comma: ${formatCount(1204, 'en')}`);
+    assert(formatCount(1204, 'fr') === '1 204', `French groups with a narrow no-break space: ${JSON.stringify(formatCount(1204, 'fr'))}`);
+    assert(timelineGrowthLine(1204) === 'Wrote 1,204 characters', `the English table writes English numbers: ${timelineGrowthLine(1204)}`);
+    assert(reportCodeSizeLabel(12043) === '12,043 characters', `the report's code size: ${reportCodeSizeLabel(12043)}`);
+    const fivePastThree = new Date(2026, 0, 1, 15, 5);
+    assert(/^3:05\sPM$/.test(formatClockTime(fivePastThree, 'en')), `English writes a 12-hour clock: ${formatClockTime(fivePastThree, 'en')}`);
+    assert(formatClockTime(fivePastThree, 'fr') === '15:05', `French writes a 24-hour clock: ${formatClockTime(fivePastThree, 'fr')}`);
+  });
+
+  await test('copy numbers: no number, date or time in src/host is formatted in the phone’s locale', () => {
+    const hits = productFiles('src/host').flatMap((file) => machineLocaleFormats(fs.readFileSync(path.join(ROOT, file), 'utf8')).map((line) => `${file}:${line}`));
+    assert(hits.length === 0, `pass the copy table's language (copy.ts#formatCount, #formatClockTime): ${hits.join(', ')}`);
+    assert(machineLocaleFormats('const s = `${n.toLocaleString()} characters`;').join() === '1', 'toLocaleString() with no locale is a hit');
+    assert(machineLocaleFormats('new Intl.NumberFormat(undefined).format(n);\nnew Intl.NumberFormat().format(n);').join() === '1,2', 'Intl.NumberFormat with no locale is a hit');
+    assert(
+      machineLocaleFormats("new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).format(d);\nd.toLocaleTimeString();\nd.toLocaleDateString(undefined, opts);\nnew Intl.DateTimeFormat().format(d);").join() === '1,2,3,4',
+      'a clock time or date with no locale is a hit',
+    );
+    assert(machineLocaleFormats("n.toLocaleString('en');\n// n.toLocaleString()\nd.toLocaleTimeString(language);\nIntl.DateTimeFormat().resolvedOptions().locale;").length === 0, 'an explicit locale, a comment, or reading the locale is not');
+  });
+
+  await test('copy numbers: an empty locale list is the phone’s locale', () => {
+    const hits = machineLocaleFormats("d.toLocaleTimeString([]);\nnew Intl.DateTimeFormat([ ], { hour: 'numeric' }).format(d);");
+    assert(hits.join() === '1,2', `both calls are hits: ${hits.join()}`);
+  });
+
+  await test('copy numbers: a call whose missing locale is on its next line is a hit, at the call’s line', () => {
+    const hits = machineLocaleFormats("const f = new Intl.DateTimeFormat(\n  undefined,\n  { hour: 'numeric' },\n);\nd.toLocaleDateString(\n);");
+    assert(hits.join() === '1,5', `both calls are hits: ${hits.join()}`);
+  });
+
+  await test('copy numbers: relative times, lists and plural rules with no locale are hits', () => {
+    const hits = machineLocaleFormats("new Intl.RelativeTimeFormat().format(-1, 'day');\nnew Intl.ListFormat(undefined, { type: 'and' }).format(names);\nnew Intl.PluralRules([]).select(n);");
+    assert(hits.join() === '1,2,3', `all three calls are hits: ${hits.join()}`);
+  });
+
+  await test('copy numbers: a locale given, on the call’s line or the next, is not a hit', () => {
+    const hits = machineLocaleFormats("new Intl.PluralRules(language).select(n);\nnew Intl.ListFormat(\n  'en',\n  { type: 'and' },\n).format(names);\nnew Intl.RelativeTimeFormat([language]).format(1, 'day');");
+    assert(hits.length === 0, `no hits: ${hits.join()}`);
   });
 }

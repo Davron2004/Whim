@@ -74,7 +74,7 @@ function idBelowFloorDiagnostic(
   anchor: { line: number; column: number },
 ): Diagnostic {
   const nextFree = `${fieldId.charAt(0)}${floor + 1}`;
-  const hint = `Field ID "${fieldId}" is at or below the burned-ID floor for "${collName}" (max allocated ordinal ${floor}); use "${nextFree}" or a higher ordinal instead.`;
+  const hint = `Field ID \`${fieldId}\` is at or below the burned-ID floor for \`${collName}\` (max allocated ordinal ${floor}); use \`${nextFree}\` or a higher ordinal instead.`;
   return {
     kind: 'id_below_floor',
     severity: 'error',
@@ -132,7 +132,7 @@ function identityContinuityDiagnostics(
         identityDriftDiagnostic(
           appliedColl.id,
           appliedColl.id,
-          `Collection ID "${appliedColl.id}" is in the applied schema but this artifact declares no collection with that ID; the user's existing rows live under "${appliedColl.id}", so keep that ID instead of allocating a new one.`,
+          `Collection ID \`${appliedColl.id}\` is in the applied schema but this artifact declares no collection with that ID; the user’s existing rows live under \`${appliedColl.id}\`, so keep that ID instead of allocating a new one.`,
           anchor,
         ),
       );
@@ -145,7 +145,7 @@ function identityContinuityDiagnostics(
         identityDriftDiagnostic(
           `${candidate.displayName}.${active.id}`,
           active.id,
-          `Field ID "${active.id}" is active in collection "${appliedColl.id}" but this artifact neither declares nor tombstones it; the user's existing rows live under "${active.id}", so keep that ID — or list it in "${candidate.displayName}"'s \`tombstones\` if the field is genuinely retired.`,
+          `Field ID \`${active.id}\` is active in collection \`${appliedColl.id}\` but this artifact neither declares nor tombstones it; the user’s existing rows live under \`${active.id}\`, so keep that ID — or list it in \`${candidate.displayName}\`’s \`tombstones\` if the field is genuinely retired.`,
           anchor,
         ),
       );
@@ -172,7 +172,7 @@ function reportMissingArtifactDrift(ctx: CheckContext, anchor: { line: number; c
       identityDriftDiagnostic(
         coll.id,
         coll.id,
-        `Collection ID "${coll.id}" is in the applied schema but this candidate declares no \`schema\` at all; the user's existing rows live under "${coll.id}", so ship a schema artifact that keeps that ID (and the field IDs inside it) rather than dropping it.`,
+        `Collection ID \`${coll.id}\` is in the applied schema but this candidate declares no \`schema\` at all; the user’s existing rows live under \`${coll.id}\`, so ship a schema artifact that keeps that ID (and the field IDs inside it) rather than dropping it.`,
         anchor,
       ),
     );
@@ -262,7 +262,7 @@ function declaredTypeDiagnostics(
       const types = declaredTypes.get(key);
       if (held.has(key) || !types || [...types].every((t) => t === field.type)) continue;
       const declaredAs = [...types].filter((t) => t !== field.type).join('/');
-      const hint = `Field "${fieldName}" in "${collName}" reuses ID "${field.id}", which a saved version declares as ${declaredAs}; a burned field's type is fixed — keep ${declaredAs} or mint a fresh ID above the floor.`;
+      const hint = `Field \`${fieldName}\` in \`${collName}\` reuses ID \`${field.id}\`, which a saved version declares as ${declaredAs}; a burned field’s type is fixed — keep ${declaredAs} or mint a fresh ID above the floor.`;
       diagnostics.push({
         kind: 'type_change',
         severity: 'error',

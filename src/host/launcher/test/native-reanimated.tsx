@@ -143,6 +143,28 @@ export function useAnimatedStyle<T>(updater: () => T): T {
   });
   return style;
 }
+/** Reanimated's reaction: `prepare` runs at once and again whenever a shared value it read is
+ *  assigned, as the UI thread would; `react` hears each result with the one before (null at first). */
+export function useAnimatedReaction<T>(prepare: () => T, react: (prepared: T, previous: T | null) => void): void {
+  const latest = React.useRef({ prepare, react });
+  latest.current = { prepare, react };
+  React.useEffect(() => {
+    let previous: T | null = null;
+    let stops: (() => void)[] = [];
+    const run = () => {
+      for (const stop of stops) stop();
+      reading = new Set();
+      const next = latest.current.prepare();
+      const read = [...reading];
+      reading = null;
+      stops = read.map((value) => value.listen(run));
+      latest.current.react(next, previous);
+      previous = next;
+    };
+    run();
+    return () => { for (const stop of stops) stop(); };
+  }, []);
+}
 export const withSpring = (to: unknown, config?: Record<string, unknown>, callback?: (finished: boolean) => void) => tag({ kind: 'spring', to, config, callback });
 export const withTiming = (to: unknown, config?: Record<string, unknown>, callback?: (finished: boolean) => void) => tag({ kind: 'timing', to, config, callback });
 export const withDelay = (delay: number, animation: Animation) => tag({ kind: 'delay', delay, animation });

@@ -6,8 +6,8 @@
  * `ConsentScreen.tsx` imports react-native and cannot be imported under the launcher's Node
  * suite, so this table lives here rather than inline in the component's JSX — the same
  * pure-logic-in-non-RN-siblings convention `consent-flow.ts` already keeps. Kept as the single
- * source `ConsentScreen.tsx` renders from, rather than a parallel description of it, so a
- * regression in the real render trips the same assertion this module's own suite makes.
+ * source `ConsentScreen.tsx` renders from, rather than a parallel description of it;
+ * `screen-controls.suite.tsx` holds the table to the rendered footer, row by row.
  *
  * No React Native import — this module must load under the Node acceptance suite.
  */

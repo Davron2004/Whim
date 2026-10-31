@@ -46,7 +46,7 @@ export default TurboModuleRegistry.get<Spec>('WhimLaunchScreen');   // null on a
   30%; `android:textColorHighlight`) in `colors.xml`. `whim_accent`/`whim_accent_highlight` no longer exist.
 - `MainActivity.onConfigurationChanged` (uiMode is a handled config change, no recreation) re-sets the
   navigation-bar icon appearance (`!night` → dark icons) and the window background from the new scheme.
-  The status bar's icons stay the JS `<StatusBar barStyle>`'s (chain-14: `t.barStyle`).
+  The status bar's icons stay the JS `<StatusBar barStyle>`'s (`statusBarStyleOver`, #218).
 - Launch: below 12 `Theme.Whim.Launch` draws `drawable/launch_screen.xml` (`launch_background` + 256 dp
   `launch_mark`); 12+ `values-v31` sets `windowSplashScreenBackground` = `launch_background` and
   `windowSplashScreenAnimatedIcon` = `@mipmap/ic_launcher_foreground`.
@@ -78,9 +78,9 @@ export default TurboModuleRegistry.get<Spec>('WhimLaunchScreen');   // null on a
 ## Fonts
 
 - No font file ships (`assets/fonts/`, `android/app/src/main/assets/fonts/` deleted; iOS never bundled any).
-  `TYPE_SCALE` faces carry no `fontFamily` (`TypeFace.fontFamily` is optional, never set).
-- Still present until 21.4: `FONT_FAMILY` (names only) and its one consumer (`ui/whim-prose/styles.ts`). With no
-  file behind them, those names draw the system font on both platforms.
+  `src/design/tokens.ts#TYPE_SCALE` has no face field (the SDK's TYPE_SCALE and `TypeFace` are deleted, 21c).
+- `FONT_FAMILY` is deleted (21.3, with its last consumer): Whim Syntax marks are weight, italic, tabular
+  figures and colour on the system font.
 
 ## Evidence
 

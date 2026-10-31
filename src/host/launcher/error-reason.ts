@@ -22,7 +22,7 @@ import { GenerationClientError } from './transport-shared';
 import { EmptyBundleError } from './build-lifecycle';
 import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 
-export const GENERIC_STREAM_ERROR = 'Something went wrong while building your app. Please try again.';
+export const GENERIC_STREAM_ERROR = 'Something went wrong while I was making your app. Please try again.';
 
 /** The one decision both exports below read: which of the three failures a thrown error is, as
  *  the closed code the log records and the sentence the screen shows. */

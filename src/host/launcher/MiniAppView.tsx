@@ -14,20 +14,20 @@
 // is destroyed when the launch ends or fails. No WebView ever hosts a second launch. A
 // fresh WebView starts waiting, unseen, once the launch has painted, so the next is warm too.
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
 import { RUNTIME_HTML } from '../../runtime/generated/runtime-html';
-import { RADIUS, SPACING } from '../../sdk/theme';
-import { SPACE } from '../../design/tokens';
+import { LAYOUT, SPACE } from '../../design/tokens';
 import { TilePlate } from '../ui/AppTile';
 import { TILE_SIDE } from '../ui/AppTile-geometry';
 import { timing } from '../ui/motion';
+import { Button } from '../ui/Button';
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
-import { buttonColors, type ShellTokens } from '../ui/tokens-pure';
+import type { ShellTokens } from '../ui/tokens-pure';
 import { themeFrame } from './theme-frame';
 import { tileOf } from './tile-identity';
 import { log } from '../logging';
@@ -422,22 +422,18 @@ export default function MiniAppView({
   useEffect(() => {
     if (paintedAt !== null) onOpened();
   }, [paintedAt, onOpened]);
-  const primary = buttonColors(frameTokens, 'ink', false);
-
-  // A launch refused pre-delivery (#41 D7, structured `launchApp` failure) never delivers a
-  // bundle -- show honest product copy instead of a blank realm, with a way back to Home.
+  // A launch refused at its delivery (#41 D7, structured `launchApp` failure) never runs a bundle --
+  // show honest product copy instead of a blank realm, with a way back to Home. The refusal came at
+  // the delivery, which already pinned the frame, so the `Button` takes the frame's tokens like the
+  // text: on the phone's live ones it would follow a scheme change the frame keeps out.
   if (surface === 'launch-failed') {
     return (
       <View style={[styles.layer, styles.errorRoot, { backgroundColor: bg }]}>
         <Text tokens={frameTokens} type="title2" style={styles.errorTitle}>{COPY.launchFailedTitle}</Text>
         <Text tokens={frameTokens} color="text-2" style={styles.errorBody}>{COPY.launchFailedBody}</Text>
-        <Pressable
-          accessibilityRole="button"
-          style={[styles.errorAction, { backgroundColor: primary.fill, borderColor: primary.fill }]}
-          onPress={onExit}
-        >
-          <Text tokens={frameTokens} type="headline" color="on-ink">{COPY.launchFailedBack}</Text>
-        </Pressable>
+        <View style={styles.errorAction}>
+          <Button tokens={frameTokens} label={COPY.launchFailedBack} variant="ink" onPress={onExit} />
+        </View>
       </View>
     );
   }
@@ -502,18 +498,11 @@ const styles = StyleSheet.create({
   waiting: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: 0 },
   slot: { flex: 1 },
   waitingSlot: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: 0 },
-  errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.lg },
-  errorTitle: { textAlign: 'center', marginBottom: SPACING.sm },
-  errorBody: { textAlign: 'center', marginBottom: SPACING.lg },
-  // A filled primary the full width.
-  errorAction: {
-    alignSelf: 'stretch',
-    height: 52,
-    borderRadius: RADIUS.card,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: LAYOUT.gutter },
+  errorTitle: { textAlign: 'center', marginBottom: SPACE[3] },
+  errorBody: { textAlign: 'center', marginBottom: LAYOUT.gapTitleToContent },
+  // The one action, the full width.
+  errorAction: { alignSelf: 'stretch' },
   layer: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   opening: { alignItems: 'center', justifyContent: 'center' },
   // Under the centred plate without moving it: the words appear late, and the plate must not jump.

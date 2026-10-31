@@ -10,17 +10,17 @@
 // the pure machine in `prompt-flow.ts`. This is also the host wiring: the MMKV-backed
 // installed-apps index, the persistent version store, the sanctioned StoreAccess path (with the
 // device user-data delete), first-run seeding (D7), the fork/delete flows (D2), the fixed theme,
-// the highlighting off-switch, and the persisted device id + server address — all read once from
+// and the persisted device id + server address — all read once from
 // the same `whim.launcher` KVBackend the installed-apps index uses. One WebView == one realm ==
 // one app: launching reads the active bundle source from the record and hands it to MiniAppView
 // (keyed by launcher id, so each launch is a fresh realm).
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Linking, StatusBar, StyleSheet, Text, TouchableOpacity, Alert } from 'react-native';
+import { Linking, StatusBar, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
 import { APP_BUNDLES } from '../../runtime/generated/app-bundles';
-import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { RADII, SPACE } from '../../design/tokens';
 import { hideLaunchScreen as nativeHideLaunchScreen } from '../launch-screen';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
@@ -30,10 +30,12 @@ import { createPersistentStore } from '../version-store';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import type { KVBackend } from '../version-store/fs/kv-fs';
 import { copyStorage, deleteStorage, peekAppliedSchema } from '../storage-engine';
-import { HighlightingProvider } from '../ui/whim-prose/WhimProse';
 import { ToastHost, useToast, type ToastApi } from '../ui/Toast';
 import { haptics } from '../haptics';
+import { Text } from '../ui/Text';
 import { useTokens, type ShellTokens } from '../ui/tokens';
+import { useScrimsUp } from '../ui/OverlayModal';
+import { statusBarStyleOver } from '../ui/status-bar-style';
 import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
 import { runFork } from './fork-op';
@@ -130,7 +132,6 @@ import type { DescribeScreen, FlowLimit, FlowNotice, FlowQuestion, FlowScreen, M
 import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 import { PROTOCOL_LEVEL } from './wire-headers';
 import { FlowRequests, onlyOnStep } from './flow-request';
-import { SHELL_PALETTE } from './theme';
 import {
   acknowledgeOwnServer,
   chooseServer,
@@ -149,7 +150,6 @@ import type { Connectivity } from './connectivity';
 import { isNetworkFailure, showOfflineIndicator, showServerUnreachableNotice } from './connectivity-ux';
 import { appIsForeground, useAppForeground } from './use-app-foreground';
 import { FlowDrafts, draftKey } from './flow-draft';
-import { loadHighlighting } from './highlighting';
 import { sweepRetiredKeys } from './retired-keys';
 import { getDeviceId, resetDeviceId } from './device-id';
 import { errorDetailsEnabled, setErrorDetails } from './error-details';
@@ -169,7 +169,7 @@ import { consentGrantDue, declineTarget, nextLegalStep } from './consent-flow';
 import type { ConsentContinuation, LegalFlow } from './consent-flow';
 import { REFUSAL_RULES, refusalRemedy, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
 import type { ServiceRefusal } from './service-refusal';
-import { useNoticeWindowClear } from './ServiceNotice';
+import { useNoticeWindowClear } from './refusal-window';
 import { errorReason, errorReasonCode, errorRemedy, errorRephraseHelps, GENERIC_STREAM_ERROR } from './error-reason';
 import { liveClientOptions } from './consent-options';
 import { resolveOptions } from './resolve-options';
@@ -416,30 +416,14 @@ function stackTitle(on: StackScreen): string | undefined {
   }
 }
 
-/** Whether a stack screen draws from the token module, following the phone's appearance; the
- *  consent screen still draws the fixed light v2 palette (`theme.ts`). Its header and the status bar
- *  follow whichever the screen on top draws. History follows the phone wherever it was opened from:
- *  it is a host screen, never the frame of the app it was opened over. */
-function schemeFollowing(on: StackScreen): boolean {
-  return on.kind === 'home' || on.kind === 'settings' || on.kind === 'advanced' || on.kind === 'report' || on.kind === 'history';
-}
-
-/** Whether the shell's frame (the status-bar strip above a screen drawn without the native stack)
- *  and the status bar's content follow the phone's scheme: they take the colours of the screen they
- *  frame — the token `bg` over a running app, the Home skeleton (`ready` false) and a scheme-following
- *  stack screen on `top`; the light v2 palette over a screen still drawn in it (the dev probe, the
- *  age hold, the missing link, the update screen). */
-function frameFollowsScheme(screen: Screen, top: StackScreen | undefined, ready: boolean): boolean {
-  if (top !== undefined) return schemeFollowing(top);
-  return screen.kind === 'app' || !ready;
-}
-
-/** The frame's colours: over an open app those of the settings its realm was delivered with
- *  (`appFrame`, `null` before the delivery), else the phone's `live` tokens or the light v2 palette. */
-function shellFrame(screen: Screen, top: StackScreen | undefined, ready: boolean, live: ShellTokens, appFrame: ShellTokens | null) {
-  if (!frameFollowsScheme(screen, top, ready)) return { background: SHELL_PALETTE.bg, barStyle: 'dark-content' as const };
+/** The shell's frame (the status-bar strip above a screen drawn without the native stack) and the
+ *  status bar's content: over an open app those of the settings its realm was delivered with
+ *  (`appFrame`, `null` before the delivery), else the phone's `live` tokens. With `scrims` overlays
+ *  up, the content reads on the frame dimmed by each one's scrim, drawn in the `live` scheme. */
+function shellFrame(screen: Screen, live: ShellTokens, appFrame: ShellTokens | null, scrims: number) {
   const t = screen.kind === 'app' && appFrame !== null ? appFrame : live;
-  return { background: t.colors.bg, barStyle: t.barStyle };
+  const dimmedBy = Array.from({ length: scrims }, () => live.colors.scrim);
+  return { background: t.colors.bg, barStyle: statusBarStyleOver(t.colors.bg, dimmedBy) };
 }
 
 /** The update screen in place of `from`, holding the prompt typed there when `from` is a flow step
@@ -514,7 +498,7 @@ function logGenError(stage: string, err: unknown, streamRequestId?: string): voi
 /** A recognised service refusal turned into the notice a step screen renders (design D9/D11/D12):
  *  the hint verbatim (or the phone's own text for the code, `refusalText`), the tone
  *  `REFUSAL_RULES` assigns its code, and — only when it carried a `Retry-After` — the re-enable
- *  moment. `ServiceNotice` derives the copy-table retry line from `retryAt` fresh on every render,
+ *  moment. `FlowNoticeBlock` derives the copy-table retry line from `retryAt` fresh on every render,
  *  so nothing here precomputes or caches that text. */
 function noticeFrom(refusal: ServiceRefusal): FlowNotice {
   const retryAt = retryAtOf(refusal, Date.now());
@@ -651,7 +635,7 @@ export default function LauncherRoot({
   hideLaunchScreen?: () => void;
 }>) {
   // Construct the persistent host services once (device native modules — lazy under the hood).
-  // The device id, server address and highlighting flag all read from the SAME `whim.launcher`
+  // The device id and server address both read from the SAME `whim.launcher`
   // KVBackend instance the installed-apps index uses (one MMKV instance, several consumers).
   const { index, access, pending, journal, kv, purges } = useMemo(() => {
     const launcherKv: KVBackend = createMmkvBackend('whim.launcher');
@@ -703,6 +687,7 @@ export default function LauncherRoot({
  * a developer reads the log of the screen they are looking at without navigating away from it.
  */
 function DevLogTools() {
+  const { colors } = useTokens();
   const [open, setOpen] = useState(false);
   // Above the navigation bar the app draws under (edge to edge on every Android version).
   const bottomInset = useSafeAreaInsets().bottom;
@@ -714,9 +699,9 @@ function DevLogTools() {
       <TouchableOpacity
         onPress={() => setOpen(true)}
         accessibilityLabel={DEV_LOG_LABEL}
-        style={[styles.devLogBtn, { bottom: bottomInset + SPACING.md, backgroundColor: SHELL_PALETTE.card, borderColor: SHELL_PALETTE.cardBorder }]}
+        style={[styles.devLogBtn, { bottom: bottomInset + SPACE[4], backgroundColor: colors.fill }]}
       >
-        <Text style={[TYPE_SCALE.eyebrow, { color: SHELL_PALETTE.textMuted }]}>{DEV_LOG_LABEL}</Text>
+        <Text type="caption" color="text-2">{DEV_LOG_LABEL}</Text>
       </TouchableOpacity>
       <DevLogOverlay visible={open} onClose={() => setOpen(false)} />
     </>
@@ -724,7 +709,8 @@ function DevLogTools() {
 }
 
 /** While the store age check runs it shows nothing, so Android back is the way out: it cancels the
- *  check, as `Back` on the age screen did. Mounted only for the length of the check. */
+ *  check, as `Back` on the age screen did. Mounted only for the length of the check, while the stack
+ *  under it answers no back (`NativeStack`'s `backOverlaid`). */
 function AgeCheckBack({ onLeave }: Readonly<{ onLeave: () => void }>) {
   useSystemBack(onLeave);
   return null;
@@ -845,8 +831,8 @@ function LauncherShell({
   significantUpdate: SignificantUpdateSheet | undefined;
   hideLaunchScreen: () => void;
 }>) {
-  const palette = SHELL_PALETTE;
   const tokens = useTokens();
+  const scrimsUp = useScrimsUp();
   // The settings an open app's frame is held to from its delivery (`MiniAppStage`), `null` before it.
   const [appFrame, setAppFrame] = useState<ShellTokens | null>(null);
   // The language every legal screen and link uses (legal-surface-v2 D6): resolved once at launch
@@ -914,7 +900,6 @@ function LauncherShell({
   // The session probe's latest answer and the address it went to: Advanced shows it under the
   // address field rather than sending a probe of its own (#130).
   const [lastProbe, setLastProbe] = useState<SessionProbe | null>(null);
-  const [highlighting] = useState<boolean>(() => loadHighlighting(kv));
   const [errorDetailsShown, setErrorDetailsShown] = useState<boolean>(() => errorDetailsEnabled(kv));
 
   // State, not a memo: Settings' "Make a new ID" replaces it, and every options memo below is keyed
@@ -1404,24 +1389,28 @@ function LauncherShell({
     setScreen({ kind: 'history', app, from });
   };
 
+  // Whether the running launch is behind its app's current version (a change landed unreloaded, an
+  // Undo moved the app after it opened), read when it opens and whenever a change lands, and taken
+  // from a switch or an Undo of the app the moment it lands (below), so no read of the store can leave
+  // it a step behind. The crash screen then leads with Reload and offers no fix of the error: that
+  // error belongs to code no longer current, and a change is made from the current version.
+  const [activeRead, setActiveRead] = useState<{ appId: string; at: number; behind: boolean } | null>(null);
+
   // History's "Use this version" and its Undo, the shell's (`VersionSwitches`): the Undo's toast
   // outlives History, and Home and a History on screen (`versionsMoved`) follow where it leaves the app.
   const [versionsMoved, setVersionsMoved] = useState(0);
-  const movedRef = useRef(() => {});
-  movedRef.current = () => {
+  const movedRef = useRef<(app: InstalledApp, activeId: string) => void>(() => {});
+  movedRef.current = (app, activeId) => {
+    const on = runningRef.current;
+    if (on?.app.id === app.id) setActiveRead({ appId: app.id, at: on.tappedAt, behind: activeId !== on.versionId });
     refresh();
     setVersionsMoved((n) => n + 1);
   };
   const versionSwitches = useMemo(
-    () => new VersionSwitches({ access, toast: () => toastRef.current, moved: () => movedRef.current(), busyWith: (appId) => appOps.opFor(appId) }),
+    () => new VersionSwitches({ access, toast: () => toastRef.current, moved: (app, activeId) => movedRef.current(app, activeId), busyWith: (appId) => appOps.opFor(appId) }),
     [access, appOps],
   );
 
-  // Whether the running launch is behind its app's current version (a change landed unreloaded, an
-  // Undo moved the app after it opened), read when it opens and whenever a change lands or a switch
-  // moves an app. The crash screen then leads with Reload and offers no fix of the error: that error
-  // belongs to code no longer current, and a change is made from the current version.
-  const [activeRead, setActiveRead] = useState<{ appId: string; at: number; behind: boolean } | null>(null);
   const runningAppId = running?.app.id;
   const runningAt = running?.tappedAt;
   const runningVersionId = running?.versionId;
@@ -1438,7 +1427,7 @@ function LauncherShell({
     return () => {
       live = false;
     };
-  }, [access, runningAppId, runningAt, runningVersionId, landed, versionsMoved]);
+  }, [access, runningAppId, runningAt, runningVersionId, landed]);
   const runningBehind =
     running !== null &&
     (runningChange.landed !== undefined || (activeRead?.appId === running.app.id && activeRead.at === running.tappedAt && activeRead.behind));
@@ -1627,7 +1616,7 @@ function LauncherShell({
   };
 
   // ── The legal flow: terms, then AI-data consent (design D1/D2/D5; legal-surface-v2 D5) ─────
-  // Every data-sending entry point — the composer row, "Prompt again", the orb's change action,
+  // Every data-sending entry point — the composer row, the tile menu's "Change it", the orb's change action,
   // History’s "Change it", and Retry — calls `openWithConsent` instead of acting
   // directly. `onRetryPending` (defined below, among the ghost-tile handlers) is referenced here
   // only inside a closure that never runs before this render completes, so its declaration order
@@ -2758,10 +2747,10 @@ function LauncherShell({
    * BEFORE the request goes out (design D3/D4), the stream runs, and exactly one of three
    * settlements follows — delivered (record deleted, after the store and index are both written),
    * failed (record persisted with its payload, never deleted), or cancelled (record deleted by the
-   * cancel path itself). The plan's `Build it` and a ghost's Retry are its only two entries, so
+   * cancel path itself). The plan's `Make it` and a ghost's Retry are its only two entries, so
    * this stays the shell's single `generateApp` call site.
    *
-   * `fromPlan` is the plan screen `Build it` was tapped from — carried ONLY so a fresh attempt
+   * `fromPlan` is the plan screen `Make it` was tapped from — carried ONLY so a fresh attempt
    * refused while still on the build screen can return to plan with every row exactly as it was
    * (design D9/D10); a Retry passes none, since a refused Retry never lands on plan.
    */
@@ -3525,7 +3514,7 @@ function LauncherShell({
       );
     }
     if (from.kind === 'ready') {
-      return <ReadyPage app={from.app} words={from.text} onOpen={() => onOpen(from.app)} onDone={goHome} />;
+      return <ReadyPage app={from.app} words={from.text} changed={from.editing != null} onOpen={() => onOpen(from.app)} onDone={goHome} />;
     }
     return (
       <FailurePage
@@ -3690,8 +3679,7 @@ function LauncherShell({
   /** One stack entry: its header, its colours and its content, all keyed to the screen it shows. */
   const stackEntry = (on: StackScreen): StackEntry => {
     const leave = leaveFor(on);
-    const look = schemeFollowing(on) ? { background: tokens.colors.bg, foreground: tokens.colors.text } : { background: palette.bg, foreground: palette.text };
-    return { key: on.kind, title: stackTitle(on), largeTitle: on.kind === 'settings', onLeave: leave, ...look, children: renderStackScreen(on, leave) };
+    return { key: on.kind, title: stackTitle(on), largeTitle: on.kind === 'settings', onLeave: leave, background: tokens.colors.bg, foreground: tokens.colors.text, children: renderStackScreen(on, leave) };
   };
 
   /** The mini-app container, mounted under every screen once the shell is ready (design-system-v1
@@ -3736,7 +3724,7 @@ function LauncherShell({
   if (!ready) {
     content = <HomeSkeleton count={knownAppCount} />;
   } else if (stack !== null) {
-    content = <NativeStack entries={stack.map(stackEntry)} onSettled={onStackSettled} />;
+    content = <NativeStack entries={stack.map(stackEntry)} onSettled={onStackSettled} backOverlaid={checkingAge !== undefined} />;
   } else {
     content = renderScreenContent();
   }
@@ -3761,37 +3749,35 @@ function LauncherShell({
   // failing-screen identifier in the log record and the reset key, so navigating away and back
   // re-attempts a screen that failed once.
   const exit = SCREEN_EXITS[screen.kind];
-  const frame = shellFrame(base, stack?.at(-1), ready, tokens, appFrame);
+  const frame = shellFrame(base, tokens, appFrame, scrimsUp);
 
   return (
-    <HighlightingProvider enabled={highlighting}>
-      <SafeAreaView edges={frameEdgesFor(base.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>
-        <StatusBar barStyle={frame.barStyle} />
-        <ToastHost bottomOffset={toastOffset(base.kind)}>
-          <ToastBridge api={toastRef} />
-          <ScreenBoundary
-            screen={screen.kind}
-            FallbackComponent={ScreenErrorFallback}
-            onLeave={exit.back === 'root' ? undefined : goHome}
-          >
-            {renderMiniApp(sheetPage !== null)}
-            {content}
-            <MakingSheet content={sheetPage} onClose={closeSheet} />
-            {checkingAge !== undefined && <AgeCheckBack onLeave={() => onLegalDecline(checkingAge.returnTo)} />}
-            <FirstRunHost
-              ask={firstRunAskOf(screen)}
-              language={legalLanguage}
-              onLanguageChange={onLegalLanguageChange}
-              outdatedFrom={outdatedGrantVersion(consentStatus(kv))}
-              consentDue={grantDue}
-              onAgree={onFirstRunAgree}
-              onDecline={onLegalDecline}
-            />
-          </ScreenBoundary>
-        </ToastHost>
-        <DevLogTools />
-      </SafeAreaView>
-    </HighlightingProvider>
+    <SafeAreaView edges={frameEdgesFor(base.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>
+      <StatusBar barStyle={frame.barStyle} />
+      <ToastHost bottomOffset={toastOffset(base.kind)}>
+        <ToastBridge api={toastRef} />
+        <ScreenBoundary
+          screen={screen.kind}
+          FallbackComponent={ScreenErrorFallback}
+          onLeave={exit.back === 'root' ? undefined : goHome}
+        >
+          {renderMiniApp(sheetPage !== null)}
+          {content}
+          <MakingSheet content={sheetPage} onClose={closeSheet} />
+          {checkingAge !== undefined && <AgeCheckBack onLeave={() => onLegalDecline(checkingAge.returnTo)} />}
+          <FirstRunHost
+            ask={firstRunAskOf(screen)}
+            language={legalLanguage}
+            onLanguageChange={onLegalLanguageChange}
+            outdatedFrom={outdatedGrantVersion(consentStatus(kv))}
+            consentDue={grantDue}
+            onAgree={onFirstRunAgree}
+            onDecline={onLegalDecline}
+          />
+        </ScreenBoundary>
+      </ToastHost>
+      <DevLogTools />
+    </SafeAreaView>
   );
 }
 
@@ -3812,10 +3798,9 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   devLogBtn: {
     position: 'absolute',
-    right: SPACING.md,
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.sm,
-    borderWidth: 1,
-    borderRadius: RADIUS.chip,
+    right: SPACE[4],
+    paddingVertical: SPACE[2],
+    paddingHorizontal: SPACE[3],
+    borderRadius: RADII.full.radius,
   },
 });

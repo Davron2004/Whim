@@ -436,7 +436,7 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
   await h.test('failure: a stream error with no hints persists the reason and no diagnostics field', async () => {
     const store = new PendingBuildStore(new MapKVBackend());
     const id = startPendingBuild(store, { text: 'a dice roller' });
-    failPendingBuild(store, id, 'Something went wrong while building your app.', []);
+    failPendingBuild(store, id, 'Something went wrong while I was making your app.', []);
     const rec = store.get(id)!;
     h.eq(rec.state, 'failed', 'a stream error is a failure like any other');
     h.ok(rec.failure!.diagnostics === undefined, 'no hints writes no field — absent and empty stay the same state');

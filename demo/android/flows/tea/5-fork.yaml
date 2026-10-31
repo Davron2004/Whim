@@ -1,26 +1,24 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# LinkedIn cut, shot 5 — fork at v1 behind the confirm sheet → new tile → open the fork (v1, own
-# storage) → back to the original (v2). One uncut real-time run. Film it with:
+# LinkedIn cut, shot 5 — make a copy from v1 → new tile → open the copy (v1, its own data) → back
+# to the original (v2). One uncut real-time run. Film it with:
 #
 #   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/5-fork.yaml \
 #        --device emulator-5554 --out demo/raw/2026-09-11/shot-5 --name take-1 \
 #        --size 1080x2404 --bit-rate 20000000 --guard-app com.anycognition.whim --tighten
 #
-# PRECONDITION: grid holds exactly ONE tea-timer tile ("Tea Steeper") on v2, and no forks. Once the
-# fork exists both tiles carry the same a11y label, so tile taps are disambiguated by `index`
-# (0 original, 1 fork). Idioms explained in ../10-fork-divergence.yaml.
+# PRECONDITION: grid holds exactly ONE tea-timer tile ("Tea Steeper") on v2, and no copies. Once the
+# copy exists both tiles carry the same name, so tile taps are disambiguated by `index`
+# (0 original, 1 copy). Idioms explained in ../10-fork-divergence.yaml.
 #
-# WRITTEN FOR THE INSTANCE GENERATED 2026-09-11 ("Tea Steeper"), stock 1344x2992 frame, measured
-# off-camera with v1 AND v2 present:
-#   * History: "Tea Steeper history" / "2 versions · started 1h ago" / per-version rows. Only an
-#     OLDER version's row expands to "Start a copy here"; the row you are currently on expands to
-#     "Change it from here" instead — so this flow can only ever run after a rewrite.
-#   * NO SCROLL NEEDED. On this frame the expanded v1 row puts "Start a copy here" at y≈1734 of
-#     2992, a real tappable node. The old 4:5 flow's Beat-2 swipe is gone; swiping here would just
-#     scroll the button out from under the tap.
-#   * Confirm sheet reads "Start a second app from v1?" / "You'll have two Tea Steepers. The one
-#     you're using now stays exactly as it is." / Cancel / "Make the copy".
-#   * The History screen has no "Back" text node — leave it with the device back button.
+# WRITTEN FOR THE INSTANCE GENERATED 2026-09-11 ("Tea Steeper"); History's words are design-system-v1's
+# (system.md §7.1 Timeline row, §9 History), not yet re-measured on a frame:
+#   * History: "History" / "Tea Steeper" / "2 versions" / per-version rows. Only an OLDER version's
+#     row expands to "Use this version" and "Make a copy from here"; the current one expands to
+#     "Change it" instead — so this flow can only ever run after a change.
+#   * "Make a copy from here" acts at once, no confirm sheet. An app with saved data first asks
+#     "Copy the data, or start fresh?"; this shot takes "Start fresh", so the copy has none of the
+#     original's data. Then the toast reads "Copy made".
+#   * Leave History with the device back button.
 # NOTE (take-5, older shoot): Maestro `text:` is a WHOLE-STRING regex (filmkit FEEDBACK #14.5) — a
 # bare "Steep time" never matches the node "Steep time (seconds)". Value regexes need .*….*.
 # V1_RE / V2_RE are genuinely version-exclusive on this pair: the rewrite renamed the card's
@@ -33,7 +31,7 @@ env:
   V1_RE: ".*Saved steep time.*"  # v1's card readout label; v2 renamed it to "Steep time"
 ---
 - extendedWaitUntil:
-    visible: "YOUR APPS"
+    visible: "Your apps"
     timeout: 20000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
 
@@ -50,34 +48,34 @@ env:
     timeout: 15000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2800, optional: true }
 
-# Beat 2 — expand v1 and fork it behind the confirm sheet.
+# Beat 2 — expand v1 and make a copy from it, starting fresh.
 - tapOn: "Where this app began"
 - waitForAnimationToEnd
 - extendedWaitUntil:
-    visible: "Start a copy here"
+    visible: "Make a copy from here"
     timeout: 10000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
-- tapOn: "Start a copy here"
+- tapOn: "Make a copy from here"
 - waitForAnimationToEnd
 - extendedWaitUntil:
-    visible: "Make the copy"
+    visible: "Copy the data, or start fresh\\?"
     timeout: 8000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
-- tapOn: "Make the copy"
+- tapOn: "Start fresh"
 - waitForAnimationToEnd
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 1800, optional: true }
 
 # Beat 3 — back out: the new tile has landed. Everything from here is tolerant — the copy is made
 # and must never be made twice, so a missed selector must not abort the run.
+- extendedWaitUntil:
+    visible: "Copy made.*"
+    timeout: 12000
+    optional: true
 - back
 - waitForAnimationToEnd
 - extendedWaitUntil:
-    visible: "YOUR APPS"
+    visible: "Your apps"
     timeout: 20000
-- extendedWaitUntil:
-    visible: "Forked from .*"
-    timeout: 12000
-    optional: true
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
 
 # Beat 4 — open the fork: v1, no strength selector, its own storage (so its own steep time, not
@@ -100,7 +98,7 @@ env:
 - back
 - waitForAnimationToEnd
 - extendedWaitUntil:
-    visible: "YOUR APPS"
+    visible: "Your apps"
     timeout: 20000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 1600, optional: true }
 - tapOn:

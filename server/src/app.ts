@@ -185,6 +185,9 @@ function buildProbeStream(onSettled: () => void, intervalMs: number): ReadableSt
   });
 }
 
+/** The body of a route error nothing else answered: the device shows its hint as the reason. */
+export const INTERNAL_ERROR: ApiError = { error: 'internal_error', hint: 'Something went wrong on our side. Please try again.' };
+
 export function createApp(options: AppOptions): Hono<AppEnv> {
   const { pipeline, usageStore, keepaliveMs, model, roster } = options;
 
@@ -271,8 +274,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
       },
       'unhandled route error',
     );
-    const body: ApiError = { error: 'internal_error', hint: 'Something went wrong on our side. Please try again.' };
-    return c.json(body, 500);
+    return c.json(INTERNAL_ERROR, 500);
   });
 
   // Health check — no auth. It also reports the commit the image was built from and the live

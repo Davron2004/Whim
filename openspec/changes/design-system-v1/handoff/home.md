@@ -68,7 +68,7 @@ LONG_PRESS_MS = 350
 - `onCreate(idea)`: idea chips pass their words; `LauncherRoot` forwards as `{ kind: 'compose', text }` (the
   `ConsentContinuation` compose member gained `text?`, `runContinuation` -> `openCompose(editing, text)`).
 - Composer bar: `ComposerBar({ draft?: string; onPress })` (own file). `draft` set = shows the words, label
-  "Describe an app, draft in progress: ...". chain-16 drives it by passing `draft` to `HomeScreen`
+  "Make an app, draft in progress: ...". chain-16 drives it by passing `draft` to `HomeScreen`
   (today `renderHome` passes none). `HomeSkeleton({ count })` and `HomeHeader({ onSettings?, onOpenDevProbe? })` are shared
 chrome; without `onSettings` the header's button is inert and hidden from screen readers (the skeleton also inerts its
 composer). `count` excludes apps with an armed purge. List rows take `listRowPadding(largeText)` (geometry module).

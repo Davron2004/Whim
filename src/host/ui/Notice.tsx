@@ -1,6 +1,5 @@
 /**
- * Notice — an inline message block (system.md §7.1; replaces `ServiceNotice` as screens move onto
- * it): `r-md`, `fill` with a 20 pt `info` (neutral) or `danger-soft` with `circle-alert`
+ * Notice — an inline message block (system.md §7.1): `r-md`, `fill` with a 20 pt `info` (neutral) or `danger-soft` with `circle-alert`
  * (danger), `callout` text, an optional retry countdown in tabular figures. A danger notice is an
  * alert to screen readers; both are announced politely when they change.
  */

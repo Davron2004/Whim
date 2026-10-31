@@ -31,7 +31,7 @@ import KeyboardShell from './KeyboardShell';
 import type { FlowNotice } from './prompt-flow';
 import type { RunJournalEntry } from './run-journal';
 import { runTimelineRows } from './run-timeline-view';
-import { useRetryGate } from './ServiceNotice';
+import { useRetryGate } from './refusal-window';
 import { openWhimUpdate } from './UpdateRequiredScreen';
 
 export interface FailurePageProps {

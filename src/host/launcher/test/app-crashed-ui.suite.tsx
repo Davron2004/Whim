@@ -17,7 +17,10 @@ import { CRASH_CLASS_MAX } from '../crash-report';
 import HistoryScreen from '../HistoryScreen';
 import { PendingBuildStore } from '../pending-builds';
 import type { StoreAccess } from '../store-access';
-import { button, hostType, isHost, press, textOf } from './react-screen';
+import { button, hostType, isHost, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { Platform, setColorScheme } from './native-host';
+import { resolveTokens } from '../../ui/tokens-pure';
+import { COLORS } from '../../../design/tokens';
 import { planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { streamingServer } from './prompt-flow-ui.suite';
 import { dismissToast, pressToastAction, toastOf } from './home-rig';
@@ -60,10 +63,42 @@ async function crashRunningApp(tree: Tree, frame: unknown = RENDER_ERROR_FRAME):
 
 const never = () => new Promise<Response>(() => {});
 
+/** `read`, slowed: each call reads in its turn, and its answer waits in `answers` until the test lets it through. */
+function slowed<A extends unknown[], T>(read: (...args: A) => Promise<T>, answers: (() => void)[]): (...args: A) => Promise<T> {
+  const held = (value: T) => new Promise<T>((resolve) => { answers.push(() => resolve(value)); });
+  return (...args) => read(...args).then(held);
+}
+
 /** History's components drawing the version `id`'s row. */
 const versionRows = (tree: Tree, id: string): Node[] => tree.root.findAll((n) => typeof n.type === 'function' && n.props.row?.id === id);
 
 export async function runAppCrashedUiTests(h: Harness): Promise<void> {
+  await h.test('app crashed: its actions draw in the frame’s scheme, not the phone’s — Reload ink, Ask Whim to fix it ember text, Back text — dark over a light phone and light over a dark one', async () => {
+    const noop = () => {};
+    for (const [phone, frame] of [['light', 'dark'], ['dark', 'light']] as const) {
+      await TestRenderer.act(async () => { setColorScheme(phone); });
+      const tokens = resolveTokens({ scheme: frame, fontScale: 1, platform: Platform.OS, reduceMotion: false, increaseContrast: false });
+      const tree = await renderScreen(<AppCrashed name={APP_NAME} tokens={tokens} bottomClearance={0} behind={false} onReload={noop} onAskFix={noop} onExit={noop} />);
+      try {
+        const drawn = tree.root.findAll(isHost('Pressable')).map((action) => {
+          const capsule = StyleSheet.flatten(action.find(isHost('Animated.View')).props.style) as { backgroundColor?: string };
+          const label = StyleSheet.flatten(action.find(isHost('Text')).props.style) as { color?: string };
+          return [String(action.props.accessibilityLabel), capsule.backgroundColor, label.color];
+        });
+        const c = COLORS[frame];
+        h.eq(drawn, [
+          [COPY.actionReload, c.ink, c['on-ink']],
+          [COPY.appCrashedAskFix, 'transparent', c['ember-text']],
+          [COPY.launchFailedBack, 'transparent', c.text],
+        ], `${frame} actions on a ${phone} phone`);
+        h.ok(c.ink !== COLORS[phone].ink && c.text !== COLORS[phone].text, 'the two schemes’ colours differ, so the phone’s would be caught');
+      } finally {
+        await unmountScreen(tree);
+      }
+    }
+    await TestRenderer.act(async () => { setColorScheme('light'); });
+  });
+
   await h.test('app crashed: a render error puts the crash screen in the app’s place — its name, that it stopped and its data is safe, Reload, Ask Whim to fix it, Back to your apps — and the orb stays', async () => {
     await withLauncher({ examples: true, server: never }, async ({ tree }) => {
       await openTipSplitter(tree);
@@ -243,16 +278,25 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
         await press(button(tree, COPY.backLabel));
         await waitFor(() => showing(tree, MiniAppView) && !showing(tree, HistoryScreen), 'the app to open again');
         const web = await paintRunningApp(tree);
-        h.eq(await access.activeId(app), older.id, 'setup: the app runs the older version, current');
-        // The switch's Undo, after the app opened again on the version it left.
-        h.eq(toastOf(tree)?.action, COPY.toastUndo, 'setup: the switch’s Undo is still offered');
+        const readActive = access.activeId.bind(access);
+        h.eq(await readActive(app), older.id, 'setup: the app runs the older version, current');
+        // The switch's Undo, after the app opened again on the version it left. Its toast follows
+        // History's own read of the versions, which the app opening again may come before.
+        await waitFor(() => toastOf(tree)?.action === COPY.toastUndo, 'the switch’s toast, with Undo');
+        // From here on the shell's reads of the app's current version are slow: each reads the store
+        // in its turn, and its answer reaches the shell only once the test lets it.
+        const slowReads: (() => void)[] = [];
+        access.activeId = slowed(readActive, slowReads);
         await pressToastAction(tree);
-        await settle();
-        h.eq(await access.activeId(app), tip.id, 'setup: the Undo made the newer version current again');
+        // Read after the Undo's move in the store's order, so it has landed once this answers.
+        h.eq(await readActive(app), tip.id, 'setup: the Undo made the newer version current again');
         await send(web.props.onMessage, RENDER_ERROR_FRAME);
         await waitFor(() => crashShown(tree), 'the crash screen');
         h.ok(textOf(tree.root.findByType(AppCrashed)).includes(COPY.appCrashedBehindBody), 'it says a newer version is ready');
         h.eq(crashActions(tree), [COPY.actionReload, COPY.launchFailedBack], 'Reload first, then Back to your apps; no Ask Whim to fix it');
+        await TestRenderer.act(async () => { for (const answer of slowReads.splice(0)) answer(); });
+        await settle();
+        h.eq(crashActions(tree), [COPY.actionReload, COPY.launchFailedBack], 'and still once the shell’s slow reads answer');
       });
     } finally {
       Date.now = realNow;

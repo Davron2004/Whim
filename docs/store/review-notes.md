@@ -17,22 +17,23 @@ no email address, phone number or person's name goes in it.
 No login, no account, nothing to sign in with. The home screen already has a few example apps on
 it.
 
-1. Tap `Describe an app…` (the composer row on Home).
-2. The first time this happens on a fresh install, it opens two steps instead of the composer —
-   that's expected, not a bug. First `Terms of use`: tap `Accept`. Then the AI-data consent screen
-   (`Before Whim builds apps for you`): tap `Agree and continue`. `Not now` on either step, or
-   system back, returns to Home with nothing sent and the examples still fully usable. Just before
-   the terms step Whim reads the store's age signal: where an age law applies, iOS may ask to
-   share an age range with Whim; anywhere else nothing shows.
+1. Tap `Make an app…` (the composer bar on Home).
+2. The first time this happens on a fresh install, one sheet opens before the composer — that's
+   expected, not a bug: `Before Whim makes apps for you`, saying what is sent, to whom and why,
+   with the terms of use. Tick `I accept the Terms of use`, then tap `Agree to send descriptions`
+   (it stays off until the box is ticked). `Not now`, the sheet's close, a swipe down or system
+   back returns to Home with nothing sent and the examples still fully usable. Just before the
+   sheet Whim reads the store's age signal: where an age law applies, iOS may ask to share an age
+   range with Whim; anywhere else nothing shows.
 3. Type a one-line description and tap `Continue`.
-4. Answer (or skip) the one to three clarifying questions Whim asks, and tap `Continue`.
-5. Review the plan and tap `Build it`. This takes about a minute; you can leave the screen and come
-   back.
+4. The plan comes back with up to three questions on the same page, each already set to
+   `Decide for me`; change any of them, or none.
+5. Tap `Make it`. This takes about a minute; you can close the sheet and come back.
 6. Tap `Open it` to run the app it made.
-7. Inside the running app, the floating orb opens a menu with `Report this app` — the in-app
-   reporting path 4.7.1 asks for.
-8. Long-press an installed app's tile from Home and choose `App link` to see that app's universal
-   link as selectable text.
+7. Inside the running app, the floating orb opens the Whim sheet with `Report a problem` — the
+   in-app reporting path 4.7.1 asks for.
+8. Long-press an installed app's tile from Home and choose `Share link` to share that app's
+   universal link.
 
 ## 2. Guideline 4.7
 
@@ -51,14 +52,14 @@ merges, don't tell App Review "no data can leave the device from inside a mini a
 three shipped legs actually block, and update this paragraph (and delete this TODO) the day the
 native leg lands.
 
-- **4.7.1 (filtering, reporting, privacy).** The consent screen (`Before Whim builds apps for you`,
+- **4.7.1 (filtering, reporting, privacy).** The first-run sheet (`Before Whim makes apps for you`,
   copy.ts `consentTitle`) discloses what is sent, why, and to whom before the first request goes
   out — see §4. The server checks a content-policy classifier — itself one small, bounded model
   call — before running the clarify, rewrite or generate model on every request; a request the classifier
   rejects comes back as a `content_policy` refusal, and the clarify/rewrite/generate model itself
   is never called (`service-refusals` spec, `REFUSAL_RULES` table) — filtering fails closed, not
-  open. In-app reporting is live from three places: the orb menu (`Report this app`), the done
-  step (`Report this app`), and each app's history header (`Report`). The response window on a
+  open. In-app reporting is live from three places: the orb's Whim sheet (`Report a problem`),
+  each app's History screen (`Report`), and Settings (`Report a problem`). The response window on a
   filed report is `[BLANK — not yet decided; fill in before submission, do not publish a promise
   Whim can't keep]`. There's nothing to block, because there are no accounts, no sharing, and no
   way for one user to see another user's content.
@@ -104,8 +105,8 @@ decisions.md` #64 has the fuller argument and the review history this rests on.
 Reviewer-only, so it names the router; the in-app consent screen doesn't.
 
 Nothing leaves the phone from inside a mini app (see the §2 TODO while it stands). Outside mini
-apps, Whim sends nothing until the user taps "Agree and continue" on the AI-data consent screen.
-That screen says what is sent, why, and who receives it, including third-party AI (guideline
+apps, Whim sends nothing until the user taps "Agree to send descriptions" on the first-run sheet.
+That sheet says what is sent, why, and who receives it, including third-party AI (guideline
 5.1.2(i)), and Settings can turn it off at any time. After that, building or changing an app
 sends what the user typed, their answers and the approved plan. A change also sends the app's
 name, code, description and data layout, never the data saved inside it. A random per-install ID
