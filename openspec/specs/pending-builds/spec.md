@@ -11,13 +11,16 @@ and spawns no separate ghost tile. The record holds exactly one of three states 
 unexplained stream error has persisted a failure payload, and `interrupted`, the state any
 still-`building` record is demoted to at launch so a killed or crashed host process can never
 leave a stale `building` claim standing across a cold start. The record is resolved — deleted —
-only on successful delivery, on user cancel, or on the user dismissing a `failed`/`interrupted`
-record; a crash after delivery begins but before it completes must not delete the record either,
+only on successful delivery, on user cancel, on the user dismissing a `failed`/`interrupted`
+record, or when its app was deleted before delivery (a late result for an app the launcher
+index no longer holds writes nothing and drops the record, which is not a failure); a crash after delivery begins but before it completes must not delete the record either,
 so it survives to be demoted to `interrupted` rather than silently losing the attempt.
 Throughout, the hard invariant holds: a pending-build record lives in its own keyspace, is never
 an `InstalledApp` and never convertible into one, and none of its writes ever read or touch the
 version store.
+
 ## Requirements
+
 ### Requirement: A pending-build record is created at generation start
 
 The host SHALL write a persisted pending-build record the moment a generation request starts, before any terminal event arrives. The record MUST carry the up-front launcher id allocated for the attempt and a working title derived from the user's prompt.
@@ -47,8 +50,7 @@ A pending-build record SHALL be in exactly one of three states: `building`, `fai
 - **THEN** neither fact changes the pending lifecycle state
 
 ### Requirement: A pending-build record is deleted on delivery, cancel, or dismiss
-
-The host SHALL delete a pending-build record when its generation is successfully delivered, when the user cancels the in-flight generation, or when the user dismisses a `failed`/`interrupted` record. A successfully deleted record MUST NOT reappear on any later render. For a retained volatile entry, Discard SHALL attempt pending and journal removal independently and verify pending-key absence, pending-order exclusion, and journal absence before clearing the retained entry. A thrown removal or a non-throwing removal that leaves a key SHALL retain the current entry and MUST NOT be reported as successful deletion. This correction makes no new atomicity guarantee for process death during multi-key removal or for cancellation/delivery write faults.
+The host SHALL delete a pending-build record when its generation is successfully delivered, when the user cancels the in-flight generation, when the user dismisses a `failed`/`interrupted` record, or when its app was deleted before delivery. A successfully deleted record MUST NOT reappear on any later render. For a retained volatile entry, Discard SHALL attempt pending and journal removal independently and verify pending-key absence, pending-order exclusion, and journal absence before clearing the retained entry. A thrown removal or a non-throwing removal that leaves a key SHALL retain the current entry and MUST NOT be reported as successful deletion. This correction makes no new atomicity guarantee for process death during multi-key removal or for cancellation/delivery write faults.
 
 #### Scenario: Successful delivery removes the record
 
@@ -65,6 +67,11 @@ The host SHALL delete a pending-build record when its generation is successfully
 - **WHEN** the user dismisses a `failed` or `interrupted` record and removal succeeds
 - **THEN** the record is deleted and no longer renders on the grid
 
+#### Scenario: A late delivery for a deleted app removes the record
+
+- **WHEN** a generation's `result` is delivered for an app the launcher index no longer holds
+- **THEN** nothing is written to the app, and the pending-build record and its journal for that attempt are deleted, not left as a failed record
+
 #### Scenario: Rejected or partial retained Discard preserves the entry
 
 - **WHEN** Discard of a retained entry removes only some required data, throws, or returns without removing a required key
@@ -76,8 +83,7 @@ The host SHALL delete a pending-build record when its generation is successfully
 - **THEN** the retained entry is cleared and subsequent refreshes do not restore it
 
 ### Requirement: Terminal failure or a stream error sets the record to failed with a persisted payload
-
-When a generation ends in a terminal `failure` event, or the stream errors before any terminal event arrives, the host SHALL set the pending-build record's state to `failed` and persist the failure payload (reason and available diagnostics) on the record. The record MUST NOT be deleted on failure. If these writes fail, the host SHALL attempt independent sibling restoration and a generic failed pending fallback as appropriate. A persisted readback SHALL decide whether that fallback was saved. If no usable saved settlement can be verified, the owning store SHALL retain the confirmed-ended attempt as a volatile generic failed record for this process; it SHALL NOT call that record interrupted or assert durability. This exception applies to failed persistence, not to healthy writes.
+When a generation ends in a terminal `failure` event, or the stream errors before any terminal event arrives, the host SHALL set the pending-build record's state to `failed` and persist the failure payload (reason and available diagnostics) on the record. The record MUST NOT be deleted on failure; dropping a record whose app was deleted before delivery is not a failure. If these writes fail, the host SHALL attempt independent sibling restoration and a generic failed pending fallback as appropriate. A persisted readback SHALL decide whether that fallback was saved. If no usable saved settlement can be verified, the owning store SHALL retain the confirmed-ended attempt as a volatile generic failed record for this process; it SHALL NOT call that record interrupted or assert durability. This exception applies to failed persistence, not to healthy writes.
 
 #### Scenario: Terminal failure event persists the record as failed
 
@@ -143,12 +149,17 @@ When a generation is started by re-prompting an existing installed app, its pend
 
 ### Requirement: A crash inside delivery degrades to interrupted, never a lost app
 
-The pending-build record for an attempt SHALL be deleted only after its delivery (install/update to `AppIndex` and the version store) completes successfully. If the process dies after delivery begins but before it completes, the record MUST remain and, per the launch-time demotion rule, surface as `interrupted` — the attempt is never silently lost.
+The pending-build record for an attempt SHALL be deleted only after its delivery (install/update to `AppIndex` and the version store) completes successfully, except that a record whose app was deleted before delivery SHALL be removed without a delivery (`AppGoneError`). If the process dies after delivery begins but before it completes, the record MUST remain and, per the launch-time demotion rule, surface as `interrupted` — the attempt is never silently lost.
 
 #### Scenario: Death mid-delivery leaves a recoverable trace
 
 - **WHEN** the host process dies after a `result` event arrives but before delivery (install/update) finishes, and the host relaunches
 - **THEN** the pending-build record still exists and its state is `interrupted`, not deleted and not `building`
+
+#### Scenario: An app deleted before delivery is removed without a delivery
+
+- **WHEN** delivery finds that the launcher index no longer holds the app (`AppGoneError`)
+- **THEN** no delivery happens and the pending-build record is removed, not left as `interrupted`
 
 ### Requirement: An attempt lease fences terminal recovery and retention
 
@@ -222,4 +233,3 @@ Before replacing or resetting a journal beneath a current pending record, includ
 
 - **WHEN** generic recovery cannot durably guard the pending record and would replace its journal
 - **THEN** it leaves that journal unchanged, attempts only safe pending recovery, and claims neither a generic terminal pair nor restored pair
-
