@@ -73,6 +73,22 @@ export async function runShellTokensTests(h: Harness): Promise<void> {
     await resetPhone();
   });
 
+  await h.test('text given captured tokens draws with them whatever the phone does; text without them follows the phone', async () => {
+    const pinned = resolveTokens({ scheme: 'dark', fontScale: 1, platform: 'ios', reduceMotion: false, increaseContrast: true });
+    const tree = await renderScreen(<><Text color="text-2" tokens={pinned}>Pinned</Text><Text color="text-2">Live</Text></>);
+    const color = (label: string) => tree.root.findAll((n) => hostType(n) === 'Text' && n.props.children === label)[0].props.style[1].color;
+    try {
+      h.eq([color('Pinned'), color('Live')], [COLORS.dark.text, COLORS.light['text-2']], 'on a light phone: the captured dark, contrast-raised role; the live light one');
+      await act(() => setColorScheme('dark'));
+      h.eq([color('Pinned'), color('Live')], [COLORS.dark.text, COLORS.dark['text-2']], 'the phone turned dark: the captured role is unchanged, the live one follows');
+      await act(() => setColorScheme('light'));
+      h.eq([color('Pinned'), color('Live')], [COLORS.dark.text, COLORS.light['text-2']], 'and back to light');
+    } finally {
+      await unmountScreen(tree);
+      await resetPhone();
+    }
+  });
+
   await h.test('Increase Contrast turns text-2 into text, read from each platform\'s own setting', async () => {
     for (const [os, own, other] of [
       ['ios', 'darkerSystemColorsChanged', 'highTextContrastChanged'],

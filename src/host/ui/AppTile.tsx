@@ -70,6 +70,10 @@ export interface TilePlateProps {
   glyph: TileGlyph;
   /** The stream's activity, 0–1, for the ember or ring of a tile being made or changed. */
   activity?: number;
+  /** Tokens captured at one moment, in place of the phone's live ones, for the plate itself (fill,
+   *  rim, outline, ring, badge): an open app's opening plate keeps the settings the app opened with.
+   *  Omitted, the plate follows the phone. The ember of a plate being made always follows the phone. */
+  tokens?: ShellTokens;
 }
 
 const plateStyles = makeStyles((t) => ({
@@ -93,8 +97,9 @@ function plateFill(t: ShellTokens, state: TileState, tint: TintName): string {
   return plate === 'ember-soft' ? t.colors['ember-soft'] : t.colors.fill;
 }
 
-export function TilePlate({ size, state, tint, glyph, activity = 0 }: Readonly<TilePlateProps>) {
-  const t = useTokens();
+export function TilePlate({ size, state, tint, glyph, activity = 0, tokens }: Readonly<TilePlateProps>) {
+  const live = useTokens();
+  const t = tokens ?? live;
   const s = plateStyles(t);
   const side = TILE_SIDE[size];
   const look = tileLook(state);

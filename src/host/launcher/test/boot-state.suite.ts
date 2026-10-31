@@ -90,12 +90,36 @@ export async function runBootStateTests(h: Harness): Promise<void> {
   // Scenario: because `bind()` resets the paint signal, the boot state is only honest if a paint
   // frame a bundle posts for ITSELF cannot end it — while every authentic paint does end it.
   await h.test('boot-state: only an authenticated paint frame ends the boot state', () => {
-    h.eq(paintAccepted({ trusted: true, payload: { generation: 7, mountToFirstPaintMs: 4 } }), true, 'an authentic paint is accepted');
-    h.eq(paintAccepted({ trusted: false, payload: { generation: 7 } }), false, 'an unauthenticated paint is refused');
-    h.eq(paintAccepted({ payload: { generation: 7 } }), false, 'a frame with no trust stamp at all is refused');
-    h.eq(paintAccepted({ trusted: 'yes' }), false, 'and a truthy-but-not-true stamp is refused');
-    h.eq(paintAccepted({ trusted: true }), false, 'a payload-less authentic frame cannot complete startup');
-    h.eq(paintAccepted(null), false, 'and a missing frame is refused');
+    h.eq(paintAccepted({ trusted: true, payload: { generation: 7, mountToFirstPaintMs: 4 } }, 7), true, 'an authentic paint is accepted');
+    h.eq(paintAccepted({ trusted: false, payload: { generation: 7, mountToFirstPaintMs: 4 } }, 7), false, 'an unauthenticated paint is refused');
+    h.eq(paintAccepted({ payload: { generation: 7, mountToFirstPaintMs: 4 } }, 7), false, 'a frame with no trust stamp at all is refused');
+    h.eq(paintAccepted({ trusted: 'yes', payload: { generation: 7, mountToFirstPaintMs: 4 } }, 7), false, 'and a truthy-but-not-true stamp is refused');
+    h.eq(paintAccepted({ trusted: true }, 7), false, 'a payload-less authentic frame cannot complete startup');
+    h.eq(paintAccepted(null, 7), false, 'and a missing frame is refused');
+  });
+
+  // Scenario (sandbox-rendering, "The host can tell which launch a paint belongs to"): the outer
+  // page stamps `paint` with the generation the host bound the realm at; only the current bind's
+  // stamp is the opening signal.
+  await h.test('boot-state: only a paint stamped with the current bind’s generation ends the boot state', () => {
+    const paint = (generation: unknown) => ({ trusted: true, payload: { generation, mountToFirstPaintMs: 4 } });
+    h.eq(paintAccepted(paint(7), 7), true, 'the current launch’s paint is accepted');
+    h.eq(paintAccepted(paint(6), 7), false, 'a paint from the launch before is refused');
+    h.eq(paintAccepted(paint(8), 7), false, 'a paint claiming a later launch is refused');
+    h.eq(paintAccepted(paint('7'), 7), false, 'a stamp that is not a number is refused');
+    h.eq(paintAccepted(paint(undefined), 7), false, 'an unstamped paint is refused');
+    h.eq(paintAccepted(paint(7), null), false, 'with no realm bound, no paint is anyone’s opening signal');
+  });
+
+  await h.test('boot-state: a stale paint cannot cancel the startup deadline', () => {
+    const clock = new FakeClock();
+    let failures = 0;
+    const deadline = createStartupDeadline(() => { failures += 1; }, clock);
+
+    deadline.begin();
+    h.eq(deadline.acceptPaint({ trusted: true, payload: { generation: 2, mountToFirstPaintMs: 4 } }, 3), false, 'the previous launch’s paint is refused');
+    clock.advanceBy(6_000);
+    h.eq(failures, 1, 'the deadline stays armed and fails the launch');
   });
 
   await h.test('boot-state: an attempted delivery with no page frames expires after six seconds', () => {
@@ -120,7 +144,7 @@ export async function runBootStateTests(h: Harness): Promise<void> {
     deadline.begin();
     clock.advanceBy(5_000);
     h.eq(failures, 0, 'accepted delivery starts a fresh six-second paint allowance');
-    h.eq(deadline.acceptPaint({ trusted: true, payload: { mountToFirstPaintMs: 25 } }), true, 'trusted paint completes startup');
+    h.eq(deadline.acceptPaint({ trusted: true, payload: { generation: 1, mountToFirstPaintMs: 25 } }, 1), true, 'trusted paint completes startup');
     clock.advanceBy(10_000);
     h.eq(failures, 0, 'completed startup cannot fail later');
   });
@@ -131,7 +155,7 @@ export async function runBootStateTests(h: Harness): Promise<void> {
     const deadline = createStartupDeadline(() => { failures += 1; }, clock);
 
     deadline.begin();
-    h.eq(deadline.acceptPaint({ trusted: false, payload: { mountToFirstPaintMs: 2 } }), false, 'forged paint is refused');
+    h.eq(deadline.acceptPaint({ trusted: false, payload: { generation: 1, mountToFirstPaintMs: 2 } }, 1), false, 'forged paint is refused');
     clock.advanceBy(6_000);
     h.eq(failures, 1, 'the original deadline remains armed');
   });
@@ -140,12 +164,12 @@ export async function runBootStateTests(h: Harness): Promise<void> {
     const malformed = [
       { trusted: true },
       { trusted: true, payload: null },
-      { trusted: true, payload: {} },
-      { trusted: true, payload: { mountToFirstPaintMs: null } },
-      { trusted: true, payload: { mountToFirstPaintMs: '4' } },
-      { trusted: true, payload: { mountToFirstPaintMs: Number.NaN } },
-      { trusted: true, payload: { mountToFirstPaintMs: Number.POSITIVE_INFINITY } },
-      { trusted: true, payload: { mountToFirstPaintMs: -0.01 } },
+      { trusted: true, payload: { generation: 1 } },
+      { trusted: true, payload: { generation: 1, mountToFirstPaintMs: null } },
+      { trusted: true, payload: { generation: 1, mountToFirstPaintMs: '4' } },
+      { trusted: true, payload: { generation: 1, mountToFirstPaintMs: Number.NaN } },
+      { trusted: true, payload: { generation: 1, mountToFirstPaintMs: Number.POSITIVE_INFINITY } },
+      { trusted: true, payload: { generation: 1, mountToFirstPaintMs: -0.01 } },
     ];
 
     for (const frame of malformed) {
@@ -158,7 +182,7 @@ export async function runBootStateTests(h: Harness): Promise<void> {
       }, clock);
 
       deadline.begin();
-      h.eq(deadline.acceptPaint(frame), false, 'malformed trusted paint is rejected');
+      h.eq(deadline.acceptPaint(frame, 1), false, 'malformed trusted paint is rejected');
       h.eq(
         miniAppSurface({ launchFailed: false, lastError, paintMs: null }),
         'boot',
@@ -182,7 +206,7 @@ export async function runBootStateTests(h: Harness): Promise<void> {
     const deadline = createStartupDeadline(() => { failures += 1; }, clock);
 
     deadline.begin();
-    h.eq(deadline.acceptPaint({ trusted: true, payload: { mountToFirstPaintMs: 0 } }), true, 'zero is a valid measured paint time');
+    h.eq(deadline.acceptPaint({ trusted: true, payload: { generation: 1, mountToFirstPaintMs: 0 } }, 1), true, 'zero is a valid measured paint time');
     h.eq(
       miniAppSurface({ launchFailed: false, lastError: null, paintMs: 0 }),
       'running',
