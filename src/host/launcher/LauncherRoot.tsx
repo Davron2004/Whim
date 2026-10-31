@@ -41,7 +41,7 @@ import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
 import { runFork } from './fork-op';
 import type { AppBusyMap } from './app-busy';
-import { StoreAccess, type ActiveEdit, type ForkOptions } from './store-access';
+import { AppGoneError, StoreAccess, type ActiveEdit, type ForkOptions } from './store-access';
 import { DataCopyJournal } from './data-copy-journal';
 import { AttemptInFlight, PendingBuildStore } from './pending-builds';
 import type { PendingAttemptLease, PendingBuildFailure, PendingBuildRecord, PendingBuildView, PendingFailureCause, PendingFailureRemedy } from './pending-builds';
@@ -2616,6 +2616,27 @@ function LauncherShell({
     return true;
   };
 
+  /** A change whose app was deleted before it landed (`AppGoneError`: the store refused it before any
+   *  write, separate-shared-data D8). Its app is gone, so the change is moot: it leaves nothing
+   *  behind, as a stopped change does, record and journal, and a leftover storage keeps is purged as
+   *  a Discard's is. A person watching its Making page is taken Home, where the app is no longer. */
+  const settleAppGone = (ctl: NonNullable<typeof genRef.current>, attemptId: string, lease: PendingAttemptLease) => {
+    const selected = isSelectedLiveAttempt(lease);
+    releaseGenRef(ctl);
+    log.warn(CHANNELS.gen, 'change dropped: its app was deleted before it landed', { operation: 'drop-app-gone' });
+    const record = pending.get(attemptId);
+    try {
+      dropAttempt(attemptId);
+    } catch (error) {
+      log.warn(CHANNELS.gen, 'change of a deleted app could not be removed', { operation: 'drop-app-gone', ...errorFields(error) });
+    }
+    pending.releaseAttempt(lease);
+    releaseLiveRef(lease);
+    if (record !== null) purgeLeftover(record);
+    refresh();
+    if (selected) setScreen({ kind: 'home' });
+  };
+
   const settleUnexpectedAttemptFailure = (input: {
     error: unknown;
     ctl: NonNullable<typeof genRef.current>;
@@ -2632,6 +2653,10 @@ function LauncherShell({
     lease: PendingAttemptLease;
   }) => {
     if (input.ctl.cancelled || !pending.isCurrentAttempt(input.lease)) return;
+    if (input.error instanceof AppGoneError) {
+      settleAppGone(input.ctl, input.attemptId, input.lease);
+      return;
+    }
     const selected = isSelectedLiveAttempt(input.lease);
     const attempt = {
       attemptId: input.attemptId,

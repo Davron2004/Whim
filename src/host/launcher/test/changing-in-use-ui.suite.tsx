@@ -24,7 +24,7 @@ import { stateLine, tileAccessibilityLabel } from '../../ui/AppTile-states';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { RUN_SIGNAL_TICK_MS } from '../prompt-flow';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
-import { PendingPurgeStore } from '../pending-purge';
+import { PendingPurgeStore, completePurge } from '../pending-purge';
 import { failNativeStorageRemovalsWhen } from './native-storage';
 import { afterRelaunch } from './attempt-lifecycle-ui.suite';
 import { button, hostType, press, textOf, unmountScreen } from './react-screen';
@@ -93,6 +93,9 @@ const runOf = (rec: PendingBuildRecord) => [rec.id, rec.prompt, rec.state];
 /** The change's record says it failed. */
 const changeFailed = (kv: KVBackend) => new PendingBuildStore(kv).list().some((r) => r.state === 'failed');
 
+/** No run is being made: each record left, if any, has ended. */
+const nothingBuilding = (kv: KVBackend) => new PendingBuildStore(kv).list().every((r) => r.state !== 'building');
+
 /** What the orb reads after "Whim menu": its state, or '' at rest. */
 export const orbState = (tree: Tree) => String(orb(tree).props.accessibilityLabel).slice(COPY.orbMenuOpenLabel.length).replace(/^, /, '');
 
@@ -136,6 +139,40 @@ async function runBehindTip(tree: Tree, app: InstalledApp): Promise<void> {
   await press(button(tree, COPY.backLabel));
   await waitFor(() => showing(tree, MiniAppView) && !showing(tree, HistoryScreen), 'the app to open again');
   await paintRunningApp(tree);
+}
+
+/** A change landing for an app deleted meanwhile: where the app is, what the person is looking at, and
+ *  whether storage refuses to remove the change's record and journal (the leftover purge, D8). */
+const DELETED_APP_CASES = [
+  { where: 'at its tip', view: 'watching its Making page', leftover: false },
+  { where: 'at its tip', view: 'on Home', leftover: false },
+  { where: 'at its tip', view: 'on Home', leftover: true },
+  { where: 'behind its tip', view: 'watching its Making page', leftover: false },
+  { where: 'behind its tip', view: 'on Home', leftover: false },
+] as const;
+
+const deletedAppTitle = (c: (typeof DELETED_APP_CASES)[number]) =>
+  `changing in use: a change that lands after its app was deleted (${c.where}, ${c.view}${c.leftover ? ', storage refuses to remove its record' : ''}) `
+  + `leaves ${c.leftover ? 'nothing in sight and the next launch removes what is left' : 'no record, no journal and no entry'}, and the person is on Home without the app`;
+
+/** Storage saying it removed a change's record or journal and not doing it, while `on()` holds. */
+const refusePendingRemovals = (on: () => boolean) => failNativeStorageRemovalsWhen(({ id, key }) =>
+  (on() && id === 'whim.launcher' && (key.startsWith('pending:') || key.startsWith('journal:')) ? 'return-false' : undefined));
+
+/** The dropped change left nothing, or (storage refusing) is out of sight with its purge armed. */
+async function expectChangeDropped(h: Harness, kv: KVBackend, id: string, leftover: boolean): Promise<void> {
+  if (leftover) {
+    await waitFor(() => new PendingPurgeStore(kv).list().length === 1, 'the leftover to be armed');
+    await settle();
+    h.ok(kv.getString(`pending:${id}`) != null, 'precondition: storage kept the record');
+    h.eq(new PendingPurgeStore(kv).list().map((p) => [p.kind, p.id]), [['attempt', id]], 'its purge is armed, as a Discard arms one');
+    return;
+  }
+  await waitFor(() => nothingBuilding(kv), 'the change to settle');
+  await settle();
+  h.eq([new PendingBuildStore(kv).list().map(runOf), kv.getString(JOURNAL_KEY(id)) ?? null, new RunJournalStore(kv).getLastRun(id) ?? null],
+    [[], null, null], 'the change left no record, no journal and no report');
+  h.eq(new PendingPurgeStore(kv).list(), [], 'and nothing waiting to be purged');
 }
 
 export async function runChangingInUseUiTests(h: Harness): Promise<void> {
@@ -489,6 +526,90 @@ export async function runChangingInUseUiTests(h: Harness): Promise<void> {
       h.eq([sent.filter((r) => r.path === '/v1/generate').length, kv.getString(`pending:${id}`)], [1, kept], 'one request, one record, as they were');
     });
   });
+
+  for (const c of DELETED_APP_CASES) {
+    const { where, view, leftover } = c;
+    await h.test(deletedAppTitle(c), async () => {
+      const streams: ReturnType<typeof sseStream>[] = [];
+      const realNow = Date.now;
+      let refuse = false;
+      let clear = () => {};
+      try {
+        await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv }) => {
+          // `withLauncher` resets storage faults, so this one is set inside it.
+          clear = refusePendingRemovals(() => refuse && leftover);
+          const app = await openTipSplitter(tree);
+          await paintRunningApp(tree);
+          if (where === 'behind its tip') {
+            // A change lands a minute later (a version's time is its commit's, to the second), so
+            // there is an older version to go back to.
+            await makeChange(tree, streams);
+            Date.now = () => realNow() + 60_000;
+            await landChange(tree, kv, streams, 0);
+            await dismissToast(tree);
+            await runBehindTip(tree, app);
+          }
+          // A copy keeps the app's version history alive past its delete, so the delivery reaches
+          // the store's index check (the copy is the launcher's own `StoreAccess`, from History).
+          await openSheet(tree);
+          await press(button(tree, COPY.actionHistory));
+          await waitFor(() => showing(tree, HistoryScreen), 'History');
+          const access: StoreAccess = tree.root.findByType(HistoryScreen).props.access;
+          const copy = await access.fork(app, undefined, { data: 'fresh' });
+          await press(button(tree, COPY.backLabel));
+          await waitFor(() => showing(tree, MiniAppView) && !showing(tree, HistoryScreen), 'the app again');
+          await paintRunningApp(tree);
+          await makeChange(tree, streams);
+          const id = new PendingBuildStore(kv).list()[0]!.id;
+          if (view === 'watching its Making page') {
+            await openSheet(tree);
+            await press(button(tree, COPY.actionHistory));
+            await waitFor(() => showing(tree, HistoryScreen), 'History');
+            await TestRenderer.act(async () => tree.root.findByType(HistoryScreen).props.onChangeIt(app));
+            h.ok(showing(tree, MakingPage), 'precondition: the change’s Making page is on screen');
+          } else {
+            await openSheet(tree);
+            await press(button(tree, COPY.whimSheetBackToApps));
+            h.ok(showing(tree, HomeScreen) && !showing(tree, MiniAppView), 'precondition: Home, the app closed');
+          }
+          // The app's delete completes while its change is being made: its purge, armed, finished as
+          // when the Undo window ends. No menu reaches this state (D8), so it is simulated through
+          // `completePurge`.
+          const index = new AppIndex(kv);
+          const purges = new PendingPurgeStore(kv);
+          const entry = index.get(app.id)!;
+          purges.armApp(entry);
+          await TestRenderer.act(async () => completePurge(
+            { purges, index, access, pending: new PendingBuildStore(kv), journal: new RunJournalStore(kv) },
+            { kind: 'app', id: app.id, entry },
+          ));
+          const entries = index.list().map((e) => e.id);
+
+          refuse = true;
+          streams.at(-1)!.push(resultEvent(APP_NAME));
+          streams.at(-1)!.end();
+          await expectChangeDropped(h, kv, id, leftover);
+          h.eq([index.get(app.id), index.list().map((e) => e.id)], [null, entries], 'the deleted app did not come back, and no entry was made');
+          h.ok(showing(tree, HomeScreen) && !showing(tree, MakingPage) && !showing(tree, FailurePage) && !showing(tree, MiniAppView),
+            'the person is on Home: no Making page, no Failure page');
+          const shown = (home(tree).props.apps as InstalledApp[]).map((a) => a.id);
+          h.ok(!shown.includes(app.id) && shown.includes(copy.id), 'Home shows the copy and not the deleted app');
+          h.ok(toastOf(tree)?.action !== COPY.toastSeeWhy, 'no toast offers a failure to look at');
+          if (leftover) {
+            refuse = false;
+            await afterRelaunch(async (next) => {
+              h.eq([kv.getString(`pending:${id}`) ?? null, kv.getString(JOURNAL_KEY(id)) ?? null], [null, null], 'the next launch removed its record and journal');
+              h.eq([new PendingBuildStore(kv).list(), new PendingPurgeStore(kv).list()], [[], []], 'and left no order entry and nothing armed');
+              h.eq([index.get(app.id), next.root.findByType(HomeScreen).props.pending], [null, []], 'the deleted app is still gone and Home shows nothing of the change');
+            });
+          }
+        });
+      } finally {
+        clear();
+        Date.now = realNow;
+      }
+    });
+  }
 
   await h.test('changing in use: a failed change’s See why, pressed after a new change of the app started, opens nothing that could start it again', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];

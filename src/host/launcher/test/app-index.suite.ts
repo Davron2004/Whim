@@ -8,6 +8,7 @@ import { Harness } from './harness';
 import { MapKVBackend, assertNoGitLeak } from '../../version-store';
 import { AppIndex, InstalledApp } from '../app-index';
 import type { AppRecord } from '../../bridge/contract';
+import { recordsSince } from './log-ring';
 
 const REC = (id: string): AppRecord => ({ appId: id, name: id, manifest: { capabilities: [] } });
 
@@ -46,6 +47,22 @@ export async function runAppIndexTests(h: Harness): Promise<void> {
     idx.remove('b');
     h.eq(idx.list().map(x => x.id), ['a', 'c'], 'removed id is gone; survivors keep order');
     h.eq(idx.get('b'), null, 'removed record no longer readable');
+  });
+
+  await h.test('app-index put leaves an unreadable stored order as it is, writes the record and says so', async () => {
+    for (const raw of ['["a","b"', '{"a":1}']) {
+      const map = new Map<string, string>();
+      const idx = new AppIndex(new MapKVBackend(map));
+      idx.put(entry('a'));
+      idx.put(entry('b'));
+      map.set('order', raw);
+      const logged = recordsSince();
+      idx.put(entry('a', { name: 'A renamed' }));
+      idx.put(entry('c'));
+      h.eq(map.get('order'), raw, `${raw}: the unreadable order is still there for a repair to read`);
+      h.eq([idx.get('a')?.name, idx.get('c')?.id], ['A renamed', 'c'], `${raw}: the records are written`);
+      h.ok(logged().some((r) => r.level === 'warn' && r.message === 'app order left as it is: it is unreadable'), `${raw}: the skipped order write is logged`);
+    }
   });
 
   // §4 restart survival
