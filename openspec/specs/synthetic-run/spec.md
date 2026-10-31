@@ -7,7 +7,9 @@ from trusted vantages (nonce-authenticated frames plus CDP), runs the real capab
 gate/dispatcher/registry over an ephemeral per-run engine, and performs a bounded interaction
 sweep with nav-aware screen coverage. Every failure-grade signal is one the candidate cannot
 forge; every watchdog outcome is an explicitly named diagnostic, never a silent catch.
+
 ## Requirements
+
 ### Requirement: One candidate in, one deterministic run report out
 
 The harness SHALL expose a library entry point that accepts one candidate TypeScript source string (the H1b bundle contract: single file importing only `vc-sdk`) plus options (budgets, concurrency handle), and returns a run report containing: the diagnostics list, the containment verdict, per-stage timings (build, boot, mount→paint, sweep, per-screen), the syscall/cue invocation trace, the screens declared, visited and cold-mounted, the sweep's counts (actions taken, fingerprints blocked, actions failed), and the applied budget values. Given the same candidate source and options, the sweep SHALL be deterministic: fixed canonical input values, a fixed group-then-sorted-fingerprint action order, no random or wall-clock-dependent branching in the driver. The one exception is a control lying under a toast, which is reached or not according to when the toast leaves.
@@ -151,7 +153,9 @@ A deferred element SHALL NOT be marked visited, SHALL NOT count toward the per-s
 
 When unvisited fingerprints remain on a screen and none passes the test, the sweep SHALL dismiss a `Modal` backdrop that does pass once more, counted as an action, but only if it acted on at least one fingerprint since its previous dismissal on that screen. Otherwise the screen's sweep ends. Every fingerprint that was enumerated and never acted on by the end of the run SHALL be counted in the report as blocked, except one retired by the per-path limit. The count is of fingerprints, so a control whose label changed before it was acted on counts once under each label it showed and was not acted on.
 
-A toast is the one cover that leaves by itself. When unvisited fingerprints remain on a screen and none passes the test, the sweep SHALL enumerate and pick once more before it ends the screen's sweep, spending no action, and if the SDK's toast host is showing it SHALL first wait for the toast to leave, up to five seconds. The second pick happens whether or not a toast was seen, so a toast that left between the test and the check cannot end the screen early. The sweep SHALL wait for a toast at most twice in one run, counted and not timed, so toasts cannot spend the total budget and the bound never depends on the clock. Which controls a toast still covers when the sweep looks does depend on when the toast leaves, so whether a toast-covered control is reached is the one part of the action sequence that can differ between two runs of the same candidate.
+After it dismisses a `Modal` backdrop, the sweep SHALL wait until that Modal has left, meaning the dismissed backdrop no longer receives a click at its action point, up to five seconds, before it enumerates again. The wait spends no action and is taken once per dismissal; a dismissal is itself a counted action, so the total wait is bounded by the per-screen action cap and never by the clock. A control is booked as blocked by a `Modal` only if that Modal is still open after the wait, so a close that lands late on a loaded machine cannot end the screen's sweep with a reachable control unpressed.
+
+A toast leaves by itself, and so does a `Modal` whose close the sweep has just asked for. When unvisited fingerprints remain on a screen and none passes the test, the sweep SHALL enumerate and pick once more before it ends the screen's sweep, spending no action, and if the SDK's toast host is showing it SHALL first wait for the toast to leave, up to five seconds. The second pick happens whether or not a toast was seen, so a toast that left between the test and the check cannot end the screen early. The sweep SHALL wait for a toast at most twice in one run, counted and not timed, so toasts cannot spend the total budget and the bound never depends on the clock. Which controls a toast still covers when the sweep looks does depend on when the toast leaves, so whether a toast-covered control is reached is the one part of the action sequence that can differ between two runs of the same candidate.
 
 An action that passes the test and still fails in the browser driver SHALL be counted in the report as a failed action, and its fingerprint marked visited. No action failure SHALL be discarded without a count.
 
@@ -159,6 +163,11 @@ An action that passes the test and still fails in the browser driver SHALL be co
 
 - **WHEN** one button opens a `Modal` and a second button on the same screen lies under the Modal's scrim when the sweep picks it
 - **THEN** the sweep acts on the Modal's own controls, dismisses the Modal, then presses the second button, and the report counts zero failed actions
+
+#### Scenario: A Modal that closes late does not strand the control beneath it
+
+- **WHEN** one button opens a `Modal` whose close handler takes 2.5 seconds to close it, and a second button lies under the Modal's scrim
+- **THEN** after dismissing the backdrop the sweep waits for the Modal to leave, presses the second button, and the report counts zero blocked fingerprints and zero failed actions
 
 #### Scenario: A disabled control is never clicked
 
