@@ -1418,7 +1418,7 @@ networking in native code), so the WebView itself refuses every network load.
   restricts the bridge's script injection, iOS only); a dead proxy via
   `WKWebsiteDataStore.proxyConfigurations` (iOS 17+, still opens a connection).
 
-### 75. One design system for the shell and every app: ember, ten cool tints, system type, real motion `[DECIDED — owner-ruled design record 2026-10-09 (Phases A–C1, critique 27 ACCEPT / 6 PARTIAL / 0 REJECT); openspec: design-system-v1]`
+### 75. One design system for the shell and every app: ember, ten cool tints, system type, real motion `[DECIDED — owner-ruled design record 2026-10-09 (Phases A–C1, critique 27 ACCEPT / 6 PARTIAL / 0 REJECT); openspec: design-system-v1; owner checks (task 24.7) PASS 2026-10-31, no token adjustments]`
 
 **Decided.** `docs/design/system.md` is the design system for the launcher and for every generated app,
 built from one token module (`src/design/tokens.ts`) that the RN shell, the SDK theme and the runtime page
