@@ -340,20 +340,12 @@ export function failPendingBuild(
   pending.setFailed(id, pendingFailure(reason, diagnostics, remedy));
 }
 
-/** What reopening a `failed`/`interrupted` record shows. A record an `update` fallback ended opens
- *  the update screen with its notice while this build is still at or below the protocol level it
- *  ended on; the notice is the record's reason unless that is the phone's own update line, which
- *  stands in for a fallback that sent none (the live screen then showed its standard body). Every
- *  other record, and that one once the build is past its level, opens the failure screen. */
-export type ReopenedRecord = { readonly kind: 'update'; readonly notice?: string } | { readonly kind: 'failure' };
-
-export function reopenedRecord(rec: PendingBuildRecord, protocolLevel: number): ReopenedRecord {
+/** Whether a record an `update` fallback ended still needs that update: this build is at or below
+ *  the protocol level it ended on. Its Failure page then reads "needs a newer Whim"; once the build
+ *  is past that level it reads as any other failure, with Try again. */
+export function stillNeedsUpdate(rec: PendingBuildRecord, protocolLevel: number): boolean {
   const remedy = rec.failure?.remedy;
-  if (remedy?.kind === 'update' && protocolLevel <= remedy.protocolLevel) {
-    const reason = rec.failure?.reason;
-    return { kind: 'update', ...(reason && reason !== COPY.updateRequiredLine ? { notice: reason } : {}) };
-  }
-  return { kind: 'failure' };
+  return remedy?.kind === 'update' && protocolLevel <= remedy.protocolLevel;
 }
 
 /**

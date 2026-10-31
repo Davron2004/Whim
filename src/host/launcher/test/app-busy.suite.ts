@@ -226,7 +226,7 @@ export async function runAppBusyTests(h: Harness): Promise<void> {
     h.eq(completed, [], 'the end of an undone window purges nothing');
 
     windows.armApp(app);
-    windows.armAttempt('draft');
+    windows.armAttempt({ id: 'draft', createdAt: 1 });
     h.eq(completed, [], 'arming alone purges nothing: no clock runs a window out');
     const running = windows.finish('app', 'timer');
     h.eq(completed, ['app:timer'], 'the window’s end runs the purge, and only that one');

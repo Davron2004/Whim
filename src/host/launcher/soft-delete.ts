@@ -14,7 +14,7 @@
  * applies.
  */
 import type { InstalledApp } from './app-index';
-import type { PendingPurgeStore, PurgeKind, PurgeMarker } from './pending-purge';
+import type { PendingPurgeStore, PurgedRun, PurgeKind, PurgeMarker } from './pending-purge';
 
 export interface PurgeWindowDeps {
   purges: Pick<PendingPurgeStore, 'armApp' | 'armAttempt' | 'cancel'>;
@@ -44,10 +44,11 @@ export class PurgeWindows {
     this.start({ kind: 'app', id: entry.id, entry });
   }
 
-  /** Discard: hide the pending-build record `id`; it is purged when `finish` ends its window. */
-  armAttempt(id: string): void {
-    this.deps.purges.armAttempt(id);
-    this.start({ kind: 'attempt', id });
+  /** Discard: hide the pending-build run `run`; it is purged when `finish` ends its window, unless a
+   *  later run holds its id by then (`completePurge`). */
+  armAttempt(run: PurgedRun): void {
+    this.deps.purges.armAttempt(run);
+    this.start({ kind: 'attempt', id: run.id, createdAt: run.createdAt });
   }
 
   /** Undo. True when the purge was cancelled; false when none was open or it is already running. */

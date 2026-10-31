@@ -20,7 +20,8 @@ import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import type { AppInfo } from '../app-info';
 import type { SignificantUpdateSheet } from '../age-check';
 import { resetNativeStorage } from './native-storage';
-import { captureTimeouts, renderScreen, unmountScreen } from './react-screen';
+import { captureTimeouts, isHost, renderScreen, unmountScreen } from './react-screen';
+import { COPY } from '../copy';
 import { testAppInfo, streamResponse } from './client-fixtures';
 import { tileNodeMock } from './home-rig';
 
@@ -64,6 +65,9 @@ export interface LauncherSetup {
   olderServer?: boolean;
   /** Answers every request except the health routes. */
   server: (request: SentRequest) => Response | Promise<Response>;
+  /** Called on every commit of the shell, so a test can see each frame React showed, including
+   *  one replaced before the test could look. */
+  onCommit?: (tree: Tree) => void;
 }
 
 export interface Launcher {
@@ -169,15 +173,19 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
   try {
     const locale = setup.locale ?? 'en-US';
     const ageSignal = setup.ageSignal ?? (() => Promise.resolve('unavailable'));
-    tree = await renderScreen(
+    const root = (
       <LauncherRoot
         appInfo={setup.appInfo ?? testAppInfo}
         deviceLocale={() => locale}
         ageSignal={ageSignal}
         significantUpdate={setup.significantUpdate}
-      />,
-      { createNodeMock: tileNodeMock },
+      />
     );
+    const { onCommit } = setup;
+    const committed = onCommit
+      ? <React.Profiler id="launcher" onRender={() => { if (tree) onCommit(tree); }}>{root}</React.Profiler>
+      : root;
+    tree = await renderScreen(committed, { createNodeMock: tileNodeMock });
     await body({ tree, kv, sent, probes, probeUrls, paths: () => sent.map((r) => r.path), clock });
   } finally {
     if (tree) await unmountScreen(tree);
@@ -242,6 +250,15 @@ export function onHome(tree: Tree): boolean {
 /** Home lists an installed app with this name. */
 export function hasInstalled(tree: Tree, name: string): boolean {
   return tree.root.findByType(HomeScreen).props.apps.some((app: InstalledApp) => app.name === name);
+}
+
+/** The Failure page's Try again, worded as its kind words it: "Try again as it is" where rewording
+ *  could help, "Try again" where it could not. */
+export function failureTryAgain(tree: Tree): TestRenderer.ReactTestInstance {
+  const labels: readonly string[] = [COPY.actionTryAgain, COPY.failureTryAgainAsIs];
+  const found = tree.root.findAll((node) => isHost('Pressable')(node) && labels.includes(String(node.props.accessibilityLabel)));
+  if (found.length !== 1) throw new Error(`Expected one Try again on the failure page, got ${found.length}`);
+  return found[0];
 }
 
 /** A request to this path was sent. */

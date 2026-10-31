@@ -99,8 +99,9 @@ function lastFailure(journal: readonly RunJournalEntry[]): RunJournalEntry['fail
 /** How many repair attempts this journal actually recorded — one per `repair` stage entry, never
  *  a number invented for a run that never reached repair. A stage is journaled on its `start` edge
  *  only (`build-lifecycle#journalStreamEvent`), so this counts attempts, not stage edges, and
- *  agrees with the shell's own `repair` tally. */
-function repairAttempts(journal: readonly RunJournalEntry[]): number {
+ *  agrees with the shell's own `repair` tally — which is why the Failure page reopened from a tile
+ *  reads its tries from here (`failure-kind.ts`). */
+export function repairAttemptsIn(journal: readonly RunJournalEntry[]): number {
   return journal.filter((entry) => entry.kind === 'stage' && entry.stage === 'repair').length;
 }
 
@@ -155,7 +156,7 @@ export function runTimelineRows(
     if (diagnostics != null) {
       rows.push({ key: 'dev:diagnostics', kind: 'dev', text: `${DIAGNOSTICS_COUNT_LABEL}: ${diagnostics}` });
     }
-    rows.push({ key: 'dev:repairs', kind: 'dev', text: `${REPAIR_ATTEMPTS_COUNT_LABEL}: ${repairAttempts(journal)}` });
+    rows.push({ key: 'dev:repairs', kind: 'dev', text: `${REPAIR_ATTEMPTS_COUNT_LABEL}: ${repairAttemptsIn(journal)}` });
   }
 
   return rows;

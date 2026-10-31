@@ -58,8 +58,6 @@ export const COPY = {
   actionDiscardAll: 'Discard all',
   actionUpdateWhim: 'Update Whim',
   cancel: 'Cancel',
-  /** The build screen's own stop control (the making flow moves it; the Home menu says `actionStop`). */
-  actionCancelBuild: 'Cancel build',
   // ── tile states (system.md §3.2) ────────────────────────────────────────────
   tileMaking: 'Making…',
   tileQueued: 'Waiting…',
@@ -95,11 +93,11 @@ export const COPY = {
   customizeSearchLabel: 'Search glyphs',
   customizeSearchEmpty: 'No glyph has that name.',
   customizeReset: 'Use the original tile',
-  /** What an `interrupted` pending-build record's failure screen says: it carries no failure
-   *  payload, because nothing failed — the process that owned the stream went away. Stated
-   *  plainly rather than borrowed from a generic stream-error string, which would claim a failure
-   *  that never happened. */
-  interruptedBuildReason: 'This build stopped when the app closed. You can try it again.',
+  /** What an `interrupted` pending-build record's failure page says (system.md §8 "Stopped when
+   *  Whim closed"): it carries no failure payload, because nothing failed — the process that owned
+   *  the stream went away. Stated plainly rather than borrowed from a generic stream-error string,
+   *  which would claim a failure that never happened. */
+  interruptedBuildReason: 'Making stopped when Whim closed.',
   backLabel: 'Back',
   /** The shell's surfaces (design-system-v1 11.1–11.3): a sheet's close control, a toast's
    *  dismiss action for screen readers, a text field's clear button. */
@@ -149,26 +147,45 @@ export const COPY = {
   workingClarify: 'Thinking about what to ask',
   workingPlan: 'Writing the plan',
   workingPlanEdit: 'Writing up the change',
-  buildTitle: 'Making it',
-  /** The edit flow's build title — copy only; `BuildStep.tsx` is placed by another task. */
-  buildTitleEdit: 'Changing it',
-  buildSubtitle: 'This takes about a minute. You can leave and come back.',
+
+  // ── the making sheet: Making, Ready, Failure (design-system-v1 17.x; system.md §8, §9) ──────
   buildStepReading: 'Reading your plan',
   buildStepWriting: 'Writing the app',
   buildStepChecking: 'Checking it runs safely',
   buildStepInstalling: 'Putting it on your home screen',
-  buildLeaveRunning: 'Leave it running',
-  /** The build screen while every build slot is taken and this one is first in line (beta-1 D8);
-   *  further back, `buildQueuedLine` counts the builds ahead. */
-  buildQueuedNext: 'You’re next in line.',
-  /** Opens the run timeline for the attempt on screen. */
-  buildDetails: 'Details',
+  /** A step's state as a screen reader hears it after the step's name. */
+  makingStepDone: 'done',
+  makingStepCurrent: 'in progress',
+  makingStepWaiting: 'not started',
+  /** The Making page's time lines (system.md §8), chosen by elapsed time against `MAKING_TIMES`. */
+  makingTimeUsual: 'Usually 1–2 min. You can leave; it keeps going.',
+  makingTimeLonger: 'Taking longer than most. Still going.',
+  makingTimeSlow: 'This one’s slow. I’ll keep at it; you can leave.',
+  /** First in line; further back, `makingQueueLine` counts the runs ahead. */
+  makingQueuedNext: 'Waiting for a free spot. You’re next.',
+  readyOnHome: 'It’s on your home screen.',
+  readyOpen: 'Open it',
+  readyDone: 'Done',
+  failureTitle: 'Couldn’t make this',
+  failureChangeDescription: 'Change the description',
+  failureTryAgainAsIs: 'Try again as it is',
+  /** The person stopped the run (Stop on the Making page or the tile's menu). */
+  failureStopped: 'You stopped making this.',
+  /** A run only a newer Whim can finish (system.md §8). */
+  failureNeedsUpdate: 'Finishing this needs the latest Whim.',
+  /** The stream dropped before its end (#151): never a suggestion to reword. */
+  failureConnection: 'I lost the connection to the server partway through.',
+  failureOfflineNotice: 'Offline. Try again turns on when you’re back online.',
+  failureOtherAppsUntouched: 'Your other apps are untouched',
+  failureCurrentVersionWorks: 'Your current version still works',
+  /** A plan request no server answered (system.md §8: a connection problem before anything was
+   *  made is not a failure, the page stays with Try again). */
+  planOffline: 'I couldn’t reach the server. Check your connection, then try again.',
   // ── the run timeline (generation-observability, design D7) ──────────────────
-  /** The timeline's heading, on the build screen's details view and on the failure screen. */
+  /** The timeline's heading: the failure page's collapsed row. */
   timelineTitle: 'What happened',
   /** No journal survived for this attempt — the section says so rather than inventing a run. */
   timelineEmpty: 'Nothing was recorded for this attempt.',
-  timelineClose: 'Close',
   /** A stage the attempt is still in, on the live build's timeline — no duration is invented for it. */
   timelineStillGoing: 'still going',
   /** A stage an attempt that has ended was still in when its journal stops (the app closed mid-build,
@@ -182,9 +199,6 @@ export const COPY = {
   timelineStageCheck: 'Checked it',
   timelineStageRun: 'Tried it out',
   timelineStageRepair: 'Fixed what didn’t work',
-  doneBody: 'It’s on your home screen. Open it, or tell Whim what to change.',
-  doneOpen: 'Open it',
-  doneBackToApps: 'Back to your apps',
 
   // ── history (4a) ────────────────────────────────────────────────────────────
   actionHistory: 'History',
@@ -237,8 +251,6 @@ export const COPY = {
   reportScreenTitle: 'Report a problem',
   /** The report sheet's title over a running app. */
   reportSheetTitle: 'Report this app',
-  /** The done step's plain-text entry point, below its two fixed destinations. */
-  doneReportThisApp: 'Report this app',
   /** The history header's entry point — reports the version the user is currently on. */
   historyReportAction: 'Report',
   reportReasonEyebrow: 'What went wrong?',
@@ -287,19 +299,11 @@ export const COPY = {
   appErrorTitle: 'This app ran into a problem',
   appErrorBody: 'It stopped and can’t carry on right now. Try again, or go back to your apps.',
   appErrorRetry: 'Try again',
-  failureTitle: 'Couldn’t build this app',
   // What a delivered bundle that defines no app reads as (bundle-validity guard): the generation
   // came back with nothing usable, so it is refused at delivery rather than stored and only
   // discovered broken the next time the app is opened.
   failureEmptyBuild: 'The app came back empty. Try again.',
   failureHintsTitle: 'What to try',
-  failureRephrase: 'Try rephrasing',
-  // The failure screen's two exits are deliberately NOT interchangeable: `failureBack` leaves the
-  // attempt exactly where it is, `failureDismiss` deletes it. A destructive action is never
-  // labelled as plain navigation (`prompt-flow` "Failure screens hydrate from the persisted
-  // failure payload").
-  failureBack: 'Back to your apps',
-  failureDismiss: 'Discard this attempt',
   // The recoverable error screen the launcher's screen boundary renders (obs-v1) — plain
   // English, never the thrown error itself.
   screenErrorTitle: 'This screen stopped working',
@@ -309,11 +313,6 @@ export const COPY = {
   // without a declared exit fails the fast gate") — a screen that throws on every render would
   // otherwise be a dead end with only `Try again` to press.
   screenErrorBack: 'Back to your apps',
-  // The `3b` failure checklist (obs-v1) — the two rows the screen writes itself. Every other row
-  // is a diagnostic's own `hint`, so no mechanism vocabulary can reach the panel.
-  failureRecoveredTitle: 'Fixed it',
-  failureRowLastVersionWorks: 'The version you already had still works and is still installed',
-  failureRowSayItDifferently: 'Describing it differently usually gets past this',
 
   // ── AI-data consent (ai-data-consent, consent version 2; legal-surface-v2) ───
   // The consent screen's disclosure, shared verbatim between ask and review mode (design D5) —
@@ -867,72 +866,51 @@ export function legalLanguageName(language: LegalLanguage): string {
   return language === 'fr' ? 'Français' : 'English';
 }
 
-/** The done step's title: "<App name> is ready". */
+/** "<App name> is ready": the toast when a run delivers with the making sheet closed. */
 export function readyTitle(name: string): string {
   return `${name} is ready`;
+}
+
+/** The person's words in quotes, as the Plan, Making and Ready pages show them: trimmed, every run
+ *  of whitespace one space (dictation leaves a leading space; a typed line break is not a quote's). */
+export function quotedWords(text: string): string {
+  return `“${text.trim().replace(/\s+/g, ' ')}”`;
+}
+
+/** The Making page's headline: "Making Pour timer", or "Changing Water Counter". */
+export function makingTitle(name: string, changing: boolean): string {
+  return changing ? `Changing ${name}` : `Making ${name}`;
+}
+
+/** The row a `repair` adds under the check: "Fixing a problem · try 2 of 3". */
+export function makingRepairLine(attempt: number, of: number): string {
+  return `Fixing a problem · try ${attempt} of ${of}`;
+}
+
+/** The run's place in line, from the `queued` event's `position` (the runs ahead plus one). */
+export function makingQueueLine(position: number): string {
+  const ahead = position - 1;
+  return ahead < 1 ? COPY.makingQueuedNext : `${ahead} ahead of you.`;
+}
+
+/** No byte for `seconds` (the stall threshold): said as it is, with the run still going. */
+export function makingStallLine(seconds: number): string {
+  return `No word from the server for ${seconds} s. Still waiting.`;
+}
+
+/** The "couldn't run" failure (system.md §8): the tries the run used, and the rewording hint only
+ *  where rewording can help. */
+export function failureCouldntRunLine(tries: number, rewordingHelps: boolean): string {
+  const tried = `I tried ${tries} times and couldn’t get it to run.`;
+  return rewordingHelps ? `${tried} Describing it differently often helps.` : tried;
 }
 
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
 
-/** Elapsed wall time as `m:ss`, independent of `prompt-flow.ts#elapsedLabel` — the same
- *  standalone-arithmetic discipline `timelineDurationLabel` below keeps, and for the same reason:
- *  `prompt-flow.ts` imports `COPY` from HERE, so the reverse import would be a cycle. */
-function livenessElapsedLabel(startedAt: number, now: number): string {
-  const totalSeconds = Math.max(0, Math.floor((now - startedAt) / MS_PER_SECOND));
-  const minutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE);
-  const seconds = totalSeconds % SECONDS_PER_MINUTE;
-  return `${minutes}:${String(seconds).padStart(2, '0')}`;
-}
-
-/**
- * The build screen's ONE liveness line (build-liveness B1/B3, replacing the old "quiet for Ns"
- * heartbeat the user reported as misleading — see the module-level rationale in `prompt-flow.ts`'s
- * `livenessOf`). `s`/`now` are typed structurally rather than importing `RunSignals` from
- * `prompt-flow.ts` — this module imports nothing else, the same discipline `timelineDurationLabel`
- * already keeps. `liveness` is the bare literal union, as `serverProbeLabel`'s parameter is, and so is `phase` (`prompt-flow.ts#livenessPhaseOf`): in line, the line
- * says so and counts the time in line; while the app is checked, nothing is being written, so it
- * names the checks rather than a reply. Once the build's turn has come, its clock reads from then
- * (`turnCameAt`), never from when it joined the line.
- *
- * No word here is "model" or "server" (`product-verbs.suite.ts` "the launcher surface speaks
- * product verbs only" — mechanism words, not merely git vocabulary, are the ones this line has to
- * dodge): a wait that is thinking reads as "thinking", never "the model is thinking".
- */
-export function buildLivenessLine(
-  liveness: 'writing' | 'thinking' | 'connected' | 'stalled',
-  s: {
-    readonly startedAt: number;
-    readonly turnCameAt?: number;
-    readonly aggregates: { readonly chars: number };
-    readonly lastFrameAt: number;
-  },
-  now: number,
-  phase: 'line' | 'model' | 'checking' = 'model',
-): string {
-  if (liveness === 'stalled') {
-    const quietSeconds = Math.max(0, Math.floor((now - s.lastFrameAt) / MS_PER_SECOND));
-    return `Nothing has arrived for ${quietSeconds}s`;
-  }
-  // In line, the clock is the time in line; once the build's turn comes, it starts over.
-  if (phase === 'line') return `Waiting in line · ${livenessElapsedLabel(s.startedAt, now)}`;
-  const clock = livenessElapsedLabel(s.turnCameAt ?? s.startedAt, now);
-  // Checking writes nothing to wait for: the connection is up and the checks are running. Asked
-  // first, because the writing and thinking windows outlast the stage that filled them by seconds.
-  if (phase === 'checking') return `Running the checks · ${clock}`;
-  if (liveness === 'writing') {
-    // en-CA, not the phone's locale (#89): this is English copy, and a French-locale phone would
-    // otherwise render the count with a non-breaking space and no comma (e.g. "1 204").
-    return `Writing · ${s.aggregates.chars.toLocaleString('en-CA')} characters`;
-  }
-  if (liveness === 'thinking') return `Thinking it through · ${clock}`;
-  return `Connected, waiting for a reply · ${clock}`;
-}
-
 // ── the run timeline's lines (generation-observability, design D7) ───────────
 // The timeline's rows ARE copy — which words a stage reads as, how a duration is written — so they
-// live here beside the checklist rows, in the one module the launcher's Node suite can import.
-// `MS_PER_SECOND`/`SECONDS_PER_MINUTE` are declared above, alongside `livenessElapsedLabel`.
+// live here, in the one module the launcher's Node suite can import.
 
 const TENTHS_PER_SECOND = 10;
 
@@ -975,14 +953,6 @@ export function timelineGrowthLine(chars: number, thinkingChars = 0): string {
   return `${written} after thinking through ${thinking}`;
 }
 
-/** The build screen's place in line (beta-1 D8), from the `queued` event's `position` — the builds
- *  ahead plus one: "You’re next in line." at the front, otherwise how many builds are ahead. */
-export function buildQueuedLine(position: number): string {
-  const ahead = position - 1;
-  if (ahead < 1) return COPY.buildQueuedNext;
-  return ahead === 1 ? 'You’re in line, 1 build ahead.' : `You’re in line, ${ahead} builds ahead.`;
-}
-
 /** The button the clarify prompt (`server/src`) still quotes for a limit's alternative. The plan
  *  page's own action is `COPY.planMakeInstead` and shows the alternative in a card; the server
  *  test pins that the prompt asks for words that read right here, so the prompt and this stay one
@@ -1017,12 +987,6 @@ export function planMakeHeader(editing: boolean): string {
   return editing ? COPY.planMakeHeaderEdit : COPY.planMakeHeader;
 }
 
-/** The build step's title (copy only — `BuildStep.tsx` is out of this change's boundary; another
- *  task wires this in). */
-export function buildTitle(editing: boolean): string {
-  return editing ? COPY.buildTitleEdit : COPY.buildTitle;
-}
-
 /** The plan skeleton's liveness phrase (`WorkingLine`): what the wait says while the rewrite is
  *  still in flight. */
 export function workingPlanPhrase(editing: boolean): string {
@@ -1034,9 +998,8 @@ export function composerContinueLine(preview: string): string {
   return `Continue “${preview}”`;
 }
 
-/** The shared "you are changing this app" eyebrow line, shown above every gated step's headline
- *  while `editing` is present (`flow-chrome.tsx#EditingEyebrow`). Sentence case here; the eyebrow
- *  style itself renders it uppercase. */
+/** The shared "you are changing this app" line, shown beside the app's tile above the Describe and
+ *  Plan headlines while `editing` is present. */
 export function editingEyebrow(name: string): string {
   return `Changing ${name}`;
 }
@@ -1082,64 +1045,9 @@ export function restoreSheetBody(version: string, losing = 'the last few changes
   return `Everything after ${version} comes off — including ${losing}. Your saved data stays. You can come forward again from this list.`;
 }
 
-// ── the `3b` failure checklist and attempt row (obs-v1) ──────────────────────
-// The failure screen's rows ARE copy: which table strings and which diagnostic hints become the
-// checklist, in what order. It lives here rather than in `FailureScreen.tsx` for the same reason
-// `home-grid.ts` holds the grid arithmetic — this module imports no `react-native`, so the
-// composition is exercised under Node (`test/failure-screen.suite.ts`) instead of grepped for.
-
-/** A checklist row's outcome (design `3b`, html:943): a completed check, a failed check, or a
- *  muted advisory line. The design's fourth kind, `run`, belongs to the in-flight build states,
- *  which this terminal screen never shows. */
-export type FailureRowKind = 'done' | 'bad' | 'wait';
-
-/** One checklist row. `text` is ALWAYS a diagnostic's `hint` or a `COPY` string — a diagnostic's
- *  `kind`, `symbol` or `message` never reaches it. */
-export interface FailureRow {
-  readonly kind: FailureRowKind;
-  readonly text: string;
-}
-
-/**
- * The terminal failure state's rows (design `3b` RP[5]): the reassurance that the last working
- * version survived — OMITTED when the app has none, because there is nothing honest to reassure
- * about — then one row per diagnostic hint, then the advisory line, OMITTED when rewording can't
- * get past the failure (`rephraseHelps: false`: a refusal, a message this build can't use).
- */
-export function failureChecklistRows(input: {
-  readonly diagnostics: readonly { hint: string }[];
-  readonly hasWorkingVersion: boolean;
-  readonly rephraseHelps?: boolean;
-}): readonly FailureRow[] {
-  const rows: FailureRow[] = [];
-  if (input.hasWorkingVersion) rows.push({ kind: 'done', text: COPY.failureRowLastVersionWorks });
-  for (const diagnostic of input.diagnostics) rows.push({ kind: 'bad', text: diagnostic.hint });
-  if (input.rephraseHelps !== false) rows.push({ kind: 'wait', text: COPY.failureRowSayItDifferently });
-  return rows;
-}
-
-/** How many repair attempts a run is permitted — one attempt-row segment each (design `3b`). */
+/** How many repair tries a run is permitted: the server's own bound (`repairAttempts`), which the
+ *  wire does not carry. The repair row's "of 3" and the "I tried 3 times" failure read from it. */
 export const REPAIR_ATTEMPT_LIMIT = 3;
-
-/** A segment of the attempt row: an attempt already spent, the one the run was on when it ended,
- *  or one that was never reached. */
-export type AttemptSegment = 'spent' | 'current' | 'remaining';
-
-/** The attempt row, one segment per permitted attempt (html:1001): the attempts the device
- *  actually observed are spent, the next one is the current one, the rest were never reached. */
-export function attemptSegments(observed: number, limit = REPAIR_ATTEMPT_LIMIT): readonly AttemptSegment[] {
-  const spent = Math.max(0, Math.min(Math.floor(observed), limit));
-  return Array.from({ length: limit }, (_unused, i) => {
-    if (i < spent) return 'spent';
-    return i === spent ? 'current' : 'remaining';
-  });
-}
-
-/** The attempt row's label — how many attempts were used, never how many are left. */
-export function attemptsUsedLabel(observed: number): string {
-  const spent = Math.max(0, Math.floor(observed));
-  return spent === 1 ? 'Tried once' : `Tried ${spent} times`;
-}
 
 /** The toast after a restore: "You're on v4 now". */
 export function restoredToast(version: string): string {

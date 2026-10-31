@@ -11,7 +11,7 @@
 import React, { useEffect, useId, useRef } from 'react';
 import { StyleSheet } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated';
-import Svg, { Circle, Defs, Path, RadialGradient, Rect, Stop } from 'react-native-svg';
+import Svg, { Circle, Defs, LinearGradient, Path, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { GLOW } from '../../design/tokens';
 import { EMBER_PATH, EMBER_VIEWBOX } from '../../design/icons/ember';
 import { timing } from './motion';
@@ -146,10 +146,14 @@ export interface AmbientLightProps {
   /** The same stream activity the ember shows; 0 when nothing streams (still and dim). Render no
    *  AmbientLight when nothing is being made. */
   activity: number;
+  /** Where the surface the light sits on cuts it off (a scroll view's top edge, `at` down the box)
+   *  and that surface's colour: the light fades into it, from none at the cut to whole by its centre,
+   *  so the cut shows no edge. */
+  cut?: { at: number; backdrop: string };
 }
 
 /** The ember's ambient light: a soft radial glow behind the making header and under the composer. */
-export function AmbientLight({ width, height, activity }: Readonly<AmbientLightProps>) {
+export function AmbientLight({ width, height, activity, cut }: Readonly<AmbientLightProps>) {
   const t = useTokens();
   const target = ambientOpacity(t.reduceMotion ? 1 : activity);
   const opacity = useSharedValue(target);
@@ -158,6 +162,7 @@ export function AmbientLight({ width, height, activity }: Readonly<AmbientLightP
   }, [opacity, target, t.reduceMotion]);
   const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
   const id = useSvgId('ambient');
+  const fadeId = useSvgId('ambient-fade');
   return (
     <Animated.View style={[{ width, height }, style]} pointerEvents="none" {...HIDDEN}>
       <Svg width={width} height={height}>
@@ -167,8 +172,15 @@ export function AmbientLight({ width, height, activity }: Readonly<AmbientLightP
             <Stop offset="0.55" stopColor={GLOW.core} stopOpacity={AMBIENT_STOPS.mid} />
             <Stop offset="1" stopColor={GLOW.core} stopOpacity={0} />
           </RadialGradient>
+          {cut ? (
+            <LinearGradient id={fadeId} x1={0} y1={cut.at} x2={0} y2={height / 2} gradientUnits="userSpaceOnUse">
+              <Stop offset="0" stopColor={cut.backdrop} stopOpacity={1} />
+              <Stop offset="1" stopColor={cut.backdrop} stopOpacity={0} />
+            </LinearGradient>
+          ) : null}
         </Defs>
         <Rect x={0} y={0} width={width} height={height} fill={`url(#${id})`} />
+        {cut ? <Rect x={0} y={0} width={width} height={height / 2} fill={`url(#${fadeId})`} /> : null}
       </Svg>
     </Animated.View>
   );

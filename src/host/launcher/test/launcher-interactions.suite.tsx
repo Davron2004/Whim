@@ -5,7 +5,7 @@ import LauncherRoot from '../LauncherRoot';
 import HomeScreen from '../HomeScreen';
 import { DescribePage } from '../DescribePage';
 import { PlanPage } from '../PlanPage';
-import BuildStep from '../BuildStep';
+import MakingPage from '../MakingPage';
 import SettingsScreen from '../SettingsScreen';
 import AdvancedScreen from '../AdvancedScreen';
 import { COPY } from '../copy';
@@ -69,7 +69,8 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => tree!.root.findByType(DescribePage).props.onContinue());
       let attempt!: Promise<void>;
       await TestRenderer.act(async () => { attempt = tree!.root.findByType(PlanPage).props.onMake(); });
-      await TestRenderer.act(async () => tree!.root.findByType(BuildStep).props.onBack());
+      h.ok(tree!.root.findAllByType(MakingPage).length === 1, 'the making page is up');
+      await androidBack(tree!);
       await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onSettings());
       const advanced = async () => {
         await TestRenderer.act(async () => tree!.root.findByType(SettingsScreen).props.onOpenAdvanced());

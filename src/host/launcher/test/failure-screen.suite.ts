@@ -1,41 +1,44 @@
 /**
- * The `3b` failure screen (obs-v1 chain-D; prompt-flow "Failure is shown honestly, never as a
- * crash", app-launcher "The mini-app container styles its failure state from tokens").
+ * The Failure page (design-system-v1 17.3; prompt-flow "Failure is shown by kind, honestly, never as
+ * a crash", "Details of a run are reachable from its tile and its failure"; system.md §8, §9).
  *
- * The screen's copy decisions (checklist rows, attempt segments, the attempt label) are pure and
- * run here directly; the screen itself is rendered for what it shows and what its exits do.
+ * Which kind a run ended in, what the page says and offers for it, are pure (`failure-kind.ts`) and
+ * run here directly; the page itself is rendered for what it shows and what its controls do.
  */
 
 import React from 'react';
 import { Harness } from './harness';
-import {
-  COPY,
-  REPAIR_ATTEMPT_LIMIT,
-  attemptSegments,
-  attemptsUsedLabel,
-  failureChecklistRows,
-} from '../copy';
-import FailureScreen, { type FailureScreenProps } from '../FailureScreen';
+import { COPY, REPAIR_ATTEMPT_LIMIT } from '../copy';
+import { failureActions, failureCauseOf, failureKindOf, failureSentence, type FailureFacts } from '../failure-kind';
+import { STORE_LISTINGS } from '../release-config';
+import { Linking } from './native-host';
+import { settle } from './rendered-launcher';
+import FailurePage, { type FailurePageProps } from '../FailurePage';
+import { Ember } from '../../ui/Ember';
 import { runTimelineRows } from '../run-timeline-view';
 import type { RunJournalEntry } from '../run-journal';
 import { WEBVIEW_ERROR_MESSAGE, logWebViewError } from '../webview-error';
 import { createSeam } from '../../logging';
 import { CHANNELS } from '../../logging/channels';
 import { REDACTED } from '../../logging/redact';
-import { hardwareBack } from './native-host';
-import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { button, hostType, press, renderScreen, screenReaderElement, textOf, unmountScreen } from './react-screen';
 
-/** Render the screen with spies on its three actions, run `body`, and unmount. */
-async function withFailureScreen(
-  props: Partial<FailureScreenProps>,
-  body: (shown: () => string, calls: { back: number; dismiss: number; rephrase: number }, tree: Awaited<ReturnType<typeof renderScreen>>) => Promise<void>,
+type Rendered = Awaited<ReturnType<typeof renderScreen>>;
+
+/** Render the page with spies on its three actions, run `body`, and unmount. */
+async function withFailurePage(
+  props: Partial<FailurePageProps>,
+  body: (shown: () => string, calls: { change: number; retry: number; dismiss: number }, tree: Rendered) => Promise<void>,
 ): Promise<void> {
-  const calls = { back: 0, dismiss: 0, rephrase: 0 };
-  const tree = await renderScreen(React.createElement(FailureScreen, {
+  const calls = { change: 0, retry: 0, dismiss: 0 };
+  const tree = await renderScreen(React.createElement(FailurePage, {
+    kind: 'other',
     reason: 'It did not build.',
     diagnostics: [{ hint: 'Try fewer screens.' }],
-    onRephrase: () => { calls.rephrase++; },
-    onBack: () => { calls.back++; },
+    rephraseHelps: true,
+    changing: false,
+    onChange: () => { calls.change++; },
+    onRetry: () => { calls.retry++; },
     ...props,
   }));
   try {
@@ -45,179 +48,200 @@ async function withFailureScreen(
   }
 }
 
+const FACTS: FailureFacts = { reason: 'Could not produce a working app after several attempts.', rephraseHelps: true, repairs: 0, refused: false };
+
 const JOURNAL: RunJournalEntry[] = [
   { t: 1_000, kind: 'stage', stage: 'generate' },
   { t: 4_000, kind: 'stage', stage: 'check' },
   { t: 6_000, kind: 'terminal', failure: { reason: 'It did not build.', diagnostics: [{ hint: 'Try fewer screens.' }] } },
 ];
 
+/** The labels of the page's buttons, in order. */
+const buttonLabels = (tree: Rendered) =>
+  tree.root.findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityRole === 'button').map((n) => String(n.props.accessibilityLabel ?? textOf(n)));
+
 export async function runFailureScreenTests(h: Harness): Promise<void> {
-  // ── the attempt row: only what the device actually watched go past ──────────
+  // ── the kind: read from what the run left behind ────────────────────────────
 
-  await h.test('attempts: two observed repairs spend two segments, and the run sits on the third', () => {
-    const segments = attemptSegments(2);
-    h.eq(segments.length, REPAIR_ATTEMPT_LIMIT, 'one segment per permitted attempt');
-    h.eq([...segments], ['spent', 'spent', 'current'], 'the observed attempts are spent; the run was on the next one');
-    h.eq([...attemptSegments(1)], ['spent', 'current', 'remaining'], 'one observed attempt leaves the rest unreached');
-    h.eq([...attemptSegments(REPAIR_ATTEMPT_LIMIT)], ['spent', 'spent', 'spent'], 'an exhausted run has no current segment');
+  await h.test('kind: a run that used every repair try couldn’t run; with fewer, the server’s own reason is the sentence', () => {
+    const exhausted = { ...FACTS, repairs: REPAIR_ATTEMPT_LIMIT };
+    h.eq(failureKindOf(exhausted), 'couldnt-run', 'every try used');
+    h.eq(failureSentence('couldnt-run', exhausted), 'I tried 3 times and couldn’t get it to run. Describing it differently often helps.', 'system.md §8, with the rewording hint');
+    h.eq(failureSentence('couldnt-run', { ...exhausted, rephraseHelps: false }), 'I tried 3 times and couldn’t get it to run.', 'and without it where rewording won’t help');
+    h.eq(failureKindOf({ ...FACTS, repairs: 1 }), 'other', 'one try is not "3 times"');
+    h.eq(failureSentence('other', FACTS), FACTS.reason, 'an unknown reason shows the server’s text');
   });
 
-  await h.test('attempts: a count is never invented — zero observed attempts spends nothing', () => {
-    h.eq([...attemptSegments(0)], ['current', 'remaining', 'remaining'], 'nothing is spent for a run that never repaired');
-    h.eq([...attemptSegments(-4)], [...attemptSegments(0)], 'a nonsense count cannot spend segments');
-    h.eq([...attemptSegments(99)], [...attemptSegments(REPAIR_ATTEMPT_LIMIT)], 'the row never grows past the permitted attempts');
+  await h.test('kind: a refusal, an interruption and a dropped connection are each their own kind', () => {
+    h.eq(failureKindOf({ ...FACTS, refused: true, repairs: REPAIR_ATTEMPT_LIMIT }), 'refused', 'a refused Try again is a refusal, whatever came before');
+    h.eq(failureSentence('refused', FACTS), null, 'whose notice carries the reason');
+    h.eq([failureKindOf({ ...FACTS, interrupted: 'closed' }), failureSentence('closed', FACTS)], ['closed', 'Making stopped when Whim closed.'], 'Whim closed under it');
+    h.eq([failureKindOf({ ...FACTS, interrupted: 'stopped' }), failureSentence('stopped', FACTS)], ['stopped', COPY.failureStopped], 'the person stopped it');
+    h.eq(failureKindOf({ ...FACTS, cause: 'connection' }), 'connection', 'the stream dropped');
+    h.eq(failureSentence('connection', FACTS), 'I lost the connection to the server partway through.', '#151: said as what happened');
+    h.eq([failureKindOf({ ...FACTS, needsUpdate: true }), failureSentence('needs-update', FACTS)], ['needs-update', 'Finishing this needs the latest Whim.'], 'a run only a newer Whim can finish');
   });
 
-  await h.test('attempts: the label names the attempts used, not the ones left', () => {
-    h.eq(attemptsUsedLabel(1), 'Tried once', 'one attempt reads as words, not a numeral');
-    h.eq(attemptsUsedLabel(3), 'Tried 3 times', 'more than one is counted');
-    h.ok(!/left|remaining|of \d/i.test(attemptsUsedLabel(2)), 'the label never counts down');
+  await h.test('kind: a lost connection is read from the cause the record stores, not from how its sentence is worded', () => {
+    h.eq(failureKindOf({ ...FACTS, reason: 'The line to the server went quiet.', cause: failureCauseOf({ reason: 'The line to the server went quiet.', cause: 'connection' }) }), 'connection', 'a stored cause holds whatever the reason says');
+    h.eq(failureKindOf({ ...FACTS, reason: COPY.failureConnection }), 'other', 'the sentence alone, on a live page, decides nothing');
+    const legacy = { reason: 'I lost the connection to the server partway through.' };
+    h.eq(failureKindOf({ ...FACTS, ...legacy, cause: failureCauseOf(legacy) }), 'connection', 'a record written before causes were stored still reads as a lost connection');
+    h.eq(failureCauseOf({ reason: 'It did not build.' }), undefined, 'and any other old record names no cause');
+    h.eq(failureCauseOf(undefined), undefined, 'nor does an interruption, which has no failure');
   });
 
+  await h.test('actions: rewording is offered only where it can help, and a dropped connection never suggests it', () => {
+    const shape = (kind: Parameters<typeof failureActions>[0], helps: boolean, canRetry = true) =>
+      failureActions(kind, helps, canRetry).map((a) => [a.label, a.variant]);
+    const reword = [[COPY.failureChangeDescription, 'ink'], [COPY.failureTryAgainAsIs, 'plain']];
+    h.eq(shape('couldnt-run', true), reword, 'couldn’t run, rewording helps: Change the description, then Try again as it is');
+    h.eq(shape('other', true), reword, 'the same for a reason the server worded');
+    h.eq(shape('couldnt-run', false), [[COPY.actionTryAgain, 'ember']], 'rewording won’t help: Try again, Whim’s action');
+    for (const kind of ['connection', 'closed'] as const) {
+      h.eq(shape(kind, true), [[COPY.actionTryAgain, 'ember']], `${kind}: Try again alone, even when the record says rewording could help`);
+    }
+    h.eq(shape('stopped', true), [[COPY.actionTryAgain, 'ember'], [COPY.failureChangeDescription, 'plain']], 'a stopped run: try it again, or describe it again');
+    h.eq(shape('couldnt-run', true, false), [[COPY.failureChangeDescription, 'ink']], 'with no attempt left to run again, describing it again is the way on');
+    h.eq(shape('needs-update', true), [['Update Whim', 'ink'], ['Not now', 'plain']], 'needing a newer Whim: Update Whim, or Not now (system.md §8)');
+    h.eq(shape('needs-update', false, false), [['Update Whim', 'ink'], ['Not now', 'plain']], 'whether or not there is an attempt to run again');
+  });
 
-  await h.test('attempts: the row shows only when the caller reports observed repair attempts', async () => {
-    await withFailureScreen({}, async (shown) => {
-      h.ok(!shown().includes(attemptsUsedLabel(1)) && !/Tried/.test(shown()), 'no count given: no attempt row, never a default of one');
+  // ── the page ────────────────────────────────────────────────────────────────
+
+  await h.test('page: the ember out, "Couldn’t make this", the sentence, and what is safe', async () => {
+    await withFailurePage({}, async (shown, _calls, tree) => {
+      h.eq([tree.root.findByType(Ember).props.state, tree.root.findByType(Ember).props.size], ['out', 96], 'the 96 pt ember, out');
+      h.ok(shown().includes(COPY.failureTitle) && shown().includes('It did not build.'), 'the title and the sentence');
+      h.ok(shown().includes(COPY.failureOtherAppsUntouched) && !shown().includes(COPY.failureCurrentVersionWorks), 'a new app: the other apps are untouched');
     });
-    await withFailureScreen({ observedRepairAttempts: 0 }, async (shown) => {
-      h.ok(!/Tried/.test(shown()), 'zero observed attempts: no attempt row');
-    });
-    await withFailureScreen({ observedRepairAttempts: 2 }, async (shown) => {
-      h.ok(shown().includes(attemptsUsedLabel(2)), 'two observed attempts are shown');
-    });
-  });
-
-  // ── the two exits: one leaves, one deletes, and each says so ───────────────
-
-  await h.test('exits: Back leaves, Discard deletes, and system back is always Back', async () => {
-    let dismissed = 0;
-    await withFailureScreen({ onDismiss: () => { dismissed++; } }, async (_shown, calls, tree) => {
-      await press(button(tree, COPY.failureBack));
-      h.eq([calls.back, dismissed], [1, 0], 'the Back button only leaves');
-      await press(button(tree, COPY.failureDismiss));
-      h.eq([calls.back, dismissed], [1, 1], 'the Discard button deletes');
-      h.ok(!/back to your apps/i.test(COPY.failureDismiss) && new Set<string>([COPY.failureDismiss, COPY.failureBack]).size === 2, 'and is not labelled as navigation');
-      hardwareBack();
-      h.eq([calls.back, dismissed], [2, 1], 'system back performs Back, never Discard');
-    });
-  });
-
-  await h.test('exits: with nothing to discard there is no Discard button, and Back still leaves', async () => {
-    await withFailureScreen({}, async (shown, calls, tree) => {
-      h.ok(!shown().includes(COPY.failureDismiss), 'no Discard label is rendered');
-      await press(button(tree, COPY.failureBack));
-      h.eq(calls.back, 1, 'Back is always there');
-    });
-  });
-
-  // ── the what-happened section ──────────────────────────────────────────────
-
-  await h.test('what happened: absent for a failure that never started an attempt', async () => {
-    await withFailureScreen({ journal: null, attemptStarted: false }, async (shown) => {
-      h.ok(!shown().includes(COPY.timelineTitle), 'no heading');
-      h.ok(!shown().includes(COPY.timelineEmpty), 'and no empty note');
+    await withFailurePage({ changing: true }, async (shown) => {
+      h.ok(shown().includes(COPY.failureCurrentVersionWorks) && !shown().includes(COPY.failureOtherAppsUntouched), 'a change: the current version still works');
     });
   });
 
-  await h.test('what happened: an attempt with no readable journal shows the empty note, and the screen is otherwise unchanged', async () => {
-    await withFailureScreen({ journal: null, attemptStarted: true }, async (shown) => {
-      h.ok(shown().includes(COPY.timelineTitle) && shown().includes(COPY.timelineEmpty), 'the section falls back to its empty note');
-      h.ok(shown().includes('Try fewer screens.'), 'and the checklist still shows the hint');
+  await h.test('page: each action does its own thing', async () => {
+    await withFailurePage({}, async (_shown, calls, tree) => {
+      await press(button(tree, COPY.failureChangeDescription));
+      h.eq([calls.change, calls.retry], [1, 0], 'Change the description describes it again');
+      await press(button(tree, COPY.failureTryAgainAsIs));
+      h.eq([calls.change, calls.retry], [1, 1], 'Try again as it is runs it again');
     });
   });
 
-  await h.test('what happened: a journal renders its timeline in addition to the checklist', async () => {
-    await withFailureScreen({ journal: JOURNAL, attemptStarted: true }, async (shown) => {
-      const rows = runTimelineRows(JOURNAL).map((r) => r.text);
-      h.ok(rows.length > 0 && rows.every((row) => shown().includes(row)), 'every timeline row is shown');
-      const checklist = failureChecklistRows({ diagnostics: [{ hint: 'Try fewer screens.' }], hasWorkingVersion: false }).map((r) => r.text);
-      h.ok(checklist.every((row) => shown().includes(row)), 'and so is every checklist row');
+  await h.test('page: a lost connection waits for the phone to be back online before Try again', async () => {
+    await withFailurePage({ kind: 'connection', reason: COPY.failureConnection, rephraseHelps: false, offline: true }, async (shown, calls, tree) => {
+      h.ok(shown().includes(COPY.failureConnection) && shown().includes(COPY.failureOfflineNotice), 'it says what happened, and that Try again waits for the connection');
+      await h.throws(() => press(button(tree, COPY.actionTryAgain)), 'disabled', 'Try again is off while offline');
+      h.eq(calls.retry, 0, 'and sends nothing');
+      h.ok(!shown().includes(COPY.failureChangeDescription), 'no rewording is suggested');
+    });
+    await withFailurePage({ kind: 'connection', reason: COPY.failureConnection, rephraseHelps: false, offline: false }, async (shown, calls, tree) => {
+      h.ok(!shown().includes(COPY.failureOfflineNotice), 'back online, the notice goes');
+      await press(button(tree, COPY.actionTryAgain));
+      h.eq(calls.retry, 1, 'and Try again runs it again');
     });
   });
 
-  // ── the checklist: hints and copy strings, nothing else ────────────────────
-
-  await h.test('checklist: reassurance, then one row per hint, then the advisory line', () => {
-    const rows = failureChecklistRows({
-      diagnostics: [{ hint: 'The sound change is the part that fails' }],
-      hasWorkingVersion: true,
-    });
-    h.eq(rows.map(r => r.kind), ['done', 'bad', 'wait'], 'the design’s three row kinds, in order');
-    h.eq(rows[0].text, COPY.failureRowLastVersionWorks, 'the reassurance row is the copy string');
-    h.eq(rows[1].text, 'The sound change is the part that fails', 'the failed row is the diagnostic’s own hint');
-    h.eq(rows[2].text, COPY.failureRowSayItDifferently, 'the advisory row is the copy string');
-  });
-
-  await h.test('checklist: every hint gets its own bad row, and none is prefixed with a bullet', () => {
-    const rows = failureChecklistRows({
-      diagnostics: [{ hint: 'first thing' }, { hint: 'second thing' }],
-      hasWorkingVersion: false,
-    });
-    h.eq(rows.filter(r => r.kind === 'bad').map(r => r.text), ['first thing', 'second thing'], 'one bad row per hint');
-    for (const row of rows) h.ok(!/^[•\-*]/.test(row.text), `"${row.text}" carries no bullet character`);
-  });
-
-  await h.test('checklist: the reassurance row is omitted when there is no working version to keep', () => {
-    const rows = failureChecklistRows({ diagnostics: [{ hint: 'it broke' }], hasWorkingVersion: false });
-    h.eq(rows.map(r => r.kind), ['bad', 'wait'], 'nothing claims a working version exists');
-    h.ok(
-      !rows.some(r => r.text === COPY.failureRowLastVersionWorks),
-      'the reassurance copy is absent, not merely restyled',
-    );
-    h.ok(
-      failureChecklistRows({ diagnostics: [], hasWorkingVersion: true }).some(r => r.kind === 'done'),
-      'and it IS present when there is one (the omission is non-vacuous)',
-    );
-  });
-
-  await h.test('checklist: a failure rewording can’t get past gets no advisory row', () => {
-    const rows = failureChecklistRows({ diagnostics: [{ hint: 'it broke' }], hasWorkingVersion: true, rephraseHelps: false });
-    h.eq(rows.map(r => r.kind), ['done', 'bad'], 'the reassurance and the hint stay; the advice goes');
-    h.eq(failureChecklistRows({ diagnostics: [], hasWorkingVersion: false, rephraseHelps: false }), [], 'with nothing else to say there are no rows at all');
-  });
-
-  // ── the advice: rephrasing is offered only where it can help ────────────────
-
-  await h.test('advice: a failure rewording can’t get past offers no rephrasing, and its primary still leads back to the prompt', async () => {
-    await withFailureScreen({ rephraseHelps: false, diagnostics: [] }, async (shown, calls, tree) => {
-      h.ok(!shown().includes(COPY.failureRowSayItDifferently), 'no advisory row suggests describing it differently');
-      h.ok(!shown().includes(COPY.failureRephrase), 'and the primary is not labelled as rephrasing');
-      await press(button(tree, COPY.screenErrorRetry));
-      h.eq(calls.rephrase, 1, 'the primary performs the same recovery action');
-    });
-    await withFailureScreen({ diagnostics: [] }, async (shown) => {
-      h.ok(shown().includes(COPY.failureRowSayItDifferently) && shown().includes(COPY.failureRephrase), 'a failed generation still advises rephrasing');
+  await h.test('page: needing a newer Whim says so, keeps what is safe and Discard, and Update Whim opens Whim’s own store listing', async () => {
+    let notNow = 0;
+    const opened = Linking.opened.length;
+    await withFailurePage({ kind: 'needs-update', reason: 'This app uses something only a newer Whim has.', rephraseHelps: false, changing: true, onNotNow: () => { notNow++; }, onDismiss: () => {} }, async (shown, calls, tree) => {
+      h.eq([tree.root.findByType(Ember).props.state, shown().includes(COPY.failureTitle)], ['out', true], 'the ember out and "Couldn’t make this"');
+      h.ok(shown().includes('Finishing this needs the latest Whim.'), 'the sentence system.md §8 gives it');
+      h.ok(shown().includes(COPY.failureCurrentVersionWorks) && shown().includes(COPY.actionDiscard), 'what is safe, and Discard');
+      h.ok(!shown().includes(COPY.actionTryAgain) && !shown().includes(COPY.failureChangeDescription), 'no Try again and no rewording: neither gets past it');
+      await press(button(tree, 'Update Whim'));
+      await settle();
+      h.eq(Linking.opened.slice(opened), [STORE_LISTINGS.ios.store], 'Update Whim opens the store app’s listing, as the update screen does');
+      await press(button(tree, 'Not now'));
+      h.eq([notNow, calls.retry, calls.change], [1, 0, 0], 'Not now leaves, and runs nothing');
     });
   });
 
-  await h.test('what happened: the reason the screen already shows is not repeated in its timeline', async () => {
-    const count = (text: string, part: string) => text.split(part).length - 1;
-    await withFailureScreen({ journal: JOURNAL, attemptStarted: true }, async (shown) => {
-      h.eq(count(shown(), 'It did not build.'), 1, 'the reason reads once');
-      const stages = runTimelineRows(JOURNAL).filter((r) => r.kind === 'stage').map((r) => r.text);
-      h.ok(stages.length > 0 && stages.every((row) => shown().includes(row)), 'while the timeline still shows what the attempt did');
+  await h.test('page: a refused Try again shows the reason once, as a notice, and holds Try again until its window ends', async () => {
+    const hint = 'Whim is busy right now. Please try again in a few minutes.';
+    await withFailurePage({ kind: 'refused', reason: hint, rephraseHelps: false, notice: { hint, tone: 'neutral', retryAt: Date.now() + 60_000 } }, async (shown, calls, tree) => {
+      h.eq(shown().split(hint).length - 1, 1, 'the reason reads once');
+      await h.throws(() => press(button(tree, COPY.actionTryAgain)), 'disabled', 'Try again waits for the window');
+      h.eq(calls.retry, 0, 'and sends nothing');
     });
-    const refused = 'Whim is busy right now. Please try again in a few minutes.';
+  });
+
+  await h.test('what happened: a refused Try again’s notice reads once, even when the run’s journal ends in that same reason', async () => {
+    const hint = 'Whim is busy right now. Please try again in a few minutes.';
     const journal: RunJournalEntry[] = [
       { t: 1_000, kind: 'stage', stage: 'generate' },
-      { t: 2_000, kind: 'terminal', failure: { reason: refused, diagnostics: [] } },
+      { t: 2_000, kind: 'terminal', failure: { reason: hint, diagnostics: [] } },
     ];
-    await withFailureScreen({ reason: refused, journal, attemptStarted: true, notice: { hint: refused, tone: 'neutral' } }, async (shown) => {
-      h.eq(count(shown(), refused), 1, 'a refused Retry’s notice reads once too');
+    await withFailurePage({ kind: 'refused', reason: hint, rephraseHelps: false, diagnostics: [], journal, attemptStarted: true, notice: { hint, tone: 'neutral' } }, async (shown, _calls, tree) => {
+      await press(button(tree, COPY.timelineTitle));
+      h.ok(runTimelineRows(journal, false, undefined, true).some((row) => row.text === hint), 'the journal on its own would show the reason as a row');
+      h.ok(shown().includes(runTimelineRows(journal, false, hint, true)[0].text), 'What happened is open, with the run’s steps');
+      h.eq(shown().split(hint).length - 1, 1, 'and the reason reads once: the notice says it, the timeline does not repeat it');
     });
   });
 
-  await h.test('checklist: no row can carry a diagnostic’s kind, symbol or message', () => {
-    const diagnostic = { hint: 'Describing the sound differently helps', kind: 'sdk-misuse', symbol: 'useAudio', message: 'TS2554: expected 1 argument' };
-    const rows = failureChecklistRows({ diagnostics: [diagnostic], hasWorkingVersion: true });
-    const allowed = new Set<string>([...Object.values(COPY), diagnostic.hint]);
-    for (const row of rows) {
-      h.ok(allowed.has(row.text), `"${row.text}" is a hint or a copy.ts string`);
-      for (const leak of [diagnostic.kind, diagnostic.symbol, diagnostic.message]) {
-        h.ok(!row.text.includes(leak), `"${row.text}" must not carry the diagnostic’s ${leak}`);
+  await h.test('discard: in the body when there is an attempt to discard, and nowhere when there is not', async () => {
+    let dismissed = 0;
+    await withFailurePage({ onDismiss: () => { dismissed++; } }, async (_shown, calls, tree) => {
+      const discard = tree.root.findAll((n) => n.props.label === COPY.actionDiscard && n.props.variant === 'danger');
+      h.eq(discard.length, 1, 'a danger Discard');
+      await press(button(tree, COPY.actionDiscard));
+      h.eq([dismissed, calls.change, calls.retry], [1, 0, 0], 'which discards, and does nothing else');
+    });
+    await withFailurePage({}, async (shown) => {
+      h.ok(!shown().includes(COPY.actionDiscard), 'no Discard with nothing to discard');
+    });
+  });
+
+  // ── what happened ───────────────────────────────────────────────────────────
+
+  await h.test('what happened: collapsed until opened; then every timeline row, each its own screen-reader element (#136)', async () => {
+    await withFailurePage({ journal: JOURNAL, attemptStarted: true }, async (shown, _calls, tree) => {
+      const rows = runTimelineRows(JOURNAL, false, 'It did not build.', true).map((r) => r.text);
+      h.ok(rows.length > 1, 'the fixture has several rows');
+      h.ok(shown().includes(COPY.timelineTitle) && rows.every((row) => !shown().includes(row)), 'collapsed: the row is there, its contents are not');
+      const toggle = button(tree, COPY.timelineTitle);
+      h.eq(toggle.props.accessibilityState?.expanded, false, 'announced as collapsed');
+      await press(toggle);
+      h.eq(button(tree, COPY.timelineTitle).props.accessibilityState?.expanded, true, 'and as expanded once opened');
+      for (const row of rows) {
+        const text = tree.root.findAll((n) => hostType(n) === 'Text' && textOf(n) === row)[0];
+        const element = text ? screenReaderElement(text) : null;
+        h.eq(element?.props.accessibilityLabel, row, `"${row}" is read as itself, not as part of the whole list`);
       }
-    }
-    h.ok(!allowed.has('sdk-misuse'), 'the leak fixtures are genuinely outside the allowed set');
+      h.eq(shown().split('It did not build.').length - 1, 1, 'the reason the page already states is not repeated');
+    });
+  });
+
+  await h.test('what happened: absent for a failure that never started an attempt; an attempt with no journal says nothing was recorded', async () => {
+    await withFailurePage({ journal: null, attemptStarted: false, diagnostics: [] }, async (shown) => {
+      h.ok(!shown().includes(COPY.timelineTitle), 'no row for a run that never was');
+    });
+    await withFailurePage({ journal: null, attemptStarted: true, diagnostics: [] }, async (shown, _calls, tree) => {
+      await press(button(tree, COPY.timelineTitle));
+      h.ok(shown().includes(COPY.timelineEmpty), 'the empty note, never an invented run');
+    });
+  });
+
+  await h.test('what happened: hints only — never a diagnostic’s kind, symbol or message', async () => {
+    const diagnostic = { hint: 'Describing the sound differently helps', kind: 'sdk-misuse', symbol: 'useAudio', message: 'TS2554: expected 1 argument' };
+    const journal: RunJournalEntry[] = [{ t: 1, kind: 'stage', stage: 'check' }, { t: 2, kind: 'terminal', failure: { reason: 'It did not build.', diagnostics: [diagnostic] } }];
+    await withFailurePage({ journal, attemptStarted: true, diagnostics: [diagnostic] }, async (shown, _calls, tree) => {
+      await press(button(tree, COPY.timelineTitle));
+      h.ok(shown().includes(diagnostic.hint), 'the hint is shown');
+      for (const leak of [diagnostic.kind, diagnostic.symbol, diagnostic.message]) h.ok(!shown().includes(leak), `"${leak}" is not`);
+      h.eq(shown().split(diagnostic.hint).length - 1, 1, 'and the hint reads once');
+    });
+  });
+
+  await h.test('what happened: a hint the journal does not hold is still shown', async () => {
+    await withFailurePage({ journal: null, attemptStarted: false, diagnostics: [{ hint: 'Try fewer screens.' }] }, async (shown, _calls, tree) => {
+      await press(button(tree, COPY.timelineTitle));
+      h.ok(shown().includes('Try fewer screens.'), 'the saved hint, from the record');
+      h.ok(buttonLabels(tree).includes(COPY.timelineTitle), 'under What happened');
+    });
   });
 
   // ── both surfaces: tokens only ─────────────────────────────────────────────

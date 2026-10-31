@@ -26,9 +26,9 @@ import { DescribePage } from '../DescribePage';
 import { PlanPage } from '../PlanPage';
 import { MakingSheet } from '../MakingSheet';
 import { describeStep, planStep } from '../prompt-flow';
-import BuildStep from '../BuildStep';
-import DoneStep from '../DoneStep';
-import FailureScreen from '../FailureScreen';
+import MakingPage from '../MakingPage';
+import ReadyPage from '../ReadyPage';
+import FailurePage from '../FailurePage';
 import ScreenErrorFallback from '../ScreenErrorFallback';
 import Orb from '../Orb';
 
@@ -73,9 +73,9 @@ const cases: Record<Exclude<ScreenKind, 'home' | 'app' | 'dev'>, { label: Exit; 
   consent: { label: COPY.consentDecline, render: leave => <FirstRunSheet visible language="en" onLanguageChange={noop} termsDue={false} consentDue onAgree={noop} onClose={leave} />, sheet: true },
   describe: { label: COPY.sheetClose, render: leave => sheeted(leave, <DescribePage text="" onChangeText={noop} onContinue={noop} />), sheet: true },
   plan: { label: COPY.backLabel, render: leave => sheeted(noop, <PlanPage screen={planStep(describeStep(undefined, 'Timer'))} onBack={leave} onAnswer={noop} onChangeRow={noop} onMake={noop} onTryAgain={noop} onMakeInstead={noop} />), sheet: true },
-  making: { label: COPY.buildLeaveRunning, render: leave => <BuildStep stage={null} delivering={false} signals={null} now={0} onBack={leave} /> },
-  ready: { label: COPY.doneBackToApps, render: leave => <DoneStep app={SCREEN_APP} onOpen={noop} onBackToApps={leave} onReport={noop} /> },
-  failure: { label: COPY.failureBack, render: leave => <FailureScreen reason="Unavailable" diagnostics={[]} retryable onRephrase={noop} onBack={leave} /> },
+  making: { label: COPY.sheetClose, render: leave => sheeted(leave, <MakingPage name="Timer" changing={false} words="A timer" stage={null} delivering={false} signals={null} now={0} activity={0} onStop={noop} />), sheet: true },
+  ready: { label: COPY.readyDone, render: leave => sheeted(leave, <ReadyPage app={SCREEN_APP} words="A timer" onOpen={noop} onDone={leave} />), sheet: true },
+  failure: { label: COPY.sheetClose, render: leave => sheeted(leave, <FailurePage kind="other" reason="Unavailable" diagnostics={[]} rephraseHelps changing={false} onChange={noop} onRetry={noop} />), sheet: true },
 };
 
 export async function runScreenControlTests(h: Harness): Promise<void> {

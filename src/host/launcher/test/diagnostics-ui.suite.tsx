@@ -13,7 +13,7 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import type { DiagnosticsBatch, GenerateRequest } from '@whim/contract';
 import { Harness } from './harness';
-import FailureScreen from '../FailureScreen';
+import FailurePage from '../FailurePage';
 import { diagnosticsTarget } from '../diagnostics-target';
 import RootErrorBoundary from '../../RootErrorBoundary';
 import { createSeam, log } from '../../logging';
@@ -200,8 +200,8 @@ export async function runDiagnosticsUiTests(h: Harness): Promise<void> {
         h.ok(reason.includes("Alice's Lisbon Tab"), `fixture precondition: the validator's sentence names the screen (${reason})`);
         streams[0].push({ type: 'failure', reason, attempts: 0, diagnostics: [] });
         streams[0].end();
-        await waitFor(() => on(tree, FailureScreen), 'the failure screen');
-        h.eq(tree.root.findByType(FailureScreen).props.reason, reason, 'the screen still shows the server’s sentence');
+        await waitFor(() => on(tree, FailurePage), 'the failure screen');
+        h.eq(tree.root.findByType(FailurePage).props.reason, reason, 'the screen still shows the server’s sentence');
         await TestRenderer.act(async () => { await log.diagnostics.flush(); });
       } finally {
         log.diagnostics.stop();

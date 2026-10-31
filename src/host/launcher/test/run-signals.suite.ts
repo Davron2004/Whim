@@ -14,7 +14,8 @@
 import { Harness } from './harness';
 import type { GenerationEvent } from '@whim/contract';
 import type { RunJournalEntry } from '../run-journal';
-import { buildLivenessLine } from '../copy';
+import { COPY, makingQueueLine } from '../copy';
+import { MAKING_TIMES, makingTimeLine } from '../making-progress';
 import {
   EMPTY_RUN_AGGREGATES,
   STALL_MS,
@@ -138,24 +139,24 @@ export async function runRunSignalsTests(h: Harness): Promise<void> {
     h.eq(after.startedAt, s.startedAt, 'nor does the attempt start time');
   });
 
-  // ── the liveness line's copy (build-liveness B1) ────────────────────────────
-  await h.test('buildLivenessLine: writing states the character count, never a model/server word', async () => {
-    const s = signals({ aggregates: { chars: 1_204, tokens: 9 } });
-    h.eq(buildLivenessLine('writing', s, 0), 'Writing · 1,204 characters', 'a thousands separator, in the user’s own units');
-    for (const bad of [/\bmodel\b/i, /\bserver\b/i]) {
-      h.ok(!bad.test(buildLivenessLine('writing', s, 0)), `no mechanism word ${bad}`);
-    }
+  // ── the Making page's time lines (system.md §8) ─────────────────────────────
+  await h.test('makingTimeLine: a slow run says so honestly — 80 s still writing reads "Taking longer than most"', async () => {
+    h.eq(makingTimeLine(40_000), COPY.makingTimeUsual, 'under the median: the usual range');
+    h.eq(makingTimeLine(80_000), 'Taking longer than most. Still going.', 'the spec’s 80 s scenario');
+    h.eq(makingTimeLine(200_000), COPY.makingTimeSlow, 'past the p90: slow, still going');
   });
 
-  await h.test('buildLivenessLine: thinking and connected both carry the attempt’s own elapsed clock', async () => {
-    const s = signals({ startedAt: 0 });
-    h.eq(buildLivenessLine('thinking', s, 65_000), 'Thinking it through · 1:05', 'reads m:ss, same units as elsewhere');
-    h.eq(buildLivenessLine('connected', s, 7_000), 'Connected, waiting for a reply · 0:07', 'and the connected line states the same kind of clock');
+  await h.test('makingTimeLine: the thresholds sit where the measured runs put them, and each line holds up to its threshold', async () => {
+    const t = MAKING_TIMES;
+    h.ok(t.medianMs < t.usualUntilMs && t.usualUntilMs < t.p90Ms, 'a run stops being usual past the median, before the p90');
+    h.ok(t.p90Ms <= t.longerUntilMs && t.longerUntilMs < t.worstMs, 'and is slow past the p90, which the worst run passed');
+    h.eq([makingTimeLine(t.usualUntilMs), makingTimeLine(t.usualUntilMs + 1)], [COPY.makingTimeUsual, COPY.makingTimeLonger], 'usual up to its threshold');
+    h.eq([makingTimeLine(t.longerUntilMs), makingTimeLine(t.longerUntilMs + 1)], [COPY.makingTimeLonger, COPY.makingTimeSlow], 'longer than most up to its threshold');
   });
 
-  await h.test('buildLivenessLine: stalled states how long, in whole seconds, since the LAST frame', async () => {
-    const s = signals({ lastFrameAt: 10_000 });
-    h.eq(buildLivenessLine('stalled', s, 41_000), 'Nothing has arrived for 31s', 'measured from lastFrameAt, not from startedAt');
+  await h.test('makingQueueLine: two runs ahead reads "2 ahead of you."; at the front, it is next', async () => {
+    h.eq(makingQueueLine(3), '2 ahead of you.', 'position 3 has two ahead');
+    h.eq(makingQueueLine(1), COPY.makingQueuedNext, 'position 1 is next');
   });
 
   // ── stage durations ─────────────────────────────────────────────────────────
