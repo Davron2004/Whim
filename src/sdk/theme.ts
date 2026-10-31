@@ -124,7 +124,3 @@ function frozen(theme: WhimTheme): WhimTheme {
 /** The built-in theme: the token module's light scheme with the `slate` tint, used whenever no
  *  theme (or an invalid one) is delivered. Frozen. */
 export const DEFAULT_THEME: WhimTheme = frozen(sanitizeTheme(undefined));
-
-// `appColor` and the v2 hues it avoids live in the sibling module below, re-exported here so its
-// readers import from one surface (`../../sdk/theme`).
-export * from './design-tokens';

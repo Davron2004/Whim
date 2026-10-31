@@ -19,7 +19,7 @@ free.
 - **Icons and tiles.** A vendored Lucide subset (147 glyphs plus chrome icons) drawn as SVG; tiles become a
   tinted squircle with one glyph, named by the app (`defineApp` `tint`, `icon`) and assigned by the host, with
   aliases, deterministic fallbacks and "Customize tile". **BREAKING (wire):** `tileColor` is deprecated in
-  favour of `tint`/`icon` in the manifest; installed hex colours map to the nearest tint.
+  favour of `tint`/`icon` in the manifest; it is still accepted but ignored, and a record with no tint shows its app id's fallback tint.
 - **Navigation.** Settings, Advanced, AI features, History and Report move to `react-native-screens`' native
   stack with the OS back gestures (edge, content-area, Android predictive back). No edge swipe over a running
   app (#67 kept).

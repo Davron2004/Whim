@@ -23,6 +23,7 @@ import {
   failPendingBuild,
   hydratedDiagnostics,
   journalStreamEvent,
+  mapWireRecord,
   pendingFailure,
   refusedGenerateOutcome,
   retryBuildScreen,
@@ -30,14 +31,15 @@ import {
   startPendingBuild,
 } from '../build-lifecycle';
 import { RunJournalStore } from '../run-journal';
-import { EMPTY_RUN_AGGREGATES, STALL_MS, ghostTileColorFor, livenessOf, withKeepalive, withStreamEvent } from '../prompt-flow';
+import { EMPTY_RUN_AGGREGATES, STALL_MS, livenessOf, withKeepalive, withStreamEvent } from '../prompt-flow';
 import { sampleLive } from '../home-live';
 import type { MakingScreen, RunSignals } from '../prompt-flow';
 import { makingProgress } from '../making-progress';
 import { COPY, makingStallLine } from '../copy';
 import type { GenerationEvent } from '@whim/contract';
-import { tileColor } from '../tiles';
 import { tileOf } from '../tile-identity';
+import { fallbackTint } from '../../../design/tints';
+import { TINT_NAMES, TINTS } from '../../../design/tokens';
 import { AppIndex } from '../app-index';
 import { createMemoryStore } from '../../version-store';
 import type { WireAppRecord } from '@whim/contract';
@@ -237,35 +239,26 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(tileOf(index.get(installed.id)!), { tint: 'violet', icon: 'music' }, 'the original is unchanged');
   });
 
-  // ── the legacy `tileColor` the current screens paint, on the NEW-INSTALL path only ─────────────
+  // ── the wire → record mapping, and a stray `tileColor` (deprecated, ignored) ─────────────────
 
-  /** A deterministic ghost id, so the colours below are fixed values. `reuseId` pins one. */
-  const GHOST_ID = 'app-ghost-1';
-
-  await h.test('colour: a delivered new install paints the colour its ghost painted', async () => {
-    // `app-launcher`: "Ghost tile color ... stable across transmute." The ghost renders
-    // `tileColor(_, { tileColor: ghostTileColorFor(rec.id) })`; the delivered tile renders
-    // `tileColor(name, record.manifest)`, which falls back to a NAME hash unless delivery records
-    // the id hash.
-    const ghostPaints = tileColor('a tip splitter', { tileColor: ghostTileColorFor(GHOST_ID) });
-    h.ok(ghostPaints !== tileColor(WIRE.name), 'sanity: the id and the name paint different colours, so this is not vacuous');
-    const store = new PendingBuildStore(new MapKVBackend());
-    const id = startPendingBuild(store, { text: 'a tip splitter', reuseId: GHOST_ID });
-    const delivered = await deliverAndSettle(store, { access: fakeAccess({}), appId: id, text: 'a tip splitter', wire: WIRE });
-    h.eq(tileColor(delivered.name, delivered.record.manifest), ghostPaints, 'the tile paints what the ghost painted');
+  await h.test('mapWireRecord: the record takes the wire’s name and declared manifest, and its schema only when it has keys', async () => {
+    const declared = { capabilities: ['storage'], tint: ['rose'], icon: 'coffee' };
+    const record = mapWireRecord('app-1', { ...WIRE, manifest: declared });
+    h.eq(record, { appId: 'app-1', name: WIRE.name, manifest: declared }, 'an empty schema is left off');
+    const schema = { collections: [] };
+    h.eq(mapWireRecord('app-1', { ...WIRE, schema }).schemaArtifact, schema, 'a schema with keys is kept');
   });
 
-  await h.test('colour: a wire manifest that DOES declare a tile colour still wins over the injection', async () => {
+  await h.test('stray colour: a delivered install whose wire carries only a hex tileColor gets the app id’s fallback tint', async () => {
+    const { index, access } = realAccess();
     const store = new PendingBuildStore(new MapKVBackend());
-    const id = startPendingBuild(store, { text: 'a tip splitter', reuseId: GHOST_ID });
-    const declared = { ...WIRE, manifest: { tileColor: '#2f6feb' } };
-    const delivered = await deliverAndSettle(store, { access: fakeAccess({}), appId: id, text: 'a tip splitter', wire: declared });
-    h.eq(delivered.record.manifest.tileColor, '#2f6feb', 'the app’s own declaration is never overwritten by the ghost hash');
+    const id = startPendingBuild(store, { text: 'a tip splitter', reuseId: 'app-legacy-1' });
+    const other = TINT_NAMES.find((t) => t !== fallbackTint(id))!;
+    await deliverAndSettle(store, { access, appId: id, text: 'a tip splitter', wire: { ...WIRE, manifest: { tileColor: TINTS[other].light } } });
+    h.eq(tileOf(index.get(id)!).tint, fallbackTint(id), `the fallback, not ${other}, whose own light value the colour is`);
   });
 
-  await h.test('colour: a rebuild records no colour on an app that never had one', async () => {
-    // Stamping the id hash inside `mapWireRecord` (shared by both edit branches) would move the
-    // colour of an app the user already owns; for a fork, `editing.record.appId` is the PARENT's.
+  await h.test('rebuild: at tip it updates the app in place; behind its tip it continues through the sharing seam (#52 D2)', async () => {
     const store = new PendingBuildStore(new MapKVBackend());
     const updates: { entry: InstalledApp; spec: UpdateSpec }[] = [];
     const forked: InstalledApp = { ...APP, id: 'app-fork' };
@@ -280,46 +273,30 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     const id = startPendingBuild(store, { editing: APP, text: 'add a dark mode' });
     await deliverResult({ access: atTip, appId: id, editing: APP, text: 'add a dark mode', wire: WIRE });
     await deliverResult({ access: behindTip, appId: id, editing: APP, text: 'add a dark mode', wire: WIRE });
-    h.ok(updates.every((u) => u.spec.record.manifest.tileColor === undefined), 'neither the in-place update nor the continuation records one');
+    h.eq(updates[0]?.entry.id, APP.id, 'the at-tip rebuild updated the app itself');
     // Decision #52 D2: the continuation keeps the user's data, through the one seam that shares it.
     h.eq(continueCalls.length, 1, 'the behind-tip rebuild continued once, through the sharing seam');
     h.eq((continueCalls[0]?.[0] as InstalledApp | undefined)?.id, APP.id, 'it continued the app being edited');
     h.eq(updates[1]?.entry.id, forked.id, 'and the update went onto the fork');
   });
 
-  await h.test('colour: rebuilding an app installed with an injected colour carries it forward, at tip and behind it', async () => {
-    // `StoreAccess.update` replaces the record wholesale with the one built from the wire, and a
-    // typical wire declares no `tileColor` — so a rebuild that passed no fallback would DELETE the
-    // colour injected at install. Install for real, then rebuild THAT app both ways.
+  await h.test('pre-tint record: a rebuild keeps the tile it showed (its fallback, a stray colour ignored), though the wire ranks another tint', async () => {
+    const { index, access } = realAccess();
     const store = new PendingBuildStore(new MapKVBackend());
-    const installId = startPendingBuild(store, { text: 'a tip splitter', reuseId: GHOST_ID });
-    const installed = await deliverAndSettle(store, { access: fakeAccess({}), appId: installId, text: 'a tip splitter', wire: WIRE });
-    h.eq(installed.record.manifest.tileColor, ghostTileColorFor(installId), 'precondition: the install injected the ghost colour');
-    const updates: { entry: InstalledApp; spec: UpdateSpec }[] = [];
-    const atTip = { ...fakeAccess({ updates }), timeline: async () => [{ id: 'snap-1' }], activeId: async () => 'snap-1' } as unknown as StoreAccess;
-    const behindTip = {
-      ...fakeAccess({ updates }),
-      timeline: async () => [{ id: 'snap-2' }, { id: 'snap-1' }],
-      activeId: async () => 'snap-1',
-      continueSharingData: async () => ({ ...installed, id: 'app-fork-real' }),
-    } as unknown as StoreAccess;
-    const rebuildId = startPendingBuild(store, { editing: installed, text: 'add a dark mode' });
-    await deliverResult({ access: atTip, appId: rebuildId, editing: installed, text: 'add a dark mode', wire: WIRE });
-    await deliverResult({ access: behindTip, appId: rebuildId, editing: installed, text: 'add a dark mode', wire: WIRE });
-    h.eq(updates.map((u) => u.spec.record.manifest.tileColor), [ghostTileColorFor(installId), ghostTileColorFor(installId)], 'both rebuilt records carry the same colour');
-  });
-
-  await h.test('colour: a rebuild whose wire DOES declare a colour takes the new declaration', async () => {
-    const store = new PendingBuildStore(new MapKVBackend());
-    const updates: { entry: InstalledApp; spec: UpdateSpec }[] = [];
-    const coloured: InstalledApp = {
-      ...APP,
-      record: { appId: APP.id, name: APP.name, manifest: { capabilities: [], tileColor: '#7a3fd0' } },
-    };
-    const atTip = { ...fakeAccess({ updates }), timeline: async () => [{ id: 'snap-1' }], activeId: async () => 'snap-1' } as unknown as StoreAccess;
-    const id = startPendingBuild(store, { editing: coloured, text: 'make it blue' });
-    await deliverResult({ access: atTip, appId: id, editing: coloured, text: 'make it blue', wire: { ...WIRE, manifest: { tileColor: '#2f6feb' } } });
-    h.eq(updates[0].spec.record.manifest.tileColor, '#2f6feb', 'the new declaration replaces the old colour');
+    const installId = startPendingBuild(store, { text: 'a new app', reuseId: 'app-legacy-3' });
+    const installed = await deliverAndSettle(store, { access, appId: installId, text: 'a new app', wire: wireDeclaring({ tint: 'violet', icon: 'music' }) });
+    const other = TINT_NAMES.find((t) => t !== fallbackTint(installed.id))!;
+    // As stored before tints: no tint, no glyph, an old hex colour on the manifest.
+    const manifest = { capabilities: [], tileColor: TINTS[other].light };
+    const legacy: InstalledApp = { ...installed, record: { ...installed.record, manifest } };
+    delete legacy.tint;
+    delete legacy.icon;
+    index.put(legacy);
+    const before = tileOf(index.get(installed.id)!);
+    h.eq(before.tint, fallbackTint(installed.id), 'precondition: it reads the fallback tint, not the colour');
+    await deliverAndSettle(store, { access, appId: installed.id, editing: legacy, text: 'add a dark mode', wire: wireDeclaring({ tint: other, icon: 'music' }) });
+    h.eq(tileOf(index.get(installed.id)!), before, 'the tile it showed is kept');
+    h.eq(index.get(installed.id)?.tint, before.tint, 'and is now written down on the entry');
   });
 
   // ── the install-time bundle guard (the stub-bundle incident) ────────────────────────────────

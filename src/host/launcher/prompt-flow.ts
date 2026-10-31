@@ -20,7 +20,6 @@ import type { InstalledApp } from './app-index';
 import type { RunAggregates, RunJournalEntry } from './run-journal';
 import { COPY } from './copy';
 import { GenerationClientError } from './transport-shared';
-import { appColor } from '../../sdk/theme';
 
 /** The `stage` event's `stage` field (`GenerationEvent` is a discriminated union). */
 export type Stage = Extract<GenerationEvent, { type: 'stage' }>['stage'];
@@ -764,13 +763,4 @@ export function stageDurations(journal: readonly RunJournalEntry[]): StageDurati
       durationMs: endsAt == null ? null : Math.max(0, endsAt - entry.t),
     };
   });
-}
-
-/** A ghost tile's colour (`pending-builds` design D6): a deterministic hash of the launcher id
- *  onto the SAME palette every installed tile resolves through (`tiles.ts#tileColor`'s fallback,
- *  `../../sdk/theme#appColor`) — never a second palette. `appColor` is itself already a pure
- *  string->hue hash, so this is a direct reuse with the launcher id as the hashed input instead of
- *  the app name. */
-export function ghostTileColorFor(id: string): string {
-  return appColor(id);
 }

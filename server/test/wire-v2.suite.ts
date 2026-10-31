@@ -589,7 +589,9 @@ function testTileIdentityExtraction(): void {
   eq('a non-literal icon is ignored, with a warning', [manifestFor('  icon: pickIcon(),')?.icon, tileKinds('  icon: pickIcon(),')], [undefined, ['icon_fallback']]);
   eq('no declaration → no tint and no icon', [manifestFor('  // no tile')?.tint, manifestFor('  // no tile')?.icon], [undefined, undefined]);
 
-  eq('a legacy tileColor is carried through unvalidated', manifestFor("  tileColor: 'blue',")?.tileColor, 'blue');
+  const withColour = manifestFor("  tileColor: '#0369a1',");
+  check('a deprecated tileColor still extracts a manifest', withColour !== undefined);
+  eq('…which carries no tileColor and equals the manifest without one', withColour, manifestFor('  // no tile'));
   check('no tile name ever raises an error', checked("  tint: 42,\n  icon: 7,").manifest !== undefined && runStaticChecks(sourceWithTile("  tint: 42,\n  icon: 7,")).diagnostics.every((d) => d.severity === 'warning'));
 }
 

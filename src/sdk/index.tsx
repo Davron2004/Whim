@@ -165,13 +165,8 @@ export interface AppSpec {
   /** The tile's glyph: one icon name from the glyph set. Extracted statically; an unknown name
    *  resolves by keyword, else draws a circle. */
   icon?: string;
-  /** @deprecated Declare `tint` instead; a `tileColor` maps to the nearest tint.
-   *  The one thing the shell asks back from a generated app: its tile colour, as a `#rrggbb`
-   *  LITERAL. Extracted statically from this `defineApp` argument exactly as `capabilities` is —
-   *  never obtained by executing or introspecting the bundle, so a non-literal value is simply not
-   *  extracted. Absent, malformed, or equal to a reserved shell hue all mean "no declaration", and
-   *  the shell falls back to its deterministic `appColor(name)`. Nothing else about a generated
-   *  app's look is constrained by the shell. */
+  /** @deprecated Declare `tint` instead. Still accepted so older sources compile, and ignored:
+   *  it is not extracted and does not change the tile. */
   tileColor?: string;
 }
 

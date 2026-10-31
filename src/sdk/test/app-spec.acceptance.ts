@@ -1,11 +1,12 @@
 // Node acceptance suite for `defineApp`'s tile declaration (sdk-design-system "An app names its tint
 // and glyph, and every name resolves"; "The SDK adds components and deprecates without removing":
-// `tileColor` keeps working). The SDK only types the declaration; the launcher's `declaredTile` is
-// its real consumer, so each declaration typed here goes through it. Auto-discovered by
-// `src/sdk/test/run.mjs`.
+// `tileColor` is still accepted, and ignored). The SDK only types the declaration; the launcher's
+// `declaredTile` is its real consumer, so each declaration typed here goes through it.
+// Auto-discovered by `src/sdk/test/run.mjs`.
 import assert from 'node:assert';
 import { defineApp, type AppSpec } from '../index';
 import { declaredTile } from '../../host/launcher/tile-identity';
+import { fallbackTint } from '../../design/tints';
 
 const base = { name: 'Pour Timer', initial: 'Home', screens: {}, capabilities: [] } satisfies AppSpec;
 
@@ -39,11 +40,12 @@ assert.deepStrictEqual(declaredTile(defineApp({ ...base, tint: 'orchid', icon: '
   assert.deepStrictEqual(first.icon, 'house', 'a legacy glyph name resolves through the alias map');
 }
 
-// ── The deprecated tileColor still decides the tint when no tint is declared ──
+// ── The deprecated tileColor is ignored: a tileColor-only app gets its fallback tint ──
+assert.ok(fallbackTint('app-3') !== 'orchid', 'sanity: the fallback differs from the tint nearest #a21caf, which the old read path picked');
 assert.deepStrictEqual(
-  declaredTile(defineApp({ ...base, tileColor: '#a21caf' }), 'app-3', base.name).ranked,
-  ['orchid'],
-  'a tileColor-only app keeps the tint nearest its colour',
+  declaredTile(defineApp({ ...base, tileColor: '#a21caf' }), 'app-3', base.name),
+  { ranked: [fallbackTint('app-3')], icon: declaredTile(defineApp(base), 'app-3', base.name).icon },
+  'a tileColor-only app ranks only its fallback tint, as if it declared nothing',
 );
 
 console.log('SDK app spec acceptance: PASS');

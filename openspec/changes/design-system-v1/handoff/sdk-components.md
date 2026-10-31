@@ -34,7 +34,7 @@ function toast(text: string): void;
 ```ts
 tint?: string | readonly [string] | readonly [string, string] | readonly [string, string, string];
 icon?: string;
-/** @deprecated Declare `tint` instead; a `tileColor` maps to the nearest tint. */ tileColor?: string;
+/** @deprecated Declare `tint` instead; accepted and ignored: it is not extracted and does not change the tile. */ tileColor?: string;
 ```
 
 `tint`/`icon` are `string` on purpose: an unknown or alias name resolves (never a type error, never a

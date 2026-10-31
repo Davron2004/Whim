@@ -26,6 +26,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { LAYOUT, SPACE } from '../../design/tokens';
 import { TilePlate } from '../ui/AppTile';
 import { TILE_SIDE } from '../ui/AppTile-geometry';
+import { haptics } from '../haptics';
 import { Button } from '../ui/Button';
 import { Ember, emberFrom, RESTING_ACTIVITY, type EmberLight, type EmberProps } from '../ui/Ember';
 import { timing } from '../ui/motion';
@@ -133,6 +134,10 @@ export default function ReadyPage({ app, words, changed, onOpen, onDone }: Reado
     travel.land();
     showEnd();
   };
+  // The page mounts as the delivery lands: that frame is the one the success confirms (§5, rule 7).
+  useEffect(() => {
+    haptics.play('success');
+  }, []);
   const leaving = useSheetLeaving();
   useEffect(() => {
     if (leaving) finish();

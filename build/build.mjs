@@ -15,9 +15,10 @@
 // Warm transpile+bundle is a few ms (negligible vs the future model latency).
 import * as esbuild from 'esbuild';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { buildSrcdoc, buildOuterHtml } from './assemble.mjs';
+import { tmpBundlePath } from '../scripts/lib/tmp-bundle.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const r = (...p) => join(ROOT, ...p);
@@ -87,6 +88,36 @@ const REACT_STUB =
   'export const useEffect=function(){};' +
   'export default {createElement:createElement,Fragment:Fragment,useState:useState,useEffect:useEffect};';
 
+// The tile identity (`tint`/`icon`, and the legacy `tileColor`) comes from the static checker's
+// manifest extraction — the SAME `runStaticChecks` the server's check stage runs on a generated
+// source (decision #41: one extraction, no second resolver). It resolves the declared names to the
+// closed sets (ranked, aliases applied), so a fixture record carries exactly what a generated app
+// with the same `defineApp` would. Bundled for Node once, on first use: `typescript` stays
+// external (its CJS dynamic requires break an ESM bundle) and the bundle lives inside the checkout
+// so it resolves. A load failure, or a source the checker extracts no manifest from, throws inside
+// `extractAppRecord`, which fails the build.
+let staticChecks;
+function loadStaticChecks() {
+  staticChecks ??= (async () => {
+    const outfile = tmpBundlePath('build-static-checks', ROOT);
+    await esbuild.build({
+      entryPoints: [r('checks/index.ts')], outfile,
+      bundle: true, format: 'esm', platform: 'node', target: 'node20',
+      tsconfigRaw: '{}', external: ['typescript'], logLevel: 'warning',
+    });
+    return (await import(pathToFileURL(outfile).href)).runStaticChecks;
+  })();
+  return staticChecks;
+}
+
+const TILE_FIELDS = ['tileColor', 'tint', 'icon'];
+async function extractTile(entryRelPath) {
+  const runStaticChecks = await loadStaticChecks();
+  const { manifest, diagnostics } = runStaticChecks(await read(entryRelPath));
+  if (!manifest) throw new Error(`the static checker extracted no manifest (${diagnostics.map((d) => d.kind).join(', ')})`);
+  return Object.fromEntries(TILE_FIELDS.filter((k) => manifest[k] !== undefined).map((k) => [k, manifest[k]]));
+}
+
 async function extractAppRecord(appId, entryRelPath) {
   const fallback = { appId, name: appId, manifest: { capabilities: [] }, schemaArtifact: undefined };
   try {
@@ -114,8 +145,8 @@ async function extractAppRecord(appId, entryRelPath) {
         name: typeof spec.name === 'string' ? spec.name : appId,
         manifest: {
           capabilities: Array.isArray(spec.capabilities) ? spec.capabilities : [],
-          // The launcher validates the value (manifest-tile-color.ts), as it does on the wire path.
-          ...(typeof spec.tileColor === 'string' ? { tileColor: spec.tileColor } : {}),
+          // The launcher re-validates these (tile-identity.ts `declaredTile`), as on the wire path.
+          ...(await extractTile(entryRelPath)),
         },
         schemaArtifact: spec.schema,
       },

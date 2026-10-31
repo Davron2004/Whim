@@ -1,6 +1,6 @@
 // Node acceptance suite for the app tints (`src/design/tints.ts`, docs/design/system.md §2.4):
 // the colour maths against published reference values, name resolution against the alias list in
-// system.md, the id-hash fallback against `appColor`'s hash, and the host's assignment rules.
+// system.md, the id-hash fallback, and the host's assignment rules.
 // Auto-discovered by `src/sdk/test/run.mjs` (every `*.acceptance.ts(x)` under this directory).
 import assert from 'node:assert';
 import fs from 'node:fs';
@@ -14,13 +14,11 @@ import {
   farthestTint,
   isTintName,
   mixHex,
-  nearestTint,
   resolveTint,
   TINT_ALIASES,
   type Lab,
 } from '../../design/tints';
 import { TINT_NAMES, TINTS, type TintName } from '../../design/tokens';
-import { appColor } from '../design-tokens';
 
 // ── CIEDE2000 ────────────────────────────────────────────────────────────────
 
@@ -48,6 +46,13 @@ for (const [a, b, want] of SHARMA) {
   assert.ok(Math.abs(got - want) < 1e-4, `CIEDE2000 ${JSON.stringify(a)} vs ${JSON.stringify(b)}: got ${got.toFixed(4)}, Sharma et al. give ${want}`);
 }
 assert.deepStrictEqual(deltaE('#535E6F', '#535E6F'), 0, 'a colour is no distance from itself');
+let shortHex = '';
+try {
+  deltaE('#fff', '#FFFFFF');
+} catch (err) {
+  shortHex = String(err);
+}
+assert.ok(/not a hex colour/.test(shortHex), `only #rrggbb is a colour: a short #rgb is refused, not guessed (threw ${JSON.stringify(shortHex)})`);
 
 // ── WCAG contrast and mixing ─────────────────────────────────────────────────
 
@@ -103,30 +108,13 @@ for (const unknown of ['chartreuse', '', 42, null, undefined, '#0852CB', 'constr
 
 const ids = Array.from({ length: 400 }, (_, i) => `app-${i}-${(i * 7919).toString(36)}`);
 assert.deepStrictEqual(new Set(ids.map(fallbackTint)).size, 10, 'the fallback reaches every one of the ten tints');
-assert.deepStrictEqual(ids.map((id) => fallbackTint(id)), ids.map(fallbackTint), 'the fallback is deterministic');
-// The fallback is "the hash appColor uses today" mod 10: over many ids the tint an id gets and the
-// colour appColor gives it must determine each other one to one.
-const colourToTint = new Map<string, TintName>();
-const tintToColour = new Map<TintName, string>();
-for (const id of [...ids, '', 'Water Counter', 'Tip Splitter', 'é☃𝄞']) {
-  const colour = appColor(id);
-  const tint = fallbackTint(id);
-  assert.deepStrictEqual(colourToTint.get(colour) ?? tint, tint, `ids sharing appColor ${colour} share one fallback tint`);
-  assert.deepStrictEqual(tintToColour.get(tint) ?? colour, colour, `ids sharing fallback tint ${tint} share one appColor`);
-  colourToTint.set(colour, tint);
-  tintToColour.set(tint, colour);
+// Known answers: djb2 (h = h*33 + c, seed 5381, 32-bit) of the id, mod 10, indexing the table in order.
+for (const [id, hash] of [['water-counter', 465493845], ['app-1', 253335012], ['a', 177670], ['', 5381]] as const) {
+  assert.deepStrictEqual(fallbackTint(id), TINT_NAMES[hash % 10], `fallbackTint(${JSON.stringify(id)}) is table[${hash} mod 10]`);
 }
-
-// ── Nearest tint for an installed hex tileColor ──────────────────────────────
-
-for (const name of TINT_NAMES) {
-  assert.deepStrictEqual(nearestTint(TINTS[name].light), name, `a tint's own light value is nearest to it (${name})`);
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(TINTS[name].light.slice(i, i + 2), 16));
-  const nudged = '#' + [r + 2, g - 2, b + 1].map((c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0')).join('');
-  assert.deepStrictEqual(nearestTint(nudged), name, `a colour a step off ${name}'s light value (${nudged}) is still nearest to it`);
-}
-assert.deepStrictEqual(nearestTint('#fff'), nearestTint('#FFFFFF'), 'short and long hex forms are the same colour');
-for (const bad of ['', 'blue', '#12345', '#GGGGGG', 'rgb(0,0,0)']) assert.deepStrictEqual(nearestTint(bad), undefined, `${JSON.stringify(bad)} is not a hex colour`);
+// An independent djb2 (BigInt, no shifts) agrees on every generated id.
+const referenceDjb2 = (text: string): bigint => [...Buffer.from(text)].reduce((h, c) => (h * 33n + BigInt(c)) % 2n ** 32n, 5381n);
+for (const id of ids) assert.deepStrictEqual(fallbackTint(id), TINT_NAMES[Number(referenceDjb2(id) % 10n)], `fallbackTint(${id}) follows the djb2 hash`);
 
 // ── Assignment ───────────────────────────────────────────────────────────────
 

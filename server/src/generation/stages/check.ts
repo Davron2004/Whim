@@ -28,9 +28,9 @@ const checkLog = log.child({ scope: 'check' });
  *  rest (`initial`/`screens`/`capabilities`, and the tile identity) — a strict superset of the
  *  bridge gate's own `AppManifest.capabilities` read, so the cast on the device side stays sound.
  *
- *  `tint`/`icon` (already resolved to the closed sets by the checker) and a legacy `tileColor`
- *  (unvalidated: the host maps it) ride INSIDE `manifest` (decision #41's "no second source of
- *  truth"): they come only from the one `defineApp` extraction, and `assembleRecord` passes
+ *  `tint`/`icon` (already resolved to the closed sets by the checker) ride INSIDE `manifest`
+ *  (decision #41's "no second source of truth"): they come only from the one `defineApp`
+ *  extraction, and `assembleRecord` passes
  *  `manifest` through untouched — there is no top-level `WireAppRecord` field to keep in sync. */
 function toCheckedManifest(m: ExtractedManifest): CheckedManifest {
   const { name, schema, ...rest } = m;
