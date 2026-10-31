@@ -49,9 +49,10 @@ function tipSplitter(tree: Tree): InstalledApp | undefined {
   return home(tree).props.apps.find((a: InstalledApp) => a.name === 'Tip Splitter');
 }
 
-/** Let the running app's page finish loading, so the shell delivers its bundle. */
+/** Let the running app's page finish loading (its WebView, not the one waiting unseen beside it),
+ *  so the shell delivers its bundle. */
 async function loadAppPage(tree: Tree): Promise<void> {
-  await TestRenderer.act(async () => tree.root.find((node) => hostType(node) === 'WebView').props.onLoadEnd());
+  await TestRenderer.act(async () => tree.root.find((node) => hostType(node) === 'WebView' && node.props.pointerEvents !== 'none').props.onLoadEnd());
 }
 
 /** Home's composer row: the first data-sending action spec terms-acceptance names. */

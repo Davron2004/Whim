@@ -8,7 +8,7 @@ import React from 'react';
 import { Text as RNText, type AccessibilityRole, type StyleProp, type TextStyle } from 'react-native';
 import type { ColorRole, TypeToken } from '../../design/tokens';
 import { useTokens } from './tokens';
-import { MAX_FONT_SCALE, TABULAR, typeStyle, type TypeStyle } from './tokens-pure';
+import { MAX_FONT_SCALE, TABULAR, typeStyle, type ShellTokens, type TypeStyle } from './tokens-pure';
 
 /** How far under the token's line height text that may wrap is set, in pt per line. */
 const LINE_ROOM = 0.0006;
@@ -55,10 +55,15 @@ export interface TextProps {
   accessibilityRole?: AccessibilityRole;
   /** Layout only (margins, alignment); colour and type come from the props above. */
   style?: StyleProp<TextStyle>;
+  /** Tokens captured at one moment, in place of the phone's live ones: an open app's area keeps the
+   *  settings it opened with (app-launcher "Settings changed while an app runs apply next time").
+   *  Omitted, the text follows the phone. */
+  tokens?: ShellTokens;
 }
 
-export function Text({ children, type = 'body', color = 'text', header = false, tabular = false, italic = false, numberOfLines, accessibilityRole, style }: Readonly<TextProps>) {
-  const t = useTokens();
+export function Text({ children, type = 'body', color = 'text', header = false, tabular = false, italic = false, numberOfLines, accessibilityRole, style, tokens }: Readonly<TextProps>) {
+  const live = useTokens();
+  const t = tokens ?? live;
   const face: TextStyle = {
     ...wrappingType(type, header),
     color: t.colors[color],

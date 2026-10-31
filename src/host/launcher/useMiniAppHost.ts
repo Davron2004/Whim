@@ -37,6 +37,11 @@ import { tearDownLiveRealm } from './teardown';
 // place RN cue APIs meet the bridge; the rows themselves stay RN-free (effects-and-cues D5).
 const REGISTRY = createDefaultRegistry({ cueBackend: createCueBackend() });
 
+// The last realm generation bound, for the whole process rather than per host: each launch mounts
+// a host of its own, and a generation that restarted with it would let a frame from an earlier
+// launch's realm (a paint, a syscall) carry the very stamp the next launch is fenced on.
+let lastGeneration = 1;
+
 // The `error` frame's `where` values a bundle can never recover a paint from (loader.js: no
 // AppSpec export, a mount throw, the delivery wrapper itself throwing before any script even
 // runs, or a render error no boundary in the app caught, which unmounts the app before or after
@@ -65,12 +70,18 @@ function handleDeliveryFrame(payload: any, startupDeadline: StartupDeadline): vo
 }
 
 /** A `paint` frame ends the container's boot state (`boot-state.ts`) and disarms the watchdog --
- *  but only when it is nonce-authenticated (`paintAccepted`), the same trust check `probes`
- *  applies. It is NOT generation-fenced like `nav-depth` (`boot-state.ts` carries the reasoning).
+ *  but only when it is nonce-authenticated, the same trust check `probes` applies, AND stamped with
+ *  the live realm's bind generation (`paintAccepted`): a previous launch's late paint opens nothing.
  *  `generation` on HostState is owned by the `probes` branch alone. */
-function handlePaintFrame(frame: any, startupDeadline: StartupDeadline, setS: (fn: (p: HostState) => HostState) => void): void {
-  if (!startupDeadline.acceptPaint(frame)) return;
-  setS((p) => ({ ...p, paintMs: frame.payload?.mountToFirstPaintMs ?? null }));
+function handlePaintFrame(
+  frame: any,
+  boundGeneration: number | null,
+  startupDeadline: StartupDeadline,
+  setS: (fn: (p: HostState) => HostState) => void,
+): void {
+  if (!startupDeadline.acceptPaint(frame, boundGeneration)) return;
+  const paintedAt = Date.now();
+  setS((p) => ({ ...p, paintMs: frame.payload?.mountToFirstPaintMs ?? null, paintedAt }));
 }
 
 /** An `error` frame only escalates to the recoverable-error surface for fatal `where`s -- a
@@ -111,6 +122,9 @@ export interface HostState {
    *  (`bind()` resets it). Non-null is the "has painted" signal `boot-state.ts` derives from — the
    *  container's boot state needs no bridge message of its own. */
   paintMs: number | null;
+  /** When (`Date.now()`) the host accepted that paint; null with `paintMs`. The far end of the
+   *  tap-to-first-paint record. */
+  paintedAt: number | null;
   generation: number | null;
   lastTap: string | null;
   rejectedForgeries: number;
@@ -127,7 +141,7 @@ export interface HostState {
 }
 
 const INITIAL: HostState = {
-  contained: null, probesFrac: '—', paintMs: null, generation: null,
+  contained: null, probesFrac: '—', paintMs: null, paintedAt: null, generation: null,
   lastTap: null, rejectedForgeries: 0, t7AnyPoison: null, lastError: null, launchFailed: false,
   currentApp: '—', syscalls: 0, lastSyscall: null, navDepth: 0,
 };
@@ -148,6 +162,9 @@ export interface UseMiniAppHostOptions {
   overlayOpen?: boolean;
   /** Called when a back press resolves to `close-overlay` — the caller closes its own sheet. */
   onCloseOverlay?: () => void;
+  /** The WebView this host controls, when the caller renders it elsewhere (`MiniAppView`'s pool);
+   *  it must keep its identity across renders. Absent: the host's own ref, for the caller to attach. */
+  webRef?: React.RefObject<WebView | null>;
 }
 
 export interface MiniAppHost {
@@ -167,14 +184,17 @@ export interface MiniAppHost {
    *  a WebView remount (a fresh `key`) by the caller so Retry falls through the error branch into
    *  a normal render, whose `onLoadEnd` re-runs `deliverBySource` → `bind()` into a fresh realm. */
   clearLastError: () => void;
+  /** The WebView the realm lives in is gone (its page failed to load, or its web content process
+   *  died): the launch fails now, to the recovery screen, whose Retry binds a fresh WebView. */
+  webViewGone: () => void;
 }
 
 export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
-  const webRef = useRef<WebView | null>(null);
+  const ownWebRef = useRef<WebView | null>(null);
+  const webRef = opts.webRef ?? ownWebRef;
   const [s, setS] = useState<HostState>(INITIAL);
   // Refs (not state) so onMessage / the back handler always see the current values w/o re-binding.
   const live = useRef<LiveRealm | null>(null);
-  const genCounter = useRef(1);
   const policy = useRef(new BackPolicy());
   const popTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The runtime engine appId for the live realm (the launcher id, #5 D8 — a fork's own data).
@@ -200,7 +220,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   // injectJavaScript runs in the OUTER page only; it cannot reach into the cross-origin iframe.
   const control = useCallback((js: string) => {
     webRef.current?.injectJavaScript(`try{${js}}catch(e){};true;`);
-  }, []);
+  }, [webRef]);
 
   // Bind a fresh realm + dispatcher at a NEW generation, then reset the iframe and deliver. The
   // engine appId is the LAUNCHER id (#5 D8) so a fork gets its own user data even when it shares
@@ -224,12 +244,13 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
       live.current = null;
       if (popTimer.current) { clearTimeout(popTimer.current); popTimer.current = null; }
       startupDeadline.current.cancel();
-      const generation = ++genCounter.current;
+      lastGeneration += 1;
+      const generation = lastGeneration;
       engineId.current = engineAppId;
       // paintMs is reset with the rest: it is the "has painted" signal the container's boot state
       // reads (`boot-state.ts`), so a PREVIOUS realm's paint must never make the next launch look
       // already-up and skip the boot state.
-      setS((p) => ({ ...p, currentApp: displayName, lastError: null, launchFailed: false, navDepth: 0, paintMs: null }));
+      setS((p) => ({ ...p, currentApp: displayName, lastError: null, launchFailed: false, navDepth: 0, paintMs: null, paintedAt: null }));
 
       // ALWAYS bind a realm + dispatcher — even for a zero-capability app — so a bundle that
       // syscalls anyway (the cap-intruder) is DENIED with a structured error, not dropped into a
@@ -315,7 +336,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         setS((p) => ({ ...p, lastTap: `${m.payload?.type ?? '?'} "${m.payload?.label ?? ''}"` }));
         return;
       case 'paint':
-        handlePaintFrame(m, startupDeadline.current, setS);
+        handlePaintFrame(m, live.current?.realm.generation ?? null, startupDeadline.current, setS);
         return;
       case 'probes': {
         const r = m.payload || {};
@@ -358,6 +379,11 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     setS((p) => ({ ...p, lastError: null }));
   }, []);
 
+  const webViewGone = useCallback(() => {
+    startupDeadline.current.cancel();
+    setS((p) => (p.launchFailed || p.lastError ? p : { ...p, lastError: 'webview gone' }));
+  }, []);
+
   // ── Android system back (#5 D4 — the guaranteed-exit wiring) ────────────────
   // The pure policy decides; the host acts. `forward` posts a nav-back and arms the unhandled-
   // press window; `exit` leaves to the launcher; `ignore` (no realm) lets the OS handle back.
@@ -396,5 +422,6 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     control,
     exit,
     clearLastError,
+    webViewGone,
   };
 }

@@ -41,11 +41,19 @@ export const SafeAreaProvider = host('SafeAreaProvider');
 export const StatusBar = host('StatusBar');
 /** Every script the host injected into a rendered WebView, oldest first. */
 export const injectedScripts: string[] = [];
+const WEBVIEW_CONTAINER = { flex: 1, overflow: 'hidden' };
 /** The WebView exposes `injectJavaScript` through its ref, as react-native-webview does, so a
- *  rendered MiniAppView really delivers its bundle; the scripts land in `injectedScripts`. */
+ *  rendered MiniAppView really delivers its bundle; the scripts land in `injectedScripts`, and the
+ *  ones each WebView received in its host element's `injected` prop. Like react-native-webview 13
+ *  (`WebView.android.tsx`, `WebView.ios.tsx`), it draws the native view inside a View of its own,
+ *  `[{ flex: 1, overflow: 'hidden' }, containerStyle]`: `style` and every other prop reach only the
+ *  native view, so the layout and touch handling a parent sees are that container's. */
 export const WebView = React.forwardRef<{ injectJavaScript: (js: string) => void }, HostProps>((props, ref) => {
-  React.useImperativeHandle(ref, () => ({ injectJavaScript: (js: string) => { injectedScripts.push(js); } }), []);
-  return React.createElement('WebView', props, props.children as React.ReactNode);
+  const [injected] = React.useState<string[]>(() => []);
+  React.useImperativeHandle(ref, () => ({ injectJavaScript: (js: string) => { injectedScripts.push(js); injected.push(js); } }), [injected]);
+  const { containerStyle, ...native } = props;
+  return React.createElement('View', { style: [WEBVIEW_CONTAINER, containerStyle] },
+    React.createElement('WebView', { ...native, injected }, props.children as React.ReactNode));
 });
 /** What the system does with a `Modal`, as React Native 0.85 shows it (measured on iOS 27):
  *  - A presentation is confirmed through `onShow` on both platforms. iOS presents a modal from the

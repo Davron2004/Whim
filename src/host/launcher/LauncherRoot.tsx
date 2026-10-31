@@ -20,7 +20,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
 import { APP_BUNDLES } from '../../runtime/generated/app-bundles';
-import { DEFAULT_THEME, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { hideLaunchScreen as nativeHideLaunchScreen } from '../launch-screen';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
@@ -33,7 +33,7 @@ import { copyStorage, deleteStorage, peekAppliedSchema } from '../storage-engine
 import { HighlightingProvider } from '../ui/whim-prose/WhimProse';
 import { ToastHost, useToast, type ToastApi } from '../ui/Toast';
 import { haptics } from '../haptics';
-import { useTokens } from '../ui/tokens';
+import { useTokens, type ShellTokens } from '../ui/tokens';
 import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
 import { runFork } from './fork-op';
@@ -58,7 +58,7 @@ import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAp
 import { seedFirstRun, SeedSpec } from './seed';
 import { COPY, LEGAL_COPY, readyTitle } from './copy';
 import HomeScreen from './HomeScreen';
-import MiniAppView from './MiniAppView';
+import { MiniAppStage, type MiniAppLaunch } from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
 import SettingsScreen from './SettingsScreen';
 import AdvancedScreen from './AdvancedScreen';
@@ -184,7 +184,8 @@ type HistoryScreenState = { kind: 'history'; app: InstalledApp; from: 'home' | '
 
 type Screen =
   | { kind: 'home' }
-  | { kind: 'app'; app: InstalledApp; record: AppRecord; source: string; engineAppId: string }
+  // `tappedAt`: when the tile was tapped (`Date.now()`), for the tap-to-first-paint record.
+  | { kind: 'app'; app: InstalledApp; record: AppRecord; source: string; engineAppId: string; tappedAt: number }
   | { kind: 'dev' }
   | { kind: 'settings' }
   // Pushed over Settings on the native stack.
@@ -330,6 +331,24 @@ function stackTitle(on: StackScreen): string | undefined {
  *  status bar follow whichever the screen on top draws. */
 function schemeFollowing(on: StackScreen): boolean {
   return on.kind === 'home' || on.kind === 'settings' || on.kind === 'advanced' || on.kind === 'report';
+}
+
+/** Whether the shell's frame (the status-bar strip above a screen drawn without the native stack)
+ *  and the status bar's content follow the phone's scheme: they take the colours of the screen they
+ *  frame — the token `bg` over a running app, the Home skeleton (`ready` false) and a scheme-following
+ *  stack screen on `top`; the light v2 palette over a screen still drawn in it (the dev probe, the
+ *  age hold, the missing link, the update screen). */
+function frameFollowsScheme(screen: Screen, top: StackScreen | undefined, ready: boolean): boolean {
+  if (top !== undefined) return schemeFollowing(top);
+  return screen.kind === 'app' || !ready;
+}
+
+/** The frame's colours: over an open app those of the settings its realm was delivered with
+ *  (`appFrame`, `null` before the delivery), else the phone's `live` tokens or the light v2 palette. */
+function shellFrame(screen: Screen, top: StackScreen | undefined, ready: boolean, live: ShellTokens, appFrame: ShellTokens | null) {
+  if (!frameFollowsScheme(screen, top, ready)) return { background: SHELL_PALETTE.bg, barStyle: 'dark-content' as const };
+  const t = screen.kind === 'app' && appFrame !== null ? appFrame : live;
+  return { background: t.colors.bg, barStyle: t.barStyle };
 }
 
 /** The update screen in place of `from`, holding the prompt typed there when `from` is a flow step
@@ -714,6 +733,8 @@ function LauncherShell({
 }>) {
   const palette = SHELL_PALETTE;
   const tokens = useTokens();
+  // The settings an open app's frame is held to from its delivery (`MiniAppStage`), `null` before it.
+  const [appFrame, setAppFrame] = useState<ShellTokens | null>(null);
   // The language every legal screen and link uses (legal-surface-v2 D6): resolved once at launch
   // from the stored choice or the phone's language, and replaced when the user taps a switch.
   const [phoneLocale] = useState(deviceLocale);
@@ -1099,11 +1120,12 @@ function LauncherShell({
    *  fails (`app-launcher` "Opening an app shows an immediate busy affordance" — a tap MUST NOT
    *  read as unregistered while the active bundle is being read). `onFailed` runs after a failed
    *  open's alert, for a caller that must not stay where it is. */
-  const onOpen = (app: InstalledApp, onFailed?: () => void) =>
-    runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
+  const onOpen = (app: InstalledApp, onFailed?: () => void) => {
+    const tappedAt = Date.now();
+    return runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
       try {
         const source = await access.activeBundle(app);
-        setScreen({ kind: 'app', app, record: app.record, source, engineAppId: access.engineAppId(app) });
+        setScreen({ kind: 'app', app, record: app.record, source, engineAppId: access.engineAppId(app), tappedAt });
       } catch (e) {
         // The user still gets the alert; the class/message/stack of what actually failed is only
         // recoverable from the seam (host-observability "The alert paths now log").
@@ -1112,6 +1134,7 @@ function LauncherShell({
         onFailed?.();
       }
     });
+  };
 
   /** Make a copy: busy for that app while it runs. Resolves the new entry, or `null` when a copy (or
    *  an open) of the app is already running; rejects when the copy could not be made, with nothing
@@ -2819,25 +2842,7 @@ function LauncherShell({
    *  own control flow for the same budget — adding a `Screen` member costs this function one
    *  branch, never the other. */
   const renderScreenContent = (): React.ReactNode => {
-    if (screen.kind === 'app') {
-      return (
-        <MiniAppView
-          key={screen.app.id}
-          record={screen.record}
-          bundleSource={screen.source}
-          engineAppId={screen.engineAppId}
-          theme={DEFAULT_THEME}
-          onExit={goHome}
-          onVersions={() => onHistory(screen.app, 'app')}
-          onChangeIt={() => openWithConsent({ kind: 'compose', editing: screen.app })}
-          installedApp={screen.app}
-          access={access}
-          reportOptions={reportOptions}
-          onUpdateRequired={onReportUpdateRequired}
-          legalLanguage={legalLanguage}
-        />
-      );
-    } else if (screen.kind === 'dev') {
+    if (screen.kind === 'dev') {
       return <DevProbeScreen onExit={goHome} />;
     } else if (screen.kind === 'age' && screen.held !== undefined) {
       const { returnTo } = screen;
@@ -3095,6 +3100,29 @@ function LauncherShell({
     return { key: on.kind, title: stackTitle(on), largeTitle: on.kind === 'settings', onLeave: leave, ...look, children: renderStackScreen(on, leave) };
   };
 
+  /** The mini-app container, mounted under every screen once the shell is ready (design-system-v1
+   *  task 18.4): hidden, with one WebView waiting, while no app is open; the open app when one is.
+   *  Both branches render it at the same place, so opening and closing never remount it. */
+  const renderMiniApp = (): React.ReactNode => {
+    if (!ready) return null;
+    if (screen.kind !== 'app') return <MiniAppStage launch={null} onFrame={setAppFrame} />;
+    const launch: MiniAppLaunch = {
+      record: screen.record,
+      bundleSource: screen.source,
+      engineAppId: screen.engineAppId,
+      tappedAt: screen.tappedAt,
+      onExit: goHome,
+      onVersions: () => onHistory(screen.app, 'app'),
+      onChangeIt: () => openWithConsent({ kind: 'compose', editing: screen.app }),
+      installedApp: screen.app,
+      access,
+      reportOptions,
+      onUpdateRequired: onReportUpdateRequired,
+      legalLanguage,
+    };
+    return <MiniAppStage launch={launch} onFrame={setAppFrame} />;
+  };
+
   const stack = ready ? stackFor(screen) : null;
   let content: React.ReactNode;
   if (!ready) {
@@ -3125,12 +3153,12 @@ function LauncherShell({
   // failing-screen identifier in the log record and the reset key, so navigating away and back
   // re-attempts a screen that failed once.
   const exit = SCREEN_EXITS[screen.kind];
-  const top = stack?.at(-1);
+  const frame = shellFrame(screen, stack?.at(-1), ready, tokens, appFrame);
 
   return (
     <HighlightingProvider enabled={highlighting}>
-      <SafeAreaView edges={frameEdgesFor(screen.kind, stack !== null)} style={[styles.root, { backgroundColor: palette.bg }]}>
-        <StatusBar barStyle={top !== undefined && schemeFollowing(top) ? tokens.barStyle : 'dark-content'} />
+      <SafeAreaView edges={frameEdgesFor(screen.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>
+        <StatusBar barStyle={frame.barStyle} />
         <ToastHost bottomOffset={toastClearance(screen.kind)}>
           <ToastBridge api={toastRef} />
           <ScreenBoundary
@@ -3138,6 +3166,7 @@ function LauncherShell({
             FallbackComponent={ScreenErrorFallback}
             onLeave={exit.back === 'root' ? undefined : goHome}
           >
+            {renderMiniApp()}
             {content}
             <MakingSheet content={renderSheetPage()} onClose={closeSheet} />
             {checkingAge !== undefined && <AgeCheckBack onLeave={() => onLegalDecline(checkingAge.returnTo)} />}
