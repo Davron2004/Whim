@@ -249,7 +249,7 @@ function runForwardCompatibilityTests(): void {
   const modeled = { ...question, select: 'one', other: false };
   check('zero questions is a valid answer', ClarifyResponse.safeParse({ questions: [] }).success);
   check('four questions are refused', !ClarifyResponse.safeParse({ questions: [modeled, modeled, modeled, modeled] }).success);
-  const limit = { reason: 'Mini-apps can’t fetch live weather.', alternative: 'a packing list you fill in yourself' };
+  const limit = { reason: 'I can’t give an app live weather.', alternative: 'a packing list you fill in yourself' };
   check('a limit with no questions validates', ClarifyResponse.safeParse({ questions: [], limit }).success);
   check('a limit carrying questions is refused', !ClarifyResponse.safeParse({ questions: [modeled], limit }).success);
   check('a limit with an empty reason is refused', !ClarifyResponse.safeParse({ questions: [], limit: { ...limit, reason: '' } }).success);

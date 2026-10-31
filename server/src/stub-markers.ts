@@ -18,7 +18,7 @@ export const STUB_LIMIT_MARKER = '[[limit]]';
 export const STUB_LIMIT: ClarifyResponse = {
   questions: [],
   limit: {
-    reason: 'Mini-apps can’t fetch live weather, so this one can’t show today’s forecast.',
+    reason: 'I can’t give an app live weather, so this one couldn’t show today’s forecast.',
     alternative: 'a packing list you fill in yourself',
   },
 };
@@ -32,8 +32,8 @@ const FUTURE_MARKERS: readonly (readonly [string, CompatFallback])[] = [
 
 /** The plain-text notice each ending fallback carries. */
 const FUTURE_NOTICES: Readonly<Record<Exclude<CompatFallback, 'skip'>, string>> = {
-  fail: 'This build needs a newer version of Whim to finish.',
-  update: 'Update Whim to see this build through.',
+  fail: 'Finishing this needs a newer version of Whim.',
+  update: 'Update Whim to finish making this app.',
 };
 
 /** Whether `prompt` carries a marker the stub PIPELINE reads — its own `[[fail]]` or a

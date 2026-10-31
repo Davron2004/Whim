@@ -267,8 +267,8 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
   // ── can't make as asked ─────────────────────────────────────────────────────────────────────
 
   await h.test('limit: it replaces the questions and the plan, is plain words, and Change my idea is the way back with the words', () => {
-    const limit = clarifyLimitOf({ limit: { reason: 'Mini-apps can’t fetch live weather.', alternative: 'a packing list you fill in yourself' } });
-    h.eq(limit, { reason: 'Mini-apps can’t fetch live weather.', alternative: 'a packing list you fill in yourself' }, 'the limit is read off the response');
+    const limit = clarifyLimitOf({ limit: { reason: 'I can’t give an app live weather.', alternative: 'a packing list you fill in yourself' } });
+    h.eq(limit, { reason: 'I can’t give an app live weather.', alternative: 'a packing list you fill in yourself' }, 'the limit is read off the response');
     h.eq(clarifyLimitOf({}), undefined, 'a response without one has none');
     const shown = withLimit(planStep(describedFlow()), limit!);
     h.eq([shown.asking, shown.loading, shown.questions, shown.answers, shown.limit], [false, false, [], {}, limit], 'the page leaves loading, with nothing to ask or make');

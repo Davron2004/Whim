@@ -1,10 +1,10 @@
 /**
- * ServiceNotice — the live timing of a service refusal's notice (design D11/D12; spec
+ * refusal-window — the live timing of a service refusal's notice (design D11/D12; spec
  * `service-refusals`): the gate that holds a refused action until its window ends, and the clear
  * that drops a sender notice when it does. The notice itself is drawn by `FlowNoticeBlock` (the
  * shell's `Notice`).
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 import { noticeExpiredAt, retryWindowState } from './refusal-landing';
 
 /**
@@ -14,12 +14,12 @@ import { noticeExpiredAt, retryWindowState } from './refusal-landing';
  * never a ticking countdown, and never a request of its own.
  */
 export function useRetryGate(retryAt: number | undefined): boolean {
-  const [, forceRecheck] = useState(0);
+  const [, forceRecheck] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
     if (retryAt === undefined) return undefined;
     const state = retryWindowState(retryAt, Date.now());
     if (!state.disabled) return undefined;
-    const timer = setTimeout(() => forceRecheck((n) => n + 1), state.msUntilEnable);
+    const timer = setTimeout(() => forceRecheck(), state.msUntilEnable);
     return () => clearTimeout(timer);
   }, [retryAt]);
   return retryAt !== undefined && retryWindowState(retryAt, Date.now()).disabled;

@@ -77,10 +77,10 @@ export function openingLook(surface: MiniAppSurface, elapsed: { cap: boolean; la
   a loading page paints the light default canvas until the theme reaches it (18e, iOS dark flash).
 - A failure surface (`launch-failed`, `app-error`) replaces the whole opening state at once.
 - Frame boundary (18g): the app's area (stage root, WebView bg, cover, plate, "Opening…", error screens) + strip + `StatusBar` read the tokens captured at delivery (live `useTokens()` before it; Reload's WebView recaptures); orb and sheets stay live. `Text`/`TilePlate` take `tokens?: ShellTokens` (omitted = live).
-- `launch-failed` (refused before delivery): `Text` title2/body `text-2`, one `buttonColors(t,'ink')` Back; no `SHELL_PALETTE`. `app-error` (fatal frame, paint watchdog, WebView gone) is the
+- `launch-failed` (refused before delivery): `Text` title2/body `text-2`, one `buttonColors(t,'ink')` Back. `app-error` (fatal frame, paint watchdog, WebView gone) is the
   crash screen `AppCrashed({ name, tokens, bottomClearance, behind, onReload, onAskFix, onExit })` with the Orb over it; Reload = `MiniAppLaunch.onReload`, a new launch (no in-place retry); `behind` (= `MiniAppLaunch.behind`, the launch runs an older version than the app's current one) drops "Ask Whim to fix it" and says a newer version is ready.
 - `LauncherRoot`'s frame (status-bar strip) + `StatusBar`: `bg`/`barStyle` of `MiniAppStage`'s `onFrame(pinned)` over an
-  open app, else live tokens; skeleton, scheme-following stack top live; else `SHELL_PALETTE`/`dark-content`.
+  open app, else live tokens (`shellFrame(screen, live, appFrame)`).
 - Closing: `onExit` → `goHome`. The tile→screen morph (chain 22) replaces the plate's position only.
 - Tests: `mini-app-host-ui` ("…shown at 600 ms anyway…", "a page still loading is never shown before
   it has the theme…", "fades in over 160 ms…", "…tile-sized plate…", stale-paint/Reload cases);

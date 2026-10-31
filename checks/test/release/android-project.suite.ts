@@ -13,6 +13,7 @@ import {
   checkAndroidProject,
   ANDROID_MANIFEST_PATH,
   ANDROID_MAIN_NETWORK_CONFIG_PATH,
+  ANDROID_MAIN_ACTIVITY_PATH,
 } from '../../../scripts/release/lib/android-project';
 
 const REPO_ROOT = process.cwd();
@@ -121,9 +122,56 @@ const MAIN_NETWORK_CONFIG_WITH_OVERRIDE = [
   '',
 ].join('\n');
 
+/** The real `MainActivity.kt`, so the fixture starts from what ships. */
+const REAL_MAIN_ACTIVITY = fs.readFileSync(path.join(REPO_ROOT, ANDROID_MAIN_ACTIVITY_PATH), 'utf8');
+const SCRIM_OFF = /^.*\.isNavigationBarContrastEnforced\s*=\s*false.*$/gm;
+/** The activity clearing its own window, in `onCreate`. */
+const ACTIVITY_CLEAR_CALL = /^ *clearNavigationBarScrim\(window\)\n/m;
+/** Every call starting the dialog walk (the activity's frames and each dialog's). */
+const DIALOG_WALK_CALLS = /^ *clearDialogNavigationBarScrims\(\)\n/gm;
+/** The dialog walk clearing a dialog's window. */
+const DIALOG_CLEAR_CALLS = /^ *clearNavigationBarScrim\(dialogWindow\)\n/gm;
+/** The window listing handing over to the walk. */
+const WALK_FROM_LISTING = /^ *if \(unwatched\) watchDialogScrims\(window\.decorView\)\n/m;
+/** The listing skipping a window once its dialog is watched. */
+const SKIP_WATCHED = / \|\| root in scrimWatched\)/;
+/** The dialog's pre-draw listener starting the walk again after clearing its window (the nested-sheet fix). */
+const DIALOG_LISTENER_WALK = /(\n *matchNavigationBarToShellScheme\(dialogBars\)\n) *clearDialogNavigationBarScrims\(\)\n/;
+/** The dialog's pre-draw listener clearing its window again (React Native turns the scrim back on). */
+const DIALOG_LISTENER_CLEAR = /(addOnPreDrawListener \{\n) *clearNavigationBarScrim\(dialogWindow\)\n/;
+/** The walk following a host into its dialog, where nested hosts live. */
+const WALK_INTO_DIALOG = /^ *watchDialogScrims\(decor\)\n/m;
+/** The activity's pre-draw listener matching the navigation bar's icons to the status bar's. */
+const ACTIVITY_LISTENER_MATCH = /^ *matchNavigationBarToStatusBar\(activityBars\)\n/m;
+/** The value `matchNavigationBarToStatusBar` gives the navigation bar: the status bar's. */
+const MATCH_FROM_STATUS = /val light = bars\.isAppearanceLightStatusBars\n/;
+/** The dialog's pre-draw listener putting its navigation bar in the shell's scheme, before the walk. */
+const DIALOG_LISTENER_SHELL = /(\n *clearNavigationBarScrim\(dialogWindow\)\n) *matchNavigationBarToShellScheme\(dialogBars\)\n(?= *clearDialogNavigationBarScrims)/;
+/** The start of `onConfigurationChanged`, where 21g's night-mode icon line sat. */
+const CONFIGURATION_CHANGED = /(super\.onConfigurationChanged\(newConfig\)\n)/;
+/** The scrim walk's time budget, and the clock it is read against. */
+const WALK_BUDGET = /const val SCRIM_WALK_MS = \d+L/;
+const WALK_CLOCK = /SystemClock\.uptimeMillis\(\)/;
+/** The scrim walk's checks floor, and the comparisons that stop walking for an unwatched window. */
+const WALK_CHECKS = /const val SCRIM_WALK_CHECKS = \d+/;
+const WALK_ELAPSED = /now - walk\.firstListed >= SCRIM_WALK_MS/;
+const WALK_COUNTED = / && walk\.checks >= SCRIM_WALK_CHECKS\)/;
+const WALK_BOTH = /(SCRIM_WALK_MS) && (walk\.checks)/;
+/** The activity's pre-draw listener starting the walk, and the end of that listener. */
+const ACTIVITY_LISTENER_WALK = /(mirrorBarAppearance\(\)\n) *clearDialogNavigationBarScrims\(\)\n( *true\n *\}\n)/;
+
+/** `REAL_MAIN_ACTIVITY` with `pattern` replaced; throws when the pattern no longer matches, so a
+ *  case can't pass vacuously after `MainActivity.kt` is reworded. */
+function mainActivityWith(pattern: RegExp, replacement: string): string {
+  const changed = REAL_MAIN_ACTIVITY.replace(pattern, replacement);
+  if (changed === REAL_MAIN_ACTIVITY) throw new Error(`${pattern} no longer matches ${ANDROID_MAIN_ACTIVITY_PATH}`);
+  return changed;
+}
+
 function writeValidFixture(root: string): void {
   writeFile(root, ANDROID_MANIFEST_PATH, VALID_MANIFEST);
   writeFile(root, ANDROID_MAIN_NETWORK_CONFIG_PATH, MAIN_NETWORK_CONFIG);
+  writeFile(root, ANDROID_MAIN_ACTIVITY_PATH, REAL_MAIN_ACTIVITY);
 }
 
 export async function run(): Promise<void> {
@@ -191,6 +239,206 @@ export async function run(): Promise<void> {
       content: () => manifest({ autoVerify: true, host: '${whimWebHost}', configChanges: `${REAL_CONFIG_CHANGES}|density` }),
       expectFile: ANDROID_MANIFEST_PATH,
       matches: /must not include density/,
+    },
+    {
+      name: 'a MainActivity that leaves the navigation bar contrast scrim on fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(SCRIM_OFF, ''),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /isNavigationBarContrastEnforced = false/,
+    },
+    {
+      name: 'a MainActivity whose scrim-off line is commented out fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(SCRIM_OFF, (line) => `// ${line}`),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /isNavigationBarContrastEnforced = false/,
+    },
+    {
+      name: 'a MainActivity whose scrim-off line is block-commented fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(SCRIM_OFF, (line) => `/* ${line} */`),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /isNavigationBarContrastEnforced = false/,
+    },
+    {
+      name: 'a MainActivity that never clears the activity window fails (the clearing function still defined and used for dialogs)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(ACTIVITY_CLEAR_CALL, ''),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /onCreate must call clearNavigationBarScrim\(window\)/,
+    },
+    {
+      name: 'a MainActivity whose activity-window clear is block-commented fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(ACTIVITY_CLEAR_CALL, (line) => `/* ${line.trimEnd()} */\n`),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /onCreate must call clearNavigationBarScrim\(window\)/,
+    },
+    {
+      name: 'a MainActivity whose activity-window clear sits in a nested block comment fails (discriminating: a stripper that ends a comment at the first */ leaves the call in)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(ACTIVITY_CLEAR_CALL, (line) => `/* /* old */ ${line.trimEnd()} */\n`),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /onCreate must call clearNavigationBarScrim\(window\)/,
+    },
+    {
+      name: 'a MainActivity that never starts the dialog walk fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(DIALOG_WALK_CALLS, ''),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /onCreate must add a pre-draw listener to the activity's window that calls clearDialogNavigationBarScrims/,
+    },
+    {
+      name: 'a MainActivity whose dialog walk start is block-commented fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(DIALOG_WALK_CALLS, (line) => `/* ${line.trimEnd()} */\n`),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /onCreate must add a pre-draw listener to the activity's window that calls clearDialogNavigationBarScrims/,
+    },
+    {
+      name: 'a MainActivity whose dialog walk clears no dialog window fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(DIALOG_CLEAR_CALLS, ''),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /watchDialogScrims must add a pre-draw listener to each dialog that calls clearNavigationBarScrim/,
+    },
+    {
+      name: 'a MainActivity whose window listing never walks to the dialogs fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => REAL_MAIN_ACTIVITY.replace(WALK_FROM_LISTING, ''),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /clearDialogNavigationBarScrims, listing/,
+    },
+    {
+      name: 'a MainActivity whose listing stops walking for a window once it has listed it, watched or not, fails (a preallocated Modal\'s dialog shows before its host is in the tree)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(SKIP_WATCHED, ' || root in scrimUnwatchedChecks)'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /clearDialogNavigationBarScrims must keep walking for a window until its dialog is in scrimWatched/,
+    },
+    {
+      name: 'a MainActivity whose dialog listener no longer walks fails (the activity\'s listener still does: a sheet opened from a sheet keeps its band)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(DIALOG_LISTENER_WALK, '$1'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /watchDialogScrims must add a pre-draw listener to each dialog that calls clearDialogNavigationBarScrims/,
+    },
+    {
+      name: 'a MainActivity whose walk no longer follows a host into its dialog fails (it still recurses into children)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_INTO_DIALOG, ''),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /watchDialogScrims must walk on into each dialog's decor view/,
+    },
+    {
+      name: 'a MainActivity whose dialog listener no longer clears the dialog fails (the first-show clear stays: React Native turns the scrim back on)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(DIALOG_LISTENER_CLEAR, '$1'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /watchDialogScrims must add a pre-draw listener to each dialog that calls clearNavigationBarScrim/,
+    },
+    {
+      name: 'a MainActivity that walks once in onCreate instead of before each frame fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(ACTIVITY_LISTENER_WALK, '$1$2    clearDialogNavigationBarScrims()\n'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /onCreate must add a pre-draw listener to the activity's window that calls clearDialogNavigationBarScrims/,
+    },
+    {
+      name: 'a MainActivity whose listing walks on only for windows that are already watched fails (the inversion: `root !in scrimWatched`)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(SKIP_WATCHED, ' || root !in scrimWatched)'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /clearDialogNavigationBarScrims must keep walking for a window until its dialog is in scrimWatched/,
+    },
+    {
+      name: 'a MainActivity whose walk budget is 1 ms fails (21i\'s skip-once bug again: the walk ends before a preallocated Modal\'s host is inserted)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_BUDGET, 'const val SCRIM_WALK_MS = 1L'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /must declare const val SCRIM_WALK_MS of at least 1000 ms/,
+    },
+    {
+      name: 'a MainActivity whose walk budget sits just under the floor fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_BUDGET, 'const val SCRIM_WALK_MS = 999L'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /must declare const val SCRIM_WALK_MS of at least 1000 ms/,
+    },
+    {
+      name: 'a MainActivity that budgets the walk by counting checks instead of the clock fails (several windows drawing spend a count in a fraction of a second)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_CLOCK, '++scrimChecks'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /clearDialogNavigationBarScrims must stop walking for an unwatched window only once both/,
+    },
+    {
+      name: 'a MainActivity that names SCRIM_WALK_MS but never compares the elapsed time against it fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_ELAPSED, 'SCRIM_WALK_MS > 0'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /clearDialogNavigationBarScrims must stop walking for an unwatched window only once both/,
+    },
+    {
+      name: 'a MainActivity that stops walking on time alone fails (idle seconds count: a preallocated Modal\'s host held back by a stalled JS thread lands after the walk)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_COUNTED, ')'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /clearDialogNavigationBarScrims must stop walking for an unwatched window only once both/,
+    },
+    {
+      name: 'a MainActivity that stops walking once either budget is spent fails (`||` for `&&`)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_BOTH, '$1 || $2'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /clearDialogNavigationBarScrims must stop walking for an unwatched window only once both/,
+    },
+    {
+      name: 'a MainActivity whose checks floor is 1 fails (the time budget alone again, in all but name)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_CHECKS, 'const val SCRIM_WALK_CHECKS = 1'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /must declare const val SCRIM_WALK_CHECKS of at least 30/,
+    },
+    {
+      name: 'a MainActivity whose checks floor sits just under the minimum fails',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(WALK_CHECKS, 'const val SCRIM_WALK_CHECKS = 29'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /must declare const val SCRIM_WALK_CHECKS of at least 30/,
+    },
+    {
+      name: 'a MainActivity whose activity listener no longer matches the navigation bar to the status bar fails (white icons on a light frame over a dark phone)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(ACTIVITY_LISTENER_MATCH, ''),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /onCreate must add a pre-draw listener to the activity's window that calls matchNavigationBarToStatusBar/,
+    },
+    {
+      name: 'a MainActivity whose activity match takes the shell\'s scheme instead of the status bar\'s fails (the weaker variant: right on Home, wrong over a frame)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(MATCH_FROM_STATUS, 'val light = shellSchemeLight()\n'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /must define matchNavigationBarToStatusBar, setting isAppearanceLightNavigationBars from isAppearanceLightStatusBars/,
+    },
+    {
+      name: 'a MainActivity that sets the navigation bar\'s icons from the night mode on a configuration change fails (the 21g regression, the pre-draw match still in place)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () =>
+        mainActivityWith(
+          CONFIGURATION_CHANGED,
+          '$1    val night = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES\n    WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightNavigationBars = !night\n',
+        ),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /must set isAppearanceLightNavigationBars only in matchNavigationBarToStatusBar and matchNavigationBarToShellScheme/,
+    },
+    {
+      name: 'a MainActivity whose dialog listener no longer puts the navigation bar in the shell\'s scheme fails (React Native sets it again with each prop update; the first-show call stays)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(DIALOG_LISTENER_SHELL, '$1'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /watchDialogScrims must add a pre-draw listener to each dialog that calls matchNavigationBarToShellScheme/,
     },
     {
       name: 'a main config that refuses cleartext at the base fails',

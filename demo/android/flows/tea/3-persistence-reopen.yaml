@@ -37,7 +37,7 @@ env:
 # Beat 3 — cold start, back to the grid.
 - launchApp
 - extendedWaitUntil:
-    visible: "YOUR APPS"
+    visible: "Your apps"
     timeout: 30000
 - waitForAnimationToEnd
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2400, optional: true }

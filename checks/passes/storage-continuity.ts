@@ -43,7 +43,7 @@ const FACADES: readonly FacadeRow[] = [
 ];
 
 function driftDiagnostic(row: FacadeRow, missing: StorageReference, anchor: { line: number; column: number }): Diagnostic {
-  const hint = `Keep reading the ${row.noun} "${missing.name}" — the user's existing data lives there; a ${row.callShape} call under a different name starts from empty.`;
+  const hint = `Keep reading the ${row.noun} \`${missing.name}\` — the user’s existing data lives there; a ${row.callShape} call under a different name starts from empty.`;
   return {
     kind: 'storage_surface_drift',
     severity: 'error',
@@ -56,7 +56,7 @@ function driftDiagnostic(row: FacadeRow, missing: StorageReference, anchor: { li
 }
 
 function dynamicDiagnostic(facade: StorageFacade, method: string, line: number, column: number): Diagnostic {
-  const hint = `Pass a string literal to \`storage.${facade}.${method}\` so the ${facade === 'kv' ? 'key' : 'collection'} it reads can be checked against the user's existing data.`;
+  const hint = `Pass a string literal to \`storage.${facade}.${method}\` so the ${facade === 'kv' ? 'key' : 'collection'} it reads can be checked against the user’s existing data.`;
   return {
     kind: 'storage_surface_dynamic',
     severity: 'warning',

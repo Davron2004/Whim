@@ -20,10 +20,9 @@ import { FirstRunSheet } from '../FirstRunSheet';
 import { LEGAL_COPY } from '../copy';
 import { TextArea, TextField } from '../../ui/TextField';
 import { Sheet } from '../../ui/Sheet';
-import { followOffset, hiddenAtRest, revealOffset, riseProgress, sheetBottomPadding } from '../keyboard-shell';
+import { followOffset, hiddenAtRest, REVEAL_MARGIN, revealOffset, riseProgress, sheetBottomPadding } from '../keyboard-shell';
 import { COLORS, LAYOUT } from '../../../design/tokens';
 import { ToastHost } from '../../ui/Toast';
-import { SPACING } from '../../../sdk/theme';
 import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
 import { reportClientOptions } from '../transport-shared';
@@ -544,7 +543,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
           await draftLoaded();
           const native = geometry.nativeScroll;
           const rise = await riseThrough(tree, device, native);
-          const below = () => Math.max(0, top + height + SPACING.md - (native.offset + native.viewport));
+          const below = () => Math.max(0, top + height + REVEAL_MARGIN - (native.offset + native.viewport));
           const visible = () => below() < 0.01;
           // A scroll view that clamps a scroll to the bounds it has when the scroll runs (Android's,
           // and a sheet's, whose card pads outside it) lands each frame's scroll before that frame's
@@ -581,7 +580,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     await on(IOS, report(), async ({ tree }) => {
       await draftLoaded();
       const rise = await riseThrough(tree, IOS, native);
-      const below = () => Math.max(0, top + height + SPACING.md - (native.offset + native.viewport));
+      const below = () => Math.max(0, top + height + REVEAL_MARGIN - (native.offset + native.viewport));
       const atRest = below();
       h.ok(atRest > 0, 'setup: the block is partly below the scroll view’s end at rest');
       const seen: number[] = [];
@@ -672,7 +671,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
       const change = await changeThrough(tree, native, KEYBOARD_HEIGHT, grown);
       const off: string[] = [];
       const check = (when: string, before: number) => {
-        const kept = Math.max(before, bottom + SPACING.md - native.viewport);
+        const kept = Math.max(before, bottom + REVEAL_MARGIN - native.viewport);
         if (Math.abs(native.offset - kept) > 0.01) off.push(`${when}: offset ${native.offset}, kept at ${kept}`);
       };
       for (let step = 1; step <= 6; step += 1) {
@@ -737,7 +736,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => { field(tree).props.onFocus({}); flushRevealFrames(); });
       h.eq(scrolls, [], 'setup: the field is in view above the keyboard');
       await instantly(grown);
-      const kept = 360 + SPACING.md - (native.viewport - (grown - KEYBOARD_HEIGHT));
+      const kept = 360 + REVEAL_MARGIN - (native.viewport - (grown - KEYBOARD_HEIGHT));
       h.eq([framePadding(tree), native.offset], [overlapOf(SCREEN_FRAME, keyboardWindow.height - grown), kept], 'a screen: in the start’s own frame the frame ends at the new keyboard and the field sits its margin above it');
       await settle(grown);
       h.eq([framePadding(tree), native.offset], [overlapOf(SCREEN_FRAME, keyboardWindow.height - grown), kept], 'a screen: the end, frames later, moves nothing');
@@ -1030,7 +1029,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('every launcher field wears ink for its caret and selection handles, selected text stays readable on its highlight, it paints its own background, and on iOS a one-line field sets no line height', async () => {
+  await h.test('every launcher field wears ink for its caret and selection handles, selected text stays readable on its highlight, it paints its own background, and on iOS a one-line field sets no line height and a different selection colour from a multiline one (#218)', async () => {
     for (const scheme of ['light', 'dark'] as const) {
       await TestRenderer.act(async () => setColorScheme(scheme));
       try {
@@ -1042,6 +1041,9 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
             ['describe', compose(), async () => {}, true],
             ['plan row', plan(), editFourthRow, true],
           ];
+          // iOS selection colours by line count: one recycled native field crossing between the two
+          // keeps its old tint unless the colour differs (`fieldSelection`).
+          const iosSelections = new Map<boolean, Set<string>>([[false, new Set()], [true, new Set()]]);
           for (const [name, element, open, multiline] of fields) {
             await on(device, element, async ({ tree }) => {
               await open(tree);
@@ -1050,7 +1052,9 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
               const background = paintedBackground(input);
               h.ok(background !== undefined, `${where}: it paints its own background, which covers Android's default field underline`);
               if (device.os === 'ios') {
-                h.eq(input.props.selectionColor, ink, `${where}: ink tints the caret, the handles and the highlight iOS draws translucent itself`);
+                const [r, g, b, a] = rgba(String(input.props.selectionColor));
+                h.ok(JSON.stringify([r, g, b]) === JSON.stringify(rgba(ink).slice(0, 3)) && a >= 0.99, `${where}: ink tints the caret, the handles and the highlight iOS draws translucent itself (${input.props.selectionColor})`);
+                iosSelections.get(multiline)?.add(String(input.props.selectionColor));
               } else {
                 h.eq([input.props.cursorColor, input.props.selectionHandleColor], [ink, ink], `${where}: ink caret and selection handles`);
                 const contrast = contrastOnHighlight(String(flat(input).color), String(input.props.selectionColor), String(background));
@@ -1059,6 +1063,11 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
               const oneLineOnIos = device.os === 'ios' && !multiline;
               h.eq(typeof flat(input).lineHeight, oneLineOnIos ? 'undefined' : 'number', `${where}: ${oneLineOnIos ? 'no line height, so iOS keeps its descenders' : 'its type’s line height'}`);
             });
+          }
+          if (device.os === 'ios') {
+            const [oneLine, multiline] = [[...(iosSelections.get(false) ?? [])], [...(iosSelections.get(true) ?? [])]];
+            h.ok(oneLine.length > 0 && multiline.length > 0 && oneLine.every((colour) => !multiline.includes(colour)),
+              `${scheme} iOS: a one-line field's selection colour (${oneLine.join(', ')}) differs from a multiline one's (${multiline.join(', ')}), so a recycled native field that changes line mode applies its ink again`);
           }
         }
       } finally {
@@ -1176,10 +1185,10 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         await TestRenderer.act(async () => field(tree).props.onFocus({}));
         await keyboard(device, true);
         await reports.viewport(400);
-        h.eq(scrolls.at(-1), 600 + 180 + SPACING.md - 400, `${device.name}: with the keyboard up, the row's bottom (Save and Cancel), not just its field, sits clear above the scroll view's end`);
+        h.eq(scrolls.at(-1), 600 + 180 + REVEAL_MARGIN - 400, `${device.name}: with the keyboard up, the row's bottom (Save and Cancel), not just its field, sits clear above the scroll view's end`);
         geometry.block = [600, 220];
         await reports.content(1040);
-        h.eq(scrolls.at(-1), 600 + 220 + SPACING.md - 400, `${device.name}: as typing grows the row, it stays in view`);
+        h.eq(scrolls.at(-1), 600 + 220 + REVEAL_MARGIN - 400, `${device.name}: as typing grows the row, it stays in view`);
         h.ok(nearest(button(tree, COPY.planBuild), 'ScrollView') == null, `${device.name}: Make it stays pinned below the scroll view`);
       }, geometry);
     }
@@ -1219,7 +1228,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
           await TestRenderer.act(async () => { emitKeyboardEvent('keyboardDidShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
         }
         const wholeRowVisible = () => geometry.block![0] >= native.offset &&
-          geometry.block![0] + geometry.block![1] + SPACING.md <= native.offset + native.viewport;
+          geometry.block![0] + geometry.block![1] + REVEAL_MARGIN <= native.offset + native.viewport;
         h.ok(wholeRowVisible(), 'after the native commit, the full row and its actions clear the keyboard and pinned footer');
         await reports.offset(native.offset);
         geometry.block = [497, 210];
@@ -1261,7 +1270,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
           h.eq(scrolls, [], `${device.name} ${name}: a field already in view is left where it is`);
           await keyboard(device, true);
           await reports.viewport(400);
-          h.eq(scrolls.at(-1), top + height + SPACING.md - 400, `${device.name} ${name}: once the keyboard shrinks the scroll view, ${shown} scroll clear above its end`);
+          h.eq(scrolls.at(-1), top + height + REVEAL_MARGIN - 400, `${device.name} ${name}: once the keyboard shrinks the scroll view, ${shown} scroll clear above its end`);
           h.eq([field(tree).props.multiline === true, doneBars(tree).length], [false, 0], `${device.name} ${name}: one line, with no Done bar`);
           h.eq(scrollView(tree).props.keyboardShouldPersistTaps, 'handled', `${device.name} ${name}: the controls around it take their taps while typing`);
           if (name === 'advanced') h.ok(textOf(revealedBlock(tree)).includes(COPY.settingsProbeNeutral), `${device.name} advanced: the check line is in the block kept above the keyboard`);

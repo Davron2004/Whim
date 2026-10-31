@@ -1,42 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// vc-sdk — shell design tokens v2 (the v2 handoff README (removed by decision #75; in git history) "Design tokens" / "Two systems, not
-// one"). A sibling of theme.ts, re-exported from it so every downstream file keeps importing
-// from a single surface (`../../sdk/theme`), same as before this redesign.
+// vc-sdk — `appColor` and the v2 hues it stays clear of. Re-exported from theme.ts so its readers
+// import from a single surface (`../../sdk/theme`). Never part of the `vc-sdk` surface.
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure data + one pure function. NO React import, NO DOM access, NO side effects.
 //
-// These are the SHELL's tokens: fixed, not themeable, identical on every device (the six theme
-// presets this module used to hold are cut — see theme.ts). Colour/radius/spacing/motion values
-// below are copied verbatim from the design doc's token tables; do not hand-tune them.
-//
-// TYPE_SCALE IS THE EXCEPTION, DELIBERATELY. Where the interactive mockups
-// (`docs/design/reference/Whim Mobile.dc.html`) disagree with the README token table, THE MOCKUPS
-// WIN — owner ruling R1, dated 2026-08-05, recorded in
-// `openspec/changes/fix-design-conformance/findings.md`. The mockups are the artifact the owner
-// reviewed and approved; splitting the difference per-value would leave the app matching neither
-// source. The specific divergences from the README table are:
-//   · `screenTitle` is 22, not the table's 26 (mockup `4a` :24 — the history/confirm-sheet title).
-//   · `body` is 13.5 / 1.55, not the table's 15 / 1.7 (mockup :64, :307; the sibling face at :41
-//     runs the same ratio one step down at 13 / 1.55, which R5's 13–13.5 range covers).
-//   · The README's "Screen title" row (26 / 1.15 / -0.025em) IS still implemented — under the name
-//     `stepTitle`. Ruling R11 split one token into two roles because the mockups run two title
-//     faces; `stepTitle` keeps the README row's values verbatim and `screenTitle` is the retargeted
-//     one. Do not read `screenTitle: 22` as the README row going unimplemented.
-//   · `headline`, `controlLabel`, `kindBadge`, `metaPlain`, `metaWide` have NO row in the README
-//     table at all; they exist only in the mockups, and they exist here because each is a distinct
-//     design role that screens were otherwise faking with the nearest legal token (ruling R2).
-// This is the reviewed state, not drift. Do NOT "correct" any of it back to the README table.
-//
-// NOT SETTLED — `kindBadge`, `metaWide`, `metaPlain` and `body` sit at the mockups' sizes, and the
-// mockups were only ever rendered in a desktop browser, never on a ~411dp Android device. Rulings
-// R4 and R5 bind all four to an explicit verdict in the on-device screenshot pass (R8). Until that
-// pass rules, they stay exactly as written: do not silently round them up.
-//
-// A generated mini-app never sees these values directly — "two systems, not one" (design
-// doc) keeps the shell's fixed look and each app's own look deliberately un-unified. `appColor`
-// below is the one exception: a pure name->hue function shared by the shell's grid, tile
-// fallback, and the Whim Syntax prose renderer (`app` spans), so an app's tile and every prose
-// mention of it always agree.
+// The shell's colours, type, spacing and radii come from the one token module
+// (`src/design/tokens.ts`); what is left here is `appColor`, a pure name->hue function the legacy
+// `tileColor` path and its tests still read, with the v2 shell and status hues its palette must avoid.
 
 /** The shell palette (design doc "Colour — the shell"). Not themeable. */
 export const SHELL_COLORS = {
@@ -68,113 +38,6 @@ export const STATUS_COLORS_ON_INK = {
   broken: '#f87171',
   waiting: '#c9c3b8',
 } as const;
-
-/** The shell's radius scale (design doc "Radius"), one value per named UI element — not a
- *  generic none/sm/md/lg/full ramp. Pixels. */
-export const RADIUS = {
-  chip: 999,
-  field: 14,
-  card: 18,
-  tile: 22,
-  sheet: 28,
-} as const;
-
-/** The shell's spacing scale (design doc "Spacing"). Pixels. */
-export const SPACING = {
-  xs: 8,
-  sm: 12,
-  md: 16,
-  lg: 22,
-  xl: 34,
-} as const;
-
-/** The retired v2 faces' names (decision #75: system faces only). No font file ships any more, so
- *  each name draws the platform's system font; the screens still naming one drop it when they move
- *  to the `src/host/ui/` primitives, and this constant goes with the last of them. */
-export const FONT_FAMILY = {
-  sansRegular: 'InstrumentSans-Regular',
-  sansMedium: 'InstrumentSans-Medium',
-  sansSemiBold: 'InstrumentSans-SemiBold',
-  sansBold: 'InstrumentSans-Bold',
-  monoRegular: 'IBMPlexMono-Regular',
-  monoMedium: 'IBMPlexMono-Medium',
-  serifItalic: 'Newsreader-Italic',
-} as const;
-
-/** Field names match RN `TextStyle` exactly (fontSize/lineHeight/letterSpacing/
- *  fontWeight/fontStyle/textTransform/color) so a consumer can spread a `TYPE_SCALE` entry
- *  straight into a `Text` style array. This module does not import `react-native` (kept
- *  platform-neutral, D4) — the shape is structural, not a real `TextStyle` import. */
-export interface TypeFace {
-  /** Never set: every face is the platform's system font (decision #75). */
-  fontFamily?: string;
-  fontSize: number;
-  lineHeight: number;
-  letterSpacing: number;
-  fontWeight?: '400' | '500' | '600' | '700';
-  fontStyle?: 'italic';
-  textTransform?: 'uppercase';
-  color?: string;
-}
-
-/** The type scale. `em` letter-spacing values are pre-multiplied into px at each face's own size
- *  (RN `letterSpacing` is absolute px, not em); `lineHeight` is `fontSize × ratio`, left unrounded.
- *  Sources are mixed by ruling R1 (see the module header): faces with a README token-table row keep
- *  it unless a mockup contradicts it, in which case the mockup wins; five roles below (`headline`,
- *  `controlLabel`, `kindBadge`, `metaPlain`, `metaWide`) exist only in the mockups, and `stepTitle`
- *  is the README's "Screen title" row carried over verbatim under a new name after R11 split that
- *  one token into two roles. `eyebrow` has no ratio in the doc, so its `1.2` is this module's own
- *  reasonable default, not a design-doc value.
- *
- *  This union is the only enumeration of type roles in the repo — extend it in lockstep with the
- *  object below, and keep each new role beside its family. */
-export const TYPE_SCALE: Record<
-  | 'display'
-  | 'headline'
-  | 'screenTitle'
-  | 'stepTitle'
-  | 'metric'
-  | 'body'
-  | 'bodyEmphatic'
-  | 'caption'
-  | 'controlLabel'
-  | 'eyebrow'
-  | 'kindBadge'
-  | 'metaPlain'
-  | 'metaWide'
-  | 'quote',
-  TypeFace
-> = {
-  display: { fontSize: 34, lineHeight: 34, letterSpacing: -1.02, fontWeight: '700' },
-  // The compose headline (mockup :417). No README table row.
-  headline: { fontSize: 30, lineHeight: 33.6, letterSpacing: -0.75, fontWeight: '700' },
-  // R1/R11: 22, not the table's 26. Scoped to the history title and the confirm-sheet title
-  // (mockup :24, :63) — the flow steps' larger title face is `stepTitle` below, not this.
-  screenTitle: { fontSize: 22, lineHeight: 25.3, letterSpacing: -0.44, fontWeight: '700' },
-  // R11: the flow-step title face (mockup :443, :475, :498), and the README table's "Screen title"
-  // row (26 / 1.15 / -0.025em) verbatim. Byte-identical to what `screenTitle` held before the
-  // retarget, so every site repointed here renders unchanged.
-  stepTitle: { fontSize: 26, lineHeight: 29.9, letterSpacing: -0.65, fontWeight: '700' },
-  metric: { fontSize: 48, lineHeight: 48, letterSpacing: -1.92, fontWeight: '500' },
-  // R1/R5: 13.5 / 1.55 per the mockups, not the table's 15 / 1.7. `20.925` is the exact product —
-  // do not round it. NOT SETTLED: deferred to the on-device pass (R8); `body` also sizes two
-  // `TextInput`s, so it shrinks what the user types, not just what they read (R13).
-  body: { fontSize: 13.5, lineHeight: 20.925, letterSpacing: 0, fontWeight: '400' },
-  // Deliberately NOT retargeted with `body`: the design really does run a 500/15 face beside the
-  // 400/13.5 one (mockup :39).
-  bodyEmphatic: { fontSize: 15, lineHeight: 25.5, letterSpacing: 0, fontWeight: '500' },
-  caption: { fontSize: 12, lineHeight: 18.6, letterSpacing: 0, fontWeight: '400' },
-  // Back labels and answer pills (mockup :413, :439, :451, :471). No README table row.
-  controlLabel: { fontSize: 13, lineHeight: 13, letterSpacing: 0, fontWeight: '500' },
-  eyebrow: { fontSize: 10.5, lineHeight: 12.6, letterSpacing: 1.47, fontWeight: '500', textTransform: 'uppercase' },
-  // ── microcopy (R2/R17): three distinct faces the history screen was previously collapsing
-  // onto `eyebrow`. All three are NOT SETTLED — R4 defers their sizes to the on-device pass.
-  kindBadge: { fontSize: 9.5, lineHeight: 9.5, letterSpacing: 0.95, fontWeight: '600', textTransform: 'uppercase' },
-  // The undecorated one (mockup :35, :36 — "when"/"version"): no uppercase, no tracking, on purpose.
-  metaPlain: { fontSize: 10.5, lineHeight: 12.6, letterSpacing: 0, fontWeight: '400' },
-  metaWide: { fontSize: 10, lineHeight: 10, letterSpacing: 1.2, fontWeight: '400', textTransform: 'uppercase' },
-  quote: { fontSize: 17, lineHeight: 27.2, letterSpacing: 0, fontWeight: '400', fontStyle: 'italic', color: SHELL_COLORS.yours },
-};
 
 // ── appColor ──────────────────────────────────────────────────────────────────
 // A fixed palette of saturated hues, deliberately excluding every reserved shell meaning: the

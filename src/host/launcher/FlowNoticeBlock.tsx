@@ -9,13 +9,9 @@ import React from 'react';
 import { Notice } from '../ui/Notice';
 import type { FlowNotice } from './prompt-flow';
 import { retryLine } from './service-refusal';
-
-/** Local time as the phone writes it: the retry line's "at 3:05 PM". */
-function formatLocalTime(date: Date): string {
-  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
-}
+import { formatClockTime } from './copy';
 
 export function FlowNoticeBlock({ notice }: Readonly<{ notice: FlowNotice }>) {
-  const countdown = notice.retryAt === undefined ? undefined : retryLine(notice.retryAt, Date.now(), formatLocalTime);
+  const countdown = notice.retryAt === undefined ? undefined : retryLine(notice.retryAt, Date.now(), formatClockTime);
   return <Notice message={notice.hint} tone={notice.tone} countdown={countdown} />;
 }

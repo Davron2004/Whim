@@ -70,7 +70,7 @@ export const capabilityDirectionsPass: Pass = (ctx: CheckContext) => {
       column,
       symbol: capability,
       message: `"${capability}" is declared in capabilities but no matching vc-sdk export is used.`,
-      hint: `Remove "${capability}" from the manifest's capabilities array — it is never exercised.`,
+      hint: `Remove \`${capability}\` from the manifest’s capabilities array — it is never exercised.`,
     };
     ctx.report(d);
   }
@@ -88,7 +88,7 @@ export const capabilityDirectionsPass: Pass = (ctx: CheckContext) => {
       column,
       symbol: row.capability,
       message: `"${row.sdkExport}" is used but "${row.capability}" is not declared in capabilities.`,
-      hint: `Add "${row.capability}" to the manifest's capabilities array, e.g. capabilities: ${JSON.stringify(corrected)}.`,
+      hint: `Add \`${row.capability}\` to the manifest’s capabilities array, e.g. \`capabilities: ${JSON.stringify(corrected)}\`.`,
     };
     ctx.report(d);
   }

@@ -170,9 +170,9 @@ async function* emitTerminal(
   if (isFailure) {
     yield {
       type: 'failure',
-      reason: 'Could not produce a buildable app after maximum attempts.',
+      reason: 'I couldn’t get a working app after every try.',
       attempts: 3,
-      diagnostics: [{ kind: 'BUILD_FAILURE', hint: 'Try a simpler prompt.' }],
+      diagnostics: [{ kind: 'BUILD_FAILURE', hint: 'Try a simpler description.' }],
     };
   } else {
     const { js, map } = await buildStubRecord();

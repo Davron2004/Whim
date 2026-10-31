@@ -6,26 +6,31 @@
  * the screen reader reads it in that language too.
  */
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity } from 'react-native';
-import { SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { Text, TouchableOpacity } from 'react-native';
+import { SPACE, TYPE_SCALE } from '../../design/tokens';
+import { useTokens } from '../ui/tokens';
+import { hitSlopFor, makeStyles, MAX_FONT_SCALE, typeStyle } from '../ui/tokens-pure';
 import { LEGAL_COPY } from './copy';
 import { otherLegalLanguage, type LegalLanguage } from './legal-language';
-import { SHELL_PALETTE } from './theme';
+
+const styles = makeStyles((t) => ({
+  switch: { alignSelf: 'flex-end' as const, marginBottom: SPACE[4] },
+  // A plain text action (system.md §7.1 Button `plain`: `text` 600), its own words in the language it offers.
+  label: { ...typeStyle('headline'), color: t.colors.text },
+}));
 
 export default function LegalLanguageSwitch({
   language,
   onChange,
 }: Readonly<{ language: LegalLanguage; onChange: (language: LegalLanguage) => void }>) {
+  const t = useTokens();
+  const s = styles(t);
   const other = otherLegalLanguage(language);
   return (
-    <TouchableOpacity onPress={() => onChange(other)} accessibilityRole="button" hitSlop={10} style={styles.switch}>
-      <Text accessibilityLanguage={other} style={[TYPE_SCALE.bodyEmphatic, { color: SHELL_PALETTE.accent }]}>
+    <TouchableOpacity onPress={() => onChange(other)} accessibilityRole="button" hitSlop={hitSlopFor(TYPE_SCALE.headline.lineHeight, t)} style={s.switch}>
+      <Text accessibilityLanguage={other} style={s.label} maxFontSizeMultiplier={MAX_FONT_SCALE}>
         {LEGAL_COPY[language].legalLanguageSwitch}
       </Text>
     </TouchableOpacity>
   );
 }
-
-const styles = StyleSheet.create({
-  switch: { alignSelf: 'flex-end', marginBottom: SPACING.md },
-});

@@ -14,6 +14,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { Linking, View } from 'react-native';
+import type { ScrollView } from 'react-native';
 import type { ReportReason, ReportRequest } from '@whim/contract';
 import { LAYOUT, SPACE } from '../../design/tokens';
 import { log } from '../logging';
@@ -38,9 +39,9 @@ import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 import type { ServiceRefusal } from './service-refusal';
 import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } from './report-send';
 import type { ReportPhase, SendOutcome } from './report-send';
-import { useNoticeWindowClear, useRetryGate } from './ServiceNotice';
+import { useNoticeWindowClear, useRetryGate } from './refusal-window';
 import KeyboardShell from './KeyboardShell';
-import { COPY, reportCodeLine, reportCodeSizeLabel, reportRecipientLine, reportThanksLine } from './copy';
+import { COPY, formatClockTime, reportCodeLine, reportCodeSizeLabel, reportRecipientLine, reportThanksLine } from './copy';
 import { RELEASE } from './release-config';
 import { sameServer, serverLabel } from './server-address';
 import { privacyPolicyUrl, type LegalLanguage } from './legal-language';
@@ -114,10 +115,6 @@ async function sendClassified(options: ClientOptions, request: ReportRequest): P
   }
 }
 
-function formatLocalTime(date: Date): string {
-  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
-}
-
 export interface ReportScreenProps {
   /** The app being reported, or `null` for a problem with no particular app (Settings). */
   app: InstalledApp | null;
@@ -178,6 +175,10 @@ function ReportForm({
   // The note and the include switch under it: the block kept in view while the note is focused,
   // so the pinned Send never cuts the switch in half.
   const noteBlock = useRef<View>(null);
+  // A send's notice sits at the end of the scroll, above the pinned footer, and may land below what
+  // shows: once the scroll view reports the content with it, it moves to its end (#218).
+  const scroll = useRef<ScrollView>(null);
+  const revealNotice = useRef(false);
   // Leaving mid-send drops the answer: nothing left on screen to show it.
   const live = useRef(true);
   useEffect(() => () => { live.current = false; }, []);
@@ -205,6 +206,13 @@ function ReportForm({
     const settled = settleSend<ReportNotice>(outcome);
     setPhase(settled.phase);
     setNotice(settled.notice);
+    revealNotice.current = settled.notice !== null;
+  };
+
+  const onContentSizeChange = () => {
+    if (!revealNotice.current) return;
+    revealNotice.current = false;
+    scroll.current?.scrollToEnd({ animated: true });
   };
 
   const handleSend = async () => {
@@ -242,6 +250,8 @@ function ReportForm({
       host={host}
       style={host === 'screen' ? s.bg : undefined}
       contentContainerStyle={[s.content, host === 'sheet' && s.sheetContent]}
+      scrollRef={scroll}
+      onContentSizeChange={onContentSizeChange}
       footer={
         <View style={[s.actions, s.footer]}>
           <Button
@@ -310,7 +320,7 @@ function ReportForm({
         <Notice
           message={notice.hint}
           tone={notice.tone}
-          countdown={notice.retryAt !== undefined ? retryLine(notice.retryAt, Date.now(), formatLocalTime) : undefined}
+          countdown={notice.retryAt !== undefined ? retryLine(notice.retryAt, Date.now(), formatClockTime) : undefined}
         />
       )}
     </KeyboardShell>

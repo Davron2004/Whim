@@ -6,10 +6,12 @@
  * unconditionally.
  */
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SPACING, RADIUS, TYPE_SCALE } from '../../sdk/theme';
+import { ScrollView, View } from 'react-native';
+import { Button } from '../ui/Button';
+import { Text } from '../ui/Text';
+import { useTokens } from '../ui/tokens';
 import { COPY } from './copy';
-import { SHELL_PALETTE } from './theme';
+import { fullScreenStyles } from './full-screen-styles';
 import { useSystemBack } from './use-system-back';
 
 export interface AppLinkMissingScreenProps {
@@ -18,36 +20,19 @@ export interface AppLinkMissingScreenProps {
 }
 
 export default function AppLinkMissingScreen({ onBackToApps }: Readonly<AppLinkMissingScreenProps>) {
-  const p = SHELL_PALETTE;
+  const s = fullScreenStyles(useTokens());
   useSystemBack(onBackToApps);
 
   return (
-    <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <View style={styles.content}>
-        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.appLinkMissingTitle}</Text>
-        <Text style={[TYPE_SCALE.body, styles.body, { color: p.textMuted }]}>{COPY.appLinkMissingBody}</Text>
+    <View style={s.root}>
+      <ScrollView contentContainerStyle={s.content}>
+        <Text type="title1">{COPY.appLinkMissingTitle}</Text>
+        <Text type="callout" color="text-2">{COPY.appLinkMissingBody}</Text>
+      </ScrollView>
+      <View style={s.footer}>
+        <Button label={COPY.appLinkMissingBack} variant="ink" onPress={onBackToApps} />
       </View>
-      <TouchableOpacity
-        onPress={onBackToApps}
-        accessibilityRole="button"
-        style={[styles.primary, { backgroundColor: p.accent }]}
-      >
-        <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.appLinkMissingBack}</Text>
-      </TouchableOpacity>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, justifyContent: 'space-between' },
-  content: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl },
-  body: { marginTop: SPACING.sm },
-  primary: {
-    height: 52,
-    marginHorizontal: SPACING.lg,
-    marginBottom: SPACING.lg,
-    borderRadius: RADIUS.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

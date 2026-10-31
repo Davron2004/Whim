@@ -19,7 +19,6 @@ export interface ShellTokens {
   readonly largeText: boolean;               // fontScale >= LARGE_TEXT_FROM (1.35)
   readonly platform: 'ios' | 'android';
   readonly touchTarget: number;              // LAYOUT.touchTarget[platform]: 44 / 48
-  readonly barStyle: 'dark-content' | 'light-content';  // StatusBar content for bg
 }
 export function makeStyles<T>(factory: (t: ShellTokens) => T): (t: ShellTokens) => T;  // memoised per t.key
 export function resolveTokens(env: ShellEnvironment): ShellTokens;  // pure; what useTokens calls
@@ -61,7 +60,7 @@ export interface TextProps { children: React.ReactNode; type?: TypeToken /* body
 export interface ButtonProps { label: string; onPress: () => void; variant: ButtonVariant; size?: ButtonSize /* large */;
   icon?: IconName; tint?: TintName /* for 'tint'; default slate */; disabled?: boolean;
   busy?: string /* busy words; taps ignored */; haptic?: HapticMoment /* prepare on press-in, play on press */;
-  accessibilityHint?: string }
+  accessibilityHint?: string; tokens?: ShellTokens /* draw in these, not useTokens(): a frame's (AppCrashed) */ }
 type ButtonVariant = 'ember'|'ink'|'tint'|'secondary'|'plain'|'plain-ember'|'danger'; type ButtonSize = 'large'|'medium'|'small';
 // IconButton.tsx — 44 × 44, press .92, hitSlop to 48 on Android
 export interface IconButtonProps { icon: IconName; label: string; onPress: () => void;
@@ -93,14 +92,14 @@ outline; flare `withSequence` 1.18 → 1 on `spark`; Reduce Motion = still inten
 
 - Ember flicker (§4.6 `0.06·ã`, token-arrival timed) — needs per-token events, not the `activity` prop.
 - Stacking paired buttons from 135% — read `t.largeText` in the screen's action area.
-- Switching existing screens: none moved in this chain; `SHELL_PALETTE` (`launcher/theme.ts`) stays for them.
+- Switching existing screens: done by chain 21; every screen reads `useTokens()` and the primitives.
 
 ## Platform: dark mode on Android (chain-9)
 
 `MainApplication.kt` pins `AppCompatDelegate.MODE_NIGHT_NO` (so edge-to-edge nav-bar icons stay dark on the
 light-only shell). While it stands, `useColorScheme()` reports `'light'` on Android and the shell never goes
 dark there. chain-9 must drop the pin when the shell follows the scheme; RN then sets nav-bar icon colour
-from the night mode, which equals `t.scheme`. Status bar: `<StatusBar barStyle={t.barStyle} />` (chain-14).
+from the night mode, which equals `t.scheme`. Status bar: `<StatusBar barStyle={statusBarStyleOver(bg, scrims)} />` (`status-bar-style.ts`, #218).
 
 ## Tests (launcher suite, `npm run launcher:test`)
 

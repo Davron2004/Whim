@@ -36,8 +36,10 @@
  * siblings there, not with the overlays under it.
  */
 
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { AppState, Modal, Platform } from 'react-native';
+import { useAnimatedReaction } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 
 /** How long iOS may take to report a dismissal before the `Modal` is unmounted and counted gone. */
 export const DISMISS_REPORT_MS = 500;
@@ -112,6 +114,53 @@ export function resetOverlayHolds(): void {
 const isActive = (state: string | null | undefined) => state !== 'background' && state !== 'inactive';
 
 const TurnsContext = createContext(rootTurns);
+
+/** How many overlays dim the screen, each by its own `scrim`: an overlay inside another's content
+ *  dims it once more. The shell's status bar reads on the dimmed page (`statusBarStyleOver`). A scrim
+ *  counts from when its fade passes half its strength (`SCRIM_COUNTS_FROM`), in and out. */
+let scrimsUp = 0;
+const scrimListeners = new Set<() => void>();
+
+function coverBy(delta: number): void {
+  scrimsUp += delta;
+  for (const listener of scrimListeners) listener();
+}
+
+function onScrims(listener: () => void): () => void {
+  scrimListeners.add(listener);
+  return () => scrimListeners.delete(listener);
+}
+
+/** The number of overlay scrims over the screen now. */
+export function useScrimsUp(): number {
+  return useSyncExternalStore(onScrims, () => scrimsUp);
+}
+
+/**
+ * The share of its full opacity from which a scrim counts as dimming the screen: the fade's midpoint.
+ * The status bar's content is picked from the composited backdrop; of the shell's pairings only a
+ * light app under the dark phone's scrim changes content, where the scrim reaches about 0.87 of its
+ * strength. An overlay does not know what is behind it, and the crossing reaches the JS thread once,
+ * never per frame, so the bar turns at one fixed point of every fade. The midpoint is off from 0.87
+ * by about 0.37 of the fade either way (on a sheet's spring, ~120 ms of the opening and ~70 ms of the
+ * closing); turning as the fade starts on open and ends on close would be off by 0.87 of it.
+ */
+export const SCRIM_COUNTS_FROM = 0.5;
+
+/**
+ * Tells the overlay's turn when its scrim passes `SCRIM_COUNTS_FROM`, either way. `scrimOpacity` is a
+ * worklet giving the scrim's opacity now, 0 to 1; it runs on the UI thread on every frame that moves
+ * the scrim, and only a crossing reaches the JS thread.
+ */
+export function useScrimCount(turn: OverlayTurn, scrimOpacity: () => number): void {
+  const { scrim } = turn;
+  useAnimatedReaction(
+    () => scrimOpacity() >= SCRIM_COUNTS_FROM,
+    (dims, before) => {
+      if (dims !== before) scheduleOnRN(scrim, dims);
+    },
+  );
+}
 
 /** `away`: no turn asked for. `waiting`: in line, or between two tries at presenting. `up`: its
  *  `Modal` is presented. `hiding`: hidden, until the system reports the dismissal. */
@@ -287,6 +336,8 @@ export interface OverlayTurn {
   /** For `OverlayModal`. */
   shown: () => void;
   dismissed: () => void;
+  /** For `useScrimCount`: the overlay's scrim now dims the screen, or no longer does. */
+  scrim: (dims: boolean) => void;
 }
 
 export interface OverlayTurnOptions {
@@ -326,16 +377,27 @@ export function useOverlayTurn(wanted: boolean, options: OverlayTurnOptions): Ov
     return () => subscription.remove();
   }, [presence]);
   useEffect(() => () => presence.drop(), [presence]);
+  const open = phase === 'up' && wanted;
+  // The scrim dims the screen while it is past half its strength and its `Modal` is presented: a
+  // closing overlay keeps dimming as its scrim fades, and one taken off the screen never does.
+  const [scrimDims, setScrimDims] = useState(false);
+  const dimming = scrimDims && phase === 'up';
+  useEffect(() => {
+    if (!dimming) return undefined;
+    coverBy(1);
+    return () => coverBy(-1);
+  }, [dimming]);
   return useMemo(
     () => ({
-      open: phase === 'up' && wanted,
+      open,
       up: phase === 'up',
       mounted: phase === 'up' || phase === 'hiding',
       exited: presence.exited,
       shown: presence.shown,
       dismissed: presence.dismissed,
+      scrim: setScrimDims,
     }),
-    [phase, wanted, presence],
+    [open, phase, presence],
   );
 }
 

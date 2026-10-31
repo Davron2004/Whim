@@ -18,10 +18,12 @@ What the owner checks by hand on a real phone before beta-1 merges. Written 2026
    minute. In the app the last element clears the orb, the orb dim covers the status bar, all four orb
    items work.
 4. **Limit**: ask for something Whim can't do ("an app that reads my text messages") → the limit screen.
-   "Build … instead" asks new questions; "Change my idea" returns to Compose.
+   "Make that instead" asks new questions; "Change my idea" returns to Compose.
 5. **The line** (optional): with 3 builds already running server-wide, a 4th shows "You're in line…" and
    starts when one finishes.
-6. **History, Settings, failure**: History lists versions and "Change it from here" opens Compose. Settings
+6. **History, Settings, failure**: History lists versions; the current one's "Change it" opens Describe, an
+   older one's "Use this version" switches at once with Undo, and "Make a copy from here" makes a copy with
+   its own data. Settings
    margins and Back look right; "Turn on AI features" shows each legal screen once; the phone ID is
    selectable. A failed build shows "Try again" filled edge to edge.
 7. **General**: crashes, blank frames, text touching edges, wrong colours.

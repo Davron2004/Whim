@@ -1,33 +1,29 @@
 /**
- * whim-prose styles — class -> ONE channel (the v2 handoff README (removed by decision #75; in git history) "Whim Syntax", the six-class
- * table). Kept platform-neutral (no `react-native` import, same discipline as the SDK's design
- * tokens) so the mapping is checkable under Node; `WhimProse.tsx` spreads these onto `Text`.
+ * whim-prose styles — class -> ONE channel (docs/design/system.md §2.7, "Whim Syntax, simplified").
+ * Kept platform-neutral (no `react-native` import) so the mapping is checkable under Node;
+ * `WhimProse.tsx` spreads these onto `Text`. Every class draws the system font.
  *
- * `app`     colour, that app's own tile hue
- * `chg`     weight 500, NO colour
- * `yours`   Newsreader italic + the `yours` brown — the one class on two channels
- * `measure` the mono face, NO colour (the face IS the highlight; colouring numbers too is greedy)
- * `state`   one of the three status hues
- * `hedge`   `faint` — a reverse highlight, said and then out of the way
+ * `app`     the app's tint text colour
+ * `chg`     weight 600, no colour
+ * `yours`   italic, in `text` (the quotes are the prose's own)
+ * `measure` tabular figures, no colour
+ * `state`   "ready" in `positive-text`, "failed" in `danger-text`
+ * `hedge`   `text-2`
  */
 
-import { FONT_FAMILY } from '../../../sdk/theme';
+import { TABULAR } from '../tokens-pure';
 import type { ProseSegment } from './types';
 
 /** Field names match RN `TextStyle` exactly, so a caller can spread this straight into a style
  *  array. Structural on purpose — this module does not import `react-native`. */
 export interface ProseTextStyle {
   color?: string;
-  fontFamily?: string;
-  fontWeight?: '500';
+  fontWeight?: '600';
   fontStyle?: 'italic';
+  fontVariant?: Array<'tabular-nums'>;
 }
 
-/**
- * The style for one rendered segment, or `undefined` for flat text. Android resolves a weight by
- * FILE, not by synthesis, so the weight channel names the Medium file as well as the numeric
- * weight — that is one channel expressed correctly, not two.
- */
+/** The style for one rendered segment, or `undefined` for flat text. */
 export function proseStyle(segment: ProseSegment): ProseTextStyle | undefined {
   switch (segment.cls) {
     case 'app':
@@ -35,11 +31,11 @@ export function proseStyle(segment: ProseSegment): ProseTextStyle | undefined {
     case 'hedge':
       return { color: segment.color };
     case 'chg':
-      return { fontFamily: FONT_FAMILY.sansMedium, fontWeight: '500' };
+      return { fontWeight: '600' };
     case 'yours':
-      return { fontFamily: FONT_FAMILY.serifItalic, fontStyle: 'italic', color: segment.color };
+      return { fontStyle: 'italic', color: segment.color };
     case 'measure':
-      return { fontFamily: FONT_FAMILY.monoRegular };
+      return { fontVariant: [...TABULAR.fontVariant] };
     default:
       return undefined;
   }

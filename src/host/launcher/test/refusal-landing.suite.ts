@@ -29,7 +29,7 @@ export async function runRefusalLandingTests(h: Harness): Promise<void> {
     h.eq(retryWindowState(undefined, 1_000_000), { disabled: false, msUntilEnable: 0 }, 'no Retry-After means no gate at all');
   });
 
-  // `noticeExpiredAt` (design D12: "A sender refusal clears when its window ends") — `ServiceNotice.tsx`'s
+  // `noticeExpiredAt` (design D12: "A sender refusal clears when its window ends") — `refusal-window.ts`'s
   // `useNoticeWindowClear` is a thin live-timer wrapper around this pure predicate.
   await h.test('noticeExpiredAt: a sender (neutral-tone) notice expires once its window ends', () => {
     h.eq(noticeExpiredAt({ tone: 'neutral', retryAt: 1_000_000 }, 999_999), false, 'still inside the window');

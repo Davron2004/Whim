@@ -43,6 +43,20 @@ The launcher SHALL offer "Make a copy" on every installed app (tile menu, and Hi
 - **WHEN** the user taps "Make a copy" on an app that has never saved any data
 - **THEN** no question is asked and the copy starts fresh
 
+### Requirement: The create affordance and per-app re-prompt action open the prompt flow
+
+The home screen SHALL carry a composer bar reading `Make an app…` as its create affordance, opening the prompt flow's new-app entry point on tap. A ready app's tile menu SHALL include a "Change it" action, opening the prompt flow's change entry point scoped to that app.
+
+#### Scenario: The composer bar opens the prompt flow
+
+- **WHEN** the user taps `Make an app…` on the home screen
+- **THEN** the prompt flow's Describe page opens with no app being changed
+
+#### Scenario: Change it opens the prompt flow scoped to an app
+
+- **WHEN** the user long-presses an app tile and chooses "Change it"
+- **THEN** the Describe page opens scoped to that app
+
 ## REMOVED Requirements
 
 ### Requirement: Explicit fork asks share-vs-fresh at fork time

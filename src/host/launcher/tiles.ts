@@ -1,7 +1,7 @@
 /**
  * tiles — derived tile visuals for the current home grid (launcher-shell / #5 D6, shell-redesign-v2
- * chain-F): a monogram and a colour per app, resolved over the design system's tints. Pure
- * functions so they are trivially unit-checkable.
+ * chain-F): a colour per app, resolved over the design system's tints. A pure function, so it is
+ * trivially unit-checkable.
  */
 
 import { TINTS } from '../../design/tokens';
@@ -20,15 +20,4 @@ export function tileColor(name: string, manifest?: Pick<AppManifest, 'tileColor'
   const declared = manifest?.tileColor;
   const tint = (declared === undefined ? undefined : nearestTint(declared)) ?? fallbackTint(name);
   return TINTS[tint].light;
-}
-
-/**
- * The monogram for an app: the first letter of each of the first two whitespace-separated
- * words, uppercased ("Water Counter" → "WC"; "tip-splitter" → "T"). Falls back to "?".
- */
-export function monogram(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return '?';
-  if (words.length === 1) return words[0].slice(0, 1).toUpperCase();
-  return (words[0][0] + words[1][0]).toUpperCase();
 }

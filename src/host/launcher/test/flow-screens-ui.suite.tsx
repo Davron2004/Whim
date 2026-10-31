@@ -199,6 +199,29 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
     });
   });
 
+  for (const machine of ['ar-EG', 'ko-KR']) {
+    await h.test(`describe: a retry window's clock time is written in the copy's English on a ${machine} phone (#214)`, async () => {
+      const PhoneFormat = Intl.DateTimeFormat;
+      // The phone's locale is whatever a formatter given no locale resolves to.
+      const onThePhone = function DateTimeFormat(locales?: string | string[], options?: Intl.DateTimeFormatOptions) {
+        return new PhoneFormat(locales ?? machine, options);
+      } as unknown as typeof Intl.DateTimeFormat;
+      // On a whole minute: the line names the window's end to the nearest minute.
+      const retryAt = Math.round((Date.now() + 2 * 60 * 60_000) / 60_000) * 60_000;
+      const englishTime = new PhoneFormat('en', { hour: 'numeric', minute: '2-digit' }).format(new Date(retryAt));
+      Intl.DateTimeFormat = onThePhone;
+      try {
+        h.ok(new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(retryAt)) !== englishTime, `the ${machine} phone writes the time its own way`);
+        await rendered(<DescribePage text="A tea timer" notice={{ ...BUSY, retryAt }} onChangeText={noop} onContinue={noop} />, async (tree) => {
+          const shown = textOf(tree.root);
+          h.ok(shown.includes(`after ${englishTime}`), `the retry line reads the English time ${englishTime}: ${shown}`);
+        });
+      } finally {
+        Intl.DateTimeFormat = PhoneFormat;
+      }
+    });
+  }
+
   await h.test('plan: while its rows are coming Make it is busy in plain words and takes no taps; once they land it makes', async () => {
     const s = spies();
     await rendered(planPage(planStep(describeStep(undefined, 'A tea timer')), s), async (tree) => {
@@ -565,7 +588,7 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
 
   await h.test('ready: the app’s tile, its name and the words; Open it in the app’s tint opens it, Done goes home', async () => {
     const s = spies();
-    await rendered(<ReadyPage app={APP} words="A tea timer" onOpen={s.fn('open')} onDone={s.fn('done')} />, async (tree) => {
+    await rendered(<ReadyPage app={APP} words="A tea timer" changed={false} onOpen={s.fn('open')} onDone={s.fn('done')} />, async (tree) => {
       const shown = textOf(tree.root);
       h.ok(shown.includes('Timer') && shown.includes('“A tea timer”') && shown.includes(COPY.readyOnHome), 'the name, the words and where it is');
       h.eq(tree.root.findByType(TilePlate).props.size, 'hero', 'the 96 pt tile');

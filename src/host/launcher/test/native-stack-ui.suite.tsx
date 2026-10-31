@@ -13,13 +13,14 @@ import MiniAppView from '../MiniAppView';
 import ReportScreen from '../ReportScreen';
 import { poppedEntry } from '../NativeStack';
 import { COPY } from '../copy';
-import { SHELL_PALETTE } from '../theme';
+import ConsentScreen from '../ConsentScreen';
 import { COLORS } from '../../../design/tokens';
 import type { InstalledApp } from '../app-index';
-import { button, hostType, press } from './react-screen';
-import { backListenerCount, hardwareBack, setColorScheme } from './native-host';
+import { button, hostType, press, textOf } from './react-screen';
+import { backListenerCount, hardwareBack, setColorScheme, setFontScale, StyleSheet, windowMetrics } from './native-host';
+import { LARGE_TEXT_FROM } from '../../ui/tokens-pure';
 import { androidHeaderBack, iosPop, stackIds, stackItems } from './native-screens';
-import { json, tap, waitFor, withLauncher, type Tree } from './rendered-launcher';
+import { firstRunOpen, json, settle, tap, waitFor, withLauncher, type Tree } from './rendered-launcher';
 
 const nothing = () => json({});
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
@@ -52,6 +53,43 @@ export async function runNativeStackUiTests(h: Harness): Promise<void> {
         h.eq([stackIds(tree), showing(tree, SettingsScreen)], [['home'], false], `${way}: the next leaves Settings for Home`);
       });
     }
+  });
+
+  await h.test('native stack: a text size changed while Advanced shows leaves every way back one screen down, to Settings (#218)', async () => {
+    for (const [way, pop] of POPS) {
+      try {
+        await withLauncher({ server: nothing }, async ({ tree }) => {
+          await openSettings(tree);
+          await press(button(tree, COPY.settingsAdvancedSectionTitle));
+          await TestRenderer.act(async () => setFontScale(1.3));
+          h.eq(stackIds(tree), ['home', 'settings', 'advanced'], `${way}: the text size changes nothing on the stack`);
+          await pop(tree);
+          h.eq([stackIds(tree), showing(tree, SettingsScreen), showing(tree, AdvancedScreen)], [['home', 'settings'], true, false], `${way}: back from Advanced lands on Settings`);
+          await TestRenderer.act(async () => setFontScale(1));
+          await pop(tree);
+          h.eq(stackIds(tree), ['home'], `${way}: and the next back on Home`);
+        });
+      } finally { windowMetrics.fontScale = 1; }
+    }
+  });
+
+  await h.test('native stack: system back during the age check over Settings cancels the check, even after a text size change remounted Settings (#218)', async () => {
+    let answer: (signal: string) => void = () => {};
+    const store = () => new Promise<unknown>((resolve) => { answer = resolve; });
+    try {
+      await withLauncher({ terms: false, consent: false, ageSignal: store, server: nothing }, async ({ tree }) => {
+        await openSettings(tree);
+        await press(button(tree, COPY.settingsAISectionTitle));
+        await press(button(tree, COPY.consentReviewTurnOn));
+        h.eq(stackIds(tree), ['home', 'settings'], 'the silent age check runs over Settings');
+        await TestRenderer.act(async () => setFontScale(1.3));
+        await TestRenderer.act(async () => { hardwareBack(); });
+        h.eq([stackIds(tree), showing(tree, SettingsScreen)], [['home', 'settings'], true], 'back cancels the check: Settings stays, Home is not shown');
+        await TestRenderer.act(async () => answer('adult'));
+        await settle();
+        h.ok(!firstRunOpen(tree), 'the check was cancelled: its late answer opens no first-run sheet');
+      });
+    } finally { windowMetrics.fontScale = 1; }
   });
 
   await h.test('native stack: the iOS back menu popping two screens at once lands on Home, and the launcher follows', async () => {
@@ -113,21 +151,48 @@ export async function runNativeStackUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('native stack: in dark mode Home and the token screens’ header and the status bar follow the scheme, while the screens not yet moved keep the light shell', async () => {
-    try {
-      await withLauncher({ server: nothing }, async ({ tree }) => {
-        await TestRenderer.act(async () => setColorScheme('dark'));
-        const barStyle = () => statusBarStyle(tree);
-        h.eq([barStyle(), stackItems(tree).find((item) => item.props.screenId === 'home')?.props.contentStyle.backgroundColor], ['light-content', COLORS.dark.bg], 'Home follows the dark scheme: light status-bar content, its canvas in the dark roles');
-        await openSettings(tree);
-        h.eq(barStyle(), 'light-content', 'Settings follows the dark scheme: light status-bar content');
-        h.eq([header(tree, 'settings').backgroundColor, header(tree, 'settings').titleColor], [COLORS.dark.bg, COLORS.dark.text], 'its header is drawn in the dark roles');
-        await press(button(tree, COPY.settingsAISectionTitle));
-        h.eq(barStyle(), 'dark-content', 'AI features still draws the light shell');
-        h.eq(header(tree, 'consent').backgroundColor, SHELL_PALETTE.bg, 'and its header matches it');
-      });
-    } finally {
-      await TestRenderer.act(async () => setColorScheme('light'));
+  await h.test('native stack: at large text the iOS back button is its chevron alone, so it never truncates the screen it returns to; at the default size it names it (#218)', async () => {
+    for (const [scale, mode] of [[1, undefined], [LARGE_TEXT_FROM, 'minimal'], [3.12, 'minimal']] as const) {
+      windowMetrics.fontScale = scale;
+      try {
+        await withLauncher({ server: nothing }, async ({ tree }) => {
+          await openSettings(tree);
+          await press(button(tree, COPY.settingsAdvancedSectionTitle));
+          h.eq([header(tree, 'settings').backButtonDisplayMode, header(tree, 'advanced').backButtonDisplayMode], [mode, mode], `text at ${scale}×: back over Settings and over Advanced is ${mode ?? 'the platform default'}`);
+          h.eq(header(tree, 'advanced').title, COPY.settingsAdvancedSectionTitle, `text at ${scale}×: the screen keeps its title`);
+        });
+      } finally {
+        windowMetrics.fontScale = 1;
+      }
+    }
+  });
+
+  await h.test('native stack: Home, Settings and AI features follow the scheme: the status bar, the header and the screen itself', async () => {
+    for (const scheme of ['light', 'dark'] as const) {
+      const c = COLORS[scheme];
+      const content = scheme === 'dark' ? 'light-content' : 'dark-content';
+      try {
+        await withLauncher({ server: nothing }, async ({ tree }) => {
+          await TestRenderer.act(async () => setColorScheme(scheme));
+          const barStyle = () => statusBarStyle(tree);
+          h.eq([barStyle(), stackItems(tree).find((item) => item.props.screenId === 'home')?.props.contentStyle.backgroundColor], [content, c.bg], `${scheme}: Home: ${content} status-bar content, its canvas in the scheme's bg`);
+          await openSettings(tree);
+          h.eq(barStyle(), content, `${scheme}: Settings: ${content} status-bar content`);
+          h.eq([header(tree, 'settings').backgroundColor, header(tree, 'settings').titleColor], [c.bg, c.text], `${scheme}: its header is drawn in the scheme's roles`);
+          await press(button(tree, COPY.settingsAISectionTitle));
+          h.eq(barStyle(), content, `${scheme}: AI features: ${content} status-bar content`);
+          h.eq([header(tree, 'consent').backgroundColor, header(tree, 'consent').titleColor], [c.bg, c.text], `${scheme}: its header is drawn in the scheme's roles`);
+          const review = tree.root.findByType(ConsentScreen);
+          h.eq(StyleSheet.flatten(review.find((n) => hostType(n) === 'View').props.style).backgroundColor, c.bg, `${scheme}: the screen is on the scheme's bg`);
+          const title = review.find((n) => hostType(n) === 'Text' && textOf(n) === COPY.consentTitle);
+          h.eq(StyleSheet.flatten(title.props.style).color, c.text, `${scheme}: its title in the scheme's text`);
+          // With AI features on, the large action keeps them on: a `secondary` button, `text` on `fill`.
+          const keep = review.find((n) => hostType(n) === 'Text' && textOf(n) === COPY.consentReviewKeepOn);
+          h.eq(StyleSheet.flatten(keep.props.style).color, c.text, `${scheme}: Keep AI features on is labelled in the scheme's text`);
+        });
+      } finally {
+        await TestRenderer.act(async () => setColorScheme('light'));
+      }
     }
   });
 }

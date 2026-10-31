@@ -9,6 +9,7 @@ import { Harness } from './harness';
 import { errorReason, errorReasonCode, GENERIC_STREAM_ERROR } from '../error-reason';
 import { GenerationClientError } from '../transport-shared';
 import { EmptyBundleError } from '../build-lifecycle';
+import { lineFindings } from '../../../../checks/test/repo/copy-glossary';
 
 export async function runErrorReasonTests(h: Harness): Promise<void> {
   await h.test('errorReason: an http error surfaces the server’s own hint', () => {
@@ -23,6 +24,11 @@ export async function runErrorReasonTests(h: Harness): Promise<void> {
       { reason: 'This device could not be identified.', diagnostics: [] },
       'a device_id hint always surfaces',
     );
+  });
+
+  await h.test('errorReason: the generic reason a scrubbed error shows uses the glossary', () => {
+    const shown = errorReason(new GenerationClientError('network', { hint: 'fetch failed: ECONNRESET' })).reason;
+    h.eq(lineFindings('GENERIC_STREAM_ERROR', shown, 'prose'), [], `"${shown}" uses the glossary`);
   });
 
   await h.test('errorReason: a network error never shows its transport hint', () => {

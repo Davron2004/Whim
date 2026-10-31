@@ -4,8 +4,10 @@
  * The spec requires the launcher surface to speak PRODUCT VERBS only: no git terminology, no
  * mechanism names (realm, lineage, snapshot ids in hash form), no internal identifiers.
  * Centralizing the copy here makes that checkable — `product-verbs.suite.ts` asserts this table
- * carries no forbidden vocabulary (the "product-verbs guard"). "Fork", "Delete", "Open" are
- * PRODUCT verbs (the spec names them); they are allowed.
+ * carries no forbidden vocabulary (the "product-verbs guard"). Every concept has one name, the
+ * glossary of `system.md` §8 ("Make a copy", never fork; "Use this version", never restore), and
+ * `COPY_KINDS` below says which keys are controls, which speak as the person, and which are prose,
+ * where the maker may say "I". `checks/test/repo/design-system.suite.ts` lints both.
  *
  * v2 (shell-redesign-v2 / group B): the whole redesigned shell's copy is seeded here in one pass,
  * verbatim from `the v2 handoff README (removed by decision #75; in git history)` and the prototypes, so the screen chains READ strings
@@ -26,9 +28,9 @@ import type { LegalLanguage } from './legal-language';
 export const COPY = {
   // ── home: Your apps (design-system-v1 15.x; system.md §3.2, §9) ─────────────
   homeTitle: 'Your apps',
-  homeComposerPlaceholder: 'Describe an app…',
+  homeComposerPlaceholder: 'Make an app…',
   /** The composer bar when a description is in progress: the words, so the person sees their draft. */
-  homeComposerDraftLabel: 'Describe an app, draft in progress',
+  homeComposerDraftLabel: 'Make an app, draft in progress',
   homeComposerHint: 'Opens the describe sheet',
   homeSearchLabel: 'Search your apps',
   homeSearchEmpty: 'No app has that name.',
@@ -164,6 +166,8 @@ export const COPY = {
   /** First in line; further back, `makingQueueLine` counts the runs ahead. */
   makingQueuedNext: 'Waiting for a free spot. You’re next.',
   readyOnHome: 'It’s on your home screen.',
+  /** The Ready page after a change: the app was already on the home screen; Open it shows the change. */
+  readyChanged: 'It opens with your change.',
   readyOpen: 'Open it',
   readyDone: 'Done',
   failureTitle: 'Couldn’t make this',
@@ -336,14 +340,14 @@ export const COPY = {
   // carries each manifest category and recipient role is `CONSENT_SCREEN_COVERAGE` below.
   consentTitle: 'Before Whim makes apps for you',
   consentLead:
-    'To build or change an app, Whim sends what you ask for to our server. AI companies that work for us write the code.',
+    'To make or change an app, Whim sends what you ask for to our server. AI companies that work for us write the code.',
   consentSentTitle: 'What gets sent',
   consentSentRequest: 'What you ask for: your description, your answers and the plan you approve',
   consentSentEdit: 'When you change an app: its name, code and description, and the layout of its data, never the data itself',
   consentSentDevice: 'An ID Whim makes for this phone, used for daily limits and usage totals.',
   consentSentErrors: 'Error details when something goes wrong. They’re technical only, not what you typed or saved.',
   consentWhyTitle: 'Why',
-  consentWhy: 'To build your apps and run Whim: daily limits, stopping abuse, keeping costs in check, and finding and fixing problems.',
+  consentWhy: 'To make your apps and run Whim: daily limits, stopping abuse, keeping costs in check, and finding and fixing problems.',
   consentWhoTitle: 'Who gets it',
   // "Who gets it" is one paragraph on screen, kept as one key per screen-named recipient role so
   // the coverage check can tell a dropped role from a reworded one.
@@ -375,7 +379,7 @@ export const COPY = {
   // names what. The lead says what the spec has it say (what you ask for goes to our server, AI
   // companies write the code); the row's AI sentence says which things they receive, so no sentence
   // is on the sheet twice.
-  firstRunLead: 'To build or change an app, Whim sends what you ask for to our server, and AI companies that work for us write the code.',
+  firstRunLead: 'To make or change an app, Whim sends what you ask for to our server, and AI companies that work for us write the code.',
   firstRunSentTitle: 'What’s sent, and who gets it',
   firstRunSentRequest: 'What you ask for, your answers and the plan you approve.',
   firstRunSentDevice: 'An ID Whim makes for this phone.',
@@ -515,6 +519,117 @@ export const COPY = {
    *  nothing. */
   keyboardDone: 'Done',
 } as const;
+
+/** Who speaks in a `COPY` string (system.md §8 "Who speaks"). `control`: something the person
+ *  presses, picks or toggles (a pressable row's title too), its busy words, and a field's
+ *  placeholder; it speaks as the person and never in Whim's "I". `person`: a control in the
+ *  person's own first person ("Include what I asked for"), or words put in a field as theirs; the
+ *  "I" is theirs. `prose`: everything read rather than pressed, where the maker may say "I". */
+type CopyKind = 'control' | 'person' | 'prose';
+
+/** Every `COPY` key's kind, so the copy lint knows which strings must not carry Whim's "I". */
+export const COPY_KINDS: Readonly<Record<keyof typeof COPY, CopyKind>> = {
+  homeTitle: 'prose', homeComposerPlaceholder: 'control', homeComposerDraftLabel: 'control', homeComposerHint: 'prose',
+  homeSearchLabel: 'control', homeSearchEmpty: 'prose', homeLoadingLabel: 'prose', homeOfflineNotice: 'prose',
+  homeEmptyTitle: 'prose', homeEmptyLine: 'prose', homeIdeaTimer: 'control', homeIdeaTracker: 'control',
+  homeIdeaDice: 'control', exampleBadge: 'prose', settingsTitle: 'control', actionOpen: 'control',
+  actionChangeIt: 'control', actionMakeCopy: 'control', actionCustomize: 'control', actionShareLink: 'control',
+  actionDelete: 'control', actionDetails: 'control', actionStop: 'control', actionStopChange: 'control',
+  actionWhatHappened: 'control', actionTryAgain: 'control', actionDiscard: 'control', actionDiscardChange: 'control',
+  actionDiscardAll: 'control', actionUpdateWhim: 'control', cancel: 'control',
+  tileMaking: 'prose', tileQueued: 'prose', tileFailed: 'prose', tileStopped: 'prose', tileNeedsUpdate: 'prose',
+  tileChanging: 'prose', tileChangeFailed: 'prose', tileCopy: 'prose', tileHintOpens: 'prose', tileHintProgress: 'prose',
+  tileHintFailure: 'prose', tileHintUpdate: 'prose', tileHintOlder: 'prose', tileMenuAction: 'control', olderTitle: 'prose',
+  toastUndo: 'control', discardedToast: 'prose', undoTooLateToast: 'prose', copyMadeToast: 'prose', copyFailedToast: 'prose',
+  copyQuestionTitle: 'prose', copyQuestionData: 'control', copyQuestionFresh: 'control', copyQuestionFreshSubtitle: 'prose',
+  customizeTitle: 'prose', customizeTintHeader: 'prose', customizeGlyphHeader: 'prose', customizeSearchLabel: 'control',
+  customizeSearchEmpty: 'prose', customizeReset: 'control', interruptedBuildReason: 'prose', backLabel: 'control',
+  sheetClose: 'control', toastDismiss: 'control', fieldClear: 'control',
+  flowContinue: 'control', composeHeadline: 'prose', composeHeadlineEdit: 'prose', composeHelper: 'prose',
+  composePlaceholderEdit: 'control', planHeadline: 'prose', planHeadlineEdit: 'prose', planChoicesHeader: 'prose',
+  planMakeHeader: 'prose', planMakeHeaderEdit: 'prose', clarifyPickMany: 'prose', clarifyDecide: 'control',
+  clarifyOtherPlaceholder: 'control', planQuestionReopenHint: 'prose', planBuild: 'control', planBuildEdit: 'control',
+  planBusy: 'control', planRowSave: 'control', planRowEdited: 'prose', planRowEditHint: 'prose', planRowFieldLabel: 'prose',
+  planTryAgain: 'control', planLimitHeadline: 'prose', planLimitCardLead: 'prose', planMakeInstead: 'control',
+  planChangeIdea: 'control', workingClarify: 'prose', workingPlan: 'prose', workingPlanEdit: 'prose',
+  buildStepReading: 'prose', buildStepWriting: 'prose', buildStepChecking: 'prose', buildStepInstalling: 'prose',
+  makingStepDone: 'prose', makingStepCurrent: 'prose', makingStepWaiting: 'prose', makingTimeUsual: 'prose',
+  makingTimeLonger: 'prose', makingTimeSlow: 'prose', makingQueuedNext: 'prose', readyOnHome: 'prose', readyChanged: 'prose',
+  readyOpen: 'control', readyDone: 'control', failureTitle: 'prose', failureChangeDescription: 'control',
+  failureTryAgainAsIs: 'control', failureStopped: 'prose', failureNeedsUpdate: 'prose', failureConnection: 'prose',
+  failureOfflineNotice: 'prose', failureOtherAppsUntouched: 'prose', failureCurrentVersionWorks: 'prose', planOffline: 'prose',
+  timelineTitle: 'prose', timelineEmpty: 'prose', timelineStillGoing: 'prose', timelineDidNotFinish: 'prose',
+  timelineStagePlan: 'prose', timelineStageGenerate: 'prose', timelineStageCheck: 'prose', timelineStageRun: 'prose',
+  timelineStageRepair: 'prose',
+  actionHistory: 'control', historyTitle: 'prose', historyCurrent: 'prose', historyTouchedEyebrow: 'prose',
+  historyUseVersion: 'control', historyMakeCopyHere: 'control', historyUseVersionFailed: 'prose',
+  historyKindAdded: 'prose', historyKindChanged: 'prose', historyKindRemoved: 'prose', historyKindLook: 'prose',
+  historyKindFixed: 'prose', historyKindStart: 'prose', historyInstallLabel: 'prose', historyHiddenData: 'prose',
+  historyLoadingLabel: 'prose', historyUseVersionBusy: 'control', historyMakeCopyBusy: 'control',
+  historyReassurancePending: 'prose',
+  orbMenuOpenLabel: 'control', orbStateChanging: 'prose', orbStateReady: 'prose', orbStateFinished: 'prose',
+  orbStateFailed: 'prose', orbMoveCorner: 'control',
+  whimSheetNewVersion: 'control', actionReload: 'control', changeFailedToast: 'prose', toastSeeWhy: 'control',
+  whimSheetAsk: 'control', whimSheetSend: 'control', whimSheetBackToApps: 'control',
+  reportScreenTitle: 'control', historyReportAction: 'control', reportReasonEyebrow: 'prose', reportReasonBroken: 'control',
+  reportReasonWrongResult: 'control', reportReasonHardToUse: 'control', reportReasonHarmful: 'control',
+  reportReasonOffensive: 'control', reportReasonOther: 'control', reportNotePlaceholder: 'control', reportPreviewTitle: 'prose',
+  reportFieldReason: 'prose', reportFieldNote: 'prose', reportFieldAppName: 'prose', reportFieldPrompt: 'prose',
+  reportFieldSource: 'prose', reportIncludePrompt: 'person', reportNoCodeDisclosure: 'prose', reportDeviceIdLine: 'prose',
+  reportSend: 'control', reportSendBusy: 'control', reportShowMore: 'control', reportShowLess: 'control',
+  reportThanksDone: 'control', reportDraftLoadFailed: 'prose', reportDraftClose: 'control',
+  reportSendFailedGeneric: 'prose', reportTooLarge: 'prose',
+  appBootLabel: 'prose', appBootA11yLabel: 'prose',
+  launchFailedTitle: 'prose', launchFailedBody: 'prose', launchFailedBack: 'control', appOpenTimedOut: 'prose',
+  appCrashedBody: 'prose', appCrashedBehindBody: 'prose', appCrashedAskFix: 'control', appCrashedFixRequest: 'person',
+  failureEmptyBuild: 'prose', failureHintsTitle: 'prose', screenErrorTitle: 'prose', screenErrorBody: 'prose',
+  screenErrorRetry: 'control', screenErrorBack: 'control',
+  consentTitle: 'prose', consentLead: 'prose', consentSentTitle: 'prose', consentSentRequest: 'prose',
+  consentSentEdit: 'prose', consentSentDevice: 'prose', consentSentErrors: 'prose', consentWhyTitle: 'prose',
+  consentWhy: 'prose', consentWhoTitle: 'prose', consentWho: 'prose', consentWhoPlatform: 'prose',
+  consentWhoAuthorities: 'prose', consentStaysTitle: 'prose', consentStays: 'prose', consentNeverTitle: 'prose',
+  consentNever: 'prose', consentAskFirst: 'prose', consentFootnote: 'prose', consentOutdatedLine: 'prose',
+  consentAgree: 'control', consentDecline: 'control',
+  firstRunLead: 'prose', firstRunSentTitle: 'prose', firstRunSentRequest: 'prose', firstRunSentDevice: 'prose',
+  firstRunSentErrors: 'prose', firstRunWhoAnycognition: 'prose', firstRunWhoHosting: 'prose', firstRunWhoAi: 'prose',
+  firstRunWhoPlatform: 'prose', firstRunWhoAuthorities: 'prose', firstRunWhy: 'prose', firstRunStaysTitle: 'prose',
+  firstRunStays: 'prose', firstRunNeverTitle: 'prose', firstRunNever: 'prose', firstRunDetails: 'control',
+  firstRunLanguage: 'control', firstRunContinue: 'control', firstRunTermsCheck: 'person',
+  updateRequiredLine: 'prose', permissionRequiredLine: 'prose', updateTitle: 'prose', updateBody: 'prose',
+  updateAction: 'control', updateNotNow: 'control', consentReviewKeepOn: 'control', consentReviewTurnOff: 'control',
+  consentReviewTurnOn: 'control', privacyPolicyLabel: 'control', supportLabel: 'control', termsOfUseLabel: 'control',
+  termsUpdatedLine: 'prose', termsLabel: 'control', ageBlockedTitle: 'prose', ageBlockedBody: 'prose',
+  ageUnder13Title: 'prose', ageUnder13Body: 'prose', ageBack: 'control', legalLanguageSwitch: 'control',
+  settingsAISectionTitle: 'control', settingsAISubtitle: 'prose', settingsLanguageTitle: 'control',
+  settingsLanguageSubtitle: 'prose', settingsAboutSectionTitle: 'prose', settingsVersionTitle: 'prose',
+  settingsReportProblem: 'control', settingsAdvancedSectionTitle: 'control', settingsErrorDetailsTitle: 'control',
+  settingsErrorDetailsHint: 'prose', settingsThisPhoneSection: 'prose', settingsDeviceIdTitle: 'prose',
+  settingsDeviceIdCopy: 'control', settingsDeviceIdCopied: 'prose', settingsDeviceIdHint: 'prose',
+  settingsDeviceIdReset: 'control', settingsDeviceIdResetTitle: 'prose', settingsDeviceIdKeep: 'control',
+  settingsDeviceIdResetConfirm: 'prose', settingsProbeNeutral: 'prose', settingsServerSection: 'prose',
+  settingsServerWhim: 'control', settingsServerOwn: 'control', ownServerKeep: 'control', serverAddressSectionTitle: 'prose',
+  serverAddressHint: 'prose', ownServerAction: 'control', ownServerConfirmBody: 'prose', ownServerConfirm: 'control',
+  ownServerCaption: 'prose', serverAddressRefused: 'prose', serverProbeVerified: 'prose', serverProbeUnverified: 'prose',
+  serverProbeUnreachable: 'prose', promptServerUnreachable: 'prose',
+  appLinkMissingTitle: 'prose', appLinkMissingBody: 'prose', appLinkMissingBack: 'control',
+  keyboardDone: 'control',
+};
+
+/** Who speaks in each line a function below composes, by the function's name, so the copy lint
+ *  reads composed lines as it reads `COPY`. */
+export const COMPOSED_KINDS: Readonly<Record<string, CopyKind>> = {
+  composePlaceholder: 'control', composerContinueLine: 'control', tileOlderLine: 'control',
+  crashFixWords: 'person', quotedWords: 'person', historyQuotedPrompt: 'person',
+  copyQuestionDataSubtitle: 'prose', deletedToast: 'prose', discardedManyToast: 'prose', serverProbeLabel: 'prose',
+  addedFieldsLine: 'prose', makingTitle: 'prose', makingRepairLine: 'prose', makingQueueLine: 'prose',
+  makingStallLine: 'prose', failureCouldntRunLine: 'prose', readyTitle: 'prose', changedTitle: 'prose',
+  appCrashedTitle: 'prose', composeHeadline: 'prose', planHeadline: 'prose', planMakeHeader: 'prose',
+  workingPlanPhrase: 'prose', editingEyebrow: 'prose', whimSheetVersionLine: 'prose', historyVersionCount: 'prose',
+  historyRowMeta: 'prose', versionSwitchToast: 'prose', reportRecipientLine: 'prose', reportCodeLine: 'prose',
+  reportThanksLine: 'prose', reportCodeSizeLabel: 'prose', timelineStageLabel: 'prose', timelineDurationLabel: 'prose',
+  timelineStageLine: 'prose', timelineGrowthLine: 'prose', retryLineSeconds: 'prose', retryLineMinutes: 'prose',
+  retryLineHoursFallback: 'prose', retryLineElapsed: 'prose', retryLineSameDay: 'prose', retryLineTomorrow: 'prose',
+};
 
 /** One what's-new line (legal-surface-v2 design D4): shown under `consentOutdatedLine` when the
  *  stored grant is from an older consent version. `covers` maps every widening from that version to
@@ -819,9 +934,26 @@ export function consentWhatsNewText(language: LegalLanguage, grantVersion: numbe
   return CONSENT_WHATS_NEW[language]?.[grantVersion]?.text;
 }
 
+/** `COPY`'s language: its numbers are written the way it writes them, never the phone's locale
+ *  (system.md §8 rule 7, #89). */
+const COPY_LANGUAGE: LegalLanguage = 'en';
+
+/** `n` as a copy table in `language` writes a number: "1,204" in English, "1 204" in French. With no
+ *  global `Intl` (the case `retryLineHoursFallback` exists for), its plain digits. */
+export function formatCount(n: number, language: LegalLanguage = COPY_LANGUAGE): string {
+  return typeof Intl === 'undefined' ? String(n) : new Intl.NumberFormat(language).format(n);
+}
+
+/** `date`'s local clock time as a copy table in `language` writes it: "3:05 PM" in English, "15:05" in
+ *  French, whatever the phone's locale (the retry lines' "Try again after 3:05 PM."). Only called
+ *  where `Intl` exists: `retryLine` falls back to hours without it. */
+export function formatClockTime(date: Date, language: LegalLanguage = COPY_LANGUAGE): string {
+  return new Intl.DateTimeFormat(language, { hour: 'numeric', minute: '2-digit' }).format(date);
+}
+
 /** The "2 didn’t work" line of the tile that gathers attempts older than a day. */
 export function tileOlderLine(count: number): string {
-  return `${count} didn’t work`;
+  return `${formatCount(count)} didn’t work`;
 }
 
 /** The Undo toast after a delete: "Water Counter deleted". */
@@ -831,7 +963,7 @@ export function deletedToast(name: string): string {
 
 /** The Undo toast after Discard all gathered `count` attempts. */
 export function discardedManyToast(count: number): string {
-  return `${count} discarded`;
+  return `${formatCount(count)} discarded`;
 }
 
 /** The copy question's first row says what it would copy: the data `name` has saved now. */
@@ -916,24 +1048,24 @@ export function makingTitle(name: string, changing: boolean): string {
 
 /** The row a `repair` adds under the check: "Fixing a problem · try 2 of 3". */
 export function makingRepairLine(attempt: number, of: number): string {
-  return `Fixing a problem · try ${attempt} of ${of}`;
+  return `Fixing a problem · try ${formatCount(attempt)} of ${formatCount(of)}`;
 }
 
 /** The run's place in line, from the `queued` event's `position` (the runs ahead plus one). */
 export function makingQueueLine(position: number): string {
   const ahead = position - 1;
-  return ahead < 1 ? COPY.makingQueuedNext : `${ahead} ahead of you.`;
+  return ahead < 1 ? COPY.makingQueuedNext : `${formatCount(ahead)} ahead of you.`;
 }
 
 /** No byte for `seconds` (the stall threshold): said as it is, with the run still going. */
 export function makingStallLine(seconds: number): string {
-  return `No word from the server for ${seconds} s. Still waiting.`;
+  return `No word from the server for ${formatCount(seconds)} s. Still waiting.`;
 }
 
 /** The "couldn't run" failure (system.md §8): the tries the run used, and the rewording hint only
  *  where rewording can help. */
 export function failureCouldntRunLine(tries: number, rewordingHelps: boolean): string {
-  const tried = `I tried ${tries} times and couldn’t get it to run.`;
+  const tried = `I tried ${formatCount(tries)} times and couldn’t get it to run.`;
   return rewordingHelps ? `${tried} Describing it differently often helps.` : tried;
 }
 
@@ -979,18 +1111,10 @@ export function timelineStageLine(label: string, durationMs: number | null, ende
  *  from before this change (or one whose roster model never reasoned) reads exactly as it always
  *  did. */
 export function timelineGrowthLine(chars: number, thinkingChars = 0): string {
-  const written = chars === 1 ? 'Wrote 1 character' : `Wrote ${chars} characters`;
+  const written = chars === 1 ? 'Wrote 1 character' : `Wrote ${formatCount(chars)} characters`;
   if (thinkingChars <= 0) return written;
-  const thinking = thinkingChars === 1 ? '1 character' : `${thinkingChars} characters`;
+  const thinking = thinkingChars === 1 ? '1 character' : `${formatCount(thinkingChars)} characters`;
   return `${written} after thinking through ${thinking}`;
-}
-
-/** The button the clarify prompt (`server/src`) still quotes for a limit's alternative. The plan
- *  page's own action is `COPY.planMakeInstead` and shows the alternative in a card; the server
- *  test pins that the prompt asks for words that read right here, so the prompt and this stay one
- *  change. */
-export function clarifyBuildInstead(alternative: string): string {
-  return `Build ${alternative} instead`;
 }
 
 // ── change mode reads as changing, on every page (C1) ────────────────────────
@@ -1041,25 +1165,25 @@ const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
 /** How long ago `at` was, in words: "just now", "5 min ago", "3 h ago", "1 day ago", "2 days ago",
- *  and from a week on the date ("Oct 3"), in English like the rest of the copy. */
+ *  and from a week on the date ("Oct 3"), in the copy's language like its numbers. */
 function agoWords(at: number, now: number): string {
   const diff = Math.max(0, now - at);
   if (diff < MINUTE_MS) return 'just now';
-  if (diff < HOUR_MS) return `${Math.floor(diff / MINUTE_MS)} min ago`;
-  if (diff < DAY_MS) return `${Math.floor(diff / HOUR_MS)} h ago`;
+  if (diff < HOUR_MS) return `${formatCount(Math.floor(diff / MINUTE_MS))} min ago`;
+  if (diff < DAY_MS) return `${formatCount(Math.floor(diff / HOUR_MS))} h ago`;
   const days = Math.floor(diff / DAY_MS);
-  if (days < 7) return days === 1 ? '1 day ago' : `${days} days ago`;
-  return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(new Date(at));
+  if (days < 7) return days === 1 ? '1 day ago' : `${formatCount(days)} days ago`;
+  return new Intl.DateTimeFormat(COPY_LANGUAGE, { month: 'short', day: 'numeric' }).format(new Date(at));
 }
 
 /** The Whim sheet's version line for the running version: "Version 4 · changed 2 days ago". */
 export function whimSheetVersionLine(version: number, changedAt: number, now: number): string {
-  return `Version ${version} · changed ${agoWords(changedAt, now)}`;
+  return `Version ${formatCount(version)} · changed ${agoWords(changedAt, now)}`;
 }
 
 /** How many versions History lists, under the app's name: "4 versions". */
 export function historyVersionCount(versionCount: number): string {
-  return versionCount === 1 ? '1 version' : `${versionCount} versions`;
+  return versionCount === 1 ? '1 version' : `${formatCount(versionCount)} versions`;
 }
 
 /** A History row's meta line: "v4 · 2 days ago". */
@@ -1081,47 +1205,48 @@ export const REPAIR_ATTEMPT_LIMIT = 3;
  *  an older version than `from`, the one that was current; "Now on version 4" when it goes to a newer
  *  one. */
 export function versionSwitchToast(version: number, from: number | null): string {
-  return from !== null && version > from ? `Now on version ${version}` : `Back on version ${version}`;
+  return from !== null && version > from ? `Now on version ${formatCount(version)}` : `Back on version ${formatCount(version)}`;
 }
 
 /** The report sheet's collapsed code row (content-reporting "the app's code (its size, with the
  *  full text expandable)"): "482 characters" — never the code itself until expanded. */
 export function reportCodeSizeLabel(chars: number): string {
-  return chars === 1 ? '1 character' : `${chars} characters`;
+  return chars === 1 ? '1 character' : `${formatCount(chars)} characters`;
 }
 
 // ── the refusal notice's retry-window line (service-refusals; design D11) ────
 // `service-refusal.ts#retryLine` owns the bucket ARITHMETIC (which of these five applies, and any
 // rounding); this module owns only the WORDING, the same split `timelineStageLine` already keeps
-// between `prompt-flow.ts`'s counts and its own phrasing.
+// between `prompt-flow.ts`'s counts and its own phrasing. The line sits on its own under the
+// notice's sentence, so each reads as a sentence of its own, saying what to do and when.
 
 export function retryLineSeconds(n: number): string {
-  return n === 1 ? 'in about 1 second' : `in about ${n} seconds`;
+  return n === 1 ? 'Try again in about 1 second.' : `Try again in about ${formatCount(n)} seconds.`;
 }
 
 export function retryLineMinutes(n: number): string {
-  return n === 1 ? 'in about 1 minute' : `in about ${n} minutes`;
+  return n === 1 ? 'Try again in about 1 minute.' : `Try again in about ${formatCount(n)} minutes.`;
 }
 
 /** The `Intl`-missing fallback — an hours-only estimate when no formatter could exist to build a
  *  local-time string at all. */
 export function retryLineHoursFallback(n: number): string {
-  return n === 1 ? 'in about 1 hour' : `in about ${n} hours`;
+  return n === 1 ? 'Try again in about 1 hour.' : `Try again in about ${formatCount(n)} hours.`;
 }
 
 /** The window had already ended by the moment this line was read: naming a bucket ("in about 0
  *  seconds") would just be a stale estimate restated, so this names no number at all. */
 export function retryLineElapsed(): string {
-  return 'shortly';
+  return 'Try again shortly.';
 }
 
-/** Later the same local day: "after 4:30 PM". `time` is already formatted by the caller's
- *  injected `Intl.DateTimeFormat`-backed formatter. */
+/** Later the same local day: "Try again after 4:30 PM.". `time` is already formatted by the
+ *  caller's injected formatter (`formatClockTime`). */
 export function retryLineSameDay(time: string): string {
-  return `after ${time}`;
+  return `Try again after ${time}.`;
 }
 
-/** Beyond the same local day: "tomorrow after 9:00 AM". */
+/** Beyond the same local day: "Try again tomorrow after 9:00 AM.". */
 export function retryLineTomorrow(time: string): string {
-  return `tomorrow after ${time}`;
+  return `Try again tomorrow after ${time}.`;
 }

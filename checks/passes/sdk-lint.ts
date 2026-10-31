@@ -29,7 +29,7 @@ export const sdkLintPass: Pass = (ctx: CheckContext) => {
             column,
             symbol: rule.globalName,
             message: `Raw ${rule.globalName}(...) is used instead of the vc-sdk equivalent.`,
-            hint: `Use vc-sdk's \`${rule.sdkAlternative}\` instead of raw ${rule.globalName}.`,
+            hint: `Use vc-sdk’s \`${rule.sdkAlternative}\` instead of raw ${rule.globalName}.`,
           };
           ctx.report(d);
         }

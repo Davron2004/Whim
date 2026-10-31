@@ -51,13 +51,13 @@ import {
   useWindowDimensions as useKeyboardWindow,
   type NativeEvent,
 } from 'react-native-keyboard-controller';
-import { SPACE } from '../../design/tokens';
-import { SPACING } from '../../sdk/theme';
+import { LAYOUT, SPACE } from '../../design/tokens';
 import { wrappingType } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
 import { COPY } from './copy';
 import {
   contentBelow,
+  fieldSelection,
   followOffset,
   FOOTER_SHARE,
   footerJoinsScroll,
@@ -68,7 +68,6 @@ import {
   REVEAL_MARGIN,
   revealOffset,
   riseProgress,
-  selectionColors,
   sheetBottomPadding,
   showsDoneBar,
   topFadeOpacity,
@@ -115,7 +114,7 @@ export const OverlayShownContext = createContext(true);
 const dismissKeyboard = () => Keyboard.dismiss();
 const takesTouch = () => true;
 
-/** The iOS keyboard toolbar's height — no SPACING counterpart. */
+/** The iOS keyboard toolbar's height — no space-token counterpart. */
 const DONE_BAR_HEIGHT = 44;
 
 /** Where the view `frame` holds ends, measured from the top of its root (the app's, or a Modal's),
@@ -766,9 +765,8 @@ export interface KeyboardTextInputProps extends TextInputProps {
 }
 
 /**
- * A text field for a `KeyboardShell`: Whim's accent for its caret and selection handles, a highlight
- * its selected text stays readable on (`selectionColors`), and the shell keeps it in view while it
- * is focused.
+ * A text field for a `KeyboardShell`: an `ink` caret and selection handles, a highlight its selected
+ * text stays readable on (`fieldSelection`), and the shell keeps it in view while it is focused.
  * `autoFocus` focuses it once it has mounted rather than natively: iOS links a Done bar to its field
  * when the bar mounts, and a field that took focus before that shows none. Multiline on iOS, it
  * carries the keyboard's Done bar, which puts the keyboard away and submits nothing; one line on iOS,
@@ -782,6 +780,7 @@ export function KeyboardTextInput({
   style,
   ...props
 }: Readonly<KeyboardTextInputProps>) {
+  const tokens = useTokens();
   const input = useRef<TextInput>(null);
   const shell = useContext(KeyboardShellContext);
   const doneBarId = useId();
@@ -804,7 +803,7 @@ export function KeyboardTextInput({
   const doneBar = showsDoneBar(Platform.OS, props.multiline);
   const field = (
     <TextInput
-      {...selectionColors(Platform.OS)}
+      {...fieldSelection(tokens, props.multiline === true)}
       {...props}
       ref={input}
       style={[style, Platform.OS === 'ios' && props.multiline !== true && styles.naturalLineHeight]}
@@ -857,17 +856,16 @@ const styles = StyleSheet.create({
   grow: { flexGrow: 1, flexShrink: 1 },
   topFade: { position: 'absolute', top: 0, left: 0, right: 0, height: TOP_FADE_HEIGHT },
   edge: { height: StyleSheet.hairlineWidth },
-  // A screen's gap between the scrolling content's cut edge and its pinned action: the design's
-  // footer is `padding:16px 22px 24px` (`Whim Mobile.dc.html:427,459,487`), whose sides and bottom
-  // `PrimaryAction` carries. A sheet spaces its own actions (`ReportPage`'s actions pad themselves).
-  footer: { paddingTop: SPACING.md },
+  // A screen's gap between the scrolling content's cut edge and its pinned action (system.md §2.8
+  // Bottom action area). A sheet spaces its own actions (`ReportPage`'s actions pad themselves).
+  footer: { paddingTop: LAYOUT.actionAreaTop },
   naturalLineHeight: { lineHeight: undefined },
   doneBar: {
     height: DONE_BAR_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    paddingHorizontal: SPACING.md,
+    paddingHorizontal: SPACE[4],
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   doneLabel: wrappingType('headline'),

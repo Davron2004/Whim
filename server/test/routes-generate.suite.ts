@@ -42,7 +42,7 @@ import { InFlightGenerations, type LineClock } from '../src/routes/generate';
 import { serverBusyCeilingRefusal, serverBusyRefusal } from '../src/admission/refusals';
 import { captureLogs, withMessage } from './log-capture';
 import { ResolveTracker, type GenerationStats, type UsageAndCostTransport } from '../src/usage/resolve';
-import { GenerationMachine, type Clock, type RunTrace } from '../src/generation/machine';
+import { CREDIT_EXHAUSTED_REASON, EXPIRED_REASON, GenerationMachine, type Clock, type RunTrace } from '../src/generation/machine';
 import { OpenRouterNetworkError } from '../src/openrouter';
 import { defaultModelRoster, type ModelClient, type ModelRoster } from '../src/generation/model';
 import {
@@ -83,8 +83,6 @@ const RESULT_APP: WireAppRecord = {
 };
 const FAST_RESOLVE_BOUNDS = { maxAttempts: 1, totalBudgetMs: 2000, retryDelayMs: 0, perAttemptTimeoutMs: 500 };
 const WAIT_MS = 5000;
-const EXPIRED_REASON = 'This took too long to build. Please try again.';
-const CREDIT_EXHAUSTED_REASON = 'Whim has used up its generation budget for now. Try again later.';
 
 // ─── Local doubles (route-specific, not shared) ─────────────────────────────
 

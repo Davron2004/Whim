@@ -12,7 +12,7 @@
  * copy being made, a switch landing). Running, queueing and dropping each log at debug level.
  */
 import type { InstalledApp } from './app-index';
-import type { StoreAccess } from './store-access';
+import { messageOf, type StoreAccess } from './store-access';
 import type { ToastApi } from '../ui/Toast';
 import { COPY, versionSwitchToast } from './copy';
 import { log } from '../logging';
@@ -22,8 +22,8 @@ export interface VersionSwitchDeps {
   access: StoreAccess;
   /** The shell's toast host. */
   toast: () => ToastApi | null;
-  /** The app's version moved (a switch or an Undo landed): bring what shows it up to date. */
-  moved: (app: InstalledApp) => void;
+  /** The app's version moved (a switch or an Undo landed) to `activeId`: bring what shows it up to date. */
+  moved: (app: InstalledApp, activeId: string) => void;
   /** What else holds the app right now (a copy being made, an open), if anything. */
   busyWith: (appId: string) => string | undefined;
 }
@@ -68,7 +68,10 @@ export class VersionSwitches {
     this.standing.set(app.id, standing);
     const keep = (kept: (n: number) => boolean) => this.standing.set(app.id, (this.standing.get(app.id) ?? []).filter(kept));
     const moving = this.deps.access.rollback(app, versionId).then(
-      () => keep((n) => n >= seq),
+      ({ activeId }) => {
+        keep((n) => n >= seq);
+        return activeId;
+      },
       (e: unknown) => {
         keep((n) => n !== seq);
         throw e;
@@ -78,8 +81,7 @@ export class VersionSwitches {
     const settled = moving.then(() => undefined, () => undefined);
     this.running.set(seq, settled);
     settled.then(() => this.running.delete(seq)).catch(() => undefined);
-    await moving;
-    this.deps.moved(app);
+    this.deps.moved(app, await moving);
     return seq;
   }
 
@@ -101,7 +103,7 @@ export class VersionSwitches {
     if (behind === undefined) log.debug(CHANNELS.app, 'version undo running', { appId: app.id });
     else log.debug(CHANNELS.app, 'version undo queued', { appId: app.id, behind });
     this.rollback(app, previousId).catch((e: unknown) => {
-      log.warn(CHANNELS.app, 'history operation failed', { operation: 'undo', detail: e instanceof Error ? e.message : String(e) });
+      log.warn(CHANNELS.app, 'history operation failed', { operation: 'undo', detail: messageOf(e) });
       this.deps.toast()?.show({ message: COPY.undoTooLateToast });
     });
   }

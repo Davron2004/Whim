@@ -19,12 +19,12 @@ import { springConfig } from '../../ui/tokens-pure';
 import { resetNativeStorage } from './native-storage';
 import {
   accessibilitySettings,
+  Dimensions,
   emitAccessibility,
   hapticCalls,
   setColorScheme,
   StyleSheet,
   useSafeAreaInsets as safeAreaOf,
-  useWindowDimensions as windowOf,
 } from './native-host';
 import { moveKeyboard, resetKeyboard } from './native-keyboard-controller';
 import { animations, isStep, type Animation } from './native-reanimated';
@@ -38,7 +38,7 @@ type Style = Record<string, unknown> & { transform?: Record<string, number>[] };
 const flat = (node: Node): Style => StyleSheet.flatten(node.props.style) as Style;
 const noop = () => {};
 /** The window and safe area the host double reports to every component. */
-const SCREEN = windowOf();
+const SCREEN = Dimensions.get();
 const SAFE = safeAreaOf();
 
 /** The orb as a screen reader and a finger find it: the one button named "Whim menu…". */

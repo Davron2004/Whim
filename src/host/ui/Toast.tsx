@@ -28,6 +28,7 @@ import { COPY } from '../launcher/copy';
 import { timing } from './motion';
 import { wrappingType } from './Text';
 import { DRAG_SLOP, dragPosition, releaseCommits } from './Sheet';
+import { TopHighlight } from './TopHighlight';
 import { useTokens } from './tokens';
 import { hitSlopFor, makeStyles, MAX_FONT_SCALE, springConfig, typeStyle } from './tokens-pure';
 
@@ -154,13 +155,13 @@ const styles = makeStyles((t) => ({
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     gap: SPACE[3],
-    paddingVertical: SPACE[3],
+    // 1 px of room for the top highlight (`TopHighlight`), which is not a border on the capsule.
+    paddingTop: SPACE[3] + 1,
+    paddingBottom: SPACE[3],
     paddingHorizontal: SPACE[4],
     borderRadius: RADII.full.radius,
     backgroundColor: t.colors.raised,
     boxShadow: t.shadows.floating,
-    borderTopWidth: 1,
-    borderColor: t.topHighlight,
   },
   message: { ...wrappingType('callout'), color: t.colors.text, flexShrink: 1 },
   action: { ...typeStyle('headline') },
@@ -307,6 +308,7 @@ function ToastView({ shown, bottomOffset, onEnd, onGone }: Readonly<ToastViewPro
           }}
           onAccessibilityEscape={leave}
         >
+          <TopHighlight radius={RADII.full.radius} />
           <RNText style={s.message} maxFontSizeMultiplier={MAX_FONT_SCALE}>
             {toast.message}
           </RNText>

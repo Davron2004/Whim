@@ -22,15 +22,15 @@ export interface ServiceRefusal {
 
 /** The D8 hint table. `server_busy` has two variants: capacity (also used while draining) and the
  *  global daily ceiling. */
-const REFUSAL_HINTS = Object.freeze({
+export const REFUSAL_HINTS = Object.freeze({
   payload_too_large: 'That request is too long. Try a shorter description.',
-  daily_limit: "You've reached today's limit on this device. It resets at midnight UTC.",
-  device_busy: 'This device is already building an app. Try again when it finishes.',
+  daily_limit: 'You’ve reached today’s limit on this device. It resets at midnight UTC.',
+  device_busy: 'This device is already making an app. Try again when it finishes.',
   server_busy_capacity: 'Whim is busy right now. Please try again in a few minutes.',
-  server_busy_ceiling: "Whim has reached today's building capacity. Please try again after midnight UTC.",
-  content_policy: "Whim can't make that kind of app. Try describing something else.",
-  policy_unavailable: "We couldn't check this request right now. Please try again in a moment.",
-  budget_exhausted: 'Whim has used up its generation budget for now. Try again later.',
+  server_busy_ceiling: 'Whim has reached today’s limit for making apps. Please try again after midnight UTC.',
+  content_policy: 'Whim can’t make that kind of app. Try describing something else.',
+  policy_unavailable: 'We couldn’t check this request right now. Please try again in a moment.',
+  budget_exhausted: 'Whim has used up its budget for making apps for now. Try again later.',
   update_required: 'Update Whim to the latest version to keep using its AI features.',
   consent_required: 'Whim needs your permission to send requests to its AI service.',
 });

@@ -26,8 +26,8 @@ import type { DescribeScreen, PlanScreen } from './prompt-flow';
 
 /**
  * What a gated action resumes once the terms and consent are current. The five entry points (the
- * home composer row, "Prompt again", the orb's change action, and history's "Change it from here"
- * all open compose; Retry on a failed/interrupted build re-runs a pending record) collapse to the
+ * home composer, the tile menu's "Change it", the Whim sheet's change field, and the current
+ * version's "Change it" in History all open compose; Retry on a failed/interrupted build re-runs a pending record) collapse to the
  * first two shapes. `resume` is the third: a request the server refused `consent_required`
  * (request-envelope) goes back to the flow step that sent it, exactly as it was — the typed
  * prompt, the answers and the plan rows included. `settings` is Settings' "Turn on AI features":

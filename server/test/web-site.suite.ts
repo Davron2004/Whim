@@ -154,6 +154,49 @@ function missingConsentDisclosures(
   return missing;
 }
 
+/** The words a policy quotes that are not the app's: what "we" and "us" mean, its own date line,
+ *  the label a store shows ("linked to you"), and the beta web page's newsletter box, in each
+ *  page's language. */
+const PAGE_WORDS: ReadonlySet<string> = new Set([
+  'we',
+  'us',
+  'nous',
+  'linked to you',
+  'liés à vous',
+  'Last updated',
+  'Email me news about Whim',
+  'Envoyez-moi des nouvelles de Whim par courriel',
+]);
+
+/** The trimmed phrases between each “ and the ” after it, and each « and the » after it. */
+function quotedPhrases(text: string): string[] {
+  const phrases: string[] = [];
+  for (const [open, close] of [['“', '”'], ['«', '»']] as const) {
+    for (let at = text.indexOf(open); at !== -1; ) {
+      const end = text.indexOf(close, at + 1);
+      if (end === -1) break;
+      phrases.push(text.slice(at + 1, end).trim());
+      at = text.indexOf(open, end + 1);
+    }
+  }
+  return phrases;
+}
+
+/** Every phrase the policy `html` puts in quotes (“…” or « … ») to name something in the app
+ *  that the app doesn't show word for word: no value of `COPY` or of the page's legal table, no
+ *  heading on the page itself, and none of `PAGE_WORDS`. */
+function unshownQuotes(html: string, language: keyof typeof LEGAL_COPY): string[] {
+  const apostrophes = (text: string) => text.replace(/[’']/g, "'");
+  const shown = new Set([...Object.values(COPY), ...Object.values(LEGAL_COPY[language])].map(apostrophes));
+  const headings = html
+    .split(/<h[1-6][^>]*>/)
+    .slice(1)
+    .map((opened) => apostrophes(pageText(opened.slice(0, opened.search(/<\/h[1-6]>/)))));
+  const text = pageText(html);
+  return quotedPhrases(text)
+    .filter((words) => !shown.has(apostrophes(words)) && !headings.some((heading) => heading.includes(apostrophes(words))) && !PAGE_WORDS.has(words));
+}
+
 interface ServerKeepDefault {
   readonly variable: string;
   readonly category: string;
@@ -541,6 +584,17 @@ function parityAndRetentionTests(): void {
     const redMissing = missingConsentDisclosures(LEGAL_COPY.fr, CONSENT_ALLOWLIST, normalizeForParity(drifted.pages['fr/privacy.html']));
     eq('a French page that drops words from the French consentWho fails naming consentWho', redMissing, ['consentWho']);
   }
+
+  // A screen or control the policy names is the one the app shows (consentTitle, consentAgree,
+  // Settings' server rows…), read from the copy table itself.
+  for (const page of POLICIES) {
+    eq(`${page} names only screens and controls the app shows, word for word`, unshownQuotes(pages[page], page.startsWith('fr/') ? 'fr' : 'en'), []);
+  }
+  eq(
+    '  red: a policy naming the retired "Agree and continue" button fails, naming it',
+    unshownQuotes(renderLegal(REAL_IDENTITY, { page: 'privacy.html', from: '“Agree to send descriptions”', to: '“Agree and continue”' }).pages['privacy.html'], 'en'),
+    ['Agree and continue'],
+  );
 
   // The processor is named in the provider list, and nowhere else: no promise rests on a vendor.
   for (const page of POLICIES) {
