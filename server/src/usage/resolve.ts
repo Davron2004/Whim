@@ -375,12 +375,11 @@ export async function runCostResolutionSweep(deps: CostSweepDeps): Promise<CostS
 export class ResolveTracker {
   private readonly inFlight = new Set<Promise<unknown>>();
 
-  /** Registers `promise` and returns it unchanged, so call sites can wrap in place. */
-  track<T>(promise: Promise<T>): Promise<T> {
+  /** Registers `promise` until it settles. */
+  track(promise: Promise<unknown>): void {
     this.inFlight.add(promise);
     const untrack = () => this.inFlight.delete(promise);
     promise.then(untrack, untrack);
-    return promise;
   }
 
   /** Number of resolutions currently in flight. */

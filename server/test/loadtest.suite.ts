@@ -12,9 +12,22 @@
  * pure pieces (SSE framing, the report builder, the verdict).
  */
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import type { Firestore, Transaction } from '@google-cloud/firestore';
 import { caught, check, eq, section } from './harness';
+import {
+  OPERATION_CEILING,
+  OperationBudget,
+  OperationCapReached,
+  assertThrowawayDatabase,
+  countingTransactions,
+  estimatedCostUsd,
+  main as firestoreAdmissionMain,
+  parseLoadArgs,
+} from './firestore-admission-load';
 import { productionEntryInputs } from './build-fixtures';
 import type { ServerHandle, StartServerOptions, StartServerOverrides } from '../src/lifecycle';
 import type { ServerConfig } from '../src/config';
@@ -476,6 +489,237 @@ function testCpuNormalization(): void {
   }
 }
 
+// ── The Firestore admission load test's guards (#143, design D7) ──────────
+
+function refusalOf(run: () => void): string | undefined {
+  try {
+    run();
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
+async function closedPort(): Promise<number> {
+  const server = net.createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as net.AddressInfo;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
+}
+
+async function testFirestoreAdmissionHarnessGuards(): Promise<void> {
+  section('Firestore admission load test: the harness refuses the production database and any non-throwaway name');
+  for (const [label, database, deployed] of [
+    ['(default)', '(default)', undefined],
+    ['the deployed WHIM_FIRESTORE_DATABASE, even with the prefix', 'whim-loadtest-live', 'whim-loadtest-live'],
+    ['a name without the whim-loadtest- prefix', 'whim-staging', undefined],
+    ['the bare prefix', 'whim-loadtest-', undefined],
+    ['an uppercase suffix', 'whim-loadtest-X', undefined],
+  ] as const) {
+    check(`refuses ${label}`, refusalOf(() => assertThrowawayDatabase(database, deployed)) !== undefined);
+  }
+  eq('accepts whim-loadtest-<suffix>', refusalOf(() => assertThrowawayDatabase('whim-loadtest-20261009', '(default)')), undefined);
+  check(`--max-ops above the ${OPERATION_CEILING} ceiling is refused`, refusalOf(() => parseLoadArgs(['--max-ops', String(OPERATION_CEILING + 1)]))?.includes('--max-ops') === true);
+  eq('--max-ops at the ceiling is accepted', parseLoadArgs(['--max-ops', String(OPERATION_CEILING)]).maxOps, OPERATION_CEILING);
+
+  // The client reads FIRESTORE_EMULATOR_HOST from the process environment, so a refusal that failed
+  // to stop the run would reach a closed local port, never real Firestore.
+  const saved = process.env.FIRESTORE_EMULATOR_HOST;
+  const savedError = console.error;
+  process.env.FIRESTORE_EMULATOR_HOST = `127.0.0.1:${await closedPort()}`;
+  const errors: string[] = [];
+  console.error = (...args: unknown[]) => errors.push(args.join(' '));
+  try {
+    const realEnv = { WHIM_FIRESTORE_DATABASE: 'whim-loadtest-live' };
+    const cases: Array<[string, string[], NodeJS.ProcessEnv, string]> = [
+      ['(default)', ['--database', '(default)', '--max-ops', '100'], realEnv, 'production'],
+      ['the deployed database', ['--database', 'whim-loadtest-live', '--max-ops', '100'], realEnv, 'deployed'],
+      ['a real database without --max-ops', ['--database', 'whim-loadtest-a1'], realEnv, '--max-ops'],
+      ['a plan above its cap', ['--database', 'whim-loadtest-a1', '--max-ops', '10'], realEnv, 'above --max-ops'],
+      ['no database and no emulator', [], {}, 'FIRESTORE_EMULATOR_HOST'],
+    ];
+    for (const [label, argv, env, needle] of cases) {
+      errors.length = 0;
+      const started = Date.now();
+      const code = await firestoreAdmissionMain(argv, env);
+      check(`main refuses ${label} with exit 2, naming why, before opening a client`, code === 2 && errors.some((line) => line.includes(needle)) && Date.now() - started < 1000, `${code}: ${errors.join(' | ')}`);
+    }
+  } finally {
+    console.error = savedError;
+    if (saved === undefined) delete process.env.FIRESTORE_EMULATOR_HOST;
+    else process.env.FIRESTORE_EMULATOR_HOST = saved;
+  }
+}
+
+/** A client double whose transaction runs `update` `attempts` times on one transaction double that
+ *  records every call it receives. */
+function transactionDouble(attempts: number): { db: Firestore; sent: string[] } {
+  const sent: string[] = [];
+  const tx = {
+    getAll: (...refs: unknown[]) => {
+      sent.push(`getAll(${refs.length})`);
+      return Promise.resolve([]);
+    },
+    create: () => sent.push('create'),
+    set: () => sent.push('set'),
+  };
+  const db = {
+    runTransaction: async (update: (t: Transaction) => Promise<unknown>) => {
+      let result: unknown;
+      for (let n = 0; n < attempts; n++) result = await update(tx as unknown as Transaction);
+      return result;
+    },
+  };
+  return { db: db as unknown as Firestore, sent };
+}
+
+async function admissionShaped(tx: Transaction): Promise<void> {
+  await tx.getAll(...([1, 2, 3] as unknown as Parameters<Transaction['getAll']>));
+  tx.create({} as never, {});
+  tx.set({} as never, {});
+  tx.set({} as never, {});
+}
+
+async function testFirestoreAdmissionBudget(): Promise<void> {
+  section('Firestore admission load test: every read and write is charged before it is sent, and none past the cap');
+  const open = transactionDouble(2);
+  const budget = new OperationBudget();
+  const client = countingTransactions(open.db, budget);
+  await client.db.runTransaction(admissionShaped);
+  eq('a retried transaction is counted as two attempts', client.attempts(), [2]);
+  eq('both attempts\' three reads and three writes are charged', budget.used(), 12);
+
+  const capped = transactionDouble(1);
+  const small = new OperationBudget(5);
+  const cappedClient = countingTransactions(capped.db, small);
+  const err = await caught(async () => {
+    await cappedClient.db.runTransaction(admissionShaped);
+  });
+  check('the transaction ends with OperationCapReached once the next write would pass the cap', err instanceof OperationCapReached, String(err));
+  eq('the write past the cap never reached the transaction', capped.sent, ['getAll(3)', 'create', 'set']);
+  eq('the budget holds exactly the operations sent', small.used(), 5);
+  eq('the cost estimate prices the ceiling at $0.09', estimatedCostUsd(OPERATION_CEILING), 0.09);
+}
+
+interface ShellRun {
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly gcloud: string[];
+  readonly node: string[];
+}
+
+const SCRIPT_STUBS: Readonly<Record<string, string>> = {
+  gcloud: `#!/usr/bin/env bash
+printf '%s\\n' "$*" >>"$STUB_DIR/gcloud.log"
+case "$*" in
+  *'firestore databases create'*) exit "\${STUB_CREATE_EXIT:-0}" ;;
+  *'firestore databases delete'*) exit "\${STUB_DELETE_EXIT:-0}" ;;
+  *'firestore databases list'*) printf 'projects/anycognition-whim/databases/(default)\\n%b' "\${STUB_LEFTOVER:-}" ;;
+esac
+exit 0
+`,
+  node: `#!/usr/bin/env bash
+printf '%s|emulator=%s|project=%s\\n' "$*" "\${FIRESTORE_EMULATOR_HOST:-}" "\${GOOGLE_CLOUD_PROJECT:-}" >>"$STUB_DIR/node.log"
+if [ -n "\${STUB_NODE_SIGNAL:-}" ]; then kill -"$STUB_NODE_SIGNAL" "$PPID"; fi
+exit "\${STUB_NODE_EXIT:-0}"
+`,
+  sleep: '#!/usr/bin/env bash\nexit 0\n',
+};
+
+/** Runs deploy/loadtest/firestore-admission.sh with gcloud, node and sleep stubbed on PATH and an
+ *  empty HOME, so no operator value, credential or network is reachable. */
+function runFirestoreAdmissionScript(args: readonly string[], env: Readonly<Record<string, string>> = {}): ShellRun {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-firestore-loadtest-'));
+  try {
+    const bin = path.join(dir, 'bin');
+    const home = path.join(dir, 'home');
+    fs.mkdirSync(bin);
+    fs.mkdirSync(home);
+    for (const [tool, body] of Object.entries(SCRIPT_STUBS)) fs.writeFileSync(path.join(bin, tool), body, { mode: 0o755 });
+    const result = spawnSync('/bin/bash', [path.join(ROOT, 'deploy', 'loadtest', 'firestore-admission.sh'), ...args], {
+      encoding: 'utf8',
+      input: '',
+      timeout: 60_000,
+      env: { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}`, HOME: home, TMPDIR: os.tmpdir(), STUB_DIR: dir, ...env },
+    });
+    const log = (tool: string): string[] => {
+      const file = path.join(dir, `${tool}.log`);
+      return fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter((line) => line !== '') : [];
+    };
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr, gcloud: log('gcloud'), node: log('node') };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function describeRun(run: ShellRun): string {
+  return `exit ${run.status}\n${run.stdout}\n${run.stderr}\ngcloud: ${run.gcloud.join(' / ')}\nnode: ${run.node.join(' / ')}`;
+}
+
+function firstCall(calls: readonly string[], needle: string): number {
+  return calls.findIndex((call) => call.includes(needle));
+}
+
+function testFirestoreAdmissionScript(): void {
+  section('Firestore admission load test script: refusals happen before any gcloud call or client');
+  const spend = ['--confirm-spend'];
+  const refusals: Array<[string, string[], Record<string, string>, string]> = [
+    ['(default)', ['--database', '(default)', ...spend], {}, 'production database'],
+    ['the deployed WHIM_FIRESTORE_DATABASE', ['--database', 'whim-loadtest-live', ...spend], { WHIM_FIRESTORE_DATABASE: 'whim-loadtest-live' }, 'production database'],
+    ['a name without the whim-loadtest- prefix', ['--database', 'whim-staging', ...spend], {}, 'throwaway'],
+    [`a cap above the ${OPERATION_CEILING} ceiling`, ['--database', 'whim-loadtest-a1', '--max-ops', String(OPERATION_CEILING + 1), ...spend], {}, '--max-ops'],
+    ['a run without --confirm-spend', ['--database', 'whim-loadtest-a1'], {}, '--confirm-spend'],
+  ];
+  for (const [label, args, env, needle] of refusals) {
+    const run = runFirestoreAdmissionScript(args, env);
+    check(
+      `refuses ${label}: non-zero, named, no gcloud call and no harness run`,
+      run.status !== 0 && run.stderr.includes(needle) && run.gcloud.length === 0 && run.node.length === 0,
+      describeRun(run),
+    );
+  }
+
+  section('Firestore admission load test script: a real-database run creates, runs, deletes and checks the list');
+  const ok = runFirestoreAdmissionScript(['--database', 'whim-loadtest-a1', '--max-ops', String(OPERATION_CEILING), '--bursts', '10,50', ...spend], { FIRESTORE_EMULATOR_HOST: '127.0.0.1:9' });
+  const created = firstCall(ok.gcloud, 'firestore databases create --database=whim-loadtest-a1 --location=northamerica-northeast1');
+  const deleted = firstCall(ok.gcloud, 'firestore databases delete --database=whim-loadtest-a1');
+  const listed = firstCall(ok.gcloud, 'firestore databases list');
+  check('the run passes, creating the database in WHIM_GCP_REGION, deleting it, then listing', ok.status === 0 && created >= 0 && deleted > created && listed > deleted, describeRun(ok));
+  check(`  ... printing the cap's cost before it starts, as the harness estimates it ($${estimatedCostUsd(OPERATION_CEILING).toFixed(4)})`, ok.stdout.includes(`at most $${estimatedCostUsd(OPERATION_CEILING).toFixed(4)}`), ok.stdout);
+  eq(
+    '  ... and the harness runs once, on real Firestore (no emulator host), with the cap and the bursts',
+    ok.node,
+    [`server/test/firestore-admission.run.mjs --database whim-loadtest-a1 --max-ops ${OPERATION_CEILING} --bursts 10,50|emulator=|project=anycognition-whim`],
+  );
+
+  for (const [label, env, status] of [
+    ['a failing run', { STUB_NODE_EXIT: '3' }, 3],
+    ['an interrupted run (SIGTERM)', { STUB_NODE_SIGNAL: 'TERM' }, 143],
+    ['a run whose create failed', { STUB_CREATE_EXIT: '4' }, 4],
+  ] as const) {
+    const run = runFirestoreAdmissionScript(['--database', 'whim-loadtest-a1', ...spend], env);
+    check(
+      `${label} still deletes the database and checks the list, keeping its exit status`,
+      run.status === status && firstCall(run.gcloud, 'firestore databases delete --database=whim-loadtest-a1') >= 0 && firstCall(run.gcloud, 'firestore databases list') >= 0,
+      describeRun(run),
+    );
+  }
+  const failedDelete = runFirestoreAdmissionScript(['--database', 'whim-loadtest-a1', ...spend], { STUB_DELETE_EXIT: '1', STUB_LEFTOVER: 'projects/anycognition-whim/databases/whim-loadtest-a1\\n' });
+  check('a database still listed after the run fails it, naming the database', failedDelete.status !== 0 && failedDelete.stderr.includes('databases/whim-loadtest-a1'), describeRun(failedDelete));
+  const leftover = runFirestoreAdmissionScript(['--database', 'whim-loadtest-a1', ...spend], { STUB_LEFTOVER: 'projects/anycognition-whim/databases/whim-loadtest-older\\n' });
+  check('  ... and so does any other whim-loadtest-* database left in the project', leftover.status !== 0 && leftover.stderr.includes('databases/whim-loadtest-older'), describeRun(leftover));
+
+  section('Firestore admission load test script: the default run is the emulator, with no gcloud call');
+  const emulator = runFirestoreAdmissionScript(['--bursts', '10', '--profile', 'generate']);
+  check(
+    'it runs the harness under the pinned emulator and never calls gcloud',
+    emulator.status === 0 && emulator.gcloud.length === 0 && emulator.node.length === 1 && emulator.node[0]!.startsWith('scripts/firestore-emulator-test.mjs server/test/firestore-admission.run.mjs --bursts 10 --profile generate|'),
+    describeRun(emulator),
+  );
+}
+
 // ── Entry point ────────────────────────────────────────────────────────────
 
 export async function runLoadTestTests(): Promise<void> {
@@ -489,4 +733,7 @@ export async function runLoadTestTests(): Promise<void> {
   testReportAndVerdict();
   testLineReportAndVerdict();
   testCpuNormalization();
+  await testFirestoreAdmissionHarnessGuards();
+  await testFirestoreAdmissionBudget();
+  testFirestoreAdmissionScript();
 }

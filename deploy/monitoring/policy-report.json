@@ -5,7 +5,7 @@
     {
       "displayName": "A user sent a report",
       "conditionMatchedLog": {
-        "filter": "log_id(\"docker\") AND jsonPayload.scope=\"report\" AND jsonPayload.msg=\"report accepted\"",
+        "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"whim-server\" AND logName:\"run.googleapis.com%2Fstdout\" AND jsonPayload.scope=\"report\" AND jsonPayload.msg=\"report accepted\"",
         "labelExtractors": {
           "reportId": "EXTRACT(jsonPayload.reportId)",
           "reason": "EXTRACT(jsonPayload.reason)"
@@ -22,7 +22,7 @@
   "notificationChannels": ["{{CHANNEL}}"],
   "documentation": {
     "mimeType": "text/markdown",
-    "content": "Report ${log.extracted_label.reportId}, reason ${log.extracted_label.reason}. Read it on the VM with `whim-admin reports show ${log.extracted_label.reportId}` (docs/deploy.md, Operating: Alerts). At most one email per 5 minutes: `whim-admin reports list` shows any others."
+    "content": "Report ${log.extracted_label.reportId}, reason ${log.extracted_label.reason}. Read it from a laptop with `node server/admin.mjs reports show ${log.extracted_label.reportId}` (docs/deploy.md, Firestore stores: Operator commands from a laptop). At most one email per 5 minutes: `node server/admin.mjs reports list` shows any others."
   },
   "userLabels": {
     "whim_spec": "{{SPEC}}"

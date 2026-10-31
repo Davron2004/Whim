@@ -251,7 +251,7 @@ async function testResolveTracker(): Promise<void> {
   const slow = new Promise<void>((resolve) => { releaseSlow = resolve; });
 
   eq('nothing tracked yet', tracker.pendingCount, 0);
-  const tracked = tracker.track(slow);
+  tracker.track(slow);
   eq('one in-flight resolution', tracker.pendingCount, 1);
 
   // drain() bounded by a timeout shorter than the in-flight promise returns without hanging.
@@ -259,7 +259,7 @@ async function testResolveTracker(): Promise<void> {
   check('drain returns even while a promise is still pending', tracker.pendingCount === 1);
 
   releaseSlow();
-  await tracked;
+  await slow;
   await withSafetyTimeout(tracker.drain(1000), 2000, 'tracker.drain (settled)');
   eq('drain untracks a settled promise', tracker.pendingCount, 0);
 }

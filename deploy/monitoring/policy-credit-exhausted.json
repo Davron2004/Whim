@@ -5,7 +5,7 @@
     {
       "displayName": "A budget_exhausted refusal or a mid-generation provider credit exhaustion was logged",
       "conditionMatchedLog": {
-        "filter": "log_id(\"docker\") AND ((jsonPayload.msg=\"request\" AND jsonPayload.error=\"budget_exhausted\") OR (jsonPayload.scope=\"run\" AND jsonPayload.msg=\"provider credit exhausted\"))"
+        "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"whim-server\" AND logName:\"run.googleapis.com%2Fstdout\" AND ((jsonPayload.msg=\"request\" AND jsonPayload.error=\"budget_exhausted\") OR (jsonPayload.scope=\"run\" AND jsonPayload.msg=\"provider credit exhausted\"))"
       }
     }
   ],

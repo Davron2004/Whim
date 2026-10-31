@@ -530,7 +530,7 @@ async function testThrowingStoreReleasesTheSlot(): Promise<void> {
   const slots = createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 1 });
   const meteredPolicy: ContentPolicy = {
     async check() {
-      return { verdict: 'allow', usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 } };
+      return { verdict: 'allow', calls: [{ usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 } }] };
     },
   };
   const blipping = creditThrowingStore();
@@ -977,37 +977,41 @@ async function testCachedVerdictAddsNoClassifierUsage(): Promise<void> {
 }
 
 async function testMalformedClassifierVerdictKeepsAccounting(): Promise<void> {
-  section('Malformed classifier verdicts fail closed while retaining their metering');
+  section('Malformed classifier verdicts fail closed, after the one retry, while retaining both attempts\' metering');
 
   const classifierUsage: Usage = { promptTokens: 6, completionTokens: 3, totalTokens: 9 };
   const classifierId = 'gen-policy-malformed-unary';
+  const retryId = 'gen-policy-malformed-unary-retry';
   for (const route of ['clarify', 'rewrite'] as const) {
     invalidateCreditCache();
     const usageStore = new RecordingUsageStore();
     const tracker = new ResolveTracker();
     const model = new ScriptedModelClient(ROSTER, [
       { role: 'rewrite', deltas: ['{"verdict":"maybe"}'], usage: classifierUsage, id: classifierId },
+      { role: 'rewrite', deltas: ['{"verdict":"maybe"}'], usage: classifierUsage, id: retryId },
     ]);
     const policy = cachedPolicy(
       new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test category', timeoutMs: 5000 }),
     );
+    const stats = { usage: classifierUsage, totalCostUsd: 0.006 };
     const { app } = testApp({
       model,
       policy,
       usageStore,
-      resolver: { tracker, transport: statsTransport({ [classifierId]: { usage: classifierUsage, totalCostUsd: 0.006 } }) },
+      resolver: { tracker, transport: statsTransport({ [classifierId]: stats, [retryId]: stats }) },
     });
     const res = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER);
     eq(`${route}: malformed classifier verdict → 503 policy_unavailable`, res.status, 503);
     const body = (await res.json()) as ApiError;
     eq(`${route}: refusal remains policy_unavailable`, body.error, 'policy_unavailable');
+    eq(`${route}: a malformed verdict is retried once`, model.requests.length, 2);
     await tracker.drain(2000);
-    eq(`${route}: classifier usage is credited despite malformed output`, await usageStore.read(DEVICE_ID), classifierUsage);
+    eq(`${route}: both attempts' classifier usage is credited despite malformed output`, await usageStore.read(DEVICE_ID), sumUsage(classifierUsage, classifierUsage));
     const countByKind = (await usageStore.summary({ days: 1, now: FIXED_NOW })).days[0]?.countByKind;
     eq(`${route}: policy_unavailable still refunds its daily unit`, countByKind?.[route], undefined);
     const resolved = usageStore.recordCostCalls.filter((entry) => entry.state === 'resolved');
     eq(`${route}: classifier cost resolves despite the refunded unit`, resolved.length, 1);
-    eq(`${route}: classifier cost amount is retained`, resolved[0]?.costUsd, 0.006);
+    eq(`${route}: both attempts' classifier cost is retained`, resolved[0]?.costUsd, 0.012);
   }
 }
 
