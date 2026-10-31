@@ -14,7 +14,7 @@ import type { AppliedSchema } from '../src/host/storage-engine/schema';
 import type { StorageSurface } from './storage-surface';
 import { CheckReport, Diagnostic } from './contract';
 import { parseSource } from './internal/parse';
-import { buildContext, Pass } from './internal/scope';
+import { buildContext, Pass, type DeclaredField } from './internal/scope';
 import { importAllowlistPass } from './passes/import-allowlist';
 import { forbiddenGlobalsPass } from './passes/forbidden-globals';
 import { manifestExtractionPass } from './passes/manifest-extraction';
@@ -30,6 +30,9 @@ import { storageContinuityPass } from './passes/storage-continuity';
 // instruction and the drift check read one scanner"), and the server imports it from here.
 export { scanStorageSurface } from './storage-surface';
 export type { StorageSurface, StorageReference, DynamicStorageSite, StorageFacade } from './storage-surface';
+// The burned-id view the schema pass enforces; the server states its floor from the same function.
+export { burnedSchema } from './passes/schema-check';
+export type { DeclaredField } from './internal/scope';
 
 /** Passes that run once the source parses, in order. Manifest extraction runs before the
  *  passes that consume `ctx.manifest` (capabilities/screens/schema). */
@@ -52,11 +55,13 @@ const PASSES: readonly Pass[] = [
  * candidate replaces already occupies (its physical schema, its named storage locations), and
  * each switches on the continuity rule that guards it (`schema_identity_drift` in the schema
  * pass, `storage_surface_drift`/`storage_surface_dynamic` in the continuity pass). Absent, a
- * candidate is a first generation and neither rule constrains it.
+ * candidate is a first generation and neither rule constrains it. `declaredFields` (an edit turn)
+ * are burned ids no column holds yet: the schema pass counts them in the floor and fixes their
+ * type, and still requires a default from a candidate that names one.
  */
 export function runStaticChecks(
   source: string,
-  opts?: { appliedSchema?: AppliedSchema; previousSurface?: StorageSurface; filename?: string },
+  opts?: { appliedSchema?: AppliedSchema; declaredFields?: readonly DeclaredField[]; previousSurface?: StorageSurface; filename?: string },
 ): CheckReport {
   const { sourceFile, diagnostics: parseDiagnostics } = parseSource(source, opts?.filename);
   if (parseDiagnostics.length > 0) {
@@ -64,7 +69,7 @@ export function runStaticChecks(
   }
 
   const diagnostics: Diagnostic[] = [];
-  const ctx = buildContext(source, sourceFile, (d) => diagnostics.push(d), opts?.appliedSchema, opts?.previousSurface);
+  const ctx = buildContext(source, sourceFile, (d) => diagnostics.push(d), opts?.appliedSchema, opts?.previousSurface, opts?.declaredFields);
   for (const pass of PASSES) pass(ctx);
 
   return { ok: diagnostics.length === 0, diagnostics, manifest: ctx.manifest };

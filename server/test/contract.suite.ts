@@ -327,6 +327,13 @@ export function runContractTests(): void {
 
   // §1.6 — request shapes.
   check('GenerateRequest requires prompt', !GenerateRequest.safeParse({}).success);
+  const declaredFields = [{ collection: 'c1', id: 'f2', type: 'int' }];
+  const withDeclared = GenerateRequest.safeParse({ prompt: 'p', app: { manifest: {}, schema: {}, appliedSchema: { collections: [] }, declaredFields } });
+  eq('GenerateRequest carries the fields saved versions declare', withDeclared.data?.app?.declaredFields, declaredFields);
+  // A server built before a field strips it rather than refusing the request: how a device that
+  // sends `declaredFields` still reaches the server deployed before it (decision #82).
+  const later = GenerateRequest.safeParse({ prompt: 'p', app: { manifest: {}, schema: {}, aFieldFromALaterDevice: [1] } });
+  check('GenerateRequest.app strips a field it does not know instead of refusing the request', later.success && !('aFieldFromALaterDevice' in (later.data?.app ?? {})));
   check('RewriteRequest shape', RewriteRequest.safeParse({ prompt: 'p' }).success);
   // A prompt-only rewrite is a NEW-app rewrite: `app` absent is the whole signal.
   check(

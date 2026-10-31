@@ -167,6 +167,7 @@ function launchOf(
     orb: { state: 'rest', activity: 0 },
     onReload: opts.onReload ?? (() => {}),
     onAskFix: () => {},
+    behind: false,
   };
 }
 
@@ -487,6 +488,29 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await send(waiting, WARM_ANSWER);
       h.eq(waiting.props.injected, [WARM_PROBE_JS], 'the probe is all it is handed: no bundle, no theme, no generation');
       h.eq(injectedScripts.length, 1, 'and nothing else was injected anywhere');
+    });
+  });
+
+  // Issue #200: Android's WebView zooms text by the system font scale on its own, on top of the
+  // `fontScale` the SDK already sizes text by (system.md §6), so a 200% phone drew apps at 400%.
+  // `textZoom` is Android-only; iOS has no such zoom and ignores it.
+  await h.test('pool: every WebView — cold, waiting, bound and the next one warming — leaves text size to the SDK (no zoom of its own)', async () => {
+    let cold: unknown;
+    await withMiniApp(TIP, async ({ webView }) => { cold = webView()!.props.textZoom; });
+    h.eq(cold, 100, 'a WebView a launch creates cold');
+    await withStage(async ({ show, webViews, send }) => {
+      const [waiting] = webViews();
+      h.eq(waiting.props.textZoom, 100, 'the WebView waiting unseen');
+      await TestRenderer.act(async () => waiting.props.onLoadEnd());
+      await send(waiting, WARM_ANSWER);
+      await show(launchOf(TIP));
+      const [web] = webViews();
+      h.ok(web === waiting, 'precondition: the app takes the waiting WebView');
+      h.eq(web.props.textZoom, 100, 'the WebView bound to the app');
+      await send(web, firstPaint(generationIn(web)));
+      const next = webViews().find((w) => w !== web);
+      h.ok(next !== undefined, 'precondition: a WebView warms beside the open app');
+      h.eq(next!.props.textZoom, 100, 'and the one warming beside it');
     });
   });
 

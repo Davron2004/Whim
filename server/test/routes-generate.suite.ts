@@ -58,6 +58,7 @@ import {
 import {
   ApiError,
   GenerationEvent,
+  MAX_DECLARED_FIELDS,
   REQUEST_ID_HEADER,
   ServiceRefusalCode,
   type GenerateRequest,
@@ -519,6 +520,49 @@ async function testSizeAndValidationComeFirst(): Promise<void> {
   eq('no credit lookup preceded the size and validation refusals', credit.lookups(), 0);
   eq('no slot acquire preceded them', h.slots.acquires, 0);
   eq('no daily unit was consumed', await h.usageStore.generationUnits(AT_2200_UTC), 0);
+}
+
+async function testDeclaredFieldsValidated(): Promise<void> {
+  section('Generate admission: declaredFields outside the storage engine vocabulary is refused before admission');
+
+  invalidateCreditCache();
+  const credit = sequencedCreditTransport([10, 10]);
+  const seen: GenerateRequest[] = [];
+  const pipeline: Pipeline = {
+    async *run(request: GenerateRequest): AsyncIterable<GenerationEvent> {
+      seen.push(request);
+      yield { type: 'usage', usage: RUN_USAGE };
+      yield { type: 'result', app: RESULT_APP };
+    },
+  };
+  const h = harness({ creditTransport: credit.transport, pipeline });
+  const editOf = (declaredFields: unknown): unknown => ({ prompt: 'add a total', app: { manifest: {}, schema: {}, appliedSchema: { collections: [] }, declaredFields } });
+  const field = (i: number): { collection: string; id: string; type: string } => ({ collection: 'c1', id: `f${i + 1}`, type: 'int' });
+
+  const cases: Array<[string, unknown]> = [
+    [`a list of ${MAX_DECLARED_FIELDS + 1}`, Array.from({ length: MAX_DECLARED_FIELDS + 1 }, (_, i) => field(i))],
+    ['an id outside the burned-id alphabet', [{ collection: 'c1', id: 'f1; DROP TABLE c1', type: 'int' }]],
+    ['a collection id outside the burned-id alphabet', [{ collection: 'notes', id: 'f1', type: 'int' }]],
+    ['a type outside the closed field-type set', [{ collection: 'c1', id: 'f1', type: 'number' }]],
+  ];
+  for (const [label, declaredFields] of cases) {
+    const res = await postGenerate(h.app, editOf(declaredFields), DEVICE_A);
+    eq(`${label}: status`, res.status, 400);
+    const streamOpened = (res.headers.get('content-type') ?? '').includes('text/event-stream');
+    check(`${label}: no SSE stream opened`, !streamOpened);
+    const body = ApiError.safeParse(streamOpened ? await res.body?.cancel() : await res.json());
+    eq(`${label}: one invalid_request refusal`, body.success ? body.data.error : undefined, 'invalid_request');
+  }
+  eq('no refused list reached the pipeline', seen.length, 0);
+  eq('no credit lookup preceded the refusals', credit.lookups(), 0);
+  eq('no daily unit was consumed by them', await h.usageStore.generationUnits(AT_2200_UTC), 0);
+
+  const full = Array.from({ length: MAX_DECLARED_FIELDS }, (_, i) => field(i));
+  const accepted = await postGenerate(h.app, editOf(full), DEVICE_A);
+  eq('a list at the cap is admitted', accepted.status, 200);
+  const events = await readEvents('a list at the cap', accepted);
+  eq('the admitted stream carries exactly one terminal event', events.filter((e) => e.type === 'result' || e.type === 'failure').length, 1);
+  eq('the pipeline sees the full declared list', seen[0]?.app?.declaredFields?.length, MAX_DECLARED_FIELDS);
 }
 
 async function testSlotAndUnitOrder(): Promise<void> {
@@ -1695,6 +1739,7 @@ export async function runRoutesGenerateTests(): Promise<void> {
   section('Generate route');
   await testCreditComesFirst();
   await testSizeAndValidationComeFirst();
+  await testDeclaredFieldsValidated();
   await testSlotAndUnitOrder();
   await testGenerationCap();
   await testLineSlotFreesWhileWaiting();

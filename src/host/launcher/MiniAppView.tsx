@@ -89,6 +89,9 @@ export interface MiniAppLaunch {
   /** The crash screen's "Ask Whim to fix it", with the error to attach (`crashAttachment`, plain
    *  text): the launcher opens the Whim sheet over the app with the request prefilled. */
   onAskFix: (attachment: string) => void;
+  /** A newer version of the app than this launch runs is current: the crash screen leads with Reload
+   *  and offers no fix of an error from code no longer current. */
+  behind: boolean;
 }
 
 export interface MiniAppStageProps {
@@ -224,6 +227,10 @@ export function MiniAppStage({ launch, onFrame }: Readonly<MiniAppStageProps>) {
               javaScriptEnabled
               domStorageEnabled={false}
               setSupportMultipleWindows={false}
+              // Android's WebView zooms text by the system font scale on its own; the SDK already
+              // sizes text by the theme's `fontScale` (system.md §6), so text is scaled once. iOS
+              // has no such zoom and ignores the prop.
+              textZoom={100}
               onError={(ev) => {
                 logWebViewError(log, ev.nativeEvent, waiting ? { surface: 'waiting' } : { appId: launch?.record.appId });
                 onSlotGone(slot.key);
@@ -266,7 +273,7 @@ interface MiniAppViewProps extends MiniAppLaunch {
 
 export default function MiniAppView({
   record, bundleSource, engineAppId, tappedAt, onExit, onOpenSheet, sheetOpen, onCloseSheet, installedApp, orb,
-  onReload, onAskFix, slot, outlet, natives, onFailed, onOpened, onPinned,
+  onReload, onAskFix, behind, slot, outlet, natives, onFailed, onOpened, onPinned,
 }: Readonly<MiniAppViewProps>) {
   const slotKey = slot?.key ?? null;
   // The WebView this launch's host controls is looked up when used: the one bound to the launch
@@ -451,6 +458,7 @@ export default function MiniAppView({
           tokens={frameTokens}
           bottomClearance={chromeInsetBottom(bottomInset)}
           onReload={onReload}
+          behind={behind}
           onAskFix={() => onAskFix(crash === null ? '' : crashAttachment(crash))}
           onExit={onExit}
         />

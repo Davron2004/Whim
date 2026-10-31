@@ -117,6 +117,25 @@ try {
     const sliderTrack = mount(<Slider value={0} onChange={() => {}} />).root.find((n) => n.type === 'div' && styleOf(n).height === '6px');
     const empty = contrastRatio(String(styleOf(sliderTrack).background), light.surface);
     assert.ok(empty >= 3, `the light slider's empty track holds 3:1 on surface (${empty.toFixed(2)}:1)`);
+    // Task 6.7: in a Modal both sit on the sheet, or on sheet-group in a Card, and hold 3:1 there too.
+    const inModal = mount(
+      <Modal visible onClose={() => {}}>
+        <Card>
+          <Switch label="Remind me" value={false} onChange={() => {}} />
+          <Slider value={0} onChange={() => {}} />
+        </Card>
+      </Modal>,
+    ).root;
+    const edges = {
+      "off switch track's outline": String(styleOf(inModal.find((n) => n.type === 'span' && styleOf(n).width === '52px')).border).replace('2px solid ', ''),
+      'empty slider track': String(styleOf(inModal.find((n) => n.type === 'div' && styleOf(n).height === '6px')).background),
+    };
+    for (const [what, edge] of Object.entries(edges)) {
+      for (const surface of ['sheet', 'sheet-group'] as const) {
+        const ratio = contrastRatio(edge, light[surface]);
+        assert.ok(ratio >= 3, `in a light Modal the ${what} holds 3:1 on ${surface} (${ratio.toFixed(2)}:1)`);
+      }
+    }
   }
 
   // ── Badge: soft fills, the status tones carry their icon ─────────────────────

@@ -78,7 +78,7 @@ export function openingLook(surface: MiniAppSurface, elapsed: { cap: boolean; la
 - A failure surface (`launch-failed`, `app-error`) replaces the whole opening state at once.
 - Frame boundary (18g): the app's area (stage root, WebView bg, cover, plate, "Opening…", error screens) + strip + `StatusBar` read the tokens captured at delivery (live `useTokens()` before it; Reload's WebView recaptures); orb and sheets stay live. `Text`/`TilePlate` take `tokens?: ShellTokens` (omitted = live).
 - `launch-failed` (refused before delivery): `Text` title2/body `text-2`, one `buttonColors(t,'ink')` Back; no `SHELL_PALETTE`. `app-error` (fatal frame, paint watchdog, WebView gone) is the
-  crash screen `AppCrashed({ name, tokens, bottomClearance, onReload, onAskFix, onExit })` with the Orb over it; Reload = `MiniAppLaunch.onReload`, a new launch (no in-place retry).
+  crash screen `AppCrashed({ name, tokens, bottomClearance, behind, onReload, onAskFix, onExit })` with the Orb over it; Reload = `MiniAppLaunch.onReload`, a new launch (no in-place retry); `behind` (= `MiniAppLaunch.behind`, the launch runs an older version than the app's current one) drops "Ask Whim to fix it" and says a newer version is ready.
 - `LauncherRoot`'s frame (status-bar strip) + `StatusBar`: `bg`/`barStyle` of `MiniAppStage`'s `onFrame(pinned)` over an
   open app, else live tokens; skeleton, scheme-following stack top live; else `SHELL_PALETTE`/`dark-content`.
 - Closing: `onExit` → `goHome`. The tile→screen morph (chain 22) replaces the plate's position only.

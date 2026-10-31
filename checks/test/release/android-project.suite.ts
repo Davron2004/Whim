@@ -27,8 +27,21 @@ function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'whim-android-project-'));
 }
 
+/** The real manifest's `MainActivity` configChanges, so the fixture starts from what ships. */
+const REAL_CONFIG_CHANGES = (() => {
+  const text = fs.readFileSync(path.join(REPO_ROOT, ANDROID_MANIFEST_PATH), 'utf8');
+  const found = /android:configChanges="([^"]*)"/.exec(text);
+  if (found === null) throw new Error(`no android:configChanges in ${ANDROID_MANIFEST_PATH}`);
+  return found[1];
+})();
+
+/** `REAL_CONFIG_CHANGES` without `change`, so a case drops exactly one flag. */
+function configChangesWithout(change: string): string {
+  return REAL_CONFIG_CHANGES.split('|').filter((c) => c !== change).join('|');
+}
+
 /** `linkActivity` moves the app-link filter off the launcher activity onto a sibling activity. */
-function manifest(opts: { autoVerify: boolean; host: string; linkActivity?: string }): string {
+function manifest(opts: { autoVerify: boolean; host: string; linkActivity?: string; configChanges?: string }): string {
   const linkFilter = [
     `        <intent-filter${opts.autoVerify ? ' android:autoVerify="true"' : ''}>`,
     '            <action android:name="android.intent.action.VIEW" />',
@@ -47,6 +60,7 @@ function manifest(opts: { autoVerify: boolean; host: string; linkActivity?: stri
     '        android:name=".MainActivity"',
     '        android:launchMode="singleTask"',
     '        android:screenOrientation="portrait"',
+    `        android:configChanges="${opts.configChanges ?? REAL_CONFIG_CHANGES}"`,
     '        android:exported="true">',
     '        <intent-filter>',
     '            <action android:name="android.intent.action.MAIN" />',
@@ -156,6 +170,27 @@ export async function run(): Promise<void> {
       content: () => manifest({ autoVerify: true, host: 'whim.example.com' }),
       expectFile: ANDROID_MANIFEST_PATH,
       matches: /host/,
+    },
+    {
+      name: 'a MainActivity that does not handle fontScale fails',
+      file: ANDROID_MANIFEST_PATH,
+      content: () => manifest({ autoVerify: true, host: '${whimWebHost}', configChanges: configChangesWithout('fontScale') }),
+      expectFile: ANDROID_MANIFEST_PATH,
+      matches: /configChanges must include fontScale/,
+    },
+    {
+      name: 'a MainActivity that does not handle uiMode fails',
+      file: ANDROID_MANIFEST_PATH,
+      content: () => manifest({ autoVerify: true, host: '${whimWebHost}', configChanges: configChangesWithout('uiMode') }),
+      expectFile: ANDROID_MANIFEST_PATH,
+      matches: /configChanges must include uiMode/,
+    },
+    {
+      name: 'a MainActivity that handles density in place fails',
+      file: ANDROID_MANIFEST_PATH,
+      content: () => manifest({ autoVerify: true, host: '${whimWebHost}', configChanges: `${REAL_CONFIG_CHANGES}|density` }),
+      expectFile: ANDROID_MANIFEST_PATH,
+      matches: /must not include density/,
     },
     {
       name: 'a main config that refuses cleartext at the base fails',

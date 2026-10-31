@@ -48,7 +48,7 @@ import {
   SDK_LINT_RULES,
   WEBVIEW_FLOOR_CHROMIUM,
 } from '../contract';
-import { runStaticChecks as runStaticChecksRaw, scanStorageSurface, StorageSurface } from '../index';
+import { burnedSchema, runStaticChecks as runStaticChecksRaw, scanStorageSurface, StorageSurface } from '../index';
 // Value import (the roster array only — `observe.ts`'s own imports are all type-only, so this
 // pulls no Playwright/runtime dependency into the Node bundle).
 import { AppliedSchema, diffSchemas } from '../../src/host/storage-engine/schema';
@@ -810,6 +810,87 @@ async function testSchemaCheck(): Promise<void> {
     const src = schemaAppSourceFields({ a: { id: 'f1' } }, 'c1'); // c1 has no counterpart in applied
     const r = runStaticChecks(src, { appliedSchema: appliedOtherCollection });
     assertNoKind(r, 'id_below_floor', 'an unmatched collection is unconstrained — a first allocation there is always clean');
+  });
+
+  // ── decision #82: fields a saved version declares that the store does not hold ──
+
+  /** One `Notes` collection whose fields carry their own types and default literals. */
+  const typedField = (name: string, f: { id: string; type: string; default?: string }): string => {
+    const defaultPart = f.default === undefined ? '' : `, default: ${f.default}`;
+    return `${name}: { id: '${f.id}', type: '${f.type}'${defaultPart} }`;
+  };
+  const typedSource = (fields: Record<string, { id: string; type: string; default?: string }>, collectionId = 'c1'): string => {
+    const rendered = Object.entries(fields).map(([name, f]) => typedField(name, f)).join(', ');
+    return schemaAppSourceFields({}, collectionId).replace('fields: {  }', `fields: { ${rendered} }`);
+  };
+  const APPLIED_F1: AppliedSchema = { collections: [{ id: 'c1', active: [{ id: 'f1', type: 'text' }], retired: [] }] };
+
+  await test('schema (declared fields): a declared field raises the floor though no column holds it', () => {
+    const src = typedSource({ a: { id: 'f1', type: 'text' }, b: { id: 'f6', type: 'text', default: "''" } });
+    const r = runStaticChecks(src, { appliedSchema: APPLIED_F1, declaredFields: [{ collection: 'c1', id: 'f9', type: 'int' }] });
+    const d = assertHasKind(r, 'id_below_floor', 'f9, declared by a saved version, is burned');
+    assert(/f10/.test(d.hint), `hint should name the next free id "f10", got: ${d.hint}`);
+  });
+
+  await test('schema (declared fields): reusing a declared id for another type is a type_change naming the declared type', () => {
+    const src = typedSource({ a: { id: 'f1', type: 'text' }, amount: { id: 'f2', type: 'text', default: "''" } });
+    const r = runStaticChecks(src, { appliedSchema: APPLIED_F1, declaredFields: [{ collection: 'c1', id: 'f2', type: 'int' }] });
+    const d = assertHasKind(r, 'type_change');
+    assert(d.symbol === 'amount' && /int/.test(d.hint), `expected the field and its declared type, got ${String(d.symbol)}: ${d.hint}`);
+  });
+
+  await test('schema (declared fields): reusing a declared id with its type still needs a default, since no column holds it', () => {
+    const declaredFields = [{ collection: 'c1', id: 'f2', type: 'int' }];
+    const bare = runStaticChecks(typedSource({ a: { id: 'f1', type: 'text' }, amount: { id: 'f2', type: 'int' } }), { appliedSchema: APPLIED_F1, declaredFields });
+    assertHasKind(bare, 'missing_default', 'the store would refuse it: existing rows have no value for it');
+    assertNoKind(bare, 'type_change', 'the type is the declared one');
+    assertNoKind(bare, 'id_below_floor', 'the id is the declared field itself, not a new one under the floor');
+    const withDefault = runStaticChecks(typedSource({ a: { id: 'f1', type: 'text' }, amount: { id: 'f2', type: 'int', default: '0' } }), { appliedSchema: APPLIED_F1, declaredFields });
+    assertNoKind(withDefault, 'missing_default', 'with a default it is a plain additive field');
+  });
+
+  await test('schema (declared fields): a declared field is never required, and a collection the store lacks keeps its declared types', () => {
+    const r = runStaticChecks(typedSource({ a: { id: 'f1', type: 'text' } }), { appliedSchema: APPLIED_F1, declaredFields: [{ collection: 'c1', id: 'f2', type: 'int' }] });
+    assertNoKind(r, 'schema_identity_drift', 'no rows live under a declared field, so leaving it out is fine');
+    const other = runStaticChecks(typedSource({ label: { id: 'f1', type: 'text' } }, 'c2'), {
+      appliedSchema: { collections: [] },
+      declaredFields: [{ collection: 'c2', id: 'f1', type: 'int' }],
+    });
+    assertHasKind(other, 'type_change', 'a collection only a saved version declares still fixes its field types');
+  });
+
+  await test('schema (declared fields): the burned view looks each declared field up once, not by scanning (linear in the request)', () => {
+    // Every id the applied schema holds is a counting getter: a scan per declared field reads them
+    // n² times; keyed lookups read each once.
+    const n = 2000;
+    let reads = 0;
+    const counted = <T extends object, K extends string>(rest: T, key: K, value: string): T & Record<K, string> =>
+      Object.defineProperty({ ...rest }, key, {
+        enumerable: true,
+        get: () => {
+          reads++;
+          return value;
+        },
+      }) as T & Record<K, string>;
+    const wide = counted(
+      {
+        active: [] as AppliedSchema['collections'][number]['active'],
+        retired: Array.from({ length: n }, (_, i) => counted({ type: 'text' as const }, 'id', `f${i + 1}`)),
+      },
+      'id',
+      'c0',
+    );
+    const others = Array.from({ length: n }, (_, i) => counted({ active: [], retired: [] }, 'id', `c${i + 1}`));
+    const declared = [
+      ...Array.from({ length: n }, (_, i) => counted({ id: `f${n + i + 1}`, type: 'int' }, 'collection', 'c0')),
+      ...Array.from({ length: n }, (_, i) => counted({ id: 'f1', type: 'int' }, 'collection', `c${n + i + 1}`)),
+      counted({ id: `f${n + 1}`, type: 'int' }, 'collection', 'c0'),
+    ];
+    const burned = burnedSchema({ collections: [wide, ...others] }, declared);
+    assert(reads <= 10 * n, `expected at most ${10 * n} id reads for ${2 * n + 1} applied ids and ${2 * n + 1} declared fields, got ${reads}`);
+    const c0 = burned?.collections.find((c) => c.id === 'c0');
+    assert(c0?.retired.length === 2 * n, `c0 should hold its ${n} columns plus ${n} declared ones once each, got ${c0?.retired.length}`);
+    assert(burned?.collections.length === 2 * n + 1, `each collection only a saved version declares is added once, got ${burned?.collections.length}`);
   });
 }
 

@@ -486,10 +486,12 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('flow: Prompt again sends the app’s name and current description with clarify and rewrite, even when the description resolves after Continue', async () => {
-    const original = StoreAccess.prototype.activeDescription;
+    const original = StoreAccess.prototype.activeEdit;
+    const describedAs = (words: Promise<string | undefined>) =>
+      async (app: InstalledApp) => ({ app, description: await words, versionId: 'g1' });
     try {
       const late = held<string | undefined>();
-      StoreAccess.prototype.activeDescription = () => late.promise;
+      StoreAccess.prototype.activeEdit = describedAs(late.promise);
       const clarify = held<Response>();
       await withLauncher({
         apps: [APP],
@@ -506,7 +508,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
           'the rewrite carries the description that resolved while clarify was in flight, trimmed');
       });
       const early = held<string | undefined>();
-      StoreAccess.prototype.activeDescription = () => early.promise;
+      StoreAccess.prototype.activeEdit = describedAs(early.promise);
       await withLauncher({ apps: [APP], server: () => json({ questions: [] }) }, async ({ tree, sent }) => {
         await TestRenderer.act(async () => home(tree).props.onPromptAgain(APP));
         await TestRenderer.act(async () => { early.resolve('A stopwatch for tea'); });
@@ -515,7 +517,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
         h.eq(sent[0]?.body?.app, { name: 'Timer', description: 'A stopwatch for tea' }, 'a description resolved before Continue rides with clarify');
       });
     } finally {
-      StoreAccess.prototype.activeDescription = original;
+      StoreAccess.prototype.activeEdit = original;
     }
   });
 

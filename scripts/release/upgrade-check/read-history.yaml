@@ -1,6 +1,7 @@
 # Upgrade check, read step: open one app's History from the home grid (long-press → History).
 # `upgrade-check.sh` dumps the view hierarchy right after this flow; `upgrade-record` reads the
-# version count from the subtitle ("2 versions · started …", copy.ts#historySubtitle).
+# version count under the app's name ("2 versions", copy.ts#historyVersionCount; "2 versions ·
+# started …" on builds from before design-system-v1).
 #   -e TILE=<the app's name as its tile shows it>
 #   -e SCREEN_HEIGHT=<points>  iOS only: the screen's height, for the tile menu's rows
 appId: com.anycognition.whim
@@ -28,6 +29,6 @@ appId: com.anycognition.whim
       - tapOn:
           point: ${'50%,' + Math.round(100 * (SCREEN_HEIGHT - 63 - 58 * 4) / SCREEN_HEIGHT) + '%'}
 - extendedWaitUntil:
-    visible: "[0-9]+ versions? · .*"
+    visible: "[0-9]+ versions?( · .*)?"
     timeout: 30000
 - waitForAnimationToEnd

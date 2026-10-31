@@ -14,11 +14,14 @@ import MiniAppView from '../MiniAppView';
 import { AppCrashed } from '../AppCrashed';
 import { PlanPage } from '../PlanPage';
 import { CRASH_CLASS_MAX } from '../crash-report';
+import HistoryScreen from '../HistoryScreen';
 import { PendingBuildStore } from '../pending-builds';
+import type { StoreAccess } from '../store-access';
 import { button, hostType, isHost, press, textOf } from './react-screen';
-import { planLoaded, settle, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
+import { planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { streamingServer } from './prompt-flow-ui.suite';
-import { APP_NAME, controlsIn, hasButton, openTipSplitter, orb, runningApp, sheetCard, showing } from './whim-sheet-ui.suite';
+import { dismissToast, pressToastAction, toastOf } from './home-rig';
+import { APP_NAME, controlsIn, hasButton, openSheet, openTipSplitter, orb, runningApp, sheetCard, showing } from './whim-sheet-ui.suite';
 import { boundWebView, generationIn, makeChange, opening, paint, paintRunningApp, send } from './changing-in-use-ui.suite';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 
@@ -56,6 +59,9 @@ async function crashRunningApp(tree: Tree, frame: unknown = RENDER_ERROR_FRAME):
 }
 
 const never = () => new Promise<Response>(() => {});
+
+/** History's components drawing the version `id`'s row. */
+const versionRows = (tree: Tree, id: string): Node[] => tree.root.findAll((n) => typeof n.type === 'function' && n.props.row?.id === id);
 
 export async function runAppCrashedUiTests(h: Harness): Promise<void> {
   await h.test('app crashed: a render error puts the crash screen in the app’s place — its name, that it stopped and its data is safe, Reload, Ask Whim to fix it, Back to your apps — and the orb stays', async () => {
@@ -178,6 +184,79 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
       h.eq([changeRequests, streams.length, kv.getString(`pending:${id}`)], [[], 1, kept],
         'nothing of a change is sent, the change’s one stream runs on and its record is as it was');
     });
+  });
+
+  await h.test('app crashed: behind a change that landed unreloaded, the crash screen says a newer version is ready and offers Reload and Back, no fix of the old code’s error; on the new version a crash offers the fix again', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv }) => {
+      await openTipSplitter(tree);
+      const web = await paintRunningApp(tree);
+      await makeChange(tree, streams);
+      streams[0].push(resultEvent(APP_NAME));
+      streams[0].end();
+      await waitFor(() => new PendingBuildStore(kv).list().length === 0, 'the change delivered');
+      await settle();
+      await dismissToast(tree);
+      const launch = runningApp(tree).props.tappedAt;
+      await send(web.props.onMessage, RENDER_ERROR_FRAME);
+      await waitFor(() => crashShown(tree), 'the crash screen');
+      h.ok(textOf(tree.root.findByType(AppCrashed)).includes(COPY.appCrashedBehindBody), 'it says a newer version is ready');
+      h.eq(crashActions(tree), [COPY.actionReload, COPY.launchFailedBack], 'Reload first, then Back to your apps; no Ask Whim to fix it');
+
+      await press(button(tree, COPY.actionReload));
+      await waitFor(() => showing(tree, MiniAppView) && runningApp(tree).props.tappedAt !== launch, 'the new version to open');
+      const fresh = await paintRunningApp(tree);
+      await send(fresh.props.onMessage, RENDER_ERROR_FRAME);
+      await waitFor(() => crashShown(tree), 'the new version’s crash screen');
+      await settle();
+      h.ok(textOf(tree.root.findByType(AppCrashed)).includes(COPY.appCrashedBody), 'on the current version, the crash screen as always');
+      h.eq(crashActions(tree), [COPY.actionReload, COPY.appCrashedAskFix, COPY.launchFailedBack], 'with Ask Whim to fix it');
+    });
+  });
+
+  await h.test('app crashed: an Undo that moved the app after it opened makes its crash screen lead with Reload too, with no fix of the old code’s error', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    const realNow = Date.now;
+    try {
+      await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv }) => {
+        const app = await openTipSplitter(tree);
+        await paintRunningApp(tree);
+        await makeChange(tree, streams);
+        // The change lands a minute later: a version's time is its commit's, to the second.
+        Date.now = () => realNow() + 60_000;
+        streams[0].push(resultEvent(APP_NAME));
+        streams[0].end();
+        await waitFor(() => new PendingBuildStore(kv).list().length === 0, 'the change delivered');
+        await settle();
+        await dismissToast(tree);
+        // History over the app: the version before, then Back, which opens the app again on it.
+        await openSheet(tree);
+        await press(button(tree, COPY.actionHistory));
+        await waitFor(() => showing(tree, HistoryScreen), 'History');
+        const access: StoreAccess = tree.root.findByType(HistoryScreen).props.access;
+        const [tip, older] = await access.timeline(app);
+        await waitFor(() => versionRows(tree, older.id).length > 0, 'the older version’s row');
+        const row = versionRows(tree, older.id).find((n) => typeof n.props.onUseVersion === 'function');
+        await TestRenderer.act(async () => row?.props.onToggle());
+        await press(button(tree, COPY.historyUseVersion));
+        await settle();
+        await press(button(tree, COPY.backLabel));
+        await waitFor(() => showing(tree, MiniAppView) && !showing(tree, HistoryScreen), 'the app to open again');
+        const web = await paintRunningApp(tree);
+        h.eq(await access.activeId(app), older.id, 'setup: the app runs the older version, current');
+        // The switch's Undo, after the app opened again on the version it left.
+        h.eq(toastOf(tree)?.action, COPY.toastUndo, 'setup: the switch’s Undo is still offered');
+        await pressToastAction(tree);
+        await settle();
+        h.eq(await access.activeId(app), tip.id, 'setup: the Undo made the newer version current again');
+        await send(web.props.onMessage, RENDER_ERROR_FRAME);
+        await waitFor(() => crashShown(tree), 'the crash screen');
+        h.ok(textOf(tree.root.findByType(AppCrashed)).includes(COPY.appCrashedBehindBody), 'it says a newer version is ready');
+        h.eq(crashActions(tree), [COPY.actionReload, COPY.launchFailedBack], 'Reload first, then Back to your apps; no Ask Whim to fix it');
+      });
+    } finally {
+      Date.now = realNow;
+    }
   });
 
   await h.test('app crashed: Back to your apps closes the app to Home', async () => {

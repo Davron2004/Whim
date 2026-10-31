@@ -53,7 +53,7 @@
 - [x] 6.5 Reduce Motion pairs: a desktop Chromium suite in `src/sdk/test/` proving each moment runs animations with `reduceMotion: false` and only the reduced form with `true` (via `getAnimations()`); draft the owner-authored invariant for `invariants/` as a proposal file in the change folder, not in `invariants/`
 - [x] 6.6 Update `fixtures/style-gallery.app.tsx` to show every motion preset (keyed add/remove, modal, toast, push)
 
-- [ ] 6.7 (product-owner ruling 2026-10-09, extends 6.0) The Switch off track and empty Slider track must clear ≥ 3:1 on EVERY surface they render on in both schemes — including `sheet-group` inside a Modal (dark: `border` on `sheet-group` measured 2.88:1). Pick a role that clears all surfaces (or a per-surface track role), update system.md §7.2, and extend the restyle suites' contrast assertion to the Modal case.
+- [x] 6.7 (product-owner ruling 2026-10-09, extends 6.0) The Switch off track and empty Slider track must clear ≥ 3:1 on EVERY surface they render on in both schemes — including `sheet-group` inside a Modal (dark: `border` on `sheet-group` measured 2.88:1). Pick a role that clears all surfaces (or a per-surface track role), update system.md §7.2, and extend the restyle suites' contrast assertion to the Modal case.
 
 ## 7. Native dependencies (HUMAN-BOOTSTRAP: `package.json`, lockfile, `babel.config.js`, Podfile)
 
@@ -162,10 +162,10 @@
 
 ## 20. History
 
-- [ ] 20.1 History on the native stack: header back and `Report`, title, 40 tile, name in tint, version count; timeline rows (quoted words, summary, tabular meta, neutral kind chips with icons, `Current`), rail stopping at v1; no filters
-- [ ] 20.2 Order by the version chain, not commit time; "Start" on the true first version (#126)
-- [ ] 20.3 Expanded rows: Use this version (immediate, "Back on version N · Undo", Undo reachable after the toast), Make a copy from here (immediate, fresh data, "Copy made · Open"), Change it on the current version, the hidden-data line; remove the confirm sheets
-- [ ] 20.4 Update `history-ui`, history-logic and version-history suites (including two versions in one second)
+- [x] 20.1 History on the native stack: header back and `Report`, title, 40 tile, name in tint, version count; timeline rows (quoted words, summary, tabular meta, neutral kind chips with icons, `Current`), rail stopping at v1; no filters
+- [x] 20.2 Order by the version chain, not commit time; "Start" on the true first version (#126)
+- [x] 20.3 Expanded rows: Use this version (immediate, "Back on version N · Undo", Undo reachable after the toast), Make a copy from here (immediate, fresh data, "Copy made · Open"), Change it on the current version, the hidden-data line; remove the confirm sheets
+- [x] 20.4 Update `history-ui`, history-logic and version-history suites (including two versions in one second)
 
 ## 21. Copy, Whim Syntax and cleanup
 

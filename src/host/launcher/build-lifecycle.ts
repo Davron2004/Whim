@@ -230,7 +230,6 @@ export async function deliverResult(spec: DeliverSpec): Promise<InstalledApp> {
     throw new EmptyBundleError();
   }
   const prompt = promptEnvelope(spec.text, spec.summary);
-  const schemaJson = Object.keys(wire.schema).length > 0 ? JSON.stringify(wire.schema) : undefined;
 
   if (!editing) {
     // NEW INSTALL ONLY. `spec.appId` is provably the ghost the user has been watching (D3 decided
@@ -244,7 +243,7 @@ export async function deliverResult(spec: DeliverSpec): Promise<InstalledApp> {
     // apps installed at the moment it writes.
     const record = mapWireRecord(spec.appId, wire, ghostTileColorFor(spec.appId));
     const tile = { kind: 'assign', declared: declaredTile(wire.manifest, spec.appId, wire.name) } as const;
-    return access.install({ id: spec.appId, name: record.name, record, bundleSource: wire.bundle, source: wire.source, prompt, example: false, schemaJson, tile });
+    return access.install({ id: spec.appId, name: record.name, record, bundleSource: wire.bundle, source: wire.source, prompt, example: false, tile });
   }
 
   // The tile (tint, glyph, override) needs nothing here: `StoreAccess.update` carries it forward
@@ -263,10 +262,10 @@ export async function deliverResult(spec: DeliverSpec): Promise<InstalledApp> {
   // is untouched; a wire that declares one still wins.
   const record = mapWireRecord(editing.record.appId, wire, editing.record.manifest.tileColor);
   if (await isAtTip(access, editing)) {
-    return access.update(editing, { record, bundleSource: wire.bundle, source: wire.source, schemaJson, prompt });
+    return access.update(editing, { record, bundleSource: wire.bundle, source: wire.source, prompt });
   }
   const continuation = await access.continueSharingData(editing);
-  return access.update(continuation, { record, bundleSource: wire.bundle, source: wire.source, schemaJson, prompt });
+  return access.update(continuation, { record, bundleSource: wire.bundle, source: wire.source, prompt });
 }
 
 /**

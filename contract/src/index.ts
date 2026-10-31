@@ -25,6 +25,7 @@
  *     `PROTOCOL_HEADER` (layer 2); and every SSE event and unary body may carry `compat` (layer 3).
  */
 import { z } from 'zod';
+import { BURNED_ID_RE, FIELD_TYPES } from '../../src/host/storage-engine/contract';
 
 export type { DiagnosticKind } from '../../checks/contract';
 
@@ -250,7 +251,34 @@ export type ClarifyResponse = z.infer<typeof ClarifyResponse>;
  *  `schema` artifact above. It is the diff baseline the harness's schema checks run against and
  *  the source of the burned-ID allocation floor. When absent, the baseline is the empty applied
  *  schema. `schema` and `appliedSchema` are deliberately separate optional-vs-required fields
- *  that can legitimately differ. */
+ *  that can legitimately differ.
+ *
+ *  `app.declaredFields` is OPTIONAL: the fields a saved version of the app (or of an app sharing
+ *  its store) declares that `appliedSchema` does not hold — a version delivered and never opened,
+ *  or one a rollback left behind. Each id is burned and its type fixed, so it raises the floor and
+ *  a candidate may reuse it only with that type; the store has no column for it, so a candidate
+ *  that names it still needs a default, and nothing requires a candidate to keep it. Absent means
+ *  none. A server built before this field strips it (the object is not strict) and checks against
+ *  `appliedSchema` alone, which is why the device never folds these fields into `appliedSchema`.
+ *
+ *  Each entry is checked against the storage engine's own vocabulary (its burned-id alphabet and
+ *  its closed field-type set, imported from the engine's dependency-free contract module), and
+ *  the list is capped at `MAX_DECLARED_FIELDS`; anything else refuses the request as
+ *  `invalid_request` before admission. */
+const DeclaredField = z.object({
+  collection: z.string().regex(BURNED_ID_RE),
+  id: z.string().regex(BURNED_ID_RE),
+  type: z.enum(FIELD_TYPES),
+});
+export type DeclaredField = z.infer<typeof DeclaredField>;
+
+/** `GenerateRequest.app.declaredFields`' length cap. The list holds only fields of saved versions
+ *  the store never created — versions delivered and not opened, or left behind by a rollback —
+ *  deduplicated per collection and id; a generated app declares tens of fields in its whole life,
+ *  so 512 is several times any real history while bounding the work (and the prompt text) one
+ *  request can ask of the checker. */
+export const MAX_DECLARED_FIELDS = 512;
+
 export const GenerateRequest = z.object({
   prompt: z.string(),
   clarifications: z.array(Clarification).optional(),
@@ -260,6 +288,7 @@ export const GenerateRequest = z.object({
       manifest: ManifestShape,
       schema: SchemaShape,
       appliedSchema: SchemaShape.optional(),
+      declaredFields: z.array(DeclaredField).max(MAX_DECLARED_FIELDS).optional(),
     })
     .optional(),
 });
