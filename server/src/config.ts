@@ -92,6 +92,12 @@ export interface ServerConfig {
   /** `WHIM_WEB_ORIGIN`: the pages site's origin, which the signup route redirects to (`https://`
    *  + `WHIM_WEB_HOST` on the VM). Required in production; a local default elsewhere. */
   readonly webOrigin: string;
+  /** `WHIM_WAITLIST_FINGERPRINT_KEY` (waitlist-hardening ruling 5): the HMAC key of waitlist removal
+   *  fingerprints, from Secret Manager in production. Required, and never the dev key, in
+   *  production and on the `firestore` backend (an operator command on a laptop writes production
+   *  fingerprints too); on SQLite outside production it defaults to `DEV_WAITLIST_FINGERPRINT_KEY`.
+   *  Never logged or exported. */
+  readonly waitlistFingerprintKey: string;
   readonly unaryModelTimeoutMs: number;
   readonly generationMaxMs: number;
   /** A non-negative decimal USD amount — the one limit that is NOT a positive integer. */
@@ -274,6 +280,36 @@ function readWebOrigin(env: NodeJS.ProcessEnv, name: string, production: boolean
   return raw;
 }
 
+/** The waitlist fingerprint key a SQLite server outside production uses when none is set. Production
+ *  and the `firestore` backend refuse it. */
+export const DEV_WAITLIST_FINGERPRINT_KEY = 'dev-only-waitlist-fingerprint-key-never-production';
+
+/** The shortest `WHIM_WAITLIST_FINGERPRINT_KEY` that loads: the waitlist stores' own minimum. */
+const FINGERPRINT_KEY_MIN_LENGTH = 32;
+
+/** `WHIM_WAITLIST_FINGERPRINT_KEY`: refused (by name, never echoing the value) when set shorter than
+ *  the minimum; unset reads as the dev key, which `loadServerConfig` refuses where it must not run. */
+function readFingerprintKey(env: NodeJS.ProcessEnv, name: string): string {
+  const raw = env[name];
+  if (raw === undefined || raw === '') return DEV_WAITLIST_FINGERPRINT_KEY;
+  if (raw.length < FINGERPRINT_KEY_MIN_LENGTH) {
+    throw new ServerConfigError(name, `${name} must be at least ${FINGERPRINT_KEY_MIN_LENGTH} characters.`);
+  }
+  return raw;
+}
+
+/** Production and the `firestore` backend keep real removal fingerprints, so the dev key never runs
+ *  there: an operator command on a laptop writes production fingerprints too. */
+function requireFingerprintKey(config: ServerConfig): void {
+  if (config.nodeEnv !== 'production' && config.storeBackend !== 'firestore') return;
+  if (config.waitlistFingerprintKey === DEV_WAITLIST_FINGERPRINT_KEY) {
+    throw new ServerConfigError(
+      'WHIM_WAITLIST_FINGERPRINT_KEY',
+      'WHIM_WAITLIST_FINGERPRINT_KEY is required in production and on the firestore backend: removed waitlist addresses are fingerprinted with it.',
+    );
+  }
+}
+
 /** `WHIM_STORE_BACKEND` (durable-server-stores D1): unset (or empty) means `sqlite`; any other
  *  value fails configuration loading naming the variable and the allowed values. */
 function readStoreBackend(env: NodeJS.ProcessEnv, name: string): StoreBackend {
@@ -372,6 +408,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     betaLimitPerClientHour: readPositiveInt(env, 'WHIM_BETA_LIMIT_PER_CLIENT_HOUR', 10),
     betaLimitPerDay: readPositiveInt(env, 'WHIM_BETA_LIMIT_PER_DAY', 2000),
     webOrigin: readWebOrigin(env, 'WHIM_WEB_ORIGIN', nodeEnv === 'production'),
+    waitlistFingerprintKey: readFingerprintKey(env, 'WHIM_WAITLIST_FINGERPRINT_KEY'),
     unaryModelTimeoutMs: readPositiveInt(env, 'WHIM_UNARY_MODEL_TIMEOUT_MS', 60_000),
     generationMaxMs,
     minCreditUsd: readNonNegativeDecimal(env, 'WHIM_MIN_CREDIT_USD', 0.5),
@@ -412,6 +449,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
       throw new ServerConfigError('WHIM_WEB_ORIGIN', 'WHIM_WEB_ORIGIN is required in production: the beta signup redirects there.');
     }
   }
+  requireFingerprintKey(config);
 
   return Object.freeze(config);
 }

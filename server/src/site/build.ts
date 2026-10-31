@@ -149,6 +149,29 @@ export const DEPLOY_VALUE_PAGES = [
  *  `/assets/*`. */
 const ASSETS_DIR = 'assets';
 
+/** The only asset files the site publishes, by extension (waitlist-hardening D8). */
+const ASSET_EXTENSIONS: ReadonlySet<string> = new Set(['.woff2', '.txt', '.svg', '.png', '.ico', '.webp']);
+
+/** Copies the allowlisted files under `from` into `to`, never anything whose name starts with `.`
+ *  at any depth. Returns every other entry, as a path under the assets directory, so the build can
+ *  refuse instead of publishing a file nobody listed. */
+function copyAssets(from: string, to: string, rel = ''): string[] {
+  const unexpected: string[] = [];
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue;
+    const entryRel = rel === '' ? entry.name : `${rel}/${entry.name}`;
+    if (entry.isDirectory()) {
+      unexpected.push(...copyAssets(path.join(from, entry.name), path.join(to, entry.name), entryRel));
+    } else if (entry.isFile() && ASSET_EXTENSIONS.has(path.extname(entry.name))) {
+      fs.mkdirSync(to, { recursive: true });
+      fs.copyFileSync(path.join(from, entry.name), path.join(to, entry.name));
+    } else {
+      unexpected.push(entryRel);
+    }
+  }
+  return unexpected;
+}
+
 function siteSource(repoRoot: string, file: string): string {
   return fs.readFileSync(path.join(repoRoot, 'deploy', 'site', file), 'utf8');
 }
@@ -194,7 +217,7 @@ function writeDeployValuePages(dir: string, repoRoot: string, values: Placeholde
 /**
  * Renders every page into a temp directory — the legal pages through the legal-pages deploy check,
  * which refuses the whole build on any finding, and the signup page only when its consent wording is
- * the current registered notice (`notice-check.ts`) — copies `deploy/site/assets/`, adds
+ * the current registered notice (`notice-check.ts`) — copies `deploy/site/assets/` through the asset allowlist, adds
  * `.well-known/` association files when `associationState(repoRoot)` is `present` (via the injected runner, copying exactly the two
  * `handoff/release-cli.md` output files byte for byte), and moves the temp directory to `outDir`
  * only on success. Never touches `outDir` on failure. Prints nothing and never calls
@@ -219,7 +242,11 @@ export async function buildSite(options: BuildSiteOptions): Promise<BuildSiteRes
     for (const page of LEGAL_PAGES) writePage(tempDir, page, legal.pages[page]);
     const renderError = writeDeployValuePages(tempDir, repoRoot, values);
     if (renderError !== undefined) return { ok: false, reason: renderError };
-    fs.cpSync(path.join(repoRoot, 'deploy', 'site', ASSETS_DIR), path.join(tempDir, ASSETS_DIR), { recursive: true });
+    const unexpected = copyAssets(path.join(repoRoot, 'deploy', 'site', ASSETS_DIR), path.join(tempDir, ASSETS_DIR));
+    if (unexpected.length > 0) {
+      const allowed = [...ASSET_EXTENSIONS].join(' ');
+      return { ok: false, reason: `deploy/site/${ASSETS_DIR}/ holds files whose extension is not on the asset allowlist (${allowed}): ${unexpected.join(', ')}` };
+    }
 
     const state = associationState(repoRoot);
     if (state.kind === 'present') {

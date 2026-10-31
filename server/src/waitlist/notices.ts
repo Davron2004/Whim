@@ -1,7 +1,7 @@
 /**
  * server/src/waitlist/notices.ts — which consent wording a waitlist signup agreed to (beta-waitlist
  * design D5; spec "Consent wording is recorded"). The signup page marks its consent line and its
- * opt-out label with `data-notice`. The site build reads their text, normalizes and hashes it, and
+ * news-box label with `data-notice`. The site build reads their text, normalizes and hashes it, and
  * refuses to publish a page whose hash isn't the current notice's; the signup route stores the
  * current notice id with every row. So a stored `notice_id` always names wording that was published.
  *
@@ -18,10 +18,11 @@ import { createHash } from 'node:crypto';
 /** Notice id → sha256 (hex) of its normalized text. APPEND-ONLY. */
 export const NOTICES: Readonly<Record<string, string>> = Object.freeze({
   'beta-1': 'd6ff49dee231490c1f296fdc2200198956cc32e1d5f7905257795bc88957b63e',
+  'beta-2': '6a929fc63b45a1bf4c8f865cd29ef70f96a79c69a348a46c4c469e4e2eabc4f5',
 });
 
 /** The notice the published signup page carries, and every new signup records. */
-export const CURRENT_NOTICE_ID = 'beta-1';
+export const CURRENT_NOTICE_ID = 'beta-2';
 
 /** Whitespace runs collapse to one space, and the ends are trimmed. */
 export function normalizeNoticeText(text: string): string {

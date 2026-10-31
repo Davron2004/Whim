@@ -124,6 +124,8 @@ Send it before the changed page goes live, and log it:
 |---|---|---|---|---|
 | 2026-09-24 | Google Play | Privacy policy and terms v2 (consent version 2), effective 2026-09-27 | Play Console → Age signals → Significant changes | en-US and fr-CA descriptions (`legal-surface-v2` progress ledger, in git history at `8c6cb385`; task 11.10, now #150) |
 | | Apple | Same change | PermissionKit Significant Change API | Not sent: the app doesn't call it yet (issue #86) |
+| 2026-10-31 | Google Play | Privacy policy (beta waitlist: express news consent, removal fingerprint, Google Cloud and Zoho receives), effective 2026-11-03 | Play Console → Age signals → Significant changes | en-US and fr-CA descriptions (waitlist-hardening rollout) |
+| | Apple | Same change | PermissionKit Significant Change API | Not sent: the app doesn't call it yet (issue #86) |
 
 ## 9. Other triggers
 

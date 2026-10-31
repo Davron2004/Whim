@@ -1449,7 +1449,7 @@ ambient light while real work streams.
 - Handoff README "yours is brown" → the person's words italic in quotes, `text`, `title3` as the hero.
 - Animation research §8.1 "the build screen stays still" → the making page carries the ember, whose glow
   follows the stream.
-- **[HELD — pending owner confirmation, 2026-10-09; until confirmed, keep #52 D2's share-or-fresh ask]** #52 D2 "explicit Fork asks share-or-fresh" → "Make a copy" happens at once and the copy starts fresh: its
+- **[RESOLVED by the owner 2026-10-09 — supersedes the reversal below: "Make a copy" asks "Copy the data, or start fresh?"; both give the copy its own storage-engine appId (never shared — sharing between two apps causes problems); "Copy the data" is a one-time copy into the new appId (change `copy-app-data`). Storage groups stay only for rewind continuations.]** ~~#52 D2 "explicit Fork asks share-or-fresh" → "Make a copy" happens at once and the copy starts fresh: its
   own storage-engine appId, the unshared fork #43b D8 described and #52 keeps as its default. Storage groups
   stay for rewind continuations (#53 D5, `shareData: true`, never asked). The share sheet's copy is removed.
 - #67 kept over running apps (no edge swipe over the WebView; the orb is the guaranteed exit), amended for
@@ -1543,3 +1543,41 @@ and no check after a deploy. The runbook is `docs/deploy.md`, "Cloud Run".
 - **Out: re-measuring the generation caps on Cloud Run (#134).** That needs a real gen2 instance
   under replay load, and an amd64 container on Apple silicon gives meaningless CPU numbers. The caps
   (3 / 2) stay the VM's, unmeasured on Cloud Run, until the owner approves the cost.
+
+### 77. Beta waitlist news needs express consent; withdrawal and removal stick `[DECIDED — openspec: waitlist-hardening; product-owner rulings 1–8, 2026-10-09; closes #109–#114]`
+
+The `/beta` page asked people to tick a box to *refuse* news. Under CASL an unticked opt-out box is
+silence, not express consent, so none of the 5 people on the list had consented; and any website
+could re-post an address to clear its opt-out or re-add a removed person. The runbook is
+`docs/deploy.md`, Operating → Beta waitlist.
+
+- **Express opt-in (ruling 1).** An unticked "Email me news about Whim" box (`updates_opt_in`,
+  notice `beta-2`); each row records consent, its time and its wording. The 5 rows migrate as no
+  consent (`whim-admin migrate-waitlist`: dry run by default, idempotent, verified, no address
+  printed). Invitations stay allowed: they answer the person's own request (SOR/2013-221, s. 3(b)).
+  News goes only to `--updates-ok`. Rejected: an opt-out under a 6-month implied-consent window (a
+  free signup is a weak "business relationship", and the consent expires).
+- **Withdrawal is sticky (ruling 4).** An unticked re-signup or an operator `updates … off`
+  withdraws for good; only `updates … on` after a written request restores consent. Without a
+  confirmation email the form can't prove the address owner ticked the box.
+- **Removal leaves a keyed fingerprint (rulings 2, 5, 7, 8).** `remove` keeps an HMAC-SHA-256 of the
+  address under `WHIM_WAITLIST_FINGERPRINT_KEY` (Secret Manager `whim-waitlist-fingerprint-key`,
+  free tier), so a later signup stores nothing; database access alone can't confirm a guessed
+  address. Production boot, the purge job and laptop Firestore commands refuse to start without the
+  key. Fingerprints are deleted 730 days after removal, the published waitlist maximum; `restore`
+  lifts one on written request. The row's doc id stays unkeyed. Nobody had asked to leave before,
+  so the migration blocks no address. Rejected: an unkeyed SHA-256 (design D3's draft), a block for
+  as long as the list runs (would lengthen a published keep-period).
+- **Cross-site posts are refused.** A signup whose `Origin` is present and not the pages origin
+  (`null` included) is refused; no `Origin` is accepted. The pages host sends
+  `Referrer-Policy: strict-origin-when-cross-origin`.
+- **Website categories leave app consent (#110).** Disclosure categories declare `surface`
+  (`app` | `website`); app practices hold only `app` ones, and a surface change on a released
+  version fails the release check. `AI_CONSENT_VERSION` is unchanged.
+- **Smaller drift (#111–#114).** The spec states the code's email rule, the CSV export neutralises
+  formulas, profiles can't set any `_LIMIT_` key, the site publishes only allowlisted assets, and the
+  Google Cloud and Zoho provider rows cover the website and the beta emails.
+- **Out: double opt-in.** A confirmation email needs an outbound mail service and SPF/DKIM DNS
+  records, which this change's no-DNS, no-spend scope excludes; a third party can still type
+  someone's address on our page. The first email anyone gets is a solicited invitation saying how
+  to leave. Also deferred: dropping the `updatesOptOut` rollback shadow.

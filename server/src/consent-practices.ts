@@ -30,18 +30,22 @@ export type PracticeCategory = CategoryId;
 
 export type PracticeTable = Readonly<Record<number, ReadonlySet<PracticeCategory>>>;
 
-/** Consent version → the category ids that version's manifest lists. Exported for the
- *  request-edge suite, which derives a table from a forged manifest set to show a new category
- *  needs no edit here; the server itself reads only `PRACTICES`. */
+/** Consent version → the `app`-surface category ids that version's manifest lists; a `website`
+ *  category (the beta waitlist) is never a practice of any version. Exported for the request-edge
+ *  suite, which derives a table from a forged manifest set to show a new category needs no edit
+ *  here; the server itself reads only `PRACTICES`. */
 export function practicesFrom(manifests: Readonly<Record<number, DisclosureManifest<PracticeCategory>>>): PracticeTable {
   return Object.freeze(
-    Object.fromEntries(Object.entries(manifests).map(([version, manifest]) => [Number(version), new Set(manifest.categories.map((c) => c.id))])),
+    Object.fromEntries(
+      Object.entries(manifests).map(([version, manifest]) => [Number(version), new Set(manifest.categories.filter((c) => c.surface === 'app').map((c) => c.id))]),
+    ),
   );
 }
 
 /** Consent version → the categories it covers. APPEND-ONLY, as the manifest is: a new version is a
- *  new key, and an existing version never gains a category — a phone's grant means what it meant
- *  when it was given. */
+ *  new key, and an existing version's practices never gain a main-grant category (the release check
+ *  refuses one) or any website category (filtered above, and the release check refuses a released
+ *  category changing surface) — a phone's grant means what it meant when it was given. */
 export const PRACTICES: PracticeTable = practicesFrom(MANIFESTS);
 
 /** The highest consent version `table` knows. */

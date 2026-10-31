@@ -16,6 +16,7 @@ import type { ServerConfig } from '../config';
 import { reportPurgeCutoff } from '../reports/store';
 import type { OpenedStores } from '../stores';
 import { usagePurgeCutoffs } from '../usage-store';
+import type { WaitlistPurgeCounts } from '../waitlist/store';
 import type { AdminCliResult } from './cli';
 
 /** The configuration the purges read. */
@@ -28,6 +29,11 @@ export function messageOf(err: unknown): string {
 /** The one structured line a failed purge run prints, which Cloud Logging records at ERROR. */
 export function purgeFailedLine(detail: string): string {
   return `${JSON.stringify({ severity: 'ERROR', message: 'purge failed', detail })}\n`;
+}
+
+/** The waitlist line's count: rows and removal fingerprints together, then each. */
+function waitlistCount({ rows, fingerprints }: WaitlistPurgeCounts): string {
+  return `${rows + fingerprints} purged (rows ${rows}, fingerprints ${fingerprints})`;
 }
 
 /** What a purge run printed, and why it failed (empty when it did not). */
@@ -48,11 +54,12 @@ async function purgeAll(argv: readonly string[], stores: Pick<OpenedStores, 'rep
   if (argv.length > 0) return { output: 'purge takes no arguments\n', failures: ['purge takes no arguments'] };
   const now = config.now();
   const { ledgerBeforeUtcDay, idleBeforeUtcDay } = usagePurgeCutoffs(now, config);
-  const purges: ReadonlyArray<readonly [string, () => Promise<number>]> = [
-    ['reports', () => stores.reports.purgeOlderThan(reportPurgeCutoff(now, config.reportRetentionDays))],
-    ['ledger', () => stores.usage.purgeLedger(ledgerBeforeUtcDay)],
-    ['usage', () => stores.usage.purgeIdleUsage(idleBeforeUtcDay)],
-    ['waitlist', () => stores.waitlist.purge(now)],
+  const count = (purged: number): string => `${purged} purged`;
+  const purges: ReadonlyArray<readonly [string, () => Promise<string>]> = [
+    ['reports', async () => count(await stores.reports.purgeOlderThan(reportPurgeCutoff(now, config.reportRetentionDays)))],
+    ['ledger', async () => count(await stores.usage.purgeLedger(ledgerBeforeUtcDay))],
+    ['usage', async () => count(await stores.usage.purgeIdleUsage(idleBeforeUtcDay))],
+    ['waitlist', async () => waitlistCount(await stores.waitlist.purge(now))],
   ];
   const settled = await Promise.allSettled(purges.map(([, purge]) => Promise.resolve().then(purge)));
   const lines: string[] = [];
@@ -60,7 +67,7 @@ async function purgeAll(argv: readonly string[], stores: Pick<OpenedStores, 'rep
   settled.forEach((outcome, i) => {
     const store = purges[i]![0];
     if (outcome.status === 'fulfilled') {
-      lines.push(`${store}: ${outcome.value} purged`);
+      lines.push(`${store}: ${outcome.value}`);
     } else {
       failures.push(`${store}: ${messageOf(outcome.reason)}`);
       lines.push(`${store}: failed: ${messageOf(outcome.reason)}`);
@@ -70,7 +77,8 @@ async function purgeAll(argv: readonly string[], stores: Pick<OpenedStores, 'rep
 }
 
 /** Runs the purges against `stores` and prints `<store>: N purged` (or `<store>: failed: <why>`)
- *  for reports, ledger, usage and waitlist, in that order. */
+ *  for reports, ledger, usage and waitlist, in that order. The waitlist line also splits its count
+ *  into rows and removal fingerprints: `waitlist: N purged (rows R, fingerprints F)`. */
 export async function runPurge(
   argv: readonly string[],
   stores: Pick<OpenedStores, 'reports' | 'usage' | 'waitlist'>,

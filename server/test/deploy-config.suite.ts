@@ -525,6 +525,7 @@ function byteSize(value: string): number | undefined {
 const API_FORBIDDEN = ['encode', 'log', 'file_server', 'root', 'try_files', 'templates', 'php_fastcgi'];
 const PAGES_FORBIDDEN = ['reverse_proxy', 'templates', 'encode', 'log', 'respond', 'redir', 'php_fastcgi', 'browse'];
 const PAGES_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'";
+const PAGES_REFERRER_POLICY = 'strict-origin-when-cross-origin';
 const ASSOCIATION_ROUTES = ['/.well-known/apple-app-site-association', '/.well-known/assetlinks.json'];
 /** Served straight from the published files, never rewritten (the pages' self-hosted fonts). */
 const ASSET_ROUTES = ['/assets/*'];
@@ -604,10 +605,31 @@ function pagesSiteProblems(site: readonly CaddyNode[], siteFiles: readonly strin
     if (!['root', 'header', 'handle'].includes(directiveOf(node))) problems.push(`the pages site has a top-level ${directiveOf(node)} (line ${node.line})`);
   }
   if (!site.some((node) => lineOf(node) === 'root * /srv/site/current')) problems.push('the pages site root is not /srv/site/current');
+  return [...problems, ...pagesHeaderProblems(site), ...pagesRouteProblems(site, siteFiles)];
+}
+
+/** The pages site's response headers. A no-referrer or same-origin policy would make a browser
+ *  post the signup form with `Origin: null`, which the signup route refuses (waitlist-hardening D4). */
+function pagesHeaderProblems(site: readonly CaddyNode[]): string[] {
+  const problems: string[] = [];
   const headers = childLines(site.find((node) => lineOf(node) === 'header'));
   if (!headers.includes(`Content-Security-Policy ${PAGES_CSP}`)) problems.push('the pages site lacks the D21 Content-Security-Policy');
   if (!headers.includes('X-Content-Type-Options nosniff')) problems.push('the pages site lacks X-Content-Type-Options nosniff');
-  return [...problems, ...pagesRouteProblems(site, siteFiles)];
+  if (!headers.includes(`Referrer-Policy ${PAGES_REFERRER_POLICY}`)) problems.push(`the pages site lacks Referrer-Policy ${PAGES_REFERRER_POLICY}`);
+  return problems;
+}
+
+/** deploy/cloudrun/Caddyfile: its one site is the pages host, sending the same headers. */
+function cloudRunCaddyfileProblems(text: string): string[] {
+  let nodes: CaddyNode[];
+  try {
+    nodes = parseCaddyfile(text);
+  } catch (error) {
+    return [(error as Error).message];
+  }
+  const sites = nodes.filter((node) => node !== globalOptionsOf(nodes));
+  if (sites.length !== 1) return [`the Cloud Run Caddyfile has ${sites.length} sites, not the pages site alone`];
+  return pagesHeaderProblems(sites[0]!.children);
 }
 
 /** The address-less first block: Caddy's global options. */
@@ -836,11 +858,12 @@ function keysReadByLoadServerConfig(): Set<string> {
 
 /** A minimum build is an operator value: in a profile it would reach config.env beside the
  *  operator's own line, and a resize would silently move it (app-update-gate). So is a keep-period,
- *  which deploy.sh's preflight checks against the disclosure manifest before any profile is read. */
+ *  which deploy.sh's preflight checks against the disclosure manifest before any profile is read.
+ *  So is every limit (`_LIMIT_` anywhere in the key, the beta signup limits included). */
 function isForbiddenProfileKey(key: string): boolean {
   return (
     PROFILE_FORBIDDEN_NAMES.has(key) ||
-    key.startsWith('WHIM_LIMIT_') ||
+    key.includes('_LIMIT_') ||
     key.startsWith('WHIM_MIN_BUILD_') ||
     key.includes('RETENTION') ||
     (KEEP_PERIOD_VARIABLES as readonly string[]).includes(key) ||
@@ -1453,6 +1476,19 @@ function createArgsFor(index: WantedIndex): string {
 }
 
 /** The values of a Cloud Run --env-vars-file, as cloudrun/deploy.sh writes it: `KEY: 'value'`. */
+/** The `NAME=secret:version` pairs a logged `gcloud run … --set-secrets` call mounts. */
+function mountedSecrets(call: string): Record<string, string> {
+  const value = /--set-secrets (\S+)/.exec(call)?.[1] ?? '';
+  return Object.fromEntries(value.split(',').filter((entry) => entry !== '').map((entry) => [entry.slice(0, entry.indexOf('=')), entry.slice(entry.indexOf('=') + 1)]));
+}
+
+/** What the server process sees on Cloud Run: the image's `NODE_ENV=production`, its env file, and a
+ *  stand-in value for each mounted secret. */
+function productionEnvOf(serverEnv: string, mounted: Readonly<Record<string, string>>): NodeJS.ProcessEnv {
+  const secrets = Object.fromEntries(Object.entries(mounted).map(([name, secret]) => [name, `stand-in-for-${secret}-0123456789abcdef`]));
+  return { NODE_ENV: 'production', ...envVarsFileValues(serverEnv), ...secrets };
+}
+
 function envVarsFileValues(text: string): Record<string, string> {
   return Object.fromEntries([...text.matchAll(/^([A-Z0-9_]+): '(.*)'$/gm)].map(([, key, value]) => [key, value.replaceAll("''", "'")]));
 }
@@ -1745,7 +1781,29 @@ function cloudRunStoreTests(): void {
     eq('  ... creating each index the file asks for, once', created.length, wanted.length);
     check('  ... with its collection group, scope and fields in order, in the (default) database', wanted.every((index) => created.some((line) => line.includes('--database=(default)') && line.includes(createArgsFor(index)))), created.join(' / '));
     check('  ... before the server deploy', serverDeploy(calls) !== -1 && calls.every((line, i) => !line.includes('firestore indexes composite create') || i < serverDeploy(calls)), calls.join(' / '));
-    eq('  ... and the server reads the firestore backend from its env file', loadServerConfig(envVarsFileValues(serverEnv)).storeBackend, 'firestore');
+    const mounted = mountedSecrets(calls[serverDeploy(calls)] ?? '');
+    eq(
+      '  ... mounting the OpenRouter key and the waitlist fingerprint key, each the latest version of its secret',
+      mounted,
+      { OPENROUTER_API_KEY: 'whim-openrouter-api-key:latest', WHIM_WAITLIST_FINGERPRINT_KEY: 'whim-waitlist-fingerprint-key:latest' },
+    );
+    eq('  ... and the server, in production as its image runs, loads from its env file and those secrets on the firestore backend', loadServerConfig(productionEnvOf(serverEnv, mounted)).storeBackend, 'firestore');
+    const without = (name: string): Record<string, string> => Object.fromEntries(Object.entries(mounted).filter(([key]) => key !== name));
+    check('  red: without the mounted fingerprint key that config refuses to load, naming it', configRefuses(productionEnvOf(serverEnv, without('WHIM_WAITLIST_FINGERPRINT_KEY')), 'WHIM_WAITLIST_FINGERPRINT_KEY'));
+    check('  red: without the mounted OpenRouter key it refuses too', configRefuses(productionEnvOf(serverEnv, without('OPENROUTER_API_KEY')), 'OPENROUTER_API_KEY'));
+  });
+
+  withSandbox((sandbox) => {
+    const { run, calls } = deployTagged(sandbox, [], { WHIM_WAITLIST_FINGERPRINT_SECRET: 'other-fingerprint-secret' });
+    eq('WHIM_WAITLIST_FINGERPRINT_SECRET names the secret the fingerprint key is mounted from', [run.status, mountedSecrets(calls[serverDeploy(calls)] ?? '').WHIM_WAITLIST_FINGERPRINT_KEY], [0, 'other-fingerprint-secret:latest']);
+    const job = calls.find((line) => line.includes('run jobs update whim-purge')) ?? '';
+    eq('  ... on the purge job too', mountedSecrets(job).WHIM_WAITLIST_FINGERPRINT_KEY, 'other-fingerprint-secret:latest');
+  });
+
+  withSandbox((sandbox) => {
+    const { run, calls } = deployTagged(sandbox, [], { WHIM_WAITLIST_FINGERPRINT_SECRET: 'two,secrets' });
+    check('a WHIM_WAITLIST_FINGERPRINT_SECRET that is not a secret id is refused, naming it', run.status === 1 && run.stderr.includes('WHIM_WAITLIST_FINGERPRINT_SECRET must be a Secret Manager secret id'), run.stderr);
+    eq('  ... before any gcloud call', calls, []);
   });
 
   withSandbox((sandbox) => {
@@ -2016,7 +2074,7 @@ function cloudRunDeploySmokeTests(): void {
     const serverDeploy = toolLog(sandbox, 'gcloud').find((line) => line.includes('run deploy whim-server')) ?? '';
     check('  ... the server deployed with request-based billing (CPU only during requests)', / --cpu-throttling(?: |$)/.test(serverDeploy) && !serverDeploy.includes('--no-cpu-throttling'), serverDeploy);
     check('  ... scaling to zero and to one instance at most, the bounds its smoke holds the revision to', serverDeploy.includes(' --min-instances 0 --max-instances 1 '), serverDeploy);
-    const served = loadServerConfig(envVarsFileValues(stubFile(sandbox, 'env-vars-file')));
+    const served = loadServerConfig(productionEnvOf(stubFile(sandbox, 'env-vars-file'), mountedSecrets(serverDeploy)));
     eq(
       "  ... and the operator's content-policy attempt timeout and policy-check limits forwarded, as the server reads them",
       [served.policyAttemptTimeoutMs, served.limitPolicyChecksPerDeviceDay, served.limitPolicyChecksPerDay],
@@ -3313,7 +3371,7 @@ function provisionMonitoringTests(): void {
   };
   checkClean('  ... an existing uptime check with a stale spec is updated in place, carrying --path /health', uptimeUpdateProblems());
   const librarySource = readRepoFile('deploy/lib.sh');
-  checkCaught('  red: an uptime update that omits --path fails', uptimeUpdateProblems(plant(librarySource, 'monitoring uptime update "${uptime_name##*/}" "${uptime_settings[@]}"', 'monitoring uptime update "${uptime_name##*/}" --period "$uptime_PERIOD_MINUTES"')), 'does not carry --path /health');
+  checkCaught('  red: an uptime update that omits --path fails', uptimeUpdateProblems(plant(librarySource, 'monitoring uptime update "${uptime_name##*/}" "${uptime_settings[@]}"', 'monitoring uptime update "${uptime_name##*/}" --period "$uptime_period_minutes"')), 'does not carry --path /health');
   const budgetCall = callMatching(first.calls, / billing budgets create /);
   check(
     '  ... the budget covers WHIM_MONTHLY_BUDGET on WHIM_BILLING_ACCOUNT at 50, 90 and 100 %, emailing the channel',
@@ -3404,6 +3462,14 @@ function caddyTests(files: ReadonlyMap<string, string>, maxBodyBytes: number, si
   red('allowing a remote font origin fails', plant(caddyfile, "; font-src 'self'\"", "; font-src 'self' https://fonts.gstatic.com\""), 'Content-Security-Policy');
   red('dropping the /beta/thanks route fails', plant(caddyfile, '\thandle /beta/thanks {\n\t\trewrite * /beta-thanks.html\n', '\thandle /beta/thanks-page {\n\t\trewrite * /beta-thanks.html\n'), 'not the D21 route table');
   red('rewriting /assets/* to a page fails', plant(caddyfile, '\thandle /assets/* {\n', '\thandle /assets/* {\n\t\trewrite * /beta.html\n'), '/assets/* is not served straight');
+  const referrer = `\t\tReferrer-Policy ${PAGES_REFERRER_POLICY}\n`;
+  red('dropping the pages Referrer-Policy fails', plant(caddyfile, referrer, ''), `Referrer-Policy ${PAGES_REFERRER_POLICY}`);
+  red('a no-referrer pages policy (signup posts would carry Origin: null) fails', plant(caddyfile, referrer, '\t\tReferrer-Policy no-referrer\n'), `Referrer-Policy ${PAGES_REFERRER_POLICY}`);
+
+  const cloudRunCaddyfile = files.get('deploy/cloudrun/Caddyfile') ?? '';
+  checkClean('the Cloud Run pages Caddyfile sends the pages CSP, nosniff and Referrer-Policy strict-origin-when-cross-origin', cloudRunCaddyfileProblems(cloudRunCaddyfile));
+  checkCaught('  red: dropping the Cloud Run Referrer-Policy fails', cloudRunCaddyfileProblems(plant(cloudRunCaddyfile, referrer, '')), `Referrer-Policy ${PAGES_REFERRER_POLICY}`);
+  checkCaught('  red: a same-origin Cloud Run policy (signup posts would carry Origin: null) fails', cloudRunCaddyfileProblems(plant(cloudRunCaddyfile, referrer, '\t\tReferrer-Policy same-origin\n')), `Referrer-Policy ${PAGES_REFERRER_POLICY}`);
 
   checkClean("Caddy's default logger deletes the request headers and the client's address from a real reverse-proxy line", caddyLogProblems(caddyfile, CADDY_PROXY_ABORT_LINE));
   const logRed = (name: string, text: string, needle: string): void => checkCaught(`  red: ${name}`, caddyLogProblems(text, CADDY_PROXY_ABORT_LINE), needle);
@@ -4055,6 +4121,7 @@ function profileTests(files: ReadonlyMap<string, string>): void {
   const eventText = profiles.get('event') ?? '';
   checkCaught('  red: a retention variable in a profile fails', profileProblems('event', `${eventText}WHIM_REPORT_RETENTION_DAYS=30\n`, readKeys), 'WHIM_REPORT_RETENTION_DAYS');
   checkCaught('  red: a minimum build in a profile fails', profileProblems('event', `${eventText}WHIM_MIN_BUILD_IOS=382000\n`, readKeys), 'sets WHIM_MIN_BUILD_IOS, which no profile may set');
+  checkCaught('  red: a beta signup limit in a profile fails', profileProblems('event', `${eventText}WHIM_BETA_LIMIT_PER_DAY=5000\n`, readKeys), 'sets WHIM_BETA_LIMIT_PER_DAY, which no profile may set');
   checkCaught('  red: a usage idle period in a profile fails', profileProblems('event', `${eventText}WHIM_USAGE_IDLE_DAYS=30\n`, readKeys), 'sets WHIM_USAGE_IDLE_DAYS, which no profile may set');
 }
 
