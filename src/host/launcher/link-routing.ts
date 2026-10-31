@@ -34,20 +34,15 @@ export function resolveAppLink(
 }
 
 /** The safe exit an arriving link takes on its way in (design D15). `'exit-app'` tears the running
- *  realm down, `'leave-build'` is exactly `Leave it running`, `'leave-failure'` is the failure
- *  screen's own non-destructive Back, `'decline-consent'` is the consent screen's `Not now`, and
- *  `'close-overlay'` closes an open sheet without acting — never forwarded into anything, never
- *  counted toward anything, the same unconditional-precedence idiom `back-policy.ts`'s
- *  `overlayOpen` already keeps for hardware back. Every other kind (home, dev, settings, history,
- *  ready, and every draft page of the making sheet) already goes Home under its own existing
- *  cancellation rule, so `'home'` is both their exit and the default. */
-export type LinkExit = 'exit-app' | 'leave-build' | 'leave-failure' | 'decline-consent' | 'close-overlay' | 'home';
+ *  realm down, `'leave-build'` is the Making page's close (the run keeps going and is detached from
+ *  the page), `'leave-failure'` is the Failure page's close (the attempt and its journal kept),
+ *  and `'decline-consent'` is the consent screen's `Not now`. Every other kind (home, dev,
+ *  settings, history, ready, and every draft page of the making sheet) already goes Home under its
+ *  own existing cancellation rule, so `'home'` is both their exit and the default. */
+export type LinkExit = 'exit-app' | 'leave-build' | 'leave-failure' | 'decline-consent' | 'home';
 
-/** `screen` ranges over every `Screen` union member's `kind`, plus the sentinel `'sheet'` standing
- *  in for "a host-level sheet is open right now" — checked FIRST and unconditionally, the same
- *  precedence `back-policy.ts`'s `overlayOpen` keeps over the screen it covers. */
+/** `screen` ranges over every `Screen` union member's `kind`. */
 export function linkExitFor(screen: string): LinkExit {
-  if (screen === 'sheet') return 'close-overlay';
   switch (screen) {
     case 'app':
       return 'exit-app';

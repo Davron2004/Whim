@@ -14,7 +14,7 @@ import LauncherRoot from '../LauncherRoot';
 import HomeScreen from '../HomeScreen';
 import HistoryScreen from '../HistoryScreen';
 import MiniAppView from '../MiniAppView';
-import FailureScreen from '../FailureScreen';
+import FailurePage from '../FailurePage';
 import { DescribePage } from '../DescribePage';
 import ConsentScreen from '../ConsentScreen';
 import { FirstRunSheet } from '../FirstRunSheet';
@@ -85,7 +85,7 @@ const ENTRIES: Entry[] = [
     trigger: async (tree) => {
       const ghost = tree.root.findByType(HomeScreen).props.pending.find((p: { id: string }) => p.id === 'failed');
       await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpenPending(ghost));
-      await TestRenderer.act(async () => tree.root.findByType(FailureScreen).props.onRephrase());
+      await TestRenderer.act(async () => tree.root.findByType(FailurePage).props.onRetry());
     },
     continued: (_tree, requests) => requests.some((url) => url.endsWith('/v1/generate')) ? null : `no generate request after agreeing (sent ${JSON.stringify(requests)})`,
   },

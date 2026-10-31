@@ -7,20 +7,23 @@ import { Harness } from './harness';
 import HomeScreen from '../HomeScreen';
 import { DescribePage } from '../DescribePage';
 import { PlanPage } from '../PlanPage';
-import BuildStep from '../BuildStep';
-import DoneStep from '../DoneStep';
-import FailureScreen from '../FailureScreen';
-import RunDetailsSheet from '../RunDetailsSheet';
+import MakingPage from '../MakingPage';
+import ReadyPage from '../ReadyPage';
+import FailurePage from '../FailurePage';
+import MiniAppView from '../MiniAppView';
+import { MakingSheet } from '../MakingSheet';
+import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { TextArea } from '../../ui/TextField';
 import { COPY } from '../copy';
 import { StoreAccess } from '../store-access';
 import { RunJournalStore } from '../run-journal';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { grantConsent, revokeConsent } from '../ai-consent';
-import { Share, hardwareBack, holdModalDismissals, modalPresentations } from './native-host';
-import { chooseRow, longPress } from './home-rig';
+import { Share, holdModalDismissals, modalPresentations } from './native-host';
+import { chooseRow, longPress, pressToastAction, toastOf } from './home-rig';
+import { streamResponse } from './client-fixtures';
 import { androidBack, button, isHost, press, textOf } from './react-screen';
-import { buildIt, composeAndContinue, hasInstalled, json, makingSheetOpen, onHome, planLoaded, questionsLanded, resultEvent, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, failureTryAgain, hasInstalled, json, makingSheetOpen, onHome, planLoaded, questionsLanded, resultEvent, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 
 const QUESTION = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'], select: 'one', other: false };
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
@@ -48,7 +51,7 @@ async function composeToPlan(tree: Tree, text: string): Promise<void> {
 export async function startBuild(tree: Tree, text: string): Promise<void> {
   await composeToPlan(tree, text);
   await buildIt(tree);
-  await waitFor(() => on(tree, BuildStep), 'the making page');
+  await waitFor(() => on(tree, MakingPage), 'the making page');
 }
 
 /** A server whose clarify asks nothing, whose rewrite echoes, and whose every generation is a
@@ -109,7 +112,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       h.eq(generate?.body?.clarifications, [{ id: 'alert', question: QUESTION.question, choices: ['Buzz'] }], 'with the answer given on the plan page');
       streams[0].push(resultEvent('Tea Timer'));
       streams[0].end();
-      await waitFor(() => on(tree, DoneStep), 'the delivered app to land on the ready page');
+      await waitFor(() => on(tree, ReadyPage), 'the delivered app to land on the ready page');
       h.eq(paths().filter((p) => p === '/v1/generate').length, 1, 'and no second generation was started');
     });
   });
@@ -168,7 +171,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
         });
         await settle();
         h.ok(onHome(tree), 'a late response leaves the user on Home');
-        h.eq(tree.root.findAllByType(FailureScreen).length, 0, 'and an abandoned request never shows a failure');
+        h.eq(tree.root.findAllByType(FailurePage).length, 0, 'and an abandoned request never shows a failure');
       });
     });
   }
@@ -248,8 +251,8 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       h.eq(home(tree).props.draft, 'A tea timer', 'closing on Plan left a draft');
       await TestRenderer.act(async () => home(tree).props.onCreate());
       await buildIt(tree);
-      await waitFor(() => on(tree, BuildStep), 'the making page');
-      await press(button(tree, COPY.buildLeaveRunning));
+      await waitFor(() => on(tree, MakingPage), 'the making page');
+      await press(button(tree, COPY.sheetClose));
       h.eq(home(tree).props.draft, undefined, 'Make it spent the draft: the words are a run now');
       streams[0].end();
     });
@@ -286,7 +289,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       await tap(() => tree.root.findByType(DescribePage).props.onContinue());
       await waitFor(() => on(tree, PlanPage) && planLoaded(tree), 'the same plan, back');
       await buildIt(tree);
-      await waitFor(() => on(tree, BuildStep), 'the making page');
+      await waitFor(() => on(tree, MakingPage), 'the making page');
       const generate = sent.find((r) => r.path === '/v1/generate');
       await androidBack(tree);
       h.ok(onHome(tree), 'back on Making closes the sheet');
@@ -359,7 +362,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       h.eq(sent.filter((r) => r.path === '/v1/clarify' && r.signal?.aborted).length, 0, 'and the first request was never aborted by a second one');
       const makeTap = tree.root.findByType(PlanPage).props.onMake;
       await tap(() => { makeTap(); return makeTap(); });
-      await waitFor(() => on(tree, BuildStep), 'the making page');
+      await waitFor(() => on(tree, MakingPage), 'the making page');
       h.eq(sent.filter((r) => r.path === '/v1/generate').length, 1, 'one generation was started');
       streams[0].end();
     });
@@ -377,7 +380,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       h.eq([on(tree, PlanPage), sent.filter((r) => r.path === '/v1/generate').length], [true, 0], 'with the grant gone, Make it sends nothing and the plan stays');
       grantConsent(kv, '2026-09-18T12:00:00.000Z');
       await buildIt(tree);
-      await waitFor(() => on(tree, BuildStep), 'the making page');
+      await waitFor(() => on(tree, MakingPage), 'the making page');
       h.eq(sent.filter((r) => r.path === '/v1/generate').length, 1, 'with the grant back, the same plan’s Make it starts the one run');
       streams[0].end();
     });
@@ -449,13 +452,13 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
     await withLauncher({ server: streamingServer(streams) }, async ({ tree, sent }) => {
       await startBuild(tree, 'A tea timer');
       streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
-      await waitFor(() => tree.root.findByType(BuildStep).props.stage === 'generate', 'the stage');
+      await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'generate', 'the stage');
       await press(button(tree, COPY.sheetClose));
       h.ok(onHome(tree), 'the sheet collapses into the tile');
       h.eq(sent.find((r) => r.path === '/v1/generate')?.signal?.aborted, false, 'the run keeps going');
       h.eq(home(tree).props.pending.map((p: { state: string }) => p.state), ['building'], 'as a building tile');
       await TestRenderer.act(async () => home(tree).props.onOpenPending(home(tree).props.pending[0]));
-      h.ok(makingSheetOpen(tree) && tree.root.findByType(BuildStep).props.stage === 'generate', 'tapping the tile reopens the page, where the run is');
+      h.ok(makingSheetOpen(tree) && tree.root.findByType(MakingPage).props.stage === 'generate', 'tapping the tile reopens the page, where the run is');
       streams[0].end();
     });
   });
@@ -472,12 +475,12 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       await waitFor(() => home(tree).props.pending.length === 2, 'both tiles');
       const [first, second] = [...home(tree).props.pending].sort((a: { createdAt: number }, b: { createdAt: number }) => a.createdAt - b.createdAt);
       await TestRenderer.act(async () => home(tree).props.onOpenPending(second));
-      await waitFor(() => tree.root.findByType(BuildStep).props.stage === 'check', 'the second run’s stage');
-      h.eq([tree.root.findByType(BuildStep).props.stage, tree.root.findByType(BuildStep).props.queuedPosition], ['check', undefined], 'the second run’s page shows only its own steps');
+      await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'check', 'the second run’s stage');
+      h.eq([tree.root.findByType(MakingPage).props.stage, tree.root.findByType(MakingPage).props.queuedPosition], ['check', undefined], 'the second run’s page shows only its own steps');
       await press(button(tree, COPY.sheetClose));
       await TestRenderer.act(async () => home(tree).props.onOpenPending(first));
-      await waitFor(() => tree.root.findByType(BuildStep).props.queuedPosition === 3, 'the first run’s place in line');
-      h.eq([tree.root.findByType(BuildStep).props.stage, tree.root.findByType(BuildStep).props.queuedPosition], [null, 3], 'the first run’s page shows its own place in line and none of the second’s steps');
+      await waitFor(() => tree.root.findByType(MakingPage).props.queuedPosition === 3, 'the first run’s place in line');
+      h.eq([tree.root.findByType(MakingPage).props.stage, tree.root.findByType(MakingPage).props.queuedPosition], [null, 3], 'the first run’s page shows its own place in line and none of the second’s steps');
       streams.forEach((stream) => stream.end());
     });
   });
@@ -557,7 +560,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
     }, async ({ tree, paths }) => {
       await composeAndContinue(tree, 'A dice roller');
       await waitFor(() => on(tree, PlanPage) && plan(tree).problem !== undefined, 'the notice');
-      h.eq(tree.root.findAllByType(FailureScreen).length, 0, 'never the failure page');
+      h.eq(tree.root.findAllByType(FailurePage).length, 0, 'never the failure page');
       await tap(() => button(tree, COPY.planTryAgain).props.onPress());
       await waitFor(() => planLoaded(tree), 'the plan after trying again');
       h.eq(paths(), ['/v1/clarify', '/v1/clarify', '/v1/rewrite'], 'Try again sent the clarify once more, and then the rewrite');
@@ -573,7 +576,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       streams[0].push({ type: 'thinking', chars: 40 });
       streams[0].push({ type: 'diagnostic', diagnostic: { kind: 'type', symbol: 'SENTINEL_SYMBOL', message: 'SENTINEL_MESSAGE', hint: 'SENTINEL_HINT' } });
       streams[0].push({ type: 'stage', stage: 'check', status: 'start' });
-      await waitFor(() => tree.root.findByType(BuildStep).props.stage === 'check', 'the stages to reach the screen');
+      await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'check', 'the stages to reach the screen');
       const shown = textOf(tree.root);
       for (const secret of ['SENTINEL_TOKEN_TEXT', 'SENTINEL_SYMBOL', 'SENTINEL_MESSAGE', 'SENTINEL_HINT']) {
         h.ok(!shown.includes(secret), `the build screen never shows "${secret}"`);
@@ -581,41 +584,271 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('flow: Details reads the journal when opened; back closes it, then leaves the run running, which still delivers', async () => {
+  await h.test('flow: back on Making leaves the run going; delivered with the sheet closed, Home says it is ready and opens it, and the journal is the app’s last-run report', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     await withLauncher({ server: streamingServer(streams) }, async ({ tree, sent, kv }) => {
       await startBuild(tree, 'A tea timer');
-      streams[0].push({ type: 'stage', stage: 'plan', status: 'start' });
-      await waitFor(() => tree.root.findByType(BuildStep).props.stage === 'plan', 'the first stage');
-      await press(button(tree, COPY.buildDetails));
-      const opened = tree.root.findByType(RunDetailsSheet).props;
-      h.eq(opened.open, true, 'Details opens the sheet');
-      const count = opened.entries?.length ?? 0;
-      h.ok(count > 0, `with the journal’s entries so far (got ${count})`);
       streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
-      await waitFor(() => tree.root.findByType(BuildStep).props.stage === 'generate', 'the next stage');
-      h.eq(tree.root.findByType(RunDetailsSheet).props.entries.length, count, 'the open sheet is not re-read as the stream moves');
+      await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'generate', 'the stage');
       const generate = sent.find((r) => r.path === '/v1/generate');
-      await TestRenderer.act(async () => { hardwareBack(); });
-      h.eq(tree.root.findByType(RunDetailsSheet).props.open, false, 'hardware back closes the sheet');
-      h.ok(on(tree, BuildStep), 'and stays on the build screen');
-      h.eq(generate?.signal?.aborted, false, 'without cancelling the run');
-      await TestRenderer.act(async () => { hardwareBack(); });
-      h.ok(onHome(tree), 'a second back leaves the making page');
-      h.eq(generate?.signal?.aborted, false, 'and still does not cancel');
-      h.eq(home(tree).props.pending.map((p: { state: string }) => p.state), ['building'], 'the run shows as a building ghost');
+      await androidBack(tree);
+      h.ok(onHome(tree), 'back closes the sheet');
+      h.eq(generate?.signal?.aborted, false, 'and never cancels the run');
+      h.eq(home(tree).props.pending.map((p: { state: string }) => p.state), ['building'], 'the run shows as a tile being made');
       streams[0].push({ type: 'token', text: 'abc' });
       streams[0].push({ type: 'token', text: 'defg' });
       streams[0].push(resultEvent('Tea Timer'));
       streams[0].end();
       await waitFor(() => hasInstalled(tree, 'Tea Timer'), 'the detached run to deliver');
-      h.ok(onHome(tree), 'delivered silently: the user stays on Home');
-      h.eq(home(tree).props.pending, [], 'and the ghost is gone');
+      h.ok(onHome(tree) && !makingSheetOpen(tree), 'the user stays on Home: no page opens over it');
+      h.eq(toastOf(tree), { message: 'Tea Timer is ready', action: COPY.actionOpen }, 'a toast says it is ready, with Open');
+      h.eq(home(tree).props.pending, [], 'and the tile being made is gone');
       const delivered = home(tree).props.apps.find((a: InstalledApp) => a.name === 'Tea Timer') as InstalledApp;
       const report = new RunJournalStore(kv).getLastRun(delivered.id) ?? [];
       h.eq(report.at(-1)?.kind, 'terminal', 'the journal became the delivered app’s last-run report, ending in its terminal entry');
       h.eq(report.at(-1)?.aggregates, { chars: 7, tokens: 2 }, 'which flushes the final output counts, too recent for any throttled entry');
       h.eq(kv.getAllKeys().filter((k) => k.startsWith('journal:')), [], 'and no attempt journal is left behind');
+      await pressToastAction(tree);
+      await waitFor(() => tree.root.findAllByType(MiniAppView).length === 1, 'the app to open');
+      h.eq(tree.root.findByType(MiniAppView).props.installedApp.id, delivered.id, 'Open opens the app that was made');
     });
   });
+
+  await h.test('flow: delivered with the sheet open, Ready shows the app, and Open it launches it', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
+      await startBuild(tree, 'A tea timer');
+      streams[0].push(resultEvent('Tea Timer'));
+      streams[0].end();
+      await waitFor(() => on(tree, ReadyPage), 'the Ready page');
+      h.eq(tree.root.findByType(ReadyPage).props.words, 'A tea timer', 'with the person’s words');
+      h.eq(toastOf(tree), null, 'and no toast: the person is looking at it');
+      h.eq(tree.root.findAllByType(MiniAppView).length, 0, 'nothing runs before it is opened');
+      await press(button(tree, COPY.readyOpen));
+      await waitFor(() => tree.root.findAllByType(MiniAppView).length === 1, 'the app to open');
+      h.eq(tree.root.findByType(MiniAppView).props.installedApp.name, 'Tea Timer', 'Open it opens the delivered app');
+    });
+  });
+
+  await h.test('flow: Stop ends the run at once and leaves a stopped tile, which reopens as stopped with Try again; Try again runs it as the same tile', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, sent, kv }) => {
+      await startBuild(tree, 'A tea timer');
+      streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
+      await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'generate', 'the stage');
+      await press(button(tree, COPY.actionStop));
+      h.eq(sent.find((r) => r.path === '/v1/generate')?.signal?.aborted, true, 'the request is aborted at once');
+      h.ok(onHome(tree) && !makingSheetOpen(tree), 'the sheet closes onto Home');
+      const [stopped] = home(tree).props.pending as PendingBuildRecord[];
+      h.eq([home(tree).props.pending.length, stopped?.state, stopped?.stopped], [1, 'interrupted', true], 'a stopped tile stays');
+      h.ok(kv.getString(`journal:${stopped.id}`) != null, 'with its journal, for What happened');
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(stopped));
+      const page = tree.root.findByType(FailurePage);
+      h.eq(page.props.kind, 'stopped', 'the tile reopens as stopped');
+      h.ok(textOf(page).includes(COPY.failureStopped) && !textOf(page).includes(COPY.interruptedBuildReason), 'saying the person stopped it, not that Whim closed');
+      await press(button(tree, COPY.actionTryAgain));
+      await waitFor(() => streams.length === 2 && on(tree, MakingPage), 'the run again');
+      h.eq(home(tree).props.pending.map((p: PendingBuildRecord) => [p.id, p.state]), [[stopped.id, 'building']], 'as the same tile, building again');
+      streams[1].end();
+    });
+  });
+
+  await h.test('flow: Stop on a change ends it and leaves the app as it was, with no tile', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, sent }) => {
+      await waitFor(() => onHome(tree) && hasInstalled(tree, 'Tip Splitter'), 'the example apps');
+      const app = (home(tree).props.apps as InstalledApp[]).find((a) => a.name === 'Tip Splitter')!;
+      const before = (home(tree).props.apps as InstalledApp[]).map((a) => a.id);
+      await TestRenderer.act(async () => home(tree).props.onPromptAgain(app));
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('Add a tip slider'));
+      await tap(() => tree.root.findByType(DescribePage).props.onContinue());
+      await waitFor(() => planLoaded(tree), 'the plan');
+      await buildIt(tree);
+      await waitFor(() => wasSent(sent, '/v1/generate') && on(tree, MakingPage), 'the making page');
+      h.ok(textOf(tree.root).includes('Changing Tip Splitter'), 'a change says so');
+      await press(button(tree, COPY.actionStop));
+      h.eq(home(tree).props.pending, [], 'no tile is left for a stopped change');
+      h.eq((home(tree).props.apps as InstalledApp[]).map((a) => a.id), before, 'and the apps are as they were');
+    });
+  });
+
+  await h.test('sheet: the Making page keeps one key from Make it to the run’s end, and a second run’s page starts at its own beginning', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    // Every key the sheet committed, one entry per change: a page that flashed under another key
+    // and was replaced before the test could look still shows here.
+    const shown: string[] = [];
+    let recording = false;
+    const onCommit = (tree: Tree) => {
+      if (!recording) return;
+      const key = String(sheetPageKey(tree));
+      if (shown.at(-1) !== key) shown.push(key);
+    };
+    await withLauncher({ server: streamingServer(streams), onCommit }, async ({ tree }) => {
+      await composeToPlan(tree, 'A tea timer');
+      recording = true;
+      shown.push(String(sheetPageKey(tree)));
+      await buildIt(tree);
+      await waitFor(() => on(tree, MakingPage), 'the making page');
+      const firstKey = String(sheetPageKey(tree));
+      streams[0].push({ type: 'stage', stage: 'check', status: 'start' });
+      await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'check', 'the first run’s stage');
+      // #131: a second run started while the first is still checking.
+      await press(button(tree, COPY.sheetClose));
+      await startBuild(tree, 'A coffee timer');
+      const second = tree.root.findByType(MakingPage).props;
+      const secondKey = String(sheetPageKey(tree));
+      h.ok(secondKey !== firstKey, 'the second run has its own key');
+      h.eq([second.stage, second.words, second.repairAttempt], [null, 'A coffee timer', undefined], 'and its page shows its own start, not the first run’s check');
+      await press(button(tree, COPY.sheetClose));
+      const first = (home(tree).props.pending as PendingBuildRecord[]).find((p) => p.prompt === 'A tea timer')!;
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(first));
+      streams[0].push(resultEvent('Tea Timer'));
+      streams[0].end();
+      await waitFor(() => on(tree, ReadyPage), 'the first run’s Ready page');
+      h.ok(firstKey === `run:${first.id}`, 'the first run’s page is keyed by its own id');
+      h.eq(shown, ['draft:new', firstKey, 'null', 'draft:new', secondKey, 'null', firstKey],
+        'every frame from Make it to Ready showed each run under its one key, with no other key in between');
+      streams[1].end();
+    });
+  });
+
+  await h.test('flow: a stream cut partway says the connection was lost, never suggests rewording, and Try again waits for the phone to be back online (#151)', async () => {
+    const net: { up: boolean; cut?: () => void } = { up: true };
+    await withLauncher(cuttingServer(net), async ({ tree, clock }) => {
+      await startBuild(tree, 'A tea timer');
+      await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'generate' && net.cut != null, 'the run under way');
+      net.up = false;
+      net.cut!();
+      await waitFor(() => on(tree, FailurePage), 'the failure page');
+      const page = () => tree.root.findByType(FailurePage);
+      h.eq(page().props.kind, 'connection', 'the run ended in a lost connection');
+      h.ok(textOf(page()).includes(COPY.failureConnection), 'and says so');
+      h.ok(!textOf(page()).includes(COPY.failureChangeDescription) && !/describing it differently/i.test(textOf(page())), 'never suggesting the words were the problem');
+      await waitFor(() => page().props.offline === true, 'the phone to be known offline');
+      h.ok(textOf(page()).includes(COPY.failureOfflineNotice), 'the page says Try again waits for the connection');
+      await h.throws(() => press(button(tree, COPY.actionTryAgain)), 'disabled', 'and Try again is off');
+      net.up = true;
+      await TestRenderer.act(async () => { clock.fireWithin(30_000); });
+      await waitFor(() => page().props.offline === false, 'the phone to be back online');
+      h.ok(!textOf(page()).includes(COPY.failureOfflineNotice), 'the notice goes');
+      await press(button(tree, COPY.actionTryAgain));
+      h.ok(!on(tree, FailurePage), 'and Try again runs it again');
+    });
+  });
+
+  await h.test('flow: a Try again that never reaches the server keeps the earlier run’s What happened, on the page and on its tile', async () => {
+    const net: { up: boolean; reach?: boolean; tries?: number; cut?: () => void } = { up: true };
+    await withLauncher(cuttingServer(net), async ({ tree, kv }) => {
+      await startBuild(tree, 'A tea timer');
+      await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'generate' && net.cut != null, 'the run under way');
+      net.cut!();
+      await waitFor(() => on(tree, FailurePage), 'the failure page');
+      const whatHappened = async () => {
+        const row = button(tree, COPY.timelineTitle);
+        if (row.props.accessibilityState?.expanded !== true) await press(row);
+        return textOf(tree.root.findByType(FailurePage));
+      };
+      h.ok((await whatHappened()).includes(COPY.timelineStageGenerate), 'What happened holds the run’s step');
+      net.reach = false;
+      await press(failureTryAgain(tree));
+      await waitFor(() => net.tries === 2 && on(tree, FailurePage), 'the retry’s failure page');
+      h.eq(tree.root.findByType(FailurePage).props.kind, 'connection', 'the retry could not reach the server');
+      h.ok((await whatHappened()).includes(COPY.timelineStageGenerate), 'and What happened still holds the earlier run’s step');
+      net.reach = true;
+      await press(button(tree, COPY.sheetClose));
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).list()[0]));
+      h.ok((await whatHappened()).includes(COPY.timelineStageGenerate), 'as it does reopened from its tile, once back online');
+    });
+  });
+
+  await h.test('flow: Stop on a Try again that has journaled nothing keeps the earlier run’s What happened on its stopped tile', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+      await startBuild(tree, 'A tea timer');
+      await waitFor(() => streams.length === 1, 'the stream');
+      streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
+      streams[0].push({ type: 'failure', reason: 'The app did not build.', attempts: 1, diagnostics: [] });
+      streams[0].end();
+      await waitFor(() => on(tree, FailurePage), 'the failure page');
+      await press(failureTryAgain(tree));
+      await waitFor(() => streams.length === 2 && on(tree, MakingPage), 'the retry under way');
+      await press(button(tree, COPY.actionStop));
+      const [stopped] = home(tree).props.pending as PendingBuildRecord[];
+      h.eq([stopped?.state, stopped?.stopped], ['interrupted', true], 'a stopped tile');
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get(stopped.id)));
+      h.eq(tree.root.findByType(FailurePage).props.kind, 'stopped', 'reopening as stopped');
+      await press(button(tree, COPY.timelineTitle));
+      h.ok(textOf(tree.root.findByType(FailurePage)).includes(COPY.timelineStageGenerate), 'whose What happened still holds the earlier run’s step');
+    });
+  });
+
+  await h.test('flow: the quoted words read as typed, without the stray spaces and line breaks dictation leaves', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
+      await composeToPlan(tree, ' A queue   one\n');
+      h.ok(textOf(tree.root.findByType(PlanPage)).includes('“A queue one”'), 'the plan page quotes them');
+      await buildIt(tree);
+      await waitFor(() => on(tree, MakingPage) && streams.length === 1, 'the making page');
+      h.ok(textOf(tree.root.findByType(MakingPage)).includes('“A queue one”'), 'so does the making page');
+      streams[0].push(resultEvent('Queue'));
+      streams[0].end();
+      await waitFor(() => on(tree, ReadyPage), 'the ready page');
+      h.ok(textOf(tree.root.findByType(ReadyPage)).includes('“A queue one”'), 'and the ready page');
+    });
+  });
+
+  await h.test('flow: a run the network cut stores a lost connection as its cause', async () => {
+    const net: { up: boolean; cut?: () => void } = { up: true };
+    await withLauncher(cuttingServer(net), async ({ tree, kv }) => {
+      await startBuild(tree, 'A tea timer');
+      await waitFor(() => tree.root.findByType(MakingPage).props.stage === 'generate' && net.cut != null, 'the run under way');
+      net.cut!();
+      await waitFor(() => on(tree, FailurePage), 'the failure page');
+      h.eq(new PendingBuildStore(kv).list().map((r) => r.failure?.cause), ['connection'], 'the record says the connection was lost, not only its sentence');
+    });
+  });
+
+  await h.test('flow: a plan the phone cannot reach says so as a connection problem, never as a failed build, and stays with Try again', async () => {
+    await withLauncher({
+      server: (r) => (r.path === '/v1/clarify' ? Promise.reject(new TypeError('Network request failed')) : json({ rewrittenPrompt: 'A dice roller', plan: [] })),
+    }, async ({ tree }) => {
+      await composeAndContinue(tree, 'A dice roller');
+      await waitFor(() => on(tree, PlanPage) && plan(tree).problem !== undefined, 'the notice');
+      h.eq(plan(tree).problem, { request: 'clarify', reason: COPY.planOffline, offline: true }, 'the page keeps the words and says the server could not be reached');
+      h.ok(!/went wrong|building/i.test(textOf(tree.root)), 'nothing claims a build went wrong');
+      h.eq(tree.root.findAllByType(FailurePage).length, 0, 'and it is not the failure page');
+      h.ok(button(tree, COPY.planTryAgain) != null, 'Try again is there');
+    });
+  });
+}
+
+/** A server whose generate stream sends one stage and is then cut by the network, as a phone
+ *  going offline mid-run sees it; `net.up` also answers the connectivity probe. With `net.reach`
+ *  false a generate request never reaches it; `net.tries` counts generate requests. */
+function cuttingServer(net: { up: boolean; reach?: boolean; tries?: number; cut?: () => void }) {
+  const encoder = new TextEncoder();
+  return {
+    health: () => {
+      if (!net.up) throw new TypeError('Network request failed');
+      return json({ service: 'whim-server' });
+    },
+    server: (r: SentRequest) => {
+      if (r.path === '/v1/clarify') return json({ questions: [] });
+      if (r.path === '/v1/rewrite') return json({ rewrittenPrompt: String(r.body?.prompt), plan: [] });
+      net.tries = (net.tries ?? 0) + 1;
+      if (net.reach === false) return Promise.reject(new TypeError('Network request failed'));
+      const body = new ReadableStream<Uint8Array>({
+        start: (controller) => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'stage', stage: 'generate', status: 'start' })}\n\n`));
+          net.cut = () => controller.error(new TypeError('Network request failed'));
+        },
+      });
+      return streamResponse(body, { headers: { 'Content-Type': 'text/event-stream' } });
+    },
+  };
+}
+
+/** The key the making sheet shows its page under (`null` while it is closed). */
+function sheetPageKey(tree: Tree): string | null {
+  return tree.root.findByType(MakingSheet).props.content?.key ?? null;
 }

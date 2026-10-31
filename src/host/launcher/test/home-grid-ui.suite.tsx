@@ -23,8 +23,6 @@ import { ICON_PATHS } from '../../../design/icons/paths';
 import { EMBER_PATH } from '../../../design/icons/ember';
 import { squirclePath } from '../../../design/icons/squircle';
 import { mixHex } from '../../../design/tints';
-import AppTile from '../app-tile';
-import { tileColor } from '../tiles';
 import { Share, StyleSheet, accessibilitySettings, setColorScheme, windowMetrics } from './native-host';
 import { press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 import {
@@ -798,19 +796,5 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       h.eq([flat(root(dark)).backgroundColor, nameColor(dark)], [COLORS.dark.bg, COLORS.dark.text], 'dark');
       h.eq(plateFill(dark), seenLight[2], 'the plate is the tint’s light value in both');
     } finally { await unmountScreen(dark); await resetPhone(); }
-  });
-
-  // ── the done step's tile (until the Ready screen moves) ─────────────────────
-  await h.test('done tile: filled and glowing in the app’s own colour', async () => {
-    await resetPhone();
-    const manifest = { capabilities: [], tileColor: '#2f7d5b' };
-    const expected = tileColor('Timer', manifest);
-    const done = await renderScreen(<AppTile name="Timer" manifest={manifest} size="done" />);
-    try {
-      const filled = done.root.findAll((n) => hostType(n) === 'View' && flat(n).backgroundColor === expected);
-      h.eq(filled.length, 1, 'the tile is filled with the app’s colour');
-      const glow = flat(filled[0]).boxShadow as { color: string }[] | undefined;
-      h.ok(glow?.[0]?.color.startsWith(expected) === true, `its glow is the same colour (got ${JSON.stringify(glow)})`);
-    } finally { await unmountScreen(done); }
   });
 }

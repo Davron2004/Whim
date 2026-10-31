@@ -11,11 +11,10 @@ import { Harness } from './harness';
 import HomeScreen from '../HomeScreen';
 import { DescribePage } from '../DescribePage';
 import { PlanPage } from '../PlanPage';
-import BuildStep from '../BuildStep';
-import FailureScreen from '../FailureScreen';
+import MakingPage from '../MakingPage';
+import FailurePage from '../FailurePage';
 import { FirstRunSheet } from '../FirstRunSheet';
 import HistoryScreen from '../HistoryScreen';
-import DoneStep from '../DoneStep';
 import MiniAppView from '../MiniAppView';
 import Orb from '../Orb';
 import UpdateRequiredScreen from '../UpdateRequiredScreen';
@@ -27,7 +26,7 @@ import { appInfoFrom, appInfoReader } from '../app-info';
 import type { InstalledApp } from '../app-index';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { button, press, textOf, hostType } from './react-screen';
-import { buildIt, composeAndContinue, json, onHome, planLoaded, resultEvent, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
+import { buildIt, composeAndContinue, failureTryAgain, json, onHome, planLoaded, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 import { TEST_APP_INFO, streamResponse } from './client-fixtures';
 import { Linking, Platform, injectedScripts } from './native-host';
@@ -200,7 +199,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       log.buffer.clear();
       streams[0].push({ type: 'failure', reason: 'The app did not build.', attempts: 2, diagnostics: [{ kind: 'type', symbol: 'x', message: 'm', hint: 'Try fewer screens.' }] });
       streams[0].end();
-      await waitFor(() => on(tree, FailureScreen), 'the failure screen');
+      await waitFor(() => on(tree, FailurePage), 'the failure screen');
       const shown = log.buffer.snapshot().filter((r) => r.message === 'failure screen shown');
       h.eq(shown.map((r) => [r.fields.errorClass, r.fields.requestId]), [['GenerationFailureEvent', 'req-gen-1']], 'the failure record names the stream’s request');
     });
@@ -221,7 +220,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       await waitFor(() => on(tree, FirstRunSheet), 'the consent screen');
       h.eq(tree.root.findByType(FirstRunSheet).props.refused, true, 'opened by the refusal, not by a first ask');
       h.ok(textOf(tree.root).includes(COPY.permissionRequiredLine), 'saying why it is back');
-      h.eq(tree.root.findAllByType(FailureScreen).length, 0, 'never the failure screen');
+      h.eq(tree.root.findAllByType(FailurePage).length, 0, 'never the failure screen');
       await press(button(tree, COPY.consentDecline));
       h.ok(on(tree, DescribePage), 'Not now returns to describe');
       h.eq(tree.root.findByType(DescribePage).props.text, 'A tea timer', 'with the typed prompt');
@@ -276,15 +275,15 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
     }, async ({ tree, sent, kv }) => {
       const ghost = new PendingBuildStore(kv).get('failed');
       await TestRenderer.act(async () => home(tree).props.onOpenPending(ghost));
-      await press(button(tree, COPY.screenErrorRetry));
+      await press(failureTryAgain(tree));
       await waitFor(() => on(tree, FirstRunSheet), 'the consent screen');
       await press(button(tree, COPY.consentDecline));
-      h.ok(on(tree, FailureScreen), 'Not now returns to the failed build');
+      h.ok(on(tree, FailurePage), 'Not now returns to the failed build');
       h.eq(new PendingBuildStore(kv).get('failed')?.state, 'failed', 'whose record is still there to retry');
-      await press(button(tree, COPY.screenErrorRetry));
+      await press(failureTryAgain(tree));
       await waitFor(() => on(tree, FirstRunSheet), 'the consent screen, again');
       await press(button(tree, COPY.consentAgree));
-      await waitFor(() => on(tree, BuildStep), 'the retried build');
+      await waitFor(() => on(tree, MakingPage), 'the retried build');
       h.eq(sent.filter((r) => r.path === '/v1/generate').map((r) => r.body?.prompt), ['A tea timer', 'A tea timer', 'A tea timer'], 'agreeing retried the stored prompt');
       h.eq(new PendingBuildStore(kv).list().map((r) => [r.id, r.state]), [['failed', 'building']], 'on the same record');
     });
@@ -296,8 +295,8 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       await composeAndContinue(tree, 'A tea timer');
       await waitFor(() => planLoaded(tree), 'the plan');
       await buildIt(tree);
-      await waitFor(() => on(tree, BuildStep), 'the build screen');
-      await press(button(tree, COPY.buildLeaveRunning));
+      await waitFor(() => on(tree, MakingPage), 'the build screen');
+      await press(button(tree, COPY.sheetClose));
       await TestRenderer.act(async () => { generation.resolve(consentRefused()); });
       await waitFor(() => new PendingBuildStore(kv).list()[0]?.state === 'failed', 'the refused run to settle');
       h.ok(onHome(tree), 'the user is still on Home');
@@ -310,7 +309,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       await composeAndContinue(tree, 'A tea timer');
       await waitFor(() => updateShown(tree), 'the update screen');
       h.ok(textOf(tree.root).includes(COPY.updateTitle), 'saying Whim needs an update');
-      h.eq(tree.root.findAllByType(FailureScreen).length, 0, 'never the failure screen');
+      h.eq(tree.root.findAllByType(FailurePage).length, 0, 'never the failure screen');
       await press(button(tree, COPY.updateNotNow));
       h.ok(onHome(tree), 'Not now goes Home');
       await TestRenderer.act(async () => home(tree).props.onPromptAgain(APP));
@@ -359,7 +358,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       server: () => updateRefused(),
     }, async ({ tree, kv }) => {
       await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).get('failed')));
-      await press(button(tree, COPY.screenErrorRetry));
+      await press(failureTryAgain(tree));
       await waitFor(() => updateShown(tree), 'the update screen');
       await press(button(tree, COPY.updateNotNow));
       h.ok(onHome(tree), 'Not now goes Home');
@@ -373,8 +372,8 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       await composeAndContinue(tree, 'A tea timer');
       await waitFor(() => planLoaded(tree), 'the plan');
       await buildIt(tree);
-      await waitFor(() => on(tree, BuildStep), 'the build screen');
-      await press(button(tree, COPY.buildLeaveRunning));
+      await waitFor(() => on(tree, MakingPage), 'the build screen');
+      await press(button(tree, COPY.sheetClose));
       await TestRenderer.act(async () => { generation.resolve(updateRefused()); });
       await waitFor(() => updateShown(tree), 'the update screen');
       const ghost = new PendingBuildStore(kv).list()[0];
@@ -389,8 +388,8 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       await composeAndContinue(tree, 'A tea timer');
       await waitFor(() => planLoaded(tree), 'the plan');
       await buildIt(tree);
-      await waitFor(() => on(tree, BuildStep), 'the build screen');
-      await press(button(tree, COPY.buildLeaveRunning));
+      await waitFor(() => on(tree, MakingPage), 'the build screen');
+      await press(button(tree, COPY.sheetClose));
       h.ok(await opensAndRuns(tree, example, APP_BUNDLES['tip-splitter']), 'the example opens and runs');
       await TestRenderer.act(async () => { generation.resolve(updateRefused()); });
       await waitFor(() => new PendingBuildStore(kv).list()[0]?.state === 'failed', 'the refused run to settle');
@@ -400,17 +399,6 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
 
   type Streams = ReturnType<typeof sseStream>[];
   const reportEntries: { name: string; examples: boolean; open: (tree: Tree, streams: Streams) => Promise<void> }[] = [
-    {
-      name: 'the done step',
-      examples: false,
-      open: async (tree, streams) => {
-        await startBuild(tree, 'A tea timer');
-        streams[0].push(resultEvent('Tea Timer'));
-        streams[0].end();
-        await waitFor(() => on(tree, DoneStep), 'the done step');
-        await TestRenderer.act(async () => tree.root.findByType(DoneStep).props.onReport());
-      },
-    },
     {
       name: 'history',
       examples: true,

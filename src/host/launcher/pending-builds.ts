@@ -32,12 +32,19 @@ export type PendingBuildState = 'building' | 'failed' | 'interrupted';
  *  level when the attempt ended, so a build above it knows the update has happened. */
 export type PendingFailureRemedy = { kind: 'retry' } | { kind: 'update'; protocolLevel: number };
 
+/** What ended the run, where the Failure page tells it apart by more than its sentence. `connection`:
+ *  the stream was cut partway, or no server answered. */
+export type PendingFailureCause = 'connection';
+
 export interface PendingBuildFailure {
   reason: string;
   diagnostics?: string;
   /** Absent when rewording may help (a failed generation), which is also what every record written
    *  before this field means. */
   remedy?: PendingFailureRemedy;
+  /** Absent for any other ending, and on records written before this field (`failure-kind.ts#failureCauseOf`
+   *  reads those). */
+  cause?: PendingFailureCause;
 }
 
 /** The persisted record (design D2, additive-only discipline). */
@@ -63,6 +70,9 @@ export interface PendingBuildRecord {
   editingAppId?: string;
   /** True when no journal can be associated with this record's current attempt. */
   journalUnavailable?: true;
+  /** Present only in state `interrupted`: the person stopped the attempt (Stop). Absent, an
+   *  interruption means Whim closed under it. */
+  stopped?: true;
 }
 
 export type PendingJournalAvailability = 'verified' | 'unavailable';
@@ -225,16 +235,9 @@ export class PendingBuildStore {
     this.started.delete(lease.token);
   }
 
+  /** Drop this process's volatile view of `id` (a discard read every persisted trace of it back gone). */
   forgetRetained(id: string): void {
     if (this.current.get(id)?.durability === 'volatile') this.current.delete(id);
-  }
-
-  /** A partial Discard has no durable record to read, but remains actionable for this process. */
-  retainDiscardFailure(record: PendingBuildRecord, failure: PendingBuildFailure): void {
-    this.current.set(record.id, {
-      durability: 'volatile',
-      record: { ...record, state: 'failed', failure, updatedAt: Date.now(), journalUnavailable: true },
-    });
   }
 
   setJournalAvailability(id: string, availability: PendingJournalAvailability): void {
@@ -263,6 +266,16 @@ export class PendingBuildStore {
       ...(availability === 'unavailable' ? { journalUnavailable: true } : {}),
       ...(availability === 'verified' ? { journalUnavailable: undefined } : {}),
     };
+    this.kv.set(PENDING_KEY(id), JSON.stringify(updated));
+    this.current.set(id, { record: updated, durability: 'persisted' });
+  }
+
+  /** The person stopped this attempt: its record becomes `interrupted`, marked `stopped`, and stays
+   *  on the grid as a stopped tile to try again or discard. A no-op if the id has no record. */
+  stop(id: string): void {
+    const rec = this.get(id);
+    if (!rec) return;
+    const updated: PendingBuildRecord = { ...rec, state: 'interrupted', stopped: true, updatedAt: Date.now() };
     this.kv.set(PENDING_KEY(id), JSON.stringify(updated));
     this.current.set(id, { record: updated, durability: 'persisted' });
   }
