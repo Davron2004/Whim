@@ -1768,3 +1768,29 @@ The checker no longer extracts it. A record with no declared or stored tint show
   testable on emulators.
 
 #52's storage groups now serve rewind continuations only (`build-lifecycle.ts` calls `continueSharingData`).
+
+### 85. A storage-group member becomes independent only by copying it; the index is the authority for an existing entry `[DECIDED — openspec: separate-shared-data; answers #160; narrows nothing in #52 or #53]`
+
+There is no "Separate the data" action, in place or automatic. A person who wants an app that no longer shares saved data
+makes a copy of the member with "Make a copy" → "Copy the data" (#84), then deletes the member; the refcounted delete
+keeps the group's store while any entry resolves to it. The route works the same from a sharer, the last member and the
+founder.
+
+- **Why not in place.** A rewind continuation and a legacy shared copy have the same record shape, so no code can
+  separate one and spare the other, and an automatic pass would unshare every continuation. Nobody outside the team is
+  known to hold a legacy shared copy. An in-place leave gives up the immutability of membership (#52 D3) to keep the
+  tile's identity, and serves neither the founder (its id names the group file) nor a last member. The runner-up is
+  designed in `openspec/changes/separate-shared-data/design.md` D11, so adopting it later is one proposal pass.
+- **The index is the authority for an existing entry.** `StoreAccess.update`, `fork` and `continueSharingData` re-read
+  the entry from the index first inside their `serial(repo)` section, before any version-store, journal, index or file
+  write. An entry the index no longer holds is refused with `AppGoneError` and nothing is written: a build that lands
+  after its app's delete completed is dropped like a stopped change (record and journal removed) and never brings the app back. `update` writes the
+  index's `storageGroupId` (present or absent), never the caller's; `fork` copies from, and `continueSharingData` joins,
+  the group of the index's record. `remove` still takes the caller's entry (a purge finishes from its marker's copy).
+- **A new entry is committed by one write.** `AppIndex.put` appends a new id to `order` before writing its record, so a
+  death between the two leaves an order id with no record, which reads as no entry; the launch sweep then deletes a
+  half-committed copy's store. A record an older build left out of `order` is listed again when next put.
+- **The copy question for a sharer** is asked of the store it resolves to (`hasSavedData` over `engineAppId(entry)`), so
+  it is never skipped for a sharer with data in its group.
+
+Pinned by `src/host/launcher/test/shared-group.suite.ts` (the `index authority:`, `index:` and `group route:` cases).

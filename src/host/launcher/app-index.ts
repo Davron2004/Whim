@@ -63,24 +63,33 @@ const APP_KEY = (id: string) => `app:${id}`;
 const ORDER_KEY = 'order';
 const SEED_KEY = 'seed:version';
 
+/** Tolerated (an unreadable order list reads as "no order"), but never silent: this is corrupted
+ *  device state, and the grid the user sees is empty because of it. */
+function orderUnreadable(detail: string): void {
+  log.warn(CHANNELS.app, 'stored app order is unreadable', { key: ORDER_KEY, detail });
+}
+
 export class AppIndex {
   constructor(private readonly kv: KVBackend) {}
 
   private readOrder(): string[] {
+    return this.readOrderIfReadable() ?? [];
+  }
+
+  /** The stored order, `[]` when none is stored, or null when a stored value is unreadable. */
+  private readOrderIfReadable(): string[] | null {
     const raw = this.kv.getString(ORDER_KEY);
     if (!raw) return [];
+    let v: unknown;
     try {
-      const v = JSON.parse(raw);
-      return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+      v = JSON.parse(raw);
     } catch (e) {
-      // Tolerated (an unreadable order list reads as "no order"), but never silent: this is
-      // corrupted device state, and the grid the user sees is empty because of it.
-      log.warn(CHANNELS.app, 'stored app order is unreadable', {
-        key: ORDER_KEY,
-        detail: e instanceof Error ? e.message : String(e),
-      });
-      return [];
+      orderUnreadable(e instanceof Error ? e.message : String(e));
+      return null;
     }
+    if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string');
+    orderUnreadable(`not a list: ${typeof v}`);
+    return null;
   }
 
   private writeOrder(ids: string[]): void {
@@ -118,15 +127,21 @@ export class AppIndex {
     return out;
   }
 
-  /** Insert (appends to the order) or update in place (order unchanged). */
+  /** Insert (appends to the order) or update in place (order unchanged). The id goes into the order
+   *  BEFORE the record is written, so the record write is the one commit: a death between the two
+   *  leaves an order id with no record, which `list()` and `has()` read as no entry (never a record
+   *  the grid does not show). A record missing from the order (left so by an older build) is listed
+   *  again the next time it is put. An unreadable stored order is left as it is (never replaced by
+   *  a list of this one id): only the record is written. */
   put(app: InstalledApp): void {
-    const existed = this.has(app.id);
-    this.kv.set(APP_KEY(app.id), JSON.stringify(app));
-    if (!existed) {
-      const ids = this.readOrder();
+    const ids = this.readOrderIfReadable();
+    if (ids === null) {
+      log.warn(CHANNELS.app, 'app order left as it is: it is unreadable', { appId: app.id });
+    } else if (!ids.includes(app.id)) {
       ids.push(app.id);
       this.writeOrder(ids);
     }
+    this.kv.set(APP_KEY(app.id), JSON.stringify(app));
   }
 
   /** Drop a record, its order entry and the corner its orb was left in; survivors keep their

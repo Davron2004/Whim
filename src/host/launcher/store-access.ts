@@ -98,8 +98,32 @@ export interface UpdateSpec {
   prompt: string;
 }
 
-function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+/**
+ * The app an operation was asked to act on is no longer in the index: it was deleted after the
+ * caller read its entry (a build that lands after its app's delete completed). `update`, `fork`
+ * and `continueSharingData` reject with it before any write (linked-apps "A launcher record is
+ * never written for an entry the index no longer holds").
+ */
+export class AppGoneError extends Error {
+  readonly appId: string;
+  constructor(appId: string) {
+    super(`"${appId}" is no longer installed`);
+    this.name = 'AppGoneError';
+    this.appId = appId;
+  }
+}
+
+/** A thrown value as log text: an Error's message, a string as is, anything else as JSON (never
+ *  "[object Object]"), falling back to its type when it has no JSON form. */
+export function messageOf(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
+  try {
+    return JSON.stringify(e) ?? typeof e;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: this renders a thrown value for a log line, so a value with no JSON form (cyclic, BigInt) reads as its type
+  } catch {
+    return typeof e;
+  }
 }
 
 /** The files a version is saved as: its code, its original source when there is one, and the
@@ -293,6 +317,15 @@ export class StoreAccess {
     }
   }
 
+  /** The index's current record for `entry` — the authority an operation that writes a launcher
+   *  record acts on, never the caller's possibly stale object. Rejects with `AppGoneError` when the
+   *  index no longer holds it. Called first inside the caller's `serial(repo)`, before any write. */
+  private indexed(entry: InstalledApp): InstalledApp {
+    const current = this.index.get(entry.id);
+    if (current == null) throw new AppGoneError(entry.id);
+    return current;
+  }
+
   /** Switch the repo to the entry's lineage only if it is not already there (D2 "checks first"). */
   private async ensureLineage(entry: InstalledApp): Promise<void> {
     const repo = storeIdOf(entry);
@@ -339,17 +372,26 @@ export class StoreAccess {
    * from the index entry as it is at write time (never the caller's possibly stale `entry`, which
    * would undo an override set while this ran), so a rebuild never moves the tile. A record from
    * before tints gets the tile it was showing written down here.
+   *
+   * The storage group is the index's too, so a stale or altered `entry` cannot move the app to
+   * another store; and an app the index no longer holds is refused with `AppGoneError` before
+   * anything is written, so a build that lands after its app's delete never brings it back.
    */
   async update(entry: InstalledApp, spec: UpdateSpec): Promise<InstalledApp> {
     return this.serial(storeIdOf(entry), async () => {
+      this.indexed(entry);
       await this.ensureLineage(entry);
       await this.store.snapshot(storeIdOf(entry), versionFiles(spec), spec.prompt);
       // `entry.name` is deliberately NOT refreshed from `spec.record.name` here (they can differ —
       // `mapWireRecord` sets `record.name = wire.name`): a rebuild leaves the name the app has on
       // the grid as it was. Pinned: store-access.suite.ts §34.
-      const current = this.index.get(entry.id) ?? entry;
+      // Read again after the snapshot, so a tile chosen while it ran is kept. `remove` shares this
+      // `serial` section, so the record cannot have gone in between.
+      const current = this.indexed(entry);
       const { tint, icon } = assignedTile(current);
       const updated: InstalledApp = { ...entry, record: spec.record, tint, icon };
+      if (current.storageGroupId != null) updated.storageGroupId = current.storageGroupId;
+      else delete updated.storageGroupId;
       if (current.tileOverride) updated.tileOverride = current.tileOverride;
       else delete updated.tileOverride;
       this.index.put(updated);
@@ -646,7 +688,7 @@ export class StoreAccess {
     from: { lineageId: string; declared: VersionDeclaration | null },
     storageGroupId?: string,
   ): InstalledApp {
-    const current = this.index.get(entry.id) ?? entry;
+    const current = this.indexed(entry);
     const tile = copyTile(current, this.index.list());
     const { lineageId } = from;
     return {
@@ -680,7 +722,8 @@ export class StoreAccess {
    * `DataCopyError`; a process death is settled by `sweepDataCopies` at the next launch. A
    * `'copy'` on an instance without the seam rejects before any write. The version-store lineage
    * a failed copy forked stays behind, unused and invisible, like any fork whose entry was never
-   * written.
+   * written. The copy is made from the index's record for `entry` (its store, name and record), and
+   * an app the index no longer holds is refused with `AppGoneError` before anything is written.
    */
   async fork(entry: InstalledApp, versionId?: string, opts?: ForkOptions): Promise<InstalledApp> {
     const data = opts?.data ?? 'fresh';
@@ -689,7 +732,8 @@ export class StoreAccess {
     if (data === 'copy' && !seam) throw new Error(`cannot copy the data of "${entry.id}": this build has no data copy`);
     const repo = storeIdOf(entry);
     return this.serial(repo, async () => {
-      const forked = await this.forkLineage(entry, repo, versionId);
+      const source = this.indexed(entry);
+      const forked = await this.forkLineage(source, repo, versionId);
       const copyAppId = `${repo}__${forked.lineageId}`;
       if (this.index.has(copyAppId) || this.index.storageRefCount(copyAppId) > 0) {
         // Fork ids are never reused while their repo lives; an entry here is a broken invariant,
@@ -697,11 +741,11 @@ export class StoreAccess {
         throw new DataCopyError('io', `cannot make a copy: an app already uses "${copyAppId}"`);
       }
       const commit = (): InstalledApp => {
-        const forkEntry = this.lineageEntry(entry, repo, forked);
+        const forkEntry = this.lineageEntry(source, repo, forked);
         this.index.put(forkEntry);
         return forkEntry;
       };
-      if (data === 'copy' && seam) return this.copyData(seam, this.engineAppId(entry), copyAppId, commit);
+      if (data === 'copy' && seam) return this.copyData(seam, this.engineAppId(source), copyAppId, commit);
       await this.deleteStorage(copyAppId); // a stray file never leaks into a fresh copy
       return commit();
     });
@@ -749,8 +793,8 @@ export class StoreAccess {
       this.index.remove(copyAppId);
       await this.deleteStorage(copyAppId);
       journal.clear(copyAppId);
-    } catch (cleanup) {
-      log.error(CHANNELS.app, 'a failed data copy could not be cleaned up yet', { appId: copyAppId, detail: messageOf(cleanup) });
+    } catch (error_) {
+      log.error(CHANNELS.app, 'a failed data copy could not be cleaned up yet', { appId: copyAppId, detail: messageOf(error_) });
     }
   }
 
@@ -759,13 +803,15 @@ export class StoreAccess {
    * lineage from `entry`'s active snapshot whose entry joins `entry`'s storage group — the
    * founder's own id, whether `entry` is the founder or already a member, so membership is never
    * re-rooted at an intermediate member. The only creation path that can share a store; "Make a
-   * copy" goes through `fork`, which cannot.
+   * copy" goes through `fork`, which cannot. The group is read from the index's record for `entry`,
+   * and an app the index no longer holds is refused with `AppGoneError` before anything is written.
    */
   async continueSharingData(entry: InstalledApp): Promise<InstalledApp> {
     const repo = storeIdOf(entry);
     return this.serial(repo, async () => {
-      const forked = await this.forkLineage(entry, repo, undefined);
-      const continuation = this.lineageEntry(entry, repo, forked, this.engineAppId(entry));
+      const source = this.indexed(entry);
+      const forked = await this.forkLineage(source, repo, undefined);
+      const continuation = this.lineageEntry(source, repo, forked, this.engineAppId(source));
       this.index.put(continuation);
       return continuation;
     });
