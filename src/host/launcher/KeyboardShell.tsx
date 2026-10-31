@@ -4,7 +4,7 @@
  * design-system-v1 task 11.3). The keyboard is tracked by `react-native-keyboard-controller`; the
  * decisions live in `keyboard-shell.ts`.
  *
- * A pinned `header`, the scrolling content, and a pinned `footer` for the primary action. On a
+ * The scrolling content, and a pinned `footer` for the primary action. On a
  * screen the frame pads its bottom by the keyboard's overlap with it, frame by frame on the UI
  * thread as the keyboard moves, so the footer rides above the keyboard on its own curve and the
  * scroll view ends above the footer; inside a sheet the host (`SheetModal`, `Sheet`) pads.
@@ -12,8 +12,10 @@
  * keyboard arriving or changing height, the field growing) scrolls the field, or the block it
  * names, back into view, `REVEAL_MARGIN` clear of the keyboard and the footer; while the keyboard
  * is still moving, that waits for it to settle.
- * A hairline under the header shows once content has scrolled beneath it, and one above the footer
- * while content continues below. A drag puts the keyboard away, a tap a control handles reaches the
+ * A hairline above the footer shows while content continues below. In a sheet the frame fills the
+ * body it sits in, so the footer sits at the bottom of a large sheet whatever the content; a footer that has outgrown its share of the
+ * window (`FOOTER_SHARE`, the largest text sizes) scrolls with the content instead; and content
+ * scrolling under the sheet's header fades out over 16 pt. A drag puts the keyboard away, a tap a control handles reaches the
  * control, and a tap on empty space anywhere in the frame puts the keyboard away.
  */
 
@@ -22,7 +24,6 @@ import {
   InputAccessoryView,
   Keyboard,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -40,6 +41,8 @@ import type {
   ViewStyle,
 } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import {
   KeyboardController,
   KeyboardEvents,
@@ -47,25 +50,27 @@ import {
   useWindowDimensions as useKeyboardWindow,
   type NativeEvent,
 } from 'react-native-keyboard-controller';
+import { SPACE } from '../../design/tokens';
 import { SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { useTokens } from '../ui/tokens';
 import { COPY } from './copy';
 import {
+  contentBelow,
+  footerJoinsScroll,
   keyboardDismissMode,
   keyboardOverlap,
   pinsFooter,
   REVEAL_MARGIN,
   revealOffset,
-  scrollEdges,
   selectionColors,
   showsDoneBar,
+  topFadeOpacity,
   type KeyboardShellHost,
   type ScrollMetrics,
 } from './keyboard-shell';
 import { SHELL_PALETTE } from './theme';
 
 export interface KeyboardShellProps {
-  /** Pinned above the scrolling content: the screen's header. */
-  header?: React.ReactNode;
   /** Pinned below the scrolling content and kept above the keyboard: the primary action and what
    *  sits with it. Leave it out on a screen with no primary action. */
   footer?: React.ReactNode;
@@ -94,7 +99,15 @@ interface RevealRegistry {
 
 const KeyboardShellContext = createContext<RevealRegistry | null>(null);
 
+/** Whether the overlay a field sits in has been presented. An overlay (`Sheet`) provides it as
+ *  `false` until its window reports it is shown; a field outside one is always `true`. */
+export const OverlayShownContext = createContext(true);
+
 const dismissKeyboard = () => Keyboard.dismiss();
+const takesTouch = () => true;
+
+/** The iOS keyboard toolbar's height — no SPACING counterpart. */
+const DONE_BAR_HEIGHT = 44;
 
 /** Where the view `frame` holds ends, measured from the top of its root (the app's, or a Modal's),
  *  which fills its window wherever a frame pads, just as the keyboard's height is reported from that
@@ -117,8 +130,13 @@ export interface KeyboardOverlap {
  * The keyboard's overlap with the view `frame` holds, while `active`, following the keyboard frame
  * by frame (showing, hiding, an interactive drag, and a keyboard that changes height while up). The
  * view is measured on layout and again when the keyboard starts to show, in case an ancestor moved it.
+ * `clearBelow` is how far the frame keeps clear of the window's bottom edge, when it is known: a
+ * screen on the native stack sits in a `SafeAreaView`, which keeps it above the home indicator, yet
+ * `measure` counts the frame from a root laid out far below the window (a pushed screen's frame
+ * read 2420 in an 874-high window) and would put its bottom at the window's: the frame was then
+ * padded by the home indicator's inset on top of what the keyboard covers.
  */
-export function useKeyboardOverlap(frame: React.RefObject<View | null>, active: boolean): KeyboardOverlap {
+export function useKeyboardOverlap(frame: React.RefObject<View | null>, active: boolean, clearBelow = 0): KeyboardOverlap {
   const overlap = useSharedValue(0);
   const frameBottom = useSharedValue(0);
   const { height: windowHeight } = useKeyboardWindow();
@@ -126,19 +144,33 @@ export function useKeyboardOverlap(frame: React.RefObject<View | null>, active: 
   useEffect(() => {
     windowSize.value = windowHeight;
   }, [windowSize, windowHeight]);
+  // iOS: the keyboard's height as the system last reported its frame, since the keyboard last set
+  // off (see the frame listener below); 0 until it has, and whenever the keyboard is down.
+  const systemHeight = useSharedValue(0);
   const onLayout = useCallback(() => {
-    measureBottom(frame, (bottom) => {
+    measureBottom(frame, (measured) => {
+      const bottom = Math.min(measured, windowSize.value - clearBelow);
       frameBottom.value = bottom;
       if (active && KeyboardController.isVisible()) {
-        overlap.value = keyboardOverlap(KeyboardController.state().height, bottom, windowSize.value);
+        overlap.value = keyboardOverlap(Math.max(KeyboardController.state().height, systemHeight.value), bottom, windowSize.value);
       }
     });
-  }, [active, frame, frameBottom, overlap, windowSize]);
+  }, [active, clearBelow, frame, frameBottom, overlap, systemHeight, windowSize]);
   const follow = (event: NativeEvent) => {
     'worklet';
     overlap.value = active ? keyboardOverlap(event.height, frameBottom.value, windowSize.value) : 0;
   };
-  useGenericKeyboardHandler({ onMove: follow, onInteractive: follow, onEnd: follow }, [active]);
+  // A keyboard at rest is as tall as the system says, if it has said: see the frame listener below.
+  const rest = (event: NativeEvent) => {
+    'worklet';
+    const resting = event.height > 0 ? Math.max(event.height, systemHeight.value) : 0;
+    overlap.value = active ? keyboardOverlap(resting, frameBottom.value, windowSize.value) : 0;
+  };
+  const setOff = () => {
+    'worklet';
+    systemHeight.value = 0;
+  };
+  useGenericKeyboardHandler({ onStart: setOff, onMove: follow, onInteractive: follow, onEnd: rest }, [active]);
   useEffect(() => {
     if (!active) {
       overlap.value = 0;
@@ -147,6 +179,20 @@ export function useKeyboardOverlap(frame: React.RefObject<View | null>, active: 
     const subscription = KeyboardEvents.addListener('keyboardWillShow', onLayout);
     return () => subscription.remove();
   }, [active, onLayout, overlap]);
+  // iOS: the first keyboard of a process is reported without the Done bar that attaches to it a moment
+  // later. Measured on iOS 27: 328 at `keyboardWillShow`, the library's frames then reach 372 as the bar
+  // arrives, and its end report goes back to 328, which a frame that ends there ends under the bar.
+  // The system's frame notification (372, 400 ms after the show) is the keyboard as it rests, so the
+  // library's end report may not make it shorter than that.
+  useEffect(() => {
+    if (!active || Platform.OS !== 'ios') return undefined;
+    const subscription = Keyboard.addListener('keyboardDidChangeFrame', (event) => {
+      const shown = Math.max(0, windowSize.value - event.endCoordinates.screenY);
+      systemHeight.value = shown;
+      overlap.value = keyboardOverlap(shown, frameBottom.value, windowSize.value);
+    });
+    return () => subscription.remove();
+  }, [active, frameBottom, overlap, systemHeight, windowSize]);
   const overlapFor = useCallback(
     (keyboardHeight: number) => (active ? keyboardOverlap(keyboardHeight, frameBottom.value, windowSize.value) : 0),
     [active, frameBottom, windowSize],
@@ -191,7 +237,7 @@ function assignRef<T>(ref: React.Ref<T> | undefined, node: T | null): void {
   else if (ref) (ref as React.MutableRefObject<T | null>).current = node;
 }
 
-/** The scroll view's wiring: its metrics, the edge hairlines, and revealing the focused block.
+/** The scroll view's wiring: its metrics, whether content continues below, and revealing the focused block.
  *  `shrinkFor` says how much the scroll view will lose to a keyboard of a given height, when the
  *  frame knows (a screen does; a sheet's host pads outside it). */
 function useRevealingScroll(
@@ -204,7 +250,7 @@ function useRevealingScroll(
   const inner = useRef<View>(null);
   const metrics = useRef<ScrollMetrics>({ offset: 0, viewport: 0, content: 0 });
   const focusedTarget = useRef<RevealTarget | null>(null);
-  const [edges, setEdges] = useState({ above: false, below: false });
+  const [below, setBelow] = useState(false);
   const pendingReveal = useRef<number | null>(null);
   const revealVersion = useRef(0);
   const keyboardMoving = useRef(false);
@@ -217,8 +263,7 @@ function useRevealingScroll(
 
   const settle = useCallback((next: Partial<ScrollMetrics>) => {
     metrics.current = { ...metrics.current, ...next };
-    const { above, below } = scrollEdges(metrics.current);
-    setEdges((prev) => (prev.above === above && prev.below === below ? prev : { above, below }));
+    setBelow(contentBelow(metrics.current));
   }, []);
 
   /** Scrolls the focused block into view: of the scroll view as it is, or, while the keyboard is on
@@ -319,17 +364,51 @@ function useRevealingScroll(
       onContentSizeChange?.(width, height);
     },
   };
-  return { scrollProps, edges, registry };
+  return { scrollProps, below, registry };
 }
 
-/** A hairline at a scroll edge, drawn only while content is hidden past it; always laid out, so
+/** The hairline above the footer, drawn only while content continues below it; always laid out, so
  *  showing it never shifts anything. */
 function EdgeLine({ shown }: Readonly<{ shown: boolean }>) {
   return <View style={[styles.edge, shown && { backgroundColor: SHELL_PALETTE.cardBorder }]} />;
 }
 
+/** Content scrolling under a sheet's header fades out over this much, from the sheet's own colour
+ *  (system.md §6). */
+const TOP_FADE_HEIGHT = SPACE[4];
+
+/** The soft edge under a sheet's header: the `sheet` colour fading to clear, drawn over the content
+ *  as far as `opacity` says (nothing at rest) and never taking a touch. */
+function SheetTopFade({ opacity }: Readonly<{ opacity: SharedValue<number> }>) {
+  const t = useTokens();
+  const shown = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return (
+    <Animated.View pointerEvents="none" accessible={false} importantForAccessibility="no-hide-descendants" style={[styles.topFade, shown]}>
+      <Svg width="100%" height={TOP_FADE_HEIGHT}>
+        <Defs>
+          <LinearGradient id="sheet-top-fade" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={t.colors.sheet} stopOpacity={1} />
+            <Stop offset="1" stopColor={t.colors.sheet} stopOpacity={0} />
+          </LinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width="100%" height={TOP_FADE_HEIGHT} fill="url(#sheet-top-fade)" />
+      </Svg>
+    </Animated.View>
+  );
+}
+
+/** The footer's wrapper: a screen spaces it from the scroll view; a sheet's own actions space
+ *  themselves; one that scrolls with the content runs edge to edge, undoing the content's side
+ *  padding that its actions carry again. */
+function footerStyleFor(joinsScroll: boolean, inSheet: boolean, contentContainerStyle: StyleProp<ViewStyle>): StyleProp<ViewStyle> {
+  if (joinsScroll) {
+    const inset = StyleSheet.flatten(contentContainerStyle)?.paddingHorizontal;
+    return { marginHorizontal: typeof inset === 'number' ? -inset : 0 };
+  }
+  return inSheet ? undefined : styles.footer;
+}
+
 export default function KeyboardShell({
-  header,
   footer,
   host = 'screen',
   style,
@@ -341,37 +420,68 @@ export default function KeyboardShell({
 }: Readonly<KeyboardShellProps>) {
   const inSheet = host === 'sheet';
   const frameRef = useRef<View>(null);
-  const { overlap, onLayout, overlapFor } = useKeyboardOverlap(frameRef, !inSheet);
+  // iOS screens sit above the home indicator (`NativeStack`'s `SafeAreaView`); Android's frame
+  // measures true and is left to its own measure.
+  const { bottom: safeBottom } = useSafeAreaInsets();
+  const { overlap, onLayout, overlapFor } = useKeyboardOverlap(frameRef, !inSheet, Platform.OS === 'ios' ? safeBottom : 0);
   const padding = useAnimatedStyle(() => ({ paddingBottom: overlap.value }));
   const shrinkFor = useCallback((keyboardHeight: number) => overlapFor(keyboardHeight) - overlap.value, [overlap, overlapFor]);
-  const { scrollProps, edges, registry } = useRevealingScroll(scrollRef, onContentSizeChange, onScrollOffset, inSheet ? undefined : shrinkFor);
+  const topFade = useSharedValue(0);
+  const trackOffset = useCallback(
+    (offset: number) => {
+      topFade.value = topFadeOpacity(offset, TOP_FADE_HEIGHT);
+      onScrollOffset?.(offset);
+    },
+    [onScrollOffset, topFade],
+  );
+  const { scrollProps, below, registry } = useRevealingScroll(scrollRef, onContentSizeChange, trackOffset, inSheet ? undefined : shrinkFor);
+  // A sheet's footer that has grown past its share of the window (large text) scrolls with the
+  // content, so the content keeps room of its own and the footer's actions stay reachable.
+  const { height: windowHeight } = useKeyboardWindow();
+  const [footerHeight, setFooterHeight] = useState(0);
+  const joinsScroll = inSheet && footerJoinsScroll(footerHeight, windowHeight);
+  const pinned = pinsFooter(footer);
+  const footerStyle = footerStyleFor(joinsScroll, inSheet, contentContainerStyle);
+  const footerView = pinned ? (
+    <View onLayout={(event) => setFooterHeight(event.nativeEvent.layout.height)} style={footerStyle}>
+      {footer}
+    </View>
+  ) : null;
+  const scroller = (
+    <ScrollView
+      {...scrollProps}
+      contentContainerStyle={contentContainerStyle}
+      keyboardDismissMode={keyboardDismissMode(Platform.OS)}
+      keyboardShouldPersistTaps="handled"
+    >
+      {children}
+      {joinsScroll ? footerView : null}
+    </ScrollView>
+  );
+  // No view around the scroll view answers a touch: iOS does not scroll while a view around the
+  // scroll view holds the touch (`RCTScrollViewComponentView` will not take a drag from an ancestor
+  // that is the JS responder), so a drag that started on plain content moved nothing. Inside the
+  // scroll view, a tap on empty space with the keyboard up is the scroll view's own
+  // (`keyboardShouldPersistTaps="handled"` blurs the field); only the pinned footer, outside it, takes
+  // a touch on its own empty space, and its actions, deeper, take theirs first.
   const frame = (
     <KeyboardShellContext.Provider value={registry}>
-      <Pressable
-        style={inSheet ? [styles.shrink, style] : styles.fill}
-        onPress={dismissKeyboard}
-        accessible={false}
-        focusable={false}
-        android_disableSound
-      >
-        {header}
-        {pinsFooter(header) && <EdgeLine shown={edges.above} />}
-        <ScrollView
-          {...scrollProps}
-          style={inSheet ? styles.shrink : undefined}
-          contentContainerStyle={contentContainerStyle}
-          keyboardDismissMode={keyboardDismissMode(Platform.OS)}
-          keyboardShouldPersistTaps="handled"
-        >
-          {children}
-        </ScrollView>
-        {pinsFooter(footer) && (
-          <>
-            <EdgeLine shown={edges.below} />
-            <View style={inSheet ? undefined : styles.footer}>{footer}</View>
-          </>
+      <View style={inSheet ? [styles.grow, style] : styles.fill}>
+        {inSheet ? (
+          <View style={styles.grow}>
+            {scroller}
+            <SheetTopFade opacity={topFade} />
+          </View>
+        ) : (
+          scroller
         )}
-      </Pressable>
+        {pinned && !joinsScroll && (
+          <View onStartShouldSetResponder={takesTouch} onResponderRelease={dismissKeyboard}>
+            <EdgeLine shown={below} />
+            {footerView}
+          </View>
+        )}
+      </View>
     </KeyboardShellContext.Provider>
   );
   if (inSheet) return frame;
@@ -380,6 +490,47 @@ export default function KeyboardShell({
       <Animated.View style={[styles.fill, padding]}>{frame}</Animated.View>
     </View>
   );
+}
+
+/** How many frames an Android field asks for the keyboard before it gives up: about two seconds at
+ *  60 Hz, which only a window that is never served (a hardware keyboard that keeps the soft one away)
+ *  outlasts. */
+const KEYBOARD_ASK_FRAMES = 120;
+
+/**
+ * Android: focuses `input` and asks for its keyboard once a frame until the keyboard sets off. A
+ * request is dropped (the field takes focus, with its caret and ring, and no keyboard comes) while
+ * the window the field sits in is not yet served by the keyboard, which is after the window's report
+ * that it is shown: measured, the first request, 80 to 300 ms after the report, was ignored ("view is
+ * not served") or aborted by the system after layout. Nothing reports the moment the window is served,
+ * and `focus()` of a field that is already focused does nothing, so the field has the keyboard library
+ * request it again, frame by frame, until `keyboardWillShow` says it did. It stops when the field
+ * loses focus, and at once if the keyboard is already up. Returns the stop.
+ */
+function askForKeyboard(input: React.RefObject<TextInput | null>, blurred: { current: boolean }): () => void {
+  blurred.current = false;
+  input.current?.focus();
+  if (KeyboardController.isVisible()) return () => {};
+  let frames = KEYBOARD_ASK_FRAMES;
+  let pending = 0;
+  let stopped = false;
+  const stop = () => {
+    stopped = true;
+    cancelAnimationFrame(pending);
+    subscription.remove();
+  };
+  const subscription = KeyboardEvents.addListener('keyboardWillShow', stop);
+  const ask = () => {
+    frames -= 1;
+    if (blurred.current || frames < 0) {
+      stop();
+      return;
+    }
+    KeyboardController.setFocusTo('current');
+    if (!stopped) pending = requestAnimationFrame(ask);
+  };
+  pending = requestAnimationFrame(ask);
+  return stop;
 }
 
 export interface KeyboardTextInputProps extends TextInputProps {
@@ -410,17 +561,20 @@ export function KeyboardTextInput({
   const doneBarId = useId();
   const target = revealTarget ?? input;
   const autoFocusOnMount = useRef(autoFocus === true);
+  const overlayShown = useContext(OverlayShownContext) || Platform.OS !== 'android';
+  // The field lost focus after it asked for the keyboard (the person put it away): it stops asking.
+  const blurred = useRef(false);
   useEffect(() => {
     if (!autoFocusOnMount.current) return undefined;
     // iOS: a frame after mounting, once the Done bar has linked to the field, so the keyboard comes
     // up with the bar already on it (focused in the mount frame, it intermittently arrived without
-    // the bar in its reported frame, leaving the footer under the bar). Android: now, and again a
-    // frame later, because it can refuse to show the keyboard for a field it doesn't serve yet; a
-    // field already served ignores the second request.
-    if (Platform.OS === 'android') input.current?.focus();
+    // the bar in its reported frame, leaving the footer under the bar). Android: see `askForKeyboard`.
+    // In an overlay, the first request waits for the overlay's own report that it is on screen.
+    if (!overlayShown) return undefined;
+    if (Platform.OS === 'android') return askForKeyboard(input, blurred);
     const later = requestAnimationFrame(() => input.current?.focus());
     return () => cancelAnimationFrame(later);
-  }, []);
+  }, [overlayShown]);
   const doneBar = showsDoneBar(Platform.OS, props.multiline);
   const field = (
     <TextInput
@@ -433,6 +587,7 @@ export function KeyboardTextInput({
         onFocus?.(event);
       }}
       onBlur={(event) => {
+        blurred.current = true;
         shell?.blurred(target);
         onBlur?.(event);
       }}
@@ -456,16 +611,18 @@ export function KeyboardTextInput({
 
 const styles = StyleSheet.create({
   fill: { flex: 1 },
-  shrink: { flexShrink: 1 },
+  // A sheet's frame fills the body it sits in (a large sheet has a height of its own, so the footer
+  // sits at its bottom) and gives way to a sheet that is capped by its content.
+  grow: { flexGrow: 1, flexShrink: 1 },
+  topFade: { position: 'absolute', top: 0, left: 0, right: 0, height: TOP_FADE_HEIGHT },
   edge: { height: StyleSheet.hairlineWidth },
   // A screen's gap between the scrolling content's cut edge and its pinned action: the design's
   // footer is `padding:16px 22px 24px` (`Whim Mobile.dc.html:427,459,487`), whose sides and bottom
   // `PrimaryAction` carries. A sheet spaces its own actions (`ReportSheet`'s Send keeps its margin).
   footer: { paddingTop: SPACING.md },
   naturalLineHeight: { lineHeight: undefined },
-  // 44: the iOS keyboard toolbar's height — no SPACING counterpart.
   doneBar: {
-    height: 44,
+    height: DONE_BAR_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',

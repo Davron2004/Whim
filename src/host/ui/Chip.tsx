@@ -9,7 +9,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Pressable, Text as RNText } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
-import { RADII, SPACE } from '../../design/tokens';
+import { RADII, SPACE, TYPE_SCALE } from '../../design/tokens';
 import { haptics } from '../haptics';
 import { Icon } from './Icon';
 import { timing, usePressFeedback } from './motion';
@@ -28,12 +28,17 @@ export interface ChipProps {
   disabled?: boolean;
 }
 
+/** What the 36 pt pill keeps above and below one `callout` line: at larger text the line grows and the
+ *  pill grows with it, instead of the label filling it edge to edge. */
+const PADDING_VERTICAL = (CHIP.height - TYPE_SCALE.callout.lineHeight) / 2;
+
 const styles = makeStyles(() => ({
   capsule: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     gap: SPACE[1],
     minHeight: CHIP.height,
+    paddingVertical: PADDING_VERTICAL,
     paddingHorizontal: CHIP.paddingHorizontal,
     borderRadius: RADII.full.radius,
     borderCurve: 'continuous' as const,

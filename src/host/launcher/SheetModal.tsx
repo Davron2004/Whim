@@ -5,7 +5,11 @@
  * uses — because a `Modal` mounts into its own native window and so reliably layers above a
  * WebView and the orb; a plain sibling view's stacking order over a hardware-accelerated WebView
  * is not guaranteed on Android. `transparent` keeps the screen underneath visible (a running
- * mini-app, or whatever screen opened the sheet) rather than painting over it.
+ * mini-app, or whatever screen opened the sheet) rather than painting over it. The `Modal` is the
+ * overlay queue's (`OverlayModal`): the sheet takes its turn on the surface it presents from, so
+ * one that sits inside a `Sheet`'s content is never presented while that sheet's own overlays are
+ * up or being dismissed, and one unmounted while up (a text-size change builds the sheet's content
+ * again) holds its place in the queue until the system has dismissed it.
  *
  * Closes on a scrim tap and on `onRequestClose` (Android delivers hardware back to a VISIBLE
  * Modal's `onRequestClose` instead of any `BackHandler` listener — see `back-policy.ts`'s
@@ -28,12 +32,13 @@
  * (`host="sheet"`) adds none.
  */
 import React, { useEffect, useRef } from 'react';
-import { Animated, Easing, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, Easing, Pressable, StyleSheet, View } from 'react-native';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MOTION, RADIUS, SPACING } from '../../sdk/theme';
 import { sheetBottomPadding } from './keyboard-shell';
 import { useKeyboardOverlap } from './KeyboardShell';
+import { OverlayModal, useOverlayTurn } from '../ui/OverlayModal';
 import { inkAlpha } from './theme';
 import { SHELL_PALETTE } from './theme';
 
@@ -53,10 +58,14 @@ export interface SheetModalProps {
 
 export default function SheetModal({ visible, onClose, children }: Readonly<SheetModalProps>) {
   const riseAnim = useRef(new Animated.Value(0)).current;
+  const turn = useOverlayTurn(visible, { onRefused: onClose });
+  const { open, up, exited } = turn;
 
   useEffect(() => {
-    if (!visible) {
+    if (!open) {
       riseAnim.setValue(0);
+      // Closing is instant: there is no exit to wait for before the `Modal` goes.
+      if (up) exited();
       return;
     }
     Animated.timing(riseAnim, {
@@ -65,16 +74,16 @@ export default function SheetModal({ visible, onClose, children }: Readonly<Shee
       easing: Easing.bezier(0.2, 0.8, 0.2, 1),
       useNativeDriver: true,
     }).start();
-  }, [visible, riseAnim]);
+  }, [open, up, exited, riseAnim]);
 
   return (
-    <Modal visible={visible} transparent animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
+    <OverlayModal turn={turn} onRequestClose={onClose}>
       <SafeAreaProvider>
         <SheetFrame riseAnim={riseAnim} onClose={onClose}>
           {children}
         </SheetFrame>
       </SafeAreaProvider>
-    </Modal>
+    </OverlayModal>
   );
 }
 

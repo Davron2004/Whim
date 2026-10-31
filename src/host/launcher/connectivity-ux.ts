@@ -10,6 +10,14 @@
  */
 
 import type { Connectivity } from './connectivity';
+import { GenerationClientError } from './transport-shared';
+
+/** Whether a failed request of the app's own never got an answer from the server — the one kind of
+ *  failure that says anything about connectivity. A refusal, an HTTP error or an unusable reply all
+ *  prove a server answered, and an abort is the person leaving, so none of them count. */
+export function isNetworkFailure(error: unknown): boolean {
+  return error instanceof GenerationClientError && error.kind === 'network';
+}
 
 /** The home screen's quiet indicator: visible only once the session state is `'offline'` — never
  *  for `'unknown'` (no address configured yet, spec "MUST NOT appear when no server address is

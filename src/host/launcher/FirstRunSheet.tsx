@@ -32,7 +32,7 @@ import { Sheet } from '../ui/Sheet';
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
 import { makeStyles, PRESS_RETENTION } from '../ui/tokens-pure';
-import { consentWhatsNewText, LEGAL_COPY } from './copy';
+import { consentWhatsNewText, firstRunSentText, LEGAL_COPY } from './copy';
 import { disclosureOf } from './consent-disclosure';
 import KeyboardShell from './KeyboardShell';
 import { otherLegalLanguage, privacyPolicyUrl, termsUrl, type LegalLanguage } from './legal-language';
@@ -60,8 +60,6 @@ export interface FirstRunSheetProps {
   onAgree: () => void;
   /** Every way out that grants and accepts nothing. */
   onClose: () => void;
-  /** The sheet has finished closing (`Sheet`'s `onClosed`): the next sheet may be presented. */
-  onClosed?: () => void;
 }
 
 const BOX = 24;
@@ -73,19 +71,31 @@ const styles = makeStyles((t) => ({
   bullet: { flexDirection: 'row' as const, gap: SPACE[2] },
   bulletText: { flex: 1 },
   termsLine: { flexDirection: 'row' as const, alignItems: 'center' as const, backgroundColor: t.colors['sheet-group'], borderRadius: RADII.lg.radius, borderCurve: 'continuous' as const },
-  termsCheck: { flex: 1, minHeight: LAYOUT.listRowMinHeight, flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], paddingHorizontal: LAYOUT.listRowPaddingHorizontal },
+  termsCheck: {
+    flex: 1,
+    minHeight: LAYOUT.listRowMinHeight,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: SPACE[3],
+    paddingVertical: LAYOUT.listRowPaddingVertical,
+    paddingHorizontal: LAYOUT.listRowPaddingHorizontal,
+  },
+  // The words take what the box leaves and wrap inside it, however long the language makes them.
+  termsWords: { flex: 1 },
   // A target of its own beside the checkbox row, never a `hitSlop` that would reach into it.
   termsLink: { minWidth: t.touchTarget, minHeight: t.touchTarget, alignItems: 'center' as const, justifyContent: 'center' as const },
   box: { width: BOX, height: BOX, borderRadius: RADII.sm.radius, borderWidth: 2, alignItems: 'center' as const, justifyContent: 'center' as const },
   footer: { paddingHorizontal: LAYOUT.gutter, paddingTop: LAYOUT.actionAreaTop, paddingBottom: LAYOUT.actionAreaBottom, gap: SPACE[1] },
 }));
 
-/** The whole consent disclosure, in the order the spec lists it. */
+/** The whole consent disclosure, in the order the spec lists it: the consent screen's own lead
+ *  first, then its sections. The sheet's lead above is shorter, so nothing repeats while it is folded. */
 function Disclosure({ language }: Readonly<{ language: LegalLanguage }>) {
   const s = styles(useTokens());
   const { sections, closing } = disclosureOf(LEGAL_COPY[language]);
   return (
     <View style={s.details}>
+      <Text color="text-2">{LEGAL_COPY[language].consentLead}</Text>
       {sections.map((section) => (
         <View key={section.title} style={s.notice}>
           <Text type="footnote" header color="text-2">
@@ -131,7 +141,9 @@ function TermsRow({ language, accepted, onToggle }: Readonly<{ language: LegalLa
         <View style={[s.box, boxLook]}>
           {accepted ? <Icon name="check" size={16} color={t.colors['on-ink']} /> : null}
         </View>
-        <Text>{copy.firstRunTermsCheck}</Text>
+        <View style={s.termsWords}>
+          <Text>{copy.firstRunTermsCheck}</Text>
+        </View>
       </Pressable>
       <Pressable
         onPress={() => Linking.openURL(termsUrl(language))}
@@ -183,15 +195,15 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
         <Notice key={line} message={line} />
       ))}
       <Text type="title2">{copy.consentTitle}</Text>
-      <Text color="text-2">{copy.consentLead}</Text>
+      <Text color="text-2">{copy.firstRunLead}</Text>
       <GroupedSection on="sheet">
-        <GroupedRow icon="arrow-up" title={copy.firstRunSentTitle} subtitle={copy.firstRunSent} />
+        <GroupedRow icon="arrow-up" title={copy.firstRunSentTitle} subtitle={firstRunSentText(copy)} />
         <GroupedRow icon="phone" title={copy.firstRunStaysTitle} subtitle={copy.firstRunStays} />
         <GroupedRow icon="lock" title={copy.firstRunNeverTitle} subtitle={copy.firstRunNever} />
       </GroupedSection>
       <GroupedSection on="sheet">
         <GroupedRow title={copy.privacyPolicyLabel} trailing={{ kind: 'external' }} onPress={() => Linking.openURL(privacyPolicyUrl(language))} />
-        <GroupedRow title={copy.firstRunDetails} trailing={{ kind: 'chevron' }} onPress={() => setExpanded((open) => !open)} />
+        <GroupedRow title={copy.firstRunDetails} trailing={{ kind: 'chevron', expanded }} onPress={() => setExpanded((open) => !open)} />
       </GroupedSection>
       {expanded ? <Disclosure language={language} /> : null}
       <GroupedSection on="sheet">
@@ -202,9 +214,9 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
   );
 }
 
-export function FirstRunSheet({ visible, onClosed, ...body }: Readonly<FirstRunSheetProps>) {
+export function FirstRunSheet({ visible, ...body }: Readonly<FirstRunSheetProps>) {
   return (
-    <Sheet visible={visible} onClose={body.onClose} onClosed={onClosed} detent="large">
+    <Sheet visible={visible} onClose={body.onClose} detent="large">
       <FirstRunBody {...body} />
     </Sheet>
   );

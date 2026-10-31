@@ -34,10 +34,18 @@ export const KeyboardEvents = {
   },
 };
 
+/** What the platform does with a request to show the keyboard for the focused input; a test rig
+ *  that models it sets `handler`. `asked` counts `setFocusTo('current')` calls. */
+export const keyboardRequests: { asked: number; handler: (() => void) | null } = { asked: 0, handler: null };
+
 export const KeyboardController = {
   isVisible: () => keyboardState.visible,
   state: () => data(keyboardState.height),
   dismiss: async () => { keyboardState.dismissed += 1; },
+  setFocusTo: (_direction: string) => {
+    keyboardRequests.asked += 1;
+    keyboardRequests.handler?.();
+  },
 };
 
 export function useGenericKeyboardHandler(handler: Handler, _deps?: unknown[]): void {
@@ -88,11 +96,19 @@ export function keyboardSubscriptions(): ReadonlySet<unknown> {
 export function resetKeyboard(): void {
   keyboardState.height = 0;
   keyboardState.visible = false;
+  keyboardRequests.asked = 0;
+  keyboardRequests.handler = null;
 }
 
 /** One frame of a keyboard animation still running: the handlers' `onMove` only. */
 export function stepKeyboard(height: number): void {
   for (const ref of [...handlers]) ref.current.onMove?.({ height, progress: height > 0 ? 1 : 0, duration: 250, target: -1 });
+}
+
+/** The library's end report on its own, with no start before it: the keyboard's rest as it settled
+ *  it, whatever the frames before it were. */
+export function endKeyboard(height: number): void {
+  for (const ref of [...handlers]) ref.current.onEnd?.({ height, progress: height > 0 ? 1 : 0, duration: 250, target: -1 });
 }
 
 /** One JS keyboard event on its own, as the library sends it. */

@@ -93,7 +93,9 @@ export async function runShellControlsUiTests(h: Harness): Promise<void> {
       const doc = documentedType(token);
       const tree = await renderScreen(<Text type={token}>Pour Timer</Text>);
       const face = style(one(tree, 'Text'));
-      h.eq([face.fontSize, face.lineHeight, face.fontWeight], [doc.size, doc.line, String(doc.weight)], `${token} size, line and weight`);
+      h.eq([face.fontSize, face.fontWeight], [doc.size, String(doc.weight)], `${token} size and weight`);
+      const line = face.lineHeight as number;
+      h.ok(line < doc.line && doc.line - line < 0.001, `${token} line: the documented ${doc.line}, set under it by less than a thousandth of a point so a wrapped last line always fits (got ${line})`);
       h.ok(Math.abs((face.letterSpacing as number) - doc.tracking * doc.size) < 0.001, `${token} tracks ${doc.tracking} em (got ${face.letterSpacing} pt)`);
       await unmountScreen(tree);
     }

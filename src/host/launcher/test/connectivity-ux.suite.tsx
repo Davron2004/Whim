@@ -6,6 +6,7 @@ import HomeScreen from '../HomeScreen';
 import { DescribePage } from '../DescribePage';
 import { FirstRunSheet } from '../FirstRunSheet';
 import LauncherRoot from '../LauncherRoot';
+import UpdateRequiredScreen from '../UpdateRequiredScreen';
 import { COPY } from '../copy';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { SEED_VERSION } from '../seed';
@@ -15,6 +16,8 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { resetNativeStorage } from './native-storage';
 import { button, press, renderScreen, unmountScreen, textOf, captureTimeouts, hostType, isHost } from './react-screen';
 import { renderHome, tile } from './home-rig';
+import { setAppState } from './native-host';
+import { json, settle, waitFor, withLauncher, type Launcher } from './rendered-launcher';
 
 const noop = () => {};
 const app: InstalledApp = {
@@ -124,4 +127,212 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
       }
     });
   }
+
+  await runRequestEvidenceTests(h);
 }
+
+/** The network the launcher's fake server sits behind. */
+interface Network {
+  /** False: every request fails at the network level, as with airplane mode on. */
+  up: boolean;
+  /** True: the health route answers but every other request fails at the network level. */
+  requestsDown: boolean;
+  /** The status the server answers a `/v1` request with while the network is up. */
+  answer: number;
+}
+
+/** Runs `body` with `Date.now` under the test's control, so the foreground floor (ten seconds
+ *  between probes asked for by returns to the foreground) passes without waiting. Installed before
+ *  the launcher renders, because the loop reads the clock it finds then. */
+async function withSkewedClock(body: (pass: (ms: number) => void) => Promise<void>): Promise<void> {
+  const realNow = Date.now;
+  let skew = 0;
+  Date.now = () => realNow() + skew;
+  try {
+    await body((ms) => { skew += ms; });
+  } finally {
+    Date.now = realNow;
+  }
+}
+
+/** A consented launcher on Home with a healthy server whose startup probe has answered, so the
+ *  session is online. `net` steers the network from then on; `pass` lets time go by. */
+async function onlineLauncher(
+  run: (launcher: Launcher, net: Network, pass: (ms: number) => void) => Promise<void>,
+): Promise<void> {
+  const net: Network = { up: true, requestsDown: false, answer: 503 };
+  const reach = <T,>(answer: () => T): T => {
+    if (!net.up) throw new TypeError('Network request failed');
+    return answer();
+  };
+  await withSkewedClock((pass) => withLauncher(
+    {
+      health: () => reach(() => json({ service: 'whim-server' })),
+      server: () => {
+        if (net.requestsDown) throw new TypeError('Network request failed');
+        return reach(() => new Response('', { status: net.answer }));
+      },
+    },
+    async (launcher) => {
+      await settle();
+      try {
+        await run(launcher, net, pass);
+      } finally {
+        await TestRenderer.act(async () => setAppState('active'));
+      }
+    },
+  ));
+}
+
+async function advance(launcher: Launcher, delay: number): Promise<void> {
+  await TestRenderer.act(async () => launcher.clock.fire(delay));
+  await settle();
+}
+
+/** Every timer the connectivity loop could have pending: the confirmation and the backoff steps. */
+const loopTimers = (launcher: Launcher) =>
+  [2000, 4000, 8000, 16000, 30000].reduce((sum, delay) => sum + launcher.clock.count(delay), 0);
+
+/** The app goes to the background and comes back `away` ms later. */
+async function leaveAndReturn(pass: (ms: number) => void, away: number): Promise<void> {
+  await TestRenderer.act(async () => setAppState('background'));
+  pass(away);
+  await TestRenderer.act(async () => setAppState('active'));
+  await settle();
+}
+
+async function typeAndContinue(launcher: Launcher): Promise<void> {
+  const { tree } = launcher;
+  await press(createButton(tree));
+  const field = tree.root.find(isHost('TextInput'));
+  await TestRenderer.act(async () => field.props.onChangeText('A tea timer'));
+  await press(button(tree, COPY.flowContinue));
+  await waitFor(() => launcher.paths().includes('/v1/clarify'), 'the plan request');
+  await settle();
+}
+
+async function runRequestEvidenceTests(h: Harness): Promise<void> {
+  await h.test('Launcher: an online Home with nothing happening schedules no probe', () =>
+    onlineLauncher(async (launcher) => {
+      h.eq(launcher.probes.length, 1, 'only the startup probe was sent');
+      h.eq(loopTimers(launcher), 0, 'and no timer waits to send another');
+      h.eq(noticeCount(launcher.tree), 0, 'a reachable server shows no notice');
+    }));
+
+  await h.test('Launcher: a plan request that gets no answer, with the probe failing too, turns the offline notice on at once', () =>
+    onlineLauncher(async (launcher, net) => {
+      const probesBefore = launcher.probes.length;
+      net.up = false;
+      await typeAndContinue(launcher);
+      h.eq(launcher.probes.length - probesBefore, 1, 'the failed request was confirmed by one probe');
+      h.eq(noticeCount(launcher.tree), 1, 'and the notice shows without waiting for anything else');
+    }));
+
+  await h.test('Launcher: a plan request that gets no answer while the server answers the probe does not turn the notice on', () =>
+    onlineLauncher(async (launcher, net) => {
+      const probesBefore = launcher.probes.length;
+      net.requestsDown = true;
+      await typeAndContinue(launcher);
+      h.eq(launcher.probes.length - probesBefore, 1, 'the failed request was checked by one probe');
+      h.eq(noticeCount(launcher.tree), 0, 'a server that answers the probe is online');
+      h.eq(loopTimers(launcher), 0, 'and nothing is left scheduled');
+    }));
+
+  await h.test('Launcher: a plan request the server answered with an error does not mean offline', () =>
+    onlineLauncher(async (launcher, net) => {
+      const probesBefore = launcher.probes.length;
+      net.answer = 500;
+      await typeAndContinue(launcher);
+      h.eq(launcher.probes.length - probesBefore, 0, 'no probe was asked for');
+      h.eq(noticeCount(launcher.tree), 0, 'a server that answered is online');
+    }));
+
+  await h.test('Launcher: returns to the foreground probe at most once per ten seconds', () =>
+    onlineLauncher(async (launcher, _net, pass) => {
+      const before = launcher.probes.length;
+      await leaveAndReturn(pass, 4000);
+      h.eq(launcher.probes.length - before, 0, 'a return soon after the startup probe sends none');
+
+      await leaveAndReturn(pass, 7000);
+      h.eq(launcher.probes.length - before, 1, 'a return after the floor sends one');
+
+      await leaveAndReturn(pass, 3000);
+      await leaveAndReturn(pass, 3000);
+      h.eq(launcher.probes.length - before, 1, 'two more inside the floor send none');
+
+      await leaveAndReturn(pass, 5000);
+      h.eq(launcher.probes.length - before, 2, 'the next one after the floor sends another');
+    }));
+
+  await h.test('Launcher: a launcher opened while the app is inactive sends its startup probe on the first return to active', async () => {
+    await TestRenderer.act(async () => setAppState('inactive'));
+    try {
+      await withLauncher({ server: () => new Response('', { status: 503 }) }, async (launcher) => {
+        await settle();
+        h.eq(launcher.probes.length, 0, 'nothing is sent while the app is not active');
+        await TestRenderer.act(async () => setAppState('active'));
+        await settle();
+        h.eq(launcher.probes.length, 1, 'the startup probe goes out when it is');
+      });
+    } finally {
+      await TestRenderer.act(async () => setAppState('active'));
+    }
+  });
+
+  await h.test('Launcher: one failed probe on return does not flash the notice; the second confirms it and a success clears it', () =>
+    onlineLauncher(async (launcher, net, pass) => {
+      net.up = false;
+      await leaveAndReturn(pass, 20000);
+      h.eq(noticeCount(launcher.tree), 0, 'one failed probe is not an outage');
+      h.eq(launcher.clock.count(2000), 1, 'it is confirmed after the first backoff step');
+
+      await advance(launcher, 2000);
+      h.eq(noticeCount(launcher.tree), 1, 'the second failure shows the notice');
+
+      await TestRenderer.act(async () => setAppState('background'));
+      h.eq(loopTimers(launcher), 0, 'no backoff probe waits in the background');
+
+      pass(20000);
+      net.up = true;
+      await TestRenderer.act(async () => setAppState('active'));
+      await settle();
+      h.eq(noticeCount(launcher.tree), 0, 'the return found the server and cleared the notice');
+      h.eq(loopTimers(launcher), 0, 'and nothing is left scheduled');
+    }));
+
+  await h.test('Launcher: offline in the foreground, the backoff probe clears the notice on its first success', () =>
+    onlineLauncher(async (launcher, net) => {
+      net.up = false;
+      await typeAndContinue(launcher);
+      h.eq(noticeCount(launcher.tree), 1, 'precondition: the notice is on');
+      h.eq(launcher.clock.count(2000), 1, 'the backoff probe is waiting');
+
+      net.up = true;
+      await advance(launcher, 2000);
+      await settle();
+      h.eq(launcher.probes.length, 3, 'the backoff probe was sent');
+      h.eq(noticeCount(launcher.tree), 0, 'and its success cleared the notice');
+      h.eq(loopTimers(launcher), 0, 'with nothing scheduled after it');
+    }));
+
+  await h.test('Launcher: a return to the foreground never brings back an update screen the person dismissed', () =>
+    outdatedBuildLauncher(async (launcher, pass) => {
+      const { tree } = launcher;
+      await waitFor(() => tree.root.findAllByType(UpdateRequiredScreen).length === 1, 'the launch-time update screen');
+      await press(button(tree, COPY.updateNotNow));
+      const probesBefore = launcher.probes.length;
+      await leaveAndReturn(pass, 20000);
+      h.eq(launcher.probes.length - probesBefore, 1, 'the return did probe');
+      h.eq(tree.root.findAllByType(UpdateRequiredScreen).length, 0, 'and the dismissed update screen stayed away');
+    }));
+}
+
+/** A launcher whose server demands a build newer than any installed one. */
+const outdatedBuildLauncher = (run: (launcher: Launcher, pass: (ms: number) => void) => Promise<void>) =>
+  withSkewedClock((pass) => withLauncher(
+    {
+      health: () => json({ ok: true, service: 'whim-server', minBuild: { ios: Number.MAX_SAFE_INTEGER, android: Number.MAX_SAFE_INTEGER } }),
+      server: () => new Response('', { status: 503 }),
+    },
+    (launcher) => run(launcher, pass),
+  ));

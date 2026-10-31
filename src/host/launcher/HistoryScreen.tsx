@@ -16,7 +16,7 @@
 // summary) and render through the one shared `WhimProse` renderer; everything else on this
 // screen is product copy and is never marked (Whim Syntax rule 7).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { KIND_BADGE_COLORS, RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { SummaryKind } from '@whim/contract';
 import { InstalledApp } from './app-index';
@@ -152,6 +152,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { fontScale } = useWindowDimensions();
 
   const load = () =>
     runHistoryLoad(async () => {
@@ -257,70 +258,76 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <View style={[styles.header, { borderBottomColor: p.cardBorder }]}>
-        <TouchableOpacity
-          onPress={onBack}
-          hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel={COPY.backLabel}
-          style={[styles.backBtn, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-        >
-          <View style={[styles.backChevron, { borderColor: p.text }]} />
-        </TouchableOpacity>
-        <View style={styles.headerText}>
-          <Text style={TYPE_SCALE.screenTitle}>
-            <Text style={{ color: appHue }}>{app.name}</Text>
-            <Text style={{ color: p.text }}>{' ' + COPY.historyTitleSuffix}</Text>
-          </Text>
-          {oldest && (
-            <Text style={[TYPE_SCALE.caption, styles.subtitle, { color: p.textMuted }]}>
-              {historySubtitle(rows.length, formatRelativeTimestamp(oldest.createdAt))}
+      {/* Keyed by the text size, as a sheet's frame is: iOS keeps every text measured at the size it
+          was first laid out at, so a size changed while History shows left the title and the rows cut
+          to pieces. What History holds (the versions, the open row, the filter, an open question) is
+          state above this and survives; the list's scroll position starts again. */}
+      <React.Fragment key={fontScale}>
+        <View style={[styles.header, { borderBottomColor: p.cardBorder }]}>
+          <TouchableOpacity
+            onPress={onBack}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={COPY.backLabel}
+            style={[styles.backBtn, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+          >
+            <View style={[styles.backChevron, { borderColor: p.text }]} />
+          </TouchableOpacity>
+          <View style={styles.headerText}>
+            <Text style={TYPE_SCALE.screenTitle}>
+              <Text style={{ color: appHue }}>{app.name}</Text>
+              <Text style={{ color: p.text }}>{' ' + COPY.historyTitleSuffix}</Text>
             </Text>
-          )}
+            {oldest && (
+              <Text style={[TYPE_SCALE.caption, styles.subtitle, { color: p.textMuted }]}>
+                {historySubtitle(rows.length, formatRelativeTimestamp(oldest.createdAt))}
+              </Text>
+            )}
+          </View>
+          <TouchableOpacity
+            onPress={onReport}
+            hitSlop={10}
+            accessibilityRole="button"
+            style={[styles.headerReportBtn, { borderColor: p.cardBorder }]}
+          >
+            <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{COPY.historyReportAction}</Text>
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          onPress={onReport}
-          hitSlop={10}
-          accessibilityRole="button"
-          style={[styles.headerReportBtn, { borderColor: p.cardBorder }]}
-        >
-          <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{COPY.historyReportAction}</Text>
-        </TouchableOpacity>
-      </View>
 
-      {!loading && (
-      <View style={styles.pillRow}>
-        {pills.map(pill => {
-          const selected = pill.key === filter;
-          const count = pill.key === 'all' ? undefined : counts[pill.key];
-          if (pill.key !== 'all' && count === 0) return null;
-          return (
-            <TouchableOpacity
-              key={pill.key}
-              onPress={() => setFilter(pill.key)}
-              style={[
-                styles.pill,
-                { borderColor: p.cardBorder, backgroundColor: selected ? p.text : p.bg },
-              ]}
-            >
-              <Text style={[TYPE_SCALE.caption, { color: selected ? p.onAccent : p.textMuted }]}>{pill.label}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-      )}
-
-      {loading ? (
-        <HistoryLoadingRows />
-      ) : (
-        <FlatList data={filtered} keyExtractor={row => row.id} renderItem={renderRow} contentContainerStyle={styles.list} />
-      )}
-
-      {toast && (
-        <View style={[styles.toast, { backgroundColor: p.text }]}>
-          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{toast.text}</Text>
+        {!loading && (
+        <View style={styles.pillRow}>
+          {pills.map(pill => {
+            const selected = pill.key === filter;
+            const count = pill.key === 'all' ? undefined : counts[pill.key];
+            if (pill.key !== 'all' && count === 0) return null;
+            return (
+              <TouchableOpacity
+                key={pill.key}
+                onPress={() => setFilter(pill.key)}
+                style={[
+                  styles.pill,
+                  { borderColor: p.cardBorder, backgroundColor: selected ? p.text : p.bg },
+                ]}
+              >
+                <Text style={[TYPE_SCALE.caption, { color: selected ? p.onAccent : p.textMuted }]}>{pill.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
-      )}
+        )}
+
+        {loading ? (
+          <HistoryLoadingRows />
+        ) : (
+          <FlatList data={filtered} keyExtractor={row => row.id} renderItem={renderRow} contentContainerStyle={styles.list} />
+        )}
+
+        {toast && (
+          <View style={[styles.toast, { backgroundColor: p.text }]}>
+            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{toast.text}</Text>
+          </View>
+        )}
+      </React.Fragment>
 
       {/* The confirm sheet (E7/D11): the SAFE option (`Cancel`) is the large, full-width button; the
           consequential action is demoted to plain text beneath it — never the other way around. */}

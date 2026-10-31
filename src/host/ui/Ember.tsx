@@ -37,6 +37,15 @@ const HIDDEN = {
   importantForAccessibility: 'no-hide-descendants' as const,
 };
 
+/** The activity of an ember that is not following a stream (the empty Home, the composer bar): the
+ *  mockup's still, fully lit mark rather than the 0.55 floor that reads as a dim brown in dark. */
+export const RESTING_ACTIVITY = 1;
+
+/** The halo is the ember's own 48 grid plus this margin on every side, so its circle (r 24 about the
+ *  body's centre, 5 below the grid's) fades out inside the drawing instead of being cut flat. */
+const HALO_MARGIN = 12;
+const HALO_GRID = EMBER_VIEWBOX + 2 * HALO_MARGIN;
+
 /** An id usable inside an SVG `url(#…)`. */
 function useSvgId(prefix: string): string {
   return `${prefix}${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
@@ -86,12 +95,15 @@ export function Ember({ size, state, activity = 0, spark }: Readonly<EmberProps>
   const bodyId = useSvgId('ember-body');
   const haloId = useSvgId('ember-halo');
   const box = { width: px, height: px };
+  const haloSide = (px * HALO_GRID) / EMBER_VIEWBOX;
+  const haloOffset = -(px * HALO_MARGIN) / EMBER_VIEWBOX;
+  const haloBox = { position: 'absolute' as const, top: haloOffset, start: haloOffset, width: haloSide, height: haloSide };
   const viewBox = `0 0 ${EMBER_VIEWBOX} ${EMBER_VIEWBOX}`;
 
   return (
     <Animated.View style={[box, flare]} {...HIDDEN}>
-      <Animated.View style={[StyleSheet.absoluteFill, haloStyle]}>
-        <Svg width={px} height={px} viewBox={viewBox}>
+      <Animated.View style={[haloBox, haloStyle]} pointerEvents="none">
+        <Svg width={haloSide} height={haloSide} viewBox={`${-HALO_MARGIN} ${-HALO_MARGIN} ${HALO_GRID} ${HALO_GRID}`}>
           <Defs>
             <RadialGradient id={haloId} cx="50%" cy="50%" r="50%">
               <Stop offset="0" stopColor={GLOW.halo} />

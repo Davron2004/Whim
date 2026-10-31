@@ -355,12 +355,22 @@ export const COPY = {
   // The first-run sheet's three summary rows, its expandable "Full details" (the disclosure above),
   // its Language row and its terms checkbox. Prefixed `firstRun`, not `consent`: the privacy page
   // quotes every `consent` key word for word, and these are a short form of what it already quotes.
-  // With `consentLead` the first row names every category sent and every screen-named recipient
-  // role and what they are for, the others what stays on the phone and what Whim never does
-  // (`FIRST_RUN_COVERAGE` says which key names what).
+  // The first row is one sentence per manifest category, per screen-named recipient role and for
+  // the purpose, joined in the order of `FIRST_RUN_SENT_KEYS`; `FIRST_RUN_COVERAGE` says which key
+  // names what. The lead says what the spec has it say (what you ask for goes to our server, AI
+  // companies write the code); the row's AI sentence says which things they receive, so no sentence
+  // is on the sheet twice.
+  firstRunLead: 'To build or change an app, Whim sends what you ask for to our server, and AI companies that work for us write the code.',
   firstRunSentTitle: 'What’s sent, and who gets it',
-  firstRunSent:
-    'What you ask for, your answers and the plan you approve. An ID Whim makes for this phone. Error details if something goes wrong. They go to AnyCognition, which makes Whim, and to the companies that work for us, including the AI companies that write the code. Apple or Google may check that the request is from the real Whim app. Authorities get information when the law requires it. All of it is used to make your apps and run Whim.',
+  firstRunSentRequest: 'What you ask for, your answers and the plan you approve.',
+  firstRunSentDevice: 'An ID Whim makes for this phone.',
+  firstRunSentErrors: 'Error details if something goes wrong.',
+  firstRunWhoAnycognition: 'They go to AnyCognition, which makes Whim.',
+  firstRunWhoHosting: 'Companies that host Whim for us handle them too.',
+  firstRunWhoAi: 'The AI companies get what you ask for, your answers and the plan.',
+  firstRunWhoPlatform: 'Apple or Google may check that the request is from the real Whim app.',
+  firstRunWhoAuthorities: 'Authorities get information when the law requires it.',
+  firstRunWhy: 'All of it is used to make your apps and run Whim.',
   firstRunStaysTitle: 'What stays on your phone',
   firstRunStays: 'What you save in your apps. Nobody at Whim can read it, and Whim doesn’t send it anywhere.',
   firstRunNeverTitle: 'What we never do',
@@ -600,8 +610,17 @@ export const LEGAL_COPY_KEYS = [
   'consentOutdatedLine',
   'consentAgree',
   'consentDecline',
+  'firstRunLead',
   'firstRunSentTitle',
-  'firstRunSent',
+  'firstRunSentRequest',
+  'firstRunSentDevice',
+  'firstRunSentErrors',
+  'firstRunWhoAnycognition',
+  'firstRunWhoHosting',
+  'firstRunWhoAi',
+  'firstRunWhoPlatform',
+  'firstRunWhoAuthorities',
+  'firstRunWhy',
   'firstRunStaysTitle',
   'firstRunStays',
   'firstRunNeverTitle',
@@ -673,9 +692,17 @@ const FRENCH: LegalCopyTable = {
   consentOutdatedLine: 'Ce texte a changé depuis que vous l’avez accepté.',
   consentAgree: 'Accepter d’envoyer mes descriptions',
   consentDecline: 'Pas maintenant',
+  firstRunLead: 'Pour créer ou modifier une app, Whim envoie ce que vous demandez à notre serveur, et des entreprises d’IA qui travaillent pour nous écrivent le code.',
   firstRunSentTitle: 'Ce qui est envoyé, et qui le reçoit',
-  firstRunSent:
-    'Ce que vous demandez, vos réponses et le plan que vous approuvez. Un identifiant que Whim crée pour ce téléphone. Des détails d’erreur quand quelque chose ne va pas. Ils vont à AnyCognition, qui conçoit Whim, et aux entreprises qui travaillent pour nous, dont les entreprises d’IA qui écrivent le code. Apple ou Google peuvent vérifier que la demande vient de la véritable app Whim. Les autorités reçoivent des renseignements lorsque la loi l’exige. Le tout sert à créer vos apps et à faire fonctionner Whim.',
+  firstRunSentRequest: 'Ce que vous demandez, vos réponses et le plan que vous approuvez.',
+  firstRunSentDevice: 'Un identifiant que Whim crée pour ce téléphone.',
+  firstRunSentErrors: 'Des détails d’erreur quand quelque chose ne va pas.',
+  firstRunWhoAnycognition: 'Ils vont à AnyCognition, qui conçoit Whim.',
+  firstRunWhoHosting: 'Les entreprises qui hébergent Whim pour nous les traitent aussi.',
+  firstRunWhoAi: 'Les entreprises d’IA reçoivent ce que vous demandez, vos réponses et le plan.',
+  firstRunWhoPlatform: 'Apple ou Google peuvent vérifier que la demande vient de la véritable app Whim.',
+  firstRunWhoAuthorities: 'Les autorités reçoivent des renseignements lorsque la loi l’exige.',
+  firstRunWhy: 'Le tout sert à créer vos apps et à faire fonctionner Whim.',
   firstRunStaysTitle: 'Ce qui reste sur votre téléphone',
   firstRunStays: 'Ce que vous enregistrez dans vos apps. Personne chez Whim ne peut le lire, et Whim ne l’envoie nulle part.',
   firstRunNeverTitle: 'Ce que nous ne faisons jamais',
@@ -703,15 +730,21 @@ const FRENCH: LegalCopyTable = {
  *  (`checks/test/repo/consent-coverage.suite.ts`) reads every table here. */
 export const LEGAL_COPY: Readonly<Record<LegalLanguage, LegalCopyTable>> = { en: COPY, fr: FRENCH };
 
-/** Which keys put each disclosure-manifest category and recipient role on the consent screen
- *  (legal-surface-v2 design D4). Plain manifest ids: the app never imports the manifest. The
- *  coverage check requires an entry for every on-screen category and screen-named role of the
- *  current manifest, each key non-empty in every `LEGAL_COPY` table; the consent UI suite requires
- *  the screen to render every key named here. */
-export const CONSENT_SCREEN_COVERAGE: {
+/** Which copy keys put each disclosure-manifest category, each screen-named recipient role and the
+ *  purpose on a surface. Plain manifest ids: the app never imports the manifest. */
+interface DisclosureCoverage {
   readonly categories: Readonly<Record<string, readonly LegalCopyKey[]>>;
   readonly roles: Readonly<Record<string, readonly LegalCopyKey[]>>;
-} = {
+  /** Why the data is sent. */
+  readonly purpose: readonly LegalCopyKey[];
+}
+
+/** Which keys put each disclosure-manifest category and recipient role on the consent screen
+ *  (legal-surface-v2 design D4). The coverage check requires an entry for every on-screen category
+ *  and screen-named role of the current manifest and for the purpose, each key non-empty in every
+ *  `LEGAL_COPY` table and its text naming what the entry stands for (that check holds the words);
+ *  the consent UI suite requires the screen to render every key named here. */
+export const CONSENT_SCREEN_COVERAGE: DisclosureCoverage = {
   categories: {
     'request-material': ['consentSentRequest', 'consentSentEdit'],
     'phone-id': ['consentSentDevice'],
@@ -724,29 +757,45 @@ export const CONSENT_SCREEN_COVERAGE: {
     platform: ['consentWhoPlatform'],
     authorities: ['consentWhoAuthorities'],
   },
+  purpose: ['consentWhy'],
 };
 
-/** Which keys put each disclosure-manifest category and screen-named recipient role on the first-run
- *  sheet's first layer, which is always visible: the title and lead (`consentLead` names the AI
- *  companies and what is sent to Whim's server) and the three summary rows. Same shape and same
- *  check as `CONSENT_SCREEN_COVERAGE`; the first layer is the short form of that disclosure and may
- *  not leave a category or role out of it. */
-export const FIRST_RUN_COVERAGE: {
-  readonly categories: Readonly<Record<string, readonly LegalCopyKey[]>>;
-  readonly roles: Readonly<Record<string, readonly LegalCopyKey[]>>;
-} = {
+/** The keys of the first-run sheet's "What's sent" row, in the order its sentences read. */
+export const FIRST_RUN_SENT_KEYS = [
+  'firstRunSentRequest',
+  'firstRunSentDevice',
+  'firstRunSentErrors',
+  'firstRunWhoAnycognition',
+  'firstRunWhoHosting',
+  'firstRunWhoAi',
+  'firstRunWhoPlatform',
+  'firstRunWhoAuthorities',
+  'firstRunWhy',
+] as const satisfies readonly LegalCopyKey[];
+
+/** The row's text in `table`'s language. */
+export function firstRunSentText(table: LegalCopyTable): string {
+  return FIRST_RUN_SENT_KEYS.map((key) => table[key]).join(' ');
+}
+
+/** Which keys put each disclosure-manifest category, screen-named recipient role and the purpose on
+ *  the first-run sheet's first layer, which is always visible: one sentence each, joined into the
+ *  "What's sent" row. Same shape and same check as `CONSENT_SCREEN_COVERAGE`; the first layer is
+ *  the short form of that disclosure and may not leave a category or role out of it. */
+export const FIRST_RUN_COVERAGE: DisclosureCoverage = {
   categories: {
-    'request-material': ['firstRunSent'],
-    'phone-id': ['firstRunSent'],
-    'error-details': ['firstRunSent'],
+    'request-material': ['firstRunSentRequest'],
+    'phone-id': ['firstRunSentDevice'],
+    'error-details': ['firstRunSentErrors'],
   },
   roles: {
-    anycognition: ['firstRunSent'],
-    'ai-providers': ['consentLead', 'firstRunSent'],
-    'hosting-providers': ['firstRunSent'],
-    platform: ['firstRunSent'],
-    authorities: ['firstRunSent'],
+    anycognition: ['firstRunWhoAnycognition'],
+    'ai-providers': ['firstRunWhoAi'],
+    'hosting-providers': ['firstRunWhoHosting'],
+    platform: ['firstRunWhoPlatform'],
+    authorities: ['firstRunWhoAuthorities'],
   },
+  purpose: ['firstRunWhy'],
 };
 
 /** The what's-new line for a grant given under `grantVersion`, in `language`, or `undefined` when

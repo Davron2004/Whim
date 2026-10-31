@@ -14,7 +14,7 @@
  * `AppTile` is the whole cell: plate, name under it (two lines, then ellipsis), the line that states
  * the state, and the touch area (at least 64 × 84). Its label is the name plus the state ("Pour
  * Timer, making") with a hint for what a double tap does. A long-press of 350 ms plays the haptic
- * and reports the cell's rect in window coordinates, which the context menu anchors to; the caller
+ * and reports the cell's rect (from the top-left of the app's root), which the context menu anchors to; the caller
  * owns the menu and passes `lifted` while it is open.
  */
 
@@ -155,7 +155,7 @@ export interface AppTileProps {
   /** Its menu is open: the tile is lifted. */
   lifted?: boolean;
   onPress: () => void;
-  /** After the 350 ms hold, with the cell's rect in window coordinates. */
+  /** After the 350 ms hold, with the cell's rect from the top-left of the app's root (`MenuAnchor`). */
   onLongPress: (anchor: MenuAnchor) => void;
 }
 
@@ -164,7 +164,9 @@ const cellStyles = makeStyles((t) => ({
   label: { marginTop: GRID.labelGap, textAlign: 'center' as const, alignSelf: 'stretch' as const },
   row: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], paddingHorizontal: listRowPadding(t.largeText) },
   texts: { flex: 1 },
-  touch: { justifyContent: 'center' as const },
+  /** A list row centres its plate on the text beside it; a grid cell holds every plate on one line. */
+  touchGrid: { justifyContent: 'flex-start' as const },
+  touchList: { justifyContent: 'center' as const },
   lifted: { boxShadow: t.shadows.floating },
 }));
 
@@ -198,7 +200,10 @@ export function AppTile({
 
   const openMenu = () => {
     haptics.play('long-press');
-    ref.current?.measureInWindow((x, y, width, height) => onLongPress({ x, y, width, height }));
+    // `measure`'s page offsets run from the top of the app's root, which fills the window, as a
+    // `Modal`'s do. Android's `measureInWindow` runs from below the status bar and would put the menu
+    // that much too high.
+    ref.current?.measure((_x, _y, width, height, pageX, pageY) => onLongPress({ x: pageX, y: pageY, width, height }));
   };
 
   const inList = layout.kind === 'list';
@@ -206,7 +211,12 @@ export function AppTile({
   const frame = inList
     ? { minHeight: layout.rowHeight, width: '100%' as const }
     : { minHeight: layout.cellHeight, width: layout.columnWidth };
-  const plate = <TilePlate size={size} state={state} tint={tint} glyph={glyph} activity={activity} />;
+  // Only the plate carries the lift's shadow, with the plate's own corner: the cell around it is not a shape.
+  const plate = (
+    <View style={lifted ? [s.lifted, { borderRadius: TILE.corner * TILE_SIDE[size] }] : null}>
+      <TilePlate size={size} state={state} tint={tint} glyph={glyph} activity={activity} />
+    </View>
+  );
   const lines = line ? (
     <Text type="caption" color={line.color} numberOfLines={1} style={inList ? undefined : s.label}>
       {line.text}
@@ -214,7 +224,7 @@ export function AppTile({
   ) : null;
 
   return (
-    <Animated.View style={[frame, liftStyle, lifted ? s.lifted : null]}>
+    <Animated.View style={[frame, liftStyle]}>
       <Pressable
         ref={ref}
         onPress={onPress}
@@ -234,7 +244,7 @@ export function AppTile({
         onAccessibilityAction={(event) => {
           if (event.nativeEvent.actionName === 'longpress') openMenu();
         }}
-        style={[s.touch, { minHeight: frame.minHeight }]}
+        style={[inList ? s.touchList : s.touchGrid, { minHeight: frame.minHeight }]}
       >
         <Animated.View style={[press.style, busy ? { opacity: BUSY_OPACITY } : null]}>
           {inList ? (

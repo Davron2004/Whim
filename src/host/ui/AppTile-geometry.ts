@@ -59,8 +59,10 @@ export function listRowPadding(largeText: boolean): number {
 export function gridLayout(width: number, fontScale: number): GridLayout {
   const scale = Math.max(1, fontScale);
   if (scale >= GRID.listFrom) {
-    const line = TYPE_SCALE.body.lineHeight * scale;
-    return { kind: 'list', tile: TILE_SIDE.menu, rowHeight: Math.max(LAYOUT.listRowMinHeight, line + 2 * LAYOUT.listRowPaddingVertical), gutter: LAYOUT.gutter };
+    // Every row is as tall as one that says its state under its name, so the rhythm does not change
+    // with which apps have a state line.
+    const lines = (TYPE_SCALE.body.lineHeight + TYPE_SCALE.caption.lineHeight) * scale;
+    return { kind: 'list', tile: TILE_SIDE.menu, rowHeight: Math.max(LAYOUT.listRowMinHeight, lines), gutter: LAYOUT.gutter };
   }
   const columns = scale >= GRID.largeTextFrom ? GRID.largeTextColumns : GRID.columns;
   const label = GRID.labelLines * TYPE_SCALE.caption.lineHeight * scale;
