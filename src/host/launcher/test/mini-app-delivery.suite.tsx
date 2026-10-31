@@ -10,7 +10,7 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { SEED_VERSION } from '../seed';
 import { log } from '../../logging';
 import { resetNativeStorage } from './native-storage';
-import { Dimensions, injectedScripts, setColorScheme, StyleSheet } from './native-host';
+import { Dimensions, hardwareBack, injectedScripts, setColorScheme, StyleSheet } from './native-host';
 import { boundWebView, button, press, renderScreen, unmountScreen, hostType } from './react-screen';
 import { COPY } from '../copy';
 import { COLORS } from '../../../design/tokens';
@@ -119,6 +119,28 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
             `${scheme}: and the status bar’s content contrasts with it`);
         });
       }
+    } finally {
+      setColorScheme('light');
+    }
+  });
+
+  await h.test('frame: once an app has been opened, the status bar on Home follows a live scheme flip, made inside the app or on Home after it (F3)', async () => {
+    try {
+      setColorScheme('light');
+      await withLauncher(async () => 'window.__WHIM_APP_MODULE__ = {};', async (tree) => {
+        await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
+        await TestRenderer.act(async () => boundWebView(tree).props.onLoadEnd());
+        await TestRenderer.act(async () => { setColorScheme('dark'); });
+        h.eq([strip(tree), barStyle(tree)], [COLORS.light.bg, 'dark-content'], 'flipped inside the app: the app keeps its light frame, dark content');
+        await TestRenderer.act(async () => { hardwareBack(); });
+        h.eq([strip(tree), barStyle(tree)], [COLORS.dark.bg, 'light-content'], 'back on Home: the dark frame, light content');
+        await TestRenderer.act(async () => { setColorScheme('light'); });
+        await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
+        await TestRenderer.act(async () => boundWebView(tree).props.onLoadEnd());
+        await TestRenderer.act(async () => { hardwareBack(); });
+        await TestRenderer.act(async () => { setColorScheme('dark'); });
+        h.eq([strip(tree), barStyle(tree)], [COLORS.dark.bg, 'light-content'], 'opened and left in light, flipped on Home: the dark frame, light content');
+      });
     } finally {
       setColorScheme('light');
     }

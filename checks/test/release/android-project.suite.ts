@@ -143,6 +143,13 @@ const DIALOG_LISTENER_CLEAR = /(addOnPreDrawListener \{\n) *clearNavigationBarSc
 const WALK_INTO_DIALOG = /^ *watchDialogScrims\(decor\)\n/m;
 /** The activity's pre-draw listener matching the navigation bar's icons to the status bar's. */
 const ACTIVITY_LISTENER_MATCH = /^ *matchNavigationBarToStatusBar\(activityBars\)\n/m;
+/** The activity's listener agreeing the two appearance stores before the match, and again after it. */
+const AGREE_BEFORE_MATCH = /^ *agreeBarAppearance\(\)\n(?= *matchNavigationBarToStatusBar\(activityBars\))/m;
+const AGREE_AFTER_MATCH = /(matchNavigationBarToStatusBar\(activityBars\)\n) *agreeBarAppearance\(\)\n/;
+/** `agreeBarAppearance`'s API gate: 31 up to 34 (React Native writes the platform store from 31, androidx from 35). */
+const AGREE_FROM_S = /Build\.VERSION_CODES\.S \|\|/;
+const AGREE_JOIN = /(Build\.VERSION_CODES\.S) \|\| /;
+const AGREE_UNTIL_34 =/ \|\| Build\.VERSION\.SDK_INT > Build\.VERSION_CODES\.UPSIDE_DOWN_CAKE\) return/;
 /** The value `matchNavigationBarToStatusBar` gives the navigation bar: the status bar's. */
 const MATCH_FROM_STATUS = /val light = bars\.isAppearanceLightStatusBars\n/;
 /** The dialog's pre-draw listener putting its navigation bar in the shell's scheme, before the walk. */
@@ -414,6 +421,41 @@ export async function run(): Promise<void> {
       content: () => mainActivityWith(ACTIVITY_LISTENER_MATCH, ''),
       expectFile: ANDROID_MAIN_ACTIVITY_PATH,
       matches: /onCreate must add a pre-draw listener to the activity's window that calls matchNavigationBarToStatusBar/,
+    },
+    {
+      name: 'a MainActivity whose activity listener no longer agrees the bars\' stores before the match fails (the status bar is read before the keyboard controller\'s write is brought over)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(AGREE_BEFORE_MATCH, ''),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /must call agreeBarAppearance\(\) before and after matchNavigationBarToStatusBar/,
+    },
+    {
+      name: 'a MainActivity whose activity listener no longer agrees the bars\' stores after the match fails (the navigation bar\'s copy never reaches the platform)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(AGREE_AFTER_MATCH, '$1'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /must call agreeBarAppearance\(\) before and after matchNavigationBarToStatusBar/,
+    },
+    {
+      name: 'a MainActivity whose bar agreement also runs on API 30 fails (React Native uses the legacy flags there, one store)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(AGREE_FROM_S, 'Build.VERSION_CODES.R ||'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /agreeBarAppearance, returning below API 31 and above API 34/,
+    },
+    {
+      name: 'a MainActivity whose bar agreement also runs on API 35 and up fails (androidx writes the platform store itself there)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(AGREE_UNTIL_34, ') return'),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /agreeBarAppearance, returning below API 31 and above API 34/,
+    },
+    {
+      name: 'a MainActivity whose bar agreement joins the API 31 and 34 bounds with && fails (a gate that is never true passes both separate comparisons)',
+      file: ANDROID_MAIN_ACTIVITY_PATH,
+      content: () => mainActivityWith(AGREE_JOIN, '$1 && '),
+      expectFile: ANDROID_MAIN_ACTIVITY_PATH,
+      matches: /agreeBarAppearance, returning below API 31 and above API 34/,
     },
     {
       name: 'a MainActivity whose activity match takes the shell\'s scheme instead of the status bar\'s fails (the weaker variant: right on Home, wrong over a frame)',

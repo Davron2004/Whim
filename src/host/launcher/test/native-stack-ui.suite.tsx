@@ -3,6 +3,7 @@
  *  features, History and Report are pushed over Home; every way the platform pops one writes back
  *  to the launcher's machine; a running app is never on the stack; the header and the status bar
  *  follow the screen on top. */
+import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import HomeScreen from '../HomeScreen';
@@ -12,14 +13,15 @@ import HistoryScreen from '../HistoryScreen';
 import MiniAppView from '../MiniAppView';
 import ReportScreen from '../ReportScreen';
 import { poppedEntry } from '../NativeStack';
-import { COPY } from '../copy';
+import { COPY, LEGAL_COPY } from '../copy';
 import ConsentScreen from '../ConsentScreen';
+import { Text } from '../../ui/Text';
 import { COLORS } from '../../../design/tokens';
 import type { InstalledApp } from '../app-index';
 import { button, hostType, press, textOf } from './react-screen';
 import { backListenerCount, hardwareBack, setColorScheme, setFontScale, StyleSheet, windowMetrics } from './native-host';
 import { LARGE_TEXT_FROM } from '../../ui/tokens-pure';
-import { androidHeaderBack, iosPop, stackIds, stackItems } from './native-screens';
+import { androidHeaderBack, iosPop, ScreenStackHeaderCenterView, stackIds, stackItems } from './native-screens';
 import { firstRunOpen, json, settle, tap, waitFor, withLauncher, type Tree } from './rendered-launcher';
 
 const nothing = () => json({});
@@ -28,6 +30,17 @@ const showing = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0])
 const openSettings = (tree: Tree) => TestRenderer.act(async () => home(tree).props.onSettings());
 const statusBarStyle = (tree: Tree) => tree.root.find((node) => hostType(node) === 'StatusBar').props.barStyle;
 const header = (tree: Tree, id: string) => stackItems(tree).find((item) => item.props.screenId === id)?.props.headerConfig;
+/** The header's own children are one empty centre view: the inline title's place, blank. */
+const blankInlineTitle = (config: { children?: React.ReactNode }) => {
+  const children = React.Children.toArray(config.children);
+  return children.length === 1 && React.isValidElement<{ children?: React.ReactNode }>(children[0])
+    && children[0].type === ScreenStackHeaderCenterView && React.Children.count(children[0].props.children) === 0;
+};
+/** The screen titles the entry `id` draws in its content: type, words and the role screen readers get. */
+const screenTitles = (tree: Tree, id: string) =>
+  stackItems(tree).find((item) => item.props.screenId === id)!.findAllByType(Text)
+    .filter((node) => node.props.type === 'largeTitle' || node.props.type === 'title1')
+    .map((node) => [node.props.type, textOf(node), node.find((n) => hostType(n) === 'Text').props.accessibilityRole]);
 
 /** Every way the platform takes the top screen off: iOS (the header back, the edge or content
  *  swipe), Android's header back, and Android's system back. */
@@ -137,16 +150,30 @@ export async function runNativeStackUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('native stack: pushed screens carry the platform header (Settings with its large title); Home and History draw their own', async () => {
+  await h.test('native stack: Settings (largeTitle), Advanced, AI features and Report (title1) draw their title as a header under the platform header, whose inline title is blank but still names the screen for the iOS back menu; Home and History draw their own', async () => {
     await withLauncher({ examples: true, server: nothing }, async ({ tree }) => {
       await waitFor(() => showing(tree, HomeScreen) && home(tree).props.apps.length > 0, 'the example apps');
       await openSettings(tree);
       h.eq([header(tree, 'home').hidden, header(tree, 'home').title], [true, COPY.homeTitle], 'Home has no platform header, but its title names it in the iOS back menu (#237)');
       h.ok(textOf(home(tree)).includes(COPY.homeTitle), 'Home still draws its own title');
-      h.eq([header(tree, 'settings').title, header(tree, 'settings').largeTitle], [COPY.settingsTitle, true], 'Settings: its title, large on iOS');
+      const settings = () => tree.root.findByType(SettingsScreen);
+      const titled = (id: string, name: string, title: [type: string, words: string]) => {
+        const config = header(tree, id);
+        h.eq([config.hidden, config.title, config.largeTitle], [undefined, name, undefined], `${id}: the platform header shows, its name kept for the iOS back button and menu, never a native large title`);
+        h.ok(blankInlineTitle(config), `${id}: the header’s inline title is blank, an empty centre view in its place`);
+        h.eq(screenTitles(tree, id), [[...title, 'header']], `${id}: the screen draws its own ${title[0]} title, a header to screen readers`);
+      };
+      titled('settings', COPY.settingsTitle, ['largeTitle', COPY.settingsTitle]);
       await press(button(tree, COPY.settingsAdvancedSectionTitle));
-      h.eq([header(tree, 'advanced').title, header(tree, 'advanced').largeTitle, header(tree, 'advanced').hidden], [COPY.settingsAdvancedSectionTitle, false, undefined], 'Advanced: its title in the bar');
-      await TestRenderer.act(async () => tree.root.findByType(SettingsScreen).props.onBack());
+      titled('advanced', COPY.settingsAdvancedSectionTitle, ['title1', COPY.settingsAdvancedSectionTitle]);
+      await TestRenderer.act(async () => tree.root.findByType(AdvancedScreen).props.onBack());
+      await TestRenderer.act(async () => settings().props.onOpenAIFeatures());
+      titled('consent', COPY.settingsAISectionTitle, ['title1', LEGAL_COPY.en.consentTitle]);
+      await TestRenderer.act(async () => tree.root.findByType(ConsentScreen).props.onClose());
+      await TestRenderer.act(async () => settings().props.onReportProblem());
+      titled('report', COPY.reportScreenTitle, ['title1', COPY.reportScreenTitle]);
+      await TestRenderer.act(async () => tree.root.findByType(ReportScreen).props.onLeave());
+      await TestRenderer.act(async () => settings().props.onBack());
       await TestRenderer.act(async () => home(tree).props.onHistory(home(tree).props.apps[0]));
       h.eq(header(tree, 'history').hidden, true, 'History draws its own header with its own back');
     });

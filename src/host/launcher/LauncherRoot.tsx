@@ -448,7 +448,8 @@ function stacksOf(ready: boolean, base: Screen, homeUnder: boolean) {
   return { stack: homeUnder ? stackFor(HOME) : own, baseOnStack: own !== null };
 }
 
-/** The native header's title; none on History, which draws its own header. Home draws its own too:
+/** The screen's name for the native header (its iOS back label and long-press menu; the screen
+ *  draws the visible title, `StackEntry.title`); none on History, which draws its own header. Home draws its own too:
  *  as the stack's root its header stays hidden, and its title only names it in the iOS back
  *  button's long-press menu (#237). */
 function stackTitle(on: StackScreen): string | undefined {
@@ -1348,7 +1349,7 @@ function LauncherShell({
    *  actually failed is only recoverable from the seam (host-observability "The alert paths now log"). */
   const openFailed = (e: unknown) => {
     log.error(CHANNELS.app, 'installed-app action failed', { operation: 'open', ...errorFields(e) });
-    Alert.alert('Could not open this app', (e as Error)?.message ?? String(e));
+    Alert.alert('Could not open this app', (e as Error)?.message ?? (e !== null && typeof e === 'object' ? 'Unknown error' : String(e)));
   };
 
   /** The pop History's own Back starts when History was opened from Home: the shell asks for it, so
@@ -1543,7 +1544,7 @@ function LauncherShell({
    *  the platform has already popped it, and its pops must find the machine off it (`NativeStack.tsx`). */
   const leaveHistory = (on: HistoryScreenState) => {
     goHome();
-    if (on.from === 'app') onOpen(index.get(on.app.id) ?? on.app, undefined, false, on.since);
+    if (on.from === 'app') onOpen(index.get(on.app.id) ?? on.app, undefined, false, on.since).catch(openFailed);
   };
 
   /** History's own Back and system back, when it was opened over an app: History stays until that app
@@ -3887,7 +3888,7 @@ function LauncherShell({
   /** One stack entry: its header, its colours and its content, all keyed to the screen it shows. */
   const stackEntry = (on: StackScreen): StackEntry => {
     const leave = leaveFor(on);
-    return { key: on.kind, title: stackTitle(on), largeTitle: on.kind === 'settings', onLeave: leave, background: tokens.colors.bg, foreground: tokens.colors.text, children: renderStackScreen(on, leave) };
+    return { key: on.kind, title: stackTitle(on), onLeave: leave, background: tokens.colors.bg, foreground: tokens.colors.text, children: renderStackScreen(on, leave) };
   };
 
   /** The mini-app container, mounted under every screen once the shell is ready (design-system-v1

@@ -28,7 +28,7 @@ import type { StoreAccess } from '../store-access';
 import { reportClientOptions } from '../transport-shared';
 import { button, freshApp, press, textOf, unmountScreen, hostType } from './react-screen';
 import { testAppInfo } from './client-fixtures';
-import { Keyboard, Platform, StyleSheet, changeKeyboardFrame, keyboardFrameListenerCount, refuseModalPresentations, setColorScheme, useSafeAreaInsets } from './native-host';
+import { Keyboard, Platform, StyleSheet, changeKeyboardFrame, keyboardFrameListenerCount, keyboardShows, refuseModalPresentations, setColorScheme, useSafeAreaInsets } from './native-host';
 import { dismissals, dragKeyboard, emitKeyboardEvent, endKeyboard, keyboardRequests, keyboardState, keyboardSubscriptions, keyboardWindow, moveKeyboard, resetKeyboard, startKeyboard, stepKeyboard } from './native-keyboard-controller';
 import { elapse, elapseSprings, emitNativeEvent, holdAnimations } from './native-reanimated';
 
@@ -121,11 +121,20 @@ const KEYBOARD_HEIGHT = keyboardWindow.height - KEYBOARD_TOP;
 const overlapOf = (frame: Rect, top: number) => Math.max(0, frame[0] + frame[1] - top);
 
 /** Android's side of a request for the keyboard, as measured on a device: a request made before the
- *  window the field sits in is `served` is dropped, leaving the field focused with no keyboard; a
- *  field that is already focused ignores `focus()` (React Native's own guard), so only a request made
- *  once the window is served (`setFocusTo`) raises the keyboard. A test turns `served` on when its
- *  window is. */
-interface Ime { served: boolean; focused: boolean; request: () => void }
+ *  focused field is `served` is dropped, leaving the field focused with no keyboard, and so is one
+ *  naming any other view ("view is not served"); a field that is already focused ignores `focus()`
+ *  (React Native's own guard), so only a request naming the focused field (`WhimKeyboard.showFor`)
+ *  made once it is served raises the keyboard. A test turns `served` on when the field is. The
+ *  keyboard library's `setFocusTo('current')` names the field the library last saw take focus
+ *  (`libraryCurrent`); measured on API 37, a field that took focus before it was attached to its
+ *  window is never seen, so that is the page before's field (`PREVIOUS_FIELD`), no longer mounted. */
+interface Ime { served: boolean; focused: boolean; focusedTag: number | null; libraryCurrent: number; request: (tag: number) => void }
+
+/** The view tag of a field that took focus on the page before and is no longer mounted. */
+const PREVIOUS_FIELD = 1;
+
+/** How many times a field asked for its keyboard by name. */
+const fieldAsks = () => keyboardShows.tags.length;
 
 interface Mounted { tree: Tree; geometry: Geometry; scrolls: number[]; focused: () => number; ime: Ime }
 
@@ -147,12 +156,19 @@ async function on(device: Device, element: React.ReactElement, body: (m: Mounted
   }
   const scrolls: number[] = [];
   let focusCalls = 0;
+  let nextTag = PREVIOUS_FIELD;
+  // The rig models the before-attach case for every field (the library's `current` always names the earlier one),
+  // even where the real device worked (Describe): only the plan-row failures in the s4b-kb red-check stand for the device bug.
   const ime: Ime = {
     served: false,
     focused: false,
-    request: () => { if (ime.served && !keyboardState.visible) moveKeyboard(KEYBOARD_HEIGHT); },
+    focusedTag: null,
+    libraryCurrent: PREVIOUS_FIELD,
+    request: (tag) => { if (ime.served && tag === ime.focusedTag && !keyboardState.visible) moveKeyboard(KEYBOARD_HEIGHT); },
   };
-  keyboardRequests.handler = ime.request;
+  keyboardRequests.handler = () => ime.request(ime.libraryCurrent);
+  keyboardShows.tags.length = 0;
+  keyboardShows.handler = ime.request;
   const createNodeMock = (node: React.ReactElement<{ collapsable?: boolean; scrollToOverflowEnabled?: boolean }>) => {
     const type = String(node.type);
     // A scroll lands within the bounds the native scroll view has when it runs, as both platforms
@@ -164,7 +180,9 @@ async function on(device: Device, element: React.ReactElement, body: (m: Mounted
       if (native) native.offset = clamps ? Math.max(0, Math.min(y, native.content - native.viewport)) : y;
     }, scrollToEnd: noop };
     if (type === 'TextInput') {
-      return { focus: () => { focusCalls += 1; if (!ime.focused) { ime.focused = true; ime.request(); } }, measureLayout: (_to: unknown, ok: (x: number, y: number, w: number, h: number) => void) => ok(0, geometry.field[0], 350, geometry.field[1]) };
+      nextTag += 1;
+      const nativeTag = nextTag;
+      return { nativeTag, focus: () => { focusCalls += 1; ime.focusedTag = nativeTag; if (!ime.focused) { ime.focused = true; ime.request(nativeTag); } }, measureLayout: (_to: unknown, ok: (x: number, y: number, w: number, h: number) => void) => ok(0, geometry.field[0], 350, geometry.field[1]) };
     }
     if (node.props.collapsable === false) {
       return { measure: (cb: (x: number, y: number, w: number, h: number, pageX: number, pageY: number) => void) => cb(0, 0, 390, geometry.frame[1], 0, geometry.frame[0] + (geometry.rootOffset ?? 0)) };
@@ -184,6 +202,7 @@ async function on(device: Device, element: React.ReactElement, body: (m: Mounted
     globalThis.cancelAnimationFrame = animationFrames.cancel;
     Object.assign(Platform, before);
     resetKeyboard();
+    keyboardShows.handler = null;
   }
 }
 
@@ -899,7 +918,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('Android raises the keyboard for an overlay’s field only once the overlay has reported it is shown; iOS does not wait for the report', async () => {
+  await h.test('an overlay’s field asks for focus only once the overlay has reported it is shown, on Android and on iOS (a Describe mounted while another sheet still holds the screen opened unfocused, with no keyboard); iOS then focuses it exactly once, a frame later', async () => {
     const emptyDescribe = sheeted(<DescribePage text="" onChangeText={noop} onContinue={noop} />);
     const release = refuseModalPresentations();
     try {
@@ -910,9 +929,15 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         await TestRenderer.act(async () => flushRevealFrames());
         h.ok(focused() >= 1, 'Android: once the window reports it is shown, the field asks for focus');
       });
-      await on(IOS, emptyDescribe, async ({ focused }) => {
-        await TestRenderer.act(async () => flushRevealFrames());
-        h.ok(focused() >= 1, 'iOS: the field asks for focus a frame after it mounts, shown or not');
+      await on(IOS, emptyDescribe, async ({ tree, focused }) => {
+        await playFrames(5);
+        h.eq(focused(), 0, 'iOS: the sheet is not presented yet, so the field has not called focus(), which would land nowhere');
+        await TestRenderer.act(async () => tree.root.find(isType('Modal')).props.onShow());
+        h.eq(focused(), 0, 'iOS: the report alone focuses nothing in its own frame: the Done bar links first');
+        await playFrames(1);
+        h.eq(focused(), 1, 'iOS: a frame after the report, the field is focused');
+        await playFrames(5);
+        h.eq([focused(), fieldAsks()], [1, 0], 'iOS: focused exactly once, and never asks for the keyboard by name');
       });
     } finally {
       release();
@@ -930,17 +955,17 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         await TestRenderer.act(async () => close.current());
         await TestRenderer.act(async () => tree.root.find(isType('Modal')).props.onShow());
         await playFrames(5);
-        h.eq([focused(), keyboardRequests.asked], [0, 0], 'closed before the report: the field neither takes focus nor asks');
+        h.eq([focused(), fieldAsks()], [0, 0], 'closed before the report: the field neither takes focus nor asks');
       });
       await on(ANDROID_17, <Closable />, async ({ tree }) => {
         await TestRenderer.act(async () => tree.root.find(isType('Modal')).props.onShow());
         await playFrames(2);
         await animateFrames(2);
-        const asked = keyboardRequests.asked;
+        const asked = fieldAsks();
         h.ok(asked > 0, 'setup: shown, the field is asking');
         await TestRenderer.act(async () => close.current());
         await playFrames(5);
-        h.eq(keyboardRequests.asked, asked, 'closed while asking: it asks no more');
+        h.eq(fieldAsks(), asked, 'closed while asking: it asks no more');
       });
     } finally {
       hold();
@@ -964,7 +989,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         await TestRenderer.act(async () => tree.root.find(isType('Modal')).props.onShow());
         await playFrames(2);
         await animateFrames(2);
-        h.ok(keyboardRequests.asked > 0 && !keyboardState.visible, 'setup: the field has asked, and no keyboard has come yet');
+        h.ok(fieldAsks() > 0 && !keyboardState.visible, 'setup: the field has asked, and no keyboard has come yet');
         await TestRenderer.act(async () => close.current());
         h.eq(dismissals.length, 0, 'setup: no keyboard to put away as the close starts');
         await TestRenderer.act(async () => moveKeyboard(KEYBOARD_HEIGHT));
@@ -989,9 +1014,9 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         ime.served = true;
         await playFrames(1);
         h.eq(keyboardState.visible, true, 'the first frame after the window is served raises the keyboard, without a tap');
-        const asked = keyboardRequests.asked;
+        const asked = fieldAsks();
         await playFrames(10);
-        h.eq(keyboardRequests.asked, asked, 'once the keyboard is on its way it asks no more');
+        h.eq(fieldAsks(), asked, 'once the keyboard is on its way it asks no more');
       });
     } finally {
       release();
@@ -1006,29 +1031,30 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
       await on(ANDROID_17, emptyDescribe, async ({ tree }) => {
         await shown(tree);
         await playFrames(300);
-        const given = keyboardRequests.asked;
+        const given = fieldAsks();
         h.ok(given > 0, 'setup: a window that is never served is asked');
         await playFrames(100);
-        h.eq(keyboardRequests.asked, given, 'a window that is never served (no soft keyboard with a hardware one) is not asked for ever');
+        h.eq(fieldAsks(), given, 'a window that is never served (no soft keyboard with a hardware one) is not asked for ever');
       });
       await on(ANDROID_17, emptyDescribe, async ({ tree }) => {
         await shown(tree);
         await playFrames(2);
-        const before = keyboardRequests.asked;
+        const before = fieldAsks();
         h.ok(before > 0, 'setup: the field is asking');
         await TestRenderer.act(async () => field(tree).props.onBlur({}));
         await playFrames(5);
-        h.eq(keyboardRequests.asked, before, 'the person put the keyboard away: the field stops asking');
+        h.eq(fieldAsks(), before, 'the person put the keyboard away: the field stops asking');
       });
       await on(ANDROID_17, emptyDescribe, async ({ tree }) => {
         await keyboard(ANDROID_17, true);
         await shown(tree);
         await playFrames(5);
-        h.eq(keyboardRequests.asked, 0, 'a keyboard that is already up (the page before it had one) is not asked for');
+        h.eq(fieldAsks(), 0, 'a keyboard that is already up (the page before it had one) is not asked for');
       });
-      await on(IOS, emptyDescribe, async ({ focused }) => {
+      await on(IOS, emptyDescribe, async ({ tree, focused }) => {
+        await shown(tree);
         await playFrames(5);
-        h.eq([focused(), keyboardRequests.asked], [1, 0], 'iOS focuses the field once, a frame after it mounts, and does not ask');
+        h.eq([focused(), fieldAsks()], [1, 0], 'iOS focuses the field once, a frame after it is shown, and does not ask');
       });
     } finally {
       release();
@@ -1257,7 +1283,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         await editFourthRow(tree);
         h.eq([field(tree).props.autoFocus, focused()], [undefined, device.os === 'android' ? 1 : 0], `${device.name}: the row's field is not focused natively on mount; ${device.os === 'android' ? 'Android focuses it at once' : 'iOS waits a frame for the Done bar to link'}`);
         await TestRenderer.act(async () => flushRevealFrames());
-        h.eq([focused(), keyboardRequests.asked], device.os === 'android' ? [1, 1] : [1, 0], `${device.name}: ${device.os === 'android' ? 'and a frame later asks the keyboard library for the keyboard, since focus() of a focused field does nothing' : 'then focuses it once'}`);
+        h.eq([focused(), fieldAsks()], device.os === 'android' ? [1, 1] : [1, 0], `${device.name}: ${device.os === 'android' ? 'and a frame later asks for its keyboard by name, since focus() of a focused field does nothing' : 'then focuses it once'}`);
         if (device.os === 'ios') h.ok(doneBars(tree).some((bar) => bar.props.nativeID === field(tree).props.inputAccessoryViewID), 'iOS: its Done bar mounts with it');
         await TestRenderer.act(async () => field(tree).props.onFocus({}));
         await keyboard(device, true);
@@ -1275,6 +1301,69 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
       h.eq(field(tree).props.value, 'A big dial', 'leaving the row open');
       h.eq([s.count('row'), s.count('build')], [0, 0], 'saving and building nothing');
     });
+  });
+
+  await h.test('Android plan: the edited row’s field keeps asking until the keyboard is up — through a show that sets off and ends hidden, one that reports nothing after it set off, and a blur and refocus while the row is revealed — then stops', async () => {
+    const geometry: Geometry = { frame: SCREEN_FRAME, field: [630, 60], block: [600, 180] };
+    for (const device of [ANDROID_14, ANDROID_17]) {
+      await on(device, plan(), async ({ tree, ime }) => {
+        await editFourthRow(tree);
+        await playFrames(3);
+        const asked = fieldAsks();
+        h.ok(asked >= 1 && !keyboardState.visible, `${device.name}: setup: the field asks, its window not served yet`);
+        await TestRenderer.act(async () => emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT));
+        await playFrames(5);
+        h.eq(fieldAsks(), asked, `${device.name}: while a keyboard is on its way, the field waits for it`);
+        await TestRenderer.act(async () => emitKeyboardEvent('keyboardDidHide', 0));
+        ime.served = true;
+        await playFrames(1);
+        h.eq([fieldAsks(), keyboardState.visible], [asked + 1, true], `${device.name}: the show ended hidden, so the next frame asks again and the keyboard comes, without a tap`);
+        await playFrames(10);
+        h.eq(fieldAsks(), asked + 1, `${device.name}: once the keyboard is up it asks no more`);
+      }, geometry);
+      await on(device, plan(), async ({ tree }) => {
+        await editFourthRow(tree);
+        await playFrames(1);
+        await TestRenderer.act(async () => emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT));
+        await playFrames(10);
+        const waited = fieldAsks();
+        h.eq(waited, 1, `${device.name}: setup: asked once, then waiting for the keyboard on its way`);
+        // The cut-short show leaves the library reporting a keyboard; the platform shows one once asked.
+        const shows: number[] = [];
+        keyboardShows.handler = () => { shows.push(fieldAsks()); moveKeyboard(KEYBOARD_HEIGHT); };
+        await playFrames(40);
+        h.eq([shows, fieldAsks()], [[waited + 1], waited + 1], `${device.name}: a show that reports nothing after it set off is asked for again, once, and the keyboard comes`);
+      }, geometry);
+      await on(device, plan(), async ({ tree, ime }) => {
+        await editFourthRow(tree);
+        await TestRenderer.act(async () => field(tree).props.onFocus({}));
+        await playFrames(2);
+        await TestRenderer.act(async () => field(tree).props.onBlur({}));
+        const blurredAt = fieldAsks();
+        await playFrames(5);
+        h.eq(fieldAsks(), blurredAt, `${device.name}: while the field is not focused, it asks nothing (a request would focus it again)`);
+        await TestRenderer.act(async () => field(tree).props.onFocus({}));
+        ime.served = true;
+        await playFrames(1);
+        h.eq([fieldAsks(), keyboardState.visible], [blurredAt + 1, true], `${device.name}: focused again before the keyboard came, it asks again, and the keyboard comes`);
+      }, geometry);
+    }
+  });
+
+  await h.test('Android plan: a row field that took focus before it was attached (the keyboard library still names the page before’s field, gone from the screen) gets its keyboard once the system serves it, without a tap, as every request names the field itself', async () => {
+    const geometry: Geometry = { frame: SCREEN_FRAME, field: [630, 60], block: [600, 180] };
+    for (const device of [ANDROID_14, ANDROID_17]) {
+      await on(device, plan(), async ({ tree, ime }) => {
+        await editFourthRow(tree);
+        await playFrames(6);
+        h.ok(fieldAsks() > 0 && !keyboardState.visible, `${device.name}: setup: the field is focused and asking, and the system does not serve it yet`);
+        h.ok(ime.focusedTag !== null && ime.focusedTag !== ime.libraryCurrent, `${device.name}: setup: the field the library last saw focused is another one`);
+        ime.served = true;
+        await playFrames(1);
+        h.eq(keyboardState.visible, true, `${device.name}: the first frame after the field is served raises its keyboard`);
+        h.eq([...new Set(keyboardShows.tags)], [ime.focusedTag], `${device.name}: every request named the focused row field, none the page before’s field`);
+      }, geometry);
+    }
   });
 
   await h.test('iOS plan: focus before native keyboard layout settles still reveals the whole row, including later typing and refocus', async () => {

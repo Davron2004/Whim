@@ -31,6 +31,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  findNodeHandle,
 } from 'react-native';
 import type {
   LayoutChangeEvent,
@@ -52,6 +53,7 @@ import {
   type NativeEvent,
 } from 'react-native-keyboard-controller';
 import { LAYOUT, SPACE } from '../../design/tokens';
+import WhimKeyboard from '../../native/NativeWhimKeyboard';
 import { wrappingType } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
 import { COPY } from './copy';
@@ -730,36 +732,64 @@ export default function KeyboardShell({
  *  outlasts. */
 const KEYBOARD_ASK_FRAMES = 120;
 
+/** How many frames a keyboard that has set off (`keyboardWillShow`) is waited for before the field
+ *  asks again: past a keyboard's rise (about 250 ms at 60 Hz), so a show cut short with nothing
+ *  reported after its start does not leave the field without one. */
+const KEYBOARD_RISE_FRAMES = 30;
+
 /**
- * Android: focuses `input` and asks for its keyboard once a frame until the keyboard sets off. A
- * request is dropped (the field takes focus, with its caret and ring, and no keyboard comes) while
- * the window the field sits in is not yet served by the keyboard, which is after the window's report
- * that it is shown: measured, the first request, 80 to 300 ms after the report, was ignored ("view is
- * not served") or aborted by the system after layout. Nothing reports the moment the window is served,
- * and `focus()` of a field that is already focused does nothing, so the field has the keyboard library
- * request it again, frame by frame, until `keyboardWillShow` says it did. It stops when the field
- * loses focus, and at once if the keyboard is already up. Returns the stop.
+ * Android: focuses `input` and asks for its keyboard once a frame until the keyboard is up. The
+ * request `focus()` makes is dropped (the field takes focus, with its caret and ring, and no keyboard
+ * comes) while the system does not yet serve the field: measured, the first request, 80 to 300 ms
+ * after the window reported it is shown, was ignored ("view is not served"), and a field mounted into
+ * a window already shown (a plan row opened for editing) can take focus before it is even attached
+ * to its window, as React Native runs a view command ahead of the mount that attaches the view.
+ * Nothing reports the moment the field is served, and `focus()` of a field that is already focused
+ * does nothing, so the field asks again, frame by frame, until `keyboardDidShow` says the keyboard is
+ * up, naming itself (`WhimKeyboard.showFor`, which shows a keyboard only for this field, once it is
+ * served). Not through the keyboard library's `setFocusTo('current')`: that asks for the field the
+ * library last saw take focus, and it never sees one focused before it was attached, so it asked for
+ * the page before's field, no longer on screen, for good (measured on API 37). While a keyboard is on
+ * its way (`keyboardWillShow`) it waits; a show that ends hidden (`keyboardDidHide` before the
+ * keyboard was up) or reports nothing more within `KEYBOARD_RISE_FRAMES` is asked for again. While
+ * the field is not focused it asks nothing, and it asks again if the focus comes back before the
+ * frames run out (a blur and refocus while the field is revealed). It stops at once if the keyboard
+ * is already up. Returns the stop.
  */
 function askForKeyboard(input: React.RefObject<TextInput | null>, blurred: { current: boolean }): () => void {
   blurred.current = false;
   input.current?.focus();
-  if (KeyboardController.isVisible()) return () => {};
+  if (settledUp && KeyboardController.isVisible()) return () => {};
   let frames = KEYBOARD_ASK_FRAMES;
+  // Frames still to wait for a keyboard on its way; 0 while none is.
+  let rising = KeyboardController.isVisible() ? KEYBOARD_RISE_FRAMES : 0;
   let pending = 0;
   let stopped = false;
   const stop = () => {
     stopped = true;
     cancelAnimationFrame(pending);
-    subscription.remove();
+    for (const subscription of subscriptions) subscription.remove();
   };
-  const subscription = KeyboardEvents.addListener('keyboardWillShow', stop);
+  const subscriptions = [
+    KeyboardEvents.addListener('keyboardWillShow', () => {
+      rising = KEYBOARD_RISE_FRAMES;
+    }),
+    KeyboardEvents.addListener('keyboardDidShow', stop),
+    KeyboardEvents.addListener('keyboardDidHide', () => {
+      rising = 0;
+    }),
+  ];
   const ask = () => {
     frames -= 1;
-    if (blurred.current || frames < 0) {
+    if (frames < 0) {
       stop();
       return;
     }
-    KeyboardController.setFocusTo('current');
+    if (rising > 0) rising -= 1;
+    else if (!blurred.current) {
+      const tag = findNodeHandle(input.current);
+      if (tag != null) WhimKeyboard?.showFor(tag);
+    }
     if (!stopped) pending = requestAnimationFrame(ask);
   };
   pending = requestAnimationFrame(ask);
@@ -794,15 +824,18 @@ export function KeyboardTextInput({
   const doneBarId = useId();
   const target = revealTarget ?? input;
   const autoFocusOnMount = useRef(autoFocus === true);
-  const overlayShown = useContext(OverlayShownContext) || Platform.OS !== 'android';
-  // The field lost focus after it asked for the keyboard (the person put it away): it stops asking.
+  const overlayShown = useContext(OverlayShownContext);
+  // The field is not focused after it asked for the keyboard (the person put it away, or a blur it
+  // has not yet come back from): Android asks nothing while it is.
   const blurred = useRef(false);
   useEffect(() => {
     if (!autoFocusOnMount.current) return undefined;
     // iOS: a frame after mounting, once the Done bar has linked to the field, so the keyboard comes
     // up with the bar already on it (focused in the mount frame, it intermittently arrived without
     // the bar in its reported frame, leaving the footer under the bar). Android: see `askForKeyboard`.
-    // In an overlay, the first request waits for the overlay's own report that it is on screen.
+    // In an overlay, the first request waits for the overlay's own report that it is on screen, on
+    // both platforms: an iOS field focused before its `Modal` is presented (one still leaving holds
+    // the screen) takes no focus, and nothing would focus it again.
     if (!overlayShown) return undefined;
     if (Platform.OS === 'android') return askForKeyboard(input, blurred);
     const later = requestAnimationFrame(() => input.current?.focus());
@@ -816,6 +849,7 @@ export function KeyboardTextInput({
       ref={input}
       style={[style, Platform.OS === 'ios' && props.multiline !== true && styles.naturalLineHeight]}
       onFocus={(event) => {
+        blurred.current = false;
         shell?.focused(target);
         onFocus?.(event);
       }}

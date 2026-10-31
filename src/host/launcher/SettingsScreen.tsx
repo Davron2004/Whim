@@ -12,6 +12,7 @@ import React from 'react';
 import { Linking, ScrollView } from 'react-native';
 import { LAYOUT, SPACE } from '../../design/tokens';
 import { GroupedRow, GroupedSection } from '../ui/GroupedList';
+import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
 import { makeStyles } from '../ui/tokens-pure';
 import { COPY, legalLanguageName } from './copy';
@@ -40,6 +41,7 @@ export interface SettingsScreenProps {
 const styles = makeStyles((t) => ({
   root: { flex: 1, backgroundColor: t.colors.bg },
   content: { paddingHorizontal: LAYOUT.gutter, paddingTop: SPACE[4], paddingBottom: SPACE[8] },
+  title: { marginBottom: LAYOUT.gapTitleToContent },
 }));
 
 export default function SettingsScreen({
@@ -56,6 +58,9 @@ export default function SettingsScreen({
   useSystemBack(onBack);
   return (
     <ScrollView style={s.root} contentContainerStyle={s.content} contentInsetAdjustmentBehavior="automatic">
+      <Text type="largeTitle" style={s.title}>
+        {COPY.settingsTitle}
+      </Text>
       <GroupedSection>
         <GroupedRow title={COPY.settingsAISectionTitle} subtitle={COPY.settingsAISubtitle} trailing={{ kind: 'chevron' }} onPress={onOpenAIFeatures} />
         <GroupedRow

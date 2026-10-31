@@ -21,7 +21,7 @@ free.
   aliases, deterministic fallbacks and "Customize tile". **BREAKING (wire):** `tileColor` is deprecated in
   favour of `tint`/`icon` in the manifest; it is still accepted but ignored, and a record with no tint shows its app id's fallback tint.
 - **Navigation.** Settings, Advanced, AI features, History and Report move to `react-native-screens`' native
-  stack with the OS back gestures (edge, content-area, Android predictive back). No edge swipe over a running
+  stack with the OS back gestures (edge, content-area, Android back). No edge swipe over a running
   app (#67 kept).
 - **Flows.** One making sheet with Describe, Plan (clarify merged in, "Decide for me" selected by default,
   long answers as rows), Making (ember, measured time lines, Stop, repair row), Ready and Failure (by kind);

@@ -14,15 +14,16 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { Clipboard, View } from 'react-native';
-import { LAYOUT, SPACE } from '../../design/tokens';
+import { LAYOUT, SPACE, TYPE_SCALE } from '../../design/tokens';
 import type { ColorRole } from '../../design/tokens';
 import { ConfirmSheet } from '../ui/ConfirmSheet';
 import { GroupedRow, GroupedSection } from '../ui/GroupedList';
+import { Icon } from '../ui/Icon';
 import { Text } from '../ui/Text';
 import { TextField } from '../ui/TextField';
 import { useToast } from '../ui/Toast';
 import { useTokens } from '../ui/tokens';
-import { makeStyles } from '../ui/tokens-pure';
+import { makeStyles, MAX_FONT_SCALE } from '../ui/tokens-pure';
 import { COPY, LEGAL_COPY, serverProbeLabel } from './copy';
 import KeyboardShell from './KeyboardShell';
 import type { LegalLanguage } from './legal-language';
@@ -71,10 +72,25 @@ const PROBE_COLOR: Readonly<Record<ProbeResult, ColorRole>> = {
   unreachable: 'danger-text',
 };
 
+/** §2.3: a status hue never stands alone, so each result in a status role leads with that role's
+ *  glyph. "Unverified" is `text-2`, not a status hue, and carries none. */
+const PROBE_GLYPH: Readonly<Partial<Record<ProbeResult, 'check' | 'circle-alert'>>> = {
+  verified: 'check',
+  unreachable: 'circle-alert',
+};
+
+/** The glyph beside a result: §3.1's inline size. */
+const CHECK_GLYPH = 16;
+
 const styles = makeStyles((t) => ({
   root: { backgroundColor: t.colors.bg },
   content: { paddingHorizontal: LAYOUT.gutter, paddingTop: SPACE[4], paddingBottom: SPACE[8] },
+  title: { marginBottom: LAYOUT.gapTitleToContent },
   address: { marginTop: -SPACE[2], marginBottom: LAYOUT.gapBetweenGroups, gap: SPACE[2] },
+  checkLine: { flexDirection: 'row' as const, alignItems: 'flex-start' as const, gap: SPACE[1] },
+  // The 16 pt glyph centres on the line's first row of text, which scales with the text size.
+  checkGlyph: { marginTop: Math.max(0, (TYPE_SCALE.footnote.lineHeight * Math.min(t.fontScale, MAX_FONT_SCALE) - CHECK_GLYPH) / 2) },
+  checkText: { flex: 1 },
 }));
 
 export default function AdvancedScreen({
@@ -146,6 +162,7 @@ export default function AdvancedScreen({
   };
 
   const check = refused ? null : addressCheck(canProbe, draft, probe);
+  const checkIcon = check === null || check === 'neutral' ? undefined : PROBE_GLYPH[check];
   const own = serverChoice === 'own';
   return (
     <>
@@ -154,6 +171,9 @@ export default function AdvancedScreen({
           with the words cut in half. What Advanced holds (the address being typed, an open question)
           is state above this and survives; the scroll position and the field's focus start again. */}
       <KeyboardShell key={t.fontScale} style={s.root} contentContainerStyle={s.content}>
+        <Text type="title1" style={s.title}>
+          {COPY.settingsAdvancedSectionTitle}
+        </Text>
         <GroupedSection footer={COPY.settingsErrorDetailsHint}>
           <GroupedRow title={COPY.settingsErrorDetailsTitle} trailing={{ kind: 'switch', value: errorDetails, onValueChange: onErrorDetailsChange }} />
         </GroupedSection>
@@ -189,9 +209,18 @@ export default function AdvancedScreen({
               helper={COPY.serverAddressHint}
             />
             {check !== null && (
-              <Text type="footnote" color={check === 'neutral' ? 'text-2' : PROBE_COLOR[check]} accessibilityRole="text">
-                {check === 'neutral' ? COPY.settingsProbeNeutral : serverProbeLabel(check)}
-              </Text>
+              <View style={s.checkLine}>
+                {check !== 'neutral' && checkIcon !== undefined && (
+                  <View style={s.checkGlyph}>
+                    <Icon name={checkIcon} size={CHECK_GLYPH} color={t.colors[PROBE_COLOR[check]]} />
+                  </View>
+                )}
+                <View style={s.checkText}>
+                  <Text type="footnote" color={check === 'neutral' ? 'text-2' : PROBE_COLOR[check]} accessibilityRole="text">
+                    {check === 'neutral' ? COPY.settingsProbeNeutral : serverProbeLabel(check)}
+                  </Text>
+                </View>
+              </View>
             )}
             {savedAddress !== undefined && (
               <Text type="footnote" color="text-2">

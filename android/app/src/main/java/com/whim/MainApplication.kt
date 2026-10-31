@@ -31,10 +31,11 @@ class MainApplication : Application(), ReactApplication {
           // In-app TurboModules (not autolinked — they live in this app, not node_modules):
           // WhimTone audio cues (effects-and-cues D6), WhimAppInfo (request-envelope D2) and
           // WhimAgeSignal (legal-surface-v2 D11); WhimHaptics (design-system-v1 D11);
-          // WhimLaunchScreen (design-system-v1 D12).
+          // WhimLaunchScreen (design-system-v1 D12); WhimKeyboard (design-system-v1 F1).
           add(com.whim.tone.WhimTonePackage())
           add(com.whim.haptics.WhimHapticsPackage())
           add(com.whim.launch.WhimLaunchScreenPackage())
+          add(com.whim.keyboard.WhimKeyboardPackage())
         },
     )
   }

@@ -18,6 +18,7 @@ import { DescribePage } from '../DescribePage';
 import ConsentScreen from '../ConsentScreen';
 import { FirstRunSheet } from '../FirstRunSheet';
 import { Icon } from '../../ui/Icon';
+import { TYPE_SCALE } from '../../../design/tokens';
 import { StoreAccess } from '../store-access';
 import { grantConsent } from '../ai-consent';
 import { acceptTerms } from '../terms-acceptance';
@@ -28,7 +29,7 @@ import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { SEED_VERSION } from '../seed';
 import { resetNativeStorage } from './native-storage';
 import { button, press, renderScreen, textOf, unmountScreen, captureTimeouts, hostType } from './react-screen';
-import { Linking } from './native-host';
+import { Linking, windowMetrics } from './native-host';
 import { testAppInfo } from './client-fixtures';
 import { buildIt, firstRunOpen, makingSheetOpen, onHome, planLoaded, sseStream, tap, waitFor, withLauncher as withRenderedLauncher } from './rendered-launcher';
 import { streamingServer } from './prompt-flow-ui.suite';
@@ -391,6 +392,31 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
       }
     });
   }
+
+  await h.test('first-run sheet: a summary row’s icon sits beside the title’s first line, at the top of the tall row, not centred on it, at default and largest text', async () => {
+    const flatStyle = (node: TestRenderer.ReactTestInstance) => Object.assign({}, ...[node.props.style].flat(Infinity)) as { alignSelf?: string; marginTop?: number };
+    try {
+      for (const scale of [1, 2]) {
+        windowMetrics.fontScale = scale;
+        const tree = await renderScreen(<FirstRunSheet visible language="en" onLanguageChange={() => {}} termsDue={false} consentDue onAgree={() => {}} onClose={() => {}} />);
+        try {
+          for (const title of [LEGAL_COPY.en.firstRunSentTitle, LEGAL_COPY.en.firstRunStaysTitle, LEGAL_COPY.en.firstRunNeverTitle]) {
+            const row = button(tree, title);
+            const icon = row.findByType(Icon);
+            let wrapper = icon.parent;
+            while (wrapper && hostType(wrapper) !== 'View') wrapper = wrapper.parent;
+            const placed = flatStyle(wrapper!);
+            h.eq(placed.alignSelf, 'flex-start', `${title} at ${scale}x: the icon is pinned to the top of the row, not centred on its height`);
+            h.eq((placed.marginTop ?? 0) + (icon.props.size as number) / 2, (TYPE_SCALE.body.lineHeight * scale) / 2, `${title} at ${scale}x: the icon’s centre is the middle of the title’s first line`);
+          }
+        } finally {
+          await unmountScreen(tree);
+        }
+      }
+    } finally {
+      windowMetrics.fontScale = 1;
+    }
+  });
 
   await h.test('consent gate: a version-1 grant asks again, saying in full what changed since version 1', async () => {
     const whatsNew = CONSENT_WHATS_NEW.en[1]?.text ?? '';

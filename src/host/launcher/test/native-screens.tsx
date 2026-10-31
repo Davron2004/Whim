@@ -67,6 +67,7 @@ export const ScreenStack = (props: HostProps) => {
   return React.createElement('ScreenStack', props, props.children);
 };
 export const ScreenStackItem = (props: HostProps) => React.createElement('ScreenStackItem', props, props.children);
+export const ScreenStackHeaderCenterView = (props: HostProps) => React.createElement('ScreenStackHeaderCenterView', props, props.children);
 export function enableScreens(): void {}
 
 type Tree = TestRenderer.ReactTestRenderer;

@@ -18,22 +18,22 @@
 import React from 'react';
 import { StyleSheet } from 'react-native';
 import type { NativeSyntheticEvent } from 'react-native';
-import { ScreenStack, ScreenStackItem } from 'react-native-screens';
+import { ScreenStack, ScreenStackHeaderCenterView, ScreenStackItem } from 'react-native-screens';
 import type { ScreenStackHeaderConfigProps } from 'react-native-screens';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTokens } from '../ui/tokens';
-import { typeStyle } from '../ui/tokens-pure';
 import { SystemBackOnTop } from './use-system-back-with';
 
 export interface StackEntry {
   /** Stable while the entry stays on the stack, so a push or a pop never remounts what is under it. */
   readonly key: string;
-  /** The native header's title. Without one the header is hidden and the screen draws its own,
-   *  with its own visible back control. The root's header is always hidden (Home draws its own), but
-   *  its title still names it in the iOS back button's long-press menu (#237). */
+  /** The screen's name. With one, the native header shows the back control and the screen draws its
+   *  title in its content (system.md §2.8 screen anatomy: `largeTitle` on Settings, `title1` on the
+   *  others), so the header's inline title stays blank; the name still labels the screen in the iOS
+   *  back button and its long-press menu (#237). Without one the header is hidden and the screen
+   *  draws its own, with its own visible back control. The root's header is always hidden (Home
+   *  draws its own), its title only naming it in that menu. */
   readonly title?: string;
-  /** The title large under the bar on iOS (Settings). */
-  readonly largeTitle?: boolean;
   /** Leaves this entry: the header back, a swipe and the screen's own system back all run it. */
   readonly onLeave: () => void;
   /** The screen's background, which its header shares and which shows while it moves. */
@@ -52,26 +52,23 @@ export function poppedEntry(top: number, dismissCount: number): number {
   return Math.max(1, top - Math.max(1, dismissCount) + 1);
 }
 
-/** The header of a pushed entry with a title. At large text (system.md §6) the iOS back button is
- *  its chevron alone (#218): the title of the screen it returns to, at that size, truncated to "S…gs"
+/** The header of a pushed entry with a title: the back control over a blank inline title, an empty
+ *  centre view standing in the title's place on both platforms (iOS draws the centre view instead of
+ *  the title, Android clears the toolbar's title for it), while `title` still names the screen in the
+ *  iOS back button and its long-press menu. At large text (system.md §6) the iOS back button is its
+ *  chevron alone (#218): the title of the screen it returns to, at that size, truncated to "S…gs"
  *  beside this screen's own. VoiceOver reads it as "Back". */
 function headerFor(entry: StackEntry, root: boolean, largeText: boolean): ScreenStackHeaderConfigProps {
   if (entry.title === undefined) return { hidden: true };
   if (root) return { hidden: true, title: entry.title };
-  const title = typeStyle('headline');
   return {
     title: entry.title,
     ...(largeText ? { backButtonDisplayMode: 'minimal' as const } : {}),
-    largeTitle: entry.largeTitle === true,
     backgroundColor: entry.background,
-    largeTitleBackgroundColor: entry.background,
     color: entry.foreground,
     titleColor: entry.foreground,
-    largeTitleColor: entry.foreground,
-    titleFontSize: title.fontSize,
-    titleFontWeight: title.fontWeight,
     hideShadow: true,
-    largeTitleHideShadow: true,
+    children: <ScreenStackHeaderCenterView />,
   };
 }
 

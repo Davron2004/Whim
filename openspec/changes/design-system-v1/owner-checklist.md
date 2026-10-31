@@ -5,7 +5,7 @@ token adjustments, in decision #75's status tag.
 
 - [ ] **Ember silhouette at 24 pt.** The ember reads as a flame, not a blob, at its smallest size (Home tile status,
       toasts), light and dark.
-- [ ] **iOS title tracking.** Large and inline titles on iOS look right next to system apps (tracking per
+- [ ] **iOS title tracking.** The in-content titles on iOS (largeTitle on Settings and History, title1 on Advanced, AI features and Report; the header row has no inline title since s4b-shell) look right next to system apps (tracking per
       `docs/design/system.md` typography).
 - [ ] **Motion recordings.** Watch the 0.25× clips against the mockup references:
       `/Users/davrondjabborov/Work/other/Whim-evidence/design-system-v1/motion/{android,ios,mockup}/`

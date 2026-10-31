@@ -453,12 +453,17 @@ Over a running app the shell SHALL show the orb of `system.md` §7.1: an opaque 
 
 ### Requirement: The Whim sheet is a running app's one menu
 
-Tapping the orb SHALL open the Whim sheet over the running app: the app's 40 pt tile, name and "Version N · changed <when>", a "New version ready · Reload" row while one waits, a "What should change?" send field, then History, Report a problem and Back to your apps, each row its own accessibility element. Sending SHALL grow the sheet into the plan page for the change without closing the app. Report a problem SHALL push inside the sheet on its own small stack, so closing the sheet returns to the running app.
+Tapping the orb SHALL open the Whim sheet over the running app: the app's tile, name and version line, a Reload row while a newer version waits, a "What should change?" field, then History, Report a problem and Back to your apps, each its own accessibility element. Sending SHALL grow the sheet into the plan page. Report SHALL push inside the sheet. History SHALL push on the native stack; its Back and system back SHALL reopen the app with the sheet closed, or Home if it cannot reopen.
 
 #### Scenario: Leaving through the sheet
 
 - **WHEN** the user taps Back to your apps
 - **THEN** the app closes into its tile on Home
+
+#### Scenario: Back from History reopens the app
+
+- **WHEN** the user opens History from the Whim sheet and presses Back, or system back
+- **THEN** the app is running again with the sheet closed
 
 #### Scenario: VoiceOver reads every row
 
