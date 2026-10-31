@@ -4,21 +4,24 @@
  * verbatim, plus `tsconfigRaw: '{}'` (the esbuild jsx-runtime gotcha). Exits non-zero on any
  * failed check.
  *
- * Not yet wired to an `npm run` script (chain 5, task 5.3 — package.json is Class-2):
- *   node synthrun/test/run.mjs
+ * Run it with `npm run synthrun:test` (`node synthrun/test/run.mjs`).
  */
 import { build } from 'esbuild';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
 import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
+import { parseOnly, entryFilter } from '../../scripts/lib/only-filter.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const entry = path.join(here, 'acceptance.ts');
 const outfile = tmpBundlePath('synthrun-acceptance');
+const only = parseOnly();
+const filter = only && entryFilter(entry, only);
 
 await build({
   entryPoints: [entry],
+  plugins: filter ? [filter.plugin] : [],
   outfile,
   bundle: true,
   platform: 'node',
@@ -35,6 +38,8 @@ await build({
   external: ['esbuild', 'playwright', 'typescript'],
   logLevel: 'warning',
 });
+
+filter?.assertMatched();
 
 try {
   await import(pathToFileURL(outfile));

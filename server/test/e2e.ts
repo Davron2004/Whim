@@ -159,7 +159,7 @@ async function testStubAppRuns(session: SynthRunSession): Promise<void> {
   }
   check('the stub app runs contained', run.contained === true, containedDetail(run.contained, run));
   eq('it mounts and survives the sweep with no diagnostic', run.diagnostics, []);
-  eq('its screen is declared and visited', run.screens, { declared: ['Today'], visited: ['Today'] });
+  eq('its screen is declared and visited', run.screens, { declared: ['Today'], visited: ['Today'], coldMounted: [] });
 }
 
 // ── A real escape-attempting candidate stays contained (non-vacuity for the stub test above) ──

@@ -48,8 +48,16 @@ const DEFAULT_CONCURRENCY = 4;
 
 /** The reserved origin every run page is delivered from. `.invalid` can never resolve (RFC 2606),
  *  so nothing outside this process can ever answer for it, and `https` keeps the outer page a
- *  secure context, as `file://` was. */
+ *  secure context, as `file://` was (measured: `isSecureContext` stays true under
+ *  `RUN_PAGE_POLICY`, which gives the document an opaque origin but leaves its URL alone). */
 export const DELIVERY_ORIGIN = 'https://synthrun.invalid';
+
+/** The response policy the run page is served with. A document sandboxed without
+ *  `allow-same-origin` has an opaque origin, so the replies it posts into the candidate's realm
+ *  carry origin `null`, the only origin the production syscall marshaller accepts from its parent
+ *  and the one the device WebView presents. It is delivery only: the page's bytes and its own CSP
+ *  are the production artifacts, and policies intersect, so this widens nothing. */
+const RUN_PAGE_POLICY = 'sandbox allow-scripts';
 
 /** The one URL a run's page is served at: `${DELIVERY_ORIGIN}/run/<runId>`. */
 export function runPageUrl(runId: string): string {
@@ -103,7 +111,8 @@ export interface IsolatedContext {
 /**
  * The only way a run's browser context is made (design D5 layer 1). The context refuses downloads.
  * A context-level route fulfills exactly one request, the first navigation to `delivery.url`, with
- * `delivery.html` from memory, and aborts every other request the context makes, from any page,
+ * `delivery.html` from memory under `RUN_PAGE_POLICY` (an opaque-origin document, so a capability
+ * reply reaches the candidate), and aborts every other request the context makes, from any page,
  * frame or worker. Every WebSocket is closed without a server connection. Each refusal is counted
  * in the returned tally.
  *
@@ -112,8 +121,9 @@ export interface IsolatedContext {
  * Without `delivery` the context serves nothing at all.
  *
  * Service workers are blocked by two mechanisms, not by Playwright's `serviceWorkers: 'block'`.
- * Chromium refuses registration in the candidate's opaque-origin sandboxed realm, and the route
- * above aborts the worker script fetch for the outer page, which counts as refused egress.
+ * Chromium refuses registration in the candidate's opaque-origin sandboxed realm, and in the
+ * outer page, whose origin `RUN_PAGE_POLICY` makes opaque too. (Were it to register anyway, the
+ * route above would abort the worker script fetch, which counts as refused egress.)
  * Playwright's option is rejected because it injects a script into every frame, the candidate's
  * realm included, and harness code never runs there.
  */
@@ -129,7 +139,7 @@ export async function newIsolatedContext(browser: Browser, delivery?: { url: str
     const request = route.request();
     if (delivery && !delivered && request.isNavigationRequest() && request.url() === delivery.url) {
       delivered = true;
-      await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: delivery.html });
+      await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', headers: { 'Content-Security-Policy': RUN_PAGE_POLICY }, body: delivery.html });
       return;
     }
     refuse();

@@ -1,0 +1,149 @@
+import {
+  defineApp,
+  Screen,
+  Stack,
+  Row,
+  Card,
+  Divider,
+  Text,
+  Button,
+  ProgressBar,
+  toast,
+  useState,
+  useEffect,
+  storage,
+  type SchemaArtifact,
+} from 'vc-sdk';
+
+const SCHEMA: SchemaArtifact = {
+  schemaVersion: 1,
+  collections: {},
+};
+
+const GOAL = 8; // glasses a day
+const GLASS_ML = 250; // millilitres in one glass
+
+// A local calendar stamp, so "today" ticks over at local midnight.
+function dayStamp(): string {
+  const d = new Date();
+  const month = `${d.getMonth() + 1}`.padStart(2, '0');
+  const day = `${d.getDate()}`.padStart(2, '0');
+  return `${d.getFullYear()}-${month}-${day}`;
+}
+
+function mlLabel(ml: number): string {
+  if (ml < 1000) return `${ml} ml`;
+  const litres = ml / 1000;
+  return `${Number.isInteger(litres) ? litres : litres.toFixed(1)} L`;
+}
+
+function Home() {
+  const [glasses, setGlasses] = useState(0);
+  const [ready, setReady] = useState(false);
+
+  // Read today's count once, when the app opens; a new day starts the count again.
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const savedDay = await storage.kv.get('todayDate');
+      const savedGlasses = await storage.kv.get('glassesToday');
+      if (!live) return;
+      const today = dayStamp();
+      if (savedDay === today && typeof savedGlasses === 'number') {
+        setGlasses(Math.max(0, Math.round(savedGlasses)));
+      } else {
+        setGlasses(0);
+        await storage.kv.set('todayDate', today);
+        await storage.kv.set('glassesToday', 0);
+      }
+      setReady(true);
+    })().catch(() => {
+      if (!live) return;
+      setReady(true);
+      toast('Couldn’t load today’s glasses.');
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const save = (next: number) => {
+    setGlasses(next);
+    storage.kv.set('todayDate', dayStamp()).catch(() => toast('Couldn’t save that.'));
+    storage.kv.set('glassesToday', next).catch(() => toast('Couldn’t save that.'));
+  };
+
+  const addGlass = () => {
+    const next = glasses + 1;
+    save(next);
+    toast(next === GOAL ? `Goal reached — ${GOAL} glasses today` : `Glass ${next} logged · ${GLASS_ML} ml`);
+  };
+
+  const undoGlass = () => {
+    if (glasses === 0) return;
+    const next = glasses - 1;
+    save(next);
+    toast(`Removed one glass · ${next} today`);
+  };
+
+  const reached = glasses >= GOAL;
+
+  return (
+    <Screen title="Water Counter">
+      <Stack gap="lg">
+        <ProgressBar
+          variant="ring"
+          value={Math.min(glasses / GOAL, 1)}
+          tone={reached ? 'positive' : 'primary'}
+          label={String(glasses)}
+        />
+        <Stack gap="xs">
+          <Text align="center">{`${glasses} of ${GOAL} glasses today`}</Text>
+          <Text align="center" size="caption" color="text-muted">
+            {reached
+              ? `${mlLabel(glasses * GLASS_ML)} logged — goal met`
+              : `${mlLabel(glasses * GLASS_ML)} of ${mlLabel(GOAL * GLASS_ML)} · ${GOAL - glasses} to go`}
+          </Text>
+        </Stack>
+
+        <Button label={`Log a glass (${GLASS_ML} ml)`} icon="glass-water" disabled={!ready} onPress={addGlass} />
+
+        <Row>
+          <Button label="Undo last glass" variant="secondary" icon="minus" disabled={glasses === 0} onPress={undoGlass} />
+        </Row>
+
+        <Card>
+          <Stack>
+            <Row justify="between">
+              <Text color="text-muted">Glasses</Text>
+              <Text>{`${glasses} / ${GOAL}`}</Text>
+            </Row>
+            <Row justify="between">
+              <Text color="text-muted">Water so far</Text>
+              <Text>{mlLabel(glasses * GLASS_ML)}</Text>
+            </Row>
+            <Divider />
+            <Row justify="between">
+              <Text color="text-muted">Daily goal</Text>
+              <Text weight="semibold">{`${GOAL} glasses · ${mlLabel(GOAL * GLASS_ML)}`}</Text>
+            </Row>
+          </Stack>
+        </Card>
+
+        <Text size="caption" color="text-muted" align="center">
+          Every glass counts {GLASS_ML} ml. The count starts fresh each day.
+        </Text>
+      </Stack>
+    </Screen>
+  );
+}
+
+export default defineApp({
+  name: 'Water Counter',
+  initial: 'Home',
+  screens: { Home },
+  capabilities: ['storage'],
+  schema: SCHEMA,
+  tint: ['blue', 'ocean'],
+  icon: 'glass-water',
+});
