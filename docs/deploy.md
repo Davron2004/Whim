@@ -27,10 +27,10 @@ isn't the project's owner. Values load as for the VM (`deploy/defaults.env`, the
 | `whim-site` | the pages host | Caddy with the rendered site and `deploy/cloudrun/Caddyfile` baked in (`deploy/cloudrun/site.Dockerfile`), 0–2 instances |
 
 Both run as service account `whim-run`, which holds only `secretmanager.secretAccessor` on
-`whim-openrouter-api-key`, `logging.logWriter` and `datastore.user` (the Firestore stores below),
+`whim-openrouter-api-key` and `whim-waitlist-fingerprint-key`, `logging.logWriter` and `datastore.user` (the Firestore stores below),
 plus `run.invoker` on the `whim-purge` job, so Cloud Scheduler can start it as `whim-run` (section
-"Firestore stores"). The OpenRouter key reaches the server as a
-Cloud Run secret env var (`latest` version); adding a secret version takes effect on the next deploy.
+"Firestore stores"). Both keys reach the server and the purge job as
+Cloud Run secret env vars (`latest` version); adding a secret version takes effect on the next deploy.
 
 What changed from the VM, and what it costs:
 
@@ -128,6 +128,7 @@ the dev runners:
 ```sh
 gcloud auth application-default login            # as the project owner
 export WHIM_STORE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=anycognition-whim
+export WHIM_WAITLIST_FINGERPRINT_KEY="$(gcloud secrets versions access latest --secret whim-waitlist-fingerprint-key)"
 node server/admin.mjs reports list --since 7
 node server/admin.mjs usage --days 1
 node server/waitlist.mjs export --platform android > android.csv
@@ -137,6 +138,25 @@ node server/waitlist.mjs remove someone@example.com
 Output is the same as against SQLite (CSV columns, report fields, usage tables). These commands
 write to production: `reports purge` and `remove` delete for real.
 
+**The waitlist fingerprint key.** A removed address is kept only as an HMAC-SHA-256 fingerprint
+under this key (Operating → Beta waitlist), so database access alone can't confirm a guessed
+address. Every process on the Firestore backend refuses to load without it (at least 32
+characters), whatever `NODE_ENV` says: the server, the `whim-purge` job and the laptop commands
+above, hence the `export` line. Create the secret once, **before the first deploy of code that
+reads it**; until then that deploy's revision and the purge job fail closed, by design:
+
+```sh
+gcloud secrets create whim-waitlist-fingerprint-key --replication-policy automatic --project anycognition-whim
+openssl rand -hex 32 | tr -d '\n' | gcloud secrets versions add whim-waitlist-fingerprint-key --data-file=- --project anycognition-whim
+gcloud secrets add-iam-policy-binding whim-waitlist-fingerprint-key --project anycognition-whim \
+  --member "serviceAccount:whim-run@anycognition-whim.iam.gserviceaccount.com" --role roles/secretmanager.secretAccessor
+```
+
+The value is piped, never echoed, saved or logged, and no script adds a version.
+`WHIM_WAITLIST_FINGERPRINT_SECRET` names another secret (default `whim-waitlist-fingerprint-key`).
+A new version orphans every kept fingerprint (they stop blocking and expire at 730 days), so don't
+rotate it without a reason.
+
 **Importing a SQLite data directory.** `whim-admin import-sqlite` copies every waitlist row, report,
 lifetime usage counter and ledger request from a directory holding `usage.db`, `reports.db` and
 `waitlist.db`, keeping ids and timestamps, and rebuilds the admission counters for the ledger days
@@ -144,10 +164,11 @@ inside retention. It never overwrites a document: a missing one is created, one 
 the SQLite row counts as imported, and one that differs is kept as found and left alone. The one
 exception is a waitlist row, whose `createdAt` becomes the earlier of the two. A device with a live
 `usage` document keeps its live totals; the SQLite lifetime totals are not added in, because
-summing would double-count on every rerun. It prints five lines, and a rerun prints the same five:
+summing would double-count on every rerun. It prints six lines, and a rerun prints the same six:
 
 ```
 waitlist: N imported, M kept as found
+waitlist fingerprints: N imported, M kept as found
 reports: N imported, M kept as found
 usage: N imported, M kept as found
 requests: N imported, M kept as found
@@ -156,30 +177,31 @@ admission counters: N set for D ledger day(s) inside retention
 
 It refuses a `usage.db` that predates the `last_credited_day` column (the column is missing, or a
 row holds NULL) before it opens Firestore. Start the server once on that directory with
-`WHIM_STORE_BACKEND=sqlite` to migrate it, then import.
+`WHIM_STORE_BACKEND=sqlite` to migrate it, then import. A `waitlist.db` from before the opt-in
+model imports in the opt-in model (no news consent; a ticked opt-out becomes a withdrawal). Its
+fingerprints block signups only when `WHIM_WAITLIST_FINGERPRINT_KEY` is the key the SQLite server used.
 
 Run the import **before** the first Firestore deploy. It needs only Firestore and your
 Application Default Credentials, not the new server, so no live traffic overlaps it and nothing
 lands as kept as found:
 
 ```sh
-WHIM_STORE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=anycognition-whim \
-  node server/admin.mjs import-sqlite --data-dir <extracted-backup-dir>
+node server/admin.mjs import-sqlite --data-dir <extracted-backup-dir>   # with the three exports above
 ```
 
 Then check the counts: `node server/waitlist.mjs export | tail -n +2 | wc -l` and
-`node server/admin.mjs reports list` with the same two variables set.
+`node server/admin.mjs reports list` with the same three variables set.
 
 **Retention purges.** The keep periods are reports 90 days (`WHIM_REPORT_RETENTION_DAYS`), ledger
-90 days (`WHIM_LEDGER_RETENTION_DAYS`), lifetime usage 365 days idle (`WHIM_USAGE_IDLE_DAYS`) and
-waitlist 730 days after the last signup. The server purges at boot and hourly while it runs, but a
+90 days (`WHIM_LEDGER_RETENTION_DAYS`), lifetime usage 365 days idle (`WHIM_USAGE_IDLE_DAYS`),
+waitlist 730 days after the last signup and a removal fingerprint 730 days after the removal. The server purges at boot and hourly while it runs, but a
 scaled-to-zero service has no instance most of the time, and its CPU is throttled between
 requests. So every Firestore deploy also creates or updates the Cloud Run Job `whim-purge` (the
-server's image, environment and secret, as `whim-run`, 1 vCPU / 512 MiB, one retry) and the Cloud
+server's image, environment and secrets, as `whim-run`, 1 vCPU / 512 MiB, one retry) and the Cloud
 Scheduler job `whim-purge-hourly` in `WHIM_RUN_REGION`, which runs it at the top of every hour (UTC)
 through `run.googleapis.com/v2/.../jobs/whim-purge:run` with a `whim-run` OAuth token. The job runs
 `node server/whim-admin.mjs purge`: the same four purges at the same cut-offs, one line per store
-(`reports: N purged`, `ledger: …`, `usage: …`, `waitlist: …`), exit 1 when any failed. A record
+(`reports: N purged`, `ledger: …`, `usage: …`, `waitlist: N purged (rows R, fingerprints F)`), exit 1 when any failed. A record
 can outlive its keep period by up to an hour (up to a UTC day plus an hour for the ledger and idle
 usage, which are cut on whole UTC days), as with the in-process hourly purge. Both fit inside
 the free tiers (3 Scheduler jobs per billing account; seconds of CPU per run).
@@ -217,7 +239,7 @@ the next plain deploy.
 gcloud run jobs executions list --job whim-purge --region us-east4 --limit 5   # recent runs
 gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="whim-purge"' --limit 20 --freshness 1d
 gcloud run jobs execute whim-purge --region us-east4 --wait                    # run it now
-WHIM_STORE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=anycognition-whim node server/admin.mjs purge   # or from the laptop
+node server/admin.mjs purge                                                    # or from the laptop, with the three exports above
 ```
 
 **Rolling back to SQLite.** `WHIM_STORE_BACKEND=sqlite deploy/cloudrun/deploy.sh --tag <sha>`
@@ -391,6 +413,7 @@ naming the secret and this section, and builds, uploads or restarts nothing.
 | `WHIM_BETA_LIMIT_PER_CLIENT_HOUR`, `WHIM_BETA_LIMIT_PER_DAY` | no | the `/beta` signup limits: signups one client address may make per hour (unset is `10`) and signups the whole list takes per day (unset is `2000`). See Operating → Beta waitlist |
 | `WHIM_POLICY_ATTEMPT_TIMEOUT_MS` | no | the bound on one content-policy classifier call; unset is `4500`, allowed `500` up to `WHIM_POLICY_TIMEOUT_MS` (`10000`, the whole check's unchanged deadline). A call that ends without a verdict (its own timeout, a provider error, unreadable output) gets one more attempt when at least 1 s of the deadline is left; a verdict or an auth error is never retried, and no verdict still fails closed (`503 policy_unavailable`). The `content policy check` log line carries `attempts` |
 | `WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY`, `WHIM_LIMIT_POLICY_CHECKS_PER_DAY` | no | classifier checks for generations that wait in line, per device (unset is `30`) and for everyone (unset is `800`) per UTC day; past either, `429 daily_limit` before any classifier call. See Operating → Tuning limits |
+| `WHIM_WAITLIST_FINGERPRINT_SECRET` | no | the Secret Manager secret `deploy/cloudrun/deploy.sh` mounts as `WHIM_WAITLIST_FINGERPRINT_KEY`; unset is `whim-waitlist-fingerprint-key` (Cloud Run → Firestore stores) |
 | `WHIM_APP_STORE_URL`, `WHIM_PLAY_STORE_URL` | no | the app-link fallback page's store-links block, dropped when both are unset |
 | `WHIM_ALERT_EMAIL` | for `provision.sh` and a plain `deploy/cloudrun/deploy.sh` | where every alert and the budget email go (Operating → Alerts) |
 | `WHIM_BILLING_ACCOUNT` | for `provision.sh` | the billing account id (`XXXXXX-XXXXXX-XXXXXX`) the spend budget is created on |
@@ -532,6 +555,7 @@ string the deploy scripts use, from `deploy/lib.sh`).
   | Terminal failures, by reason | `resource.type="cloud_run_revision" resource.labels.service_name="whim-server" jsonPayload.msg="terminal failure"`, plus `jsonPayload.reason="<code>"` to narrow (`reason` holds the closed failure code, e.g. `plan_failed`, never the sentence the user saw) |
   | Device errors | `resource.type="cloud_run_revision" resource.labels.service_name="whim-server" jsonPayload.scope="device"` |
   | Accepted reports | `resource.type="cloud_run_revision" resource.labels.service_name="whim-server" jsonPayload.msg="report accepted"` (its `reportId` feeds `reports show` below) |
+  | Beta signups refused for their origin | `resource.type="cloud_run_revision" resource.labels.service_name="whim-server" jsonPayload.msg="beta signup" jsonPayload.outcome="origin"` (Operating → Beta waitlist) |
   | Browser launch | `resource.type="cloud_run_revision" resource.labels.service_name="whim-server" (jsonPayload.msg="boot host" OR jsonPayload.msg="browser launch failed")` (#139's evidence) |
   | Warnings and worse | `resource.type="cloud_run_revision" resource.labels.service_name="whim-server" severity>=WARNING` |
 
@@ -566,25 +590,42 @@ string the deploy scripts use, from `deploy/lib.sh`).
   `reports show <id> [--json]`, `reports purge`.
 - **Usage and cost** — `$C exec -T whim-server node server/whim-admin.mjs usage [--days N] [--top N] [--json]`
   — cost per generation, per device and per day, from the ledger.
-- **Beta waitlist** — the signups from `/beta`, in `waitlist.db` under `WHIM_DATA_DIR`. No HTTP route
-  reads it; the waitlist command inside the container is the only way in. It prints CSV
-  (`email,platform,updates_opt_out,created_at,updated_at`, times in UTC) to stdout:
+- **Beta waitlist** — the signups from `/beta`, in `waitlist.db` under `WHIM_DATA_DIR` (on Cloud
+  Run, the Firestore collections `waitlist` and `waitlistSuppressed`). No HTTP route reads it; the
+  waitlist command is the only way in. `export` prints CSV
+  (`email,platform,updates_opt_in,updates_consent_at,notice_id,created_at,updated_at`, times in UTC,
+  oldest signup first) to stdout. The third column was `updates_opt_out`, inverted, before the
+  opt-in model (decision #77):
 
   ```sh
-  $C exec -T whim-server node server/whim-waitlist.mjs export                        # everyone
-  $C exec -T whim-server node server/whim-waitlist.mjs export --platform android     # ios | android | other
-  $C exec -T whim-server node server/whim-waitlist.mjs export --updates-ok           # without the opt-out
-  $C exec -T whim-server node server/whim-waitlist.mjs remove someone@example.com    # any casing
+  $C exec -T whim-server node server/whim-waitlist.mjs export                         # everyone
+  $C exec -T whim-server node server/whim-waitlist.mjs export --platform android      # ios | android | other
+  $C exec -T whim-server node server/whim-waitlist.mjs export --updates-ok            # only rows with news consent
+  $C exec -T whim-server node server/whim-waitlist.mjs remove someone@example.com     # any casing
+  $C exec -T whim-server node server/whim-waitlist.mjs updates someone@example.com on # on | off
+  $C exec -T whim-server node server/whim-waitlist.mjs restore someone@example.com    # lifts a removal
   ```
 
-  **Android testers for Play closed testing:** run the `--platform android` export through
-  `gcloud compute ssh` into a file on your laptop, keep the `email` column
-  (`cut -d, -f1 android.csv | tail -n +2 > testers.txt`), and paste the addresses into Play Console →
-  Testing → Closed testing → the track → Testers → the email list. Google invites each one; that
-  address is why the `/beta` page asks Android people for their phone's Google account. Only mail
-  the rows with `updates_opt_out=false` (`--updates-ok`) about anything other than the beta.
-  A person who asks to leave the list: `remove <their email>`, which exits 1 if they aren't on it.
-  Rows are also deleted 730 days after their last signup (the purge runs at boot and hourly), the
+  **News consent.** The page's box is an unticked opt-in ("Email me news about Whim", notice
+  `beta-2`), so a row has consent only when its person ticked it, and `--updates-ok` is exactly the
+  `updates_opt_in=true` rows. Once consent is off (an unticked re-signup, or `updates … off`), no
+  signup turns it back on. Only `updates <email> on` does, and only on a written request from that
+  address; it records `written-request` as the wording. A withdrawn row keeps its old
+  `updates_consent_at` as the record, with `updates_opt_in=false`, so pick news recipients with
+  `--updates-ok`, never from that column. `updates` exits 1 when the address isn't on the list.
+
+  **Removal.** `remove` deletes the row and keeps a fingerprint of the address (the fingerprint key,
+  Cloud Run → Firestore stores). A later signup with that address stores nothing, and the page still
+  says thanks. It exits 0 either way and says whether a row existed, so it also blocks an address
+  that never signed up. Fingerprints are deleted 730 days after the removal. `restore <email>`
+  deletes the fingerprint, on that person's written request only (exit 1 when none is kept); they
+  then sign up again.
+
+  **Android testers for Play closed testing:** export `--platform android` into a file on your
+  laptop, keep the `email` column (`cut -d, -f1 android.csv | tail -n +2 > testers.txt`), and paste
+  the addresses into Play Console → Testing → Closed testing → the track → Testers → the email list.
+  Google invites each one; that address is why the `/beta` page asks Android people for their
+  phone's Google account. Rows are also deleted 730 days after their last signup (the purge runs at boot and hourly), the
   period the privacy policy publishes. In dev, `node server/waitlist.mjs …` runs the same command
   against the local `WHIM_DATA_DIR`. The route's limits are `WHIM_MAX_BODY_BYTES_BETA` (4096, a
   default in `server/src/config.ts`), `WHIM_BETA_LIMIT_PER_CLIENT_HOUR` (10, per forwarded client
@@ -592,10 +633,88 @@ string the deploy scripts use, from `deploy/lib.sh`).
   values: set them in `~/.config/whim/deploy.env` and run a full deploy. Before an event where many
   people share one network (a venue's Wi-Fi reaches the server as one address), raise
   `WHIM_BETA_LIMIT_PER_CLIENT_HOUR`, e.g. to 200. A refused or malformed signup lands on
-  `/beta/retry`; its log line (`jsonPayload.msg="beta signup"`) carries only `outcome` (`stored`,
-  `updated`, `invalid`, `limited`, `trap`, `error`) and `requestId`, never the address.
+  `/beta/retry`; its log line (`jsonPayload.msg="beta signup"`) carries only `outcome` and
+  `requestId` (plus `errorClass` on `error`), never the address. The outcomes are `stored`,
+  `updated`, `suppressed` (a removed address: thanks, nothing stored), `invalid`, `origin`, `limited`,
+  `trap` and `error`. `origin` is a post whose `Origin` header is present and isn't the pages
+  origin, `null` included; a post without one is accepted. The pages host sends
+  `Referrer-Policy: strict-origin-when-cross-origin`, so browsers send the real origin. Count them
+  with the "Beta signups refused for their origin" query: a few are a privacy tool rewriting
+  `Origin` to `null`, a burst is another site posting through its visitors' browsers.
+- **Sending beta emails** — from the support mailbox (Zoho), one recipient per message or everyone
+  in BCC, never To or CC. Every email ends with the identification footer from
+  `deploy/site/legal-identity.json` (`legalName`, `streetAddress`, `locality`, `contactEmail`:
+  AnyCognition Inc., 575 Borbridge Avenue, Ottawa, Ontario, Canada, support@whim.anycognition.ca)
+  and a stop line ("Reply STOP, or write to support@whim.anycognition.ca, and we'll stop"). Handle a
+  stop within 10 business days: `updates <email> off` for news, `remove <email>` to leave the list.
+  The CASL position, plainly:
+  - **Invitations need no news consent.** A beta invitation answers the person's own signup, so it
+    is a requested message, exempt from CASL section 6 (SOR/2013-221, s. 3(b)); it still carries
+    the footer and the stop line. Android: the Play closed-testing list above, and Google sends the
+    invitation. iOS: email the TestFlight public link; never upload addresses to App Store Connect
+    as testers.
+  - **News needs express consent.** Any other email about Whim is a commercial electronic message:
+    send it only to `export --updates-ok`. None of the 5 people who signed up before the opt-in
+    model has consent. Those who had ticked the old "don't email me" box get it back only in
+    writing; the others by ticking the new box or in writing.
+  - **Known gap.** There is no confirmation email (double opt-in needs an outbound mail service and
+    SPF/DKIM records), so someone can sign up another person's address. The first email anyone gets
+    is a solicited invitation that says why it came and how to leave.
+- **Moving the waitlist to the opt-in model** — once, at the waitlist-hardening rollout, from the
+  merged `main` checkout on a laptop, with the three exports of "Firestore stores". `$SCRATCH` is
+  the session's scratch directory, never `~/.config/whim/`. The migration prints fingerprint
+  prefixes, never an address.
+  1. **Texas notice.** `docs/legal/change-process.md` §8 applies to any change in what the privacy
+     policy says Whim collects or keeps, and this one adds the consent record and the removal
+     fingerprint. If it applies, file the Google Play significant-change notice first, then set
+     `effectiveDates.privacy` in `deploy/site/legal-identity.json` to its effective date (at least
+     3 days after filing) or later, commit, and deploy from that commit. Log it in §8's table.
+  2. **The key.** Create `whim-waitlist-fingerprint-key` ("Firestore stores"). Every step below
+     needs it, the pre-deploy dry run included.
+  3. **Before the deploy, read only:**
+
+     ```sh
+     node server/waitlist.mjs export | tail -n +2 | wc -l                       # expect 5
+     node server/admin.mjs migrate-waitlist > "$SCRATCH/migrate-1-dry.txt"      # expect totals: 5 planned, 0 already migrated, 5 total
+     date +%s000 > "$SCRATCH/deploy-start.txt"
+     ```
+
+  4. **Deploy and smoke.** `deploy/cloudrun/deploy.sh`, then three trap posts, which store nothing:
+
+     ```sh
+     B='email=smoke@example.com&platform=other&hp_ref=x' U=https://api.whim.anycognition.ca/beta/signup
+     curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' -H 'Origin: https://evil.example' --data "$B" "$U"          # 303 …/beta/retry
+     curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' -H 'Origin: https://whim.anycognition.ca' --data "$B" "$U" # 303 …/beta/thanks
+     curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' --data "$B" "$U"                                           # 303 …/beta/thanks
+     curl -sI https://whim.anycognition.ca/beta | grep -i referrer-policy        # strict-origin-when-cross-origin
+     curl -s https://whim.anycognition.ca/beta | grep -c 'Email me news about Whim'   # 1
+     ```
+
+     Cloud Logging then shows outcomes `origin` and `trap`, with no address.
+  5. **Migrate and verify:**
+
+     ```sh
+     node server/admin.mjs migrate-waitlist > "$SCRATCH/migrate-2-dry.txt"           # expect 5 planned
+     node server/admin.mjs migrate-waitlist --apply > "$SCRATCH/migrate-3-apply.txt"  # exit 0; 5 migrated, then "verified: …"
+     node server/admin.mjs migrate-waitlist > "$SCRATCH/migrate-4-dry.txt"           # expect totals: 0 planned, 5 already migrated, 5 total
+     diff <(grep -E '^planned ' "$SCRATCH/migrate-1-dry.txt" | cut -d' ' -f2- | sort) \
+          <(grep -E '^already-migrated ' "$SCRATCH/migrate-4-dry.txt" | cut -d' ' -f2- | sort)   # expect no output
+     awk -v t="$(cat "$SCRATCH/deploy-start.txt")" '{ for (i = 1; i <= NF; i++) if ($i ~ /^updatedAt=/ && substr($i, 11) + 0 >= t) print $2 }' "$SCRATCH/migrate-4-dry.txt"
+     node server/waitlist.mjs export | tail -n +2 | wc -l                       # 5, plus any new signup
+     ```
+
+     A signup after the deploy is stored in the new model, so it shows as `already-migrated`: in
+     step 5's first dry run (fewer than 5 planned only when one of the 5 re-signed), as an extra `>`
+     line in the diff, and in the `awk` listing of rows written since the deploy started. A
+     re-signed row shows as a `<`/`>` pair whose `updatedAt` is in that listing. Anything else in
+     the diff is a problem. Exit codes: 0 done (and, with `--apply`, verified); 1 a usage error;
+     2 an unreadable row (every row listed, nothing written) or a failed verification (one `VERIFY
+     FAILED <prefix>: <reason>` line each): stop there. The apply never rewrites a migrated row, so
+     a rerun after the fix is safe. No data rollback is needed: every write keeps the old `updatesOptOut` field as
+     `!updatesOptIn`, so the previous revision exports only consented rows as updates OK.
 - **Tuning limits** — apart from the two beta signup limits above and the two policy-check limits
-  below, a capacity profile (below) is the only deploy-time lever, and it never carries a daily limit, a retention period or `NODE_ENV` by
+  below, a capacity profile (below) is the only deploy-time lever, and it never carries a limit (no key
+  containing `_LIMIT_`, so not the beta signup limits either), a retention period or `NODE_ENV` by
   construction. Changing a daily/global limit (design.md D6's table) means editing its default in
   `server/src/config.ts` and deploying that commit — a code change, not a runtime flag, so it goes through the same review as anything else.
   Two global daily ceilings, not the per-device limits, are what actually bound a day's spend — a

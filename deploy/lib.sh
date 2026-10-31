@@ -31,7 +31,7 @@ readonly WHIM_VM_SITE_DIR=/mnt/disks/whim-data/site
 readonly WHIM_COMPOSE="sudo -H docker compose --project-directory /opt/whim --file /opt/whim/compose.yaml"
 
 # Every deploy-time value, in the order the operator reads them (design D20, D24).
-readonly WHIM_VALUE_KEYS="WHIM_GCP_PROJECT WHIM_GCP_REGION WHIM_RUN_REGION WHIM_GCP_ZONE WHIM_STATIC_IP WHIM_API_HOST WHIM_WEB_HOST WHIM_SUPPORT_EMAIL WHIM_ENGINEER_MODEL WHIM_REWRITE_MODEL WHIM_CLARIFY_MODEL WHIM_SUMMARY_MODEL WHIM_PLAN_MODEL WHIM_REPAIR_MODEL WHIM_CLARIFY_REASONING WHIM_REWRITE_REASONING WHIM_SUMMARY_REASONING WHIM_PLAN_REASONING WHIM_ENGINEER_REASONING WHIM_REPAIR_REASONING WHIM_PROVIDER_SORT WHIM_PROVIDER_QUANTIZATIONS WHIM_QUEUE_MAX WHIM_QUEUE_MAX_WAIT_MS WHIM_MIN_BUILD_IOS WHIM_MIN_BUILD_ANDROID WHIM_USAGE_IDLE_DAYS WHIM_BETA_LIMIT_PER_CLIENT_HOUR WHIM_BETA_LIMIT_PER_DAY WHIM_POLICY_ATTEMPT_TIMEOUT_MS WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY WHIM_LIMIT_POLICY_CHECKS_PER_DAY WHIM_APP_STORE_URL WHIM_PLAY_STORE_URL WHIM_ALERT_EMAIL WHIM_BILLING_ACCOUNT WHIM_MONTHLY_BUDGET"
+readonly WHIM_VALUE_KEYS="WHIM_GCP_PROJECT WHIM_GCP_REGION WHIM_RUN_REGION WHIM_GCP_ZONE WHIM_STATIC_IP WHIM_API_HOST WHIM_WEB_HOST WHIM_SUPPORT_EMAIL WHIM_ENGINEER_MODEL WHIM_REWRITE_MODEL WHIM_CLARIFY_MODEL WHIM_SUMMARY_MODEL WHIM_PLAN_MODEL WHIM_REPAIR_MODEL WHIM_CLARIFY_REASONING WHIM_REWRITE_REASONING WHIM_SUMMARY_REASONING WHIM_PLAN_REASONING WHIM_ENGINEER_REASONING WHIM_REPAIR_REASONING WHIM_PROVIDER_SORT WHIM_PROVIDER_QUANTIZATIONS WHIM_QUEUE_MAX WHIM_QUEUE_MAX_WAIT_MS WHIM_MIN_BUILD_IOS WHIM_MIN_BUILD_ANDROID WHIM_USAGE_IDLE_DAYS WHIM_BETA_LIMIT_PER_CLIENT_HOUR WHIM_BETA_LIMIT_PER_DAY WHIM_POLICY_ATTEMPT_TIMEOUT_MS WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY WHIM_LIMIT_POLICY_CHECKS_PER_DAY WHIM_APP_STORE_URL WHIM_PLAY_STORE_URL WHIM_ALERT_EMAIL WHIM_BILLING_ACCOUNT WHIM_MONTHLY_BUDGET WHIM_WAITLIST_FINGERPRINT_SECRET"
 
 # The profile keys that are not server environment (design D25).
 readonly WHIM_PROFILE_HOST_KEYS="WHIM_PROFILE_MACHINE_TYPE WHIM_SERVER_MEM_LIMIT WHIM_SERVER_SHM_SIZE"
@@ -208,12 +208,13 @@ whim_machine_type_vcpus() {
 # deploys it with. deploy/cloudrun/smoke.sh compares the association files the pages host serves
 # against such a build.
 whim_cloudrun_site_build() {
+  local out_dir="$1"
   local -a site_env=(env -u WHIM_APP_STORE_URL -u WHIM_PLAY_STORE_URL
     "WHIM_SUPPORT_EMAIL=$WHIM_SUPPORT_EMAIL" "WHIM_BETA_SIGNUP_URL=https://$WHIM_API_HOST/beta/signup"
     "WHIM_ENGINEER_MODEL=$WHIM_ENGINEER_MODEL" "WHIM_REWRITE_MODEL=$WHIM_REWRITE_MODEL")
   [[ -z "$WHIM_APP_STORE_URL" ]] || site_env+=("WHIM_APP_STORE_URL=$WHIM_APP_STORE_URL")
   [[ -z "$WHIM_PLAY_STORE_URL" ]] || site_env+=("WHIM_PLAY_STORE_URL=$WHIM_PLAY_STORE_URL")
-  (cd "$WHIM_REPO_ROOT" && "${site_env[@]}" node server/site.mjs build --out "$1")
+  (cd "$WHIM_REPO_ROOT" && "${site_env[@]}" node server/site.mjs build --out "$out_dir")
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -226,7 +227,8 @@ readonly WHIM_MONITORING_DIR="$WHIM_DEPLOY_DIR/monitoring"
 readonly WHIM_TAB=$'\t'
 
 whim_monitoring_fail() {
-  whim_fail "$1.${WHIM_FAIL_CONTEXT:+ $WHIM_FAIL_CONTEXT}"
+  local message="$1"
+  whim_fail "$message.${WHIM_FAIL_CONTEXT:+ $WHIM_FAIL_CONTEXT}"
 }
 
 # Renders a deploy/monitoring template into WHIM_MONITORING_WORK: each {{KEY}} named by a KEY VALUE
@@ -305,11 +307,17 @@ whim_apply_rendered() {
   fi
 }
 
+# Names the apply function's local that holds an uptime-env KEY: uptime_ plus the key in lower case.
+whim_uptime_var_name() {
+  local key="$1"
+  printf 'uptime_%s' "$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')"
+}
+
 whim_capture_uptime_value() {
   local key="$1" value="$2" context="$3"
   whim_word_in "$key" "DISPLAY_NAME CHECK_PATH PERIOD_MINUTES TIMEOUT_SECONDS REGIONS MATCHER_CONTENT" \
     || whim_fail "$context: unknown uptime check setting $key"
-  printf -v "uptime_$key" '%s' "$value"
+  printf -v "$(whim_uptime_var_name "$key")" '%s' "$value"
 }
 
 # Applies all of deploy/monitoring/: the email channel to $1, the uptime check on https://$2, every
@@ -319,7 +327,7 @@ whim_capture_uptime_value() {
 whim_apply_monitoring() {
   local alert_email="$1" api_host="$2" rows template metric description uptime_spec uptime_name uptime_check_id
   local uptime_file="$WHIM_MONITORING_DIR/uptime-healthz.env" key value_name
-  local uptime_DISPLAY_NAME="" uptime_CHECK_PATH="" uptime_PERIOD_MINUTES="" uptime_TIMEOUT_SECONDS="" uptime_REGIONS="" uptime_MATCHER_CONTENT=""
+  local uptime_display_name="" uptime_check_path="" uptime_period_minutes="" uptime_timeout_seconds="" uptime_regions="" uptime_matcher_content=""
   local -a uptime_settings
 
   # Every definition renders before anything is applied, so a broken one changes nothing.
@@ -337,34 +345,34 @@ whim_apply_monitoring() {
   echo "==> uptime check on https://$api_host"
   whim_read_env_lines "$uptime_file" whim_capture_uptime_value
   for key in DISPLAY_NAME CHECK_PATH PERIOD_MINUTES TIMEOUT_SECONDS REGIONS MATCHER_CONTENT; do
-    value_name="uptime_$key"
+    value_name="$(whim_uptime_var_name "$key")"
     [[ -n "${!value_name}" ]] || whim_fail "$uptime_file sets no $key"
   done
   uptime_spec="$(git hash-object "$uptime_file")"
-  uptime_settings=(--path "$uptime_CHECK_PATH" --period "$uptime_PERIOD_MINUTES" --timeout "$uptime_TIMEOUT_SECONDS"
-    --validate-ssl=true --matcher-content "$uptime_MATCHER_CONTENT" --matcher-type contains-string)
+  uptime_settings=(--path "$uptime_check_path" --period "$uptime_period_minutes" --timeout "$uptime_timeout_seconds"
+    --validate-ssl=true --matcher-content "$uptime_matcher_content" --matcher-type contains-string)
   rows="$(whim_gcloud monitoring uptime list-configs --format='value(displayName,name,userLabels.whim_spec,monitoredResource.labels.host)')" \
     || whim_monitoring_fail "listing the uptime checks failed"
-  whim_find_row "$uptime_DISPLAY_NAME" "$rows"
+  whim_find_row "$uptime_display_name" "$rows"
   if [[ -z "$ROW_NAME" ]]; then
-    uptime_name="$(whim_gcloud monitoring uptime create "$uptime_DISPLAY_NAME" --resource-type uptime-url \
+    uptime_name="$(whim_gcloud monitoring uptime create "$uptime_display_name" --resource-type uptime-url \
       --resource-labels "host=$api_host,project_id=$WHIM_GCP_PROJECT" --protocol https --port 443 "${uptime_settings[@]}" \
-      --regions "$uptime_REGIONS" --user-labels "whim_spec=$uptime_spec" --format='value(name)')" \
-      || whim_monitoring_fail "creating uptime check '$uptime_DISPLAY_NAME' failed"
-    [[ -n "$uptime_name" ]] || whim_monitoring_fail "creating uptime check '$uptime_DISPLAY_NAME' returned no resource name"
-    echo "created uptime check '$uptime_DISPLAY_NAME'"
+      --regions "$uptime_regions" --user-labels "whim_spec=$uptime_spec" --format='value(name)')" \
+      || whim_monitoring_fail "creating uptime check '$uptime_display_name' failed"
+    [[ -n "$uptime_name" ]] || whim_monitoring_fail "creating uptime check '$uptime_display_name' returned no resource name"
+    echo "created uptime check '$uptime_display_name'"
   elif [[ "$ROW_EXTRA" != "$api_host" ]]; then
     # An uptime check's host can't be updated in place.
-    whim_monitoring_fail "uptime check '$uptime_DISPLAY_NAME' watches ${ROW_EXTRA:-another host}, not $api_host; delete it (gcloud monitoring uptime delete ${ROW_NAME##*/}), then rerun"
+    whim_monitoring_fail "uptime check '$uptime_display_name' watches ${ROW_EXTRA:-another host}, not $api_host; delete it (gcloud monitoring uptime delete ${ROW_NAME##*/}), then rerun"
   elif [[ "$ROW_SPEC" != "$uptime_spec" ]]; then
     uptime_name="$ROW_NAME"
-    whim_gcloud monitoring uptime update "${uptime_name##*/}" "${uptime_settings[@]}" --set-regions "$uptime_REGIONS" \
+    whim_gcloud monitoring uptime update "${uptime_name##*/}" "${uptime_settings[@]}" --set-regions "$uptime_regions" \
       --update-user-labels "whim_spec=$uptime_spec" >/dev/null \
-      || whim_monitoring_fail "updating uptime check '$uptime_DISPLAY_NAME' failed"
-    echo "updated uptime check '$uptime_DISPLAY_NAME'"
+      || whim_monitoring_fail "updating uptime check '$uptime_display_name' failed"
+    echo "updated uptime check '$uptime_display_name'"
   else
     uptime_name="$ROW_NAME"
-    echo "unchanged uptime check '$uptime_DISPLAY_NAME'"
+    echo "unchanged uptime check '$uptime_display_name'"
   fi
   uptime_check_id="${uptime_name##*/}"
 
@@ -457,7 +465,7 @@ whim_smoke_flunk() {
 
 # Fails when any check failed, and otherwise says all passed.
 whim_smoke_finish() {
-  [ "$WHIM_SMOKE_FAILURES" -eq 0 ] || whim_fail "$WHIM_SMOKE_FAILURES smoke check(s) failed"
+  [[ "$WHIM_SMOKE_FAILURES" -eq 0 ]] || whim_fail "$WHIM_SMOKE_FAILURES smoke check(s) failed"
   echo "${WHIM_SCRIPT:-smoke}: all checks passed"
 }
 
@@ -502,7 +510,7 @@ whim_smoke_health() {
 whim_smoke_device_header_required() {
   local url="https://$WHIM_API_HOST/v1/generate"
   whim_smoke_probe "$url" -X POST -H 'content-type: application/json' -H 'x-whim-protocol: 1' --data '{}'
-  if [ "$PROBE_STATUS" = 400 ]; then
+  if [[ "$PROBE_STATUS" = 400 ]]; then
     whim_smoke_pass "api $url without a device header -> 400"
   else
     whim_smoke_flunk "api $url without a device header answered $PROBE_STATUS, expected 400"
@@ -558,7 +566,7 @@ whim_smoke_beta_signup_trap() {
 whim_smoke_page() {
   local path="$1" expected="$2" url="https://$WHIM_WEB_HOST$1"
   whim_smoke_probe "$url"
-  if [ "$PROBE_STATUS" = "$expected" ] && [ -z "$PROBE_LOCATION" ] && [[ "$PROBE_TYPE" == text/html* ]]; then
+  if [[ "$PROBE_STATUS" = "$expected" ]] && [[ -z "$PROBE_LOCATION" ]] && [[ "$PROBE_TYPE" == text/html* ]]; then
     whim_smoke_pass "pages $path -> $expected HTML, no redirect"
   else
     whim_smoke_flunk "pages $url answered $PROBE_STATUS ($PROBE_TYPE)${PROBE_LOCATION:+ redirecting to $PROBE_LOCATION}, expected $expected HTML without a redirect"
@@ -597,7 +605,7 @@ whim_smoke_association() {
   whim_smoke_probe "$url"
   case "$state" in
     present)
-      if [ "$PROBE_STATUS" = 200 ] && [ -z "$PROBE_LOCATION" ] && [[ "$PROBE_TYPE" == application/json* ]] \
+      if [[ "$PROBE_STATUS" = 200 ]] && [[ -z "$PROBE_LOCATION" ]] && [[ "$PROBE_TYPE" == application/json* ]] \
         && cmp -s "$WHIM_SMOKE_WORK/body" "$published"; then
         whim_smoke_pass "association $name -> 200 application/json, bytes equal the published file"
       else
@@ -605,7 +613,7 @@ whim_smoke_association() {
       fi
       ;;
     absent)
-      if [ "$PROBE_STATUS" = 404 ] && [ -z "$PROBE_LOCATION" ]; then
+      if [[ "$PROBE_STATUS" = 404 ]] && [[ -z "$PROBE_LOCATION" ]]; then
         whim_smoke_pass "association $name -> 404 (the published site has none)"
       else
         whim_smoke_flunk "association $url answered $PROBE_STATUS; the published site has no such file, so expected 404"

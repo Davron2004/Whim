@@ -2,7 +2,7 @@
 # else, the same route table as the pages site in deploy/Caddyfile. Cloud Run terminates TLS and maps
 # the custom domain to this service, so Caddy serves plain HTTP on the port Cloud Run injects. Routes
 # rewrite internally to flat files, so no answer is a redirect (Apple and Android refuse an
-# association file behind one). Keep the handles below in step with deploy/Caddyfile.
+# association file behind one). Keep the handles and headers below in step with deploy/Caddyfile.
 {
 	auto_https off
 	admin off
@@ -25,6 +25,7 @@
 	header {
 		Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'"
 		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
 	}
 
 	handle /.well-known/apple-app-site-association {

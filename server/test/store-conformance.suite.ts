@@ -11,20 +11,55 @@
  * against the emulator. Cases assert observable behaviour only, never a backend's mechanism.
  */
 import nodeAssert from 'node:assert';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { check, section } from './harness';
+import { DatabaseSync } from 'node:sqlite';
+import { inspect } from 'node:util';
+import { check, eq, section } from './harness';
 import { loadServerConfig } from '../src/config';
 import { openStores, type OpenedStores, type StoreConfig } from '../src/stores';
 import { InMemoryUsageStore, NodeSqliteUsageStore, policyCheckRowId, type AdmitParams, type AdmitResult, type FailureReason, type LedgerRow, type UsageRecordKeeping, type UsageStore } from '../src/usage-store';
 import { firestoreKey } from '../src/firestore/usage-store';
 import { InMemoryReportStore, type InsertReportParams } from '../src/reports/store';
-import { InMemoryWaitlistStore, WAITLIST_RETENTION_DAYS, type WaitlistPlatform, type WaitlistSignup } from '../src/waitlist/store';
+import {
+  InMemoryWaitlistStore,
+  NodeSqliteWaitlistStore,
+  WAITLIST_FINGERPRINT_KEY_MIN_LENGTH,
+  WAITLIST_FINGERPRINT_RETENTION_DAYS,
+  WAITLIST_RETENTION_DAYS,
+  WAITLIST_SUPPRESSED_TABLE,
+  WRITTEN_REQUEST_NOTICE_ID,
+  waitlistFingerprint,
+  type WaitlistPlatform,
+  type WaitlistRow,
+  type WaitlistSignup,
+  type WaitlistStore,
+} from '../src/waitlist/store';
+import { LEGACY_ROWS, LEGACY_SIGNUPS, createLegacySqliteSchema, legacySqliteUpsert, type LegacySignup } from './waitlist-legacy-fixtures';
 
 /** The clock a case drives. The usage store reads it (through the factory) for `credit`'s day. */
 export interface ConformanceClock {
   now: number;
+}
+
+/** One opened backend's waitlist storage, reached beneath the store: how the waitlist cases write
+ *  what the opt-out-model code wrote, and see everything the backend keeps. */
+export interface WaitlistBackdoor {
+  /** The key the opened waitlist store fingerprints with. */
+  readonly fingerprintKey: string;
+  /** Runs the opt-out-model code's `upsert` against this backend's storage
+   *  (`waitlist-legacy-fixtures.ts`). */
+  legacyUpsert(signup: LegacySignup): Promise<void>;
+  /** Every stored waitlist record, rows and fingerprints with their ids, as text. */
+  dump(): Promise<string>;
+}
+
+/** One backend, opened for one case. */
+export interface OpenedBackend {
+  readonly stores: OpenedStores;
+  readonly waitlist: WaitlistBackdoor;
 }
 
 /** Opens one backend's stores for one case. */
@@ -33,13 +68,13 @@ export interface StoreBackendFactory {
   readonly label: string;
   /** Fresh stores holding no record any earlier `open` wrote. `now` is the usage store's injected
    *  clock (`UsageStoreOptions.now`). */
-  open(now: () => number): Promise<OpenedStores>;
+  open(now: () => number): Promise<OpenedBackend>;
 }
 
 export interface StoreConformanceCase {
   readonly name: string;
   /** Rejects (an `AssertionError` or a store error) when the backend breaks the contract. */
-  run(stores: OpenedStores, clock: ConformanceClock): Promise<void>;
+  run(stores: OpenedStores, clock: ConformanceClock, waitlist: WaitlistBackdoor): Promise<void>;
 }
 
 const HOUR_MS = 3_600_000;
@@ -78,8 +113,9 @@ function report(deviceId: string, now: number, extra: Partial<InsertReportParams
   return { deviceId, reason: 'broken', now, ...extra };
 }
 
-function signup(email: string, platform: WaitlistPlatform, now: number, updatesOptOut = false): WaitlistSignup {
-  return { email, platform, updatesOptOut, noticeId: 'notice-1', now };
+/** A signup with the news box unticked, or ticked (`updatesOptIn`). */
+function signup(email: string, platform: WaitlistPlatform, now: number, updatesOptIn = false): WaitlistSignup {
+  return { email, platform, updatesOptIn, noticeId: 'notice-1', now };
 }
 
 const admissionLimits: StoreConformanceCase = {
@@ -425,21 +461,35 @@ const waitlistRows: StoreConformanceCase = {
   async run({ waitlist }) {
     nodeAssert.strictEqual(await waitlist.upsert(signup('  Person@Example.COM ', 'android', T0)), 'stored');
     nodeAssert.strictEqual(await waitlist.upsert({ ...signup('person@example.com', 'ios', T0 + DAY_MS, true), noticeId: 'notice-2' }), 'updated');
-    nodeAssert.deepStrictEqual(await waitlist.export(), [
-      { email: 'person@example.com', platform: 'ios', updatesOptOut: true, noticeId: 'notice-2', createdAt: T0, updatedAt: T0 + DAY_MS },
-    ]);
+    nodeAssert.deepStrictEqual(
+      await waitlist.export(),
+      [
+        {
+          email: 'person@example.com',
+          platform: 'ios',
+          noticeId: 'notice-2',
+          createdAt: T0,
+          updatedAt: T0 + DAY_MS,
+          updatesOptIn: true,
+          updatesConsentAt: T0 + DAY_MS,
+          updatesConsentNoticeId: 'notice-2',
+          updatesWithdrawnAt: null,
+        },
+      ],
+      'a repeat signup updates platform and notice, records news consent at the ticked signup under its notice, and keeps created_at',
+    );
 
-    await waitlist.upsert(signup('zed@example.com', 'android', T0 - 2));
-    await waitlist.upsert(signup('bea@example.com', 'android', T0 - 1));
-    await waitlist.upsert(signup('amy@example.com', 'android', T0 - 1));
-    await waitlist.upsert(signup('out@example.com', 'other', T0 + 5, true));
+    await waitlist.upsert(signup('zed@example.com', 'android', T0 - 2, true));
+    await waitlist.upsert(signup('bea@example.com', 'android', T0 - 1, true));
+    await waitlist.upsert(signup('amy@example.com', 'android', T0 - 1, true));
+    await waitlist.upsert(signup('out@example.com', 'other', T0 + 5));
     const emails = async (filter?: Parameters<OpenedStores['waitlist']['export']>[0]): Promise<string[]> => (await waitlist.export(filter)).map((row) => row.email);
     nodeAssert.deepStrictEqual(await emails(), ['zed@example.com', 'amy@example.com', 'bea@example.com', 'person@example.com', 'out@example.com'], 'oldest signup first, ties by email');
     nodeAssert.deepStrictEqual(await emails({ platform: 'android' }), ['zed@example.com', 'amy@example.com', 'bea@example.com']);
-    nodeAssert.deepStrictEqual(await emails({ updatesOk: true }), ['zed@example.com', 'amy@example.com', 'bea@example.com']);
+    nodeAssert.deepStrictEqual(await emails({ updatesOk: true }), ['zed@example.com', 'amy@example.com', 'bea@example.com', 'person@example.com'], 'updatesOk lists exactly the rows with news consent');
 
-    nodeAssert.strictEqual(await waitlist.remove('  AMY@example.com'), true);
-    nodeAssert.strictEqual(await waitlist.remove('amy@example.com'), false);
+    nodeAssert.strictEqual(await waitlist.remove('  AMY@example.com', T0), true);
+    nodeAssert.strictEqual(await waitlist.remove('amy@example.com', T0), false);
     nodeAssert.deepStrictEqual(await emails({ platform: 'android' }), ['zed@example.com', 'bea@example.com']);
   },
 };
@@ -451,6 +501,130 @@ const waitlistConcurrentSignups: StoreConformanceCase = {
     const outcomes = await Promise.all(spellings.map((email) => waitlist.upsert(signup(email, 'ios', T0))));
     nodeAssert.strictEqual(outcomes.filter((outcome) => outcome === 'stored').length, 1, `one signup stores the row, the rest update it: ${outcomes.join(', ')}`);
     nodeAssert.deepStrictEqual((await waitlist.export()).map((row) => [row.email, row.createdAt]), [['new@example.com', T0]]);
+  },
+};
+
+/** The consent fields of `email`'s row, or `undefined` when it has none. */
+async function consentOf(waitlist: WaitlistStore, email: string): Promise<Pick<WaitlistRow, 'updatesOptIn' | 'updatesConsentAt' | 'updatesConsentNoticeId' | 'updatesWithdrawnAt'> | undefined> {
+  const row = (await waitlist.export()).find((candidate) => candidate.email === email);
+  if (row === undefined) return undefined;
+  const { updatesOptIn, updatesConsentAt, updatesConsentNoticeId, updatesWithdrawnAt } = row;
+  return { updatesOptIn, updatesConsentAt, updatesConsentNoticeId, updatesWithdrawnAt };
+}
+
+const waitlistConsentRules: StoreConformanceCase = {
+  name: 'news consent comes only from a ticked box or the operator, and no signup undoes a withdrawal',
+  async run({ waitlist }) {
+    const ticked = (email: string, at: number, noticeId = 'notice-1'): WaitlistSignup => ({ ...signup(email, 'ios', at, true), noticeId });
+    const unticked = (email: string, at: number): WaitlistSignup => signup(email, 'ios', at);
+
+    await waitlist.upsert(ticked('a@example.com', T0));
+    nodeAssert.deepStrictEqual(await consentOf(waitlist, 'a@example.com'), { updatesOptIn: true, updatesConsentAt: T0, updatesConsentNoticeId: 'notice-1', updatesWithdrawnAt: null }, 'a new ticked signup records consent now, under its notice');
+    await waitlist.upsert(unticked('b@example.com', T0));
+    nodeAssert.deepStrictEqual(await consentOf(waitlist, 'b@example.com'), { updatesOptIn: false, updatesConsentAt: null, updatesConsentNoticeId: null, updatesWithdrawnAt: null }, 'a new unticked signup records no consent');
+
+    await waitlist.upsert(ticked('A@example.com', T0 + 1, 'notice-2'));
+    nodeAssert.deepStrictEqual(await consentOf(waitlist, 'a@example.com'), { updatesOptIn: true, updatesConsentAt: T0, updatesConsentNoticeId: 'notice-1', updatesWithdrawnAt: null }, 'ticked with consent recorded: the earlier record is kept');
+    await waitlist.upsert(unticked('b@example.com', T0 + 1));
+    nodeAssert.deepStrictEqual(await consentOf(waitlist, 'b@example.com'), { updatesOptIn: false, updatesConsentAt: null, updatesConsentNoticeId: null, updatesWithdrawnAt: null }, 'unticked with no consent: nothing changes');
+    await waitlist.upsert(ticked('b@example.com', T0 + 2, 'notice-2'));
+    nodeAssert.deepStrictEqual(await consentOf(waitlist, 'b@example.com'), { updatesOptIn: true, updatesConsentAt: T0 + 2, updatesConsentNoticeId: 'notice-2', updatesWithdrawnAt: null }, 'ticked, never withdrawn, no consent: consent is recorded now');
+
+    await waitlist.upsert(unticked('a@example.com', T0 + 3));
+    nodeAssert.deepStrictEqual(await consentOf(waitlist, 'a@example.com'), { updatesOptIn: false, updatesConsentAt: T0, updatesConsentNoticeId: 'notice-1', updatesWithdrawnAt: T0 + 3 }, 'unticked with consent: withdrawn now, the consent it withdrew kept as its record');
+    await waitlist.upsert(ticked('a@example.com', T0 + 4, 'notice-3'));
+    nodeAssert.deepStrictEqual(await consentOf(waitlist, 'a@example.com'), { updatesOptIn: false, updatesConsentAt: T0, updatesConsentNoticeId: 'notice-1', updatesWithdrawnAt: T0 + 3 }, 'ticked after a withdrawal: nothing about consent changes');
+    nodeAssert.deepStrictEqual((await waitlist.export({ updatesOk: true })).map((row) => row.email), ['b@example.com'], 'updatesOk omits the withdrawn row');
+
+    nodeAssert.strictEqual(await waitlist.setUpdates('A@Example.com ', true, T0 + 5), true);
+    nodeAssert.deepStrictEqual(await consentOf(waitlist, 'a@example.com'), { updatesOptIn: true, updatesConsentAt: T0 + 5, updatesConsentNoticeId: WRITTEN_REQUEST_NOTICE_ID, updatesWithdrawnAt: null }, 'a written request restores consent under written-request');
+
+    await waitlist.upsert(unticked('c@example.com', T0));
+    nodeAssert.strictEqual(await waitlist.setUpdates('c@example.com', false, T0 + 6), true);
+    await waitlist.upsert(ticked('c@example.com', T0 + 7));
+    nodeAssert.deepStrictEqual(await consentOf(waitlist, 'c@example.com'), { updatesOptIn: false, updatesConsentAt: null, updatesConsentNoticeId: null, updatesWithdrawnAt: T0 + 6 }, 'an operator stop on a row that never consented is a withdrawal no signup undoes');
+    nodeAssert.strictEqual(await waitlist.setUpdates('b@example.com', false, T0 + 8), true);
+    nodeAssert.deepStrictEqual(await consentOf(waitlist, 'b@example.com'), { updatesOptIn: false, updatesConsentAt: T0 + 2, updatesConsentNoticeId: 'notice-2', updatesWithdrawnAt: T0 + 8 }, 'an operator stop withdraws consent');
+
+    const updatedAt = (await waitlist.export()).find((row) => row.email === 'b@example.com')?.updatedAt;
+    nodeAssert.strictEqual(updatedAt, T0 + 2, 'an operator change leaves updated_at, which the retention counts from, as it was');
+    nodeAssert.strictEqual(await waitlist.setUpdates('nobody@example.com', true, T0), false, 'an address with no row reports none');
+    nodeAssert.deepStrictEqual((await waitlist.export()).map((row) => row.email), ['a@example.com', 'b@example.com', 'c@example.com'], 'and gains none');
+  },
+};
+
+const waitlistFingerprints: StoreConformanceCase = {
+  name: 'a removal keeps a keyed fingerprint that refuses a later signup until restore, and keeps no address',
+  async run({ waitlist }, _clock, backdoor) {
+    await waitlist.upsert(signup('gone@example.com', 'ios', T0, true));
+    await waitlist.upsert(signup('stays@example.com', 'ios', T0));
+    nodeAssert.strictEqual(await waitlist.remove(' Gone@Example.com', T0 + 1), true, 'the removal found the row');
+    nodeAssert.strictEqual(await waitlist.upsert(signup('GONE@example.com ', 'android', T0 + 2, true)), 'suppressed', 'a later signup in any casing is refused as suppressed');
+    nodeAssert.deepStrictEqual((await waitlist.export()).map((row) => row.email), ['stays@example.com'], '  ... storing nothing');
+
+    const stored = await backdoor.dump();
+    for (const [what, secret] of [
+      ['the removed address', 'gone@example.com'],
+      ['its unkeyed SHA-256', createHash('sha256').update('gone@example.com').digest('hex')],
+      ['the fingerprint key', backdoor.fingerprintKey],
+    ] as const) {
+      nodeAssert.ok(!stored.includes(secret), `nothing the backend stores holds ${what}`);
+    }
+    nodeAssert.ok(stored.includes(waitlistFingerprint(backdoor.fingerprintKey, 'gone@example.com')), 'the backend keeps the keyed fingerprint of the removed address');
+
+    nodeAssert.strictEqual(await waitlist.remove('never@example.com', T0), false, 'removing an address with no row reports none');
+    nodeAssert.strictEqual(await waitlist.upsert(signup('never@example.com', 'ios', T0 + 1)), 'suppressed', '  ... and still refuses its later signup');
+
+    nodeAssert.strictEqual(await waitlist.restore('GONE@example.com'), true, 'restore lifts the fingerprint');
+    nodeAssert.strictEqual(await waitlist.restore('gone@example.com'), false, '  ... once');
+    nodeAssert.strictEqual(await waitlist.upsert(signup('gone@example.com', 'android', T0 + 3, true)), 'stored', 'after restore, a signup is stored');
+    nodeAssert.deepStrictEqual(await consentOf(waitlist, 'gone@example.com'), { updatesOptIn: true, updatesConsentAt: T0 + 3, updatesConsentNoticeId: 'notice-1', updatesWithdrawnAt: null });
+  },
+};
+
+const waitlistLegacyRows: StoreConformanceCase = {
+  name: 'rows the opt-out model wrote read as no news consent, a ticked opt-out as a withdrawal, nothing else changed',
+  async run({ waitlist }, _clock, backdoor) {
+    for (const legacy of LEGACY_SIGNUPS) await backdoor.legacyUpsert(legacy);
+    nodeAssert.deepStrictEqual(
+      await waitlist.export(),
+      LEGACY_ROWS.map(({ optedOut, ...kept }) => ({ ...kept, updatesOptIn: false, updatesConsentAt: null, updatesConsentNoticeId: null, updatesWithdrawnAt: optedOut ? kept.updatedAt : null })),
+      'every legacy row keeps email, platform, notice id and both timestamps, with no consent',
+    );
+    nodeAssert.deepStrictEqual(await waitlist.export({ updatesOk: true }), [], 'updatesOk lists none of them');
+
+    const now = T0 + 1000;
+    await waitlist.upsert({ ...signup('tick@example.com', 'android', now, true), noticeId: 'notice-2' });
+    nodeAssert.deepStrictEqual(await consentOf(waitlist, 'tick@example.com'), { updatesOptIn: false, updatesConsentAt: null, updatesConsentNoticeId: null, updatesWithdrawnAt: LEGACY_ROWS[1].updatedAt }, 'a legacy opt-out stays respected: a ticked signup gains no consent');
+    await waitlist.upsert({ ...signup('una@example.com', 'android', now, true), noticeId: 'notice-2' });
+    nodeAssert.deepStrictEqual(await consentOf(waitlist, 'una@example.com'), { updatesOptIn: true, updatesConsentAt: now, updatesConsentNoticeId: 'notice-2', updatesWithdrawnAt: null }, 'a legacy row without the opt-out gains consent from a ticked signup');
+    await waitlist.upsert(signup('untick@example.com', 'ios', now));
+    const rows = new Map((await waitlist.export()).map((row) => [row.email, row]));
+    nodeAssert.deepStrictEqual(
+      [rows.get('untick@example.com')?.platform, rows.get('untick@example.com')?.createdAt, rows.get('untick@example.com')?.updatesWithdrawnAt, rows.get('tick@example.com')?.createdAt],
+      ['ios', LEGACY_ROWS[3].createdAt, null, LEGACY_ROWS[1].createdAt],
+      'a write to a legacy row keeps its created_at and applies the rules to its mapped consent',
+    );
+    nodeAssert.strictEqual(await waitlist.setUpdates('last@example.com', false, now), true);
+    nodeAssert.strictEqual(await waitlist.remove('later-tick@example.com', now), true, 'a legacy row can be removed');
+    nodeAssert.strictEqual(await waitlist.upsert(signup('later-tick@example.com', 'ios', now + 1, true)), 'suppressed', '  ... and stays removed');
+    nodeAssert.deepStrictEqual((await waitlist.export({ updatesOk: true })).map((row) => row.email), ['una@example.com']);
+  },
+};
+
+const waitlistSignupRacesRemoval: StoreConformanceCase = {
+  name: 'a signup racing a removal of the same email ends removed or refused, never as a row beside its fingerprint',
+  async run({ waitlist }) {
+    await waitlist.upsert(signup('race-0@example.com', 'ios', T0));
+    const emails = Array.from({ length: 6 }, (_, i) => `race-${i}@example.com`);
+    const outcomes = await Promise.all(emails.map(async (email, i) => {
+      const [upserted] = await Promise.all([waitlist.upsert(signup(i % 2 === 0 ? email.toUpperCase() : email, 'android', T0 + 1, true)), waitlist.remove(email, T0 + 1)]);
+      return upserted;
+    }));
+    nodeAssert.ok(outcomes.every((outcome) => outcome === 'stored' || outcome === 'updated' || outcome === 'suppressed'), outcomes.join(', '));
+    nodeAssert.deepStrictEqual(await waitlist.export(), [], 'no raced row survives its removal');
+    const later = await Promise.all(emails.map((email) => waitlist.upsert(signup(email, 'ios', T0 + 2))));
+    nodeAssert.deepStrictEqual(later, emails.map(() => 'suppressed'), 'every raced address keeps its fingerprint');
   },
 };
 
@@ -548,8 +722,17 @@ const retention: StoreConformanceCase = {
     await waitlist.upsert(signup('recent@example.com', 'ios', now - (WAITLIST_RETENTION_DAYS - 1) * DAY_MS));
     await waitlist.upsert(signup('renewed@example.com', 'ios', now - 900 * DAY_MS));
     await waitlist.upsert(signup('renewed@example.com', 'ios', now - DAY_MS));
-    nodeAssert.strictEqual(await waitlist.purge(now), 1);
+    const keptAt = (days: number): number => now - days * DAY_MS;
+    await waitlist.remove('gone-expired@example.com', keptAt(WAITLIST_FINGERPRINT_RETENTION_DAYS) - 1);
+    await waitlist.remove('gone-at-cutoff@example.com', keptAt(WAITLIST_FINGERPRINT_RETENTION_DAYS));
+    await waitlist.remove('gone-recent@example.com', keptAt(1));
+    nodeAssert.deepStrictEqual(await waitlist.purge(now), { rows: 1, fingerprints: 1 }, 'the purge counts the rows and the fingerprints it deleted');
     nodeAssert.deepStrictEqual((await waitlist.export()).map((row) => row.email), ['renewed@example.com', 'at-cutoff@example.com', 'recent@example.com']);
+    nodeAssert.deepStrictEqual(
+      await Promise.all(['gone-expired', 'gone-at-cutoff', 'gone-recent'].map((name) => waitlist.upsert(signup(`${name}@example.com`, 'ios', now)))),
+      ['stored', 'suppressed', 'suppressed'],
+      `a fingerprint kept more than ${WAITLIST_FINGERPRINT_RETENTION_DAYS} days ago is gone; one kept at the cutoff or later remains`,
+    );
   },
 };
 
@@ -596,7 +779,7 @@ const unstorableIds: StoreConformanceCase = {
     }
     nodeAssert.deepStrictEqual(await reports.listByDevice(''), []);
     nodeAssert.strictEqual(await reports.deleteByDevice(''), 0);
-    nodeAssert.strictEqual(await waitlist.remove(''), false);
+    nodeAssert.strictEqual(await waitlist.remove('', T0), false);
     nodeAssert.deepStrictEqual(await usage.read(''), { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
     nodeAssert.deepStrictEqual(await usage.deviceRecords(''), { ledger: [], usage: null });
     nodeAssert.deepStrictEqual(await usage.deleteDeviceRecords(''), { ledger: 0, usage: 0 });
@@ -628,6 +811,10 @@ export const STORE_CONFORMANCE_CASES: readonly StoreConformanceCase[] = [
   reportListing,
   waitlistRows,
   waitlistConcurrentSignups,
+  waitlistConsentRules,
+  waitlistFingerprints,
+  waitlistLegacyRows,
+  waitlistSignupRacesRemoval,
   deviceRecords,
   deviceDeleteReleasesUnits,
   retention,
@@ -643,8 +830,9 @@ function messageOf(err: unknown): string {
 export async function runConformanceCase(factory: StoreBackendFactory, testCase: StoreConformanceCase, timeoutMs = CASE_TIMEOUT_MS): Promise<string | undefined> {
   const clock: ConformanceClock = { now: T0 };
   let stores: OpenedStores;
+  let backdoor: WaitlistBackdoor;
   try {
-    stores = await factory.open(() => clock.now);
+    ({ stores, waitlist: backdoor } = await factory.open(() => clock.now));
   } catch (err) {
     return `could not open the stores: ${messageOf(err)}`;
   }
@@ -653,7 +841,7 @@ export async function runConformanceCase(factory: StoreBackendFactory, testCase:
     timer = setTimeout(() => resolve(`timed out after ${timeoutMs} ms`), timeoutMs);
   });
   try {
-    return await Promise.race([testCase.run(stores, clock).then(() => undefined, messageOf), timedOut]);
+    return await Promise.race([testCase.run(stores, clock, backdoor).then(() => undefined, messageOf), timedOut]);
   } finally {
     clearTimeout(timer);
     await stores.close().catch((err: unknown) => {
@@ -670,15 +858,35 @@ export async function runStoreConformance(factory: StoreBackendFactory, cases: r
   }
 }
 
+/** The key the conformance backends fingerprint with. */
+const CONFORMANCE_FINGERPRINT_KEY = 'conformance-fingerprint-key-0123456789abcdef';
+
 const inMemoryBackend: StoreBackendFactory = {
   label: 'in-memory',
   async open(now) {
     const usage = new InMemoryUsageStore({ now });
     const reports = new InMemoryReportStore();
-    const waitlist = new InMemoryWaitlistStore();
-    return { usage, reports, waitlist, close: async () => {} };
+    const waitlist = new InMemoryWaitlistStore({ fingerprintKey: CONFORMANCE_FINGERPRINT_KEY });
+    return {
+      stores: { usage, reports, waitlist, close: async () => {} },
+      waitlist: {
+        fingerprintKey: CONFORMANCE_FINGERPRINT_KEY,
+        // The opt-out-model in-memory upsert: the whole row replaced, created_at kept.
+        legacyUpsert: async (legacy) => {
+          const email = legacy.email.trim().toLowerCase();
+          const existing = (await waitlist.export()).find((row) => row.email === email);
+          waitlist.insertLegacyRow({ email, platform: legacy.platform, updatesOptOut: legacy.updatesOptOut, noticeId: legacy.noticeId, createdAt: existing?.createdAt ?? legacy.now, updatedAt: legacy.now });
+        },
+        dump: async () => inspect(waitlist, { depth: Infinity, maxArrayLength: Infinity, maxStringLength: Infinity }),
+      },
+    };
   },
 };
+
+/** Every row of the SQLite waitlist file at `file`, raw, as text. */
+function sqliteDump(db: DatabaseSync): string {
+  return JSON.stringify([db.prepare('SELECT * FROM waitlist').all(), db.prepare(`SELECT * FROM ${WAITLIST_SUPPRESSED_TABLE}`).all()]);
+}
 
 /** The production SQLite backend, opened through `openStores` on a fresh data directory per case. */
 function sqliteBackend(): StoreBackendFactory {
@@ -686,15 +894,25 @@ function sqliteBackend(): StoreBackendFactory {
     label: 'sqlite',
     async open(now) {
       const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-store-conformance-'));
-      const stores = await openStores({ ...sqliteConfig(dataDir), now });
+      const config = { ...sqliteConfig(dataDir), now };
+      const stores = await openStores(config);
+      const raw = new DatabaseSync(path.join(dataDir, 'waitlist.db'));
       return {
-        ...stores,
-        close: async () => {
-          try {
-            await stores.close();
-          } finally {
-            fs.rmSync(dataDir, { recursive: true, force: true });
-          }
+        stores: {
+          ...stores,
+          close: async () => {
+            try {
+              raw.close();
+              await stores.close();
+            } finally {
+              fs.rmSync(dataDir, { recursive: true, force: true });
+            }
+          },
+        },
+        waitlist: {
+          fingerprintKey: config.waitlistFingerprintKey,
+          legacyUpsert: async (legacy) => legacySqliteUpsert(raw, legacy),
+          dump: async () => sqliteDump(raw),
         },
       };
     },
@@ -702,7 +920,7 @@ function sqliteBackend(): StoreBackendFactory {
 }
 
 function sqliteConfig(dataDir: string): StoreConfig {
-  const config = loadServerConfig({ WHIM_DATA_DIR: dataDir });
+  const config = loadServerConfig({ WHIM_DATA_DIR: dataDir, WHIM_WAITLIST_FINGERPRINT_KEY: CONFORMANCE_FINGERPRINT_KEY });
   return { ...config, storeBackend: 'sqlite' };
 }
 
@@ -712,7 +930,7 @@ function deviceLimitSkippingBackend(inner: StoreBackendFactory): StoreBackendFac
   return {
     label: `${inner.label} without the device limit`,
     async open(now) {
-      const stores = await inner.open(now);
+      const { stores, waitlist } = await inner.open(now);
       const usage = new Proxy(stores.usage, {
         get(target, property) {
           if (property === 'admit') return (params: AdmitParams) => target.admit({ ...params, deviceLimit: Number.MAX_SAFE_INTEGER });
@@ -720,7 +938,7 @@ function deviceLimitSkippingBackend(inner: StoreBackendFactory): StoreBackendFac
           return typeof value === 'function' ? value.bind(target) : value;
         },
       });
-      return { ...stores, usage, close: () => stores.close() };
+      return { stores: { ...stores, usage, close: () => stores.close() }, waitlist };
     },
   };
 }
@@ -762,7 +980,7 @@ async function factoryTests(): Promise<void> {
   }
 
   const firestoreConfig: StoreConfig = { ...sqliteConfig(os.tmpdir()), storeBackend: 'firestore', firestoreDatabase: 'whim-test' };
-  const injected = await inMemoryBackend.open(Date.now);
+  const { stores: injected } = await inMemoryBackend.open(Date.now);
   let seen: StoreConfig | undefined;
   const opened = await openStores(firestoreConfig, {
     openFirestore: async (config) => {
@@ -786,6 +1004,122 @@ async function factoryTests(): Promise<void> {
     outcome = `threw: ${messageOf(err)}`;
   }
   check('firestore: an opener that throws makes openStores reject with its error', outcome === 'rejected: boom', outcome);
+}
+
+/** Runs `body` on a fresh temp directory, removed after. */
+async function inTempDir(label: string, body: (dir: string) => Promise<void>): Promise<void> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `whim-waitlist-${label}-`));
+  try {
+    await body(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** The raw `waitlist` rows of the file at `file`, by email. */
+function rawRows(file: string): Record<string, unknown>[] {
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    return db.prepare('SELECT * FROM waitlist ORDER BY email').all() as Record<string, unknown>[];
+  } finally {
+    db.close();
+  }
+}
+
+/** waitlist-hardening ruling 5 and design D2/D5: the fingerprint is keyed, SQLite brings an
+ *  opt-out-model file to the opt-in model on open, and every write keeps the rollback shadow. */
+async function waitlistStorageTests(): Promise<void> {
+  section('Waitlist fingerprints are keyed');
+
+  const keyA = 'a'.repeat(WAITLIST_FINGERPRINT_KEY_MIN_LENGTH);
+  const keyB = 'b'.repeat(WAITLIST_FINGERPRINT_KEY_MIN_LENGTH);
+  check('one address in any casing has one fingerprint under one key', waitlistFingerprint(keyA, ' Person@Example.com ') === waitlistFingerprint(keyA, 'person@example.com'));
+  check('  ... and another under another key', waitlistFingerprint(keyA, 'person@example.com') !== waitlistFingerprint(keyB, 'person@example.com'));
+  check('  ... neither of them the unkeyed SHA-256 of the address', ![keyA, keyB].some((key) => waitlistFingerprint(key, 'person@example.com') === createHash('sha256').update('person@example.com').digest('hex')));
+  for (const [label, construct] of [
+    ['in-memory', (key: string) => new InMemoryWaitlistStore({ fingerprintKey: key })],
+    ['sqlite', (key: string) => new NodeSqliteWaitlistStore(':memory:', { fingerprintKey: key })],
+  ] as const) {
+    let refused: unknown;
+    try {
+      construct(keyA.slice(1));
+    } catch (err) {
+      refused = err;
+    }
+    check(`${label}: a key one character under the minimum is refused, without echoing it`, refused instanceof Error && !refused.message.includes(keyA.slice(1)), messageOf(refused));
+    const accepted = construct(keyA);
+    check(`${label}: a key of exactly the minimum is accepted`, (await accepted.export()).length === 0);
+    await accepted.close();
+  }
+
+  await inTempDir('keyed', async (dir) => {
+    const file = path.join(dir, 'waitlist.db');
+    const underA = new NodeSqliteWaitlistStore(file, { fingerprintKey: keyA });
+    await underA.remove('person@example.com', T0);
+    await underA.close();
+    const underB = new NodeSqliteWaitlistStore(file, { fingerprintKey: keyB });
+    const withB = await underB.upsert(signup('person@example.com', 'ios', T0 + 1));
+    await underB.remove('person@example.com', T0 + 2);
+    await underB.restore('person@example.com');
+    await underB.close();
+    const againA = new NodeSqliteWaitlistStore(file, { fingerprintKey: keyA });
+    const withA = await againA.upsert(signup('person@example.com', 'ios', T0 + 3));
+    await againA.close();
+    eq('sqlite: a fingerprint kept under one key does not refuse a signup under another', withB, 'stored');
+    eq('  ... and still refuses one under its own key', withA, 'suppressed');
+  });
+
+  section('SQLite waitlist: an opt-out-model file moves to the opt-in model on open');
+
+  await inTempDir('migrate', async (dir) => {
+    const file = path.join(dir, 'waitlist.db');
+    const legacy = new DatabaseSync(file);
+    legacy.exec('PRAGMA journal_mode = WAL');
+    createLegacySqliteSchema(legacy);
+    for (const legacySignup of LEGACY_SIGNUPS) legacySqliteUpsert(legacy, legacySignup);
+    legacy.close();
+    const before = rawRows(file);
+
+    const opened = new NodeSqliteWaitlistStore(file, { fingerprintKey: keyA });
+    await opened.close();
+    const after = rawRows(file);
+    const kept = (rows: Record<string, unknown>[]): unknown[] => rows.map(({ email, platform, notice_id, created_at, updated_at }) => [email, platform, notice_id, created_at, updated_at]);
+    eq('every row keeps email, platform, notice id, created_at and updated_at', kept(after), kept(before));
+    const byEmail = new Map(LEGACY_ROWS.map((row) => [row.email, row]));
+    eq(
+      'every row is converted: no consent, a ticked opt-out a withdrawal at updated_at, the shadow set to "no news"',
+      after.map((row) => [row.email, row.updates_opt_in, row.updates_consent_at, row.updates_consent_notice_id, row.updates_withdrawn_at, row.updates_opt_out]),
+      before.map((row) => {
+        const legacyRow = byEmail.get(row.email as (typeof LEGACY_ROWS)[number]['email']);
+        return [row.email, 0, null, null, legacyRow?.optedOut ? legacyRow.updatedAt : null, 1];
+      }),
+    );
+
+    const consenting = new NodeSqliteWaitlistStore(file, { fingerprintKey: keyA });
+    await consenting.setUpdates('una@example.com', true, T0);
+    await consenting.close();
+    const consented = rawRows(file);
+    const reopened = new NodeSqliteWaitlistStore(file, { fingerprintKey: keyA });
+    await reopened.close();
+    eq('reopening converts nothing again: a migrated row keeps the consent written since', rawRows(file), consented);
+    check('  ... which is consent under written-request', consented.some((row) => row.email === 'una@example.com' && row.updates_opt_in === 1 && row.updates_consent_notice_id === WRITTEN_REQUEST_NOTICE_ID));
+  });
+
+  section('SQLite waitlist: every write keeps the rollback shadow updates_opt_out = !updatesOptIn');
+
+  await inTempDir('shadow', async (dir) => {
+    const file = path.join(dir, 'waitlist.db');
+    const store = new NodeSqliteWaitlistStore(file, { fingerprintKey: keyA });
+    const shadow = (): unknown => rawRows(file)[0]?.updates_opt_out;
+    await store.upsert(signup('shadow@example.com', 'ios', T0, true));
+    const consented = shadow();
+    await store.upsert(signup('shadow@example.com', 'ios', T0 + 1));
+    const withdrawn = shadow();
+    await store.setUpdates('shadow@example.com', true, T0 + 2);
+    const restored = shadow();
+    await store.close();
+    eq('consented, withdrawn by a signup, restored by the operator', [consented, withdrawn, restored], [0, 1, 0]);
+  });
 }
 
 /** How `call` ends: `rejected`, `resolved`, or `threw: …` when it throws before returning a promise. */
@@ -887,4 +1221,5 @@ export async function runStoreConformanceTests(): Promise<void> {
   await runStoreConformance(sqliteBackend());
   await negativeControlTests();
   await factoryTests();
+  await waitlistStorageTests();
 }
