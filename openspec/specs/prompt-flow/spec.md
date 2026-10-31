@@ -11,86 +11,7 @@ target app's rewind state (new entry / new snapshot on tip / silent shared conti
 tip), the structured prompt envelope tracked against every delivered snapshot, the persisted
 anonymous device identity attached to every request, and clean cancellation of an in-flight
 generation.
-
 ## Requirements
-
-### Requirement: Generation progress is shown without exposing internals
-While a generation request streams, the UI SHALL render progress as four named steps in order — `Reading your plan`, `Writing the app`, `Checking it runs safely`, `Putting it on your home screen` — derived from `stage` events, under the title `Making it` and the subhead `This takes about a minute. You can leave and come back.` A step SHALL read as not-started, in-progress, or passed; passed steps SHALL stay passed.
-
-Alongside the steps the screen SHALL show one plain-words sentence at a time describing the current action, in the user's terms. Raw `token` event text and raw `diagnostic.kind`/`diagnostic.symbol` values SHALL NOT be rendered to the user at any point during generation, and no raw log, terminal panel, or engineering trace SHALL be shown. Arriving text SHALL NOT be faded in or typed in per character.
-
-The screen SHALL offer `Leave it running`, which returns the user to the shell without cancelling the run.
-
-#### Scenario: Stage progress renders
-- **WHEN** a `stage` event with `status: 'start'` arrives for `generate`
-- **THEN** the `Writing the app` step reads as in-progress and the steps before it read as passed
-
-#### Scenario: Token and diagnostic internals never render live
-- **WHEN** `token` or `diagnostic` events arrive during generation
-- **THEN** neither the token text nor the diagnostic's `kind`/`symbol` fields appear anywhere in the rendered UI, and no raw log panel is present
-
-#### Scenario: Leaving does not cancel
-- **WHEN** the user takes the `Leave it running` action mid-build
-- **THEN** the shell is shown, the run continues, and its result is still delivered
-
-#### Scenario: Prose does not animate in
-- **WHEN** the current-action sentence changes
-- **THEN** the new sentence appears without a fade or per-character typing animation
-
-### Requirement: Failure is shown honestly, never as a crash
-A `failure` terminal event, or a client-side stream error, SHALL produce a failure screen stating the reason and offering to rephrase (returning to the prompt screen with the user's text preserved). Diagnostic detail shown on this screen SHALL be limited to each diagnostic's `hint` string.
-
-A service refusal (an `ApiError` whose `error` is a member of `ServiceRefusalCode`) of a clarify, rewrite, or plan-started generate request is not a failure: it SHALL NOT produce this screen, and SHALL be presented as `service-refusals` specifies. A refused Retry from this screen SHALL keep this screen with the refusal's hint as its reason. No failure reason on this screen SHALL ever be a transport message; a failure without a `hint` SHALL read as the copy table's generic sentence.
-
-The screen SHALL be rendered to design `3b` and SHALL resolve every colour, radius, type face, and size from the shell's v2 design tokens — no numeric style literal and no hex value in its own stylesheet:
-
-- a screen title at the display size the token scale defines for it, whose colour is **dynamic**: the failure hue when the run ended badly, the success hue when a repair recovered it;
-- a sub-line under the title, in plain words, saying what happens next;
-- an **attempt-progress row** of equal segments, one per permitted repair attempt — segments for spent attempts in the failure hue, the current attempt in the accent, the remainder in the neutral border tone — under a small uppercase mono label reading how many attempts were used. The row SHALL be shown only when the device actually observed repair attempts on the stream, and SHALL be hidden otherwise; a count SHALL NOT be invented for a run that never reached the repair stage;
-- a bordered panel with the large radius, filled and outlined by the run's outcome tone, containing a **checklist** of rows. Each row carries a ring/mark icon and its text: a completed check with a filled ring and a check mark, a failed check with a filled ring and an alert mark, an in-flight check with a ring outline and no mark, and a waiting or advisory row with a muted ring outline, no mark, and muted text.
-
-Checklist rows SHALL be built only from data the screen already receives — each diagnostic's `hint`, and copy-table strings. A row SHALL NOT carry a diagnostic's `kind`, `symbol`, or `message`; the hint-only discipline is unchanged by the redesign.
-
-Every failure that reaches this screen SHALL also be recorded through the logging seam with the error class, message, stack, and the taxonomy the on-screen text deliberately scrubs — the screen stays plain-English while the detail becomes recoverable.
-
-#### Scenario: Terminal failure event
-- **WHEN** the stream ends with a `failure` event
-- **THEN** the failure screen shows `reason` and each diagnostic's `hint`, and offers to rephrase
-
-#### Scenario: Stream error before any terminal event
-- **WHEN** the SSE stream ends or errors without a terminal event (not due to a user-initiated cancel)
-- **THEN** the same honest failure screen is shown rather than the UI hanging or crashing
-
-#### Scenario: Attempts are shown only when they happened
-- **WHEN** the run reached the repair stage twice before failing
-- **THEN** the attempt-progress row renders with two spent segments and a label naming the attempts used
-- **AND WHEN** the run failed on a transport error before any stage arrived
-- **THEN** no attempt-progress row is rendered
-
-#### Scenario: The checklist reads as checks, not bullets
-- **WHEN** the failure screen renders with diagnostics
-- **THEN** each row carries its outcome icon and its hint text inside the bordered panel, and no row is prefixed with a bullet character
-
-#### Scenario: No engineering detail leaks into the redesign
-- **WHEN** any row of the checklist is inspected
-- **THEN** its text is a diagnostic `hint` or a copy-table string, and no `kind`, `symbol`, or `message` value appears
-
-#### Scenario: The failure is recoverable from the log
-- **WHEN** the failure screen is shown
-- **THEN** a record on the generation channel carries the error class, message, stack, and mapped error kind, none of which is rendered on screen
-
-#### Scenario: Styling comes from tokens
-- **WHEN** the failure screen's stylesheet is inspected
-- **THEN** it contains no hex colour and no numeric font-size or radius literal
-
-#### Scenario: A refusal is not a failure
-- **WHEN** a clarify request is refused with `content_policy`
-- **THEN** no failure screen is shown, and compose shows the refusal notice instead
-
-#### Scenario: No transport text reaches the reason
-- **WHEN** a request fails at the network level with an error message and no hint
-- **THEN** the failure screen's reason is the copy table's generic sentence, and the error message appears only in the log record
-
 ### Requirement: Successful generation is delivered per the app's rewind state
 On a `result` terminal event, the generated app SHALL be delivered as follows: a new launcher entry when no existing app is being edited; a new snapshot on the same lineage when editing an app that is at the tip of its own history; a silently created new launcher entry sharing the original's storage group, with no share/fresh question asked, when editing an app that has been restored to a version behind its own tip.
 
@@ -137,98 +58,6 @@ Navigating away from the progress screen before a terminal event arrives SHALL a
 - **WHEN** the user backs out of the progress screen before `result` or `failure` arrives
 - **THEN** the request is aborted and no launcher entry is created or modified
 
-### Requirement: The prompt flow is a five-step machine — compose, clarify, plan, build, done
-
-The on-device flow SHALL be a single machine with five steps: `compose` → `clarify` → `plan` → `build` → `done`. Compose SHALL show the headline `What should it do?`, the user's prompt in a field that is never live-highlighted, the helper line `Plain words are enough. Whim will ask if something is unclear.`, and suggestion chips under the eyebrow `Or start from` — tapping a chip SHALL fill the prompt and SHALL NOT advance the flow.
-
-Forward movement SHALL be gated by an explicit primary action at the bottom of the screen: full width, 52–56px tall, card radius. Its label SHALL be `Continue` on compose and clarify, `Build it` on plan, and `One moment` while a step's request is in flight. A busy primary action SHALL always keep plain words — a bare spinner with no label SHALL NOT ship. Backward movement (clarify → compose, plan → clarify, compose → home) SHALL be immediate, with no busy state.
-
-When the clarify step has no questions to ask, the flow SHALL move from compose directly to plan without rendering an empty clarify step.
-
-#### Scenario: The flow advances only on the primary action
-- **WHEN** the user taps a suggestion chip on the compose step
-- **THEN** the prompt field is filled with that chip's text and the flow stays on compose
-
-#### Scenario: Busy states keep their words
-- **WHEN** any forward step is waiting on its request
-- **THEN** the primary action reads `One moment` and no bare-spinner-only control is rendered
-
-#### Scenario: Back is immediate
-- **WHEN** the user goes back from plan to clarify, or from clarify to compose
-- **THEN** the previous step renders immediately with its state preserved and no busy delay
-
-#### Scenario: No questions skips the step
-- **WHEN** the clarify exchange returns zero questions
-- **THEN** the flow renders the plan step next and the clarify step is never shown
-
-### Requirement: Clarifying questions are a pre-stream exchange, never a generation stage
-
-Between compose and plan the device SHALL make one request/response call to the clarify endpoint and render the returned questions — at most three — each as a set of answer pills that allows one pick for a `select: 'one'` question and several for `select: 'many'`, plus a typed "Other" answer when the question allows it, plus a "Decide for me" choice on every question that clears any picks and delegates that question to Whim. The step SHALL be skippable with zero answers and SHALL carry the helper line `Skip these and Whim will pick sensible answers.`; there SHALL be no validation gate on the questions. For exactly two questions the headline SHALL read `Two quick things`, and the same counted construction SHALL be used for one or three.
-
-The user's submitted prompt SHALL be echoed on this step as the user's own words. Collected answers SHALL be threaded into the subsequent requests. This exchange SHALL NOT emit or consume any `GenerationEvent`, and no `clarify` member SHALL be added to the stage vocabulary.
-
-#### Scenario: Skipping answers nothing
-- **WHEN** the user taps the primary action on the clarify step with no answers selected
-- **THEN** the flow proceeds and the request carries no answers
-
-#### Scenario: Answers reach generation
-- **WHEN** the user answers a clarifying question and the app is later generated
-- **THEN** the generation request carries that question's identifier and the chosen answer
-
-#### Scenario: Several picks
-- **WHEN** the user picks two options on a `select: 'many'` question
-- **THEN** both are carried as that question's `choices`
-
-#### Scenario: Typed answer
-- **WHEN** the user types an answer into a question's "Other" field
-- **THEN** the request carries it as that question's `other`, and the field stays above the keyboard while typing
-
-#### Scenario: Decide for me
-- **WHEN** the user taps "Decide for me" on a question
-- **THEN** its picks and typed answer clear and the request carries `decide: true` for it
-
-#### Scenario: The stage vocabulary is untouched
-- **WHEN** the generation event stream for a run that began with clarifying questions is inspected
-- **THEN** every `stage` event's stage is one of the ratified members and none names clarification
-
-### Requirement: The plan step is the approval gate before generation
-
-Before any generation request is sent, the device SHALL show a plan step headed `Here's the plan` with the subhead `Tap anything to change it before building.`, the plan rendered as labelled rows, and the footer `Nothing here is final — you can keep changing the app after it's built.` Generation SHALL NOT start until the user takes the `Build it` action.
-
-Each plan row SHALL be tappable, and tapping SHALL open an inline editor on the plan step itself — one row at a time, with Save and Cancel — and SHALL NOT re-open the compose step. An unedited plan's build prompt SHALL be the rewrite response's `rewritten` string byte-identical; once any row is hand-edited, the build prompt SHALL instead be deterministically assembled from the current rows, and SHALL stay on that path for every subsequent edit even if the row's text is reverted to the model's original wording. When the plan arrives as structured rows they SHALL render one row per entry with its label; when it arrives as a single rewritten string it SHALL render as one row. No SDK-specific or engineering-internal detail SHALL appear on this step.
-
-#### Scenario: Nothing is generated before approval
-- **WHEN** the plan step is showing
-- **THEN** no generation request has been sent, and none is sent until the user takes the `Build it` action
-
-#### Scenario: Tapping a row opens an inline editor on the plan step
-- **WHEN** the user taps a plan row
-- **THEN** an inline editor opens on the plan step for that row, and the compose step is not re-opened
-
-#### Scenario: A hand-edited plan's rows become the build prompt
-- **WHEN** the user edits a plan piece inline, in place on the plan step, and approves
-- **THEN** the generation request carries the prompt assembled from the edited plan, not the original rewrite response
-
-#### Scenario: Unedited plan builds from the rewrite response
-- **WHEN** the user approves the plan without editing any piece of it
-- **THEN** the generation request carries the rewrite response's own prompt, unchanged
-
-#### Scenario: An unstructured plan still renders
-- **WHEN** the plan arrives as a single rewritten string with no rows
-- **THEN** the step renders it as one row and remains approvable
-
-### Requirement: The done step offers two distinct destinations
-
-On successful delivery the flow SHALL show a done step carrying the new app's tile in its own colour, the title `<App name> is ready`, and the body `It's on your home screen. Open it, or tell Whim what to change.` It SHALL offer `Open it` as the primary action and `Back to your apps` as the secondary one, and the two SHALL lead to different places: `Open it` SHALL launch the delivered app, and `Back to your apps` SHALL return to the home grid.
-
-#### Scenario: Open launches the app
-- **WHEN** the user takes the `Open it` action
-- **THEN** the newly delivered mini-app is launched full-screen
-
-#### Scenario: Back to your apps goes home
-- **WHEN** the user takes the `Back to your apps` action
-- **THEN** the home grid is shown with the new app's tile on it, and no mini-app is launched
-
 ### Requirement: Generation start writes a pending-build record and allocates the launcher id up front
 
 When a generation request is sent, the prompt flow SHALL allocate the launcher id for the attempt before sending the request, and SHALL write a pending-build record carrying that id and a prompt-derived working title. This id allocation MUST happen for new-install attempts as well as edit/rebuild attempts.
@@ -255,15 +84,6 @@ In addition to aborting the underlying request, cancelling an in-flight generati
 
 - **WHEN** the user cancels an in-flight generation
 - **THEN** the pending-build record for that attempt is deleted and no ghost tile remains for it
-
-### Requirement: "Leave it running" leaves a visible building ghost
-
-When the user chooses to leave a generation running in the background, the prompt flow SHALL keep the pending-build record in the `building` state and SHALL NOT delete or otherwise hide it. The home grid SHALL show the corresponding ghost tile for as long as the generation remains in flight.
-
-#### Scenario: Leaving a build running shows a ghost on return to home
-
-- **WHEN** the user chooses "Leave it running" and returns to the home screen while the generation is still in flight
-- **THEN** the pending-build record is still `building`, and its ghost tile is visible on the grid
 
 ### Requirement: Tapping a building ghost tile reattaches to the build-progress screen
 
@@ -332,26 +152,6 @@ A failure screen shown from a live failure SHALL offer the Discard action only w
 - **WHEN** a clarify or rewrite step fails before any generation attempt started
 - **THEN** the failure screen renders no Discard action, and Back returns to the launcher
 
-### Requirement: The build screen shows derived activity signals alongside the stage sentence
-
-While a generation request streams, the build screen SHALL additionally render, alongside the
-existing stage sentence: the elapsed time since the request started, and a rising output-size
-counter reflecting cumulative generated-output characters observed so far. Both signals SHALL be
-derived aggregates only — no raw `token` text or raw `diagnostic` field SHALL be rendered as part
-of, or alongside, either signal.
-
-#### Scenario: Elapsed time renders and advances
-
-- **WHEN** a generation request has been streaming for some duration
-- **THEN** the build screen shows an elapsed-time value reflecting that duration, and the value
-  advances as the stream continues
-
-#### Scenario: The output-size counter rises with generated output
-
-- **WHEN** `token` events carrying generated output arrive during a stream
-- **THEN** the build screen's output-size counter increases to reflect the cumulative character
-  count, without displaying any of the token text itself
-
 ### Requirement: A stall heartbeat visibly reports when the stream goes quiet
 
 The build screen SHALL track the time since the last progress event arrived on the generation stream. Every stream event counts as progress (`token`, `stage`, `queued`, `restart`, `thinking`, `diagnostic`, `usage`, and the terminal events); the server's keepalive comment frame does not. A keepalive is liveness: it proves the connection is alive, keeps the transport open, and SHALL NOT reset this clock. When that period exceeds 40 seconds (`STALL_MS` in `src/host/launcher/prompt-flow.ts`), the screen SHALL visibly report that the make has not progressed, stating for how long (e.g. "No progress for 40 s"), without claiming the connection is silent. The indication SHALL clear as soon as any new progress event arrives.
@@ -375,18 +175,6 @@ The build screen SHALL track the time since the last progress event arrived on t
 
 - **WHEN** stream events keep arriving within the 40-second threshold
 - **THEN** no quiet indication is shown
-
-### Requirement: The build screen offers a details affordance into the run timeline
-
-The build screen SHALL offer an affordance that, when activated, shows the current attempt's run
-timeline (this change's `generation-run-journal` capability) rendered as a readable list. This
-affordance MUST NOT render raw `token` text or raw `diagnostic` `kind`/`symbol`/`message` values.
-
-#### Scenario: The details affordance opens the timeline
-
-- **WHEN** the user activates the build screen's details affordance during or after a run
-- **THEN** the current attempt's run timeline is shown as a readable list of stage transitions and
-  output growth, with no raw token or diagnostic internals
 
 ### Requirement: The failure screen includes a what-happened timeline section
 
@@ -424,18 +212,6 @@ This additional detail SHALL NOT appear when the flag is disabled.
 
 - **WHEN** the developer-diagnostics flag is disabled
 - **THEN** the run timeline shows no diagnostics count and no repair-attempts count
-
-### Requirement: Leaving clarify or rewrite cancels the in-flight request cleanly
-The device SHALL abort the underlying request when the user navigates away from the compose step before the clarify exchange resolves, or away from the plan step before the rewrite response resolves. Neither an abandoned clarify exchange nor an abandoned rewrite request SHALL be allowed to run to completion server-side after the user has left the step that started it.
-
-#### Scenario: Leaving compose cancels clarify
-- **WHEN** the user backs out of the compose step (or returns Home) before the clarify exchange
-  resolves
-- **THEN** the clarify request is aborted
-
-#### Scenario: Leaving the plan step cancels rewrite
-- **WHEN** the user navigates away from the plan step before the rewrite response resolves
-- **THEN** the rewrite request is aborted
 
 ### Requirement: A response to a request the user has left cannot move the screen
 Applying a clarify or rewrite response to on-screen state SHALL be guarded by the current screen
@@ -513,17 +289,6 @@ The prompt flow's entry point SHALL show a "server unreachable" notice when the 
 - **WHEN** the user opens the prompt entry point with no server override saved
 - **THEN** no "set an address in Settings" message is shown, and the connectivity notice follows the session state alone
 
-### Requirement: The build screen shows the user's place in line
-While the stream's latest event is `queued`, the build screen SHALL show that the generation is waiting its turn and how many generations are ahead, SHALL keep Cancel and "Leave it running" available, and SHALL switch to normal progress at the first `stage` event.
-
-#### Scenario: Waiting behind two builds
-- **WHEN** a `queued` event with `position: 3` arrives
-- **THEN** the build screen says the build is in line with 2 ahead
-
-#### Scenario: Turn comes
-- **WHEN** a `stage` event arrives after `queued` events
-- **THEN** the in-line message is replaced by normal progress
-
 ### Requirement: A request Whim can't build is answered before any build
 When a clarify response carries `limit`, the prompt flow SHALL show the reason and the alternative in plain words, SHALL offer to continue with the alternative as the request, and SHALL offer to change the idea; it SHALL NOT start a generation on its own.
 
@@ -562,3 +327,111 @@ Once any byte of the `POST /v1/generate` response has arrived, keepalive comment
 
 - **WHEN** a step between two events takes 35 seconds and keepalive frames arrive throughout
 - **THEN** the attempt continues, the Making page does not report a lost connection, and the next event arrives normally
+
+### Requirement: The making flow is one sheet with four pages
+
+Making or changing an app SHALL happen in one large sheet over the current screen with the pages Describe, Plan, Making and Ready (or Failure), with no step indicator; each page SHALL start its headline at the same height. Forward movement SHALL be gated by one bottom action: `Continue` on Describe, `Make it` (or `Make the change`) on Plan, both `ember`. Back on Plan SHALL return to Describe with the text and answers kept. A busy action SHALL keep plain words, never a bare spinner. The sheet SHALL be keyed by the run's own journal id, so a page never shows another run's progress.
+
+#### Scenario: Two runs never cross
+
+- **WHEN** two runs are in flight and the user opens the second run's tile
+- **THEN** the Making page shows only that run's steps, time and queue position
+
+#### Scenario: Describe opens with the keyboard
+
+- **WHEN** the user taps the composer
+- **THEN** the sheet shows "What should it do?" with the field focused and Continue above the keyboard
+
+### Requirement: The plan page shows the questions and the plan together
+
+Continue SHALL send one clarify request and show the Plan page: "Here's the plan", the person's words quoted as the hero, then "A few choices" (the clarify questions, at most three, as soon as they land) and "What I'll make" (the plan rows, with skeleton rows until they land). Every question SHALL end with "Decide for me", selected by default and exclusive in multi-select (picking it clears the others; picking another clears it). A question whose options are all 20 characters or fewer SHALL show wrapping chips; otherwise every option SHALL be a full-width radio (single) or checkbox (multi) row. An answered question scrolled out of view SHALL collapse to one line with its answer, and tapping it SHALL reopen it. Answers SHALL travel to generation as `clarifications`; the plan rows SHALL NOT restate them. The exchange SHALL emit no `GenerationEvent`.
+
+#### Scenario: Making without touching a choice
+
+- **WHEN** the user taps Make it without changing any question
+- **THEN** every question is sent as delegated (`decide: true`)
+
+#### Scenario: Long options become rows
+
+- **WHEN** one option of a question is 34 characters long
+- **THEN** that question renders every option as a full-width row, not chips
+
+### Requirement: The plan page is the approval gate before making
+
+No generation request SHALL be sent before the user takes `Make it`. Each plan row SHALL edit in place on the Plan page, one at a time, with Save and Cancel at full targets; an edited row SHALL show the person's words and an "Edited" label. An unedited plan's build prompt SHALL be the rewrite response's `rewritten` string byte-identical; once any row is hand-edited the build prompt SHALL be assembled deterministically from the current rows, and SHALL stay on that path even if the text is reverted. A plan that arrives as one string SHALL render as one row. No SDK or engineering detail SHALL appear on the page. A server notice SHALL show above `Make it`.
+
+#### Scenario: Nothing is made before approval
+
+- **WHEN** the Plan page is showing
+- **THEN** no generation request has been sent
+
+#### Scenario: A hand-edited plan's rows become the build prompt
+
+- **WHEN** the user edits a row and taps Make it
+- **THEN** the build prompt is assembled from the current rows
+
+### Requirement: The Making page shows honest progress without internals
+
+While a run streams the Making page SHALL show the 128 pt ember (working, stuck after 40 s with no progress event, following the stream's activity), "Making <name>" (or "Changing <name>"), the person's words, the four steps (`Reading your plan`, `Writing the app`, `Checking it runs safely`, `Putting it on your home screen`) with done, current (elapsed time on it) and waiting states, one time line from `system.md` §8 chosen by elapsed time, stall and queue position, and Stop. A `repair` event SHALL add "Fixing a problem · try N of M" under the current step and move the marker down to it. Raw `token` text, raw diagnostic fields, transport wording and output-size counters SHALL NOT render. Stop SHALL end the run at once and leave a stopped tile.
+
+#### Scenario: A slow run says so honestly
+
+- **WHEN** 80 seconds have passed and the run is still writing
+- **THEN** the time line reads "Taking longer than most. Still going."
+
+#### Scenario: Waiting in line
+
+- **WHEN** a `queued` event with two runs ahead arrives
+- **THEN** the page reads "2 ahead of you.", the ember is still and dim, and Stop is available
+
+#### Scenario: Stop after a typo costs one tap
+
+- **WHEN** the user taps Stop right after Make it
+- **THEN** the run ends and a stopped tile they can change, retry or discard is on Home
+
+### Requirement: Leaving the making sheet keeps the run and the draft
+
+Closing the sheet (close button, back, drag or scrim) SHALL never cancel a run: on Making it SHALL collapse into the run's tile, which keeps its ember and reopens the page. Closing on Describe or Plan SHALL abort any in-flight clarify or rewrite request and keep the draft: the composer SHALL read "Continue "<start of the text>"" and reopening SHALL restore the text, the answers and any plan edits.
+
+#### Scenario: A closed plan comes back
+
+- **WHEN** the user answers two questions, closes the sheet and taps the composer again
+- **THEN** the Plan page returns with the same text and answers, and the abandoned rewrite was aborted
+
+### Requirement: The Ready page opens the app or returns home
+
+When a run delivers with the sheet open, the Ready page SHALL show the 96 pt tile, the app's name, the person's words, "It's on your home screen." (after a change, "It opens with your change."), `Open it` in the app's tint and `Done` (plain). `Open it` SHALL launch the app; `Done` SHALL return to Home. When it delivers with the sheet closed, Home SHALL show the toast "<name> is ready · Open", or over a running app the orb SHALL get its `ember` dot. Ready SHALL NOT run the app before it is opened.
+
+#### Scenario: Open launches the app
+
+- **WHEN** the user takes `Open it`
+- **THEN** the delivered app opens from its tile
+
+#### Scenario: Ready after a change
+
+- **WHEN** a change to an app on the home screen delivers with the sheet open
+- **THEN** the Ready page reads "It opens with your change." in place of "It's on your home screen."
+
+### Requirement: Failure is shown by kind, honestly, never as a crash
+
+A `failure` terminal event or a stream error SHALL show the Failure page: the ember out, "Couldn't make this", one sentence and actions chosen by failure kind as in `system.md` §8 (couldn't run with or without a rewording hint, server refused for now, needs a newer Whim, stopped when Whim closed, connection dropped), "Your other apps are untouched" (or "Your current version still works" when changing), a collapsed "What happened" timeline, and Discard in the body with a 6 s Undo. A dropped connection SHALL never suggest rewording. A connection problem before any run (clarify or rewrite unreachable) SHALL NOT open this page; the current page SHALL show a notice with Try again. A service refusal SHALL be presented as `service-refusals` specifies. Diagnostic detail SHALL be limited to each diagnostic's `hint`; no failure reason SHALL be a transport message, and an unknown reason SHALL show the server's text.
+
+#### Scenario: Offline mid-run
+
+- **WHEN** the stream drops because the phone went offline
+- **THEN** the page reads "I lost the connection to the server partway through." and Try again enables when the phone is back online
+
+### Requirement: Details of a run are reachable from its tile and its failure
+
+The menu of a tile being made SHALL offer Details, which reopens that run's Making page. The Failure page SHALL offer "What happened", which shows the run's timeline as a readable list, each row its own accessibility element, without raw `token` text or raw diagnostic `kind`, `symbol` or `message` values.
+
+#### Scenario: Details from a tile being made
+
+- **WHEN** the user long-presses a tile being made and taps Details
+- **THEN** that run's Making page opens
+
+#### Scenario: What happened is readable by VoiceOver
+
+- **WHEN** a VoiceOver user expands "What happened" on the Failure page
+- **THEN** each timeline row is focusable on its own
+

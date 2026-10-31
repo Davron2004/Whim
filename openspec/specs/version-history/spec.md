@@ -11,15 +11,15 @@ reachable), copying any listed version into its own app, and data-shape annotati
 reassurance for schema-changing versions.
 ## Requirements
 ### Requirement: History reads as the user's own prompts
-The history screen SHALL present an app's versions as a newest-first timeline. Its header SHALL name the app in that app's own tile hue followed by `history`, over a subtitle counting the versions and naming when the app started.
+The history screen SHALL present an app's versions as a newest-first timeline, ordered by the version chain. Its header SHALL be the title "History" over the app's 40 pt tile, the app's name in its tint and the number of versions ("4 versions").
 
-Each collapsed row SHALL carry a kind badge, a human-readable timestamp, the version identifier, an origin line reading `You said` when the user's prompt caused the version and `Whim, on its own` when the product acted unprompted, and a headline. Under `You said` the headline SHALL quote the user's own words, the version's prompt text, parsing the prompt envelope (any version of it) when present and falling back to the raw stored string when it is not; it SHALL NOT be the stored summary, which the row's expanded body shows instead. Under `Whim, on its own`, where there are no words of the user's to quote, the headline SHALL be the stored summary's text. Headlines SHALL be rendered through the shared Whim Syntax renderer, so the user's own words carry the `yours` class and mentions of an app carry its hue.
+Each row SHALL lead with the user's own words, quoted, in the italic that marks them as theirs: the version's prompt text, parsing the prompt envelope (any version of it) when present and falling back to the raw stored string when it is not. A version with no words of the user's SHALL lead with its stored summary's text instead, rendered through the shared Whim Syntax renderer. Under the words the row SHALL show Whim's summary when the version has one (and it is not already the headline), "vN · <when>" and the kind chip. Rows SHALL carry no origin line naming who caused the version.
 
-The version the user is currently on SHALL be marked `↑ you're on this one` beneath its row, derived live from the store and never persisted on the app record. Version-control vocabulary SHALL never appear; every user-visible string SHALL come from the centralized copy table and pass the product-verbs guard.
+The version the user is currently on SHALL carry the `Current` badge on its row, derived live from the store and never persisted on the app record. The first version of the chain SHALL carry the `Start` chip and, with no summary of its own, the line "Where this app began". Version-control vocabulary SHALL never appear; every user-visible string SHALL come from the centralized copy table and pass the product-verbs guard.
 
 #### Scenario: Summarised rows
 - **WHEN** the user opens History for an app whose versions carry stored summaries
-- **THEN** each row shows `You said` over that version's own prompt, quoted, as its headline, with its kind badge, timestamp and version identifier, newest first, and no row shows its summary until it is expanded
+- **THEN** each row leads with that version's own prompt, quoted, with Whim's summary under it, then the version, when, and its kind chip, newest first
 
 #### Scenario: A version with no summary still shows its prompt
 - **WHEN** a version was delivered before summaries existed, or its run produced none
@@ -30,12 +30,12 @@ The version the user is currently on SHALL be marked `↑ you're on this one` be
 - **THEN** the row shows the raw string unchanged and the screen does not error
 
 #### Scenario: Install row
-- **WHEN** the list reaches the app's first version (the install event)
-- **THEN** the row shows install-appropriate copy, and offers no restore action (there is no earlier state)
+- **WHEN** the list reaches the app's first version
+- **THEN** the row carries the `Start` chip, says "Where this app began" when it has no summary, and, when it is not current, offers Use this version and Make a copy from here like any other version
 
 #### Scenario: Current version is marked
-- **WHEN** the list renders after a restore
-- **THEN** `↑ you're on this one` appears beneath the now-active version's row and beneath no other
+- **WHEN** the list renders after the user used another version
+- **THEN** the `Current` badge is on the now-active version's row and on no other
 
 ### Requirement: Roll-forward — restored-past versions remain listed and reachable
 After the user restores backward, versions later on the same line SHALL remain visible in the history list and SHALL be restorable (roll-forward) exactly like earlier versions. Rolling backward and then forward SHALL never lose or alter any version.
@@ -48,89 +48,43 @@ After the user restores backward, versions later on the same line SHALL remain v
 - **WHEN** the user restores from version B back to A, then forward to B again
 - **THEN** the app's code and behavior at B are identical to before the round trip
 
-### Requirement: Any version can become its own app
-Every listed version SHALL offer `Start a copy here` in its expanded body, creating a new launcher entry from that exact version via the existing fork flow. The action SHALL open a confirm sheet before anything is created, titled to name the version being copied, whose body states that the user will have two apps and that the one they are using now stays exactly as it is, and whose confirming action reads `Make the copy`. On confirmation a toast SHALL report `Copy made — it's on your home screen`. The new app SHALL start with its own fresh user data (existing fork semantics unchanged by this change).
-
-#### Scenario: Fork from an old version
-- **WHEN** the user invokes the action on a version that is not the newest and confirms
-- **THEN** a new launcher entry appears whose code is exactly that version, the original app is unchanged, and the toast reports the copy is on the home screen
-
-#### Scenario: Nothing is copied without confirming
-- **WHEN** the user opens the copy confirm sheet and takes the safe option
-- **THEN** no new launcher entry is created
-
 ### Requirement: Data-shape annotations and restore reassurance
-A history row whose version changed the app's data shape SHALL carry a one-line annotation naming the added fields and their types (computed from the schema artifacts; additive-only evolution means only additions/display-renames can appear). The annotation SHALL appear in the row's expanded body alongside what the version touched, and SHALL be rendered through the shared renderer so counted things carry the `measure` class and the annotation itself reads as a `hedge` — honest detail that is not the point.
+A history row whose version changed the app's data shape SHALL carry a one-line annotation naming the added fields and their types (computed from the schema artifacts; additive-only evolution means only additions/display-renames can appear). The annotation SHALL appear in the row's expanded body alongside what the version touched. It is product copy, not agent prose: it SHALL be drawn in `footnote` at the secondary text colour (`text-2`), never fainter, with no Whim Syntax mark.
 
-When a restore targets a version whose schema lacks fields the user has since gained, the reassurance that nothing is deleted and the data returns with newer versions SHALL appear in the confirm sheet's body, where the user reads it before deciding.
+When the current version's schema has fields the expanded version's lacks, the expanded row SHALL say so above its actions, before either is tapped: "If you use this version, some saved data won't show. It isn't deleted and comes back when you return." The line speaks only of using that version, and the current version's row never shows it.
 
 #### Scenario: Added-field annotation
 - **WHEN** a version's prompt added a "notes" text field to the app's data
-- **THEN** its expanded body carries an annotation naming "notes" and its type
+- **THEN** its expanded body carries an annotation naming "notes" and its type, at the secondary text colour
 
 #### Scenario: Restore reassurance
-- **WHEN** the user opens the confirm sheet for a version predating a field that now holds their data
-- **THEN** the sheet's body states the data is kept and returns on newer versions, and no data is deleted
+- **WHEN** the user expands a version that predates a field the current version has
+- **THEN** before either action the row says that using it hides some saved data, which isn't deleted and comes back, and no data is deleted
 
-### Requirement: Tapping a row expands it; restoring is confirmed, never instant
-Tapping a history row SHALL expand it and SHALL NOT change which version is active. At most one row SHALL be expanded at a time. Restoring SHALL be reachable only as an explicit action inside an expanded row, and SHALL take effect only after a confirm sheet is confirmed. Nothing destructive SHALL be one tap away.
-
-On confirmation the app SHALL be restored to the chosen version and a toast SHALL report which version the user is now on. Versions later on the same line SHALL remain listed and restorable afterwards.
-
-#### Scenario: A tap is safe
-- **WHEN** the user taps a history row
-- **THEN** the row expands and the active version is unchanged
-
-#### Scenario: Restore goes through the sheet
-- **WHEN** the user takes the restore action in an expanded row
-- **THEN** a confirm sheet opens, and the app is restored only once the user confirms it
-
-#### Scenario: Backing out of the sheet changes nothing
-- **WHEN** the user opens the restore confirm sheet and takes the safe option
-- **THEN** the active version is unchanged and no toast is shown
+#### Scenario: Nothing hidden, nothing said
+- **WHEN** the user expands a version whose schema has every field the current version has, or the current version itself
+- **THEN** the row shows no hidden-data line
 
 ### Requirement: An expanded row answers what happened, what it touched, and what to do next
-An expanded row SHALL show, in order: the result in plain words (the stored summary's body, rendered through the shared renderer), the eyebrow `What it touched` over chips naming the areas the version affected — area names, never diffs — and at most two next actions.
+Whim's summary of what a version did SHALL show on its row. Expanding the row SHALL show, in order: the eyebrow `What it touched` over chips naming the areas the version affected (area names, never diffs), the data-shape annotation when the version changed the data's shape, the hidden-data line when using the version would hide saved data, and its actions. Expanding SHALL NOT move the row's words.
 
-The current version SHALL offer exactly one action, `Change it from here`, opening the compose step scoped to that app. Any past version SHALL offer exactly two, `Go back to this` and `Start a copy here`. No third action SHALL be added to a row.
+The current version SHALL offer exactly one action, `Change it`, opening the compose step scoped to that app. Every other version, the first version included, SHALL offer exactly two, `Use this version` and `Make a copy from here`. No third action SHALL be added to a row.
 
 #### Scenario: The current version offers one action
-- **WHEN** the newest version's row is expanded
-- **THEN** it offers `Change it from here` and no restore or copy action
+- **WHEN** the current version's row is expanded
+- **THEN** it offers `Change it` and no other action
 
 #### Scenario: A past version offers exactly two
-- **WHEN** a past version's row is expanded
-- **THEN** it offers `Go back to this` and `Start a copy here`, and nothing else
+- **WHEN** the row of a version that is not current is expanded, v1 included
+- **THEN** it offers `Use this version` and `Make a copy from here`, and nothing else
 
 #### Scenario: Touched areas are named, not diffed
 - **WHEN** an expanded row lists what the version touched
 - **THEN** each chip names an area of the app in plain words, and no file name, symbol, or diff appears
 
-### Requirement: Filter pills group the list by what changed
-The history screen SHALL render filter pills above the list: an all-versions pill whose label carries the live count of versions in the list, plus one pill per kind group derived from each version's summariser kind. Selecting a pill SHALL filter the list to that group; the all-versions pill SHALL be selected by default. A version with no summariser kind SHALL remain reachable under the all-versions pill.
-
-#### Scenario: The count is live
-- **WHEN** a new version is delivered and History is reopened
-- **THEN** the all-versions pill's count includes it
-
-#### Scenario: Filtering narrows the list
-- **WHEN** the user selects a kind pill
-- **THEN** only versions of that group are listed, and selecting the all-versions pill restores the full list
-
-#### Scenario: Unclassified versions are never hidden
-- **WHEN** a version carries no summariser kind
-- **THEN** it appears under the all-versions pill
-
-### Requirement: A confirm sheet makes the safe option the large button
-Every confirm sheet on this surface SHALL present the safe option as the large, full-width button and SHALL demote the consequential action to plain text beneath it. The sheet SHALL rise from the bottom edge it will return to, and its body SHALL say in plain words what the user will be left with — for a restore, what comes off, what is kept, and that they can come forward again from this list.
-
-#### Scenario: The safe option is the prominent one
-- **WHEN** any restore or copy confirm sheet is shown
-- **THEN** the button that changes nothing is the large one, and the action that changes something is plain text
-
-#### Scenario: The body says what is lost and what is kept
-- **WHEN** a restore confirm sheet is shown
-- **THEN** its body names what comes off, states the user's saved data stays, and states they can come forward again from this list
+#### Scenario: The words stay where they are
+- **WHEN** the user taps a row to expand it
+- **THEN** its words keep their position, and the card grows around them
 
 ### Requirement: History's first load shows a loading state, never fake-empty
 While the initial snapshot list and active version are being read, the history screen SHALL
@@ -145,32 +99,71 @@ zero rows before the first load has actually resolved.
 - **WHEN** the snapshot list resolves with only the install row
 - **THEN** the loading state clears and the install-only list renders normally
 
-### Requirement: The confirm sheet's Restore and Copy actions disable while in flight
-Once the user confirms Restore or Copy on the confirm sheet, that action's control SHALL show a
-busy state and SHALL be disabled against further taps until the underlying restore or fork
-operation completes. Repeated taps MUST NOT queue more than one restore or fork operation for the
-same confirmation.
-
-#### Scenario: Restore cannot be double-submitted
-- **WHEN** the user taps Restore on the confirm sheet and taps it again before the operation
-  completes
-- **THEN** only one restore operation runs
-
-#### Scenario: Copy cannot be double-submitted
-- **WHEN** the user taps Copy on the confirm sheet and taps it again before the operation
-  completes
-- **THEN** only one fork operation runs
-
 ### Requirement: The restore-diff reassurance line shows a pending state while it loads
-The reassurance line's position SHALL show a subtle pending state, rather than staying absent and then popping in unannounced, while the confirm sheet computes which fields would leave view on a restore.
+While an expanded row works out whether using its version would hide saved data, the hidden-data line's place SHALL show a subtle pending state, rather than staying absent and then popping in unannounced.
 
 #### Scenario: The reassurance line does not pop in silently
-- **WHEN** the restore confirm sheet opens and the fields-leaving-view computation is still
-  running
-- **THEN** a pending state is shown where the reassurance line will appear, before it resolves
+- **WHEN** the user expands a version that is not current and the fields-leaving-view computation is still running
+- **THEN** a pending state is shown in the expanded row where the hidden-data line will appear, before it resolves
 
 #### Scenario: The pending state resolves to the reassurance text or nothing
-- **WHEN** the computation resolves
-- **THEN** the pending state is replaced by the reassurance line if fields would leave view, or
-  by nothing if none would
+- **WHEN** the computation resolves, or fails
+- **THEN** the pending state is replaced by the hidden-data line if fields would leave view, or by nothing if none would or the computation failed
+
+### Requirement: History is a native-stack screen with the person's words as the hero
+History SHALL be pushed on the native stack with a header back control and a `Report` text button, the title "History", the app's 40 pt tile, its name in its tint and the version count. Each version row SHALL show the person's words quoted (italic, `title3`), Whim's summary, "vN · <when>" in tabular figures, a neutral kind chip with its icon, and `Current` on the active version; the rail SHALL stop at v1. Tapping a row SHALL expand it without changing the active version; at most one row is expanded.
+
+#### Scenario: The kind is not colour-coded
+- **WHEN** History lists Added, Changed and Fixed versions
+- **THEN** every kind chip has the same neutral colours and differs only by icon and word
+
+### Requirement: Versions are ordered by the version chain, not the clock
+History SHALL order versions by their position in the version chain (newest first) and label the first version of the line by its place in the chain, never by commit timestamps, so versions saved within the same second keep their true order.
+
+#### Scenario: Two versions in one second
+- **WHEN** two versions are saved within the same second
+- **THEN** the later one is listed first and the "Start" chip is on the true first version
+
+### Requirement: Using an older version is immediate and undoable
+An expanded version that is not current SHALL offer "Use this version"; tapping it SHALL make that version active at once and show a toast with Undo for the Undo window (10 s): "Back on version N" when N is older than the version that was current, "Now on version N" when it is newer. Every Undo SHALL stay reachable from History after the toast ends. Later versions SHALL remain listed and usable. The Undo SHALL belong to the shell, not to History: it SHALL run whether or not History is still showing, and Home and History SHALL show the version it returns to. An Undo tapped while a copy of the app is being made SHALL be carried out once the copy is made, never dropped; an Undo from a switch that a newer switch of the same app has since replaced SHALL be dropped, so the app ends on the version the newest toast names; while that newer switch is still running the Undo SHALL wait for it, and SHALL run if it fails. The current version's expanded row SHALL offer "Change it".
+
+#### Scenario: Undo returns to the newer version
+- **WHEN** the user uses version 3 of 4 and taps Undo
+- **THEN** version 4 is active again and both remain listed
+
+#### Scenario: A used version runs with its own manifest and schema
+- **WHEN** the user uses a version whose manifest or schema differs from the current one's, then taps Undo
+- **THEN** the app runs that version with its own manifest and schema, and after Undo with the newer version's again
+
+#### Scenario: Moving to a newer version says so
+- **WHEN** the app is on version 2 of 4 and the user uses version 4
+- **THEN** the toast reads "Now on version 4", not "Back on version 4"
+
+#### Scenario: An Undo tapped during a copy is not lost
+- **WHEN** the user uses version 3 of 4, then starts a copy, and taps the toast's Undo while the copy is being made
+- **THEN** once the copy is made, version 4 is active again
+
+#### Scenario: An Undo runs after History is left, and Home follows it
+- **WHEN** the user uses version 1 from History opened from Home, goes Back, and taps the toast's Undo on Home (or taps it while a copy is still being made, then goes Back)
+- **THEN** the app is on the version it left, and Home shows that version's app
+
+#### Scenario: A stale Undo never overrides a newer switch
+- **WHEN** the user uses version 3 of 4, then uses version 2, and taps the first toast's Undo while the second switch is still running
+- **THEN** that Undo is dropped, and the app is on version 2, as the toast showing says
+
+#### Scenario: A newer switch that fails does not cost the earlier Undo
+- **WHEN** the user uses version 3 of 4, then uses version 2, taps the first toast's Undo while the second switch is still running, and the second switch fails
+- **THEN** that Undo runs once the second switch has failed, and the app is back on version 4
+
+### Requirement: Any version can be copied into its own app
+Every expanded version SHALL offer "Make a copy from here", which SHALL ask the same "Copy the data, or start fresh?" question as "Make a copy" (skipped when there is no saved data) and SHALL create a new launcher entry from that exact version with its own storage (#43b), and show the toast "Copy made" with Open. The original SHALL be unchanged.
+
+#### Scenario: Copy from an old version
+- **WHEN** the user taps "Make a copy from here" on version 2
+- **AND** answers "Start fresh"
+- **THEN** a new app whose code is version 2 appears on Home, starts with empty data, and the original is unchanged
+
+#### Scenario: The question's answer is taken once
+- **WHEN** the user taps an answer to "Copy the data, or start fresh?" twice in quick succession
+- **THEN** exactly one copy is made
 

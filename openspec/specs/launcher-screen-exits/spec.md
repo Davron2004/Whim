@@ -6,36 +6,36 @@ TBD - created by archiving change ios-launcher-back-navigation. Update Purpose a
 ### Requirement: Every launcher screen except Home can be left with a visible control
 Every launcher screen other than the home grid SHALL show a visible, tappable control that leaves it, on iOS and Android alike, so that no screen depends on a hardware back button or a gesture to be left.
 
-The controls are the ones each screen's design already carries: the header back button on Settings and History; the header `Back` on the compose, clarify and plan steps; `Leave it running` on the build step; `Back to your apps` on the done step, the failure screen and the link-missing screen; `Not now` on the consent screen in ask mode; `Keep AI features on` or `Not now` on the consent screen in review mode; the orb's `Home` over a running mini-app, plus `Back to your apps` on a mini-app's launch-failed and app-error states; and `‹ Home` on the developer probe screen. None of these controls SHALL be hidden behind a platform check. Every sheet opened over a screen SHALL likewise carry a visible close, cancel or done control besides its scrim.
+The controls are: the native stack's header back control on Settings, Advanced, AI features, History and Report; the header back on the Plan page and the close button on every page of the making sheet; `Done` on Ready; the close button and `Back to your apps` on the Failure page and the link-missing screen; `Not now` on the first-run sheet; the orb's Whim sheet `Back to your apps` over a running app, plus `Back to your apps` on an app's launch-failed and crashed states; and `‹ Home` on the developer probe screen. None of these controls SHALL be hidden behind a platform check. Every sheet SHALL carry a visible close control besides its scrim and drag.
 
 #### Scenario: Leaving Settings on an iPhone
-- **WHEN** a user on an iPhone opens Settings from the home grid and taps the header back button
+- **WHEN** a user on an iPhone opens Settings from the home grid and taps the header back control
 - **THEN** the home grid is shown, and no gesture or hardware button was needed
 
 #### Scenario: Leaving the flow on an iPhone
-- **WHEN** a user on an iPhone reached the plan step through clarify and taps the header `Back` three times
-- **THEN** the flow shows clarify, then compose with the text kept, then the home grid
+- **WHEN** a user on an iPhone is on the Plan page and taps back, then the close button
+- **THEN** the sheet shows Describe with the text kept, then closes to the home grid with the draft kept in the composer
 
 #### Scenario: Leaving a running mini-app on an iPhone
-- **WHEN** a mini-app is running on an iPhone and the user opens the orb and taps `Home`
-- **THEN** the mini-app closes and the home grid is shown
+- **WHEN** an app is running on an iPhone and the user taps the orb, then `Back to your apps`
+- **THEN** the app closes into its tile and the home grid is shown
 
 ### Requirement: System back and the visible control perform the same action
-On every launcher screen that handles system back, system back SHALL perform exactly the action that screen's visible leave control performs in the same state, and both SHALL run one handler.
+On every launcher screen that handles system back, system back SHALL perform exactly the action that screen's visible leave control performs in the same state, and both SHALL run one handler. On native-stack screens the stack's own back (header control, iOS edge and content-area swipe, Android back) SHALL pop exactly one screen.
 
-On the plan step, while a row is being edited, both the header `Back` and system back SHALL cancel the row edit and keep the step; with no row being edited, both SHALL move back one step. On the build step, both SHALL leave the build running and SHALL never cancel it; while the details sheet is open, system back SHALL close the sheet and the sheet's visible `Close` does the same. On the done step, system back SHALL do what `Back to your apps` does. The system back listener SHALL be registered once per screen mount and SHALL always run the screen's current handler.
+On the Plan page, while a row is being edited, both the header back and system back SHALL cancel the row edit and keep the page; with no row being edited, both SHALL return to Describe. On the Making page, system back and the close button SHALL leave the run going and SHALL never stop it. On Ready, system back SHALL do what `Done` does. With a sheet open over a screen, system back SHALL close the sheet. The system back listener SHALL be registered once per screen mount and SHALL always run the screen's current handler.
 
 #### Scenario: Header Back while editing a plan row
-- **WHEN** the user is editing a plan row with unsaved text and taps the header `Back`
-- **THEN** the row edit is cancelled, the plan step stays on screen, and the saved rows are unchanged
-
-#### Scenario: System back on the done step
-- **WHEN** a build has just been delivered and the user presses Android system back on the done step
-- **THEN** the home grid is shown with the new tile, the same as tapping `Back to your apps`, and Whim stays in the foreground
+- **WHEN** a row on the Plan page is being edited and the user taps the header back
+- **THEN** the edit is cancelled and the Plan page stays
 
 #### Scenario: System back on the build step never cancels
-- **WHEN** a build is streaming, the details sheet is closed, and the user presses system back
-- **THEN** the home grid is shown with a building ghost tile and the build keeps running
+- **WHEN** the user presses Android back on the Making page
+- **THEN** the sheet collapses into the run's tile and the run continues
+
+#### Scenario: System back on the done step
+- **WHEN** a run has just delivered and the user presses Android system back on the Ready page
+- **THEN** the home grid is shown with the new tile, the same as tapping `Done`, and Whim stays in the foreground
 
 ### Requirement: The consent review screen can always be left without changing consent
 The consent screen in review mode SHALL always show a visible control that returns to Settings without changing consent, whether consent is currently on or off.
@@ -56,8 +56,8 @@ Every launcher screen other than a running mini-app and the developer probe scre
 A running mini-app keeps its full-height frame; its orb and its sheets add the bottom inset themselves. The developer probe screen applies its own safe area.
 
 #### Scenario: The build step on an iPhone with a home indicator
-- **WHEN** the build step renders on an iPhone that reports a bottom safe-area inset
-- **THEN** `Leave it running` sits entirely above that inset
+- **WHEN** the Making page renders on an iPhone that reports a bottom safe-area inset
+- **THEN** `Stop` sits entirely above that inset
 
 #### Scenario: A running mini-app keeps its full height
 - **WHEN** a mini-app is running on the same iPhone
@@ -79,4 +79,23 @@ The table names, for each kind, whether system back is handled by the screen's o
 #### Scenario: A back handler with no matching control
 - **WHEN** a component passes one handler to the system-back hook and binds a different one to its visible back control
 - **THEN** the launcher suite fails and names that component's file
+
+### Requirement: Pushed shell screens sit on the native stack
+Settings, Advanced, AI features (consent review), History and Report (when opened from History or Settings) SHALL be on `react-native-screens`' native stack: iOS gives the edge and content-area swipe, Android a plain pop (#164). The launcher's state machine SHALL stay the single navigation truth: a gesture pop SHALL update it as the header back does. With the keyboard up, the first back SHALL put it away. A running app SHALL NOT be on it (#67); its Android back keeps its seam.
+
+#### Scenario: Swiping back from History on an iPhone
+- **WHEN** a user drags from the leading edge on History
+- **THEN** History follows the finger and pops to Home, and the launcher's state shows Home
+
+#### Scenario: Back on Android pops without a preview
+- **WHEN** a user on Android starts the back gesture on Settings
+- **THEN** Settings pops to Home as a standard pop, with no preview of Home behind it
+
+#### Scenario: Back with the keyboard up
+- **WHEN** a field on a pushed screen has the keyboard up and the user presses back once
+- **THEN** the keyboard goes away and the screen stays
+
+#### Scenario: No edge swipe over a running app
+- **WHEN** a user drags from the leading edge over a running app on an iPhone
+- **THEN** the app receives the touch and nothing closes
 
