@@ -15,6 +15,8 @@ export const RUNTIME_ASSETS: readonly string[] = Object.freeze([
   'docs/content-policy.md',
   'fixtures/navigation-demo.app.tsx',
   'fixtures/pour-over-timer.app.tsx',
+  'fixtures/reading-list.app.tsx',
+  'fixtures/sleep-log.app.tsx',
   'fixtures/style-gallery.app.tsx',
   'fixtures/tip-splitter.app.tsx',
   'fixtures/water-counter.app.tsx',

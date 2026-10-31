@@ -1,13 +1,15 @@
 /**
- * theme — the launcher shell's named RN colors (v2; docs/design/README.md "Two systems, not
+ * theme — the launcher shell's named RN colors (v2; the v2 handoff README (removed by decision #75; in git history) "Two systems, not
  * one").
  *
- * The shell has one fixed theme, `DEFAULT_THEME` from the SDK, and one derived palette,
- * `SHELL_PALETTE` below — there is no theme parameter anywhere in the launcher, and no second
- * palette of hex literals: every shell color reads from this one constant.
+ * Screens not yet moved onto the `src/host/ui/` primitives keep this v2 palette, `SHELL_PALETTE`
+ * below, pinned here rather than derived from the SDK's `DEFAULT_THEME` (which now resolves from
+ * the token module). New and moved shell code reads colours from `useTokens()`
+ * (`src/host/ui/tokens.ts`), which follows the phone's appearance; this file goes once the last
+ * screen has moved (design-system-v1 chain 21). Neither path takes a theme parameter.
  */
 
-import { DEFAULT_THEME, SHELL_COLORS } from '../../sdk/theme';
+import { SHELL_COLORS, STATUS_COLORS } from '../../sdk/theme';
 
 /** The launcher shell's named RN colors, the type of `SHELL_PALETTE` below. */
 export interface ShellPalette {
@@ -21,17 +23,16 @@ export interface ShellPalette {
   danger: string;
 }
 
-/** The shell's one fixed palette, derived once from `DEFAULT_THEME` — never recomputed, never
- *  parameterised by a theme. */
+/** The shell's one fixed v2 palette — never recomputed, never parameterised by a theme. */
 export const SHELL_PALETTE: ShellPalette = Object.freeze({
-  bg: DEFAULT_THEME.colors.bg,
-  card: DEFAULT_THEME.colors.surface,
-  cardBorder: DEFAULT_THEME.colors.border,
-  text: DEFAULT_THEME.colors.text,
-  textMuted: DEFAULT_THEME.colors['text-muted'],
-  accent: DEFAULT_THEME.colors.primary,
-  onAccent: DEFAULT_THEME.colors['on-primary'],
-  danger: DEFAULT_THEME.colors.danger,
+  bg: SHELL_COLORS.paper,
+  card: SHELL_COLORS.surface,
+  cardBorder: SHELL_COLORS.border,
+  text: SHELL_COLORS.text,
+  textMuted: SHELL_COLORS.muted,
+  accent: SHELL_COLORS.accent,
+  onAccent: '#ffffff',
+  danger: STATUS_COLORS.broken,
 });
 
 /** A `#rrggbb` colour at `alpha`, as `rgba()`. */
@@ -62,6 +63,6 @@ export function primaryButtonColors(enabled: boolean): { backgroundColor: string
 
 /** Selected text's highlight where the platform paints it in exactly the colour it is given (an
  *  Android field): the accent at 30%, so the text under it stays readable — the solid accent put
- *  it at about 2:1. `whim_accent_highlight` in `android/app/src/main/res/values/colors.xml` is the
- *  same colour, for the text Android selects under the app's theme. */
+ *  it at about 2:1. The app's Android theme already selects in ink (`whim_selection`,
+ *  `android/app/src/main/res/values/colors.xml`); this goes when the fields move to the primitives. */
 export const SELECTION_HIGHLIGHT = withAlpha(SHELL_PALETTE.accent, 0.3);

@@ -116,8 +116,9 @@
   });
 
   // ── A focused input stays visible (beta-1 D3) ────────────────────────────────
-  // The keyboard opening shrinks the viewport, which can leave the field the user just tapped
-  // underneath it. The focused editable element is scrolled into view when it gains focus, and
+  // The keyboard opening shrinks the viewport (on Android because the host ends the WebView at the
+  // keyboard's top edge, `MiniAppView`), which can leave the field the user just tapped underneath
+  // it. The focused editable element is scrolled into view when it gains focus, and
   // again one frame after each viewport resize while it keeps focus (the frame lets the resized
   // layout settle first). The listeners live in this closure: nothing new is reachable on window.
   function isEditable(el) {

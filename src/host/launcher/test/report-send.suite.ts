@@ -128,7 +128,15 @@ export async function runReportSendTests(h: Harness): Promise<void> {
       urls.push(url);
       return json({ reportId: 'r-1' }, 202);
     }) as typeof fetch;
-    for (const [baseUrl, recipient] of [[RELEASE.serverUrl, 'AnyCognition'], ['https://whim.example.org:8443', 'whim.example.org:8443']] as const) {
+    const cases = [
+      [RELEASE.serverUrl, 'AnyCognition'],
+      ['https://whim.example.org:8443', 'whim.example.org:8443'],
+      // Whim's own server, written differently: the same origin is still AnyCognition.
+      [`${RELEASE.serverUrl.replace('https://api.', 'HTTPS://API.')}:443`, 'AnyCognition'],
+      // An address with credentials in it never shows them.
+      ['https://alice:secret@whim.example.org:8443', 'whim.example.org:8443'],
+    ] as const;
+    for (const [baseUrl, recipient] of cases) {
       const tree = await renderScreen(React.createElement(ReportSheet, {
         app: APP, access: ACCESS, options: { ...reportClientOptions({ kind: 'absent' }, baseUrl, 'device', testAppInfo), fetchImpl }, onClose: () => {}, onUpdateRequired: () => {}, legalLanguage: 'en',
       }));
@@ -137,7 +145,8 @@ export async function runReportSendTests(h: Harness): Promise<void> {
         await press(button(tree, COPY.reportReasonBroken));
         const line = tree.root.findAll((n) => String(n.type) === 'Text' && textOf(n).includes('goes with your report')).map((n) => textOf(n));
         h.eq(line.length, 1, `${baseUrl}: one line says where the report goes`);
-        h.ok(line[0].includes(recipient), `${baseUrl}: it names ${recipient}`);
+        h.ok(line[0].includes(recipient), `${baseUrl}: it names ${recipient} (got ${line[0]})`);
+        h.ok(!/alice|secret|@/.test(line[0]), `${baseUrl}: and never the credentials an address carries`);
         if (recipient === 'AnyCognition') h.ok(!line[0].includes('server you chose'), `${baseUrl}: and no server of the user’s own`);
         else h.ok(line[0].includes('not to AnyCognition'), `${baseUrl}: and says AnyCognition doesn’t get it`);
         await press(button(tree, COPY.reportSend));

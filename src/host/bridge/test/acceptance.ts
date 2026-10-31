@@ -382,6 +382,21 @@ async function main(): Promise<void> {
     ok(/backend|unavailable/i.test(e.hint), 'the hint explains the cue backend is unavailable');
   });
 
+  await test('§G8 a haptic cue reaches the backend with the realm that called it (the rate-cap key)', async () => {
+    const seen: [string, RealmRecord][] = [];
+    const reg = createDefaultRegistry({
+      cueBackend: { haptic: (kind, realm) => { seen.push([kind, realm]); }, sound: () => {} },
+    });
+    const a = bring(storageApp('a', ['cues']), reg);
+    const b = bring(storageApp('b', ['cues']), reg);
+    const retry = frame('cues.haptic', { kind: 'tap' }, 1, 8900);
+    await send(a.d, retry);
+    await send(a.d, retry);
+    await callOk(b.d, 'cues.haptic', { kind: 'heavy' });
+    eq(seen.map(([kind]) => kind), ['tap', 'heavy'], 'one backend call per request, the retry absorbed by the dedupe first');
+    ok(seen[0][1] === a.realm && seen[1][1] === b.realm, "each call carries its own realm's record");
+  });
+
   // §G9 (the #41 review rule — cues touch only contract.ts + rows.ts + index.ts, never
   // dispatcher/gate/registry/launch) is a review/`git diff` assertion, recorded in close-out 9.2.
 

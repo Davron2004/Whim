@@ -11,7 +11,14 @@ import { createMemoryStore, MapKVBackend } from '../../version-store';
 import { AppIndex } from '../app-index';
 import { StoreAccess, storeIdOf } from '../store-access';
 import { promptEnvelope } from '../prompt-envelope';
-import type { AppRecord } from '../../bridge/contract';
+import type { AppManifest, AppRecord } from '../../bridge/contract';
+import type { InstalledApp } from '../app-index';
+import { tileOf } from '../tile-identity';
+import { PendingPurgeStore, completeInterruptedPurges, type PurgeDeps } from '../pending-purge';
+import { PendingBuildStore } from '../pending-builds';
+import { RunJournalStore } from '../run-journal';
+import { TINT_NAMES, TINTS, type TintName } from '../../../design/tokens';
+import { deltaE, nearestTint } from '../../../design/tints';
 
 const REC = (id: string): AppRecord => ({ appId: id, name: id, manifest: { capabilities: ['storage'] } });
 
@@ -33,6 +40,53 @@ function harnessAccess() {
 }
 
 type Store = ReturnType<typeof createMemoryStore>;
+
+/** A record whose manifest declares a tile, the way the wire carries `defineApp({ tint, icon })`. */
+function declaring(id: string, tile: { tint: string | string[]; icon: string }): AppRecord {
+  return { appId: id, name: id, manifest: { capabilities: [], ...tile } as AppManifest };
+}
+
+function installDeclaring(access: StoreAccess, id: string, tile: { tint: string | string[]; icon: string }): Promise<InstalledApp> {
+  return access.install({ id, name: id, record: declaring(id, tile), bundleSource: 'V1', prompt: 'p1' });
+}
+
+/** A copy's tint is among the least used before the copy, and no least-used tint is farther from
+ *  the original's (CIEDE2000 of light values). */
+function assertFarthestLeastUsed(h: Harness, original: TintName, used: readonly TintName[], got: TintName): void {
+  const count = (t: TintName) => used.filter((u) => u === t).length;
+  const least = Math.min(...TINT_NAMES.map(count));
+  h.eq(count(got), least, `${got} is among the least used`);
+  const distance = (t: TintName) => deltaE(TINTS[original].light, TINTS[t].light);
+  for (const t of TINT_NAMES.filter((n) => count(n) === least)) {
+    h.ok(distance(got) >= distance(t), `${got} is at least as far from ${original} as ${t}`);
+  }
+}
+
+/** One launcher KV under the index, pending builds, journal and purge markers, as on the device. */
+function purgeRig(opts: { failFirstDelete?: boolean } = {}) {
+  const kv = new MapKVBackend();
+  const store = createMemoryStore({ autoCompact: false, now: storeClock() });
+  const index = new AppIndex(kv);
+  const deleted: string[] = [];
+  let failNext = opts.failFirstDelete === true;
+  const access = new StoreAccess({
+    store,
+    index,
+    deleteStorage: (id) => {
+      if (failNext) {
+        failNext = false;
+        throw new Error('the database file is busy');
+      }
+      deleted.push(id);
+    },
+  });
+  const pending = new PendingBuildStore(kv);
+  const journal = new RunJournalStore(kv);
+  const purges = new PendingPurgeStore(kv);
+  const deps: PurgeDeps = { purges, index, access, pending, journal };
+  return { kv, store, index, access, deleted, pending, journal, purges, deps };
+}
+
 
 /** A promise plus its resolver — a gate the test holds open and releases on cue. */
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -540,5 +594,140 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     const pNext = access.activeBundle(orig);
     await h.throws(() => within(pFail, 5000, 'the failing op'), 'boom', 'the failure is delivered to its OWN caller, not swallowed');
     h.eq(await within(pNext, 5000, 'the op queued behind a failure'), 'V1_MAIN', 'the next op on that repo still runs and resolves normally');
+  });
+  // ── tiles (design-system-v1 D5): assigned at install, carried through rebuilds, moved for copies ──
+
+  await h.test('tile: a new app takes its first ranked tint no installed app uses', async () => {
+    const { index, access } = harnessAccess();
+    await installDeclaring(access, 'a1', { tint: 'stone', icon: 'coffee' });
+    await installDeclaring(access, 'a2', { tint: 'ocean', icon: 'fish' });
+    const fresh = await installDeclaring(access, 'a3', { tint: ['stone', 'rose', 'slate'], icon: 'timer' });
+    h.eq(tileOf(fresh), { tint: 'rose', icon: 'timer' }, 'stone is taken, so the next ranked tint, rose');
+    h.eq(index.get('a3')?.tint, 'rose', 'stored on the index entry');
+  });
+
+  await h.test('tile: install-then-rebuild keeps the tint and glyph, whatever the new build declares', async () => {
+    const { index, access } = harnessAccess();
+    const app = await installDeclaring(access, 'a1', { tint: 'violet', icon: 'music' });
+    h.eq(tileOf(app), { tint: 'violet', icon: 'music' }, 'precondition: the install took its declaration');
+    await access.update(app, { record: declaring('a1', { tint: ['berry'], icon: 'coffee' }), bundleSource: 'V2', prompt: 'p2' });
+    h.eq(tileOf(index.get('a1')!), { tint: 'violet', icon: 'music' }, 'the rebuild ranked berry/coffee; the tile did not move');
+    await access.update(index.get('a1')!, { record: REC('a1'), bundleSource: 'V3', prompt: 'p3' });
+    h.eq(tileOf(index.get('a1')!), { tint: 'violet', icon: 'music' }, 'nor on a rebuild that declares nothing');
+  });
+
+  await h.test('tile: an override survives a change, even when the rebuild holds an entry read before it', async () => {
+    const { index, access } = harnessAccess();
+    const stale = await installDeclaring(access, 'a1', { tint: 'stone', icon: 'coffee' });
+    index.setTileOverride('a1', { tint: 'violet', icon: 'music' });
+    await access.update(stale, { record: REC('a1'), bundleSource: 'V2', prompt: 'p2' });
+    h.eq(tileOf(index.get('a1')!), { tint: 'violet', icon: 'music' }, 'the override still shows after the change');
+    const withOverride = index.get('a1')!;
+    index.clearTileOverride('a1');
+    await access.update(withOverride, { record: REC('a1'), bundleSource: 'V3', prompt: 'p3' });
+    h.ok(index.get('a1')?.tileOverride === undefined, 'a cleared override is not brought back by an entry read before the clear');
+    h.eq(tileOf(index.get('a1')!), { tint: 'stone', icon: 'coffee' }, 'the assigned tile shows again');
+  });
+
+  await h.test('tile: a record from before tints keeps the tile it showed through a rebuild', async () => {
+    const { index, access } = harnessAccess();
+    await access.install({ id: 'old', name: 'Old App', record: REC('old'), bundleSource: 'V1', prompt: 'p1' });
+    // As stored before this change: no tint, no glyph, an old hex colour on the manifest.
+    const legacy: InstalledApp = {
+      id: 'old', name: 'Old App', createdAt: 1, lineageId: 'main',
+      record: { appId: 'old', name: 'Old App', manifest: { capabilities: [], tileColor: '#0369a1' } },
+    };
+    index.put(legacy);
+    const before = tileOf(index.get('old')!);
+    h.eq(before.tint, nearestTint('#0369a1'), 'precondition: it reads the nearest tint');
+    await access.update(legacy, { record: REC('old'), bundleSource: 'V2', prompt: 'p2' });
+    h.eq(index.get('old')?.tint, before.tint, 'the rebuild wrote down the tint it was showing');
+    h.eq(tileOf(index.get('old')!), before, 'though the new record has no colour at all');
+  });
+
+  await h.test('tile: a copy takes the tint farthest from its original among the least used, and the same glyph', async () => {
+    const { index, access } = harnessAccess();
+    const orig = await installDeclaring(access, 'a1', { tint: 'stone', icon: 'coffee' });
+    await installDeclaring(access, 'a2', { tint: 'ocean', icon: 'fish' });
+    const usedBefore = index.list().map((a) => tileOf(a).tint);
+    const copy = await access.fork(orig);
+    const tile = tileOf(copy);
+    h.eq(tile.icon, 'coffee', 'the copy draws its original’s glyph');
+    h.ok(tile.tint !== 'stone', 'and not its original’s tint');
+    assertFarthestLeastUsed(h, 'stone', usedBefore, tile.tint);
+    h.eq(index.get(copy.id)?.tint, tile.tint, 'stored on the copy’s own entry');
+    h.eq(tileOf(index.get('a1')!), { tint: 'stone', icon: 'coffee' }, 'the original is unchanged');
+  });
+
+  await h.test('tile: a copy of a customized app moves away from the tile it shows, even from an entry read before', async () => {
+    const { index, access } = harnessAccess();
+    const stale = await installDeclaring(access, 'a1', { tint: 'stone', icon: 'coffee' });
+    index.setTileOverride('a1', { tint: 'blue', icon: 'music' });
+    const usedBefore = index.list().map((a) => tileOf(a).tint);
+    const copy = await access.fork(stale);
+    h.eq(tileOf(copy).icon, 'music', 'the glyph the original shows');
+    assertFarthestLeastUsed(h, 'blue', usedBefore, tileOf(copy).tint);
+    h.ok(copy.tileOverride === undefined, 'the override is the original’s own; the copy has none');
+  });
+
+  // ── pending purge (design-system-v1 D16): soft delete and discard outlive the process ──────────
+
+  await h.test('purge: a delete armed when Whim closed completes at the next launch, leaving nothing', async () => {
+    const r = purgeRig();
+    const app = await r.access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    r.journal.create('wc');
+    r.journal.moveToLastRun('wc', 'wc');
+    new PendingPurgeStore(r.kv).armApp(app);
+    h.ok(r.index.get('wc') != null, 'armed, not yet deleted: Undo can still bring it back whole');
+
+    const relaunch = { ...r.deps, purges: new PendingPurgeStore(r.kv) };
+    await completeInterruptedPurges(relaunch);
+    h.eq(r.index.get('wc'), null, 'the record is gone');
+    h.eq(r.deleted, ['wc'], 'its user data is gone');
+    h.eq((await r.store.history('wc')).length, 0, 'its history is gone');
+    h.eq(r.journal.getLastRun('wc'), null, 'its last-run report is gone');
+    h.eq(relaunch.purges.list(), [], 'and the marker is cleared');
+  });
+
+  await h.test('purge: Undo clears the marker, so the next launch leaves the app whole', async () => {
+    const r = purgeRig();
+    const app = await r.access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    r.purges.armApp(app);
+    h.ok(r.purges.has('app', 'wc'), 'armed');
+    r.purges.cancel('app', 'wc');
+    await completeInterruptedPurges({ ...r.deps, purges: new PendingPurgeStore(r.kv) });
+    h.ok(r.index.get('wc') != null, 'still installed');
+    h.eq(await r.access.activeBundle(app), 'V1', 'and still opens');
+    h.eq(r.deleted, [], 'no data dropped');
+  });
+
+  await h.test('purge: a purge that died part-way is finished from its marker at the next launch', async () => {
+    const r = purgeRig({ failFirstDelete: true });
+    const app = await r.access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    r.purges.armApp(app);
+    await completeInterruptedPurges(r.deps);
+    h.eq(r.index.get('wc'), null, 'precondition: the record went before the user data failed to');
+    h.ok(r.purges.has('app', 'wc'), 'the marker survives the failure');
+    h.ok((await r.store.history('wc')).length > 0, 'precondition: the history is still there');
+
+    await completeInterruptedPurges({ ...r.deps, purges: new PendingPurgeStore(r.kv) });
+    h.eq(r.deleted, ['wc'], 'the user data is dropped from the stored record');
+    h.eq((await r.store.history('wc')).length, 0, 'the history too');
+    h.eq(r.purges.list(), [], 'then the marker goes');
+  });
+
+  await h.test('purge: a discard armed when Whim closed completes, and never touches the app the attempt changes', async () => {
+    const r = purgeRig();
+    await r.access.install({ id: 'app-1', name: 'Timer', record: REC('app-1'), bundleSource: 'V1', prompt: 'p1' });
+    // A failed change to app-1: its attempt record shares the app's launcher id.
+    r.pending.create({ id: 'app-1', prompt: 'add a lap button', workingTitle: 'add a lap button', editingAppId: 'app-1' });
+    r.journal.create('app-1');
+    r.purges.armAttempt('app-1');
+    await completeInterruptedPurges({ ...r.deps, purges: new PendingPurgeStore(r.kv) });
+    h.eq(r.pending.get('app-1'), null, 'the attempt record is gone');
+    h.eq(r.journal.get('app-1'), null, 'its journal is gone');
+    h.ok(r.index.get('app-1') != null, 'the app it was changing is still installed');
+    h.eq(r.deleted, [], 'with its data');
+    h.eq(r.purges.list(), [], 'the marker is cleared');
   });
 }

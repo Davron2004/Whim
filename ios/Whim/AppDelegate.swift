@@ -41,10 +41,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
       launchOptions: launchOptions
     )
 
-    // Launch wiring (design D10): keep the root background on the launch paper color until
-    // the launcher draws its first frame, so there's no white flash after the storyboard hands
-    // off to React Native.
+    // Launch wiring (design D10, design-system-v1 D12): the root background is the scheme's `bg`
+    // (the LaunchBackground colour follows the phone's appearance), and a copy of the launch screen
+    // covers the window until the launcher draws Home, so the storyboard hands off to Home's first
+    // frame with no white or black frame between.
     window.rootViewController?.view.backgroundColor = UIColor(named: "LaunchBackground")
+    WhimLaunchScreenOverlay.cover(window)
   }
 
   // Universal-link cold start / foreground handoff (specs/app-links "The iOS app delivers

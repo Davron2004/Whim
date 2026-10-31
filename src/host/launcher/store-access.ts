@@ -26,6 +26,7 @@ import type { VersionStore, Snapshot, Pin, FileChange } from '../version-store';
 import type { AppRecord } from '../bridge/contract';
 import { AppIndex, InstalledApp } from './app-index';
 import { parsePromptEnvelope } from './prompt-envelope';
+import { assignedTile, copyTile, declaredTile, resolveTileRequest, type TileRequest } from './tile-identity';
 
 /** Drop an installed app's per-app user-data store (the storage engine's SQLite db). Device →
  *  op-sqlite `db.delete()`; Node tests → a spy. Injected so store-access stays device-free. */
@@ -55,6 +56,8 @@ export interface InstallSpec {
   example?: boolean;
   /** Optional storage-engine schema artifact, written alongside `bundle.js` when supplied (D7). */
   schemaJson?: string;
+  /** How the entry gets its tile. Absent: assigned from `record.manifest`'s declaration. */
+  tile?: TileRequest;
 }
 
 /** The prompt-flow's delivery spec for `StoreAccess.update` (design D7). */
@@ -156,6 +159,11 @@ export class StoreAccess {
         spec.prompt,
       );
       this.repoLineage.set(spec.id, 'main');
+      // Assigned against the index as it is NOW, with no await before the write below, so two
+      // installs landing together cannot both take the same free tint.
+      const others = this.index.list().filter((app) => app.id !== spec.id);
+      const request = spec.tile ?? { kind: 'assign', declared: declaredTile(spec.record.manifest, spec.id, spec.name) };
+      const tile = resolveTileRequest(request, others);
       const entry: InstalledApp = {
         id: spec.id,
         name: spec.name,
@@ -163,6 +171,8 @@ export class StoreAccess {
         createdAt: this.now(),
         record: spec.record,
         lineageId: 'main',
+        tint: tile.tint,
+        icon: tile.icon,
       };
       this.index.put(entry);
       return entry;
@@ -173,6 +183,11 @@ export class StoreAccess {
    * Deliver a new version onto an already-installed entry's own lineage (design D7 — the prompt
    * flow's "update" path): a snapshot (bundle + optional schema artifact) followed by an index
    * record refresh. `id`/`lineageId`/`createdAt` are untouched; only `record` changes.
+   *
+   * The tile is host state, not the wire's: the assigned tint and glyph and any override are read
+   * from the index entry as it is at write time (never the caller's possibly stale `entry`, which
+   * would undo an override set while this ran), so a rebuild never moves the tile. A record from
+   * before tints gets the tile it was showing written down here.
    */
   async update(entry: InstalledApp, spec: UpdateSpec): Promise<InstalledApp> {
     return this.serial(storeIdOf(entry), async () => {
@@ -188,11 +203,15 @@ export class StoreAccess {
       );
       // `entry.name` is deliberately NOT refreshed from `spec.record.name` here (they can differ —
       // `mapWireRecord` sets `record.name = wire.name`). `app.name` is what tile-colour resolution
-      // hashes for a record with no declared/injected colour (`tiles.ts#tileColor` -> `appColor(name)`
+      // hashes for a record with no declared/injected colour (`tiles.ts#tileColor` -> `fallbackTint(name)`
       // via `AppTile`); build-lifecycle.ts's `deliverResult` PRESERVE comment depends on this holding
       // in the other direction. Adopting the new name here would move that app's hue on its next
       // rename-carrying rebuild. Pinned: store-access.suite.ts §34.
-      const updated: InstalledApp = { ...entry, record: spec.record };
+      const current = this.index.get(entry.id) ?? entry;
+      const { tint, icon } = assignedTile(current);
+      const updated: InstalledApp = { ...entry, record: spec.record, tint, icon };
+      if (current.tileOverride) updated.tileOverride = current.tileOverride;
+      else delete updated.tileOverride;
       this.index.put(updated);
       return updated;
     });
@@ -329,6 +348,9 @@ export class StoreAccess {
       const { lineageId } = await this.store.fork(repo, snapshotId);
       // fork() left the repo HEAD on the new lineage.
       this.repoLineage.set(repo, lineageId);
+      // A copy's tile: the original's glyph, the tint farthest from the original's among the least
+      // used — read from the index now, so an override set since the caller read `entry` counts.
+      const tile = copyTile(this.index.get(entry.id) ?? entry, this.index.list());
       const forkEntry: InstalledApp = {
         id: `${repo}__${lineageId}`,
         name: entry.name,
@@ -338,6 +360,8 @@ export class StoreAccess {
         lineageId,
         forkedFrom: { id: entry.id, name: entry.name },
         storageGroupId: opts?.shareData ? (entry.storageGroupId ?? entry.id) : undefined,
+        tint: tile.tint,
+        icon: tile.icon,
       };
       this.index.put(forkEntry);
       return forkEntry;

@@ -33,7 +33,9 @@ import { run as runHeaderLockstep } from './repo/header-lockstep.suite';
 import { run as runConsentCoverage } from './repo/consent-coverage.suite';
 import { run as runLogEgress } from './repo/log-egress.suite';
 import { run as runAndroidAccent } from './repo/android-accent.suite';
+import { run as runAndroidEdgeToEdge } from './repo/android-edge-to-edge.suite';
 import { run as runTrackedWeight } from './repo/tracked-weight.suite';
+import { run as runDesignSystem } from './repo/design-system.suite';
 import {
   CheckReport,
   DIAGNOSTIC_KINDS,
@@ -1228,7 +1230,9 @@ async function main(): Promise<void> {
   await runConsentCoverage();
   await runLogEgress();
   await runAndroidAccent();
+  await runAndroidEdgeToEdge();
   await runTrackedWeight();
+  await runDesignSystem();
 }
 
 main()

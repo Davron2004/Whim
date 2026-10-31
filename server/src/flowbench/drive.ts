@@ -1,9 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ApiError, Clarification, ClarifyLimit, ClarifyResponse, GenerationEvent, RewriteResponse } from '@whim/contract';
+import type { ApiError, Clarification, ClarifyLimit, ClarifyResponse, GenerationEvent, RewriteResponse, WireAppRecord } from '@whim/contract';
 import { benchEnvelopeHeaders } from '../bench-envelope';
-import { buildReport, type CaseOutcome, type CaseReport, type EvalCase, type EvalSet, type FlowBenchmarkReport, type GenerateReport, type PhaseReport, type StageTiming } from './report';
+import {
+  assessTile,
+  buildReport,
+  optionReport,
+  tileKept,
+  type CaseOutcome,
+  type CaseReport,
+  type ChangeReport,
+  type EvalCase,
+  type EvalSet,
+  type FlowBenchmarkReport,
+  type GenerateReport,
+  type OptionReport,
+  type PhaseReport,
+  type StageTiming,
+  type TileReport,
+} from './report';
 
 export { formatMarkdownReport } from './report';
 
@@ -50,7 +66,7 @@ interface GenerateAttempt {
   events: ObservedEvent[];
   firstEventMs?: number;
   terminal?: Extract<GenerationEvent, { type: 'result' | 'failure' }>;
-  source?: string;
+  app?: WireAppRecord;
   streamError?: string;
 }
 
@@ -245,7 +261,7 @@ async function generateAttempt(url: string, body: unknown, deviceId: string, ove
   let buffer = '';
   let firstEventMs: number | undefined;
   let terminal: GenerateAttempt['terminal'];
-  let source: string | undefined;
+  let app: WireAppRecord | undefined;
   let streamError: string | undefined;
   try {
     for (;;) {
@@ -261,7 +277,7 @@ async function generateAttempt(url: string, body: unknown, deviceId: string, ove
         events.push({ event, atMs });
         if (event.type === 'result' || event.type === 'failure') {
           terminal = event;
-          if (event.type === 'result') source = event.app.source;
+          if (event.type === 'result') app = event.app;
         }
       }
       if (terminal !== undefined) break;
@@ -274,7 +290,7 @@ async function generateAttempt(url: string, body: unknown, deviceId: string, ove
     events,
     firstEventMs,
     terminal,
-    source,
+    app,
     streamError,
   };
 }
@@ -304,7 +320,7 @@ function stageTimings(events: readonly ObservedEvent[]): { stages: StageTiming[]
 }
 
 // eslint-disable-next-line sonarjs/cognitive-complexity -- retries and terminal variants map directly to the benchmark report
-async function generateWithRetries(baseUrl: string, body: unknown, deviceId: string, retriesAllowed: number, timeoutMs: number): Promise<GenerateReport & { source?: string }> {
+async function generateWithRetries(baseUrl: string, body: unknown, deviceId: string, retriesAllowed: number, timeoutMs: number): Promise<GenerateReport & { app?: WireAppRecord }> {
   const started = performance.now();
   let retries = 0;
   for (;;) {
@@ -326,7 +342,7 @@ async function generateWithRetries(baseUrl: string, body: unknown, deviceId: str
       stages: timings.stages,
       repairs: timings.repairs,
       ...(terminal !== undefined && timings.lastDoneMs !== undefined ? { tailMs: Math.max(0, (attempt.events.at(-1)?.atMs ?? timings.lastDoneMs) - timings.lastDoneMs) } : {}),
-      ...(terminal?.type === 'result' ? { terminal: { type: 'result' as const, sourceBytes: Buffer.byteLength(terminal.app.source) }, source: attempt.source } : {}),
+      ...(terminal?.type === 'result' ? { terminal: { type: 'result' as const, sourceBytes: Buffer.byteLength(terminal.app.source) }, app: attempt.app } : {}),
       ...(terminal?.type === 'failure' ? { terminal: { type: 'failure' as const, reason: terminal.reason, attempts: terminal.attempts } } : {}),
       ...(error === undefined ? {} : { error }),
     };
@@ -337,7 +353,9 @@ function notRun(): PhaseReport {
   return { status: 0, durationMs: 0, retries: 0, error: { error: 'not_run', hint: 'The previous phase did not complete.' } };
 }
 
-function phaseFailure(phase: 'clarify' | 'rewrite' | 'generate', report: PhaseReport, clarifications: Clarification[], caseInfo: EvalCase, run: number, deviceId: string): CaseReport {
+const NO_OPTIONS: OptionReport = { count: 0, long: [] };
+
+function phaseFailure(phase: 'clarify' | 'rewrite' | 'generate', report: PhaseReport, clarifications: Clarification[], caseInfo: EvalCase, run: number, deviceId: string, options: OptionReport = NO_OPTIONS): CaseReport {
   const outcome: CaseOutcome = { type: 'failure', phase, reason: report.error?.error ?? 'phase_failed', attempts: report.retries + 1 };
   return {
     caseId: caseInfo.caseId,
@@ -346,6 +364,7 @@ function phaseFailure(phase: 'clarify' | 'rewrite' | 'generate', report: PhaseRe
     prompt: caseInfo.prompt,
     deviceId,
     clarifications,
+    options,
     phases: { clarify: phase === 'clarify' ? report : notRun(), ...(phase !== 'clarify' ? { rewrite: phase === 'rewrite' ? report : notRun() } : {}), ...(phase === 'generate' ? { generate: report as GenerateReport } : {}) },
     outcome,
   };
@@ -367,10 +386,11 @@ async function runCase(baseUrl: string, caseInfo: EvalCase, run: number, options
   if (clarifyBody === undefined) return phaseFailure('clarify', clarify, [], caseInfo, run, deviceId);
   if (clarifyBody.limit !== undefined) {
     const { reason, alternative } = clarifyBody.limit;
-    return { ...identity, clarifications: [], phases: { clarify }, outcome: { type: 'limit', reason, alternative } };
+    return { ...identity, clarifications: [], options: NO_OPTIONS, phases: { clarify }, outcome: { type: 'limit', reason, alternative } };
   }
+  const offered = optionReport(clarifyBody.questions.flatMap((question) => question.options));
   const clarifications = clarifyBody.questions.map((question) => ({ id: question.id, question: question.question, choices: [question.options[0]!] }));
-  if (options.stopAfter === 'clarify') return { ...identity, clarifications, phases: { clarify }, outcome: { type: 'clarified' } };
+  if (options.stopAfter === 'clarify') return { ...identity, clarifications, options: offered, phases: { clarify }, outcome: { type: 'clarified' } };
 
   const rewriteBody = { prompt: caseInfo.prompt, ...(clarifications.length > 0 ? { clarifications } : {}) };
   const rewriteResponse = await postWithRetries(`${baseUrl}/v1/rewrite`, rewriteBody, deviceId, retries, timeoutMs);
@@ -382,23 +402,43 @@ async function runCase(baseUrl: string, caseInfo: EvalCase, run: number, options
     ...(rewriteResponse.status !== 200 || rewriteBodyParsed === undefined ? { error: rewriteResponse.status === 200 ? { error: 'invalid_response', hint: 'The rewrite response did not match the contract.' } : apiErrorFrom(rewriteResponse.body, rewriteResponse.status) } : {}),
   };
   if (rewriteBodyParsed === undefined) {
-    const failed = phaseFailure('rewrite', rewrite, clarifications, caseInfo, run, deviceId);
+    const failed = phaseFailure('rewrite', rewrite, clarifications, caseInfo, run, deviceId, offered);
     return { ...failed, phases: { clarify, rewrite } };
   }
 
   const generateBody = { prompt: rewriteBodyParsed.rewrittenPrompt, ...(clarifications.length > 0 ? { clarifications } : {}) };
   const generated = await generateWithRetries(baseUrl, generateBody, deviceId, retries, timeoutMs);
-  const { source, ...generate } = generated;
-  if (generate.terminal?.type === 'result') {
-    if (saveSources !== undefined && source !== undefined) {
+  const { app, ...generate } = generated;
+  const delivered = { ...identity, clarifications, options: offered, phases: { clarify, rewrite, generate } };
+  if (generate.terminal?.type === 'result' && app !== undefined) {
+    if (saveSources !== undefined) {
       fs.mkdirSync(saveSources, { recursive: true });
-      fs.writeFileSync(path.join(saveSources, `${caseInfo.caseId}.ts`), source);
+      fs.writeFileSync(path.join(saveSources, `${caseInfo.caseId}.ts`), app.source);
     }
-    return { ...identity, clarifications, phases: { clarify, rewrite, generate }, outcome: { type: 'result' } };
+    const tile = assessTile(app);
+    if (caseInfo.change === undefined) return { ...delivered, tile, outcome: { type: 'result' } };
+    const change = await runChange(baseUrl, caseInfo.change, app, tile, deviceId, options);
+    const failed = change.kept === undefined ? terminalFailure(change.generate) : undefined;
+    return { ...delivered, tile, change, outcome: failed === undefined ? { type: 'result' } : { type: 'failure', phase: 'change', ...failed } };
   }
-  const reason = generate.terminal?.type === 'failure' ? generate.terminal.reason : generate.error?.error ?? 'no_terminal_event';
-  const attempts = generate.terminal?.type === 'failure' ? generate.terminal.attempts : generate.retries + 1;
-  return { ...identity, clarifications, phases: { clarify, rewrite, generate }, outcome: { type: 'failure', phase: 'generate', reason, attempts } };
+  return { ...delivered, outcome: { type: 'failure', phase: 'generate', ...terminalFailure(generate) } };
+}
+
+/** Why a generate phase delivered nothing: its `failure` terminal, else its transport error. */
+function terminalFailure(generate: GenerateReport): { reason: string; attempts: number } {
+  if (generate.terminal?.type === 'failure') return { reason: generate.terminal.reason, attempts: generate.terminal.attempts };
+  return { reason: generate.error?.error ?? 'no_terminal_event', attempts: generate.retries + 1 };
+}
+
+/** Sends the delivered app back to generate with the case's change, as the device does for "Change
+ *  it" (generate only: the tile is decided by the generate turn), and reports whether the changed
+ *  app kept its tile. */
+async function runChange(baseUrl: string, prompt: string, app: WireAppRecord, before: TileReport, deviceId: string, options: RunOptions): Promise<ChangeReport> {
+  const body = { prompt, app: { source: app.source, manifest: app.manifest, schema: app.schema } };
+  const { app: changed, ...generate } = await generateWithRetries(baseUrl, body, deviceId, options.retries, options.timeoutMs);
+  if (generate.terminal?.type !== 'result' || changed === undefined) return { prompt, generate };
+  const tile = assessTile(changed);
+  return { prompt, generate, tile, kept: tileKept(before, tile) };
 }
 
 function readManifest(evalSetDir: string): EvalSet {
@@ -414,7 +454,7 @@ function readManifest(evalSetDir: string): EvalSet {
   const cases = record?.cases;
   if (typeof record?.setId !== 'string' || typeof record?.visibility !== 'string' || !Array.isArray(cases)) throw new Error(`eval set manifest ${manifestPath} has an invalid shape`);
   const validCases = cases.filter((item): item is Record<string, unknown> => asRecord(item) !== undefined);
-  if (validCases.length !== cases.length || validCases.some((item) => typeof item.caseId !== 'string' || typeof item.appSlug !== 'string' || typeof item.prompt !== 'string' || !Array.isArray(item.assertions))) {
+  if (validCases.length !== cases.length || validCases.some((item) => typeof item.caseId !== 'string' || typeof item.appSlug !== 'string' || typeof item.prompt !== 'string' || !Array.isArray(item.assertions) || (item.change !== undefined && typeof item.change !== 'string'))) {
     throw new Error(`eval set manifest ${manifestPath} has an invalid case`);
   }
   return { setId: record.setId, visibility: record.visibility, cases: validCases as unknown as EvalCase[] };

@@ -1,11 +1,11 @@
 <resources>
 
-    <!-- Launch wiring (design D10): on Android 12+ the system splash screen API owns the first
-         frame and reads windowSplashScreenBackground instead of windowBackground's layer list.
-         The icon itself is left to the adaptive launcher icon, which the system draws in the
-         same circle. -->
+    <!-- Launch wiring: on Android 12+ the system splash screen owns the first frame. It shows the
+         ember (the adaptive icon's foreground layer, inside the system's icon mask) on the scheme's
+         `bg`, and stays up until the launcher draws its first frame (MainActivity, LaunchScreen). -->
     <style name="Theme.Whim.Launch" parent="AppTheme">
         <item name="android:windowSplashScreenBackground">@color/launch_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
     </style>
 
 </resources>

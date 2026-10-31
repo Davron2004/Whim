@@ -32,7 +32,6 @@ import { runPromptFlowWiringTests } from './prompt-flow-wiring.suite';
 import { runGenerationRequestTests } from './generation-request.suite';
 import { runXhrTransportTests } from './xhr-transport.suite';
 import { runWhimProseTests } from './whim-prose.suite';
-import { runAndroidFontsTests } from './android-fonts.suite';
 import { runTileColourTests } from './tile-colour.suite';
 import { runOrbMenuTests } from './orb-menu.suite';
 import { runLoggingTests } from '../../logging/test/logging.suite';
@@ -83,6 +82,12 @@ import { runDiagnosticsUiTests } from './diagnostics-ui.suite';
 import { runWireFutureFramesTests } from './wire-future-frames.suite';
 import { runFlowMessagesUiTests } from './flow-messages-ui.suite';
 import { runKeyboardShellUiTests } from './keyboard-shell-ui.suite';
+import { runIconUiTests } from './icon-ui.suite';
+import { runHapticsTests } from './haptics.suite';
+import { runLaunchScreenTests } from './launch-screen.suite';
+import { runShellTokensTests } from './shell-tokens.suite';
+import { runShellControlsUiTests } from './shell-controls-ui.suite';
+import { runShellStatusUiTests } from './shell-status-ui.suite';
 
 const h = new Harness();
 
@@ -110,7 +115,6 @@ await runPromptFlowWiringTests(h);
 await runGenerationRequestTests(h);
 await runXhrTransportTests(h);
 await runWhimProseTests(h);
-await runAndroidFontsTests(h);
 await runTileColourTests(h);
 await runOrbMenuTests(h);
 await runLoggingTests(h);
@@ -163,6 +167,12 @@ await runDiagnosticsUiTests(h);
 await runWireFutureFramesTests(h);
 await runFlowMessagesUiTests(h);
 await runKeyboardShellUiTests(h);
+await runIconUiTests(h);
+await runHapticsTests(h);
+await runLaunchScreenTests(h);
+await runShellTokensTests(h);
+await runShellControlsUiTests(h);
+await runShellStatusUiTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

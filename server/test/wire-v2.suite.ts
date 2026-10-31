@@ -1,10 +1,10 @@
 /**
  * server/test/wire-v2.suite.ts — the shell-redesign-v2 wire seam: the clarify exchange, the
- * post-run summariser, the rewrite endpoint's plan rows, and the declared tile colour.
+ * post-run summariser, the rewrite endpoint's plan rows, and the declared tile identity.
  *
  * Deterministic: no network, no Chromium, every model turn through `ScriptedModelClient`. The
- * tile-colour section is the one that reaches the real static checker (`createCheckStage`) — on
- * purpose, because the whole claim being tested is "the colour comes from the ONE extraction that
+ * tile-identity section is the one that reaches the real static checker (`createCheckStage`) — on
+ * purpose, because the whole claim being tested is "tint and icon come from the ONE extraction that
  * already yields capabilities", which a fake check stage could not falsify.
  */
 import { check, deepEqual, eq, section } from './harness';
@@ -15,7 +15,8 @@ import { createApp } from '../src/app';
 import { createStubPipeline, type Pipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
 import { createCheckStage } from '../src/generation/stages/check';
-import { SHELL_COLORS, STATUS_COLORS, STATUS_COLORS_ON_INK } from '../../src/sdk/theme';
+import { runStaticChecks } from '../../checks/index';
+import { GLYPH_NAMES } from '../../src/design/icons/names';
 import {
   GenerationMachine,
   type BuildOutcome,
@@ -521,14 +522,14 @@ async function testRewriteRetry(): Promise<void> {
   }
 }
 
-// ── §5 tileColor rides through the one extraction (C5) ───────────────────────
+// ── §5 Tile identity rides through the one extraction (design-system-v1 D5) ───
 
-function sourceWithTileColor(declaration: string): string {
+function sourceWithTile(declaration: string, appName = 'demo'): string {
   return [
     "import { defineApp, Screen, Text } from 'vc-sdk';",
     'function Home() { return null; }',
     'export default defineApp({',
-    "  name: 'demo',",
+    `  name: ${JSON.stringify(appName)},`,
     "  initial: 'Home',",
     '  screens: { Home },',
     '  capabilities: [],',
@@ -537,42 +538,59 @@ function sourceWithTileColor(declaration: string): string {
   ].join('\n');
 }
 
-function testTileColorExtraction(): void {
-  section('Wire v2 — the declared tile colour comes from the one extraction');
+function testTileIdentityExtraction(): void {
+  section('Wire v2 — tint and icon come from the one extraction, resolved, and never cost a repair');
 
   const stage = createCheckStage();
-  const manifestFor = (declaration: string): Record<string, unknown> | undefined => {
-    const report = stage.check(sourceWithTileColor(declaration), {}) as CheckReport;
-    return report.manifest?.manifest;
-  };
+  const checked = (declaration: string, appName?: string): CheckReport => stage.check(sourceWithTile(declaration, appName), {}) as CheckReport;
+  const manifestFor = (declaration: string, appName?: string): Record<string, unknown> | undefined => checked(declaration, appName).manifest?.manifest;
+  const tileKinds = (declaration: string, appName?: string): string[] =>
+    runStaticChecks(sourceWithTile(declaration, appName)).diagnostics.filter((d) => d.severity === 'warning').map((d) => d.kind).sort((a, b) => a.localeCompare(b));
 
-  const declared = manifestFor("  tileColor: '#2563eb',");
-  eq('a declared colour reaches the manifest verbatim', declared?.tileColor, '#2563eb');
-  check('capabilities still ride in the same manifest', Array.isArray(declared?.capabilities));
+  const exact = checked("  tint: ['rose', 'stone'],\n  icon: 'coffee',");
+  eq('a ranked tint list reaches the manifest exactly', exact.manifest?.manifest.tint, ['rose', 'stone']);
+  eq('a set glyph reaches the manifest exactly', exact.manifest?.manifest.icon, 'coffee');
+  check('capabilities still ride in the same manifest', Array.isArray(exact.manifest?.manifest.capabilities));
+  eq('exact names raise no diagnostic at all', exact.diagnostics, []);
+  eq('a single tint name becomes a one-name list', manifestFor("  tint: 'ocean',")?.tint, ['ocean']);
 
-  eq('no declaration → no tile colour', manifestFor("  // no colour")?.tileColor, undefined);
-  eq('a malformed colour is dropped', manifestFor("  tileColor: 'blue',")?.tileColor, undefined);
-  eq('a short hex is dropped', manifestFor("  tileColor: '#abc',")?.tileColor, undefined);
-  eq('a non-literal declaration is not extracted', manifestFor('  tileColor: someHue,')?.tileColor, undefined);
-
-  // Reserved hues: the three status meanings (both backgrounds), the accent and `yours` — read
-  // from the SDK's own token module (as check.ts's RESERVED_HUES does), never re-typed as a
-  // literal palette here, so a token edit can never leave this test pinned to a stale one.
-  const reservedHues = [
-    ...Object.values(STATUS_COLORS),
-    ...Object.values(STATUS_COLORS_ON_INK),
-    SHELL_COLORS.accent,
-    SHELL_COLORS.yours,
-    SHELL_COLORS.yoursOnDark,
-  ];
-  for (const hue of reservedHues) {
-    eq(`the reserved hue ${hue} is dropped`, manifestFor(`  tileColor: '${hue}',`)?.tileColor, undefined);
-    // Case-insensitively.
-    eq(`the reserved hue ${hue} is dropped uppercased`, manifestFor(`  tileColor: '${hue.toUpperCase()}',`)?.tileColor, undefined);
+  // The spec's near-miss scenario, with a glyph-set alias (`alert-circle` aliases into the CHROME
+  // set, which a tile never draws — handoff/icons.md: `defineApp icon` resolves via `resolveGlyph`).
+  const capture = captureLogs();
+  let nearMiss: CheckReport;
+  try {
+    nearMiss = checked("  tint: 'teal',\n  icon: 'home',");
+  } finally {
+    capture.stop();
   }
+  eq('an alias tint resolves (teal → ocean)', nearMiss.manifest?.manifest.tint, ['ocean']);
+  eq('an alias icon resolves (home → house)', nearMiss.manifest?.manifest.icon, 'house');
+  eq('the checker records two warning diagnostics for them', tileKinds("  tint: 'teal',\n  icon: 'home',"), ['icon_alias', 'tint_alias']);
+  eq('the stage hands the machine no diagnostic for them, so no repair is spent', nearMiss.diagnostics, []);
+  const logged = withMessage(capture, 'tile names resolved');
+  eq('the stage records the resolutions by kind', logged.map((r) => r.kinds), [['tint_alias', 'icon_alias']]);
 
-  const dropped = manifestFor(`  tileColor: '${reservedHues[0]}',`);
-  check('dropping a colour leaves the rest of the manifest intact', Array.isArray(dropped?.capabilities));
+  const unknownTint = manifestFor("  tint: 'chartreuse',");
+  eq('an unknown tint is dropped (the device falls back by app id)', unknownTint?.tint, undefined);
+  eq('…with a fallback warning', tileKinds("  tint: 'chartreuse',"), ['tint_fallback']);
+  eq('…deterministically', manifestFor("  tint: 'chartreuse',"), unknownTint);
+  eq(
+    'a ranked list resolves aliases, drops duplicates and keeps three',
+    manifestFor("  tint: ['teal', 'ocean', 'rose', 'chartreuse', 'blue', 'berry'],")?.tint,
+    ['ocean', 'rose', 'blue'],
+  );
+  eq('a non-literal tint is ignored, with a warning', [manifestFor('  tint: someTint,')?.tint, tileKinds('  tint: someTint,')], [undefined, ['tint_fallback']]);
+
+  eq('an unknown icon falls back on the app name\'s keywords', manifestFor("  icon: 'h2o-bottle',", 'Water log')?.icon, 'glass-water');
+  eq('…with a keyword warning', tileKinds("  icon: 'h2o-bottle',", 'Water log'), ['icon_keyword']);
+  eq('an icon matching nothing falls back to circle', manifestFor("  icon: 'zzz',", 'Zzz')?.icon, 'circle');
+  const chrome = manifestFor("  icon: 'chevron-left',", 'Zzz')?.icon;
+  check('a tile never takes a chrome-only name', typeof chrome === 'string' && (chrome === 'circle' || (GLYPH_NAMES as readonly string[]).includes(chrome)), String(chrome));
+  eq('a non-literal icon is ignored, with a warning', [manifestFor('  icon: pickIcon(),')?.icon, tileKinds('  icon: pickIcon(),')], [undefined, ['icon_fallback']]);
+  eq('no declaration → no tint and no icon', [manifestFor('  // no tile')?.tint, manifestFor('  // no tile')?.icon], [undefined, undefined]);
+
+  eq('a legacy tileColor is carried through unvalidated', manifestFor("  tileColor: 'blue',")?.tileColor, 'blue');
+  check('no tile name ever raises an error', checked("  tint: 42,\n  icon: 7,").manifest !== undefined && runStaticChecks(sourceWithTile("  tint: 42,\n  icon: 7,")).diagnostics.every((d) => d.severity === 'warning'));
 }
 
 // ── §6 The summariser's own shaping (C9) ─────────────────────────────────────
@@ -1041,7 +1059,7 @@ export async function runWireV2Tests(): Promise<void> {
   await testRewriteClarificationsAndPlan();
   await testRewriteAnswerModes();
   await testRewriteRetry();
-  testTileColorExtraction();
+  testTileIdentityExtraction();
   testSummaryShaping();
   await testModelSummariser();
   await testSummariserWireReasoningIsExplicitlyOff();

@@ -290,6 +290,19 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('Android: a keyboard that grows or shrinks while up (the emoji panel), reported as another show, moves the footer with it', async () => {
+    const taller = KEYBOARD_TOP - 60;
+    for (const device of [ANDROID_14, ANDROID_17]) {
+      await on(device, compose(), async ({ tree }) => {
+        await keyboard(device, true);
+        await TestRenderer.act(async () => { Keyboard.emit('keyboardDidShow', taller); });
+        h.eq(framePadding(tree), SCREEN_FRAME[0] + SCREEN_FRAME[1] - taller, `${device.name}: the frame ends at the taller keyboard’s top edge`);
+        await TestRenderer.act(async () => { Keyboard.emit('keyboardDidShow', KEYBOARD_TOP); });
+        h.eq(framePadding(tree), SCREEN_FRAME[0] + SCREEN_FRAME[1] - KEYBOARD_TOP, `${device.name}: and follows it back down`);
+      });
+    }
+  });
+
   await h.test('compose on iOS: Done, empty space and a drag put the keyboard away without continuing', async () => {
     const s = spies();
     await on(IOS, compose(s.fn('continue'), s.fn('change')), async ({ tree }) => {

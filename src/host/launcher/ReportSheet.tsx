@@ -34,7 +34,7 @@ import SheetModal from './SheetModal';
 import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
 import { COPY, reportCodeSizeLabel, reportRecipientLine } from './copy';
 import { RELEASE } from './release-config';
-import { serverLabel } from './server-address';
+import { sameServer, serverLabel } from './server-address';
 import { privacyPolicyUrl, type LegalLanguage } from './legal-language';
 import { SHELL_PALETTE } from './theme';
 
@@ -136,7 +136,7 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
   }, [app, access]);
 
   // Send posts to `options.baseUrl`, so that is the recipient the sheet names.
-  const ownServer = options.baseUrl === RELEASE.serverUrl ? undefined : serverLabel(options.baseUrl);
+  const ownServer = sameServer(options.baseUrl, RELEASE.serverUrl) ? undefined : serverLabel(options.baseUrl);
   const request = draft ? buildReportRequest(draft) : null;
   const rows = request ? reportPreview(request) : [];
 
