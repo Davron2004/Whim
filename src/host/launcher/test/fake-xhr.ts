@@ -158,3 +158,60 @@ export class FakeXMLHttpRequest {
     this.ontimeout?.();
   }
 }
+
+/** The real `setTimeout`, taken before any test can hold it: a suite's hang guard uses this one,
+ *  so a regression under `holdTimers` still fails by name instead of hanging the suite. */
+export const realSetTimeout = globalThis.setTimeout;
+
+/**
+ * A clock double for the stream transports' connect window (both transports arm it with the
+ * global `setTimeout`): while held, every `setTimeout` is queued instead of armed, and time moves
+ * only through `advance`, which fires the timers that fall due, earliest first, and says how many
+ * that was. A long gap is then a number, never a real sleep.
+ *
+ * Limits (enough for a connect window, not a general fake clock; the fetch suite uses it too):
+ * `setTimeout` returns a number, not a Node `Timeout` (no `unref`/`refresh`); extra arguments are
+ * dropped; `setInterval` is not held; a timer armed by a callback during `advance` waits for the
+ * next `advance`, even if it is already due.
+ */
+export function holdTimers() {
+  const original = { set: globalThis.setTimeout, clear: globalThis.clearTimeout };
+  let now = 0;
+  let nextId = 0;
+  const pending = new Map<number, { at: number; fire: () => void }>();
+  globalThis.setTimeout = ((fire: () => void, ms = 0) => {
+    nextId += 1;
+    pending.set(nextId, { at: now + ms, fire });
+    return nextId;
+  }) as unknown as typeof setTimeout;
+  globalThis.clearTimeout = ((id: number) => {
+    pending.delete(id);
+  }) as unknown as typeof clearTimeout;
+  return {
+    /** How many timers are armed right now. */
+    armed: (): number => pending.size,
+    advance(ms: number): number {
+      now += ms;
+      const due = [...pending].filter(([, timer]) => timer.at <= now).sort((a, b) => a[1].at - b[1].at);
+      for (const [id, timer] of due) {
+        pending.delete(id);
+        timer.fire();
+      }
+      return due.length;
+    },
+    restore(): void {
+      globalThis.setTimeout = original.set;
+      globalThis.clearTimeout = original.clear;
+    },
+  };
+}
+
+/** Yield to queued work (never to a timer, which `holdTimers` may hold) until `ready()` holds;
+ *  throws naming `what` if it never does, so a regression fails by name instead of hanging. */
+export async function untilSettled(ready: () => boolean, what: string, rounds = 1000): Promise<void> {
+  for (let i = 0; i < rounds; i++) {
+    if (ready()) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`never happened: ${what}`);
+}

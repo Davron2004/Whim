@@ -15,8 +15,9 @@
  * is a known event failing its shape raises `GenerationClientError{kind:'stream_parse'}` rather
  * than silently passing bad data to the UI.
  * Keepalive comment lines (`: ...`) are recognized and skipped, never treated as malformed
- * frames — but they still fire `ClientOptions.onKeepalive` (build-liveness B2), since a keepalive
- * is real evidence the connection is alive even though it carries no `GenerationEvent`.
+ * frames and never surfaced: a keepalive is liveness, not progress (beta-2-spec-fixes D2). Its
+ * bytes have already done their one job by the time it is parsed — disarming the connect window
+ * like any first chunk — and it must never reset the Making page's progress clock.
  *
  * `fetchImpl` defaults to global `fetch` and is injectable so `launcher:test` can supply canned
  * `Response` objects with no real HTTP server. `POST /v1/generate`'s stream additionally has its
@@ -500,9 +501,8 @@ export async function sendReport(
 }
 
 /** One parsed SSE block: a validated event, the server's keepalive comment (`: keepalive\n\n`,
- *  build-liveness B2 — transport noise, never a `GenerationEvent`), or a truly empty block (an
- *  incidental extra blank line, distinct from a keepalive so only the real keepalive frame ever
- *  invokes `onKeepalive`), or `skipped`: a frame this build cannot use whose fallback is `skip`. */
+ *  liveness, never a `GenerationEvent`), a truly empty block (an incidental extra blank line), or
+ *  `skipped`: a frame this build cannot use whose fallback is `skip`. */
 type SseBlockResult = { kind: 'event'; event: GenerationEvent } | { kind: 'keepalive' } | { kind: 'empty' } | { kind: 'skipped' };
 
 /** Parse one SSE block (the text between blank-line separators, `\n\n`-delimited) in the two
@@ -725,17 +725,15 @@ async function readNext(reader: ResponseBodyReader): Promise<ReadOutcome> {
   }
 }
 
-/** `onKeepalive` fires once per real keepalive block — never for a merely-empty one, and never as
- *  a `GenerationEvent` (build-liveness B2: "do NOT add a client-local event type to the
- *  GenerationEvent union"). Every block handed here is one the caller has already decided is
- *  COMPLETE, so each is parsed exactly once over the life of the stream. */
-function* framesIn(blocks: string[], onKeepalive?: () => void): Generator<GenerationEvent> {
+/** The events in a run of complete blocks. A keepalive, an empty block and a skipped frame yield
+ *  nothing: only a `GenerationEvent` is progress (beta-2-spec-fixes D2), and no client-local event
+ *  type is ever added to the union. Every block handed here is one the caller has already decided
+ *  is COMPLETE, so each is parsed exactly once over the life of the stream. */
+function* framesIn(blocks: string[]): Generator<GenerationEvent> {
   for (const block of blocks) {
     const result = parseSseBlock(block);
     if (result.kind === 'event') {
       yield result.event;
-    } else if (result.kind === 'keepalive') {
-      onKeepalive?.();
     }
   }
 }
@@ -840,7 +838,7 @@ async function* streamEvents(
 
   let ended = false;
   try {
-    yield* eventsOn(reader, opts.onKeepalive);
+    yield* eventsOn(reader);
     ended = true;
   } finally {
     if (!ended) reader.cancel();
@@ -849,7 +847,7 @@ async function* streamEvents(
 
 /** The events on an opened stream's SSE body, until the body ends or the caller's signal aborts
  *  it (see `generateApp` for why each byte is decoded exactly once). */
-async function* eventsOn(reader: ResponseBodyReader, onKeepalive: (() => void) | undefined): AsyncGenerator<GenerationEvent, void, undefined> {
+async function* eventsOn(reader: ResponseBodyReader): AsyncGenerator<GenerationEvent, void, undefined> {
   const decoder = new TextDecoder();
   // The bytes that have arrived and are NOT yet part of a completed block: at most one partial
   // frame, never the accumulated body.
@@ -872,7 +870,7 @@ async function* eventsOn(reader: ResponseBodyReader, onKeepalive: (() => void) |
       // Nothing follows, so the trailing block (if any) is final too — the one case where a block
       // with no separator after it is still complete.
       if (pending.length > 0) {
-        yield* framesIn(decoder.decode(pending).split('\n\n'), onKeepalive);
+        yield* framesIn(decoder.decode(pending).split('\n\n'));
       }
       break;
     }
@@ -884,7 +882,7 @@ async function* eventsOn(reader: ResponseBodyReader, onKeepalive: (() => void) |
       // few bytes of the next partial frame.
       pending = concatBytes([pending.subarray(separator + SEPARATOR_LENGTH)]);
       searchedThrough = Math.max(0, pending.length - SEPARATOR_LENGTH + 1);
-      yield* framesIn(completed.split('\n\n'), onKeepalive);
+      yield* framesIn(completed.split('\n\n'));
     } else {
       searchedThrough = Math.max(0, pending.length - SEPARATOR_LENGTH + 1);
     }

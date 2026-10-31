@@ -124,7 +124,6 @@ import {
   updatePlanRow,
   withAnswer,
   withDelivering,
-  withKeepalive,
   withLimit,
   withPlan,
   withProblem,
@@ -1603,6 +1602,19 @@ function LauncherShell({
     }
   };
 
+  /** A Failure page replacing a draft page that a run's end reached while the person was on it:
+   *  what that page has in flight is aborted and what they typed is held for the next compose on the
+   *  same app, as the update screen it stands in for held it. Idempotent, so it can run inside a
+   *  `setScreen` updater. It writes `heldPromptRef` rather than calling `keepDraft`, which sets state
+   *  (`drafts.keep`, `syncComposerDraft`) and so cannot run inside an updater; the text therefore
+   *  returns only when `takeHeldPrompt` runs on the next compose opened for the same app. */
+  const holdDraftOf = (from: Screen) => {
+    leaveFlowStep(from.kind);
+    if ((from.kind === 'describe' || from.kind === 'plan') && from.text !== '') {
+      heldPromptRef.current = { editing: from.editing, text: from.text };
+    }
+  };
+
   const goHome = () => {
     keepDraft(screen);
     aboutRef.current = null;
@@ -2187,15 +2199,6 @@ function LauncherShell({
     if (delivered) whenLiveAttemptOwns(lease, (selected) => complete(delivered, selected));
   };
   const isSelectedLiveAttempt = (lease: PendingAttemptLease): boolean => liveRef.current?.lease === lease;
-  const recordAttemptKeepalive = (attemptId: string, lease: PendingAttemptLease, signals: RunSignals): RunSignals | undefined => {
-    if (!pending.isCurrentAttempt(lease)) return undefined;
-    const currentLive = liveAttemptsRef.get(attemptId);
-    if (currentLive?.lease !== lease) return undefined;
-    const nextSignals = withKeepalive(signals, Date.now());
-    currentLive.signals = nextSignals;
-    if (isSelectedLiveAttempt(lease)) signalsRef.current = nextSignals;
-    return nextSignals;
-  };
   const recordAttemptFrame = (
     attemptId: string,
     lease: PendingAttemptLease,
@@ -2529,9 +2532,12 @@ function LauncherShell({
    * caller settles as a failure (a `fail` fallback among them: its notice is the failure's reason).
    *
    * An `update` fallback (beta-1 D16) ends the build `failed` — nothing installed, nothing updated,
-   * its ghost kept for a Retry, its reason the notice (else the update line) — and the update screen
-   * shows the notice: in place of the build screen, or for a build left running only where it
-   * interrupts nothing, like the update refusal. A refusal never opens the failure screen
+   * its ghost kept for a Retry, its reason the notice (else the update line) — and the run lands on
+   * its record's Failure page, which reads "needs a newer Whim" (Update Whim, Not now): in place of
+   * the Making page, or for a build left running only where it interrupts nothing, like the update
+   * refusal. The update screen is for flows with no run (clarify, rewrite, report) and for an
+   * `update_required` refusal (prompt-flow "Messages the app can't use follow their fallback",
+   * design D3). A refusal never opens the failure screen
    * (service-refusals); design D10's three-way split lives in `handleGenerateRefusal`. Either proves
    * the server answered (spec "…any service refusal those paths receive... SHALL be treated as
    * proof of connectivity").
@@ -2554,19 +2560,25 @@ function LauncherShell({
         remedy: { kind: 'update', protocolLevel: PROTOCOL_LEVEL },
       }, attempt.retrySnapshot, attempt.lease);
       const ids = genericSettlementIds(settlement, attempt.attemptId);
-      const genericFailure = settlement === 'persisted' ? undefined : genericAttemptFailure(
-        attempt.editing,
-        attempt.prompt,
-        'update fallback state was not persisted',
-        attempt.observedRepairAttempts,
-        ids.recordId,
-        ids.journalId,
-        ids.pendingId,
-      );
+      const settled = settlement === 'persisted' ? pending.get(attempt.attemptId) : undefined;
       if (selected) {
-        setScreen((prev) => (!detached || updateMayInterrupt(prev)
-          ? genericFailure ?? updateScreenFrom(prev, notice)
-          : prev));
+        const unsettledStage = settlement === 'persisted' ? 'update fallback record was not readable' : 'update fallback state was not persisted';
+        const target = settled
+          ? { ...failureFromRecord(settled), announce: announceFailure() }
+          : genericAttemptFailure(
+            attempt.editing,
+            attempt.prompt,
+            unsettledStage,
+            attempt.observedRepairAttempts,
+            ids.recordId,
+            ids.journalId,
+            ids.pendingId,
+          );
+        setScreen((prev) => {
+          if (detached && !updateMayInterrupt(prev)) return prev;
+          holdDraftOf(prev);
+          return target;
+        });
       }
       return true;
     }
@@ -2930,17 +2942,11 @@ function LauncherShell({
       aggregates: EMPTY_RUN_AGGREGATES,
       lastTokenAt: null,
       lastThinkingAt: null,
-      lastFrameAt: startedAt,
+      lastProgressAt: startedAt,
     };
     const live: LiveAttempt = { id: attemptId, lease, screen: building, signals, ctl, retrySnapshot, light: createRunLight() };
     liveAttemptsRef.set(attemptId, live);
     showStartedAttempt(live, over);
-    // The keepalive comment frame (`: keepalive\n\n`, build-liveness B2) is transport noise, never
-    // a `GenerationEvent` — it reaches here through `ClientOptions.onKeepalive`, not the stream
-    // loop below, and moves ONLY the any-frame clock (`withKeepalive` never touches the journal).
-    const onKeepalive = () => {
-      signals = recordAttemptKeepalive(attemptId, lease, signals) ?? signals;
-    };
     /** What the terminal entry flushes, read at the instant the stream ends: the final cumulative
      *  counts (the throttle's last window has no later arrival to close it) and the diagnostics
      *  tally. Numbers only — the same redaction rule every journal entry lives under. */
@@ -2964,7 +2970,7 @@ function LauncherShell({
       // `diagnostic.kind`/`symbol` — spec "Generation progress is shown without exposing
       // internals"); `result`/`failure` are held until the stream ends so the terminal-event
       // handling below stays in one place.
-      stream = generateApp({ ...options, onKeepalive }, request, controller.signal);
+      stream = generateApp(options, request, controller.signal);
       for await (const event of stream) {
         const nextSignals = recordAttemptFrame(attemptId, lease, signals, counts, event);
         if (!nextSignals) return;
@@ -3529,6 +3535,10 @@ function LauncherShell({
           onStopChange={() => {
             if (runningChange.changing) onCancelPending(runningChange.changing);
           }}
+          failedChange={runningChange.failed !== undefined}
+          onSeeWhy={() => {
+            if (runningChange.failed) seeWhy(runningChange.failed.id);
+          }}
           text={whimWords?.appId === app.id ? whimWords.text : ''}
           onChangeText={(text) => setWhimWords({ appId: app.id, text })}
           onSend={onWhimSend}
@@ -3663,7 +3673,7 @@ function LauncherShell({
         journal={failureJournal}
         attemptStarted={from.journalId != null}
         devMode={timelineDevMode}
-        onNotNow={goHome}
+        onNotNow={closeSheet}
         announce={from.announce}
         {...failureActions(from)}
       />

@@ -600,13 +600,16 @@ export const EMPTY_RUN_AGGREGATES: RunAggregates = { chars: 0, tokens: 0 };
  * the cumulative counts folded from its stream, and three separate arrival clocks (build-liveness
  * B1) — because "quiet" used to mean one thing (no `token`/`stage` since X) when the roster's
  * reasoning models made it mean two different things: the model can be reasoning for minutes with
- * nothing to show, or the connection itself can have gone dead. One clock cannot tell those apart,
+ * nothing to show, or the run itself can have stopped moving. One clock cannot tell those apart,
  * so there are three:
  *   - `lastTokenAt` — the last VISIBLE output arrived (the stream is writing).
  *   - `lastThinkingAt` — the last reasoning delta arrived (the model is thinking, not hung).
- *   - `lastFrameAt` — ANY frame arrived at all, INCLUDING the transport's own keepalive comment
- *     (`ClientOptions.onKeepalive`) — the one clock that answers "is the connection still there",
- *     independent of what the model is doing. Starts at `startedAt`.
+ *   - `lastProgressAt` — the last progress event arrived: ANY `GenerationEvent` (`token`, `stage`,
+ *     `queued`, `restart`, `thinking`, `diagnostic`, `usage`, the terminals) — the one clock that
+ *     answers "is the make still moving", independent of what the model is doing. The server's
+ *     keepalive comment is NOT progress and never moves it: a keepalive is liveness (it keeps the
+ *     transport open, `transport-shared.ts`), and a stream of nothing but keepalives is a stall
+ *     (beta-2-spec-fixes D2). Starts at `startedAt`.
  * `livenessOf` folds the three into one state; the Making page reads it (`making-progress.ts`)
  * per render from a single `now`, so its clock and its stall line can never disagree.
  */
@@ -615,7 +618,7 @@ export interface RunSignals {
   aggregates: RunAggregates;
   lastTokenAt: number | null;
   lastThinkingAt: number | null;
-  lastFrameAt: number;
+  lastProgressAt: number;
   /** The written-output counts when the current model turn began (its `stage` start), which a
    *  `restart` returns to (beta-1 D10). Absent means the attempt's own start: nothing written. */
   turnStart?: { readonly chars: number; readonly tokens: number };
@@ -643,7 +646,7 @@ export function withTurnStart(signals: RunSignals): RunSignals {
  * A `restart` (beta-1 D10): the current model turn is being resent and the tokens it streamed are
  * void, so everything counted from them goes back to where the turn began — the characters and
  * tokens written, and the "writing" clock — while the build carries on as the same build. The
- * reasoning tally is not counted from tokens and stays. The frame itself is liveness, like any
+ * reasoning tally is not counted from tokens and stays. The event itself is progress, like any
  * other event.
  */
 export function withRestart(signals: RunSignals, at: number): RunSignals {
@@ -652,7 +655,7 @@ export function withRestart(signals: RunSignals, at: number): RunSignals {
     ...signals,
     aggregates: { ...signals.aggregates, chars: start.chars, tokens: start.tokens },
     lastTokenAt: null,
-    lastFrameAt: at,
+    lastProgressAt: at,
   };
 }
 
@@ -710,9 +713,11 @@ export const WRITING_WINDOW_MS = 4_000;
 /** A `thinking` event within this long still reads as "thinking it through" between deltas. */
 export const THINKING_WINDOW_MS = 4_000;
 
-/** No frame at all — not even a keepalive — within this long is a stall, not merely a quiet
- *  moment. The server's own keepalive is every 15s, so two missed keepalives plus margin is the
- *  earliest a silence can honestly be called "nothing has arrived", never a normal gap. */
+/** No progress event within this long is a stall, not merely a quiet moment. Keepalives are
+ *  liveness, not progress (beta-2-spec-fixes ruling 5, design D2): they keep the connection open
+ *  but never reset this clock, so keepalives every 15 s with no event for 40 s still read as a
+ *  stall. The window is two of the server's 15 s keepalive intervals plus margin, longer than any
+ *  normal gap between a working run's events. */
 export const STALL_MS = 40_000;
 
 /** The four things the build screen can honestly say is happening right now. `writing` and
@@ -721,22 +726,11 @@ export const STALL_MS = 40_000;
  *  one ambiguous "quiet" reading. */
 export type Liveness = 'writing' | 'thinking' | 'connected' | 'stalled';
 
-export function livenessOf(s: Pick<RunSignals, 'lastTokenAt' | 'lastThinkingAt' | 'lastFrameAt'>, now: number): Liveness {
+export function livenessOf(s: Pick<RunSignals, 'lastTokenAt' | 'lastThinkingAt' | 'lastProgressAt'>, now: number): Liveness {
   if (s.lastTokenAt != null && now - s.lastTokenAt <= WRITING_WINDOW_MS) return 'writing';
   if (s.lastThinkingAt != null && now - s.lastThinkingAt <= THINKING_WINDOW_MS) return 'thinking';
-  if (now - s.lastFrameAt <= STALL_MS) return 'connected';
+  if (now - s.lastProgressAt <= STALL_MS) return 'connected';
   return 'stalled';
-}
-
-/**
- * The keepalive comment frame (`: keepalive\n\n`, `ClientOptions.onKeepalive`) folded into
- * `RunSignals`: pure transport liveness, so it moves `lastFrameAt` ONLY — never `aggregates`,
- * never `lastTokenAt`/`lastThinkingAt`, and (unlike `journalStreamEvent`) it never touches a
- * `RunJournalStore` at all, by construction: this function does not take one. A keepalive is
- * transport noise, not something a run's history should record.
- */
-export function withKeepalive(signals: RunSignals, at: number): RunSignals {
-  return { ...signals, lastFrameAt: at };
 }
 
 /** One stage transition as the timeline renders it. `durationMs` is `null` for a stage that never

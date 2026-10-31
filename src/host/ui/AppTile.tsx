@@ -125,7 +125,7 @@ export interface TilePlateProps {
   activity?: number;
   /** That stream's arrival pulse: the ember or ring flickers with it (system.md §4.6). */
   flicker?: FlickerPulse;
-  /** That stream stalled (no bytes for 40 s): the ember or ring is stuck, dim and still. */
+  /** That stream stalled (no progress event for 40 s): the ember or ring is stuck, dim and still. */
   stuck?: boolean;
   /** Tokens captured at one moment, in place of the phone's live ones, for the plate itself (fill,
    *  rim, outline, ring, badge): an open app's opening plate keeps the settings the app opened with.

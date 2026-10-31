@@ -1,8 +1,8 @@
 /**
  * home-live — what Home shows of attempts that are running right now: which ones wait for a free
  * spot, how hard each stream is working (system.md §4.6 Honest light: activity
- * `a = clamp(tokensPerSecond / 40, 0, 1)`, reasoning included), which ones stalled (no bytes for
- * `STALL_MS`, as the Making page says), and each run's flicker pulse, which its arrivals move.
+ * `a = clamp(tokensPerSecond / 40, 0, 1)`, reasoning included), which ones stalled (no progress event
+ * for `STALL_MS`, as the Making page says), and each run's flicker pulse, which its arrivals move.
  * Sampled from the live attempts' in-memory signals about once a second while Home is on screen;
  * nothing here is persisted, and the counts are never read back from a journal. No React import.
  */
@@ -15,7 +15,7 @@ export const FULL_ACTIVITY_TOKENS_PER_SECOND = 40;
 const CHARS_PER_TOKEN = 4;
 
 /** The part of an attempt's signals Home reads (`RunSignals`, structurally). */
-export interface LiveSignals extends Pick<RunSignals, 'lastTokenAt' | 'lastThinkingAt' | 'lastFrameAt'> {
+export interface LiveSignals extends Pick<RunSignals, 'lastTokenAt' | 'lastThinkingAt' | 'lastProgressAt'> {
   inLine?: boolean;
   aggregates: { tokens: number; thinkingChars?: number };
 }
@@ -41,7 +41,7 @@ export interface LiveSample {
 export interface LiveView {
   readonly queued: ReadonlySet<string>;
   readonly activity: Readonly<Record<string, number>>;
-  /** No bytes for `STALL_MS`: the run's light is stuck. */
+  /** No progress event for `STALL_MS`: the run's light is stuck. */
   readonly stalled: ReadonlySet<string>;
   readonly flicker: Readonly<Record<string, FlickerPulse>>;
 }
@@ -76,7 +76,7 @@ export function sampleLive(attempts: readonly LiveAttemptView[], previous: Map<s
     activity[id] = before && seconds > 0 ? activityOf(Math.max(0, tokens - before.tokens) / seconds) : 0;
     previous.set(id, { tokens, at: now });
   }
-  for (const id of [...previous.keys()]) if (!live.has(id)) previous.delete(id);
+  for (const id of previous.keys()) if (!live.has(id)) previous.delete(id);
   return { queued, activity, stalled, flicker };
 }
 

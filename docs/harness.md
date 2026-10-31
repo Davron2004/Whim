@@ -377,7 +377,16 @@ schema `apply.instruction` is the durable routing anchor if any generated skill 
 - A background/headless subagent can't answer any permission prompt — anything outside the
   auto-allowed vocabulary blocks it silently. Plan dispatched commands accordingly. A tool call
   sitting in `running` state with no process output may be waiting on approval rather than hung;
-  interrupt it before retrying so two copies cannot execute after a late approval.
+  interrupt it before retrying so two copies cannot execute after a late approval. A
+  sub-orchestrator cannot `TaskStop` a child it does not own: never send a second writer into the
+  stalled worktree; abandon it, create a NEW worktree, dispatch a FRESH agent, and tell the
+  top-level session (which can stop the zombie). Since #181 option 1, `.claude/hooks/subagent-deny.sh`
+  denies such a call instead (subagent, `permission_mode` default/acceptEdits/plan, command outside
+  bash-policy's allow tier, the project `permissions.allow` and `echo`/`pwd`/`true`; a plain `&&`/`||`/`;`/`|`
+  chain passes when every segment does or is a `cd` inside the repo), logging to `.claude/run/subagent-denials.log`.
+  Kill switch: `WHIM_SUBAGENT_DENY=off` in the env, or remove the `PreToolUse` Bash line in `.claude/settings.json`.
+  Known misfires (counted in that log): Claude's other built-in read-only auto-approvals, user-scope
+  allow rules, mid-pattern `*` rules, chains with quotes, `$`, redirects or newlines.
 - The closure phase (ruleset probe, push, draft PR, Sonar rounds, git-cleanup, force-push, ready
   flip, teardown) is **orchestrator-executed on the ATTENDED host** — the human's presence is
   required (they merge the reviewed PR — the sole ratification), their execution is not (decision

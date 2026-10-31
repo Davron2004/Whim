@@ -40,6 +40,7 @@ import { COPY, deletedToast, discardedManyToast, tileOlderLine } from './copy';
 import { CopyQuestionSheet } from './CopyQuestionSheet';
 import { CustomizeTileSheet } from './CustomizeTileSheet';
 import { cellKey, cellName, composeGrid, searchCells, SEARCH_FROM_APPS, type GridCell } from './grid-composition';
+import { PROTOCOL_LEVEL } from './wire-headers';
 import { HomeHeader } from './HomeHeader';
 import { OlderAttemptsSheet } from './OlderAttemptsSheet';
 import type { PendingBuildRecord } from './pending-builds';
@@ -66,7 +67,7 @@ export interface HomeScreenProps {
   queued?: ReadonlySet<string>;
   /** The stream's activity, 0–1, per attempt id: the ember on a tile being made or changed follows it. */
   activity?: Readonly<Record<string, number>>;
-  /** The attempts whose stream stalled (no bytes for 40 s): their tile's light is stuck. */
+  /** The attempts whose stream stalled (no progress event for 40 s): their tile's light is stuck. */
   stalled?: ReadonlySet<string>;
   /** Each attempt's arrival pulse: its tile's light flickers with it. */
   flicker?: Readonly<Record<string, FlickerPulse>>;
@@ -362,6 +363,7 @@ export default function HomeScreen({
   // A deleted app's tile keeps its cell while it leaves; its neighbours reflow once it has gone.
   const all = composeGrid(pending ?? [], apps, {
     now: Date.now(),
+    protocolLevel: PROTOCOL_LEVEL,
     queued,
     deletedApps: departures.hidden(apps, purges),
     discardedAttempts: new Set((pending ?? []).filter((r) => purges?.hidesAttempt(r)).map((r) => r.id)),

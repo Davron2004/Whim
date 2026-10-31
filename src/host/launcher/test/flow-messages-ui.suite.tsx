@@ -201,7 +201,7 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
 
   // ── messages this build can't use (4.4) ──────────────────────────────────────────────────────
 
-  await h.test('fallback: an update fallback mid-build fails the record, installs nothing, and the update screen shows the notice', async () => {
+  await h.test('fallback: an update fallback mid-build fails the record, installs nothing, and ends on the Failure page as needing a newer Whim, never the update screen', async () => {
     const streams: Stream[] = [];
     const notice = stubFutureFrame('update').compat?.notice ?? '';
     await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
@@ -209,14 +209,18 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       streams[0].push(STAGE);
       streams[0].push(stubFutureFrame('update'));
       streams[0].push(resultEvent('Tip Splitter'));
-      await waitFor(() => on(tree, UpdateRequiredScreen), 'the update screen');
+      await waitFor(() => on(tree, FailurePage), 'the Failure page');
+      h.ok(!on(tree, UpdateRequiredScreen) && !on(tree, MakingPage), 'in place of the Making page, and no update screen opens');
       h.eq(generateSignal(sent)?.aborted, true, 'the generation request is aborted, so the server stops building');
-      h.ok(notice.length > 0 && textOf(tree.root).includes(notice), 'showing the notice');
-      h.ok(!textOf(tree.root).includes(COPY.updateBody), 'in place of the standard body');
-      h.eq(records(kv), [['failed', notice]], 'the pending record resolves as failed');
+      h.eq(tree.root.findByType(FailurePage).props.kind, 'needs-update', 'as a run only a newer Whim can finish');
+      h.ok(textOf(tree.root).includes('Finishing this needs the latest Whim.'), 'saying so');
+      h.ok(button(tree, COPY.updateAction) != null && button(tree, COPY.updateNotNow) != null, 'with Update Whim and Not now');
+      h.eq(records(kv), [['failed', notice]], 'the pending record resolves as failed, the notice its reason');
+      h.eq(new PendingBuildStore(kv).list()[0]?.failure?.remedy, { kind: 'update', protocolLevel: PROTOCOL_LEVEL }, 'with an update remedy');
       h.eq(new AppIndex(kv).list(), [], 'and the result after the frame installs nothing');
       await press(button(tree, COPY.updateNotNow));
-      h.eq(ghosts(tree).map((g) => g.state), ['failed'], 'Home keeps the failed ghost for a Retry');
+      h.ok(onHome(tree) && !on(tree, FailurePage), 'Not now goes Home');
+      h.eq(ghosts(tree).map((g) => g.state), ['failed'], 'Home keeps the failed ghost');
       h.ok(!hasInstalled(tree, 'Tip Splitter'), 'and no new app');
       streams[0].end();
     });
@@ -302,7 +306,7 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       await startBuild(tree, 'A tip splitter');
       streams[0].push(STAGE);
       streams[0].push(stubFutureFrame('update'));
-      await waitFor(() => on(tree, UpdateRequiredScreen), 'the update screen');
+      await waitFor(() => on(tree, FailurePage), 'the Failure page');
       await press(button(tree, COPY.updateNotNow));
       await TestRenderer.act(async () => home(tree).props.onOpenPending(ghosts(tree)[0]));
       h.ok(on(tree, FailurePage) && !on(tree, UpdateRequiredScreen), 'the ghost reopens the Failure page, not the update screen');
@@ -414,7 +418,7 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       await startBuild(tree, 'A tip splitter');
       streams[0].push(STAGE);
       streams[0].push(stubFutureFrame('update'));
-      await waitFor(() => on(tree, UpdateRequiredScreen), 'the update screen');
+      await waitFor(() => on(tree, FailurePage), 'the Failure page');
       await press(button(tree, COPY.updateNotNow));
       // The record as this build wrote it, read by a build one level on: the update has happened.
       const [written] = new PendingBuildStore(kv).list();
@@ -429,16 +433,35 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('fallback: an update fallback on a build left running still fails its record, and opens the update screen over Home', async () => {
+  await h.test('fallback: an update fallback on a build left running still fails its record, and opens its Failure page over Home, never the update screen', async () => {
     const streams: Stream[] = [];
     await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
       await startBuild(tree, 'A tip splitter');
       await press(button(tree, COPY.sheetClose));
       streams[0].push(STAGE);
       streams[0].push(stubFutureFrame('update'));
-      await waitFor(() => on(tree, UpdateRequiredScreen), 'the update screen, over Home');
+      await waitFor(() => on(tree, FailurePage), 'the Failure page, over Home');
+      h.ok(tree.root.findByType(FailurePage).props.kind === 'needs-update' && !on(tree, UpdateRequiredScreen), 'needing a newer Whim, and no update screen');
       h.eq(records(kv).map(([state]) => state), ['failed'], 'the record resolves as failed');
       h.eq(new AppIndex(kv).list(), [], 'and nothing is installed');
+      streams[0].end();
+    });
+  });
+
+  await h.test('fallback: an update fallback on a build left running keeps what the person is typing on Describe, which comes back after the Failure page', async () => {
+    const streams: Stream[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {
+      await startBuild(tree, 'A tip splitter');
+      await press(button(tree, COPY.sheetClose));
+      await TestRenderer.act(async () => home(tree).props.onCreate());
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('A tea timer'));
+      streams[0].push(STAGE);
+      streams[0].push(stubFutureFrame('update'));
+      await waitFor(() => on(tree, FailurePage), 'the Failure page, in place of Describe');
+      h.ok(!on(tree, DescribePage) && !on(tree, UpdateRequiredScreen), 'Describe is replaced, and no update screen opens');
+      await press(button(tree, COPY.updateNotNow));
+      await TestRenderer.act(async () => home(tree).props.onCreate());
+      h.eq(tree.root.findByType(DescribePage).props.text, 'A tea timer', 'the typed prompt is not lost');
       streams[0].end();
     });
   });

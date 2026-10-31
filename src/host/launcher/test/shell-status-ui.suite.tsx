@@ -59,7 +59,7 @@ function flickerDoc() {
 
 const noop = () => {};
 /** A run that is writing: a token a moment ago. */
-const WRITING: RunSignals = { startedAt: 0, aggregates: { chars: 10, tokens: 3 }, lastTokenAt: 1_000, lastThinkingAt: null, lastFrameAt: 1_000 };
+const WRITING: RunSignals = { startedAt: 0, aggregates: { chars: 10, tokens: 3 }, lastTokenAt: 1_000, lastThinkingAt: null, lastProgressAt: 1_000 };
 
 /** The body of the ember `ember` draws: the faded layer holding the flame's gradient (centred low). */
 const emberBody = (ember: Node): Node =>

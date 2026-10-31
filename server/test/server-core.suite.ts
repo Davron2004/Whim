@@ -291,6 +291,49 @@ async function testSseCancelClearsKeepalive(): Promise<void> {
   }
 }
 
+async function testSseOpeningFrame(): Promise<void> {
+  section('SSE writes a keepalive frame as the stream opens');
+
+  const dec = new TextDecoder();
+  const heldSource = (release: Promise<void>): AsyncIterable<GenerationEvent> => ({
+    async *[Symbol.asyncIterator]() {
+      await release;
+      yield { type: 'stage', stage: 'plan', status: 'start' };
+    },
+  });
+
+  for (const keepaliveMs of [60_000, 0, undefined]) {
+    let releaseHold: () => void = () => {};
+    const hold = new Promise<void>((resolve) => {
+      releaseHold = resolve;
+    });
+    const reader = buildSseStream(heldSource(hold), keepaliveMs).getReader();
+    const label = `keepaliveMs=${String(keepaliveMs)}`;
+    if (keepaliveMs) {
+      const first = await within(reader.read());
+      eq(
+        `${label}: first chunk is the bare keepalive comment, before any event`,
+        first === TIMED_OUT ? 'no first byte' : dec.decode(first.value),
+        ': keepalive\n\n',
+      );
+      releaseHold();
+      const second = await within(reader.read());
+      check(
+        `${label}: held event follows with id 1`,
+        second !== TIMED_OUT && dec.decode(second.value).endsWith('id: 1\n\n'),
+      );
+    } else {
+      releaseHold();
+      const first = await within(reader.read());
+      check(
+        `${label}: first chunk is the event, no comment frame`,
+        first !== TIMED_OUT && dec.decode(first.value).startsWith('event: stage'),
+      );
+    }
+    await reader.cancel();
+  }
+}
+
 const RACE_USAGE: Usage = { promptTokens: 10, completionTokens: 20, totalTokens: 30 };
 const RACE_APP: WireAppRecord = {
   name: 'race-app',
@@ -745,6 +788,7 @@ export async function runServerCoreTests(): Promise<void> {
   await testSseFraming();
   await testStubPipelineEndpoints();
   await testSseCancelClearsKeepalive();
+  await testSseOpeningFrame();
   await testAbortDoubleCreditRace();
   await testRequestLogging();
   await testStubBundleDefinesAppModule();

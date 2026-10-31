@@ -30,7 +30,13 @@ import {
 import { animations, elapse, elapseSprings, holdAnimations, isStep, runningAnimations, type Animation, type Step } from './native-reanimated';
 import { pan, type PanConfig } from './native-gesture-handler';
 import { dismissals, keyboardWindow, moveKeyboard, resetKeyboard } from './native-keyboard-controller';
-import { captureTimeouts, freshApp, hostType, press, screenReaderElement, textOf } from './react-screen';
+import { button, captureTimeouts, freshApp, hostType, press, screenReaderElement, textOf } from './react-screen';
+import ReportScreen, { ReportPage } from '../ReportScreen';
+import { reportClientOptions } from '../transport-shared';
+import { testAppInfo } from './client-fixtures';
+import { resolveTokens } from '../../ui/tokens-pure';
+import { contrastRatio } from '../../../design/tints';
+import type { StoreAccess } from '../store-access';
 
 /** Every pending `setTimeout`, by delay, without running any. */
 function pendingTimeouts() {
@@ -1795,6 +1801,46 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
       const list = gridLayout(width, 2);
       h.ok(list.kind === 'list' && list.tile === 40 && Number.isFinite(list.rowHeight) && list.rowHeight > 0, `width ${width}: the list at 200% is rows of the 40 tile`);
     }
+  });
+
+  // ── Report, dark on Android (#193) ─────────────────────────────────────────
+
+  await h.test('Report on Android: the title, section header, Cancel and a ready Send read at 4.5:1 on the surface behind them, on the Whim-sheet page and the native screen, in both schemes', async () => {
+    const options = reportClientOptions({ kind: 'absent' } as const, 'https://server.test', 'device', testAppInfo);
+    const props = { app: null, access: {} as StoreAccess, options, onLeave: () => {}, onUpdateRequired: () => {}, legalLanguage: 'en' as const };
+    const hosts = [
+      { name: 'Whim-sheet page', surface: 'sheet', element: <Sheet visible title="Sheet" onClose={() => {}}><ReportPage {...props} /></Sheet>, words: [COPY.reportScreenTitle, COPY.reportReasonEyebrow, COPY.cancel, COPY.reportSend] },
+      { name: 'native screen', surface: 'bg', element: <ReportScreen {...props} />, words: [COPY.reportReasonEyebrow, COPY.cancel, COPY.reportSend] },
+    ] as const;
+    for (const scheme of ['dark', 'light'] as const) {
+      for (const host of hosts) {
+        await resetPhone();
+        Platform.OS = 'android';
+        await act(() => setColorScheme(scheme));
+        const tokens = resolveTokens({ scheme, fontScale: 1, platform: 'android', reduceMotion: false, increaseContrast: false });
+        const tree = await render(host.element);
+        await settle();
+        await press(button(tree, COPY.reportReasonBroken));
+        h.eq(button(tree, COPY.reportSend).props.disabled, false, `${scheme} ${host.name}: setup: with a reason chosen Send is ready`);
+        // The surface is read from what is drawn: the Sheet's card for the page (the plate behind the
+        // page), the root View carrying the screen's `s.bg` (the frame `KeyboardShell` gives `style`) for
+        // the screen; the token is the cross-check that the rendered colour is the scheme's.
+        const drawnSurface = host.surface === 'sheet'
+          ? flat(card(tree)).backgroundColor
+          : flat(tree.root.findAll((n) => hostType(n) === 'View' && n.props.collapsable === false && flat(n).backgroundColor !== undefined)[0]).backgroundColor;
+        const surface = String(drawnSurface);
+        h.eq(surface, tokens.colors[host.surface], `${scheme} ${host.name}: the surface drawn behind the text is the scheme's ${host.surface} colour`);
+        for (const words of host.words) {
+          const found = all(tree, 'Text').filter((n) => textOf(n) === words);
+          h.eq(found.length, 1, `${scheme} ${host.name}: "${words}" is drawn once`);
+          // Send is a filled button: its label sits on the fill it is drawn with, the rest on the host's surface.
+          const fill = words === COPY.reportSend ? String(flat(button(tree, words).find((n) => hostType(n) === 'Animated.View')).backgroundColor) : surface;
+          const ratio = contrastRatio(String(flat(found[0]).color), fill);
+          h.ok(ratio >= 4.5, `${scheme} ${host.name}: "${words}" is ${ratio.toFixed(2)}:1 on ${fill}, under 4.5:1`);
+        }
+      }
+    }
+    await resetPhone();
   });
 
   await resetPhone();

@@ -5,8 +5,8 @@
  * The decoder (`wire-compat.ts`) turns such a message into a fallback, and the client throws the
  * two that end a flow as `GenerationClientError{kind:'fallback'}`. This module is the caller's
  * side: recognising one, and the notice as the screen shows it. `fail` ends on the failure screen
- * and `update` on the update screen, each with its notice as plain text; neither installs or
- * updates anything. RN-free, so the decisions are watchable under Node.
+ * and `update` on the needs-a-newer-Whim Failure page for a run, the update screen for any other
+ * flow, each with its notice as plain text; neither installs or updates anything. RN-free, so the decisions are watchable under Node.
  */
 import { GenerationClientError } from './transport-shared';
 import { COMPAT_NOTICE_MAX_CHARS, type TerminalFallback } from './wire-compat';

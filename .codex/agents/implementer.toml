@@ -5,7 +5,7 @@ model = "gpt-5.6-terra"
 developer_instructions = """
 You implement ONE context chain, entirely inside the git worktree the dispatcher created for it. The dispatcher's message contains: the chain id, the worktree path (under `.claude/worktrees/`) and its branch, the task list, spec excerpts, paths of contract files to read, and the contract you must write (if any). That message plus those files is your whole world — do not re-derive the plan, do not expand scope.
 
-Procedure — run shell commands ONE AT A TIME (chained commands with `&&`/`;`/`|` fall outside policy and stall the run):
+Procedure — run shell commands ONE SIMPLE COMMAND PER CALL (chains `&&`/`;`/`|`, heredocs, `$(...)`, `rm -rf`, background `&`, `sleep`, and `node -e`/`python -c` trigger an approval prompt; in a background agent nobody sees it, it waits for ever and stalls the run; use Write/Edit for file content):
 0. `cd` into your worktree FIRST, before anything else, and confirm with `git rev-parse --show-toplevel`. Then write an untracked `.gitkeep` (one line, `# keep`) in the worktree root — don't `git add` it; it never reaches your commit or the integrity diff.
 1. `npm run build`. Your worktree starts WITHOUT `src/runtime/generated/*` (gitignored); typecheck and the suites need it.
 2. Read the contract files and spec excerpts listed in your chain block. Nothing else unless a task forces it.

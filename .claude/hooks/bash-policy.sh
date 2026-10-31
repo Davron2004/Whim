@@ -64,6 +64,9 @@ ask() {
 # teardown (`finish` prints the rm) and MUST remove it before re-dispatching a parked worktree to a
 # NEW agent, or the replacement worker is refused.
 owners_claim() {
+  # Classification-only callers (subagent-deny.sh) set WHIM_BASH_POLICY_NO_CLAIM: no marker writes,
+  # ownership treated as held, so the verdict leans to its allow (pass-through) side.
+  [[ -z "${WHIM_BASH_POLICY_NO_CLAIM:-}" ]] || return 0
   local root="$1"
   local wt_id="$2"
   local of="$root/.claude/fixloop/owners/$wt_id"

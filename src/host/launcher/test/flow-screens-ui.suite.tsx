@@ -510,7 +510,7 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
 
   await h.test('making: the run’s name and words, its steps with the time on the current one, the time line, and Stop', async () => {
     const s = spies();
-    const signals = { startedAt: 0, aggregates: { chars: 1204, tokens: 300 }, lastTokenAt: 41_000, lastThinkingAt: null, lastFrameAt: 41_000 };
+    const signals = { startedAt: 0, aggregates: { chars: 1204, tokens: 300 }, lastTokenAt: 41_000, lastThinkingAt: null, lastProgressAt: 41_000 };
     await rendered(<MakingPage name="Tea timer" changing={false} words="A tea timer" stage="generate" delivering={false} stepSince={1_000} signals={signals} now={42_000} activity={0.6} onStop={s.fn('stop')} />, async (tree) => {
       const shown = textOf(tree.root);
       h.ok(shown.includes('Making Tea timer') && shown.includes('“A tea timer”'), 'the headline names the app, over the person’s words');
@@ -527,7 +527,7 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('making: in line the page says how many are ahead, nothing has started, and the ember is still and dim', async () => {
-    const signals = { startedAt: 0, aggregates: { chars: 0, tokens: 0 }, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: 0, inLine: true };
+    const signals = { startedAt: 0, aggregates: { chars: 0, tokens: 0 }, lastTokenAt: null, lastThinkingAt: null, lastProgressAt: 0, inLine: true };
     await rendered(<MakingPage name="Tea timer" changing={false} words="A tea timer" stage={null} delivering={false} queuedPosition={3} stepSince={0} signals={signals} now={5_000} activity={0.9} onStop={noop} />, async (tree) => {
       h.ok(textOf(tree.root).includes('2 ahead of you.'), 'position 3 is two ahead');
       h.ok(stepLabels(tree).every((label) => label.endsWith(COPY.makingStepWaiting)), 'no step has started');
@@ -543,10 +543,10 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('making: 40 s with no frame at all is a stall, said with the ember stuck', async () => {
-    const signals = { startedAt: 0, aggregates: { chars: 10, tokens: 3 }, lastTokenAt: 5_000, lastThinkingAt: null, lastFrameAt: 5_000 };
+  await h.test('making: 40 s with no progress event is a stall, said with the ember stuck', async () => {
+    const signals = { startedAt: 0, aggregates: { chars: 10, tokens: 3 }, lastTokenAt: 5_000, lastThinkingAt: null, lastProgressAt: 5_000 };
     await rendered(<MakingPage name="Tea timer" changing={false} words="A tea timer" stage="generate" delivering={false} stepSince={0} signals={signals} now={46_000} activity={0.4} onStop={noop} />, async (tree) => {
-      h.ok(textOf(tree.root).includes('No word from the server for 40 s. Still waiting.'), 'the stall line replaces the time line');
+      h.ok(textOf(tree.root).includes('No progress for 41 s. Still waiting.'), 'the stall line replaces the time line, with the 41 s since the last event');
       h.eq(tree.root.findByType(Ember).props.state, 'stuck', 'and the ember is stuck');
     });
   });

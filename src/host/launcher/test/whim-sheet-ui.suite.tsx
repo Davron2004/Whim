@@ -2,8 +2,9 @@
  *  system.md §9 Whim sheet), driven through the real shell over a real version store: what the orb
  *  opens and in what order, each row its own accessibility element (#103), the running version's line
  *  and the Reload row while a newer version waits, sending growing the same sheet into the change's
- *  plan page with the app still running, History, Report pushed inside the sheet, Back to your apps,
- *  Android back, and typed words surviving a text-size rebuild. */
+ *  plan page with the app still running, See why while a change of the app has failed, History,
+ *  Report pushed inside the sheet, Back to your apps, Android back, and typed words surviving a
+ *  text-size rebuild. */
 import type React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
@@ -15,16 +16,22 @@ import MiniAppView from '../MiniAppView';
 import { DescribePage } from '../DescribePage';
 import { PlanPage } from '../PlanPage';
 import MakingPage from '../MakingPage';
+import FailurePage from '../FailurePage';
+import { toastDuration } from '../../ui/Toast';
 import { Sheet } from '../../ui/Sheet';
 import { PendingBuildStore } from '../pending-builds';
 import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
+import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { listVersions } from '../history-logic';
 import { setColorScheme, windowMetrics } from './native-host';
 import { iosPop } from './native-screens';
 import { androidBack, button, hostType, isHost, press, screenReaderElement, textOf } from './react-screen';
+import { toastOf } from './home-rig';
+import { makeChange, paintRunningApp } from './changing-in-use-ui.suite';
 import { buildIt, makingSheetOpen, planLoaded, resultEvent, settle, sseStream, tap, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { streamingServer } from './prompt-flow-ui.suite';
+import { stubFutureFrame } from '../../../../server/src/stub-markers';
 
 type Node = TestRenderer.ReactTestInstance;
 
@@ -32,6 +39,7 @@ export const APP_NAME = 'Tip Splitter';
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** The Reload row as a screen reader names it: its title, then its trailing word. */
 export const RELOAD_ROW = `${COPY.whimSheetNewVersion}, ${COPY.actionReload}`;
+export const SEE_WHY_ROW = `${COPY.changeFailedToast}, ${COPY.toastSeeWhy}`;
 
 export const home = (tree: Tree) => tree.root.findByType(HomeScreen);
 export const showing = (tree: Tree, type: React.ElementType) => tree.root.findAllByType(type).length === 1;
@@ -84,6 +92,41 @@ export async function openSheet(tree: Tree): Promise<void> {
 }
 
 const never = () => new Promise<Response>(() => {});
+
+/** A change's record says it failed. */
+const changeFailed = (kv: KVBackend) => new PendingBuildStore(kv).list().some((r) => r.state === 'failed');
+
+// Taken before `withLauncher` captures the timers, so a wait on real work can still end in a
+// failure that names it instead of hanging the suite.
+const realSetTimeout = globalThis.setTimeout;
+const realClearTimeout = globalThis.clearTimeout;
+/** A bound for a read whose cost grows with the machine's load: the failure, not the expectation. */
+const READ_BUDGET_MS = 120_000;
+
+/** `promise`, or a failure naming `what` once `ms` of real time has passed without it settling. */
+async function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = realSetTimeout(() => reject(new Error(`timed out waiting for ${what}`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    realClearTimeout(timer);
+  }
+}
+
+/** Every version timeline `access` reads from now on, as the read's own promise. */
+function timelineReads(access: StoreAccess): Promise<unknown>[] {
+  const reads: Promise<unknown>[] = [];
+  const timeline = access.timeline.bind(access);
+  access.timeline = (...args: Parameters<StoreAccess['timeline']>) => {
+    const read = timeline(...args);
+    reads.push(read);
+    return read;
+  };
+  return reads;
+}
 
 type Spacing = { gap?: number; marginTop?: number; marginBottom?: number; paddingBottom?: number };
 const spacing = (style: unknown) => (StyleSheet.flatten(style as StyleProp<ViewStyle>) ?? {}) as Spacing;
@@ -198,7 +241,12 @@ export async function runWhimSheetUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => { await access.rollback(app, chain[chain.length - 2].id); });
       await iosPop(tree);
       await openTipSplitter(tree);
+      const reads = timelineReads(access);
       await openSheet(tree);
+      // The sheet reads all 102 versions (~1.2 s idle, several times that on a loaded machine): await
+      // that read itself, then give the render waitFor's usual budget (#232).
+      h.ok(reads.length > 0, 'setup: the sheet read the chain');
+      await TestRenderer.act(async () => { await within(Promise.all(reads), READ_BUDGET_MS, 'the sheet’s read of the whole chain'); });
       await waitFor(() => versionLine(tree) !== null, 'the version line');
       h.ok(versionLine(tree)!.startsWith('Version 2 · '), `the app runs its second version, and the sheet says so (${versionLine(tree)})`);
     });
@@ -251,6 +299,70 @@ export async function runWhimSheetUiTests(h: Harness): Promise<void> {
     } finally {
       Date.now = realNow;
     }
+  });
+
+  await h.test('whim sheet: a failed change of the running app shows See why, still after its toast has gone, opening its Failure page in the sheet; no row before it fails or once a new change runs', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv, clock }) => {
+      await openTipSplitter(tree);
+      await paintRunningApp(tree);
+      const launch = runningApp(tree).props.tappedAt;
+      await openSheet(tree);
+      h.ok(!hasButton(tree, SEE_WHY_ROW), 'no See why while nothing has failed');
+      await press(button(tree, COPY.sheetClose));
+
+      await makeChange(tree, streams);
+      streams[0].push({ type: 'failure', reason: 'The change did not build.', attempts: 1, diagnostics: [] });
+      streams[0].end();
+      await waitFor(() => changeFailed(kv), 'the change to fail');
+      await settle();
+      h.eq(toastOf(tree)?.action, COPY.toastSeeWhy, 'setup: the failed-change toast is up');
+      clock.fire(toastDuration({ message: COPY.changeFailedToast, action: { label: COPY.toastSeeWhy, onPress: () => undefined } }));
+      await waitFor(() => toastOf(tree) === null, 'the toast to expire');
+
+      await openSheet(tree);
+      h.eq(controlsIn(tree)[0], SEE_WHY_ROW, 'See why stands on top of the sheet once the toast has gone');
+      h.ok(controlsIn(tree).includes(COPY.whimSheetAsk), 'with the send area still there: no change is being made');
+      await press(button(tree, SEE_WHY_ROW));
+      await waitFor(() => showing(tree, FailurePage), 'the Failure page');
+      h.eq(tree.root.findByType(FailurePage).props.changing, true, 'the failed change’s page, which says the current version still works');
+      h.ok(makingSheetOpen(tree) && !hasButton(tree, COPY.whimSheetBackToApps), 'in the sheet, in place of its rows');
+      h.ok(runningApp(tree).props.tappedAt === launch && !showing(tree, HomeScreen), 'over the same running app');
+      await press(button(tree, COPY.sheetClose));
+      await openSheet(tree);
+      h.eq(controlsIn(tree)[0], SEE_WHY_ROW, 'the row stays while the change stays failed');
+
+      await typeWords(tree, 'Make it purple');
+      await press(button(tree, COPY.whimSheetSend));
+      await waitFor(() => planLoaded(tree), 'the new change’s plan');
+      await press(button(tree, COPY.planBuildEdit));
+      await waitFor(() => streams.length === 2 && !makingSheetOpen(tree), 'the new change being made');
+      await openSheet(tree);
+      h.ok(hasButton(tree, COPY.actionStopChange) && !hasButton(tree, SEE_WHY_ROW), 'once a new change runs, Stop the change and no See why');
+    });
+  });
+
+  await h.test('whim sheet: a change that ends needing a newer Whim, opened with See why over the running app, returns to the app on Not now', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv, clock }) => {
+      await openTipSplitter(tree);
+      await paintRunningApp(tree);
+      const launch = runningApp(tree).props.tappedAt;
+      await makeChange(tree, streams);
+      streams[0].push(stubFutureFrame('update'));
+      await waitFor(() => changeFailed(kv), 'the change to fail');
+      await settle();
+      clock.fire(toastDuration({ message: COPY.changeFailedToast, action: { label: COPY.toastSeeWhy, onPress: () => undefined } }));
+      await waitFor(() => toastOf(tree) === null, 'the toast to expire');
+      await openSheet(tree);
+      await press(button(tree, SEE_WHY_ROW));
+      await waitFor(() => showing(tree, FailurePage), 'the Failure page');
+      h.eq(tree.root.findByType(FailurePage).props.kind, 'needs-update', 'the page of a change only a newer Whim can finish');
+      await press(button(tree, COPY.updateNotNow));
+      h.ok(!showing(tree, FailurePage) && !showing(tree, HomeScreen), 'Not now leaves the page and does not go Home');
+      h.ok(showing(tree, MiniAppView) && runningApp(tree).props.tappedAt === launch, 'the same app is still running on screen');
+      streams[0].end();
+    });
   });
 
   await h.test('whim sheet: sending grows the same sheet into the plan page for a change of this app, with the app still running; closing the plan returns to the app', async () => {

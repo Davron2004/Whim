@@ -1057,9 +1057,10 @@ export function makingQueueLine(position: number): string {
   return ahead < 1 ? COPY.makingQueuedNext : `${formatCount(ahead)} ahead of you.`;
 }
 
-/** No byte for `seconds` (the stall threshold): said as it is, with the run still going. */
+/** No progress event for `seconds` (counting up from the last one), keepalives or not: said as it is, with
+ *  the run still going. It claims no progress, never silence: the connection may well be alive. */
 export function makingStallLine(seconds: number): string {
-  return `No word from the server for ${formatCount(seconds)} s. Still waiting.`;
+  return `No progress for ${formatCount(seconds)} s. Still waiting.`;
 }
 
 /** The "couldn't run" failure (system.md §8): the tries the run used, and the rewording hint only

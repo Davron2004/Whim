@@ -19,6 +19,7 @@
 import type { InstalledApp } from './app-index';
 import type { PendingBuildRecord } from './pending-builds';
 import type { TileState } from '../ui/AppTile-states';
+import { stillNeedsUpdate } from './build-lifecycle';
 
 /** An attempt this old or older has stopped being news. */
 export const ATTEMPT_RECENT_MS = 24 * 60 * 60 * 1000;
@@ -54,6 +55,10 @@ export type GridCell = AppCell | AttemptCell | OlderCell;
 export interface ComposeOptions {
   /** The clock the day is measured against. */
   now: number;
+  /** The protocol level this build understands (`PROTOCOL_LEVEL`): an attempt an `update` fallback
+   *  ended needs an update only while this is at or below the level it ended on, the same predicate
+   *  its Failure page decides with. */
+  protocolLevel: number;
   /** Ids of attempts waiting for a free spot (their stream's latest event is `queued`). */
   queued?: ReadonlySet<string>;
   /** Ids of installed apps whose Delete is waiting out its Undo window. */
@@ -72,10 +77,10 @@ export function attemptName(rec: Pick<PendingBuildRecord, 'prompt' | 'workingTit
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-function attemptState(rec: PendingBuildRecord, queued: ReadonlySet<string> | undefined): AttemptCellState {
-  if (rec.state === 'building') return queued?.has(rec.id) ? 'queued' : 'making';
+function attemptState(rec: PendingBuildRecord, options: ComposeOptions): AttemptCellState {
+  if (rec.state === 'building') return options.queued?.has(rec.id) ? 'queued' : 'making';
   if (rec.state === 'interrupted') return 'stopped';
-  return rec.failure?.remedy?.kind === 'update' ? 'needs-update' : 'failed';
+  return stillNeedsUpdate(rec, options.protocolLevel) ? 'needs-update' : 'failed';
 }
 
 function appState(rebuild: PendingBuildRecord | undefined): AppCellState {
@@ -107,7 +112,7 @@ export function composeGrid(
   const attempts: AttemptCell[] = [];
   for (const rec of visible) {
     if (rec.editingAppId) rebuildByAppId.set(rec.editingAppId, rec);
-    else attempts.push({ kind: 'attempt', state: attemptState(rec, options.queued), rec, name: attemptName(rec) });
+    else attempts.push({ kind: 'attempt', state: attemptState(rec, options), rec, name: attemptName(rec) });
   }
 
   const attemptIds = new Set(attempts.map((a) => a.rec.id));

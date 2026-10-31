@@ -19,7 +19,7 @@ demo/out/linkedin-<date>-sound.mp4 voiceover + ducked music bed, video stream by
 ## 1. Film
 
 The app under film is the real release APK on the Android emulator (build notes in the root
-`CLAUDE.md`: Node 22, JDK 21, `npm run android:release`). The flows are driven and recorded by
+`CLAUDE.md`: Node 22, JDK 21, `npm run android:release -- --device <serial>`). The flows are driven and recorded by
 **filmkit**, which lives outside this repo:
 
 ```sh

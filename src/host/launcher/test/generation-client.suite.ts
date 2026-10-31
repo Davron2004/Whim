@@ -19,8 +19,8 @@
  *     break the device the way `thinking`'s own guard arm was initially missed; a frame whose
  *     `data:` JSON does not match `GenerationEvent` raises `kind:'stream_parse'`; a stream aborted
  *     mid-flight (`AbortError` from the reader) ends iteration with no terminal event and does not
- *     throw; a keepalive comment block (`: keepalive\n\n`) fires `ClientOptions.onKeepalive`, never
- *     an event.
+ *     throw; a keepalive comment block (`: keepalive\n\n`) is skipped: it yields no event, so it is
+ *     never progress.
  */
 
 import { Harness } from './harness';
@@ -39,9 +39,10 @@ import {
   PLATFORM_HEADER,
   REQUEST_ID_HEADER,
 } from '@whim/contract';
-import { CONNECT_TIMEOUT_HINT } from '../transport-shared';
+import { CONNECT_TIMEOUT_HINT, CONNECT_TIMEOUT_MS } from '../transport-shared';
 import { appInfoReader } from '../app-info';
 import { TEST_APP_INFO, grantedOptions, streamResponse } from './client-fixtures';
+import { holdTimers, realSetTimeout, untilSettled } from './fake-xhr';
 import { fillRing, recordsSince } from './log-ring';
 import { CHANNELS } from '../../logging/channels';
 
@@ -133,7 +134,7 @@ function sleep(ms: number): Promise<void> {
  *  settles (a bare `await` on a regression here would be an exit-13 hang, not a failed check). */
 async function settledOrHung<T>(promise: Promise<T>, ms: number): Promise<T | 'hung' | Error> {
   const hung = new Promise<'hung'>((resolve) => {
-    setTimeout(() => resolve('hung'), ms);
+    realSetTimeout(() => resolve('hung'), ms);
   });
   try {
     return await Promise.race([promise, hung]);
@@ -413,16 +414,15 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     h.eq(got, [event], 'reassembles the split frame and skips the keepalive comment');
   });
 
-  // build-liveness B2: the keepalive comment is transport noise (never a GenerationEvent), but it
-  // still has to reach the caller SOMEHOW — through `ClientOptions.onKeepalive`.
-  await h.test('generateApp: a keepalive comment block fires onKeepalive exactly once, never as an event', async () => {
+  // beta-2-spec-fixes D2: a keepalive is liveness, not progress — the parser recognises it and
+  // yields nothing for it, however many arrive, and a stream of nothing else ends cleanly.
+  await h.test('generateApp: keepalive comment blocks are skipped, never yielded as an event or read as a malformed frame', async () => {
     const event: GenerationEvent = { type: 'token', text: 'hi' };
-    const fetchImpl = (async () =>
-      sseResponse([sseFrame(event, 1), ': keepalive\n\n', ': keepalive\n\n'])) as typeof fetch;
-    let keepalives = 0;
-    const got = await collect(generateApp({ ...BASE, fetchImpl, onKeepalive: () => keepalives++ }, { prompt: 'p' }));
-    h.eq(got, [event], 'still yields only the real event');
-    h.eq(keepalives, 2, 'and the caller hears about both keepalive frames');
+    const interleaved = (async () =>
+      sseResponse([': keepalive\n\n', sseFrame(event, 1), ': keepalive\n\n', ': keepalive\n\n'])) as typeof fetch;
+    h.eq(await collect(generateApp({ ...BASE, fetchImpl: interleaved }, { prompt: 'p' })), [event], 'only the real event is yielded');
+    const keepalivesOnly = (async () => sseResponse([': keepalive\n\n', ': keepalive\n\n'])) as typeof fetch;
+    h.eq(await collect(generateApp({ ...BASE, fetchImpl: keepalivesOnly }, { prompt: 'p' })), [], 'and a body of keepalives alone yields nothing and throws nothing');
   });
 
   // generateApp: malformed frame — no event envelope at all. (An unrecognized `type` is not
@@ -631,6 +631,62 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       );
     },
   );
+
+  // --- beta-2-spec-fixes D1/D2: a keepalive is the first byte, and no step after it is a lost
+  // connection. The production window (no `connectTimeoutMs`), with time moved by a held clock.
+
+  await h.test(
+    'generateApp (fetch path): a keepalive as the first chunk disarms the connect window, so a 20 s first step and a 35 s later step end nothing',
+    async () => {
+      const enc = new TextEncoder();
+      const stage: GenerationEvent = { type: 'stage', stage: 'plan', status: 'start' };
+      const token: GenerationEvent = { type: 'token', text: 'const a = 1;' };
+      const hold: { controller?: ReadableStreamDefaultController<Uint8Array> } = {};
+      const clock = holdTimers();
+      try {
+        const gen = generateApp({ ...BASE, fetchImpl: openEndedSseFetch(hold) }, { prompt: 'p' });
+        const first = gen.next();
+        await untilSettled(() => hold.controller !== undefined, 'the response to open');
+        h.eq(clock.armed(), 1, 'the connect window is armed while no byte has arrived');
+        hold.controller?.enqueue(enc.encode(': keepalive\n\n'));
+        await untilSettled(() => clock.armed() === 0, 'the opening keepalive to disarm the connect window');
+        h.eq(clock.advance(20_000), 0, 'a first step 20 s long fires no timeout');
+        hold.controller?.enqueue(enc.encode(sseFrame(stage, 1)));
+        const firstResult = await settledOrHung(first, 1000);
+        h.eq(firstResult !== 'hung' && !(firstResult instanceof Error) ? firstResult.value : firstResult, stage, 'the attempt continues to the first event');
+
+        const second = gen.next();
+        const keepalive = () => hold.controller?.enqueue(enc.encode(': keepalive\n\n'));
+        let fired = clock.advance(15_000);
+        keepalive();
+        fired += clock.advance(15_000);
+        keepalive();
+        fired += clock.advance(5_000);
+        h.eq(fired, 0, 'a 35 s step with keepalives throughout fires no timeout');
+        hold.controller?.enqueue(enc.encode(sseFrame(token, 2)));
+        hold.controller?.close();
+        const secondResult = await settledOrHung(second, 1000);
+        h.eq(secondResult !== 'hung' && !(secondResult instanceof Error) ? secondResult.value : secondResult, token, 'and the next event arrives normally');
+      } finally {
+        clock.restore();
+      }
+    },
+  );
+
+  await h.test('generateApp (fetch path): no byte within the production connect window still ends the attempt as a network failure', async () => {
+    const hold: { controller?: ReadableStreamDefaultController<Uint8Array> } = {};
+    const clock = holdTimers();
+    try {
+      const first = settledOrHung(generateApp({ ...BASE, fetchImpl: openEndedSseFetch(hold) }, { prompt: 'p' }).next(), 1000);
+      await untilSettled(() => hold.controller !== undefined, 'the response to open');
+      h.eq(clock.advance(CONNECT_TIMEOUT_MS - 1), 0, 'a millisecond short of the window, nothing has fired');
+      h.eq(clock.advance(1), 1, 'at the window, the connect timeout fires');
+      const err = await first;
+      h.eq(err instanceof GenerationClientError ? [err.kind, err.hint] : err, ['network', CONNECT_TIMEOUT_HINT], 'and the attempt ends as a network failure');
+    } finally {
+      clock.restore();
+    }
+  });
 
   // clarifyPrompt: a mapped error records a generation-channel breadcrumb before throwing.
   // obs-v1: the breadcrumb is a SEAM record, not a console line — so this reads the seam's ring

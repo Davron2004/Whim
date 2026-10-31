@@ -146,7 +146,8 @@ npm install
 npm run build              # runtime HTML, app bundles, artifacts
 npm run invariants         # containment suite against this exact build (headless Chromium)
 npm run launcher:test      # launcher acceptance (Node); vstore:test, storage:test, bridge:test, sdk:test, server:test likewise
-npm run android:release    # debug-signed offline build onto a device or emulator; the store AAB comes only from `fastlane android closed`
+npm run android:release -- --device <serial>    # debug-signed offline build onto that one device or emulator (or set ANDROID_SERIAL; never opens a packager window); the store AAB comes only from `fastlane android closed`
+npm run android -- --device <serial>            # debug build onto that one device; start Metro yourself first (npm start)
 ```
 
 Generating needs the server: `npm run server:dev` with `OPENROUTER_API_KEY`, `WHIM_REWRITE_MODEL` and `WHIM_ENGINEER_MODEL` in `.env`, or `WHIM_PIPELINE=stub` for a canned pipeline (`WHIM_STUB_DELAY_MS` sets its wait before each event, 200 by default). Opening apps you already have does not.
