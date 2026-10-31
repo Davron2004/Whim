@@ -1,0 +1,839 @@
+# Sonar round 1 plan: fix-beta-2-sonar-r1
+
+Nested in the beta-2 closure on `integration/beta-2` (PR #262 → main), BASE `b280448f`. Input: `findings.md` (331 issues, verbatim from design-system-v1/findings-sonar-1.md). The quality gate fails only on new_reliability_rating (21 BUGs). Every EVIDENCE file passed `fixloop.sh stale` at `b280448f` (exit 0, all live).
+
+Grouping: findings are batched by file/area into disjoint lanes (allowlists/<g>.txt, evidence/<g>.txt). Pipeline per lane (build → gate → fix split): fix-worker (Sonnet) builds + touched suites + commits + handoff; Sonnet runner gates (gate.sh, integrity, ratchet, red-check); Opus reviewer verifies; orchestrator merges serially + regate. Accept proposals from workers are adjudicated by the orchestrator and applied via the Sonar API; every accepted key + reason lands in `accepted.md`.
+
+`deferred-hooks` (S15-S17 and the other `.claude/hooks/subagent-deny.sh` S7679 findings): `.claude/hooks` is Class-2 in fixloop.sh, so a worker branch touching it is integrity exit 3 (a stop in this run). Left for the integration orchestrator.
+
+## Rule guide (binding for every worker)
+
+General: fix each finding at its cited location with the smallest change that clears the rule AND preserves behavior. No drive-by refactors. When a fix would be wrong (it changes product behavior beyond the rule, breaks a public/SDK API, or removes deliberate sequencing), do NOT fix it: list it under `## Accept proposals` in your handoff as `S<n>: <one-line reason>`. The orchestrator adjudicates and accepts through the Sonar API. A proposal is never a way to skip work that is merely tedious.
+
+Test classification per finding (state it in the handoff): most rules here are **structural-no-test** (no behavioral delta; regression = the touched suites stay green). Rules that CAN change behavior need a **behavioral** red-without/green-with test in the area's acceptance suite: S2189, S905, S7727, S6959, S3923, S2681 (when braces change control flow), S9383 when you add a rejection handler that changes what happens on failure, S6551 when the fix changes the produced string.
+
+- **S9383 floating promise (BUG):** decide per call site what a rejection should do. If the promise already cannot reject or the rejection is handled inside, mark it `void expr` (structural). If a rejection would today be an unhandled rejection that silently drops an error, route it to the existing error path of that module (its logger/diagnostics/state setter) with `.catch(...)`; never swallow silently. Keep ordering and fire-and-forget semantics.
+- **S9382 await in loop:** keep the await when the iterations must run in order (ordered writes, a shared transaction/lock, rate limits, sequential fixtures, early break on failure, bounded memory). That is an Accept proposal with the concrete reason. Convert to `Promise.all` only when iterations are independent and concurrency is safe.
+- **S2699 assertion-free test (BLOCKER):** see CLAUDE.md "Test assertions". Each flagged test must assert observable behavior through the shared helper that delegates to `node:assert` (checks/test/harness.ts or the suite's existing `h.*` helpers, which must reach `nodeAssert.*`). If a test's checks run in a helper Sonar cannot follow, make the helper delegate to node:assert or move the assertion into the test body. No dummy assertions, no renames to dodge the rule. Verify a deliberately false condition fails the suite.
+- **S2189 loop end condition invariant (BUG):** find why the loop condition never changes inside the body; make the loop terminate by an explicit, bounded condition (deadline/attempt cap) while keeping its purpose. Behavioral test where a home exists.
+- **S905 expression statement (BUG):** an expression whose value is discarded is usually a missing call/assignment; find the intended effect (or a dead expression to delete) and fix it.
+- **S7727 function passed to .map:** wrap in an arrow so the index/array arguments are not passed to a function with optional params: `.map((x) => renderCell(x))`.
+- **S6959 reduce without initial value:** add the correct initial value (empty-array input must not throw).
+- **S3923 same value both branches:** find the intended difference; if both branches are truly meant equal, collapse the conditional.
+- **S2681 multiline block without braces:** add braces matching the evident intent (check indentation vs actual control flow; if they disagree, that is a real bug: fix to intent).
+- **S6551 object stringification:** make the value a string explicitly with correct typing (narrow the type, `String(x)` only if x is a primitive at runtime, or use the real name field).
+- **S7503 async without await:** drop `async` and return a Promise explicitly only if callers rely on a Promise; otherwise make it sync. Check every caller.
+- Shell **S7688** `[`→`[[` (bash only; keep `[` in POSIX `sh` scripts and say so as an Accept proposal), **S7679** assign positional params to named locals, **S7684** lower_case local names, **S131** add a `*)` default case that fails loudly or is a deliberate no-op.
+- Mechanical JS/TS: S7781 `replaceAll`, S7780 `String.raw`, S6582 optional chain, S7747 drop needless Array.from/spread in for-of, S7755 `.at(-n)`, S6653 `Object.hasOwn`, S7773 `Number.parseInt`, S7776 Set + `.has`, S4043 `toReversed()` (check runtime support: Hermes/Node 22 OK), S7750 `findLast`, S6557 `startsWith/endsWith`, S4138 for-of, S7718 rename catch param, S6759 `Readonly<Props>`, S6754 destructure useState, S1874 replace deprecated API (or Accept if it is a deliberate back-compat alias), S6767 remove an unused propType/prop only if no caller passes it, S2301 boolean selector param (Accept if splitting would change a public SDK surface), S1172/S1481/S1854 unused param/var/dead store.
+- Python S117/S1542 snake_case names, S3358 nested ternary, S7519 `dict.fromkeys`. Swift S3087/S1172/S115/S3358. Ruby S7840/S7816.
+- **S4624 nested template literal / S3358 nested ternary / S3776 cognitive complexity:** extract a named variable/helper; behavior identical.
+
+
+## Checklist
+
+- [x] S1
+- [x] S2
+- [x] S3
+- [x] S4
+- [x] S5
+- [x] S6
+- [x] S7
+- [x] S8
+- [x] S9
+- [x] S10
+- [x] S11
+- [x] S12
+- [x] S13
+- [x] S14
+- [ ] S15
+- [ ] S16
+- [ ] S17
+- [ ] S18
+- [ ] S19
+- [ ] S20
+- [x] S21
+- [x] S22
+- [x] S23
+- [x] S24
+- [x] S25
+- [x] S26
+- [x] S27
+- [x] S28
+- [x] S29
+- [x] S30
+- [x] S31
+- [x] S32
+- [x] S33
+- [x] S34
+- [x] S35
+- [x] S36
+- [x] S37
+- [x] S38
+- [x] S39
+- [x] S40
+- [x] S41
+- [x] S42
+- [x] S43
+- [x] S44
+- [x] S45
+- [x] S46
+- [x] S47
+- [x] S48
+- [x] S49
+- [x] S50
+- [x] S51
+- [x] S52
+- [x] S53
+- [x] S54
+- [x] S55
+- [x] S56
+- [x] S57
+- [x] S58
+- [x] S59
+- [x] S60
+- [x] S61
+- [x] S62
+- [x] S63
+- [x] S64
+- [x] S65
+- [x] S66
+- [x] S67
+- [x] S68
+- [x] S69
+- [x] S70
+- [x] S71
+- [x] S72
+- [x] S73
+- [x] S74
+- [x] S75
+- [x] S76
+- [x] S77
+- [x] S78
+- [x] S79
+- [x] S80
+- [x] S81
+- [x] S82
+- [x] S83
+- [x] S84
+- [x] S85
+- [x] S86
+- [x] S87
+- [x] S88
+- [x] S89
+- [x] S90
+- [x] S91
+- [x] S92
+- [x] S93
+- [x] S94
+- [x] S95
+- [x] S96
+- [x] S97
+- [x] S98
+- [x] S99
+- [x] S100
+- [x] S101
+- [x] S102
+- [x] S103
+- [x] S104
+- [x] S105
+- [x] S106
+- [x] S107
+- [x] S108
+- [x] S109
+- [x] S110
+- [x] S111
+- [x] S112
+- [x] S113
+- [x] S114
+- [x] S115
+- [x] S116
+- [x] S117
+- [x] S118
+- [x] S119
+- [x] S120
+- [x] S121
+- [x] S122
+- [x] S123
+- [x] S124
+- [x] S125
+- [x] S126
+- [x] S127
+- [x] S128
+- [x] S129
+- [x] S130
+- [x] S131
+- [x] S132
+- [x] S133
+- [x] S134
+- [x] S135
+- [x] S136
+- [x] S137
+- [x] S138
+- [x] S139
+- [x] S140
+- [x] S141
+- [x] S142
+- [x] S143
+- [x] S144
+- [x] S145
+- [x] S146
+- [x] S147
+- [x] S148
+- [x] S149
+- [x] S150
+- [x] S151
+- [x] S152
+- [x] S153
+- [x] S154
+- [x] S155
+- [x] S156
+- [x] S157
+- [x] S158
+- [x] S159
+- [x] S160
+- [x] S161
+- [x] S162
+- [x] S163
+- [x] S164
+- [x] S165
+- [x] S166
+- [x] S167
+- [x] S168
+- [x] S169
+- [x] S170
+- [x] S171
+- [x] S172
+- [x] S173
+- [x] S174
+- [x] S175
+- [x] S176
+- [x] S177
+- [x] S178
+- [x] S179
+- [x] S180
+- [x] S181
+- [x] S182
+- [x] S183
+- [x] S184
+- [x] S185
+- [x] S186
+- [x] S187
+- [x] S188
+- [x] S189
+- [x] S190
+- [x] S191
+- [x] S192
+- [x] S193
+- [x] S194
+- [x] S195
+- [x] S196
+- [x] S197
+- [x] S198
+- [x] S199
+- [x] S200
+- [x] S201
+- [x] S202
+- [x] S203
+- [x] S204
+- [x] S205
+- [x] S206
+- [x] S207
+- [x] S208
+- [x] S209
+- [x] S210
+- [x] S211
+- [x] S212
+- [x] S213
+- [x] S214
+- [x] S215
+- [x] S216
+- [x] S217
+- [x] S218
+- [x] S219
+- [x] S220
+- [x] S221
+- [x] S222
+- [x] S223
+- [x] S224
+- [x] S225
+- [x] S226
+- [x] S227
+- [x] S228
+- [x] S229
+- [x] S230
+- [x] S231
+- [x] S232
+- [x] S233
+- [x] S234
+- [x] S235
+- [x] S236
+- [x] S237
+- [x] S238
+- [x] S239
+- [x] S240
+- [x] S241
+- [x] S242
+- [x] S243
+- [x] S244
+- [x] S245
+- [x] S246
+- [x] S247
+- [x] S248
+- [x] S249
+- [x] S250
+- [x] S251
+- [x] S252
+- [x] S253
+- [x] S254
+- [x] S255
+- [x] S256
+- [x] S257
+- [x] S258
+- [x] S259
+- [x] S260
+- [x] S261
+- [x] S262
+- [x] S263
+- [x] S264
+- [x] S265
+- [x] S266
+- [x] S267
+- [x] S268
+- [x] S269
+- [x] S270
+- [x] S271
+- [x] S272
+- [x] S273
+- [x] S274
+- [x] S275
+- [x] S276
+- [x] S277
+- [x] S278
+- [x] S279
+- [x] S280
+- [x] S281
+- [x] S282
+- [x] S283
+- [x] S284
+- [x] S285
+- [x] S286
+- [x] S287
+- [x] S288
+- [x] S289
+- [x] S290
+- [x] S291
+- [x] S292
+- [x] S293
+- [x] S294
+- [x] S295
+- [x] S296
+- [x] S297
+- [x] S298
+- [x] S299
+- [x] S300
+- [x] S301
+- [x] S302
+- [x] S303
+- [x] S304
+- [x] S305
+- [x] S306
+- [x] S307
+- [x] S308
+- [x] S309
+- [x] S310
+- [x] S311
+- [x] S312
+- [x] S313
+- [x] S314
+- [x] S315
+- [x] S316
+- [x] S317
+- [x] S318
+- [x] S319
+- [x] S320
+- [x] S321
+- [x] S322
+- [x] S323
+- [x] S324
+- [x] S325
+- [x] S326
+- [x] S327
+- [x] S328
+- [x] S329
+- [x] S330
+- [x] S331
+
+## g01-firestore-loop: firestore emulator test: S2189 invariant loop (BLOCKER bug) + rest
+
+- effort: high
+- allowlist: allowlists/g01-firestore-loop.txt
+- evidence: evidence/g01-firestore-loop.txt (stale exit 0)
+- notes: S2189 is the BLOCKER bug that fails the gate: read the loop at :92 and its exit path; make termination explicit and bounded. Find out how the script is run (package.json scripts, docs) and run it if it runs without network (the Firestore emulator may be unavailable: then reason carefully and say so).
+- findings:
+  - S178 scripts/firestore-emulator-test.mjs:34 javascript:S7780 MINOR CODE_SMELL: `String.raw` should be used to avoid escaping `\`.
+  - S294 scripts/firestore-emulator-test.mjs:52 javascript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S295 scripts/firestore-emulator-test.mjs:92 javascript:S2189 BLOCKER BUG: Correct this loop's end condition to not be invariant.
+  - S296 scripts/firestore-emulator-test.mjs:93 javascript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+
+## g02-launcher-screens: launcher screens: S9383 floating promises, S7727 map(fn), smells
+
+- effort: medium
+- allowlist: allowlists/g02-launcher-screens.txt
+- evidence: evidence/g02-launcher-screens.txt (stale exit 0)
+- notes: Launcher UI: the launcher suite is large; run only the relevant `--only <suite>` patterns (`npm run launcher:test -- --only <pattern>` through capped-run --mb 4096). S7727 at HomeScreen.tsx:586.
+- findings:
+  - S7 src/host/launcher/HomeScreen.tsx:173 typescript:S7503 MINOR CODE_SMELL: Async arrow function 'savedUnknown' has no 'await' expression.
+  - S14 src/host/launcher/LauncherRoot.tsx:1547 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S25 src/host/launcher/HistoryScreen.tsx:380 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S44 src/host/launcher/HistoryScreen.tsx:103 typescript:S6551 MINOR CODE_SMELL: 'e' will use Object's default stringification format ('[object Object]') when stringified.
+  - S45 src/host/launcher/HistoryScreen.tsx:377 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S46 src/host/launcher/HistoryScreen.tsx:472 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S49 src/host/launcher/LauncherRoot.tsx:1352 typescript:S6551 MINOR CODE_SMELL: 'e' will use Object's default stringification format ('[object Object]') when stringified.
+  - S52 src/host/launcher/LauncherRoot.tsx:3233 typescript:S7750 MINOR CODE_SMELL: Prefer `.findLast(…)` over `.filter(…).at(-1)`.
+  - S92 src/host/launcher/HomeScreen.tsx:453 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S93 src/host/launcher/HomeScreen.tsx:586 typescript:S7727 MAJOR BUG: Do not pass function `renderCell` directly to `.map(…)`.
+
+## g03-server: server: S9383 floating promises + smells
+
+- effort: medium
+- allowlist: allowlists/g03-server.txt
+- evidence: evidence/g03-server.txt (stale exit 0)
+- notes: server:test suites via `--only`. Floating promises in routes: a rejection must reach the route's existing error/terminal-event path (one terminal GenerationEvent per stream invariant).
+- findings:
+  - S134 server/src/admin/migrate-waitlist.ts:216 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S142 server/src/flowbench/report.ts:44 typescript:S7776 MINOR CODE_SMELL: `TINT_KINDS` should be a `Set`, and use `TINT_KINDS.has()` to check existence or non-existence.
+  - S143 server/src/flowbench/report.ts:45 typescript:S7776 MINOR CODE_SMELL: `ICON_KINDS` should be a `Set`, and use `ICON_KINDS.has()` to check existence or non-existence.
+  - S173 server/src/routes/clarify.ts:224 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S174 server/src/routes/generate.ts:295 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S175 server/src/routes/generate.ts:477 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S176 server/src/routes/generate.ts:838 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S301 server/src/policy/policy.ts:292 typescript:S7503 MINOR CODE_SMELL: Async method 'check' has no 'await' expression.
+
+## g04-fixtures: fixtures: S9383 floating promises + smells
+
+- effort: medium
+- allowlist: allowlists/g04-fixtures.txt
+- evidence: evidence/g04-fixtures.txt (stale exit 0)
+- notes: Fixtures obey the bundle contract (one TS file importing only vc-sdk). Run `npm run build` after editing (it compiles fixtures and verifies source maps). Fixtures may feed server prompts (server/src/generation/prompts/inputs.ts): run `npm run server:test -- --only prompts` and `npm run sdk:test` too; if a pinned prompt/hash test needs an update that is a legitimate consequence, server/test/prompts.suite.ts is allowlisted.
+- findings:
+  - S96 fixtures/latency-probe.app.tsx:36 typescript:S7755 MINOR CODE_SMELL: Prefer `.at(…)` over `[….length - index]`.
+  - S127 fixtures/pour-over-timer.app.tsx:19 typescript:S6759 MINOR CODE_SMELL: Mark the props of the component as read-only.
+  - S128 fixtures/pour-over-timer.app.tsx:53 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S129 fixtures/pour-over-timer.app.tsx:59 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S130 fixtures/reading-list.app.tsx:49 typescript:S6551 MINOR CODE_SMELL: 'row.title ?? ''' will use Object's default stringification format ('[object Object]') when stringified.
+  - S131 fixtures/reading-list.app.tsx:49 typescript:S6551 MINOR CODE_SMELL: 'row.author ?? ''' will use Object's default stringification format ('[object Object]') when stringified.
+  - S132 fixtures/reading-list.app.tsx:49 typescript:S6551 MINOR CODE_SMELL: 'row.shelf ?? SHELVES[0]' will use Object's default stringification format ('[object Object]') when stringified.
+  - S312 fixtures/latency-probe.app.tsx:60 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S313 fixtures/pour-over-timer.app.tsx:54 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S314 fixtures/pour-over-timer.app.tsx:60 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S315 fixtures/pour-over-timer.app.tsx:74 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S316 fixtures/pour-over-timer.app.tsx:75 typescript:S9383 MAJOR BUG: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly 
+  - S318 fixtures/latency-probe.app.tsx:13 typescript:S1874 MINOR CODE_SMELL: 'Heading' is deprecated.
+  - S319 fixtures/latency-probe.app.tsx:50 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S320 fixtures/latency-probe.app.tsx:81 typescript:S1874 MINOR CODE_SMELL: The signature '({ size, color: colorToken, children }: HeadingProps): any' of 'Heading' is deprecated.
+  - S321 fixtures/latency-probe.app.tsx:81 typescript:S1874 MINOR CODE_SMELL: 'Heading' is deprecated.
+
+## g05-host-ui: host ui: S905 TravelLayer bugs + optional-chain/for-of smells
+
+- effort: high
+- allowlist: allowlists/g05-host-ui.txt
+- evidence: evidence/g05-host-ui.txt (stale exit 0)
+- notes: S905 at TravelLayer.tsx:282/:286 are gate bugs. Find the intended effect (a missing call?) before deleting anything; behavioral test in the launcher/ui suite if the effect is observable.
+- findings:
+  - S26 src/host/ui/SheetAnchor.tsx:66 typescript:S7747 MINOR CODE_SMELL: `for…of` can iterate over iterable, it's unnecessary to convert to an array.
+  - S27 src/host/launcher/MakingSheet.tsx:102 typescript:S6582 MINOR CODE_SMELL: Prefer using an optional chain expression instead, as it's more concise and easier to read.
+  - S28 src/host/ui/TravelLayer.tsx:140 typescript:S7747 MINOR CODE_SMELL: `for…of` can iterate over iterable, it's unnecessary to convert to an array.
+  - S29 src/host/ui/TravelLayer.tsx:282 typescript:S905 MAJOR BUG: Expected an assignment or function call and instead saw an expression.
+  - S30 src/host/ui/TravelLayer.tsx:286 typescript:S905 MAJOR BUG: Expected an assignment or function call and instead saw an expression.
+  - S31 src/host/ui/TravelLayer.tsx:312 typescript:S6582 MINOR CODE_SMELL: Prefer using an optional chain expression instead, as it's more concise and easier to read.
+  - S34 src/host/ui/tokens-pure.ts:205 typescript:S2301 MAJOR CODE_SMELL: Provide multiple methods instead of using "reduceMotion" to determine which action to take.
+  - S47 src/host/launcher/KeyboardShell.tsx:141 typescript:S7747 MINOR CODE_SMELL: `for…of` can iterate over iterable, it's unnecessary to convert to an array.
+  - S50 src/host/launcher/webview-pool.ts:121 typescript:S6582 MINOR CODE_SMELL: Prefer using an optional chain expression instead, as it's more concise and easier to read.
+  - S51 src/host/launcher/webview-pool.ts:140 typescript:S6582 MINOR CODE_SMELL: Prefer using an optional chain expression instead, as it's more concise and easier to read.
+  - S53 src/host/ui/OverlayModal.tsx:97 typescript:S7747 MINOR CODE_SMELL: `for…of` can iterate over iterable, it's unnecessary to convert to an array.
+  - S95 src/host/launcher/home-live.ts:79 typescript:S7747 MINOR CODE_SMELL: `for…of` can iterate over iterable, it's unnecessary to convert to an array.
+  - S138 src/host/ui/tokens.ts:39 typescript:S6551 MINOR CODE_SMELL: 'e' will use Object's default stringification format ('[object Object]') when stringified.
+
+## g06-scripts-ts: scripts TS/JS: S6959 reduce bug + smells
+
+- effort: medium
+- allowlist: allowlists/g06-scripts-ts.txt
+- evidence: evidence/g06-scripts-ts.txt (stale exit 0)
+- notes: S6959 at scripts/lib/design-tokens.ts:521 is a gate bug. scripts/removal-ratchet.mjs is in gate.sh CONFIG_SET: allowed here (protected-file system disabled), but keep the edit minimal and run the ratchet's own test if one exists (scripts/test/). Run `npm run build` if design tokens feed generated output.
+- findings:
+  - S13 scripts/lib/only-filter.mjs:149 javascript:S4043 MAJOR CODE_SMELL: Move this array "reverse" operation to a separate statement or replace it with "toReversed".
+  - S35 scripts/release/lib/android-project.ts:352 typescript:S7780 MINOR CODE_SMELL: `String.raw` should be used to avoid escaping `\`.
+  - S36 scripts/release/lib/android-project.ts:305 typescript:S7776 MINOR CODE_SMELL: `decorNames` should be a `Set`, and use `decorNames.has()` to check existence or non-existence.
+  - S37 scripts/release/lib/android-project.ts:307 typescript:S6557 MAJOR CODE_SMELL: Use the 'String#endsWith' method instead.
+  - S38 scripts/release/lib/android-project.ts:231 typescript:S7780 MINOR CODE_SMELL: `String.raw` should be used to avoid escaping `\`.
+  - S48 scripts/release/lib/android-project.ts:65 typescript:S7776 MINOR CODE_SMELL: `configChanges` should be a `Set`, and use `configChanges.has()` to check existence or non-existence.
+  - S90 scripts/removal-ratchet.mjs:124 javascript:S6557 MAJOR CODE_SMELL: Use the 'String#endsWith' method instead.
+  - S141 checks/passes/manifest-extraction.ts:151 typescript:S6653 MINOR CODE_SMELL: Use 'Object.hasOwn()' instead of 'Object.prototype.hasOwnProperty.call()'.
+  - S163 scripts/lib/design-tokens.ts:293 typescript:S7781 MINOR CODE_SMELL: Use `replaceAll()` with a string literal instead of this global regex.
+  - S164 scripts/lib/design-tokens.ts:293 typescript:S7781 MINOR CODE_SMELL: Use `replaceAll()` with a string literal instead of this global regex.
+  - S165 scripts/lib/design-tokens.ts:293 typescript:S7780 MINOR CODE_SMELL: `String.raw` should be used to avoid escaping `\`.
+  - S166 scripts/lib/design-tokens.ts:521 typescript:S6959 MAJOR BUG: Add an initial value to this "reduce()" call.
+  - S167 scripts/lib/design-tokens.ts:585 typescript:S7780 MINOR CODE_SMELL: `String.raw` should be used to avoid escaping `\`.
+  - S300 scripts/release/lib/assets.ts:382 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+
+## g07-mockup: design mockup: S3923 bug + per-issue judgement
+
+- effort: medium
+- allowlist: allowlists/g07-mockup.txt
+- evidence: evidence/g07-mockup.txt (stale exit 0)
+- notes: Design reference artifact. Fix S3923 (logic bug), S2681 (braces; check intent), S1481/S1854 (unused/dead), S1874, S7761, S1788, S7781, S7776, S4666 (duplicate CSS selector: merge without changing the cascade result), S9423 (!important: only if removable without a visual change, else Accept). Pure style churn S4624/S3358/S3776: default Accept proposal ("design reference mockup; restructuring changes the reference without behavior value") unless a fix is trivial and obviously identical. Do not change what the mockup renders.
+- findings:
+  - S21 docs/design/mockups/index.html:1747 javascript:S3776 CRITICAL CODE_SMELL: Refactor this function to reduce its Cognitive Complexity from 16 to the 15 allowed.
+  - S179 docs/design/mockups/index.html:1463 javascript:S1481 MINOR CODE_SMELL: Remove the declaration of the unused 'g' variable.
+  - S180 docs/design/mockups/index.html:1463 javascript:S1854 MAJOR CODE_SMELL: The value assigned to "g" is never read. Use it or remove this assignment.
+  - S181 docs/design/mockups/index.html:1873 javascript:S3776 CRITICAL CODE_SMELL: Refactor this function to reduce its Cognitive Complexity from 17 to the 15 allowed.
+  - S182 docs/design/mockups/index.html:1885 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S183 docs/design/mockups/index.html:109 css:S1874 MINOR CODE_SMELL: Deprecated keyword "break-word" for property "word-break"
+  - S184 docs/design/mockups/index.html:135 css:S9423 MAJOR CODE_SMELL: Remove this "!important" and resolve the specificity conflict instead.
+  - S185 docs/design/mockups/index.html:152 css:S4666 MAJOR CODE_SMELL: Duplicate selector ".phone[data-platform="android"]", first used at line 149
+  - S186 docs/design/mockups/index.html:228 css:S4666 MAJOR CODE_SMELL: Duplicate selector ".w-actions", first used at line 226
+  - S187 docs/design/mockups/index.html:253 css:S4666 MAJOR CODE_SMELL: Duplicate selector ".w-switch.on::after", first used at line 252
+  - S188 docs/design/mockups/index.html:265 css:S4666 MAJOR CODE_SMELL: Duplicate selector ".w-chip.decide.sel", first used at line 264
+  - S189 docs/design/mockups/index.html:413 css:S4666 MAJOR CODE_SMELL: Duplicate selector ".s-switch.on::after", first used at line 407
+  - S190 docs/design/mockups/index.html:788 javascript:S7781 MINOR CODE_SMELL: Use `replaceAll()` with a string literal instead of this global regex.
+  - S191 docs/design/mockups/index.html:788 javascript:S7781 MINOR CODE_SMELL: Use `replaceAll()` with a string literal instead of this global regex.
+  - S192 docs/design/mockups/index.html:788 javascript:S7781 MINOR CODE_SMELL: Use `replaceAll()` with a string literal instead of this global regex.
+  - S193 docs/design/mockups/index.html:820 javascript:S7776 MINOR CODE_SMELL: `EMBER_SIZES` should be a `Set`, and use `EMBER_SIZES.has()` to check existence or non-existence.
+  - S194 docs/design/mockups/index.html:851 javascript:S3776 CRITICAL CODE_SMELL: Refactor this function to reduce its Cognitive Complexity from 19 to the 15 allowed.
+  - S195 docs/design/mockups/index.html:854 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S196 docs/design/mockups/index.html:897 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S197 docs/design/mockups/index.html:897 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S198 docs/design/mockups/index.html:898 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S199 docs/design/mockups/index.html:910 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S200 docs/design/mockups/index.html:911 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S201 docs/design/mockups/index.html:911 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S202 docs/design/mockups/index.html:911 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S203 docs/design/mockups/index.html:922 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S204 docs/design/mockups/index.html:922 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S205 docs/design/mockups/index.html:923 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S206 docs/design/mockups/index.html:923 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S207 docs/design/mockups/index.html:935 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S208 docs/design/mockups/index.html:943 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S209 docs/design/mockups/index.html:944 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S210 docs/design/mockups/index.html:949 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S211 docs/design/mockups/index.html:951 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S212 docs/design/mockups/index.html:951 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S213 docs/design/mockups/index.html:989 javascript:S1788 MAJOR CODE_SMELL: Move this default parameter last, so callers can omit it instead of passing "undefined".
+  - S214 docs/design/mockups/index.html:995 javascript:S2681 MAJOR CODE_SMELL: This statement will not be executed conditionally; only the first statement will be. The rest will execute unconditional
+  - S215 docs/design/mockups/index.html:1023 javascript:S2681 MAJOR CODE_SMELL: This statement will not be executed conditionally; only the first statement will be. The rest will execute unconditional
+  - S216 docs/design/mockups/index.html:1086 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S217 docs/design/mockups/index.html:1121 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S218 docs/design/mockups/index.html:1122 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S219 docs/design/mockups/index.html:1122 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S220 docs/design/mockups/index.html:1122 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S221 docs/design/mockups/index.html:1131 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S222 docs/design/mockups/index.html:1156 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S223 docs/design/mockups/index.html:1159 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S224 docs/design/mockups/index.html:1159 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S225 docs/design/mockups/index.html:1159 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S226 docs/design/mockups/index.html:1168 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S227 docs/design/mockups/index.html:1175 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S228 docs/design/mockups/index.html:1179 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S229 docs/design/mockups/index.html:1190 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S230 docs/design/mockups/index.html:1190 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S231 docs/design/mockups/index.html:1190 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S232 docs/design/mockups/index.html:1201 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S233 docs/design/mockups/index.html:1259 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S234 docs/design/mockups/index.html:1332 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S235 docs/design/mockups/index.html:1348 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S236 docs/design/mockups/index.html:1367 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S237 docs/design/mockups/index.html:1369 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S238 docs/design/mockups/index.html:1395 javascript:S1481 MINOR CODE_SMELL: Remove the declaration of the unused 'g' variable.
+  - S239 docs/design/mockups/index.html:1395 javascript:S1854 MAJOR CODE_SMELL: The value assigned to "g" is never read. Use it or remove this assignment.
+  - S240 docs/design/mockups/index.html:1418 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S241 docs/design/mockups/index.html:1418 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S242 docs/design/mockups/index.html:1423 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S243 docs/design/mockups/index.html:1429 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S244 docs/design/mockups/index.html:1430 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S245 docs/design/mockups/index.html:1456 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S246 docs/design/mockups/index.html:1503 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S247 docs/design/mockups/index.html:1516 javascript:S3923 MAJOR BUG: This conditional operation returns the same value whether the condition is "true" or "false".
+  - S248 docs/design/mockups/index.html:1519 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S249 docs/design/mockups/index.html:1540 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S250 docs/design/mockups/index.html:1541 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S251 docs/design/mockups/index.html:1549 javascript:S1481 MINOR CODE_SMELL: Remove the declaration of the unused 'c' variable.
+  - S252 docs/design/mockups/index.html:1549 javascript:S1854 MAJOR CODE_SMELL: The value assigned to "c" is never read. Use it or remove this assignment.
+  - S253 docs/design/mockups/index.html:1564 javascript:S3358 MAJOR CODE_SMELL: Extract this nested ternary operation into an independent statement.
+  - S254 docs/design/mockups/index.html:1572 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S255 docs/design/mockups/index.html:1587 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S256 docs/design/mockups/index.html:1593 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S257 docs/design/mockups/index.html:1593 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S258 docs/design/mockups/index.html:1593 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S259 docs/design/mockups/index.html:1609 javascript:S7761 MAJOR CODE_SMELL: Prefer `.dataset` over `getAttribute(…)`.
+  - S260 docs/design/mockups/index.html:1621 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S261 docs/design/mockups/index.html:1621 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+  - S262 docs/design/mockups/index.html:1661 javascript:S2681 MAJOR CODE_SMELL: This statement will not be executed conditionally; only the first statement will be. The rest will execute unconditional
+  - S263 docs/design/mockups/index.html:1673 javascript:S2681 MAJOR CODE_SMELL: This statement will not be executed conditionally; only the first statement will be. The rest will execute unconditional
+  - S264 docs/design/mockups/index.html:1673 javascript:S2681 MAJOR CODE_SMELL: This statement will not be executed conditionally; only the first statement will be. The rest will execute unconditional
+  - S265 docs/design/mockups/index.html:1675 javascript:S2681 MAJOR CODE_SMELL: This statement will not be executed conditionally; only the first statement will be. The rest will execute unconditional
+  - S266 docs/design/mockups/index.html:1779 javascript:S2681 MAJOR CODE_SMELL: This statement will not be executed conditionally; only the first statement will be. The rest will execute unconditional
+  - S267 docs/design/mockups/index.html:1791 javascript:S2681 MAJOR CODE_SMELL: This statement will not be executed conditionally; only the first statement will be. The rest will execute unconditional
+  - S268 docs/design/mockups/index.html:1809 javascript:S2681 MAJOR CODE_SMELL: This statement will not be executed conditionally; only the first statement will be. The rest will execute unconditional
+  - S269 docs/design/mockups/index.html:1811 javascript:S2681 MAJOR CODE_SMELL: This statement will not be executed conditionally; only the first statement will be. The rest will execute unconditional
+  - S270 docs/design/mockups/index.html:1827 javascript:S2681 MAJOR CODE_SMELL: This statement will not be executed conditionally; only the first statement will be. The rest will execute unconditional
+  - S271 docs/design/mockups/index.html:1828 javascript:S2681 MAJOR CODE_SMELL: This statement will not be executed conditionally; only the first statement will be. The rest will execute unconditional
+  - S272 docs/design/mockups/index.html:1830 javascript:S2681 MAJOR CODE_SMELL: This statement will not be executed conditionally; only the first statement will be. The rest will execute unconditional
+  - S273 docs/design/mockups/index.html:1837 javascript:S2681 MAJOR CODE_SMELL: This statement will not be executed conditionally; only the first statement will be. The rest will execute unconditional
+  - S274 docs/design/mockups/index.html:1920 javascript:S4624 MAJOR CODE_SMELL: Refactor this code to not use nested template literals.
+
+## g08-saved-data-suite: saved-data.suite.ts S2699 assertion-free tests
+
+- effort: high
+- allowlist: allowlists/g08-saved-data-suite.txt
+- evidence: evidence/g08-saved-data-suite.txt (stale exit 0)
+- notes: S2699 BLOCKER x8. Read CLAUDE.md "Test assertions" first. `npm run storage:test -- --only saved-data`. Show a deliberately false condition fails (then revert it).
+- findings:
+  - S1 src/host/storage-engine/test/saved-data.suite.ts:139 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S3 src/host/storage-engine/test/saved-data.suite.ts:89 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S4 src/host/storage-engine/test/saved-data.suite.ts:120 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S5 src/host/storage-engine/test/saved-data.suite.ts:128 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S6 src/host/storage-engine/test/saved-data.suite.ts:166 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S10 src/host/storage-engine/test/saved-data.suite.ts:74 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S11 src/host/storage-engine/test/saved-data.suite.ts:80 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S12 src/host/storage-engine/test/saved-data.suite.ts:104 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+
+## g09-copy-suite: copy.suite.ts S2699 assertion-free tests
+
+- effort: high
+- allowlist: allowlists/g09-copy-suite.txt
+- evidence: evidence/g09-copy-suite.txt (stale exit 0)
+- notes: S2699 BLOCKER x15. Read CLAUDE.md "Test assertions" first. `npm run storage:test -- --only copy`. Show a deliberately false condition fails (then revert it). copy.suite.ts has a timing-sensitive live-write test (F177, fixed): do not change its timing logic.
+- findings:
+  - S91 src/host/storage-engine/test/copy.suite.ts:232 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S111 src/host/storage-engine/test/copy.suite.ts:184 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S112 src/host/storage-engine/test/copy.suite.ts:212 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S113 src/host/storage-engine/test/copy.suite.ts:322 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S114 src/host/storage-engine/test/copy.suite.ts:340 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S115 src/host/storage-engine/test/copy.suite.ts:373 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S116 src/host/storage-engine/test/copy.suite.ts:390 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S117 src/host/storage-engine/test/copy.suite.ts:399 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S118 src/host/storage-engine/test/copy.suite.ts:405 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S119 src/host/storage-engine/test/copy.suite.ts:427 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S120 src/host/storage-engine/test/copy.suite.ts:446 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S121 src/host/storage-engine/test/copy.suite.ts:461 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S122 src/host/storage-engine/test/copy.suite.ts:473 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S123 src/host/storage-engine/test/copy.suite.ts:512 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+  - S124 src/host/storage-engine/test/copy.suite.ts:529 typescript:S2699 BLOCKER CODE_SMELL: Add at least one assertion to this test case.
+
+## g10-storage-engine: storage-engine modules: S6551 stringification + smells
+
+- effort: medium
+- allowlist: allowlists/g10-storage-engine.txt
+- evidence: evidence/g10-storage-engine.txt (stale exit 0)
+- notes: storage:test via `--only`. Device-acceptance files run on device only: keep them compiling (typecheck) and behavior-identical.
+- findings:
+  - S2 src/host/storage-engine/saved-data-device-acceptance.ts:43 typescript:S6551 MINOR CODE_SMELL: 'r.name' will use Object's default stringification format ('[object Object]') when stringified.
+  - S8 src/host/storage-engine/saved-data.ts:23 typescript:S7781 MINOR CODE_SMELL: Use `replaceAll()` with a string literal instead of this global regex.
+  - S9 src/host/storage-engine/saved-data.ts:28 typescript:S6551 MINOR CODE_SMELL: 'r.name' will use Object's default stringification format ('[object Object]') when stringified.
+  - S102 src/host/storage-engine/copy-device-acceptance.ts:89 typescript:S6551 MINOR CODE_SMELL: 'scalar(db, 'PRAGMA quick_check')' will use Object's default stringification format ('[object Object]') when stringified
+  - S103 src/host/storage-engine/copy-device-acceptance.ts:101 typescript:S6551 MINOR CODE_SMELL: 'err' will use Object's default stringification format ('[object Object]') when stringified.
+  - S104 src/host/storage-engine/copy-device-acceptance.ts:158 typescript:S6551 MINOR CODE_SMELL: 'scalar(db, 'SELECT sqlite_version()')' will use Object's default stringification format ('[object Object]') when string
+  - S105 src/host/storage-engine/copy-device-acceptance.ts:158 typescript:S6551 MINOR CODE_SMELL: 'scalar(db, 'PRAGMA journal_mode')' will use Object's default stringification format ('[object Object]') when stringifie
+  - S106 src/host/storage-engine/copy-device-acceptance.ts:207 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S107 src/host/storage-engine/copy-node.ts:25 typescript:S7503 MINOR CODE_SMELL: Async method 'runAsync' has no 'await' expression.
+  - S108 src/host/storage-engine/copy.ts:67 typescript:S6551 MINOR CODE_SMELL: 'err' will use Object's default stringification format ('[object Object]') when stringified.
+  - S109 src/host/storage-engine/copy.ts:72 typescript:S6551 MINOR CODE_SMELL: 'err' will use Object's default stringification format ('[object Object]') when stringified.
+  - S110 src/host/storage-engine/copy.ts:118 typescript:S6551 MINOR CODE_SMELL: 'check' will use Object's default stringification format ('[object Object]') when stringified.
+
+## g11-launcher-modules: launcher modules: S6551/S9382/smells
+
+- effort: medium
+- allowlist: allowlists/g11-launcher-modules.txt
+- evidence: evidence/g11-launcher-modules.txt (stale exit 0)
+- notes: S9382 in store-access/seed/pending-purge/data-copy-journal: version-store and SQLite writes are usually deliberately sequential; justify each Accept proposal concretely.
+- findings:
+  - S39 src/host/launcher/store-access.ts:551 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S40 src/host/launcher/version-switches.ts:106 typescript:S6551 MINOR CODE_SMELL: 'e' will use Object's default stringification format ('[object Object]') when stringified.
+  - S41 src/host/launcher/generation-request.ts:62 typescript:S6551 MINOR CODE_SMELL: 'e' will use Object's default stringification format ('[object Object]') when stringified.
+  - S42 src/host/launcher/store-access.ts:547 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S43 src/host/launcher/store-access.ts:548 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S94 src/host/launcher/customize-tile.ts:9 typescript:S7781 MINOR CODE_SMELL: Use `replaceAll()` with a string literal instead of this global regex.
+  - S97 src/host/launcher/data-copy-journal.ts:35 typescript:S6582 MINOR CODE_SMELL: Prefer using an optional chain expression instead, as it's more concise and easier to read.
+  - S98 src/host/launcher/data-copy-journal.ts:101 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S99 src/host/launcher/store-access.ts:117 typescript:S6551 MINOR CODE_SMELL: 'e' will use Object's default stringification format ('[object Object]') when stringified.
+  - S100 src/host/launcher/store-access.ts:787 typescript:S7718 MINOR CODE_SMELL: The catch parameter `cleanup` should be named `error_`.
+  - S144 src/host/launcher/pending-purge.ts:210 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S145 src/host/launcher/seed.ts:54 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S302 src/host/launcher/refusal-window.ts:17 typescript:S6754 MINOR CODE_SMELL: useState call is not destructured into value + setter pair
+
+## g12-version-store: version-store engine.ts: S9382 + S7503
+
+- effort: medium
+- allowlist: allowlists/g12-version-store.txt
+- evidence: evidence/g12-version-store.txt (stale exit 0)
+- notes: engine.ts S9382 x11: isomorphic-git object writes/reads are often order-dependent (refs after objects, pack index). Accept proposals need the concrete ordering reason per site; convert only clearly independent reads. `npm run vstore:test`.
+- findings:
+  - S303 src/host/version-store/engine.ts:335 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S304 src/host/version-store/engine.ts:339 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S317 src/host/version-store/engine.ts:562 typescript:S7503 MINOR CODE_SMELL: Async method 'remove' has no 'await' expression.
+  - S322 src/host/version-store/engine.ts:171 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S323 src/host/version-store/engine.ts:171 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S324 src/host/version-store/engine.ts:209 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S325 src/host/version-store/engine.ts:250 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S326 src/host/version-store/engine.ts:251 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S327 src/host/version-store/engine.ts:257 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S328 src/host/version-store/engine.ts:257 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S329 src/host/version-store/engine.ts:258 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S330 src/host/version-store/engine.ts:468 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+
+## g13-synthrun: synthrun: S9382 + smells
+
+- effort: medium
+- allowlist: allowlists/g13-synthrun.txt
+- evidence: evidence/g13-synthrun.txt (stale exit 0)
+- notes: synthrun sweep is a deliberately sequential device/browser driver in many places (one session at a time); justify each S9382 Accept. Run synthrun tests via its runner `--only` if present.
+- findings:
+  - S22 synthrun/sweep.ts:770 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S23 synthrun/sweep.ts:770 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S24 synthrun/sweep.ts:853 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S54 synthrun/sweep.ts:1046 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S83 synthrun/sweep.ts:322 typescript:S6582 MINOR CODE_SMELL: Prefer using an optional chain expression instead, as it's more concise and easier to read.
+  - S84 synthrun/sweep.ts:755 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S85 synthrun/sweep.ts:755 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S86 synthrun/sweep.ts:917 typescript:S7780 MINOR CODE_SMELL: `String.raw` should be used to avoid escaping `\`.
+  - S87 synthrun/sweep.ts:399 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S88 synthrun/sweep.ts:408 typescript:S7503 MINOR CODE_SMELL: Async function 'firstActionableIndex' has no 'await' expression.
+  - S89 synthrun/sweep.ts:488 typescript:S4138 MINOR CODE_SMELL: Use a "for...of" loop, since the index is only used to read array elements.
+  - S101 synthrun/sweep.ts:998 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S125 synthrun/sweep.ts:206 typescript:S4138 MINOR CODE_SMELL: Use a "for...of" loop, since the index is only used to read array elements.
+  - S126 synthrun/sweep.ts:228 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S170 synthrun/session.ts:289 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S171 synthrun/session.ts:297 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S305 synthrun/capability.ts:100 typescript:S7503 MINOR CODE_SMELL: Async method 'dispatch' has no 'await' expression.
+  - S306 synthrun/sweep.ts:141 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S307 synthrun/sweep.ts:164 typescript:S7503 MINOR CODE_SMELL: Async function 'getScreenInfo' has no 'await' expression.
+  - S308 synthrun/sweep.ts:259 typescript:S7503 MINOR CODE_SMELL: Async function 'enumerateInteractiveElements' has no 'await' expression.
+  - S309 synthrun/sweep.ts:912 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+  - S310 synthrun/sweep.ts:1045 typescript:S9382 MINOR CODE_SMELL: Unexpected `await` inside a loop.
+
+## g14-deploy: deploy shell + site html
+
+- effort: medium
+- allowlist: allowlists/g14-deploy.txt
+- evidence: evidence/g14-deploy.txt (stale exit 0)
+- notes: Check each script's shebang: S7688 `[[` applies to bash only; POSIX sh keeps `[` (Accept proposal). Run `bash -n` on every touched script and any scripts/test/*.test.sh that covers deploy/lib.sh. HTML: S9423/S4666 only if no visual change (else Accept).
+- findings:
+  - S133 deploy/site/fr/privacy.html:33 css:S4666 MAJOR CODE_SMELL: Duplicate selector ":lang(ko)", first used at line 32
+  - S146 deploy/cloudrun/smoke.sh:78 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S147 deploy/lib.sh:216 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S148 deploy/lib.sh:229 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S149 deploy/lib.sh:322 shell:S7684 MAJOR CODE_SMELL: Local variable 'uptime_DISPLAY_NAME' should use lower_case naming convention.
+  - S150 deploy/lib.sh:322 shell:S7684 MAJOR CODE_SMELL: Local variable 'uptime_CHECK_PATH' should use lower_case naming convention.
+  - S151 deploy/lib.sh:322 shell:S7684 MAJOR CODE_SMELL: Local variable 'uptime_PERIOD_MINUTES' should use lower_case naming convention.
+  - S152 deploy/lib.sh:322 shell:S7684 MAJOR CODE_SMELL: Local variable 'uptime_TIMEOUT_SECONDS' should use lower_case naming convention.
+  - S153 deploy/lib.sh:322 shell:S7684 MAJOR CODE_SMELL: Local variable 'uptime_REGIONS' should use lower_case naming convention.
+  - S154 deploy/lib.sh:322 shell:S7684 MAJOR CODE_SMELL: Local variable 'uptime_MATCHER_CONTENT' should use lower_case naming convention.
+  - S155 deploy/lib.sh:460 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S156 deploy/lib.sh:505 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S157 deploy/lib.sh:561 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S158 deploy/lib.sh:561 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S159 deploy/lib.sh:600 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S160 deploy/lib.sh:600 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S161 deploy/lib.sh:608 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S162 deploy/lib.sh:608 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S177 deploy/loadtest/firestore-admission.sh:51 shell:S131 CRITICAL CODE_SMELL: Add a default case (*) to handle unexpected values.
+  - S297 deploy/site/beta.html:206 css:S9423 MAJOR CODE_SMELL: Remove this "!important" and resolve the specificity conflict instead.
+  - S298 deploy/site/beta.html:206 css:S9423 MAJOR CODE_SMELL: Remove this "!important" and resolve the specificity conflict instead.
+  - S299 deploy/site/beta.html:206 css:S9423 MAJOR CODE_SMELL: Remove this "!important" and resolve the specificity conflict instead.
+
+## g15-ios: iOS: ios-ui-driver shell/swift/ruby + AppDelegate
+
+- effort: medium
+- allowlist: allowlists/g15-ios.txt
+- evidence: evidence/g15-ios.txt (stale exit 0)
+- notes: driver.sh is bash; `bash -n` it. Swift (main.swift, DriverUITests.swift, AppDelegate.swift) cannot be built in a builder run cheaply: keep edits trivially safe (rename/`_` params/extract closure) and say it was not compiled; if a change is risky without a compile, Accept-propose it. Ruby gen.rb: `ruby -c`.
+- findings:
+  - S32 ios/Whim/AppDelegate.swift:120 swift:S3087 MAJOR CODE_SMELL: Refactor this code to not nest more than 2 closure expressions.
+  - S33 ios/Whim/AppDelegate.swift:114 swift:S3087 MAJOR CODE_SMELL: Refactor this code to not nest more than 2 closure expressions.
+  - S55 scripts/ios-ui-driver/Driver/main.swift:6 swift:S1172 MAJOR CODE_SMELL: Remove the unused function parameter "o" or name it "_".
+  - S56 scripts/ios-ui-driver/Driver/main.swift:6 swift:S1172 MAJOR CODE_SMELL: Remove the unused function parameter "a" or name it "_".
+  - S57 scripts/ios-ui-driver/DriverUITests/DriverUITests.swift:5 swift:S115 MINOR CODE_SMELL: Rename this constant "BUNDLE" to match the regular expression ^[a-z][a-zA-Z0-9]*$.
+  - S58 scripts/ios-ui-driver/DriverUITests/DriverUITests.swift:53 swift:S3358 MAJOR CODE_SMELL: Extract the nested ternary operation into an independent statement.
+  - S59 scripts/ios-ui-driver/driver.sh:33 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S60 scripts/ios-ui-driver/driver.sh:40 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S61 scripts/ios-ui-driver/driver.sh:50 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S62 scripts/ios-ui-driver/driver.sh:56 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S63 scripts/ios-ui-driver/driver.sh:91 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S64 scripts/ios-ui-driver/driver.sh:98 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S65 scripts/ios-ui-driver/driver.sh:98 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S66 scripts/ios-ui-driver/driver.sh:99 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S67 scripts/ios-ui-driver/driver.sh:100 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S68 scripts/ios-ui-driver/driver.sh:100 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S69 scripts/ios-ui-driver/driver.sh:104 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S70 scripts/ios-ui-driver/driver.sh:109 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S71 scripts/ios-ui-driver/driver.sh:115 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S72 scripts/ios-ui-driver/driver.sh:126 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S73 scripts/ios-ui-driver/driver.sh:132 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S74 scripts/ios-ui-driver/driver.sh:133 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S75 scripts/ios-ui-driver/driver.sh:136 shell:S131 CRITICAL CODE_SMELL: Add a default case (*) to handle unexpected values.
+  - S76 scripts/ios-ui-driver/driver.sh:159 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S77 scripts/ios-ui-driver/driver.sh:160 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S78 scripts/ios-ui-driver/driver.sh:160 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S79 scripts/ios-ui-driver/driver.sh:164 shell:S7688 MAJOR CODE_SMELL: Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.
+  - S80 scripts/ios-ui-driver/gen.rb:23 rubydre:S7840 MINOR CODE_SMELL: Use `any?` instead of `each`.
+  - S81 scripts/ios-ui-driver/gen.rb:34 rubydre:S7816 MAJOR CODE_SMELL: Move this 'require' statement to the top of the file before any class or module definitions.
+  - S82 scripts/ios-ui-driver/gen.rb:40 rubydre:S7816 MAJOR CODE_SMELL: Move this 'require' statement to the top of the file before any class or module definitions.
+
+## g16-sdk-design: SDK + design tokens: smells
+
+- effort: medium
+- allowlist: allowlists/g16-sdk-design.txt
+- evidence: evidence/g16-sdk-design.txt (stale exit 0)
+- notes: vc-sdk is a public surface for generated mini-apps: never change exported names/signatures/prop shapes (S2301/S6767/S1874 on an exported API → Accept proposal with reason). Run `npm run build` and `npm run sdk:test`.
+- findings:
+  - S135 src/sdk/motion.ts:404 typescript:S7755 MINOR CODE_SMELL: Prefer `.at(…)` over `[….length - index]`.
+  - S136 src/sdk/navigation.tsx:221 typescript:S7755 MINOR CODE_SMELL: Prefer `.at(…)` over `[….length - index]`.
+  - S137 src/sdk/surfaces.tsx:400 typescript:S2301 MAJOR CODE_SMELL: Provide multiple methods instead of using "first" to determine which action to take.
+  - S139 src/sdk/index.tsx:529 typescript:S1874 MINOR CODE_SMELL: 'HeadingProps' is deprecated.
+  - S140 src/sdk/surfaces.tsx:340 typescript:S6767 MINOR CODE_SMELL: 'children' PropType is defined but prop is never used
+  - S168 src/design/tints.ts:64 typescript:S6653 MINOR CODE_SMELL: Use 'Object.hasOwn()' instead of 'Object.prototype.hasOwnProperty.call()'.
+  - S169 src/design/tints.ts:83 typescript:S7773 MINOR CODE_SMELL: Prefer `Number.parseInt` over `parseInt`.
+  - S172 src/design/icons/names.ts:251 typescript:S6653 MINOR CODE_SMELL: Use 'Object.hasOwn()' instead of 'Object.prototype.hasOwnProperty.call()'.
+  - S311 src/sdk/surfaces.tsx:54 typescript:S6767 MINOR CODE_SMELL: 'radius' PropType is defined but prop is never used
+  - S331 src/sdk/index.tsx:565 typescript:S6767 MINOR CODE_SMELL: 'radius' PropType is defined but prop is never used
+
+## g17-palette-py: palette-check.py naming + smells
+
+- effort: medium
+- allowlist: allowlists/g17-palette-py.txt
+- evidence: evidence/g17-palette-py.txt (stale exit 0)
+- notes: Standalone design script. Rename to snake_case consistently (all uses), keep output byte-identical: run it before and after if it runs offline (`python3 -I docs/design/system-v1/palette-check.py`) and diff the output.
+- findings:
+  - S275 docs/design/system-v1/palette-check.py:23 python:S117 MINOR CODE_SMELL: Rename this parameter "C" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S276 docs/design/system-v1/palette-check.py:23 python:S117 MINOR CODE_SMELL: Rename this parameter "H" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S277 docs/design/system-v1/palette-check.py:23 python:S117 MINOR CODE_SMELL: Rename this parameter "L" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S278 docs/design/system-v1/palette-check.py:42 python:S117 MINOR CODE_SMELL: Rename this local variable "Cb" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S279 docs/design/system-v1/palette-check.py:45 python:S117 MINOR CODE_SMELL: Rename this local variable "C1p" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S280 docs/design/system-v1/palette-check.py:45 python:S117 MINOR CODE_SMELL: Rename this local variable "C2p" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S281 docs/design/system-v1/palette-check.py:47 python:S117 MINOR CODE_SMELL: Rename this local variable "dCp" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S282 docs/design/system-v1/palette-check.py:47 python:S117 MINOR CODE_SMELL: Rename this local variable "dLp" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S283 docs/design/system-v1/palette-check.py:53 python:S117 MINOR CODE_SMELL: Rename this local variable "dHp" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S284 docs/design/system-v1/palette-check.py:54 python:S117 MINOR CODE_SMELL: Rename this local variable "Cbp" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S285 docs/design/system-v1/palette-check.py:54 python:S117 MINOR CODE_SMELL: Rename this local variable "Lbp" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S286 docs/design/system-v1/palette-check.py:57 python:S3358 MAJOR CODE_SMELL: Extract this nested conditional expression into an independent statement.
+  - S287 docs/design/system-v1/palette-check.py:60 python:S117 MINOR CODE_SMELL: Rename this local variable "Rc" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S288 docs/design/system-v1/palette-check.py:61 python:S117 MINOR CODE_SMELL: Rename this local variable "Sc" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S289 docs/design/system-v1/palette-check.py:61 python:S117 MINOR CODE_SMELL: Rename this local variable "Sh" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S290 docs/design/system-v1/palette-check.py:61 python:S117 MINOR CODE_SMELL: Rename this local variable "Sl" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S291 docs/design/system-v1/palette-check.py:62 python:S117 MINOR CODE_SMELL: Rename this local variable "Rt" to match the regular expression ^[_a-z][a-z0-9_]*$.
+  - S292 docs/design/system-v1/palette-check.py:72 python:S1542 MAJOR CODE_SMELL: Rename function "dE" to match the regular expression ^[a-z_][a-z0-9_]*$.
+  - S293 docs/design/system-v1/palette-check.py:105 python:S7519 MINOR CODE_SMELL: Replace with dict fromkeys method call
+
+## deferred-hooks: .claude/hooks (Class-2): left for integration orchestrator
+
+- effort: medium
+- not dispatched
+
+- notes: -
+- findings:
+  - S15 .claude/hooks/subagent-deny.sh:44 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S16 .claude/hooks/subagent-deny.sh:44 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S17 .claude/hooks/subagent-deny.sh:46 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S18 .claude/hooks/subagent-deny.sh:55 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S19 .claude/hooks/subagent-deny.sh:62 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
+  - S20 .claude/hooks/subagent-deny.sh:62 shell:S7679 MAJOR CODE_SMELL: Assign this positional parameter to a local variable.
