@@ -9,7 +9,9 @@ OpenRouter client wrapper mounted behind the model-client seam. The stub pipelin
 rewrite remain reachable behind an explicit environment opt-in for LAN UI work. In production the
 service runs as the public server described by `server-deployment`, behind that deployment's TLS
 front proxy, which terminates TLS and never buffers the SSE stream.
+
 ## Requirements
+
 ### Requirement: Server workspace and runtime
 The repo SHALL provide an npm workspace `server/` (package `@whim/server`): a Node 22 HTTP service whose runtime dependencies are exactly `hono`, `@hono/node-server`, `pino`, `@whim/contract` (+`zod` via the contract), and the three packages the generation harness executes at run time: `esbuild` (candidate builds), `playwright` (the synthetic run's browser), and `typescript` (the static checker).
 
@@ -385,3 +387,13 @@ The beta waitlist store (`beta-waitlist`) lives in the same backend and holds on
 - **WHEN** the SQLite data directory is inspected after clarify, rewrite, generate, and report requests carrying distinctive marker text
 - **THEN** it contains only the usage and report databases (with their SQLite sidecar files), the marker text appears only in the report database and only for the report request, and the usage database holds counters and ledger rows only
 
+### Requirement: The generation stream writes a frame as it opens
+The generation server SHALL write a keepalive comment frame to a `POST /v1/generate` response as the stream opens, before the pipeline emits anything, whenever keepalives are enabled, and then every keepalive interval. The opening frame carries no event and no `id:`, so event ids still start at 1. A device therefore receives a first byte at once however long the pipeline's first step takes.
+
+#### Scenario: A slow first step still opens with a byte
+- **WHEN** the pipeline's first event arrives 20 seconds after the stream opens
+- **THEN** the first chunk the client reads is the keepalive comment frame, the first event follows with `id: 1`, and keepalive frames arrive between them at the keepalive interval
+
+#### Scenario: Keepalives disabled
+- **WHEN** the keepalive interval is `0` or unset
+- **THEN** no comment frame is written at open or after

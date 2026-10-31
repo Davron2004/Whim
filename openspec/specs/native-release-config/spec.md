@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change platform-release-readiness. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: One native release file declares identity, version and domain
 The iOS project and the Android build SHALL read the app id, the Apple team id, the marketing version, the development build number and the release domain from one file, `release/whim-release.xcconfig`, under the keys `WHIM_APP_ID`, `WHIM_APPLE_TEAM_ID`, `WHIM_MARKETING_VERSION`, `WHIM_BUILD_NUMBER` and `WHIM_DOMAIN`.
 No tracked text file under `ios/` or `android/` SHALL contain a literal of the app id, the team id or the release domain. `project.pbxproj`, `Info.plist` and `android/app/build.gradle` SHALL NOT contain a literal of the marketing version. The file SHALL hold only `KEY = VALUE` lines, `//` comment lines and blank lines, with no includes and no `$(...)` references, and the release checks SHALL reject any other line, naming its line number. The associated-domain host and the app-link filter host SHALL both be `whim.` followed by `WHIM_DOMAIN`.
@@ -59,12 +61,20 @@ When any of the four is missing, every task that packages the `release` variant 
 - **THEN** the AAB is signed by the upload certificate and its manifest doesn't declare the app debuggable
 
 ### Requirement: An offline build type serves the Android dev loop
-The Android build SHALL provide an `offline` build type that embeds the release JS bundle, signs with the debug key, is debuggable, and allows the dev cleartext hosts. `npm run android:release` SHALL build and install it.
+The Android build SHALL provide an `offline` build type that embeds the release JS bundle, signs with the debug key, is debuggable, and allows the dev cleartext hosts. `npm run android:release` SHALL build it and install it on exactly one device, the one named by `--device <serial>` or by `ANDROID_SERIAL`, and SHALL refuse before building or installing anything when neither is set or the named device is not attached. It SHALL never install on any other attached device or emulator.
 The store upload SHALL never accept an `offline` artifact.
 
 #### Scenario: The emulator reaches a LAN dev server
-- **WHEN** `npm run android:release` installs the app on the emulator and the Settings server address is `http://10.0.2.2:8787`
+- **WHEN** `npm run android:release -- --device emulator-5560` installs the app on that emulator and the Settings server address is `http://10.0.2.2:8787`
 - **THEN** requests to that server succeed without Metro
+
+#### Scenario: No device named
+- **WHEN** `npm run android:release` runs with no `--device` and no `ANDROID_SERIAL`
+- **THEN** it exits non-zero naming both ways to pick a device, and nothing is built or installed
+
+#### Scenario: Other attached devices are left alone
+- **WHEN** two devices are attached and `npm run android:release -- --device <first>` runs
+- **THEN** the app is installed on the first device only, and the second device's installed packages are unchanged
 
 ### Requirement: The iOS app declares its export, device and permission surface
 The iOS app SHALL declare `ITSAppUsesNonExemptEncryption` as false, SHALL target iPhone only (`TARGETED_DEVICE_FAMILY = 1`), SHALL support portrait only, and SHALL carry no usage-description key with an empty string.
@@ -117,3 +127,20 @@ The iOS app SHALL keep App Transport Security's arbitrary loads disabled, with l
 - **WHEN** the user enters `http://api.example.com` or `http://8.8.8.8` as the server address
 - **THEN** the launcher refuses to save it, and no request is sent to it
 
+### Requirement: The Android dev loop script installs on one named device and never opens a packager window
+The `npm run android` script SHALL install the debug build on exactly one device, the one named by `--device <serial>` or by `ANDROID_SERIAL`, and SHALL refuse with exit code 2 before building anything when neither is set or the named device is not attached. It SHALL never open a Metro terminal window and SHALL launch the app by its real application id.
+
+#### Scenario: The dev script targets one device and launches the real app
+- **WHEN** two devices are attached and `npm run android -- --device <first>` runs
+- **THEN** the app is installed on the first device only, launched by its real application id, and no Metro terminal window opens
+
+#### Scenario: The dev script with no device named
+- **WHEN** `npm run android` runs with no `--device` and no `ANDROID_SERIAL`
+- **THEN** it exits with code 2 naming both ways to pick a device and saying to start Metro first, and nothing is built
+
+### Requirement: The release check refuses scripts that bypass the Android wrappers
+The release check SHALL fail on any `package.json` script that runs `react-native run-android` or `run-ios` directly, and on an Android wrapper whose command lacks the no-packager flag or the application id.
+
+#### Scenario: A script that bypasses the wrappers is refused
+- **WHEN** `package.json` has a script such as `react-native run-ios` or a bare `react-native run-android`
+- **THEN** the release check reports a finding naming that script
