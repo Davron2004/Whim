@@ -523,7 +523,7 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     const id = startPendingBuild(store, { text: 'a brew timer with a chime' });
     failPendingBuild(store, id, 'it broke', []);
     const screen = retryBuildScreen(store.get(id)!);
-    h.eq(screen.kind, 'build', 'a retry opens the build step directly');
+    h.eq(screen.kind, 'making', 'a retry opens the making page directly');
     h.eq(screen.text, 'a brew timer with a chime', 'the verbatim prompt is what gets tracked');
     h.eq(screen.rewritten, 'a brew timer with a chime', 'and what generation is asked to build');
     h.eq(screen.questions, [], 'no clarify questions are invented');

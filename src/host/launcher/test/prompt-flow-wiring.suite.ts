@@ -10,7 +10,8 @@ import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
 import {
   acknowledgeOwnServer,
-  clearServerUrl,
+  chooseServer,
+  serverChoice,
   effectiveServerUrl,
   loadServerUrl,
   ownServerAcknowledged,
@@ -169,15 +170,24 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.eq(effectiveServerUrl(kv), RELEASE.serverUrl, 'blank/whitespace counts as no override');
   });
 
-  await h.test('clearServerUrl: removes a saved override, restoring the compiled-in default, and keeps the acknowledgement', () => {
+  await h.test('chooseServer: Whim’s server restores the compiled-in default and keeps the saved address and the acknowledgement; your own server reads it again', () => {
     const kv = new MapKVBackend();
     acknowledgeOwnServer(kv);
     saveServerUrl(kv, 'http://127.0.0.1:8787');
-    h.eq(effectiveServerUrl(kv), 'http://127.0.0.1:8787', 'override is active before clearing');
-    clearServerUrl(kv);
-    h.eq(loadServerUrl(kv), undefined, 'the saved key is gone');
-    h.eq(effectiveServerUrl(kv), RELEASE.serverUrl, 'the next request goes to the compiled-in server');
+    h.eq([serverChoice(kv), effectiveServerUrl(kv)], ['own', 'http://127.0.0.1:8787'], 'once acknowledged, your own server is chosen and its address is used');
+    chooseServer(kv, 'whim');
+    h.eq([serverChoice(kv), effectiveServerUrl(kv)], ['whim', RELEASE.serverUrl], 'Whim’s server: the next request goes to the compiled-in server');
+    h.eq(loadServerUrl(kv), 'http://127.0.0.1:8787', 'the saved address is kept');
     h.eq(ownServerAcknowledged(kv), true, 'the acknowledgement stays');
+    chooseServer(kv, 'own');
+    h.eq([serverChoice(kv), effectiveServerUrl(kv)], ['own', 'http://127.0.0.1:8787'], 'switching back uses the kept address');
+  });
+
+  await h.test('chooseServer: your own server stays unchosen and unread until the acknowledgement exists', () => {
+    const kv = new MapKVBackend();
+    saveServerUrl(kv, 'http://127.0.0.1:8787');
+    chooseServer(kv, 'own');
+    h.eq([serverChoice(kv), effectiveServerUrl(kv)], ['whim', RELEASE.serverUrl], 'no acknowledgement, no override');
   });
 
   await h.test('effectiveServerUrl: an override an earlier build saved stays unread until acknowledged, and is kept', () => {

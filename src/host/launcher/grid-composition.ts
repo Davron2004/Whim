@@ -1,70 +1,154 @@
 /**
- * grid-composition — the home grid's pure composition logic (launcher-ghost-tiles, tasks
- * 3.1/3.3). Free of `react-native`, so the dedupe/ordering/rebuild-flagging correctness is
- * Node-testable — the same split `home-grid.ts` makes for the grid's geometry, and for the same
- * reason: `HomeScreen.tsx` imports `react-native` at module scope, so the Node acceptance harness
- * (which esbuild-bundles the whole import graph) cannot load it.
+ * grid-composition — the home grid's pure composition: which cells there are, in what order, and
+ * in which state (app-launcher "Tiles show their state", "The home grid orders and lays out apps
+ * for every text size"; system.md §3.2, §9). Free of `react-native`, so the order rule, the
+ * collapse of old attempts and the state of every cell are Node-testable — the same split
+ * `home-grid` made when `HomeScreen.tsx` first imported React Native at module scope.
  *
- * Three invariants this module exists to hold (`handoff/ghost-handlers.md`,
- * `handoff/pending-store.md`):
- *   - `pending` arrives already NEWEST-FIRST from `PendingBuildStore.list()` — never re-sorted
- *     here. Ghosts render before installed apps (design D1).
- *   - A record carrying `editingAppId` is a rebuild attempt and spawns NO ghost tile; it attaches
- *     to the installed tile of that id instead (design D8) — `editingAppId === id` for these
- *     records.
- *   - An id present in both a ghost candidate and an installed record (a delivery race — delete +
- *     refresh is not atomic with a render) dedupes to exactly one tile: the pending/ghost entry
- *     wins, and the installed entry for that id is dropped until the pending record is deleted.
+ * Rules this module holds (`handoff/ghost-handlers.md` and `handoff/home.md`):
+ *   - A pending record with `editingAppId` is a change in flight on an installed app: it decorates
+ *     that app's own cell (changing, or change failed) and spawns no cell of its own.
+ *   - An id present as both an attempt and an installed app renders once, as the attempt.
+ *   - Order: attempts being made (waiting ones with them), then failed and stopped attempts from the
+ *     last day, then apps, each group newest first; an app keeps its place when it changes (its
+ *     `createdAt` never moves). Failed and stopped attempts older than a day gather in one cell at
+ *     the end. `pending` arrives newest first from `PendingBuildStore.list()` and is never re-sorted.
+ *   - Attempts and apps whose purge is armed (Delete, Discard waiting out their Undo window) are
+ *     not cells.
  */
 import type { InstalledApp } from './app-index';
 import type { PendingBuildRecord } from './pending-builds';
+import type { TileState } from '../ui/AppTile-states';
 
-export interface GhostTile {
-  readonly kind: 'ghost';
-  readonly rec: PendingBuildRecord;
-}
+/** An attempt this old or older has stopped being news. */
+export const ATTEMPT_RECENT_MS = 24 * 60 * 60 * 1000;
 
-export interface InstalledTile {
+export type AppCellState = Extract<TileState, 'ready' | 'changing' | 'change-failed'>;
+export type AttemptCellState = Extract<TileState, 'making' | 'queued' | 'failed' | 'stopped' | 'needs-update'>;
+
+/** An installed app's cell; `rebuild` is the change in flight or failed on it. */
+export interface AppCell {
   readonly kind: 'app';
+  readonly state: AppCellState;
   readonly app: InstalledApp;
-  /** Present when a pending record with `editingAppId === app.id` exists: a rebuild attempt
-   *  in-flight or terminally failed/interrupted on this already-installed app (design D8). */
   readonly rebuild?: PendingBuildRecord;
 }
 
-export type GridTile = GhostTile | InstalledTile;
+/** A pending-build record that is not a change: a new app being made, or one that did not finish. */
+export interface AttemptCell {
+  readonly kind: 'attempt';
+  readonly state: AttemptCellState;
+  readonly rec: PendingBuildRecord;
+  /** The tile's name: the description's first three words (`attemptName`). */
+  readonly name: string;
+}
 
-/**
- * Composes the home grid from the pending-build records and the installed apps: ghosts
- * (newest-first, in `pending`'s own order) before installed apps, an id present in both lists
- * rendering exactly once — as the ghost/pending entry — and any `editingAppId` record attached to
- * its target installed tile's `rebuild` field instead of spawning its own ghost.
- */
+/** The one cell standing for failed and stopped attempts older than a day. */
+export interface OlderCell {
+  readonly kind: 'older';
+  readonly recs: readonly PendingBuildRecord[];
+}
+
+export type GridCell = AppCell | AttemptCell | OlderCell;
+
+export interface ComposeOptions {
+  /** The clock the day is measured against. */
+  now: number;
+  /** Ids of attempts waiting for a free spot (their stream's latest event is `queued`). */
+  queued?: ReadonlySet<string>;
+  /** Ids of installed apps whose Delete is waiting out its Undo window. */
+  deletedApps?: ReadonlySet<string>;
+  /** Ids of pending records whose Discard is waiting out its Undo window. */
+  discardedAttempts?: ReadonlySet<string>;
+}
+
+/** The name of a tile being made. The plan's proposed name is not carried by any record yet, so this
+ *  is the description's first three words without a leading "a", "an" or "the", capitalised. */
+export function attemptName(rec: Pick<PendingBuildRecord, 'prompt' | 'workingTitle'>): string {
+  const words = rec.prompt.trim().split(/\s+/).filter((w) => w !== '');
+  if (words.length > 1 && /^(?:a|an|the)$/i.test(words[0])) words.shift();
+  const name = words.slice(0, 3).join(' ');
+  if (name === '') return rec.workingTitle;
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function attemptState(rec: PendingBuildRecord, queued: ReadonlySet<string> | undefined): AttemptCellState {
+  if (rec.state === 'building') return queued?.has(rec.id) ? 'queued' : 'making';
+  if (rec.state === 'interrupted') return 'stopped';
+  return rec.failure?.remedy?.kind === 'update' ? 'needs-update' : 'failed';
+}
+
+function appState(rebuild: PendingBuildRecord | undefined): AppCellState {
+  if (!rebuild) return 'ready';
+  return rebuild.state === 'building' ? 'changing' : 'change-failed';
+}
+
+/** Newest first; a tie keeps the later install ahead (the index lists in install order). */
+function newestFirst(apps: readonly InstalledApp[]): InstalledApp[] {
+  return apps
+    .map((app, index) => ({ app, index }))
+    .sort((a, b) => b.app.createdAt - a.app.createdAt || b.index - a.index)
+    .map(({ app }) => app);
+}
+
+/** Whether a failed or stopped attempt has aged into the collapsed cell. Needs-update attempts
+ *  never do: the one thing to do about one is to update Whim, so it stays in sight. */
+function collapses(cell: AttemptCell, now: number): boolean {
+  return (cell.state === 'failed' || cell.state === 'stopped') && now - cell.rec.createdAt > ATTEMPT_RECENT_MS;
+}
+
 export function composeGrid(
   pending: readonly PendingBuildRecord[],
   apps: readonly InstalledApp[],
-): GridTile[] {
+  options: ComposeOptions,
+): GridCell[] {
+  const visible = pending.filter((rec) => !options.discardedAttempts?.has(rec.id));
   const rebuildByAppId = new Map<string, PendingBuildRecord>();
-  const ghosts: GhostTile[] = [];
-  for (const rec of pending) {
-    if (rec.editingAppId) {
-      rebuildByAppId.set(rec.editingAppId, rec);
-    } else {
-      ghosts.push({ kind: 'ghost', rec });
-    }
+  const attempts: AttemptCell[] = [];
+  for (const rec of visible) {
+    if (rec.editingAppId) rebuildByAppId.set(rec.editingAppId, rec);
+    else attempts.push({ kind: 'attempt', state: attemptState(rec, options.queued), rec, name: attemptName(rec) });
   }
 
-  const ghostIds = new Set(ghosts.map((g) => g.rec.id));
-  const seenAppIds = new Set<string>();
-  const installed: InstalledTile[] = [];
-  for (const app of apps) {
-    // Dedupe by id, pending wins (a transmute race can list the same id in both `apps` and a
-    // still-present ghost for one frame); also guards defensively against a duplicate `apps` id.
-    if (ghostIds.has(app.id) || seenAppIds.has(app.id)) continue;
-    seenAppIds.add(app.id);
+  const attemptIds = new Set(attempts.map((a) => a.rec.id));
+  const seen = new Set<string>();
+  const installed: AppCell[] = [];
+  for (const app of newestFirst(apps)) {
+    // Dedupe by id, the attempt wins (delivery and a render are not atomic); a duplicate id inside
+    // `apps` keeps its first.
+    if (options.deletedApps?.has(app.id) || attemptIds.has(app.id) || seen.has(app.id)) continue;
+    seen.add(app.id);
     const rebuild = rebuildByAppId.get(app.id);
-    installed.push({ kind: 'app', app, ...(rebuild ? { rebuild } : {}) });
+    installed.push({ kind: 'app', state: appState(rebuild), app, ...(rebuild ? { rebuild } : {}) });
   }
 
-  return [...ghosts, ...installed];
+  const making = attempts.filter((a) => a.state === 'making' || a.state === 'queued');
+  const finished = attempts.filter((a) => a.state !== 'making' && a.state !== 'queued');
+  const older = finished.filter((a) => collapses(a, options.now));
+  const recent = finished.filter((a) => !collapses(a, options.now));
+  const tail: OlderCell[] = older.length > 0 ? [{ kind: 'older', recs: older.map((a) => a.rec) }] : [];
+  return [...making, ...recent, ...installed, ...tail];
 }
+
+/** A stable key for a cell, so a list re-renders the same tile in place. */
+export function cellKey(cell: GridCell): string {
+  if (cell.kind === 'app') return `app:${cell.app.id}`;
+  if (cell.kind === 'attempt') return `attempt:${cell.rec.id}`;
+  return 'older';
+}
+
+/** A cell's name as the grid and the menu title show it; the older cell has none of its own. */
+export function cellName(cell: Exclude<GridCell, OlderCell>): string {
+  return cell.kind === 'app' ? cell.app.name : cell.name;
+}
+
+/** The apps' search (shown from 13 apps): the cells whose name contains `query`, any case. The
+ *  collapsed older cell has no name and is not searched. An empty query keeps every cell. */
+export function searchCells(cells: readonly GridCell[], query: string): GridCell[] {
+  const needle = query.trim().toLowerCase();
+  if (needle === '') return [...cells];
+  return cells.filter((cell) => cell.kind !== 'older' && cellName(cell).toLowerCase().includes(needle));
+}
+
+/** Search appears once there are this many apps to look through. */
+export const SEARCH_FROM_APPS = 13;

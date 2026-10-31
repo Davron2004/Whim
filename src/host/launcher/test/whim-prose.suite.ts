@@ -29,11 +29,13 @@ import {
   CONSENT_WHATS_NEW,
   LEGAL_COPY,
   addedFieldsLine,
-  clarifyHeadline,
+  composerContinueLine,
+  planMakeHeader,
   copySheetBody,
   copySheetTitle,
-  deleteBody,
-  forkedFromLabel,
+  copyQuestionDataSubtitle,
+  deletedToast,
+  discardedManyToast,
   historyFilterAll,
   historyQuotedPrompt,
   historySubtitle,
@@ -41,6 +43,7 @@ import {
   restoreSheetBody,
   restoreSheetTitle,
   restoredToast,
+  tileOlderLine,
 } from '../copy';
 
 const POUR_TIMER = { name: 'Pour Timer' };
@@ -63,13 +66,15 @@ function everyCopyString(): string[] {
     ...Object.values(COPY),
     ...Object.values(LEGAL_COPY.fr),
     ...Object.values(CONSENT_WHATS_NEW).flatMap((lines) => Object.values(lines).map((line) => line.text)),
-    forkedFromLabel('Water Counter'),
-    deleteBody('Pour Timer'),
+    copyQuestionDataSubtitle('Water Counter'),
+    deletedToast('Pour Timer'),
+    discardedManyToast(2),
+    tileOlderLine(2),
     addedFieldsLine(['notes (text)']),
     readyTitle('Pour Timer'),
-    clarifyHeadline(1),
-    clarifyHeadline(2),
-    clarifyHeadline(3),
+    composerContinueLine('A timer for my…'),
+    planMakeHeader(false),
+    planMakeHeader(true),
     historySubtitle(1, 'today'),
     historySubtitle(7, '3 days ago'),
     historyFilterAll(7),
@@ -296,9 +301,9 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
   });
 
   await h.test('copy: the offering guard is non-vacuous — the same words as agent prose DO mark', () => {
-    h.ok(isOffering(COPY.composeChipTimer), 'a copy-table string is an offering');
-    h.ok(!isOffering(`${COPY.composeChipTimer} today`), 'agent prose is not');
-    const asProse = renderProse(`${COPY.composeChipTimer} today`, { apps: [{ name: 'timer' }] });
+    h.ok(isOffering(COPY.homeIdeaTimer), 'a copy-table string is an offering');
+    h.ok(!isOffering(`${COPY.homeIdeaTimer} today`), 'agent prose is not');
+    const asProse = renderProse(`${COPY.homeIdeaTimer} today`, { apps: [{ name: 'timer' }] });
     h.eq(countOf(asProse, 'app'), 1, 'the identical words outside the table lex normally');
   });
 

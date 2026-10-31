@@ -1,29 +1,25 @@
 /**
- * ConsentScreen — the AI-data consent gate (design D5; spec ai-data-consent). A full screen,
- * never a sheet: the disclosure has a list, a link and two outcomes, and a swipeable sheet reads
- * as chrome you can dismiss — the wrong signal for a permission (design D5).
+ * ConsentScreen — the AI features review, pushed on the native stack from Settings (design D5; spec
+ * ai-data-consent "Settings shows consent and can review or turn it off"). A full screen, not a
+ * sheet: the disclosure has a list, a link and two outcomes. The first ask for consent is the
+ * first-run sheet (`FirstRunSheet.tsx`), which shows this same disclosure under "Full details".
  *
- * Ask mode opens in place of a data-sending action the user just took, with no current consent
- * grant; its own hardware back declines, same as `Not now`. Review mode opens from Settings' AI
- * features row and shows the IDENTICAL disclosure, with only its bottom actions keyed off whether
- * consent is currently on. `onClose` is the one "leave without an explicit grant/revoke" callback,
- * shared by hardware back, ask mode's `Not now`, review mode with consent on's safe large `Keep AI
- * features on` button, and review mode with consent off's own plain-text `Not now` beneath its
- * agree button — the last of these exists because hardware back declines only on Android, and
- * without a visible non-granting exit an iOS reviewer who declines has no way off this screen
- * short of agreeing (spec ai-data-consent "any other exit SHALL grant nothing"). All of them mean
- * the same thing: nothing changes, land wherever this instance's caller decided.
+ * With consent on, the large button keeps it on and a plain-text action turns it off; with consent
+ * off, the large button turns it on and `Not now` leaves. `onClose` is the one "leave without an
+ * explicit grant/revoke" callback, shared by hardware back, `Keep AI features on` and `Not now` —
+ * all of them mean the same thing: nothing changes, land back on Settings (spec ai-data-consent "any
+ * other exit SHALL grant nothing").
  *
  * Every string comes from the active legal language's table (`LEGAL_COPY`), in the order spec
  * ai-data-consent "The disclosure names what is sent…" lists, and the privacy link opens that
- * language's policy. The switch at the top offers the other language in one tap, in both modes
- * (spec legal-text-localization). An outdated grant adds, above the title, the outdated line and the what's-new
- * line written for the grant's version (spec "Consent grants are versioned").
+ * language's policy. The switch at the top offers the other language in one tap (spec
+ * legal-text-localization).
  */
 import React from 'react';
 import { Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
-import { consentWhatsNewText, LEGAL_COPY, type LegalCopyTable } from './copy';
+import { LEGAL_COPY, type LegalCopyTable } from './copy';
+import { disclosureOf } from './consent-disclosure';
 import { consentScreenActions, type ConsentScreenAction } from './consent-screen-actions';
 import LegalLanguageSwitch from './LegalLanguageSwitch';
 import { privacyPolicyUrl, type LegalLanguage } from './legal-language';
@@ -34,8 +30,6 @@ import { useSystemBack } from './use-system-back';
  *  the table's abstract action ids meet real copy and callbacks. */
 function actionLabel(action: ConsentScreenAction, copy: LegalCopyTable): string {
   switch (action) {
-    case 'agree':
-      return copy.consentAgree;
     case 'decline':
       return copy.consentDecline;
     case 'keepOn':
@@ -47,50 +41,29 @@ function actionLabel(action: ConsentScreenAction, copy: LegalCopyTable): string 
   }
 }
 
-/** The line above the title in ask mode: the outdated line when the stored grant is outdated,
- *  else the permission line when a `consent_required` refusal opened the screen, else none. */
-function noticeLine(copy: LegalCopyTable, outdated: boolean, refused: boolean): string | undefined {
-  if (outdated) return copy.consentOutdatedLine;
-  return refused ? copy.permissionRequiredLine : undefined;
-}
-
 function SectionTitle({ text }: Readonly<{ text: string }>) {
   return <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: SHELL_PALETTE.textMuted }]}>{text}</Text>;
 }
 
 export interface ConsentScreenProps {
-  mode: 'ask' | 'review';
-  /** The active legal language: this screen's copy, its what's-new line and its privacy link. */
+  /** The active legal language: this screen's copy and its privacy link. */
   language: LegalLanguage;
   /** The language switch was tapped: the launcher persists the choice and re-renders in it. */
   onLanguageChange: (language: LegalLanguage) => void;
-  /** Ask mode only: the version of the stored grant when it is outdated (spec "Consent grants are
-   *  versioned") — shows the outdated line and that version's what's-new line above the title. */
-  outdatedFrom?: number;
-  /** Ask mode only: a `consent_required` refusal opened this screen (request-envelope) — shown as
-   *  one line above the disclosure, unless the outdated line already explains it. */
-  refused?: boolean;
-  /** Review mode only: whether a current grant exists right now — decides which action set
-   *  renders (spec "Settings shows consent and can review or turn it off"). */
+  /** Whether a current grant exists right now — decides which action set renders (spec "Settings
+   *  shows consent and can review or turn it off"). */
   consentOn?: boolean;
-  /** Ask mode: grants and runs the continuation that opened this screen. Review mode with consent
-   *  off: grants and returns to Settings. */
+  /** With consent off: grants and returns to Settings. */
   onAgree: () => void;
-  /** Review mode with consent on, only: the plain-text action that deletes the grant and returns
-   *  to Settings. */
+  /** With consent on, only: the plain-text action that deletes the grant and returns to Settings. */
   onTurnOff?: () => void;
-  /** Leaves without granting or revoking anything: hardware back in both modes, ask mode's
-   *  `Not now`, review mode with consent on's safe large `Keep AI features on` button, and review
-   *  mode with consent off's own plain-text `Not now`. */
+  /** Leaves without granting or revoking anything: hardware back, `Keep AI features on` and `Not now`. */
   onClose: () => void;
 }
 
 export default function ConsentScreen({
-  mode,
   language,
   onLanguageChange,
-  outdatedFrom,
-  refused = false,
   consentOn = false,
   onAgree,
   onTurnOff,
@@ -100,63 +73,42 @@ export default function ConsentScreen({
   useSystemBack(onClose);
   const copy = LEGAL_COPY[language];
 
-  /** `agree`/`turnOn` grant and `turnOff` also deletes an existing grant — neither is `onClose`,
-   *  so the JSX below routes those three through this helper. `decline`/`keepOn` leave without
-   *  granting or revoking anything, same as hardware back: their `onPress` binds `onClose`
-   *  DIRECTLY, inline, rather than through this function (design D8 "bound" — the scanner requires
-   *  the identifier passed to `useSystemBack` to appear inside an `on[A-Z]…={…}` attribute in this
-   *  file itself, not through a same-file indirection). */
+  /** `turnOn` grants and `turnOff` deletes the grant — neither is `onClose`, so the JSX below
+   *  routes those through this helper. `decline`/`keepOn` leave without granting or revoking
+   *  anything, same as hardware back: their `onPress` binds `onClose` DIRECTLY, inline, rather than
+   *  through this function (design D8 "bound" — the scanner requires the identifier passed to
+   *  `useSystemBack` to appear inside an `on[A-Z]…={…}` attribute in this file itself, not through
+   *  a same-file indirection). */
   function pressHandlerFor(action: ConsentScreenAction): () => void {
-    if (action === 'agree' || action === 'turnOn') return onAgree;
-    if (action === 'decline' || action === 'keepOn') return onClose;
+    if (action === 'turnOn') return onAgree;
     return onTurnOff ?? onClose;
   }
 
-  const actions = consentScreenActions(mode === 'ask' ? { kind: 'ask' } : { kind: 'review', consentOn });
-  const grantVersion = mode === 'ask' ? outdatedFrom : undefined;
-  const notice = mode === 'ask' ? noticeLine(copy, grantVersion !== undefined, refused) : undefined;
-  const whatsNew = grantVersion === undefined ? undefined : consentWhatsNewText(language, grantVersion);
-  const sent = [copy.consentSentRequest, copy.consentSentEdit, copy.consentSentDevice, copy.consentSentErrors];
+  const actions = consentScreenActions({ consentOn });
+  const { sections, closing } = disclosureOf(copy);
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
       <ScrollView style={[styles.scroll, { borderBottomColor: p.cardBorder }]} contentContainerStyle={styles.content}>
         <LegalLanguageSwitch language={language} onChange={onLanguageChange} />
-        {notice !== undefined && (
-          <View style={[styles.notice, whatsNew !== undefined && styles.noticeWithWhatsNew]}>
-            <Text style={[TYPE_SCALE.body, { color: p.danger }]}>{notice}</Text>
-            {whatsNew !== undefined && (
-              <Text style={[TYPE_SCALE.body, styles.whatsNew, { color: p.text }]}>{whatsNew}</Text>
-            )}
-          </View>
-        )}
         <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{copy.consentTitle}</Text>
         <Text style={[TYPE_SCALE.body, styles.lead, { color: p.text }]}>{copy.consentLead}</Text>
 
-        <SectionTitle text={copy.consentSentTitle} />
-        {sent.map((item) => (
-          <View key={item} style={styles.bulletRow}>
-            <Text style={[TYPE_SCALE.body, styles.bullet, { color: p.textMuted }]}>•</Text>
-            <Text style={[TYPE_SCALE.body, styles.bulletText, { color: p.text }]}>{item}</Text>
+        {sections.map((section) => (
+          <View key={section.title}>
+            <SectionTitle text={section.title} />
+            {section.bullets?.map((item) => (
+              <View key={item} style={styles.bulletRow}>
+                <Text style={[TYPE_SCALE.body, styles.bullet, { color: p.textMuted }]}>•</Text>
+                <Text style={[TYPE_SCALE.body, styles.bulletText, { color: p.text }]}>{item}</Text>
+              </View>
+            ))}
+            {section.body ? <Text style={[TYPE_SCALE.body, styles.item, { color: p.text }]}>{section.body}</Text> : null}
           </View>
         ))}
 
-        <SectionTitle text={copy.consentWhyTitle} />
-        <Text style={[TYPE_SCALE.body, styles.item, { color: p.text }]}>{copy.consentWhy}</Text>
-
-        <SectionTitle text={copy.consentWhoTitle} />
-        <Text style={[TYPE_SCALE.body, styles.item, { color: p.text }]}>
-          {`${copy.consentWho} ${copy.consentWhoPlatform} ${copy.consentWhoAuthorities}`}
-        </Text>
-
-        <SectionTitle text={copy.consentStaysTitle} />
-        <Text style={[TYPE_SCALE.body, styles.item, { color: p.text }]}>{copy.consentStays}</Text>
-
-        <SectionTitle text={copy.consentNeverTitle} />
-        <Text style={[TYPE_SCALE.body, styles.item, { color: p.text }]}>{copy.consentNever}</Text>
-
-        <Text style={[TYPE_SCALE.body, styles.askFirst, { color: p.text }]}>{copy.consentAskFirst}</Text>
-        <Text style={[TYPE_SCALE.caption, styles.footnote, { color: p.textMuted }]}>{copy.consentFootnote}</Text>
+        <Text style={[TYPE_SCALE.body, styles.askFirst, { color: p.text }]}>{closing[0]}</Text>
+        <Text style={[TYPE_SCALE.caption, styles.footnote, { color: p.textMuted }]}>{closing[1]}</Text>
 
         <TouchableOpacity
           onPress={() => Linking.openURL(privacyPolicyUrl(language))}
@@ -200,11 +152,6 @@ const styles = StyleSheet.create({
   // The disclosure scrolls under the pinned actions; a hairline marks where it is cut off.
   scroll: { borderBottomWidth: StyleSheet.hairlineWidth },
   content: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl, paddingBottom: SPACING.xl },
-  notice: { marginBottom: SPACING.sm },
-  // The what's-new line is a full paragraph, so the pair keeps a section's worth of air above the
-  // title rather than the single line's tighter gap.
-  noticeWithWhatsNew: { marginBottom: SPACING.lg },
-  whatsNew: { marginTop: SPACING.xs },
   lead: { marginTop: SPACING.sm },
   sectionTitle: { marginTop: SPACING.lg, marginBottom: SPACING.xs },
   item: { marginTop: SPACING.xs },

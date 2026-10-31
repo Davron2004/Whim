@@ -1,29 +1,35 @@
 /** The keyboard never hides the field or the action it belongs to (app-launcher "Text input never
- *  hides the content or action it belongs to", beta-1 D3): every launcher screen and sheet with a
- *  text field, rendered on each platform, for how its keyboard comes up and goes away. Android is
- *  rendered before 15 and from 15: the app is drawn edge to edge on both, so no window resizes for
- *  the keyboard and every frame lifts itself. Native geometry is played in through the host views'
- *  measurements: a frame's place in the window, and a field's place in its scroll content. */
+ *  hides the content or action it belongs to", beta-1 D3, design-system-v1 11.3): every launcher
+ *  screen and sheet with a text field, rendered on each platform, for how its keyboard comes up,
+ *  moves and goes away. Android is rendered before 15 and from 15: the app is drawn edge to edge on
+ *  both, so no window resizes for the keyboard and every frame lifts itself. The keyboard is played
+ *  in through react-native-keyboard-controller's events (`native-keyboard-controller.tsx`); native
+ *  geometry through the host views' measurements: a frame's place in the window, and a field's
+ *  place in its scroll content. */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { COPY } from '../copy';
-import { primaryActionLabel } from '../prompt-flow';
-import ComposeStep from '../ComposeStep';
-import ClarifyStep from '../ClarifyStep';
-import PlanStep from '../PlanStep';
-import ReportSheet from '../ReportSheet';
+import { DescribePage } from '../DescribePage';
+import { PlanPage } from '../PlanPage';
+import type { PlanScreen } from '../prompt-flow';
+import { ReportSheet } from '../ReportScreen';
 import { KeyboardTextInput } from '../KeyboardShell';
-import SettingsScreen from '../SettingsScreen';
+import AdvancedScreen from '../AdvancedScreen';
 import { SHELL_PALETTE } from '../theme';
+import { TextArea, TextField } from '../../ui/TextField';
+import { Sheet } from '../../ui/Sheet';
+import { sheetBottomPadding } from '../keyboard-shell';
+import { COLORS } from '../../../design/tokens';
+import { ToastHost } from '../../ui/Toast';
 import { SPACING } from '../../../sdk/theme';
 import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
 import { reportClientOptions } from '../transport-shared';
-import { AI_CONSENT_VERSION } from '../release-config';
 import { button, press, textOf, unmountScreen, hostType } from './react-screen';
 import { testAppInfo } from './client-fixtures';
-import { Keyboard, Platform, StyleSheet, useSafeAreaInsets, type KeyboardListener } from './native-host';
+import { Keyboard, Platform, StyleSheet, setColorScheme, useSafeAreaInsets } from './native-host';
+import { dragKeyboard, emitKeyboardEvent, keyboardSubscriptions, keyboardWindow, moveKeyboard, resetKeyboard, stepKeyboard } from './native-keyboard-controller';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -80,6 +86,10 @@ function flushRevealFrames(): void {
 /** A screen's frame sits under the status bar and above the home indicator of an 844-high window. */
 const SCREEN_FRAME: Rect = [20, 794];
 const KEYBOARD_TOP = 500;
+/** The keyboard's height above the window's bottom edge, as the library reports it. */
+const KEYBOARD_HEIGHT = keyboardWindow.height - KEYBOARD_TOP;
+/** How far a keyboard whose top edge is at `top` covers a frame at `frame`. */
+const overlapOf = (frame: Rect, top: number) => Math.max(0, frame[0] + frame[1] - top);
 
 interface Mounted { tree: Tree; geometry: Geometry; scrolls: number[]; focused: () => number }
 
@@ -93,7 +103,7 @@ async function on(device: Device, element: React.ReactElement, body: (m: Mounted
   globalThis.cancelAnimationFrame = (id) => { if (typeof id === 'number') revealFrames.delete(id); };
   Platform.OS = device.os;
   Platform.Version = device.version;
-  Keyboard.visible = false;
+  resetKeyboard();
   const scrolls: number[] = [];
   let focusCalls = 0;
   const createNodeMock = (node: React.ReactElement<{ collapsable?: boolean }>) => {
@@ -122,20 +132,24 @@ async function on(device: Device, element: React.ReactElement, body: (m: Mounted
     globalThis.requestAnimationFrame = animationFrames.request;
     globalThis.cancelAnimationFrame = animationFrames.cancel;
     Object.assign(Platform, before);
-    Keyboard.visible = false;
+    resetKeyboard();
   }
 }
 
-/** Plays the keyboard coming up (top edge at `KEYBOARD_TOP`) or going away with every event the
- *  platform sends for it: iOS announces the show or hide and the frame change, before the keyboard
- *  moves; Android only the show or hide, after. */
-async function keyboard(device: Device, shown: boolean): Promise<void> {
-  const top = shown ? KEYBOARD_TOP : 844;
-  const events = device.os === 'ios'
-    ? [shown ? 'keyboardWillShow' : 'keyboardWillHide', 'keyboardWillChangeFrame'] as const
-    : [shown ? 'keyboardDidShow' : 'keyboardDidHide'] as const;
+/** Plays the keyboard coming up (top edge at `KEYBOARD_TOP`) or going away, through two frames on
+ *  the way, with every event the library sends for it on both platforms. */
+async function keyboard(_device: Device, shown: boolean): Promise<void> {
   await TestRenderer.act(async () => {
-    for (const event of events) { Keyboard.emit(event, top); }
+    moveKeyboard(shown ? KEYBOARD_HEIGHT : 0, shown ? [KEYBOARD_HEIGHT / 3, (2 * KEYBOARD_HEIGHT) / 3] : [(2 * KEYBOARD_HEIGHT) / 3, KEYBOARD_HEIGHT / 3]);
+    flushRevealFrames();
+  });
+}
+
+/** Plays the keyboard changing height while up, its top edge moving to `top` (the emoji panel,
+ *  another keyboard, a suggestion bar). */
+async function keyboardTo(top: number): Promise<void> {
+  await TestRenderer.act(async () => {
+    moveKeyboard(keyboardWindow.height - top);
     flushRevealFrames();
   });
 }
@@ -152,8 +166,10 @@ function mountContent(tree: Tree): void {
   scrollView(tree).props.innerViewRef.current = {};
 }
 
+/** The view inside a measured frame that carries its keyboard padding. */
+const padded = (frame: Node) => frame.find((n) => String(n.type) === 'Animated.View');
 /** The padding the (single) screen frame carries now. */
-const framePadding = (tree: Tree) => flat(frames(tree)[0]).paddingBottom;
+const framePadding = (tree: Tree) => flat(padded(frames(tree)[0])).paddingBottom;
 
 /** The frame's padding with the keyboard down, up, then down again. */
 async function paddingAcrossKeyboard(tree: Tree, device: Device): Promise<unknown[]> {
@@ -198,6 +214,17 @@ function contrastOnHighlight(text: string, highlight: string, background: string
   return (light + 0.05) / (dark + 0.05);
 }
 
+/** The background a field paints behind its text: its own, or its box's around it. */
+function paintedBackground(input: Node): string | undefined {
+  for (let at: Node | null = input; at; at = at.parent) {
+    if (typeof at.type !== 'string') continue;
+    const fill = flat(at).backgroundColor;
+    if (typeof fill === 'string') return fill;
+    if (isType('ScrollView')(at)) return undefined;
+  }
+  return undefined;
+}
+
 /** Lets the report sheet's draft load (`reportDraftFor` reads the store). */
 const draftLoaded = () => TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });
 
@@ -210,30 +237,32 @@ const ROWS = [
   { label: 'Look', text: 'A big dial' },
   { label: 'Sound', text: 'A soft chime' },
 ];
-const OTHER_QUESTION = { id: 'cup', question: 'What size is the cup?', options: ['Small', 'Large'], select: 'one', other: true } as const;
+const PLAN: PlanScreen = { kind: 'plan', text: 'A tea timer', questions: [], answers: {}, asking: false, rewritten: 'A tea timer', rows: ROWS, loading: false, edited: false };
 
-const compose = (onContinue = noop, onChangeText = noop) => <ComposeStep text="A tea timer" editing={false} onChangeText={onChangeText} onContinue={onContinue} onBack={noop} />;
-const clarify = () => <ClarifyStep prompt="A tea timer" questions={[OTHER_QUESTION]} answers={{}} loading={false} editing={false} onAnswer={noop} onContinue={noop} onBack={noop} />;
-const plan = (onChangeRow = noop, onBuild = noop) => <PlanStep rows={ROWS} loading={false} editing={false} onChangeRow={onChangeRow} onBuild={onBuild} onBack={noop} />;
-const settings = () => (
-  <SettingsScreen
-    onBack={noop}
-    legalLanguage="en"
-    ownServerAcknowledged
-    onAcknowledgeOwnServer={() => undefined}
-    serverUrl="https://saved.example"
-    onServerUrlChange={noop}
-    onUseDefaultServer={noop}
-    highlighting
-    onHighlightingChange={noop}
-    consentStatus={{ kind: 'granted', version: AI_CONSENT_VERSION, grantedAt: '2026-09-18' }}
-    canProbe={false}
-    onOpenAIFeatures={noop}
-    errorDetails
-    onErrorDetailsChange={noop}
-    deviceId="test-device"
-    onResetDeviceId={noop}
-  />
+const compose = (onContinue = noop, onChangeText = noop) => <DescribePage text="A tea timer" onChangeText={onChangeText} onContinue={onContinue} />;
+const plan = (onChangeRow = noop, onMake = noop) => <PlanPage screen={PLAN} onBack={noop} onAnswer={noop} onChangeRow={onChangeRow} onMake={onMake} onTryAgain={noop} onMakeInstead={noop} />;
+/** A page in a real sheet, as the making flow shows it. */
+const sheeted = (page: React.ReactElement) => <Sheet visible detent="large" onClose={noop}>{page}</Sheet>;
+const sheetCard = (tree: Tree) => tree.root.find((n) => String(n.type) === 'Animated.View' && n.props.accessibilityViewIsModal === true);
+const advanced = () => (
+  <ToastHost>
+    <AdvancedScreen
+      onBack={noop}
+      errorDetails
+      onErrorDetailsChange={noop}
+      deviceId="test-device"
+      onResetDeviceId={noop}
+      serverChoice="own"
+      ownServerAcknowledged
+      onAcknowledgeOwnServer={noop}
+      onChooseServer={noop}
+      savedAddress="https://saved.example"
+      onServerUrlChange={noop}
+      canProbe={false}
+      probe={null}
+      legalLanguage="en"
+    />
+  </ToastHost>
 );
 const report = (onClose = noop) => (
   <ReportSheet
@@ -245,23 +274,25 @@ const report = (onClose = noop) => (
     legalLanguage="en"
   />
 );
-const editFourthRow = (tree: Tree) => press(tree.root.find((n) => String(n.type) === 'TouchableOpacity' && textOf(n).includes('A soft chime')));
+const editFourthRow = (tree: Tree) => press(tree.root.find((n) => String(n.type) === 'Pressable' && n.props.accessibilityRole === 'button' && textOf(n).includes('A soft chime')));
 
 export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
-  await h.test('compose opens without the keyboard, with the suggestions in view', async () => {
-    await on(IOS, <ComposeStep text="" editing={false} onChangeText={noop} onContinue={noop} onBack={noop} />, async ({ tree }) => {
-      h.ok(field(tree).props.autoFocus !== true, 'the description field is not focused on open');
-      const shown = textOf(tree.root);
-      h.ok([COPY.composeChipTimer, COPY.composeChipTracker, COPY.composeChipDice].every((chip) => shown.includes(chip)), 'the suggestions show');
-    });
+  await h.test('describe opens with the keyboard: its field takes focus once mounted, and the idea chips wait for the keyboard to go down', async () => {
+    for (const device of [IOS, ANDROID_17]) {
+      await on(device, <DescribePage text="" onChangeText={noop} onContinue={noop} />, async ({ tree, focused }) => {
+        await TestRenderer.act(async () => flushRevealFrames());
+        h.ok(focused() >= 1, `${device.name}: the description field is focused on open`);
+        const shown = textOf(tree.root);
+        h.ok([COPY.homeIdeaTimer, COPY.homeIdeaTracker, COPY.homeIdeaDice].every((chip) => shown.includes(chip)), `${device.name}: with no keyboard up yet, the suggestions show`);
+        await keyboard(device, true);
+        h.ok(![COPY.homeIdeaTimer, COPY.homeIdeaTracker, COPY.homeIdeaDice].some((chip) => textOf(tree.root).includes(chip)), `${device.name}: with the keyboard up they step aside`);
+      });
+    }
   });
 
   await h.test('every screen pads its frame by the keyboard on iOS and every Android version, Android 14 included; no scroll view insets itself as well', async () => {
     const screens = [
-      { name: 'compose', element: compose(), action: primaryActionLabel('compose', false) },
-      { name: 'clarify', element: clarify(), action: primaryActionLabel('clarify', false) },
-      { name: 'plan', element: plan(), action: primaryActionLabel('plan', false) },
-      { name: 'settings', element: settings(), action: null },
+      { name: 'advanced', element: advanced(), action: null },
     ];
     const overlap = SCREEN_FRAME[0] + SCREEN_FRAME[1] - KEYBOARD_TOP;
     for (const device of DEVICES) {
@@ -279,31 +310,179 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('iOS: a keyboard that grows or shrinks while up (another keyboard, a suggestion bar) moves the footer with it', async () => {
-    const taller = KEYBOARD_TOP - 60;
-    await on(IOS, compose(), async ({ tree }) => {
-      await keyboard(IOS, true);
-      await TestRenderer.act(async () => { Keyboard.emit('keyboardWillChangeFrame', taller); });
-      h.eq(framePadding(tree), SCREEN_FRAME[0] + SCREEN_FRAME[1] - taller, 'the frame ends at the taller keyboard’s top edge');
-      await TestRenderer.act(async () => { Keyboard.emit('keyboardWillChangeFrame', KEYBOARD_TOP); });
-      h.eq(framePadding(tree), SCREEN_FRAME[0] + SCREEN_FRAME[1] - KEYBOARD_TOP, 'and follows it back down');
-    });
+  await h.test('a screen measured mid-push, still below the window, pads nothing when a sheet opening reports the keyboard down (Android native stack)', async () => {
+    // The native stack slides a pushed screen in; measured on its first layout, its frame still sat
+    // off the bottom of the window. A sheet opening then reports the keyboard at 0 with no show event,
+    // so nothing re-measured: the padding must not swallow the screen.
+    const midPush: Geometry = { frame: [keyboardWindow.height * 2, keyboardWindow.height - 100], field: [300, 60] };
+    await on(ANDROID_17, advanced(), async ({ tree }) => {
+      await TestRenderer.act(async () => { frames(tree)[0].props.onLayout(); });
+      await TestRenderer.act(async () => { stepKeyboard(0); flushRevealFrames(); });
+      h.eq(framePadding(tree), 0, 'with the keyboard down, no part of the screen is padded away');
+    }, midPush);
   });
 
-  await h.test('Android: a keyboard that grows or shrinks while up (the emoji panel), reported as another show, moves the footer with it', async () => {
+  await h.test('a keyboard that grows or shrinks while up (the emoji panel, another keyboard, a suggestion bar) moves the footer with it, on iOS and every Android version', async () => {
     const taller = KEYBOARD_TOP - 60;
-    for (const device of [ANDROID_14, ANDROID_17]) {
-      await on(device, compose(), async ({ tree }) => {
+    for (const device of DEVICES) {
+      await on(device, advanced(), async ({ tree }) => {
         await keyboard(device, true);
-        await TestRenderer.act(async () => { Keyboard.emit('keyboardDidShow', taller); });
-        h.eq(framePadding(tree), SCREEN_FRAME[0] + SCREEN_FRAME[1] - taller, `${device.name}: the frame ends at the taller keyboard’s top edge`);
-        await TestRenderer.act(async () => { Keyboard.emit('keyboardDidShow', KEYBOARD_TOP); });
-        h.eq(framePadding(tree), SCREEN_FRAME[0] + SCREEN_FRAME[1] - KEYBOARD_TOP, `${device.name}: and follows it back down`);
+        await keyboardTo(taller);
+        h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, taller), `${device.name}: the frame ends at the taller keyboard’s top edge`);
+        await keyboardTo(KEYBOARD_TOP);
+        h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, KEYBOARD_TOP), `${device.name}: and follows it back down`);
       });
     }
   });
 
-  await h.test('compose on iOS: Done, empty space and a drag put the keyboard away without continuing', async () => {
+  await h.test('the frame follows the keyboard frame by frame, on its own curve and under an interactive drag, not only where it ends', async () => {
+    for (const device of DEVICES) {
+      await on(device, advanced(), async ({ tree }) => {
+        await TestRenderer.act(async () => { emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT); stepKeyboard(KEYBOARD_HEIGHT / 2); });
+        h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, keyboardWindow.height - KEYBOARD_HEIGHT / 2), `${device.name}: halfway up, the footer sits on the keyboard halfway up`);
+        await keyboard(device, true);
+        await TestRenderer.act(async () => { dragKeyboard(KEYBOARD_HEIGHT / 4); });
+        h.eq(framePadding(tree), overlapOf(SCREEN_FRAME, keyboardWindow.height - KEYBOARD_HEIGHT / 4), `${device.name}: a drag pulling the keyboard down takes the footer with it`);
+      });
+    }
+  });
+
+  await h.test('as the keyboard sets off, the focused field scrolls once to where the keyboard is heading, not on every frame in between, and stays put once it settles', async () => {
+    for (const device of DEVICES) {
+      await on(device, advanced(), async ({ tree, scrolls }) => {
+        const reports = scrollReports(tree);
+        await reports.viewport(700);
+        await reports.content(1200);
+        mountContent(tree);
+        await TestRenderer.act(async () => { field(tree).props.onFocus({}); flushRevealFrames(); });
+        await TestRenderer.act(async () => { emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
+        const settledViewport = 700 - overlapOf(SCREEN_FRAME, KEYBOARD_TOP);
+        const target = 500 + 60 + SPACING.md - settledViewport;
+        h.eq(scrolls, [target], `${device.name}: one scroll as it sets off, putting the field 16 pt above where the keyboard will stop`);
+        await reports.offset(target);
+        await TestRenderer.act(async () => { stepKeyboard(KEYBOARD_HEIGHT / 2); });
+        await reports.viewport(550);
+        await TestRenderer.act(async () => { stepKeyboard(KEYBOARD_HEIGHT); });
+        await reports.viewport(settledViewport);
+        h.eq(scrolls, [target], `${device.name}: none on the frames in between`);
+        await TestRenderer.act(async () => { emitKeyboardEvent('keyboardDidShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
+        h.eq(scrolls, [target], `${device.name}: settled where it was heading: no second scroll`);
+      }, { frame: SCREEN_FRAME, field: [500, 60], block: [500, 60] });
+    }
+  });
+
+  await h.test('in a sheet, whose host pads outside the scroll view, the focused note waits for the keyboard to settle and then scrolls once, not on every frame', async () => {
+    for (const device of [IOS, ANDROID_17]) {
+      await on(device, report(), async ({ tree, scrolls }) => {
+        await draftLoaded();
+        const reports = scrollReports(tree);
+        await reports.viewport(500);
+        await reports.content(900);
+        mountContent(tree);
+        await TestRenderer.act(async () => { field(tree).props.onFocus({}); flushRevealFrames(); });
+        await TestRenderer.act(async () => { emitKeyboardEvent('keyboardWillShow', KEYBOARD_HEIGHT); stepKeyboard(KEYBOARD_HEIGHT / 2); });
+        await reports.viewport(350);
+        await TestRenderer.act(async () => { stepKeyboard(KEYBOARD_HEIGHT); });
+        await reports.viewport(200);
+        h.eq(scrolls, [], `${device.name}: no scroll while the keyboard moves`);
+        await TestRenderer.act(async () => { emitKeyboardEvent('keyboardDidShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
+        h.eq(scrolls, [300 + 140 + SPACING.md - 200], `${device.name}: once settled, one scroll that puts the note and its switch 16 pt above the sheet’s actions`);
+      }, { frame: [0, 844], field: [300, 90], block: [300, 140] });
+    }
+  });
+
+  await h.test('a frame pads only by the part of it the keyboard covers: never twice, never for a keyboard below it', async () => {
+    // A frame above a bottom bar (or a window resized for the keyboard after all) ends 124 above the
+    // window's bottom; one in the top half of a split screen ends above where the keyboard reaches.
+    const cases: [string, Rect, number][] = [
+      ['a frame ending above the window’s bottom', [20, 700], overlapOf([20, 700], KEYBOARD_TOP)],
+      ['a frame wholly above the keyboard', [0, 480], 0],
+    ];
+    for (const device of DEVICES) {
+      for (const [name, frame, expected] of cases) {
+        await on(device, advanced(), async ({ tree }) => {
+          await keyboard(device, true);
+          h.eq(framePadding(tree), expected, `${device.name}, ${name}: pads ${expected}`);
+        }, { frame, field: [300, 60] });
+      }
+    }
+  });
+
+  await h.test('the sheet-hosted pages pad by the keyboard frame: Describe and Plan lift the sheet’s card to the keyboard, and Continue and Make it stay pinned above it', async () => {
+    const pages: [string, React.ReactElement, string][] = [
+      ['describe', sheeted(compose()), COPY.flowContinue],
+      ['plan', sheeted(plan()), COPY.planBuild],
+    ];
+    const overlap = overlapOf(SCREEN_FRAME, KEYBOARD_TOP);
+    for (const device of DEVICES) {
+      for (const [name, element, action] of pages) {
+        await on(device, element, async ({ tree }) => {
+          const safe = useSafeAreaInsets().bottom;
+          const padding = () => flat(sheetCard(tree)).paddingBottom;
+          h.eq(padding(), sheetBottomPadding(0, safe), `${device.name} ${name}: with the keyboard down the card clears the home indicator`);
+          await keyboard(device, true);
+          h.eq(padding(), sheetBottomPadding(overlap, safe), `${device.name} ${name}: with the keyboard up the card ends at its top edge`);
+          const pinned = button(tree, action);
+          h.ok(nearest(pinned, 'ScrollView') == null, `${device.name} ${name}: ${action} sits below the scroll view, in the padded card, so it is above the keyboard`);
+          await keyboard(device, false);
+          h.eq(padding(), sheetBottomPadding(0, safe), `${device.name} ${name}: back down, the card drops back`);
+        });
+      }
+    }
+  });
+
+  await h.test('describe opens with the keyboard: Continue is in the card the keyboard lifts, so it is above the keyboard with the field focused', async () => {
+    for (const device of [IOS, ANDROID_17]) {
+      await on(device, sheeted(compose()), async ({ tree, focused }) => {
+        await TestRenderer.act(async () => flushRevealFrames());
+        h.ok(focused() >= 1, `${device.name}: the field is focused on open`);
+        await keyboard(device, true);
+        const continueButton = button(tree, COPY.flowContinue);
+        const ancestors: Node[] = [];
+        for (let at: Node | null = continueButton; at; at = at.parent) ancestors.push(at);
+        h.ok(ancestors.includes(sheetCard(tree)) && nearest(continueButton, 'ScrollView') == null, `${device.name}: Continue rides in the lifted card, not in the scrolling content under the keyboard`);
+      });
+    }
+  });
+
+  await h.test('every launcher field wears ink for its caret and selection handles, selected text stays readable on its highlight, it paints its own background, and on iOS a one-line field sets no line height', async () => {
+    for (const scheme of ['light', 'dark'] as const) {
+      await TestRenderer.act(async () => setColorScheme(scheme));
+      try {
+        const ink = COLORS[scheme].ink;
+        for (const device of [IOS, ANDROID_17]) {
+          const fields: [string, React.ReactElement, (tree: Tree) => Promise<void>, boolean][] = [
+            ['text field', <TextField value="Ada" onChangeText={noop} accessibilityLabel="Name" />, async () => {}, false],
+            ['text area', <TextArea value="Ada" onChangeText={noop} accessibilityLabel="Notes" />, async () => {}, true],
+            ['describe', compose(), async () => {}, true],
+            ['plan row', plan(), editFourthRow, true],
+          ];
+          for (const [name, element, open, multiline] of fields) {
+            await on(device, element, async ({ tree }) => {
+              await open(tree);
+              const input = field(tree);
+              const where = `${scheme} ${device.name} ${name}`;
+              const background = paintedBackground(input);
+              h.ok(background !== undefined, `${where}: it paints its own background, which covers Android's default field underline`);
+              if (device.os === 'ios') {
+                h.eq(input.props.selectionColor, ink, `${where}: ink tints the caret, the handles and the highlight iOS draws translucent itself`);
+              } else {
+                h.eq([input.props.cursorColor, input.props.selectionHandleColor], [ink, ink], `${where}: ink caret and selection handles`);
+                const contrast = contrastOnHighlight(String(flat(input).color), String(input.props.selectionColor), String(background));
+                h.ok(contrast >= 4.5, `${where}: the text Android paints its highlight over stays readable (${contrast.toFixed(2)}:1, at least 4.5:1)`);
+              }
+              const oneLineOnIos = device.os === 'ios' && !multiline;
+              h.eq(typeof flat(input).lineHeight, oneLineOnIos ? 'undefined' : 'number', `${where}: ${oneLineOnIos ? 'no line height, so iOS keeps its descenders' : 'its type’s line height'}`);
+            });
+          }
+        }
+      } finally {
+        await TestRenderer.act(async () => setColorScheme('light'));
+      }
+    }
+  });
+
+  await h.test('describe on iOS: Done, empty space and a drag put the keyboard away without continuing', async () => {
     const s = spies();
     await on(IOS, compose(s.fn('continue'), s.fn('change')), async ({ tree }) => {
       h.eq(field(tree).props.inputAccessoryViewID != null && doneBars(tree).some((bar) => bar.props.nativeID === field(tree).props.inputAccessoryViewID), true, 'the field has a Done bar');
@@ -314,7 +493,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('compose on Android: a drag dismisses, there is no Done bar, and empty space puts the keyboard away', async () => {
+  await h.test('describe on Android: a drag dismisses, there is no Done bar, and empty space puts the keyboard away', async () => {
     const s = spies();
     await on(ANDROID_17, compose(s.fn('continue')), async ({ tree }) => {
       h.eq([scrollView(tree).props.keyboardDismissMode, doneBars(tree).length], ['on-drag', 0], 'a drag dismisses; no Done bar');
@@ -324,7 +503,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('plan: editing the 4th row focuses it once mounted, and keeps the whole row (field, Save, Cancel) in view above Build it as the keyboard arrives and as the row grows', async () => {
+  await h.test('plan: editing the 4th row focuses it once mounted, and keeps the whole row (field, Save, Cancel) in view above Make it as the keyboard arrives and as the row grows', async () => {
     const s = spies();
     for (const device of [IOS, ANDROID_14, ANDROID_17]) {
       const geometry: Geometry = { frame: SCREEN_FRAME, field: [630, 60], block: [600, 180] };
@@ -334,7 +513,9 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         await reports.content(1000);
         mountContent(tree);
         await editFourthRow(tree);
-        h.eq([field(tree).props.autoFocus, focused()], [undefined, 1], `${device.name}: the row's field takes focus after it mounts, not natively on mount`);
+        h.eq([field(tree).props.autoFocus, focused()], [undefined, device.os === 'android' ? 1 : 0], `${device.name}: the row's field is not focused natively on mount; ${device.os === 'android' ? 'Android focuses it at once' : 'iOS waits a frame for the Done bar to link'}`);
+        await TestRenderer.act(async () => flushRevealFrames());
+        h.eq(focused(), device.os === 'android' ? 2 : 1, `${device.name}: ${device.os === 'android' ? 'and asks again a frame later, which Android needs to show the keyboard for a field it hasn’t served yet' : 'then focuses it once'}`);
         if (device.os === 'ios') h.ok(doneBars(tree).some((bar) => bar.props.nativeID === field(tree).props.inputAccessoryViewID), 'iOS: its Done bar mounts with it');
         await TestRenderer.act(async () => field(tree).props.onFocus({}));
         await keyboard(device, true);
@@ -343,11 +524,11 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         geometry.block = [600, 220];
         await reports.content(1040);
         h.eq(scrolls.at(-1), 600 + 220 + SPACING.md - 400, `${device.name}: as typing grows the row, it stays in view`);
-        h.ok(nearest(button(tree, primaryActionLabel('plan', false)), 'ScrollView') == null, `${device.name}: Build it stays pinned below the scroll view`);
+        h.ok(nearest(button(tree, COPY.planBuild), 'ScrollView') == null, `${device.name}: Make it stays pinned below the scroll view`);
       }, geometry);
     }
     await on(IOS, plan(s.fn('row'), s.fn('build')), async ({ tree }) => {
-      await press(tree.root.find((n) => String(n.type) === 'TouchableOpacity' && textOf(n).includes('A big dial')));
+      await press(tree.root.find((n) => String(n.type) === 'Pressable' && n.props.accessibilityRole === 'button' && textOf(n).includes('A big dial')));
       h.eq(await dismissBoth(tree), 2, 'Done and empty space put the keyboard away');
       h.eq(field(tree).props.value, 'A big dial', 'leaving the row open');
       h.eq([s.count('row'), s.count('build')], [0, 0], 'saving and building nothing');
@@ -379,7 +560,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         if (settledBy === 'keyboard') {
           await reports.offset(native.offset);
           native.viewport = 306;
-          await TestRenderer.act(async () => { Keyboard.emit('keyboardDidShow', KEYBOARD_TOP); flushRevealFrames(); });
+          await TestRenderer.act(async () => { emitKeyboardEvent('keyboardDidShow', KEYBOARD_HEIGHT); flushRevealFrames(); });
         }
         const wholeRowVisible = () => geometry.block![0] >= native.offset &&
           geometry.block![0] + geometry.block![1] + SPACING.md <= native.offset + native.viewport;
@@ -407,11 +588,10 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('clarify "Other", and the Settings server field with the lines and the Use Whim’s server action under it, are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
-    // The Settings field names its block: the field, its helper line and the probe's line, 100 tall.
+  await h.test('Advanced’s server field with the lines under it, are kept in view above the keyboard; one line, so Return puts the keyboard away', async () => {
+    // Advanced's field names its block: the field, its helper line and the check line, 100 tall.
     const cases: [string, React.ReactElement, Geometry, string][] = [
-      ['clarify', clarify(), { frame: SCREEN_FRAME, field: [500, 60] }, 'the field'],
-      ['settings', settings(), { frame: SCREEN_FRAME, field: [500, 60], block: [500, 100] }, 'the field and its helper line'],
+      ['advanced', advanced(), { frame: SCREEN_FRAME, field: [500, 60], block: [500, 100] }, 'the field and its helper line'],
     ];
     for (const device of [IOS, ANDROID_14, ANDROID_17]) {
       for (const [name, element, geometry, shown] of cases) {
@@ -428,13 +608,10 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
           h.eq(scrolls.at(-1), top + height + SPACING.md - 400, `${device.name} ${name}: once the keyboard shrinks the scroll view, ${shown} scroll clear above its end`);
           h.eq([field(tree).props.multiline === true, doneBars(tree).length], [false, 0], `${device.name} ${name}: one line, with no Done bar`);
           h.eq(scrollView(tree).props.keyboardShouldPersistTaps, 'handled', `${device.name} ${name}: the controls around it take their taps while typing`);
-          if (name === 'settings') h.ok(revealedBlock(tree).findAll((n) => String(n.type) === 'TouchableOpacity' && textOf(n) === COPY.settingsUseDefaultServer).length === 1, `${device.name} settings: Use Whim’s server is in the block kept above the keyboard`);
+          if (name === 'advanced') h.ok(textOf(revealedBlock(tree)).includes(COPY.settingsProbeNeutral), `${device.name} advanced: the check line is in the block kept above the keyboard`);
         }, geometry);
       }
     }
-    await on(IOS, clarify(), async ({ tree }) => {
-      h.eq(field(tree).props.returnKeyType, 'done', 'Return is its Done');
-    });
   });
 
   await h.test('the report sheet: its dim covers the whole window, bars and keyboard included, its card continues behind the keyboard, and Send and Cancel ride above it', async () => {
@@ -451,7 +628,7 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         const scrim = tree.root.find((n) => String(n.type) === 'Pressable' && n.props.accessibilityRole === 'none');
         h.eq([hostParent(scrim) === frame[0], flat(scrim).position, flat(scrim).top, flat(scrim).bottom], [true, 'absolute', 0, 0],
           `${device.name}: the dim fills the whole window frame`);
-        const card = tree.root.find((n) => String(n.type) === 'View' && flat(n).maxHeight === '100%');
+        const card = padded(frame[0]);
         const cardPadding = () => flat(card).paddingBottom;
         const seen = [cardPadding()];
         await keyboard(device, true);
@@ -459,12 +636,12 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         seen.push(cardPadding());
         await keyboard(device, false);
         seen.push(cardPadding());
-        h.eq(seen, [insets.bottom + SPACING.md, 844 - KEYBOARD_TOP + SPACING.md, insets.bottom + SPACING.md],
+        h.eq(seen, [insets.bottom + SPACING.md, KEYBOARD_HEIGHT + SPACING.md, insets.bottom + SPACING.md],
           `${device.name}: the card grows down behind the keyboard while it is up, on every Android version too, and drops back`);
         h.ok(nearest(button(tree, COPY.reportSend), 'ScrollView') == null && nearest(button(tree, COPY.cancel), 'ScrollView') == null, `${device.name}: Send and Cancel are pinned below the note`);
         const note = around(field(tree));
         h.eq([note.scrolls, note.doneBarLinked(tree)], [true, device.os === 'ios'], `${device.name}: the note scrolls in the sheet; iOS links a Done bar`);
-        h.eq(revealedBlock(tree).findAll(isType('Switch')).length, 1, `${device.name}: the note keeps the include-prompt row under it in view too, so Send never cuts its switch`);
+        h.eq(revealedBlock(tree).findAll(isType('Switch')).length, 1, `${device.name}: the note keeps the include row under it in view too, so Send never cuts its switch`);
       }, { frame: [0, 844], field: [300, 90] });
     }
     await on(IOS, report(s.fn('close')), async ({ tree }) => {
@@ -490,49 +667,21 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('every launcher field wears Whim’s accent for its caret and selection handles, selected text stays readable on its highlight, it paints its own background, and on iOS a one-line field sets no line height', async () => {
-    for (const device of [IOS, ANDROID_17]) {
-      const fields: [string, React.ReactElement, (tree: Tree) => Promise<void>][] = [
-        ['compose', compose(), async () => {}],
-        ['clarify', clarify(), async () => {}],
-        ['plan row', plan(), editFourthRow],
-        ['settings', settings(), async () => {}],
-        ['report note', report(), draftLoaded],
-      ];
-      for (const [name, element, open] of fields) {
-        await on(device, element, async ({ tree }) => {
-          await open(tree);
-          const input = field(tree);
-          h.ok(typeof flat(input).backgroundColor === 'string', `${device.name} ${name}: it paints its own background, which covers Android's default field underline`);
-          if (device.os === 'ios') {
-            h.eq(input.props.selectionColor, SHELL_PALETTE.accent, `${device.name} ${name}: the accent tints the caret, the handles and the highlight iOS draws translucent itself`);
-          } else {
-            h.eq([input.props.cursorColor, input.props.selectionHandleColor], [SHELL_PALETTE.accent, SHELL_PALETTE.accent], `${device.name} ${name}: accent caret and selection handles`);
-            const contrast = contrastOnHighlight(String(flat(input).color), String(input.props.selectionColor), String(flat(input).backgroundColor));
-            h.ok(contrast >= 4.5, `${device.name} ${name}: the text Android paints its highlight over stays readable (${contrast.toFixed(2)}:1, at least 4.5:1)`);
-          }
-          const oneLineOnIos = device.os === 'ios' && input.props.multiline !== true;
-          h.eq(typeof flat(input).lineHeight, oneLineOnIos ? 'undefined' : 'number', `${device.name} ${name}: ${oneLineOnIos ? 'no line height, so iOS keeps its descenders' : 'its type’s line height'}`);
-        });
-      }
-    }
-  });
-
   await h.test('a keyboard frame, a screen’s or a sheet’s, removes every keyboard subscription it added once it unmounts', async () => {
     for (const device of DEVICES) {
       const frameHosts: [string, React.ReactElement, () => Promise<void>][] = [
-        ['compose', compose(), async () => {}],
+        ['advanced', advanced(), async () => {}],
         ['report sheet', report(), draftLoaded],
       ];
       for (const [name, element, open] of frameHosts) {
-        const before = Keyboard.listening();
-        let added: KeyboardListener[] = [];
+        const before = keyboardSubscriptions();
+        let added: unknown[] = [];
         await on(device, element, async () => {
           await open();
-          added = [...Keyboard.listening()].filter((listener) => !before.has(listener));
+          added = [...keyboardSubscriptions()].filter((subscription) => !before.has(subscription));
         });
         h.ok(added.length > 0, `${device.name} ${name}: setup: the frame listens to the keyboard while it pads`);
-        const after = Keyboard.listening();
+        const after = keyboardSubscriptions();
         h.eq(added.filter((listener) => after.has(listener)).length, 0, `${device.name} ${name}: none of the subscriptions it added outlive it`);
       }
     }
@@ -559,10 +708,12 @@ function nearestFrame(node: Node): Node {
 
 /** Whether a field scrolls, and whether iOS linked its Done bar. */
 /** What a screen's one field keeps in view while focused: the block it names (`revealTarget`, the
- *  view wrapping it), or the field alone. */
+ *  view wrapping the field, or the `TextField`/`TextArea` it sits in), or the field alone. */
 function revealedBlock(tree: Tree): Node {
   const input = tree.root.findByType(KeyboardTextInput);
-  return input.props.revealTarget != null && input.parent != null ? input.parent : input;
+  if (input.props.revealTarget == null) return input;
+  const owner = [...tree.root.findAllByType(TextField), ...tree.root.findAllByType(TextArea)][0] ?? input;
+  return owner.parent ?? input;
 }
 
 function around(input: Node) {

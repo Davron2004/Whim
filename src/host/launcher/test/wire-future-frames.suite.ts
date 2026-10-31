@@ -31,7 +31,7 @@ import { openXhrGenerateStream } from '../xhr-transport';
 import { FakeXMLHttpRequest } from './fake-xhr';
 import { serviceRefusalOf } from '../service-refusal';
 import { GENERIC_STREAM_ERROR, errorReason } from '../error-reason';
-import { acceptClarifyQuestions, clarifyLimitOf, planRowsFrom, stepAfterClarifyExchange } from '../prompt-flow';
+import { acceptClarifyQuestions, clarifyLimitOf, planRowsFrom } from '../prompt-flow';
 import { fallbackNotice, terminalFallbackOf } from '../wire-fallback';
 import { PROTOCOL_LEVEL } from '../wire-headers';
 import { COMPAT_NOTICE_MAX_CHARS as COMPAT_NOTICE_MAX_CHARS_DEVICE, KNOWN_ERROR_CODES } from '../wire-compat';
@@ -440,11 +440,11 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
   // No conforming server sends null there today; a later one may write "none" that way, and this
   // build can't be patched to meet it.
 
-  await h.test('oldest reader: a clarify limit of null is no limit, so the flow takes the zero-question path', async () => {
+  await h.test('oldest reader: a clarify limit of null is no limit, so the plan page carries no choices', async () => {
     const response = await bounded(clarifyPrompt(answering({ questions: [], limit: null }), 'a packing list'), 'clarify');
     h.eq(response, { questions: [] }, 'the reply is read, with no limit on it');
     h.eq(clarifyLimitOf(response), undefined, 'the flow finds no limit to show');
-    h.eq(stepAfterClarifyExchange(acceptClarifyQuestions(response.questions)), 'plan', 'and goes straight to the plan step');
+    h.eq(acceptClarifyQuestions(response.questions), [], 'and no question to ask, so the plan page shows no choices');
   });
 
   await h.test('oldest reader: compat null on a known event is no compat, so the event is used', async () => {

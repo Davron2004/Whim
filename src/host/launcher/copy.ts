@@ -24,88 +24,129 @@ import type { WideningId } from '@whim/contract';
 import type { LegalLanguage } from './legal-language';
 
 export const COPY = {
-  // ── home (2a) ───────────────────────────────────────────────────────────────
-  homeTitle: 'Whim',
-  homeSubtitle: 'Your apps',
+  // ── home: Your apps (design-system-v1 15.x; system.md §3.2, §9) ─────────────
+  homeTitle: 'Your apps',
   homeComposerPlaceholder: 'Describe an app…',
+  /** The composer bar when a description is in progress: the words, so the person sees their draft. */
+  homeComposerDraftLabel: 'Describe an app, draft in progress',
+  homeComposerHint: 'Opens the describe sheet',
+  homeSearchLabel: 'Search your apps',
+  homeSearchEmpty: 'No app has that name.',
+  homeLoadingLabel: 'Loading your apps',
+  homeOfflineNotice: 'Offline. Your apps still work; making new ones needs a connection.',
+  homeEmptyTitle: 'Make your first app',
+  homeEmptyLine: 'A timer, a tracker, a dice roller. Say it in plain words.',
+  /** The three idea chips on an empty Home; each opens the describe sheet with its words. */
+  homeIdeaTimer: 'A timer for my pour-over',
+  homeIdeaTracker: 'A plant watering tracker',
+  homeIdeaDice: 'A dice roller for game night',
   exampleBadge: 'Example',
+  settingsTitle: 'Settings',
   actionOpen: 'Open',
-  actionFork: 'Fork',
-  actionPromptAgain: 'Prompt again',
+  actionChangeIt: 'Change it',
+  actionMakeCopy: 'Make a copy',
+  actionCustomize: 'Customize tile',
+  actionShareLink: 'Share link',
   actionDelete: 'Delete',
-  /** The Fork/Delete rows while that app's operation is running (`app-launcher` "Fork and delete
-   *  show a busy state and cannot be re-triggered mid-operation"): the row says what it is doing
-   *  rather than what it offers, so the disabled row never reads as an unregistered tap. */
-  actionForkBusy: 'Forking…',
-  actionDeleteBusy: 'Deleting…',
+  actionDetails: 'Details',
+  actionStop: 'Stop',
+  actionStopChange: 'Stop the change',
+  actionWhatHappened: 'What happened',
+  actionTryAgain: 'Try again',
+  actionDiscard: 'Discard',
+  actionDiscardChange: 'Discard the change',
+  actionDiscardAll: 'Discard all',
+  actionUpdateWhim: 'Update Whim',
   cancel: 'Cancel',
-  // ── ghost tiles (launcher-ghost-tiles) ──────────────────────────────────────
-  /** A ghost/rebuild tile's state caption — names its own state, distinguishing `building` from
-   *  the shared `failed`/`interrupted` alert treatment (spec "Building and failed/interrupted
-   *  ghosts are visually distinct"). */
-  ghostCaptionBuilding: 'Building…',
-  ghostCaptionFailed: 'Didn’t finish',
-  ghostCaptionInterrupted: 'Interrupted',
-  ghostCaptionUpdate: 'Update needed',
-  /** Long-press quick actions (spec "Long-press on a ghost tile offers Cancel or Dismiss, never
-   *  both"). Named distinctly from the sheet's own closing `cancel` row so the two never collide
-   *  in the same menu. */
+  /** The build screen's own stop control (the making flow moves it; the Home menu says `actionStop`). */
   actionCancelBuild: 'Cancel build',
-  actionDismissBuild: 'Dismiss',
+  // ── tile states (system.md §3.2) ────────────────────────────────────────────
+  tileMaking: 'Making…',
+  tileQueued: 'Waiting…',
+  tileFailed: 'Didn’t work',
+  tileStopped: 'Stopped',
+  tileNeedsUpdate: 'Needs update',
+  tileChanging: 'Changing…',
+  tileChangeFailed: 'Change didn’t work',
+  tileCopy: 'Copy',
+  tileHintOpens: 'Opens the app',
+  tileHintProgress: 'Shows progress',
+  tileHintFailure: 'Shows what happened',
+  tileHintUpdate: 'Shows the update',
+  tileHintOlder: 'Shows the list',
+  /** The screen-reader name of the long-press action a tile offers. */
+  tileMenuAction: 'Show actions',
+  /** The list the "2 didn't work" tile opens. */
+  olderTitle: 'Attempts that didn’t work',
+  // ── delete, discard, copy (Undo toasts; the copy question) ──────────────────
+  toastUndo: 'Undo',
+  discardedToast: 'Discarded',
+  /** An Undo that found nothing to restore: said in the system's voice, never silence. */
+  undoTooLateToast: 'Too late to undo.',
+  copyMadeToast: 'Copy made',
+  copyFailedToast: 'Couldn’t make the copy. Your app is unchanged.',
+  copyQuestionTitle: 'Copy the data, or start fresh?',
+  copyQuestionData: 'Copy the data',
+  copyQuestionFresh: 'Start fresh',
+  copyQuestionFreshSubtitle: 'The copy starts empty.',
+  customizeTitle: 'Customize tile',
+  customizeTintHeader: 'Colour',
+  customizeGlyphHeader: 'Glyph',
+  customizeSearchLabel: 'Search glyphs',
+  customizeSearchEmpty: 'No glyph has that name.',
+  customizeReset: 'Use the original tile',
   /** What an `interrupted` pending-build record's failure screen says: it carries no failure
    *  payload, because nothing failed — the process that owned the stream went away. Stated
    *  plainly rather than borrowed from a generic stream-error string, which would claim a failure
    *  that never happened. */
   interruptedBuildReason: 'This build stopped when the app closed. You can try it again.',
-  deleteTitle: 'Delete this app?',
-  deleteConfirm: 'Delete',
-  emptyTitle: 'No apps yet',
-  settingsTitle: 'Settings',
   backLabel: 'Back',
-  highlightingSectionTitle: 'Highlighting',
-  highlightingHint: 'Colours and marks in what Whim tells you.',
+  /** The shell's surfaces (design-system-v1 11.1–11.3): a sheet's close control, a toast's
+   *  dismiss action for screen readers, a text field's clear button. */
+  sheetClose: 'Close',
+  toastDismiss: 'Dismiss',
+  fieldClear: 'Clear text',
 
-  // ── the five-step prompt flow (2a) ──────────────────────────────────────────
+  // ── the making sheet: Describe and Plan (design-system-v1 16.x; system.md §8, §9) ──────────
   flowContinue: 'Continue',
   composeHeadline: 'What should it do?',
-  /** The edit flow's compose headline — "Prompt again"/"Change it" on an app that already
-   *  exists, never the new-app question (`editingEyebrow`/`composeHeadline` "the edit flow reads
-   *  as editing, on every step"). */
+  /** Change mode's headline: "Changing <app name>" sits over it (`editingEyebrow`). */
   composeHeadlineEdit: 'What should change?',
-  composeHelper: 'Plain words are enough. Whim will ask if something is unclear.',
-  /** The edit flow's compose field placeholder — `homeComposerPlaceholder` stays the new-app one
-   *  (it is shared with the home screen's own composer row). */
+  composeHelper: 'Plain words are enough. I’ll ask if anything’s unclear.',
+  /** Change mode's field placeholder — `homeComposerPlaceholder` stays the new-app one (it is
+   *  shared with the home screen's own composer). */
   composePlaceholderEdit: 'Add, change, or remove something…',
-  composeChipsEyebrow: 'Or start from',
-  composeChipTimer: 'a timer with my pour-over recipe',
-  composeChipTracker: 'a tracker for how often I water the plants',
-  composeChipDice: 'a dice roller for game night',
-  clarifyHeadlineOne: 'One quick thing',
-  clarifyHeadlineTwo: 'Two quick things',
-  clarifyHeadlineThree: 'Three quick things',
-  clarifyHelper: 'Skip these and Whim will pick sensible answers.',
-  /** Under a question that takes several picks (beta-1 D18). */
+  planHeadline: 'Here’s the plan',
+  /** Change mode's plan headline — the SAME approval gate, over a change instead of a new app. */
+  planHeadlineEdit: 'Here’s the change',
+  planChoicesHeader: 'A few choices',
+  planMakeHeader: 'What I’ll make',
+  planMakeHeaderEdit: 'What I’ll change',
+  /** Under a question that takes several picks. */
   clarifyPickMany: 'Pick any that fit.',
-  /** The pill every question carries, which hands that question to Whim (beta-1 D18). */
+  /** The option every question ends with, selected until the person picks something else. */
   clarifyDecide: 'Decide for me',
   /** The typed "Other" answer's placeholder, on a question that allows one. */
   clarifyOtherPlaceholder: 'Or type your own answer',
-  /** The clarify step when the request can't be built as asked (beta-1 D9): the reason follows in
-   *  the server's own words, then the alternative to build instead (`clarifyBuildInstead`). */
-  clarifyLimitHeadline: 'Whim can’t build this as asked',
-  clarifyLimitChangeIdea: 'Change my idea',
-  /** The one-line liveness phrase under the clarify skeleton (`WorkingLine`, `flow-working.tsx`). */
-  workingClarify: 'Thinking about what to ask',
-  planHeadline: 'Here’s the plan',
-  /** The edit flow's plan headline — the SAME approval gate, over a change instead of a new app. */
-  planHeadlineEdit: 'Here’s the change',
-  planSubhead: 'Tap anything to change it before building.',
-  planFooter: 'Nothing here is final — you can keep changing the app after it’s built.',
-  planBuild: 'Build it',
-  /** The edit flow's plan primary action. */
+  /** A question answered and scrolled out of view, read as one line: a hint for screen readers. */
+  planQuestionReopenHint: 'Change your answer',
+  planBuild: 'Make it',
+  /** Change mode's primary action. */
   planBuildEdit: 'Make the change',
+  /** The primary action's busy words while the plan is still being written. */
+  planBusy: 'Writing the plan…',
   planRowSave: 'Save',
-  /** The liveness phrase under the plan skeleton, new-app and edit variants. */
+  planRowEdited: 'Edited',
+  planRowEditHint: 'Edit this part of the plan',
+  planRowFieldLabel: 'Edit this part of the plan',
+  planTryAgain: 'Try again',
+  /** Can't make as asked: the headline, the card that offers the nearest thing, and its two actions. */
+  planLimitHeadline: 'I can’t make this as asked',
+  planLimitCardLead: 'I could make this instead…',
+  planMakeInstead: 'Make that instead',
+  planChangeIdea: 'Change my idea',
+  /** What the question and plan skeletons are, for screen readers, and the busy words under them. */
+  workingClarify: 'Thinking about what to ask',
   workingPlan: 'Writing the plan',
   workingPlanEdit: 'Writing up the change',
   buildTitle: 'Making it',
@@ -178,8 +219,6 @@ export const COPY = {
   historyRestoreConfirmBusy: 'Going back…',
   historyCopyConfirmBusy: 'Making the copy…',
   historyReassurancePending: 'Checking what this changes',
-  forkShareData: 'Use the same saved data',
-  forkStartFresh: 'Start fresh',
 
   // ── inside a running app: the orb menu (3a) ─────────────────────────────────
   // `versions` opens the real History screen and `change` opens the real compose step (review
@@ -193,7 +232,10 @@ export const COPY = {
   orbMenuCloseLabel: 'Close the app menu',
   orbMenuDismissLabel: 'Dismiss the app menu',
 
-  // ── the report sheet (content-reporting; design D13/D14) ────────────────────
+  // ── the report screen (content-reporting; design D13/D14) ───────────────────
+  /** The Report screen's header title on the native stack, from History and Settings. */
+  reportScreenTitle: 'Report a problem',
+  /** The report sheet's title over a running app. */
   reportSheetTitle: 'Report this app',
   /** The done step's plain-text entry point, below its two fixed destinations. */
   doneReportThisApp: 'Report this app',
@@ -211,24 +253,22 @@ export const COPY = {
   reportFieldReason: 'Reason',
   reportFieldNote: 'Note',
   reportFieldAppName: 'App',
-  reportFieldPrompt: 'The prompt',
+  reportFieldPrompt: 'What you asked for',
   reportFieldSource: 'The code',
-  reportIncludePrompt: 'Include the prompt for this version',
-  reportCodeDisclosure: 'Your report includes this app’s code so we can investigate what went wrong.',
+  reportIncludePrompt: 'Include what I asked for',
   reportNoCodeDisclosure: 'This version has no saved code to include.',
   /** The recipient line while reports go to Whim's own server; `reportRecipientLine` words it for
    *  a server the user chose (beta-1 D20). */
   reportDeviceIdLine: 'This phone’s Whim ID goes with your report. The report goes to AnyCognition, the company that makes Whim.',
   reportSend: 'Send report',
-  reportSendBusy: 'One moment',
+  reportSendBusy: 'Sending…',
   reportShowMore: 'Show more',
   reportShowLess: 'Show less',
-  reportThanksTitle: 'Thanks. We’ll look into it.',
   reportThanksDone: 'Done',
   reportDraftLoadFailed: 'Couldn’t open the report. Close it and try again.',
   reportDraftClose: 'Close',
   reportSendFailedGeneric: 'Couldn’t send the report. Check your connection and try again.',
-  reportTooLarge: 'This report is too large to send. You can try leaving out the prompt.',
+  reportTooLarge: 'This report is too large to send. You can try leaving out what you asked for.',
 
   // ── mini-app boot state (`app-launcher` "The mini-app container shows a boot state before
   //    first paint") ──────────────────────────────────────────────────────────
@@ -279,7 +319,7 @@ export const COPY = {
   // The consent screen's disclosure, shared verbatim between ask and review mode (design D5) —
   // only the bottom actions below differ by mode. Screen order is `ConsentScreen.tsx`'s; which key
   // carries each manifest category and recipient role is `CONSENT_SCREEN_COVERAGE` below.
-  consentTitle: 'Before Whim builds apps for you',
+  consentTitle: 'Before Whim makes apps for you',
   consentLead:
     'To build or change an app, Whim sends what you ask for to our server. AI companies that work for us write the code.',
   consentSentTitle: 'What gets sent',
@@ -310,8 +350,27 @@ export const COPY = {
   // Shown above the title only when the stored grant is outdated, followed by that grant version's
   // `CONSENT_WHATS_NEW` line (spec "Consent grants are versioned").
   consentOutdatedLine: 'This has changed since you last agreed.',
-  consentAgree: 'Agree and continue',
+  consentAgree: 'Agree to send descriptions',
   consentDecline: 'Not now',
+  // The first-run sheet's three summary rows, its expandable "Full details" (the disclosure above),
+  // its Language row and its terms checkbox. Prefixed `firstRun`, not `consent`: the privacy page
+  // quotes every `consent` key word for word, and these are a short form of what it already quotes.
+  // With `consentLead` the first row names every category sent and every screen-named recipient
+  // role and what they are for, the others what stays on the phone and what Whim never does
+  // (`FIRST_RUN_COVERAGE` says which key names what).
+  firstRunSentTitle: 'What’s sent, and who gets it',
+  firstRunSent:
+    'What you ask for, your answers and the plan you approve. An ID Whim makes for this phone. Error details if something goes wrong. They go to AnyCognition, which makes Whim, and to the companies that work for us, including the AI companies that write the code. Apple or Google may check that the request is from the real Whim app. Authorities get information when the law requires it. All of it is used to make your apps and run Whim.',
+  firstRunStaysTitle: 'What stays on your phone',
+  firstRunStays: 'What you save in your apps. Nobody at Whim can read it, and Whim doesn’t send it anywhere.',
+  firstRunNeverTitle: 'What we never do',
+  firstRunNever: 'Show ads, sell your data, or track you across other apps and websites.',
+  firstRunDetails: 'Full details',
+  firstRunLanguage: 'Language',
+  // The sheet's action when only the terms are due and the grant stands: it continues, and agrees to
+  // nothing new.
+  firstRunContinue: 'Continue',
+  firstRunTermsCheck: 'I accept the Terms of use',
   // ── refusals about this phone itself (request-envelope; design D5/D7) ──────
   // What the phone says for these two refusals in place of the server's hint
   // (`service-refusal.ts#REFUSAL_RULES`). The permission line also heads the consent screen a
@@ -339,22 +398,16 @@ export const COPY = {
   // from Settings").
   termsOfUseLabel: 'Terms of use',
 
-  // ── terms step (terms-acceptance; legal-surface-v2 design D5) ───────────────
-  // Shown before the consent screen while the terms aren't accepted. It says nothing about data:
-  // what is sent, to whom and why is the consent screen's alone (Play's prominent-disclosure rule).
-  termsTitle: 'Terms of use',
-  termsLead:
-    'Whim’s AI features come with a few rules: what you can build, what AI gets wrong, and what we’re responsible for.',
-  // Shown in place of `termsLead` when the stored acceptance is of another terms version.
+  // ── terms (terms-acceptance; legal-surface-v2 design D5) ────────────────────
+  // The first-run sheet's checkbox row carries the acceptance (`firstRunTermsCheck`); these two are
+  // its link out and the updated-terms line a guardian is asked to acknowledge.
   termsUpdatedLine: 'We’ve updated the terms of use.',
   termsLabel: 'Read the terms of use',
-  termsAccept: 'Accept',
-  termsDecline: 'Not now',
   // ── store age check (store-age-signals; legal-surface-v2 design D11) ─────────
   // Shown in place of the terms step when the store says the user is a minor without a parent's
   // approval (`ageBlocked*`) or under 13 (`ageUnder13*`). The AI features stay off; the apps on
-  // the phone keep working. `ageBack` also leaves the brief screen shown while the store is asked,
-  // which says only `ageChecking` so it never reads as a blank, broken screen.
+  // the phone keep working. The check itself shows nothing: this screen is only for the answer that
+  // stops the flow.
   ageBlockedTitle: 'A parent needs to approve Whim',
   ageBlockedBody:
     'Whim’s AI features need a parent’s approval on this account. A parent can approve Whim through the App Store or Google Play, then you can try again. The apps you already have keep working.',
@@ -362,31 +415,44 @@ export const COPY = {
   ageUnder13Body:
     'The App Store or Google Play says this account belongs to someone under 13, so Whim can’t make new apps for you. The apps you already have keep working.',
   ageBack: 'Back',
-  ageChecking: 'One moment…',
   // The one-tap switch the terms step and the consent screen show (legal-text-localization): it
   // names the OTHER language, in that language, so English's own entry is the French label.
   legalLanguageSwitch: 'Continuer en français',
 
   // ── settings ────────────────────────────────────────────────────────────────
   settingsAISectionTitle: 'AI features',
-  settingsAIOff: 'Off',
+  settingsAISubtitle: 'Review what’s sent',
+  settingsLanguageTitle: 'Language',
+  settingsLanguageSubtitle: 'For the privacy policy, terms and consent',
   settingsAboutSectionTitle: 'About',
+  settingsVersionTitle: 'Version',
+  /** About's entry into the Report screen, for a problem with no particular app. */
+  settingsReportProblem: 'Report a problem',
   settingsAdvancedSectionTitle: 'Advanced',
-  settingsUseDefaultServer: 'Use Whim’s server',
-  // AI features section (legal-surface-v2 design D10; spec privacy-settings).
+  // Advanced (legal-surface-v2 design D10; spec privacy-settings).
   settingsErrorDetailsTitle: 'Send error details',
   settingsErrorDetailsHint: 'When something goes wrong, Whim sends technical details so we can fix it. Not what you typed or saved.',
-  // About section: the ID sent as `x-whim-device`, and the confirm step before replacing it.
-  settingsDeviceIdTitle: 'This phone’s ID',
+  // This phone: the ID sent as `x-whim-device`, and the confirm sheet before replacing it.
+  settingsThisPhoneSection: 'This phone',
+  settingsDeviceIdTitle: 'Phone ID',
+  settingsDeviceIdCopy: 'Copy phone ID',
+  settingsDeviceIdCopied: 'Phone ID copied',
   settingsDeviceIdHint: 'The ID Whim made for this phone. Include it if you ask us about your data.',
   settingsDeviceIdReset: 'Make a new ID',
+  settingsDeviceIdResetTitle: 'Make a new ID?',
+  settingsDeviceIdKeep: 'Keep this ID',
   settingsDeviceIdResetConfirm:
     'Whim will use a new ID from now on. Records tied to the old one are kept for up to 12 months, then deleted. Write to us if you want them deleted sooner.',
   // Shown in place of the save-time probe result while AI features are off (server-connectivity
   // "Without a current consent grant the system SHALL NOT probe").
   settingsProbeNeutral: 'Checked once AI features are on',
+  settingsServerSection: 'Server',
+  settingsServerWhim: 'Whim’s server',
+  settingsServerOwn: 'Your own server',
+  /** The safe choice of the confirm sheet before "Your own server" is first used. */
+  ownServerKeep: 'Keep Whim’s server',
   serverAddressSectionTitle: 'Server address',
-  serverAddressHint: 'Where Whim sends your prompts to build apps.',
+  serverAddressHint: 'Where Whim sends what you describe to make apps.',
   // Your own server (beta-1 design D20): the Advanced action, its confirm step, and the caption
   // under an active override. Legal keys, so each has a French twin; the refusal note is not.
   ownServerAction: 'Use your own server',
@@ -411,16 +477,13 @@ export const COPY = {
   // without blocking generation") — the compose step opens only once AI-data consent is granted,
   // so there is no separate "no address configured" message any more (a server address always
   // exists, per `release-config`).
-  homeOfflineIndicator: 'Can’t reach the server',
   promptServerUnreachable: 'Can’t reach your server right now — you can still try.',
 
   // ── app links (app-links; design D15/D16) ───────────────────────────────────
-  actionAppLink: 'App link',
   appLinkMissingTitle: 'This app lives on another phone',
   appLinkMissingBody:
     'Apps made with Whim stay on the phone that made them, so this link only opens there.',
   appLinkMissingBack: 'Back to your apps',
-  appLinkSheetClose: 'Done',
 
   // ── the keyboard (beta-1 D3) ────────────────────────────────────────────────
   /** The iOS keyboard bar's one action on a multiline field: puts the keyboard away and submits
@@ -508,18 +571,13 @@ export const CONSENT_WHATS_NEW: Readonly<Record<string, Readonly<Record<number, 
  *  copy key exists in both languages"). A runtime list, so the coverage check can require each one
  *  in every table. */
 export const LEGAL_COPY_KEYS = [
-  'termsTitle',
-  'termsLead',
   'termsUpdatedLine',
   'termsLabel',
-  'termsAccept',
-  'termsDecline',
   'ageBlockedTitle',
   'ageBlockedBody',
   'ageUnder13Title',
   'ageUnder13Body',
   'ageBack',
-  'ageChecking',
   'consentTitle',
   'consentLead',
   'consentSentTitle',
@@ -542,6 +600,16 @@ export const LEGAL_COPY_KEYS = [
   'consentOutdatedLine',
   'consentAgree',
   'consentDecline',
+  'firstRunSentTitle',
+  'firstRunSent',
+  'firstRunStaysTitle',
+  'firstRunStays',
+  'firstRunNeverTitle',
+  'firstRunNever',
+  'firstRunDetails',
+  'firstRunLanguage',
+  'firstRunContinue',
+  'firstRunTermsCheck',
   'consentReviewKeepOn',
   'consentReviewTurnOff',
   'consentReviewTurnOn',
@@ -565,13 +633,8 @@ export type LegalCopyTable = { readonly [K in LegalCopyKey]: string };
  *  (`server/test/web-site.suite.ts`). A non-breaking space goes before a colon, so the colon
  *  never starts a line. */
 const FRENCH: LegalCopyTable = {
-  termsTitle: 'Conditions d’utilisation',
-  termsLead:
-    'Les fonctions d’IA de Whim s’accompagnent de quelques règles\u00a0: ce que vous pouvez créer, là où l’IA se trompe et ce dont nous sommes responsables.',
   termsUpdatedLine: 'Nous avons mis à jour les conditions d’utilisation.',
   termsLabel: 'Lire les conditions d’utilisation',
-  termsAccept: 'Accepter',
-  termsDecline: 'Pas maintenant',
   ageBlockedTitle: 'Un parent doit approuver Whim',
   ageBlockedBody:
     'Les fonctions d’IA de Whim nécessitent l’approbation d’un parent pour ce compte. Un parent peut approuver Whim dans l’App Store ou Google Play, puis vous pourrez réessayer. Les apps que vous avez déjà continuent de fonctionner.',
@@ -579,7 +642,6 @@ const FRENCH: LegalCopyTable = {
   ageUnder13Body:
     'Selon l’App Store ou Google Play, ce compte appartient à une personne de moins de 13\u00a0ans, donc Whim ne peut pas créer de nouvelles apps pour vous. Les apps que vous avez déjà continuent de fonctionner.',
   ageBack: 'Retour',
-  ageChecking: 'Un instant…',
   consentTitle: 'Avant que Whim crée des apps pour vous',
   consentLead:
     'Pour créer ou modifier une app, Whim envoie ce que vous demandez à notre serveur. Des entreprises d’IA qui travaillent pour nous écrivent le code.',
@@ -609,8 +671,19 @@ const FRENCH: LegalCopyTable = {
   consentFootnote:
     'Vous pouvez désactiver les fonctions d’IA et les détails d’erreur dans les réglages de Whim (Settings). Les apps que vous avez déjà continuent de fonctionner dans les deux cas.',
   consentOutdatedLine: 'Ce texte a changé depuis que vous l’avez accepté.',
-  consentAgree: 'Accepter et continuer',
+  consentAgree: 'Accepter d’envoyer mes descriptions',
   consentDecline: 'Pas maintenant',
+  firstRunSentTitle: 'Ce qui est envoyé, et qui le reçoit',
+  firstRunSent:
+    'Ce que vous demandez, vos réponses et le plan que vous approuvez. Un identifiant que Whim crée pour ce téléphone. Des détails d’erreur quand quelque chose ne va pas. Ils vont à AnyCognition, qui conçoit Whim, et aux entreprises qui travaillent pour nous, dont les entreprises d’IA qui écrivent le code. Apple ou Google peuvent vérifier que la demande vient de la véritable app Whim. Les autorités reçoivent des renseignements lorsque la loi l’exige. Le tout sert à créer vos apps et à faire fonctionner Whim.',
+  firstRunStaysTitle: 'Ce qui reste sur votre téléphone',
+  firstRunStays: 'Ce que vous enregistrez dans vos apps. Personne chez Whim ne peut le lire, et Whim ne l’envoie nulle part.',
+  firstRunNeverTitle: 'Ce que nous ne faisons jamais',
+  firstRunNever: 'Afficher des publicités, vendre vos données ou vous suivre dans d’autres apps et sites Web.',
+  firstRunDetails: 'Tous les détails',
+  firstRunLanguage: 'Langue',
+  firstRunContinue: 'Continuer',
+  firstRunTermsCheck: 'J’accepte les conditions d’utilisation',
   consentReviewKeepOn: 'Garder les fonctions d’IA activées',
   consentReviewTurnOff: 'Désactiver les fonctions d’IA',
   consentReviewTurnOn: 'Activer les fonctions d’IA',
@@ -653,55 +726,63 @@ export const CONSENT_SCREEN_COVERAGE: {
   },
 };
 
+/** Which keys put each disclosure-manifest category and screen-named recipient role on the first-run
+ *  sheet's first layer, which is always visible: the title and lead (`consentLead` names the AI
+ *  companies and what is sent to Whim's server) and the three summary rows. Same shape and same
+ *  check as `CONSENT_SCREEN_COVERAGE`; the first layer is the short form of that disclosure and may
+ *  not leave a category or role out of it. */
+export const FIRST_RUN_COVERAGE: {
+  readonly categories: Readonly<Record<string, readonly LegalCopyKey[]>>;
+  readonly roles: Readonly<Record<string, readonly LegalCopyKey[]>>;
+} = {
+  categories: {
+    'request-material': ['firstRunSent'],
+    'phone-id': ['firstRunSent'],
+    'error-details': ['firstRunSent'],
+  },
+  roles: {
+    anycognition: ['firstRunSent'],
+    'ai-providers': ['consentLead', 'firstRunSent'],
+    'hosting-providers': ['firstRunSent'],
+    platform: ['firstRunSent'],
+    authorities: ['firstRunSent'],
+  },
+};
+
 /** The what's-new line for a grant given under `grantVersion`, in `language`, or `undefined` when
  *  that version has none (a grant from a newer build than this one). */
 export function consentWhatsNewText(language: LegalLanguage, grantVersion: number): string | undefined {
   return CONSENT_WHATS_NEW[language]?.[grantVersion]?.text;
 }
 
-/** The AI features row's status line (design D7): the date it was granted when on, or `Off` —
- *  `outdated` reads the same as `absent` here, since neither currently authorizes a request. */
-export function aiFeaturesStatusLine(kind: 'granted' | 'absent' | 'outdated', sinceLabel?: string): string {
-  return kind === 'granted' && sinceLabel != null ? `On since ${sinceLabel}` : COPY.settingsAIOff;
+/** The "2 didn’t work" line of the tile that gathers attempts older than a day. */
+export function tileOlderLine(count: number): string {
+  return `${count} didn’t work`;
 }
 
-/** "Forked from Water Counter" — fork provenance for a tile (product vocabulary). */
-export function forkedFromLabel(name: string): string {
-  return `Forked from ${name}`;
+/** The Undo toast after a delete: "Water Counter deleted". */
+export function deletedToast(name: string): string {
+  return `${name} deleted`;
 }
 
-/** The App link reveal sheet's one line of copy (design D16): "Opens Water Counter on this phone.
- *  Press and hold the link to copy it." — the selectable `<Text>` itself carries the link. */
-export function appLinkSheetLine(name: string): string {
-  return `Opens ${name} on this phone. Press and hold the link to copy it.`;
+/** The Undo toast after Discard all gathered `count` attempts. */
+export function discardedManyToast(count: number): string {
+  return `${count} discarded`;
 }
 
-/** A ghost/rebuild tile's state caption, by `PendingBuildRecord.state` (kept as the bare literal
- *  union rather than importing `PendingBuildState` — `copy.ts` stays free of any non-`react` /
- *  non-`react-native` module dependency). */
-export function ghostStateCaption(
-  state: 'building' | 'failed' | 'interrupted',
-  remedy?: { kind: 'retry' } | { kind: 'update'; protocolLevel: number },
-): string {
-  if (state === 'failed' && remedy?.kind === 'update') return COPY.ghostCaptionUpdate;
-  if (state === 'building') return COPY.ghostCaptionBuilding;
-  if (state === 'failed') return COPY.ghostCaptionFailed;
-  return COPY.ghostCaptionInterrupted;
+/** The copy question's first row says what it would copy: the data `name` has saved now. */
+export function copyQuestionDataSubtitle(name: string): string {
+  return `Starts with what ${name} has saved now.`;
 }
 
 /** The Settings screen's save-time probe result (server-connectivity, design.md decision 1;
  *  `server-probe.ts`'s `ProbeResult`). Kept as the bare literal union rather than importing
  *  `ProbeResult` — `copy.ts` stays free of any non-`react`/non-`react-native` module dependency,
- *  the same discipline `ghostStateCaption` keeps. */
+ *  the same discipline `tileOlderLine` keeps. */
 export function serverProbeLabel(result: 'verified' | 'unverified' | 'unreachable'): string {
   if (result === 'verified') return COPY.serverProbeVerified;
   if (result === 'unverified') return COPY.serverProbeUnverified;
   return COPY.serverProbeUnreachable;
-}
-
-/** The delete confirmation body for a named app. */
-export function deleteBody(name: string): string {
-  return `“${name}” and all its data will be removed. This can’t be undone.`;
 }
 
 /** The History screen's data-shape annotation line (design D5): "Added: notes (text)". `fields`
@@ -716,6 +797,25 @@ export function addedFieldsLine(fields: readonly string[]): string {
 export function reportRecipientLine(ownServer?: string): string {
   if (ownServer === undefined) return COPY.reportDeviceIdLine;
   return `This phone’s Whim ID goes with your report. The report goes to the server you chose, ${ownServer}, not to AnyCognition.`;
+}
+
+/** Why the report carries the app's code, naming who looks at it: AnyCognition ("we") on Whim's
+ *  server, whoever runs the server the user chose otherwise (#153). */
+export function reportCodeLine(ownServer?: string): string {
+  if (ownServer === undefined) return 'Your report includes this app’s code so we can investigate what went wrong.';
+  return `Your report includes this app’s code, so whoever runs ${ownServer} can see what went wrong.`;
+}
+
+/** The thank-you once the report is sent. On the user's own server it names that server and no
+ *  company: AnyCognition never sees the report (#153). */
+export function reportThanksLine(ownServer?: string): string {
+  if (ownServer === undefined) return 'Thanks. We’ll look into it.';
+  return `Thanks. Your report went to ${ownServer}.`;
+}
+
+/** The Language row's value: the active legal language, named in itself. */
+export function legalLanguageName(language: LegalLanguage): string {
+  return language === 'fr' ? 'Français' : 'English';
 }
 
 /** The done step's title: "<App name> is ready". */
@@ -741,8 +841,7 @@ function livenessElapsedLabel(startedAt: number, now: number): string {
  * heartbeat the user reported as misleading — see the module-level rationale in `prompt-flow.ts`'s
  * `livenessOf`). `s`/`now` are typed structurally rather than importing `RunSignals` from
  * `prompt-flow.ts` — this module imports nothing else, the same discipline `timelineDurationLabel`
- * already keeps. `liveness` is the bare literal union for the same reason `ghostStateCaption`'s
- * `state` parameter is, and so is `phase` (`prompt-flow.ts#livenessPhaseOf`): in line, the line
+ * already keeps. `liveness` is the bare literal union, as `serverProbeLabel`'s parameter is, and so is `phase` (`prompt-flow.ts#livenessPhaseOf`): in line, the line
  * says so and counts the time in line; while the app is checked, nothing is being written, so it
  * names the checks rather than a reply. Once the build's turn has come, its clock reads from then
  * (`turnCameAt`), never from when it joined the line.
@@ -789,7 +888,7 @@ export function buildLivenessLine(
 const TENTHS_PER_SECOND = 10;
 
 /** A stage's plain-words label. Kept as the bare literal union rather than importing `Stage`, the
- *  same standing `ghostStateCaption` has: `copy.ts` depends on no other module. */
+ *  same standing `serverProbeLabel` has: `copy.ts` depends on no other module. */
 export function timelineStageLabel(stage: 'plan' | 'generate' | 'check' | 'run' | 'repair'): string {
   if (stage === 'plan') return COPY.timelineStagePlan;
   if (stage === 'generate') return COPY.timelineStageGenerate;
@@ -835,37 +934,38 @@ export function buildQueuedLine(position: number): string {
   return ahead === 1 ? 'You’re in line, 1 build ahead.' : `You’re in line, ${ahead} builds ahead.`;
 }
 
-/** The limit step's primary action (beta-1 D9): the alternative clarify suggested, as plain words. */
+/** The button the clarify prompt (`server/src`) still quotes for a limit's alternative. The plan
+ *  page's own action is `COPY.planMakeInstead` and shows the alternative in a card; the server
+ *  test pins that the prompt asks for words that read right here, so the prompt and this stay one
+ *  change. */
 export function clarifyBuildInstead(alternative: string): string {
   return `Build ${alternative} instead`;
 }
 
-/** The clarify step's headline, counted: one, two or three quick things. */
-export function clarifyHeadline(questionCount: number): string {
-  if (questionCount <= 1) return COPY.clarifyHeadlineOne;
-  if (questionCount === 2) return COPY.clarifyHeadlineTwo;
-  return COPY.clarifyHeadlineThree;
-}
+// ── change mode reads as changing, on every page (C1) ────────────────────────
+// One function per branching string, so a page reads through a function rather than an inline
+// ternary — `prompt-flow-screens.suite.ts`'s static check pins that every page actually calls
+// these, so the branch cannot silently regress back to one un-branched string.
 
-// ── the edit flow reads as editing, on every step (C1) ────────────────────────
-// One function per branching string, so a step screen reads through a function rather than an
-// inline ternary — `prompt-flow-screens.suite.ts`'s static check pins that every gated step
-// actually calls these, so the branch cannot silently regress back to one un-branched string.
-
-/** The compose step's headline: the new-app question, or the edit flow's own. */
+/** The describe page's headline: the new-app question, or change mode's own. */
 export function composeHeadline(editing: boolean): string {
   return editing ? COPY.composeHeadlineEdit : COPY.composeHeadline;
 }
 
-/** The compose field's placeholder: the new-app prompt, or the edit flow's own. */
+/** The describe field's placeholder: the new-app prompt, or change mode's own. */
 export function composePlaceholder(editing: boolean): string {
   return editing ? COPY.composePlaceholderEdit : COPY.homeComposerPlaceholder;
 }
 
-/** The plan step's headline: "the plan" for a new app, "the change" for an edit — the SAME
+/** The plan page's headline: "the plan" for a new app, "the change" for a change — the SAME
  *  approval gate either way. */
 export function planHeadline(editing: boolean): string {
   return editing ? COPY.planHeadlineEdit : COPY.planHeadline;
+}
+
+/** The plan page's second section header: what will be made, or what will change. */
+export function planMakeHeader(editing: boolean): string {
+  return editing ? COPY.planMakeHeaderEdit : COPY.planMakeHeader;
 }
 
 /** The build step's title (copy only — `BuildStep.tsx` is out of this change's boundary; another
@@ -878,6 +978,11 @@ export function buildTitle(editing: boolean): string {
  *  still in flight. */
 export function workingPlanPhrase(editing: boolean): string {
   return editing ? COPY.workingPlanEdit : COPY.workingPlan;
+}
+
+/** The composer when a draft waits: the start of the person's words in quotation marks. */
+export function composerContinueLine(preview: string): string {
+  return `Continue “${preview}”`;
 }
 
 /** The shared "you are changing this app" eyebrow line, shown above every gated step's headline

@@ -9,7 +9,7 @@
 
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
-import { activeLegalLanguage, chooseLegalLanguage, intlLocale, legalDateLabel, preferredLocale } from '../legal-language';
+import { activeLegalLanguage, chooseLegalLanguage, intlLocale, preferredLocale } from '../legal-language';
 import { deviceLocale } from '../device-locale';
 import { I18nManager, Platform, Settings } from './native-host';
 
@@ -56,7 +56,6 @@ function onPhone<T>(phone: PhonePlatform, body: () => T): T {
 }
 
 /** Noon, local time, on 24 September 2026: the same calendar day in every time zone's formatting. */
-const SEPT_24 = new Date(2026, 8, 24, 12).toISOString();
 
 export async function runLegalLanguageTests(h: Harness): Promise<void> {
   await h.test('legal-language: with no choice, a French phone in any region gets French', () => {
@@ -113,18 +112,5 @@ export async function runLegalLanguageTests(h: Harness): Promise<void> {
     const withoutIntl = withIntl(undefined, () => onPhone(android, deviceLocale));
     h.eq(withoutIntl, 'fr_CA', 'without Intl, the first configured locale');
     h.eq(activeLegalLanguage(new MapKVBackend(), withoutIntl), 'fr', 'so a French Android phone without Intl still gets French');
-  });
-
-  await h.test('legal-language: a legal date names its month, in the phone’s locale or Canadian French with the French text', () => {
-    h.eq(legalDateLabel(SEPT_24, 'en', 'en-CA'), 'Sep 24, 2026', 'a Canadian English phone');
-    h.eq(legalDateLabel(SEPT_24, 'en', 'en-US'), 'Sep 24, 2026', 'a US phone reads the same, never 9/24/2026');
-    h.ok(legalDateLabel(SEPT_24, 'en', 'en-GB').startsWith('24 Sep'), 'a British phone puts the day first');
-    h.eq(legalDateLabel(SEPT_24, 'fr', 'en-US'), '24 sept. 2026', 'the French legal text writes it in Canadian French, whatever the phone');
-    h.eq(legalDateLabel(SEPT_24, 'en', 'fr_CA'), '24 sept. 2026', 'an Android-style fr_CA identifier is read');
-  });
-
-  await h.test('legal-language: without Intl, or with a locale it rejects, a legal date is the ISO day', () => {
-    h.eq(withIntl(undefined, () => legalDateLabel(SEPT_24, 'en', 'en-CA')), '2026-09-24', 'no Intl');
-    h.eq(legalDateLabel(SEPT_24, 'en', 'not a locale!'), '2026-09-24', 'a locale Intl cannot read');
   });
 }

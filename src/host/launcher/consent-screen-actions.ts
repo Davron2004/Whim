@@ -14,7 +14,7 @@
 
 /** One bottom action. `grants` is `true` only for the one explicit agree action a mode offers —
  *  every other row, and hardware back, SHALL leave without granting or revoking anything. */
-export type ConsentScreenAction = 'agree' | 'decline' | 'keepOn' | 'turnOff' | 'turnOn';
+export type ConsentScreenAction = 'decline' | 'keepOn' | 'turnOff' | 'turnOn';
 
 export interface ConsentActionRow {
   readonly action: ConsentScreenAction;
@@ -23,16 +23,8 @@ export interface ConsentActionRow {
   readonly grants: boolean;
 }
 
-export type ConsentScreenMode = { readonly kind: 'ask' } | { readonly kind: 'review'; readonly consentOn: boolean };
-
-/** The bottom action rows for a mode, top to bottom, exactly as `ConsentScreen.tsx` renders them. */
-export function consentScreenActions(mode: ConsentScreenMode): readonly ConsentActionRow[] {
-  if (mode.kind === 'ask') {
-    return [
-      { action: 'agree', kind: 'primary', grants: true },
-      { action: 'decline', kind: 'plain', grants: false },
-    ];
-  }
+/** The bottom action rows for the review screen, top to bottom, exactly as `ConsentScreen.tsx` renders them. */
+export function consentScreenActions(mode: { readonly consentOn: boolean }): readonly ConsentActionRow[] {
   if (mode.consentOn) {
     return [
       { action: 'keepOn', kind: 'primary', grants: false },

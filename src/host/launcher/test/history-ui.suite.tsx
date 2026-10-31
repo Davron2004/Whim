@@ -12,13 +12,14 @@ import HomeScreen from '../HomeScreen';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { StoreAccess, storeIdOf } from '../store-access';
 import { createMemoryStore, MapKVBackend } from '../../version-store';
-import ComposeStep from '../ComposeStep';
+import { DescribePage } from '../DescribePage';
 import DoneStep from '../DoneStep';
 import MiniAppView from '../MiniAppView';
 import WhimProse from '../../ui/whim-prose/WhimProse';
 import { SHELL_COLORS } from '../../../sdk/theme';
 import { Alert, finishAnimations, hardwareBack, StyleSheet } from './native-host';
 import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
+import { chooseRow, longPress, renderHome } from './home-rig';
 import { buildIt, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
@@ -256,8 +257,8 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       // to the second, and two versions stamped in the same second have no order between them.
       Date.now = () => realNow() + 60_000;
       await TestRenderer.act(async () => home(tree).props.onPromptAgain(tracker(tree)));
-      await TestRenderer.act(async () => tree.root.findByType(ComposeStep).props.onChangeText('Let me set my own daily goal'));
-      await tap(() => tree.root.findByType(ComposeStep).props.onContinue());
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('Let me set my own daily goal'));
+      await tap(() => tree.root.findByType(DescribePage).props.onContinue());
       await waitFor(() => planLoaded(tree), 'the edit’s plan');
       await buildIt(tree);
       await waitFor(() => streams.length === 2, 'the edit’s generation');
@@ -296,8 +297,9 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
         await press(button(tree, COPY.orbActionVersions));
         await waitFor(() => showing(HistoryScreen), 'its history');
         await leave();
-        await waitFor(() => showing(MiniAppView) || showing(HomeScreen), `${name} to leave history`);
-        h.ok(showing(MiniAppView), `${name} from the history opened over the app returns to the app, not Home`);
+        h.ok(showing(HomeScreen) && !showing(HistoryScreen), `${name}: History pops off the stack at once, onto Home under it`);
+        await waitFor(() => showing(MiniAppView), `${name} to reopen the app`);
+        h.ok(!showing(HistoryScreen), `${name} from the history opened over the app returns to the app`);
         h.eq(tree.root.findByType(MiniAppView).props.installedApp.id, app.id, `${name}: the same app`);
         await TestRenderer.act(async () => tree.root.findByType(MiniAppView).props.onExit());
       }
@@ -343,13 +345,13 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('history screen: Home’s long-press sheet opens History for that app', async () => {
+  await h.test('history screen: Home’s tile menu opens History for that app', async () => {
     const app: InstalledApp = { id: 'tea', name: 'Tea', createdAt: 1, lineageId: 'main', record: { appId: 'tea', name: 'Tea', manifest: { capabilities: [] } } };
     const opened: InstalledApp[] = [];
-    const tree = await renderScreen(<HomeScreen apps={[app]} onOpen={noop} onFork={noop} onDelete={noop} onHistory={(a) => { opened.push(a); }} onPromptAgain={noop} onCreate={noop} onSettings={noop} />);
+    const tree = await renderHome({ apps: [app], onHistory: (a) => { opened.push(a); } });
     try {
-      await TestRenderer.act(async () => tree.root.find((n) => hostType(n) === 'TouchableOpacity' && typeof n.props.onLongPress === 'function').props.onLongPress());
-      await press(button(tree, COPY.actionHistory));
+      await longPress(tree, 'Tea');
+      await chooseRow(tree, COPY.actionHistory);
       h.eq(opened.map((a) => a.id), [app.id], 'History opens for the long-pressed app');
     } finally {
       await unmountScreen(tree);

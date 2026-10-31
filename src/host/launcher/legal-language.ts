@@ -79,29 +79,3 @@ const TERMS_URLS: Readonly<Record<LegalLanguage, string>> = { en: RELEASE.termsU
 export function termsUrl(language: LegalLanguage): string {
   return TERMS_URLS[language];
 }
-
-const DATE_FORMAT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: 'numeric' };
-
-/** The local day of `date` as `2026-09-24`: unambiguous in any language. */
-function isoDay(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-/**
- * A date on a legal surface (the consent grant's in Settings), written so no reader can mistake
- * the day for the month: `Sep 24, 2026` on an English phone, `24 sept. 2026` with the French legal
- * text (Canadian French, whatever the phone's region). Without `Intl`, or with a locale it can't
- * read, `2026-09-24`.
- */
-export function legalDateLabel(iso: string, language: LegalLanguage, deviceLocale: string | undefined): string {
-  const date = new Date(iso);
-  if (typeof Intl === 'undefined' || typeof Intl.DateTimeFormat !== 'function') return isoDay(date);
-  const locale = language === 'fr' ? 'fr-CA' : deviceLocale?.replaceAll('_', '-');
-  try {
-    return new Intl.DateTimeFormat(locale, DATE_FORMAT).format(date);
-    // eslint-disable-next-line no-restricted-syntax -- intentional: a platform locale Intl rejects falls back to the unambiguous ISO day
-  } catch {
-    return isoDay(date);
-  }
-}

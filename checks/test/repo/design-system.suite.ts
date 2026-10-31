@@ -109,8 +109,7 @@ function withColor(scheme: tokens.Scheme, role: tokens.ColorRole, value: string)
 const EXEMPT: Readonly<Record<string, string>> = {
   'src/sdk/design-tokens.ts': 'the v2 shell tokens, read by the screens that have not moved to src/design/tokens.ts yet',
   'src/host/launcher/theme.ts': "the v2 shell palette's white `onAccent`, pinned until the shell moves to the token module",
-  'src/host/launcher/app-tile.tsx': 'the v2 tile glyph white, until tiles draw from the tints',
-  'src/host/launcher/tile-pill-view.tsx': 'the v2 alert pill label white, until tiles draw from the tints',
+  'src/host/launcher/app-tile.tsx': 'the done step’s v2 celebration tile, until Ready draws the tint-based hero tile',
   'src/host/launcher/Orb.tsx': "the v2 orb's shadow colour, until the orb moves to the token shadows",
   'src/host/launcher/orb-actions.ts': "the v2 orb menu's swatch fills, until the orb moves to the tokens",
   'src/host/BridgeProbeScreen.tsx': 'a flag-gated on-device acceptance probe (RUN_BRIDGE_PROBE), off in the product',

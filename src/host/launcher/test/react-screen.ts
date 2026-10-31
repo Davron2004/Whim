@@ -2,6 +2,9 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+// React Native's frame callbacks, which Node lacks: one frame is the next timer turn.
+globalThis.requestAnimationFrame ??= (callback) => setTimeout(() => callback(Date.now()), 0) as unknown as number;
+globalThis.cancelAnimationFrame ??= (handle) => clearTimeout(handle);
 
 export async function renderScreen(element: React.ReactElement, options?: TestRenderer.TestRendererOptions): Promise<TestRenderer.ReactTestRenderer> {
   let tree!: TestRenderer.ReactTestRenderer;
@@ -39,6 +42,16 @@ export async function press(node: TestRenderer.ReactTestInstance): Promise<void>
   }
   if (typeof node.props.onPress !== 'function') throw new Error('Control has no press handler');
   await TestRenderer.act(async () => { node.props.onPress(); });
+}
+
+/** Android back as a device delivers it while a sheet is up: to the topmost `Modal`'s
+ *  `onRequestClose`, never to `BackHandler` (a Modal consumes the press). The last `Modal` in tree
+ *  order is the one presented last. */
+export async function androidBack(tree: TestRenderer.ReactTestRenderer): Promise<void> {
+  const modals = tree.root.findAll(isHost('Modal'));
+  const top = modals.at(-1);
+  if (!top || typeof top.props.onRequestClose !== 'function') throw new Error('No modal is up to take Android back');
+  await TestRenderer.act(async () => { top.props.onRequestClose(); });
 }
 
 /** React Native's touchables, text and inputs are accessibility elements unless `accessible={false}`

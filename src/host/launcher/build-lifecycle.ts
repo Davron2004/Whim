@@ -30,7 +30,7 @@ import type { SchemaArtifact } from '../storage-engine';
 import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
 import type { PendingBuildFailure, PendingBuildRecord, PendingBuildStore, PendingFailureRemedy } from './pending-builds';
-import type { BuildScreen, RunSignals } from './prompt-flow';
+import type { MakingScreen, RunSignals } from './prompt-flow';
 import type { RunJournalStore, RunTerminalCounts } from './run-journal';
 import { accumulateRunAggregates, ghostTileColorFor, withLinePlace, withRestart, withTurnStart, workingTitleFromPrompt } from './prompt-flow';
 import { promptEnvelope } from './prompt-envelope';
@@ -414,9 +414,9 @@ export function dropPendingBuild(pending: PendingBuildStore, id: string): void {
  * is not replayed: its answers were never persisted either, and inventing them would put words in
  * the user's mouth.
  */
-export function retryBuildScreen(rec: PendingBuildRecord, editing?: InstalledApp): BuildScreen {
+export function retryBuildScreen(rec: PendingBuildRecord, editing?: InstalledApp): MakingScreen {
   return {
-    kind: 'build',
+    kind: 'making',
     ...(editing ? { editing } : {}),
     text: rec.prompt,
     rewritten: rec.prompt,

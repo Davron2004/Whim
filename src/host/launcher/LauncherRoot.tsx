@@ -15,7 +15,7 @@
 // one app: launching reads the active bundle source from the record and hands it to MiniAppView
 // (keyed by launcher id, so each launch is a fresh realm).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Linking, StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
+import { Linking, StatusBar, StyleSheet, Text, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
@@ -31,8 +31,11 @@ import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import type { KVBackend } from '../version-store/fs/kv-fs';
 import { copyStorage, deleteStorage, peekAppliedSchema } from '../storage-engine';
 import { HighlightingProvider } from '../ui/whim-prose/WhimProse';
+import { ToastHost } from '../ui/Toast';
+import { useTokens } from '../ui/tokens';
 import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
+import { runFork } from './fork-op';
 import type { AppBusyMap } from './app-busy';
 import { StoreAccess, type ForkOptions } from './store-access';
 import { DataCopyJournal } from './data-copy-journal';
@@ -53,19 +56,21 @@ import {
 import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAppContext } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
 import { COPY, LEGAL_COPY } from './copy';
-import HomeScreen, { HOME_GRID_COLUMNS, HOME_GRID_COLUMN_GAP } from './HomeScreen';
+import HomeScreen from './HomeScreen';
 import MiniAppView from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
 import SettingsScreen from './SettingsScreen';
+import AdvancedScreen from './AdvancedScreen';
+import NativeStack, { type StackEntry } from './NativeStack';
 import HistoryScreen from './HistoryScreen';
-import ComposeStep from './ComposeStep';
-import ClarifyStep from './ClarifyStep';
-import PlanStep from './PlanStep';
+import { DescribePage } from './DescribePage';
+import { PlanPage } from './PlanPage';
+import { FirstRunSheet } from './FirstRunSheet';
+import { HostedPage, MakingSheet, type SheetContent } from './MakingSheet';
 import BuildStep from './BuildStep';
 import DoneStep from './DoneStep';
 import FailureScreen from './FailureScreen';
 import ConsentScreen from './ConsentScreen';
-import TermsScreen from './TermsScreen';
 import AgeScreen from './AgeScreen';
 import AppLinkMissingScreen from './AppLinkMissingScreen';
 import UpdateRequiredScreen from './UpdateRequiredScreen';
@@ -76,47 +81,68 @@ import type { LinkExit } from './link-routing';
 import ScreenBoundary from './ScreenBoundary';
 import ScreenErrorFallback from './ScreenErrorFallback';
 import { SCREEN_EXITS, frameEdgesFor } from './screen-exits';
+import { useSystemBack } from './use-system-back';
 import DevLogOverlay from './DevLogOverlay';
 import { devLogOverlayEnabled } from './dev-log-view';
 import RunDetailsSheet from './RunDetailsSheet';
 import { runTimelineDevModeEnabled } from './run-timeline-view';
-import { HomeGridSkeleton } from './flow-skeletons';
+import { HomeSkeleton } from './HomeSkeleton';
+import { toastClearance } from './ComposerBar';
+import { useHomeLive } from './use-home-live';
+import { PendingPurgeStore, completeInterruptedPurges, completePurge } from './pending-purge';
+import { PurgeWindows } from './soft-delete';
+import type { TileIdentity } from './tile-identity';
 import {
   EMPTY_RUN_AGGREGATES,
   RUN_SIGNAL_TICK_MS,
   acceptClarifyQuestions,
-  backFrom,
+  backToDescribe,
   buildBackAction,
-  buildStep,
-  clarifyLimitOf,
-  clarifyStep,
   clarificationsFrom,
-  composeStep,
-  composeTextChanged,
-  doneStep,
+  clarifyLimitOf,
+  delegatedAnswers,
+  describeStep,
+  describeTextChanged,
   isClarifySkip,
+  makingStep,
+  missingRequest,
+  pageKeyOf,
   planStep,
-  stepAfterClarifyExchange,
+  readyStep,
+  retrying,
   updatePlanRow,
   withAnswer,
   withDelivering,
   withKeepalive,
   withLimit,
   withPlan,
+  withProblem,
   withQuestions,
   withStreamEvent,
 } from './prompt-flow';
-import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowLimit, FlowNotice, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
+import type { DescribeScreen, FlowLimit, FlowNotice, FlowQuestion, FlowScreen, MakingScreen, PlanScreen, RunSignals } from './prompt-flow';
 import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 import { PROTOCOL_LEVEL } from './wire-headers';
 import { FlowRequests, onlyOnStep } from './flow-request';
 import { SHELL_PALETTE } from './theme';
-import { acknowledgeOwnServer, clearServerUrl, effectiveServerUrl, ownServerAcknowledged, saveServerUrl, serverOverride } from './server-address';
+import {
+  acknowledgeOwnServer,
+  chooseServer,
+  effectiveServerUrl,
+  loadServerUrl,
+  ownServerAcknowledged,
+  saveServerUrl,
+  serverChoice,
+  serverOverride,
+  type ServerChoice,
+} from './server-address';
+import { versionLabel, type SessionProbe } from './settings-sections';
 import { probeServerHealth } from './server-probe';
 import { ConnectivityLoop } from './connectivity';
 import type { Connectivity } from './connectivity';
 import { showOfflineIndicator, showServerUnreachableNotice } from './connectivity-ux';
-import { loadHighlighting, saveHighlighting } from './highlighting';
+import { FlowDrafts, draftKey } from './flow-draft';
+import { loadHighlighting } from './highlighting';
 import { getDeviceId, resetDeviceId } from './device-id';
 import { errorDetailsEnabled, setErrorDetails } from './error-details';
 import { GenerationClientError, clarifyPrompt, consentedClientOptions, generateApp, rewritePrompt } from './generation-client';
@@ -124,19 +150,17 @@ import type { ClientOptions, ConsentedClientOptions, GenerationStream } from './
 import { reportClientOptions } from './transport-shared';
 import type { AppInfo } from './app-info';
 import { installedAppInfo } from './installed-app-info';
-import ReportSheet from './ReportSheet';
+import ReportScreen, { ReportSheet } from './ReportScreen';
 import { consentStatus, grantConsent, outdatedGrantVersion, revokeConsent } from './ai-consent';
 import { acceptTerms, termsStatus } from './terms-acceptance';
 import { runAgeCheck, storedAgeGate, type AgeGate, type AgeHold, type SignificantUpdateSheet } from './age-check';
 import { installedAgeSignal, installedSignificantUpdate } from './installed-age-signal';
 import { activeLegalLanguage, chooseLegalLanguage, type LegalLanguage } from './legal-language';
 import { deviceLocale as installedDeviceLocale } from './device-locale';
-import { declineTarget, nextLegalStep } from './consent-flow';
+import { consentGrantDue, declineTarget, nextLegalStep } from './consent-flow';
 import type { ConsentContinuation, LegalFlow } from './consent-flow';
 import { REFUSAL_RULES, refusalRemedy, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
 import type { ServiceRefusal } from './service-refusal';
-import { rewriteRefusalTarget } from './refusal-target';
-import type { RefusalSentFrom } from './refusal-target';
 import { useNoticeWindowClear } from './ServiceNotice';
 import { errorReason, errorReasonCode, errorRemedy, errorRephraseHelps, GENERIC_STREAM_ERROR } from './error-reason';
 import { liveClientOptions } from './consent-options';
@@ -151,14 +175,21 @@ interface HeldPrompt {
   readonly text: string;
 }
 
+/** History, and `from`: where it was opened — Home's sheet, or the orb over the running app — and
+ *  so where leaving it returns. */
+type HistoryScreenState = { kind: 'history'; app: InstalledApp; from: 'home' | 'app' };
+
 type Screen =
   | { kind: 'home' }
   | { kind: 'app'; app: InstalledApp; record: AppRecord; source: string; engineAppId: string }
   | { kind: 'dev' }
   | { kind: 'settings' }
-  // `from`: where History was opened — Home's sheet, or the orb over the running app — and so
-  // where leaving it returns.
-  | { kind: 'history'; app: InstalledApp; from: 'home' | 'app' }
+  // Pushed over Settings on the native stack.
+  | { kind: 'advanced' }
+  | HistoryScreenState
+  // Pushed over the screen it was opened from (`from`), where leaving returns: History, for the
+  // version the user is on, or Settings, for a problem with no particular app (`app` null).
+  | { kind: 'report'; app: InstalledApp | null; from: { kind: 'settings' } | HistoryScreenState }
   // An app link's id matched neither an installed app nor a pending build (design D15; spec
   // app-links "A link to an app that isn't on this phone shows a friendly screen").
   | { kind: 'link-missing' }
@@ -183,8 +214,9 @@ type Screen =
   // `outdatedFrom`: the stored grant's version when that grant is outdated.
   | ({ kind: 'consent'; mode: 'ask'; outdatedFrom?: number } & LegalFlow<Screen>)
   | { kind: 'consent'; mode: 'review' }
-  // The five steps of screen `2a`, shaped and sequenced by `prompt-flow.ts`. `editing` absent =
-  // the new-app flow (the home composer row); present = the per-app "Prompt again" edit flow.
+  // The making sheet's pages (describe, plan, making, ready), shaped and sequenced by
+  // `prompt-flow.ts` and drawn in the sheet over Home. `editing` absent = a new app (the home
+  // composer); present = change mode, on one app.
   | FlowScreen
   // `observedRepairAttempts` is how many repair attempts THIS device watched go past on the
   // stream (never a wire field), and `hasWorkingVersion` says whether the app already had a
@@ -221,12 +253,82 @@ type Screen =
       notice?: FlowNotice;
     };
 
+/** The screens the native stack shows (design-system-v1 D6): Home at its root, then Settings and
+ *  what it pushes (Advanced, AI features — the consent screen in review mode — and Report), and
+ *  History with its Report. */
+type StackScreen =
+  | Extract<Screen, { kind: 'home' | 'settings' | 'advanced' | 'history' | 'report' }>
+  | Extract<Screen, { kind: 'consent'; mode: 'review' }>;
+
+/** The sheets the shell presents over Home: the making flow (its describe, plan, making, ready and
+ *  failure pages), the first-run ask in place of the data-sending action (the terms step, or the
+ *  ask-mode consent step), and the store age check while it runs, which shows nothing at all. */
+function isSheetScreen(screen: Screen): boolean {
+  switch (screen.kind) {
+    case 'describe':
+    case 'plan':
+    case 'making':
+    case 'ready':
+    case 'failure':
+    case 'terms':
+      return true;
+    case 'consent':
+      return screen.mode === 'ask';
+    case 'age':
+      return screen.held === undefined;
+    default:
+      return false;
+  }
+}
+
+/** The native stack under `screen`, root first: Home, then each screen pushed on the way to it.
+ *  A sheet is presented over Home, which stays under it. `null` for a screen that isn't on the
+ *  stack: a running app and the full screens, which are drawn in its place. */
+function stackFor(screen: Screen): readonly StackScreen[] | null {
+  const home = { kind: 'home' } as const;
+  // The first-run ask and the age check sit over the screen they replaced (Settings, History) and
+  // over Home when that screen has no place on the stack.
+  if (screen.kind === 'terms' || screen.kind === 'age' || (screen.kind === 'consent' && screen.mode === 'ask')) {
+    return screen.kind === 'age' && screen.held !== undefined ? null : (stackFor(screen.returnTo) ?? [home]);
+  }
+  if (screen.kind === 'home' || isSheetScreen(screen)) return [home];
+  if (screen.kind === 'settings' || screen.kind === 'history') return [home, screen];
+  if (screen.kind === 'advanced' || (screen.kind === 'consent' && screen.mode === 'review')) {
+    return [home, { kind: 'settings' }, screen];
+  }
+  if (screen.kind === 'report') return [...(stackFor(screen.from) ?? []), screen];
+  return null;
+}
+
+/** The native header's title; none on Home and History, which draw their own header. */
+function stackTitle(on: StackScreen): string | undefined {
+  switch (on.kind) {
+    case 'settings':
+      return COPY.settingsTitle;
+    case 'advanced':
+      return COPY.settingsAdvancedSectionTitle;
+    case 'consent':
+      return COPY.settingsAISectionTitle;
+    case 'report':
+      return COPY.reportScreenTitle;
+    default:
+      return undefined;
+  }
+}
+
+/** Whether a stack screen draws from the token module, following the phone's appearance; History
+ *  and the consent screen still draw the fixed light v2 palette (`theme.ts`). Their header and the
+ *  status bar follow whichever the screen on top draws. */
+function schemeFollowing(on: StackScreen): boolean {
+  return on.kind === 'home' || on.kind === 'settings' || on.kind === 'advanced' || on.kind === 'report';
+}
+
 /** The update screen in place of `from`, holding the prompt typed there when `from` is a flow step
  *  that has one, and showing `notice` when a fallback opened it. Pure, so it can run inside a
  *  `setScreen` updater. */
 function updateScreenFrom(from: Screen, notice?: string): Screen {
   const shown = notice === undefined ? {} : { updateNotice: notice };
-  if ((from.kind === 'compose' || from.kind === 'clarify' || from.kind === 'plan') && from.text !== '') {
+  if ((from.kind === 'describe' || from.kind === 'plan') && from.text !== '') {
     return { kind: 'update-required', heldPrompt: { editing: from.editing, text: from.text }, ...shown };
   }
   return { kind: 'update-required', ...shown };
@@ -234,10 +336,10 @@ function updateScreenFrom(from: Screen, notice?: string): Screen {
 
 /** Where the update screen may open when the user's current action did not ask for it — the
  *  launch-time check's verdict, or a build left running being refused: Home, or a prompt being
- *  typed. Anywhere else, above all a running mini-app, the user carries on, and their next AI
+ *  described. Anywhere else, above all a running mini-app, the user carries on, and their next AI
  *  action shows the screen. */
 function updateMayInterrupt(screen: Screen): boolean {
-  return screen.kind === 'home' || screen.kind === 'compose';
+  return screen.kind === 'home' || screen.kind === 'describe';
 }
 
 /** The developer affordance that opens the dev log overlay. A mechanism word, deliberately not in
@@ -406,7 +508,7 @@ export default function LauncherRoot({
   // Construct the persistent host services once (device native modules — lazy under the hood).
   // The device id, server address and highlighting flag all read from the SAME `whim.launcher`
   // KVBackend instance the installed-apps index uses (one MMKV instance, several consumers).
-  const { index, access, pending, journal, kv } = useMemo(() => {
+  const { index, access, pending, journal, kv, purges } = useMemo(() => {
     const launcherKv: KVBackend = createMmkvBackend('whim.launcher');
     const idx = new AppIndex(launcherKv);
     const store = createPersistentStore(createMmkvBackend('whim-version-store'));
@@ -426,6 +528,8 @@ export default function LauncherRoot({
       // key of (design D1), under the same single-writer discipline.
       journal: new RunJournalStore(launcherKv),
       kv: launcherKv,
+      // Delete and Discard wait out their Undo window on markers in the same KV (D16).
+      purges: new PendingPurgeStore(launcherKv),
     };
   }, []);
 
@@ -435,6 +539,7 @@ export default function LauncherRoot({
       access={access}
       pending={pending}
       journal={journal}
+      purges={purges}
       kv={kv}
       appInfo={appInfo}
       deviceLocale={deviceLocale}
@@ -472,99 +577,102 @@ function DevLogTools() {
   );
 }
 
-/**
- * The consent screen's two modes (design D5), in one small switch — kept out of `LauncherShell`'s
- * own screen-kind chain so branching between them never adds to that function's own complexity.
- */
-function ConsentScreenForShell({
-  screen,
-  onAskAgree,
-  onAskDecline,
-  onReviewTurnOn,
-  onReviewTurnOff,
-  onReviewClose,
-  consentOn,
-  language,
-  onLanguageChange,
-}: Readonly<{
-  screen: Extract<Screen, { kind: 'consent' }>;
-  onAskAgree: (continuation: ConsentContinuation) => void;
-  onAskDecline: (returnTo: Screen) => void;
-  onReviewTurnOn: () => void;
-  onReviewTurnOff: () => void;
-  onReviewClose: () => void;
-  consentOn: boolean;
-  language: LegalLanguage;
-  onLanguageChange: (language: LegalLanguage) => void;
-}>) {
-  if (screen.mode === 'ask') {
-    return (
-      <ConsentScreen
-        mode="ask"
-        language={language}
-        onLanguageChange={onLanguageChange}
-        outdatedFrom={screen.outdatedFrom}
-        refused={screen.refused}
-        onAgree={() => onAskAgree(screen.continuation)}
-        onClose={() => onAskDecline(screen.returnTo)}
-      />
-    );
-  }
-  return (
-    <ConsentScreen
-      mode="review"
-      language={language}
-      onLanguageChange={onLanguageChange}
-      consentOn={consentOn}
-      onAgree={onReviewTurnOn}
-      onTurnOff={onReviewTurnOff}
-      onClose={onReviewClose}
-    />
-  );
+/** While the store age check runs it shows nothing, so Android back is the way out: it cancels the
+ *  check, as `Back` on the age screen did. Mounted only for the length of the check. */
+function AgeCheckBack({ onLeave }: Readonly<{ onLeave: () => void }>) {
+  useSystemBack(onLeave);
+  return null;
 }
 
-/** The legal flow's steps ahead of the consent screen: the store age check and the terms step. */
-type PreConsentStep = Extract<Screen, { kind: 'age' | 'terms' }>;
+/** The ask the first-run sheet makes: the terms step, or the ask-mode consent step. */
+type FirstRunAsk = Extract<Screen, { kind: 'terms' }> | Extract<Screen, { kind: 'consent'; mode: 'ask' }>;
 
-function isPreConsentStep(screen: Screen): screen is PreConsentStep {
-  return screen.kind === 'age' || screen.kind === 'terms';
+function firstRunAskOf(screen: Screen): FirstRunAsk | null {
+  if (screen.kind === 'terms') return screen;
+  return screen.kind === 'consent' && screen.mode === 'ask' ? screen : null;
 }
 
 /**
- * The age check and the terms step in one small switch, kept out of `LauncherShell`'s own
- * screen-kind chain like `ConsentScreenForShell`. Both leave through `onDecline` with the screen
- * the flow replaced; only the terms step can accept.
+ * Whether `page` is a page whose forward action has not been taken yet. A second tap on the same
+ * page lands before React has drawn the next one, and a busy action ignores taps (system.md Button):
+ * it would otherwise send a second request, or start a second run. Every page the machine moves to
+ * is a new object.
  */
-function PreConsentStepForShell({
-  screen,
-  language,
-  onLanguageChange,
-  onTermsAccept,
-  onDecline,
-}: Readonly<{
-  screen: PreConsentStep;
+function useFirstTake() {
+  const taken = useRef<object | null>(null);
+  const firstTake = (page: object): boolean => {
+    if (taken.current === page) return false;
+    taken.current = page;
+    return true;
+  };
+  /** Runs `action` on `page` unless its forward action was already taken. */
+  const takeOnce = <P extends object>(page: P, action: (page: P) => unknown): unknown => (firstTake(page) ? action(page) : undefined);
+  return { firstTake, takeOnce };
+}
+
+/**
+ * Presents the making sheet and the first-run sheet one after the other, never overlapping: a sheet
+ * the screen wants is held back while the other is still on screen, and is presented the moment that
+ * one reports it has finished closing (`Sheet`'s `onClosed`). iOS can drop a presentation issued
+ * while another modal is still being dismissed, which is what agreeing (first-run closes, making
+ * opens) and a `consent_required` refusal (the reverse) would otherwise do.
+ */
+function useSheetHandOver(page: SheetContent | null, ask: FirstRunAsk | null) {
+  const [, redraw] = useState(0);
+  const onScreen = useRef({ making: false, firstRun: false }).current;
+  const making = page !== null && !onScreen.firstRun;
+  const firstRun = ask !== null && !onScreen.making;
+  if (making) onScreen.making = true;
+  if (firstRun) onScreen.firstRun = true;
+  const closed = (sheet: 'making' | 'firstRun') => {
+    onScreen[sheet] = false;
+    redraw((n) => n + 1);
+  };
+  return {
+    page: making ? page : null,
+    ask: firstRun ? ask : null,
+    onMakingClosed: () => closed('making'),
+    onFirstRunClosed: () => closed('firstRun'),
+  };
+}
+
+/** What the first-run sheet needs of the current terms and consent state, read fresh at render. */
+interface FirstRunHostProps {
+  ask: FirstRunAsk | null;
   language: LegalLanguage;
   onLanguageChange: (language: LegalLanguage) => void;
-  onTermsAccept: (flow: LegalFlow<Screen>) => void;
+  /** The stored consent grant's version when it is outdated. */
+  outdatedFrom: number | undefined;
+  /** Whether the ask also needs the consent grant recorded (see `grantDue`). */
+  consentDue: (ask: FirstRunAsk) => boolean;
+  onAgree: (ask: FirstRunAsk) => void;
   onDecline: (returnTo: Screen) => void;
-}>) {
-  if (screen.kind === 'age') {
-    return (
-      <AgeScreen
-        language={language}
-        onLanguageChange={onLanguageChange}
-        held={screen.held}
-        onClose={() => onDecline(screen.returnTo)}
-      />
-    );
-  }
+  onClosed: () => void;
+}
+
+/**
+ * The first-run sheet (design-system-v1 16.2) in place of the data-sending action that opened it. It
+ * is shown while the machine is on the terms or ask-mode consent step; closing it keeps showing the
+ * ask that was open for the length of the sheet's exit, so it never animates out blank.
+ */
+function FirstRunHost({ ask, language, onLanguageChange, outdatedFrom, consentDue, onAgree, onDecline, onClosed }: Readonly<FirstRunHostProps>) {
+  const last = useRef<FirstRunAsk | null>(null);
+  if (ask !== null) last.current = ask;
+  const shown = last.current;
+  if (shown === null) return null;
   return (
-    <TermsScreen
+    <FirstRunSheet
+      visible={ask !== null}
       language={language}
       onLanguageChange={onLanguageChange}
-      outdated={screen.outdated}
-      onAccept={() => onTermsAccept(screen)}
-      onClose={() => onDecline(screen.returnTo)}
+      termsDue={shown.kind === 'terms'}
+      consentDue={consentDue(shown)}
+      termsOutdated={shown.kind === 'terms' && shown.outdated}
+      outdatedFrom={outdatedFrom}
+      refused={shown.refused}
+      onAgree={() => onAgree(shown)}
+      onClose={() => onDecline(shown.returnTo)}
+      onClosed={onClosed}
     />
   );
 }
@@ -574,6 +682,7 @@ function LauncherShell({
   access,
   pending,
   journal,
+  purges,
   kv,
   appInfo,
   deviceLocale,
@@ -585,6 +694,7 @@ function LauncherShell({
   access: StoreAccess;
   pending: PendingBuildStore;
   journal: RunJournalStore;
+  purges: PendingPurgeStore;
   kv: KVBackend;
   appInfo: () => AppInfo;
   deviceLocale: () => string | undefined;
@@ -593,6 +703,7 @@ function LauncherShell({
   hideLaunchScreen: () => void;
 }>) {
   const palette = SHELL_PALETTE;
+  const tokens = useTokens();
   // The language every legal screen and link uses (legal-surface-v2 D6): resolved once at launch
   // from the stored choice or the phone's language, and replaced when the user taps a switch.
   const [phoneLocale] = useState(deviceLocale);
@@ -627,12 +738,17 @@ function LauncherShell({
   // own server is their responsibility (design D20), whatever an earlier build saved.
   const [serverUrl, setServerUrl] = useState<string | undefined>(() => serverOverride(kv));
   const [ownServerAck, setOwnServerAck] = useState<boolean>(() => ownServerAcknowledged(kv));
-  const [highlighting, setHighlighting] = useState<boolean>(() => loadHighlighting(kv));
+  // Advanced's chosen server row; Whim's server keeps the saved address (`server-address.ts`).
+  const [chosenServer, setChosenServer] = useState<ServerChoice>(() => serverChoice(kv));
+  // The session probe's latest answer and the address it went to: Advanced shows it under the
+  // address field rather than sending a probe of its own (#130).
+  const [lastProbe, setLastProbe] = useState<SessionProbe | null>(null);
+  const [highlighting] = useState<boolean>(() => loadHighlighting(kv));
   const [errorDetailsShown, setErrorDetailsShown] = useState<boolean>(() => errorDetailsEnabled(kv));
-  // The report sheet's target for the done-step and history-header entry points (design D13) —
-  // `null` closes it. The orb's own entry point (inside a running mini-app) is a separate, local
-  // state owned by `MiniAppView` itself, since it also drives that realm's `overlayOpen` back-
-  // policy input.
+  // The report sheet's target for the done step's entry point (design D13) — `null` closes it.
+  // History and Settings push the Report screen instead. The orb's own entry point (inside a
+  // running mini-app) is a separate, local state owned by `MiniAppView` itself, since it also
+  // drives that realm's `overlayOpen` back-policy input.
   const [reportTarget, setReportTarget] = useState<InstalledApp | null>(null);
 
   // State, not a memo: Settings' "Make a new ID" replaces it, and every options memo below is keyed
@@ -716,6 +832,7 @@ function LauncherShell({
     const loop = new ConnectivityLoop({
       probe: async () => {
         const health = await probeServerHealth(decision.baseUrl);
+        if (live) setLastProbe({ address: decision.baseUrl, result: health.result });
         if (live && belowMinimumBuild(appInfo, health.minBuild)) {
           log.warn(CHANNELS.app, 'installed build is below the server minimum', { ...health.minBuild });
           setScreen((prev) => (updateMayInterrupt(prev) ? updateScreenFrom(prev) : prev));
@@ -742,8 +859,9 @@ function LauncherShell({
   }, [connectivity]);
 
   /** How many tiles the grid is known to be about to show — the skeleton's exact count. Read
-   *  synchronously from the index at mount, before first-run seeding resolves. */
-  const knownAppCount = useMemo(() => index.list().length, [index]);
+   *  synchronously from the index at mount, before first-run seeding resolves. An app whose purge is
+   *  armed is about to be removed by the launch sweep, so it is not a cell to promise. */
+  const knownAppCount = useMemo(() => index.list().filter((a) => !purges.has('app', a.id)).length, [index, purges]);
 
   // Tracks the in-flight generation's abort controller, the caller's own cancellation intent, and
   // whether the user left it running (generation-client's abort contract: the caller must track
@@ -796,7 +914,7 @@ function LauncherShell({
   type LiveAttempt = {
     id: string;
     lease: PendingAttemptLease;
-    screen: BuildScreen;
+    screen: MakingScreen;
     signals: RunSignals;
     ctl: GenerationControl;
   };
@@ -815,7 +933,7 @@ function LauncherShell({
   const [, setTick] = useState(0);
 
   useEffect(() => {
-    if (screen.kind !== 'build') return undefined;
+    if (screen.kind !== 'making') return undefined;
     const timer = setInterval(() => setTick((t) => t + 1), RUN_SIGNAL_TICK_MS);
     return () => clearInterval(timer);
   }, [screen.kind]);
@@ -825,10 +943,10 @@ function LauncherShell({
   // screen should re-render — and the read happens there, never on the tick above.
   const [timeline, setTimeline] = useState<RunJournal | null>(null);
 
-  // Leaving the build screen closes it, so returning to a later attempt never opens onto the
+  // Leaving the making page closes it, so returning to a later attempt never opens onto the
   // previous one's entries.
   useEffect(() => {
-    if (screen.kind !== 'build') setTimeline(null);
+    if (screen.kind !== 'making') setTimeline(null);
   }, [screen.kind]);
 
   /** Whether the timeline shows the developer counts, decided ONCE for both surfaces — never a
@@ -839,6 +957,32 @@ function LauncherShell({
     setApps(index.list());
     setPendingBuilds(pending.listCurrent());
   };
+
+  // Delete and Discard hide at once and purge when their Undo window ends (design D16). The windows
+  // outlive Home (a delete is not undone by opening Settings); the markers outlive the process.
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+  const purgeWindows = useMemo(
+    () =>
+      new PurgeWindows({
+        purges,
+        complete: (marker) => completePurge({ purges, index, access, pending, journal }, marker),
+        changed: () => refreshRef.current(),
+        failed: (marker, e) =>
+          log.error(CHANNELS.app, 'purge did not complete', { kind: marker.kind, appId: marker.id, ...errorFields(e) }),
+      }),
+    [purges, index, access, pending, journal],
+  );
+  useEffect(() => () => purgeWindows.dispose(), [purgeWindows]);
+
+  // Home's view of the attempts running right now: which wait for a spot, how hard each stream works.
+  const liveView = useHomeLive(screen.kind === 'home', () => [...liveAttemptsRef.values()]);
+
+  /** The installed apps and the attempts a person can reach: those whose purge is armed are gone as far
+   *  as a link or a tile is concerned. */
+  const reachableApps = () => index.list().filter((a) => !purges.has('app', a.id));
+  const reachableAttempts = () =>
+    pending.listCurrent().map((view) => view.record).filter((r) => !purges.has('attempt', r.id));
 
   // The sink's destination is the address the device ALREADY persists for `/v1/generate` (design
   // D4) — no second setting. It stays inert until both the flag and an address are set, so this
@@ -862,6 +1006,9 @@ function LauncherShell({
       } catch (e) {
         log.error(CHANNELS.app, 'data-copy sweep failed', { operation: 'sweep', ...errorFields(e) });
       }
+      // A delete or a discard a closed process had not finished is finished now, before the grid is
+      // first drawn; one that cannot be finished keeps its marker (and stays hidden) for next time.
+      await completeInterruptedPurges({ purges, index, access, pending, journal });
       try {
         await seedFirstRun(index, access, defaultSeeds());
       } catch (e) {
@@ -929,60 +1076,88 @@ function LauncherShell({
       }
     });
 
-  const onFork = (app: InstalledApp, opts: ForkOptions) =>
-    runAppOp(appOps, setAppBusy, app.id, 'fork', async () => {
-      try {
-        await access.fork(app, undefined, opts);
+  /** Make a copy: busy for that app while it runs. Resolves the new entry, or `null` when a copy (or
+   *  an open) of the app is already running; rejects when the copy could not be made, with nothing
+   *  created (`StoreAccess.fork`'s error surface), for Home to say so in a toast. */
+  const onFork = (app: InstalledApp, opts: ForkOptions): Promise<InstalledApp | null> =>
+    runFork(
+      (work) => runAppOp(appOps, setAppBusy, app.id, 'fork', work),
+      async () => {
+        const made = await access.fork(app, undefined, opts);
         refresh();
-      } catch (e) {
-        log.error(CHANNELS.app, 'installed-app action failed', { operation: 'fork', ...errorFields(e) });
-        Alert.alert('Could not fork this app', (e as Error)?.message ?? String(e));
-      }
-    });
+        return made;
+      },
+      (e) => log.error(CHANNELS.app, 'installed-app action failed', { operation: 'fork', ...errorFields(e) }),
+    );
 
   const onHistory = (app: InstalledApp, from: 'home' | 'app') => {
     setScreen({ kind: 'history', app, from });
   };
 
-  /** Leaving History: back into the app it was opened over, reopened at whatever version is now
-   *  current (a restore there may have moved it), or Home. Home too when that app fails to open, so
-   *  Back never strands the user on History repeating the failing open. */
+  /** Leaving History: Home, and from there back into the app it was opened over, reopened at
+   *  whatever version is now current (a restore there may have moved it). Home at once: History is
+   *  on the native stack, whose pops must find the machine already off it (`NativeStack.tsx`), and
+   *  Home is where a failing open leaves the user, never stranded on History. */
   const leaveHistory = (app: InstalledApp, from: 'home' | 'app') => {
-    if (from === 'app') onOpen(index.get(app.id) ?? app, goHome);
-    else goHome();
+    goHome();
+    if (from === 'app') onOpen(index.get(app.id) ?? app);
   };
 
-  const onDelete = (app: InstalledApp) =>
-    runAppOp(appOps, setAppBusy, app.id, 'delete', async () => {
-      try {
-        await access.remove(app);
-        // The app's retained last-run report goes with it, in the SAME operation — the discipline
-        // "dismissing a ghost deletes its journal" applied to the other journal key. Nothing else
-        // ever revisits this id, so a report left behind would never be reclaimed.
-        journal.deleteLastRun(app.id);
-        refresh();
-      } catch (e) {
-        log.error(CHANNELS.app, 'installed-app action failed', { operation: 'delete', ...errorFields(e) });
-        Alert.alert('Could not delete this app', (e as Error)?.message ?? String(e));
-      }
+  /** Delete and Discard hide at once and complete when their Undo toast ends (`soft-delete.ts`):
+   *  Home calls the `Settle` pair then. An Undo answers whether it restored everything. */
+  const onDelete = (app: InstalledApp) => purgeWindows.armApp(app);
+  const onUndoDelete = (app: InstalledApp) => purgeWindows.undo('app', app.id);
+  const onSettleDelete = (app: InstalledApp) => {
+    purgeWindows.finish('app', app.id).catch(() => undefined);
+  };
+  const onDiscard = (recs: readonly PendingBuildRecord[]) => recs.forEach((rec) => purgeWindows.armAttempt(rec.id));
+  const onUndoDiscard = (recs: readonly PendingBuildRecord[]) =>
+    recs.map((rec) => purgeWindows.undo('attempt', rec.id)).every(Boolean);
+  const onSettleDiscard = (recs: readonly PendingBuildRecord[]) => {
+    recs.forEach((rec) => {
+      purgeWindows.finish('attempt', rec.id).catch(() => undefined);
     });
+  };
 
-  /** The leave-handler half of the flow's cancellation pattern: the step being left cancels its
-   *  OWN in-flight request and nothing else. The clarify exchange now starts the moment compose's
-   *  primary action is tapped — the screen is already `clarify` (loading) by the time anything is
-   *  in flight (C2), so it is leaving THAT step, never `compose`, that aborts the `'compose'`-
-   *  labelled request (the internal slot name is unchanged; only which screen owns the wait is
-   *  new). Compose itself never has a request of its own to cancel. */
+  /** "Customize tile": the override is stored host-side and wins over the assigned tile. */
+  const onCustomizeTile = (app: InstalledApp, tile: TileIdentity) => {
+    index.setTileOverride(app.id, tile);
+    refresh();
+  };
+  const onResetTile = (app: InstalledApp) => {
+    index.clearTileOverride(app.id);
+    refresh();
+  };
+
+  /** The session's making-sheet drafts (`flow-draft.ts`): the page left on Describe or Plan, with its
+   *  words, answers and plan edits, one for a new app and one per app being changed. */
+  const drafts = useRef(new FlowDrafts()).current;
+  const [composerDraft, setComposerDraft] = useState<string | undefined>(undefined);
+  const syncComposerDraft = () => setComposerDraft(drafts.composerWords());
+
+  /** The leave-handler half of the flow's cancellation pattern: leaving a page cancels its OWN
+   *  in-flight request and nothing else. Describe never has one; Plan owns the clarify exchange (the
+   *  `'compose'` slot) and the rewrite (the `'plan'` slot), both aborted when the sheet is left, so an
+   *  abandoned request neither moves a screen nor shows a failure. */
   const leaveFlowStep = (kind: Screen['kind']) => {
-    if (kind === 'clarify') {
+    if (kind === 'plan') {
       flowRequests.abort('compose');
-    } else if (kind === 'plan') {
       flowRequests.abort('plan');
     }
   };
 
+  /** Leaving a draft page by any route (close, scrim, drag, back, a link, a screen that replaces
+   *  it) aborts what it has in flight and keeps what the person had, to come back to from the composer. */
+  const keepDraft = (from: Screen) => {
+    leaveFlowStep(from.kind);
+    if (from.kind === 'describe' || from.kind === 'plan') {
+      drafts.keep(from);
+      syncComposerDraft();
+    }
+  };
+
   const goHome = () => {
-    leaveFlowStep(screen.kind);
+    keepDraft(screen);
     aboutRef.current = null;
     refresh();
     setScreen({ kind: 'home' });
@@ -996,12 +1171,13 @@ function LauncherShell({
   };
 
   /** A report refused `update_required`, or answered with an `update` fallback carrying `notice`,
-   *  from any of its three sheets: the update screen replaces the screen the sheet sits on — only
-   *  while that screen still shows, the same never-pull-back rule every other refusal follows. */
+   *  from the Report screen or either sheet: the update screen replaces the screen the report sits
+   *  on — only while that screen still shows, the same never-pull-back rule every other refusal
+   *  follows. */
   const onReportUpdateRequired = (notice?: string) => {
     setReportTarget(null);
     setScreen((prev) =>
-      prev.kind === 'done' || prev.kind === 'history' || prev.kind === 'app' ? updateScreenFrom(prev, notice) : prev,
+      prev.kind === 'ready' || prev.kind === 'report' || prev.kind === 'app' ? updateScreenFrom(prev, notice) : prev,
     );
   };
 
@@ -1021,38 +1197,36 @@ function LauncherShell({
     setServerUrl(serverOverride(kv));
   };
 
-  const onHighlightingChange = (enabled: boolean) => {
-    saveHighlighting(kv, enabled);
-    setHighlighting(enabled);
-  };
-
   const onErrorDetailsChange = (on: boolean) => {
     setErrorDetails(kv, on);
     setErrorDetailsShown(on);
   };
 
-  /** Settings' confirmed "Make a new ID": the stored ID is replaced, and the options memos (keyed on
+  /** Advanced's confirmed "Make a new ID": the stored ID is replaced, and the options memos (keyed on
    *  `deviceId`) rebuild, so every later request carries the new one. */
   const onResetDeviceId = () => {
     setDeviceId(resetDeviceId(kv));
   };
 
-  /** Settings' confirmed "Use your own server": records the acknowledgement, so a saved address is
-   *  honoured from now on, and returns it for the field to show. */
-  const onAcknowledgeOwnServer = (): string | undefined => {
+  /** Advanced's server rows: Whim's server keeps the saved address, unread; your own server reads
+   *  it again, with nothing to confirm once acknowledged. */
+  const onChooseServer = (choice: ServerChoice) => {
     const previous = effectiveServerUrl(kv);
-    acknowledgeOwnServer(kv);
+    chooseServer(kv, choice);
     afterServerWrite(previous);
-    const honoured = serverOverride(kv);
-    setServerUrl(honoured);
-    setOwnServerAck(true);
-    return honoured;
+    setChosenServer(serverChoice(kv));
+    setServerUrl(serverOverride(kv));
   };
 
-  const onUseDefaultServer = () => {
+  /** Advanced's confirmed "Use your own server": records the acknowledgement and chooses it, so a
+   *  saved address is honoured from now on. */
+  const onAcknowledgeOwnServer = () => {
     const previous = effectiveServerUrl(kv);
-    clearServerUrl(kv);
+    acknowledgeOwnServer(kv);
+    chooseServer(kv, 'own');
     afterServerWrite(previous);
+    setOwnServerAck(true);
+    setChosenServer(serverChoice(kv));
     setServerUrl(serverOverride(kv));
   };
 
@@ -1094,7 +1268,7 @@ function LauncherShell({
    *  was, for the user to send it again. */
   const runContinuation = (continuation: ConsentContinuation) => {
     if (continuation.kind === 'compose') {
-      openCompose(continuation.editing);
+      openCompose(continuation.editing, continuation.text);
     } else if (continuation.kind === 'resume') {
       setScreen(continuation.screen);
     } else if (continuation.kind === 'settings') {
@@ -1124,12 +1298,23 @@ function LauncherShell({
     return undefined;
   };
 
+  /** Whether the flow began on the AI features review screen (the one flow that continues to
+   *  Settings), which showed the whole disclosure and whose "Turn on AI features" is the consent
+   *  itself (#104): its consent step grants rather than showing the disclosure a second time. */
+  const reviewedConsent = (flow: LegalFlow<Screen>): boolean => flow.continuation.kind === 'settings';
+
   /** Moves the flow on: opens its next legal screen, or runs its continuation when nothing is left
    *  to ask. `age` is passed only by the age check, with the result it just derived. */
   const advanceLegalFlow = (flow: LegalFlow<Screen>, age?: AgeGate) => {
     const next = legalScreen(flow, age);
-    if (next === undefined) runContinuation(flow.continuation);
-    else setScreen(next);
+    if (next === undefined) {
+      runContinuation(flow.continuation);
+    } else if (next.kind === 'consent' && reviewedConsent(flow)) {
+      onGrantConsent();
+      runContinuation(flow.continuation);
+    } else {
+      setScreen(next);
+    }
   };
 
   // The age check (legal-surface-v2 D11; spec store-age-signals): while the checking screen shows,
@@ -1186,43 +1371,41 @@ function LauncherShell({
     return legalScreen({ continuation: resume, returnTo: back, refused: true });
   };
 
-  /** The terms step's `Accept`: records the acceptance, then moves the same flow on — to the
-   *  consent screen when consent isn't current (or the flow is a refused one), otherwise straight
-   *  to the action the user started (spec terms-acceptance "After `Accept`, the flow SHALL
-   *  continue…"). */
-  const onTermsAccept = (flow: LegalFlow<Screen>) => {
-    onAcceptTerms();
-    advanceLegalFlow(flow);
+  /** Whether `ask` also needs the consent grant recorded: it is not current, or the server refused it
+   *  again. When only the terms are due the stored grant is left exactly as it is. */
+  const grantDue = (ask: FirstRunAsk): boolean => consentGrantDue(consentStatus(kv), ask.refused);
+
+  /** The first-run sheet's `Agree to send descriptions`: the two acts on purpose, each recorded as it
+   *  always was with its own version — the terms acceptance when it was due, and the consent grant
+   *  when it is not current (or a `consent_required` refusal asked again) — then the action the
+   *  user started continues as if both had always been there (spec ai-data-consent "After the user
+   *  agrees, the action they started SHALL continue as if consent had already existed"). */
+  const onFirstRunAgree = (ask: FirstRunAsk) => {
+    if (ask.kind === 'terms') onAcceptTerms();
+    if (grantDue(ask)) onGrantConsent();
+    runContinuation(ask.continuation);
   };
 
-  /** Ask mode's `Agree and continue`: grants, then resumes exactly the continuation that opened
-   *  this screen (spec "After the user agrees, the action they started SHALL continue as if
-   *  consent had already existed"). */
-  const onConsentAskAgree = (continuation: ConsentContinuation) => {
-    onGrantConsent();
-    runContinuation(continuation);
-  };
-
-  /** Declining either legal screen (`Not now`, and hardware back — both routed through the
-   *  screen's one `onClose`): grants and accepts nothing, and returns to whatever screen the flow
+  /** Declining the legal flow (`Not now`, close, and hardware back — all routed through the
+   *  sheet's or screen's one `onClose`): grants and accepts nothing, and returns to whatever screen the flow
    *  replaced (design D5: Home for a running mini-app, since a torn-down realm is never resumed). */
   const onLegalDecline = (returnTo: Screen) => {
     setScreen(declineTarget<Screen>(returnTo));
   };
 
-  /** Turning AI features on from Settings (spec terms-acceptance "One pass through the legal flow
-   *  shows each legal screen at most once"; beta-1 D6, #104): the legal flow from its first due
-   *  step, so the age check and the terms step when due, then the one consent screen. It ends back
-   *  on Settings, and declining any step returns there too. */
+  /** Turning AI features on from their review screen (spec terms-acceptance "One pass through the
+   *  legal flow shows each legal screen at most once"; beta-1 D6, #104): the legal flow from its
+   *  first due step, so the age check and the terms step when due; the review screen was the one
+   *  consent screen (`reviewedConsent`). It ends back on Settings, and declining any step returns
+   *  there too. */
   const onTurnOnAIFeatures = () => {
     advanceLegalFlow({ continuation: { kind: 'settings' }, returnTo: { kind: 'settings' }, refused: false });
   };
 
-  /** Settings' AI features row: with AI features on, the consent screen in review mode, to keep
-   *  them on or turn them off whatever the terms say; otherwise turning them on. */
+  /** Settings' AI features row: the consent screen in review mode, pushed on the stack, to keep
+   *  them on or turn them off whatever the terms say, or to turn them on. */
   const onOpenAIFeatures = () => {
-    if (consentStatus(kv).kind === 'granted') setScreen({ kind: 'consent', mode: 'review' });
-    else onTurnOnAIFeatures();
+    setScreen({ kind: 'consent', mode: 'review' });
   };
 
   /** Review mode with consent on: the plain-text action deletes the grant and returns to
@@ -1239,10 +1422,10 @@ function LauncherShell({
     setScreen({ kind: 'settings' });
   };
 
-  // ── The `2a` flow (group D) ────────────────────────────────────────────────────────────────
-  // compose → clarify → plan → build → done. Every forward move is gated by a primary action and
-  // carries one request; every backward move is immediate (`prompt-flow.ts#backFrom`). The step
-  // screens never touch fetch, StoreAccess or AbortController — all of that lives here.
+  // ── The making sheet's flow (design-system-v1 D15) ─────────────────────────────────────────
+  // describe → plan → making → ready | failure. Every forward move is gated by the page's one
+  // action and carries its requests; every backward move is immediate. The pages never touch
+  // fetch, StoreAccess or AbortController — all of that lives here.
 
   /** The ONE construction of the failure screen from a thrown error: it records the failure on the
    *  generation channel on the way, so no path can reach the screen without a log record. Always
@@ -1295,18 +1478,30 @@ function LauncherShell({
     ...(pendingId != null ? { pendingId } : {}),
   });
 
-  /** Opens compose, optionally scoped to a re-prompt. `about` (the edit flow's shared clarify/
-   *  rewrite `app.description`) is resolved AFTER the screen is already showing — best effort,
-   *  never blocking the field the user is about to type into — and lands directly in `aboutRef`,
-   *  keyed by `editing.id`, rather than onto the screen: a user who taps Continue before it
-   *  resolves must still get it on the clarify/rewrite request that follows (the "about" race), and
-   *  `aboutRef` is read at request time regardless of which screen is showing when the read lands.
-   *  Capped here too, not only where `buildRewriteAppContext` sends it (`generation-request.ts`'s
+  const { firstTake, takeOnce } = useFirstTake();
+
+  /** Opens the making sheet, optionally scoped to one app being changed: on the draft the person left
+   *  for it (a plan page comes back as it was, with its answers and edits; its missing requests are
+   *  sent again), or on a fresh describe page. `about` (change mode's shared clarify/rewrite
+   *  `app.description`) is resolved AFTER the sheet is already showing — best effort, never
+   *  blocking the field the user is about to type into — and lands directly in `aboutRef`, keyed by
+   *  `editing.id`, rather than onto the screen: a user who taps Continue before it resolves must
+   *  still get it on the clarify/rewrite request that follows (the "about" race), and `aboutRef` is
+   *  read at request time regardless of which page is showing when the read lands. Capped here too,
+   *  not only where `buildRewriteAppContext` sends it (`generation-request.ts`'s
    *  `APP_CONTEXT_DESCRIPTION_MAX_CHARS` doc comment) — a cap enforced only on the read side is not
    *  a cap. A read that fails or finds no snapshot leaves `aboutRef` untouched for this id, which
-   *  `aboutFor` already treats as "no description" — a degraded edit flow, never a blocked one. */
-  const openCompose = (editing?: InstalledApp, text?: string) => {
-    setScreen(composeStep(editing, text ?? takeHeldPrompt(editing) ?? ''));
+   *  `aboutFor` already treats as "no description" — a degraded change flow, never a blocked one. */
+  const openCompose = (requested?: InstalledApp, text?: string) => {
+    // The app as it is now: a draft kept for it carries the app as it was when the draft was kept (a
+    // new version, a new name, a customised tile), and the plan's requests must send the current one.
+    // An app that has gone takes its draft with it.
+    const live = reachableApps().find((app) => app.id === requested?.id);
+    const editing = live ?? requested;
+    const kept = text === undefined ? drafts.reopen(requested, live) : undefined;
+    const opened = kept ?? describeStep(editing, text ?? takeHeldPrompt(editing) ?? '');
+    setScreen(opened);
+    if (opened.kind === 'plan') resumePlan(opened);
     if (!editing) return;
     (async () => {
       let about: string | undefined;
@@ -1321,137 +1516,65 @@ function LauncherShell({
     })();
   };
 
-  const goBack = (from: FlowScreen) => {
-    leaveFlowStep(from.kind);
-    const target = backFrom(from);
-    if (target === 'home') goHome();
-    else if (target) setScreen(target);
+  /** The plan page's header back: Describe, with the words kept and this plan to come back to. Aborts
+   *  what the page had in flight (and so the draft is kept only as far as it landed). */
+  const backToDescribePage = (from: PlanScreen) => {
+    leaveFlowStep('plan');
+    setScreen(backToDescribe(from));
   };
 
-  /** Fetch the plan and show it: the step opens immediately under its row skeleton, and its own
-   *  primary action stays busy until the rewrite response lands. `sentFrom` is the step whose OWN
-   *  `Continue` fired this request — `'clarify'` from the clarify step's own action, `'compose'`
-   *  when a zero-question exchange skips it and `onComposeContinue` opens plan directly from the
-   *  loading `clarify` screen it built (never `prev.kind`, which would misattribute that skip's
-   *  refusal landing to a clarify step the user never saw). */
-  const openPlan = async (prev: ComposeScreen | ClarifyScreen, sentFrom: RefusalSentFrom) => {
-    const options = resolveClientOptions();
-    if (!options) return;
-    const markOnline = onlineForRequest(options);
-    const plan = planStep(prev);
-    // Guarded like every other post-navigation write: this runs straight after the clarify await
-    // on the compose path, and a user who has already left must not be pulled onto a plan step.
-    setScreen(onlyOnStep<Screen, 'compose' | 'clarify'>(prev.kind, () => plan));
-    const request = flowRequests.start('plan');
-    try {
-      const response = await rewritePrompt(
-        options,
-        plan.text,
-        clarificationsFrom(plan.questions, plan.answers),
-        // A re-prompt tells the rewrite which app it is changing, and what it currently is;
-        // composing a new app sends neither. `aboutFor`, not `plan.about` — the description can
-        // still resolve after the user has already moved past compose (the "about" race).
-        buildRewriteAppContext(plan.editing, aboutFor(plan.editing)),
-        request.controller.signal,
-      );
-      markOnline();
-      if (request.cancelled) return;
-      setScreen(onlyOnStep<Screen, 'plan'>('plan', (s) => withPlan(s, response)));
-    } catch (e) {
-      // A request the user walked away from fails as an abort: no failure screen, no breadcrumb.
-      if (request.cancelled) return;
-      // A reply this build can't use, whose fallback is `update` (beta-1 D16): the update screen,
-      // with its notice, holding the prompt — and no build started. A `fail` fallback is the
-      // generic failure below, whose reason is its notice.
-      const fallback = terminalFallbackOf(e);
-      if (fallback?.kind === 'update') {
-        markOnline();
-        logUpdateFallback('rewrite', e);
-        const update = updateScreenFrom(plan, fallbackNotice(fallback));
-        setScreen(onlyOnStep<Screen, 'plan'>('plan', () => update));
-        return;
-      }
-      // A structured service refusal proves the server answered — proof of connectivity
-      // equivalent to a successful dedicated probe (spec "A real generation or rewrite call
-      // succeeding, and any service refusal those paths receive... SHALL be treated as proof of
-      // connectivity").
-      const refusal = serviceRefusalOf(e);
-      if (refusal) markOnline();
-      if (refusal) {
-        // Never the failure screen (service-refusals "never opens the failure screen"): the
-        // rewrite's landing is compose or clarify — whichever step's Continue sent it — for a
-        // sender refusal, and always compose for a refusal about the words themselves. A refusal
-        // that opens a screen of its own goes there, with that same step to come back to.
-        logServiceRefusal('rewrite', refusal);
-        const back = rewriteRefusalTarget(sentFrom, plan, refusal);
-        const target =
-          refusalScreen(refusal, back, { kind: 'resume', screen: back }) ??
-          rewriteRefusalTarget(sentFrom, plan, refusal, noticeFrom(refusal));
-        setScreen(onlyOnStep<Screen, 'plan'>('plan', () => target));
-        return;
-      }
-      logGenError('rewrite failed', e);
-      const failed = failure(plan.editing, plan.text, e, 'rewrite failed');
-      setScreen(onlyOnStep<Screen, 'plan'>('plan', () => failed));
-    } finally {
-      flowRequests.release('plan', request);
-    }
+  /** A request-failure on the plan page that is not a refusal and not an update: stays on the page
+   *  with the sentence and Try again (spec "A connection problem before any run ... SHALL NOT open
+   *  the failure page"). */
+  const planProblem = (request: 'clarify' | 'rewrite', e: unknown): ((s: PlanScreen) => PlanScreen) => {
+    logGenError(`${request} failed`, e);
+    const problem = { request, reason: errorReason(e).reason } as const;
+    return (current) => withProblem(current, problem);
   };
 
-  /** Where a clarify exchange that threw lands (an abort never gets here — the caller swallows it),
-   *  or `'skip'` for a clarify `502`, which goes on to the plan step. Called outside any `setScreen`
-   *  updater, since the failure screen's construction logs. */
-  const clarifyThrewTo = (from: ComposeScreen, e: unknown, markOnline: () => void): Screen | 'skip' => {
-    const back = composeStep(from.editing, from.text);
-    // A reply this build can't use, whose fallback is `update` (beta-1 D16): the update screen,
-    // with its notice, holding the typed prompt. A `fail` fallback is the failure below, whose
-    // reason is its notice (it is never a clarify skip, which is a 502 alone).
+  /** Where a clarify or rewrite refusal, `update` fallback or refused `consent_required` lands: back
+   *  on Describe with the words (the request was sent from its Continue), carrying the notice, or on
+   *  the screen the refusal opens of its own. `undefined` when `e` is neither. A refusal proves the
+   *  server answered. Called outside any `setScreen` updater, since the failure screen's construction
+   *  logs. */
+  const refusalLandingOf = (from: PlanScreen, request: 'clarify' | 'rewrite', e: unknown, markOnline: () => void): Screen | undefined => {
+    const back = describeStep(from.editing, from.text);
+    // A reply this build can't use, whose fallback is `update` (beta-1 D16): the update screen, with
+    // its notice, holding the typed prompt. A `fail` fallback is no landing here (see `planProblem`).
     const fallback = terminalFallbackOf(e);
     if (fallback?.kind === 'update') {
       markOnline();
-      logUpdateFallback('clarify', e);
+      logUpdateFallback(request, e);
       return updateScreenFrom(back, fallbackNotice(fallback));
     }
-    // A structured service refusal proves the server answered (spec "A real generation or
-    // rewrite call succeeding, and any service refusal those paths receive... SHALL be treated
-    // as proof of connectivity") — checked regardless of `isClarifySkip`, since a refusal never
-    // reads as one (that path is 502-only).
     const refusal = serviceRefusalOf(e);
-    if (refusal) {
-      markOnline();
-      // Never the failure screen (service-refusals "never opens the failure screen"): a
-      // clarify request's only sender is compose, and a refusal about the words themselves
-      // lands there too, so the landing is always compose. A refusal that opens a screen of its
-      // own goes there, with the compose step (the typed prompt intact) to come back to.
-      logServiceRefusal('clarify', refusal);
-      return refusalScreen(refusal, back, { kind: 'resume', screen: back }) ?? { ...from, notice: noticeFrom(refusal) };
-    }
-    if (isClarifySkip(e)) return 'skip';
-    logGenError('clarify failed', e);
-    return failure(from.editing, from.text, e, 'clarify failed');
+    if (!refusal) return undefined;
+    markOnline();
+    // Never the failure screen (service-refusals "never opens the failure screen"): the page the
+    // words were sent from. A refusal that opens a screen of its own goes there, with Describe (the
+    // typed prompt intact) to come back to.
+    logServiceRefusal(request, refusal);
+    return refusalScreen(refusal, back, { kind: 'resume', screen: back }) ?? { ...back, notice: noticeFrom(refusal) };
   };
 
-  /** compose → clarify, or straight past it when the exchange has nothing to ask. The clarify step
-   *  opens IMMEDIATELY, under its own loading state — the wait is that screen, never a grey compose
-   *  button (C2) — and the request that fills it in is fired straight after. A clarify `502` means
-   *  "skip to the plan step", not a dead end (`isClarifySkip`). */
-  const onComposeContinue = async (from: ComposeScreen) => {
+  /** Asks the clarify questions for `plan` (its page is already showing, loading), then — at once, with
+   *  every question delegated — has the plan written. A clarify `502` means "no questions", not a dead
+   *  end (`isClarifySkip`). */
+  const askQuestions = async (plan: PlanScreen) => {
     const options = resolveClientOptions();
     if (!options) return;
     const markOnline = onlineForRequest(options);
-    const loading = clarifyStep(from);
-    setScreen(loading);
     const request = flowRequests.start('compose');
     let questions: FlowQuestion[] = [];
     let limit: FlowLimit | undefined;
     try {
       const response = await clarifyPrompt(
         options,
-        from.text,
+        plan.text,
         // The same context a rewrite would carry (name, collections, description) — so the
-        // clarifier never re-asks what kind of app it is talking to. `aboutFor`, not
-        // `from.about` — see `aboutRef`'s doc comment.
-        buildRewriteAppContext(from.editing, aboutFor(from.editing)),
+        // clarifier never re-asks what kind of app it is talking to. `aboutFor`, not a copy on the
+        // screen — see `aboutRef`'s doc comment.
+        buildRewriteAppContext(plan.editing, aboutFor(plan.editing)),
         request.controller.signal,
       );
       questions = acceptClarifyQuestions(response.questions);
@@ -1460,13 +1583,16 @@ function LauncherShell({
       // to a successful dedicated probe (spec "A real generation or rewrite call succeeding...").
       markOnline();
     } catch (e) {
-      // The user left the loading clarify screen while this was in flight (back to compose, or
-      // Home): the abort surfaces here as a plain `AbortError`, and it is swallowed — no failure
-      // screen, no breadcrumb.
+      // The sheet was left while this was in flight: the abort surfaces here as a plain
+      // `AbortError`, and it is swallowed — no failure, no breadcrumb.
       if (request.cancelled) return;
-      const landing = clarifyThrewTo(from, e, markOnline);
-      if (landing !== 'skip') {
-        setScreen(onlyOnStep<Screen, 'clarify'>('clarify', () => landing));
+      const landing = refusalLandingOf(plan, 'clarify', e, markOnline);
+      if (landing) {
+        setScreen(onlyOnStep<Screen, 'plan'>('plan', () => landing));
+        return;
+      }
+      if (!isClarifySkip(e)) {
+        setScreen(onlyOnStep<Screen, 'plan'>('plan', planProblem('clarify', e)));
         return;
       }
     } finally {
@@ -1474,19 +1600,74 @@ function LauncherShell({
     }
     if (request.cancelled) return;
     if (limit) {
-      // Clarify says this can't be built as asked (beta-1 D9): the step shows why and what could
-      // be built instead, and nothing more happens until the user picks one.
+      // Clarify says this can't be made as asked (beta-1 D9): the page shows why and what could be
+      // made instead, and nothing more happens until the person picks one.
       const shown = limit;
-      setScreen(onlyOnStep<Screen, 'clarify'>('clarify', (s) => withLimit(s, shown)));
-    } else if (stepAfterClarifyExchange(questions) === 'clarify') {
-      setScreen(onlyOnStep<Screen, 'clarify'>('clarify', (s) => withQuestions(s, questions)));
-    } else {
-      // Zero questions (or a clarify skip): the loading clarify screen goes straight to the plan
-      // step — its own skeleton replaces this one, so the wait reads as continuous, never as a
-      // clarify screen that flashed empty. `'compose'`, not `loading.kind` (`'clarify'`) — it was
-      // THIS Continue that sent the rewrite request (M3 review fix).
-      await openPlan(loading, 'compose');
+      setScreen(onlyOnStep<Screen, 'plan'>('plan', (s) => withLimit(s, shown)));
+      return;
     }
+    const asked = withQuestions(plan, questions);
+    setScreen(onlyOnStep<Screen, 'plan'>('plan', (s) => withQuestions(s, questions)));
+    await writePlan(asked);
+  };
+
+  /** Has the plan written: the rewrite goes out at once with every question delegated (`decide:
+   *  true`), whatever the person has answered meanwhile — the plan's rows must not depend on, or
+   *  restate, an answer; the answers travel on to making as `clarifications`. */
+  const writePlan = async (plan: PlanScreen) => {
+    const options = resolveClientOptions();
+    if (!options) return;
+    const markOnline = onlineForRequest(options);
+    const request = flowRequests.start('plan');
+    try {
+      const response = await rewritePrompt(
+        options,
+        plan.text,
+        clarificationsFrom(plan.questions, delegatedAnswers(plan.questions)),
+        // A change tells the rewrite which app it is changing, and what it currently is; making a
+        // new app sends neither. `aboutFor`, not a copy on the screen — the description can still
+        // resolve after the person has already moved past Describe (the "about" race).
+        buildRewriteAppContext(plan.editing, aboutFor(plan.editing)),
+        request.controller.signal,
+      );
+      markOnline();
+      if (request.cancelled) return;
+      setScreen(onlyOnStep<Screen, 'plan'>('plan', (s) => withPlan(s, response)));
+    } catch (e) {
+      // A request the user walked away from fails as an abort: no failure, no breadcrumb.
+      if (request.cancelled) return;
+      const landing = refusalLandingOf(plan, 'rewrite', e, markOnline);
+      setScreen(onlyOnStep<Screen, 'plan'>('plan', landing ? () => landing : planProblem('rewrite', e)));
+    } finally {
+      flowRequests.release('plan', request);
+    }
+  };
+
+  /** Sends the request a restored or retried plan page is missing: the clarify exchange (which then
+   *  has the plan written), or just the plan. A page with nothing missing sends nothing. */
+  const resumePlan = (plan: PlanScreen, request: 'clarify' | 'rewrite' | null = missingRequest(plan)) => {
+    const missing = request;
+    if (missing === null) return;
+    const loading = retrying(plan, missing);
+    setScreen(onlyOnStep<Screen, 'plan'>('plan', () => loading));
+    if (missing === 'clarify') askQuestions(loading).catch((e) => logGenError('clarify continuation failed', e));
+    else writePlan(loading).catch((e) => logGenError('rewrite continuation failed', e));
+  };
+
+  /** Describe's Continue: back to the plan page this one was reached back from while the words are
+   *  unchanged, otherwise the plan page opens IMMEDIATELY, under its own loading state — the wait is
+   *  that page, never a grey Continue — and the one clarify request that fills it in goes out
+   *  straight after. */
+  const onDescribeContinue = async (from: DescribeScreen) => {
+    if (!resolveClientOptions() || !firstTake(from)) return;
+    if (from.kept) {
+      setScreen(from.kept);
+      resumePlan(from.kept);
+      return;
+    }
+    const plan = planStep(from);
+    setScreen(plan);
+    await askQuestions(plan);
   };
 
   /** A settling attempt releases ONLY the refs that still point at ITSELF. Two attempts can
@@ -1540,7 +1721,7 @@ function LauncherShell({
     const nextScreen = withStreamEvent(currentLive.screen, event);
     if (nextScreen !== currentLive.screen) {
       currentLive.screen = nextScreen;
-      if (selected) setScreen((previous) => (previous.kind === 'build' ? withStreamEvent(previous, event) : previous));
+      if (selected) setScreen((previous) => (previous.kind === 'making' ? withStreamEvent(previous, event) : previous));
     }
     return nextSignals;
   };
@@ -1743,7 +1924,7 @@ function LauncherShell({
       if (selected && fromPlan) {
         const back: PlanScreen = { ...fromPlan, notice: undefined };
         const target = refusalScreen(refusal, back, { kind: 'resume', screen: back }) ?? { ...fromPlan, notice };
-        setScreen(onlyOnStep<Screen, 'build'>('build', () => target));
+        setScreen(onlyOnStep<Screen, 'making'>('making', () => target));
       }
       return;
     }
@@ -1769,7 +1950,7 @@ function LauncherShell({
     if (updated) {
       const back = failureFromRecord(updated);
       const target = refusalScreen(refusal, back, { kind: 'retry', record: updated }) ?? { ...back, notice };
-      setScreen(onlyOnStep<Screen, 'build'>('build', () => target));
+      setScreen(onlyOnStep<Screen, 'making'>('making', () => target));
     }
   };
 
@@ -2044,7 +2225,7 @@ function LauncherShell({
   };
 
   const beginPendingAttempt = (
-    building: BuildScreen,
+    building: MakingScreen,
     editing: InstalledApp | undefined,
     reuseId: string | undefined,
     ctl: NonNullable<typeof genRef.current>,
@@ -2095,11 +2276,11 @@ function LauncherShell({
    * refused while still on the build screen can return to plan with every row exactly as it was
    * (design D9/D10); a Retry passes none, since a refused Retry never lands on plan.
    */
-  const runAttempt = async (building: BuildScreen, reuseId?: string, fromPlan?: PlanScreen) => {
+  const runAttempt = async (opening: MakingScreen, reuseId?: string, fromPlan?: PlanScreen) => {
     const options = resolveClientOptions();
     if (!options) return;
     const markOnline = onlineForRequest(options);
-    setScreen(building);
+    setScreen(opening);
 
     const controller = new AbortController();
     const ctl = { controller, cancelled: false, detached: false };
@@ -2107,7 +2288,7 @@ function LauncherShell({
     const setDoneIfAttached = (next: (current: Screen) => Screen) => {
       if (!ctl.detached) setScreen(next);
     };
-    const editing = building.editing;
+    const editing = opening.editing;
     // Declared outside the try so a throw mid-stream still knows what the device observed, and on
     // which request (the stream's `x-whim-request-id`, once it has opened).
     const counts: EventCounts = { stage: 0, token: 0, diagnostic: 0, repair: 0 };
@@ -2115,9 +2296,11 @@ function LauncherShell({
 
     // The id this attempt writes to, decided and persisted before the request exists: a new
     // install mints one, a rebuild's id IS the app it rebuilds, a retry reuses its record's.
-    const startedAttempt = beginPendingAttempt(building, editing, reuseId, ctl);
+    const startedAttempt = beginPendingAttempt(opening, editing, reuseId, ctl);
     if (startedAttempt == null) return;
     const { id: attemptId, lease, retrySnapshot } = startedAttempt;
+    // The page is this run's from here on: keyed by its own journal id, so it never shows another's.
+    const building: MakingScreen = { ...opening, runId: attemptId };
     const startedAt = Date.now();
     let signals: RunSignals = {
       startedAt,
@@ -2130,6 +2313,7 @@ function LauncherShell({
     liveAttemptsRef.set(attemptId, live);
     liveRef.current = live;
     signalsRef.current = signals;
+    setScreen(building);
     // The keepalive comment frame (`: keepalive\n\n`, build-liveness B2) is transport noise, never
     // a `GenerationEvent` — it reaches here through `ClientOptions.onKeepalive`, not the stream
     // loop below, and moves ONLY the any-frame clock (`withKeepalive` never touches the journal).
@@ -2231,7 +2415,7 @@ function LauncherShell({
       journal.appendTerminal(attemptId, terminalCounts());
       currentLive.screen = withDelivering(currentLive.screen);
       if (liveRef.current?.lease === lease) {
-        setScreen((s) => (s.kind === 'build' ? withDelivering(s) : s));
+        setScreen((s) => (s.kind === 'making' ? withDelivering(s) : s));
       }
       // Store first, index second, pending record deleted LAST (design D5) — a process death
       // anywhere inside this await leaves the record behind to surface as `interrupted`.
@@ -2253,7 +2437,7 @@ function LauncherShell({
         releaseLiveRef(lease);
         refresh();
         // "Leave it running": delivered silently, the user is elsewhere.
-        if (selected) setDoneIfAttached((s) => (s.kind === 'build' ? doneStep(s, installed) : s));
+        if (selected) setDoneIfAttached((s) => (s.kind === 'making' ? readyStep(s, installed) : s));
       });
     } catch (error) {
       settleUnexpectedAttemptFailure({
@@ -2274,13 +2458,16 @@ function LauncherShell({
     }
   };
 
-  /** The approval gate's action — the first moment a generation request is sent. */
+  /** The approval gate's action — the first moment a generation request is sent. The draft is
+   *  spent: the words are now a run, and the composer stops offering to continue them. */
   const onBuildIt = async (from: PlanScreen) => {
-    await runAttempt(buildStep(from), undefined, from);
+    drafts.clear(draftKey(from));
+    syncComposerDraft();
+    await runAttempt(makingStep(from), undefined, from);
   };
 
-  /** `Leave it running`: back to the shell WITHOUT cancelling — the run finishes and its result
-   *  is still delivered, it just no longer takes over the screen. Its record stays `building`, so
+  /** Closing the sheet on Making: back to the shell WITHOUT cancelling — the run finishes and its
+   *  result is still delivered, it just no longer takes over the screen. Its record stays `building`, so
    *  the grid keeps showing the ghost for as long as the stream is in flight. */
   const onLeaveRunning = () => {
     const ctl = genRef.current;
@@ -2296,12 +2483,17 @@ function LauncherShell({
     goHome();
   };
 
-  /** The limit step's `Build <alternative> instead` (beta-1 D9): the alternative becomes the prompt
-   *  and clarify is asked about it afresh — its own questions, never the old ones. Nothing is built
-   *  until the user approves a plan, as always. */
-  const onBuildInstead = async (from: ClarifyScreen) => {
+  /** The limit page's `Make that instead` (beta-1 D9): the alternative becomes the prompt and clarify
+   *  is asked about it afresh — its own questions, never the old ones. Nothing is made until the
+   *  person approves a plan, as always. */
+  const onBuildInstead = async (from: PlanScreen) => {
     if (!from.limit) return;
-    await onComposeContinue(composeStep(from.editing, from.limit.alternative));
+    await onDescribeContinue(describeStep(from.editing, from.limit.alternative));
+  };
+
+  /** "Try again" on a plan page that could not reach the server: sends the request it was missing. */
+  const onPlanTryAgain = (from: PlanScreen) => {
+    if (from.problem) resumePlan(from, from.problem.request);
   };
 
   // `onBuildBack` reads the latest `timeline`/`onLeaveRunning` through refs so its identity never
@@ -2452,7 +2644,7 @@ function LauncherShell({
    *  report sheet, mirroring `back-policy.ts`'s `overlayOpen` precedent: never forwarded, never
    *  counted toward anything else. */
   const leaveForLink = (exit: LinkExit) => {
-    leaveFlowStep(screen.kind);
+    keepDraft(screen);
     aboutRef.current = null;
     if (exit === 'leave-build') {
       const ctl = genRef.current;
@@ -2472,7 +2664,7 @@ function LauncherShell({
    *  settles (the "waits" release, above). */
   const openAppLink = (id: string) => {
     if (screen.kind === 'app' && screen.app.id === id) return;
-    const resolution = resolveAppLink(id, index.list(), pending.listCurrent().map((view) => view.record));
+    const resolution = resolveAppLink(id, reachableApps(), reachableAttempts());
     leaveForLink(linkExitFor(reportTarget != null ? 'sheet' : screen.kind));
     if (resolution.kind === 'open') {
       onOpen(resolution.app);
@@ -2536,9 +2728,6 @@ function LauncherShell({
     };
   };
 
-  // v2: the shell is fixed and always light (paper), never dark — see theme.ts.
-  const statusBarStyle = 'dark-content';
-
   /** Home's developer-probe entry, offered only where the dev log tools are. Decided here rather than
    *  inside `renderScreenContent`, whose complexity budget goes to the screen kinds. */
   const onOpenDevProbe = devLogOverlayEnabled(__DEV__) ? () => setScreen({ kind: 'dev' }) : undefined;
@@ -2569,219 +2758,283 @@ function LauncherShell({
       );
     } else if (screen.kind === 'dev') {
       return <DevProbeScreen onExit={goHome} />;
-    } else if (screen.kind === 'settings') {
+    } else if (screen.kind === 'age' && screen.held !== undefined) {
+      const { returnTo } = screen;
       return (
-        <SettingsScreen
-          onBack={goHome}
-          ownServerAcknowledged={ownServerAck}
-          onAcknowledgeOwnServer={onAcknowledgeOwnServer}
-          serverUrl={serverUrl}
-          onServerUrlChange={onServerUrlChange}
-          onUseDefaultServer={onUseDefaultServer}
-          highlighting={highlighting}
-          onHighlightingChange={onHighlightingChange}
-          consentStatus={consentStatus(kv)}
-          canProbe={clientOptions != null}
-          onOpenAIFeatures={onOpenAIFeatures}
-          errorDetails={errorDetailsShown}
-          onErrorDetailsChange={onErrorDetailsChange}
-          deviceId={deviceId}
-          onResetDeviceId={onResetDeviceId}
-          legalLanguage={legalLanguage}
-          deviceLocale={phoneLocale}
-        />
-      );
-    } else if (isPreConsentStep(screen)) {
-      return (
-        <PreConsentStepForShell
-          screen={screen}
+        <AgeScreen
           language={legalLanguage}
           onLanguageChange={onLegalLanguageChange}
-          onTermsAccept={onTermsAccept}
-          onDecline={onLegalDecline}
+          held={screen.held}
+          onClose={() => onLegalDecline(returnTo)}
         />
-      );
-    } else if (screen.kind === 'consent') {
-      return (
-        <ConsentScreenForShell
-          screen={screen}
-          onAskAgree={onConsentAskAgree}
-          onAskDecline={onLegalDecline}
-          onReviewTurnOn={onTurnOnAIFeatures}
-          onReviewTurnOff={onConsentReviewTurnOff}
-          onReviewClose={onConsentReviewClose}
-          consentOn={consentStatus(kv).kind === 'granted'}
-          language={legalLanguage}
-          onLanguageChange={onLegalLanguageChange}
-        />
-      );
-    } else if (screen.kind === 'history') {
-      return (
-        <>
-          <HistoryScreen
-            app={screen.app}
-            access={access}
-            onBack={() => leaveHistory(screen.app, screen.from)}
-            onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
-            onReport={() => setReportTarget(screen.app)}
-          />
-          <ReportSheet
-            app={reportTarget}
-            access={access}
-            options={reportOptions}
-            legalLanguage={legalLanguage}
-            onClose={() => setReportTarget(null)}
-            onUpdateRequired={onReportUpdateRequired}
-          />
-        </>
       );
     } else if (screen.kind === 'link-missing') {
       return <AppLinkMissingScreen onBackToApps={goHome} />;
     } else if (screen.kind === 'update-required') {
       const held = screen.heldPrompt;
       return <UpdateRequiredScreen notice={screen.updateNotice} onNotNow={() => onUpdateNotNow(held)} />;
-    } else if (screen.kind === 'compose') {
+    }
+    return null;
+  };
+
+  /** Closing the sheet by any route (the close control, the scrim, a drag, Android back): on Making the
+   *  run keeps going and the sheet collapses into its tile; on Describe and Plan the in-flight
+   *  clarify or rewrite is aborted and the draft kept (`goHome` → `keepDraft`); on Ready it is Done;
+   *  on Failure it leaves the attempt as it is (`onLeaveFailure`). */
+  const closeSheet = () => {
+    if (screen.kind === 'making') onLeaveRunning();
+    else goHome();
+  };
+
+  /** The page the making sheet shows for the current screen, with the key it is shown under; `null`
+   *  closes the sheet. Describe and Plan are drawn here by their own pages. Making, Ready and
+   *  Failure are the run's existing screens, hosted in the sheet as they are until the
+   *  making-progress pages replace them. */
+  const renderSheetPage = (): SheetContent | null => {
+    if (screen.kind === 'describe') {
       const from = screen;
-      return (
-        <ComposeStep
-          text={from.text}
-          notice={from.notice}
-          serverUnreachable={showServerUnreachableNotice(connectivity, clientOptions != null)}
-          editing={from.editing != null}
-          editingName={from.editing?.name}
-          onChangeText={(text) => setScreen(composeTextChanged(from, text))}
-          onContinue={() => onComposeContinue(from)}
-          onBack={() => goBack(from)}
-        />
-      );
-    } else if (screen.kind === 'clarify') {
-      const from = screen;
-      return (
-        <ClarifyStep
-          prompt={from.text}
-          questions={from.questions}
-          answers={from.answers}
-          loading={from.loading}
-          startedAt={from.startedAt}
-          notice={from.notice}
-          limit={from.limit}
-          editing={from.editing != null}
-          editingName={from.editing?.name}
-          onAnswer={(id, change) => setScreen(withAnswer(from, id, change))}
-          onContinue={() => openPlan(from, 'clarify')}
-          onBuildInstead={() => onBuildInstead(from)}
-          onBack={() => goBack(from)}
-        />
-      );
-    } else if (screen.kind === 'plan') {
-      const from = screen;
-      return (
-        <PlanStep
-          rows={from.rows}
-          loading={from.loading}
-          startedAt={from.startedAt}
-          notice={from.notice}
-          editing={from.editing != null}
-          editingName={from.editing?.name}
-          onChangeRow={(rowIndex, text) => setScreen(updatePlanRow(from, rowIndex, text))}
-          onBuild={() => onBuildIt(from)}
-          onBack={() => goBack(from)}
-        />
-      );
-    } else if (screen.kind === 'build') {
-      const from = screen;
-      return (
-        <>
-          <BuildStep
-            stage={from.stage}
-            delivering={from.delivering}
-            queuedPosition={from.queuedPosition}
-            onCancel={onCancelBuild}
-            signals={signalsRef.current}
-            now={Date.now()}
-            editing={from.editing != null}
-            editingName={from.editing?.name}
-            onBack={onBuildBack}
-            onShowDetails={onShowDetails}
+      return {
+        key: pageKeyOf(from),
+        node: (
+          <DescribePage
+            text={from.text}
+            editing={from.editing}
+            serverUnreachable={showServerUnreachableNotice(connectivity, clientOptions != null)}
+            notice={from.notice}
+            onChangeText={(text) => setScreen(onlyOnStep<Screen, 'describe'>('describe', (s) => describeTextChanged(s, text)))}
+            onContinue={() => onDescribeContinue(from)}
           />
-          <RunDetailsSheet
-            open={timeline !== null}
-            entries={timeline}
-            devMode={timelineDevMode}
-            onClose={() => setTimeline(null)}
-          />
-        </>
-      );
-    } else if (screen.kind === 'done') {
+        ),
+      };
+    }
+    if (screen.kind === 'plan') {
       const from = screen;
-      return (
-        <>
-          <DoneStep
-            app={from.app}
-            onOpen={() => onOpen(from.app)}
-            onBackToApps={goHome}
-            onReport={() => setReportTarget(from.app)}
+      return {
+        key: pageKeyOf(from),
+        node: (
+          <PlanPage
+            screen={from}
+            editing={from.editing}
+            onBack={() => backToDescribePage(from)}
+            onAnswer={(id, change) => setScreen(onlyOnStep<Screen, 'plan'>('plan', (s) => withAnswer(s, id, change)))}
+            onChangeRow={(rowIndex, text) => setScreen(onlyOnStep<Screen, 'plan'>('plan', (s) => updatePlanRow(s, rowIndex, text)))}
+            onMake={() => takeOnce(from, onBuildIt)}
+            onTryAgain={() => onPlanTryAgain(from)}
+            onMakeInstead={() => onBuildInstead(from)}
           />
-          <ReportSheet
-            app={reportTarget}
-            access={access}
-            options={reportOptions}
-            legalLanguage={legalLanguage}
-            onClose={() => setReportTarget(null)}
-            onUpdateRequired={onReportUpdateRequired}
-          />
-        </>
-      );
-    } else if (screen.kind === 'failure') {
-      return (
-        <FailureScreen
-          reason={screen.reason}
-          diagnostics={screen.diagnostics}
-          observedRepairAttempts={screen.observedRepairAttempts}
-          hasWorkingVersion={screen.hasWorkingVersion}
-          rephraseHelps={screen.rephraseHelps}
-          notice={screen.notice}
-          journal={failureJournal}
-          attemptStarted={screen.journalId != null}
-          devMode={timelineDevMode}
-          {...failureActions(screen)}
-        />
-      );
-    } else {
-      return (
-        <HomeScreen
-          apps={apps}
-          pending={pendingBuilds.map((view) => view.record)}
-          onOpen={onOpen}
-          onFork={onFork}
-          onDelete={onDelete}
-          appBusy={appBusy}
-          onHistory={(app) => onHistory(app, 'home')}
-          onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
-          onCreate={() => openWithConsent({ kind: 'compose' })}
-          onSettings={() => setScreen({ kind: 'settings' })}
-          onOpenDevProbe={onOpenDevProbe}
-          offline={showOfflineIndicator(connectivity)}
-          onOpenPending={onOpenPending}
-          onCancelPending={onCancelPending}
-          onDismissPending={onDismissPending}
-        />
-      );
+        ),
+      };
+    }
+    if (screen.kind === 'making') {
+      const from = screen;
+      return {
+        key: pageKeyOf(from),
+        node: (
+          <HostedPage>
+            <BuildStep
+              stage={from.stage}
+              delivering={from.delivering}
+              queuedPosition={from.queuedPosition}
+              onCancel={onCancelBuild}
+              signals={signalsRef.current}
+              now={Date.now()}
+              editing={from.editing != null}
+              editingName={from.editing?.name}
+              onBack={onBuildBack}
+              onShowDetails={onShowDetails}
+            />
+            <RunDetailsSheet
+              open={timeline !== null}
+              entries={timeline}
+              devMode={timelineDevMode}
+              onClose={() => setTimeline(null)}
+            />
+          </HostedPage>
+        ),
+      };
+    }
+    if (screen.kind === 'ready') {
+      const from = screen;
+      return {
+        key: pageKeyOf(from),
+        node: (
+          <HostedPage>
+            <DoneStep
+              app={from.app}
+              onOpen={() => onOpen(from.app)}
+              onBackToApps={goHome}
+              onReport={() => setReportTarget(from.app)}
+            />
+            <ReportSheet
+              app={reportTarget}
+              access={access}
+              options={reportOptions}
+              legalLanguage={legalLanguage}
+              onClose={() => setReportTarget(null)}
+              onUpdateRequired={onReportUpdateRequired}
+            />
+          </HostedPage>
+        ),
+      };
+    }
+    if (screen.kind === 'failure') {
+      return {
+        key: pageKeyOf(screen),
+        node: (
+          <HostedPage>
+            <FailureScreen
+              reason={screen.reason}
+              diagnostics={screen.diagnostics}
+              observedRepairAttempts={screen.observedRepairAttempts}
+              hasWorkingVersion={screen.hasWorkingVersion}
+              rephraseHelps={screen.rephraseHelps}
+              notice={screen.notice}
+              journal={failureJournal}
+              attemptStarted={screen.journalId != null}
+              devMode={timelineDevMode}
+              {...failureActions(screen)}
+            />
+          </HostedPage>
+        ),
+      };
+    }
+    return null;
+  };
+
+  const renderHome = (): React.ReactNode => (
+    <HomeScreen
+      apps={apps}
+      pending={pendingBuilds.map((view) => view.record)}
+      purges={purges}
+      onOpen={onOpen}
+      onFork={onFork}
+      onDelete={onDelete}
+      onUndoDelete={onUndoDelete}
+      onSettleDelete={onSettleDelete}
+      onDiscard={onDiscard}
+      onUndoDiscard={onUndoDiscard}
+      onSettleDiscard={onSettleDiscard}
+      appBusy={appBusy}
+      canCopyData={access.canCopyData}
+      draft={composerDraft}
+      queued={liveView.queued}
+      activity={liveView.activity}
+      onHistory={(app) => onHistory(app, 'home')}
+      onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
+      onCreate={(idea) => openWithConsent({ kind: 'compose', text: idea })}
+      onSettings={() => setScreen({ kind: 'settings' })}
+      onOpenDevProbe={onOpenDevProbe}
+      offline={showOfflineIndicator(connectivity)}
+      onOpenPending={onOpenPending}
+      onCancelPending={onCancelPending}
+      onRetryPending={(rec) => openWithConsent({ kind: 'retry', record: rec })}
+      onCustomizeTile={onCustomizeTile}
+      onResetTile={onResetTile}
+    />
+  );
+
+  /** Where leaving a stack screen lands: one handler, run by its header back, a swipe and system
+   *  back alike, and always off the screen at once (`NativeStack.tsx`). */
+  const leaveFor = (from: StackScreen): (() => void) => {
+    switch (from.kind) {
+      case 'home':
+      case 'settings':
+        return goHome;
+      case 'advanced':
+        return () => setScreen({ kind: 'settings' });
+      case 'consent':
+        return onConsentReviewClose;
+      case 'history':
+        return () => leaveHistory(from.app, from.from);
+      case 'report':
+        return () => setScreen(from.from);
     }
   };
 
+  /** A stack screen's content, given the handler that leaves it. */
+  const renderStackScreen = (on: StackScreen, leave: () => void): React.ReactNode => {
+    switch (on.kind) {
+      case 'home':
+        return renderHome();
+      case 'settings':
+        return (
+          <SettingsScreen
+            onBack={leave}
+            onOpenAIFeatures={onOpenAIFeatures}
+            legalLanguage={legalLanguage}
+            onLegalLanguageChange={onLegalLanguageChange}
+            version={versionLabel(appInfo)}
+            onReportProblem={() => setScreen({ kind: 'report', app: null, from: { kind: 'settings' } })}
+            onOpenAdvanced={() => setScreen({ kind: 'advanced' })}
+          />
+        );
+      case 'advanced':
+        return (
+          <AdvancedScreen
+            onBack={leave}
+            errorDetails={errorDetailsShown}
+            onErrorDetailsChange={onErrorDetailsChange}
+            deviceId={deviceId}
+            onResetDeviceId={onResetDeviceId}
+            serverChoice={chosenServer}
+            ownServerAcknowledged={ownServerAck}
+            onAcknowledgeOwnServer={onAcknowledgeOwnServer}
+            onChooseServer={onChooseServer}
+            savedAddress={loadServerUrl(kv)}
+            onServerUrlChange={onServerUrlChange}
+            canProbe={clientOptions != null}
+            probe={lastProbe}
+            legalLanguage={legalLanguage}
+          />
+        );
+      case 'consent':
+        return (
+          <ConsentScreen
+            language={legalLanguage}
+            onLanguageChange={onLegalLanguageChange}
+            consentOn={consentStatus(kv).kind === 'granted'}
+            onAgree={onTurnOnAIFeatures}
+            onTurnOff={onConsentReviewTurnOff}
+            onClose={leave}
+          />
+        );
+      case 'history':
+        return (
+          <HistoryScreen
+            app={on.app}
+            access={access}
+            onBack={leave}
+            onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
+            onReport={() => setScreen({ kind: 'report', app: on.app, from: on })}
+          />
+        );
+      case 'report':
+        return (
+          <ReportScreen
+            app={on.app}
+            access={access}
+            options={reportOptions}
+            legalLanguage={legalLanguage}
+            onLeave={leave}
+            onUpdateRequired={onReportUpdateRequired}
+          />
+        );
+    }
+  };
+
+  /** One stack entry: its header, its colours and its content, all keyed to the screen it shows. */
+  const stackEntry = (on: StackScreen): StackEntry => {
+    const leave = leaveFor(on);
+    const look = schemeFollowing(on) ? { background: tokens.colors.bg, foreground: tokens.colors.text } : { background: palette.bg, foreground: palette.text };
+    return { key: on.kind, title: stackTitle(on), largeTitle: on.kind === 'settings', onLeave: leave, ...look, children: renderStackScreen(on, leave) };
+  };
+
+  const stack = ready ? stackFor(screen) : null;
   let content: React.ReactNode;
   if (!ready) {
-    content = (
-      <View style={styles.loading}>
-        <HomeGridSkeleton
-          count={knownAppCount}
-          columns={HOME_GRID_COLUMNS}
-          gap={HOME_GRID_COLUMN_GAP}
-          color={palette.card}
-        />
-      </View>
-    );
+    content = <HomeSkeleton count={knownAppCount} />;
+  } else if (stack !== null) {
+    content = <NativeStack entries={stack.map(stackEntry)} />;
   } else {
     content = renderScreenContent();
   }
@@ -2806,17 +3059,35 @@ function LauncherShell({
   // failing-screen identifier in the log record and the reset key, so navigating away and back
   // re-attempts a screen that failed once.
   const exit = SCREEN_EXITS[screen.kind];
+  const top = stack?.at(-1);
+
+  const handOver = useSheetHandOver(renderSheetPage(), firstRunAskOf(screen));
+
   return (
     <HighlightingProvider enabled={highlighting}>
-      <SafeAreaView edges={frameEdgesFor(screen.kind)} style={[styles.root, { backgroundColor: palette.bg }]}>
-        <StatusBar barStyle={statusBarStyle} />
-        <ScreenBoundary
-          screen={screen.kind}
-          FallbackComponent={ScreenErrorFallback}
-          onLeave={exit.back === 'root' ? undefined : goHome}
-        >
-          {content}
-        </ScreenBoundary>
+      <SafeAreaView edges={frameEdgesFor(screen.kind, stack !== null)} style={[styles.root, { backgroundColor: palette.bg }]}>
+        <StatusBar barStyle={top !== undefined && schemeFollowing(top) ? tokens.barStyle : 'dark-content'} />
+        <ToastHost bottomOffset={toastClearance(screen.kind)}>
+          <ScreenBoundary
+            screen={screen.kind}
+            FallbackComponent={ScreenErrorFallback}
+            onLeave={exit.back === 'root' ? undefined : goHome}
+          >
+            {content}
+            <MakingSheet content={handOver.page} onClose={closeSheet} onClosed={handOver.onMakingClosed} />
+            {checkingAge !== undefined && <AgeCheckBack onLeave={() => onLegalDecline(checkingAge.returnTo)} />}
+            <FirstRunHost
+              ask={handOver.ask}
+              language={legalLanguage}
+              onLanguageChange={onLegalLanguageChange}
+              outdatedFrom={outdatedGrantVersion(consentStatus(kv))}
+              consentDue={grantDue}
+              onAgree={onFirstRunAgree}
+              onDecline={onLegalDecline}
+              onClosed={handOver.onFirstRunClosed}
+            />
+          </ScreenBoundary>
+        </ToastHost>
         <DevLogTools />
       </SafeAreaView>
     </HighlightingProvider>
@@ -2825,7 +3096,6 @@ function LauncherShell({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  loading: { flex: 1, padding: SPACING.lg },
   // The details view is `RunDetailsSheet` (build-liveness B5) — a bottom sheet anchored to its
   // own edge, not an absolutely-positioned overlay sized off this component's styles.
   devLogBtn: {

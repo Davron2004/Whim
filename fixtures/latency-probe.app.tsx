@@ -10,7 +10,6 @@ import {
   defineApp,
   Screen,
   Stack,
-  Heading,
   Text,
   useState,
   useEffect,
@@ -33,7 +32,7 @@ function stats(xs: number[]): string {
   const sorted = xs.slice().sort((a, b) => a - b);
   const med = sorted[Math.floor(sorted.length / 2)];
   const r1 = (n: number) => Math.round(n * 100) / 100;
-  return `min ${r1(sorted[0])} · med ${r1(med)} · max ${r1(sorted.at(-1)!)} ms (n=${xs.length})`;
+  return `min ${r1(sorted[0])} · med ${r1(med)} · max ${r1(sorted[sorted.length - 1])} ms (n=${xs.length})`;
 }
 
 // The diag transport is on `vc-sdk` only via the same syscall pipe; call it directly through
@@ -57,7 +56,7 @@ function Home() {
   const [lines, setLines] = useState<string[]>(['measuring…']);
 
   useEffect(() => {
-    (async () => {
+    const probe = async () => {
       try {
         await echo({ warm: true }); // warm-up
         const result = [
@@ -72,13 +71,14 @@ function Home() {
         const detail = (e as { detail?: { hint?: string } } | undefined)?.detail;
         setLines(['probe failed: ' + (detail?.hint ?? (e as { message?: string })?.message ?? String(e))]);
       }
-    })();
+    };
+    probe().catch((e: unknown) => setLines(['probe failed: ' + String(e)]));
   }, []);
 
   return (
     <Screen padding="lg">
       <Stack gap="sm">
-        <Heading size="title">Latency Probe</Heading>
+        <Text size="title">Latency Probe</Text>
         <Text size="caption" color="text-muted">syscall round-trip over the real transport</Text>
         {lines.map((l) => (
           <Text key={l} size="caption">{l}</Text>
