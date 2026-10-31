@@ -22,7 +22,7 @@
  * → one safe switch on first use. Operations on DIFFERENT repos stay fully concurrent.
  */
 
-import type { VersionStore, Snapshot, SnapshotContent, Pin, FileChange } from '../version-store';
+import type { VersionStore, Snapshot, SnapshotContent, Declaration, Pin, FileChange } from '../version-store';
 import type { AppManifest, AppRecord } from '../bridge/contract';
 import type { SchemaArtifact } from '../storage-engine/contract';
 import { AppIndex, InstalledApp } from './app-index';
@@ -37,11 +37,19 @@ import { CHANNELS } from '../logging/channels';
  *  op-sqlite `db.delete()`; Node tests → a spy. Injected so store-access stays device-free. */
 export type DeleteStorage = (appId: string) => void | Promise<void>;
 
+/** Whether an engine appId's store holds any user data (kv or a collection row). Reads only and
+ *  never deletes; reaching a store that was never written may create it table-less. Device → the
+ *  storage engine's `hasSavedData`; Node tests → `createNodeHasSavedData(dir)`. */
+export type HasSavedData = (appId: string) => boolean | Promise<boolean>;
+
 interface StoreAccessBaseOptions {
   store: VersionStore;
   index: AppIndex;
   /** Drops the per-launcher-id user-data db. Defaults to a no-op (e.g. seeding-only contexts). */
   deleteStorage?: DeleteStorage;
+  /** Reads whether a store holds user data (`StoreAccess.hasSavedData`). Absent: the answer is
+   *  always "yes", so the copy-or-fresh question is asked rather than skipped. */
+  hasSavedData?: HasSavedData;
   /** Injectable clock for deterministic tests. Defaults to Date.now. */
   now?: () => number;
 }
@@ -114,14 +122,23 @@ interface VersionDeclaration {
   schemaArtifact?: SchemaArtifact;
 }
 
-/** Reads `version`'s declaration. Throws when its files cannot be parsed — callers read it before
- *  anything moves, so a damaged version is refused while the app is still where it was. */
+/** Parses a version's saved manifest and schema (the store's `declarationOf`). Throws when they
+ *  cannot be parsed — callers read it before anything moves, so a damaged version is refused while
+ *  the app is still where it was. */
+function parseDeclaration(files: Declaration): VersionDeclaration | null {
+  if (files.manifest == null) return null;
+  const manifest = JSON.parse(files.manifest) as AppManifest;
+  return { manifest, ...(files.schema != null ? { schemaArtifact: JSON.parse(files.schema) as SchemaArtifact } : {}) };
+}
+
+/** `version`'s declaration, from the whole version a caller has already read (`parseDeclaration`). */
 function versionDeclaration(version: SnapshotContent): VersionDeclaration | null {
-  const manifestFile = version.artifacts['manifest.json'];
-  if (manifestFile == null) return null;
-  const manifest = JSON.parse(manifestFile) as AppManifest;
-  const schemaFile = version.artifacts['schema.json'];
-  return { manifest, ...(schemaFile != null ? { schemaArtifact: JSON.parse(schemaFile) as SchemaArtifact } : {}) };
+  return parseDeclaration({ manifest: version.artifacts['manifest.json'] ?? null, schema: version.artifacts['schema.json'] ?? null });
+}
+
+/** Whether a manifest declares storage: what makes the bridge open an engine for it (`launchApp`). */
+function declaresStorage(manifest: AppManifest): boolean {
+  return manifest.capabilities.includes('storage');
 }
 
 /**
@@ -184,6 +201,7 @@ export class StoreAccess {
   private readonly store: VersionStore;
   private readonly index: AppIndex;
   private readonly deleteStorage: DeleteStorage;
+  private readonly savedData: HasSavedData | undefined;
   private readonly copyStorage: CopyStorage | undefined;
   private readonly copyJournal: DataCopyJournal | undefined;
   private readonly now: () => number;
@@ -195,13 +213,14 @@ export class StoreAccess {
   private readonly repoLineage = new Map<string, string>();
   /** repoId → the tail of that repo's in-flight operation chain (see `serial`). */
   private readonly chains = new Map<string, Promise<unknown>>();
-  /** repoId → version id → the schema that version declares (`schemaOf`); dropped with the repo. */
-  private readonly schemas = new Map<string, Map<string, SchemaArtifact | null>>();
+  /** repoId → version id → what that version declares (`declarationOf`); dropped with the repo. */
+  private readonly declarations = new Map<string, Map<string, VersionDeclaration | null>>();
 
   constructor(opts: StoreAccessOptions) {
     this.store = opts.store;
     this.index = opts.index;
     this.deleteStorage = opts.deleteStorage ?? (() => {});
+    this.savedData = opts.hasSavedData;
     this.copyStorage = opts.copyStorage;
     this.copyJournal = opts.copyJournal;
     this.canCopyData = opts.copyStorage !== undefined;
@@ -246,6 +265,32 @@ export class StoreAccess {
    */
   engineAppId(entry: InstalledApp): string {
     return entry.storageGroupId ?? entry.id;
+  }
+
+  /**
+   * Whether the store `entry` resolves to holds any user data (copy-app-data ruling 3: a copy of
+   * an app that never saved anything starts fresh without asking). Asked of `engineAppId(entry)`,
+   * never `entry.id`: a legacy copy that shares its group's store has no store of its own under
+   * its id, so asking of the id would call a full store empty and the copy route would lose the
+   * group's data.
+   *
+   * When no code that opens that store ever declared storage (`everDeclaredStorage`), the answer is
+   * `false` and the store is not touched, so no file is created for it. Otherwise the store's rows
+   * are read; that may create a table-less file for an app that declares storage but never ran,
+   * which the engine opens normally before the app's first run. Nothing is ever deleted. Without
+   * the read, or when either read fails, the answer is `true`: not knowing means asking, never
+   * skipping the question.
+   */
+  async hasSavedData(entry: InstalledApp): Promise<boolean> {
+    if (!this.savedData) return true;
+    const appId = this.engineAppId(entry);
+    try {
+      if (!(await this.everDeclaredStorage(entry))) return false;
+      return await this.savedData(appId);
+    } catch (e) {
+      log.warn(CHANNELS.app, 'whether an app has saved data could not be read', { appId, detail: messageOf(e) });
+      return true;
+    }
   }
 
   /** Switch the repo to the entry's lineage only if it is not already there (D2 "checks first"). */
@@ -455,8 +500,8 @@ export class StoreAccess {
    * sends the fields these declare that the store does not hold (`generation-request.ts`).
    *
    * A version never changes once saved, so each one's schema is read once per repo and kept
-   * (`schemaOf`): a change request reads only the versions saved since the last one, rather than
-   * every file of every version while it holds the repo.
+   * (`schemaOf`): a change request reads only the versions saved since the last one, and of each
+   * only its manifest and schema, never its code, while it holds the repo.
    */
   async declaredSchemas(entry: InstalledApp): Promise<SchemaArtifact[]> {
     const repo = storeIdOf(entry);
@@ -478,19 +523,57 @@ export class StoreAccess {
     });
   }
 
-  /** The schema version `id` of `repo` declares (`null`: none, or saved before versions kept it),
-   *  read from the store the first time only. Runs inside the caller's `serial(repo)`. */
+  /** The schema version `id` of `repo` declares (`null`: none, or saved before versions kept it).
+   *  Runs inside the caller's `serial(repo)`. */
   private async schemaOf(repo: string, id: string): Promise<SchemaArtifact | null> {
-    let kept = this.schemas.get(repo);
+    return (await this.declarationOf(repo, id))?.schemaArtifact ?? null;
+  }
+
+  /** What version `id` of `repo` declares (`parseDeclaration`; `null`: saved before versions kept
+   *  their manifest), read from the store the first time only, and only its manifest and schema
+   *  (the store's `declarationOf`), never its code. Runs inside the caller's `serial(repo)`. */
+  private async declarationOf(repo: string, id: string): Promise<VersionDeclaration | null> {
+    let kept = this.declarations.get(repo);
     if (kept == null) {
       kept = new Map();
-      this.schemas.set(repo, kept);
+      this.declarations.set(repo, kept);
     }
     const known = kept.get(id);
     if (known !== undefined) return known;
-    const schema = versionDeclaration(await this.store.getSnapshot(repo, id))?.schemaArtifact ?? null;
-    kept.set(id, schema);
-    return schema;
+    const declared = parseDeclaration(await this.store.declarationOf(repo, id));
+    kept.set(id, declared);
+    return declared;
+  }
+
+  /**
+   * Whether any code that opens `entry`'s store ever declared storage (copy-app-data ruling 40
+   * revised): the record each app sharing that store runs with now, then every version saved on
+   * each one's timeline, as `declaredSchemas` walks them. Only an app that declares storage gets an
+   * engine (bridge `launchApp`), so when none ever did, no code has opened that store. A version
+   * saved before versions kept their manifest cannot tell, so it counts as declaring.
+   *
+   * The records answer most apps that hold data without reading the version store; the walk reads
+   * each version's manifest and schema once per repo (kept with `declaredSchemas`'s,
+   * `declarationOf`), never its code, and stops at the first version that declares.
+   */
+  private async everDeclaredStorage(entry: InstalledApp): Promise<boolean> {
+    const repo = storeIdOf(entry);
+    const group = this.engineAppId(entry);
+    const members = [entry, ...this.index.list().filter((e) => e.id !== entry.id && storeIdOf(e) === repo && this.engineAppId(e) === group)];
+    if (members.some((m) => declaresStorage(m.record.manifest))) return true;
+    return this.serial(repo, async () => {
+      const seen = new Set<string>();
+      for (const member of members) {
+        await this.ensureLineage(member);
+        for (const { id } of await this.store.timeline(repo, { limit: Number.POSITIVE_INFINITY })) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+          const declared = await this.declarationOf(repo, id);
+          if (declared == null || declaresStorage(declared.manifest)) return true;
+        }
+      }
+      return false;
+    });
   }
 
   /** Label a snapshot (D6/D8): re-pinning an existing label MOVES it (last write wins) —
@@ -723,7 +806,7 @@ export class StoreAccess {
       if (this.index.refCount(repo) === 0) {
         await this.store.remove(repo);
         this.repoLineage.delete(repo);
-        this.schemas.delete(repo);
+        this.declarations.delete(repo);
       }
     });
   }

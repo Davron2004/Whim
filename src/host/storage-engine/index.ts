@@ -54,6 +54,14 @@ export function deleteStorage(opts: { appId: string }): void {
 export { copyStorage } from './copy-device';
 
 /**
+ * Device entrypoint (copy-app-data task 3.0): whether an app's store holds any user data (kv or
+ * any collection row). Reads only and never deletes; a store never written is left table-less, and
+ * the engine opens it normally. Types and the Node variant live in `./saved-data` and
+ * `./saved-data-node`.
+ */
+export { hasSavedData } from './saved-data-device';
+
+/**
  * Device entrypoint (#52-D5, task 3.2/3.5): a side-effect-free peek at an app's live database's
  * accumulated `_meta` union — no artifact applied, no DDL run. This is what
  * `LauncherRoot.buildGenerateRequest` sources `app.appliedSchema` from, keyed by

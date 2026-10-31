@@ -19,10 +19,11 @@
 // once, with Undo instead of a question (decision #75, "undo over are you sure"): "Use this version"
 // makes it current and offers Undo in the toast, and the version it left stays listed, so the same
 // Undo is a row away once the toast has gone; "Make a copy from here" asks only "Copy the data, or
-// start fresh?" (`CopyQuestionSheet`, the one Home asks) and offers Open. Before either, the open row
-// says when going there would hide saved data. The summary and the expanded result are agent prose
-// and render through the one shared `WhimProse` renderer; everything else is product copy and is
-// never marked (Whim Syntax rule 7).
+// start fresh?" (`CopyQuestionSheet`, the one Home asks; skipped, fresh, when the app has saved
+// nothing) and offers Open. Before either, the open row says when going there would hide saved data,
+// and the question says it again for the data a copy would carry. The summary and the expanded
+// result are agent prose and render through the one shared `WhimProse` renderer; everything else is
+// product copy and is never marked (Whim Syntax rule 7).
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, Text as RNText, View, type FlatListProps } from 'react-native';
 import Animated, { Easing, FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
@@ -45,6 +46,7 @@ import {
   type RestoreDiffState,
 } from './history-wait';
 import { CopyQuestionSheet } from './CopyQuestionSheet';
+import { copyFailure } from './fork-op';
 import { tileOf } from './tile-identity';
 import { useSystemBack } from './use-system-back';
 import WhimProse from '../ui/whim-prose/WhimProse';
@@ -75,6 +77,11 @@ export interface HistoryScreenProps {
   /** Whether "Make a copy from here" can copy the data (`StoreAccess.canCopyData`). When false the
    *  copy starts fresh at once, with no question. */
   canCopyData?: boolean;
+  /** Whether `app` has saved any data, asked before the copy question: an app with nothing saved is
+   *  copied fresh at once, unasked (copy-app-data ruling 3). Resolves `null` when the app is busy
+   *  and nothing should happen. The shell asks it in the app's busy slot; omitted, History asks
+   *  `access.hasSavedData` itself. */
+  hasSavedData?: (app: InstalledApp) => Promise<boolean | null>;
   /** Makes a copy of `app` from `versionId` with its own storage (`StoreAccess.fork`): the new entry,
    *  or `null` when that app is busy with something else and nothing started; rejects when nothing
    *  was made. */
@@ -92,8 +99,11 @@ export interface HistoryScreenProps {
 /** The row action in flight, which shows its busy words. */
 type RowBusy = { id: string; action: 'use-version' | 'make-copy' } | null;
 
+/** What a thrown non-Error is logged as: a primitive as itself, an object by its kind only. */
+const thrownText = (e: unknown): string => (e !== null && typeof e === 'object' ?'non-Error object thrown' : String(e));
+
 function historyOperationFailed(operation: 'list' | 'hidden-data' | 'annotation' | 'use-version' | 'copy', e?: unknown): void {
-  log.warn(CHANNELS.app, 'history operation failed', { operation, ...(e === undefined ? {} : { detail: e instanceof Error ? e.message : String(e) }) });
+  log.warn(CHANNELS.app, 'history operation failed', { operation, ...(e === undefined ? {} : { detail: e instanceof Error ? e.message : thrownText(e) }) });
 }
 
 /** §7.1 Timeline row: the rail's centre line (x = 27 from the screen's edge), its 2 pt width, the
@@ -319,7 +329,7 @@ function Prose({
   );
 }
 
-export default function HistoryScreen({ app, access, onBack, onChangeIt, onReport, canCopyData = false, onFork, onOpen, onUseVersion, versionsMoved = 0 }: Readonly<HistoryScreenProps>) {
+export default function HistoryScreen({ app, access, onBack, onChangeIt, onReport, canCopyData = false, hasSavedData, onFork, onOpen, onUseVersion, versionsMoved = 0 }: Readonly<HistoryScreenProps>) {
   const t = useTokens();
   const s = styles(t);
   const toast = useToast();
@@ -349,6 +359,10 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
   // may already be made) answers nothing: a ref, for the same reason as `flight`.
   const [asking, setAsking] = useState(false);
   const asked = useRef<HistoryRow | null>(null);
+  // Whether the question was asked from a version that would hide saved data (its row's hidden-data
+  // line). Set only as the question opens, so the line stays while the sheet slides away.
+  const [askedHides, setAskedHides] = useState(false);
+  const savedData = hasSavedData ?? ((a: InstalledApp) => access.hasSavedData(a));
 
   const load = () =>
     runHistoryLoad(async () => {
@@ -363,10 +377,10 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
   const movedLoaded = useRef(versionsMoved);
   useEffect(() => {
     if (movedLoaded.current === versionsMoved) {
-      reload();
+      reload().catch((e) => historyOperationFailed('list', e));
     } else {
       movedLoaded.current = versionsMoved;
-      moves.hold(reload);
+      moves.hold(reload).catch((e) => historyOperationFailed('list', e));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [access, app, versionsMoved]);
@@ -407,7 +421,11 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
     } catch (e) {
       historyOperationFailed('copy', e);
       haptics.play('failure');
-      toast.show({ message: COPY.copyFailedToast });
+      const failure = copyFailure(e, data);
+      toast.show({
+        message: failure.message,
+        ...(failure.startFresh ? { action: { label: COPY.copyQuestionFresh, onPress: () => makeCopy(row, 'fresh') } } : {}),
+      });
       return;
     }
     const { made } = result;
@@ -417,13 +435,35 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
     }
   };
 
-  const askCopy = (row: HistoryRow) => {
+  /** Whether copying the app's data from `row`'s version would hide some of it, read when the question
+   *  opens (the row's own line may still be computing at the tap). A failed read says nothing. */
+  const copyWouldHideData = async (row: HistoryRow): Promise<boolean> => {
+    if (row.isCurrent || activeId == null) return false;
+    try {
+      return (await fieldsLeavingViewOnRestore(access, app, row.id, activeId)).length > 0;
+    } catch (e) {
+      historyOperationFailed('hidden-data', e);
+      return false;
+    }
+  };
+
+  /** The saved-data read, and the hidden-data read that goes with a question, hold the row actions, so
+   *  a tap meanwhile asks nothing twice. */
+  const askCopy = async (row: HistoryRow) => {
     if (flight.inFlight) return;
-    if (canCopyData) {
+    const probe: { saved: boolean | null; hides: boolean } = { saved: false, hides: false };
+    const read = async () => {
+      probe.saved = await savedData(app);
+      if (probe.saved) probe.hides = await copyWouldHideData(row);
+    };
+    if (canCopyData && !(await runRowAction(flight, () => undefined, read))) return;
+    if (probe.saved === null) return;
+    if (probe.saved) {
       asked.current = row;
+      setAskedHides(probe.hides);
       setAsking(true);
     } else {
-      makeCopy(row, 'fresh');
+      await makeCopy(row, 'fresh');
     }
   };
 
@@ -432,7 +472,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
     const row = asked.current;
     asked.current = null;
     setAsking(false);
-    if (row) makeCopy(row, data);
+    if (row) makeCopy(row, data).catch((e) => historyOperationFailed('copy', e));
   };
 
   const leaveQuestion = () => {
@@ -519,6 +559,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
       <CopyQuestionSheet
         visible={asking}
         appName={app.name}
+        hidesData={askedHides}
         onCopyData={() => answerCopy('copy')}
         onStartFresh={() => answerCopy('fresh')}
         onClose={leaveQuestion}

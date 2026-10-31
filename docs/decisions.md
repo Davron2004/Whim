@@ -1731,3 +1731,40 @@ The host no longer maps a stored or wire `tileColor` to the nearest tint (`neare
 are no installed tester builds, and the generator stopped emitting `tileColor` in design-system-v1 chain 23. `defineApp`
 still accepts `tileColor` as an ignored, deprecated type, so no vc-sdk export is removed and older sources compile.
 The checker no longer extracts it. A record with no declared or stored tint shows its app id's fallback tint.
+
+### 84. `copy-app-data` built: "Copy the data" is a verified one-time snapshot into the copy's own store `[BUILT — openspec: copy-app-data; product-owner rulings 1–6, 2026-10-09; realizes #75's RESOLVED copy bullet; narrows #52 to rewind continuations]`
+
+"Make a copy" (tile menu) and "Make a copy from here" (History) ask "Copy the data, or start fresh?" through one
+`CopyQuestionSheet`. Either answer gives the copy its own storage-engine appId; no answer shares data.
+
+- **Snapshot.** `copyStore` (`storage-engine/copy.ts`, the only `VACUUM` in `src/`) runs `VACUUM INTO` of the store the
+  original resolves to (`engineAppId`: a legacy shared copy's group store) into `<copyId>.db`, then verifies it
+  (`quick_check` = `ok`, and its `_meta` is a superset of the source's accumulated schema). kv and every table, retired
+  columns included, ride in the one file; record ids and the burned-id floor carry over unchanged.
+- **Commit and crash safety.** The launcher entry is the commit point. A journal record (`DataCopyJournal`) is written before
+  any byte of the copy; `sweepDataCopies` runs at launch before any realm binds and deletes the store of any journalled id
+  with no entry. A crash leaves no copy or a complete one.
+- **API.** `StoreAccess.fork(entry, versionId?, { data: 'fresh' | 'copy' })` (`shareData` deleted; every result has no
+  `storageGroupId`), `continueSharingData(entry)` for rewind continuations only, `readonly canCopyData` (true exactly
+  when the copy seam is injected; false → "Make a copy" is fresh with no question), and `hasSavedData(entry)` (rulings 3 and
+  40): an original that has saved nothing is copied fresh without asking. When no version of any app sharing the store ever
+  declared `storage` (its record's manifest, each timeline version's saved `manifest.json`; a version saved without one
+  counts as declaring), the answer is `false` and nothing is touched: no store is opened and no file is created. Otherwise
+  the store is opened and its kv and collection rows are counted (`_meta` never counts); that open may leave an empty
+  file, which is never deleted. A read that throws or rejects answers `true` (ask), never "nothing saved".
+- **Failure.** `DataCopyError` kinds `no_space` / `source_unreadable` / `verify_failed` / `io` each show plain copy and
+  offer "Start fresh"; nothing falls back to an empty copy silently. The copy runs under the app's busy slot.
+- **History from an older version.** "Copy the data" copies the current data under the older code; when that version would
+  hide fields, the question says so under its answers ("If you copy the data, this version won't show some of it. It isn't
+  deleted.").
+- **Legacy shared copies untouched.** Records carrying `storageGroupId` (#52) keep sharing; refcounted delete still keeps the
+  group's store until its last member goes. Copying one with "Copy the data" yields an independent app holding the group's
+  data. No migration runs.
+- **Device probe (tasks 5.1–5.2, Android emulator-5560 and an iOS 27 simulator).** A second op-sqlite connection snapshots a
+  store an engine holds open and writes to (D8's fallback not needed). The live writer's `database is locked` race (#165)
+  is fixed by `PRAGMA busy_timeout = 5000` on every connection (0 failed writes in 5 runs per platform). `getDbPath` puts
+  the copy beside its source on both platforms. A 70 MB store copies in 176–595 ms on Android and 162–413 ms on iOS (budget 5 s), `quick_check` `ok`. A
+  SIGKILL right after `VACUUM INTO` returns loses nothing (D2's commit-transaction fallback not needed); power loss was not
+  testable on emulators.
+
+#52's storage groups now serve rewind continuations only (`build-lifecycle.ts` calls `continueSharingData`).

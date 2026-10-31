@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Making a copy asks whether to copy the data or start fresh
-When the person chooses "Make a copy" (tile menu) or "Make a copy from here" (History), the launcher SHALL ask one question, "Copy the data, or start fresh?", offering "Copy the data" and "Start fresh". Leaving the question without choosing SHALL create nothing. Either answer MUST give the copy its own storage-engine appId, its own launcher id. The copy MUST NOT be placed in the original's storage group. No answer exists that shares data between the copy and its original. All question copy SHALL come from the centralized copy table and pass the copy lint.
+The launcher SHALL ask one question, "Copy the data, or start fresh?", offering "Copy the data" and "Start fresh", when the person chooses "Make a copy" (tile menu) or "Make a copy from here" (History) for an app that has saved data. An app that has saved nothing (no key-value or record rows, or storage never declared) SHALL be copied fresh at once, without the question. Leaving the question without choosing SHALL create nothing. Either answer MUST give the copy its own storage-engine appId and its own launcher id. The copy MUST NOT be placed in the original's storage group. No answer exists that shares data between the copy and its original. All question copy SHALL come from the centralized copy table and pass the copy lint.
 
 #### Scenario: Start fresh gives an empty store
 - **WHEN** the person makes a copy of app A and chooses "Start fresh"
@@ -10,6 +10,10 @@ When the person chooses "Make a copy" (tile menu) or "Make a copy from here" (Hi
 #### Scenario: Copy the data starts from A's data
 - **WHEN** the person makes a copy of app A that has saved records and kv values and chooses "Copy the data"
 - **THEN** the copy opens showing the same records and values A had at that moment, read from the copy's own database file
+
+#### Scenario: An app with nothing saved is copied fresh without the question
+- **WHEN** the person makes a copy of app A and A has saved nothing (no key-value or record rows, or storage never declared)
+- **THEN** a fresh copy is made at once, no question is shown, and the copy resolves to its own appId
 
 #### Scenario: Leaving the question makes nothing
 - **WHEN** the person opens the question and then dismisses it or goes back

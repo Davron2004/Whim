@@ -15,6 +15,7 @@ import { createStorageEngine } from './index';
 import { createEngine } from './engine';
 import { createOpSqlExecutor } from './bindings/op-sqlite';
 import { SchemaArtifact, StorageEngine, StorageEngineError } from './contract';
+import { runSavedDataDeviceSteps, SavedDataVerdict } from './saved-data-device-acceptance';
 
 // Realistic Tier-0 volume for a spending tracker (a few thousand ledger rows).
 const LEDGER_VOLUME = 2000;
@@ -77,6 +78,7 @@ export interface StorageVerdict {
   volume: { records: number };
   dbSizeBytes: number | null;
   persistence: { priorRecords: number; restartVerified: boolean | 'n/a'; totalAfterThisRun: number };
+  savedData: SavedDataVerdict;
   latencyMs: Record<string, number>;
   failures: string[];
   pass: boolean;
@@ -230,6 +232,8 @@ export function runStorageDeviceAcceptance(): StorageVerdict {
   const totalAfterThisRun = ps.records.list('Expenses').length;
   ps.close();
 
+  const savedData = runSavedDataDeviceSteps(check);
+
   const verdict: StorageVerdict = {
     binding: 'op-sqlite',
     schema: { applyV1, additiveV2, renameServed, tombstoneFreshId, rollbackShapedNoLoss },
@@ -238,6 +242,7 @@ export function runStorageDeviceAcceptance(): StorageVerdict {
     volume: { records: all.length },
     dbSizeBytes: dbSize,
     persistence: { priorRecords, restartVerified, totalAfterThisRun },
+    savedData,
     latencyMs,
     failures,
     pass: failures.length === 0,

@@ -42,6 +42,16 @@ export interface SnapshotContent extends Snapshot {
   artifacts: Artifacts; // the full materialized code-artifact set at this snapshot
 }
 
+/** What a snapshot declares about itself: the text of its `manifest.json` and `schema.json`,
+ *  `null` for a file the snapshot does not hold. Nothing else of the snapshot is read. */
+export interface Declaration {
+  manifest: string | null;
+  schema: string | null;
+}
+
+/** The files `declarationOf` reads, by the key it returns each under. */
+const DECLARATION_FILES = { manifest: 'manifest.json', schema: 'schema.json' } as const;
+
 export type ChangeStatus = 'added' | 'removed' | 'modified';
 
 export interface FileChange {
@@ -193,12 +203,15 @@ export class VersionStore {
 
   private async oidToId(gitdir: string): Promise<Map<string, string>> {
     const map = new Map<string, string>();
+    const snapTags: Array<{ tag: string; id: string }> = [];
     for (const tag of await git.listTags({ fs: this.client, gitdir })) {
       const m = /^whim\/snap\/(g\d+)$/.exec(tag);
-      if (!m) continue;
-      const oid = await git.resolveRef({ fs: this.client, gitdir, ref: `refs/tags/${tag}` });
-      map.set(oid, m[1]);
+      if (m) snapTags.push({ tag, id: m[1] });
     }
+    const oids = await Promise.all(
+      snapTags.map(({ tag }) => git.resolveRef({ fs: this.client, gitdir, ref: `refs/tags/${tag}` })),
+    );
+    snapTags.forEach(({ id }, i) => map.set(oids[i], id));
     return map;
   }
 
@@ -451,14 +464,17 @@ export class VersionStore {
     const { gitdir } = this.paths(appId);
     if (!(await this.exists(`${gitdir}/HEAD`))) return [];
     const map = await this.oidToId(gitdir);
-    const pins: Pin[] = [];
+    const pinTags: Array<{ tag: string; label: string }> = [];
     for (const tag of await git.listTags({ fs: this.client, gitdir })) {
       const m = /^whim\/pin\/(.+)$/.exec(tag);
-      if (!m) continue;
-      const oid = await git.resolveRef({ fs: this.client, gitdir, ref: `refs/tags/${tag}` });
-      pins.push({ label: m[1], snapshotId: map.get(oid) ?? null });
+      if (m) pinTags.push({ tag, label: m[1] });
     }
-    return pins;
+    return Promise.all(
+      pinTags.map(async ({ tag, label }) => {
+        const oid = await git.resolveRef({ fs: this.client, gitdir, ref: `refs/tags/${tag}` });
+        return { label, snapshotId: map.get(oid) ?? null };
+      }),
+    );
   }
 
   /** Retrieve a pinned snapshot's full content by its label (spec: survives later gens). */
@@ -509,6 +525,25 @@ export class VersionStore {
     return this.snapshotContent(gitdir, oid, snapshotId);
   }
 
+  /**
+   * declarationOf(appId, snapshotId) → the snapshot's manifest and schema only (copy-app-data
+   * ruling 41): one lookup of the snapshot's top-level file list, then a read of just those two
+   * files, so its code and sources are never loaded. A file the snapshot does not hold is `null`.
+   * An unknown snapshot rejects as `getSnapshot` does.
+   */
+  async declarationOf(appId: string, snapshotId: string): Promise<Declaration> {
+    const { gitdir } = this.paths(appId);
+    const oid = await this.resolveSnap(gitdir, snapshotId);
+    const { tree } = await git.readTree({ fs: this.client, gitdir, oid });
+    const read = async (name: string): Promise<string | null> => {
+      const entry = tree.find((e) => e.path === name && e.type === 'blob');
+      if (entry == null) return null;
+      const { blob } = await git.readBlob({ fs: this.client, gitdir, oid: entry.oid });
+      return decodeUtf8(blob);
+    };
+    return { manifest: await read(DECLARATION_FILES.manifest), schema: await read(DECLARATION_FILES.schema) };
+  }
+
   /** The currently-active snapshot (HEAD) with its content. */
   async active(appId: string): Promise<SnapshotContent | null> {
     const { gitdir } = this.paths(appId);
@@ -530,10 +565,11 @@ export class VersionStore {
    * one prefix). Idempotent: removing an unknown app is a clean no-op. No git vocabulary crosses
    * the surface — the return is a plain product-verb shape.
    */
-  async remove(appId: string): Promise<{ removed: boolean }> {
-    const { dir } = this.paths(appId);
-    const removed = this.backend.removeTree(dir);
-    return { removed: removed > 0 };
+  remove(appId: string): Promise<{ removed: boolean }> {
+    return new Promise((resolve) => {
+      const { dir } = this.paths(appId);
+      resolve({ removed: this.backend.removeTree(dir) > 0 });
+    });
   }
 
   /** Manually compact a repo (Section 4); also runs automatically past the threshold. */

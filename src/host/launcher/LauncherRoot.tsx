@@ -29,7 +29,7 @@ import type { AppRecord } from '../bridge';
 import { createPersistentStore } from '../version-store';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import type { KVBackend } from '../version-store/fs/kv-fs';
-import { copyStorage, deleteStorage, peekAppliedSchema } from '../storage-engine';
+import { copyStorage, deleteStorage, hasSavedData, peekAppliedSchema } from '../storage-engine';
 import { ToastHost, useToast, type ToastApi } from '../ui/Toast';
 import { haptics } from '../haptics';
 import { Text } from '../ui/Text';
@@ -698,6 +698,9 @@ export default function LauncherRoot({
       store,
       index: idx,
       deleteStorage: (appId) => deleteStorage({ appId }),
+      // Whether a store holds any user data, so a copy of an app that saved nothing is not asked
+      // whether to copy it (copy-app-data ruling 3).
+      hasSavedData: (appId) => hasSavedData({ appId }),
       // The data copy and its crash journal (copy-app-data D2/D3), the journal on the same backend.
       copyStorage,
       copyJournal: new DataCopyJournal(launcherKv),
@@ -1476,6 +1479,17 @@ function LauncherShell({
       },
       (e) => log.error(CHANNELS.app, 'installed-app action failed', { operation: 'fork', ...errorFields(e) }),
     );
+
+  /** Whether `app`'s store holds any data, read before "Make a copy" asks whether to copy it. Read in
+   *  the app's busy slot, as the copy is made; `null` when the slot was taken (a copy or an open of
+   *  the app is already running) and nothing was read. */
+  const onAskSavedData = async (app: InstalledApp): Promise<boolean | null> => {
+    const read = { saved: true };
+    const ran = await runAppOp(appOps, setAppBusy, app.id, 'fork', async () => {
+      read.saved = await access.hasSavedData(app);
+    });
+    return ran ? read.saved : null;
+  };
 
   const onHistory = (app: InstalledApp, from: 'home' | 'app', since?: number) => {
     setScreen({ kind: 'history', app, from, ...(since === undefined ? {} : { since }) });
@@ -3712,6 +3726,7 @@ function LauncherShell({
       onSettleDiscard={onSettleDiscard}
       appBusy={appBusy}
       canCopyData={access.canCopyData}
+      hasSavedData={onAskSavedData}
       draft={composerDraft}
       queued={liveView.queued}
       activity={liveView.activity}
@@ -3823,6 +3838,7 @@ function LauncherShell({
             onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
             onReport={() => setScreen({ kind: 'report', app: on.app, from: on })}
             canCopyData={access.canCopyData}
+            hasSavedData={onAskSavedData}
             onFork={(app, versionId, opts) => onFork(app, opts, versionId)}
             onOpen={onOpen}
             onUseVersion={versionSwitches.use}

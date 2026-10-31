@@ -64,20 +64,20 @@
 
 ## 3. Launcher question UI
 
-- [ ] 3.0 (product-owner ruling 2026-10-09, after chain-2's note) Ruling 3 mechanism: add an exact `hasSavedData(appId)` read to the storage engine beside `deleteStorage` (true iff the app's store holds any user data — kv or any collection row; must NOT create the file, unlike op-sqlite `open`), expose it through `StoreAccess`, and skip the copy-or-fresh question (start fresh silently) when it is false. Widen chain-3's file list to the storage-engine module for this. Red-check: kv-only data counts as saved; a never-opened app is not saved; probing never creates a file.
+- [x] 3.0 (product-owner ruling 2026-10-09, after chain-2's note) Ruling 3 mechanism: add an exact `hasSavedData(appId)` read to the storage engine beside `deleteStorage` (true iff the app's store holds any user data — kv or any collection row; it never creates a store for an app that declares no storage; for one that does, it reads row counts and never deletes — ruling 40 revised), expose it through `StoreAccess`, and skip the copy-or-fresh question (start fresh silently) when it is false. Widen chain-3's file list to the storage-engine module for this. Red-check: kv-only data counts as saved; a never-opened app is not saved; an app no version of which declared storage is answered without its store being read and gets no store file; storage declared only by an older version still counts; nothing is ever deleted. The question is asked of `engineAppId(entry)`, not of `entry.id`: asked of `entry.id`, a copy that shares its original's storage group looks empty, the question is skipped, and the copy route then loses the group's data (separate-shared-data design D9).
 
-- [ ] 3.1 Precondition: design-system-v1 chains 15 and 20 have merged onto the staging branch. Check this first, and stop with a report if not. Then, in the tile menu's "Make a copy" flow:
+- [x] 3.1 Precondition: design-system-v1 chains 15 and 20 have merged onto the staging branch. Check this first, and stop with a report if not. Then, in the tile menu's "Make a copy" flow:
   - When `access.canCopyData` is true, show the "Copy the data, or start fresh?" sheet, with the rows "Copy the data" and "Start fresh". Their copy keys go in `copy.ts`.
   - Dismissing the sheet or going back creates nothing.
   - When `canCopyData` is false, keep design-system-v1's immediate fresh copy.
   - Replace any placeholder feature check those chains left with `canCopyData`.
-- [ ] 3.2 In History, "Make a copy from here" asks the same question through the same component. When the version is older than the current one and "Copy the data" is chosen, show the existing hidden-data line.
-- [ ] 3.3 Busy state and failure:
+- [x] 3.2 In History, "Make a copy from here" asks the same question through the same component. When the version is older than the current one and "Copy the data" is chosen, show the existing hidden-data line.
+- [x] 3.3 Busy state and failure:
   - The triggering control shows busy under `runAppOp` and cannot be re-triggered for that app while the copy runs.
   - Each `DataCopyError` kind maps to plain copy ("There wasn't room to copy the data." and the like), offering "Start fresh".
   - No silent fallback to an empty copy.
   - Delete any leftover share-question keys and tests (`fork-question-ui.spec.md`, `fork-ui.suite.tsx`, and the `home-grid-ui.suite.tsx` share-row cases) if design-system-v1 left them.
-- [ ] 3.4 UI suites covering:
+- [x] 3.4 UI suites covering:
   - question shown and hidden by `canCopyData`;
   - dismiss creates nothing;
   - each answer calls `fork` with the right `data` value;
@@ -88,11 +88,11 @@
 
 ## 4. Docs
 
-- [ ] 4.1 Append the next free decision number to `docs/decisions.md` (read the file's tail; do not assume a number). Record:
+- [x] 4.1 Append the next free decision number to `docs/decisions.md` (read the file's tail; do not assume a number). Record:
   - `copy-app-data`, built: `VACUUM INTO` snapshot, index-entry commit with a journal sweep, `fork({data})` plus `continueSharingData`, `canCopyData`;
   - legacy shared copies untouched;
   - that it realizes #75's resolved copy bullet and narrows #52 to continuations.
-- [ ] 4.2 Update `docs/capabilities.md`: add the `app-data-copy` line and amend the `linked-apps` line to say "rewind continuations only; legacy shared copies keep their group".
+- [x] 4.2 Update `docs/capabilities.md`: add the `app-data-copy` line and amend the `linked-apps` line to say "rewind continuations only; legacy shared copies keep their group".
 
 ## 5. On-device verification (attended)
 
@@ -105,15 +105,15 @@
 
   Record the results in the decision entry. If the second connection is refused, implement design D8's fallback before continuing. Turn the flag back off.
 - [x] 5.2 iOS simulator: the same probe and the same record.
-- [ ] 5.3 Android end to end with the product build:
+- [x] 5.3 Android end to end with the product build: PASS (partial: busy state not observable, a 200 MB copy takes ~1 s (#259); verify_failed/io toasts unreachable; question sheet compared by eye; c5a, handoff/5-c5a.md)
   - make an app and save records and kv values;
   - "Make a copy" with "Copy the data" shows the data in the copy; add data on each side and confirm independence; delete the original and confirm the copy keeps its data;
   - "Start fresh" is empty;
   - "Make a copy from here" on an older version with "Copy the data" works and shows the hidden-data line;
   - force-stop during the copy of a large store (`adb shell am force-stop`), relaunch, and see either no copy or a complete one, never a broken tile;
   - check the question sheet, busy state and failure copy pixel by pixel against `docs/design/system.md`.
-- [ ] 5.4 iOS simulator end to end: the same flow, using `xcrun simctl terminate` mid-copy.
-- [ ] 5.5 Legacy shared copy on device:
+- [x] 5.4 iOS simulator end to end: the same flow, using `xcrun simctl terminate` mid-copy. PASS (partial: no busy cue seen during a ~2 s copy (#259); failure toasts not reached on iOS; pixel check by eye; c5i, handoff/5-c5i.md)
+- [x] 5.5 Legacy shared copy on device: PASS (partial: Android only; c5a, handoff/5-c5a.md)
   - install a build from before this change and make a shared copy (#52 "use the same saved data");
   - install this change's build over it;
   - both apps still share, deleting one keeps the other's data, and copying the shared copy with "Copy the data" yields an independent app.

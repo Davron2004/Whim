@@ -92,6 +92,15 @@ export const COPY = {
   copyQuestionData: 'Copy the data',
   copyQuestionFresh: 'Start fresh',
   copyQuestionFreshSubtitle: 'The copy starts empty.',
+  /** History's copy question, asked from a version that would hide some of the current version's
+   *  saved data: the hidden-data line in a copy's terms (a copy never "returns", so nothing "comes
+   *  back" to it). */
+  copyQuestionHiddenData: 'If you copy the data, this version won’t show some of it. It isn’t deleted.',
+  /** A "Copy the data" that failed, by `DataCopyError` kind, each offering "Start fresh"
+   *  (app-data-copy "A failed copy creates nothing and says so"). */
+  copyNoRoomToast: 'There wasn’t room to copy the data. Your app is unchanged.',
+  copyUnreadableToast: 'Couldn’t read the saved data to copy. Your app is unchanged.',
+  copyDataFailedToast: 'Couldn’t copy the data. Your app is unchanged.',
   customizeTitle: 'Customize tile',
   customizeTintHeader: 'Colour',
   customizeGlyphHeader: 'Glyph',
@@ -545,6 +554,7 @@ export const COPY_KINDS: Readonly<Record<keyof typeof COPY, CopyKind>> = {
   tileHintFailure: 'prose', tileHintUpdate: 'prose', tileHintOlder: 'prose', tileMenuAction: 'control', olderTitle: 'prose',
   toastUndo: 'control', discardedToast: 'prose', undoTooLateToast: 'prose', copyMadeToast: 'prose', copyFailedToast: 'prose',
   copyQuestionTitle: 'prose', copyQuestionData: 'control', copyQuestionFresh: 'control', copyQuestionFreshSubtitle: 'prose',
+  copyQuestionHiddenData: 'prose', copyNoRoomToast: 'prose', copyUnreadableToast: 'prose', copyDataFailedToast: 'prose',
   customizeTitle: 'prose', customizeTintHeader: 'prose', customizeGlyphHeader: 'prose', customizeSearchLabel: 'control',
   customizeSearchEmpty: 'prose', customizeReset: 'control', interruptedBuildReason: 'prose', backLabel: 'control',
   sheetClose: 'control', toastDismiss: 'control', fieldClear: 'control',
