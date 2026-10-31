@@ -6,10 +6,15 @@
  */
 
 import nodeAssert from 'node:assert';
-import { inspect } from 'node:util';
+import { inspect, isDeepStrictEqual } from 'node:util';
+
+/** The most characters of a value one failure message shows: a value that reaches a rendered tree
+ *  prints every fiber's debug stack. */
+const SHOWN_CHARS = 4000;
 
 function show(value: unknown): string {
-  return inspect(value, { depth: 6, breakLength: Infinity });
+  const text = inspect(value, { depth: 6, breakLength: Infinity });
+  return text.length > SHOWN_CHARS ? `${text.slice(0, SHOWN_CHARS)} … (${text.length - SHOWN_CHARS} more characters)` : text;
 }
 
 export class Harness {
@@ -20,9 +25,11 @@ export class Harness {
     this.record(() => nodeAssert.ok(passedCheck, msg), msg);
   }
 
-  /** Deep, strict equality: key order doesn't matter, but an extra key holding `undefined` does. */
+  /** Deep, strict equality: key order doesn't matter, but an extra key holding `undefined` does.
+   *  Compared apart from the assertion: a failed `deepStrictEqual` inspects `a` all the way down to
+   *  build its diff, which for a value reaching a rendered tree runs the machine out of memory. */
   eq(a: unknown, b: unknown, msg: string): void {
-    this.record(() => nodeAssert.deepStrictEqual(a, b, msg), `${msg} (got ${show(a)}, want ${show(b)})`);
+    this.record(() => nodeAssert.ok(isDeepStrictEqual(a, b), msg), `${msg} (got ${show(a)}, want ${show(b)})`);
   }
 
   private record(assertion: () => void, failure: string): void {

@@ -179,11 +179,11 @@
 
 ## 22. Shell motion
 
-- [ ] 22.1 Container transforms on Reanimated: M2 open (bg container width/height/radius on the UI thread, tint plate, fade on the opening signal) and M3 close, M6 composer to Describe, M5 making sheet into its tile, M9 Make it ember travel, M10 Ready flare, M4 ghost to tile
-- [ ] 22.2 Honest light (M20): activity from the stream (tokens/s ÷ 40), 0.6 s smoothing spring, flicker from token arrivals only, stuck easing, out fade; shared by the making ember, ambient lights, tiles, changing ring and orb
-- [ ] 22.3 Grid and list motion: M17 first-launch stagger, M18 delete reflow with Undo reversal, M26 History row expand, M8 plan arrival, M25 row edit, M12 menu lift, M14 toast, M16 orb, M23 keyboard
-- [ ] 22.4 Static check in `checks/test/repo/design-system.suite.ts`: no `Animated`, `LayoutAnimation`, `useNativeDriver` or literal spring configs in `src/host/`; Reduce Motion pair tests for each moment
-- [ ] 22.5 Slow-motion (0.25×) recordings of every moment on an Android emulator and the iOS simulator, compared with the mockup motion lab, saved to the evidence archive and linked from the change
+- [x] 22.1 Container transforms on Reanimated: M2 open (bg container width/height/radius on the UI thread, tint plate, fade on the opening signal) and M3 close, M6 composer to Describe, M5 making sheet into its tile, M9 Make it ember travel, M10 Ready flare, M4 ghost to tile
+- [x] 22.2 Honest light (M20): activity from the stream (tokens/s ÷ 40), 0.6 s smoothing spring, flicker from token arrivals only, stuck easing, out fade; shared by the making ember, ambient lights, tiles, changing ring and orb
+- [x] 22.3 Grid and list motion: M17 first-launch stagger, M18 delete reflow with Undo reversal, M26 History row expand, M8 plan arrival, M25 row edit, M12 menu lift, M14 toast, M16 orb, M23 keyboard
+- [x] 22.4 Static check in `checks/test/repo/design-system.suite.ts`: no `Animated`, `LayoutAnimation`, `useNativeDriver` or literal spring configs in `src/host/`; Reduce Motion pair tests for each moment
+- [x] 22.5 Slow-motion (0.25×) recordings of every moment on an Android emulator and the iOS simulator, compared with the mockup motion lab, saved to the evidence archive and linked from the change
 
 ## 23. Generator: reference and few-shot
 

@@ -3,13 +3,15 @@
  * orders and lays out apps for every text size"): a raised capsule at the bottom, the 24 pt ember leading, that reads
  * "Make an app…", or `Continue "A timer for my…"` when a description waits (`draft`, the start
  * of the words, `flow-draft.ts#draftPreview`). Tapping it opens the making sheet at the page the
- * draft was left on. One line.
+ * draft was left on. One line. The capsule is the place the making sheet grows out of and goes back
+ * into (M6, `SheetAnchor`): the sheet draws a copy of it, still, where it is.
  */
 import React from 'react';
 import { Pressable, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { LAYOUT, RADII, SPACE } from '../../design/tokens';
 import { Ember, RESTING_ACTIVITY } from '../ui/Ember';
+import { useSheetAnchor } from '../ui/SheetAnchor';
 import { usePressFeedback } from '../ui/motion';
 import { Text } from '../ui/Text';
 import { TopHighlight } from '../ui/TopHighlight';
@@ -21,6 +23,9 @@ import { draftPreview } from './flow-draft';
 /** The capsule's height, and how far it reaches above the safe area: a toast sits above both. */
 export const COMPOSER_BAR = { height: LAYOUT.buttonHeight.large, bottomGap: LAYOUT.actionAreaBottom } as const;
 const COMPOSER_CLEARANCE = COMPOSER_BAR.height + COMPOSER_BAR.bottomGap;
+
+/** The name the capsule is registered under as a sheet's anchor. */
+export const COMPOSER_ANCHOR = 'composer';
 
 /** How far above the safe area a toast must sit on the screen of this kind: clear of the composer on
  *  Home, the safe area itself everywhere else. */
@@ -48,13 +53,39 @@ const styles = makeStyles((t) => ({
     paddingTop: 1,
   },
   words: { flex: 1 },
+  face: { flex: 1 },
 }));
+
+/** What the capsule shows: the ember and its one line. */
+function CapsuleContent({ draft, drafting }: Readonly<{ draft: string | undefined; drafting: boolean }>) {
+  const s = styles(useTokens());
+  return (
+    <>
+      <TopHighlight radius={RADII.full.radius} continuous />
+      <Ember size={24} state="working" activity={RESTING_ACTIVITY} />
+      <View style={s.words}>
+        <Text type="body" color={drafting ? 'text' : 'text-2'} numberOfLines={1}>
+          {drafting ? composerContinueLine(draftPreview(draft ?? '')) : COPY.homeComposerPlaceholder}
+        </Text>
+      </View>
+    </>
+  );
+}
 
 export function ComposerBar({ draft, onPress }: Readonly<ComposerBarProps>) {
   const t = useTokens();
   const s = styles(t);
   const press = usePressFeedback('button', t);
   const drafting = draft !== undefined && draft.trim() !== '';
+  const anchor = useSheetAnchor(COMPOSER_ANCHOR, {
+    radius: RADII.full.radius,
+    face: (
+      <View style={[s.capsule, s.face]}>
+        <CapsuleContent draft={draft} drafting={drafting} />
+      </View>
+    ),
+    onPress,
+  });
   return (
     <View style={s.frame}>
       <Pressable
@@ -66,14 +97,8 @@ export function ComposerBar({ draft, onPress }: Readonly<ComposerBarProps>) {
         accessibilityLabel={drafting ? `${COPY.homeComposerDraftLabel}: ${draft}` : COPY.homeComposerPlaceholder}
         accessibilityHint={COPY.homeComposerHint}
       >
-        <Animated.View style={[s.capsule, press.style]}>
-          <TopHighlight radius={RADII.full.radius} continuous />
-          <Ember size={24} state="working" activity={RESTING_ACTIVITY} />
-          <View style={s.words}>
-            <Text type="body" color={drafting ? 'text' : 'text-2'} numberOfLines={1}>
-              {drafting ? composerContinueLine(draftPreview(draft ?? '')) : COPY.homeComposerPlaceholder}
-            </Text>
-          </View>
+        <Animated.View ref={anchor.ref} collapsable={false} onLayout={anchor.onLayout} style={[s.capsule, press.style]}>
+          <CapsuleContent draft={draft} drafting={drafting} />
         </Animated.View>
       </Pressable>
     </View>

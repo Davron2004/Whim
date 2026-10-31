@@ -93,6 +93,9 @@ export interface KeyboardShellProps {
   onContentSizeChange?: ScrollViewProps['onContentSizeChange'];
   /** Called with the content's vertical offset as it scrolls. */
   onScrollOffset?: (offset: number) => void;
+  /** Content above what is in view changing height (a block collapsing once scrolled past) leaves
+   *  what is in view where it is, rather than shifting it. */
+  keepsVisibleContent?: boolean;
   children: React.ReactNode;
 }
 
@@ -575,6 +578,9 @@ function useRevealingScroll(
   return { scrollProps, below, registry };
 }
 
+/** The scroll view's anchor for `keepsVisibleContent`: the first block in view, from the first block on. */
+const VISIBLE_ANCHOR = { minIndexForVisible: 0 } as const;
+
 /** The hairline above the footer, drawn only while content continues below it; always laid out, so
  *  showing it never shifts anything. */
 function EdgeLine({ shown }: Readonly<{ shown: boolean }>) {
@@ -626,6 +632,7 @@ export default function KeyboardShell({
   scrollRef,
   onContentSizeChange,
   onScrollOffset,
+  keepsVisibleContent = false,
   children,
 }: Readonly<KeyboardShellProps>) {
   const inSheet = host === 'sheet';
@@ -678,6 +685,7 @@ export default function KeyboardShell({
       contentContainerStyle={contentContainerStyle}
       keyboardDismissMode={keyboardDismissMode(Platform.OS)}
       keyboardShouldPersistTaps="handled"
+      maintainVisibleContentPosition={keepsVisibleContent ? VISIBLE_ANCHOR : undefined}
     >
       {children}
       {joinsScroll ? footerView : null}

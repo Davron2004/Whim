@@ -194,6 +194,18 @@ export async function runOrbUiTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('orb: a change whose stream stalled shows its ember stuck, and burning again once bytes resume; no other state is stuck', async () => {
+    resetNativeStorage();
+    await withOrb({ state: 'changing', activity: 0.7, stuck: true }, async (tree) => {
+      h.eq(tree.root.findByType(Ember).props.state, 'stuck', 'a stalled change: stuck');
+      await TestRenderer.act(async () => tree.update(<Orb appId="app-a" onOpen={noop} state="changing" activity={0.7} stuck={false} />));
+      h.eq([tree.root.findByType(Ember).props.state, tree.root.findByType(Ember).props.activity], ['working', 0.7], 'bytes again: it follows the stream');
+    });
+    await withOrb({ state: 'rest', stuck: true }, async (tree) => {
+      h.eq(tree.root.findByType(Ember).props.state, 'working', 'at rest the orb’s ember is never stuck');
+    });
+  });
+
   await h.test('orb: each app remembers its own corner across a close and reopen; deleting the app forgets it', async () => {
     resetNativeStorage();
     await withOrb({ appId: 'app-a' }, async (tree) => { await drag(tree, [-10, -120], -1500); });

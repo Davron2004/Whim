@@ -14,7 +14,8 @@
 // with its icon and `Current` on the active version. No filters. All store access goes through
 // `StoreAccess`; the row model lives in `history-logic.ts`, Node-testable without this component.
 //
-// Tapping a row EXPANDS it (never changes the version); at most one row is open. Its actions act at
+// Tapping a row EXPANDS it (never changes the version); at most one row is open. M26: it opens and
+// closes on `smooth` with the rows below moving, its actions fading in (`RowsMove`). Its actions act at
 // once, with Undo instead of a question (decision #75, "undo over are you sure"): "Use this version"
 // makes it current and offers Undo in the toast, and the version it left stays listed, so the same
 // Undo is a row away once the toast has gone; "Make a copy from here" asks only "Copy the data, or
@@ -22,8 +23,9 @@
 // says when going there would hide saved data. The summary and the expanded result are agent prose
 // and render through the one shared `WhimProse` renderer; everything else is product copy and is
 // never marked (Whim Syntax rule 7).
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Pressable, Text as RNText, View } from 'react-native';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { FlatList, Pressable, Text as RNText, View, type FlatListProps } from 'react-native';
+import Animated, { Easing, FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import type { SummaryKind, SummaryMark } from '@whim/contract';
 import { LAYOUT, RADII, SPACE, TINTS, TYPE_SCALE, type ColorRole, type TypeToken } from '../../design/tokens';
 import type { IconName } from '../../design/icons/names';
@@ -46,15 +48,16 @@ import { CopyQuestionSheet } from './CopyQuestionSheet';
 import { tileOf } from './tile-identity';
 import { useSystemBack } from './use-system-back';
 import WhimProse from '../ui/whim-prose/WhimProse';
-import { TilePlate } from '../ui/AppTile';
+import { REFLOW, TilePlate } from '../ui/AppTile';
 import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
 import { BackButton } from '../ui/IconButton';
+import { timing } from '../ui/motion';
 import { Skeleton, SkeletonBlock } from '../ui/Skeleton';
 import { Text, wrappingType } from '../ui/Text';
 import { useToast } from '../ui/Toast';
 import { useTokens } from '../ui/tokens';
-import { ICON_BUTTON, makeStyles, MAX_FONT_SCALE, type ShellTokens } from '../ui/tokens-pure';
+import { ICON_BUTTON, makeStyles, MAX_FONT_SCALE, springReachMs, timingOf, type ShellTokens } from '../ui/tokens-pure';
 import { haptics } from '../haptics';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
@@ -104,6 +107,95 @@ const ROW_GAP = 22;
 /** How many placeholder rows the first load draws. The real count is not known until the read
  *  resolves, so this is a shape hint, not a prediction. */
 const HISTORY_SKELETON_ROWS = 3;
+
+/** M26: an opened row's actions fade in on `fade-in`, in place; closing, the same path out: they and
+ *  the card's fill fade out on `fade-out` as the card shrinks. */
+const FADE_IN = timingOf('fadeIn');
+const ACTIONS_IN = FadeIn.duration(FADE_IN.duration).easing(Easing.bezier(...FADE_IN.bezier));
+const FADE_OUT = timingOf('fadeOut');
+const ACTIONS_OUT = FadeOut.duration(FADE_OUT.duration).easing(Easing.bezier(...FADE_OUT.bezier));
+const FILL_OUT = timing('fadeOut');
+/** How long a move on `smooth` takes to come to rest. */
+const SMOOTH_SETTLE_MS = springReachMs('smooth', 0.99);
+
+/** M26: how the rows move as one changes size: on `smooth` (`REFLOW`, a layout transition, which
+ *  retargets one still running), or, undefined, at once. Only what the person's own action causes
+ *  moves (`usePersonsMove`); under Reduce Motion nothing does. */
+const RowsMove = React.createContext<typeof REFLOW | undefined>(undefined);
+
+/** The window in which the rows move: opened by the person's own action (a row opened or closed,
+ *  "Use this version", its Undo) and closed once what it changed has come to rest. Outside it, what
+ *  arrives or measures on its own (an open row's added-fields or hidden-data line, a late text
+ *  measure, a re-read) lands at once. Reanimated registers a view's transition only after the commit
+ *  that sets it, so a change of size committed together with it would jump, and one committed
+ *  together with its removal would still move: `act`'s change waits for the commit that opened the
+ *  window, and the window closes only after its change. `hold` keeps it open until an action's
+ *  re-read has landed; one that lands after History has gone starts nothing. */
+function usePersonsMove() {
+  const [open, setOpen] = useState(false);
+  const committed = useRef(false);
+  const pending = useRef<(() => void)[]>([]);
+  const holds = useRef(0);
+  const closing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const gone = useRef(false);
+  const settle = () => {
+    clearTimeout(closing.current);
+    if (holds.current === 0 && !gone.current) closing.current = setTimeout(() => setOpen(false), SMOOTH_SETTLE_MS);
+  };
+  useEffect(() => {
+    committed.current = open;
+    if (!open) return;
+    const due = pending.current.splice(0);
+    for (const change of due) change();
+    if (due.length > 0) settle();
+  });
+  useEffect(() => {
+    gone.current = false;
+    return () => {
+      gone.current = true;
+      clearTimeout(closing.current);
+    };
+  }, []);
+  const act = (change?: () => void) => {
+    clearTimeout(closing.current);
+    if (committed.current) {
+      change?.();
+      settle();
+    } else if (change) {
+      pending.current.push(change);
+    }
+    setOpen(true);
+  };
+  const hold = async <T,>(work: () => Promise<T>): Promise<T> => {
+    act();
+    holds.current += 1;
+    try {
+      return await work();
+    } finally {
+      holds.current -= 1;
+      settle();
+    }
+  };
+  /** Opens the window with the render under way, for a `hold` its effects start. */
+  const opens = () => setOpen(true);
+  return { open, act, hold, opens };
+}
+
+/** What the list hands each cell it draws through `CellRendererComponent`. */
+type HistoryCellProps = Pick<React.ComponentProps<NonNullable<FlatListProps<HistoryRow>['CellRendererComponent']>>, 'children' | 'style' | 'onLayout' | 'onFocusCapture'>;
+
+/** A row's cell in the list, a view of its own on the native side: it moves with `RowsMove` when a
+ *  row above it opens or closes. The list hears focus land in it (`onFocusCapture`), as it does in
+ *  the cells it draws itself. */
+function HistoryCell({ children, style, onLayout, onFocusCapture }: Readonly<HistoryCellProps>) {
+  // A View takes `onFocusCapture` (ViewPropTypes.js), which React Native's own TypeScript types leave out.
+  const focus: object = { onFocusCapture };
+  return (
+    <Animated.View style={style} onLayout={onLayout} {...focus} layout={useContext(RowsMove)}>
+      {children}
+    </Animated.View>
+  );
+}
 
 /** The dot's centre, down from the row's top: on the middle of the words' first line, at the
  *  phone's text size up to the 200% cap. */
@@ -162,17 +254,19 @@ const styles = makeStyles((t) => {
     },
     dot: { width: RAIL.dot, height: RAIL.dot, borderRadius: RAIL.dot / 2, backgroundColor: t.colors.border },
     dotCurrent: { backgroundColor: t.colors.ink },
-    // A row's words sit in the same place open or closed: a closed row keeps the open card's side
-    // padding, and the card reaches up by its top padding, so it grows around the words instead of
-    // pushing them in.
-    flat: { paddingTop: ROW_TOP, paddingHorizontal: CARD_PADDING.horizontal },
+    // A row's words sit in the same place open or closed: the card, drawn only open, reaches up by
+    // its top padding whether drawn or not, so it grows around the words, downward from a top that
+    // stays put, instead of pushing them in; growing (M26), it shows only what it has reached.
     card: {
       marginTop: ROW_TOP - CARD_PADDING.vertical,
       borderRadius: RADII.lg.radius,
-      backgroundColor: t.colors.surface,
-      paddingVertical: CARD_PADDING.vertical,
+      paddingTop: CARD_PADDING.vertical,
       paddingHorizontal: CARD_PADDING.horizontal,
+      overflow: 'hidden' as const,
     },
+    cardOpen: { paddingBottom: CARD_PADDING.vertical },
+    // The open card's fill, under its content, its own view so a close can fade it.
+    fill: { position: 'absolute' as const, top: 0, right: 0, bottom: 0, left: 0, backgroundColor: t.colors.surface },
     summary: { marginTop: SPACE[1] },
     meta: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, alignItems: 'center' as const, gap: SPACE[2], marginTop: SPACE[2] },
     chip: {
@@ -237,6 +331,14 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
   // `loading` already false is exactly the fake-empty flash this screen had).
   const [{ loading, snapshots, activeId }, setLoad] = useState<HistoryLoadState>(HISTORY_LOADING);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const moves = usePersonsMove();
+  // An Undo (or a switch) landing moves the version, from the shell: the person's action, so the
+  // window opens with the render that brings it, before the re-read below (held) can land.
+  const [movedSeen, setMovedSeen] = useState(versionsMoved);
+  if (movedSeen !== versionsMoved) {
+    setMovedSeen(versionsMoved);
+    moves.opens();
+  }
   // The row actions' double-submit guard, shared by Use this version, its Undo and Make a copy. A
   // ref, not state: two taps inside one frame both read the same rendered busy value, so only a
   // synchronous claim can refuse the second.
@@ -258,8 +360,14 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
       historyOperationFailed('list', e);
     });
 
+  const movedLoaded = useRef(versionsMoved);
   useEffect(() => {
-    reload();
+    if (movedLoaded.current === versionsMoved) {
+      reload();
+    } else {
+      movedLoaded.current = versionsMoved;
+      moves.hold(reload);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [access, app, versionsMoved]);
 
@@ -277,7 +385,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
   const switchVersion = async (row: HistoryRow) => {
     const words = { to: row.number, from: rows.find((r) => r.isCurrent)?.number ?? null };
     try {
-      if (!(await runRowAction(flight, busyFor(row, 'use-version'), () => onUseVersion(app, row.id, words, activeId, load)))) return;
+      if (!(await moves.hold(() => runRowAction(flight, busyFor(row, 'use-version'), () => onUseVersion(app, row.id, words, activeId, load))))) return;
     } catch (e) {
       historyOperationFailed('use-version', e);
       haptics.play('failure');
@@ -352,6 +460,12 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
     </View>
   );
 
+  /** Opens the row `id`, or closes it when it is the open one: the person's own action, so it moves. */
+  const toggle = (id: string) => {
+    const opens = (prev: string | null) => (prev === id ? null : id);
+    moves.act(() => setExpandedId(opens));
+  };
+
   const renderRow = ({ item, index }: { item: HistoryRow; index: number }) => (
     <HistoryRowView
       row={item}
@@ -364,7 +478,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
       busy={busy?.id === item.id ? busy.action : null}
       isFirst={index === 0}
       isLast={index === rows.length - 1}
-      onToggle={() => setExpandedId(prev => (prev === item.id ? null : item.id))}
+      onToggle={() => toggle(item.id)}
       onChangeIt={() => onChangeIt?.(app)}
       onUseVersion={() => switchVersion(item)}
       onMakeCopy={() => askCopy(item)}
@@ -389,13 +503,16 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
             <HistoryLoadingRows />
           </View>
         ) : (
-          <FlatList
-            data={rows}
-            keyExtractor={row => row.id}
-            renderItem={renderRow}
-            ListHeaderComponent={titleBlock}
-            contentContainerStyle={s.list}
-          />
+          <RowsMove.Provider value={moves.open && !t.reduceMotion ? REFLOW : undefined}>
+            <FlatList
+              data={rows}
+              keyExtractor={row => row.id}
+              renderItem={renderRow}
+              CellRendererComponent={HistoryCell}
+              ListHeaderComponent={titleBlock}
+              contentContainerStyle={s.list}
+            />
+          </RowsMove.Provider>
         )}
       </React.Fragment>
 
@@ -431,6 +548,30 @@ interface HistoryRowViewProps {
   onMakeCopy: () => void;
 }
 
+/** M26's way out, the opening's backwards: the card's fill and its actions fade out on `fade-out` while
+ *  the card shrinks on `smooth`. The fill shows at once as a row opens; the actions fade out only once
+ *  they have faded in (Reanimated's fade-out sets out from whole), so a row closed while its actions
+ *  still fade in drops them at once. Nothing fades while nothing moves (`moves` undefined). */
+function useClosingFades(expanded: boolean, moves: typeof REFLOW | undefined) {
+  const fill = useSharedValue(expanded ? 1 : 0);
+  const [actionsShown, setActionsShown] = useState(false);
+  useEffect(() => {
+    if (expanded) fill.value = 1;
+    else fill.value = moves === undefined ? 0 : withTiming(0, FILL_OUT);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only an open or a close fades the fill
+  }, [expanded]);
+  useEffect(() => {
+    if (!expanded) {
+      setActionsShown(false);
+      return undefined;
+    }
+    const faded = setTimeout(() => setActionsShown(true), FADE_IN.duration);
+    return () => clearTimeout(faded);
+  }, [expanded]);
+  const fillStyle = useAnimatedStyle(() => ({ opacity: fill.value }));
+  return { fillStyle, actionsExit: moves !== undefined && actionsShown ? ACTIONS_OUT : undefined };
+}
+
 function HistoryRowView({
   row,
   app,
@@ -449,6 +590,8 @@ function HistoryRowView({
 }: Readonly<HistoryRowViewProps>) {
   const t = useTokens();
   const s = styles(t);
+  const moves = useContext(RowsMove);
+  const { fillStyle, actionsExit } = useClosingFades(expanded, moves);
   const [annotationFields, setAnnotationFields] = useState<string[]>([]);
   const [hiddenData, setHiddenData] = useState<RestoreDiffState>(RESTORE_DIFF_NONE);
   const chip = row.kind ? KIND_CHIP[row.kind] : null;
@@ -526,7 +669,8 @@ function HistoryRowView({
       <View style={s.ring}>
         <View style={[s.dot, row.isCurrent && s.dotCurrent]} />
       </View>
-      <View style={expanded ? s.card : s.flat}>
+      <Animated.View style={[s.card, expanded && s.cardOpen]} layout={moves}>
+        <Animated.View style={[s.fill, fillStyle]} pointerEvents="none" />
         <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded }}>
           {words}
           {summary && <View style={s.summary}>{summary}</View>}
@@ -553,7 +697,7 @@ function HistoryRowView({
         </Pressable>
 
         {expanded && (
-          <View style={s.expanded}>
+          <Animated.View style={s.expanded} entering={moves === undefined ? undefined : ACTIONS_IN} exiting={actionsExit}>
             {row.touched.length > 0 && (
               <>
                 <Text type="footnote" color="text-2" header>
@@ -598,9 +742,9 @@ function HistoryRowView({
                 />
               )}
             </View>
-          </View>
+          </Animated.View>
         )}
-      </View>
+      </Animated.View>
     </View>
   );
 }

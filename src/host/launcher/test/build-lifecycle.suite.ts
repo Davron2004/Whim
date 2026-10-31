@@ -30,7 +30,8 @@ import {
   startPendingBuild,
 } from '../build-lifecycle';
 import { RunJournalStore } from '../run-journal';
-import { EMPTY_RUN_AGGREGATES, STALL_MS, ghostTileColorFor, livenessOf, withStreamEvent } from '../prompt-flow';
+import { EMPTY_RUN_AGGREGATES, STALL_MS, ghostTileColorFor, livenessOf, withKeepalive, withStreamEvent } from '../prompt-flow';
+import { sampleLive } from '../home-live';
 import type { MakingScreen, RunSignals } from '../prompt-flow';
 import { makingProgress } from '../making-progress';
 import { COPY, makingStallLine } from '../copy';
@@ -526,6 +527,29 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     const started = makingRun();
     started.fold({ type: 'stage', stage: 'plan', status: 'start' }, 1_000);
     h.eq([started.at(silent).line, started.at(silent).ember.state], [makingStallLine(STALL_MS / 1000), 'stuck'], 'where the same silence out of line is a stall');
+  });
+
+  await h.test('honest light: a Home tile’s light is stuck exactly when its Making page’s ember is — no bytes for the stall time, a keepalive counting as bytes — and live again once bytes resume', () => {
+    const journal = new RunJournalStore(new MapKVBackend());
+    journal.create('run-1');
+    let signals: RunSignals = { startedAt: 0, aggregates: EMPTY_RUN_AGGREGATES, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: 0 };
+    let page = { kind: 'making', text: 'A tea timer', rewritten: 'A tea timer', answers: {}, questions: [], stage: null, delivering: false, stepSince: 0 } as MakingScreen;
+    const fold = (event: GenerationEvent, at: number) => {
+      signals = journalStreamEvent(journal, 'run-1', signals, event, at);
+      page = withStreamEvent(page, event, at);
+    };
+    const tileStuck = (now: number) => sampleLive([{ id: 'run-1', signals }], new Map(), now).stalled.has('run-1');
+    const pageStuck = (now: number) => makingProgress(page, signals, now, 0).ember.state === 'stuck';
+    const both = (now: number) => [tileStuck(now), pageStuck(now)];
+    fold({ type: 'stage', stage: 'plan', status: 'start' }, 1_000);
+    fold({ type: 'token', text: 'const a = 1;' }, 2_000);
+    h.eq(both(2_000 + STALL_MS), [false, false], 'at the stall time to the millisecond, both still burn');
+    h.eq(both(2_000 + STALL_MS + 1), [true, true], 'a millisecond past it, both are stuck');
+    signals = withKeepalive(signals, 50_000);
+    h.eq(both(50_000 + STALL_MS), [false, false], 'a keepalive is bytes: both burn again, the page and the tile together');
+    h.eq(both(50_000 + STALL_MS + 1), [true, true], 'and the stall counts from it');
+    fold({ type: 'thinking', chars: 120 }, 100_000);
+    h.eq(both(100_001), [false, false], 'a reasoning delta resumes both');
   });
 
   await h.test('the Making page’s steps: the current step’s time starts when the marker reaches it, and a check after a repair keeps the marker on the repair', () => {

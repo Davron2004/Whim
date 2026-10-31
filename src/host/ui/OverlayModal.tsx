@@ -37,7 +37,8 @@
  */
 
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { AppState, Modal, Platform } from 'react-native';
+import { AppState, Modal, Platform, StyleSheet } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useAnimatedReaction } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
@@ -409,7 +410,9 @@ export interface OverlayModalProps {
 }
 
 /** The overlay's own full-window, transparent `Modal`, under both system bars. Renders nothing
- *  until the overlay's turn. */
+ *  until the overlay's turn. Android draws a `Modal` in a window of its own, outside the app's
+ *  gesture root, where a gesture finds no root to run in and never starts (a sheet's drag did
+ *  nothing), so the window has its own. */
 export function OverlayModal({ turn, onRequestClose, children }: Readonly<OverlayModalProps>) {
   const [inside] = useState(() => new OverlayTurns());
   if (!turn.mounted) return null;
@@ -424,7 +427,11 @@ export function OverlayModal({ turn, onRequestClose, children }: Readonly<Overla
       onShow={turn.shown}
       onDismiss={turn.dismissed}
     >
-      <TurnsContext.Provider value={inside}>{children}</TurnsContext.Provider>
+      <GestureHandlerRootView style={styles.window}>
+        <TurnsContext.Provider value={inside}>{children}</TurnsContext.Provider>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
+
+const styles = StyleSheet.create({ window: { flex: 1 } });

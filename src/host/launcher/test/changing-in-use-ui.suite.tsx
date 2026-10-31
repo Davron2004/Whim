@@ -154,7 +154,7 @@ export async function runChangingInUseUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('changing in use: the orb’s ember follows the change’s stream: dark until tokens arrive, lit while they do', async () => {
+  await h.test('changing in use: the orb’s ember follows the change’s stream: dark until tokens arrive, lit and flickering while they do', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree }) => {
       await openTipSplitter(tree);
@@ -165,6 +165,13 @@ export async function runChangingInUseUiTests(h: Harness): Promise<void> {
       for (let i = 0; i < 80; i++) streams[0].push({ type: 'token', text: 'x' });
       await waitFor(() => orbActivity(tree) > 0, 'the ember to follow the tokens', 4000);
       h.ok(showing(tree, MiniAppView) && !makingSheetOpen(tree), 'over the running app');
+      const pulse = orb(tree).findByType(Ember).props.flicker as { value: number; listen: (fn: () => void) => () => void } | undefined;
+      h.ok(pulse !== undefined, 'the orb’s ember reads the change’s flicker pulse');
+      let kicks = 0;
+      const stop = pulse?.listen(() => { if (pulse.value !== 0) kicks += 1; });
+      streams[0].push({ type: 'token', text: 'y' });
+      await waitFor(() => kicks > 0, 'a token to flicker the orb');
+      stop?.();
       await waitFor(() => orbActivity(tree) === 0, 'the ember to fall back when the stream goes quiet', 4000);
       streams[0].end();
     });
