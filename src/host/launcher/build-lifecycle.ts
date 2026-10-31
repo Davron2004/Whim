@@ -197,9 +197,9 @@ export function journalStreamEvent(
 /**
  * D5's delivery routing: a brand-new install (no `editing`), an in-place update when `editing`
  * is at the tip of its own history, or — when it has been restored behind its own tip — a
- * silent shared continuation (fork with `shareData:true`, no question asked per decision #52 D2
- * / the `linked-apps` spec) followed by an update onto that fork. The ONLY three `StoreAccess`
- * call shapes a `result` event may produce (spec "Delivery only through StoreAccess").
+ * silent shared continuation (`continueSharingData`, no question asked per decision #52 D2 / the
+ * `linked-apps` spec) followed by an update onto it. The ONLY three `StoreAccess` call shapes a
+ * `result` event may produce (spec "Delivery only through StoreAccess").
  *
  * `text` is the user's VERBATIM prompt (not the rewritten one) and `summary` the run's summary
  * when it produced one — together the `{v:2, text, summary?}` envelope the snapshot tracks.
@@ -264,8 +264,8 @@ export async function deliverResult(spec: DeliverSpec): Promise<InstalledApp> {
   if (await isAtTip(access, editing)) {
     return access.update(editing, { record, bundleSource: wire.bundle, source: wire.source, schemaJson, prompt });
   }
-  const fork = await access.fork(editing, undefined, { shareData: true });
-  return access.update(fork, { record, bundleSource: wire.bundle, source: wire.source, schemaJson, prompt });
+  const continuation = await access.continueSharingData(editing);
+  return access.update(continuation, { record, bundleSource: wire.bundle, source: wire.source, schemaJson, prompt });
 }
 
 /**

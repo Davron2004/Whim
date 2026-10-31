@@ -145,7 +145,7 @@ export async function runGenerationRequestTests(h: Harness): Promise<void> {
       const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc', foundersSchema), bundleSource: 'V1', prompt: 'p1' });
       writeLiveSchema(dir, 'wc', foundersSchema); // founder's own field lands in the group's live db
 
-      const shared = await access.fork(orig, undefined, { shareData: true });
+      const shared = await access.continueSharingData(orig);
       writeLiveSchema(dir, access.engineAppId(shared), sharersAddedField); // sharer adds its own field to the SAME group file
 
       // The sharer's own stored record.schemaArtifact never learned about the founder's field —
@@ -168,7 +168,7 @@ export async function runGenerationRequestTests(h: Harness): Promise<void> {
       const orig = await access.install({ id: 'wc2', name: 'WC2', record: REC('wc2', foundersSchema), bundleSource: 'V1', prompt: 'p1' });
       writeLiveSchema(dir, 'wc2', foundersSchema); // only the founder has ever written to the group
 
-      const shared = await access.fork(orig, undefined, { shareData: true }); // the fork itself never opens the engine
+      const shared = await access.continueSharingData(orig); // the fork itself never opens the engine
       const request = await buildGenerateRequest(access, fileAppliedReader(dir), shared, 'edit fresh sharer');
 
       h.ok(fieldIds(request.app?.appliedSchema, 'c1').includes('f1'), 'a fork that has never written anything still sees the founder\'s field via the shared group id');

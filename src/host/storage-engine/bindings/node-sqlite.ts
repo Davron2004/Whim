@@ -10,6 +10,7 @@
 
 import * as fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { BUSY_TIMEOUT_MS } from '../busy-timeout';
 import { SqlBindValue } from '../marshal';
 import { readAppliedSchema } from '../engine';
 import { AppliedSchema, emptyApplied } from '../schema';
@@ -22,6 +23,8 @@ export function createNodeSqlExecutor(filename = ':memory:'): SqlExecutor {
   const db = new DatabaseSync(filename);
   // Conservative, portable pragmas only; the device build is the authoritative dialect.
   db.exec('PRAGMA foreign_keys = OFF');
+  // A write that meets another connection's lock (a copy's snapshot) waits instead of throwing.
+  db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
 
   const executor: SqlExecutor = {
     execute(sql: string, params: SqlBindValue[] = []): SqlResult {

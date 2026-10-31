@@ -10,6 +10,7 @@
  * Not exercised by the Node suite — its acceptance is the on-device probe run (task 7).
  */
 
+import { BUSY_TIMEOUT_MS } from '../busy-timeout';
 import { SqlBindValue } from '../marshal';
 import { readAppliedSchema } from '../engine';
 import { AppliedSchema } from '../schema';
@@ -23,6 +24,15 @@ export interface OpSqlExecutorOptions {
   mode: 'persistent' | 'ephemeral';
 }
 
+/** The slice of an op-sqlite database handle the executor uses. */
+export interface OpSqlDb {
+  executeSync(
+    sql: string,
+    params?: SqlBindValue[],
+  ): { rows?: SqlRow[] | { _array?: SqlRow[] }; insertId?: number; rowsAffected?: number } | undefined;
+  close(): void;
+}
+
 export function createOpSqlExecutor(opts: OpSqlExecutorOptions): SqlExecutor {
   // Lazy require: keep the native module off any path that isn't the device.
   const { open } = require('@op-engineering/op-sqlite');
@@ -32,10 +42,18 @@ export function createOpSqlExecutor(opts: OpSqlExecutorOptions): SqlExecutor {
       ? open({ name: ':memory:' })
       : open({ name: `${opts.appId}.db`, location: 'storage' });
 
+  return createOpSqlExecutorOver(db);
+}
+
+/** The SqlExecutor over an already-open op-sqlite database (the data copy opens its own
+ *  connections and needs the handle itself for `getDbPath` and async `execute`). */
+export function createOpSqlExecutorOver(db: OpSqlDb): SqlExecutor {
   // Guard that the op-sqlite v16+ JSI build's executeSync is present. Extracted to
   // assertExecuteSyncAvailable so its throw is unit-testable under Node — this file
   // can't load outside React Native (it imports the native module).
   assertExecuteSyncAvailable(db);
+  // A write that meets another connection's lock (a copy's snapshot) waits instead of throwing.
+  db.executeSync(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`, []);
 
   // op-sqlite v16+ JSI build: executeSync is always present and synchronous.
   const runOne = (sql: string, params: SqlBindValue[]): SqlResult => {

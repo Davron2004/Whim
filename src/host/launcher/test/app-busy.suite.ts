@@ -167,7 +167,7 @@ export async function runAppBusyTests(h: Harness): Promise<void> {
       const tile = () => tree.root.find((n) => hostType(n) === 'TouchableOpacity' && typeof n.props.onLongPress === 'function' && textOf(n).includes('Timer'));
       await TestRenderer.act(async () => tile().props.onLongPress());
       await press(button(tree, COPY.actionFork));
-      await press(button(tree, COPY.forkShareData));
+      await press(button(tree, COPY.forkStartFresh));
       h.eq(forks, 1, 'the fork started');
       const faded = tile().findAll((n) => hostType(n) === 'View' && typeof (StyleSheet.flatten(n.props.style) as { opacity?: number }).opacity === 'number');
       h.ok(faded.some((n) => ((StyleSheet.flatten(n.props.style) as { opacity: number }).opacity) < 1), 'the tile reads as busy (faded, not a shadow, which Android does not draw)');

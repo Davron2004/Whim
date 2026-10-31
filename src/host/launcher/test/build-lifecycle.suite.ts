@@ -238,22 +238,21 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     const store = new PendingBuildStore(new MapKVBackend());
     const updates: { entry: InstalledApp; spec: UpdateSpec }[] = [];
     const forked: InstalledApp = { ...APP, id: 'app-fork' };
-    const forkCalls: unknown[][] = [];
+    const continueCalls: unknown[][] = [];
     const atTip = { ...fakeAccess({ updates }), timeline: async () => [{ id: 'snap-1' }], activeId: async () => 'snap-1' } as unknown as StoreAccess;
     const behindTip = {
       ...fakeAccess({ updates }),
       timeline: async () => [{ id: 'snap-2' }, { id: 'snap-1' }],
       activeId: async () => 'snap-1',
-      fork: async (...args: unknown[]) => { forkCalls.push(args); return forked; },
+      continueSharingData: async (...args: unknown[]) => { continueCalls.push(args); return forked; },
     } as unknown as StoreAccess;
     const id = startPendingBuild(store, { editing: APP, text: 'add a dark mode' });
     await deliverResult({ access: atTip, appId: id, editing: APP, text: 'add a dark mode', wire: WIRE });
     await deliverResult({ access: behindTip, appId: id, editing: APP, text: 'add a dark mode', wire: WIRE });
     h.ok(updates.every((u) => u.spec.record.manifest.tileColor === undefined), 'neither the in-place update nor the continuation records one');
-    // Decision #52 D2: the continuation keeps the user's data, so the fork shares the original's.
-    h.eq(forkCalls.length, 1, 'the behind-tip rebuild forked once');
-    h.eq((forkCalls[0]?.[0] as InstalledApp | undefined)?.id, APP.id, 'it forked the app being edited');
-    h.ok((forkCalls[0]?.[2] as { shareData?: unknown } | undefined)?.shareData === true, `the fork shares the original's data (got ${JSON.stringify(forkCalls[0]?.[2])})`);
+    // Decision #52 D2: the continuation keeps the user's data, through the one seam that shares it.
+    h.eq(continueCalls.length, 1, 'the behind-tip rebuild continued once, through the sharing seam');
+    h.eq((continueCalls[0]?.[0] as InstalledApp | undefined)?.id, APP.id, 'it continued the app being edited');
     h.eq(updates[1]?.entry.id, forked.id, 'and the update went onto the fork');
   });
 
@@ -271,7 +270,7 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
       ...fakeAccess({ updates }),
       timeline: async () => [{ id: 'snap-2' }, { id: 'snap-1' }],
       activeId: async () => 'snap-1',
-      fork: async () => ({ ...installed, id: 'app-fork-real' }),
+      continueSharingData: async () => ({ ...installed, id: 'app-fork-real' }),
     } as unknown as StoreAccess;
     const rebuildId = startPendingBuild(store, { editing: installed, text: 'add a dark mode' });
     await deliverResult({ access: atTip, appId: rebuildId, editing: installed, text: 'add a dark mode', wire: WIRE });

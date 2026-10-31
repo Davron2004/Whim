@@ -144,15 +144,15 @@ entry's own launcher `id`. Absent = own group (today's per-app behavior, unchang
 27. `engineAppId(entry)` resolves `entry.storageGroupId ?? entry.id` — a grouped entry's engine
     appId is the founder's id (so its realm reads/writes the founder's database); an ungrouped
     entry's engine appId is still its own id, exactly as before this change.
-28. `fork(entry, versionId, {shareData: true})` copies the parent's storage group onto the new
-    entry: `newEntry.storageGroupId === (entry.storageGroupId ?? entry.id)` — the founder's own
-    id when the parent itself is ungrouped, or the parent's existing group id when the parent is
-    already a member.
-29. `fork(entry, versionId)` / `fork(entry, versionId, {shareData: false})` / no third argument
-    at all: the new entry gets NO `storageGroupId` — its own group, same as today.
-30. Group membership is immutable after creation: no API mutates `storageGroupId` post-fork; a
-    fork-of-a-fork with `shareData: true` still resolves to the ORIGINAL founder's id (grouping
-    is transitive through the founder, never re-rooted at an intermediate fork).
+28. `continueSharingData(entry)` (a rewind continuation, the only sharing path) copies the
+    parent's storage group onto the new entry: `newEntry.storageGroupId === (entry.storageGroupId
+    ?? entry.id)` — the founder's own id when the parent itself is ungrouped, or the parent's
+    existing group id when the parent is already a member.
+29. `fork(entry, versionId, opts?)` — "Make a copy", with any options — never sets
+    `storageGroupId`: the copy is its own group (`data-copy.suite.ts` exercises every option).
+30. Group membership is immutable after creation: no API mutates `storageGroupId` post-creation;
+    a continuation of a continuation still resolves to the ORIGINAL founder's id (grouping is
+    transitive through the founder, never re-rooted at an intermediate member).
 31. `AppIndex.storageRefCount(groupId)` counts installed entries whose
     `(a.storageGroupId ?? a.id) === groupId` — mirrors `refCount`'s idiom for the version-store
     repo, keyed on the storage field instead.

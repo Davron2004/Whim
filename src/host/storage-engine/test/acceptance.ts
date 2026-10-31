@@ -23,6 +23,7 @@ import { createNodeSqlExecutor, readAppliedSchemaFromFile } from '../bindings/no
 import { RecordingExecutor } from '../sql-executor';
 import { JsonValue, SchemaArtifact, StorageEngine, StorageEngineError, StorageErrorKind } from '../contract';
 import { AppliedSchema, burnedIdFloor, emptyApplied } from '../schema';
+import { runCopyTests } from './copy.suite';
 
 // ── tiny harness ─────────────────────────────────────────────────────────────
 
@@ -808,6 +809,12 @@ test('§G readAppliedSchema: a freshly-connected-but-never-opened db (no _meta t
   ok(raw.ddlStatements().length === 0, 'no DDL was issued to accommodate the missing table');
   raw.close();
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// §H  copy-app-data: the one-time copy of a whole store (copy.suite.ts)
+// ═══════════════════════════════════════════════════════════════════════════
+
+await runCopyTests(TMP, { ok, eq, fail: msg => failures.push(msg) });
 
 // ── verdict ──────────────────────────────────────────────────────────────────
 
