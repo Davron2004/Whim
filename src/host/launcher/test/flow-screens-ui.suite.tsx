@@ -20,7 +20,7 @@ import { reportClientOptions } from '../transport-shared';
 import { testAppInfo } from './client-fixtures';
 import { SPACING, TYPE_SCALE } from '../../../sdk/theme';
 import { StyleSheet } from './native-host';
-import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 
 type Tree = TestRenderer.ReactTestRenderer;
 
@@ -33,8 +33,8 @@ function spies() {
   return { calls, fn, count: (name: string) => calls[name]?.length ?? 0 };
 }
 
-const isTextInput = (node: TestRenderer.ReactTestInstance) => node.type === 'TextInput';
-const touchableWith = (tree: Tree, text: string) => tree.root.find((n) => n.type === 'TouchableOpacity' && textOf(n).includes(text));
+const isTextInput = (node: TestRenderer.ReactTestInstance) => hostType(node) === 'TextInput';
+const touchableWith = (tree: Tree, text: string) => tree.root.find((n) => hostType(n) === 'TouchableOpacity' && textOf(n).includes(text));
 
 async function rendered(element: React.ReactElement, body: (tree: Tree) => Promise<void>): Promise<void> {
   const tree = await renderScreen(element);
@@ -61,7 +61,7 @@ const contains = (outer: Node, inner: Node): boolean => {
 function gapBetween(notice: Node, action: Node): number {
   let gap = marginOf(action, 'marginTop');
   for (let at: Node | null = notice; at && !contains(at, action); at = at.parent) {
-    if (typeof at.type === 'string') gap += marginOf(at, 'marginBottom');
+    if (typeof hostType(at) === 'string') gap += marginOf(at, 'marginBottom');
   }
   return gap;
 }
@@ -84,7 +84,7 @@ function faceOf(tree: Tree, words: string): unknown {
 }
 
 /** The card `ServiceNotice` draws. */
-const noticeCard = (tree: Tree): Node => tree.root.findByType(ServiceNotice).find((n) => typeof n.type === 'string');
+const noticeCard = (tree: Tree): Node => tree.root.findByType(ServiceNotice).find((n) => typeof hostType(n) === 'string');
 
 export async function runFlowScreensUiTests(h: Harness): Promise<void> {
   await h.test('compose: a starter chip fills the field and does not continue; editing an app shows no chips', async () => {
@@ -205,9 +205,9 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
     const s = spies();
     await rendered(<PlanStep rows={ROWS} loading={false} editing={false} onChangeRow={s.fn('row')} onBuild={s.fn('build')} onBack={s.fn('back')} />, async (tree) => {
       const rowButton = (text: string) => touchableWith(tree, text);
-      h.eq(tree.root.findAll((n) => n.type === 'TextInput').length, 0, 'no field until a row is tapped');
+      h.eq(tree.root.findAll((n) => hostType(n) === 'TextInput').length, 0, 'no field until a row is tapped');
       await press(rowButton('Buzzes at zero'));
-      const field = tree.root.find((n) => n.type === 'TextInput');
+      const field = tree.root.find((n) => hostType(n) === 'TextInput');
       h.eq(field.props.value, 'Buzzes at zero', 'the tapped row opens as a field holding its text');
       await TestRenderer.act(async () => field.props.onChangeText('Chimes at zero'));
       await press(button(tree, COPY.cancel));

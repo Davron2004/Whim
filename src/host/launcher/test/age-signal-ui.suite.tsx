@@ -16,7 +16,7 @@ import type { InstalledApp } from '../app-index';
 import { termsStatus } from '../terms-acceptance';
 import { TERMS_VERSION } from '../release-config';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
-import { button, press, textOf } from './react-screen';
+import { button, press, textOf, hostType } from './react-screen';
 import { json, settle, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { injectedScripts } from './native-host';
 
@@ -34,7 +34,7 @@ function tipSplitter(tree: Tree): InstalledApp | undefined {
 
 /** Let the running app's page finish loading, so the shell delivers its bundle. */
 async function loadAppPage(tree: Tree): Promise<void> {
-  await TestRenderer.act(async () => tree.root.find((node) => node.type === 'WebView').props.onLoadEnd());
+  await TestRenderer.act(async () => tree.root.find((node) => hostType(node) === 'WebView').props.onLoadEnd());
 }
 
 async function describeAnApp(tree: Tree): Promise<void> {

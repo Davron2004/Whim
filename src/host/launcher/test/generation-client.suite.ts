@@ -41,7 +41,7 @@ import {
 } from '@whim/contract';
 import { CONNECT_TIMEOUT_HINT } from '../transport-shared';
 import { appInfoReader } from '../app-info';
-import { TEST_APP_INFO, grantedOptions } from './client-fixtures';
+import { TEST_APP_INFO, grantedOptions, streamResponse } from './client-fixtures';
 import { log } from '../../logging';
 import { CHANNELS } from '../../logging/channels';
 
@@ -60,7 +60,7 @@ function sseResponse(chunks: string[], opts: { status?: number } = {}): Response
       controller.close();
     },
   });
-  return new Response(stream, {
+  return streamResponse(stream, {
     status: opts.status ?? 200,
     headers: { 'content-type': 'text/event-stream' },
   });
@@ -89,7 +89,7 @@ function abortableSseResponse(startEvent: GenerationEvent, signal: AbortSignal |
       signal?.addEventListener('abort', () => errorStreamOnAbort(streamController));
     },
   });
-  return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  return streamResponse(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 
 const BASE = grantedOptions('https://example.invalid', 'device-1');
@@ -152,7 +152,7 @@ function openEndedSseFetch(hold: { controller?: ReadableStreamDefaultController<
   };
   return (async (_url: string, init?: RequestInit) => {
     const stream = new ReadableStream<Uint8Array>({ start: (c) => start(c, init?.signal) });
-    return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    return streamResponse(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
   }) as typeof fetch;
 }
 

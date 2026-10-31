@@ -147,7 +147,7 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
 
   // ── ghostStateCaption (copy.ts) — every state names itself, distinctly ────
   await h.test('ghostStateCaption: every state has its own, non-empty caption', async () => {
-    const captions = (['building', 'failed', 'interrupted'] as const).map(ghostStateCaption);
+    const captions = (['building', 'failed', 'interrupted'] as const).map((state) => ghostStateCaption(state));
     h.eq(new Set(captions).size, 3, 'three distinct captions — no state borrows another’s wording');
     for (const c of captions) h.ok(c.length > 0, `"${c}" is non-empty`);
   });

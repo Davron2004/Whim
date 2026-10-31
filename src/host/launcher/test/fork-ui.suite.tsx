@@ -10,7 +10,7 @@ import { AppIndex, type InstalledApp } from '../app-index';
 import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { SEED_VERSION } from '../seed';
 import { resetNativeStorage } from './native-storage';
-import { button, press, renderScreen, unmountScreen } from './react-screen';
+import { button, press, renderScreen, unmountScreen, hostType } from './react-screen';
 
 const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
@@ -26,7 +26,7 @@ export async function runForkUiTests(h: Harness): Promise<void> {
       StoreAccess.prototype.fork = async function (...args: unknown[]) { calls.push(args); return { ...app, id: 'timer-copy' }; } as typeof originalFork;
       const tree = await renderScreen(<LauncherRoot deviceLocale={() => 'en-US'} />);
       try {
-        await TestRenderer.act(async () => tree.root.find(node => node.type === 'TouchableOpacity' && typeof node.props.onLongPress === 'function').props.onLongPress());
+        await TestRenderer.act(async () => tree.root.find(node => hostType(node) === 'TouchableOpacity' && typeof node.props.onLongPress === 'function').props.onLongPress());
         await press(button(tree, COPY.actionFork));
         h.eq(calls.length, 0, 'choosing Fork asks first; nothing is forked yet');
         await press(button(tree, answer));

@@ -23,3 +23,10 @@ export function grantedOptions(baseUrl: string, deviceId: string): ConsentedClie
   if (options === null) throw new Error('a fresh grant yields no options');
   return options;
 }
+
+/** A Response streaming `body`, as Node's fetch builds one. The suites run on Node, whose Response
+ *  takes a ReadableStream; React Native's global `BodyInit` typing lists no stream body, so the one
+ *  widening lives here. */
+export function streamResponse(body: ReadableStream<Uint8Array> | Response['body'], init?: ResponseInit): Response {
+  return new Response(body as unknown as ConstructorParameters<typeof Response>[0], init);
+}

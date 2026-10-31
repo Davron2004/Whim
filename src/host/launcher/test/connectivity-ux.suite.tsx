@@ -13,7 +13,7 @@ import { grantConsent } from '../ai-consent';
 import { acceptTerms } from '../terms-acceptance';
 import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { resetNativeStorage } from './native-storage';
-import { button, press, renderScreen, unmountScreen, textOf, captureTimeouts } from './react-screen';
+import { button, press, renderScreen, unmountScreen, textOf, captureTimeouts, hostType, isHost } from './react-screen';
 
 const noop = () => {};
 const app: InstalledApp = {
@@ -22,11 +22,11 @@ const app: InstalledApp = {
 };
 
 function visibleTextCount(tree: TestRenderer.ReactTestRenderer, text: string): number {
-  return tree.root.findAll(node => node.type === 'Text' && textOf(node) === text).length;
+  return tree.root.findAll(node => hostType(node) === 'Text' && textOf(node) === text).length;
 }
 function createButton(tree: TestRenderer.ReactTestRenderer): TestRenderer.ReactTestInstance {
-  return tree.root.find(node => node.type === 'TouchableOpacity' &&
-    node.findAll(child => child.type === 'Text' && textOf(child) === COPY.homeComposerPlaceholder).length === 1);
+  return tree.root.find(node => hostType(node) === 'TouchableOpacity' &&
+    node.findAll(child => hostType(child) === 'Text' && textOf(child) === COPY.homeComposerPlaceholder).length === 1);
 }
 
 export async function runConnectivityUxTests(h: Harness): Promise<void> {
@@ -40,7 +40,7 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
         onFork={noop} onDelete={noop} onHistory={noop} onPromptAgain={noop} onSettings={noop} />);
       try {
         h.eq(visibleTextCount(tree, COPY.homeOfflineIndicator), offline ? 1 : 0, 'the home notice follows connectivity');
-        const tile = tree.root.find(node => node.type === 'TouchableOpacity' &&
+        const tile = tree.root.find(node => hostType(node) === 'TouchableOpacity' &&
           typeof node.props.onLongPress === 'function' && textOf(node).includes(app.name));
         await press(tile);
         await press(createButton(tree));
@@ -56,7 +56,7 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
         onChangeText={text => edits.push(text)} onContinue={() => { continues++; }} onBack={noop} />);
       try {
         h.eq(visibleTextCount(tree, COPY.promptServerUnreachable), offline ? 1 : 0, 'the compose notice follows connectivity');
-        const field = tree.root.findByType('TextInput');
+        const field = tree.root.find(isHost('TextInput'));
         h.ok(field.props.editable !== false, 'the prompt remains editable');
         await TestRenderer.act(async () => field.props.onChangeText('A tea timer'));
         await press(button(tree, COPY.flowContinue));
@@ -108,7 +108,7 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
         h.eq(tree.root.findAllByType(ConsentScreen).length, consented ? 0 : 1, 'absent consent opens the disclosure');
         h.eq(visibleTextCount(tree, COPY.promptServerUnreachable), consented ? 1 : 0, 'root passes the failed probe into the visible compose notice');
         if (consented) {
-          const field = tree.root.findByType('TextInput');
+          const field = tree.root.find(isHost('TextInput'));
           await TestRenderer.act(async () => field.props.onChangeText('A tea timer'));
           h.eq(button(tree, COPY.flowContinue).props.disabled, false, 'root-managed compose enables Continue after typing while offline');
         } else {

@@ -112,8 +112,7 @@ export async function runScreenExitsTests(h: Harness): Promise<void> {
       tree = TestRenderer.create(
         React.createElement(
           ScreenBoundary,
-          { screen: 'onleave-given', FallbackComponent: Fallback, onLeave },
-          React.createElement(controlledChild({ throws: true })),
+          { screen: 'onleave-given', FallbackComponent: Fallback, onLeave, children: React.createElement(controlledChild({ throws: true })) },
         ),
       );
     });
@@ -133,8 +132,7 @@ export async function runScreenExitsTests(h: Harness): Promise<void> {
       tree = TestRenderer.create(
         React.createElement(
           ScreenBoundary,
-          { screen: 'onleave-absent', FallbackComponent: Fallback },
-          React.createElement(controlledChild({ throws: true })),
+          { screen: 'onleave-absent', FallbackComponent: Fallback, children: React.createElement(controlledChild({ throws: true })) },
         ),
       );
     });

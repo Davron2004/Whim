@@ -13,7 +13,7 @@
 import React from 'react';
 import { Harness } from './harness';
 import WhimProse, { HighlightingProvider } from '../../ui/whim-prose/WhimProse';
-import { renderScreen, textOf as screenText, unmountScreen } from './react-screen';
+import { renderScreen, textOf as screenText, unmountScreen, hostType } from './react-screen';
 import { lexProse, STATE_VOCABULARY } from '../../ui/whim-prose/lex';
 import {
   flattenProse,
@@ -355,9 +355,9 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
   await h.test('component: WhimProse styles its spans, and renders flat text when the provider turns highlighting off', async () => {
     const text = 'Pour Timer is broken after 2 tries.';
     // One outer Text holds the sentence; every styled span is a Text nested inside it.
-    const styledSpans = (tree: Awaited<ReturnType<typeof renderScreen>>) => tree.root.findAll((n) => n.type === 'Text').length - 1;
+    const styledSpans = (tree: Awaited<ReturnType<typeof renderScreen>>) => tree.root.findAll((n) => hostType(n) === 'Text').length - 1;
     const on = await renderScreen(React.createElement(WhimProse, { text, apps: [POUR_TIMER] }));
-    const off = await renderScreen(React.createElement(HighlightingProvider, { enabled: false }, React.createElement(WhimProse, { text, apps: [POUR_TIMER] })));
+    const off = await renderScreen(React.createElement(HighlightingProvider, { enabled: false, children: React.createElement(WhimProse, { text, apps: [POUR_TIMER] }) }));
     try {
       h.ok(styledSpans(on) > 0, 'with highlighting on, the app name, state and count are styled spans');
       h.eq(styledSpans(off), 0, 'under a provider with highlighting off, nothing is styled');

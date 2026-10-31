@@ -36,7 +36,7 @@ export class Harness {
     }
   }
 
-  async test(name: string, fn: () => void | Promise<void>): Promise<void> {
+  async test(name: string, fn: () => unknown): Promise<void> {
     try {
       await fn();
       console.log('• ' + name);
@@ -47,7 +47,7 @@ export class Harness {
   }
 
   /** Assert that calling `fn` throws (optionally matching a substring of the message). */
-  async throws(fn: () => void | Promise<void>, match: string, msg: string): Promise<void> {
+  async throws(fn: () => unknown, match: string, msg: string): Promise<void> {
     try {
       await fn();
       this.ok(false, `${msg} (expected throw matching "${match}", got none)`);

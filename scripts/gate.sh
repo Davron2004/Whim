@@ -46,6 +46,9 @@ if ! ./scripts/worktree.sh check; then
   exit 2
 fi
 
+# The Node version decides more than syntax (its ICU data, node:sqlite), so every verdict names it.
+printf 'node %s (ICU %s, Unicode %s)\n' "$(node -v)" "$(node -p process.versions.icu)" "$(node -p process.versions.unicode)"
+
 FAILED=()
 
 section() { local name="$1"; printf '\n== %s\n' "$name"; return 0; }

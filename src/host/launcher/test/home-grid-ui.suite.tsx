@@ -15,7 +15,7 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { STATUS_COLORS } from '../../../sdk/theme';
 import { resetNativeStorage } from './native-storage';
 import { StyleSheet } from './native-host';
-import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen } from './react-screen';
+import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Style = Record<string, unknown>;
@@ -27,7 +27,7 @@ const EXAMPLE: InstalledApp = { id: 'tip-splitter', name: 'Tip Splitter', exampl
 /** The tile's art: the one square filled with the app's own colour. */
 function art(root: TestRenderer.ReactTestInstance, app: Pick<InstalledApp, 'name' | 'record'>): TestRenderer.ReactTestInstance {
   const fill = tileColor(app.name, app.record.manifest);
-  const squares = root.findAll((n) => n.type === 'View' && flat(n).backgroundColor === fill);
+  const squares = root.findAll((n) => hostType(n) === 'View' && flat(n).backgroundColor === fill);
   if (squares.length !== 1) throw new Error(`expected one tile filled ${fill} for "${app.name}", got ${squares.length}`);
   return squares[0];
 }
@@ -37,7 +37,7 @@ function isInside(node: TestRenderer.ReactTestInstance, ancestor: TestRenderer.R
   return false;
 }
 
-const lines = (root: TestRenderer.ReactTestInstance) => root.findAll((n) => n.type === 'Text');
+const lines = (root: TestRenderer.ReactTestInstance) => root.findAll((n) => hostType(n) === 'Text');
 /** What is written on the tile's art, and the lines written around it, in reading order. */
 const onArt = (square: TestRenderer.ReactTestInstance) => lines(square).map(textOf);
 const offArt = (root: TestRenderer.ReactTestInstance, square: TestRenderer.ReactTestInstance) => lines(root).filter((n) => !isInside(n, square));
@@ -80,7 +80,7 @@ const innermostTouchables = (root: TestRenderer.ReactTestInstance) =>
 
 /** The grid cell (tap + long-press target) whose tile is labelled `name`. */
 function cell(tree: Tree, name: string): TestRenderer.ReactTestInstance {
-  const cells = tree.root.findAll((n) => n.type === 'TouchableOpacity' && typeof n.props.onLongPress === 'function' && textOf(n).includes(name));
+  const cells = tree.root.findAll((n) => hostType(n) === 'TouchableOpacity' && typeof n.props.onLongPress === 'function' && textOf(n).includes(name));
   if (cells.length !== 1) throw new Error(`expected one grid cell for "${name}", got ${cells.length}`);
   return cells[0];
 }
@@ -149,7 +149,7 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       const row = (label: string) => controls().find((n) => textOf(n) === label)!;
       const readAsButtons = (sheet: string, labels: string[]) => {
         const modal = sheets()[0];
-        const cards = modal.findAll((n) => n.type === 'View' && typeof flat(n).paddingBottom === 'number' && (flat(n).paddingBottom as number) > 30);
+        const cards = modal.findAll((n) => hostType(n) === 'View' && typeof flat(n).paddingBottom === 'number' && (flat(n).paddingBottom as number) > 30);
         h.ok(modal.props.statusBarTranslucent === true && modal.props.navigationBarTranslucent === true, `${sheet}: its window reaches the system bars so the dim covers them`);
         h.eq(cards.length, 1, `${sheet}: its card leaves room below the controls for the bottom safe area`);
         h.eq(controls().map(textOf), ['', ...labels], `${sheet}: the dim first, behind the card, with no words of its own, then the card's rows`);
@@ -187,7 +187,7 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     const records = pendingRecords();
     const rebuild = records.find((r) => r.id === 'rebuild')!;
     await withHome(records, async (tree) => {
-      const pill = tree.root.findAll((n) => n.type === 'TouchableOpacity' && textOf(n) === ghostStateCaption('building'));
+      const pill = tree.root.findAll((n) => hostType(n) === 'TouchableOpacity' && textOf(n) === ghostStateCaption('building'));
       h.eq(pill.length, 0, 'a building rebuild’s pill is not a button');
       h.ok(textOf(cell(tree, APP.name)).includes(ghostStateCaption('building')), 'but it is shown on the installed tile');
     });
@@ -242,7 +242,7 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     const done = await renderScreen(<AppTile name="Timer" manifest={manifest} size="done" />);
     const plain = await renderScreen(<AppTile name="Timer" manifest={manifest} />);
     try {
-      const tileOf = (tree: Tree) => tree.root.findAll((n) => n.type === 'View' && flat(n).backgroundColor === expected);
+      const tileOf = (tree: Tree) => tree.root.findAll((n) => hostType(n) === 'View' && flat(n).backgroundColor === expected);
       h.eq(tileOf(done).length, 1, 'the done tile is filled with the app’s colour');
       const glow = flat(tileOf(done)[0]).boxShadow as { color: string }[] | undefined;
       h.ok(glow?.[0]?.color.startsWith(expected) === true, `its glow is the same colour (got ${JSON.stringify(glow)})`);
@@ -278,11 +278,11 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       const fill = ghostTileColorFor('ghost-1');
       const tree = await renderScreen(<AppTile name="A dice roller" manifest={{ tileColor: fill }} ghost={ghost} />);
       try {
-        const tile = tree.root.findAll((n) => n.type === 'View' && flat(n).backgroundColor === fill);
+        const tile = tree.root.findAll((n) => hostType(n) === 'View' && flat(n).backgroundColor === fill);
         h.eq(tile.length, 1, `the ${ghost} ghost keeps its own fill`);
         const alert = ghost !== 'building';
         h.eq(flat(tile[0]).borderColor === STATUS_COLORS.broken, alert, `the ${ghost} ghost ${alert ? 'is' : 'is not'} outlined in the broken hue`);
-        h.ok(tree.root.findAll((n) => n.type === 'View' && flat(n).backgroundColor === STATUS_COLORS.broken).length === 0, 'the broken hue is never a fill');
+        h.ok(tree.root.findAll((n) => hostType(n) === 'View' && flat(n).backgroundColor === STATUS_COLORS.broken).length === 0, 'the broken hue is never a fill');
       } finally {
         await unmountScreen(tree);
       }

@@ -180,10 +180,14 @@ async function differingReportKept(namespace: string, root: DocumentReference): 
   }
 }
 
+/** The probe bound for this file's own client: a hang ceiling, as `PROBE_CEILING_MS` in
+ *  `firestore-conformance.ts` (the 10 s default is the production boot's budget, #144). */
+const PROBE_CEILING_MS = 120_000;
+
 /** Runs the import checks, each in its own namespace under `conformance/`. */
 export async function runFirestoreImportTests(open: (namespace: string) => Promise<OpenedStores>, runId: string, verify: (name: string, run: () => Promise<void>) => Promise<void>): Promise<void> {
   section('Firestore: import-sqlite copies a SQLite data directory, idempotently');
-  const db = await openFirestoreClient('(default)');
+  const db = await openFirestoreClient('(default)', { probeTimeoutMs: PROBE_CEILING_MS });
   try {
     const idempotent = `${runId}-import`;
     await verify('importing twice leaves one document set, the same counts, and admission honouring imported and live rows', () =>

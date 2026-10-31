@@ -12,7 +12,7 @@ import type { RealmRecord } from '../../bridge';
 export async function runUnmountTeardownTests(h: Harness): Promise<void> {
   // ── (1) Behavioral: the helper correctly tears down live + popTimer ───────────
   await h.test('E2(1): tearDownLiveRealm sets alive=false, closes engine, clears live and popTimer', () => {
-    let closed = false;
+    let closed = false as boolean;
     const realm = {
       appId: 'test-app',
       manifest: { capabilities: [] },

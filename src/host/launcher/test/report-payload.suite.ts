@@ -69,7 +69,7 @@ export async function runReportPayloadTests(h: Harness): Promise<void> {
     const request = buildReportRequest({ ...FULL_DRAFT, appName: long });
     h.ok(request !== null, 'builds');
     if (request) {
-      h.eq(request.appName.length, 200, 'the app name is cut at exactly 200 characters');
+      h.eq(request.appName?.length, 200, 'the app name is cut at exactly 200 characters');
       const parsed = ReportRequestSchema.safeParse(request);
       h.ok(parsed.success, 'the cut app name still validates against the mirrored 200-character bound');
     }
@@ -130,7 +130,7 @@ export async function runReportPayloadTests(h: Harness): Promise<void> {
       h.ok(!serialized.includes(request.note ?? ' never'), 'the note text is nowhere in the log fields');
       h.ok(!serialized.includes(request.prompt ?? ' never'), 'the prompt text is nowhere in the log fields');
       h.ok(!serialized.includes(request.source ?? ' never'), 'the source text is nowhere in the log fields');
-      h.ok(!serialized.includes(request.appName), 'the app name text is nowhere in the log fields');
+      h.ok(!serialized.includes(request.appName ?? ' never'), 'the app name text is nowhere in the log fields');
     }
   });
 
