@@ -1,7 +1,7 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { button, press, renderScreen, unmountScreen, textOf } from './react-screen';
+import { button, press, renderScreen, unmountScreen, textOf, hostType, isHost } from './react-screen';
 import { finishAnimations, hardwareBack, backListenerCount } from './native-host';
 import { COPY } from '../copy';
 import type { ScreenKind } from '../screen-exits';
@@ -36,7 +36,7 @@ const cases: Record<Exclude<ScreenKind, 'home' | 'app' | 'dev'>, { label: string
   history: { label: COPY.backLabel, render: leave => <HistoryScreen app={SCREEN_APP} access={access} onBack={leave} onReport={noop} /> },
   'link-missing': { label: COPY.appLinkMissingBack, render: leave => <AppLinkMissingScreen onBackToApps={leave} /> },
   'update-required': { label: COPY.updateNotNow, render: leave => <UpdateRequiredScreen onNotNow={leave} /> },
-  age: { label: COPY.ageBack, render: leave => <AgeScreen language="en" onLanguageChange={noop} blocked onClose={leave} /> },
+  age: { label: COPY.ageBack, render: leave => <AgeScreen language="en" onLanguageChange={noop} held="minor-not-approved" onClose={leave} /> },
   terms: { label: COPY.termsDecline, render: leave => <TermsScreen language="en" onLanguageChange={noop} onClose={leave} onAccept={noop} /> },
   consent: { label: COPY.consentDecline, render: leave => <ConsentScreen mode="ask" language="en" onLanguageChange={noop} onClose={leave} onAgree={noop} /> },
   compose: { label: COPY.backLabel, render: leave => <ComposeStep text="" editing={false} onChangeText={noop} onContinue={noop} onBack={leave} /> },
@@ -82,10 +82,10 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
     try {
       for (const system of [false, true]) {
         await press(button(tree, 'Track time'));
-        h.eq(tree.root.findAllByType('TextInput').length, 1, 'row edit is visible');
+        h.eq(tree.root.findAll(isHost('TextInput')).length, 1, 'row edit is visible');
         if (system) await TestRenderer.act(async () => { hardwareBack(); });
         else await press(button(tree, COPY.backLabel));
-        h.eq(tree.root.findAllByType('TextInput').length, 0, 'back dismisses the editor');
+        h.eq(tree.root.findAll(isHost('TextInput')).length, 0, 'back dismisses the editor');
         h.eq([leaves, saves], [0, 0], 'cancel does not leave or save');
       }
       await press(button(tree, COPY.backLabel));
@@ -95,14 +95,14 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
   await h.test('error fallback: leave is visible only when supplied, and differs from retry', async () => {
     let leaves = 0;
     let retries = 0;
-    const tree = await renderScreen(<ScreenErrorFallback resetErrorBoundary={() => { retries++; }} onLeave={() => { leaves++; }} />);
+    const tree = await renderScreen(<ScreenErrorFallback error={new Error('screen failed')} screen="history" resetErrorBoundary={() => { retries++; }} onLeave={() => { leaves++; }} />);
     try {
       await press(button(tree, COPY.screenErrorBack));
       await TestRenderer.act(async () => { hardwareBack(); });
       h.eq([leaves, retries], [2, 0], 'both leave controls navigate without retrying');
-      await TestRenderer.act(async () => tree.update(<ScreenErrorFallback resetErrorBoundary={() => { retries++; }} />));
+      await TestRenderer.act(async () => tree.update(<ScreenErrorFallback error={new Error('screen failed')} screen="history" resetErrorBoundary={() => { retries++; }} />));
       h.eq(backListenerCount(), 0, 'home fallback has no back listener');
-      h.eq(tree.root.findAll(node => node.type === 'Text' && node.children.includes(COPY.screenErrorBack)).length, 0, 'home fallback hides leave');
+      h.eq(tree.root.findAll(node => hostType(node) === 'Text' && node.children.includes(COPY.screenErrorBack)).length, 0, 'home fallback hides leave');
       await press(button(tree, COPY.screenErrorRetry));
       h.eq(retries, 1, 'home fallback can retry');
     } finally { await unmountScreen(tree); }
@@ -111,10 +111,10 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
     let leaves = 0;
     const tree = await renderScreen(<Orb onExit={() => { leaves++; }} onVersions={noop} onChangeIt={noop} onReport={noop} />);
     try {
-      const orb = tree.root.findAll(node => node.type === 'Pressable' && typeof node.props.onPress === 'function')[0];
+      const orb = tree.root.findAll(node => hostType(node) === 'Pressable' && typeof node.props.onPress === 'function')[0];
       await press(orb);
       await TestRenderer.act(async () => { finishAnimations(); });
-      await press(tree.root.find(node => node.type === 'Pressable' && textOf(node).endsWith(COPY.orbActionHome)));
+      await press(tree.root.find(node => hostType(node) === 'Pressable' && textOf(node).endsWith(COPY.orbActionHome)));
       h.eq(leaves, 1, 'orb Home invokes the exit callback');
     } finally { await unmountScreen(tree); }
   });

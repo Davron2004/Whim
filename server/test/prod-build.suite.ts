@@ -43,12 +43,14 @@ const BUNDLES = [
   'server/whim-waitlist.mjs',
   'server/whim-waitlist.mjs.map',
 ];
-const BOOT_MS = 20_000;
-const EXIT_MS = 15_000;
-/** The ceiling on a boot refusal: the case waits for the process to exit, which takes about half a
- *  second idle, and this only bounds a hang. A starved machine stretches a boot (loading the
- *  Firestore client most of all) far past EXIT_MS, so a refusal never times out first. */
-const BOOT_REFUSAL_MS = 120_000;
+/** The ceiling on every wait for a server process: to listen, to answer, to log, to exit. Each
+ *  wait ends on its condition, and this only bounds a hang. Idle, a boot or an exit takes about
+ *  2 s; at background QoS beside a busy CPU (how a background agent's gate runs) boots took over
+ *  20 s and exits 20 s, past the old fixed 20 s and 15 s budgets (#144). */
+const PROCESS_WAIT_MS = 180_000;
+/** The drain deadline in the case that proves the drain waits for a running stream: far past
+ *  PROCESS_WAIT_MS, so a drain that waited for it instead of the stream fails by timing out. */
+const FAR_DRAIN_DEADLINE_MS = 600_000;
 const DEVICE_A = 'a11a11a1-a11a-41a1-81a1-a11a11a11a11';
 const DEVICE_B = 'b22b22b2-b22b-42b2-82b2-b22b22b22b22';
 
@@ -160,12 +162,12 @@ class TreeProcess {
   async dispose(): Promise<void> {
     if (this.exit) return;
     this.child.kill('SIGKILL');
-    await within(this.exited, EXIT_MS);
+    await within(this.exited, PROCESS_WAIT_MS);
   }
 }
 
-async function exitOf(proc: TreeProcess, ms: number = EXIT_MS): Promise<Exit | typeof TIMED_OUT> {
-  return within(proc.exited, ms);
+async function exitOf(proc: TreeProcess): Promise<Exit | typeof TIMED_OUT> {
+  return within(proc.exited, PROCESS_WAIT_MS);
 }
 
 /** An HTTP/1.1 request written straight onto a TCP socket, accumulating the raw response. */
@@ -318,7 +320,9 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
     WHIM_WEB_ORIGIN: pagesOrigin,
   });
   try {
-    check('the tree started and listened', await proc.waitForLog('whim-server listening', BOOT_MS), proc.text().slice(-2000));
+    const listening = await proc.waitForLog('whim-server listening', PROCESS_WAIT_MS);
+    check('the tree started and listened', listening, proc.text().slice(-2000));
+    if (!listening) return;
     eq('it logs the bound URL', proc.logs('whim-server listening')[0]?.url, `http://127.0.0.1:${port}`);
     eq('the boot line carries the commit the image was built from', proc.logs('whim-server listening')[0]?.commit, commit);
     const stores = proc.logs('stores opened')[0];
@@ -333,6 +337,7 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
         headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-forwarded-for': '203.0.113.5' },
         body: 'email=Tree.Person%40example.com&platform=android',
       }),
+      PROCESS_WAIT_MS,
     );
     eq(
       'POST /beta/signup, with no device header, answers 303 to the pages origin\'s /beta/thanks',
@@ -360,7 +365,7 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
   const exported = spawnSync(process.execPath, [path.join(fixture.tree, 'server', 'whim-waitlist.mjs'), 'export', '--platform', 'android'], {
     cwd: fixture.tree,
     encoding: 'utf8',
-    timeout: EXIT_MS,
+    timeout: PROCESS_WAIT_MS,
     env: { PATH: process.env.PATH ?? '', WHIM_DATA_DIR: dataDir },
   });
   eq('the tree\'s whim-waitlist.mjs exports the signup the server stored', [exported.status, exported.stdout.split('\n')[1]?.split(',').slice(0, 3)], [0, ['tree.person@example.com', 'android', 'false']]);
@@ -387,7 +392,7 @@ async function denyingFirestore(message: string): Promise<{ host: string; calls:
 async function expectBootRefusal(what: string, root: string, env: Record<string, string>, named: string): Promise<void> {
   const proc = new TreeProcess(root, { WHIM_SERVER_HOST: '127.0.0.1', WHIM_SERVER_PORT: String(await freePort()), ...env });
   try {
-    const exit = await exitOf(proc, BOOT_REFUSAL_MS);
+    const exit = await exitOf(proc);
     check(`${what}: the process exits non-zero`, exit !== TIMED_OUT && exit.code !== 0 && exit.code !== null, JSON.stringify(exit));
     check(`${what}: its output names ${named}`, proc.text().includes(named), proc.text().slice(-2000));
     eq(`${what}: it never listened`, proc.logs('whim-server listening').length, 0);
@@ -483,7 +488,7 @@ async function testBootRefusals(fixture: Fixture): Promise<void> {
       WHIM_SERVER_PORT: String(await freePort()),
     });
     try {
-      const exit = await exitOf(proc, BOOT_REFUSAL_MS);
+      const exit = await exitOf(proc);
       const failure = proc.logs('boot failed')[0];
       const detail = typeof failure?.detail === 'string' ? failure.detail : '';
       check('WHIM_REPORT_RETENTION_DAYS=400: the process exits non-zero', exit !== TIMED_OUT && exit.code !== 0 && exit.code !== null, JSON.stringify(exit));
@@ -532,12 +537,12 @@ async function testStubDelayReachesThePipeline(fixture: Fixture): Promise<void> 
   });
   let stream: ReturnType<typeof rawRequest> | undefined;
   try {
-    check('setup: the tree listened', await proc.waitForLog('whim-server listening', BOOT_MS), proc.text().slice(-2000));
+    check('setup: the tree listened', await proc.waitForLog('whim-server listening', PROCESS_WAIT_MS), proc.text().slice(-2000));
     const payload = JSON.stringify({ prompt: 'a tip splitter' });
     const sentAt = Date.now();
     const opened = rawRequest(port, generateHead(DEVICE_A, payload), payload);
     stream = opened;
-    const arrived = await waitFor(() => opened.text().includes('event: '), delayMs + 5000);
+    const arrived = await waitFor(() => opened.text().includes('event: '), PROCESS_WAIT_MS);
     const elapsed = Date.now() - sentAt;
     check('the generation stream delivered its first event', arrived, opened.text().slice(-500));
     check(`no sooner than the ${delayMs} ms wait`, elapsed >= delayMs, `${elapsed} ms`);
@@ -558,10 +563,10 @@ async function startStreaming(fixture: Fixture, name: string, env: Record<string
     WHIM_SERVER_PORT: String(port),
     ...env,
   });
-  const listening = await proc.waitForLog('whim-server listening', BOOT_MS);
+  const listening = await proc.waitForLog('whim-server listening', PROCESS_WAIT_MS);
   const payload = JSON.stringify({ prompt: 'a tip splitter' });
   const stream = rawRequest(port, generateHead(DEVICE_A, payload), payload);
-  const firstEvent = listening && (await waitFor(() => stream.text().includes('event: '), 5000));
+  const firstEvent = listening && (await waitFor(() => stream.text().includes('event: '), PROCESS_WAIT_MS));
   check(`setup (${name}): the tree listened and a generation stream delivered its first event`, firstEvent, proc.text().slice(-2000));
   return { port, dataDir, proc, stream };
 }
@@ -569,27 +574,27 @@ async function startStreaming(fixture: Fixture, name: string, env: Record<string
 async function testDrainCompletesStream(fixture: Fixture): Promise<void> {
   section('spec: SIGTERM mid-stream lets the stream finish, refuses new work, then exits 0');
 
-  const { port, dataDir, proc, stream } = await startStreaming(fixture, 'drain-completes', { WHIM_DRAIN_TIMEOUT_MS: '30000' });
+  const { port, dataDir, proc, stream } = await startStreaming(fixture, 'drain-completes', { WHIM_DRAIN_TIMEOUT_MS: String(FAR_DRAIN_DEADLINE_MS) });
   try {
     // A request already on its connection when the signal lands: headers in, body still to come.
     const late = JSON.stringify({ prompt: 'a habit tracker' });
     const pending = rawRequest(port, generateHead(DEVICE_B, late, ['Expect: 100-continue']));
-    check('setup: the second request is in progress on its connection', await waitFor(() => pending.text().startsWith('HTTP/1.1 100 Continue'), 5000), pending.text());
+    check('setup: the second request is in progress on its connection', await waitFor(() => pending.text().startsWith('HTTP/1.1 100 Continue'), PROCESS_WAIT_MS), pending.text());
 
     const signalledAt = Date.now();
     proc.signal('SIGTERM');
-    check('the drain started', await proc.waitForLog('drain started', 5000), proc.text().slice(-2000));
+    check('the drain started', await proc.waitForLog('drain started', PROCESS_WAIT_MS), proc.text().slice(-2000));
     check('the listener accepts no new connection', await connectRefused(port));
 
     pending.socket.write(late);
-    check('the request arriving on its existing connection is refused 429', await waitFor(() => pending.text().includes('HTTP/1.1 429'), 5000), pending.text());
+    check('the request arriving on its existing connection is refused 429', await waitFor(() => pending.text().includes('HTTP/1.1 429'), PROCESS_WAIT_MS), pending.text());
     check('as server_busy', pending.text().includes('"error":"server_busy"'), pending.text());
     check('while the running stream has not finished yet', !hasTerminal(stream.text()));
 
     const exit = await exitOf(proc);
     check('the stream delivered its terminal result before the process ended', stream.text().includes('event: result'), stream.text().slice(-500));
     eq('then the process exited 0', exit === TIMED_OUT ? 'timed out' : exit.code, 0);
-    check('the drain waited for the stream rather than its 30 s deadline', Date.now() - signalledAt < 15_000, `${Date.now() - signalledAt} ms`);
+    check('the drain waited for the stream rather than its deadline', Date.now() - signalledAt < FAR_DRAIN_DEADLINE_MS, `${Date.now() - signalledAt} ms`);
     eq('the ledger settled the stream as delivered, and the refused request took no unit', ledgerOutcomes(dataDir), ['delivered']);
   } finally {
     stream.socket.destroy();
@@ -616,10 +621,10 @@ async function testDrainDeadlineAborts(fixture: Fixture): Promise<void> {
 async function testSecondSignalSkipsWait(fixture: Fixture): Promise<void> {
   section('spec: a second signal during the drain skips the wait');
 
-  const { dataDir, proc, stream } = await startStreaming(fixture, 'drain-second-signal', { WHIM_DRAIN_TIMEOUT_MS: '60000' });
+  const { dataDir, proc, stream } = await startStreaming(fixture, 'drain-second-signal', { WHIM_DRAIN_TIMEOUT_MS: String(FAR_DRAIN_DEADLINE_MS) });
   try {
     proc.signal('SIGTERM');
-    check('the drain started', await proc.waitForLog('drain started', 5000), proc.text().slice(-2000));
+    check('the drain started', await proc.waitForLog('drain started', PROCESS_WAIT_MS), proc.text().slice(-2000));
     proc.signal('SIGTERM');
     const exit = await exitOf(proc);
     eq('the process exited 0', exit === TIMED_OUT ? 'timed out' : exit.code, 0);
@@ -758,7 +763,7 @@ async function testInlinedBuildModuleBuildsNothing(): Promise<void> {
     fs.writeFileSync(entry, `import { devBundleExternals } from ${JSON.stringify(path.join(ROOT, 'server', 'build.mjs'))};\nconsole.log(devBundleExternals().length > 0);\n`);
     await build({ entryPoints: [entry], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: devBundleExternals() });
     check('setup: the bundle inlines build.mjs', fs.readFileSync(outfile, 'utf8').includes('buildRuntimeTree'));
-    const run = spawnSync(process.execPath, [outfile], { cwd: ROOT, encoding: 'utf8', timeout: BOOT_REFUSAL_MS });
+    const run = spawnSync(process.execPath, [outfile], { cwd: ROOT, encoding: 'utf8', timeout: PROCESS_WAIT_MS });
     eq('it runs its own code and exits 0, building no tree', [run.status, run.stdout, run.stderr], [0, 'true\n', '']);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

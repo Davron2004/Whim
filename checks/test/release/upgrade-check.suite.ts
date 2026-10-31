@@ -183,7 +183,7 @@ function literalsIn(file: string): string[] {
 }
 
 function appStrings(): string[] {
-  const copy = Object.values(COPY).filter((value): value is string => typeof value === 'string');
+  const copy = Object.values(COPY).filter((value) => typeof value === 'string');
   return [
     ...copy,
     // Eyebrow text renders uppercase ("YOUR APPS", "ADVANCED").

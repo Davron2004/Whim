@@ -19,7 +19,7 @@ import type { AppInfo } from '../app-info';
 import type { SignificantUpdateSheet } from '../age-check';
 import { resetNativeStorage } from './native-storage';
 import { captureTimeouts, renderScreen, unmountScreen } from './react-screen';
-import { testAppInfo } from './client-fixtures';
+import { testAppInfo, streamResponse } from './client-fixtures';
 
 export type Tree = TestRenderer.ReactTestRenderer;
 
@@ -92,7 +92,7 @@ export function sseStream(signal?: AbortSignal) {
     controller.error(new DOMException('The operation was aborted.', 'AbortError'));
   });
   return {
-    response: new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }),
+    response: streamResponse(body, { headers: { 'Content-Type': 'text/event-stream' } }),
     /** Send one event; a stream already ended or aborted takes nothing more. */
     push: (event: unknown) => { if (open) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)); },
     end: () => { if (open) { open = false; controller.close(); } },

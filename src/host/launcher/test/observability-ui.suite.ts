@@ -25,7 +25,7 @@ import HomeScreen from '../HomeScreen';
 import { PendingBuildStore } from '../pending-builds';
 import { JOURNAL_KEY, RunJournalStore } from '../run-journal';
 import { withLauncher } from './rendered-launcher';
-import { button, press, textOf } from './react-screen';
+import { button, press, textOf, hostType } from './react-screen';
 import type { ScreenFallbackProps } from '../ScreenBoundary';
 import {
   ALL_CHANNELS_FILTER,
@@ -83,8 +83,7 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
           null,
           React.createElement(
             ScreenBoundary,
-            { screen, FallbackComponent: Fallback },
-            React.createElement(controlledChild({ throws: true })),
+            { screen, FallbackComponent: Fallback, children: React.createElement(controlledChild({ throws: true })) },
           ),
         ),
       );
@@ -111,8 +110,7 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
       tree = TestRenderer.create(
         React.createElement(
           ScreenBoundary,
-          { screen, FallbackComponent: Fallback },
-          React.createElement(controlledChild({ throws: true })),
+          { screen, FallbackComponent: Fallback, children: React.createElement(controlledChild({ throws: true })) },
         ),
       );
     });
@@ -141,7 +139,7 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
     let tree: TestRenderer.ReactTestRenderer | undefined;
     TestRenderer.act(() => {
       tree = TestRenderer.create(
-        React.createElement(ScreenBoundary, { screen, FallbackComponent: Fallback }, React.createElement(Child)),
+        React.createElement(ScreenBoundary, { screen, FallbackComponent: Fallback, children: React.createElement(Child) }),
       );
     });
     h.eq((tree!.toJSON() as { type: string }).type, 'fallback', 'the failed screen shows the error screen first');
@@ -168,8 +166,7 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
       tree = TestRenderer.create(
         React.createElement(
           ScreenBoundary,
-          { screen: 'screen-a', FallbackComponent: Fallback },
-          React.createElement(failing),
+          { screen: 'screen-a', FallbackComponent: Fallback, children: React.createElement(failing) },
         ),
       );
     });
@@ -180,8 +177,7 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
       tree!.update(
         React.createElement(
           ScreenBoundary,
-          { screen: 'screen-b', FallbackComponent: Fallback },
-          React.createElement('ok'),
+          { screen: 'screen-b', FallbackComponent: Fallback, children: React.createElement('ok') },
         ),
       );
     });
@@ -195,7 +191,7 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
     let tree: TestRenderer.ReactTestRenderer | undefined;
     TestRenderer.act(() => {
       tree = TestRenderer.create(
-        React.createElement(ScreenBoundary, { screen, FallbackComponent: Fallback }, React.createElement('ok')),
+        React.createElement(ScreenBoundary, { screen, FallbackComponent: Fallback, children: React.createElement('ok') }),
       );
     });
     h.eq((tree!.toJSON() as { type: string }).type, 'ok', 'the screen renders itself');
@@ -210,11 +206,14 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
     let tree: TestRenderer.ReactTestRenderer | undefined;
     TestRenderer.act(() => {
       tree = TestRenderer.create(
-        React.createElement(ScreenBoundary, { screen: 'sentinel-screen', FallbackComponent: ScreenErrorFallback },
-          React.createElement(function Child(): React.ReactElement {
+        React.createElement(ScreenBoundary, {
+          screen: 'sentinel-screen',
+          FallbackComponent: ScreenErrorFallback,
+          children: React.createElement(function Child(): React.ReactElement {
             if (control.throws) throw new TypeError('SENTINEL_BOOM at renderRow (HomeScreen.tsx:42)');
             return React.createElement('ok');
-          })),
+          }),
+        }),
       );
     });
     const shown = textOf(tree!.root);
@@ -225,7 +224,7 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
     }
     control.throws = false;
     TestRenderer.act(() => { button(tree!, COPY.screenErrorRetry).props.onPress(); });
-    h.eq(tree!.root.findAll((n) => n.type === 'ok').length, 1, 'Retry remounts the screen');
+    h.eq(tree!.root.findAll((n) => hostType(n) === 'ok').length, 1, 'Retry remounts the screen');
     TestRenderer.act(() => tree!.unmount());
   });
 
@@ -311,7 +310,7 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpenPending(ghost));
       const fallback = tree.root.findAllByType(ScreenErrorFallback);
       h.eq(fallback.length, 1, 'the error screen replaces the failed screen');
-      const frame = tree.root.find((n) => n.type === 'SafeAreaView');
+      const frame = tree.root.find((n) => hostType(n) === 'SafeAreaView');
       h.ok(frame.findAllByType(ScreenErrorFallback).length === 1, 'inside the shell’s safe-area frame, which survives');
       await press(button(tree, COPY.screenErrorBack));
       h.eq(tree.root.findAllByType(HomeScreen).length, 1, 'its way out returns Home');

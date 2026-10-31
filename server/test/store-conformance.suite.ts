@@ -47,7 +47,10 @@ const DAY_MS = 86_400_000;
 /** Noon UTC, so `retryAfterSec` on this day is exactly 12 hours. */
 const T0 = Date.UTC(2026, 9, 7, 12, 0, 0);
 const NEXT_MIDNIGHT = Date.UTC(2026, 9, 8);
-const CASE_TIMEOUT_MS = 20_000;
+/** A case's ceiling, which only bounds a hang. The slowest Firestore case (the admission race) took
+ *  7 s against the emulator idle and 12 s at background QoS beside a busy CPU, close to the old
+ *  20 s; the in-memory and SQLite cases take milliseconds (#144). */
+const CASE_TIMEOUT_MS = 120_000;
 
 function utcDay(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);

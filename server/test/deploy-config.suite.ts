@@ -38,6 +38,11 @@ import * as releaseConfig from '../../src/host/launcher/release-config';
 import { MANIFESTS, keepLimit, latestVersion } from '../../contract/src/disclosure-manifest';
 
 const ROOT = process.cwd();
+/** The ceiling on every script this suite runs. The scripts never wait on a clock (sleep and the
+ *  network are stubbed), so this only bounds a hang. A run is CPU-bound and stretches with load: the
+ *  slowest took about 1 s idle and 24 s at background QoS beside a busy CPU, how a background
+ *  agent's gate runs, where the old fixed 10 s and 60 s timeouts killed scripts mid-run (#144). */
+const SPAWN_HANG_MS = 180_000;
 
 function readRepoFile(rel: string): string {
   return fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -902,6 +907,9 @@ const API_HOST = `api.${WEB_HOST}`;
 const FAKE_KEY = 'sk-or-v1-0000000000000000stubvalue0000000000000000';
 const TAG = 'a'.repeat(40);
 
+/** How long a readiness probe hangs under STUB_READINESS_HANG=1. */
+const READINESS_HANG_MS = 20_000;
+
 /** One stub body for every tool: logs its arguments, answers from <tool>.rules (first glob wins),
  *  and otherwise keeps a little state (the VM's machine type, the last upload, the site build). */
 const STUB_SCRIPT = [
@@ -913,7 +921,7 @@ const STUB_SCRIPT = [
   'printf \'%s\\n\' "${all//$newline/ }" >>"$STUB_DIR/$tool.log"',
   'case "$tool $*" in',
   '  gcloud*compute\\ ssh*--command\\ :*)',
-  '  [ "${STUB_READINESS_HANG:-0}" = 1 ] && sleep 20',
+  `  [ "\${STUB_READINESS_HANG:-0}" = 1 ] && sleep ${READINESS_HANG_MS / 1000}`,
   '  readiness_count_file="$STUB_DIR/readiness-count"',
   '  readiness_count=0; [ -f "$readiness_count_file" ] && readiness_count=$(cat "$readiness_count_file")',
   '  readiness_count=$((readiness_count + 1)); printf "%s" "$readiness_count" >"$readiness_count_file"',
@@ -992,6 +1000,10 @@ function makeSandbox(): Sandbox {
   fs.cpSync(path.join(ROOT, 'deploy'), path.join(sandbox.repo, 'deploy'), { recursive: true });
   for (const tool of ['gcloud', 'node', 'dig', 'curl']) fs.writeFileSync(path.join(sandbox.bin, tool), STUB_SCRIPT, { mode: 0o755 });
   fs.writeFileSync(path.join(sandbox.stubs, 'machine-type'), 'e2-standard-2');
+  // Every git command here and in the scripts runs with this HOME. Git otherwise starts a detached
+  // `git maintenance run --auto` after a commit and after a push, which can create a lock file in
+  // the sandbox while withSandbox removes it (rmSync then throws ENOTEMPTY, oftener under load).
+  fs.writeFileSync(path.join(sandbox.home, '.gitconfig'), '[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n');
   git(dir, sandbox.home, ['init', '-q', '--bare', 'remote.git']);
   git(sandbox.repo, sandbox.home, ['init', '-q']);
   git(sandbox.repo, sandbox.home, ['add', '-A']);
@@ -1037,7 +1049,7 @@ function runScript(sandbox: Sandbox, script: string, args: readonly string[], en
     cwd: sandbox.repo,
     encoding: 'utf8',
     input: '',
-    timeout: 60_000,
+    timeout: SPAWN_HANG_MS,
     env: {
       PATH: `${sandbox.bin}${path.delimiter}${process.env.PATH ?? ''}`,
       HOME: sandbox.home,
@@ -2082,7 +2094,7 @@ function resizeTests(): void {
     const result = runFromPath('bash', ['-c', 'source deploy/lib.sh; whim_wait_for_ssh persistent 1 1'], {
       cwd: sandbox.repo,
       encoding: 'utf8',
-      timeout: 10_000,
+      timeout: SPAWN_HANG_MS,
       env: {
         PATH: `${sandbox.bin}${path.delimiter}${process.env.PATH ?? ''}`,
         STUB_DIR: sandbox.stubs,
@@ -2100,7 +2112,7 @@ function resizeTests(): void {
     const result = runFromPath('bash', ['-c', 'source deploy/lib.sh; whim_wait_for_ssh hanging 2 1'], {
       cwd: sandbox.repo,
       encoding: 'utf8',
-      timeout: 8_000,
+      timeout: SPAWN_HANG_MS,
       env: {
         PATH: `${sandbox.bin}${path.delimiter}${process.env.PATH ?? ''}`,
         STUB_DIR: sandbox.stubs, STUB_REAL_NODE: process.execPath, STUB_READINESS_HANG: '1',
@@ -2108,27 +2120,31 @@ function resizeTests(): void {
       },
     });
     const elapsed = Date.now() - started;
-    check('a hanging IAP child is killed by the per-probe timeout and overall budget', result.status === 1 && elapsed < 4_500 && result.stderr.includes('step hanging readiness failed'), `${result.stdout}\n${result.stderr}\nelapsed=${elapsed}ms`);
+    // The hanging child sleeps 20 s. Killed by the 1 s probe timeout, the helper returns in about
+    // 2 s idle and under 3 s starved; waiting the child out takes 20 s whatever the load.
+    check('a hanging IAP child is killed by the per-probe timeout and overall budget', result.status === 1 && elapsed < READINESS_HANG_MS / 2 && result.stderr.includes('step hanging readiness failed'), `${result.stdout}\n${result.stderr}\nelapsed=${elapsed}ms`);
   });
 
   withSandbox((sandbox) => {
-    const started = Date.now();
+    // Sleep returns at once and logs its argument, so the check reads the waits the helper chose
+    // rather than a wall-clock time that stretches with load.
+    fs.writeFileSync(path.join(sandbox.bin, 'sleep'), SLEEP_STUB_SCRIPT, { mode: 0o755 });
     const result = runFromPath('bash', ['-c', 'source deploy/lib.sh; whim_wait_for_ssh bounded 2 1'], {
       cwd: sandbox.repo,
       encoding: 'utf8',
-      timeout: 8_000,
+      timeout: SPAWN_HANG_MS,
       env: {
         PATH: `${sandbox.bin}${path.delimiter}${process.env.PATH ?? ''}`,
         STUB_DIR: sandbox.stubs, STUB_REAL_NODE: process.execPath, STUB_READINESS_FAILS: '999',
         WHIM_SCRIPT: 'resize.sh', WHIM_GCP_PROJECT: 'project', WHIM_GCP_ZONE: 'zone', WHIM_VM_NAME: 'vm',
       },
     });
-    const elapsed = Date.now() - started;
     const boundedCalls = toolLog(sandbox, 'gcloud');
-    check('immediate IAP failures exhaust the bounded helper before 4.5 seconds', result.status === 1
-      && elapsed < 4_500
+    const waits = toolLog(sandbox, 'sleep').map(Number);
+    check('immediate IAP failures exhaust the bounded helper', result.status === 1
       && result.stderr.includes('step bounded readiness failed')
-      && boundedCalls.some((line) => line.includes('IAP 4003')), `${result.stdout}\n${result.stderr}\n${boundedCalls.join('\n')}\nelapsed=${elapsed}ms`);
+      && boundedCalls.some((line) => line.includes('IAP 4003')), `${result.stdout}\n${result.stderr}\n${boundedCalls.join('\n')}`);
+    check('  ... never waiting past its 2 s budget between probes', waits.length > 0 && waits.every((seconds) => seconds >= 1 && seconds <= 2), `waits: ${waits.join(', ')}`);
   });
 }
 
@@ -2989,7 +3005,7 @@ if (tool === 'docker' || args.includes('-L') || args.includes('-D')) process.exi
     }
     const file = path.join(dir, 'script.sh');
     fs.writeFileSync(file, script);
-    const run = runFromPath('bash', [file, ...args], { encoding: 'utf8', timeout: 10_000, env: { PATH: `${dir}:/usr/bin:/bin`, COMMAND_LOG: log, ...stubEnv } });
+    const run = runFromPath('bash', [file, ...args], { encoding: 'utf8', timeout: SPAWN_HANG_MS, env: { PATH: `${dir}:/usr/bin:/bin`, COMMAND_LOG: log, ...stubEnv } });
     if (run.error) throw run.error;
     const calls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as string[]) : [];
     return { status: run.status, calls, stderr: run.stderr };
@@ -3215,7 +3231,7 @@ function logAgeCapRunProblems({ script, tailed, appDir, unlabeled = false }: Log
     fs.writeFileSync(file, script);
     const run = runFromPath('bash', [file], {
       encoding: 'utf8',
-      timeout: 10_000,
+      timeout: SPAWN_HANG_MS,
       env: { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}`, LOG_AGE_CAP_ROOT: fixture.root, DOCKER_LOG: dockerLog, STUB_DOCKER_LABELS: JSON.stringify(LOG_AGE_CAP_LABELS) },
     });
     if (run.error) throw run.error;

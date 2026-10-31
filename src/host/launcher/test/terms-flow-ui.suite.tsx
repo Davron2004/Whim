@@ -21,7 +21,7 @@ import type { InstalledApp } from '../app-index';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { consentRequiredRefusal } from '../../../../server/src/admission/refusals';
-import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 import { composeAndContinue, json, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { Linking, injectedScripts } from './native-host';
 
@@ -41,7 +41,7 @@ function tipSplitter(tree: Tree): InstalledApp | undefined {
 
 /** Let the running app's page finish loading, so the shell delivers its bundle. */
 async function loadAppPage(tree: Tree): Promise<void> {
-  await TestRenderer.act(async () => tree.root.find((node) => node.type === 'WebView').props.onLoadEnd());
+  await TestRenderer.act(async () => tree.root.find((node) => hostType(node) === 'WebView').props.onLoadEnd());
 }
 
 /** Home's composer row: the first data-sending action spec terms-acceptance names. */

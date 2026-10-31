@@ -24,7 +24,7 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { SEED_VERSION } from '../seed';
 import { resetNativeStorage } from './native-storage';
-import { button, press, renderScreen, textOf, unmountScreen, captureTimeouts } from './react-screen';
+import { button, press, renderScreen, textOf, unmountScreen, captureTimeouts, hostType } from './react-screen';
 import { Linking } from './native-host';
 import { testAppInfo } from './client-fixtures';
 
@@ -250,7 +250,7 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
       const text = textOf(tree.root);
       const [outdatedAt, whatsNewAt, titleAt] = [text.indexOf(COPY.consentOutdatedLine), text.indexOf(whatsNew), text.indexOf(COPY.consentTitle)];
       h.ok(outdatedAt >= 0 && whatsNewAt > outdatedAt && titleAt > whatsNewAt, 'the outdated line, then version 1’s what’s-new line, both above the title');
-      const line = tree.root.findAll((node) => node.type === 'Text' && node.children.join('') === whatsNew);
+      const line = tree.root.findAll((node) => hostType(node) === 'Text' && node.children.join('') === whatsNew);
       h.ok(line.length === 1 && line[0].props.numberOfLines === undefined, 'the what’s-new line is one text, never truncated');
       h.eq(requests, [], 'nothing is sent before agreeing again');
       await press(button(tree, COPY.consentAgree));

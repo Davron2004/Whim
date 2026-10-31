@@ -11,6 +11,15 @@ export async function renderScreen(element: React.ReactElement): Promise<TestRen
 export async function unmountScreen(tree: TestRenderer.ReactTestRenderer): Promise<void> {
   await TestRenderer.act(async () => tree.unmount());
 }
+/** The name of the host component `node` is ('View', 'Text', 'TextInput', ...), or undefined for a
+ *  composite. The native-host double renders React Native's host components as plain string types,
+ *  which `ReactTestInstance.type` (typed for react-dom's intrinsic elements) cannot name. */
+export function hostType(node: TestRenderer.ReactTestInstance): string | undefined {
+  const type: unknown = node.type;
+  return typeof type === 'string' ? type : undefined;
+}
+/** A `find`/`findAll` predicate for the host component named `name`. */
+export const isHost = (name: string) => (node: TestRenderer.ReactTestInstance): boolean => hostType(node) === name;
 export function textOf(node: TestRenderer.ReactTestInstance): string {
   return node.children.map(child => typeof child === 'string' ? child : textOf(child)).join('');
 }

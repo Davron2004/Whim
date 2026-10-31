@@ -118,6 +118,6 @@ export async function runTermsAcceptanceTests(h: Harness): Promise<void> {
       h.eq([en.origin, fr.origin], [RELEASE.webOrigin, RELEASE.webOrigin], `${english} and its twin are on the web origin`);
       h.eq(fr.pathname, `/fr${en.pathname}`, `${french} is ${en.pathname} in French`);
     }
-    h.ok(RELEASE.termsUrl !== RELEASE.privacyPolicyUrl, 'the terms and the privacy policy are different pages');
+    h.ok(new Set<string>([RELEASE.termsUrl, RELEASE.privacyPolicyUrl]).size === 2, 'the terms and the privacy policy are different pages');
   });
 }

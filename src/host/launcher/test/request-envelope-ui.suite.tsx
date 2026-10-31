@@ -27,10 +27,10 @@ import { PendingBuildStore } from '../pending-builds';
 import { appInfoFrom, appInfoReader } from '../app-info';
 import type { InstalledApp } from '../app-index';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
-import { button, press, textOf } from './react-screen';
+import { button, press, textOf, hostType } from './react-screen';
 import { buildIt, composeAndContinue, json, planLoaded, resultEvent, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
-import { TEST_APP_INFO } from './client-fixtures';
+import { TEST_APP_INFO, streamResponse } from './client-fixtures';
 import { Linking, Platform, injectedScripts } from './native-host';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { consentRequiredRefusal, updateRequiredRefusal, type ServiceRefusal } from '../../../../server/src/admission/refusals';
@@ -71,7 +71,7 @@ async function opensAndRuns(tree: Tree, app: InstalledApp, bundle: string): Prom
   injectedScripts.length = 0;
   await TestRenderer.act(async () => home(tree).props.onOpen(app));
   await waitFor(() => on(tree, MiniAppView), `${app.name} to open`);
-  await TestRenderer.act(async () => tree.root.find((node) => node.type === 'WebView').props.onLoadEnd());
+  await TestRenderer.act(async () => tree.root.find((node) => hostType(node) === 'WebView').props.onLoadEnd());
   return injectedScripts.length === 1 && injectedScripts[0].includes(JSON.stringify(bundle));
 }
 
@@ -195,7 +195,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
       if (r.path !== '/v1/generate') return streamingServer(streams)(r);
       const stream = sseStream(r.signal);
       streams.push(stream);
-      return new Response(stream.response.body, { headers: { 'Content-Type': 'text/event-stream', [REQUEST_ID_HEADER]: 'req-gen-1' } });
+      return streamResponse(stream.response.body, { headers: { 'Content-Type': 'text/event-stream', [REQUEST_ID_HEADER]: 'req-gen-1' } });
     };
     await withLauncher({ server }, async ({ tree }) => {
       await startBuild(tree, 'A tea timer');

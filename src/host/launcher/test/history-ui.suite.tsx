@@ -18,7 +18,7 @@ import MiniAppView from '../MiniAppView';
 import WhimProse from '../../ui/whim-prose/WhimProse';
 import { SHELL_COLORS } from '../../../sdk/theme';
 import { Alert, finishAnimations, hardwareBack, StyleSheet } from './native-host';
-import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen } from './react-screen';
+import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 import { buildIt, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
 
@@ -71,15 +71,15 @@ async function waitForReassuranceToClear(tree: Tree): Promise<void> {
 }
 
 /** How many loading placeholders the screen shows. */
-const loadingRows = (tree: Tree) => tree.root.findAll((n) => n.type === 'View' && n.props.accessibilityLabel === COPY.historyLoadingLabel).length;
+const loadingRows = (tree: Tree) => tree.root.findAll((n) => hostType(n) === 'View' && n.props.accessibilityLabel === COPY.historyLoadingLabel).length;
 const hasPendingReassurance = (tree: Tree) => tree.root.findAll((n) => n.props.accessibilityLabel === COPY.historyReassurancePending).length > 0;
 
 /** The row card whose headline is `text`. */
-const row = (tree: Tree, text: string) => tree.root.find((n) => n.type === 'TouchableOpacity' && typeof n.props.onPress === 'function' && textOf(n).includes(text) && textOf(n).includes(COPY.historyOriginYouSaid));
-const hasRow = (tree: Tree, text: string) => tree.root.findAll((n) => n.type === 'TouchableOpacity' && typeof n.props.onPress === 'function' && textOf(n).includes(text) && textOf(n).includes(COPY.historyOriginYouSaid)).length === 1;
+const row = (tree: Tree, text: string) => tree.root.find((n) => hostType(n) === 'TouchableOpacity' && typeof n.props.onPress === 'function' && textOf(n).includes(text) && textOf(n).includes(COPY.historyOriginYouSaid));
+const hasRow = (tree: Tree, text: string) => tree.root.findAll((n) => hostType(n) === 'TouchableOpacity' && typeof n.props.onPress === 'function' && textOf(n).includes(text) && textOf(n).includes(COPY.historyOriginYouSaid)).length === 1;
 /** The words a rendered prose line attributes to the user (its `yours` spans). */
 const yoursIn = (prose: TestRenderer.ReactTestInstance) =>
-  prose.findAll((n) => n.type === 'Text' && StyleSheet.flatten(n.props.style).color === SHELL_COLORS.yours).map(textOf);
+  prose.findAll((n) => hostType(n) === 'Text' && StyleSheet.flatten(n.props.style).color === SHELL_COLORS.yours).map(textOf);
 
 /** How many sheets are open. */
 const sheetsOpen = (tree: Tree) => tree.root.findAll((n) => String(n.type) === 'Modal').length;
@@ -348,7 +348,7 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
     const opened: InstalledApp[] = [];
     const tree = await renderScreen(<HomeScreen apps={[app]} onOpen={noop} onFork={noop} onDelete={noop} onHistory={(a) => { opened.push(a); }} onPromptAgain={noop} onCreate={noop} onSettings={noop} />);
     try {
-      await TestRenderer.act(async () => tree.root.find((n) => n.type === 'TouchableOpacity' && typeof n.props.onLongPress === 'function').props.onLongPress());
+      await TestRenderer.act(async () => tree.root.find((n) => hostType(n) === 'TouchableOpacity' && typeof n.props.onLongPress === 'function').props.onLongPress());
       await press(button(tree, COPY.actionHistory));
       h.eq(opened.map((a) => a.id), [app.id], 'History opens for the long-pressed app');
     } finally {

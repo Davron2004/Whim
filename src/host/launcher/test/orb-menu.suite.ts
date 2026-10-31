@@ -24,7 +24,7 @@ import {
 import { chromeInsetBottom } from '../orb-geometry';
 import { resetNativeStorage } from './native-storage';
 import { finishAnimations } from './native-host';
-import { button, press, renderScreen, unmountScreen } from './react-screen';
+import { button, press, renderScreen, unmountScreen, hostType } from './react-screen';
 
 /** The menu's rise runs its course. */
 const risen = () => TestRenderer.act(async () => { finishAnimations(); });
@@ -115,7 +115,7 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
       }));
       try {
         const counts = () => loadOrbActionCounts(createMmkvBackend('whim.launcher'));
-        const dismiss = () => tree.root.findAll((n) => n.type === 'Pressable' && n.props.accessibilityLabel === COPY.orbMenuDismissLabel);
+        const dismiss = () => tree.root.findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === COPY.orbMenuDismissLabel);
         await press(button(tree, COPY.orbMenuOpenLabel));
         await press(button(tree, COPY.orbMenuCloseLabel));
         await press(button(tree, COPY.orbMenuOpenLabel));
@@ -166,7 +166,7 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     const tree = await renderScreen(React.createElement(Orb, { onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
     try {
       await press(button(tree, COPY.orbMenuOpenLabel));
-      const touchable = (n: { type: unknown }) => n.type === 'Pressable' || n.type === 'TouchableOpacity';
+      const touchable = (n: TestRenderer.ReactTestInstance) => hostType(n) === 'Pressable' || hostType(n) === 'TouchableOpacity';
       for (const action of ORB_ACTIONS) {
         const node = tree.root.findAll((n) => touchable(n) && n.props.accessibilityLabel === action.label);
         h.eq(node.length, 1, `"${action.label}" is one element labelled with its own words`);
@@ -201,9 +201,9 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     resetNativeStorage();
     const tree = await renderScreen(React.createElement(Orb, { onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
     try {
-      h.eq(tree.root.findAll((n) => n.type === 'Modal').length, 0, 'no Modal before the menu opens');
+      h.eq(tree.root.findAll((n) => hostType(n) === 'Modal').length, 0, 'no Modal before the menu opens');
       await press(button(tree, COPY.orbMenuOpenLabel));
-      const modals = tree.root.findAll((n) => n.type === 'Modal');
+      const modals = tree.root.findAll((n) => hostType(n) === 'Modal');
       h.eq(modals.length, 1, 'the open menu renders inside exactly one Modal');
       h.eq(
         [modals[0].props.transparent, modals[0].props.statusBarTranslucent, modals[0].props.navigationBarTranslucent],

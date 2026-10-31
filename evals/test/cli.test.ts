@@ -44,7 +44,7 @@ declare module 'node:child_process' {
       readonly env?: Readonly<Record<string, string | undefined>>;
       readonly encoding?: 'utf8';
     },
-  ): { readonly status: number | null; readonly stdout: string; readonly stderr: string };
+  ): { readonly status: number | null; readonly stdout: string; readonly stderr: string; readonly error?: Error };
 }
 
 const repoRoot = process.cwd();
