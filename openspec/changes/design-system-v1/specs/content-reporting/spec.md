@@ -40,3 +40,14 @@ The send action SHALL post the body to `POST /v1/report` on the effective server
 #### Scenario: Own server, neutral thanks
 - **WHEN** a report is sent to the user's own server
 - **THEN** the thank-you copy mentions no company
+
+### Requirement: Closing the sheet sends nothing
+System back, a tap on the scrim, and the cancel action SHALL each leave the report without sending and discard its draft. Inside the Whim sheet, Back, Cancel and system back SHALL go to the sheet menu and Close SHALL go to the running app. System back SHALL NOT reach the app (see `mini-app-back-navigation`).
+
+#### Scenario: Back closes an unsent sheet
+- **WHEN** the Report screen is open inside the Whim sheet over a running app with a reason chosen and the user presses Back, Cancel or system back
+- **THEN** the sheet menu shows, nothing is posted, the draft is dropped, and the app is still running at the same screen
+
+#### Scenario: Close inside the Whim sheet goes to the app
+- **WHEN** the Report screen is open inside the Whim sheet and the user taps Close
+- **THEN** the sheet closes, nothing is posted, the draft is dropped, and the app is still running at the same screen

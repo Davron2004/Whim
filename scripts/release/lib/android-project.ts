@@ -62,17 +62,17 @@ function findViewIntentFilter(activityBody: string): { attrs: string; body: stri
 /** `MainActivity` handles a font-size change and a light/dark switch in place (MainActivity.kt
  *  re-reads both), and leaves a display-size change to Android's default, recreating it. */
 function configChangesProblems(activityAttrs: string): string[] {
-  const configChanges = (/android:configChanges="([^"]*)"/.exec(activityAttrs)?.[1] ?? '').split('|');
+  const configChanges = new Set((/android:configChanges="([^"]*)"/.exec(activityAttrs)?.[1] ?? '').split('|'));
   const problems: string[] = [];
   for (const [change, why] of [
     ['fontScale', 'recreating the activity on a font-size change closes a running app and loses its state (issue #201)'],
     ['uiMode', 'recreating the activity on a light/dark switch closes a running app and loses its state'],
   ] as const) {
-    if (!configChanges.includes(change)) {
+    if (!configChanges.has(change)) {
       problems.push(`MainActivity's android:configChanges must include ${change}: ${why}`);
     }
   }
-  if (configChanges.includes('density')) {
+  if (configChanges.has('density')) {
     problems.push(
       "MainActivity's android:configChanges must not include density: a display-size change keeps Android's default and recreates the activity, since React Native's Fabric pins the pixel density when it starts (FabricUIManagerBinding.setPixelDensity) and nothing re-lays the views out at a new density in place",
     );
@@ -228,7 +228,7 @@ function closingBracket(code: string, open: number): number | undefined {
 
 /** The block body of the function `name`, or `undefined` when it has none. */
 function kotlinFunction(code: string, name: string): { body: string } | undefined {
-  const declaration = new RegExp(`\\bfun ${name}\\(`).exec(code);
+  const declaration = new RegExp(String.raw`\bfun ${name}\(`).exec(code);
   if (declaration === null) return undefined;
   const params = closingBracket(code, declaration.index + declaration[0].length - 1);
   if (params === undefined) return undefined;
@@ -302,9 +302,9 @@ function checkNavigationBarScrim(repoRoot: string): AndroidProjectFinding[] {
   if (!dialogListeners.lambdas.some((lambda) => /\bclearDialogNavigationBarScrims\(/.test(lambda))) {
     problems.push('MainActivity.watchDialogScrims must add a pre-draw listener to each dialog that calls clearDialogNavigationBarScrims: a sheet opened from a sheet shows over the first, never before an activity frame');
   }
-  const decorNames = [...dialogListeners.rest.matchAll(/\bval (\w+)\s*=\s*[\w.?]*\.decorView\b/g)].map((m) => m[1]);
+  const decorNames = new Set([...dialogListeners.rest.matchAll(/\bval (\w+)\s*=\s*[\w.?]*\.decorView\b/g)].map((m) => m[1]));
   const intoDialog = [...dialogListeners.rest.matchAll(/\bwatchDialogScrims\(([\w.?]+)\)/g)].some(
-    ([, arg]) => decorNames.includes(arg) || /\.decorView$/.test(arg),
+    ([, arg]) => decorNames.has(arg) || arg.endsWith('.decorView'),
   );
   if (!intoDialog) {
     problems.push('MainActivity.watchDialogScrims must walk on into each dialog\'s decor view: a Modal inside another\'s content has its host there');
@@ -349,7 +349,7 @@ function checkScrimListing(code: string): string[] {
 function navigationBarsAssignment(body: string): string | undefined {
   const assigned = /\.isAppearanceLightNavigationBars\s*=\s*([^\n;]+)/.exec(body)?.[1].trim();
   if (assigned === undefined || !/^\w+$/.test(assigned)) return assigned;
-  return new RegExp(`\\bval ${assigned}\\s*=\\s*([^\\n;]+)`).exec(body)?.[1].trim() ?? assigned;
+  return new RegExp(String.raw`\bval ${assigned}\s*=\s*([^\n;]+)`).exec(body)?.[1].trim() ?? assigned;
 }
 
 /** With the scrim off the navigation bar shows what is under it, so `MainActivity` sets its icons
@@ -358,8 +358,12 @@ function navigationBarsAssignment(body: string): string | undefined {
  *  `matchNavigationBarToStatusBar` copies the status bar's appearance and runs before each of the
  *  activity's frames; on a Modal's dialog it is the overlay, in the shell's scheme, so each watched
  *  dialog's pre-draw listener runs `matchNavigationBarToShellScheme`. No other code may set the
- *  navigation bar's appearance: the night-mode assignment in `onConfigurationChanged` is the
- *  regression (white icons on a light frame over a dark phone). */
+ *  navigation bar's appearance through `isAppearanceLightNavigationBars`: the night-mode assignment
+ *  in `onConfigurationChanged` is the regression (white icons on a light frame over a dark phone).
+ *  The one other writer is `agreeBarAppearance`, which copies the bars' appearance between the legacy
+ *  flags and the platform's store on API 31-34 (where React Native and the keyboard controller write
+ *  different stores); the activity's listener runs it on both sides of the match, so the match reads
+ *  the agreed status bar and its result reaches the platform. */
 function checkNavigationBarIcons(code: string): string[] {
   const problems: string[] = [];
   const match = kotlinFunction(code, 'matchNavigationBarToStatusBar');
@@ -371,6 +375,16 @@ function checkNavigationBarIcons(code: string): string[] {
   const activityListeners = onCreate === undefined ? [] : preDrawListeners(onCreate.body).lambdas;
   if (!activityListeners.some((lambda) => /\bmatchNavigationBarToStatusBar\(/.test(lambda))) {
     problems.push('MainActivity.onCreate must add a pre-draw listener to the activity\'s window that calls matchNavigationBarToStatusBar: the JS StatusBar\'s style changes with the page, and the navigation bar\'s icons must follow it');
+  }
+  const bracketed = /\bagreeBarAppearance\(\)[\s\S]*\bmatchNavigationBarToStatusBar\([\s\S]*\bagreeBarAppearance\(\)/;
+  if (!activityListeners.some((lambda) => bracketed.test(lambda))) {
+    problems.push('MainActivity.onCreate\'s pre-draw listener must call agreeBarAppearance() before and after matchNavigationBarToStatusBar: the status bar is read from the store the JS StatusBar last wrote, and the navigation bar\'s copy must reach the platform');
+  }
+  const agree = kotlinFunction(code, 'agreeBarAppearance');
+  const gated = agree !== undefined &&
+    /\bSDK_INT\s*<\s*Build\.VERSION_CODES\.S\b\s*\|\|\s*Build\.VERSION\.SDK_INT\s*>\s*Build\.VERSION_CODES\.UPSIDE_DOWN_CAKE\s*\)\s*return\b/.test(agree.body);
+  if (!gated) {
+    problems.push('MainActivity must define agreeBarAppearance, returning below API 31 and above API 34: React Native writes the platform appearance only from 31, and androidx writes it from 35, so only 31-34 have two stores to agree');
   }
   const watch = kotlinFunction(code, 'watchDialogScrims');
   const dialogListeners = watch === undefined ? [] : preDrawListeners(watch.body).lambdas;

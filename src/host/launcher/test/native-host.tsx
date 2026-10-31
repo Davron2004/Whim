@@ -214,8 +214,13 @@ export const accessibilitySettings = { reduceMotion: false, increaseContrast: fa
  *  (`sendAccessibilityEvent`'s host node), oldest first; splice to reset. */
 export const announcements: string[] = [];
 export const accessibilityFocus: unknown[] = [];
+/** When set, the Reduce Motion query rejects with `reason` (any value, as a native module may). */
+export const accessibilityQueryFailure: { reason?: unknown } = {};
 export const AccessibilityInfo = {
-  isReduceMotionEnabled: async () => accessibilitySettings.reduceMotion,
+  isReduceMotionEnabled: async () => {
+    if ('reason' in accessibilityQueryFailure) throw accessibilityQueryFailure.reason;
+    return accessibilitySettings.reduceMotion;
+  },
   isDarkerSystemColorsEnabled: async () => accessibilitySettings.increaseContrast,
   isHighTextContrastEnabled: async () => accessibilitySettings.increaseContrast,
   isScreenReaderEnabled: async () => accessibilitySettings.screenReader,
@@ -310,9 +315,22 @@ export const Alert = {
  *  through `LauncherRoot`'s `deviceLocale` instead; the legal-language suite swaps these per test. */
 export const I18nManager = { getConstants: () => ({ isRTL: false, doLeftAndRightSwapInRTL: true, localeIdentifier: undefined }) };
 export const Settings = { get: (_key: string): unknown => undefined };
-/** Every call the `WhimHaptics` module received, oldest first, as `"<method>:<args joined by ,>"`.
- *  It is the only TurboModule this host registers; every other name resolves to null. */
+/** Every call the `WhimHaptics` module received, oldest first, as `"<method>:<args joined by ,>"`. */
 export const hapticCalls: string[] = [];
 const record = (method: string) => (...args: unknown[]) => { hapticCalls.push(`${method}:${args.join(',')}`); };
 const whimHaptics = { impact: record('impact'), selection: record('selection'), notification: record('notification'), prepare: record('prepare'), cue: record('cue') };
-export const TurboModuleRegistry = { get: (name: string) => (name === 'WhimHaptics' ? whimHaptics : null), getEnforcing: () => ({ play: () => {}, stop: () => {} }) };
+/** Every view tag the `WhimKeyboard` module was asked to show the keyboard for, oldest first. What
+ *  the platform does with a request is the test's: a rig that models it sets `handler`. */
+export const keyboardShows: { tags: number[]; handler: ((tag: number) => void) | null } = { tags: [], handler: null };
+const whimKeyboard = { showFor: (tag: number) => { keyboardShows.tags.push(tag); keyboardShows.handler?.(tag); } };
+/** The TurboModules this host registers; every other name resolves to null. */
+const turboModules: Record<string, object> = { WhimHaptics: whimHaptics, WhimKeyboard: whimKeyboard };
+export const TurboModuleRegistry = {
+  get: (name: string) => (Object.hasOwn(turboModules, name) ? turboModules[name] : null),
+  getEnforcing: () => ({ play: () => {}, stop: () => {} }),
+};
+/** A host view's tag: the `nativeTag` its node mock carries (`createNodeMock`), or null. */
+export function findNodeHandle(ref: unknown): number | null {
+  const tag = (ref as { nativeTag?: unknown } | null)?.nativeTag;
+  return typeof tag === 'number' ? tag : null;
+}

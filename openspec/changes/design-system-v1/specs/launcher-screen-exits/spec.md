@@ -18,7 +18,7 @@ The controls are: the native stack's header back control on Settings, Advanced, 
 - **THEN** the app closes into its tile and the home grid is shown
 
 ### Requirement: System back and the visible control perform the same action
-On every launcher screen that handles system back, system back SHALL perform exactly the action that screen's visible leave control performs in the same state, and both SHALL run one handler. On native-stack screens the stack's own back (header control, iOS edge and content-area swipe, Android predictive back) SHALL pop exactly one screen.
+On every launcher screen that handles system back, system back SHALL perform exactly the action that screen's visible leave control performs in the same state, and both SHALL run one handler. On native-stack screens the stack's own back (header control, iOS edge and content-area swipe, Android back) SHALL pop exactly one screen.
 
 On the Plan page, while a row is being edited, both the header back and system back SHALL cancel the row edit and keep the page; with no row being edited, both SHALL return to Describe. On the Making page, system back and the close button SHALL leave the run going and SHALL never stop it. On Ready, system back SHALL do what `Done` does. With a sheet open over a screen, system back SHALL close the sheet. The system back listener SHALL be registered once per screen mount and SHALL always run the screen's current handler.
 
@@ -50,15 +50,19 @@ A running mini-app keeps its full-height frame; its orb and its sheets add the b
 ## ADDED Requirements
 
 ### Requirement: Pushed shell screens sit on the native stack
-Settings, Advanced, AI features (consent review), History and Report (when opened from History or Settings) SHALL be presented on `react-native-screens`' native stack, so iOS gives them the edge and content-area swipe and Android its predictive back preview (`android:enableOnBackInvokedCallback="true"`), with Whim drawing none of the transition. The launcher's state machine SHALL stay the single source of navigation truth: a pop by gesture SHALL update it exactly as the header back does. A running app SHALL NOT be on this stack: there is no edge swipe over a running app (#67), and the running app's Android back SHALL keep its existing seam (in-app depth, then close at depth 0).
+Settings, Advanced, AI features (consent review), History and Report (when opened from History or Settings) SHALL be on `react-native-screens`' native stack: iOS gives the edge and content-area swipe, Android a plain pop (#164). The launcher's state machine SHALL stay the single navigation truth: a gesture pop SHALL update it as the header back does. With the keyboard up, the first back SHALL put it away. A running app SHALL NOT be on it (#67); its Android back keeps its seam.
 
 #### Scenario: Swiping back from History on an iPhone
 - **WHEN** a user drags from the leading edge on History
 - **THEN** History follows the finger and pops to Home, and the launcher's state shows Home
 
-#### Scenario: Predictive back on Android
-- **WHEN** a user on Android 14 or later starts the back gesture on Settings
-- **THEN** the system previews Home behind Settings and completes or cancels the pop with the gesture
+#### Scenario: Back on Android pops without a preview
+- **WHEN** a user on Android starts the back gesture on Settings
+- **THEN** Settings pops to Home as a standard pop, with no preview of Home behind it
+
+#### Scenario: Back with the keyboard up
+- **WHEN** a field on a pushed screen has the keyboard up and the user presses back once
+- **THEN** the keyboard goes away and the screen stays
 
 #### Scenario: No edge swipe over a running app
 - **WHEN** a user drags from the leading edge over a running app on an iPhone

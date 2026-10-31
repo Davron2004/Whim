@@ -8,8 +8,10 @@ import { Harness } from './harness';
 import SettingsScreen, { type SettingsScreenProps } from '../SettingsScreen';
 import AdvancedScreen, { type AdvancedScreenProps } from '../AdvancedScreen';
 import ReportScreen from '../ReportScreen';
+import { Icon } from '../../ui/Icon';
 import { Text } from '../../ui/Text';
 import { ToastHost } from '../../ui/Toast';
+import { COLORS } from '../../../design/tokens';
 import { COPY, LEGAL_COPY } from '../copy';
 import { RELEASE, WHIM_DOMAIN } from '../release-config';
 import { addressCheck, middleTruncated, versionLabel } from '../settings-sections';
@@ -18,7 +20,7 @@ import type { StoreAccess } from '../store-access';
 import { reportClientOptions } from '../transport-shared';
 import { testAppInfo } from './client-fixtures';
 import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen } from './react-screen';
-import { Linking, windowMetrics } from './native-host';
+import { Linking, StyleSheet, windowMetrics } from './native-host';
 import { log } from '../../logging';
 
 const noop = () => {};
@@ -76,6 +78,26 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
         await unmountScreen(tree);
         fetches.restore();
         clock.restore();
+      }
+    }
+  });
+
+  await h.test('Advanced: a status result never stands on its colour alone: "Verified" leads with the positive check, "Unreachable" with the danger circle-alert, "Unverified" (not a status hue) with none (§2.3)', async () => {
+    for (const [result, glyphs] of [['verified', [['check', COLORS.light['positive-text']]]], ['unverified', []], ['unreachable', [['circle-alert', COLORS.light['danger-text']]]]] as const) {
+      const tree = await renderScreen(advanced({ probe: { address: 'https://saved.example', result } }));
+      try {
+        const words = tree.root.findAllByType(Text).find(node => PROBE_LABELS.includes(textOf(node)));
+        h.ok(words !== undefined, `${result}: the check line shows`);
+        // The line is the row the words sit in; what it draws before them leads the line.
+        let line = words!.parent;
+        while (line !== null && !(String(line.type) === 'View' && StyleSheet.flatten(line.props.style)?.flexDirection === 'row')) line = line.parent;
+        h.ok(line !== null, `${result}: the words sit in a row`);
+        const children = line!.children as TestRenderer.ReactTestInstance[];
+        const at = children.findIndex(child => child.findAllByType(Text).includes(words!));
+        const drawn = children.slice(0, at).flatMap(node => node.findAllByType(Icon)).map(icon => [icon.props.name, icon.props.color]);
+        h.eq(drawn, glyphs, `${result}: ${glyphs.length === 0 ? 'no glyph before the words' : 'its role glyph, in the role text colour, before the words'}`);
+      } finally {
+        await unmountScreen(tree);
       }
     }
   });

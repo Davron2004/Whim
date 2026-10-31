@@ -201,7 +201,7 @@ export function WhimSheet({
             <GroupedRow title={COPY.whimSheetNewVersion} trailing={{ kind: 'value', text: COPY.actionReload }} onPress={onReload} />
           ) : null}
           {seeWhy ? (
-            <GroupedRow title={COPY.changeFailedToast} trailing={{ kind: 'value', text: COPY.toastSeeWhy }} onPress={onSeeWhy} />
+            <GroupedRow dot="danger" title={COPY.changeFailedToast} trailing={{ kind: 'value', text: COPY.toastSeeWhy }} onPress={onSeeWhy} />
           ) : null}
         </GroupedSection>
       ) : null}

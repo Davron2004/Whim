@@ -18,7 +18,7 @@
 
 import React from 'react';
 import { Pressable, StyleSheet, Switch, Text as RNText, View } from 'react-native';
-import { LAYOUT, RADII, SPACE } from '../../design/tokens';
+import { LAYOUT, RADII, SPACE, TYPE_SCALE } from '../../design/tokens';
 import type { IconName } from '../../design/icons/names';
 import { haptics } from '../haptics';
 import { Icon } from './Icon';
@@ -43,6 +43,8 @@ export interface GroupedRowProps {
   title: string;
   subtitle?: string;
   icon?: IconName;
+  /** An 8 pt `danger` dot in the icon's place: the orb's failed dot as a row. Decorative (the title speaks). */
+  dot?: 'danger';
   trailing?: RowTrailing;
   /** The row's action; a switch row toggles instead. */
   onPress?: () => void;
@@ -67,6 +69,7 @@ export const ROW = {
   paddingHorizontal: LAYOUT.listRowPaddingHorizontal,
   icon: 20,
   trailingIcon: 20,
+  dot: 8,
   separatorInset: LAYOUT.separatorInset,
   separatorInsetWithIcon: LAYOUT.separatorInsetWithIcon,
   headerGap: SPACE[2],
@@ -107,7 +110,16 @@ const styles = makeStyles((t) => ({
   valueStacked: { ...wrappingType('callout'), color: t.colors['text-2'], marginTop: LAYOUT.gapTitleToSubtitle / 2 },
   pressed: { backgroundColor: t.colors.fill },
   copy: { paddingRight: ROW.paddingHorizontal },
+  dotSlot: { width: ROW.icon, height: ROW.icon, alignItems: 'center' as const, justifyContent: 'center' as const },
+  dot: { width: ROW.dot, height: ROW.dot, borderRadius: ROW.dot / 2 },
 }));
+
+/** How far a 20 pt icon sits below the row's content top to centre on the title's first line: with a
+ *  subtitle the row is taller than that line, and the icon belongs beside the title, not mid-row.
+ *  The title scales with the text size (up to `MAX_FONT_SCALE`); the icon does not. */
+function iconTopOffset(fontScale: number): number {
+  return Math.max(0, (TYPE_SCALE.body.lineHeight * Math.min(fontScale, MAX_FONT_SCALE) - ROW.icon) / 2);
+}
 
 /** A row title's colour: `text-3` disabled, `danger-text` destructive, else `text`. */
 function titleColor(t: ShellTokens, destructive: boolean, disabled: boolean): string {
@@ -131,7 +143,7 @@ export function GroupedSection({ header, footer, on = 'canvas', children }: Read
         {rows.map((row, i) => (
           <React.Fragment key={row.key ?? i}>
             {i > 0 ? (
-              <View style={[s.separator, { marginLeft: row.props.icon ? ROW.separatorInsetWithIcon : ROW.separatorInset }]} />
+              <View style={[s.separator, { marginLeft: row.props.icon || row.props.dot ? ROW.separatorInsetWithIcon : ROW.separatorInset }]} />
             ) : null}
             {row}
           </React.Fragment>
@@ -230,7 +242,7 @@ function flipper(trailing: RowTrailing | undefined, platform: ShellTokens['platf
 }
 
 export function GroupedRow(props: Readonly<GroupedRowProps>) {
-  const { title, subtitle, icon, trailing, onPress, destructive = false, disabled = false, accessibilityHint } = props;
+  const { title, subtitle, icon, dot, trailing, onPress, destructive = false, disabled = false, accessibilityHint } = props;
   const t = useTokens();
   const s = styles(t);
   const flip = flipper(trailing, t.platform, false);
@@ -240,6 +252,7 @@ export function GroupedRow(props: Readonly<GroupedRowProps>) {
   // A trailing value takes width the title needs: at large text (system.md §6, paired things stack)
   // it goes under the title instead.
   const stacked = trailing?.kind === 'value' && t.largeText;
+  const iconPlace = subtitle ? { alignSelf: 'flex-start' as const, marginTop: iconTopOffset(t.fontScale) } : undefined;
   return (
     <View style={s.line}>
       <Pressable
@@ -251,7 +264,16 @@ export function GroupedRow(props: Readonly<GroupedRowProps>) {
         accessibilityHint={accessibilityHint ?? subtitle}
         accessibilityState={rowState(trailing, disabled)}
       >
-        {icon ? <Icon name={icon} size={ROW.icon} color={t.colors['text-2']} /> : null}
+        {icon ? (
+          <View style={iconPlace}>
+            <Icon name={icon} size={ROW.icon} color={t.colors['text-2']} />
+          </View>
+        ) : null}
+        {dot ? (
+          <View style={s.dotSlot} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            <View style={[s.dot, { backgroundColor: t.colors[dot] }]} />
+          </View>
+        ) : null}
         <View style={s.texts}>
           <RNText style={[s.title, { color: titleColor(t, destructive, disabled) }]} maxFontSizeMultiplier={MAX_FONT_SCALE}>
             {title}

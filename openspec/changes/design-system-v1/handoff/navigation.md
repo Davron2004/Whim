@@ -7,8 +7,8 @@ Interface only. Rules: design.md D6/D7, system.md §9 (four kinds of surface), s
 ```ts
 export interface StackEntry {
   readonly key: string;          // stable while on the stack (LauncherRoot uses the screen kind)
-  readonly title?: string;       // native header title; absent = header hidden, screen draws its own + back
-  readonly largeTitle?: boolean; // iOS large title (Settings only)
+  readonly title?: string;       // the screen's name: header = back + blank inline title (empty centre view); iOS back
+                                 // label + menu use it; screen draws largeTitle (Settings) / title1. Absent = header hidden
   readonly onLeave: () => void;  // the ONE leave handler: header back, swipes, system back
   readonly background: string;   // screen + header background
   readonly foreground: string;   // header title / back tint

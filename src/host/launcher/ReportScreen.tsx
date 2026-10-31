@@ -266,7 +266,7 @@ function ReportForm({
       }
     >
       {title !== undefined && (
-        <Text type="title2" style={s.title}>
+        <Text type={host === 'screen' ? 'title1' : 'title2'} style={s.title}>
           {title}
         </Text>
       )}
@@ -434,7 +434,7 @@ function PreviewRow({
 /** The Report screen on the native stack. System back leaves, as the stack's header back does. */
 export default function ReportScreen(props: Readonly<ReportScreenProps>) {
   useSystemBack(props.onLeave);
-  return <ReportForm {...props} host="screen" />;
+  return <ReportForm {...props} host="screen" title={COPY.reportScreenTitle} />;
 }
 
 /** The report as a page inside a sheet that already holds the shell (the Whim sheet), which pads for

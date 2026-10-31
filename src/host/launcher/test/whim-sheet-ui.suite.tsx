@@ -9,7 +9,9 @@ import type React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 import { Harness } from './harness';
+import { COLORS } from '../../../design/tokens';
 import { COPY } from '../copy';
+import { Icon } from '../../ui/Icon';
 import HomeScreen from '../HomeScreen';
 import HistoryScreen from '../HistoryScreen';
 import MiniAppView from '../MiniAppView';
@@ -91,6 +93,13 @@ export async function openSheet(tree: Tree): Promise<void> {
   await waitFor(() => hasButton(tree, COPY.whimSheetBackToApps), 'the Whim sheet');
 }
 
+/** The 8 pt dots drawn in the open sheet, by colour: a view of exactly 8 x 8 with a round radius. */
+function dotsIn(tree: Tree): string[] {
+  return sheetCard(tree)
+    .findAll((n) => hostType(n) === 'View' && StyleSheet.flatten(n.props.style as StyleProp<ViewStyle>)?.width === 8 && StyleSheet.flatten(n.props.style as StyleProp<ViewStyle>)?.height === 8)
+    .map((n) => String(StyleSheet.flatten(n.props.style as StyleProp<ViewStyle>)?.backgroundColor));
+}
+
 const never = () => new Promise<Response>(() => {});
 
 /** A change's record says it failed. */
@@ -170,6 +179,20 @@ export async function runWhimSheetUiTests(h: Harness): Promise<void> {
       const gaps = blockGaps(name);
       h.ok(gaps.length === 2 && gaps.every((gap) => gap === gaps[0]) && gaps[0] > 0, `the blocks are evenly spaced (${gaps.join(', ')})`);
       h.eq(trailingSpace(name), gaps[0], 'and the last one ends that far from the bottom');
+    });
+  });
+
+  await h.test('whim sheet: an icon row with no subtitle keeps its icon centred on the row, not pinned to the top', async () => {
+    await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+      await openTipSplitter(tree);
+      await openSheet(tree);
+      for (const label of [COPY.actionHistory, COPY.reportScreenTitle, COPY.whimSheetBackToApps]) {
+        let wrapper = button(tree, label).findAllByType(Icon)[0].parent;
+        while (wrapper && hostType(wrapper) !== 'View') wrapper = wrapper.parent;
+        const placed = StyleSheet.flatten(wrapper!.props.style as StyleProp<ViewStyle>) ?? {};
+        h.eq(placed.alignSelf, undefined, `${label}: the icon is not pinned to the top`);
+        h.eq(placed.marginTop, undefined, `${label}: the icon is not nudged down`);
+      }
     });
   });
 
@@ -309,6 +332,7 @@ export async function runWhimSheetUiTests(h: Harness): Promise<void> {
       const launch = runningApp(tree).props.tappedAt;
       await openSheet(tree);
       h.ok(!hasButton(tree, SEE_WHY_ROW), 'no See why while nothing has failed');
+      h.eq(dotsIn(tree), [], 'and no dot in the sheet');
       await press(button(tree, COPY.sheetClose));
 
       await makeChange(tree, streams);
@@ -322,6 +346,7 @@ export async function runWhimSheetUiTests(h: Harness): Promise<void> {
 
       await openSheet(tree);
       h.eq(controlsIn(tree)[0], SEE_WHY_ROW, 'See why stands on top of the sheet once the toast has gone');
+      h.eq(dotsIn(tree), [COLORS.light.danger], 'the row carries the orb’s failed dot: one 8 pt dot, in the danger colour');
       h.ok(controlsIn(tree).includes(COPY.whimSheetAsk), 'with the send area still there: no change is being made');
       await press(button(tree, SEE_WHY_ROW));
       await waitFor(() => showing(tree, FailurePage), 'the Failure page');
@@ -339,6 +364,7 @@ export async function runWhimSheetUiTests(h: Harness): Promise<void> {
       await waitFor(() => streams.length === 2 && !makingSheetOpen(tree), 'the new change being made');
       await openSheet(tree);
       h.ok(hasButton(tree, COPY.actionStopChange) && !hasButton(tree, SEE_WHY_ROW), 'once a new change runs, Stop the change and no See why');
+      h.eq(dotsIn(tree), [], 'and no dot');
     });
   });
 

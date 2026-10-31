@@ -22,7 +22,6 @@ import com.facebook.react.bridge.LifecycleEventListener
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 import com.facebook.react.views.modal.ReactModalHostView
-import com.swmansion.rnscreens.ScreenStackHeaderConfig
 import com.swmansion.rnscreens.fragment.restoration.RNScreensFragmentFactory
 import com.whim.launch.LaunchScreen
 import java.util.WeakHashMap
@@ -42,8 +41,12 @@ class MainActivity : ReactActivity() {
     clearNavigationBarScrim(window)
     fontScale = resources.configuration.fontScale
     LaunchScreen.hold(this)
+    agreedBarAppearance = platformBarAppearance()
     window.decorView.viewTreeObserver.addOnPreDrawListener {
+      // Before the navigation bar copies the status bar's icons, and again to hand that copy to the platform.
+      agreeBarAppearance()
       matchNavigationBarToStatusBar(activityBars)
+      agreeBarAppearance()
       mirrorBarAppearance()
       clearDialogNavigationBarScrims()
       true
@@ -66,6 +69,52 @@ class MainActivity : ReactActivity() {
   private fun matchNavigationBarToStatusBar(bars: WindowInsetsControllerCompat) {
     val light = bars.isAppearanceLightStatusBars
     if (bars.isAppearanceLightNavigationBars != light) bars.isAppearanceLightNavigationBars = light
+  }
+
+  // On API 31–34 the activity's bar icons have two writers that use two different stores. React Native's
+  // StatusBar module sets the platform appearance (`window.insetsController`) from API 31 (on 30 it uses the
+  // legacy flags, so there is only one store and nothing to agree). But once its
+  // `KeyboardProvider` is active, react-native-keyboard-controller's module registers under the same name
+  // (`StatusBarManager`) and does the JS `StatusBar`'s `setStyle` through androidx's
+  // `WindowInsetsControllerCompat`. On 31–34 that compat class, built from a window, reads and writes only the legacy
+  // `systemUiVisibility` light flags (so does `matchNavigationBarToStatusBar` above). The platform maps those
+  // flags to the appearance only while nothing has set it through the insets controller. React Native's
+  // first style, sent before the provider is active, has set it. After that, every later style lands in the
+  // ignored legacy flags (a cold start in light, then a switch to dark, kept dark icons on the dark page). So
+  // before each frame the two stores are brought to agreement, bar by bar: a light bit the legacy flags
+  // changed since the last agreement wins, else the platform's. When both stores changed the same bit in one
+  // frame the legacy value wins, which is wrong only if the KeyboardProvider toggles active between two
+  // `setStyle` calls in one frame; App.tsx never toggles `enabled`. API 35+ compat uses the platform controller.
+  private var agreedBarAppearance = 0
+
+  private fun platformBarAppearance(): Int =
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        (window.insetsController?.systemBarsAppearance ?: 0) and BAR_APPEARANCE
+      } else {
+        0
+      }
+
+  private fun agreeBarAppearance() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || Build.VERSION.SDK_INT > Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+    val controller = window.insetsController ?: return
+    val decor = window.decorView
+    @Suppress("DEPRECATION")
+    val flags = decor.systemUiVisibility
+    val legacy =
+        (if (flags and LEGACY_LIGHT_STATUS != 0) WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS else 0) or
+            (if (flags and LEGACY_LIGHT_NAVIGATION != 0) WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS else 0)
+    val platform = controller.systemBarsAppearance and BAR_APPEARANCE
+    val legacyChanged = legacy xor agreedBarAppearance
+    val agreed = (legacy and legacyChanged) or (platform and legacyChanged.inv())
+    agreedBarAppearance = agreed
+    if (platform != agreed) controller.setSystemBarsAppearance(agreed, BAR_APPEARANCE)
+    if (legacy != agreed) {
+      val wanted =
+          (if (agreed and WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS != 0) LEGACY_LIGHT_STATUS else 0) or
+              (if (agreed and WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS != 0) LEGACY_LIGHT_NAVIGATION else 0)
+      @Suppress("DEPRECATION")
+      decor.systemUiVisibility = (flags and LIGHT_BAR_FLAGS.inv()) or wanted
+    }
   }
 
   private fun shellSchemeLight(): Boolean =
@@ -227,10 +276,6 @@ class MainActivity : ReactActivity() {
   // - Whim in front (split screen): no resume comes, so the hook runs after the next layout.
   // - Whim in the background (the Settings app): the change arrives before `onResume`, whose
   //   `super` runs the hook at once, so `onResume` measures the window first.
-  // A pushed screen's native header (react-native-screens) sets its title's size in sp once, when
-  // its props change, so the title kept the old scale's pixels (#218): every header applies its
-  // props again with the new scale (`refreshStackHeaders`). Only the top screen's header is
-  // applied there; one under it is applied again when it comes back to the top.
   private var fontScale = 0f
   private var measureBeforeResume = false
 
@@ -239,7 +284,6 @@ class MainActivity : ReactActivity() {
     window.setBackgroundDrawable(ColorDrawable(getColor(R.color.launch_background)))
     if (newConfig.fontScale == fontScale) return
     fontScale = newConfig.fontScale
-    refreshStackHeaders(window.decorView)
     if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
       measureBeforeResume = true
       return
@@ -267,14 +311,6 @@ class MainActivity : ReactActivity() {
       }
     }
     super.onResume()
-  }
-
-  private fun refreshStackHeaders(view: View) {
-    if (view is ScreenStackHeaderConfig) {
-      view.onUpdate()
-      return
-    }
-    if (view is ViewGroup) for (i in 0 until view.childCount) refreshStackHeaders(view.getChildAt(i))
   }
 
   private fun rereadFontScaleForJs() {
@@ -312,7 +348,9 @@ class MainActivity : ReactActivity() {
         WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
             WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
     @Suppress("DEPRECATION")
-    const val LIGHT_BAR_FLAGS =
-        View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+    const val LEGACY_LIGHT_STATUS = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+    @Suppress("DEPRECATION")
+    const val LEGACY_LIGHT_NAVIGATION = View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+    const val LIGHT_BAR_FLAGS = LEGACY_LIGHT_STATUS or LEGACY_LIGHT_NAVIGATION
   }
 }
